@@ -1,0 +1,7 @@
+onnx
+numpy
+matplotlib
+pillow
+
+# optional:
+# onnxruntime

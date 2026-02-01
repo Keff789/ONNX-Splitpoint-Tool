@@ -1,0 +1,58 @@
+{
+  "base": {
+    "provider": "huggingface",
+    "repo": "onnxmodelzoo/legacy_models",
+    "branch": "main",
+    "resolve_url": "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main"
+  },
+  "models": [
+    {
+      "id": "mobilenetv2-7",
+      "task": "classification",
+      "archive_path": "validated/vision/classification/mobilenet/model/mobilenetv2-7.tar.gz",
+      "suggested_preset": "imagenet"
+    },
+    {
+      "id": "efficientnet-lite4-11",
+      "task": "classification",
+      "archive_path": "validated/vision/classification/efficientnet-lite4/model/efficientnet-lite4-11.tar.gz",
+      "suggested_preset": "imagenet"
+    },
+    {
+      "id": "efficientnet-lite4-11-int8",
+      "task": "classification",
+      "archive_path": "validated/vision/classification/efficientnet-lite4/model/efficientnet-lite4-11-int8.tar.gz",
+      "suggested_preset": "raw"
+    },
+    {
+      "id": "densenet121-12",
+      "task": "classification",
+      "archive_path": "validated/vision/classification/densenet/model/densenet121-12.tar.gz",
+      "suggested_preset": "imagenet"
+    },
+    {
+      "id": "resnet50-v1-12",
+      "task": "classification",
+      "archive_path": "validated/vision/classification/resnet/model/resnet50-v1-12.tar.gz",
+      "suggested_preset": "imagenet"
+    },
+    {
+      "id": "resnet50-v1-12-int8",
+      "task": "classification",
+      "archive_path": "validated/vision/classification/resnet/model/resnet50-v1-12-int8.tar.gz",
+      "suggested_preset": "raw"
+    },
+    {
+      "id": "squeezenet1.1-7",
+      "task": "classification",
+      "archive_path": "validated/vision/classification/squeezenet/model/squeezenet1.1-7.tar.gz",
+      "suggested_preset": "imagenet"
+    },
+    {
+      "id": "inception-v3-12",
+      "task": "classification",
+      "archive_path": "validated/vision/classification/inception/model/inception-v3-12.tar.gz",
+      "suggested_preset": "imagenet"
+    }
+  ]
+}
