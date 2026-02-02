@@ -16,6 +16,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import onnx
 
 from .onnx_utils import (
+    _get_attr,
     dtype_nbytes,
     elemtype_from_vi,
     numel_from_shape,

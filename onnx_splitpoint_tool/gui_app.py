@@ -54,7 +54,7 @@ from onnx import shape_inference
 
 from . import api as asc
 
-__version__ = "0.10.37"
+__version__ = "0.10.39"
 
 
 # ------------------------------- Tooltips -------------------------------
@@ -339,6 +339,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         ttk.Label(r, text="Ranking:").grid(row=0, column=0, sticky="w")
         self.cb_rank = ttk.Combobox(r, textvariable=self.var_rank, values=["cut", "score", "latency"], width=10, state="readonly")
         self.cb_rank.grid(row=0, column=1, sticky="w", padx=(4, 10))
+        self.cb_rank.bind("<<ComboboxSelected>>", lambda _e: self._on_rank_changed(), add=True)
 
         self.var_log_comm = tk.BooleanVar(value=True)
         self.chk_log_comm = ttk.Checkbutton(r, text="log10(1+comm)", variable=self.var_log_comm)
@@ -364,9 +365,28 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.chk_show_pareto = ttk.Checkbutton(r, text="Show Pareto front", variable=self.var_show_pareto)
         self.chk_show_pareto.grid(row=0, column=9, sticky="w")
 
-        # Latency model frame
-        self.lat_frame = ttk.LabelFrame(self.params_frame, text="Latency model")
-        self.lat_frame.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
+        # Latency model (collapsible)
+        # This block is optional and can take a lot of vertical space. We keep a compact
+        # toggle row visible and show/hide the full settings panel.
+        self.var_lat_expanded = tk.BooleanVar(value=False)
+
+        self.lat_container = ttk.Frame(self.params_frame)
+        self.lat_container.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
+        self.lat_container.columnconfigure(0, weight=1)
+
+        lat_toggle = ttk.Frame(self.lat_container)
+        lat_toggle.grid(row=0, column=0, sticky="ew")
+        lat_toggle.columnconfigure(0, weight=1)
+
+        self.btn_lat_toggle = ttk.Button(
+            lat_toggle,
+            text="▶ Latency model (optional)",
+            command=self._toggle_latency_frame,
+        )
+        self.btn_lat_toggle.grid(row=0, column=0, sticky="w")
+
+        self.lat_frame = ttk.LabelFrame(self.lat_container, text="Latency model")
+        self.lat_frame.grid(row=1, column=0, sticky="ew", pady=(4, 0))
 
         l = ttk.Frame(self.lat_frame)
         l.pack(fill=tk.X, padx=8, pady=6)
@@ -469,6 +489,9 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         ToolTip(self.ent_mem_left, "Optional: constrain peak activation memory of part1 (approx, from value spans).")
         ToolTip(self.ent_mem_right, "Optional: constrain peak activation memory of part2 (approx, from value spans).")
+
+        # Start collapsed by default, unless latency ranking is selected.
+        self._set_latency_expanded((self.var_rank.get() or "").strip().lower() == "latency")
 
         # Diagnostics frame
         self.diag_frame = ttk.LabelFrame(self.params_frame, text="Diagnostics")
@@ -716,6 +739,18 @@ class SplitPointAnalyserGUI(tk.Tk):
         ToolTip(self.chk_strict, "Only keep boundaries where Part2 has no dependencies on original model inputs (besides weights). This guarantees a self-contained split.")
         ToolTip(self.sp_show_top_tensors, "Show the k largest crossing tensors per suggested boundary as child rows (0 disables).")
 
+        ToolTip(
+            self.ent_skip_min_span,
+            "Skip-/block-aware pruning: minimum skip span in ops.\n"
+            "If a tensor is forwarded over >= N ops into an Add/Concat-like merge, this is treated as a skip/residual block.\n"
+            "Larger values are less aggressive (fewer candidates pruned).",
+        )
+        ToolTip(
+            self.ent_skip_allow_last_n,
+            "Skip-/block-aware pruning: allow the last N ops inside a detected skip/residual block.\n"
+            "Use this to still permit splits close to the merge op.",
+        )
+
         ToolTip(self.cb_rank, "Ranking mode:\n- cut: minimise communication bytes\n- score: weighted trade-off (comm + imbalance + tensor penalty)\n- latency: minimise predicted latency (requires bandwidth + GOPS L/R)")
         ToolTip(self.chk_log_comm, "Use log10(1+comm) inside the score to reduce domination by very large activations.")
         ToolTip(self.ent_w_comm, "Weight for communication term in the score.")
@@ -723,11 +758,33 @@ class SplitPointAnalyserGUI(tk.Tk):
         ToolTip(self.ent_w_tensors, "Weight for crossing-tensor penalty in the score.")
         ToolTip(self.chk_show_pareto, "Overlay the Pareto front (comm vs imbalance) in the Pareto plot.")
 
+        ToolTip(
+            self.btn_lat_toggle,
+            "Show/hide optional latency/link settings.\n"
+            "This is only needed for 'latency' ranking or the latency plot.\n"
+            "Tip: the panel auto-expands when you switch Ranking to 'latency'.",
+        )
+
         ToolTip(self.ent_bw, "Link bandwidth for latency model.")
         ToolTip(self.cb_bw_unit, "Bandwidth units (bytes/s and bits/s variants).")
         ToolTip(self.ent_gops_l, "Compute throughput of the left device in GOPS (10^9 ops/s).")
         ToolTip(self.ent_gops_r, "Compute throughput of the right device in GOPS (10^9 ops/s).")
         ToolTip(self.ent_overhead, "Constant overhead added to latency model (ms).")
+
+        ToolTip(self.ent_link_energy, "Optional: link energy per transferred byte in pJ/B (used for energy constraints + export).")
+        ToolTip(self.ent_link_mtu, "Packetized link model: MTU payload bytes per packet (data payload, not including headers).")
+        ToolTip(self.ent_link_pkt_ovh_ms, "Packetized link model: additional per-packet latency overhead in ms (e.g., scheduling/airtime gaps).")
+        ToolTip(self.ent_link_pkt_ovh_bytes, "Packetized link model: per-packet header overhead in bytes (protocol headers, framing, etc.).")
+
+        ToolTip(self.ent_link_max_ms, "Constraint: maximum allowed link latency (ms) per inference. Candidates exceeding are filtered.")
+        ToolTip(self.ent_link_max_mJ, "Constraint: maximum allowed link energy (mJ) per inference. Requires E_link (pJ/B).")
+        ToolTip(self.ent_link_max_bytes, "Constraint: maximum allowed transferred bytes per inference.")
+
+        ToolTip(self.ent_energy_left, "Optional: compute energy per flop for left device (pJ/F). Used for energy export/constraints.")
+        ToolTip(self.ent_energy_right, "Optional: compute energy per flop for right device (pJ/F). Used for energy export/constraints.")
+
+        ToolTip(self.cb_mem_left_unit, "Units for 'Max act mem left' constraint.")
+        ToolTip(self.cb_mem_right_unit, "Units for 'Max act mem right' constraint.")
 
         ToolTip(self.lbl_cov, "Share of produced activation tensors whose size could be inferred.\nIf low, Comm(b) can be underestimated.")
         ToolTip(self.lbl_unk, "Max number of crossing tensors with unknown size on any boundary.\nIf >0, Comm(b) is a lower bound on those boundaries.")
@@ -755,11 +812,42 @@ class SplitPointAnalyserGUI(tk.Tk):
             "Generate a small onnxruntime runner script next to the exported models.\n"
             "Useful as a starting point for benchmarking/integration.",
         )
+        ToolTip(
+            self.chk_split_folder,
+            "Export split into a dedicated folder (recommended).\n"
+            "This keeps models, runner, plots, and metadata together.",
+        )
 
         ToolTip(self.btn_export_svg, "Export the 2x2 plot overview as a single SVG.")
         ToolTip(self.btn_export_pdf, "Export the 2x2 plot overview as a single PDF.")
         ToolTip(self.btn_export_svg_s, "Export each plot as its own SVG file.")
         ToolTip(self.btn_export_pdf_s, "Export each plot as its own PDF file.")
+
+    # ------------------------- Latency panel helpers ------------------------
+
+    def _on_rank_changed(self):
+        """Auto-expand latency settings when the user selects latency ranking."""
+        if (self.var_rank.get() or "").strip().lower() == "latency":
+            self._set_latency_expanded(True)
+
+    def _toggle_latency_frame(self):
+        self._set_latency_expanded(not bool(self.var_lat_expanded.get()))
+
+    def _set_latency_expanded(self, expanded: bool):
+        expanded = bool(expanded)
+        self.var_lat_expanded.set(expanded)
+
+        if expanded:
+            # Restore the full panel.
+            try:
+                self.lat_frame.grid()
+            except Exception:
+                self.lat_frame.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+            self.btn_lat_toggle.configure(text="▼ Latency model (optional)")
+        else:
+            # Hide the full panel and keep only the toggle row.
+            self.lat_frame.grid_remove()
+            self.btn_lat_toggle.configure(text="▶ Latency model (optional)")
 
     # ----------------------------- Event handlers -----------------------------
 

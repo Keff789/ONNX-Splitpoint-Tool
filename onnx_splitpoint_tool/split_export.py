@@ -2800,19 +2800,59 @@ def _maybe_visualize_outputs(
         )
 
         if dets is None:
-            dets = _decode_dets_6col(outputs)
+            dets = _decode_dets_6col(
+                output_names,
+                outputs,
+                img_meta,
+                conf_thres=float(conf_thres),
+                max_det=int(max_det),
+            )
         if dets is None:
-            dets = _decode_dets_separate(output_names, outputs)
+            dets = _decode_dets_separate(
+                output_names,
+                outputs,
+                img_meta,
+                conf_thres=float(conf_thres),
+                max_det=int(max_det),
+            )
 
         if dets is not None:
-            out_img = _draw_dets(img.copy(), dets)
-            out_path = out_dir / f"detections_{tag}.png"
-            _save_image_bgr(str(out_path), out_img)
-            print(f"Wrote {out_path}")
-            out_json = out_dir / f"detections_{tag}.json"
-            _write_json(str(out_json), {"tag": tag, "count": int(dets.shape[0]), "dets_xyxy_conf_cls": dets.tolist()})
-            print(f"Wrote detections_{tag}.png and detections_{tag}.json")
-            return {"type": "dets", "count": int(dets.shape[0]), "path": str(out_path), "path_json": str(out_json)}
+            # Use PIL-based drawing (no extra deps). Write JSON in a format the agreement KPI can read.
+            out_img = out_dir / _with_suffix(detections_out_base, f"_{tag}")
+            out_json = out_dir / _with_suffix(detections_json_base, f"_{tag}")
+
+            try:
+                _draw_detections(image_path, dets, out_img)
+            except Exception as e:
+                print(f"[viz] WARNING: drawing detections failed ({type(e).__name__}): {e}")
+
+            try:
+                out_json.write_text(
+                    json.dumps(
+                        {
+                            "preset": used_preset,
+                            "image": image_path,
+                            "img_meta": img_meta,
+                            "conf_thres": float(conf_thres),
+                            "iou_thres": float(iou_thres),
+                            "max_det": int(max_det),
+                            "detections": dets,
+                        },
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
+
+            print(f"Wrote {out_json.name} and {out_img.name}")
+            return {
+                "type": "detection",
+                "tag": tag,
+                "image": out_img.name,
+                "json": out_json.name,
+                "count": int(len(dets) if dets is not None else 0),
+            }
 
     # 2) Try ImageNet-like classification.
     cls = _decode_classification_topk(
