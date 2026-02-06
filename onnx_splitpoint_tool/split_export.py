@@ -1379,6 +1379,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
+import sys
+import subprocess
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -1389,21 +1392,36 @@ import onnxruntime as ort
 from onnx import TensorProto
 
 
+# Session init meta (useful for TensorRT engine build analysis)
+_INIT_TIMES_S: Dict[str, float] = {}
+_SESSION_PROVIDERS_IN_USE: Dict[str, List[str]] = {}
+
 def pick_providers(provider: str) -> List[str]:
     """Pick ORT execution providers.
 
-    Notes:
-      * We intentionally do **NOT** prefer TensorRT in 'auto'. Many ORT GPU wheels
-        list TensorRT as available, but loading it fails unless TensorRT DLLs are
-        installed (nvinfer_*.dll, etc.). For workstation benchmarking we want a
-        reliable default.
-      * In 'auto', we prefer CUDA if present, otherwise fall back to CPU.
-      * Users can explicitly request TensorRT via --provider tensorrt.
+    Rules:
+      - If provider is 'auto':
+          * On Linux, prefer TensorRT if available (with CUDA/CPU fallback).
+          * Otherwise prefer CUDA if available.
+      - If provider is 'tensorrt': request TensorRT (+CUDA/CPU fallback if available).
+      - If provider is 'cuda': request CUDA (+CPU fallback).
+      - If provider is 'cpu': CPU only.
+
+    Note:
+      TensorRT session initialization can take a long time on first run because engines
+      are built. Use the TensorRT engine cache to speed up subsequent runs.
     """
     avail = ort.get_available_providers()
     provider = (provider or '').strip().lower()
+    is_linux = platform.system().lower() == "linux"
 
     if provider in ("auto", ""):
+        if is_linux and "TensorrtExecutionProvider" in avail:
+            pref = ["TensorrtExecutionProvider"]
+            if "CUDAExecutionProvider" in avail:
+                pref.append("CUDAExecutionProvider")
+            pref.append("CPUExecutionProvider")
+            return pref
         if "CUDAExecutionProvider" in avail:
             return ["CUDAExecutionProvider", "CPUExecutionProvider"]
         if "DmlExecutionProvider" in avail:
@@ -1411,10 +1429,11 @@ def pick_providers(provider: str) -> List[str]:
         return ["CPUExecutionProvider"]
 
     if provider in ("cuda", "gpu"):
-        return [p for p in ["CUDAExecutionProvider", "CPUExecutionProvider"] if p in avail]
+        prov = [p for p in ["CUDAExecutionProvider", "CPUExecutionProvider"] if p in avail]
+        return prov or ["CPUExecutionProvider"]
 
     if provider in ("tensorrt", "trt"):
-        pref = []
+        pref: List[str] = []
         if "TensorrtExecutionProvider" in avail:
             pref.append("TensorrtExecutionProvider")
         if "CUDAExecutionProvider" in avail:
@@ -1432,10 +1451,223 @@ def pick_providers(provider: str) -> List[str]:
         return [cand]
 
     # Fallback
+    if is_linux and "TensorrtExecutionProvider" in avail:
+        pref = ["TensorrtExecutionProvider"]
+        if "CUDAExecutionProvider" in avail:
+            pref.append("CUDAExecutionProvider")
+        pref.append("CPUExecutionProvider")
+        return pref
     if "CUDAExecutionProvider" in avail:
         return ["CUDAExecutionProvider", "CPUExecutionProvider"]
     return ["CPUExecutionProvider"]
 
+
+class _InitSpinner:
+    """Lightweight progress indicator for long session initialization.
+
+    Why a subprocess?
+    Some ORT/TensorRT builds hold the GIL during InferenceSession() creation,
+    which can prevent Python threads from updating a spinner in real time.
+    A tiny helper process keeps the heartbeat visible even in that case.
+    """
+
+    def __init__(self, label: str, *, interval_s: float = 1.0, enabled: bool = True):
+        self.label = str(label)
+        self.interval_s = float(interval_s)
+        self.enabled = bool(enabled)
+        self._proc = None
+
+    def __enter__(self):
+        if not self.enabled:
+            return self
+
+        code = r"""
+import sys, time
+label = sys.argv[1]
+interval = float(sys.argv[2])
+t0 = time.time()
+chars = "|/-\\"
+i = 0
+# Some terminals/log collectors do not show carriage-return updates. Emit
+# a real newline heartbeat every N seconds so users can see time passing.
+LOG_EVERY_S = 10
+_last_hb = -1
+# Unbuffered (-u) in parent Popen.
+while True:
+    elapsed = int(time.time() - t0)
+    msg = f"{label} {chars[i % len(chars)]}  elapsed={elapsed}s"
+    if elapsed % LOG_EVERY_S == 0 and elapsed != _last_hb:
+        sys.stdout.write("\n" + msg + "\n")
+        _last_hb = elapsed
+    else:
+        sys.stdout.write("\r" + msg)
+    sys.stdout.flush()
+    time.sleep(interval)
+    i += 1
+"""
+
+        try:
+            # Inherit stdout/stderr; -u makes the helper unbuffered.
+            self._proc = subprocess.Popen(
+                [sys.executable, "-u", "-c", code, self.label, str(self.interval_s)],
+                stdout=None,
+                stderr=None,
+            )
+        except Exception:
+            self._proc = None
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if not self.enabled:
+            return False
+        if self._proc is not None:
+            try:
+                self._proc.terminate()
+                self._proc.wait(timeout=1.0)
+            except Exception:
+                pass
+        # Ensure we end on a clean line.
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        return False
+
+
+def _provider_options_for(providers: List[str], args: argparse.Namespace, base_dir: Path, out_dir: Path) -> Optional[List[Dict[str, object]]]:
+    """Build provider_options list aligned with providers list.
+
+    Notes:
+      - In the ORT Python API, TensorRT EP provider options can be passed as native
+        Python types (bool/int/str). Some builds stringify them internally; using
+        bool values avoids the brittle '0/1' vs 'True/False' ambiguity.
+      - We enable TensorRT engine caching by default when TRT EP is active.
+      - Timing cache can dramatically reduce repeated build time and is enabled
+        by default when caching is enabled.
+    """
+    opts: List[Dict[str, object]] = []
+    cache_dir: Optional[Path] = None
+
+    if getattr(args, "trt_cache", None):
+        cache_dir = Path(str(args.trt_cache))
+        if not cache_dir.is_absolute():
+            cache_dir = base_dir / cache_dir
+
+    for p in providers:
+        if p == "TensorrtExecutionProvider":
+            d: Dict[str, object] = {}
+            cache_enabled = not getattr(args, "no_trt_cache", False)
+
+            # Engine cache
+            if cache_enabled:
+                d["trt_engine_cache_enable"] = True
+                if cache_dir is not None:
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+                    d["trt_engine_cache_path"] = str(cache_dir)
+
+            # Timing cache (helps speed up builds; path defaults to working directory if not set)
+            if cache_enabled and not getattr(args, "no_trt_timing_cache", False):
+                d["trt_timing_cache_enable"] = True
+                if cache_dir is not None:
+                    d["trt_timing_cache_path"] = str(cache_dir)
+
+            # Precision
+            if getattr(args, "trt_fp16", False):
+                d["trt_fp16_enable"] = True
+
+            # Debugging helpers
+            if getattr(args, "trt_dump_subgraphs", False):
+                d["trt_dump_subgraphs"] = True
+            if getattr(args, "trt_detailed_build_log", False):
+                d["trt_detailed_build_log"] = True
+
+            # Build-time tuning
+            if getattr(args, "trt_build_heuristics", False):
+                d["trt_build_heuristics_enable"] = True
+
+            bol = getattr(args, "trt_builder_opt_level", None)
+            if bol is not None:
+                try:
+                    bol_i = int(bol)
+                    if bol_i < 0:
+                        bol_i = 0
+                    if bol_i > 5:
+                        bol_i = 5
+                    d["trt_builder_optimization_level"] = bol_i
+                except Exception:
+                    pass
+
+            # Advanced: restrict tactic sources to reduce build time (may affect runtime perf)
+            ts = getattr(args, "trt_tactic_sources", None)
+            if ts:
+                d["trt_tactic_sources"] = str(ts)
+
+            opts.append(d)
+        else:
+            opts.append({})
+
+    return opts if any(opts) else None
+
+
+def _create_session(model_path: Path, *, label: str, providers: List[str], provider_options: Optional[List[Dict[str, object]]], log_severity: int, show_progress: bool) -> ort.InferenceSession:
+    """Create an ORT session with optional progress indicator and safe fallback.
+
+    If TensorRT is requested but session creation fails, we retry without TRT.
+    """
+    so = ort.SessionOptions()
+    try:
+        so.log_severity_level = int(log_severity)
+    except Exception:
+        pass
+
+    def _try(prov: List[str], prov_opts: Optional[List[Dict[str, object]]]) -> ort.InferenceSession:
+        print(f"[init] creating session '{label}' using {model_path.name}", flush=True)
+        print(f"[init] providers={prov}", flush=True)
+        t0 = time.time()
+        try:
+            with _InitSpinner(
+                f"[init] building '{label}' (TensorRT engine build can take minutes)",
+                enabled=show_progress and ("TensorrtExecutionProvider" in prov),
+            ):
+                sess = ort.InferenceSession(
+                    str(model_path),
+                    sess_options=so,
+                    providers=prov,
+                    provider_options=prov_opts,
+                )
+        except KeyboardInterrupt:
+            print(
+                "\n[init] interrupted while creating session. "
+                "If TensorRT is active, the first engine build can take several minutes.",
+                flush=True,
+            )
+            raise
+        dt = time.time() - t0
+        print(f"[init] session '{label}' ready in {dt:.1f}s", flush=True)
+        # Helpful to verify whether ORT actually uses TRT/CUDA or fell back to CPU.
+        try:
+            used = sess.get_providers()
+        except Exception:
+            used = prov
+        print(f"[init] session '{label}' providers in use: {used}", flush=True)
+        _INIT_TIMES_S[label] = float(dt)
+        _SESSION_PROVIDERS_IN_USE[label] = list(used)
+        return sess
+
+    try:
+        return _try(providers, provider_options)
+    except Exception as e:
+        if "TensorrtExecutionProvider" in providers:
+            prov2 = [p for p in providers if p != "TensorrtExecutionProvider"]
+            if prov2:
+                print(
+                    f"[warn] session '{label}' failed with TensorRT "
+                    f"({type(e).__name__}: {e}). Retrying without TensorRT...",
+                    flush=True,
+                )
+                prov_opts2 = None
+                if provider_options is not None:
+                    prov_opts2 = [o for p, o in zip(providers, provider_options) if p != "TensorrtExecutionProvider"]
+                return _try(prov2, prov_opts2)
+        raise
 def _np_dtype_from_onnx(elem_type: int) -> np.dtype:
     mapping = {
         TensorProto.FLOAT: np.float32,
@@ -3042,11 +3274,105 @@ def main() -> int:
     ap.add_argument("--eps", type=float, default=1e-4, help="Max-abs tolerance for PASS/FAIL.")
 
     ap.add_argument(
+        "--build-only",
+        action="store_true",
+        help="Only build/initialize sessions (and run minimal inferences) to populate caches (e.g., TensorRT engine cache), then exit.",
+    )
+    ap.add_argument(
+        "--build-only-runs",
+        type=int,
+        default=1,
+        help="Number of single-run inferences per session in build-only mode (default: 1).",
+    )
+
+    ap.add_argument(
         "--provider",
         type=str,
         default="__DEFAULT_PROVIDER__",
         choices=["auto", "cpu", "cuda", "tensorrt"],
         help="Preferred onnxruntime execution provider (falls back if unavailable).",
+    )
+
+    ap.add_argument(
+        "--ort-log-severity",
+        type=int,
+        default=2,
+        help="onnxruntime log severity (0=verbose, 1=info, 2=warning, 3=error, 4=fatal).",
+    )
+    ap.add_argument(
+        "--no-init-progress",
+        action="store_true",
+        help="Disable spinner/progress output during session initialization.",
+    )
+    ap.add_argument(
+        "--trt-cache",
+        type=str,
+        default="trt_cache",
+        help="TensorRT engine cache directory (relative to split folder unless absolute).",
+    )
+    ap.add_argument(
+        "--no-trt-cache",
+        action="store_true",
+        help="Disable TensorRT engine caching.",
+    )
+    ap.add_argument(
+        "--no-trt-timing-cache",
+        action="store_true",
+        help=(
+            "Disable TensorRT timing cache. Timing cache can significantly reduce repeated "
+            "engine build times, but you may disable it for debugging/reproducibility."
+        ),
+    )
+    ap.add_argument(
+        "--trt-fp16",
+        action="store_true",
+        help="Enable TensorRT FP16 mode (may change numerics slightly).",
+    )
+
+    # TensorRT debugging + build-time tuning
+    ap.add_argument(
+        "--trt-fast-build",
+        action="store_true",
+        help=(
+            "Preset to reduce TensorRT engine build time (useful on Jetson). "
+            "Enables build heuristics and sets --trt-builder-opt-level=2 unless you override them. "
+            "Works best together with engine/timing caches (enabled by default)."
+        ),
+    )
+    ap.add_argument(
+        "--trt-dump-subgraphs",
+        action="store_true",
+        help=(
+            "Dump the ONNX subgraphs that are converted into TensorRT engines to the filesystem "
+            "(useful for debugging with trtexec)."
+        ),
+    )
+    ap.add_argument(
+        "--trt-detailed-build-log",
+        action="store_true",
+        help="Enable detailed TensorRT engine build logging (can be very verbose).",
+    )
+    ap.add_argument(
+        "--trt-build-heuristics",
+        action="store_true",
+        help="Enable TensorRT build heuristics to reduce build time.",
+    )
+    ap.add_argument(
+        "--trt-builder-opt-level",
+        type=int,
+        default=None,
+        help=(
+            "Set TensorRT builder optimization level [0..5]. Lower levels can greatly reduce build time "
+            "but may reduce runtime performance (default: TensorRT/ORT default)."
+        ),
+    )
+    ap.add_argument(
+        "--trt-tactic-sources",
+        type=str,
+        default=None,
+        help=(
+            "Optional TensorRT tactic sources override (e.g. '-CUDNN,+CUBLAS'). Can reduce build time but may affect perf."
+        ),
     )
 
     ap.add_argument(
@@ -3096,6 +3422,14 @@ def main() -> int:
     ap.add_argument("--labels-file", type=str, default=None, help="Optional labels file (one label per line) for classification visualization.")
 
     args = ap.parse_args()
+
+    # Convenience preset: reduce TensorRT engine build time.
+    # We do NOT override explicit user flags if they already set them.
+    if getattr(args, "trt_fast_build", False):
+        if not getattr(args, "trt_build_heuristics", False):
+            args.trt_build_heuristics = True
+        if getattr(args, "trt_builder_opt_level", None) is None:
+            args.trt_builder_opt_level = 2
 
     manifest_path = Path(args.manifest)
     with manifest_path.open("r", encoding="utf-8") as f:
@@ -3214,9 +3548,51 @@ def main() -> int:
     print(f"ORT available providers: {ort.get_available_providers()}")
     print(f"Using providers: {providers}")
 
-    sess_full = ort.InferenceSession(str(full_path), providers=providers)
-    sess_p1 = ort.InferenceSession(str(p1_path), providers=providers)
-    sess_p2 = ort.InferenceSession(str(p2_path), providers=providers)
+    provider_options = _provider_options_for(providers, args, base_dir, out_dir)
+
+    if "TensorrtExecutionProvider" in providers:
+        cache_dir = Path(str(args.trt_cache))
+        if not cache_dir.is_absolute():
+            cache_dir = base_dir / cache_dir
+        if args.no_trt_cache:
+            print("[tensorrt] engine cache: disabled", flush=True)
+        else:
+            print(f"[tensorrt] engine cache dir: {cache_dir}", flush=True)
+        if args.trt_fp16:
+            print("[tensorrt] FP16: enabled", flush=True)
+        if getattr(args, "trt_fast_build", False):
+            bol = getattr(args, "trt_builder_opt_level", None)
+            bol_txt = str(bol) if bol is not None else "(default)"
+            print(
+                f"[tensorrt] fast-build preset: enabled (build_heuristics=on, builder_opt_level={bol_txt})",
+                flush=True,
+            )
+
+    sess_full = _create_session(
+        full_path,
+        label="full",
+        providers=providers,
+        provider_options=provider_options,
+        log_severity=args.ort_log_severity,
+        show_progress=(not args.no_init_progress),
+    )
+    sess_p1 = _create_session(
+        p1_path,
+        label="part1",
+        providers=providers,
+        provider_options=provider_options,
+        log_severity=args.ort_log_severity,
+        show_progress=(not args.no_init_progress),
+    )
+    sess_p2 = _create_session(
+        p2_path,
+        label="part2",
+        providers=providers,
+        provider_options=provider_options,
+        log_severity=args.ort_log_severity,
+        show_progress=(not args.no_init_progress),
+    )
+
 
 
 
@@ -3303,6 +3679,45 @@ def main() -> int:
         feeds_p2 = build_feeds_p2(p1_map)
         return sess_p2.run(None, feeds_p2)
 
+
+    # ---- Build-only mode (populate TensorRT engine cache etc.) ----
+    if args.build_only:
+        n = max(1, int(getattr(args, "build_only_runs", 1)))
+        print(f"[build-only] running {n} inference(s) to finalize engine builds/caches...", flush=True)
+        for _ in range(n):
+            _ = run_full()
+        # part1 already ran once above to create p1_map0; run it additional times if requested.
+        for _ in range(max(0, n - 1)):
+            _ = run_p1()
+        for _ in range(n):
+            _ = run_p2_only()
+
+        # Write a small build report for reproducibility
+        try:
+            build_report = {
+                "mode": "build-only",
+                "runs": n,
+                "provider_requested": args.provider,
+                "available_providers": ort.get_available_providers(),
+                "providers_requested": providers,
+                "providers_in_use": dict(_SESSION_PROVIDERS_IN_USE),
+                "session_init_s": dict(_INIT_TIMES_S),
+                "tensorrt": {
+                    "cache_dir": str(cache_dir) if "TensorrtExecutionProvider" in providers else None,
+                    "cache_enabled": bool((not args.no_trt_cache) and ("TensorrtExecutionProvider" in providers)),
+                    "fp16": bool(getattr(args, "trt_fp16", False)),
+                },
+                "onnxruntime_version": getattr(ort, "__version__", None),
+            }
+            (out_dir / "build_report.json").write_text(json.dumps(build_report, indent=2), encoding="utf-8")
+            print(f"[build-only] wrote {out_dir / 'build_report.json'}", flush=True)
+        except Exception as e:
+            print(f"[build-only] warning: failed to write build_report.json: {e}", flush=True)
+
+        print("[build-only] done.", flush=True)
+        return 0
+
+
     full_mean, full_std, _, full_out = _bench("full", run_full, args.warmup, args.runs)
     p1_mean, p1_std, _, _ = _bench("part1", lambda: list(run_p1().values()), args.warmup, args.runs)
     p2_mean, p2_std, _, _ = _bench("part2", run_p2_only, args.warmup, args.runs)
@@ -3332,6 +3747,25 @@ def main() -> int:
         "eps": float(args.eps),
         "ok": bool(ok),
     }
+
+
+    # ---- Session/provider meta (helps compare CUDA vs TensorRT runs) ----
+    try:
+        summary["provider_requested"] = str(args.provider)
+        summary["available_providers"] = list(ort.get_available_providers())
+        summary["providers_requested"] = list(providers)
+        summary["providers_in_use"] = dict(_SESSION_PROVIDERS_IN_USE)
+        summary["session_init_s"] = dict(_INIT_TIMES_S)
+        summary["onnxruntime_version"] = getattr(ort, "__version__", None)
+        if "TensorrtExecutionProvider" in providers:
+            summary["tensorrt"] = {
+                "cache_dir": str(cache_dir),
+                "cache_enabled": bool(not args.no_trt_cache),
+                "fp16": bool(getattr(args, "trt_fp16", False)),
+            }
+    except Exception:
+        pass
+
 
     print("\n==== Timing summary (ms) ====")
     print(f"full     : {full_mean:.3f} ± {full_std:.3f}")
@@ -3707,6 +4141,9 @@ def write_netron_launcher(out_dir: str, *, manifest_filename: str = "split_manif
 import argparse
 import json
 import os
+import platform
+import sys
+import threading
 import time
 from pathlib import Path
 

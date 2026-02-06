@@ -55,7 +55,7 @@ from onnx import shape_inference
 
 from . import api as asc
 
-__version__ = "0.10.39"
+__version__ = "0.10.46"
 
 
 # ------------------------------- Tooltips -------------------------------
