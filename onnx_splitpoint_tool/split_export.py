@@ -3101,10 +3101,42 @@ def main() -> int:
     with manifest_path.open("r", encoding="utf-8") as f:
         m = json.load(f)
 
-    base_dir = manifest_path.parent
+    # Resolve to an absolute directory to avoid subtle path-joining quirks
+    # when the manifest path is relative (e.g. "split_manifest.json").
+    base_dir = manifest_path.parent.resolve()
+
+    def _looks_like_windows_abs(s: str) -> bool:
+        s = (s or "").strip()
+        return len(s) >= 3 and s[1] == ":" and (s[2] == "\\" or s[2] == "/")
 
     def _resolve_path(p: str) -> Path:
-        pp = Path(p)
+        """Resolve a manifest path.
+
+        The benchmark/split folders are often created on Windows and then copied to
+        Linux devices (Jetson, Raspberry Pi). In that case the manifest may still contain
+        Windows absolute paths. We try to recover gracefully by falling back to the basename
+        inside the current folder (or its parent).
+        """
+        if p is None:
+            return base_dir
+
+        ps = os.path.expandvars(os.path.expanduser(str(p)))
+        ps_norm = ps.replace("\\", "/")
+
+        # Windows absolute path stored in manifest, but now running on a different OS.
+        if _looks_like_windows_abs(ps_norm):
+            if os.path.exists(ps):
+                return Path(ps)
+            bn = os.path.basename(ps_norm)
+            cand = base_dir / bn
+            if cand.exists():
+                return cand
+            cand2 = base_dir.parent / bn
+            if cand2.exists():
+                return cand2
+            return Path(ps_norm)
+
+        pp = Path(ps_norm)
         return pp if pp.is_absolute() else (base_dir / pp)
 
     full_path = _resolve_path(m["full_model"])

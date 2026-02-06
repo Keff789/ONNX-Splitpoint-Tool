@@ -31,6 +31,7 @@ import json
 import csv
 import statistics
 import os
+import shutil
 import re
 import threading
 import queue
@@ -2018,6 +2019,20 @@ class SplitPointAnalyserGUI(tk.Tk):
                 msg.append(f"Wrote: {p1_path}")
                 msg.append(f"Wrote: {p2_path}")
 
+                # Make the export folder self-contained for portability.
+                # If the copy fails, we keep the original absolute path so the export remains usable locally.
+                full_model_src = os.path.abspath(self.model_path)
+                full_model_local = os.path.join(out_dir, os.path.basename(full_model_src))
+                full_model_field = full_model_src
+                try:
+                    if os.path.abspath(full_model_local) != full_model_src:
+                        shutil.copy2(full_model_src, full_model_local)
+                        msg.append(f"Wrote: {full_model_local}")
+                    if os.path.exists(full_model_local):
+                        full_model_field = os.path.basename(full_model_local)
+                except Exception as e:
+                    msg.append(f"[warn] Could not copy full model into export folder: {e}")
+
                 # Manifest (must include cut-name mapping for the runner)
                 manifest_out = {
                     "tool": {
@@ -2028,9 +2043,10 @@ class SplitPointAnalyserGUI(tk.Tk):
                     "cut_tensors": cut_tensors,
                     "strict_boundary": strict_boundary,
                     "split_context_hops": int(ctx_hops),
-                    "full_model": os.path.abspath(self.model_path),
-                    "part1": os.path.abspath(p1_path),
-                    "part2": os.path.abspath(p2_path),
+                    "full_model": str(full_model_field).replace('\\', '/'),
+                    "full_model_source": str(full_model_src).replace('\\', '/'),
+                    "part1": os.path.basename(p1_path).replace('\\', '/'),
+                    "part2": os.path.basename(p2_path).replace('\\', '/'),
                     "created_at": datetime.now().isoformat(timespec="seconds"),
                 }
                 if isinstance(split_manifest, dict):
@@ -3085,6 +3101,20 @@ if __name__ == "__main__":
                 errors = []
                 made = 0
 
+                # Make the benchmark folder self-contained for portability.
+                # We copy the full model once into <benchmark_root>/models/ and reference it via
+                # relative paths from each case directory.
+                full_model_src = os.path.abspath(self.model_path)
+                models_dir = os.path.join(out_dir, "models")
+                os.makedirs(models_dir, exist_ok=True)
+                full_model_dst = os.path.join(models_dir, os.path.basename(full_model_src))
+                try:
+                    if os.path.abspath(full_model_dst) != full_model_src:
+                        shutil.copy2(full_model_src, full_model_dst)
+                except Exception as e:
+                    errors.append(f"full model copy failed: {type(e).__name__}: {e}")
+                    full_model_dst = full_model_src
+
                 # Try candidates in ranked order and keep adding cases until we have k successful splits.
                 # We respect the GUI "Min gap" setting to avoid exporting near-duplicate boundaries.
                 gap = _safe_int(self.var_min_gap.get()) or 0
@@ -3208,9 +3238,15 @@ if __name__ == "__main__":
                         'cut_tensors': list(cut_tensors),
                         'strict_boundary': bool(strict_boundary),
                         'predicted': pred,
-                        'full_model': os.path.abspath(self.model_path),
-                        'part1': os.path.abspath(p1_path),
-                        'part2': os.path.abspath(p2_path),
+                        # Portable paths (store forward slashes for cross-platform use).
+                        'full_model': (
+                            Path(os.path.relpath(full_model_dst, start=case_dir)).as_posix()
+                            if os.path.exists(full_model_dst)
+                            else str(full_model_src).replace('\\', '/')
+                        ),
+                        'full_model_source': str(full_model_src).replace('\\', '/'),
+                        'part1': os.path.basename(p1_path).replace('\\', '/'),
+                        'part2': os.path.basename(p2_path).replace('\\', '/'),
                         'created_at': datetime.now().isoformat(timespec='seconds'),
                     }
                     if isinstance(split_manifest, dict):
@@ -3282,7 +3318,14 @@ if __name__ == "__main__":
                 # Write benchmark_set.json
                 bench = {
                     'tool': {'gui': __version__, 'core': getattr(asc, '__version__', '?')},
-                    'model': os.path.abspath(self.model_path),
+                    # Keep both a portable path (relative within the benchmark folder)
+                    # and the original source path (useful for provenance).
+                    'model': (
+                        Path(os.path.relpath(full_model_dst, start=out_dir)).as_posix()
+                        if os.path.exists(full_model_dst)
+                        else str(full_model_src).replace('\\', '/')
+                    ),
+                    'model_source': str(full_model_src).replace('\\', '/'),
                     'model_name': base,
                     'created_at': datetime.now().isoformat(timespec='seconds'),
                     'analysis_params': {
@@ -3342,7 +3385,8 @@ if __name__ == "__main__":
                 with open(readme, 'w', encoding='utf-8') as f:
                     f.write(
                         "Benchmark suite generated by the ONNX Split-Point Analyser.\n\n"
-                        f"Model: {os.path.abspath(self.model_path)}\n"
+                        f"Model (portable): {bench.get('model')}\n"
+                        f"Model (source):   {bench.get('model_source')}\n"
                         f"Cases: {len(cases)} (requested: {k})\n\n"
                         "Next steps:\n"
                         "  1) (optional) install deps: pip install onnx onnxruntime numpy pillow matplotlib\n"
@@ -3352,6 +3396,10 @@ if __name__ == "__main__":
                         "Outputs:\n"
                         "  - benchmark_results_<provider>.csv / .json\n"
                         "  - benchmark_plots_<provider>.pdf (if matplotlib installed)\n"
+                        "\n"
+                        "Paper-ready analysis exports (created during benchmark set generation):\n"
+                        "  - analysis_plots/   (PDF + SVG)\n"
+                        "  - analysis_tables/  (.tex, .csv, .json)\n"
                     )
 
                 msg = []
@@ -3479,6 +3527,8 @@ if __name__ == "__main__":
         include_overview: bool = True,
         include_table: bool = True,
         include_json: bool = True,
+        plots_subdir: Optional[str] = None,
+        tables_subdir: Optional[str] = None,
     ) -> None:
         """Write paper-ready assets (plots, tables, and metadata) into a folder.
 
@@ -3489,6 +3539,15 @@ if __name__ == "__main__":
 
         out_dir = Path(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
+
+        plots_dir = out_dir
+        tables_dir = out_dir
+        if plots_subdir:
+            plots_dir = out_dir / str(plots_subdir)
+            plots_dir.mkdir(parents=True, exist_ok=True)
+        if tables_subdir:
+            tables_dir = out_dir / str(tables_subdir)
+            tables_dir.mkdir(parents=True, exist_ok=True)
 
         # Pull arrays from analysis dict.
         costs = list(a.get("costs_bytes") or [])
@@ -3673,7 +3732,7 @@ if __name__ == "__main__":
             fig = Figure(figsize=figsize, constrained_layout=True)
             ax = fig.add_subplot(1, 1, 1)
             plot_fn(ax)
-            out_path = out_dir / f"{fname_stem}.{fmt}"
+            out_path = plots_dir / f"{fname_stem}.{fmt}"
             fig.savefig(str(out_path), format=fmt, bbox_inches="tight")
 
         def save_overview(fmt: str) -> None:
@@ -3686,7 +3745,7 @@ if __name__ == "__main__":
             plot_comp(ax2)
             plot_pareto(ax3)
             plot_latency(ax4)
-            fig.savefig(str(out_dir / f"analysis_plots_overview.{fmt}"), format=fmt, bbox_inches="tight")
+            fig.savefig(str(plots_dir / f"analysis_plots_overview.{fmt}"), format=fmt, bbox_inches="tight")
 
         for fmt in formats:
             if fmt not in {"pdf", "svg"}:
@@ -3709,7 +3768,7 @@ if __name__ == "__main__":
         if include_table:
             try:
                 tex = self._make_tex_table(a, picks)
-                (out_dir / "split_candidates.tex").write_text(tex, encoding="utf-8")
+                (tables_dir / "split_candidates.tex").write_text(tex, encoding="utf-8")
             except Exception as e:
                 print(f"[warn] Failed to export TeX candidate table: {e}")
 
@@ -3718,7 +3777,7 @@ if __name__ == "__main__":
             try:
                 if p is not None:
                     sys = self._build_system_spec(p)
-                    (out_dir / "system_config.json").write_text(json.dumps(asdict(sys), indent=2), encoding="utf-8")
+                    (tables_dir / "system_config.json").write_text(json.dumps(asdict(sys), indent=2), encoding="utf-8")
             except Exception as e:
                 print(f"[warn] Failed to export system_config.json: {e}")
 
@@ -3739,7 +3798,7 @@ if __name__ == "__main__":
                     "peak_act_mem_right_bytes": [int(x) for x in (a.get("peak_act_mem_right_bytes") or [])[:M]],
                     "peak_act_mem_max_bytes": [int(x) for x in (a.get("peak_act_mem_max_bytes") or [])[:M]],
                 }
-                (out_dir / "workload_profile.json").write_text(json.dumps(workload, indent=2), encoding="utf-8")
+                (tables_dir / "workload_profile.json").write_text(json.dumps(workload, indent=2), encoding="utf-8")
             except Exception as e:
                 print(f"[warn] Failed to export workload_profile.json: {e}")
 
@@ -3751,7 +3810,7 @@ if __name__ == "__main__":
                     "candidate_prune_link_constraints": a.get("candidate_prune_link_constraints"),
                     "candidate_prune_memory_constraints": a.get("candidate_prune_memory_constraints"),
                 }
-                (out_dir / "candidate_pruning.json").write_text(json.dumps(pruning, indent=2), encoding="utf-8")
+                (tables_dir / "candidate_pruning.json").write_text(json.dumps(pruning, indent=2), encoding="utf-8")
             except Exception as e:
                 print(f"[warn] Failed to export candidate_pruning.json: {e}")
 
@@ -3778,7 +3837,7 @@ if __name__ == "__main__":
                     except Exception:
                         sys = None
 
-                out_csv = out_dir / "pareto_export.csv"
+                out_csv = tables_dir / "pareto_export.csv"
                 with open(out_csv, "w", newline="", encoding="utf-8") as f:
                     w = csv.writer(f)
                     w.writerow([
@@ -3868,6 +3927,8 @@ if __name__ == "__main__":
             include_overview=True,
             include_table=True,
             include_json=True,
+            plots_subdir="analysis_plots",
+            tables_subdir="analysis_tables",
         )
 
     def _export_tex_table(self):
