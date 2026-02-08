@@ -55,6 +55,12 @@ Notes:
 - A small helper for interactive shells is included:
   `source ./scripts/activate_hailo_dfc_venv.sh`
 
+Practical tips:
+
+- The GUI provides a **Test backend** button in the Hailo section to verify that the selected backend (local or WSL) can import the Hailo SDK.
+- Hailo parse-only results are cached across runs (by sub-model hash) to avoid re-running DFC translation during ranking.
+  You can clear the cache from the GUI (**Clear cache**) or delete `~/.onnx_splitpoint_tool/hailo_parse_cache.json`.
+
 ## Run
 
 ### GUI

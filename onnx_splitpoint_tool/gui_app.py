@@ -30,12 +30,14 @@ import math
 import json
 import csv
 import statistics
+import hashlib
 import os
 import shutil
 import re
 import tempfile
 import threading
 import queue
+import time
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -56,7 +58,7 @@ from onnx import shape_inference
 
 from . import api as asc
 
-__version__ = "0.10.51"
+__version__ = "0.10.52"
 
 
 # ------------------------------- Tooltips -------------------------------
@@ -261,6 +263,13 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.analysis: Optional[Dict] = None
         self.current_picks: List[int] = []
 
+        # Hailo feasibility-check result cache (persists across runs).
+        # Keyed by (backend|hw_arch|fixup|sha1(model_bytes)).
+        self._hailo_cache_path: Path = self._default_hailo_cache_path()
+        self._hailo_cache: Dict[str, Dict[str, Any]] = {}
+        self._hailo_cache_dirty: bool = False
+        self._load_hailo_cache()
+
         self._build_ui()
 
     # -------------------------- UI construction --------------------------
@@ -275,6 +284,11 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         self.lbl_model = ttk.Label(top, text="(no model loaded)")
         self.lbl_model.pack(side=tk.LEFT, padx=10)
+
+        # Allow quickly hiding the settings to maximize plot area.
+        self.var_settings_visible = tk.BooleanVar(value=True)
+        self.btn_toggle_settings = ttk.Button(top, text="Hide settings", command=self._toggle_settings)
+        self.btn_toggle_settings.pack(side=tk.RIGHT)
 
         # --- Parameters ---
         self.params_frame = ttk.LabelFrame(self, text="Analysis Parameters")
@@ -662,6 +676,24 @@ class SplitPointAnalyserGUI(tk.Tk):
             "Default: ~/hailo_dfc_venv/bin/activate",
         )
 
+        # Convenience actions for setup/debug.
+        btns = ttk.Frame(hf)
+        btns.grid(row=2, column=6, sticky="w", padx=(12, 0), pady=(6, 0))
+        self.btn_hailo_test = ttk.Button(btns, text="Test backend", command=self._hailo_test_backend)
+        self.btn_hailo_test.pack(side=tk.TOP, fill=tk.X)
+        self.btn_hailo_clear_cache = ttk.Button(btns, text="Clear cache", command=self._hailo_clear_cache)
+        self.btn_hailo_clear_cache.pack(side=tk.TOP, fill=tk.X, pady=(4, 0))
+        ToolTip(
+            self.btn_hailo_test,
+            "Run a quick sanity-check for the selected Hailo backend (local/WSL).\n"
+            "This does not translate a model; it only verifies the environment.",
+        )
+        ToolTip(
+            self.btn_hailo_clear_cache,
+            "Delete cached Hailo parse-check results stored in your home directory.\n"
+            "Useful if you upgraded the Hailo DFC and want to re-check everything.",
+        )
+
         # Start collapsed by default.
         self._set_hailo_expanded(False)
 
@@ -783,7 +815,8 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.btn_benchmark.state(["disabled"])
 
         # --- Results split: table + plots ---
-        mid = ttk.PanedWindow(self, orient=tk.VERTICAL)
+        self.mid_pane = ttk.PanedWindow(self, orient=tk.VERTICAL)
+        mid = self.mid_pane
         mid.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
         # ------------------------------ Table ------------------------------
@@ -851,7 +884,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         # ------------------------------ Plots ------------------------------
         plot_frame = ttk.LabelFrame(mid, text="Plots")
-        mid.add(plot_frame, weight=2)
+        mid.add(plot_frame, weight=3)
 
         # Use grid so canvas does not hide the toolbar/export controls.
         plot_frame.columnconfigure(0, weight=1)
@@ -1021,6 +1054,28 @@ class SplitPointAnalyserGUI(tk.Tk):
             self.lat_frame.grid_remove()
             self.btn_lat_toggle.configure(text="▶ Latency model (optional)")
 
+    # ------------------------- Layout helpers ------------------------
+
+    def _toggle_settings(self) -> None:
+        """Hide/show the settings panel to maximize plot/table area."""
+        is_visible = bool(self.var_settings_visible.get())
+        if is_visible:
+            try:
+                self.params_frame.pack_forget()
+            except Exception:
+                pass
+            self.var_settings_visible.set(False)
+            self.btn_toggle_settings.configure(text="Show settings")
+        else:
+            # Re-pack the settings frame *before* the main pane (so it stays above plots).
+            try:
+                self.params_frame.pack(fill=tk.X, padx=10, pady=(0, 8), before=self.mid_pane)
+            except Exception:
+                # Fallback: normal packing order.
+                self.params_frame.pack(fill=tk.X, padx=10, pady=(0, 8))
+            self.var_settings_visible.set(True)
+            self.btn_toggle_settings.configure(text="Hide settings")
+
     # --------------------------- Hailo panel helpers ------------------------
 
     def _toggle_hailo_frame(self):
@@ -1039,6 +1094,61 @@ class SplitPointAnalyserGUI(tk.Tk):
         else:
             self.hailo_frame.grid_remove()
             self.btn_hailo_toggle.configure(text="▶ Hailo feasibility check (optional)")
+
+    def _hailo_test_backend(self) -> None:
+        """Quick sanity-check that the selected Hailo backend is reachable."""
+        backend = (self.var_hailo_backend.get() or "auto").strip()
+        wsl_distro = (self.var_hailo_wsl_distro.get() or "").strip()
+        wsl_venv = (self.var_hailo_wsl_venv.get() or "").strip() or "~/hailo_dfc_venv/bin/activate"
+
+        try:
+            from .hailo_backend import hailo_probe_auto
+
+            res = hailo_probe_auto(
+                backend=backend,
+                wsl_distro=wsl_distro,
+                wsl_venv_activate=wsl_venv,
+                timeout_s=30.0,
+            )
+        except Exception as e:
+            messagebox.showerror("Hailo backend test failed", str(e))
+            return
+
+        if res.ok:
+            details = ""
+            if res.details:
+                # Compact key=value list
+                parts = []
+                for k, v in res.details.items():
+                    if v is None:
+                        continue
+                    s = str(v)
+                    if len(s) > 200:
+                        s = s[:200] + "..."
+                    parts.append(f"{k}={s}")
+                if parts:
+                    details = "\n\n" + "\n".join(parts)
+
+            messagebox.showinfo(
+                "Hailo backend",
+                f"OK ({res.backend}).{details}",
+            )
+        else:
+            messagebox.showerror(
+                "Hailo backend",
+                f"Not ready ({res.backend}).\n\n{res.reason}",
+            )
+
+    def _hailo_clear_cache(self) -> None:
+        """Clear the persistent Hailo parse-check cache on disk."""
+        self._hailo_cache = {}
+        self._hailo_cache_dirty = False
+        try:
+            if self._hailo_cache_path.exists():
+                self._hailo_cache_path.unlink()
+        except Exception:
+            pass
+        messagebox.showinfo("Hailo cache", "Cleared Hailo parse-check cache.")
 
     # ----------------------------- Event handlers -----------------------------
 
@@ -1064,18 +1174,76 @@ class SplitPointAnalyserGUI(tk.Tk):
             messagebox.showerror("Invalid parameters", str(e))
             return
 
-        try:
-            self.analysis = self._analyse_model(self.model_path, params)
-            self.current_picks = self._select_picks(self.analysis, params)
-            # Nordstern: relevance analysis for unknown activation sizes
-            self._compute_nordstern(self.analysis, self.current_picks, params)
-            self._update_diagnostics(self.analysis)
-            self._update_table(self.analysis, self.current_picks, params)
-            self._update_plots(self.analysis, self.current_picks, params)
-            self._update_action_buttons()
-        except Exception as e:
-            messagebox.showerror("Analysis failed", f"{type(e).__name__}: {e}")
-            raise
+        # Run analysis in a background thread (Hailo parse-checks can take a while).
+        self.btn_analyse.state(["disabled"])
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Analysing model")
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        msg_var = tk.StringVar(value="Starting...")
+        ttk.Label(dlg, textvariable=msg_var).pack(padx=14, pady=(14, 8))
+        pb = ttk.Progressbar(dlg, mode="indeterminate", length=360)
+        pb.pack(padx=14, pady=(0, 14))
+        pb.start(10)
+
+        # Avoid leaving a half-finished UI state if the user closes the dialog.
+        dlg.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        q: "queue.Queue[tuple]" = queue.Queue()
+
+        def _progress(msg: str) -> None:
+            q.put(("progress", msg))
+
+        def _worker() -> None:
+            try:
+                analysis = self._analyse_model(self.model_path, params, progress_cb=_progress)
+                _progress("Selecting candidates...")
+                picks = self._select_picks(analysis, params, progress_cb=_progress)
+                _progress("Computing diagnostics...")
+                self._compute_nordstern(analysis, picks, params)
+                q.put(("ok", analysis, picks))
+            except Exception:
+                import traceback
+
+                q.put(("err", traceback.format_exc()))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+        def _poll() -> None:
+            try:
+                while True:
+                    item = q.get_nowait()
+                    kind = item[0]
+                    if kind == "progress":
+                        msg_var.set(str(item[1]))
+                    elif kind == "ok":
+                        self.analysis = item[1]
+                        self.current_picks = item[2]
+                        self._update_diagnostics(self.analysis)
+                        self._update_table(self.analysis, self.current_picks, params)
+                        self._update_plots(self.analysis, self.current_picks, params)
+                        self._update_action_buttons()
+                        # Persist Hailo cache updates.
+                        self._save_hailo_cache()
+                        pb.stop()
+                        dlg.destroy()
+                        self.btn_analyse.state(["!disabled"])
+                        return
+                    elif kind == "err":
+                        err_text = str(item[1])
+                        pb.stop()
+                        dlg.destroy()
+                        self.btn_analyse.state(["!disabled"])
+                        messagebox.showerror("Analysis failed", err_text)
+                        return
+            except queue.Empty:
+                pass
+            self.after(100, _poll)
+
+        _poll()
 
     # ----------------------------- Parameters -----------------------------
 
@@ -1313,16 +1481,26 @@ class SplitPointAnalyserGUI(tk.Tk):
 
     # ----------------------------- Core analysis -----------------------------
 
-    def _analyse_model(self, model_path: str, p: Params) -> Dict:
+    def _analyse_model(self, model_path: str, p: Params, progress_cb: Optional[Callable[[str], None]] = None) -> Dict:
+        if progress_cb:
+            progress_cb("Loading ONNX model...")
         model = onnx.load(model_path)
+        if progress_cb:
+            progress_cb("Running ONNX shape inference...")
         model = shape_inference.infer_shapes(model)
 
+        if progress_cb:
+            progress_cb("Collecting value infos...")
         vimap = asc.value_info_map(model)
         asc.backfill_quant_shapes(model, vimap, batch=p.batch_override)
 
+        if progress_cb:
+            progress_cb("Building graph metadata...")
         nodes, producer_of, consumers_of = asc.build_producers_consumers(model)
         order = asc.topo_sort(nodes, producer_of)
 
+        if progress_cb:
+            progress_cb("Estimating activation bytes and boundary costs...")
         value_bytes = asc.compute_tensor_bytes_per_value(vimap, p.batch_override, p.assume_bpe)
         costs_bytes, val_span = asc.boundary_costs(order, producer_of, consumers_of, value_bytes)
 
@@ -1346,6 +1524,8 @@ class SplitPointAnalyserGUI(tk.Tk):
         coverage = (float(known_produced) / float(len(produced))) if produced else 1.0
 
         # FLOPs per node
+        if progress_cb:
+            progress_cb("Estimating per-node FLOPs...")
         node_flops_list = asc.per_node_flops(
             model,
             vimap,
@@ -1378,6 +1558,8 @@ class SplitPointAnalyserGUI(tk.Tk):
         strict_ok = [True] * (len(costs_bytes))
         strict_extras = {}
         if p.strict_boundary:
+            if progress_cb:
+                progress_cb("Checking strict boundary feasibility...")
             for b in range(len(costs_bytes)):
                 cut_tensors = asc.cut_tensors_for_boundary(order, nodes, b)
                 extras = asc.strict_boundary_extras(model, cut_tensors)
@@ -1750,6 +1932,33 @@ class SplitPointAnalyserGUI(tk.Tk):
         }
 
         def _run_one(which: str, submodel: onnx.ModelProto, onnx_path: Path) -> Dict[str, Any]:
+            keep = bool(getattr(p, "hailo_keep_artifacts", False))
+            backend_req = str(getattr(p, "hailo_backend", "auto"))
+            hw_arch = str(getattr(p, "hailo_hw_arch", "hailo8"))
+            fixup = bool(getattr(p, "hailo_fixup", True))
+
+            # Persistent cache (best effort): only used when we don't need
+            # artifacts on disk. This can dramatically speed up repeated runs
+            # and avoids repeated WSL/DFC startup overhead.
+            cache_key: Optional[str] = None
+            if not keep:
+                try:
+                    backend_eff = backend_req
+                    if backend_req == "auto":
+                        from .hailo_backend import hailo_sdk_available
+
+                        backend_eff = "local" if hailo_sdk_available() else "wsl"
+                    sha1 = self._sha1_bytes(submodel.SerializeToString())
+                    cache_key = f"{backend_eff}|{hw_arch}|fixup={int(fixup)}|{which}|sha1={sha1}"
+                    cached = self._hailo_cache_get(cache_key)
+                    if cached is not None:
+                        out = dict(cached)
+                        out["cached"] = True
+                        out["cache_key"] = cache_key
+                        return out
+                except Exception:
+                    cache_key = None
+
             try:
                 asc.save_model(submodel, str(onnx_path), external_data=False)
             except Exception as e:
@@ -1758,15 +1967,13 @@ class SplitPointAnalyserGUI(tk.Tk):
                     "error": f"Failed to save {which} ONNX: {type(e).__name__}: {e}",
                 }
 
-            keep = bool(getattr(p, "hailo_keep_artifacts", False))
-
             res = hailo_parse_check_auto(
                 onnx_path,
-                backend=str(getattr(p, "hailo_backend", "auto")),
-                hw_arch=str(getattr(p, "hailo_hw_arch", "hailo8")),
+                backend=backend_req,
+                hw_arch=hw_arch,
                 net_name=f"{which}_b{b}",
                 outdir=onnx_path.parent if keep else None,
-                fixup=bool(getattr(p, "hailo_fixup", True)),
+                fixup=fixup,
                 save_har=keep,
                 wsl_distro=getattr(p, "hailo_wsl_distro", None),
                 wsl_venv_activate=str(getattr(p, "hailo_wsl_venv_activate", "~/hailo_dfc_venv/bin/activate")),
@@ -1788,6 +1995,16 @@ class SplitPointAnalyserGUI(tk.Tk):
                 out["onnx_path"] = str(onnx_path)
                 out["har_path"] = res.har_path
                 out["fixed_onnx_path"] = res.fixed_onnx_path
+
+            if cache_key is not None and not keep:
+                try:
+                    cache_payload = dict(out)
+                    cache_payload["ts"] = float(time.time())
+                    cache_payload.pop("cached", None)
+                    self._hailo_cache_put(cache_key, cache_payload)
+                    self._hailo_cache_dirty = True
+                except Exception:
+                    pass
 
             return out
 
@@ -4559,6 +4776,62 @@ if __name__ == "__main__":
         return "\n".join(lines) + "\n"
 
     # ----------------------------- Utilities -----------------------------
+
+    def _default_hailo_cache_path(self) -> Path:
+        """Return the default persistent cache path for Hailo parse-check results."""
+        base = Path.home() / ".onnx_splitpoint_tool"
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # Best-effort; fall back to a temp dir.
+            base = Path(tempfile.gettempdir()) / "onnx_splitpoint_tool"
+            base.mkdir(parents=True, exist_ok=True)
+        return base / "hailo_parse_cache.json"
+
+    def _load_hailo_cache(self) -> None:
+        path = self._hailo_cache_path
+        self._hailo_cache = {}
+        try:
+            if path.is_file():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and isinstance(data.get("entries"), dict):
+                    self._hailo_cache = data["entries"]  # type: ignore[assignment]
+        except Exception:
+            # Corrupt cache -> ignore.
+            self._hailo_cache = {}
+
+    def _save_hailo_cache(self) -> None:
+        if not self._hailo_cache_dirty:
+            return
+        try:
+            payload = {
+                "version": 1,
+                "entries": self._hailo_cache,
+            }
+            tmp = self._hailo_cache_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+            tmp.replace(self._hailo_cache_path)
+            self._hailo_cache_dirty = False
+        except Exception:
+            # Best-effort; ignore.
+            pass
+
+    @staticmethod
+    def _sha1_bytes(data: bytes) -> str:
+        return hashlib.sha1(data).hexdigest()
+
+    def _hailo_cache_get(self, key: str) -> Optional[Dict[str, Any]]:
+        try:
+            v = self._hailo_cache.get(key)
+            if isinstance(v, dict):
+                return v
+        except Exception:
+            pass
+        return None
+
+    def _hailo_cache_put(self, key: str, value: Dict[str, Any]) -> None:
+        self._hailo_cache[key] = value
+        self._hailo_cache_dirty = True
 
     def _clear_results(self):
         self.analysis = None
