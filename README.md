@@ -26,6 +26,35 @@ pip install onnx numpy matplotlib pillow
 pip install onnxruntime
 ```
 
+## Optional: Hailo DFC integration (Linux or Windows via WSL2)
+
+The GUI can optionally run a **Hailo feasibility check (parse-only)** during ranking.
+This is useful to automatically prune split candidates where a partition cannot be translated by the Hailo toolchain.
+
+### Linux (native)
+
+- Install the Hailo Dataflow Compiler (DFC) Python wheel into the same Python environment as this tool.
+- In the GUI enable **Hailo check** and set **Backend = local** (or keep **auto**).
+
+### Windows + WSL2 (recommended)
+
+The Hailo DFC wheel is Linux-only. Recommended setup:
+
+1. Install WSL2 + an Ubuntu distro.
+2. Create a WSL virtualenv (default expected path: `~/hailo_dfc_venv`) and install the Hailo DFC wheel there.
+   A helper script is included:
+   `./scripts/setup_hailo_dfc_wsl.sh /path/to/hailo_dataflow_compiler-*.whl`
+3. Run the GUI on Windows, enable **Hailo check**, set **Backend = wsl** (or **auto**), and point it to:
+   - **WSL venv**: `~/hailo_dfc_venv/bin/activate`
+   - **WSL distro**: optional (leave empty to use the default WSL distro)
+
+Notes:
+
+- The tool calls `wsl.exe` and runs a helper script inside WSL; you do **not** need to activate the venv manually.
+- If your model files are on `C:`/`D:`, WSL can access them via `/mnt/c/...` and `/mnt/d/...`.
+- A small helper for interactive shells is included:
+  `source ./scripts/activate_hailo_dfc_venv.sh`
+
 ## Run
 
 ### GUI
