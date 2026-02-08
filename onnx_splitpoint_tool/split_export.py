@@ -1490,13 +1490,13 @@ chars = "|/-\\"
 i = 0
 # Some terminals/log collectors do not show carriage-return updates. Emit
 # a real newline heartbeat every N seconds so users can see time passing.
-LOG_EVERY_S = 10
+LOG_EVERY_S = 0 if sys.stdout.isatty() else 10
 _last_hb = -1
 # Unbuffered (-u) in parent Popen.
 while True:
     elapsed = int(time.time() - t0)
     msg = f"{label} {chars[i % len(chars)]}  elapsed={elapsed}s"
-    if elapsed % LOG_EVERY_S == 0 and elapsed != _last_hb:
+    if LOG_EVERY_S and elapsed % LOG_EVERY_S == 0 and elapsed != _last_hb:
         sys.stdout.write("\n" + msg + "\n")
         _last_hb = elapsed
     else:
@@ -1996,7 +1996,14 @@ YOLOV7_ANCHORS = np.array(
 )
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:
-    return 1.0 / (1.0 + np.exp(-x))
+    """Numerically stable sigmoid (avoids exp overflow warnings)."""
+    x = np.asarray(x, dtype=np.float32)
+    out = np.empty_like(x, dtype=np.float32)
+    pos = x >= 0
+    out[pos] = 1.0 / (1.0 + np.exp(-x[pos]))
+    expx = np.exp(x[~pos])
+    out[~pos] = expx / (1.0 + expx)
+    return out
 
 
 def _as_yolo_tensor(arr: np.ndarray) -> Optional[np.ndarray]:
@@ -3273,6 +3280,32 @@ def main() -> int:
     ap.add_argument("--runs", type=int, default=10, help="Measured runs.")
     ap.add_argument("--eps", type=float, default=1e-4, help="Max-abs tolerance for PASS/FAIL.")
 
+ap.add_argument(
+    "--ok-mode",
+    type=str,
+    default="auto",
+    choices=["auto", "raw", "agreement", "either"],
+    help=(
+        "PASS/FAIL policy. "
+        "raw: only max_abs<=eps. "
+        "agreement: only semantic agreement (detection/classification). "
+        "either: raw OR agreement. "
+        "auto: use raw by default; if TensorRT is used and agreement is available, use either."
+    ),
+)
+ap.add_argument(
+    "--agreement-f1-thr",
+    type=float,
+    default=1.0,
+    help="Detection agreement minimum F1 for agreement PASS (default: 1.0).",
+)
+ap.add_argument(
+    "--agreement-mean-iou-thr",
+    type=float,
+    default=0.99,
+    help="Detection agreement minimum mean IoU for agreement PASS (default: 0.99).",
+)
+
     ap.add_argument(
         "--build-only",
         action="store_true",
@@ -3296,7 +3329,7 @@ def main() -> int:
     ap.add_argument(
         "--ort-log-severity",
         type=int,
-        default=2,
+        default=3,
         help="onnxruntime log severity (0=verbose, 1=info, 2=warning, 3=error, 4=fatal).",
     )
     ap.add_argument(
@@ -3425,9 +3458,12 @@ def main() -> int:
 
     # Convenience preset: reduce TensorRT engine build time.
     # We do NOT override explicit user flags if they already set them.
+    #
+    # Note: On TRT 8.6+ builder heuristics are automatically enabled for
+    # builder optimization level >=2, and explicitly setting
+    # trt_build_heuristics_enable may trigger noisy deprecation warnings.
+    # Therefore the preset only adjusts builder optimization level.
     if getattr(args, "trt_fast_build", False):
-        if not getattr(args, "trt_build_heuristics", False):
-            args.trt_build_heuristics = True
         if getattr(args, "trt_builder_opt_level", None) is None:
             args.trt_builder_opt_level = 2
 
@@ -3564,7 +3600,7 @@ def main() -> int:
             bol = getattr(args, "trt_builder_opt_level", None)
             bol_txt = str(bol) if bol is not None else "(default)"
             print(
-                f"[tensorrt] fast-build preset: enabled (build_heuristics=on, builder_opt_level={bol_txt})",
+                f"[tensorrt] fast-build preset: enabled (builder_opt_level={bol_txt})",
                 flush=True,
             )
 
@@ -3727,26 +3763,64 @@ def main() -> int:
     p2_names = [o.name for o in sess_p2.get_outputs()]
     cmp = _compare_outputs(full_names, full_out, p2_names, comp_out)
 
-    max_abs = float(cmp["max_abs"])
-    ok = max_abs <= float(args.eps)
+max_abs = float(cmp["max_abs"])
+ok_raw = max_abs <= float(args.eps)
 
-    summary = {
-        "timing_ms": {
-            "full": {"mean": full_mean, "std": full_std},
-            "part1": {"mean": p1_mean, "std": p1_std},
-            "part2": {"mean": p2_mean, "std": p2_std},
-            "composed": {"mean": comp_mean, "std": comp_std},
-        },
-        "derived": {
-            "part1_plus_part2_mean": float(p1_mean + p2_mean),
-            "composed_minus_full_mean": float(comp_mean - full_mean),
-            "composed_minus_part1_part2_mean": float(comp_mean - (p1_mean + p2_mean)),
-        },
-        "runs": {"warmup": int(args.warmup), "measured": int(args.runs)},
-        "output_compare": cmp,
-        "eps": float(args.eps),
-        "ok": bool(ok),
-    }
+ok_mode = str(getattr(args, "ok_mode", "auto")).strip().lower()
+agree_ok: Optional[bool] = None  # computed later (if visualization/agreement is available)
+
+def _uses_tensorrt() -> bool:
+    try:
+        for _, pv in _SESSION_PROVIDERS_IN_USE.items():
+            if isinstance(pv, (list, tuple)) and "TensorrtExecutionProvider" in pv:
+                return True
+    except Exception:
+        pass
+    return False
+
+uses_trt = _uses_tensorrt()
+
+def _compute_final_ok(agree_ok_val: Optional[bool]) -> bool:
+    m = (ok_mode or "auto").lower()
+    if m == "raw":
+        return bool(ok_raw)
+    if m == "agreement":
+        return bool(agree_ok_val) if agree_ok_val is not None else False
+    if m == "either":
+        return bool(ok_raw) or bool(agree_ok_val)
+    # auto:
+    if uses_trt and agree_ok_val is not None:
+        return bool(ok_raw) or bool(agree_ok_val)
+    return bool(ok_raw)
+
+ok_final = _compute_final_ok(None)
+
+summary = {
+    "timing_ms": {
+        "full": {"mean": full_mean, "std": full_std},
+        "part1": {"mean": p1_mean, "std": p1_std},
+        "part2": {"mean": p2_mean, "std": p2_std},
+        "composed": {"mean": comp_mean, "std": comp_std},
+    },
+    "derived": {
+        "part1_plus_part2_mean": float(p1_mean + p2_mean),
+        "composed_minus_full_mean": float(comp_mean - full_mean),
+        "composed_minus_part1_part2_mean": float(comp_mean - (p1_mean + p2_mean)),
+    },
+    "runs": {"warmup": int(args.warmup), "measured": int(args.runs)},
+    "output_compare": cmp,
+    "eps": float(args.eps),
+    "ok": bool(ok_final),
+    "ok_raw": bool(ok_raw),
+    "ok_mode": str(ok_mode),
+    "ok_agreement": None,
+    "agreement_thresholds": {
+        "f1_min": float(getattr(args, "agreement_f1_thr", 1.0)),
+        "mean_iou_min": float(getattr(args, "agreement_mean_iou_thr", 0.99)),
+    },
+    "uses_tensorrt": bool(uses_trt),
+}
+
 
 
     # ---- Session/provider meta (helps compare CUDA vs TensorRT runs) ----
@@ -3779,13 +3853,13 @@ def main() -> int:
     print(f"Compared outputs: {cmp.get('n_outputs_compared', 0)}")
     print(f"max_abs : {max_abs:.6g}")
     print(f"mean_abs: {float(cmp.get('mean_abs', 0.0)):.6g}")
-    print(f"PASS({args.eps}): {ok}")
+    print(f"PASS_RAW({args.eps}): {ok_raw}")
 
     report_path = out_dir / "validation_report.json"
     report_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(f"\nWrote {report_path}")
 
-    _maybe_write_plots(summary, out_dir)
+    # plots are written at the end (after agreement/visualization updates).
 
     viz_all: Dict[str, dict] = {}
 
@@ -3966,10 +4040,43 @@ def main() -> int:
                             'match_iou_thr': float(thr_match),
                         }
 
-        if agree is not None:
-            summary['agreement'] = agree
-            report_path.write_text(json.dumps(summary, indent=2), encoding='utf-8')
-            print(f"Updated {report_path} with agreement KPIs.")
+if agree is not None:
+    summary['agreement'] = agree
+
+    # Determine semantic agreement PASS flag (optional policy for ok_mode).
+    agree_ok_local: Optional[bool] = None
+    try:
+        if isinstance(agree, dict):
+            t_ag = str(agree.get('type') or '')
+            if t_ag == 'detection':
+                n_full = int(agree.get('n_full', 0))
+                n_comp = int(agree.get('n_comp', 0))
+                n_match = int(agree.get('n_matched', 0))
+                f1_v = float(agree.get('f1', 0.0))
+                miou_v = float(agree.get('mean_iou', 0.0))
+                f1_thr = float(getattr(args, 'agreement_f1_thr', 1.0))
+                miou_thr = float(getattr(args, 'agreement_mean_iou_thr', 0.99))
+                counts_ok = (n_full == n_comp == n_match) if f1_thr >= 0.999999 else True
+                agree_ok_local = bool(counts_ok and (f1_v >= f1_thr) and (miou_v >= miou_thr))
+            elif t_ag == 'classification':
+                # For classification, use top-1 equality as a strict agreement signal.
+                agree_ok_local = bool(agree.get('top1_equal'))
+    except Exception:
+        agree_ok_local = None
+
+    agree_ok = agree_ok_local
+    summary['ok_agreement'] = (bool(agree_ok_local) if agree_ok_local is not None else None)
+
+    # Re-compute final ok according to policy.
+    ok_final = _compute_final_ok(agree_ok_local)
+    summary['ok'] = bool(ok_final)
+
+    report_path.write_text(json.dumps(summary, indent=2), encoding='utf-8')
+    print(f"Updated {report_path} with agreement KPIs.")
+    if agree_ok_local is not None and ok_mode != 'raw':
+        print(f"PASS_AGREEMENT: {bool(agree_ok_local)}")
+        print(f"PASS_FINAL(mode={ok_mode}): {bool(ok_final)}")
+
     except Exception as e:
         print(f"[agreement] failed: {e}")
 
@@ -4023,6 +4130,8 @@ def main() -> int:
         summary["visualization"] = viz_all
         report_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
         print(f"Updated {report_path} with visualization info.")
+
+    _maybe_write_plots(summary, out_dir)
 
     if args.pause:
         try:

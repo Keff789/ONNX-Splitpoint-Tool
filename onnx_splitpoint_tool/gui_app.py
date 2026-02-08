@@ -33,12 +33,13 @@ import statistics
 import os
 import shutil
 import re
+import tempfile
 import threading
 import queue
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
@@ -55,7 +56,7 @@ from onnx import shape_inference
 
 from . import api as asc
 
-__version__ = "0.10.46"
+__version__ = "0.10.50"
 
 
 # ------------------------------- Tooltips -------------------------------
@@ -160,7 +161,23 @@ class Params:
     max_peak_act_right: Optional[float]
     max_peak_act_right_unit: str
 
+    # Optional: Hailo backend feasibility check (parse-only)
+    # Used to prune/rerank top candidates for Jetson↔Hailo type deployments.
+    hailo_check: bool
+    hailo_hw_arch: str
+    hailo_max_checks: int
+    hailo_fixup: bool
+    hailo_keep_artifacts: bool
+
+    # Which partition should be considered for the Hailo feasibility check.
+    #  - 'part2': only check Part2 (suffix)
+    #  - 'part1': only check Part1 (prefix)
+    #  - 'either': accept if Part1 OR Part2 can be translated
+    hailo_target: str
+
     show_top_tensors: int
+
+
 def _safe_float(s: str) -> Optional[float]:
     s = (s or "").strip()
     if not s:
@@ -494,9 +511,112 @@ class SplitPointAnalyserGUI(tk.Tk):
         # Start collapsed by default, unless latency ranking is selected.
         self._set_latency_expanded((self.var_rank.get() or "").strip().lower() == "latency")
 
+        # Hailo feasibility check (collapsible)
+        # The split ranking can optionally run a *parse-only* check via Hailo DFC/SDK
+        # for the top candidates. This is useful for Jetson↔Hailo mid-splits.
+        self.var_hailo_expanded = tk.BooleanVar(value=False)
+
+        self.hailo_container = ttk.Frame(self.params_frame)
+        self.hailo_container.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
+        self.hailo_container.columnconfigure(0, weight=1)
+
+        hailo_toggle = ttk.Frame(self.hailo_container)
+        hailo_toggle.grid(row=0, column=0, sticky="ew")
+        hailo_toggle.columnconfigure(0, weight=1)
+
+        self.btn_hailo_toggle = ttk.Button(
+            hailo_toggle,
+            text="▶ Hailo feasibility check (optional)",
+            command=self._toggle_hailo_frame,
+        )
+        self.btn_hailo_toggle.grid(row=0, column=0, sticky="w")
+        ToolTip(
+            self.btn_hailo_toggle,
+            "Optional: run a Hailo DFC/SDK translate (parse-only) on Part1/Part2 for top split candidates.\n"
+            "Candidates that cannot be translated for the selected partition are rejected during pick selection.",
+        )
+
+        self.hailo_frame = ttk.LabelFrame(self.hailo_container, text="Hailo feasibility check")
+        self.hailo_frame.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+
+        hf = ttk.Frame(self.hailo_frame)
+        hf.pack(fill=tk.X, padx=8, pady=6)
+
+        self.var_hailo_check = tk.BooleanVar(value=False)
+        self.chk_hailo_check = ttk.Checkbutton(
+            hf,
+            text="Enable parse-check in ranking",
+            variable=self.var_hailo_check,
+        )
+        self.chk_hailo_check.grid(row=0, column=0, sticky="w")
+        ToolTip(
+            self.chk_hailo_check,
+            "If enabled, the tool will export Part1/Part2 for top candidates and run a Hailo translate (parse-only).\n"
+            "Requires a Python environment with the Hailo SDK (hailo_sdk_client).",
+        )
+
+        self.var_hailo_hw_arch = tk.StringVar(value="hailo8")
+        ttk.Label(hf, text="HW arch:").grid(row=0, column=1, sticky="e", padx=(14, 2))
+        self.cb_hailo_hw_arch = ttk.Combobox(
+            hf,
+            textvariable=self.var_hailo_hw_arch,
+            values=["hailo8", "hailo8l", "hailo8r"],
+            width=10,
+            state="readonly",
+        )
+        self.cb_hailo_hw_arch.grid(row=0, column=2, sticky="w", padx=(0, 12))
+        ToolTip(self.cb_hailo_hw_arch, "Target Hailo device architecture for the parse check.")
+
+        self.var_hailo_max_checks = tk.StringVar(value="25")
+        ttk.Label(hf, text="Max checks:").grid(row=0, column=3, sticky="e", padx=(0, 2))
+        self.ent_hailo_max_checks = ttk.Entry(hf, textvariable=self.var_hailo_max_checks, width=8)
+        self.ent_hailo_max_checks.grid(row=0, column=4, sticky="w", padx=(0, 12))
+        ToolTip(self.ent_hailo_max_checks, "Limit how many candidates will be checked (protects against long runs).")
+
+        self.var_hailo_fixup = tk.BooleanVar(value=True)
+        self.chk_hailo_fixup = ttk.Checkbutton(hf, text="ONNX fixup", variable=self.var_hailo_fixup)
+        self.chk_hailo_fixup.grid(row=0, column=5, sticky="w")
+        ToolTip(
+            self.chk_hailo_fixup,
+            "Apply small ONNX fixups before translating (e.g., fill missing Conv kernel_shape).",
+        )
+
+        self.var_hailo_keep = tk.BooleanVar(value=False)
+        self.chk_hailo_keep = ttk.Checkbutton(hf, text="Keep artifacts", variable=self.var_hailo_keep)
+        self.chk_hailo_keep.grid(row=0, column=6, sticky="w", padx=(10, 0))
+        ToolTip(
+            self.chk_hailo_keep,
+            "Keep intermediate Part1/Part2 ONNX + parsed.har files in a hailo_check_* folder next to the model.\n"
+            "Useful for debugging. If disabled, temporary files are cleaned up.",
+        )
+
+        # Target partition policy
+        # Keep this on a second row to avoid squeezing the main settings.
+        self.var_hailo_target = tk.StringVar(value="either")
+        ttk.Label(hf, text="Target:").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.cb_hailo_target = ttk.Combobox(
+            hf,
+            textvariable=self.var_hailo_target,
+            values=["either", "part2", "part1"],
+            width=10,
+            state="readonly",
+        )
+        self.cb_hailo_target.grid(row=1, column=1, sticky="w", pady=(6, 0))
+        ToolTip(
+            self.cb_hailo_target,
+            "Which partition must be Hailo-translatable:\n"
+            "  - either: accept if Part1 OR Part2 translates\n"
+            "  - part2 : require Part2 (suffix) translates\n"
+            "  - part1 : require Part1 (prefix) translates\n"
+            "Tip: 'either' is useful when you are not sure yet whether Hailo will run the left or right side.",
+        )
+
+        # Start collapsed by default.
+        self._set_hailo_expanded(False)
+
         # Diagnostics frame
         self.diag_frame = ttk.LabelFrame(self.params_frame, text="Diagnostics")
-        self.diag_frame.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
+        self.diag_frame.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
 
         d = ttk.Frame(self.diag_frame)
         d.pack(fill=tk.X, padx=8, pady=6)
@@ -525,7 +645,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         # ---------------- Actions (analyse + export/split) ----------------
         # Keep this compact (small Analyse button) and always visible.
         action_bar = ttk.Frame(self.params_frame)
-        action_bar.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
+        action_bar.grid(row=5, column=0, sticky="ew", padx=8, pady=(0, 8))
         action_bar.columnconfigure(0, weight=1)
 
         # Row 0: main actions
@@ -850,6 +970,25 @@ class SplitPointAnalyserGUI(tk.Tk):
             self.lat_frame.grid_remove()
             self.btn_lat_toggle.configure(text="▶ Latency model (optional)")
 
+    # --------------------------- Hailo panel helpers ------------------------
+
+    def _toggle_hailo_frame(self):
+        self._set_hailo_expanded(not bool(self.var_hailo_expanded.get()))
+
+    def _set_hailo_expanded(self, expanded: bool):
+        expanded = bool(expanded)
+        self.var_hailo_expanded.set(expanded)
+
+        if expanded:
+            try:
+                self.hailo_frame.grid()
+            except Exception:
+                self.hailo_frame.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+            self.btn_hailo_toggle.configure(text="▼ Hailo feasibility check (optional)")
+        else:
+            self.hailo_frame.grid_remove()
+            self.btn_hailo_toggle.configure(text="▶ Hailo feasibility check (optional)")
+
     # ----------------------------- Event handlers -----------------------------
 
     def _on_open(self):
@@ -975,6 +1114,27 @@ class SplitPointAnalyserGUI(tk.Tk):
         if max_peak_act_right_unit not in asc.UNIT_MULT:
             raise ValueError("Unknown memory unit for right peak activation memory.")
 
+        # Hailo feasibility check (optional)
+        hailo_check = bool(self.var_hailo_check.get())
+        hailo_hw_arch = (self.var_hailo_hw_arch.get() or "hailo8").strip()
+        if hailo_hw_arch not in {"hailo8", "hailo8l", "hailo8r"}:
+            raise ValueError("Hailo HW arch must be one of: hailo8, hailo8l, hailo8r")
+
+        hailo_max_checks = _safe_int(self.var_hailo_max_checks.get())
+        if hailo_max_checks is None:
+            hailo_max_checks = 25
+        if hailo_max_checks <= 0:
+            raise ValueError("Hailo max checks must be a positive integer.")
+
+        hailo_fixup = bool(self.var_hailo_fixup.get())
+        hailo_keep_artifacts = bool(self.var_hailo_keep.get())
+
+        # Default is 'part2' for backwards compatibility if GUI doesn't expose the option.
+        hailo_target = (self.var_hailo_target.get() if hasattr(self, 'var_hailo_target') else 'part2')
+        hailo_target = (hailo_target or 'part2').strip().lower()
+        if hailo_target not in {'part1', 'part2', 'either'}:
+            raise ValueError("Hailo target must be one of: part1, part2, either")
+
         show_top_tensors = _safe_int(self.var_show_top_tensors.get())
         if show_top_tensors is None or show_top_tensors < 0:
             raise ValueError("Show top tensors must be an integer ≥ 0.")
@@ -1016,6 +1176,12 @@ class SplitPointAnalyserGUI(tk.Tk):
             max_peak_act_left_unit=str(max_peak_act_left_unit),
             max_peak_act_right=max_peak_act_right,
             max_peak_act_right_unit=str(max_peak_act_right_unit),
+            hailo_check=hailo_check,
+            hailo_hw_arch=str(hailo_hw_arch),
+            hailo_max_checks=int(hailo_max_checks),
+            hailo_fixup=hailo_fixup,
+            hailo_keep_artifacts=hailo_keep_artifacts,
+            hailo_target=str(hailo_target),
             show_top_tensors=int(show_top_tensors),
         )
 
@@ -1181,7 +1347,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
     # ----------------------------- Candidate selection -----------------------------
 
-    def _select_picks(self, a: Dict, p: Params) -> List[int]:
+    def _select_picks(self, a: Dict, p: Params, progress_cb: Optional[Callable[[str], None]] = None) -> List[int]:
         nodes = a["nodes"]
         order = a["order"]
         costs = a["costs_bytes"]
@@ -1349,12 +1515,92 @@ class SplitPointAnalyserGUI(tk.Tk):
                 candidates.sort(key=lambda b: float(scores.get(b, 0.0) if scores is not None else costs[b]))
 
         # Non-maximum suppression by boundary index
+        # Optionally inject a Hailo feasibility check into the pick selection.
         picks: List[int] = []
+
+        hailo_enabled = bool(getattr(p, "hailo_check", False))
+        hailo_results: Dict[int, Dict[str, Any]] = {}
+        hailo_summary: Dict[str, Any] = {
+            "enabled": hailo_enabled,
+            "hw_arch": getattr(p, "hailo_hw_arch", None),
+            "max_checks": getattr(p, "hailo_max_checks", None),
+            "fixup": bool(getattr(p, "hailo_fixup", True)),
+            "keep_artifacts": bool(getattr(p, "hailo_keep_artifacts", False)),
+            "target": str(getattr(p, "hailo_target", "part2")),
+        }
+
+        hailo_work_root: Optional[Path] = None
+        if hailo_enabled:
+            from .hailo_backend import hailo_sdk_available
+
+            if progress_cb:
+                progress_cb("Hailo check enabled: verifying environment…")
+
+            if not hailo_sdk_available():
+                raise RuntimeError(
+                    "Hailo check is enabled, but the Hailo SDK Python module (hailo_sdk_client) is not importable. "
+                    "Disable the option or run the tool inside the Hailo DFC Python environment."
+                )
+
+            if bool(getattr(p, "hailo_keep_artifacts", False)) and getattr(self, "model_path", None):
+                md = Path(str(self.model_path)).resolve().parent
+                hailo_work_root = md / f"hailo_check_{Path(str(self.model_path)).stem}"
+                hailo_work_root.mkdir(parents=True, exist_ok=True)
+            else:
+                hailo_work_root = Path(tempfile.mkdtemp(prefix="hailo_check_"))
+
+            hailo_summary["workdir"] = str(hailo_work_root)
+
+        checks_budget = int(getattr(p, "hailo_max_checks", 0) or 0) if hailo_enabled else 0
+        checks_done = 0
+        checks_passed = 0
+        checks_failed = 0
+
         for b in candidates:
-            if all(abs(b - s) > p.min_gap for s in picks):
-                picks.append(b)
             if len(picks) >= p.topk:
                 break
+
+            if not all(abs(b - s) > p.min_gap for s in picks):
+                continue
+
+            if hailo_enabled:
+                if checks_done >= checks_budget:
+                    hailo_summary["budget_exhausted"] = True
+                    break
+
+                checks_done += 1
+                if progress_cb:
+                    progress_cb(f"Hailo parse-check {checks_done}/{checks_budget}: boundary b={b}")
+
+                ok, info = self._hailo_parse_check_boundary(a, int(b), p, hailo_work_root)
+                hailo_results[int(b)] = info
+                if not ok:
+                    checks_failed += 1
+                    continue
+                checks_passed += 1
+
+            picks.append(int(b))
+
+        # Attach Hailo info to analysis (useful for exports / reproducibility)
+        if hailo_enabled:
+            hailo_summary.update(
+                {
+                    "checked": int(checks_done),
+                    "passed": int(checks_passed),
+                    "failed": int(checks_failed),
+                    "picks": int(len(picks)),
+                }
+            )
+            a["hailo_check"] = hailo_summary
+            a["hailo_check_results"] = hailo_results
+
+            # If we used a temporary workdir, clean it up.
+            if hailo_work_root is not None and not bool(getattr(p, "hailo_keep_artifacts", False)):
+                try:
+                    shutil.rmtree(hailo_work_root, ignore_errors=True)
+                    a["hailo_check_temp_cleaned"] = True
+                except Exception:
+                    a["hailo_check_temp_cleaned"] = False
 
         # Store for plots/export
         a["candidate_bounds"] = list(candidates)
@@ -1362,6 +1608,208 @@ class SplitPointAnalyserGUI(tk.Tk):
         a["latency_ms_dict"] = latency_ms
 
         return picks
+
+    def _hailo_parse_check_boundary(self, a: Dict, boundary: int, p: Params, work_root: Optional[Path]) -> Tuple[bool, Dict[str, Any]]:
+        """Run a Hailo translate (parse-only) feasibility check for a boundary.
+
+        Depending on `p.hailo_target`, this checks:
+          - Part2 only (suffix)
+          - Part1 only (prefix)
+          - either (Part1 OR Part2)
+
+        The intention is a *hard feasibility filter* during pick selection.
+        """
+
+        from .hailo_backend import hailo_parse_check
+
+        model: Optional[onnx.ModelProto] = a.get("model")
+        nodes = a.get("nodes") or []
+        order = a.get("order") or []
+
+        if model is None:
+            return False, {"ok": False, "error": "No model loaded in analysis."}
+
+        b = int(boundary)
+        policy = str(getattr(p, "hailo_target", "part2") or "part2").strip().lower()
+        if policy not in {"part1", "part2", "either"}:
+            policy = "part2"
+
+        cut_tensors = asc.cut_tensors_for_boundary(order, nodes, b)
+        if not cut_tensors:
+            return False, {"ok": False, "error": "No cut tensors for boundary.", "b": b, "policy": policy}
+
+        # Materialize artifacts on disk for the Hailo translator.
+        if work_root is None:
+            work_root = Path(tempfile.mkdtemp(prefix="hailo_check_"))
+
+        case_dir = Path(work_root) / f"b{b:04d}"
+        case_dir.mkdir(parents=True, exist_ok=True)
+
+        g = model.graph
+        init_names = {i.name for i in g.initializer}
+        orig_inputs = [vi.name for vi in g.input if vi.name not in init_names]
+        orig_outputs = [o.name for o in g.output]
+
+        info: Dict[str, Any] = {
+            "ok": False,
+            "b": b,
+            "policy": policy,
+            "cut_tensors": list(cut_tensors),
+        }
+
+        def _run_one(which: str, submodel: onnx.ModelProto, onnx_path: Path) -> Dict[str, Any]:
+            try:
+                asc.save_model(submodel, str(onnx_path), external_data=False)
+            except Exception as e:
+                return {
+                    "ok": False,
+                    "error": f"Failed to save {which} ONNX: {type(e).__name__}: {e}",
+                }
+
+            res = hailo_parse_check(
+                onnx_path,
+                hw_arch=str(getattr(p, "hailo_hw_arch", "hailo8")),
+                net_name=f"{which}_b{b}",
+                outdir=onnx_path.parent,
+                fixup=bool(getattr(p, "hailo_fixup", True)),
+                save_har=bool(getattr(p, "hailo_keep_artifacts", False)),
+            )
+
+            out: Dict[str, Any] = {
+                "ok": bool(res.ok),
+                "elapsed_s": float(res.elapsed_s),
+                "hw_arch": str(res.hw_arch),
+                "net_name": str(res.net_name),
+                "error": res.error,
+                "fixup_report": res.fixup_report,
+            }
+
+            if bool(getattr(p, "hailo_keep_artifacts", False)):
+                out["work_dir"] = str(onnx_path.parent)
+                out["onnx_path"] = str(onnx_path)
+                out["har_path"] = res.har_path
+                out["fixed_onnx_path"] = res.fixed_onnx_path
+
+            return out
+
+        # Decide which parts to check.
+        check_part1 = policy in {"part1", "either"}
+        check_part2 = policy in {"part2", "either"}
+
+        part1_res: Optional[Dict[str, Any]] = None
+        part2_res: Optional[Dict[str, Any]] = None
+
+        # By default, check Part2 first for backwards compatibility, then Part1 if needed.
+        # This keeps runtime similar to the older "Part2-only" behavior in the common case.
+        check_order = ["part2", "part1"]
+
+        def _try_part2() -> Dict[str, Any]:
+            # If Hailo is the *consumer* side (Part2 on Hailo), non-strict boundaries become
+            # multi-input on Hailo and are much harder to integrate. Keep this as a hard fail.
+            extras = asc.strict_boundary_extras(model, cut_tensors)
+            if extras:
+                return {
+                    "ok": False,
+                    "error": f"Non-strict boundary: Part2 requires extra inputs: {extras}",
+                    "strict_extras": list(extras),
+                }
+
+            try:
+                p2_model, ext_inputs = asc.build_submodel(
+                    model,
+                    outputs=orig_outputs,
+                    stop_names=set(cut_tensors) | set(orig_inputs),
+                    model_name=f"part2_b{b}",
+                    force_inputs=list(cut_tensors),
+                )
+            except Exception as e:
+                return {
+                    "ok": False,
+                    "error": f"Failed to build Part2 submodel: {type(e).__name__}: {e}",
+                }
+
+            ext_only = [x for x in ext_inputs if x not in cut_tensors]
+            if ext_only:
+                return {
+                    "ok": False,
+                    "error": f"Part2 still has external inputs beyond cut tensors: {ext_only}",
+                    "external_inputs": list(ext_inputs),
+                }
+
+            p2_dir = case_dir / "part2"
+            p2_dir.mkdir(parents=True, exist_ok=True)
+            return _run_one("part2", p2_model, p2_dir / "part2.onnx")
+
+        def _try_part1() -> Dict[str, Any]:
+            try:
+                p1_model, ext_inputs = asc.build_submodel(
+                    model,
+                    outputs=list(cut_tensors),
+                    stop_names=set(orig_inputs),
+                    model_name=f"part1_b{b}",
+                )
+            except Exception as e:
+                return {
+                    "ok": False,
+                    "error": f"Failed to build Part1 submodel: {type(e).__name__}: {e}",
+                }
+
+            ext_only = [x for x in ext_inputs if x not in orig_inputs]
+            if ext_only:
+                return {
+                    "ok": False,
+                    "error": f"Unexpected external inputs for Part1: {ext_only}",
+                    "external_inputs": list(ext_inputs),
+                }
+
+            p1_dir = case_dir / "part1"
+            p1_dir.mkdir(parents=True, exist_ok=True)
+            return _run_one("part1", p1_model, p1_dir / "part1.onnx")
+
+        for which in check_order:
+            if which == "part2" and check_part2 and part2_res is None:
+                part2_res = _try_part2()
+                info["part2"] = part2_res
+                if policy != "either":
+                    # policy is part2-only; no need to check others
+                    break
+                if bool(part2_res.get("ok")):
+                    # In 'either' mode, accept early to keep runtime small.
+                    break
+
+            if which == "part1" and check_part1 and part1_res is None:
+                part1_res = _try_part1()
+                info["part1"] = part1_res
+                if policy != "either":
+                    break
+                if bool(part1_res.get("ok")):
+                    break
+
+        ok_part1 = bool(part1_res and part1_res.get("ok"))
+        ok_part2 = bool(part2_res and part2_res.get("ok"))
+
+        ok = False
+        accepted_by = None
+        if policy == "part1":
+            ok = ok_part1
+            accepted_by = "part1" if ok else None
+        elif policy == "part2":
+            ok = ok_part2
+            accepted_by = "part2" if ok else None
+        else:
+            ok = ok_part1 or ok_part2
+            # Prefer Part2 for backwards compatibility, otherwise Part1.
+            if ok_part2:
+                accepted_by = "part2"
+            elif ok_part1:
+                accepted_by = "part1"
+
+        info["ok"] = bool(ok)
+        info["accepted_by"] = accepted_by
+        info["ok_part1"] = ok_part1
+        info["ok_part2"] = ok_part2
+
+        return bool(ok), info
 
     # ----------------------------- Diagnostics UI -----------------------------
 
