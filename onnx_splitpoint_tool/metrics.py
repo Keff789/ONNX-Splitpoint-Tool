@@ -224,13 +224,55 @@ def flops_per_output_element(node: onnx.NodeProto, vimap: Dict[str, onnx.ValueIn
     return int(numel_from_shape(out_shape, batch_override))
 
 
+def _get_weight_dims(w_obj) -> Optional[List[int]]:
+    """Return weight tensor dims without forcing tensor data into memory.
+
+    Historically, `init_map` stored numpy arrays created via
+    `onnx.numpy_helper.to_array()`. For large models (external data weights),
+    materializing all initializers is prohibitively expensive.
+
+    We now accept either:
+    - a numpy array (has `.shape`)
+    - an onnx.TensorProto (has `.dims`)
+    - a list/tuple of dims
+    """
+
+    if w_obj is None:
+        return None
+
+    # numpy array
+    shp = getattr(w_obj, "shape", None)
+    if shp is not None:
+        try:
+            return [int(x) for x in list(shp)]
+        except Exception:
+            return None
+
+    # TensorProto
+    dims = getattr(w_obj, "dims", None)
+    if dims is not None:
+        try:
+            return [int(x) for x in list(dims)]
+        except Exception:
+            return None
+
+    # dims list/tuple
+    if isinstance(w_obj, (list, tuple)):
+        try:
+            return [int(x) for x in list(w_obj)]
+        except Exception:
+            return None
+
+    return None
+
+
 def flops_conv(node: onnx.NodeProto, vimap, init_map, batch_override: Optional[int] = None) -> int:
     if len(node.input) < 2 or not node.output:
         return 0
-    W = init_map.get(node.input[1])
-    if W is None or getattr(W, "ndim", 0) != 4:
+    W_dims = _get_weight_dims(init_map.get(node.input[1]))
+    if not W_dims or len(W_dims) != 4:
         return 0
-    C_out, C_in_per_group, kH, kW = W.shape
+    C_out, C_in_per_group, kH, kW = W_dims
     out_shape = shape_from_vi(vimap.get(node.output[0]))
     if not out_shape or len(out_shape) != 4:
         return 0
@@ -244,10 +286,10 @@ def flops_qlinearconv(node: onnx.NodeProto, vimap, init_map, batch_override: Opt
     # weight is input[3]
     if len(node.input) < 4 or not node.output:
         return 0
-    W = init_map.get(node.input[3])
-    if W is None or getattr(W, "ndim", 0) != 4:
+    W_dims = _get_weight_dims(init_map.get(node.input[3]))
+    if not W_dims or len(W_dims) != 4:
         return 0
-    C_out, C_in_per_group, kH, kW = W.shape
+    C_out, C_in_per_group, kH, kW = W_dims
     out_shape = shape_from_vi(vimap.get(node.output[0]))
     if not out_shape or len(out_shape) != 4:
         return 0
@@ -260,11 +302,11 @@ def flops_qlinearconv(node: onnx.NodeProto, vimap, init_map, batch_override: Opt
 def flops_convtranspose(node: onnx.NodeProto, vimap, init_map, batch_override: Optional[int] = None) -> int:
     if len(node.input) < 2 or not node.output:
         return 0
-    W = init_map.get(node.input[1])
-    if W is None or getattr(W, "ndim", 0) != 4:
+    W_dims = _get_weight_dims(init_map.get(node.input[1]))
+    if not W_dims or len(W_dims) != 4:
         return 0
     # ConvTranspose weight layout: [C_in, C_out/group, kH, kW]
-    C_in, C_out_per_group, kH, kW = W.shape
+    C_in, C_out_per_group, kH, kW = W_dims
     out_shape = shape_from_vi(vimap.get(node.output[0]))
     if not out_shape or len(out_shape) != 4:
         return 0
@@ -274,34 +316,66 @@ def flops_convtranspose(node: onnx.NodeProto, vimap, init_map, batch_override: O
     return int(2 * N * H * Wd * int(C_in) * int(C_out_per_group) * int(kH) * int(kW))
 
 
-def flops_matmul(node: onnx.NodeProto, vimap) -> int:
+def _shape_from_any(
+    tensor_name: str,
+    vimap: Dict[str, onnx.ValueInfoProto],
+    init_map: Optional[Dict[str, object]] = None,
+) -> Optional[List[Optional[int]]]:
+    """Return best-effort shape for a tensor.
+
+    Prefer ValueInfo (runtime / shape-inference), fall back to initializer dims.
+    This is important for MatMul/Gemm where one input is often a weight initializer
+    that is not present in graph.value_info.
+    """
+
+    sh = shape_from_vi(vimap.get(tensor_name))
+    if sh:
+        return sh
+    if init_map is not None and tensor_name in init_map:
+        dims = _get_weight_dims(init_map.get(tensor_name))
+        if dims:
+            return [int(d) if d is not None else None for d in dims]
+    return None
+
+
+def flops_matmul(node: onnx.NodeProto, vimap, init_map: Optional[Dict[str, object]] = None) -> int:
     if len(node.input) < 2:
         return 0
-    sa = shape_from_vi(vimap.get(node.input[0]))
-    sb = shape_from_vi(vimap.get(node.input[1]))
+    sa = _shape_from_any(node.input[0], vimap, init_map)
+    sb = _shape_from_any(node.input[1], vimap, init_map)
     B, M, K, N = _matmul_dims(sa, sb)
     if B == 0:
+        # Fallback: if one side is a constant weight and we at least know the output shape,
+        # estimate based on output dims and K from the weight.
+        out_shape = shape_from_vi(vimap.get(node.output[0])) if node.output else None
+        if out_shape and sb and len(sb) >= 2:
+            out = [int(d or 1) for d in out_shape]
+            batch = _prod(out[:-2]) if len(out) >= 2 else 1
+            m = out[-2] if len(out) >= 2 else 1
+            n = out[-1] if len(out) >= 1 else 1
+            k = int((sb[-2] if sb[-2] is not None else 1))
+            return int(2 * batch * m * n * k)
         return 0
     return int(2 * B * M * N * K)
 
 
-def flops_qlinearmatmul(node: onnx.NodeProto, vimap) -> int:
+def flops_qlinearmatmul(node: onnx.NodeProto, vimap, init_map: Optional[Dict[str, object]] = None) -> int:
     # spec: a at input[0], b at input[3]
     if len(node.input) < 4:
         return 0
-    sa = shape_from_vi(vimap.get(node.input[0]))
-    sb = shape_from_vi(vimap.get(node.input[3]))
+    sa = _shape_from_any(node.input[0], vimap, init_map)
+    sb = _shape_from_any(node.input[3], vimap, init_map)
     B, M, K, N = _matmul_dims(sa, sb)
     if B == 0:
         return 0
     return int(2 * B * M * N * K)
 
 
-def flops_gemm(node: onnx.NodeProto, vimap) -> int:
+def flops_gemm(node: onnx.NodeProto, vimap, init_map: Optional[Dict[str, object]] = None) -> int:
     if len(node.input) < 2:
         return 0
-    sa = shape_from_vi(vimap.get(node.input[0]))
-    sb = shape_from_vi(vimap.get(node.input[1]))
+    sa = _shape_from_any(node.input[0], vimap, init_map)
+    sb = _shape_from_any(node.input[1], vimap, init_map)
     B, M, K, N = _matmul_dims(sa, sb)
     if B == 0:
         return 0
@@ -343,7 +417,11 @@ def per_node_flops(
     if batch_override is None and batch is not None:
         batch_override = batch
 
-    init_map = {init.name: onnx.numpy_helper.to_array(init) for init in model.graph.initializer}
+    # NOTE: Do NOT materialize initializer arrays here.
+    # For large models (e.g., LLMs exported with external data), converting all
+    # initializers to numpy arrays can consume many GB of RAM and crash the GUI.
+    # FLOPs estimates only need tensor shapes.
+    init_map = {init.name: list(init.dims) for init in model.graph.initializer}
 
     recs: List[Tuple[int, str, str, int]] = []
     for idx, node in enumerate(model.graph.node):
@@ -370,13 +448,13 @@ def per_node_flops(
                 fl += flops_per_output_element(node, vimap, batch_override)
 
         elif op == "MatMul":
-            fl = flops_matmul(node, vimap)
+            fl = flops_matmul(node, vimap, init_map)
 
         elif op == "QLinearMatMul":
-            fl = flops_qlinearmatmul(node, vimap)
+            fl = flops_qlinearmatmul(node, vimap, init_map)
 
         elif op == "Gemm":
-            fl = flops_gemm(node, vimap)
+            fl = flops_gemm(node, vimap, init_map)
             has_bias = len(node.input) > 2 and bool(node.input[2])
             if has_bias:
                 fl += flops_per_output_element(node, vimap, batch_override)

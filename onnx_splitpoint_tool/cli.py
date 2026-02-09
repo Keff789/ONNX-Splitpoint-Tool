@@ -77,9 +77,24 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     ap.add_argument("--tex-out", type=str, default=None, help="Write a LaTeX table of the top-k picks")
 
+    ap.add_argument(
+        "--load-external-data",
+        action="store_true",
+        help=(
+            "Load external tensor data (weights) into memory when parsing the model. "
+            "This is NOT required for split analysis and can consume multiple GB for large models."
+        ),
+    )
+
     args = ap.parse_args(argv)
 
-    model = onnx.load(args.onnx_model)
+    # For analysis we only need shapes/metadata; avoid pulling large external weights into RAM.
+    try:
+        model = onnx.load(args.onnx_model, load_external_data=bool(args.load_external_data))
+    except TypeError:
+        # Older onnx versions: parse protobuf directly.
+        with open(args.onnx_model, "rb") as f:
+            model = onnx.ModelProto.FromString(f.read())
     model = shape_inference.infer_shapes(model)
 
     vimap = value_info_map(model)

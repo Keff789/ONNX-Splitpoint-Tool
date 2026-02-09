@@ -69,9 +69,53 @@ def numel_from_shape(shape: Optional[List[Optional[int]]], batch_override: Optio
 
 
 def value_info_map(model: onnx.ModelProto) -> Dict[str, onnx.ValueInfoProto]:
-    """Map tensor name -> ValueInfo (includes inputs, intermediate value_info, outputs)."""
+    """Map tensor name -> ValueInfo.
+
+    Notes
+    -----
+    ONNX models do not always populate `graph.value_info` for every produced tensor.
+    In practice (especially for transformer exports), a significant number of tensors
+    are produced by `Constant` nodes and never get a ValueInfo from shape inference.
+    
+    For our use-cases (activation byte estimates, unknown-shape diagnostics), it is
+    still very helpful to at least know dtype + static dims for these constants.
+    The constant payloads are usually tiny (shape/control tensors), so this improves
+    coverage without impacting memory.
+    """
+
     vis = list(model.graph.input) + list(model.graph.value_info) + list(model.graph.output)
-    return {vi.name: vi for vi in vis}
+    m: Dict[str, onnx.ValueInfoProto] = {vi.name: vi for vi in vis}
+
+    # Backfill missing ValueInfo for Constant node outputs.
+    try:
+        from onnx import AttributeProto
+    except Exception:  # pragma: no cover
+        AttributeProto = None  # type: ignore
+
+    if AttributeProto is not None:
+        for n in model.graph.node:
+            if n.op_type != "Constant" or not n.output:
+                continue
+            out = n.output[0]
+            if out in m:
+                continue
+
+            # Prefer the tensor-valued "value" attribute when present.
+            t = None
+            for a in n.attribute:
+                if a.name == "value" and a.type == AttributeProto.TENSOR:
+                    t = a.t
+                    break
+
+            if t is not None:
+                try:
+                    # TensorProto.dims can be empty for scalars.
+                    m[out] = helper.make_tensor_value_info(out, t.data_type, list(t.dims))
+                except Exception:
+                    # If something goes wrong, just leave it unknown.
+                    pass
+
+    return m
 
 
 # ---------------------------- Graph utilities ----------------------------
@@ -209,7 +253,9 @@ def backfill_quant_shapes(
     if batch_override is None and batch is not None:
         batch_override = batch
 
-    init_map = {init.name: onnx.numpy_helper.to_array(init) for init in model.graph.initializer}
+    # Only need initializer *shapes* for quant backfilling.
+    # Avoid materializing large weights into memory (external data).
+    init_map = {init.name: list(init.dims) for init in model.graph.initializer}
 
     def ensure_vi(name: str, shape: List[int], elem_type: int):
         if name in vimap:
@@ -232,11 +278,11 @@ def backfill_quant_shapes(
             if y in vimap:
                 continue
             xs = shp(x)
-            W = init_map.get(w)
-            if not xs or len(xs) != 4 or W is None or getattr(W, "ndim", 0) != 4:
+            W_dims = init_map.get(w)
+            if not xs or len(xs) != 4 or not W_dims or len(W_dims) != 4:
                 continue
             N, C, H, Wd = [batch_override if (i == 0 and batch_override) else int(xs[i] or 1) for i in range(4)]
-            Cout, _, kH, kW = W.shape
+            Cout, _, kH, kW = [int(d or 1) for d in W_dims]
             Ho, Wo = _conv_output_hw(
                 H,
                 Wd,

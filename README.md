@@ -87,7 +87,7 @@ python analyse_and_split.py path/to/model.onnx --topk 10
   - per partition: `peak_left[b]=max_{i<=b} live(i)`, `peak_right[b]=max_{i>=b} live(i)`
   - optional constraints: max act mem left/right (fits SRAM/VRAM)
 - Split directly from the GUI (export part1/part2 ONNX).
-- Strict boundary option (rejects splits where part2 still depends on original inputs).
+- Strict boundary option (rejects splits where part2 needs additional *intermediate* activations beyond the cut tensors; original graph inputs are allowed).
 - Optional onnxruntime validation (`full(x) ~= part2(part1(x))`).
 - Runner skeleton generator (`run_split_onnxruntime.py`)
   - supports classification-style top-k plots
@@ -105,3 +105,20 @@ python analyse_and_split.py path/to/model.onnx --topk 10
 
 - If Graphviz `dot` is installed, `.dot` files are rendered to SVG/PDF automatically. Otherwise a matplotlib fallback diagram is created.
 - Windows: do not run `.bat` files with Python. Double click, or run from PowerShell directly.
+
+### External-data ONNX models (`*.onnx` + `*.onnx.data`)
+
+Large models exported with ONNX external data are supported.
+
+When exporting splits/benchmark sets, the tool tries to make the output folder usable by:
+
+- creating a **hardlink** to the referenced `*.data` file (fast, no extra disk use; requires same filesystem),
+- or falling back to **symlink**/**copy**,
+- and if none of the above is possible, it rewrites the ONNX external-data `location` to an **absolute path** (works locally, not portable).
+
+### GUI logs
+
+The GUI writes logs to both:
+
+- `~/.onnx_splitpoint_tool/gui.log`
+- `./gui.log` (current working directory)

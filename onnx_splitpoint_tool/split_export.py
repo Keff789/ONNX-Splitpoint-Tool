@@ -14,6 +14,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import logging
 import os
 import shutil
 import subprocess
@@ -32,6 +33,8 @@ from .onnx_utils import (
     topo_sort,
     value_info_map,
 )
+
+LOGGER = logging.getLogger("onnx_splitpoint_tool.split_export")
 from .metrics import compute_tensor_bytes_per_value
 
 
@@ -198,21 +201,64 @@ def build_submodel(
     for mp in full_model.metadata_props:
         new_model.metadata_props.append(copy.deepcopy(mp))
 
+    # NOTE: For external-data models (large weights stored in a separate *.data file),
+    # `onnx.checker.check_model(ModelProto)` may fail because it cannot resolve
+    # relative paths for external tensors without a filesystem base path.
+    # In that case we run a lighter check (full_check=False) if available, or we
+    # allow the build to proceed and validate later when saving with linked data.
+    uses_external_data = any(
+        (init.data_location == TensorProto.EXTERNAL) or bool(init.external_data)
+        for init in new_model.graph.initializer
+    )
+
     try:
-        onnx.checker.check_model(new_model)
+        if uses_external_data:
+            try:
+                onnx.checker.check_model(new_model, full_check=False)  # type: ignore[arg-type]
+            except TypeError:
+                # Older ONNX versions may not support the `full_check` keyword.
+                onnx.checker.check_model(new_model)
+        else:
+            onnx.checker.check_model(new_model)
     except Exception as e:
-        raise RuntimeError(f"ONNX checker failed for submodel '{model_name}': {e}")
+        msg = str(e)
+        if uses_external_data and (
+            "Data of TensorProto" in msg
+            or "should be stored" in msg
+            or "doesn't exist" in msg
+            or "not accessible" in msg
+            or "external" in msg.lower()
+        ):
+            LOGGER.warning(
+                "ONNX checker could not verify external tensor data for submodel '%s' (%s). "
+                "Proceeding; external data will be validated when saving/loading.",
+                model_name,
+                msg,
+            )
+        else:
+            raise RuntimeError(f"ONNX checker failed for submodel '{model_name}': {e}") from e
 
     return new_model, external_inputs
 
 
 def strict_boundary_extras(full_model: onnx.ModelProto, cut_tensors: Iterable[str]) -> List[str]:
-    """Return a list of *additional* external inputs required by part2 besides the cut tensors.
+    """Return extra *non-input* tensors required by part2 besides the cut tensors.
 
-    This performs the same dependency analysis as the actual split (part2 creation) but returns
-    only the extra inputs, without materializing or saving the submodel. If the returned list is
-    empty, the boundary is *strict* in the sense that part2 depends only on the cut tensors
-    (plus initializers/constants bundled into the model).
+    Historically the tool treated a boundary as *strict* only if part2 required **only** the
+    cut tensors (and initializers) as inputs.
+
+    For many models (especially transformers), part2 still legitimately depends on one or more
+    original model inputs (e.g. `attention_mask`, `position_ids`, ...). These are not *produced*
+    by part1 and therefore are not part of the inter-device communication budget. They are also
+    typically available to both parts.
+
+    We therefore define "strict" as:
+
+    - part2 requires no **additional intermediate activations** besides the cut tensors;
+    - original graph inputs are allowed.
+
+    The returned list contains only additional tensors that are neither cut tensors nor original
+    model inputs.
     """
 
     g = full_model.graph
@@ -236,7 +282,10 @@ def strict_boundary_extras(full_model: onnx.ModelProto, cut_tensors: Iterable[st
     needed_nodes = [nodes_full[i] for i in needed_idxs]
 
     external_inputs = _compute_external_inputs(needed_nodes, initializer_names=init_names)
-    extras = sorted([x for x in external_inputs if x not in cut_set])
+
+    # Allow original graph inputs (they are not produced by part1).
+    orig_input_set = set(orig_inputs)
+    extras = sorted([x for x in external_inputs if x not in cut_set and x not in orig_input_set])
     return extras
 
 
@@ -248,8 +297,8 @@ def compute_strict_boundary_ok(
     """Compute whether each boundary is *strict* and (if not) which extra inputs appear.
 
     A boundary is considered *strict* if the right subgraph (part2) depends only on the cut
-    activation tensors (plus initializers), i.e., it does not require any additional original
-    graph inputs.
+    activation tensors (plus initializers and original graph inputs). In other words, it must
+    not require additional *intermediate* activations from the left side.
 
     Returns:
         strict_ok: list[bool] of length (len(order) - 1)
@@ -958,10 +1007,15 @@ def split_model_on_cut_tensors(
     )
 
     if strict_boundary:
-        extras = [x for x in p2_external_inputs if x not in cut_tensors]
+        # Strict boundary here means: part2 can be run with *only* the cut tensors
+        # plus any original model inputs (e.g. masks, ids) that are available anyway.
+        # We do NOT allow additional intermediate activations from the left part.
+        cut_set = set(cut_tensors)
+        orig_in_set = set(orig_inputs)
+        extras = sorted([x for x in p2_external_inputs if x not in cut_set and x not in orig_in_set])
         if extras:
             raise RuntimeError(
-                "Strict boundary check failed. Part2 still requires external inputs besides cut tensors: "
+                "Strict boundary check failed. Part2 still requires additional activations besides cut tensors/original inputs: "
                 + ", ".join(extras)
             )
 
@@ -1011,6 +1065,178 @@ def save_model(model: onnx.ModelProto, path: str, *, external_data: bool = False
         )
     else:
         onnx.save(model, path)
+
+
+def model_external_data_locations(model: onnx.ModelProto) -> List[str]:
+    """Return a sorted list of external-data `location` strings used by initializers.
+
+    Many large models (e.g. LLMs) store weights in an external *.data file. In that case
+    initializers have `data_location=EXTERNAL` and the actual payload is referenced via
+    `TensorProto.external_data` entries.
+    """
+    locs: Set[str] = set()
+    for init in model.graph.initializer:
+        if int(getattr(init, "data_location", 0)) != int(TensorProto.EXTERNAL):
+            continue
+        loc: Optional[str] = None
+        for kv in init.external_data:
+            if kv.key == "location":
+                loc = kv.value
+                break
+        if loc:
+            locs.add(loc)
+    return sorted(locs)
+
+
+def _rewrite_external_data_locations_inplace(
+    model: onnx.ModelProto, *, location_map: Dict[str, str]
+) -> None:
+    """Rewrite external-data locations in-place.
+
+    `location_map` maps old `location` values to new ones.
+    """
+    if not location_map:
+        return
+    for init in model.graph.initializer:
+        if int(getattr(init, "data_location", 0)) != int(TensorProto.EXTERNAL):
+            continue
+        for kv in init.external_data:
+            if kv.key == "location" and kv.value in location_map:
+                kv.value = location_map[kv.value]
+
+
+def ensure_external_data_files(
+    model: onnx.ModelProto,
+    *,
+    source_model_path: str,
+    dest_dir: Optional[str] = None,
+    # Backwards-compat alias used by older GUI code.
+    dest_base: Optional[str] = None,
+    mode: str = "auto",
+    copy_threshold_mb: int = 256,
+) -> Dict[str, str]:
+    """Ensure external-data files referenced by `model` are accessible from `dest_dir`.
+
+    Strategy:
+    - Prefer hardlinks (fast, no extra disk usage).
+    - Fall back to symlinks.
+    - Fall back to copying only for smaller data files (< copy_threshold_mb).
+    - As a last resort, rewrite the model to use absolute paths (portable only on the same machine).
+
+    Returns a dict {location -> action} where action is one of:
+      - "hardlink"
+      - "symlink"
+      - "copied"
+      - "absolute"
+
+    Notes
+    -----
+    This function does *not* load any external weights into RAM.
+    """
+    # dest_base was the name used in a previous iteration of the GUI.
+    # Prefer dest_dir when both are provided.
+    if dest_dir is None:
+        dest_dir = dest_base
+    if dest_dir is None:
+        raise TypeError("ensure_external_data_files() missing required argument: 'dest_dir'")
+
+    actions: Dict[str, str] = {}
+    locs = model_external_data_locations(model)
+    if not locs:
+        return actions
+
+    src_base = os.path.dirname(os.path.abspath(source_model_path))
+    dst_base = os.path.abspath(dest_dir)
+
+    # Helper to normalize the ONNX external-data `location` string into a platform path.
+    def _loc_to_relpath(loc: str) -> str:
+        loc_norm = loc.replace("\\", "/")
+        return os.path.join(*[p for p in loc_norm.split("/") if p not in ("", ".")])
+
+    # First attempt: materialize all external files into dest_dir (hardlink/symlink/copy).
+    for loc in locs:
+        rel = _loc_to_relpath(loc)
+        src_path = loc if os.path.isabs(loc) else os.path.join(src_base, rel)
+        dst_path = os.path.join(dst_base, rel)
+        os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+
+        if os.path.exists(dst_path):
+            actions[loc] = "exists"
+            continue
+
+        if not os.path.exists(src_path):
+            # Try a simple fallback: if there is exactly one *.data next to the model,
+            # assume that's the intended file.
+            cand = [
+                os.path.join(src_base, f)
+                for f in os.listdir(src_base)
+                if f.lower().endswith(".data")
+            ]
+            if len(cand) == 1 and os.path.exists(cand[0]):
+                src_path = cand[0]
+            else:
+                raise FileNotFoundError(
+                    f"External data file referenced by ONNX not found: location='{loc}' -> '{src_path}'. "
+                    "Make sure the *.data file is present next to the ONNX with the expected name."
+                )
+
+        # Mode can force a specific mechanism.
+        tried: List[str] = []
+
+        def _try_hardlink() -> bool:
+            tried.append("hardlink")
+            try:
+                os.link(src_path, dst_path)
+                actions[loc] = "hardlink"
+                return True
+            except Exception:
+                return False
+
+        def _try_symlink() -> bool:
+            tried.append("symlink")
+            try:
+                os.symlink(src_path, dst_path)
+                actions[loc] = "symlink"
+                return True
+            except Exception:
+                return False
+
+        def _try_copy() -> bool:
+            tried.append("copy")
+            try:
+                shutil.copy2(src_path, dst_path)
+                actions[loc] = "copied"
+                return True
+            except Exception:
+                return False
+
+        if mode in ("auto", "hardlink") and _try_hardlink():
+            continue
+        if mode in ("auto", "symlink") and _try_symlink():
+            continue
+        if mode in ("copy", "auto"):
+            try:
+                sz_mb = int(os.path.getsize(src_path) / (1024 * 1024))
+            except Exception:
+                sz_mb = copy_threshold_mb + 1
+            if mode == "copy" or sz_mb <= int(copy_threshold_mb):
+                if _try_copy():
+                    continue
+
+        # Last resort: rewrite locations to absolute paths so the model can find the original file.
+        abs_src = os.path.abspath(src_path)
+        _rewrite_external_data_locations_inplace(model, location_map={loc: abs_src})
+        actions[loc] = f"absolute({abs_src})"
+        LOGGER.warning(
+            "Could not materialize external-data file for location '%s' in '%s' (tried: %s). "
+            "Falling back to absolute path reference: %s",
+            loc,
+            dst_base,
+            ",".join(tried),
+            abs_src,
+        )
+
+    return actions
 
 
 # ---------------------------- Optional: splitting validation & runners ----------------------------

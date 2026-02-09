@@ -35,6 +35,8 @@ import os
 import shutil
 import re
 import tempfile
+import logging
+import sys
 import threading
 import queue
 import time
@@ -58,7 +60,65 @@ from onnx import shape_inference
 
 from . import api as asc
 
-__version__ = "0.10.52"
+__version__ = "0.10.53"
+
+
+def _setup_gui_logging() -> Optional[str]:
+    """Configure logging to a persistent file.
+
+    The GUI is often started without a visible console. A log file helps debug
+    crashes or backend issues.
+    """
+
+    try:
+        log_dir = Path.home() / ".onnx_splitpoint_tool"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "gui.log"
+
+        # Don't clobber an existing logging configuration (e.g. when embedded).
+        root = logging.getLogger()
+        if not root.handlers:
+            logging.basicConfig(
+                level=logging.INFO,
+                format="%(asctime)s [%(levelname)s] %(message)s",
+                handlers=[
+                    logging.FileHandler(str(log_path), mode="a", encoding="utf-8"),
+                    logging.StreamHandler(sys.stdout),
+                ],
+            )
+
+        # Convenience: also write a `./gui.log` in the current working directory
+        # (best-effort). This helps when users expect a local log file next to the
+        # repo or the launcher script.
+        try:
+            cwd_log_path = Path.cwd() / "gui.log"
+            if str(cwd_log_path) != str(log_path):
+                fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+                cwd_fh = logging.FileHandler(str(cwd_log_path), mode="a", encoding="utf-8")
+                cwd_fh.setFormatter(fmt)
+                logging.getLogger().addHandler(cwd_fh)
+        except Exception:
+            pass
+
+        # Hook unhandled exceptions so we get a traceback in the log file.
+        def _excepthook(exc_type, exc, tb):
+            logging.error("Unhandled exception", exc_info=(exc_type, exc, tb))
+            try:
+                sys.__excepthook__(exc_type, exc, tb)
+            except Exception:
+                pass
+
+        sys.excepthook = _excepthook
+
+        if hasattr(threading, "excepthook"):
+            def _thread_excepthook(args):
+                logging.error("Unhandled thread exception", exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+            threading.excepthook = _thread_excepthook  # type: ignore[attr-defined]
+
+        logging.info("GUI started (v%s)", __version__)
+        return str(log_path)
+    except Exception:
+        return None
 
 
 # ------------------------------- Tooltips -------------------------------
@@ -344,7 +404,9 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.chk_only_one = ttk.Checkbutton(general, text="Only one crossing tensor", variable=self.var_only_one)
         self.chk_only_one.grid(row=1, column=2, columnspan=3, sticky="w", pady=(4, 0))
 
-        # Strict boundary (feasible split): Part2 must not depend on original model inputs.
+        # Strict boundary (feasible split): Part2 must not depend on additional *intermediate*
+        # activations besides the selected cut tensors. Original model inputs are allowed
+        # (common in transformer exports where e.g. masks are used throughout the network).
         self.var_strict_boundary = tk.BooleanVar(value=True)
         self.chk_strict = ttk.Checkbutton(general, text="Strict boundary", variable=self.var_strict_boundary)
         self.chk_strict.grid(row=1, column=5, columnspan=2, sticky="w", pady=(4, 0), padx=(0, 10))
@@ -1206,6 +1268,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                 self._compute_nordstern(analysis, picks, params)
                 q.put(("ok", analysis, picks))
             except Exception:
+                logging.exception("Analysis failed")
                 import traceback
 
                 q.put(("err", traceback.format_exc()))
@@ -1484,10 +1547,23 @@ class SplitPointAnalyserGUI(tk.Tk):
     def _analyse_model(self, model_path: str, p: Params, progress_cb: Optional[Callable[[str], None]] = None) -> Dict:
         if progress_cb:
             progress_cb("Loading ONNX model...")
-        model = onnx.load(model_path)
+        # IMPORTANT: For large models exported with external tensor data (e.g. LLMs),
+        # loading external data into memory can easily consume many GB and crash the GUI.
+        # For analysis we only need graph structure + tensor shapes, not the raw weights.
+        try:
+            model = onnx.load(model_path, load_external_data=False)
+        except TypeError:
+            # Some older onnx versions do not expose the flag on `onnx.load(...)`.
+            # Fall back to parsing the protobuf directly (this does not pull in external weights).
+            with open(model_path, "rb") as f:
+                model = onnx.ModelProto.FromString(f.read())
+        except Exception:
+            # If anything goes wrong, re-raise with context.
+            raise
+
         if progress_cb:
             progress_cb("Running ONNX shape inference...")
-        model = shape_inference.infer_shapes(model)
+        model = asc.infer_shapes_safe(model)
 
         if progress_cb:
             progress_cb("Collecting value infos...")
@@ -2774,6 +2850,42 @@ class SplitPointAnalyserGUI(tk.Tk):
                     p1_cut_names=p1_cut_names,
                     p2_cut_names=p2_cut_names,
                 )
+
+                # If the model uses external data (weights in separate *.data files),
+                # materialize those files into the export folder (prefer hardlink / symlink
+                # to avoid copying multi-GB weights).
+                try:
+                    actions = {}
+                    actions.update(
+                        asc.ensure_external_data_files(
+                            p1,
+                            source_model_path=self.model_path,
+                            dest_dir=out_dir,
+                            mode="auto",
+                        )
+                    )
+                    actions.update(
+                        asc.ensure_external_data_files(
+                            p2,
+                            source_model_path=self.model_path,
+                            dest_dir=out_dir,
+                            mode="auto",
+                        )
+                    )
+                    if actions:
+                        if any(str(v).startswith("absolute(") for v in actions.values()):
+                            msg.append(
+                                "External data: could not link/copy weights into export folder; "
+                                "wrote absolute paths into ONNX (non-portable)."
+                            )
+                        else:
+                            msg.append(f"External data: materialized {len(actions)} file(s) in export folder")
+                except FileNotFoundError as e:
+                    # The export would be unusable. Turn into a clear message.
+                    raise RuntimeError(
+                        "This model references external weight data, but the referenced *.data file was not found. "
+                        "Keep the external data file next to the original ONNX (matching the `location` inside the model)."
+                    ) from e
                 asc.save_model(p1, p1_path)
                 asc.save_model(p2, p2_path)
 
@@ -2904,6 +3016,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
                 q.put(("ok", "\n".join(msg)))
             except Exception as e:
+                logging.exception("Split selected boundary failed")
                 q.put(("err", f"{type(e).__name__}: {e}"))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -4177,6 +4290,7 @@ if __name__ == "__main__":
                         msg.append(f"  ... and {len(errors)-10} more")
                 q.put(("ok", "\n".join(msg)))
             except Exception as e:
+                logging.exception("Benchmark set generation failed")
                 q.put(("err", f"{type(e).__name__}: {e}"))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -4851,10 +4965,13 @@ if __name__ == "__main__":
 
 
 def main():
+    log_path = _setup_gui_logging()
     # Debug: show which files are being executed/imported (helps when multiple versions exist)
     try:
         print(f"[GUI] {os.path.abspath(__file__)} (v{__version__})")
         print(f"[CORE] {os.path.abspath(getattr(asc, '__file__', ''))} (v{getattr(asc, '__version__', '?')})")
+        if log_path:
+            print(f"[LOG] {log_path}")
     except Exception:
         pass
     app = SplitPointAnalyserGUI()
