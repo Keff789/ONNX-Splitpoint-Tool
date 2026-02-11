@@ -11,7 +11,7 @@ Includes:
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set, Iterable
 
 import onnx
 from onnx import TensorProto, helper, shape_inference
@@ -355,3 +355,209 @@ def backfill_quant_shapes(
             sa = shp(x)
             if sa:
                 ensure_vi(y, [int(d or 1) for d in sa], TensorProto.FLOAT)
+
+# ---------------- LLM / symbolic shape helpers ----------------
+
+def collect_dim_params(model: ModelProto) -> Set[str]:
+    """Collect all dim_param strings used in graph inputs/outputs/value_info."""
+    params: Set[str] = set()
+
+    def _scan_vi(vi: ValueInfoProto) -> None:
+        try:
+            shp = vi.type.tensor_type.shape
+        except Exception:
+            return
+        for d in shp.dim:
+            if getattr(d, "dim_param", ""):
+                params.add(d.dim_param)
+
+    for vi in list(model.graph.input) + list(model.graph.output) + list(model.graph.value_info):
+        _scan_vi(vi)
+
+    return params
+
+
+def apply_dim_param_overrides(
+    model: ModelProto,
+    overrides: Dict[str, int],
+    *,
+    only_inputs: bool = True,
+    clear_dim_param: bool = True,
+) -> List[Tuple[str, str, Optional[int], int]]:
+    """Apply dim_param -> dim_value overrides in-place.
+
+    This is useful for LLM graphs where shapes use symbolic names like
+    'batch_size', 'sequence_length', 'past_sequence_length', etc.
+
+    Returns a list of applied changes as tuples:
+        (tensor_name, dim_param, old_dim_value, new_dim_value)
+    """
+    changes: List[Tuple[str, str, Optional[int], int]] = []
+
+    def _apply_to_vi(vi: ValueInfoProto) -> None:
+        try:
+            shp = vi.type.tensor_type.shape
+        except Exception:
+            return
+        for d in shp.dim:
+            dp = getattr(d, "dim_param", "")
+            if not dp:
+                continue
+            if dp not in overrides:
+                continue
+            new_v = int(overrides[dp])
+            old_v: Optional[int] = None
+            if d.HasField("dim_value"):
+                old_v = int(d.dim_value)
+            d.dim_value = new_v
+            if clear_dim_param:
+                d.dim_param = ""
+            changes.append((vi.name, dp, old_v, new_v))
+
+    if only_inputs:
+        for vi in list(model.graph.input):
+            _apply_to_vi(vi)
+    else:
+        for vi in list(model.graph.input) + list(model.graph.output) + list(model.graph.value_info):
+            _apply_to_vi(vi)
+
+    return changes
+
+
+def make_llm_dim_overrides(
+    model: ModelProto,
+    *,
+    batch: int,
+    seq_len: int,
+    past_len: int,
+    total_len: int,
+) -> Dict[str, int]:
+    """Heuristically map dim_param strings to concrete values for LLM graphs.
+
+    We *don't* assume a fixed exporter; instead we look at existing dim_param
+    strings and try to infer which ones represent batch/seq/past/total.
+
+    The returned dict maps the *actual* dim_param strings present in the model
+    to integer values.
+    """
+    params = collect_dim_params(model)
+    out: Dict[str, int] = {}
+
+    for p in params:
+        pl = p.lower()
+
+        # Batch-like
+        if "batch" in pl or pl in {"b", "bs", "batch_size"}:
+            out[p] = int(batch)
+            continue
+
+        # Past / KV cache
+        if (
+            "past" in pl
+            or "kv" in pl
+            or "cache" in pl
+            or "history" in pl
+            or "prev" in pl
+        ):
+            out[p] = int(past_len)
+            continue
+
+        # Total/context length (often used by attention mask)
+        if (
+            "total" in pl
+            or "context" in pl
+            or "attn" in pl
+            or "attention" in pl
+            or "mask" in pl
+        ) and ("head" not in pl) and ("hidden" not in pl):
+            out[p] = int(total_len)
+            continue
+
+        # Sequence length
+        if (
+            "seq" in pl
+            or "sequence" in pl
+            or (pl.endswith("_len") and ("head" not in pl) and ("hidden" not in pl))
+        ):
+            out[p] = int(seq_len)
+            continue
+
+    return out
+
+
+# Backwards-compatible alias (public API expects this name)
+def make_llm_symbolic_dim_overrides(
+    model: ModelProto,
+    *,
+    # Generic / explicit form
+    batch: int = 1,
+    seq_len: Optional[int] = None,
+    past_len: Optional[int] = None,
+    total_len: Optional[int] = None,
+    # Convenience form used by the GUI presets
+    prefill_len: Optional[int] = None,
+    decode_past_len: Optional[int] = None,
+    # Back-compat alias (older experiments)
+    decode_past: Optional[int] = None,
+    mode: str = "decode",
+) -> Dict[str, int]:
+    """Build a mapping from symbolic LLM dimensions to integers.
+
+    This helper is used to *override symbolic dims* (``dim_param``) for LLM graphs
+    that expose KV-cache inputs/outputs.
+
+    Two ways to call it:
+
+    1) Explicit (engineer mode): ``seq_len``, ``past_len``, ``total_len``.
+    2) Preset-friendly (GUI): ``prefill_len`` + ``decode_past_len`` and ``mode``:
+       - ``mode='prefill'`` -> ``seq_len=prefill_len``, ``past_len=0``
+       - ``mode='decode'``  -> ``seq_len=1``, ``past_len=decode_past_len``
+
+    If ``total_len`` is omitted, it defaults to ``seq_len + past_len``.
+    """
+
+    # Resolve alias
+    if decode_past_len is None and decode_past is not None:
+        decode_past_len = decode_past
+
+    m = (mode or "").strip().lower()
+
+    # If preset values are provided, compute explicit lengths from them.
+    if (prefill_len is not None) or (decode_past_len is not None):
+        if m in {"prefill", "prompt"}:
+            seq_len = int(prefill_len if prefill_len is not None else 0)
+            past_len = 0
+            total_len = int(seq_len)
+        else:  # decode (default)
+            seq_len = 1
+            past_len = int(decode_past_len if decode_past_len is not None else 0)
+            total_len = int(seq_len + past_len)
+
+    # Fall back to explicit lengths (or safe defaults).
+    if seq_len is None:
+        seq_len = 1
+    if past_len is None:
+        past_len = 0
+    if total_len is None:
+        total_len = int(seq_len + past_len)
+
+    return make_llm_dim_overrides(
+        model,
+        batch=int(batch),
+        seq_len=int(seq_len),
+        past_len=int(past_len),
+        total_len=int(total_len),
+    )
+
+
+def llm_preset_to_lengths(preset: str) -> Tuple[int, int]:
+    """Return (prefill_len, decode_past_len) for known presets."""
+    p = (preset or "").strip().lower()
+    if p in {"latency", "latency_critical", "chat"}:
+        return (128, 512)
+    if p in {"standard", "std", "default"}:
+        return (512, 2048)
+    if p in {"throughput", "rag", "throughput_rag"}:
+        return (2048, 128)
+    # Fallback
+    return (512, 2048)

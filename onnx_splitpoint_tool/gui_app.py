@@ -60,7 +60,12 @@ from onnx import shape_inference
 
 from . import api as asc
 
-__version__ = "0.10.53"
+from . import __version__ as TOOL_VERSION
+
+__version__ = TOOL_VERSION
+
+# Module logger (used by worker threads as well).
+logger = logging.getLogger(__name__)
 
 
 def _setup_gui_logging() -> Optional[str]:
@@ -177,6 +182,11 @@ class Params:
     min_compute_pct: float
 
     batch_override: Optional[int]
+    llm_enable: bool
+    llm_preset: str
+    llm_mode: str
+    llm_prefill_len: int
+    llm_decode_past_len: int
     assume_bpe: Optional[int]
 
     exclude_trivial: bool
@@ -467,8 +477,105 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.ent_w_tensors.grid(row=0, column=8, sticky="w", padx=(2, 10))
 
         self.var_show_pareto = tk.BooleanVar(value=True)
+
+        # LLM shape presets (optional)
+        # Useful for decoder-style models with KV-cache (e.g., Gemma/Llama) where
+        # symbolic dimensions like batch_size / sequence_length / past_sequence_length
+        # need to be concretized for reliable shape inference and FLOPs/bytes estimates.
+        self.var_llm_enable = tk.BooleanVar(value=False)
+        self.var_llm_preset = tk.StringVar(value="Standard")
+        self.var_llm_mode = tk.StringVar(value="decode")   # 'decode' or 'prefill'
+        self.var_llm_prefill = tk.StringVar(value="512")   # prompt length (tokens)
+        self.var_llm_decode = tk.StringVar(value="2048")   # KV cache (past) length (tokens)
+
         self.chk_show_pareto = ttk.Checkbutton(r, text="Show Pareto front", variable=self.var_show_pareto)
         self.chk_show_pareto.grid(row=0, column=9, sticky="w")
+
+        
+
+        # LLM shape presets (collapsible)
+        # NOTE: use self.params_frame (created above). A previous refactor used a
+        # local name `params_frame` which doesn't exist, causing a NameError at
+        # GUI startup.
+        llm_container = ttk.Frame(self.params_frame)
+        llm_container.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 6))
+        llm_container.columnconfigure(0, weight=1)
+
+        llm_expanded = False
+        llm_toggle_btn = ttk.Button(llm_container, text="▶ LLM shape presets (optional)")
+        llm_toggle_btn.grid(row=0, column=0, sticky="w")
+
+        llm_frame = ttk.LabelFrame(llm_container, text="LLM shape presets")
+        llm_frame.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        for c in range(0, 8):
+            llm_frame.columnconfigure(c, weight=0)
+        llm_frame.columnconfigure(7, weight=1)
+        llm_frame.grid_remove()
+
+        def _toggle_llm() -> None:
+            nonlocal llm_expanded
+            llm_expanded = not llm_expanded
+            if llm_expanded:
+                llm_toggle_btn.config(text="▼ LLM shape presets (optional)")
+                llm_frame.grid()
+            else:
+                llm_toggle_btn.config(text="▶ LLM shape presets (optional)")
+                llm_frame.grid_remove()
+
+        llm_toggle_btn.config(command=_toggle_llm)
+
+        # Preset selection + lengths
+        preset_values = [
+            "Standard",
+            "Latency Critical (Chat)",
+            "Throughput/RAG",
+            "Custom",
+        ]
+        preset_map = {
+            "Latency Critical (Chat)": (128, 512),
+            "Standard": (512, 2048),
+            "Throughput/RAG": (2048, 128),
+        }
+
+        def _apply_llm_preset(event=None) -> None:
+            p = self.var_llm_preset.get().strip()
+            if p in preset_map:
+                prefill, dec = preset_map[p]
+                self.var_llm_prefill.set(str(prefill))
+                self.var_llm_decode.set(str(dec))
+
+        ttk.Checkbutton(llm_frame, text="Enable LLM preset", variable=self.var_llm_enable).grid(
+            row=0, column=0, sticky="w", padx=(6, 8), pady=(4, 2)
+        )
+
+        ttk.Label(llm_frame, text="Preset:").grid(row=0, column=1, sticky="e", padx=(0, 4))
+        llm_preset_cb = ttk.Combobox(llm_frame, textvariable=self.var_llm_preset, values=preset_values, state="readonly", width=22)
+        llm_preset_cb.grid(row=0, column=2, sticky="w", padx=(0, 10))
+        llm_preset_cb.bind("<<ComboboxSelected>>", _apply_llm_preset)
+
+        ttk.Label(llm_frame, text="Prefill (tokens):").grid(row=0, column=3, sticky="e", padx=(0, 4))
+        ttk.Entry(llm_frame, textvariable=self.var_llm_prefill, width=8).grid(row=0, column=4, sticky="w", padx=(0, 10))
+
+        ttk.Label(llm_frame, text="Decode past (tokens):").grid(row=0, column=5, sticky="e", padx=(0, 4))
+        ttk.Entry(llm_frame, textvariable=self.var_llm_decode, width=8).grid(row=0, column=6, sticky="w", padx=(0, 10))
+
+        # Mode: which scenario to apply for analysis
+        ttk.Label(llm_frame, text="Apply as:").grid(row=1, column=1, sticky="e", padx=(0, 4), pady=(0, 4))
+        ttk.Radiobutton(llm_frame, text="Decode", variable=self.var_llm_mode, value="decode").grid(
+            row=1, column=2, sticky="w", padx=(0, 10), pady=(0, 4)
+        )
+        ttk.Radiobutton(llm_frame, text="Prefill", variable=self.var_llm_mode, value="prefill").grid(
+            row=1, column=3, sticky="w", padx=(0, 10), pady=(0, 4)
+        )
+
+        ttk.Label(
+            llm_frame,
+            text="Tip: Decode uses seq_len=1 and past=Decode past. Prefill uses seq_len=Prefill and past=0.",
+            foreground="#555555",
+        ).grid(row=1, column=4, columnspan=4, sticky="w", padx=(0, 6), pady=(0, 4))
+
+        # Apply default preset values to keep entries consistent
+        _apply_llm_preset()
 
         # Latency model (collapsible)
         # This block is optional and can take a lot of vertical space. We keep a compact
@@ -476,7 +583,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.var_lat_expanded = tk.BooleanVar(value=False)
 
         self.lat_container = ttk.Frame(self.params_frame)
-        self.lat_container.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
+        self.lat_container.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
         self.lat_container.columnconfigure(0, weight=1)
 
         lat_toggle = ttk.Frame(self.lat_container)
@@ -604,7 +711,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.var_hailo_expanded = tk.BooleanVar(value=False)
 
         self.hailo_container = ttk.Frame(self.params_frame)
-        self.hailo_container.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
+        self.hailo_container.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
         self.hailo_container.columnconfigure(0, weight=1)
 
         hailo_toggle = ttk.Frame(self.hailo_container)
@@ -761,7 +868,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         # Diagnostics frame
         self.diag_frame = ttk.LabelFrame(self.params_frame, text="Diagnostics")
-        self.diag_frame.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
+        self.diag_frame.grid(row=5, column=0, sticky="ew", padx=8, pady=(0, 8))
 
         d = ttk.Frame(self.diag_frame)
         d.pack(fill=tk.X, padx=8, pady=6)
@@ -790,7 +897,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         # ---------------- Actions (analyse + export/split) ----------------
         # Keep this compact (small Analyse button) and always visible.
         action_bar = ttk.Frame(self.params_frame)
-        action_bar.grid(row=5, column=0, sticky="ew", padx=8, pady=(0, 8))
+        action_bar.grid(row=6, column=0, sticky="ew", padx=8, pady=(0, 8))
         action_bar.columnconfigure(0, weight=1)
 
         # Row 0: main actions
@@ -1442,6 +1549,11 @@ class SplitPointAnalyserGUI(tk.Tk):
             min_gap=int(min_gap),
             min_compute_pct=float(min_comp),
             batch_override=batch,
+            llm_enable=bool(self.var_llm_enable.get()),
+            llm_preset=str(self.var_llm_preset.get()),
+            llm_mode=str(self.var_llm_mode.get()),
+            llm_prefill_len=int(self.var_llm_prefill.get() or 0),
+            llm_decode_past_len=int(self.var_llm_decode.get() or 0),
             assume_bpe=bpe,
             exclude_trivial=exclude_trivial,
             only_single_tensor=only_one,
@@ -1563,6 +1675,44 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         if progress_cb:
             progress_cb("Running ONNX shape inference...")
+        # Optional LLM symbolic dim preset overrides (helps with KV-cache models)
+        if p.llm_enable:
+            try:
+                preset_name = (p.llm_preset or '').strip()
+                prefill_len = int(p.llm_prefill_len)
+                decode_past_len = int(p.llm_decode_past_len)
+                # We use the batch override if provided; otherwise default to 1.
+                bsz = int(p.batch_override) if p.batch_override else 1
+
+                # Mode controls which shapes we apply for analysis:
+                #  - 'decode': sequence_length=1, past_sequence_length=decode_past_len, total=past+1
+                #  - 'prefill': sequence_length=prefill_len, past_sequence_length=0, total=prefill_len
+                mode = (p.llm_mode or 'decode').strip().lower()
+                mapping = asc.make_llm_symbolic_dim_overrides(
+                    model,
+                    batch=bsz,
+                    prefill_len=prefill_len,
+                    decode_past_len=decode_past_len,
+                    mode=mode,
+                )
+                if mapping:
+                    changes = asc.apply_dim_param_overrides(model, mapping, only_inputs=True)
+                    logger.info(
+                        "[llm] Applied %d symbolic dim overrides (%s, prefill=%d, decode_past=%d) | %d dims updated",
+                        len(mapping),
+                        mode,
+                        prefill_len,
+                        decode_past_len,
+                        len(changes),
+                    )
+                else:
+                    logger.warning(
+                        "[llm] LLM preset enabled, but no matching dim_param names were found on graph inputs. "
+                        "(Try disabling strict boundary, or add explicit input shape overrides.)"
+                    )
+            except Exception as e:
+                logger.exception("[llm] Failed to apply LLM shape preset overrides: %s", e)
+
         model = asc.infer_shapes_safe(model)
 
         if progress_cb:
@@ -2922,7 +3072,9 @@ class SplitPointAnalyserGUI(tk.Tk):
                     "full_model": str(full_model_field).replace('\\', '/'),
                     "full_model_source": str(full_model_src).replace('\\', '/'),
                     "part1": os.path.basename(p1_path).replace('\\', '/'),
+                    "part1_model": os.path.basename(p1_path).replace('\\', '/'),
                     "part2": os.path.basename(p2_path).replace('\\', '/'),
+                    "part2_model": os.path.basename(p2_path).replace('\\', '/'),
                     "created_at": datetime.now().isoformat(timespec="seconds"),
                 }
                 if isinstance(split_manifest, dict):

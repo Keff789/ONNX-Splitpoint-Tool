@@ -27,6 +27,10 @@ from .onnx_utils import (
     shape_from_vi,
     topo_sort,
     value_info_map,
+    collect_dim_params,
+    apply_dim_param_overrides,
+    make_llm_symbolic_dim_overrides,
+    llm_preset_to_lengths,
 )
 
 # Metrics / ranking

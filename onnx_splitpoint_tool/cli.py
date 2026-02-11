@@ -21,6 +21,9 @@ from .onnx_utils import (
     build_producers_consumers,
     topo_sort,
     value_info_map,
+    apply_dim_param_overrides,
+    make_llm_symbolic_dim_overrides,
+    llm_preset_to_lengths,
 )
 from .units import (
     BANDWIDTH_MULT,
@@ -57,6 +60,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--batch", type=int, default=None)
     ap.add_argument("--assume-activation-bytes", type=int, default=None)
 
+    ap.add_argument("--llm-preset", type=str, default="none",
+                    help="Apply decoder-style LLM symbolic dim overrides (KV-cache models). \n                         Use one of: standard, latency, throughput, rag, custom, none.")
+    ap.add_argument("--llm-mode", type=str, default="decode", choices=["decode", "prefill"],
+                    help="Which scenario to apply: decode uses sequence_length=1 & past_sequence_length=decode_past_len; \n                         prefill uses sequence_length=prefill_len & past_sequence_length=0.")
+    ap.add_argument("--llm-prefill-len", type=int, default=512, help="Prefill sequence length (tokens)")
+    ap.add_argument("--llm-decode-past-len", type=int, default=2048, help="Decode past sequence length (KV cache length)")
+
     ap.add_argument("--exclude-trivial", action="store_true")
     ap.add_argument("--only-single-tensor", action="store_true")
 
@@ -91,6 +101,32 @@ def main(argv: Optional[List[str]] = None) -> int:
     # For analysis we only need shapes/metadata; avoid pulling large external weights into RAM.
     try:
         model = onnx.load(args.onnx_model, load_external_data=bool(args.load_external_data))
+
+        # Optional LLM symbolic dim preset overrides (helps with KV-cache decoder models)
+        llm_key = str(getattr(args, 'llm_preset', 'none')).strip().lower()
+        if llm_key and llm_key not in ('none', 'off', 'false', '0'):
+            prefill_len = int(getattr(args, 'llm_prefill_len', 512))
+            decode_past_len = int(getattr(args, 'llm_decode_past_len', 2048))
+            p_pref, p_dec = llm_preset_to_lengths(llm_key)
+            if p_pref is not None and p_dec is not None and llm_key != 'custom':
+                prefill_len, decode_past_len = int(p_pref), int(p_dec)
+            batch = int(args.batch) if args.batch is not None else 1
+            llm_mode = str(getattr(args, 'llm_mode', 'decode'))
+            overrides = make_llm_symbolic_dim_overrides(
+                model,
+                batch=batch,
+                prefill_len=prefill_len,
+                decode_past_len=decode_past_len,
+                mode=llm_mode,
+            )
+            if overrides:
+                apply_dim_param_overrides(model, overrides, only_inputs=True)
+                k_preview = ', '.join(list(overrides.keys())[:6])
+                suffix = '...' if len(overrides) > 6 else ''
+                print(f'[llm] applied {len(overrides)} symbolic dim overrides ({llm_mode}): {k_preview}{suffix}')
+            else:
+                print('[llm] preset requested but no matching dim_param names were found; skipping')
+
     except TypeError:
         # Older onnx versions: parse protobuf directly.
         with open(args.onnx_model, "rb") as f:

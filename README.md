@@ -90,8 +90,28 @@ python analyse_and_split.py path/to/model.onnx --topk 10
 - Strict boundary option (rejects splits where part2 needs additional *intermediate* activations beyond the cut tensors; original graph inputs are allowed).
 - Optional onnxruntime validation (`full(x) ~= part2(part1(x))`).
 - Runner skeleton generator (`run_split_onnxruntime.py`)
-  - supports classification-style top-k plots
-  - supports YOLO-style detection visualization + JSON export
+  - generic ORT benchmark runner for: full / part1 / part2 / composed
+  - supports input feeds via NPZ (`--inputs-npz`) and saving generated inputs (`--save-inputs-npz`)
+  - supports dumping standalone split interfaces as NPZ (`--dump-interface {right,left,min,either}`) with metadata
+  - supports CPU/CUDA/TensorRT (engine cache + fast-build preset) and writes `validation_report.json`
+
+**Example (dump interface for Part 2 / “right” side):**
+```bash
+./run_split_onnxruntime.sh --provider tensorrt --dump-interface right --dump-interface-out results/interface
+# outputs: results/interface_right.npz (and metadata in __meta__)
+```
+
+**Example (LLM-style shapes via overrides):**
+```bash
+./run_split_onnxruntime.sh --provider cuda --shape-override "input_ids=1x128 attention_mask=1x128"
+```
+
+**Example (reproducible inputs to NPZ):**
+```bash
+./run_split_onnxruntime.sh --provider cpu --seed 0 --save-inputs-npz results/inputs_full.npz
+./run_split_onnxruntime.sh --provider cpu --inputs-npz results/inputs_full.npz
+```
+
 - **Benchmark set generator (GUI button: “Benchmark set…”)**
   - exports one subfolder per selected split (models + runner)
   - writes `benchmark_suite.py` to run all cases and aggregate results/plots
