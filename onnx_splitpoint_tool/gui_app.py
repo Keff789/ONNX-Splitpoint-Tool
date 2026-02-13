@@ -187,7 +187,9 @@ class Params:
     llm_mode: str
     llm_prefill_len: int
     llm_decode_past_len: int
+    llm_use_ort_symbolic: bool
     assume_bpe: Optional[int]
+    unknown_tensor_proxy_mb: float
 
     exclude_trivial: bool
     only_single_tensor: bool
@@ -405,6 +407,16 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.ent_bpe.grid(row=0, column=col, sticky="w", padx=(4, 14))
         col += 1
 
+        # Fallback for tensors whose shape cannot be inferred.
+        # If >0, each unknown-size tensor contributes this many MB to the
+        # communication cost estimate (guards against "0-byte" cuts).
+        self.var_unknown_mb = tk.StringVar(value="2.0")
+        ttk.Label(general, text="Unknown MB/tensor:").grid(row=0, column=col, sticky="w")
+        col += 1
+        self.ent_unknown_mb = ttk.Entry(general, textvariable=self.var_unknown_mb, width=6)
+        self.ent_unknown_mb.grid(row=0, column=col, sticky="w", padx=(4, 14))
+        col += 1
+
         # second row
         self.var_exclude_trivial = tk.BooleanVar(value=True)
         self.chk_exclude_trivial = ttk.Checkbutton(general, text="Exclude trivial ops", variable=self.var_exclude_trivial)
@@ -487,6 +499,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.var_llm_mode = tk.StringVar(value="decode")   # 'decode' or 'prefill'
         self.var_llm_prefill = tk.StringVar(value="512")   # prompt length (tokens)
         self.var_llm_decode = tk.StringVar(value="2048")   # KV cache (past) length (tokens)
+        self.var_llm_use_ort_symbolic = tk.BooleanVar(value=True)
 
         self.chk_show_pareto = ttk.Checkbutton(r, text="Show Pareto front", variable=self.var_show_pareto)
         self.chk_show_pareto.grid(row=0, column=9, sticky="w")
@@ -573,6 +586,12 @@ class SplitPointAnalyserGUI(tk.Tk):
             text="Tip: Decode uses seq_len=1 and past=Decode past. Prefill uses seq_len=Prefill and past=0.",
             foreground="#555555",
         ).grid(row=1, column=4, columnspan=4, sticky="w", padx=(0, 6), pady=(0, 4))
+
+        ttk.Checkbutton(
+            llm_frame,
+            text="Use ORT symbolic shape inference (better shape coverage)",
+            variable=self.var_llm_use_ort_symbolic,
+        ).grid(row=2, column=1, columnspan=7, sticky="w", padx=(0, 6), pady=(0, 2))
 
         # Apply default preset values to keep entries consistent
         _apply_llm_preset()
@@ -1435,6 +1454,12 @@ class SplitPointAnalyserGUI(tk.Tk):
         batch = _safe_int(self.var_batch.get())
         bpe = _safe_int(self.var_bpe.get())
 
+        unknown_mb = _safe_float(self.var_unknown_mb.get())
+        if unknown_mb is None:
+            unknown_mb = 0.0
+        if unknown_mb < 0:
+            unknown_mb = 0.0
+
         exclude_trivial = bool(self.var_exclude_trivial.get())
         only_one = bool(self.var_only_one.get())
         strict_boundary = bool(self.var_strict_boundary.get())
@@ -1554,7 +1579,9 @@ class SplitPointAnalyserGUI(tk.Tk):
             llm_mode=str(self.var_llm_mode.get()),
             llm_prefill_len=int(self.var_llm_prefill.get() or 0),
             llm_decode_past_len=int(self.var_llm_decode.get() or 0),
+            llm_use_ort_symbolic=bool(self.var_llm_use_ort_symbolic.get()),
             assume_bpe=bpe,
+            unknown_tensor_proxy_mb=float(unknown_mb),
             exclude_trivial=exclude_trivial,
             only_single_tensor=only_one,
             strict_boundary=strict_boundary,
@@ -1675,45 +1702,86 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         if progress_cb:
             progress_cb("Running ONNX shape inference...")
-        # Optional LLM symbolic dim preset overrides (helps with KV-cache models)
+
+        # ------------------------------------------------------------
+        # LLM shape presets (optional)
+        #
+        # Two levers:
+        #   1) Pre-seed concrete shapes on common I/O tensors (input_ids, attention_mask,
+        #      past/present KV caches, logits). This helps both onnx.shape_inference and
+        #      ORT's symbolic shape inference.
+        #   2) Post-inference: apply dim_param->dim_value overrides across the entire
+        #      graph (covers value_info entries that shape inference adds).
+        # ------------------------------------------------------------
+
         if p.llm_enable:
             try:
-                preset_name = (p.llm_preset or '').strip()
                 prefill_len = int(p.llm_prefill_len)
                 decode_past_len = int(p.llm_decode_past_len)
-                # We use the batch override if provided; otherwise default to 1.
-                bsz = int(p.batch_override) if p.batch_override else 1
+                mode = p.llm_mode  # 'prefill' or 'decode'
 
-                # Mode controls which shapes we apply for analysis:
-                #  - 'decode': sequence_length=1, past_sequence_length=decode_past_len, total=past+1
-                #  - 'prefill': sequence_length=prefill_len, past_sequence_length=0, total=prefill_len
-                mode = (p.llm_mode or 'decode').strip().lower()
+                if mode == "decode":
+                    seq_len = 1
+                    past_len = decode_past_len
+                else:
+                    seq_len = prefill_len
+                    past_len = 0
+                total_len = seq_len + past_len
+
+                try:
+                    asc.apply_llm_io_shape_overrides(
+                        model,
+                        batch=max(1, int(p.batch_override)),
+                        seq_len=seq_len,
+                        past_len=past_len,
+                        total_len=total_len,
+                    )
+                    logger.info(
+                        "[llm] Pre-seeded I/O shapes: mode=%s batch=%d seq_len=%d past_len=%d total_len=%d",
+                        mode,
+                        max(1, int(p.batch_override)),
+                        seq_len,
+                        past_len,
+                        total_len,
+                    )
+                except Exception as e:
+                    logger.warning("[llm] Failed to pre-seed I/O shapes (continuing): %s", e)
+
+            except Exception as e:
+                logger.exception("[llm] Failed to compute LLM preset lengths: %s", e)
+
+        model = asc.infer_shapes_safe(model, use_ort_symbolic=bool(p.llm_enable and p.llm_use_ort_symbolic))
+
+        # Post-inference: apply dim_param overrides to all value_info.
+        if p.llm_enable:
+            try:
+                prefill_len = int(p.llm_prefill_len)
+                decode_past_len = int(p.llm_decode_past_len)
+                mode = p.llm_mode
+
                 mapping = asc.make_llm_symbolic_dim_overrides(
                     model,
-                    batch=bsz,
+                    batch=max(1, int(p.batch_override)),
                     prefill_len=prefill_len,
                     decode_past_len=decode_past_len,
                     mode=mode,
                 )
+
                 if mapping:
-                    changes = asc.apply_dim_param_overrides(model, mapping, only_inputs=True)
-                    logger.info(
-                        "[llm] Applied %d symbolic dim overrides (%s, prefill=%d, decode_past=%d) | %d dims updated",
-                        len(mapping),
-                        mode,
-                        prefill_len,
-                        decode_past_len,
-                        len(changes),
-                    )
+                    params["dim_overrides"] = mapping
+                    a["llm_dim_overrides"] = mapping
+                    changes2 = asc.apply_dim_param_overrides(model, mapping, only_inputs=False)
+                    if changes2:
+                        logger.info(
+                            "[llm] Applied symbolic dim overrides after shape inference (%d dims updated)",
+                            len(changes2),
+                        )
                 else:
                     logger.warning(
-                        "[llm] LLM preset enabled, but no matching dim_param names were found on graph inputs. "
-                        "(Try disabling strict boundary, or add explicit input shape overrides.)"
+                        "[llm] LLM preset enabled, but no dim_param names could be mapped. Comm estimation may be conservative."
                     )
             except Exception as e:
-                logger.exception("[llm] Failed to apply LLM shape preset overrides: %s", e)
-
-        model = asc.infer_shapes_safe(model)
+                logger.exception("[llm] Failed to apply dim overrides after shape inference: %s", e)
 
         if progress_cb:
             progress_cb("Collecting value infos...")
@@ -1740,6 +1808,18 @@ class SplitPointAnalyserGUI(tk.Tk):
         value_bytes_all = {k: 1 for k in producer_of.keys()}
         counts_all = asc.boundary_tensor_counts(order, producer_of, consumers_of, value_bytes_all)
         unknown_counts = [max(0, int(a) - int(k)) for a, k in zip(counts_all, counts_known)]
+
+        # Optional: pessimistically account for tensors whose shape cannot be inferred.
+        # Without this, the communication cost becomes a *lower bound* and the optimiser
+        # may incorrectly prefer "dirty" cuts that look cheap only because shape
+        # inference failed.
+        costs_bytes_lb = list(costs_bytes)
+        if p.unknown_tensor_proxy_mb and p.unknown_tensor_proxy_mb > 0 and unknown_counts:
+            proxy_bytes = int(float(p.unknown_tensor_proxy_mb) * 1024 * 1024)
+            costs_bytes = [int(cb) + proxy_bytes * int(uc) for cb, uc in zip(costs_bytes, unknown_counts)]
+
+            # Recompute peak memory estimates using the pessimistic comm estimate.
+            peak_l, peak_r, peak_max = asc.peak_activation_memory_per_boundary(costs_bytes)
 
         # Spans for ALL crossing values (including unknown sizes). Useful for Nordstern.
         _, val_span_all = asc.boundary_costs(order, producer_of, consumers_of, value_bytes_all)
@@ -1803,6 +1883,7 @@ class SplitPointAnalyserGUI(tk.Tk):
             "vimap": vimap,
             "value_bytes": value_bytes,
             "costs_bytes": costs_bytes,
+            "costs_bytes_lb": costs_bytes_lb,
             "peak_act_mem_left_bytes": peak_l,
             "peak_act_mem_right_bytes": peak_r,
             "peak_act_mem_max_bytes": peak_max,
@@ -1811,6 +1892,7 @@ class SplitPointAnalyserGUI(tk.Tk):
             "crossing_counts_known": counts_known,
             "crossing_counts_all": counts_all,
             "unknown_crossing_counts": unknown_counts,
+            "unknown_tensor_proxy_mb": float(p.unknown_tensor_proxy_mb) if p.unknown_tensor_proxy_mb else 0.0,
             "shape_coverage": coverage,
             "known_produced": known_produced,
             "total_produced": len(produced),
@@ -2365,7 +2447,11 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.var_unknown_crossing.set(str(max_unk))
 
         if cov < 0.999 or max_unk > 0:
-            self.var_diag_note.set("Comm(b) may be underestimated (lower bound)")
+            proxy_mb = float(a.get("unknown_tensor_proxy_mb", 0.0) or 0.0)
+            if max_unk > 0 and proxy_mb > 0:
+                self.var_diag_note.set(f"Comm(b) includes unknown proxy ({proxy_mb:g} MB/tensor)")
+            else:
+                self.var_diag_note.set("Comm(b) may be underestimated (lower bound)")
         else:
             self.var_diag_note.set("")
 
@@ -2401,14 +2487,19 @@ class SplitPointAnalyserGUI(tk.Tk):
             ]
 
             # Heuristic "unit" size for a single unknown tensor (used only for rough impact numbers).
-            known_sizes = [int(b) for b in value_bytes.values() if int(b) > 0]
-            if known_sizes:
-                try:
-                    assume_unknown_bytes = int(statistics.median(known_sizes))
-                except Exception:
-                    assume_unknown_bytes = int(sum(known_sizes) / max(1, len(known_sizes)))
+            # Prefer the user-provided proxy (same knob used for Comm(b) ranking), fall back
+            # to median known activation size if the proxy is 0.
+            if float(getattr(p, "unknown_tensor_proxy_mb", 0.0) or 0.0) > 0:
+                assume_unknown_bytes = int(float(p.unknown_tensor_proxy_mb) * 1e6)
             else:
-                assume_unknown_bytes = 1024 * 1024
+                known_sizes = [int(b) for b in value_bytes.values() if int(b) > 0]
+                if known_sizes:
+                    try:
+                        assume_unknown_bytes = int(statistics.median(known_sizes))
+                    except Exception:
+                        assume_unknown_bytes = int(sum(known_sizes) / max(1, len(known_sizes)))
+                else:
+                    assume_unknown_bytes = 1024 * 1024
 
             top1 = int(picks[0]) if picks else None
 

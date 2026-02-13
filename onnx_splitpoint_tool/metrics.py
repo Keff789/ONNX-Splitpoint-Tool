@@ -40,6 +40,13 @@ def compute_tensor_bytes_per_value(
     out: Dict[str, int] = {}
     for name, vi in vimap.items():
         shp = shape_from_vi(vi)
+        # If any dimension is unknown, treat this value as unknown-sized.
+        # We intentionally avoid guessing here because it can severely
+        # under-estimate communication. Unknown sizes can instead be handled
+        # via a dedicated proxy penalty (see GUI setting).
+        if any(d is None for d in shp):
+            out[name] = 0
+            continue
         n = numel_from_shape(shp, batch_override)
         if n <= 0:
             out[name] = 0

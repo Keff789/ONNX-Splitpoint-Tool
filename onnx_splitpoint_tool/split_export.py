@@ -38,16 +38,95 @@ LOGGER = logging.getLogger("onnx_splitpoint_tool.split_export")
 from .metrics import compute_tensor_bytes_per_value
 
 
-def infer_shapes_safe(model: onnx.ModelProto) -> onnx.ModelProto:
-    """Try to run ONNX shape inference.
+def _infer_shapes_ort_symbolic_safe(model: onnx.ModelProto) -> onnx.ModelProto:
+    """Best-effort symbolic shape inference via onnxruntime (if available).
 
-    Shape inference is useful for nicer I/O ValueInfo, but splitting should work
-    even if inference fails.
+    ORT's symbolic shape inference can resolve many dynamic shapes that
+    `onnx.shape_inference` can't (especially transformer graphs). We keep this
+    optional and *never* fail hard if ORT isn't present or inference errors.
     """
     try:
-        return shape_inference.infer_shapes(model)
+        # onnxruntime is an optional dependency for this tool.
+        from onnxruntime.tools.symbolic_shape_infer import SymbolicShapeInference  # type: ignore
     except Exception:
         return model
+
+    # The API signature has changed a few times across ORT versions. We use a
+    # small set of robust fallbacks.
+    try:
+        # 1) Classmethod/staticmethod style
+        if hasattr(SymbolicShapeInference, "infer_shapes"):
+            fn = getattr(SymbolicShapeInference, "infer_shapes")
+            if callable(fn):
+                try:
+                    return fn(
+                        model,
+                        int_max=2**31 - 1,
+                        auto_merge=True,
+                        guess_output_rank=True,
+                        verbose=0,
+                    )
+                except TypeError:
+                    # Try minimal signature.
+                    try:
+                        return fn(model)
+                    except TypeError:
+                        pass
+
+        # 2) Instance method style
+        try:
+            try:
+                inf = SymbolicShapeInference(
+                    int_max=2**31 - 1,
+                    auto_merge=True,
+                    guess_output_rank=True,
+                    verbose=0,
+                )
+            except TypeError:
+                inf = SymbolicShapeInference()  # type: ignore
+
+            if hasattr(inf, "infer_shapes"):
+                fn2 = getattr(inf, "infer_shapes")
+                if callable(fn2):
+                    try:
+                        return fn2(model)
+                    except TypeError:
+                        # Some variants expose the same kwargs on the method.
+                        return fn2(
+                            model,
+                            int_max=2**31 - 1,
+                            auto_merge=True,
+                            guess_output_rank=True,
+                            verbose=0,
+                        )
+        except Exception:
+            pass
+    except Exception:
+        return model
+
+    return model
+
+
+def infer_shapes_safe(model: onnx.ModelProto, *, use_ort_symbolic: bool = False) -> onnx.ModelProto:
+    """Try to run ONNX shape inference.
+
+    Shape inference is useful for comm estimation + nicer I/O ValueInfo, but
+    splitting should still work even if inference fails.
+
+    When `use_ort_symbolic` is True, we also attempt ORT's symbolic shape
+    inference as a second pass.
+    """
+    out = model
+    try:
+        out = shape_inference.infer_shapes(out)
+    except Exception as e:
+        LOGGER.debug("onnx.shape_inference failed (continuing): %s", e)
+
+    if use_ort_symbolic:
+        out2 = _infer_shapes_ort_symbolic_safe(out)
+        out = out2
+
+    return out
 
 
 def make_fallback_value_info(name: str):

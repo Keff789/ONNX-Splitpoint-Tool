@@ -30,6 +30,7 @@ from .onnx_utils import (
     collect_dim_params,
     apply_dim_param_overrides,
     make_llm_symbolic_dim_overrides,
+    apply_llm_io_shape_overrides,
     llm_preset_to_lengths,
 )
 

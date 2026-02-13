@@ -97,20 +97,61 @@ def value_info_map(model: onnx.ModelProto) -> Dict[str, onnx.ValueInfoProto]:
             if n.op_type != "Constant" or not n.output:
                 continue
             out = n.output[0]
-            if out in m:
-                continue
 
-            # Prefer the tensor-valued "value" attribute when present.
-            t = None
+            # If the exporter already emitted a ValueInfo for this Constant, keep it
+            # only if the shape is fully known. Otherwise, we overwrite it with a
+            # best-effort inferred shape to avoid treating small constants as
+            # “unknown size”.
+            existing = m.get(out)
+            if existing is not None:
+                try:
+                    sh = shape_from_vi(existing)
+                except Exception:
+                    sh = None
+                if sh is not None and all(d is not None for d in sh):
+                    continue
+
+            # Try to infer dtype+shape for Constant outputs.
+            #
+            # Many exporters use a tensor-valued "value" attribute, but others
+            # use scalar/vector attributes (value_int, value_ints, ...). If we
+            # don't backfill these shapes, they look "unknown" and can skew the
+            # unknown-size penalty/diagnostics.
+            inferred = None  # (dtype, shape)
+
+            # 1) TensorProto-valued Constant
             for a in n.attribute:
                 if a.name == "value" and a.type == AttributeProto.TENSOR:
                     t = a.t
+                    inferred = (t.data_type, list(t.dims))
                     break
 
-            if t is not None:
+            # 2) Scalar / vector Constant fallbacks
+            if inferred is None:
+                for a in n.attribute:
+                    if a.name == "value_int" and a.type == AttributeProto.INT:
+                        inferred = (TensorProto.INT64, [])
+                        break
+                    if a.name == "value_float" and a.type == AttributeProto.FLOAT:
+                        inferred = (TensorProto.FLOAT, [])
+                        break
+                    if a.name == "value_ints" and a.type == AttributeProto.INTS:
+                        inferred = (TensorProto.INT64, [len(a.ints)])
+                        break
+                    if a.name == "value_floats" and a.type == AttributeProto.FLOATS:
+                        inferred = (TensorProto.FLOAT, [len(a.floats)])
+                        break
+                    if a.name == "value_string" and a.type == AttributeProto.STRING:
+                        inferred = (TensorProto.STRING, [])
+                        break
+                    if a.name == "value_strings" and a.type == AttributeProto.STRINGS:
+                        inferred = (TensorProto.STRING, [len(a.strings)])
+                        break
+
+            if inferred is not None:
                 try:
-                    # TensorProto.dims can be empty for scalars.
-                    m[out] = helper.make_tensor_value_info(out, t.data_type, list(t.dims))
+                    dtype, shape = inferred
+                    m[out] = helper.make_tensor_value_info(out, dtype, shape)
                 except Exception:
                     # If something goes wrong, just leave it unknown.
                     pass
@@ -482,6 +523,126 @@ def make_llm_dim_overrides(
             out[p] = int(seq_len)
             continue
 
+    # ---------------------------------------------------------------------
+    # Extra seeding: some exporters (incl. ORT's symbolic shape infer) emit
+    # very generic dim_param names like "unk__0" / "dim_0". The heuristics
+    # above can't classify those from the name alone.
+    #
+    # In that case, we can still map a good portion of dims by looking at
+    # *where* they appear (standard LLM input/output names).
+    # ---------------------------------------------------------------------
+    try:
+        vimap = value_info_map(model)
+
+        def _seed_dim(value_name: str, axis: int, value: int) -> None:
+            vi = vimap.get(value_name)
+            if vi is None:
+                return
+            try:
+                dims = vi.type.tensor_type.shape.dim
+            except Exception:
+                return
+            if not dims:
+                return
+            if axis < 0:
+                axis2 = len(dims) + axis
+            else:
+                axis2 = axis
+            if axis2 < 0 or axis2 >= len(dims):
+                return
+            d = dims[axis2]
+            if getattr(d, "dim_param", "") and d.dim_param not in out:
+                out[d.dim_param] = int(value)
+
+        # Common text model inputs.
+        _seed_dim("input_ids", 0, batch)
+        _seed_dim("input_ids", 1, seq_len)
+        _seed_dim("position_ids", 0, batch)
+        _seed_dim("position_ids", 1, seq_len)
+        _seed_dim("attention_mask", 0, batch)
+        _seed_dim("attention_mask", -1, total_len)
+        if total_len != seq_len:
+            _seed_dim("attention_mask", -2, seq_len)
+
+        # KV cache inputs (past).
+        for inp in model.graph.input:
+            n = inp.name
+            if not (n.startswith("past_key_values.") and (n.endswith(".key") or n.endswith(".value"))):
+                continue
+            _seed_dim(n, 0, batch)
+            vi = vimap.get(n)
+            if vi is None:
+                continue
+            try:
+                dims = vi.type.tensor_type.shape.dim
+            except Exception:
+                continue
+            rank = len(dims)
+            if rank < 2:
+                continue
+
+            # Prefer the "middle" axis for past length (often axis 2 in [B, H, T, D]).
+            cand_axes = [i for i in range(rank) if i not in (0, rank - 1)]
+            pref_order = []
+            if rank >= 3:
+                pref_order.append(2)
+                pref_order.append(1)
+                pref_order.append(rank - 2)
+            pref_order += cand_axes
+            past_axis = None
+            for ax in pref_order:
+                if ax < 0 or ax >= rank:
+                    continue
+                dp = getattr(dims[ax], "dim_param", "")
+                if dp and dp not in out:
+                    past_axis = ax
+                    break
+            if past_axis is not None:
+                out[dims[past_axis].dim_param] = int(past_len)
+
+        # KV cache outputs (present): length is usually total_len (past+seq).
+        for out_vi in model.graph.output:
+            n = out_vi.name
+            if not (n.startswith("present.") and (n.endswith(".key") or n.endswith(".value"))):
+                continue
+            _seed_dim(n, 0, batch)
+            vi = vimap.get(n)
+            if vi is None:
+                continue
+            try:
+                dims = vi.type.tensor_type.shape.dim
+            except Exception:
+                continue
+            rank = len(dims)
+            if rank < 2:
+                continue
+
+            cand_axes = [i for i in range(rank) if i not in (0, rank - 1)]
+            pref_order = []
+            if rank >= 3:
+                pref_order.append(2)
+                pref_order.append(1)
+                pref_order.append(rank - 2)
+            pref_order += cand_axes
+            t_axis = None
+            for ax in pref_order:
+                if ax < 0 or ax >= rank:
+                    continue
+                dp = getattr(dims[ax], "dim_param", "")
+                if dp and dp not in out:
+                    t_axis = ax
+                    break
+            if t_axis is not None:
+                out[dims[t_axis].dim_param] = int(total_len)
+
+        # Logits output often carries (batch, seq_len, vocab). Map the first two.
+        _seed_dim("logits", 0, batch)
+        _seed_dim("logits", 1, seq_len)
+
+    except Exception:
+        # Seeding is best-effort; ignore failures.
+        pass
+
     return out
 
 
@@ -548,6 +709,141 @@ def make_llm_symbolic_dim_overrides(
         past_len=int(past_len),
         total_len=int(total_len),
     )
+
+
+def apply_llm_io_shape_overrides(
+    model,
+    *,
+    batch: int,
+    seq_len: int,
+    past_len: int,
+    total_len: int,
+) -> None:
+    """Best-effort: write concrete dim_value into common LLM I/O ValueInfo.
+
+    This is intentionally conservative:
+    - We only touch graph inputs/outputs (not internal value_info).
+    - We only set dim_value when it is currently unset.
+
+    Why we need this:
+    - Many transformer ONNX graphs keep `dim_param` empty and leave dims
+      unknown, which makes ONNX shape inference unable to propagate shapes.
+    - By forcing concrete input sizes (decode/prefill presets), we improve
+      downstream shape inference and reduce "unknown size" noise in comm
+      estimation.
+    """
+
+    def _set_if_unset(dim, value: int) -> None:
+        # Do not override fixed dims.
+        if dim is None:
+            return
+        try:
+            if dim.HasField("dim_value"):
+                return
+        except Exception:
+            # proto2 HasField should exist, but be safe.
+            if getattr(dim, "dim_value", None):
+                return
+        dim.dim_value = int(value)
+
+    def _patch_vi(vi, *, is_output: bool) -> None:
+        try:
+            tt = vi.type.tensor_type
+            if not tt.HasField("shape"):
+                return
+            dims = tt.shape.dim
+        except Exception:
+            return
+
+        if not dims:
+            return
+
+        name = getattr(vi, "name", "") or ""
+        lname = name.lower()
+        rank = len(dims)
+
+        # Batch is almost always dim0.
+        _set_if_unset(dims[0], batch)
+
+        # Token ids / positions
+        if lname == "input_ids" or "input_ids" in lname or lname.endswith("/input_ids"):
+            if rank >= 2:
+                _set_if_unset(dims[1], seq_len)
+            return
+
+        if lname == "position_ids" or "position_ids" in lname:
+            if rank >= 2:
+                _set_if_unset(dims[1], seq_len)
+            return
+
+        # Logits
+        if lname == "logits" or lname.endswith("/logits"):
+            # Typical: [batch, seq, vocab]
+            if rank >= 2:
+                _set_if_unset(dims[1], seq_len)
+            return
+
+        # Attention mask (shapes vary across exporters)
+        if "attention_mask" in lname or "attn_mask" in lname:
+            if rank >= 1:
+                _set_if_unset(dims[-1], total_len)
+            if rank >= 2:
+                # Often [B, 1, Q, K] or [B, Q, K]
+                _set_if_unset(dims[-2], seq_len)
+            if rank >= 4:
+                # Common: [B, 1, Q, K]
+                _set_if_unset(dims[1], 1)
+            return
+
+        # KV-cache inputs/outputs.
+        #  - past_key_values.*: input caches (length = past_len)
+        #  - present.*: output caches (length = total_len)
+        is_past = ("past_key_values" in lname) or lname.startswith("past_key_values.")
+        is_present = lname.startswith("present.")
+        if is_past or is_present:
+            cache_len = total_len if is_present else past_len
+
+            # Heuristic for cache axis:
+            #  - rank 4 common: [B, H, T, D] (T at axis2)
+            #  - for other layouts, choose the sole remaining unknown dim
+            #    (excluding batch + last dim) if possible.
+            if rank >= 3:
+                unknown_axes = []
+                for i, d in enumerate(dims):
+                    if i == 0:
+                        continue
+                    # avoid overriding head_dim (often last dim)
+                    if i == rank - 1:
+                        continue
+                    try:
+                        if d.HasField("dim_value"):
+                            continue
+                    except Exception:
+                        if getattr(d, "dim_value", None):
+                            continue
+                    # if dim_param exists, let symbolic override logic handle it
+                    if getattr(d, "dim_param", ""):
+                        continue
+                    unknown_axes.append(i)
+
+                if len(unknown_axes) == 1:
+                    _set_if_unset(dims[unknown_axes[0]], cache_len)
+                elif rank >= 4 and 2 in unknown_axes:
+                    _set_if_unset(dims[2], cache_len)
+                elif rank >= 4 and 1 in unknown_axes:
+                    _set_if_unset(dims[1], cache_len)
+                elif unknown_axes:
+                    _set_if_unset(dims[unknown_axes[0]], cache_len)
+
+            return
+
+    # Inputs
+    for vi in getattr(model.graph, "input", []):
+        _patch_vi(vi, is_output=False)
+
+    # Outputs
+    for vi in getattr(model.graph, "output", []):
+        _patch_vi(vi, is_output=True)
 
 
 def llm_preset_to_lengths(preset: str) -> Tuple[int, int]:
