@@ -4914,7 +4914,7 @@ if __name__ == "__main__":
                     except Exception:
                         semantic_label = None
 
-                    llm_style = bool(semantic_label) or bool(self.var_llm_preset.get())
+                    llm_style = bool(semantic_label) or bool(self.var_llm_enable.get())
                     value_bytes_map = self.analysis.get("value_bytes") if isinstance(self.analysis, dict) else None
 
                     if do_ctx_full:

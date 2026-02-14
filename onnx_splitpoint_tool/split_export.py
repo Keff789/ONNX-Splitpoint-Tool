@@ -1050,8 +1050,22 @@ def export_boundary_graphviz_context(
                 return s[: max(0, max_len - 3)] + "..."
 
             # Keep the fallback readable: shorten/wrap long labels, cap the cut tensor list.
-            left_text = "LEFT\n" + _short(left_label.replace("\n", " "), 110)
-            right_text = "RIGHT\n" + _short(right_label.replace("\n", " "), 110)
+            def _node_summary(ni: int) -> str:
+                if ni < 0 or ni >= len(nodes):
+                    return "(unknown)"
+                n = nodes[ni]
+                name = short_edge_label(n.name) if getattr(n, "name", "") else ""
+                return f"{ni}: {n.op_type}{(' | ' + name) if name else ''}"
+
+            left_text = "LEFT\n" + _short(_node_summary(int(b_left)).replace("\n", " "), 110)
+            right_text = "RIGHT\n" + _short(_node_summary(int(b_right)).replace("\n", " "), 110)
+
+            total_cut = 0
+            for t in cut_list:
+                try:
+                    total_cut += int(value_bytes_map.get(t, 0)) if isinstance(value_bytes_map, dict) else 0
+                except Exception:
+                    continue
 
             # Show each cut tensor as its own box (much more readable than a
             # single giant text blob). Cap the list so the diagram stays usable.
