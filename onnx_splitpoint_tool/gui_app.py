@@ -523,6 +523,7 @@ class SplitPointAnalyserGUI(tk.Tk):
     def _handle_candidate_selected(self, _candidate: Optional[SelectedCandidate]) -> None:
         self._update_action_buttons()
         self._refresh_memory_forecast()
+        self._highlight_selected_boundary_in_plots()
 
     def _handle_settings_changed(self) -> None:
         self._update_action_buttons()
@@ -1380,6 +1381,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=plot_frame)
         self.canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+        self.canvas.mpl_connect("button_press_event", self._on_plot_click_select_candidate)
 
         # Matplotlib navigation toolbar (zoom/pan/save/etc.)
         toolbar_frame = ttk.Frame(plot_frame)
@@ -1615,6 +1617,62 @@ class SplitPointAnalyserGUI(tk.Tk):
                 stats = dict(self.analysis_result.memory_estimate.get(int(b), {}))
         self.selected_candidate = SelectedCandidate(boundary_id=int(b), semantic_label=sem, cut_tensors=cut_tensors, stats=stats)
         self.events.emit_candidate_selected(self.selected_candidate)
+
+    def _on_plot_click_select_candidate(self, event) -> None:
+        """Map clicks in boundary-index plots back to tree/candidate selection."""
+        if event is None or event.xdata is None:
+            return
+        if event.inaxes not in {getattr(self, "ax_comm", None), getattr(self, "ax_comp", None), getattr(self, "ax_lat", None)}:
+            return
+        if not self._candidate_rows:
+            return
+        try:
+            boundary = int(round(float(event.xdata)))
+        except Exception:
+            return
+        candidates = [int(r.get("boundary", -1)) for r in self._candidate_rows]
+        if not candidates:
+            return
+        boundary = min(candidates, key=lambda b: abs(int(b) - boundary))
+        for item in self.tree.get_children(""):
+            vals = self.tree.item(item, "values")
+            if len(vals) < 3:
+                continue
+            try:
+                if int(vals[2]) == int(boundary):
+                    self.tree.selection_set(item)
+                    self.tree.focus(item)
+                    self.tree.see(item)
+                    self._on_tree_selection_changed()
+                    return
+            except Exception:
+                continue
+
+    def _highlight_selected_boundary_in_plots(self) -> None:
+        """Draw selection marker in plots so table↔plot↔inspector stay in sync."""
+        b = self._selected_boundary_index()
+        for ax in (getattr(self, "ax_comm", None), getattr(self, "ax_comp", None), getattr(self, "ax_pareto", None), getattr(self, "ax_lat", None)):
+            if ax is None:
+                continue
+            for line in list(ax.lines):
+                if getattr(line, "_split_selected_marker", False):
+                    try:
+                        line.remove()
+                    except Exception:
+                        pass
+        if b is None:
+            try:
+                self.canvas.draw_idle()
+            except Exception:
+                pass
+            return
+        for ax in (self.ax_comm, self.ax_comp, self.ax_lat):
+            marker = ax.axvline(float(b), color="#d32f2f", linestyle="-", linewidth=1.2, alpha=0.9)
+            setattr(marker, "_split_selected_marker", True)
+        try:
+            self.canvas.draw_idle()
+        except Exception:
+            pass
 
     def _sync_gui_state_from_vars(self) -> None:
         self.gui_state.analysis_params = {
@@ -3850,6 +3908,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                 transform=self.ax_lat.transAxes,
             )
 
+        self._highlight_selected_boundary_in_plots()
         self.canvas.draw_idle()
 
         self.analysis_result.plot_data = {
