@@ -144,6 +144,17 @@ def build_panel(parent, app=None) -> ttk.Frame:
 def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
     preset_cb = frame.preset_cb
 
+    def _same_parent(widget: Any, parent: Any) -> bool:
+        winfo_parent = getattr(widget, "winfo_parent", None)
+        winfo_pathname = getattr(widget, "winfo_pathname", None)
+        winfo_id = getattr(parent, "winfo_id", None)
+        if not (callable(winfo_parent) and callable(winfo_pathname) and callable(winfo_id)):
+            return False
+        try:
+            return bool(winfo_parent() == winfo_pathname(winfo_id()))
+        except Exception:
+            return False
+
     def _widget_text(widget: Any) -> str:
         """Best-effort text lookup for ttk/tk widgets.
 
@@ -195,16 +206,21 @@ def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
             if _widget_text(child) == "Output folder…":
                 continue
         open_btn = getattr(app, "btn_open", None)
-        if open_btn is not None:
+        if open_btn is not None and _same_parent(open_btn, frame.top_model_bar):
             open_btn.pack_forget()
             open_btn.pack(in_=frame.top_model_bar, side=tk.LEFT)
+        else:
+            ttk.Button(frame.top_model_bar, text="Open Model…", command=app._on_open).pack(side=tk.LEFT)
         out_cmd = getattr(app, "_split_selected_boundary", None)
         if callable(out_cmd):
             frame.output_btn.configure(command=out_cmd)
 
     if hasattr(app, "btn_toggle_settings"):
-        app.btn_toggle_settings.pack_forget()
-        app.btn_toggle_settings.pack(in_=frame.top_model_bar, side=tk.RIGHT)
+        if _same_parent(app.btn_toggle_settings, frame.top_model_bar):
+            app.btn_toggle_settings.pack_forget()
+            app.btn_toggle_settings.pack(in_=frame.top_model_bar, side=tk.RIGHT)
+        else:
+            ttk.Button(frame.top_model_bar, text="Hide settings", command=app._toggle_settings).pack(side=tk.RIGHT)
 
     if hasattr(app, "lbl_model"):
         app.lbl_model.pack_forget()
