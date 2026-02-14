@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tkinter as tk
+from tkinter import TclError
 from tkinter import ttk
 from typing import Any, Dict, Iterable
 
@@ -143,6 +144,23 @@ def build_panel(parent, app=None) -> ttk.Frame:
 def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
     preset_cb = frame.preset_cb
 
+    def _widget_text(widget: Any) -> str:
+        """Best-effort text lookup for ttk/tk widgets.
+
+        Some widgets (e.g. Frame, PanedWindow) do not support `-text` and raise
+        ``TclError`` on ``cget('text')``. We must guard this during generic child
+        iteration to keep GUI startup robust on all platforms.
+        """
+
+        cget = getattr(widget, "cget", None)
+        if not callable(cget):
+            return ""
+        try:
+            v = cget("text")
+        except (TclError, Exception):
+            return ""
+        return str(v or "")
+
     def _refresh_model_bar() -> None:
         path = str(getattr(app, "model_path", None) or getattr(getattr(app, "gui_state", None), "current_model_path", "") or "")
         frame.model_name_var.set(os.path.basename(path) if path else "(no model loaded)")
@@ -174,7 +192,7 @@ def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
 
     if hasattr(app, "_on_open"):
         for child in frame.top_model_bar.winfo_children():
-            if getattr(child, "cget", lambda *_: None)("text") == "Output folder…":
+            if _widget_text(child) == "Output folder…":
                 continue
         open_btn = getattr(app, "btn_open", None)
         if open_btn is not None:
