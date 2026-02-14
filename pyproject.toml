@@ -24,3 +24,6 @@ onnx-splitpoint-gui = "onnx_splitpoint_tool.gui_app:main"
 
 [tool.setuptools]
 packages = ["onnx_splitpoint_tool"]
+
+[tool.setuptools.package-data]
+onnx_splitpoint_tool = ["resources/*.json"]
