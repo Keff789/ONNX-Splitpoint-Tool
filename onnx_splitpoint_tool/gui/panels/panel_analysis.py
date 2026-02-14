@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import tkinter as tk
-from tkinter import TclError
 from tkinter import ttk
 from typing import Any, Dict, Iterable
 
@@ -155,23 +154,6 @@ def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
         except Exception:
             return False
 
-    def _widget_text(widget: Any) -> str:
-        """Best-effort text lookup for ttk/tk widgets.
-
-        Some widgets (e.g. Frame, PanedWindow) do not support `-text` and raise
-        ``TclError`` on ``cget('text')``. We must guard this during generic child
-        iteration to keep GUI startup robust on all platforms.
-        """
-
-        cget = getattr(widget, "cget", None)
-        if not callable(cget):
-            return ""
-        try:
-            v = cget("text")
-        except (TclError, Exception):
-            return ""
-        return str(v or "")
-
     def _refresh_model_bar() -> None:
         path = str(getattr(app, "model_path", None) or getattr(getattr(app, "gui_state", None), "current_model_path", "") or "")
         frame.model_name_var.set(os.path.basename(path) if path else "(no model loaded)")
@@ -202,15 +184,12 @@ def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
     preset_cb.bind("<<ComboboxSelected>>", _on_preset_selected, add=True)
 
     if hasattr(app, "_on_open"):
-        for child in frame.top_model_bar.winfo_children():
-            if _widget_text(child) == "Output folder…":
-                continue
         open_btn = getattr(app, "btn_open", None)
         if open_btn is not None and _same_parent(open_btn, frame.top_model_bar):
             open_btn.pack_forget()
-            open_btn.pack(in_=frame.top_model_bar, side=tk.LEFT)
+            open_btn.grid(in_=frame.top_model_bar, row=0, column=0, sticky="w")
         else:
-            ttk.Button(frame.top_model_bar, text="Open Model…", command=app._on_open).pack(side=tk.LEFT)
+            ttk.Button(frame.top_model_bar, text="Open Model…", command=app._on_open).grid(row=0, column=0, sticky="w")
         out_cmd = getattr(app, "_split_selected_boundary", None)
         if callable(out_cmd):
             frame.output_btn.configure(command=out_cmd)
@@ -218,9 +197,9 @@ def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
     if hasattr(app, "btn_toggle_settings"):
         if _same_parent(app.btn_toggle_settings, frame.top_model_bar):
             app.btn_toggle_settings.pack_forget()
-            app.btn_toggle_settings.pack(in_=frame.top_model_bar, side=tk.RIGHT)
+            app.btn_toggle_settings.grid(in_=frame.top_model_bar, row=0, column=3, sticky="e", padx=(8, 0))
         else:
-            ttk.Button(frame.top_model_bar, text="Hide settings", command=app._toggle_settings).pack(side=tk.RIGHT)
+            ttk.Button(frame.top_model_bar, text="Hide settings", command=app._toggle_settings).grid(row=0, column=3, sticky="e", padx=(8, 0))
 
     if hasattr(app, "lbl_model"):
         app.lbl_model.pack_forget()
