@@ -48,6 +48,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
+try:
+    import ttkbootstrap as tb
+except Exception:  # optional dependency
+    tb = None
+
 # Matplotlib backend must be selected BEFORE importing pyplot/backends
 import matplotlib
 
@@ -186,6 +191,7 @@ class Params:
     llm_preset: str
     llm_mode: str
     llm_prefill_len: int
+    llm_seq_len: int
     llm_decode_past_len: int
     llm_use_ort_symbolic: bool
     assume_bpe: Optional[int]
@@ -328,7 +334,14 @@ class SplitPointAnalyserGUI(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self.title(f"ONNX Split-Point Analyser v{__version__} (core v{getattr(asc, '__version__', '?')})")
+        self._theme = None
+        if tb is not None:
+            try:
+                self._theme = tb.Style(theme="darkly")
+            except Exception:
+                self._theme = None
+
+        self.title(f"ONNX Split-Point Analyser - AI Edition v{__version__} (core v{getattr(asc, '__version__', '?')})")
         self.geometry("1250x860")
 
         self.model_path: Optional[str] = None
@@ -1578,6 +1591,7 @@ class SplitPointAnalyserGUI(tk.Tk):
             llm_preset=str(self.var_llm_preset.get()),
             llm_mode=str(self.var_llm_mode.get()),
             llm_prefill_len=int(self.var_llm_prefill.get() or 0),
+            llm_seq_len=(1 if str(self.var_llm_mode.get()) == "decode" else int(self.var_llm_prefill.get() or 0)),
             llm_decode_past_len=int(self.var_llm_decode.get() or 0),
             llm_use_ort_symbolic=bool(self.var_llm_use_ort_symbolic.get()),
             assume_bpe=bpe,
@@ -1702,6 +1716,27 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         if progress_cb:
             progress_cb("Running ONNX shape inference...")
+
+        # Apply generic LLM-related dimension overrides early (safe for None batch override)
+        if p.llm_enable:
+            try:
+                batch_val = int(p.batch_override) if p.batch_override is not None else 1
+                seq_val = int(getattr(p, "llm_seq_len", 0) or 0)
+                if seq_val <= 0:
+                    seq_val = 1 if str(getattr(p, "llm_mode", "")).lower() == "decode" else int(getattr(p, "llm_prefill_len", 1) or 1)
+                asc.apply_dim_overrides(
+                    model,
+                    {
+                        "batch": batch_val,
+                        "batch_size": batch_val,
+                        "seq": seq_val,
+                        "sequence": seq_val,
+                        "sequence_length": seq_val,
+                        "seq_len": seq_val,
+                    },
+                )
+            except Exception as e:
+                logger.warning("[llm] Failed to apply generic dim overrides (continuing): %s", e)
 
         # ------------------------------------------------------------
         # LLM shape presets (optional)
@@ -2780,6 +2815,14 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         M = len(costs)
         xs = list(range(M))
+
+        # Visual layer bands (zebra) to improve boundary readability.
+        # Use candidate boundaries as approximate semantic layer edges.
+        layer_bounds = sorted(set(int(b) for b in (a.get("candidate_bounds") or [])))
+        if len(layer_bounds) >= 2:
+            for ax in (self.ax_comm, self.ax_comp, self.ax_lat):
+                for i in range(0, len(layer_bounds) - 1, 2):
+                    ax.axvspan(layer_bounds[i], layer_bounds[i + 1], color="white", alpha=0.05, zorder=0)
 
         comm_mb = [float(cb) / 1e6 for cb in costs]
         fl_l_g = [float(f) / 1e9 for f in flops_left_prefix]
