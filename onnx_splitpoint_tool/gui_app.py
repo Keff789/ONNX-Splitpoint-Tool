@@ -3692,7 +3692,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                 # NOTE: This worker runs asynchronously and should not depend on GUI variables
                 # that may not exist in this scope. We infer "LLM style" from the selected
                 # boundary metadata (semantic labels) and/or whether LLM presets are enabled.
-                llm_style = bool(semantic_label) or bool(getattr(params, "llm_enable", False))
+                llm_style = bool(getattr(params, "llm_enable", False))
                 value_bytes_map = self.analysis.get("value_bytes") if isinstance(self.analysis, dict) else None
 
                 if do_ctx_full:
@@ -4914,7 +4914,7 @@ if __name__ == "__main__":
                     except Exception:
                         semantic_label = None
 
-                    llm_style = bool(semantic_label) or bool(self.var_llm_enable.get())
+                    llm_style = bool(self.var_llm_enable.get())
                     value_bytes_map = self.analysis.get("value_bytes") if isinstance(self.analysis, dict) else None
 
                     if do_ctx_full:

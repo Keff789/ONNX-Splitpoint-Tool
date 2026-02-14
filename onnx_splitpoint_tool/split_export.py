@@ -1057,24 +1057,6 @@ def export_boundary_graphviz_context(
                 name = short_edge_label(n.name) if getattr(n, "name", "") else ""
                 return f"{ni}: {n.op_type}{(' | ' + name) if name else ''}"
 
-            left_text = "LEFT\n" + _short(_node_summary(int(b_left)).replace("\n", " "), 110)
-            right_text = "RIGHT\n" + _short(_node_summary(int(b_right)).replace("\n", " "), 110)
-
-            total_cut = 0
-            for t in cut_list:
-                try:
-                    total_cut += int(value_bytes_map.get(t, 0)) if isinstance(value_bytes_map, dict) else 0
-                except Exception:
-                    continue
-
-            # Show each cut tensor as its own box (much more readable than a
-            # single giant text blob). Cap the list so the diagram stays usable.
-            max_show = 22
-            shown = cut_list[:max_show]
-            omitted = max(0, len(cut_list) - len(shown))
-
-            import re as _re
-
             def _wrap_keep_newlines(s: str, width: int) -> str:
                 """Wrap each line individually while preserving explicit newlines."""
                 out_lines = []
@@ -1085,6 +1067,36 @@ def export_boundary_graphviz_context(
                         continue
                     out_lines.append(_tw.fill(ln, width=width, break_long_words=True, break_on_hyphens=False))
                 return "\n".join(out_lines)
+
+            # Keep boundary summaries compact and wrapped so side boxes don't sprawl
+            # into the center column (which caused visual overlap in dense diagrams).
+            left_text = "LEFT\n" + _wrap_keep_newlines(
+                _short(_node_summary(int(b_left)).replace("\n", " "), 70), width=24
+            )
+            right_text = "RIGHT\n" + _wrap_keep_newlines(
+                _short(_node_summary(int(b_right)).replace("\n", " "), 70), width=24
+            )
+
+            size_map: Dict[str, int] = {}
+            if isinstance(vb, dict):
+                size_map.update({str(k): int(v or 0) for k, v in vb.items()})
+            if isinstance(value_bytes_map, dict):
+                size_map.update({str(k): int(v or 0) for k, v in value_bytes_map.items()})
+
+            total_cut = 0
+            for t in cut_list:
+                try:
+                    total_cut += int(size_map.get(t, 0))
+                except Exception:
+                    continue
+
+            # Show each cut tensor as its own box (much more readable than a
+            # single giant text blob). Cap the list so the diagram stays usable.
+            max_show = 22
+            shown = cut_list[:max_show]
+            omitted = max(0, len(cut_list) - len(shown))
+
+            import re as _re
 
             def _shorten_path(name: str, keep_tail: int = 4) -> str:
                 name = (name or "").strip()
@@ -1114,13 +1126,17 @@ def export_boundary_graphviz_context(
                         name_line, meta_lines = first.strip(), [rest.strip()]
 
                 name_short = _shorten_path(name_line, keep_tail=4)
-                name_short = _wrap_keep_newlines(name_short, width=26)
+                name_short = _wrap_keep_newlines(name_short, width=20)
                 meta = "\n".join(meta_lines)
-                meta = _wrap_keep_newlines(meta, width=44) if meta else ""
+                meta = _wrap_keep_newlines(meta, width=30) if meta else ""
+                t_bytes = int(size_map.get(name_line, 0) or 0)
+                size_line = f"~{_mb(t_bytes):.3f} MiB assumed" if t_bytes > 0 else ""
 
                 label = name_short
                 if meta:
                     label = f"{label}\n{meta}"
+                if size_line:
+                    label = f"{label}\n{size_line}"
 
                 # Apply numbering and indent wrapped lines.
                 prefix = f"{idx:>2}. "
@@ -1139,11 +1155,12 @@ def export_boundary_graphviz_context(
 
             # Figure size adapts to the number of cut tensors (and the side boxes).
             n_cut = len(cut_nodes)
-            fig_h = max(3.2, 0.28 * n_cut + 2.0)
-            fig_w = 13.0
+            fig_h = max(3.8, 0.34 * n_cut + 2.6)
+            fig_w = 15.0
 
             fig, ax = plt.subplots(figsize=(fig_w, fig_h))
             ax.set_axis_off()
+            fig.subplots_adjust(left=0.02, right=0.98, top=0.90, bottom=0.06)
 
             box_kw = dict(
                 boxstyle="round,pad=0.45",
@@ -1165,7 +1182,7 @@ def export_boundary_graphviz_context(
             )
             ax.text(
                 0.50,
-                0.92,
+                0.875,
                 "CUT TENSORS",
                 va="center",
                 ha="center",
@@ -1189,7 +1206,7 @@ def export_boundary_graphviz_context(
             if len(cut_nodes) == 1:
                 ys = [0.5]
             else:
-                top_y, bot_y = 0.84, 0.16
+                top_y, bot_y = 0.73, 0.15
                 step = (top_y - bot_y) / (len(cut_nodes) - 1)
                 ys = [top_y - i * step for i in range(len(cut_nodes))]
 
@@ -1201,8 +1218,8 @@ def export_boundary_graphviz_context(
             )
 
             # Anchor points for arrows (axes fraction coordinates).
-            left_anchor = (0.20, 0.5)
-            right_anchor = (0.80, 0.5)
+            left_anchor = (0.27, 0.5)
+            right_anchor = (0.73, 0.5)
             for y, label in zip(ys, cut_nodes):
                 ax.text(
                     0.50,
@@ -1219,7 +1236,7 @@ def export_boundary_graphviz_context(
                 # Left -> cut
                 ax.annotate(
                     "",
-                    xy=(0.41, y),
+                    xy=(0.445, y),
                     xytext=left_anchor,
                     arrowprops=dict(arrowstyle="->", lw=0.9),
                     xycoords=ax.transAxes,
@@ -1228,20 +1245,16 @@ def export_boundary_graphviz_context(
                 ax.annotate(
                     "",
                     xy=right_anchor,
-                    xytext=(0.59, y),
+                    xytext=(0.555, y),
                     arrowprops=dict(arrowstyle="->", lw=0.9),
                     xycoords=ax.transAxes,
                 )
 
-            ax.text(
-                0.5,
-                0.97,
+            fig.suptitle(
                 f"Split boundary {boundary_index}{(' | ' + semantic_label) if semantic_label else ''} | cut={_mb(total_cut):.3f} MiB | "
                 f"tensors={len(cut_list)} (+{num_cut_omitted} const/init omitted)",
-                ha="center",
-                va="top",
                 fontsize=11,
-                transform=ax.transAxes,
+                y=0.985,
             )
 
             # Save only the missing formats; do not overwrite graphviz output if present.
