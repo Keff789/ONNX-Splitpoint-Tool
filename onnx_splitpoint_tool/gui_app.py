@@ -496,6 +496,9 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         self._register_event_handlers()
 
+        # Remembered default folder for split/export dialogs.
+        self.default_output_dir: Optional[str] = None
+
         self._build_ui()
 
     def _register_event_handlers(self) -> None:
@@ -564,6 +567,26 @@ class SplitPointAnalyserGUI(tk.Tk):
         except Exception:
             pass
         self.var_settings_visible.set(True)
+
+    def _on_pick_output_folder(self) -> None:
+        """Choose and remember a default output folder for exports."""
+        initial = self.default_output_dir
+        if not initial:
+            model_path = self.model_path if isinstance(self.model_path, str) else ""
+            if model_path:
+                initial = os.path.dirname(model_path)
+        if not initial:
+            initial = os.getcwd()
+
+        picked = filedialog.askdirectory(title="Select default output folder", initialdir=initial)
+        if not picked:
+            return
+
+        self.default_output_dir = picked
+        try:
+            self._set_status(f"Default output folder: {picked}")
+        except Exception:
+            pass
 
     def _build_ui(self):
         # --- Top bar: open model ---
@@ -4075,9 +4098,11 @@ class SplitPointAnalyserGUI(tk.Tk):
                     p1_cut_names = [new_name]
                     p2_cut_names = [new_name]
 
-        out_parent = filedialog.askdirectory(title="Select output folder")
+        initial_out = self.default_output_dir or os.path.dirname(model_path)
+        out_parent = filedialog.askdirectory(title="Select output folder", initialdir=initial_out)
         if not out_parent:
             return
+        self.default_output_dir = out_parent
 
         base = os.path.splitext(os.path.basename(model_path))[0]
         export_as_folder = bool(self.var_split_folder.get())

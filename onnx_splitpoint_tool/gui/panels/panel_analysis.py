@@ -191,7 +191,7 @@ def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
             open_btn.grid(in_=frame.top_model_bar, row=0, column=0, sticky="w")
         else:
             ttk.Button(frame.top_model_bar, text="Open Model…", command=app._on_open).grid(row=0, column=0, sticky="w")
-        out_cmd = getattr(app, "_split_selected_boundary", None)
+        out_cmd = getattr(app, "_on_pick_output_folder", None)
         if callable(out_cmd):
             frame.output_btn.configure(command=out_cmd)
 
