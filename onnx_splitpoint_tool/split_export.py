@@ -1071,17 +1071,11 @@ def export_boundary_graphviz_context(
             # Keep boundary summaries compact and wrapped so side boxes don't sprawl
             # into the center column (which caused visual overlap in dense diagrams).
             left_text = "LEFT\n" + _wrap_keep_newlines(
-                _short(_node_summary(int(b_left)).replace("\n", " "), 70), width=24
+                _short(_node_summary(int(b_left)).replace("\n", " "), 90), width=34
             )
             right_text = "RIGHT\n" + _wrap_keep_newlines(
-                _short(_node_summary(int(b_right)).replace("\n", " "), 70), width=24
+                _short(_node_summary(int(b_right)).replace("\n", " "), 90), width=34
             )
-
-            size_map: Dict[str, int] = {}
-            if isinstance(vb, dict):
-                size_map.update({str(k): int(v or 0) for k, v in vb.items()})
-            if isinstance(value_bytes_map, dict):
-                size_map.update({str(k): int(v or 0) for k, v in value_bytes_map.items()})
 
             total_cut = 0
             for t in cut_list:
@@ -1126,11 +1120,9 @@ def export_boundary_graphviz_context(
                         name_line, meta_lines = first.strip(), [rest.strip()]
 
                 name_short = _shorten_path(name_line, keep_tail=4)
-                name_short = _wrap_keep_newlines(name_short, width=20)
+                name_short = _wrap_keep_newlines(name_short, width=22)
                 meta = "\n".join(meta_lines)
-                meta = _wrap_keep_newlines(meta, width=30) if meta else ""
-                t_bytes = int(size_map.get(name_line, 0) or 0)
-                size_line = f"~{_mb(t_bytes):.3f} MiB assumed" if t_bytes > 0 else ""
+                meta = _wrap_keep_newlines(meta, width=34) if meta else ""
 
                 label = name_short
                 if meta:
@@ -1155,8 +1147,8 @@ def export_boundary_graphviz_context(
 
             # Figure size adapts to the number of cut tensors (and the side boxes).
             n_cut = len(cut_nodes)
-            fig_h = max(3.8, 0.34 * n_cut + 2.6)
-            fig_w = 15.0
+            fig_h = max(3.2, 0.28 * n_cut + 2.0)
+            fig_w = 14.0
 
             fig, ax = plt.subplots(figsize=(fig_w, fig_h))
             ax.set_axis_off()
@@ -1170,7 +1162,7 @@ def export_boundary_graphviz_context(
             )
 
             ax.text(
-                0.02,
+                0.03,
                 0.5,
                 left_text,
                 va="center",
@@ -1191,7 +1183,7 @@ def export_boundary_graphviz_context(
                 transform=ax.transAxes,
             )
             ax.text(
-                0.98,
+                0.97,
                 0.5,
                 right_text,
                 va="center",
@@ -1218,8 +1210,8 @@ def export_boundary_graphviz_context(
             )
 
             # Anchor points for arrows (axes fraction coordinates).
-            left_anchor = (0.27, 0.5)
-            right_anchor = (0.73, 0.5)
+            left_anchor = (0.24, 0.5)
+            right_anchor = (0.76, 0.5)
             for y, label in zip(ys, cut_nodes):
                 ax.text(
                     0.50,
@@ -1236,7 +1228,7 @@ def export_boundary_graphviz_context(
                 # Left -> cut
                 ax.annotate(
                     "",
-                    xy=(0.445, y),
+                    xy=(0.43, y),
                     xytext=left_anchor,
                     arrowprops=dict(arrowstyle="->", lw=0.9),
                     xycoords=ax.transAxes,
@@ -1245,7 +1237,7 @@ def export_boundary_graphviz_context(
                 ax.annotate(
                     "",
                     xy=right_anchor,
-                    xytext=(0.555, y),
+                    xytext=(0.57, y),
                     arrowprops=dict(arrowstyle="->", lw=0.9),
                     xycoords=ax.transAxes,
                 )
