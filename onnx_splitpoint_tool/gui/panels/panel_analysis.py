@@ -147,7 +147,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
 def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
     preset_cb = frame.preset_cb
 
-    def _refresh_model_bar() -> None:
+    def _refresh_model_bar(_model_info: Any = None) -> None:
         path = str(getattr(app, "model_path", None) or getattr(getattr(app, "gui_state", None), "current_model_path", "") or "")
         frame.model_name_var.set(os.path.basename(path) if path else "(no model loaded)")
         mtype = str(getattr(getattr(app, "gui_state", None), "model_type", "onnx") or "onnx").upper()
