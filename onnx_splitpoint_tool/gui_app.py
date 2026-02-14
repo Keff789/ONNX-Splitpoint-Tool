@@ -1012,9 +1012,65 @@ class SplitPointAnalyserGUI(tk.Tk):
         for v in (self.var_memf_left_accel, self.var_memf_right_accel, self.var_memf_interface, self.var_memf_policy, self.var_memf_include_comm, self.var_memf_include_kv):
             v.trace_add("write", lambda *_: self._refresh_memory_forecast())
 
+        # Memory forecast (optional)
+        self.var_memf_left_accel = tk.StringVar(value="")
+        self.var_memf_right_accel = tk.StringVar(value="")
+        self.var_memf_interface = tk.StringVar(value="")
+        self.var_memf_include_kv = tk.BooleanVar(value=True)
+        self.var_memf_include_comm = tk.BooleanVar(value=True)
+        self.var_memf_policy = tk.StringVar(value="max_peak_or_comm")
+        self.var_memf_filter_fit = tk.BooleanVar(value=False)
+        self.var_memf_left_text = tk.StringVar(value="Left: n/a")
+        self.var_memf_right_text = tk.StringVar(value="Right: n/a")
+
+        accel_names = [str(x.get("name")) for x in (self.accel_specs.get("accelerators") or [])]
+        iface_names = [str(x.get("name")) for x in (self.accel_specs.get("interfaces") or [])]
+        if accel_names:
+            self.var_memf_left_accel.set(accel_names[0])
+            self.var_memf_right_accel.set(accel_names[min(1, len(accel_names)-1)])
+        if iface_names:
+            self.var_memf_interface.set(iface_names[0])
+
+        memf = ttk.LabelFrame(self.params_frame, text="Memory forecast (optional)")
+        memf.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
+        row0 = ttk.Frame(memf)
+        row0.pack(fill=tk.X, padx=8, pady=6)
+        ttk.Label(row0, text="Left accelerator:").pack(side=tk.LEFT)
+        cb_ml = ttk.Combobox(row0, textvariable=self.var_memf_left_accel, values=accel_names, width=28, state="readonly")
+        cb_ml.pack(side=tk.LEFT, padx=(4, 10))
+        ttk.Label(row0, text="Right accelerator:").pack(side=tk.LEFT)
+        cb_mr = ttk.Combobox(row0, textvariable=self.var_memf_right_accel, values=accel_names, width=28, state="readonly")
+        cb_mr.pack(side=tk.LEFT, padx=(4, 10))
+        ttk.Label(row0, text="Interface:").pack(side=tk.LEFT)
+        cb_if = ttk.Combobox(row0, textvariable=self.var_memf_interface, values=iface_names, width=22, state="readonly")
+        cb_if.pack(side=tk.LEFT, padx=(4, 10))
+
+        row1 = ttk.Frame(memf)
+        row1.pack(fill=tk.X, padx=8, pady=(0, 6))
+        ttk.Checkbutton(row1, text="include KV cache", variable=self.var_memf_include_kv).pack(side=tk.LEFT)
+        ttk.Checkbutton(row1, text="include comm buffers", variable=self.var_memf_include_comm).pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Label(row1, text="Policy:").pack(side=tk.LEFT, padx=(12, 4))
+        ttk.Combobox(row1, textvariable=self.var_memf_policy, values=["max_peak_or_comm", "sum_peak_and_comm"], width=20, state="readonly").pack(side=tk.LEFT)
+        ttk.Checkbutton(row1, text="show only fitting candidates", variable=self.var_memf_filter_fit, command=self._refresh_memory_forecast).pack(side=tk.LEFT, padx=(12, 0))
+
+        try:
+            ttk.Style(self).configure("MemGreen.Horizontal.TProgressbar", troughcolor="#eeeeee", background="#1c9c4a")
+            ttk.Style(self).configure("MemRed.Horizontal.TProgressbar", troughcolor="#eeeeee", background="#c0392b")
+        except Exception:
+            pass
+        self.pb_mem_left = ttk.Progressbar(memf, orient="horizontal", mode="determinate", maximum=100, style="MemGreen.Horizontal.TProgressbar")
+        self.pb_mem_left.pack(fill=tk.X, padx=8, pady=(0, 2))
+        ttk.Label(memf, textvariable=self.var_memf_left_text).pack(anchor="w", padx=8)
+        self.pb_mem_right = ttk.Progressbar(memf, orient="horizontal", mode="determinate", maximum=100, style="MemGreen.Horizontal.TProgressbar")
+        self.pb_mem_right.pack(fill=tk.X, padx=8, pady=(2, 2))
+        ttk.Label(memf, textvariable=self.var_memf_right_text).pack(anchor="w", padx=8, pady=(0, 6))
+
+        for v in (self.var_memf_left_accel, self.var_memf_right_accel, self.var_memf_interface, self.var_memf_policy, self.var_memf_include_comm, self.var_memf_include_kv):
+            v.trace_add("write", lambda *_: self._refresh_memory_forecast())
+
         # Diagnostics frame
         self.diag_frame = ttk.LabelFrame(self.params_frame, text="Diagnostics")
-        self.diag_frame.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
+        self.diag_frame.grid(row=6, column=0, sticky="ew", padx=8, pady=(0, 8))
 
         d = ttk.Frame(self.diag_frame)
         d.pack(fill=tk.X, padx=8, pady=6)
