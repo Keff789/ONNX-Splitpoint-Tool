@@ -54,10 +54,7 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         for key, label in self.TAB_LABELS:
             self.main_notebook.add(self.panel_frames[key], text=label)
 
-        analysis_mount = getattr(self.panel_frames["analysis"], "legacy_mount", self.panel_frames["analysis"])
-        for widget in root_children:
-            widget.pack_forget()
-            widget.pack(in_=analysis_mount, fill=tk.BOTH if widget is getattr(self, "mid_pane", None) else tk.X, expand=widget is getattr(self, "mid_pane", None), padx=0, pady=(0, 8) if widget is getattr(self, "params_frame", None) else 0)
+        panel_analysis.mount_legacy_widgets(self.panel_frames["analysis"], root_children, self)
 
     def _wire_model_type_state(self) -> None:
         if not hasattr(self, "gui_state"):
