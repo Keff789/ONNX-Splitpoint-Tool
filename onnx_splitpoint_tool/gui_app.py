@@ -611,6 +611,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         # General parameters row
         general = ttk.Frame(self.params_frame)
         general.grid(row=0, column=0, sticky="ew", padx=8, pady=6)
+        self.general_frame = general
         self.params_frame.columnconfigure(0, weight=1)
 
         col = 0
@@ -1135,6 +1136,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         memf = ttk.LabelFrame(self.params_frame, text="Memory forecast (optional)")
         memf.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
+        self.memf_frame = memf
         row0 = ttk.Frame(memf)
         row0.pack(fill=tk.X, padx=8, pady=6)
         ttk.Label(row0, text="Left accelerator:").pack(side=tk.LEFT)
@@ -1208,6 +1210,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         # Keep this compact (small Analyse button) and always visible.
         action_bar = ttk.Frame(self.params_frame)
         action_bar.grid(row=6, column=0, sticky="ew", padx=8, pady=(0, 8))
+        self.action_bar = action_bar
         action_bar.columnconfigure(0, weight=1)
 
         # Row 0: main actions
