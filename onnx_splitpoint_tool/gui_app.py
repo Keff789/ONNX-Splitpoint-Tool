@@ -535,6 +535,36 @@ class SplitPointAnalyserGUI(tk.Tk):
 
     # -------------------------- UI construction --------------------------
 
+    def _toggle_settings(self) -> None:
+        """Show/hide the settings block below the top model bar."""
+        visible = bool(getattr(self, "var_settings_visible", tk.BooleanVar(value=True)).get())
+        # current state is visible -> hide
+        if visible:
+            try:
+                self.params_frame.pack_forget()
+            except Exception:
+                pass
+            try:
+                self.btn_toggle_settings.configure(text="Show settings")
+            except Exception:
+                pass
+            self.var_settings_visible.set(False)
+            return
+
+        # currently hidden -> show again just below top bar
+        try:
+            self.params_frame.pack(fill=tk.X, padx=10, pady=(0, 8), after=self.winfo_children()[0])
+        except Exception:
+            try:
+                self.params_frame.pack(fill=tk.X, padx=10, pady=(0, 8))
+            except Exception:
+                pass
+        try:
+            self.btn_toggle_settings.configure(text="Hide settings")
+        except Exception:
+            pass
+        self.var_settings_visible.set(True)
+
     def _build_ui(self):
         # --- Top bar: open model ---
         top = ttk.Frame(self)

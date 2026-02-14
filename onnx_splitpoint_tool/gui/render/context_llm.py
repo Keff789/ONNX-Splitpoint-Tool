@@ -9,8 +9,6 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
-from ...gui_app import _run_case
-
 _META_TOKENS = (
     "mask",
     "position",
@@ -27,6 +25,14 @@ _META_TOKENS = (
 
 
 def run_case(case_dir: Path, provider: str, image: str, preset: str, warmup: int, runs: int, timeout_s: Optional[int], case_meta: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """Compatibility runner hook.
+
+    Uses the legacy benchmark runner only when available to avoid import cycles.
+    """
+    try:
+        from ...gui_app import _run_case  # type: ignore
+    except Exception:
+        return None
     return _run_case(case_dir, provider, image, preset, warmup, runs, timeout_s, case_meta)
 
 
