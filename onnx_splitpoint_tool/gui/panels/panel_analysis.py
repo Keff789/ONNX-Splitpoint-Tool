@@ -8,6 +8,7 @@ from tkinter import ttk
 from typing import Any, Dict, Iterable
 
 from ..widgets.collapsible_section import CollapsibleSection
+from . import panel_candidates
 
 
 GLOBAL_PRESETS: Dict[str, Dict[str, Dict[str, Any]]] = {
@@ -227,10 +228,11 @@ def mount_legacy_widgets(frame: ttk.Frame, root_children: list[Any], app: Any) -
     if mid_pane is not None:
         mid_pane.pack_forget()
         try:
-            mid_pane.configure(orient=tk.HORIZONTAL)
+            mid_pane.configure(orient=tk.VERTICAL)
         except Exception:
             pass
-        mid_pane.pack(in_=frame.results_host, fill="both", expand=True)
+        split = panel_candidates.mount_split_view(frame.results_host, app)
+        mid_pane.pack(in_=split.left_host, fill="both", expand=True)
 
     for widget in root_children:
         if widget in {params_frame, mid_pane, getattr(app, "btn_open", None), getattr(app, "lbl_model", None), getattr(app, "btn_toggle_settings", None)}:
