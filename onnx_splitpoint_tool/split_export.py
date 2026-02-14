@@ -27,6 +27,7 @@ import onnx
 from onnx import TensorProto, helper, shape_inference
 
 from .onnx_utils import (
+    backfill_custom_op_passthrough_shapes,
     build_producers_consumers,
     elemtype_from_vi,
     shape_from_vi,
@@ -107,7 +108,12 @@ def _infer_shapes_ort_symbolic_safe(model: onnx.ModelProto) -> onnx.ModelProto:
     return model
 
 
-def infer_shapes_safe(model: onnx.ModelProto, *, use_ort_symbolic: bool = False) -> onnx.ModelProto:
+def infer_shapes_safe(
+    model: onnx.ModelProto,
+    *,
+    use_ort_symbolic: bool = False,
+    custom_op_passthrough: bool = True,
+) -> onnx.ModelProto:
     """Try to run ONNX shape inference.
 
     Shape inference is useful for comm estimation + nicer I/O ValueInfo, but
@@ -115,16 +121,47 @@ def infer_shapes_safe(model: onnx.ModelProto, *, use_ort_symbolic: bool = False)
 
     When `use_ort_symbolic` is True, we also attempt ORT's symbolic shape
     inference as a second pass.
+
+    When `custom_op_passthrough` is True, we apply a pragmatic passthrough
+    rule for custom/fused ops (output shape == input shape) to avoid inference
+    chains breaking on unknown nodes.
     """
     out = model
+
+    # 1) ONNX shape inference
     try:
-        out = shape_inference.infer_shapes(out)
+        out = shape_inference.infer_shapes(out, strict_mode=False)
+    except TypeError:
+        # Older onnx may not accept strict_mode
+        try:
+            out = shape_inference.infer_shapes(out)
+        except Exception as e:
+            LOGGER.debug("onnx.shape_inference failed (continuing): %s", e)
     except Exception as e:
         LOGGER.debug("onnx.shape_inference failed (continuing): %s", e)
 
+    # 2) ORT symbolic shape inference (optional)
     if use_ort_symbolic:
-        out2 = _infer_shapes_ort_symbolic_safe(out)
-        out = out2
+        out = _infer_shapes_ort_symbolic_safe(out)
+
+    # 3) Passthrough for custom/fused ops (optional)
+    if custom_op_passthrough:
+        try:
+            n_upd = backfill_custom_op_passthrough_shapes(out, max_iters=2)
+            if n_upd:
+                LOGGER.info("Custom-op passthrough: filled %d missing ValueInfo shapes", n_upd)
+                # Rerun inference to propagate beyond newly-typed tensors
+                try:
+                    out = shape_inference.infer_shapes(out, strict_mode=False)
+                except TypeError:
+                    out = shape_inference.infer_shapes(out)
+                except Exception as e:
+                    LOGGER.debug("onnx.shape_inference (2nd pass) failed (continuing): %s", e)
+
+                if use_ort_symbolic:
+                    out = _infer_shapes_ort_symbolic_safe(out)
+        except Exception as e:
+            LOGGER.debug("custom-op passthrough failed (continuing): %s", e)
 
     return out
 
@@ -471,6 +508,12 @@ def export_boundary_graphviz_context(
     include_internal_consumers: bool = True,
     cut_flow_only: bool = False,
     include_external_inputs: bool = True,
+    # GUI/API-compat extras (safe to ignore for classic models)
+    strict_boundary: bool = False,
+    semantic_label: Optional[str] = None,
+    value_bytes_map: Optional[Dict[str, int]] = None,
+    force_matplotlib_fallback: bool = False,
+    matplotlib_max_nodes: int = 80,
 ) -> Dict[str, Optional[str]]:
     """Export a small GraphViz diagram around a split boundary.
 
@@ -510,6 +553,10 @@ def export_boundary_graphviz_context(
     -------
     Dict with keys: dot, pdf, svg, png (values are basenames or None).
     """
+    # NOTE: 'strict_boundary' affects the actual split operation, not the diagram export.
+    # We accept it here for GUI/API compatibility.
+    _ = strict_boundary
+
 
     os.makedirs(out_dir, exist_ok=True)
 
@@ -525,6 +572,7 @@ def export_boundary_graphviz_context(
             cut_list.append(str(t))
             seen_cut.add(str(t))
     cut_set = set(cut_list)
+    num_cut_all = len([t for t in cut_list if t])
 
     left_set = set(order[: boundary_index + 1])
     right_set = set(order[boundary_index + 1 :])
@@ -667,12 +715,39 @@ def export_boundary_graphviz_context(
     initializer_names = {i.name for i in model.graph.initializer}
     graph_input_names = {vi.name for vi in model.graph.input}
 
+    # Filter cut tensors: skip initializers and outputs of Constant nodes (visual noise)
+    const_tensor_names: Set[str] = set()
+    for t, prod_ix in producer_of.items():
+        try:
+            if prod_ix is not None and 0 <= int(prod_ix) < len(nodes) and nodes[int(prod_ix)].op_type == "Constant":
+                const_tensor_names.add(t)
+        except Exception:
+            continue
+    cut_list = [t for t in cut_list if t and t not in initializer_names and t not in const_tensor_names]
+    num_cut_omitted = max(0, num_cut_all - len(cut_list))
+
+    # Drop Constant ops from the context graph to keep it readable
+    selected = {i for i in selected if nodes[i].op_type != "Constant"}
+
+
     # Helper: escape labels for DOT
     def esc(s: str) -> str:
         return str(s).replace("\\", "\\\\").replace('"', '\"')
 
     def short_edge_label(s: str) -> str:
         s = str(s)
+
+        # Prefer the tail of long hierarchical ONNX names (".../layers.20/.../output_0")
+        # to keep diagrams readable. This is purely a visualization aid.
+        if "/" in s:
+            parts = [p for p in s.split("/") if p]
+            if len(parts) >= 4:
+                s = "/".join(parts[-4:])
+            elif len(parts) >= 2:
+                s = "/".join(parts[-2:])
+            else:
+                s = parts[-1] if parts else s
+
         if max_edge_label and len(s) > int(max_edge_label):
             return s[: max(0, int(max_edge_label) - 3)] + "..."
         return s
@@ -680,8 +755,6 @@ def export_boundary_graphviz_context(
     dot_path = os.path.join(out_dir, f"{basename}.dot")
     pdf_path = os.path.join(out_dir, f"{basename}.pdf")
     svg_path = os.path.join(out_dir, f"{basename}.svg")
-    png_path = os.path.join(out_dir, f"{basename}.png")
-
     # Colors (GraphViz understands hex colors)
     col_left_fill = "#d9ecff"
     col_right_fill = "#fff3d9"
@@ -700,7 +773,7 @@ def export_boundary_graphviz_context(
         n = nodes[ni]
         label = f"{ni}: {n.op_type}"
         if n.name:
-            label += f"\n{n.name}"
+            label += f"\n{short_edge_label(n.name)}"
         fill = "white"
         border = "black"
         pen = 1.2
@@ -742,8 +815,10 @@ def export_boundary_graphviz_context(
     if not cut_flow_only:
         _legend += ", dashed boxes = auxiliary context"
     _mode = "cut-flow" if cut_flow_only else "context"
+    _sem = f"  |  {semantic_label}" if semantic_label else ""
+    _sem = _sem.replace('\"', "'")
     lines.append(
-        f'  label="Split boundary {boundary_index}  |  #cut_tensors={len(cut_list)}  |  {_mode}\n({_legend})";'
+        f'  label="Split boundary {boundary_index}{_sem}  |  #cut_tensors={len(cut_list)} (+{num_cut_omitted} const/init omitted)  |  {_mode}\\n({_legend})";'
     )
     lines.append('')
 
@@ -776,10 +851,11 @@ def export_boundary_graphviz_context(
         vid = f"v{i}"
         cut_node_ids[t] = vid
         meta = cut_meta.get(t, {})
+        t_short = short_edge_label(t)
         if meta:
-            label = f"{t}\n{meta.get('shape','?')} {meta.get('dtype','?')}\n{meta.get('mib','?')} MiB"
+            label = f"{t_short}\n{meta.get('shape','?')} {meta.get('dtype','?')}\n{meta.get('mib','?')} MiB"
         else:
-            label = t
+            label = t_short
         lines.append(
             f'  {vid} [shape=ellipse, label="{esc(label)}", style="filled,bold", fillcolor="{col_boundary_fill}", color="{col_boundary_border}", penwidth=2.0];'
         )
@@ -906,129 +982,277 @@ def export_boundary_graphviz_context(
     # GraphViz renderer (preferred)
     if render:
         dot_exe = shutil.which("dot")
-        if dot_exe:
+        if render and dot_exe and (not force_matplotlib_fallback):
+            # PDF
             try:
-                subprocess.run([dot_exe, "-Tpdf", dot_path, "-o", pdf_path], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                out["pdf"] = os.path.basename(pdf_path)
+                r = subprocess.run(
+                    [dot_exe, "-Tpdf", dot_path, "-o", pdf_path],
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                if r.returncode != 0:
+                    LOGGER.warning(
+                        "Graphviz 'dot' failed to render PDF (rc=%s). stderr: %s",
+                        r.returncode,
+                        (r.stderr.decode("utf-8", errors="ignore")[:600] if r.stderr else ""),
+                    )
+                if os.path.exists(pdf_path):
+                    out["pdf"] = os.path.basename(pdf_path)
+                else:
+                    # Keep key absent so fallback can run.
+                    out.pop("pdf", None)
             except Exception:
-                pass
+                out.pop("pdf", None)
+                LOGGER.exception("Graphviz PDF render raised unexpectedly")
+
+            # SVG
             try:
-                subprocess.run([dot_exe, "-Tsvg", dot_path, "-o", svg_path], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                out["svg"] = os.path.basename(svg_path)
+                r = subprocess.run(
+                    [dot_exe, "-Tsvg", dot_path, "-o", svg_path],
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                if r.returncode != 0:
+                    LOGGER.warning(
+                        "Graphviz 'dot' failed to render SVG (rc=%s). stderr: %s",
+                        r.returncode,
+                        (r.stderr.decode("utf-8", errors="ignore")[:600] if r.stderr else ""),
+                    )
+                if os.path.exists(svg_path):
+                    out["svg"] = os.path.basename(svg_path)
+                else:
+                    out.pop("svg", None)
             except Exception:
-                pass
-            try:
-                subprocess.run([dot_exe, "-Tpng", dot_path, "-o", png_path], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                out["png"] = os.path.basename(png_path)
-            except Exception:
-                pass
+                out.pop("svg", None)
+                LOGGER.exception("Graphviz SVG render raised unexpectedly")
+
 
     # Fallback renderer (matplotlib) if GraphViz is missing or rendering failed.
     # This yields a compact, paper-friendly diagram even without the `dot` executable.
-    if render and (out.get("pdf") is None or out.get("svg") is None or out.get("png") is None):
+    # Important: PNG rendering is optional/disabled by default. Do NOT treat a missing PNG as a render failure.
+    # Need flags should reflect the actual files on disk, not just dict keys.
+    need_pdf = not os.path.exists(pdf_path)
+    need_svg = not os.path.exists(svg_path)
+    if render and (need_pdf or need_svg):
         try:
-            import matplotlib.pyplot as plt  # type: ignore
-            from matplotlib.patches import FancyBboxPatch  # type: ignore
+            import matplotlib.pyplot as plt
+            import textwrap as _tw
 
-            # Try to attach shape + dtype + sizes for cut tensors (best-effort)
-            sizes: Dict[str, int] = {}
-            shapes: Dict[str, Optional[List[Optional[int]]]] = {}
-            dtypes: Dict[str, Optional[int]] = {}
-            try:
-                vimap = value_info_map(infer_shapes_safe(model))
-                vb = compute_tensor_bytes_per_value(vimap, batch_override=None, assume_activation_bytes=None)
-                for t in cut_list:
-                    sizes[t] = int(vb.get(t, 0) or 0)
-                    vi = vimap.get(t)
-                    shapes[t] = shape_from_vi(vi)
-                    dtypes[t] = elemtype_from_vi(vi)
-            except Exception:
-                pass
+            def _mb(x_bytes: int) -> float:
+                return float(x_bytes) / (1024.0 * 1024.0)
 
-            def _mb(x: int) -> str:
-                if not x:
-                    return "?"
-                return f"{x / (1024 * 1024):.3f} MiB"
+            def _short(s: str, max_len: int = 72) -> str:
+                s = s or ""
+                if len(s) <= max_len:
+                    return s
+                return s[: max(0, max_len - 3)] + "..."
 
-            def _shape_str(sh: Optional[List[Optional[int]]]) -> str:
-                if not sh:
-                    return "?"
-                return "[" + ",".join(str(int(d)) if (d is not None and int(d) > 0) else "?" for d in sh) + "]"
+            # Keep the fallback readable: shorten/wrap long labels, cap the cut tensor list.
+            left_text = "LEFT\n" + _short(left_label.replace("\n", " "), 110)
+            right_text = "RIGHT\n" + _short(right_label.replace("\n", " "), 110)
 
-            def _dtype_str(et: Optional[int]) -> str:
-                if not et:
-                    return "?"
-                try:
-                    # protobuf enum helper
-                    return onnx.TensorProto.DataType.Name(int(et))
-                except Exception:
-                    return str(int(et))
+            # Show each cut tensor as its own box (much more readable than a
+            # single giant text blob). Cap the list so the diagram stays usable.
+            max_show = 22
+            shown = cut_list[:max_show]
+            omitted = max(0, len(cut_list) - len(shown))
 
-            left_node = nodes[b_left]
-            right_node = nodes[b_right]
-            left_lbl = f"Left boundary\n{b_left}: {left_node.op_type}\n{left_node.name or ''}".strip()
-            right_lbl = f"Right boundary\n{b_right}: {right_node.op_type}\n{right_node.name or ''}".strip()
+            import re as _re
 
-            cut_lines = []
-            for t in cut_list:
-                s = sizes.get(t, 0)
-                shs = _shape_str(shapes.get(t))
-                dts = _dtype_str(dtypes.get(t))
-                if s:
-                    cut_lines.append(f"{t}\n{shs} {dts}  ({_mb(s)})")
+            def _wrap_keep_newlines(s: str, width: int) -> str:
+                """Wrap each line individually while preserving explicit newlines."""
+                out_lines = []
+                for ln in (s or "").splitlines() or [""]:
+                    ln = ln.rstrip("\r")
+                    if not ln:
+                        out_lines.append("")
+                        continue
+                    out_lines.append(_tw.fill(ln, width=width, break_long_words=True, break_on_hyphens=False))
+                return "\n".join(out_lines)
+
+            def _shorten_path(name: str, keep_tail: int = 4) -> str:
+                name = (name or "").strip()
+                name = _re.sub(r"^/model/", "", name)
+                parts = [p for p in name.split("/") if p]
+                if len(parts) > keep_tail:
+                    parts = parts[-keep_tail:]
+                # Abbreviate layers.N -> LN
+                parts = [_re.sub(r"^layers\.(\d+)$", r"L\1", p) for p in parts]
+                return "\n".join(parts) if parts else name
+
+            def _pretty_cut_item(raw: str, idx: int) -> str:
+                # The cut list often comes as multi-line strings:
+                #   <tensor_name>\n[shape] DTYPE
+                # Our previous whitespace split broke on the shape line.
+                s = ("" if raw is None else str(raw)).strip()
+                lines = [ln for ln in s.splitlines() if ln.strip()]
+                if not lines:
+                    name_line, meta_lines = "(unknown)", []
                 else:
-                    cut_lines.append(f"{t}\n{shs} {dts}")
-            if not cut_lines:
-                cut_lines = ["(no cut tensors)"]
+                    name_line = lines[0].strip()
+                    meta_lines = [ln.strip() for ln in lines[1:]]
+                    # If we did not actually have a newline-based split, also support
+                    # the legacy single-line format: "name meta...".
+                    if len(lines) == 1 and " " in name_line:
+                        first, rest = name_line.split(" ", 1)
+                        name_line, meta_lines = first.strip(), [rest.strip()]
 
-            total_cut = sum(int(sizes.get(t, 0) or 0) for t in cut_list)
+                name_short = _shorten_path(name_line, keep_tail=4)
+                name_short = _wrap_keep_newlines(name_short, width=26)
+                meta = "\n".join(meta_lines)
+                meta = _wrap_keep_newlines(meta, width=44) if meta else ""
 
-            fig = plt.figure(figsize=(10.0, 2.6))
-            ax = fig.add_subplot(111)
+                label = name_short
+                if meta:
+                    label = f"{label}\n{meta}"
+
+                # Apply numbering and indent wrapped lines.
+                prefix = f"{idx:>2}. "
+                lab_lines = label.splitlines() or [""]
+                lab_lines[0] = prefix + lab_lines[0]
+                pad = " " * len(prefix)
+                for i in range(1, len(lab_lines)):
+                    lab_lines[i] = pad + lab_lines[i]
+                return "\n".join(lab_lines)
+
+            cut_nodes: List[str] = [_pretty_cut_item(t, i + 1) for i, t in enumerate(shown)]
+            if omitted:
+                cut_nodes.append(f"... (+{omitted} more)")
+            if not cut_nodes:
+                cut_nodes = ["(none)"]
+
+            # Figure size adapts to the number of cut tensors (and the side boxes).
+            n_cut = len(cut_nodes)
+            fig_h = max(3.2, 0.28 * n_cut + 2.0)
+            fig_w = 13.0
+
+            fig, ax = plt.subplots(figsize=(fig_w, fig_h))
             ax.set_axis_off()
 
-            # Boxes
-            box_kw = dict(boxstyle="round,pad=0.4", linewidth=1.2)
-            b1 = FancyBboxPatch((0.05, 0.25), 0.32, 0.5, **box_kw)
-            b2 = FancyBboxPatch((0.63, 0.25), 0.32, 0.5, **box_kw)
-            ax.add_patch(b1)
-            ax.add_patch(b2)
+            box_kw = dict(
+                boxstyle="round,pad=0.45",
+                facecolor="white",
+                edgecolor="black",
+                linewidth=1.0,
+            )
 
-            ax.text(0.21, 0.50, left_lbl, ha="center", va="center", fontsize=10)
-            ax.text(0.79, 0.50, right_lbl, ha="center", va="center", fontsize=10)
+            ax.text(
+                0.02,
+                0.5,
+                left_text,
+                va="center",
+                ha="left",
+                fontsize=9,
+                family="monospace",
+                bbox=box_kw,
+                transform=ax.transAxes,
+            )
+            ax.text(
+                0.50,
+                0.92,
+                "CUT TENSORS",
+                va="center",
+                ha="center",
+                fontsize=10,
+                family="monospace",
+                transform=ax.transAxes,
+            )
+            ax.text(
+                0.98,
+                0.5,
+                right_text,
+                va="center",
+                ha="right",
+                fontsize=9,
+                family="monospace",
+                bbox=box_kw,
+                transform=ax.transAxes,
+            )
 
-            # Arrow + cut tensor list
-            ax.annotate("", xy=(0.63, 0.50), xytext=(0.37, 0.50), arrowprops=dict(arrowstyle="->", lw=2.0))
-            ax.text(0.50, 0.50, "\n".join(cut_lines), ha="center", va="center", fontsize=9)
+            # Lay out cut tensor nodes vertically between the two boundary boxes.
+            if len(cut_nodes) == 1:
+                ys = [0.5]
+            else:
+                top_y, bot_y = 0.84, 0.16
+                step = (top_y - bot_y) / (len(cut_nodes) - 1)
+                ys = [top_y - i * step for i in range(len(cut_nodes))]
+
+            cut_box_kw = dict(
+                boxstyle="round,pad=0.30",
+                facecolor="white",
+                edgecolor="black",
+                linewidth=1.0,
+            )
+
+            # Anchor points for arrows (axes fraction coordinates).
+            left_anchor = (0.20, 0.5)
+            right_anchor = (0.80, 0.5)
+            for y, label in zip(ys, cut_nodes):
+                ax.text(
+                    0.50,
+                    y,
+                    label,
+                    va="center",
+                    ha="center",
+                    fontsize=8,
+                    family="monospace",
+                    bbox=cut_box_kw,
+                    transform=ax.transAxes,
+                )
+
+                # Left -> cut
+                ax.annotate(
+                    "",
+                    xy=(0.41, y),
+                    xytext=left_anchor,
+                    arrowprops=dict(arrowstyle="->", lw=0.9),
+                    xycoords=ax.transAxes,
+                )
+                # Cut -> right
+                ax.annotate(
+                    "",
+                    xy=right_anchor,
+                    xytext=(0.59, y),
+                    arrowprops=dict(arrowstyle="->", lw=0.9),
+                    xycoords=ax.transAxes,
+                )
 
             ax.text(
                 0.5,
-                0.92,
-                f"Split boundary {boundary_index}  |  cut={_mb(total_cut)}  (#tensors={len(cut_list)})",
+                0.97,
+                f"Split boundary {boundary_index}{(' | ' + semantic_label) if semantic_label else ''} | cut={_mb(total_cut):.3f} MiB | "
+                f"tensors={len(cut_list)} (+{num_cut_omitted} const/init omitted)",
                 ha="center",
-                va="center",
+                va="top",
                 fontsize=11,
+                transform=ax.transAxes,
             )
 
-            try:
-                fig.savefig(pdf_path, bbox_inches="tight")
-                out["pdf"] = os.path.basename(pdf_path)
-            except Exception:
-                pass
-            try:
-                fig.savefig(svg_path, bbox_inches="tight")
-                out["svg"] = os.path.basename(svg_path)
-            except Exception:
-                pass
-            try:
-                fig.savefig(png_path, bbox_inches="tight", dpi=200)
-                out["png"] = os.path.basename(png_path)
-            except Exception:
-                pass
+            # Save only the missing formats; do not overwrite graphviz output if present.
+            if need_pdf:
+                try:
+                    fig.savefig(pdf_path, bbox_inches="tight")
+                    if os.path.exists(pdf_path):
+                        out["pdf"] = os.path.basename(pdf_path)
+                    else:
+                        LOGGER.warning("Matplotlib savefig did not create PDF: %s", pdf_path)
+                except Exception:
+                    LOGGER.exception("Matplotlib failed to save PDF: %s", pdf_path)
+            if need_svg:
+                try:
+                    fig.savefig(svg_path, bbox_inches="tight")
+                    if os.path.exists(svg_path):
+                        out["svg"] = os.path.basename(svg_path)
+                    else:
+                        LOGGER.warning("Matplotlib savefig did not create SVG: %s", svg_path)
+                except Exception:
+                    LOGGER.exception("Matplotlib failed to save SVG: %s", svg_path)
+
             plt.close(fig)
         except Exception:
-            pass
-
+            LOGGER.exception("Matplotlib fallback context rendering failed")
     return out
 
 

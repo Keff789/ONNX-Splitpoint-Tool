@@ -11,6 +11,7 @@ Includes:
 from __future__ import annotations
 
 import math
+import re
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import onnx
@@ -24,11 +25,129 @@ from .onnx_utils import (
 )
 
 
+# --- Heuristics for LLM-ish dynamic shapes ---------------------------------
+
+_RE_IDS_LIKE = re.compile(
+    # Match the usual id/index tensors *including* common "reformat" helpers
+    # such as "pos_ids_reformat".
+    r"(?:^|/)(?:input_ids|position_ids|pos_ids|cache_position|cache_pos|token_type_ids)(?:$|/|_)",
+    re.IGNORECASE,
+)
+_RE_MASK_LIKE = re.compile(r"(attn_mask|attention_mask|mask)", re.IGNORECASE)
+_RE_KV_LIKE = re.compile(
+    r"(past_key_values|present|/key(?:$|/)|/value(?:$|/)|\.key$|\.value$)",
+    re.IGNORECASE,
+)
+
+
+def infer_common_hidden_size(vimap: Dict[str, onnx.ValueInfoProto]) -> Optional[int]:
+    """Best-effort hidden-size guess from existing (partial) value_infos.
+
+    Many transformer exports carry a *lot* of rank-3 tensors shaped like
+    (batch, seq, hidden). Even if batch/seq are dynamic, the final dim is
+    usually a fixed integer. We take the most frequent one.
+    """
+    counts: Dict[int, int] = {}
+    for _name, vi in vimap.items():
+        try:
+            tt = vi.type.tensor_type
+        except Exception:
+            continue
+        if tt is None:
+            continue
+        if tt.elem_type not in (
+            onnx.TensorProto.FLOAT16,
+            onnx.TensorProto.FLOAT,
+            getattr(onnx.TensorProto, "BFLOAT16", -1),
+        ):
+            continue
+        shp = shape_from_vi(vi)
+        if len(shp) == 3 and isinstance(shp[2], int) and shp[2] > 0:
+            counts[shp[2]] = counts.get(shp[2], 0) + 1
+    if not counts:
+        return None
+    return max(counts.items(), key=lambda kv: kv[1])[0]
+
+
+def _try_fill_llm_shape(
+    name: str,
+    shp: List[Optional[int]],
+    llm_hints: Dict[str, int],
+    hidden_size_hint: Optional[int],
+) -> Optional[List[int]]:
+    """Try to turn a partially-unknown shape into a fully-known one.
+
+    This does *not* mutate `shp`.
+    """
+    if not shp:
+        return None
+
+    b = llm_hints.get("batch")
+    s = llm_hints.get("seq_len")
+    t = llm_hints.get("total_len")
+
+    out: List[Optional[int]] = list(shp)
+
+    # Generic "batch" fill for tensors that look like they carry batch.
+    if b is not None and len(out) >= 1 and out[0] is None:
+        out[0] = b
+
+    lname = name.lower() if name else ""
+
+    # Name-driven special cases first.
+    if len(out) == 2:
+        if _RE_IDS_LIKE.search(lname):
+            out = [b, s]
+        elif _RE_MASK_LIKE.search(lname):
+            out = [b, (t if t is not None else s)]
+        else:
+            if out[1] is None and s is not None:
+                out[1] = s
+
+    elif len(out) == 3:
+        # Typical hidden-state like tensors: (B, S, H)
+        if out[1] is None and s is not None:
+            out[1] = s
+        if out[2] is None and hidden_size_hint is not None:
+            out[2] = hidden_size_hint
+
+    elif len(out) == 4:
+        if _RE_MASK_LIKE.search(lname):
+            # Common attention mask layouts are (B, 1, S, T) or (B, 1, 1, T)
+            if out[0] is None:
+                out[0] = b
+            if out[1] is None:
+                out[1] = 1
+            if out[2] is None and s is not None:
+                out[2] = s
+            if out[3] is None and (t is not None or s is not None):
+                out[3] = t if t is not None else s
+        elif _RE_KV_LIKE.search(lname):
+            # KV cache-like: (B, heads, T, head_dim)
+            if out[0] is None:
+                out[0] = b
+            if out[2] is None and t is not None:
+                out[2] = t
+
+    elif len(out) == 1:
+        # Some graphs keep small id/index tensors as 1D "helper" values.
+        if (_RE_IDS_LIKE.search(lname) or _RE_MASK_LIKE.search(lname)) and (t is not None or s is not None):
+            out[0] = t if t is not None else s
+
+    # Final check
+    if any(d is None or not isinstance(d, int) or d <= 0 for d in out):
+        return None
+    return [int(d) for d in out]
+
+
 def compute_tensor_bytes_per_value(
     vimap: Dict[str, onnx.ValueInfoProto],
     batch_override: Optional[int] = None,
     assume_activation_bytes: Optional[int] = None,
     batch: Optional[int] = None,
+    *,
+    llm_hints: Optional[Dict[str, int]] = None,
+    hidden_size_hint: Optional[int] = None,
 ) -> Dict[str, int]:
     """Return mapping value_name -> estimated bytes.
 
@@ -37,16 +156,28 @@ def compute_tensor_bytes_per_value(
     if batch_override is None and batch is not None:
         batch_override = batch
 
+    # If LLM hints are provided but no hidden size hint, try to infer it from
+    # the available value_info.
+    if llm_hints is not None and hidden_size_hint is None:
+        hidden_size_hint = infer_common_hidden_size(vimap)
+
     out: Dict[str, int] = {}
     for name, vi in vimap.items():
         shp = shape_from_vi(vi)
-        # If any dimension is unknown, treat this value as unknown-sized.
-        # We intentionally avoid guessing here because it can severely
-        # under-estimate communication. Unknown sizes can instead be handled
-        # via a dedicated proxy penalty (see GUI setting).
         if any(d is None for d in shp):
-            out[name] = 0
-            continue
+            # Optional: try to fill common dynamic dimensions in LLM graphs.
+            # This is opt-in via `llm_hints` and stays conservative (returns
+            # None if anything remains unknown).
+            if llm_hints is not None:
+                filled = _try_fill_llm_shape(name, shp, llm_hints, hidden_size_hint)
+                if filled is not None:
+                    shp = filled
+                else:
+                    out[name] = 0
+                    continue
+            else:
+                out[name] = 0
+                continue
         n = numel_from_shape(shp, batch_override)
         if n <= 0:
             out[name] = 0

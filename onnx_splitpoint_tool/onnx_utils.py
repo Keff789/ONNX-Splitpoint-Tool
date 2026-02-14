@@ -399,6 +399,146 @@ def backfill_quant_shapes(
 
 # ---------------- LLM / symbolic shape helpers ----------------
 
+
+def backfill_custom_op_passthrough_shapes(
+    model: onnx.ModelProto,
+    *,
+    max_iters: int = 2,
+) -> int:
+    """Best-effort shape propagation for (often fused) custom ops.
+
+    Many LLM ONNX exports contain custom-domain ops (e.g. fused RMSNorm / LayerNorm / activations).
+    ONNX shape inference may leave their outputs without *any* shape (rank) information, which then
+    prevents shapes from being inferred for all downstream nodes.
+
+    This function applies a pragmatic rule for those ops:
+      - If an op is likely shape-preserving (custom domain or name suggests norm/activation),
+        and an output is missing a shape, copy the *full* tensor_type (dtype + dim_value/dim_param)
+        from the first suitable input tensor.
+
+    Returns the number of ValueInfo entries updated/added.
+    """
+
+    g = model.graph
+    total_updates = 0
+
+    # Ops that are almost always shape-preserving (even in standard domain)
+    passthrough_ops: Set[str] = {
+        "Identity",
+        "Cast",
+        "Dropout",
+        "Relu",
+        "Sigmoid",
+        "Tanh",
+        "Softmax",
+    }
+
+    def _looks_like_passthrough(node: onnx.NodeProto) -> bool:
+        op = (node.op_type or "")
+        dom = (node.domain or "")
+        op_l = op.lower()
+        if op in passthrough_ops:
+            return True
+        # Custom domains (ORT / MS contrib / vendor ops) are common for fused norms/acts
+        if dom not in ("", "ai.onnx"):
+            return True
+        # Heuristic keywords for fused LLM ops
+        if "norm" in op_l or "normalization" in op_l or "rms" in op_l:
+            return True
+        if "gelu" in op_l or "silu" in op_l or "swish" in op_l:
+            return True
+        if "rotary" in op_l:
+            return True
+        if op_l.startswith("skip") and "norm" in op_l:
+            return True
+        return False
+
+    def _copy_tensor_type(dst_vi: onnx.ValueInfoProto, src_vi: onnx.ValueInfoProto) -> None:
+        src_tt = src_vi.type.tensor_type
+        dst_tt = dst_vi.type.tensor_type
+        dst_tt.elem_type = src_tt.elem_type
+
+        # Clear existing dims (if any)
+        try:
+            del dst_tt.shape.dim[:]
+        except Exception:
+            while len(dst_tt.shape.dim) > 0:
+                dst_tt.shape.dim.pop()
+
+        for sd in src_tt.shape.dim:
+            d = dst_tt.shape.dim.add()
+            if getattr(sd, "dim_value", 0):
+                d.dim_value = sd.dim_value
+            elif getattr(sd, "dim_param", ""):
+                d.dim_param = sd.dim_param
+
+    for _ in range(max_iters):
+        vimap = value_info_map(g)
+        iter_updates = 0
+
+        for node in g.node:
+            if not node.output:
+                continue
+            if not _looks_like_passthrough(node):
+                continue
+
+            # Find a suitable input ValueInfo as template
+            src_vi: Optional[onnx.ValueInfoProto] = None
+            for inp in node.input:
+                if not inp:
+                    continue
+                vi = vimap.get(inp)
+                if vi is None:
+                    continue
+                try:
+                    tt = vi.type.tensor_type
+                    if tt is None or tt.elem_type == 0:
+                        continue
+                    if not tt.HasField("shape") or len(tt.shape.dim) == 0:
+                        continue
+                except Exception:
+                    continue
+                src_vi = vi
+                break
+
+            if src_vi is None:
+                continue
+
+            for out in node.output:
+                if not out:
+                    continue
+
+                vi_out = vimap.get(out)
+                if vi_out is not None:
+                    # If it already has rank info, leave it alone.
+                    try:
+                        if vi_out.type.tensor_type.HasField("shape") and len(vi_out.type.tensor_type.shape.dim) > 0:
+                            continue
+                    except Exception:
+                        pass
+                    try:
+                        _copy_tensor_type(vi_out, src_vi)
+                        iter_updates += 1
+                    except Exception:
+                        continue
+                else:
+                    new_vi = onnx.ValueInfoProto()
+                    new_vi.name = out
+                    try:
+                        _copy_tensor_type(new_vi, src_vi)
+                        g.value_info.append(new_vi)
+                        vimap[out] = new_vi
+                        iter_updates += 1
+                    except Exception:
+                        continue
+
+        total_updates += iter_updates
+        if iter_updates == 0:
+            break
+
+    return total_updates
+
+
 def collect_dim_params(model: ModelProto) -> Set[str]:
     """Collect all dim_param strings used in graph inputs/outputs/value_info."""
     params: Set[str] = set()

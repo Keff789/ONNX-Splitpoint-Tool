@@ -250,14 +250,71 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.tex_out:
         # Simple LaTeX table export for top-k picks
-        def _label_safe(s: str) -> str:
-            import re
+        import re
 
+        def _label_safe(s: str) -> str:
             s = re.sub(r"[^A-Za-z0-9]+", "_", s)
             return s.strip("_").lower()
 
         def _escape(s: str) -> str:
             return s.replace("_", "\\_")
+
+        def _semantic_group_for_node(n: onnx.NodeProto) -> str:
+            """Return a stable semantic group identifier for a node.
+
+            We try to infer groups such as 'layers.20' or 'blocks.5' based on
+            node names / value names. This is mainly for Transformer/LLM graphs,
+            but is safe as a best-effort for other models.
+            """
+
+            hay = (n.name or "").strip()
+            if not hay:
+                # Node names are often empty; value names are usually more informative.
+                if n.output:
+                    hay = str(n.output[0])
+                elif n.input:
+                    hay = str(n.input[0])
+
+            patterns = [
+                (r"/layers\.(\d+)\b", lambda m: f"layers.{m.group(1)}"),
+                (r"/layer\.(\d+)\b", lambda m: f"layer.{m.group(1)}"),
+                (r"/blocks\.(\d+)\b", lambda m: f"blocks.{m.group(1)}"),
+                (r"/block\.(\d+)\b", lambda m: f"block.{m.group(1)}"),
+                (r"/encoder/layer\.(\d+)\b", lambda m: f"enc_layer.{m.group(1)}"),
+                (r"/decoder/layer\.(\d+)\b", lambda m: f"dec_layer.{m.group(1)}"),
+                (r"/backbone/stage(\d+)\b", lambda m: f"backbone_stage{m.group(1)}"),
+                (r"/neck/stage(\d+)\b", lambda m: f"neck_stage{m.group(1)}"),
+                (r"/head/stage(\d+)\b", lambda m: f"head_stage{m.group(1)}"),
+                (r"/stage(\d+)\b", lambda m: f"stage{m.group(1)}"),
+            ]
+
+            for pat, fn in patterns:
+                m = re.search(pat, hay)
+                if m:
+                    try:
+                        return fn(m)
+                    except Exception:
+                        return "other"
+
+            hay_l = hay.lower()
+            if "/stem/" in hay_l:
+                return "stem"
+            if "/embed" in hay_l or "/embedding" in hay_l:
+                return "embed"
+            return "other"
+
+        def _semantic_labels_for_boundaries() -> List[str]:
+            M_local = max(0, len(order) - 1)
+            out: List[str] = [""] * M_local
+            for b in range(M_local):
+                left = nodes[order[b]]
+                right = nodes[order[b + 1]]
+                gl = _semantic_group_for_node(left)
+                gr = _semantic_group_for_node(right)
+                out[b] = gl if gl == gr else f"{gl}->{gr}"
+            return out
+
+        sem_labels = _semantic_labels_for_boundaries()
 
         model_name = _escape(args.onnx_model.split("/")[-1].split("\\")[-1])
         label = _label_safe(model_name)
@@ -268,15 +325,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         lines2.append("  \\centering\n")
         lines2.append("  \\small\n")
         lines2.append("  \\setlength{\\tabcolsep}{4pt}\n")
-        lines2.append("  \\begin{tabular}{@{}r r r r r@{}}\n")
+        lines2.append("  \\begin{tabular}{@{}r l r r r r@{}}\n")
         lines2.append("    \\toprule\n")
-        lines2.append("    Boundary & Comm (MiB) & \\#Tensors & $F_L$ (GFLOP) & $F_R$ (GFLOP) \\\\ \n")
+        lines2.append("    Boundary & Semantic & Comm (MiB) & \\#Tensors & $F_L$ (GFLOP) & $F_R$ (GFLOP) \\\\ \n")
         lines2.append("    \\midrule\n")
         for b in picks:
             comm_mib = float(costs[b]) / (1024.0**2)
             fl_l = float(flops_left_prefix[b]) / 1e9
             fl_r = float(total_flops - flops_left_prefix[b]) / 1e9
-            lines2.append(f"    {b} & {comm_mib:.3f} & {int(crossing_counts[b])} & {fl_l:.3f} & {fl_r:.3f} \\\\ \n")
+            sem = _escape(str(sem_labels[b]) if b < len(sem_labels) else "")
+            lines2.append(
+                f"    {b} & {sem} & {comm_mib:.3f} & {int(crossing_counts[b])} & {fl_l:.3f} & {fl_r:.3f} \\\\ \n"
+            )
         lines2.append("    \\bottomrule\n")
         lines2.append("  \\end{tabular}\n")
         lines2.append(f"  \\caption{{Example split candidates for {model_name} (illustrative).}}\n")

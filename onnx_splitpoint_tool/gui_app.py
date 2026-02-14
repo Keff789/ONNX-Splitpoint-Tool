@@ -48,11 +48,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
-try:
-    import ttkbootstrap as tb
-except Exception:  # optional dependency
-    tb = None
-
 # Matplotlib backend must be selected BEFORE importing pyplot/backends
 import matplotlib
 
@@ -71,6 +66,134 @@ __version__ = TOOL_VERSION
 
 # Module logger (used by worker threads as well).
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------- Semantic clustering helpers ----------------------------
+
+# Many transformer/LLM ONNX exports use paths like:
+#   /model/layers.20/attn/...   or   /model/blocks.3/...
+# and KV-cache values like:
+#   present.20.key, present.20.value
+#
+# We use these patterns to provide a "semantic layers" clustering mode that
+# selects the best boundary per layer-transition (rather than per fixed op window).
+_SEM_LAYER_RE = re.compile(r"(?:^|/)(layers|blocks)[\._](\d+)(?:/|$)")
+_SEM_PRESENT_RE = re.compile(r"(?:^|/)?present\.(\d+)\.")
+
+
+def _semantic_group_for_node(node: onnx.NodeProto) -> Optional[str]:
+    """Best-effort semantic group label for a node.
+
+    Returns values like:
+      - "layers.20" / "blocks.3" when a layer index is detectable
+      - "embed", "lm_head", "final_norm" for common non-layer regions
+      - None if no reasonable semantic tag can be inferred
+
+    This is intentionally heuristic and designed to be:
+      - stable across minor graph changes
+      - good enough to cluster candidates for LLMs
+      - safe to ignore for CNNs (falls back to uniform clustering)
+    """
+
+    # Prefer node.name, but also look at value names (inputs/outputs) because
+    # many exporters embed the semantic path there instead.
+    cand: List[str] = []
+    if getattr(node, "name", ""):
+        cand.append(str(node.name))
+    cand.extend([str(x) for x in getattr(node, "output", []) if x])
+    cand.extend([str(x) for x in getattr(node, "input", []) if x])
+
+    for s in cand:
+        m = _SEM_LAYER_RE.search(s)
+        if m:
+            try:
+                return f"{m.group(1)}.{int(m.group(2))}"
+            except Exception:
+                return f"{m.group(1)}.{m.group(2)}"
+
+    # KV-cache naming (present.<layer>.key/value)
+    for s in cand:
+        m = _SEM_PRESENT_RE.search(s)
+        if m:
+            try:
+                return f"layers.{int(m.group(1))}"
+            except Exception:
+                return f"layers.{m.group(1)}"
+
+    # Coarse heuristics for common top/bottom transformer regions.
+    joined = " ".join(cand).lower()
+    if "embed" in joined or "embedding" in joined:
+        return "embed"
+    if "lm_head" in joined or "logits" in joined:
+        return "lm_head"
+    if "final" in joined and "norm" in joined:
+        return "final_norm"
+
+    return None
+
+
+
+
+def _semantic_labels_for_boundaries(nodes: List[onnx.NodeProto], order: List[int]) -> List[str]:
+    """Return a semantic label for each boundary index.
+
+    The label is a best-effort, human-readable tag that is stable across small
+    graph changes, intended primarily for transformer/LLM graphs.
+
+    Examples:
+      - "layers.19->layers.20" for a clean inter-layer boundary
+      - "layers.20 (in-layer)" for a cut inside a layer/block
+
+    For CNN-like graphs where no semantic tags can be inferred, labels will be
+    empty strings.
+    """
+
+    n_pos = int(len(order))
+    if n_pos <= 1:
+        return []
+
+    pos_group: List[Optional[str]] = []
+    pos_is_const: List[bool] = []
+    for node_idx in order:
+        n = nodes[int(node_idx)]
+        pos_group.append(_semantic_group_for_node(n))
+        pos_is_const.append(str(getattr(n, 'op_type', '')) == 'Constant')
+
+    # Nearest non-constant semantic tag to the left
+    prev_group: List[Optional[str]] = [None] * n_pos
+    last: Optional[str] = None
+    for i in range(n_pos):
+        g = pos_group[i]
+        if (not pos_is_const[i]) and g:
+            last = g
+        prev_group[i] = last
+
+    # Nearest non-constant semantic tag to the right
+    next_group: List[Optional[str]] = [None] * n_pos
+    last = None
+    for i in range(n_pos - 1, -1, -1):
+        g = pos_group[i]
+        if (not pos_is_const[i]) and g:
+            last = g
+        next_group[i] = last
+
+    M = n_pos - 1
+    labels: List[str] = [''] * M
+    for b in range(M):
+        lg = prev_group[b] if 0 <= b < n_pos else None
+        rg = next_group[b + 1] if 0 <= (b + 1) < n_pos else None
+        if lg and rg:
+            if lg == rg:
+                labels[b] = f"{lg} (in-layer)"
+            else:
+                labels[b] = f"{lg}->{rg}"
+        elif lg:
+            labels[b] = str(lg)
+        elif rg:
+            labels[b] = str(rg)
+        else:
+            labels[b] = ''
+    return labels
 
 
 def _setup_gui_logging() -> Optional[str]:
@@ -191,12 +314,18 @@ class Params:
     llm_preset: str
     llm_mode: str
     llm_prefill_len: int
-    llm_seq_len: int
     llm_decode_past_len: int
     llm_use_ort_symbolic: bool
     assume_bpe: Optional[int]
     unknown_tensor_proxy_mb: float
 
+    cluster_best_per_region: bool
+    # Clustering mode used when cluster_best_per_region is enabled:
+    #  - auto: semantic for LLM mode, uniform for other graphs
+    #  - uniform: fixed op windows (legacy "region ops")
+    #  - semantic: best split per (layer/block) transition
+    cluster_mode: str
+    cluster_region_ops: int  # <=0 => auto binning
     exclude_trivial: bool
     only_single_tensor: bool
     strict_boundary: bool
@@ -334,14 +463,7 @@ class SplitPointAnalyserGUI(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self._theme = None
-        if tb is not None:
-            try:
-                self._theme = tb.Style(theme="darkly")
-            except Exception:
-                self._theme = None
-
-        self.title(f"ONNX Split-Point Analyser - AI Edition v{__version__} (core v{getattr(asc, '__version__', '?')})")
+        self.title(f"ONNX Split-Point Analyser v{__version__} (core v{getattr(asc, '__version__', '?')})")
         self.geometry("1250x860")
 
         self.model_path: Optional[str] = None
@@ -360,20 +482,8 @@ class SplitPointAnalyserGUI(tk.Tk):
     # -------------------------- UI construction --------------------------
 
     def _build_ui(self):
-        # Notebook layout: Setup / Analysis / Export
-        self.notebook = ttk.Notebook(self)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=8, pady=(8, 4))
-
-        self.tab_setup = ttk.Frame(self.notebook)
-        self.tab_analyze = ttk.Frame(self.notebook)
-        self.tab_export = ttk.Frame(self.notebook)
-
-        self.notebook.add(self.tab_setup, text=" 1. Setup & Load ")
-        self.notebook.add(self.tab_analyze, text=" 2. Analysis & Split ")
-        self.notebook.add(self.tab_export, text=" 3. Export & Deploy ")
-
         # --- Top bar: open model ---
-        top = ttk.Frame(self.tab_setup)
+        top = ttk.Frame(self)
         top.pack(fill=tk.X, padx=10, pady=8)
 
         self.btn_open = ttk.Button(top, text="Open Model…", command=self._on_open)
@@ -388,7 +498,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.btn_toggle_settings.pack(side=tk.RIGHT)
 
         # --- Parameters ---
-        self.params_frame = ttk.LabelFrame(self.tab_setup, text="Analysis Parameters")
+        self.params_frame = ttk.LabelFrame(self, text="Analysis Parameters")
         self.params_frame.pack(fill=tk.X, padx=10, pady=(0, 8))
 
         # General parameters row
@@ -478,6 +588,29 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.var_skip_allow_last_n = tk.StringVar(value="0")
         self.ent_skip_allow_last_n = ttk.Entry(general, textvariable=self.var_skip_allow_last_n, width=6)
         self.ent_skip_allow_last_n.grid(row=2, column=5, sticky="w", padx=(4, 14), pady=(4, 0))
+
+        # Candidate clustering: keep only the best-scoring candidate per region/bin.
+        self.var_cluster_best_region = tk.BooleanVar(value=True)
+        self.chk_cluster_best_region = ttk.Checkbutton(general, text="Best per region", variable=self.var_cluster_best_region)
+        self.chk_cluster_best_region.grid(row=2, column=6, sticky="w", pady=(4, 0), padx=(0, 10))
+        ToolTip(self.chk_cluster_best_region, "Reduce duplicate candidates: keep only the best-scoring split per region of boundary indices.")
+
+        ttk.Label(general, text="Region (ops):").grid(row=2, column=7, sticky="e", pady=(4, 0))
+        self.var_cluster_region_ops = tk.StringVar(value="auto")
+        self.ent_cluster_region_ops = ttk.Entry(general, textvariable=self.var_cluster_region_ops, width=6)
+        self.ent_cluster_region_ops.grid(row=2, column=8, sticky="w", padx=(4, 14), pady=(4, 0))
+
+        ttk.Label(general, text="Mode:").grid(row=2, column=9, sticky="e", pady=(4, 0))
+        self.var_cluster_mode = tk.StringVar(value="Auto")
+        self.cb_cluster_mode = ttk.Combobox(
+            general,
+            textvariable=self.var_cluster_mode,
+            values=["Auto", "Uniform", "Semantic (LLM)"],
+            width=14,
+            state="readonly",
+        )
+        self.cb_cluster_mode.grid(row=2, column=10, sticky="w", padx=(4, 0), pady=(4, 0))
+        ToolTip(self.cb_cluster_mode, "Clustering mode for candidates. Auto: Semantic (LLM) if LLM presets are enabled, otherwise Uniform.")
 
         # Ranking frame
         self.rank_frame = ttk.LabelFrame(self.params_frame, text="Ranking")
@@ -920,6 +1053,8 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.var_shape_coverage = tk.StringVar(value="(run analysis)")
         self.var_unknown_crossing = tk.StringVar(value="(run analysis)")
         self.var_diag_note = tk.StringVar(value="")
+        # Extra info line for LLM presets (effective shapes, mode, etc.).
+        self.var_llm_info = tk.StringVar(value="")
 
         ttk.Label(d, text="Shape coverage (known/produced):").grid(row=0, column=0, sticky="w")
         self.lbl_cov = ttk.Label(d, textvariable=self.var_shape_coverage)
@@ -932,6 +1067,10 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.lbl_note = ttk.Label(d, textvariable=self.var_diag_note, foreground="#b00020")
         self.lbl_note.grid(row=0, column=4, sticky="w")
 
+        # LLM info line (shown only when the LLM preset is enabled / used).
+        self.lbl_llm_info = ttk.Label(d, textvariable=self.var_llm_info, foreground="#444444")
+        self.lbl_llm_info.grid(row=1, column=0, columnspan=6, sticky="w", pady=(4, 0))
+
         # Nordstern (relevance analysis for unknown tensor sizes)
         self.btn_nordstern = ttk.Button(d, text="Nordstern…", command=self._show_nordstern)
         self.btn_nordstern.grid(row=0, column=5, sticky="e", padx=(10, 0))
@@ -940,15 +1079,13 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         # ---------------- Actions (analyse + export/split) ----------------
         # Keep this compact (small Analyse button) and always visible.
-        action_bar = ttk.LabelFrame(self.tab_export, text="Export & Deploy", padding=10)
-        action_bar.pack(fill=tk.X, padx=12, pady=12)
+        action_bar = ttk.Frame(self.params_frame)
+        action_bar.grid(row=6, column=0, sticky="ew", padx=8, pady=(0, 8))
         action_bar.columnconfigure(0, weight=1)
-
-        ttk.Label(action_bar, text="Export, Split und Benchmark laufen hier gebündelt.").grid(row=0, column=0, sticky="w", pady=(0, 8))
 
         # Row 0: main actions
         main_actions = ttk.Frame(action_bar)
-        main_actions.grid(row=1, column=0, sticky="w")
+        main_actions.grid(row=0, column=0, sticky="w")
 
         self.btn_analyse = ttk.Button(main_actions, text="Analyse", command=self._on_analyse, width=12)
         self.btn_analyse.pack(side=tk.LEFT)
@@ -969,7 +1106,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         # Row 1: split options (compact)
         split_opts = ttk.Frame(action_bar)
-        split_opts.grid(row=2, column=0, sticky="w", pady=(6, 0))
+        split_opts.grid(row=1, column=0, sticky="w", pady=(4, 0))
 
         self.var_split_validate = tk.BooleanVar(value=False)
         self.chk_split_validate = ttk.Checkbutton(split_opts, text="Validate (ORT)", variable=self.var_split_validate)
@@ -1029,64 +1166,23 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.btn_split.state(["disabled"])
         self.btn_benchmark.state(["disabled"])
 
-        # --- Results split: graph left + controls/table right ---
-        self.mid_pane = ttk.PanedWindow(self.tab_analyze, orient=tk.HORIZONTAL)
+        # --- Results split: table + plots ---
+        self.mid_pane = ttk.PanedWindow(self, orient=tk.VERTICAL)
         mid = self.mid_pane
         mid.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
-        # Left side: plot area gets most space
-        left = ttk.Frame(mid)
-        left.columnconfigure(0, weight=1)
-        left.rowconfigure(0, weight=1)
-        mid.add(left, weight=4)
+        # ------------------------------ Table ------------------------------
+        table_frame = ttk.LabelFrame(mid, text="Suggested Boundaries")
+        mid.add(table_frame, weight=1)
 
-        plot_frame = ttk.LabelFrame(left, text="Plots")
-        plot_frame.grid(row=0, column=0, sticky="nsew")
-        plot_frame.columnconfigure(0, weight=1)
-        plot_frame.rowconfigure(0, weight=1)
-        plot_frame.rowconfigure(1, weight=0)
-
-        self.fig = Figure(figsize=(12, 7), constrained_layout=True)
-        self.ax_comm = self.fig.add_subplot(2, 2, 1)
-        self.ax_comp = self.fig.add_subplot(2, 2, 2)
-        self.ax_pareto = self.fig.add_subplot(2, 2, 3)
-        self.ax_lat = self.fig.add_subplot(2, 2, 4)
-
-        self.canvas = FigureCanvasTkAgg(self.fig, master=plot_frame)
-        self.canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
-
-        toolbar_frame = ttk.Frame(plot_frame)
-        toolbar_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(2, 6))
-        self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
-        self.toolbar.update()
-        try:
-            self.toolbar.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        except Exception:
-            pass
-
-        # Right side: manual control + candidates table
-        right = ttk.Frame(mid)
-        right.columnconfigure(0, weight=1)
-        right.rowconfigure(1, weight=1)
-        mid.add(right, weight=2)
-
-        self.ctrl_box = ttk.LabelFrame(right, text="Manual Boundary Control")
-        self.ctrl_box.grid(row=0, column=0, sticky="ew", padx=(8, 0), pady=(0, 8))
-
-        self.var_boundary = tk.IntVar(value=0)
-        self.scale_boundary = ttk.Scale(self.ctrl_box, orient=tk.HORIZONTAL, from_=0, to=1, command=self._on_scale_drag)
-        self.scale_boundary.pack(fill=tk.X, padx=8, pady=(8, 2))
-        self.lbl_boundary_val = ttk.Label(self.ctrl_box, text="Boundary: -")
-        self.lbl_boundary_val.pack(anchor="center", pady=(0, 8))
-
-        table_frame = ttk.LabelFrame(right, text="Suggested Boundaries")
-        table_frame.grid(row=1, column=0, sticky="nsew", padx=(8, 0))
+        # Use grid so the bottom of the frame is never "eaten" by the Treeview.
         table_frame.columnconfigure(0, weight=1)
         table_frame.rowconfigure(0, weight=1)
 
         cols = [
             "rank",
             "boundary",
+            "semantic",
             "left_op",
             "right_op",
             "cut_mb",
@@ -1106,6 +1202,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.tree = ttk.Treeview(table_inner, columns=cols, show="headings")
         self.tree.heading("rank", text="#")
         self.tree.heading("boundary", text="Boundary")
+        self.tree.heading("semantic", text="Semantic")
         self.tree.heading("left_op", text="Left op")
         self.tree.heading("right_op", text="Right op")
         self.tree.heading("cut_mb", text="Cut (MB)")
@@ -1118,15 +1215,16 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         self.tree.column("rank", width=40, anchor=tk.E)
         self.tree.column("boundary", width=80, anchor=tk.E)
-        self.tree.column("left_op", width=130)
-        self.tree.column("right_op", width=130)
-        self.tree.column("cut_mb", width=80, anchor=tk.E)
-        self.tree.column("num_tensors", width=70, anchor=tk.E)
-        self.tree.column("gflops_left", width=120, anchor=tk.E)
-        self.tree.column("gflops_right", width=120, anchor=tk.E)
-        self.tree.column("peak_left_mib", width=90, anchor=tk.E)
-        self.tree.column("peak_right_mib", width=90, anchor=tk.E)
-        self.tree.column("peak_max_mib", width=90, anchor=tk.E)
+        self.tree.column("semantic", width=170)
+        self.tree.column("left_op", width=150)
+        self.tree.column("right_op", width=150)
+        self.tree.column("cut_mb", width=90, anchor=tk.E)
+        self.tree.column("num_tensors", width=80, anchor=tk.E)
+        self.tree.column("gflops_left", width=135, anchor=tk.E)
+        self.tree.column("gflops_right", width=135, anchor=tk.E)
+        self.tree.column("peak_left_mib", width=110, anchor=tk.E)
+        self.tree.column("peak_right_mib", width=110, anchor=tk.E)
+        self.tree.column("peak_max_mib", width=110, anchor=tk.E)
 
         self.tree.grid(row=0, column=0, sticky="nsew")
 
@@ -1135,14 +1233,43 @@ class SplitPointAnalyserGUI(tk.Tk):
         vsb.grid(row=0, column=1, sticky="ns")
 
         self.tree.tag_configure("pick", background="#eef6ff")
-        self.tree.bind("<<TreeviewSelect>>", lambda _e: self._update_action_buttons(), add=True)
-        self.tree.bind("<<TreeviewSelect>>", self._on_tree_selection_sync, add=True)
 
-        # Plot export buttons are on the Export tab
-        plot_export = ttk.LabelFrame(self.tab_export, text="Plot Exports", padding=10)
-        plot_export.pack(fill=tk.X, padx=12, pady=(0, 12))
-        export_bar = ttk.Frame(plot_export)
-        export_bar.pack(fill=tk.X)
+        # Enable split only when a boundary row (not a child tensor row) is selected
+        self.tree.bind("<<TreeviewSelect>>", lambda _e: self._update_action_buttons(), add=True)
+
+        # ------------------------------ Plots ------------------------------
+        plot_frame = ttk.LabelFrame(mid, text="Plots")
+        mid.add(plot_frame, weight=3)
+
+        # Use grid so canvas does not hide the toolbar/export controls.
+        plot_frame.columnconfigure(0, weight=1)
+        plot_frame.rowconfigure(0, weight=1)
+        plot_frame.rowconfigure(1, weight=0)
+        plot_frame.rowconfigure(2, weight=0)
+
+        self.fig = Figure(figsize=(10, 6), constrained_layout=True)
+        self.ax_comm = self.fig.add_subplot(2, 2, 1)
+        self.ax_comp = self.fig.add_subplot(2, 2, 2)
+        self.ax_pareto = self.fig.add_subplot(2, 2, 3)
+        self.ax_lat = self.fig.add_subplot(2, 2, 4)
+
+        self.canvas = FigureCanvasTkAgg(self.fig, master=plot_frame)
+        self.canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+
+        # Matplotlib navigation toolbar (zoom/pan/save/etc.)
+        toolbar_frame = ttk.Frame(plot_frame)
+        toolbar_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(2, 0))
+        self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
+        self.toolbar.update()
+        try:
+            # Some Matplotlib versions auto-pack; calling pack() is harmless and makes it robust.
+            self.toolbar.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        except Exception:
+            pass
+
+        # Export buttons near plots
+        export_bar = ttk.Frame(plot_frame)
+        export_bar.grid(row=2, column=0, sticky="ew", padx=6, pady=(2, 6))
 
         self.btn_export_svg = ttk.Button(export_bar, text="Export SVG (overview)", command=lambda: self._export_overview("svg"))
         self.btn_export_pdf = ttk.Button(export_bar, text="Export PDF (overview)", command=lambda: self._export_overview("pdf"))
@@ -1154,19 +1281,6 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.btn_export_svg_s.pack(side=tk.LEFT, padx=(0, 6))
         self.btn_export_pdf_s.pack(side=tk.LEFT)
 
-        # Status bar at bottom (compact feedback + log dialog)
-        status = ttk.Frame(self)
-        status.pack(fill=tk.X, padx=8, pady=(0, 8))
-        self.var_status = tk.StringVar(value="Ready.")
-        ttk.Label(status, textvariable=self.var_status).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(status, text="Show Log", command=self._show_log_window).pack(side=tk.RIGHT)
-
-        # Internal status log storage
-        self._event_log: List[str] = []
-        self._log_win: Optional[tk.Toplevel] = None
-
-        # click in plot to select nearest boundary
-        self.canvas.mpl_connect("button_press_event", self._on_plot_click)
 
         # Tooltips
         self._add_tooltips()
@@ -1298,7 +1412,7 @@ class SplitPointAnalyserGUI(tk.Tk):
     # ------------------------- Layout helpers ------------------------
 
     def _toggle_settings(self) -> None:
-        """Hide/show the setup settings panel."""
+        """Hide/show the settings panel to maximize plot/table area."""
         is_visible = bool(self.var_settings_visible.get())
         if is_visible:
             try:
@@ -1308,115 +1422,14 @@ class SplitPointAnalyserGUI(tk.Tk):
             self.var_settings_visible.set(False)
             self.btn_toggle_settings.configure(text="Show settings")
         else:
+            # Re-pack the settings frame *before* the main pane (so it stays above plots).
             try:
-                self.params_frame.pack(fill=tk.X, padx=10, pady=(0, 8))
+                self.params_frame.pack(fill=tk.X, padx=10, pady=(0, 8), before=self.mid_pane)
             except Exception:
-                pass
+                # Fallback: normal packing order.
+                self.params_frame.pack(fill=tk.X, padx=10, pady=(0, 8))
             self.var_settings_visible.set(True)
             self.btn_toggle_settings.configure(text="Hide settings")
-
-    def _append_log(self, msg: str) -> None:
-        ts = datetime.now().strftime("%H:%M:%S")
-        line = f"[{ts}] {msg}"
-        self._event_log.append(line)
-        if len(self._event_log) > 500:
-            self._event_log = self._event_log[-500:]
-        if getattr(self, "_log_win", None) is not None and self._log_win.winfo_exists():
-            try:
-                self._log_text.configure(state="normal")
-                self._log_text.insert("end", line + "\n")
-                self._log_text.see("end")
-                self._log_text.configure(state="disabled")
-            except Exception:
-                pass
-
-    def _set_status(self, msg: str) -> None:
-        if hasattr(self, "var_status"):
-            self.var_status.set(msg)
-        self._append_log(msg)
-
-    def _show_log_window(self) -> None:
-        if getattr(self, "_log_win", None) is not None and self._log_win.winfo_exists():
-            self._log_win.lift()
-            return
-        win = tk.Toplevel(self)
-        win.title("Analysis Log")
-        win.geometry("920x380")
-        body = ttk.Frame(win)
-        body.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-        txt = tk.Text(body, wrap="none")
-        ysb = ttk.Scrollbar(body, orient="vertical", command=txt.yview)
-        txt.configure(yscrollcommand=ysb.set)
-        txt.grid(row=0, column=0, sticky="nsew")
-        ysb.grid(row=0, column=1, sticky="ns")
-        body.rowconfigure(0, weight=1)
-        body.columnconfigure(0, weight=1)
-        txt.insert("1.0", "\n".join(self._event_log) + ("\n" if self._event_log else ""))
-        txt.configure(state="disabled")
-        self._log_win = win
-        self._log_text = txt
-
-    def _highlight_boundary(self, boundary: Optional[int]) -> None:
-        try:
-            for ax in (self.ax_comm, self.ax_comp, self.ax_lat):
-                if hasattr(ax, "_selected_boundary_line") and ax._selected_boundary_line is not None:
-                    try:
-                        ax._selected_boundary_line.remove()
-                    except Exception:
-                        pass
-                    ax._selected_boundary_line = None
-                if boundary is not None:
-                    ax._selected_boundary_line = ax.axvline(int(boundary), color="#ffcc00", linewidth=1.4)
-            self.lbl_boundary_val.configure(text=(f"Boundary: {int(boundary)}" if boundary is not None else "Boundary: -"))
-            self.canvas.draw_idle()
-        except Exception:
-            pass
-
-    def _on_tree_selection_sync(self, _evt=None) -> None:
-        b = self._selected_boundary_index()
-        if b is None:
-            return
-        try:
-            self.var_boundary.set(int(b))
-            self.scale_boundary.set(float(b))
-        except Exception:
-            pass
-        self._highlight_boundary(int(b))
-
-    def _on_scale_drag(self, value: str) -> None:
-        try:
-            b = int(round(float(value)))
-        except Exception:
-            return
-        self.var_boundary.set(b)
-        self._highlight_boundary(b)
-        # Select matching boundary row in table (if present)
-        for item in self.tree.get_children():
-            vals = self.tree.item(item, "values")
-            if len(vals) > 1:
-                try:
-                    if int(vals[1]) == b:
-                        self.tree.selection_set(item)
-                        self.tree.see(item)
-                        break
-                except Exception:
-                    pass
-
-    def _on_plot_click(self, event) -> None:
-        if event is None or event.xdata is None or self.analysis is None:
-            return
-        b = int(round(float(event.xdata)))
-        try:
-            max_b = max(0, len(self.analysis.get("costs_bytes") or []) - 1)
-            b = max(0, min(max_b, b))
-        except Exception:
-            pass
-        self.var_boundary.set(b)
-        try:
-            self.scale_boundary.set(float(b))
-        except Exception:
-            pass
-        self._on_scale_drag(str(b))
 
     # --------------------------- Hailo panel helpers ------------------------
 
@@ -1504,7 +1517,6 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.model_path = path
         self.lbl_model.configure(text=os.path.basename(path))
         self._clear_results()
-        self._set_status(f"Model loaded: {os.path.basename(path)}")
 
     def _on_analyse(self):
         if not self.model_path:
@@ -1562,9 +1574,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                     item = q.get_nowait()
                     kind = item[0]
                     if kind == "progress":
-                        msg = str(item[1])
-                        msg_var.set(msg)
-                        self._set_status(msg)
+                        msg_var.set(str(item[1]))
                     elif kind == "ok":
                         self.analysis = item[1]
                         self.current_picks = item[2]
@@ -1577,15 +1587,12 @@ class SplitPointAnalyserGUI(tk.Tk):
                         pb.stop()
                         dlg.destroy()
                         self.btn_analyse.state(["!disabled"])
-                        self._set_status("Analysis completed.")
-                        self.notebook.select(self.tab_analyze)
                         return
                     elif kind == "err":
                         err_text = str(item[1])
                         pb.stop()
                         dlg.destroy()
                         self.btn_analyse.state(["!disabled"])
-                        self._set_status("Analysis failed.")
                         messagebox.showerror("Analysis failed", err_text)
                         return
             except queue.Empty:
@@ -1729,6 +1736,17 @@ class SplitPointAnalyserGUI(tk.Tk):
         if show_top_tensors is None or show_top_tensors < 0:
             raise ValueError("Show top tensors must be an integer ≥ 0.")
 
+        cluster_mode = (self.var_cluster_mode.get() if hasattr(self, 'var_cluster_mode') else 'auto')
+        cluster_mode = (cluster_mode or 'auto').strip().lower()
+        if cluster_mode.startswith('auto'):
+            cluster_mode = 'auto'
+        elif 'semantic' in cluster_mode:
+            cluster_mode = 'semantic'
+        elif 'uniform' in cluster_mode:
+            cluster_mode = 'uniform'
+        else:
+            cluster_mode = 'auto'
+
         return Params(
             topk=int(topk),
             min_gap=int(min_gap),
@@ -1738,11 +1756,14 @@ class SplitPointAnalyserGUI(tk.Tk):
             llm_preset=str(self.var_llm_preset.get()),
             llm_mode=str(self.var_llm_mode.get()),
             llm_prefill_len=int(self.var_llm_prefill.get() or 0),
-            llm_seq_len=(1 if str(self.var_llm_mode.get()) == "decode" else int(self.var_llm_prefill.get() or 0)),
             llm_decode_past_len=int(self.var_llm_decode.get() or 0),
             llm_use_ort_symbolic=bool(self.var_llm_use_ort_symbolic.get()),
             assume_bpe=bpe,
             unknown_tensor_proxy_mb=float(unknown_mb),
+            cluster_best_per_region=bool(self.var_cluster_best_region.get()),
+            cluster_mode=str(cluster_mode),
+            cluster_region_ops=int((_safe_int(self.var_cluster_region_ops.get()) or 0)),
+
             exclude_trivial=exclude_trivial,
             only_single_tensor=only_one,
             strict_boundary=strict_boundary,
@@ -1864,27 +1885,6 @@ class SplitPointAnalyserGUI(tk.Tk):
         if progress_cb:
             progress_cb("Running ONNX shape inference...")
 
-        # Apply generic LLM-related dimension overrides early (safe for None batch override)
-        if p.llm_enable:
-            try:
-                batch_val = int(p.batch_override) if p.batch_override is not None else 1
-                seq_val = int(getattr(p, "llm_seq_len", 0) or 0)
-                if seq_val <= 0:
-                    seq_val = 1 if str(getattr(p, "llm_mode", "")).lower() == "decode" else int(getattr(p, "llm_prefill_len", 1) or 1)
-                asc.apply_dim_overrides(
-                    model,
-                    {
-                        "batch": batch_val,
-                        "batch_size": batch_val,
-                        "seq": seq_val,
-                        "sequence": seq_val,
-                        "sequence_length": seq_val,
-                        "seq_len": seq_val,
-                    },
-                )
-            except Exception as e:
-                logger.warning("[llm] Failed to apply generic dim overrides (continuing): %s", e)
-
         # ------------------------------------------------------------
         # LLM shape presets (optional)
         #
@@ -1895,6 +1895,14 @@ class SplitPointAnalyserGUI(tk.Tk):
         #   2) Post-inference: apply dim_param->dim_value overrides across the entire
         #      graph (covers value_info entries that shape inference adds).
         # ------------------------------------------------------------
+
+        # Defaults (used later for comm/shape hints). Populated when LLM preset is enabled.
+        llm_enabled = bool(p.llm_enable)
+        llm_batch = 1
+        llm_seq_len = 1
+        llm_past_len = 0
+        llm_total_len = 1
+        llm_mode = "decode"
 
         if p.llm_enable:
             try:
@@ -1910,10 +1918,25 @@ class SplitPointAnalyserGUI(tk.Tk):
                     past_len = 0
                 total_len = seq_len + past_len
 
+                # Batch override can be empty in the GUI (None). For LLM shape
+                # overrides we always need a concrete batch.
+                try:
+                    batch_llm = int(p.batch_override) if p.batch_override is not None else 1
+                except Exception:
+                    batch_llm = 1
+                batch_llm = max(1, batch_llm)
+
+                # Persist for later comm estimation.
+                llm_batch = batch_llm
+                llm_seq_len = seq_len
+                llm_past_len = past_len
+                llm_total_len = total_len
+                llm_mode = str(mode or "decode")
+
                 try:
                     asc.apply_llm_io_shape_overrides(
                         model,
-                        batch=max(1, int(p.batch_override)),
+                        batch=batch_llm,
                         seq_len=seq_len,
                         past_len=past_len,
                         total_len=total_len,
@@ -1921,7 +1944,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                     logger.info(
                         "[llm] Pre-seeded I/O shapes: mode=%s batch=%d seq_len=%d past_len=%d total_len=%d",
                         mode,
-                        max(1, int(p.batch_override)),
+                        batch_llm,
                         seq_len,
                         past_len,
                         total_len,
@@ -1930,28 +1953,30 @@ class SplitPointAnalyserGUI(tk.Tk):
                     logger.warning("[llm] Failed to pre-seed I/O shapes (continuing): %s", e)
 
             except Exception as e:
+                llm_enabled = False
                 logger.exception("[llm] Failed to compute LLM preset lengths: %s", e)
 
-        model = asc.infer_shapes_safe(model, use_ort_symbolic=bool(p.llm_enable and p.llm_use_ort_symbolic))
+        model = asc.infer_shapes_safe(model, use_ort_symbolic=bool(llm_enabled and p.llm_use_ort_symbolic))
 
+        llm_dim_overrides: Dict[str, int] = {}
         # Post-inference: apply dim_param overrides to all value_info.
-        if p.llm_enable:
+        if llm_enabled:
             try:
                 prefill_len = int(p.llm_prefill_len)
                 decode_past_len = int(p.llm_decode_past_len)
-                mode = p.llm_mode
+                mode = llm_mode
 
                 mapping = asc.make_llm_symbolic_dim_overrides(
                     model,
-                    batch=max(1, int(p.batch_override)),
+                    batch=llm_batch,
                     prefill_len=prefill_len,
                     decode_past_len=decode_past_len,
                     mode=mode,
                 )
 
                 if mapping:
-                    params["dim_overrides"] = mapping
-                    a["llm_dim_overrides"] = mapping
+                    llm_dim_overrides = dict(mapping)
+                    # Apply post-infer to avoid ORT clearing edits
                     changes2 = asc.apply_dim_param_overrides(model, mapping, only_inputs=False)
                     if changes2:
                         logger.info(
@@ -1975,9 +2000,78 @@ class SplitPointAnalyserGUI(tk.Tk):
         nodes, producer_of, consumers_of = asc.build_producers_consumers(model)
         order = asc.topo_sort(nodes, producer_of)
 
+        # Semantic (LLM) labels per boundary (best-effort, used for UI readability).
+        semantic_labels_by_boundary = _semantic_labels_for_boundaries(nodes, order)
+
         if progress_cb:
             progress_cb("Estimating activation bytes and boundary costs...")
-        value_bytes = asc.compute_tensor_bytes_per_value(vimap, p.batch_override, p.assume_bpe)
+
+        # Many LLM ONNX exports include a lot of tiny Constant-node outputs (INT64
+        # scalars, shape helpers, etc.). These are safe to duplicate into both
+        # split parts and should not be counted as runtime communication.
+        const_values = {
+            v
+            for v, pi in producer_of.items()
+            if 0 <= int(pi) < len(nodes) and getattr(nodes[int(pi)], "op_type", "") == "Constant"
+        }
+
+        llm_hints = None
+        if llm_enabled:
+            llm_hints = {
+                "batch": int(llm_batch),
+                "seq_len": int(llm_seq_len),
+                "past_len": int(llm_past_len),
+                "total_len": int(llm_total_len),
+            }
+
+        # Best-effort: infer the model hidden size from *weight* tensor shapes.
+        # This is useful when shape inference does not annotate intermediate activations
+        # but the 2D weight matrices still expose the hidden dimension.
+        hidden_size_hint = None
+        if llm_enabled:
+            try:
+                from collections import Counter
+
+                dims = []
+                for init in getattr(model.graph, "initializer", []):
+                    try:
+                        dlist = list(getattr(init, "dims", []))
+                    except Exception:
+                        continue
+                    if len(dlist) != 2:
+                        continue
+                    for d in dlist:
+                        try:
+                            di = int(d)
+                        except Exception:
+                            continue
+                        # Hidden sizes are typically in the low-thousands; filter out vocab (huge)
+                        # and tiny scalars.
+                        if 256 <= di <= 16384:
+                            dims.append(di)
+                if dims:
+                    dim, cnt = Counter(dims).most_common(1)[0]
+                    # Require that the dimension shows up often, otherwise it could be an
+                    # intermediate size for a single layer.
+                    if cnt >= 16:
+                        hidden_size_hint = int(dim)
+            except Exception:
+                hidden_size_hint = None
+
+        batch_for_sizes = p.batch_override
+        if llm_enabled and (batch_for_sizes is None or batch_for_sizes <= 0):
+            batch_for_sizes = int(llm_batch)
+
+        value_bytes_raw = asc.compute_tensor_bytes_per_value(
+            vimap,
+            batch_for_sizes,
+            p.assume_bpe,
+            llm_hints=llm_hints,
+            hidden_size_hint=hidden_size_hint,
+        )
+        # Filter constants from comm + tensor-count metrics.
+        value_bytes = {k: (0 if k in const_values else int(b)) for k, b in value_bytes_raw.items()}
+
         costs_bytes, val_span = asc.boundary_costs(order, producer_of, consumers_of, value_bytes)
 
         # Peak activation memory per boundary (approx)
@@ -1987,8 +2081,10 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         # Crossing tensor counts: known sizes vs all (unknown sizes enabled via value_bytes_all)
         counts_known = asc.boundary_tensor_counts(order, producer_of, consumers_of, value_bytes)
-        value_bytes_all = {k: 1 for k in producer_of.keys()}
+        value_bytes_all = {k: (0 if k in const_values else 1) for k in producer_of.keys()}
         counts_all = asc.boundary_tensor_counts(order, producer_of, consumers_of, value_bytes_all)
+        value_bytes_const = {k: (1 if k in const_values else 0) for k in producer_of.keys()}
+        counts_const = asc.boundary_tensor_counts(order, producer_of, consumers_of, value_bytes_const)
         unknown_counts = [max(0, int(a) - int(k)) for a, k in zip(counts_all, counts_known)]
 
         # Optional: pessimistically account for tensors whose shape cannot be inferred.
@@ -1996,20 +2092,85 @@ class SplitPointAnalyserGUI(tk.Tk):
         # may incorrectly prefer "dirty" cuts that look cheap only because shape
         # inference failed.
         costs_bytes_lb = list(costs_bytes)
-        if p.unknown_tensor_proxy_mb and p.unknown_tensor_proxy_mb > 0 and unknown_counts:
-            proxy_bytes = int(float(p.unknown_tensor_proxy_mb) * 1024 * 1024)
-            costs_bytes = [int(cb) + proxy_bytes * int(uc) for cb, uc in zip(costs_bytes, unknown_counts)]
 
-            # Recompute peak memory estimates using the pessimistic comm estimate.
-            peak_l, peak_r, peak_max = asc.peak_activation_memory_per_boundary(costs_bytes)
+        # DType-aware proxy bytes for unknown-size tensors (conservative but less misleading):
+        #   - FLOAT16/FLOAT32/... : unknown_tensor_proxy_mb (default 2 MiB)
+        #   - INT/BOOL-like       : 64 KiB (hard default; these are usually masks/ids)
+        unknown_float_proxy_mb = float(getattr(p, "unknown_tensor_proxy_mb", 0.0) or 0.0)
+        unknown_int_proxy_kb = 64.0
+        if (unknown_float_proxy_mb > 0 or unknown_int_proxy_kb > 0) and unknown_counts:
+            try:
+                M = max(0, len(order) - 1)
+                delta = [0.0] * (M + 1)
+                pos_of = {n: i for i, n in enumerate(order)}
 
-        # Spans for ALL crossing values (including unknown sizes). Useful for Nordstern.
+                float_proxy_b = float(unknown_float_proxy_mb) * 1024.0 * 1024.0
+                int_proxy_b = float(unknown_int_proxy_kb) * 1024.0
+
+                int_like = {
+                    onnx.TensorProto.BOOL,
+                    onnx.TensorProto.INT8,
+                    onnx.TensorProto.UINT8,
+                    onnx.TensorProto.INT16,
+                    onnx.TensorProto.UINT16,
+                    onnx.TensorProto.INT32,
+                    onnx.TensorProto.UINT32,
+                    onnx.TensorProto.INT64,
+                    onnx.TensorProto.UINT64,
+                }
+
+                for v, prod in producer_of.items():
+                    if v in const_values:
+                        continue
+                    if value_bytes.get(v, 0) > 0:
+                        continue  # size known
+                    cons = consumers_of.get(v, [])
+                    if not cons:
+                        continue
+                    p_pos = pos_of.get(prod, None)
+                    if p_pos is None:
+                        continue
+                    cons_pos = [pos_of[c] for c in cons if c in pos_of]
+                    if not cons_pos:
+                        continue
+                    last = max(cons_pos)
+                    if last <= p_pos:
+                        continue
+
+                    et = asc.elemtype_from_vi(vimap.get(v))
+                    pb = int_proxy_b if et in int_like else float_proxy_b
+                    if pb <= 0:
+                        continue
+
+                    if p_pos < len(delta):
+                        delta[p_pos] += pb
+                    if last < len(delta):
+                        delta[last] -= pb
+
+                running = 0.0
+                proxy_bytes_by_boundary: List[float] = []
+                for b in range(M):
+                    running += delta[b]
+                    proxy_bytes_by_boundary.append(running)
+
+                if proxy_bytes_by_boundary:
+                    costs_bytes = [
+                        int(cb) + int(pb) for cb, pb in zip(costs_bytes, proxy_bytes_by_boundary)
+                    ]
+            except Exception as e:
+                logger.warning("[proxy] Failed to compute dtype-aware unknown-size proxy: %s", e)
+
+        peak_l, peak_r, peak_max = asc.peak_activation_memory_per_boundary(costs_bytes)
+
+
+# Spans for ALL crossing values (including unknown sizes). Useful for Nordstern.
         _, val_span_all = asc.boundary_costs(order, producer_of, consumers_of, value_bytes_all)
 
         # Coverage of produced tensors that have an inferred size
         produced = list(producer_of.keys())
-        known_produced = sum(1 for v in produced if value_bytes.get(v, 0) > 0)
-        coverage = (float(known_produced) / float(len(produced))) if produced else 1.0
+        produced_act = [v for v in produced if v not in const_values]
+        known_produced = sum(1 for v in produced_act if value_bytes.get(v, 0) > 0)
+        coverage = (float(known_produced) / float(len(produced_act))) if produced_act else 1.0
 
         # FLOPs per node
         if progress_cb:
@@ -2062,6 +2223,7 @@ class SplitPointAnalyserGUI(tk.Tk):
             "producer_of": producer_of,
             "consumers_of": consumers_of,
             "order": order,
+            "semantic_labels_by_boundary": semantic_labels_by_boundary,
             "vimap": vimap,
             "value_bytes": value_bytes,
             "costs_bytes": costs_bytes,
@@ -2073,11 +2235,18 @@ class SplitPointAnalyserGUI(tk.Tk):
             "val_span_all": val_span_all,
             "crossing_counts_known": counts_known,
             "crossing_counts_all": counts_all,
+            "crossing_counts_const": counts_const,
+            "const_value_count": len(const_values),
             "unknown_crossing_counts": unknown_counts,
             "unknown_tensor_proxy_mb": float(p.unknown_tensor_proxy_mb) if p.unknown_tensor_proxy_mb else 0.0,
+            "unknown_tensor_proxy_kb_int": float(unknown_int_proxy_kb),
+            "llm_dim_overrides": llm_dim_overrides,
+            "llm_hints": llm_hints,
+            "llm_mode": llm_mode,
+            "hidden_size_hint": hidden_size_hint,
             "shape_coverage": coverage,
             "known_produced": known_produced,
-            "total_produced": len(produced),
+            "total_produced": len(produced_act),
             "max_unknown_crossing": max(unknown_counts) if unknown_counts else 0,
             "node_flops_list": node_flops_list,
             "flops_by_node": flops_by_node,
@@ -2257,7 +2426,123 @@ class SplitPointAnalyserGUI(tk.Tk):
             else:
                 candidates.sort(key=lambda b: float(scores.get(b, 0.0) if scores is not None else costs[b]))
 
-        # Non-maximum suppression by boundary index
+        
+        raw_candidates = list(candidates)
+
+        # Candidate clustering (diversity): keep only the best-scoring candidate per region/bin.
+        #
+        # For CNN-like graphs we use uniform op windows (legacy behaviour).
+        # For transformer/LLM graphs we can cluster semantically by "layer/block transitions",
+        # which removes the "dirty splits" inside attention/MLP blocks.
+        if getattr(p, "cluster_best_per_region", False) and candidates:
+            cluster_mode = str(getattr(p, "cluster_mode", "auto") or "auto").strip().lower()
+            if (not cluster_mode) or cluster_mode.startswith("auto"):
+                cluster_mode = "semantic" if bool(getattr(p, "llm_enable", False)) else "uniform"
+            elif "sem" in cluster_mode:
+                cluster_mode = "semantic"
+            elif "uni" in cluster_mode:
+                cluster_mode = "uniform"
+            else:
+                cluster_mode = "uniform"
+
+            # --- Semantic clustering (LLMs): best split per layer transition ---
+            if cluster_mode == "semantic":
+                n_pos = int(len(order))
+                # Map each topo position to a semantic group label (or None).
+                pos_group = []
+                pos_is_const = []
+                for node_idx in order:
+                    n = nodes[int(node_idx)]
+                    pos_group.append(_semantic_group_for_node(n))
+                    pos_is_const.append(str(getattr(n, "op_type", "")) == "Constant")
+
+                # Nearest "real" group to the left/right (skip constants and unknown groups).
+                prev_group: List[Optional[str]] = [None] * n_pos
+                last: Optional[str] = None
+                for i in range(n_pos):
+                    g = pos_group[i]
+                    if (not pos_is_const[i]) and g:
+                        last = g
+                    prev_group[i] = last
+                next_group: List[Optional[str]] = [None] * n_pos
+                last = None
+                for i in range(n_pos - 1, -1, -1):
+                    g = pos_group[i]
+                    if (not pos_is_const[i]) and g:
+                        last = g
+                    next_group[i] = last
+
+                sem_key_by_b: List[Optional[str]] = [None] * M
+                for b in range(M):
+                    lg = prev_group[b] if 0 <= b < n_pos else None
+                    rg = next_group[b + 1] if 0 <= (b + 1) < n_pos else None
+                    if lg and rg and lg != rg:
+                        sem_key_by_b[b] = f"{lg}->{rg}"
+
+                used_keys = set()
+                clustered = []
+                for b in candidates:
+                    key = sem_key_by_b[int(b)] if 0 <= int(b) < len(sem_key_by_b) else None
+                    if not key:
+                        continue
+                    if key in used_keys:
+                        continue
+                    used_keys.add(key)
+                    clustered.append(b)
+
+                if clustered:
+                    logger.info(
+                        "[cluster] semantic layers: %d -> %d candidates (%d unique transitions)",
+                        len(candidates),
+                        len(clustered),
+                        len(used_keys),
+                    )
+                    candidates = clustered
+                else:
+                    # If we couldn't extract any semantic transitions (non-transformer graph,
+                    # or model exported without layer names), fall back to uniform regions.
+                    logger.info(
+                        "[cluster] semantic layers: no transitions detected; falling back to uniform regions",
+                    )
+                    cluster_mode = "uniform"
+
+            # --- Uniform clustering: best split per fixed op window ---
+            if cluster_mode == "uniform":
+                region_ops = int(getattr(p, "cluster_region_ops", 0) or 0)
+                if region_ops <= 0:
+                    # Auto: choose a region/bin size proportional to the model's graph size.
+                    #
+                    # We intentionally make this *independent* of Top-K to keep the clustering
+                    # stable when the user changes the display depth. For large graphs (LLMs)
+                    # this typically yields ~2% of the topo-op count per region (≈ 50 regions).
+                    n_ops = max(1, int(len(order)))
+                    region_ops = int(round(n_ops / 50.0))  # ~2% of model size
+                    # Clamp to avoid degenerate behavior on tiny/huge graphs.
+                    region_ops = max(5, min(250, region_ops))
+                    logger.info(
+                        "[cluster] auto region_ops=%d (n_ops=%d, ~%.2f%%)",
+                        region_ops,
+                        n_ops,
+                        100.0 * float(region_ops) / float(n_ops),
+                    )
+                used_regions = set()
+                clustered = []
+                for b in candidates:
+                    rid = b // region_ops
+                    if rid in used_regions:
+                        continue
+                    used_regions.add(rid)
+                    clustered.append(b)
+                if len(clustered) != len(candidates):
+                    logger.info(
+                        "[cluster] best-per-region: %d -> %d candidates (region_ops=%d)",
+                        len(candidates),
+                        len(clustered),
+                        region_ops,
+                    )
+                candidates = clustered
+
+# Non-maximum suppression by boundary index
         # Optionally inject a Hailo feasibility check into the pick selection.
         picks: List[int] = []
 
@@ -2367,6 +2652,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                     a["hailo_check_temp_cleaned"] = False
 
         # Store for plots/export
+        a["candidate_bounds_all"] = list(raw_candidates)
         a["candidate_bounds"] = list(candidates)
         a["scores"] = scores
         a["latency_ms_dict"] = latency_ms
@@ -2630,12 +2916,35 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         if cov < 0.999 or max_unk > 0:
             proxy_mb = float(a.get("unknown_tensor_proxy_mb", 0.0) or 0.0)
+            proxy_kb_int = float(a.get("unknown_tensor_proxy_kb_int", 0.0) or 0.0)
             if max_unk > 0 and proxy_mb > 0:
-                self.var_diag_note.set(f"Comm(b) includes unknown proxy ({proxy_mb:g} MB/tensor)")
+                if proxy_kb_int > 0:
+                    self.var_diag_note.set(
+                        f"Comm(b) includes unknown proxy (float {proxy_mb:g} MB, int/bool {proxy_kb_int:g} KB)"
+                    )
+                else:
+                    self.var_diag_note.set(f"Comm(b) includes unknown proxy ({proxy_mb:g} MB/tensor)")
             else:
                 self.var_diag_note.set("Comm(b) may be underestimated (lower bound)")
         else:
             self.var_diag_note.set("")
+
+        # LLM preset info (helps interpret comm/shape numbers).
+        llm_hints = a.get("llm_hints")
+        if isinstance(llm_hints, dict) and llm_hints:
+            llm_mode = str(a.get("llm_mode") or "")
+            b = llm_hints.get("batch")
+            s = llm_hints.get("seq_len")
+            past = llm_hints.get("past_len")
+            total = llm_hints.get("total_len")
+            hidden_hint = a.get("hidden_size_hint")
+            mode_note = " (per-token)" if llm_mode == "decode" else ""
+            msg = f"LLM effective shapes: mode={llm_mode}{mode_note} batch={b} seq_len={s} past_len={past} total_len={total}"
+            if hidden_hint:
+                msg += f" (hidden≈{hidden_hint})"
+            self.var_llm_info.set(msg)
+        else:
+            self.var_llm_info.set("")
 
     # ----------------------------- Nordstern -----------------------------
 
@@ -2874,11 +3183,6 @@ class SplitPointAnalyserGUI(tk.Tk):
 
     def _update_table(self, a: Dict, picks: List[int], p: Params):
         self.tree.delete(*self.tree.get_children())
-        try:
-            max_b = max(0, len(a.get("costs_bytes") or []) - 1)
-            self.scale_boundary.configure(from_=0, to=max_b)
-        except Exception:
-            pass
 
         nodes = a["nodes"]
         order = a["order"]
@@ -2886,6 +3190,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         counts_all = a["crossing_counts_all"]
         unknown = a["unknown_crossing_counts"]
         flops_left_prefix = a["flops_left_prefix"]
+        sem_labels = a.get("semantic_labels_by_boundary") or []
         total_flops = float(a["total_flops"])
         peak_left_b = a.get("peak_act_mem_left_bytes") or []
         peak_right_b = a.get("peak_act_mem_right_bytes") or []
@@ -2912,6 +3217,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                 values=(
                     r,
                     b,
+                    (sem_labels[b] if b < len(sem_labels) else ""),
                     nodes[lidx].op_type,
                     nodes[ridx].op_type,
                     f"{cut_mb:.3f}",
@@ -2930,7 +3236,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                 self.tree.insert(
                     parent,
                     "end",
-                    values=("", "↳ unknown sizes", "", "", "", f"+{int(unknown[b])}", "", "", "", "", ""),
+                    values=("", "", "↳ unknown sizes", "", "", "", f"+{int(unknown[b])}", "", "", "", "", ""),
                 )
 
             if p.show_top_tensors > 0:
@@ -2940,6 +3246,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                         parent,
                         "end",
                         values=(
+                            "",
                             "",
                             f"↳ {name}",
                             "",
@@ -2954,15 +3261,6 @@ class SplitPointAnalyserGUI(tk.Tk):
                         ),
                     )
 
-        if picks:
-            b0 = int(picks[0])
-            try:
-                self.var_boundary.set(b0)
-                self.scale_boundary.set(float(b0))
-            except Exception:
-                pass
-            self._highlight_boundary(b0)
-
     # ----------------------------- Plotting -----------------------------
 
     def _update_plots(self, a: Dict, picks: List[int], p: Params):
@@ -2976,14 +3274,6 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         M = len(costs)
         xs = list(range(M))
-
-        # Visual layer bands (zebra) to improve boundary readability.
-        # Use candidate boundaries as approximate semantic layer edges.
-        layer_bounds = sorted(set(int(b) for b in (a.get("candidate_bounds") or [])))
-        if len(layer_bounds) >= 2:
-            for ax in (self.ax_comm, self.ax_comp, self.ax_lat):
-                for i in range(0, len(layer_bounds) - 1, 2):
-                    ax.axvspan(layer_bounds[i], layer_bounds[i + 1], color="white", alpha=0.05, zorder=0)
 
         comm_mb = [float(cb) / 1e6 for cb in costs]
         fl_l_g = [float(f) / 1e9 for f in flops_left_prefix]
@@ -3232,8 +3522,18 @@ class SplitPointAnalyserGUI(tk.Tk):
         do_runner = bool(self.var_split_runner.get())
         runner_target = str(self.var_runner_target.get() or "auto")
 
-        do_ctx_full = bool(getattr(self, 'var_split_ctx_full', tk.BooleanVar(value=True)).get())
-        do_ctx_cutflow = bool(getattr(self, 'var_split_ctx_cutflow', tk.BooleanVar(value=False)).get())
+        # Context export toggles.
+        #
+        # Practical default: when exporting a split as a folder, always emit context artifacts.
+        # This avoids the "where are the PDFs?" confusion when users forget that the
+        # context checkboxes exist or are unchecked.
+        do_ctx_full_user = bool(getattr(self, 'var_split_ctx_full', tk.BooleanVar(value=True)).get())
+        do_ctx_cutflow_user = bool(getattr(self, 'var_split_ctx_cutflow', tk.BooleanVar(value=True)).get())
+        if (not do_ctx_full_user) and (not do_ctx_cutflow_user):
+            # Safety: ensure at least one context artifact for the split folder
+            do_ctx_cutflow_user = True
+        do_ctx_full = do_ctx_full_user or export_as_folder
+        do_ctx_cutflow = do_ctx_cutflow_user or export_as_folder
 
         ctx_hops = _safe_int(getattr(self, 'var_split_ctx_hops', tk.StringVar(value='2')).get()) or 2
 
@@ -3376,6 +3676,25 @@ class SplitPointAnalyserGUI(tk.Tk):
                     manifest_out.update(split_manifest)
 
                 # Split-context diagrams around the boundary (GraphViz if available; otherwise fallback).
+                # Selected row metadata lives in the current analysis model.
+                # We avoid relying on Treeview payload here because the worker runs asynchronously.
+                semantic_label = None
+                try:
+                    sem = self.analysis.get("semantic_labels_by_boundary") if isinstance(self.analysis, dict) else None
+                    if isinstance(sem, list) and 0 <= int(b) < len(sem):
+                        semantic_label = sem[int(b)]
+                except Exception:
+                    semantic_label = None
+
+                # Use a compact, "LLM-friendly" context rendering only for LLM runs.
+                # (Non-LLM models like YOLO/ResNet should keep the full context graph rendering.)
+                #
+                # NOTE: This worker runs asynchronously and should not depend on GUI variables
+                # that may not exist in this scope. We infer "LLM style" from the selected
+                # boundary metadata (semantic labels) and/or whether LLM presets are enabled.
+                llm_style = bool(semantic_label) or bool(getattr(params, "llm_enable", False))
+                value_bytes_map = self.analysis.get("value_bytes") if isinstance(self.analysis, dict) else None
+
                 if do_ctx_full:
                     try:
                         ctx = asc.export_boundary_graphviz_context(
@@ -3387,6 +3706,11 @@ class SplitPointAnalyserGUI(tk.Tk):
                             basename=f"split_context_b{b}",
                             render=True,
                             hops=int(ctx_hops),
+                            strict_boundary=bool(self.var_strict_boundary.get()),
+                            include_external_inputs=(not llm_style),
+                            semantic_label=semantic_label,
+                            value_bytes_map=value_bytes_map,
+                            force_matplotlib_fallback=llm_style,
                         )
                         manifest_out["split_context"] = ctx
                         if isinstance(ctx, dict):
@@ -3407,9 +3731,13 @@ class SplitPointAnalyserGUI(tk.Tk):
                             basename=f"split_context_b{b}_cutflow",
                             render=True,
                             hops=int(ctx_hops),
+                            strict_boundary=bool(self.var_strict_boundary.get()),
                             cut_flow_only=True,
                             include_internal_consumers=False,
                             include_external_inputs=False,
+                            semantic_label=semantic_label,
+                            value_bytes_map=value_bytes_map,
+                            force_matplotlib_fallback=llm_style,
                         )
                         manifest_out["split_context_cutflow"] = ctx_cf
                         if isinstance(ctx_cf, dict):
@@ -4577,6 +4905,18 @@ if __name__ == "__main__":
                         manifest_out.update(split_manifest)
 
                     # Context diagrams
+                    semantic_label = None
+                    try:
+                        for c in (self.candidates or []):
+                            if int(c.get("boundary", -1)) == int(b) and c.get("semantic"):
+                                semantic_label = c.get("semantic")
+                                break
+                    except Exception:
+                        semantic_label = None
+
+                    llm_style = bool(semantic_label) or bool(self.var_llm_preset.get())
+                    value_bytes_map = self.analysis.get("value_bytes") if isinstance(self.analysis, dict) else None
+
                     if do_ctx_full:
                         try:
                             ctx = asc.export_boundary_graphviz_context(
@@ -4588,6 +4928,11 @@ if __name__ == "__main__":
                                 basename=f"split_context_b{b}",
                                 render=True,
                                 hops=int(ctx_hops),
+                                strict_boundary=bool(self.var_strict_boundary.get()),
+                                include_external_inputs=(not llm_style),
+                                semantic_label=semantic_label,
+                                value_bytes_map=value_bytes_map,
+                                force_matplotlib_fallback=llm_style,
                             )
                             manifest_out['split_context'] = ctx
                         except Exception as e:
@@ -4604,9 +4949,13 @@ if __name__ == "__main__":
                                 basename=f"split_context_b{b}_cutflow",
                                 render=True,
                                 hops=int(ctx_hops),
+                                strict_boundary=bool(self.var_strict_boundary.get()),
                                 cut_flow_only=True,
                                 include_internal_consumers=False,
                                 include_external_inputs=False,
+                                semantic_label=semantic_label,
+                                value_bytes_map=value_bytes_map,
+                                force_matplotlib_fallback=llm_style,
                             )
                             manifest_out['split_context_cutflow'] = ctx_cf
                         except Exception as e:
@@ -5094,6 +5443,39 @@ if __name__ == "__main__":
             try:
                 tex = self._make_tex_table(a, picks)
                 (tables_dir / "split_candidates.tex").write_text(tex, encoding="utf-8")
+
+                # Also provide a CSV version of the same top-k table.
+                # This is handy for plotting/aggregation without LaTeX parsing.
+                sem_labels = a.get("semantic_labels_by_boundary") or []
+                costs_bytes = a.get("costs_bytes") or []
+                counts_all = a.get("crossing_counts_all") or []
+                unknown_counts = a.get("unknown_crossing_counts") or []
+                flops_left_prefix = a.get("flops_left_prefix") or []
+                total_flops = float(a.get("total_flops") or 0.0)
+
+                out_csv = tables_dir / "split_candidates.csv"
+                with open(out_csv, "w", newline="", encoding="utf-8") as f:
+                    w = csv.writer(f)
+                    w.writerow([
+                        "boundary",
+                        "semantic",
+                        "comm_bytes",
+                        "comm_MiB",
+                        "crossing_tensors_all",
+                        "unknown_crossing_tensors",
+                        "flops_left_GFlop",
+                        "flops_right_GFlop",
+                    ])
+                    for b in picks:
+                        bi = int(b)
+                        sem = str(sem_labels[bi]) if bi < len(sem_labels) else ""
+                        comm_b = int(costs_bytes[bi]) if bi < len(costs_bytes) else 0
+                        comm_mib = float(comm_b) / (1024.0**2)
+                        nt = int(counts_all[bi]) if bi < len(counts_all) else 0
+                        nu = int(unknown_counts[bi]) if bi < len(unknown_counts) else 0
+                        fl_l = float(flops_left_prefix[bi]) / 1e9 if bi < len(flops_left_prefix) else 0.0
+                        fl_r = float(total_flops - float(flops_left_prefix[bi])) / 1e9 if bi < len(flops_left_prefix) else 0.0
+                        w.writerow([bi, sem, comm_b, f"{comm_mib:.6f}", nt, nu, f"{fl_l:.6f}", f"{fl_r:.6f}"])
             except Exception as e:
                 print(f"[warn] Failed to export TeX candidate table: {e}")
 
@@ -5167,6 +5549,7 @@ if __name__ == "__main__":
                     w = csv.writer(f)
                     w.writerow([
                         "boundary",
+                        "semantic",
                         "is_candidate",
                         "is_pick",
                         "is_pareto_comm_imb",
@@ -5190,6 +5573,7 @@ if __name__ == "__main__":
                         "link_feasible",
                     ])
                     cand_set = set(cand_list)
+                    sem_labels = a.get("semantic_labels_by_boundary") or []
                     for b in range(M):
                         is_cand = b in cand_set
                         is_pick = b in pick_set
@@ -5217,6 +5601,7 @@ if __name__ == "__main__":
 
                         w.writerow([
                             int(b),
+                            str(sem_labels[b]) if b < len(sem_labels) else "",
                             int(1 if is_cand else 0),
                             int(1 if is_pick else 0),
                             int(1 if is_pareto else 0),
@@ -5293,6 +5678,7 @@ if __name__ == "__main__":
         unknown = a["unknown_crossing_counts"]
         flops_left_prefix = a["flops_left_prefix"]
         total_flops = float(a["total_flops"])
+        sem_labels = a.get("semantic_labels_by_boundary") or []
 
         def comm_mib(b: int) -> float:
             return float(costs[b]) / (1024.0**2)
@@ -5305,6 +5691,13 @@ if __name__ == "__main__":
 
         any_unknown = any(int(unknown[b]) > 0 for b in picks if b < len(unknown))
 
+        def semantic_label(b: int) -> str:
+            try:
+                s = sem_labels[int(b)] if int(b) < len(sem_labels) else ""
+            except Exception:
+                s = ""
+            return _latex_escape(str(s))
+
         lines: List[str] = []
         lines.append("% Generated by analyse_and_split_gui.py")
         lines.append("% Requires: \\usepackage{booktabs}")
@@ -5312,16 +5705,16 @@ if __name__ == "__main__":
         lines.append("  \\centering")
         lines.append("  \\small")
         lines.append("  \\setlength{\\tabcolsep}{4pt}")
-        lines.append("  \\begin{tabular}{@{}r r r r r@{}}")
+        lines.append("  \\begin{tabular}{@{}r l r r r r@{}}")
         lines.append("    \\toprule")
         # NOTE: we need a literal LaTeX line break "\\" at the end of the header/rows.
         # In Python string literals that means writing "\\\\".
-        lines.append("    Boundary & Comm (MiB) & \\#Tensors & $F_L$ (GFLOP) & $F_R$ (GFLOP) \\\\")
+        lines.append("    Boundary & Semantic & Comm (MiB) & \\#Tensors & $F_L$ (GFLOP) & $F_R$ (GFLOP) \\\\")
         lines.append("    \\midrule")
 
         for b in picks:
             lines.append(
-                f"    {int(b)} & {comm_mib(b):.3f} & {int(counts_all[b])} & {gflops_left(b):.3f} & {gflops_right(b):.3f} \\\\")
+                f"    {int(b)} & {semantic_label(b)} & {comm_mib(b):.3f} & {int(counts_all[b])} & {gflops_left(b):.3f} & {gflops_right(b):.3f} \\\\")
 
         lines.append("    \\bottomrule")
         lines.append("  \\end{tabular}")
@@ -5409,13 +5802,6 @@ if __name__ == "__main__":
         self.var_shape_coverage.set("(run analysis)")
         self.var_unknown_crossing.set("(run analysis)")
         self.var_diag_note.set("")
-        try:
-            self.scale_boundary.configure(from_=0, to=1)
-            self.scale_boundary.set(0)
-            self.lbl_boundary_val.configure(text="Boundary: -")
-        except Exception:
-            pass
-        self._set_status("Ready.")
 
 
 def main():
