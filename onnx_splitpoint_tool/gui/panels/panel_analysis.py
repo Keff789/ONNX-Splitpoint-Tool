@@ -226,17 +226,12 @@ def mount_legacy_widgets(frame: ttk.Frame, root_children: list[Any], app: Any) -
     if params_frame is not None:
         params_frame.pack_forget()
         params_frame.pack(in_=frame.settings_sections["candidate"].body, fill="x")
-
-        children = params_frame.grid_slaves()
-        by_row = {int(w.grid_info().get("row", -1)): w for w in children}
-        if 0 in by_row:
-            by_row[0].grid_configure(in_=frame.settings_sections["candidate"].body, row=0, column=0, sticky="ew", padx=0, pady=0)
-        if 1 in by_row:
-            by_row[1].grid_configure(in_=frame.settings_sections["scoring"].body, row=0, column=0, sticky="ew", padx=0, pady=0)
-        if 2 in by_row:
-            by_row[2].grid_configure(in_=frame.settings_sections["llm"].body, row=0, column=0, sticky="ew", padx=0, pady=0)
-        if 6 in by_row:
-            by_row[6].grid_configure(in_=frame.settings_sections["shape"].body, row=0, column=0, sticky="ew", padx=0, pady=0)
+        # NOTE:
+        # Tk does not allow moving already-created children of params_frame into
+        # unrelated section bodies via `grid(..., in_=...)`. That raises:
+        # "can't put <widget> inside <other-parent>".
+        # Keep the legacy settings layout mounted as one block to avoid crashes
+        # during startup while the panel migration is still in progress.
 
     if mid_pane is not None:
         mid_pane.pack_forget()
