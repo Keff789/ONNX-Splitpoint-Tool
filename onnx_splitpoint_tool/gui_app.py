@@ -1609,6 +1609,70 @@ class SplitPointAnalyserGUI(tk.Tk):
             "ctx_hops": self.var_split_ctx_hops.get(),
         }
 
+    def _sync_vars_from_gui_state(self) -> None:
+        """Apply state dictionaries back to bound tkinter variables."""
+        ap = dict(getattr(self.gui_state, "analysis_params", {}) or {})
+        llm = dict(getattr(self.gui_state, "llm_params", {}) or {})
+
+        mapping = {
+            "topk": ("var_topk", str),
+            "min_gap": ("var_min_gap", str),
+            "min_compute_pct": ("var_min_compute", str),
+            "batch_override": ("var_batch", str),
+            "assume_bpe": ("var_bpe", str),
+            "unknown_tensor_proxy_mb": ("var_unknown_mb", str),
+            "exclude_trivial": ("var_exclude_trivial", bool),
+            "only_single_tensor": ("var_only_one", bool),
+            "strict_boundary": ("var_strict_boundary", bool),
+            "rank": ("var_rank", str),
+        }
+        for key, (var_name, caster) in mapping.items():
+            if key not in ap:
+                continue
+            var = getattr(self, var_name, None)
+            if var is None:
+                continue
+            var.set(caster(ap.get(key)))
+
+        llm_mapping = {
+            "enable": ("var_llm_enable", bool),
+            "preset": ("var_llm_preset", str),
+            "mode": ("var_llm_mode", str),
+            "prefill": ("var_llm_prefill", str),
+            "decode": ("var_llm_decode", str),
+            "use_ort_symbolic": ("var_llm_use_ort_symbolic", bool),
+        }
+        for key, (var_name, caster) in llm_mapping.items():
+            if key not in llm:
+                continue
+            var = getattr(self, var_name, None)
+            if var is None:
+                continue
+            var.set(caster(llm.get(key)))
+
+    def _apply_analysis_global_preset(self, preset_name: str, presets: Dict[str, Dict[str, Dict[str, Any]]]) -> None:
+        """Apply global analysis/LLM preset through GuiState dictionaries."""
+        self._sync_gui_state_from_vars()
+        preset = dict((presets or {}).get(preset_name, {}) or {})
+        self.gui_state.analysis_params.update(dict(preset.get("analysis", {}) or {}))
+        self.gui_state.llm_params.update(dict(preset.get("llm", {}) or {}))
+        self._sync_vars_from_gui_state()
+        self.events.emit_settings_changed()
+
+    def _analysis_modified_fields(self, preset_name: str, presets: Optional[Dict[str, Dict[str, Dict[str, Any]]]] = None) -> List[str]:
+        """Return fields diverging from the selected global preset."""
+        preset = dict((presets or {}).get(preset_name, {}) or {})
+        if not preset:
+            return []
+        self._sync_gui_state_from_vars()
+        modified: List[str] = []
+        for scope_name, source in (("analysis", self.gui_state.analysis_params), ("llm", self.gui_state.llm_params)):
+            target = dict(preset.get(scope_name, {}) or {})
+            for key, expected in target.items():
+                if str(source.get(key)) != str(expected):
+                    modified.append(f"{scope_name}.{key}")
+        return modified
+
     def _on_open(self):
         path = filedialog.askopenfilename(
             title="Open ONNX model",
