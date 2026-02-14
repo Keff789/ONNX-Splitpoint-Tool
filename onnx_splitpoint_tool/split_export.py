@@ -1080,7 +1080,7 @@ def export_boundary_graphviz_context(
             total_cut = 0
             for t in cut_list:
                 try:
-                    total_cut += int(value_bytes_map.get(t, 0)) if isinstance(value_bytes_map, dict) else 0
+                    total_cut += int(size_map.get(t, 0))
                 except Exception:
                     continue
 
@@ -1127,6 +1127,8 @@ def export_boundary_graphviz_context(
                 label = name_short
                 if meta:
                     label = f"{label}\n{meta}"
+                if size_line:
+                    label = f"{label}\n{size_line}"
 
                 # Apply numbering and indent wrapped lines.
                 prefix = f"{idx:>2}. "
@@ -1150,6 +1152,7 @@ def export_boundary_graphviz_context(
 
             fig, ax = plt.subplots(figsize=(fig_w, fig_h))
             ax.set_axis_off()
+            fig.subplots_adjust(left=0.02, right=0.98, top=0.90, bottom=0.06)
 
             box_kw = dict(
                 boxstyle="round,pad=0.45",
@@ -1171,7 +1174,7 @@ def export_boundary_graphviz_context(
             )
             ax.text(
                 0.50,
-                0.92,
+                0.875,
                 "CUT TENSORS",
                 va="center",
                 ha="center",
@@ -1195,7 +1198,7 @@ def export_boundary_graphviz_context(
             if len(cut_nodes) == 1:
                 ys = [0.5]
             else:
-                top_y, bot_y = 0.84, 0.16
+                top_y, bot_y = 0.73, 0.15
                 step = (top_y - bot_y) / (len(cut_nodes) - 1)
                 ys = [top_y - i * step for i in range(len(cut_nodes))]
 
@@ -1239,15 +1242,11 @@ def export_boundary_graphviz_context(
                     xycoords=ax.transAxes,
                 )
 
-            ax.text(
-                0.5,
-                0.97,
+            fig.suptitle(
                 f"Split boundary {boundary_index}{(' | ' + semantic_label) if semantic_label else ''} | cut={_mb(total_cut):.3f} MiB | "
                 f"tensors={len(cut_list)} (+{num_cut_omitted} const/init omitted)",
-                ha="center",
-                va="top",
                 fontsize=11,
-                transform=ax.transAxes,
+                y=0.985,
             )
 
             # Save only the missing formats; do not overwrite graphviz output if present.
