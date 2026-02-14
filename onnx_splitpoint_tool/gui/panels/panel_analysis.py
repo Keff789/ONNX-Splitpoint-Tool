@@ -145,12 +145,13 @@ def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
 
     def _same_parent(widget: Any, parent: Any) -> bool:
         winfo_parent = getattr(widget, "winfo_parent", None)
-        winfo_pathname = getattr(widget, "winfo_pathname", None)
-        winfo_id = getattr(parent, "winfo_id", None)
-        if not (callable(winfo_parent) and callable(winfo_pathname) and callable(winfo_id)):
+        nametowidget = getattr(widget, "nametowidget", None)
+        if not (callable(winfo_parent) and callable(nametowidget)):
             return False
         try:
-            return bool(winfo_parent() == winfo_pathname(winfo_id()))
+            parent_name = winfo_parent()
+            resolved_parent = nametowidget(parent_name)
+            return bool(resolved_parent is parent)
         except Exception:
             return False
 
