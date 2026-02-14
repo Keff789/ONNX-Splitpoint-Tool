@@ -5918,17 +5918,10 @@ if __name__ == "__main__":
 
 
 def main():
-    log_path = _setup_gui_logging()
-    # Debug: show which files are being executed/imported (helps when multiple versions exist)
-    try:
-        print(f"[GUI] {os.path.abspath(__file__)} (v{__version__})")
-        print(f"[CORE] {os.path.abspath(getattr(asc, '__file__', ''))} (v{getattr(asc, '__version__', '?')})")
-        if log_path:
-            print(f"[LOG] {log_path}")
-    except Exception:
-        pass
-    app = SplitPointAnalyserGUI()
-    app.mainloop()
+    """Compatibility entrypoint delegating to ``onnx_splitpoint_tool.gui.app``."""
+    from .gui.app import main as _new_main
+
+    _new_main()
 
 
 if __name__ == "__main__":
