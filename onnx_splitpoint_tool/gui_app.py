@@ -60,6 +60,7 @@ from onnx import shape_inference
 
 from . import api as asc
 from .accelerator_specs import load_accelerator_specs
+from .gui.state import AnalysisResult, GuiState, SelectedCandidate
 from .memory_utils import estimate_ram_bytes, kv_cache_bytes_per_layer, kv_for_boundary, layer_split_index_for_boundary, precompute_initializer_spans, weights_for_all_boundaries
 
 from . import __version__ as TOOL_VERSION
@@ -468,9 +469,12 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.title(f"ONNX Split-Point Analyser v{__version__} (core v{getattr(asc, '__version__', '?')})")
         self.geometry("1250x860")
 
+        self.gui_state = GuiState()
         self.model_path: Optional[str] = None
         self.analysis: Optional[Dict] = None
         self.current_picks: List[int] = []
+        self.analysis_result: Optional[AnalysisResult] = None
+        self.selected_candidate: Optional[SelectedCandidate] = None
         self._last_params: Optional[Params] = None
 
         # Hailo feasibility-check result cache (persists across runs).
@@ -1272,6 +1276,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.tree.tag_configure("pick", background="#eef6ff")
 
         # Enable split only when a boundary row (not a child tensor row) is selected
+        self.tree.bind("<<TreeviewSelect>>", self._on_tree_selection_changed, add=True)
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self._update_action_buttons(), add=True)
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self._refresh_memory_forecast(), add=True)
 
@@ -1493,6 +1498,65 @@ class SplitPointAnalyserGUI(tk.Tk):
 
     # ----------------------------- Event handlers -----------------------------
 
+    def _on_tree_selection_changed(self, _evt=None) -> None:
+        b = self._selected_boundary_index()
+        if b is None:
+            self.selected_candidate = None
+            return
+        sem = ""
+        if isinstance(self.analysis, dict):
+            labels = self.analysis.get("semantic_labels_by_boundary") or []
+            if b < len(labels):
+                sem = str(labels[b] or "")
+        cut_tensors: List[str] = []
+        stats: Dict[str, Any] = {}
+        if isinstance(self.analysis, dict):
+            try:
+                cut_tensors = list(asc.cut_tensors_for_boundary(self.analysis["order"], self.analysis["nodes"], int(b)))
+            except Exception:
+                cut_tensors = []
+            if self.analysis_result and self.analysis_result.memory_estimate:
+                stats = dict(self.analysis_result.memory_estimate.get(int(b), {}))
+        self.selected_candidate = SelectedCandidate(boundary_id=int(b), semantic_label=sem, cut_tensors=cut_tensors, stats=stats)
+
+    def _sync_gui_state_from_vars(self) -> None:
+        self.gui_state.analysis_params = {
+            "topk": self.var_topk.get(),
+            "min_gap": self.var_min_gap.get(),
+            "min_compute_pct": self.var_min_compute.get(),
+            "batch_override": self.var_batch.get(),
+            "assume_bpe": self.var_bpe.get(),
+            "unknown_tensor_proxy_mb": self.var_unknown_mb.get(),
+            "exclude_trivial": bool(self.var_exclude_trivial.get()),
+            "only_single_tensor": bool(self.var_only_one.get()),
+            "strict_boundary": bool(self.var_strict_boundary.get()),
+            "rank": self.var_rank.get(),
+        }
+        self.gui_state.llm_params = {
+            "enable": bool(self.var_llm_enable.get()),
+            "preset": self.var_llm_preset.get(),
+            "mode": self.var_llm_mode.get(),
+            "prefill": self.var_llm_prefill.get(),
+            "decode": self.var_llm_decode.get(),
+            "use_ort_symbolic": bool(self.var_llm_use_ort_symbolic.get()),
+        }
+        self.gui_state.hardware_selection = {
+            "left_accel": self.var_memf_left_accel.get(),
+            "right_accel": self.var_memf_right_accel.get(),
+            "interface": self.var_memf_interface.get(),
+            "policy": self.var_memf_policy.get(),
+            "include_kv": bool(self.var_memf_include_kv.get()),
+            "include_comm": bool(self.var_memf_include_comm.get()),
+        }
+        self.gui_state.export_flags = {
+            "split_validate": bool(self.var_split_validate.get()),
+            "split_runner": bool(self.var_split_runner.get()),
+            "split_folder": bool(self.var_split_folder.get()),
+            "ctx_full": bool(self.var_split_ctx_full.get()),
+            "ctx_cutflow": bool(self.var_split_ctx_cutflow.get()),
+            "ctx_hops": self.var_split_ctx_hops.get(),
+        }
+
     def _on_open(self):
         path = filedialog.askopenfilename(
             title="Open ONNX model",
@@ -1501,11 +1565,13 @@ class SplitPointAnalyserGUI(tk.Tk):
         if not path:
             return
         self.model_path = path
+        self.gui_state.current_model_path = path
+        self.gui_state.model_type = "onnx"
         self.lbl_model.configure(text=os.path.basename(path))
         self._clear_results()
 
     def _on_analyse(self):
-        if not self.model_path:
+        if not self.gui_state.current_model_path:
             messagebox.showwarning("No model", "Please open an ONNX model first.")
             return
 
@@ -1540,7 +1606,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         def _worker() -> None:
             try:
-                analysis = self._analyse_model(self.model_path, params, progress_cb=_progress)
+                analysis = self._analyse_model(self.gui_state.current_model_path, params, progress_cb=_progress)
                 _progress("Selecting candidates...")
                 picks = self._select_picks(analysis, params, progress_cb=_progress)
                 _progress("Computing diagnostics...")
@@ -1564,6 +1630,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                     elif kind == "ok":
                         self.analysis = item[1]
                         self.current_picks = item[2]
+                        self.analysis_result = AnalysisResult(candidates=list(self.current_picks))
                         self._last_params = params
                         self._update_diagnostics(self.analysis)
                         self._update_table(self.analysis, self.current_picks, params)
@@ -1592,32 +1659,37 @@ class SplitPointAnalyserGUI(tk.Tk):
     # ----------------------------- Parameters -----------------------------
 
     def _read_params(self) -> Params:
-        topk = _safe_int(self.var_topk.get())
+        self._sync_gui_state_from_vars()
+        ap = self.gui_state.analysis_params
+        llm = self.gui_state.llm_params
+        hw = self.gui_state.hardware_selection
+
+        topk = _safe_int(str(ap.get("topk", "")))
         if topk is None or topk <= 0:
             raise ValueError("Top-k must be a positive integer.")
 
-        min_gap = _safe_int(self.var_min_gap.get())
+        min_gap = _safe_int(str(ap.get("min_gap", "")))
         if min_gap is None or min_gap < 0:
             raise ValueError("Min gap must be an integer ≥ 0.")
 
-        min_comp = _safe_float(self.var_min_compute.get())
+        min_comp = _safe_float(str(ap.get("min_compute_pct", "")))
         if min_comp is None:
             min_comp = 0.0
         if min_comp < 0:
             raise ValueError("Min compute each side (%) must be ≥ 0.")
 
-        batch = _safe_int(self.var_batch.get())
-        bpe = _safe_int(self.var_bpe.get())
+        batch = _safe_int(str(ap.get("batch_override", "")))
+        bpe = _safe_int(str(ap.get("assume_bpe", "")))
 
-        unknown_mb = _safe_float(self.var_unknown_mb.get())
+        unknown_mb = _safe_float(str(ap.get("unknown_tensor_proxy_mb", "")))
         if unknown_mb is None:
             unknown_mb = 0.0
         if unknown_mb < 0:
             unknown_mb = 0.0
 
-        exclude_trivial = bool(self.var_exclude_trivial.get())
-        only_one = bool(self.var_only_one.get())
-        strict_boundary = bool(self.var_strict_boundary.get())
+        exclude_trivial = bool(ap.get("exclude_trivial", False))
+        only_one = bool(ap.get("only_single_tensor", False))
+        strict_boundary = bool(ap.get("strict_boundary", False))
 
         prune_skip_block = bool(self.var_prune_skip_block.get())
         skip_min_span = _safe_int(self.var_skip_min_span.get())
@@ -1629,7 +1701,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         if skip_allow_last_n < 0:
             raise ValueError("Allow last N inside must be an integer ≥ 0.")
 
-        ranking = (self.var_rank.get() or "cut").strip().lower()
+        ranking = (str(ap.get("rank", "cut")) or "cut").strip().lower()
         if ranking not in {"cut", "score", "latency"}:
             raise ValueError("Ranking must be one of: cut, score, latency")
 
@@ -2912,6 +2984,8 @@ class SplitPointAnalyserGUI(tk.Tk):
     # ----------------------------- Diagnostics UI -----------------------------
 
     def _update_diagnostics(self, a: Dict) -> None:
+        if self.analysis_result is None:
+            self.analysis_result = AnalysisResult()
         cov = float(a.get("shape_coverage", 1.0))
         kp = int(a.get("known_produced", 0))
         tp = int(a.get("total_produced", 0))
@@ -2956,6 +3030,13 @@ class SplitPointAnalyserGUI(tk.Tk):
             self.var_llm_info.set("")
             self.var_memf_include_kv.set(False)
 
+        self.analysis_result.diagnostics = {
+            "shape_coverage": self.var_shape_coverage.get(),
+            "unknown_crossing": self.var_unknown_crossing.get(),
+            "diag_note": self.var_diag_note.get(),
+            "llm_info": self.var_llm_info.get(),
+        }
+
     def _accel_by_name(self, name: str) -> Dict[str, Any]:
         for a in (self.accel_specs.get("accelerators") or []):
             if str(a.get("name")) == str(name):
@@ -2996,7 +3077,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.var_memf_right_text.set(f"Right: {tot_r_mb/1024.0:.2f} / {limit_r/1024.0:.2f} GB ({util_r:.1f}%)")
 
         if hasattr(self, "_last_params") and self._last_params is not None:
-            picks = list(self.current_picks)
+            picks = list(self.analysis_result.candidates if self.analysis_result else self.current_picks)
             if bool(self.var_memf_filter_fit.get()):
                 picks = [x for x in picks if (self.memory_by_boundary.get(int(x), {}).get("left", {}).get("fits") and self.memory_by_boundary.get(int(x), {}).get("right", {}).get("fits"))]
             self._update_table(a, picks, self._last_params)
@@ -3237,6 +3318,9 @@ class SplitPointAnalyserGUI(tk.Tk):
     # ----------------------------- Table UI -----------------------------
 
     def _update_table(self, a: Dict, picks: List[int], p: Params):
+        if self.analysis_result is None:
+            self.analysis_result = AnalysisResult()
+        self.analysis_result.candidates = list(picks)
         self.tree.delete(*self.tree.get_children())
 
         nodes = a["nodes"]
@@ -3348,9 +3432,15 @@ class SplitPointAnalyserGUI(tk.Tk):
                         values=("", "", f"↳ {name}", "", "", f"{_mb(sz):.3f}", "", "", "", "", "", "", "", "", "", ""),
                     )
 
+        if self.analysis_result is None:
+            self.analysis_result = AnalysisResult()
+        self.analysis_result.memory_estimate = dict(self.memory_by_boundary)
+
     # ----------------------------- Plotting -----------------------------
 
     def _update_plots(self, a: Dict, picks: List[int], p: Params):
+        if self.analysis_result is None:
+            self.analysis_result = AnalysisResult()
         for ax in (self.ax_comm, self.ax_comp, self.ax_pareto, self.ax_lat):
             ax.clear()
 
@@ -3457,6 +3547,14 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         self.canvas.draw_idle()
 
+        self.analysis_result.plot_data = {
+            "costs_bytes": list(costs),
+            "flops_left_prefix": list(flops_left_prefix),
+            "total_flops": float(total_flops),
+            "imbalance": list(imbalance),
+            "selected_candidates": list(picks),
+        }
+
     # ----------------------------- Split models -----------------------------
 
 
@@ -3478,6 +3576,8 @@ class SplitPointAnalyserGUI(tk.Tk):
 
     def _selected_boundary_index(self) -> Optional[int]:
         """Return the selected boundary index, but ONLY if a boundary row is selected."""
+        if self.selected_candidate is not None:
+            return int(self.selected_candidate.boundary_id)
         sel = self.tree.selection()
         if not sel:
             return None
@@ -3502,14 +3602,16 @@ class SplitPointAnalyserGUI(tk.Tk):
                 pass
             return
 
+        picks = self.analysis_result.candidates if self.analysis_result else self.current_picks
+
         # Export table only if we have picks
-        if self.current_picks:
+        if picks:
             self.btn_export_tex.state(["!disabled"])
         else:
             self.btn_export_tex.state(["disabled"])
 
         # Benchmark-set generation also requires picks
-        if self.current_picks:
+        if picks:
             self.btn_benchmark.state(["!disabled"])
         else:
             self.btn_benchmark.state(["disabled"])
@@ -3532,7 +3634,8 @@ class SplitPointAnalyserGUI(tk.Tk):
 
 
     def _split_selected_boundary(self) -> None:
-        if self.analysis is None or self.model_path is None:
+        model_path = self.gui_state.current_model_path or self.model_path
+        if self.analysis is None or model_path is None:
             messagebox.showinfo("Nothing to split", "Load a model and run an analysis first.")
             return
 
@@ -3582,7 +3685,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         if not out_parent:
             return
 
-        base = os.path.splitext(os.path.basename(self.model_path))[0]
+        base = os.path.splitext(os.path.basename(model_path))[0]
         export_as_folder = bool(self.var_split_folder.get())
         if export_as_folder:
             out_dir = os.path.join(out_parent, f"{base}_split_b{b}")
@@ -3947,7 +4050,8 @@ class SplitPointAnalyserGUI(tk.Tk):
           - benchmark_set.json (list of cases + predicted metrics)
           - benchmark_suite.py (runs all cases and collects results/plots)
         """
-        if self.analysis is None or self.model_path is None:
+        model_path = self.gui_state.current_model_path or self.model_path
+        if self.analysis is None or model_path is None:
             messagebox.showinfo("Nothing to benchmark", "Load a model and run an analysis first.")
             return
         if not self.current_picks:
@@ -3961,7 +4065,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         if not out_parent:
             return
 
-        base = os.path.splitext(os.path.basename(self.model_path))[0]
+        base = os.path.splitext(os.path.basename(model_path))[0]
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         out_dir = os.path.join(out_parent, f"{base}_benchmark_{ts}")
         os.makedirs(out_dir, exist_ok=True)
@@ -5757,7 +5861,7 @@ if __name__ == "__main__":
 
         default_name = "split_candidates.tex"
         if self.model_path:
-            base = os.path.splitext(os.path.basename(self.model_path))[0]
+            base = os.path.splitext(os.path.basename(model_path))[0]
             default_name = f"split_candidates_{_label_sanitize(base)}.tex"
 
         path = filedialog.asksaveasfilename(
@@ -5899,6 +6003,8 @@ if __name__ == "__main__":
     def _clear_results(self):
         self.analysis = None
         self.current_picks = []
+        self.analysis_result = None
+        self.selected_candidate = None
         self._last_params = None
         self.memory_by_boundary = {}
         try:
