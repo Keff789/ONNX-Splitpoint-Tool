@@ -59,6 +59,8 @@ import onnx
 from onnx import shape_inference
 
 from . import api as asc
+from .accelerator_specs import load_accelerator_specs
+from .memory_utils import estimate_ram_bytes, kv_cache_bytes_per_layer, kv_for_boundary, layer_split_index_for_boundary, precompute_initializer_spans, weights_for_all_boundaries
 
 from . import __version__ as TOOL_VERSION
 
@@ -469,6 +471,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.model_path: Optional[str] = None
         self.analysis: Optional[Dict] = None
         self.current_picks: List[int] = []
+        self._last_params: Optional[Params] = None
 
         # Hailo feasibility-check result cache (persists across runs).
         # Keyed by (backend|hw_arch|fixup|sha1(model_bytes)).
@@ -476,6 +479,9 @@ class SplitPointAnalyserGUI(tk.Tk):
         self._hailo_cache: Dict[str, Dict[str, Any]] = {}
         self._hailo_cache_dirty: bool = False
         self._load_hailo_cache()
+
+        self.accel_specs = load_accelerator_specs()
+        self.memory_by_boundary: Dict[int, Dict[str, Any]] = {}
 
         self._build_ui()
 
@@ -1043,9 +1049,65 @@ class SplitPointAnalyserGUI(tk.Tk):
         # Start collapsed by default.
         self._set_hailo_expanded(False)
 
+        # Memory forecast (optional)
+        self.var_memf_left_accel = tk.StringVar(value="")
+        self.var_memf_right_accel = tk.StringVar(value="")
+        self.var_memf_interface = tk.StringVar(value="")
+        self.var_memf_include_kv = tk.BooleanVar(value=True)
+        self.var_memf_include_comm = tk.BooleanVar(value=True)
+        self.var_memf_policy = tk.StringVar(value="max_peak_or_comm")
+        self.var_memf_filter_fit = tk.BooleanVar(value=False)
+        self.var_memf_left_text = tk.StringVar(value="Left: n/a")
+        self.var_memf_right_text = tk.StringVar(value="Right: n/a")
+
+        accel_names = [str(x.get("name")) for x in (self.accel_specs.get("accelerators") or [])]
+        iface_names = [str(x.get("name")) for x in (self.accel_specs.get("interfaces") or [])]
+        if accel_names:
+            self.var_memf_left_accel.set(accel_names[0])
+            self.var_memf_right_accel.set(accel_names[min(1, len(accel_names)-1)])
+        if iface_names:
+            self.var_memf_interface.set(iface_names[0])
+
+        memf = ttk.LabelFrame(self.params_frame, text="Memory forecast (optional)")
+        memf.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
+        row0 = ttk.Frame(memf)
+        row0.pack(fill=tk.X, padx=8, pady=6)
+        ttk.Label(row0, text="Left accelerator:").pack(side=tk.LEFT)
+        cb_ml = ttk.Combobox(row0, textvariable=self.var_memf_left_accel, values=accel_names, width=28, state="readonly")
+        cb_ml.pack(side=tk.LEFT, padx=(4, 10))
+        ttk.Label(row0, text="Right accelerator:").pack(side=tk.LEFT)
+        cb_mr = ttk.Combobox(row0, textvariable=self.var_memf_right_accel, values=accel_names, width=28, state="readonly")
+        cb_mr.pack(side=tk.LEFT, padx=(4, 10))
+        ttk.Label(row0, text="Interface:").pack(side=tk.LEFT)
+        cb_if = ttk.Combobox(row0, textvariable=self.var_memf_interface, values=iface_names, width=22, state="readonly")
+        cb_if.pack(side=tk.LEFT, padx=(4, 10))
+
+        row1 = ttk.Frame(memf)
+        row1.pack(fill=tk.X, padx=8, pady=(0, 6))
+        ttk.Checkbutton(row1, text="include KV cache", variable=self.var_memf_include_kv).pack(side=tk.LEFT)
+        ttk.Checkbutton(row1, text="include comm buffers", variable=self.var_memf_include_comm).pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Label(row1, text="Policy:").pack(side=tk.LEFT, padx=(12, 4))
+        ttk.Combobox(row1, textvariable=self.var_memf_policy, values=["max_peak_or_comm", "sum_peak_and_comm"], width=20, state="readonly").pack(side=tk.LEFT)
+        ttk.Checkbutton(row1, text="show only fitting candidates", variable=self.var_memf_filter_fit, command=self._refresh_memory_forecast).pack(side=tk.LEFT, padx=(12, 0))
+
+        try:
+            ttk.Style(self).configure("MemGreen.Horizontal.TProgressbar", troughcolor="#eeeeee", background="#1c9c4a")
+            ttk.Style(self).configure("MemRed.Horizontal.TProgressbar", troughcolor="#eeeeee", background="#c0392b")
+        except Exception:
+            pass
+        self.pb_mem_left = ttk.Progressbar(memf, orient="horizontal", mode="determinate", maximum=100, style="MemGreen.Horizontal.TProgressbar")
+        self.pb_mem_left.pack(fill=tk.X, padx=8, pady=(0, 2))
+        ttk.Label(memf, textvariable=self.var_memf_left_text).pack(anchor="w", padx=8)
+        self.pb_mem_right = ttk.Progressbar(memf, orient="horizontal", mode="determinate", maximum=100, style="MemGreen.Horizontal.TProgressbar")
+        self.pb_mem_right.pack(fill=tk.X, padx=8, pady=(2, 2))
+        ttk.Label(memf, textvariable=self.var_memf_right_text).pack(anchor="w", padx=8, pady=(0, 6))
+
+        for v in (self.var_memf_left_accel, self.var_memf_right_accel, self.var_memf_interface, self.var_memf_policy, self.var_memf_include_comm, self.var_memf_include_kv):
+            v.trace_add("write", lambda *_: self._refresh_memory_forecast())
+
         # Diagnostics frame
         self.diag_frame = ttk.LabelFrame(self.params_frame, text="Diagnostics")
-        self.diag_frame.grid(row=5, column=0, sticky="ew", padx=8, pady=(0, 8))
+        self.diag_frame.grid(row=6, column=0, sticky="ew", padx=8, pady=(0, 8))
 
         d = ttk.Frame(self.diag_frame)
         d.pack(fill=tk.X, padx=8, pady=6)
@@ -1192,6 +1254,10 @@ class SplitPointAnalyserGUI(tk.Tk):
             "peak_left_mib",
             "peak_right_mib",
             "peak_max_mib",
+            "fits_left",
+            "fits_right",
+            "ram_left_gb",
+            "ram_right_gb",
         ]
 
         table_inner = ttk.Frame(table_frame)
@@ -1212,6 +1278,10 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.tree.heading("peak_left_mib", text="Peak L (MiB)")
         self.tree.heading("peak_right_mib", text="Peak R (MiB)")
         self.tree.heading("peak_max_mib", text="Peak max (MiB)")
+        self.tree.heading("fits_left", text="Fits L")
+        self.tree.heading("fits_right", text="Fits R")
+        self.tree.heading("ram_left_gb", text="RAM L (GB)")
+        self.tree.heading("ram_right_gb", text="RAM R (GB)")
 
         self.tree.column("rank", width=40, anchor=tk.E)
         self.tree.column("boundary", width=80, anchor=tk.E)
@@ -1225,6 +1295,10 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.tree.column("peak_left_mib", width=110, anchor=tk.E)
         self.tree.column("peak_right_mib", width=110, anchor=tk.E)
         self.tree.column("peak_max_mib", width=110, anchor=tk.E)
+        self.tree.column("fits_left", width=60, anchor=tk.CENTER)
+        self.tree.column("fits_right", width=60, anchor=tk.CENTER)
+        self.tree.column("ram_left_gb", width=95, anchor=tk.E)
+        self.tree.column("ram_right_gb", width=95, anchor=tk.E)
 
         self.tree.grid(row=0, column=0, sticky="nsew")
 
@@ -1236,6 +1310,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         # Enable split only when a boundary row (not a child tensor row) is selected
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self._update_action_buttons(), add=True)
+        self.tree.bind("<<TreeviewSelect>>", lambda _e: self._refresh_memory_forecast(), add=True)
 
         # ------------------------------ Plots ------------------------------
         plot_frame = ttk.LabelFrame(mid, text="Plots")
@@ -1578,10 +1653,12 @@ class SplitPointAnalyserGUI(tk.Tk):
                     elif kind == "ok":
                         self.analysis = item[1]
                         self.current_picks = item[2]
+                        self._last_params = params
                         self._update_diagnostics(self.analysis)
                         self._update_table(self.analysis, self.current_picks, params)
                         self._update_plots(self.analysis, self.current_picks, params)
                         self._update_action_buttons()
+                        self._refresh_memory_forecast()
                         # Persist Hailo cache updates.
                         self._save_hailo_cache()
                         pb.stop()
@@ -2172,6 +2249,19 @@ class SplitPointAnalyserGUI(tk.Tk):
         known_produced = sum(1 for v in produced_act if value_bytes.get(v, 0) > 0)
         coverage = (float(known_produced) / float(len(produced_act))) if produced_act else 1.0
 
+        # Memory components per boundary
+        init_spans = precompute_initializer_spans(model, nodes, order)
+        weights_left_b, weights_right_b = weights_for_all_boundaries(init_spans, len(costs_bytes))
+
+        kv_per_layer = kv_cache_bytes_per_layer(model, vimap, llm_hints if llm_enabled else None) if llm_enabled else {}
+        kv_left_b: List[int] = []
+        kv_right_b: List[int] = []
+        for bb in range(len(costs_bytes)):
+            split_idx = layer_split_index_for_boundary(nodes, order, bb)
+            kl, kr = kv_for_boundary(kv_per_layer, split_idx)
+            kv_left_b.append(int(kl))
+            kv_right_b.append(int(kr))
+
         # FLOPs per node
         if progress_cb:
             progress_cb("Estimating per-node FLOPs...")
@@ -2231,6 +2321,11 @@ class SplitPointAnalyserGUI(tk.Tk):
             "peak_act_mem_left_bytes": peak_l,
             "peak_act_mem_right_bytes": peak_r,
             "peak_act_mem_max_bytes": peak_max,
+            "weights_left_bytes": weights_left_b,
+            "weights_right_bytes": weights_right_b,
+            "kv_left_bytes": kv_left_b,
+            "kv_right_bytes": kv_right_b,
+            "kv_per_layer": kv_per_layer,
             "val_span": val_span,
             "val_span_all": val_span_all,
             "crossing_counts_known": counts_known,
@@ -2928,10 +3023,13 @@ class SplitPointAnalyserGUI(tk.Tk):
                 self.var_diag_note.set("Comm(b) may be underestimated (lower bound)")
         else:
             self.var_diag_note.set("")
+        self.var_memf_left_text.set("Left: n/a")
+        self.var_memf_right_text.set("Right: n/a")
 
         # LLM preset info (helps interpret comm/shape numbers).
         llm_hints = a.get("llm_hints")
         if isinstance(llm_hints, dict) and llm_hints:
+            self.var_memf_include_kv.set(True)
             llm_mode = str(a.get("llm_mode") or "")
             b = llm_hints.get("batch")
             s = llm_hints.get("seq_len")
@@ -2945,6 +3043,52 @@ class SplitPointAnalyserGUI(tk.Tk):
             self.var_llm_info.set(msg)
         else:
             self.var_llm_info.set("")
+            self.var_memf_include_kv.set(False)
+
+    def _accel_by_name(self, name: str) -> Dict[str, Any]:
+        for a in (self.accel_specs.get("accelerators") or []):
+            if str(a.get("name")) == str(name):
+                return a
+        return {}
+
+    def _refresh_memory_forecast(self) -> None:
+        a = self.analysis or {}
+        if not self.memory_by_boundary:
+            self.var_memf_left_text.set("Left: n/a")
+            self.var_memf_right_text.set("Right: n/a")
+            self.pb_mem_left.configure(value=0)
+            self.pb_mem_right.configure(value=0)
+            return
+
+        b = self._selected_boundary_index()
+        if b is None and self.current_picks:
+            b = int(self.current_picks[0])
+        if b is None:
+            return
+
+        left_acc = self._accel_by_name(self.var_memf_left_accel.get())
+        right_acc = self._accel_by_name(self.var_memf_right_accel.get())
+        m = self.memory_by_boundary.get(int(b)) or {}
+        if not left_acc or not right_acc or not m:
+            return
+
+        limit_l = float(left_acc.get("ram_limit_mb") or 0.0)
+        limit_r = float(right_acc.get("ram_limit_mb") or 0.0)
+        tot_l_mb = float(m.get("left", {}).get("total_mb") or 0.0)
+        tot_r_mb = float(m.get("right", {}).get("total_mb") or 0.0)
+        util_l = (100.0 * tot_l_mb / limit_l) if limit_l > 0 else 0.0
+        util_r = (100.0 * tot_r_mb / limit_r) if limit_r > 0 else 0.0
+
+        self.pb_mem_left.configure(value=max(0.0, min(100.0, util_l)), style=("MemRed.Horizontal.TProgressbar" if util_l > 100.0 else "MemGreen.Horizontal.TProgressbar"))
+        self.pb_mem_right.configure(value=max(0.0, min(100.0, util_r)), style=("MemRed.Horizontal.TProgressbar" if util_r > 100.0 else "MemGreen.Horizontal.TProgressbar"))
+        self.var_memf_left_text.set(f"Left: {tot_l_mb/1024.0:.2f} / {limit_l/1024.0:.2f} GB ({util_l:.1f}%)")
+        self.var_memf_right_text.set(f"Right: {tot_r_mb/1024.0:.2f} / {limit_r/1024.0:.2f} GB ({util_r:.1f}%)")
+
+        if hasattr(self, "_last_params") and self._last_params is not None:
+            picks = list(self.current_picks)
+            if bool(self.var_memf_filter_fit.get()):
+                picks = [x for x in picks if (self.memory_by_boundary.get(int(x), {}).get("left", {}).get("fits") and self.memory_by_boundary.get(int(x), {}).get("right", {}).get("fits"))]
+            self._update_table(a, picks, self._last_params)
 
     # ----------------------------- Nordstern -----------------------------
 
@@ -3195,6 +3339,18 @@ class SplitPointAnalyserGUI(tk.Tk):
         peak_left_b = a.get("peak_act_mem_left_bytes") or []
         peak_right_b = a.get("peak_act_mem_right_bytes") or []
         peak_max_b = a.get("peak_act_mem_max_bytes") or []
+        weights_left_b = a.get("weights_left_bytes") or []
+        weights_right_b = a.get("weights_right_bytes") or []
+        kv_left_b = a.get("kv_left_bytes") or []
+        kv_right_b = a.get("kv_right_bytes") or []
+
+        left_acc = self._accel_by_name(self.var_memf_left_accel.get())
+        right_acc = self._accel_by_name(self.var_memf_right_accel.get())
+        pol = str(self.var_memf_policy.get() or "max_peak_or_comm")
+        include_kv = bool(self.var_memf_include_kv.get())
+        include_comm = bool(self.var_memf_include_comm.get())
+
+        self.memory_by_boundary = {}
 
         def _mb(x_bytes: float) -> float:
             return float(x_bytes) / 1e6
@@ -3210,6 +3366,36 @@ class SplitPointAnalyserGUI(tk.Tk):
 
             gfl_l = fl_l / 1e9
             gfl_r = fl_r / 1e9
+
+            wl = int(weights_left_b[b]) if b < len(weights_left_b) else 0
+            wr = int(weights_right_b[b]) if b < len(weights_right_b) else 0
+            kl = int(kv_left_b[b]) if (include_kv and b < len(kv_left_b)) else 0
+            kr = int(kv_right_b[b]) if (include_kv and b < len(kv_right_b)) else 0
+            comm = int(costs[b]) if include_comm else 0
+
+            ovh_l = int(float(left_acc.get("runtime_overhead_mb") or 0.0) * 1024.0 * 1024.0)
+            ovh_r = int(float(right_acc.get("runtime_overhead_mb") or 0.0) * 1024.0 * 1024.0)
+            total_l = estimate_ram_bytes(wl, int(peak_left_b[b]) if b < len(peak_left_b) else 0, kl, ovh_l, comm, policy=pol)
+            total_r = estimate_ram_bytes(wr, int(peak_right_b[b]) if b < len(peak_right_b) else 0, kr, ovh_r, comm, policy=pol)
+            lim_l = int(float(left_acc.get("ram_limit_mb") or 0.0) * 1024.0 * 1024.0)
+            lim_r = int(float(right_acc.get("ram_limit_mb") or 0.0) * 1024.0 * 1024.0)
+            fits_l = (total_l <= lim_l) if lim_l > 0 else False
+            fits_r = (total_r <= lim_r) if lim_r > 0 else False
+
+            self.memory_by_boundary[int(b)] = {
+                "left": {
+                    "weights_mb": wl / (1024.0**2), "kv_mb": kl / (1024.0**2),
+                    "peak_activations_mb": (int(peak_left_b[b]) if b < len(peak_left_b) else 0) / (1024.0**2),
+                    "comm_mb": comm / (1024.0**2), "runtime_overhead_mb": ovh_l / (1024.0**2),
+                    "total_mb": total_l / (1024.0**2), "fits": bool(fits_l),
+                },
+                "right": {
+                    "weights_mb": wr / (1024.0**2), "kv_mb": kr / (1024.0**2),
+                    "peak_activations_mb": (int(peak_right_b[b]) if b < len(peak_right_b) else 0) / (1024.0**2),
+                    "comm_mb": comm / (1024.0**2), "runtime_overhead_mb": ovh_r / (1024.0**2),
+                    "total_mb": total_r / (1024.0**2), "fits": bool(fits_r),
+                },
+            }
 
             parent = self.tree.insert(
                 "",
@@ -3227,16 +3413,19 @@ class SplitPointAnalyserGUI(tk.Tk):
                     f"{(float(peak_left_b[b]) / (1024.0**2)):.2f}" if b < len(peak_left_b) else "",
                     f"{(float(peak_right_b[b]) / (1024.0**2)):.2f}" if b < len(peak_right_b) else "",
                     f"{(float(peak_max_b[b]) / (1024.0**2)):.2f}" if b < len(peak_max_b) else "",
+                    "✅" if fits_l else "❌",
+                    "✅" if fits_r else "❌",
+                    f"{total_l/(1024.0**3):.2f}",
+                    f"{total_r/(1024.0**3):.2f}",
                 ),
                 tags=("pick",),
             )
 
-            # Unknown-size hint as first child row (if relevant)
             if b < len(unknown) and int(unknown[b]) > 0:
                 self.tree.insert(
                     parent,
                     "end",
-                    values=("", "", "↳ unknown sizes", "", "", "", f"+{int(unknown[b])}", "", "", "", "", ""),
+                    values=("", "", "↳ unknown sizes", "", "", "", f"+{int(unknown[b])}", "", "", "", "", "", "", "", "", ""),
                 )
 
             if p.show_top_tensors > 0:
@@ -3245,20 +3434,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                     self.tree.insert(
                         parent,
                         "end",
-                        values=(
-                            "",
-                            "",
-                            f"↳ {name}",
-                            "",
-                            "",
-                            f"{_mb(sz):.3f}",
-                            "",
-                            "",
-                            "",
-                            "",
-                            "",
-                            "",
-                        ),
+                        values=("", "", f"↳ {name}", "", "", f"{_mb(sz):.3f}", "", "", "", "", "", "", "", "", "", ""),
                     )
 
     # ----------------------------- Plotting -----------------------------
@@ -3674,6 +3850,28 @@ class SplitPointAnalyserGUI(tk.Tk):
                 }
                 if isinstance(split_manifest, dict):
                     manifest_out.update(split_manifest)
+
+                mem = (self.memory_by_boundary or {}).get(int(b))
+                left_acc = self._accel_by_name(self.var_memf_left_accel.get())
+                right_acc = self._accel_by_name(self.var_memf_right_accel.get())
+                mode = str(self.var_llm_mode.get() or "decode")
+                seq_len = int(self.var_llm_prefill.get() or 0) if mode == "prefill" else 1
+                past_len = 0 if mode == "prefill" else int(self.var_llm_decode.get() or 0)
+                if mem:
+                    manifest_out["memory_forecast"] = {
+                        "mode": mode,
+                        "batch": int(params.batch_override or 1) if params is not None else 1,
+                        "seq_len": int(seq_len),
+                        "past_len": int(past_len),
+                        "left_accelerator": left_acc.get("id"),
+                        "right_accelerator": right_acc.get("id"),
+                        "interface": self.var_memf_interface.get(),
+                        "policy": str(self.var_memf_policy.get()),
+                        "left": mem.get("left", {}),
+                        "right": mem.get("right", {}),
+                        "left_spec": left_acc,
+                        "right_spec": right_acc,
+                    }
 
                 # Split-context diagrams around the boundary (GraphViz if available; otherwise fallback).
                 # Selected row metadata lives in the current analysis model.
@@ -5790,6 +5988,8 @@ if __name__ == "__main__":
     def _clear_results(self):
         self.analysis = None
         self.current_picks = []
+        self._last_params = None
+        self.memory_by_boundary = {}
         try:
             self.btn_export_tex.state(["disabled"])
             self.btn_split.state(["disabled"])
@@ -5802,6 +6002,8 @@ if __name__ == "__main__":
         self.var_shape_coverage.set("(run analysis)")
         self.var_unknown_crossing.set("(run analysis)")
         self.var_diag_note.set("")
+        self.var_memf_left_text.set("Left: n/a")
+        self.var_memf_right_text.set("Right: n/a")
 
 
 def main():
