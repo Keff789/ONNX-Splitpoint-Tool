@@ -79,6 +79,9 @@ def build_panel(parent, app=None) -> ttk.Frame:
     output_btn = ttk.Button(top_model_bar, text="Output folder…")
     output_btn.grid(row=0, column=2, sticky="e")
 
+    open_btn = ttk.Button(top_model_bar, text="Open Model…")
+    open_btn.grid(row=0, column=0, sticky="w")
+
     main = ttk.PanedWindow(frame, orient=tk.HORIZONTAL)
     main.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
 
@@ -120,6 +123,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
     frame.top_model_bar = top_model_bar  # type: ignore[attr-defined]
     frame.preset_bar = preset_bar  # type: ignore[attr-defined]
     frame.output_btn = output_btn  # type: ignore[attr-defined]
+    frame.open_btn = open_btn  # type: ignore[attr-defined]
     frame.model_name_var = model_name_var  # type: ignore[attr-defined]
     frame.model_type_var = model_type_var  # type: ignore[attr-defined]
     frame.external_var = external_var  # type: ignore[attr-defined]
@@ -143,19 +147,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
 def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
     preset_cb = frame.preset_cb
 
-    def _same_parent(widget: Any, parent: Any) -> bool:
-        winfo_parent = getattr(widget, "winfo_parent", None)
-        nametowidget = getattr(widget, "nametowidget", None)
-        if not (callable(winfo_parent) and callable(nametowidget)):
-            return False
-        try:
-            parent_name = winfo_parent()
-            resolved_parent = nametowidget(parent_name)
-            return bool(resolved_parent is parent)
-        except Exception:
-            return False
-
-    def _refresh_model_bar() -> None:
+    def _refresh_model_bar(_model_info: Any | None = None) -> None:
         path = str(getattr(app, "model_path", None) or getattr(getattr(app, "gui_state", None), "current_model_path", "") or "")
         frame.model_name_var.set(os.path.basename(path) if path else "(no model loaded)")
         mtype = str(getattr(getattr(app, "gui_state", None), "model_type", "onnx") or "onnx").upper()
@@ -185,22 +177,27 @@ def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
     preset_cb.bind("<<ComboboxSelected>>", _on_preset_selected, add=True)
 
     if hasattr(app, "_on_open"):
-        open_btn = getattr(app, "btn_open", None)
-        if open_btn is not None and _same_parent(open_btn, frame.top_model_bar):
-            open_btn.pack_forget()
-            open_btn.grid(in_=frame.top_model_bar, row=0, column=0, sticky="w")
-        else:
-            ttk.Button(frame.top_model_bar, text="Open Model…", command=app._on_open).grid(row=0, column=0, sticky="w")
+        def _open_model() -> None:
+            # Call the legacy open-model flow and always refresh the panel badges
+            # afterwards so model status updates are visible immediately.
+            app._on_open()
+            _refresh_model_bar()
+
+        frame.open_btn.configure(command=_open_model)
+
         out_cmd = getattr(app, "_on_pick_output_folder", None)
         if callable(out_cmd):
             frame.output_btn.configure(command=out_cmd)
 
     if hasattr(app, "btn_toggle_settings"):
-        if _same_parent(app.btn_toggle_settings, frame.top_model_bar):
+        try:
             app.btn_toggle_settings.pack_forget()
-            app.btn_toggle_settings.grid(in_=frame.top_model_bar, row=0, column=3, sticky="e", padx=(8, 0))
-        else:
-            ttk.Button(frame.top_model_bar, text="Hide settings", command=app._toggle_settings).grid(row=0, column=3, sticky="e", padx=(8, 0))
+        except Exception:
+            pass
+        try:
+            app.btn_toggle_settings.grid_forget()
+        except Exception:
+            pass
 
     if hasattr(app, "lbl_model"):
         app.lbl_model.pack_forget()
@@ -218,6 +215,9 @@ def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
 
     _refresh_model_bar()
     _refresh_modified_marker()
+
+    if hasattr(app, "events") and hasattr(app.events, "on_model_loaded"):
+        app.events.on_model_loaded(_refresh_model_bar)
 
 
 def mount_legacy_widgets(frame: ttk.Frame, root_children: list[Any], app: Any) -> None:
