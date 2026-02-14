@@ -207,20 +207,20 @@ def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
                 continue
         open_btn = getattr(app, "btn_open", None)
         if open_btn is not None and _same_parent(open_btn, frame.top_model_bar):
-            open_btn.grid_forget()
-            open_btn.grid(in_=frame.top_model_bar, row=0, column=0, sticky="w")
+            open_btn.pack_forget()
+            open_btn.pack(in_=frame.top_model_bar, side=tk.LEFT)
         else:
-            ttk.Button(frame.top_model_bar, text="Open Model…", command=app._on_open).grid(row=0, column=0, sticky="w")
+            ttk.Button(frame.top_model_bar, text="Open Model…", command=app._on_open).pack(side=tk.LEFT)
         out_cmd = getattr(app, "_split_selected_boundary", None)
         if callable(out_cmd):
             frame.output_btn.configure(command=out_cmd)
 
     if hasattr(app, "btn_toggle_settings"):
         if _same_parent(app.btn_toggle_settings, frame.top_model_bar):
-            app.btn_toggle_settings.grid_forget()
-            app.btn_toggle_settings.grid(in_=frame.top_model_bar, row=0, column=3, sticky="e", padx=(8, 0))
+            app.btn_toggle_settings.pack_forget()
+            app.btn_toggle_settings.pack(in_=frame.top_model_bar, side=tk.RIGHT)
         else:
-            ttk.Button(frame.top_model_bar, text="Hide settings", command=app._toggle_settings).grid(row=0, column=3, sticky="e", padx=(8, 0))
+            ttk.Button(frame.top_model_bar, text="Hide settings", command=app._toggle_settings).pack(side=tk.RIGHT)
 
     if hasattr(app, "lbl_model"):
         app.lbl_model.pack_forget()
