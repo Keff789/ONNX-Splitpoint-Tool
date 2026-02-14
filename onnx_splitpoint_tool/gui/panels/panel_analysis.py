@@ -225,14 +225,44 @@ def mount_legacy_widgets(frame: ttk.Frame, root_children: list[Any], app: Any) -
     mid_pane = getattr(app, "mid_pane", None)
 
     if params_frame is not None:
-        params_frame.pack_forget()
-        params_frame.pack(in_=frame.settings_sections["candidate"].body, fill="x")
-        # NOTE:
-        # Tk does not allow moving already-created children of params_frame into
-        # unrelated section bodies via `grid(..., in_=...)`. That raises:
-        # "can't put <widget> inside <other-parent>".
-        # Keep the legacy settings layout mounted as one block to avoid crashes
-        # during startup while the panel migration is still in progress.
+        # Keep the legacy container hidden and mount its key content blocks into
+        # the new section bodies. This keeps the new left-side navigation usable
+        # (settings visible + Analyse button available) while the migration is in
+        # progress.
+        try:
+            params_frame.pack_forget()
+        except Exception:
+            pass
+
+        for name, target in (
+            ("general_frame", "candidate"),
+            ("rank_frame", "scoring"),
+            ("diag_frame", "shape"),
+            ("memf_frame", "shape"),
+            ("adv_container", "llm"),
+            ("action_bar", "candidate"),
+        ):
+            widget = getattr(app, name, None)
+            if widget is None:
+                continue
+            try:
+                widget.grid_forget()
+            except Exception:
+                pass
+            try:
+                widget.pack_forget()
+            except Exception:
+                pass
+            try:
+                widget.pack(in_=frame.settings_sections[target].body, fill="x", pady=(0, 6))
+            except Exception:
+                pass
+
+        try:
+            frame.settings_sections["shape"].set_expanded(True)
+            frame.settings_sections["llm"].set_expanded(True)
+        except Exception:
+            pass
 
     if mid_pane is not None:
         mid_pane.pack_forget()
