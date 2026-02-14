@@ -43,7 +43,7 @@ import time
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
@@ -61,6 +61,7 @@ from onnx import shape_inference
 from . import api as asc
 from .accelerator_specs import load_accelerator_specs
 from .gui.events import GuiEvents
+from .gui.panels import panel_candidates as cand_panel
 from .gui.state import AnalysisResult, GuiState, SelectedCandidate
 from .memory_utils import estimate_ram_bytes, kv_cache_bytes_per_layer, kv_for_boundary, layer_split_index_for_boundary, precompute_initializer_spans, weights_for_all_boundaries
 
@@ -488,6 +489,10 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         self.accel_specs = load_accelerator_specs()
         self.memory_by_boundary: Dict[int, Dict[str, Any]] = {}
+        self._candidate_rows: List[Dict[str, Any]] = []
+        self._tree_clean_tooltips: Dict[str, str] = {}
+        self._clean_tooltip_tip: Optional[tk.Toplevel] = None
+        self._clean_tooltip_row: Optional[str] = None
 
         self._register_event_handlers()
 
@@ -1245,18 +1250,52 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         # Use grid so the bottom of the frame is never "eaten" by the Treeview.
         table_frame.columnconfigure(0, weight=1)
-        table_frame.rowconfigure(0, weight=1)
+        table_frame.rowconfigure(1, weight=1)
+
+        filter_row = ttk.Frame(table_frame)
+        filter_row.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
+        for ci, w in enumerate((0, 0, 0, 0, 1)):
+            filter_row.columnconfigure(ci, weight=w)
+
+        self.var_cand_search = tk.StringVar(value="")
+        self.var_cand_search_regex = tk.BooleanVar(value=False)
+        self.var_cand_hide_dirty = tk.BooleanVar(value=False)
+        self.var_cand_group_semantic = tk.BooleanVar(value=False)
+        self.var_cand_sort = tk.StringVar(value="Rank ↑")
+        self.var_cand_advanced = tk.BooleanVar(value=False)
+
+        ttk.Label(filter_row, text="Search:").grid(row=0, column=0, sticky="w", padx=(0, 4))
+        self.ent_cand_search = ttk.Entry(filter_row, textvariable=self.var_cand_search, width=28)
+        self.ent_cand_search.grid(row=0, column=1, sticky="w", padx=(0, 6))
+        self.chk_cand_regex = ttk.Checkbutton(filter_row, text="Regex", variable=self.var_cand_search_regex, command=self._refresh_candidates_table)
+        self.chk_cand_regex.grid(row=0, column=2, sticky="w", padx=(0, 8))
+        self.chk_cand_dirty = ttk.Checkbutton(filter_row, text="Hide dirty splits", variable=self.var_cand_hide_dirty, command=self._refresh_candidates_table)
+        self.chk_cand_dirty.grid(row=0, column=3, sticky="w", padx=(0, 8))
+        self.chk_cand_group = ttk.Checkbutton(filter_row, text="Group by semantic transition", variable=self.var_cand_group_semantic, command=self._refresh_candidates_table)
+        self.chk_cand_group.grid(row=0, column=4, sticky="w", padx=(0, 8))
+
+        ttk.Label(filter_row, text="Sort:").grid(row=0, column=5, sticky="e", padx=(6, 4))
+        self.cb_cand_sort = ttk.Combobox(filter_row, textvariable=self.var_cand_sort, state="readonly", width=14,
+                                         values=["Rank ↑", "Boundary ↑", "Boundary ↓", "Cut MB ↑", "Cut MB ↓", "Clean (best)"])
+        self.cb_cand_sort.grid(row=0, column=6, sticky="e", padx=(0, 8))
+
+        self.chk_cand_advanced = ttk.Checkbutton(filter_row, text="Detail (Advanced)", variable=self.var_cand_advanced, command=self._refresh_candidates_table)
+        self.chk_cand_advanced.grid(row=0, column=7, sticky="e")
+
+        self.ent_cand_search.bind("<KeyRelease>", self._refresh_candidates_table, add=True)
+        self.cb_cand_sort.bind("<<ComboboxSelected>>", self._refresh_candidates_table, add=True)
 
         cols = [
             "rank",
+            "clean",
             "boundary",
             "semantic",
-            "left_op",
-            "right_op",
             "cut_mb",
             "num_tensors",
             "gflops_left",
             "gflops_right",
+            "left_op",
+            "right_op",
             "peak_left_mib",
             "peak_right_mib",
             "peak_max_mib",
@@ -1267,12 +1306,13 @@ class SplitPointAnalyserGUI(tk.Tk):
         ]
 
         table_inner = ttk.Frame(table_frame)
-        table_inner.grid(row=0, column=0, sticky="nsew")
+        table_inner.grid(row=1, column=0, sticky="nsew")
         table_inner.columnconfigure(0, weight=1)
         table_inner.rowconfigure(0, weight=1)
 
         self.tree = ttk.Treeview(table_inner, columns=cols, show="headings")
         self.tree.heading("rank", text="#")
+        self.tree.heading("clean", text="Clean")
         self.tree.heading("boundary", text="Boundary")
         self.tree.heading("semantic", text="Semantic")
         self.tree.heading("left_op", text="Left op")
@@ -1290,8 +1330,9 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.tree.heading("ram_right_gb", text="RAM R (GB)")
 
         self.tree.column("rank", width=40, anchor=tk.E)
+        self.tree.column("clean", width=60, anchor=tk.CENTER)
         self.tree.column("boundary", width=80, anchor=tk.E)
-        self.tree.column("semantic", width=170)
+        self.tree.column("semantic", width=190)
         self.tree.column("left_op", width=150)
         self.tree.column("right_op", width=150)
         self.tree.column("cut_mb", width=90, anchor=tk.E)
@@ -1313,10 +1354,14 @@ class SplitPointAnalyserGUI(tk.Tk):
         vsb.grid(row=0, column=1, sticky="ns")
 
         self.tree.tag_configure("pick", background="#eef6ff")
+        self.tree.tag_configure("dirty", background="#fff2f2")
+
+        self._configure_candidate_columns()
 
         # Enable split only when a boundary row (not a child tensor row) is selected
         self.tree.bind("<<TreeviewSelect>>", self._on_tree_selection_changed, add=True)
-
+        self.tree.bind("<Motion>", self._on_tree_motion_clean_tooltip, add=True)
+        self.tree.bind("<Leave>", self._hide_tree_clean_tooltip, add=True)
         # ------------------------------ Plots ------------------------------
         plot_frame = ttk.LabelFrame(mid, text="Plots")
         mid.add(plot_frame, weight=3)
@@ -3432,11 +3477,104 @@ class SplitPointAnalyserGUI(tk.Tk):
 
     # ----------------------------- Table UI -----------------------------
 
+    def _configure_candidate_columns(self) -> None:
+        summary_cols = ["rank", "clean", "boundary", "semantic", "cut_mb", "num_tensors", "gflops_left", "gflops_right"]
+        advanced = bool(self.var_cand_advanced.get()) if hasattr(self, "var_cand_advanced") else False
+        display = list(self.tree["columns"]) if advanced else summary_cols
+        self.tree.configure(displaycolumns=display)
+
+    def _refresh_candidates_table(self, _evt=None) -> None:
+        if not isinstance(self.analysis, dict) or self._last_params is None:
+            return
+        self._update_table(self.analysis, self.current_picks, self._last_params)
+
+    def _candidate_passes_search(self, row: Dict[str, Any], search: str, use_regex: bool) -> bool:
+        if not search:
+            return True
+        hay = " | ".join([str(row.get("semantic", "")), str(row.get("left_op", "")), str(row.get("right_op", "")), str(row.get("boundary", "")), " ".join(row.get("cut_tensors", []))])
+        if use_regex:
+            try:
+                return re.search(search, hay, flags=re.IGNORECASE) is not None
+            except re.error:
+                return True
+        return search.lower() in hay.lower()
+
+    def _candidate_clean_rank(self, symbol: str) -> int:
+        return {"✅": 0, "⚠️": 1, "❌": 2}.get(str(symbol), 3)
+
+    def _filtered_sorted_candidate_rows(self, rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        search = str(self.var_cand_search.get() or "").strip() if hasattr(self, "var_cand_search") else ""
+        use_regex = bool(self.var_cand_search_regex.get()) if hasattr(self, "var_cand_search_regex") else False
+        hide_dirty = bool(self.var_cand_hide_dirty.get()) if hasattr(self, "var_cand_hide_dirty") else False
+        group_sem = bool(self.var_cand_group_semantic.get()) if hasattr(self, "var_cand_group_semantic") else False
+        sort_mode = str(self.var_cand_sort.get() or "Rank ↑") if hasattr(self, "var_cand_sort") else "Rank ↑"
+
+        out = [r for r in rows if self._candidate_passes_search(r, search, use_regex)]
+        if hide_dirty:
+            out = [r for r in out if str(r.get("clean_symbol", "")) == "✅"]
+
+        if group_sem:
+            by_sem: Dict[str, Dict[str, Any]] = {}
+            for r in out:
+                sem = str(r.get("semantic", "") or "<none>")
+                prev = by_sem.get(sem)
+                if prev is None or float(r.get("cut_mb_val", 0.0)) < float(prev.get("cut_mb_val", 0.0)):
+                    by_sem[sem] = r
+            out = list(by_sem.values())
+
+        if sort_mode == "Boundary ↑":
+            out.sort(key=lambda r: int(r.get("boundary", -1)))
+        elif sort_mode == "Boundary ↓":
+            out.sort(key=lambda r: int(r.get("boundary", -1)), reverse=True)
+        elif sort_mode == "Cut MB ↑":
+            out.sort(key=lambda r: float(r.get("cut_mb_val", 0.0)))
+        elif sort_mode == "Cut MB ↓":
+            out.sort(key=lambda r: float(r.get("cut_mb_val", 0.0)), reverse=True)
+        elif sort_mode == "Clean (best)":
+            out.sort(key=lambda r: (self._candidate_clean_rank(str(r.get("clean_symbol", ""))), float(r.get("cut_mb_val", 0.0))))
+        else:
+            out.sort(key=lambda r: int(r.get("rank", 10**9)))
+        return out
+
+    def _on_tree_motion_clean_tooltip(self, evt=None) -> None:
+        if evt is None:
+            return
+        row_id = self.tree.identify_row(evt.y)
+        col_id = self.tree.identify_column(evt.x)
+        if not row_id or col_id != "#2":
+            self._hide_tree_clean_tooltip()
+            return
+        txt = self._tree_clean_tooltips.get(row_id, "")
+        if not txt:
+            self._hide_tree_clean_tooltip()
+            return
+        if self._clean_tooltip_tip is not None and self._clean_tooltip_row == row_id:
+            return
+        self._hide_tree_clean_tooltip()
+        tw = tk.Toplevel(self.tree)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{self.tree.winfo_rootx()+evt.x+12}+{self.tree.winfo_rooty()+evt.y+12}")
+        tk.Label(tw, text=txt, justify=tk.LEFT, background="#ffffe0", relief=tk.SOLID, borderwidth=1, wraplength=420).pack(ipadx=6, ipady=3)
+        self._clean_tooltip_tip = tw
+        self._clean_tooltip_row = row_id
+
+    def _hide_tree_clean_tooltip(self, _evt=None) -> None:
+        if self._clean_tooltip_tip is not None:
+            try:
+                self._clean_tooltip_tip.destroy()
+            except Exception:
+                pass
+            self._clean_tooltip_tip = None
+            self._clean_tooltip_row = None
+
     def _update_table(self, a: Dict, picks: List[int], p: Params):
         if self.analysis_result is None:
             self.analysis_result = AnalysisResult()
         self.analysis_result.candidates = list(picks)
+        self._last_params = p
         self.tree.delete(*self.tree.get_children())
+        self._hide_tree_clean_tooltip()
+        self._tree_clean_tooltips = {}
 
         nodes = a["nodes"]
         order = a["order"]
@@ -3453,6 +3591,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         weights_right_b = a.get("weights_right_bytes") or []
         kv_left_b = a.get("kv_left_bytes") or []
         kv_right_b = a.get("kv_right_bytes") or []
+        vimap = a.get("vimap") or {}
 
         left_acc = self._accel_by_name(self.var_memf_left_accel.get())
         right_acc = self._accel_by_name(self.var_memf_right_accel.get())
@@ -3461,19 +3600,23 @@ class SplitPointAnalyserGUI(tk.Tk):
         include_comm = bool(self.var_memf_include_comm.get())
 
         self.memory_by_boundary = {}
+        candidate_rows: List[Dict[str, Any]] = []
 
         def _mb(x_bytes: float) -> float:
             return float(x_bytes) / 1e6
 
         for r, b in enumerate(picks, 1):
             lidx, ridx = order[b], order[b + 1]
+            cut_tensors: List[str] = []
+            try:
+                cut_tensors = list(asc.cut_tensors_for_boundary(order, nodes, int(b)))
+            except Exception:
+                cut_tensors = []
 
             cut_mb = _mb(costs[b])
             num_tensors = int(counts_all[b]) if b < len(counts_all) else 0
-
             fl_l = float(flops_left_prefix[b])
             fl_r = float(total_flops - flops_left_prefix[b])
-
             gfl_l = fl_l / 1e9
             gfl_r = fl_r / 1e9
 
@@ -3507,50 +3650,97 @@ class SplitPointAnalyserGUI(tk.Tk):
                 },
             }
 
+            semantic = (sem_labels[b] if b < len(sem_labels) else "")
+            left_op = nodes[lidx].op_type
+            right_op = nodes[ridx].op_type
+            clean = cand_panel.compute_candidate_clean_status(
+                boundary=int(b),
+                semantic_label=str(semantic),
+                left_op=str(left_op),
+                right_op=str(right_op),
+                cut_tensor_names=cut_tensors,
+                vimap=vimap,
+            )
+            tooltip = "Clean split" if not clean.reasons else "\n".join(clean.reasons)
+
+            candidate_rows.append({
+                "rank": int(r),
+                "boundary": int(b),
+                "semantic": str(semantic),
+                "left_op": str(left_op),
+                "right_op": str(right_op),
+                "cut_mb": f"{cut_mb:.3f}",
+                "cut_mb_val": float(cut_mb),
+                "num_tensors": int(num_tensors),
+                "gflops_left": f"{gfl_l:.3f}",
+                "gflops_right": f"{gfl_r:.3f}",
+                "peak_left_mib": f"{(float(peak_left_b[b]) / (1024.0**2)):.2f}" if b < len(peak_left_b) else "",
+                "peak_right_mib": f"{(float(peak_right_b[b]) / (1024.0**2)):.2f}" if b < len(peak_right_b) else "",
+                "peak_max_mib": f"{(float(peak_max_b[b]) / (1024.0**2)):.2f}" if b < len(peak_max_b) else "",
+                "fits_left": "✅" if fits_l else "❌",
+                "fits_right": "✅" if fits_r else "❌",
+                "ram_left_gb": f"{total_l/(1024.0**3):.2f}",
+                "ram_right_gb": f"{total_r/(1024.0**3):.2f}",
+                "clean_symbol": clean.symbol,
+                "clean_tooltip": tooltip,
+                "clean_flags": sorted(list(clean.flags)),
+                "cut_tensors": cut_tensors,
+                "unknown_count": int(unknown[b]) if b < len(unknown) else 0,
+            })
+
+        self._candidate_rows = list(candidate_rows)
+        rows_for_view = self._filtered_sorted_candidate_rows(candidate_rows)
+        self.analysis_result.candidates = [int(r["boundary"]) for r in rows_for_view]
+
+        for row in rows_for_view:
             parent = self.tree.insert(
                 "",
                 "end",
                 values=(
-                    r,
-                    b,
-                    (sem_labels[b] if b < len(sem_labels) else ""),
-                    nodes[lidx].op_type,
-                    nodes[ridx].op_type,
-                    f"{cut_mb:.3f}",
-                    num_tensors,
-                    f"{gfl_l:.3f}",
-                    f"{gfl_r:.3f}",
-                    f"{(float(peak_left_b[b]) / (1024.0**2)):.2f}" if b < len(peak_left_b) else "",
-                    f"{(float(peak_right_b[b]) / (1024.0**2)):.2f}" if b < len(peak_right_b) else "",
-                    f"{(float(peak_max_b[b]) / (1024.0**2)):.2f}" if b < len(peak_max_b) else "",
-                    "✅" if fits_l else "❌",
-                    "✅" if fits_r else "❌",
-                    f"{total_l/(1024.0**3):.2f}",
-                    f"{total_r/(1024.0**3):.2f}",
+                    row["rank"],
+                    row["clean_symbol"],
+                    row["boundary"],
+                    row["semantic"],
+                    row["cut_mb"],
+                    row["num_tensors"],
+                    row["gflops_left"],
+                    row["gflops_right"],
+                    row["left_op"],
+                    row["right_op"],
+                    row["peak_left_mib"],
+                    row["peak_right_mib"],
+                    row["peak_max_mib"],
+                    row["fits_left"],
+                    row["fits_right"],
+                    row["ram_left_gb"],
+                    row["ram_right_gb"],
                 ),
-                tags=("pick",),
+                tags=(("pick", "dirty") if row["clean_symbol"] != "✅" else ("pick",)),
             )
+            self._tree_clean_tooltips[parent] = str(row.get("clean_tooltip", ""))
 
-            if b < len(unknown) and int(unknown[b]) > 0:
+            if int(row.get("unknown_count", 0)) > 0:
                 self.tree.insert(
                     parent,
                     "end",
-                    values=("", "", "↳ unknown sizes", "", "", "", f"+{int(unknown[b])}", "", "", "", "", "", "", "", "", ""),
+                    values=("", "", "", "↳ unknown sizes", "", f"+{int(row['unknown_count'])}", "", "", "", "", "", "", "", "", "", "", ""),
                 )
 
             if p.show_top_tensors > 0:
+                b = int(row["boundary"])
                 crossing = asc.collect_crossing_values_for_boundary(b, a["val_span"], a["value_bytes"])
                 for name, sz in crossing[: p.show_top_tensors]:
                     self.tree.insert(
                         parent,
                         "end",
-                        values=("", "", f"↳ {name}", "", "", f"{_mb(sz):.3f}", "", "", "", "", "", "", "", "", "", ""),
+                        values=("", "", "", f"↳ {name}", f"{_mb(sz):.3f}", "", "", "", "", "", "", "", "", "", "", "", ""),
                     )
+
+        self._configure_candidate_columns()
 
         if self.analysis_result is None:
             self.analysis_result = AnalysisResult()
         self.analysis_result.memory_estimate = dict(self.memory_by_boundary)
-
     # ----------------------------- Plotting -----------------------------
 
     def _update_plots(self, a: Dict, picks: List[int], p: Params):
@@ -3680,11 +3870,11 @@ class SplitPointAnalyserGUI(tk.Tk):
         if self.tree.parent(item):
             return False
         vals = self.tree.item(item, "values")
-        if len(vals) < 2:
+        if len(vals) < 3:
             return False
         try:
             int(vals[0])  # rank
-            int(vals[1])  # boundary index
+            int(vals[2])  # boundary index
             return True
         except Exception:
             return False
@@ -3701,7 +3891,7 @@ class SplitPointAnalyserGUI(tk.Tk):
             return None
         vals = self.tree.item(item, "values")
         try:
-            return int(vals[1])
+            return int(vals[2])
         except Exception:
             return None
 
