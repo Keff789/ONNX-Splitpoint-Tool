@@ -1057,8 +1057,25 @@ def export_boundary_graphviz_context(
                 name = short_edge_label(n.name) if getattr(n, "name", "") else ""
                 return f"{ni}: {n.op_type}{(' | ' + name) if name else ''}"
 
-            left_text = "LEFT\n" + _short(_node_summary(int(b_left)).replace("\n", " "), 110)
-            right_text = "RIGHT\n" + _short(_node_summary(int(b_right)).replace("\n", " "), 110)
+            def _wrap_keep_newlines(s: str, width: int) -> str:
+                """Wrap each line individually while preserving explicit newlines."""
+                out_lines = []
+                for ln in (s or "").splitlines() or [""]:
+                    ln = ln.rstrip("\r")
+                    if not ln:
+                        out_lines.append("")
+                        continue
+                    out_lines.append(_tw.fill(ln, width=width, break_long_words=True, break_on_hyphens=False))
+                return "\n".join(out_lines)
+
+            # Keep boundary summaries compact and wrapped so side boxes don't sprawl
+            # into the center column (which caused visual overlap in dense diagrams).
+            left_text = "LEFT\n" + _wrap_keep_newlines(
+                _short(_node_summary(int(b_left)).replace("\n", " "), 90), width=34
+            )
+            right_text = "RIGHT\n" + _wrap_keep_newlines(
+                _short(_node_summary(int(b_right)).replace("\n", " "), 90), width=34
+            )
 
             total_cut = 0
             for t in cut_list:
@@ -1074,17 +1091,6 @@ def export_boundary_graphviz_context(
             omitted = max(0, len(cut_list) - len(shown))
 
             import re as _re
-
-            def _wrap_keep_newlines(s: str, width: int) -> str:
-                """Wrap each line individually while preserving explicit newlines."""
-                out_lines = []
-                for ln in (s or "").splitlines() or [""]:
-                    ln = ln.rstrip("\r")
-                    if not ln:
-                        out_lines.append("")
-                        continue
-                    out_lines.append(_tw.fill(ln, width=width, break_long_words=True, break_on_hyphens=False))
-                return "\n".join(out_lines)
 
             def _shorten_path(name: str, keep_tail: int = 4) -> str:
                 name = (name or "").strip()
@@ -1114,9 +1120,9 @@ def export_boundary_graphviz_context(
                         name_line, meta_lines = first.strip(), [rest.strip()]
 
                 name_short = _shorten_path(name_line, keep_tail=4)
-                name_short = _wrap_keep_newlines(name_short, width=26)
+                name_short = _wrap_keep_newlines(name_short, width=22)
                 meta = "\n".join(meta_lines)
-                meta = _wrap_keep_newlines(meta, width=44) if meta else ""
+                meta = _wrap_keep_newlines(meta, width=34) if meta else ""
 
                 label = name_short
                 if meta:
@@ -1140,7 +1146,7 @@ def export_boundary_graphviz_context(
             # Figure size adapts to the number of cut tensors (and the side boxes).
             n_cut = len(cut_nodes)
             fig_h = max(3.2, 0.28 * n_cut + 2.0)
-            fig_w = 13.0
+            fig_w = 14.0
 
             fig, ax = plt.subplots(figsize=(fig_w, fig_h))
             ax.set_axis_off()
@@ -1153,7 +1159,7 @@ def export_boundary_graphviz_context(
             )
 
             ax.text(
-                0.02,
+                0.03,
                 0.5,
                 left_text,
                 va="center",
@@ -1174,7 +1180,7 @@ def export_boundary_graphviz_context(
                 transform=ax.transAxes,
             )
             ax.text(
-                0.98,
+                0.97,
                 0.5,
                 right_text,
                 va="center",
@@ -1201,8 +1207,8 @@ def export_boundary_graphviz_context(
             )
 
             # Anchor points for arrows (axes fraction coordinates).
-            left_anchor = (0.20, 0.5)
-            right_anchor = (0.80, 0.5)
+            left_anchor = (0.24, 0.5)
+            right_anchor = (0.76, 0.5)
             for y, label in zip(ys, cut_nodes):
                 ax.text(
                     0.50,
@@ -1219,7 +1225,7 @@ def export_boundary_graphviz_context(
                 # Left -> cut
                 ax.annotate(
                     "",
-                    xy=(0.41, y),
+                    xy=(0.43, y),
                     xytext=left_anchor,
                     arrowprops=dict(arrowstyle="->", lw=0.9),
                     xycoords=ax.transAxes,
@@ -1228,7 +1234,7 @@ def export_boundary_graphviz_context(
                 ax.annotate(
                     "",
                     xy=right_anchor,
-                    xytext=(0.59, y),
+                    xytext=(0.57, y),
                     arrowprops=dict(arrowstyle="->", lw=0.9),
                     xycoords=ax.transAxes,
                 )
