@@ -670,36 +670,54 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         
 
-        # LLM shape presets (collapsible)
-        # NOTE: use self.params_frame (created above). A previous refactor used a
-        # local name `params_frame` which doesn't exist, causing a NameError at
-        # GUI startup.
-        llm_container = ttk.Frame(self.params_frame)
-        llm_container.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 6))
-        llm_container.columnconfigure(0, weight=1)
+        # Advanced options (collapsible + tabbed)
+        self.var_adv_expanded = tk.BooleanVar(value=False)
+        self.adv_container = ttk.Frame(self.params_frame)
+        self.adv_container.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
+        self.adv_container.columnconfigure(0, weight=1)
 
-        llm_expanded = False
-        llm_toggle_btn = ttk.Button(llm_container, text="▶ LLM shape presets (optional)")
-        llm_toggle_btn.grid(row=0, column=0, sticky="w")
+        adv_toggle = ttk.Frame(self.adv_container)
+        adv_toggle.grid(row=0, column=0, sticky="ew")
+        adv_toggle.columnconfigure(0, weight=1)
 
-        llm_frame = ttk.LabelFrame(llm_container, text="LLM shape presets")
-        llm_frame.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        self.btn_adv_toggle = ttk.Button(adv_toggle, text="▶ Additional options (LLM / Latency / Hailo / Memory)")
+        self.btn_adv_toggle.grid(row=0, column=0, sticky="w")
+
+        self.adv_body = ttk.Frame(self.adv_container)
+        self.adv_body.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        self.adv_body.columnconfigure(0, weight=1)
+
+        self.adv_tabs = ttk.Notebook(self.adv_body)
+        self.adv_tabs.grid(row=0, column=0, sticky="ew")
+
+        tab_llm = ttk.Frame(self.adv_tabs)
+        tab_lat = ttk.Frame(self.adv_tabs)
+        tab_hailo = ttk.Frame(self.adv_tabs)
+        tab_mem = ttk.Frame(self.adv_tabs)
+        self.adv_tabs.add(tab_llm, text="LLM")
+        self.adv_tabs.add(tab_lat, text="Latency")
+        self.adv_tabs.add(tab_hailo, text="Hailo")
+        self.adv_tabs.add(tab_mem, text="Memory")
+
+        def _toggle_adv() -> None:
+            expanded = not bool(self.var_adv_expanded.get())
+            self.var_adv_expanded.set(expanded)
+            if expanded:
+                self.btn_adv_toggle.configure(text="▼ Additional options (LLM / Latency / Hailo / Memory)")
+                self.adv_body.grid()
+            else:
+                self.btn_adv_toggle.configure(text="▶ Additional options (LLM / Latency / Hailo / Memory)")
+                self.adv_body.grid_remove()
+
+        self.btn_adv_toggle.configure(command=_toggle_adv)
+        self.adv_body.grid_remove()
+
+        # LLM shape presets tab
+        llm_frame = ttk.LabelFrame(tab_llm, text="LLM shape presets")
+        llm_frame.pack(fill=tk.X, padx=4, pady=4)
         for c in range(0, 8):
             llm_frame.columnconfigure(c, weight=0)
         llm_frame.columnconfigure(7, weight=1)
-        llm_frame.grid_remove()
-
-        def _toggle_llm() -> None:
-            nonlocal llm_expanded
-            llm_expanded = not llm_expanded
-            if llm_expanded:
-                llm_toggle_btn.config(text="▼ LLM shape presets (optional)")
-                llm_frame.grid()
-            else:
-                llm_toggle_btn.config(text="▶ LLM shape presets (optional)")
-                llm_frame.grid_remove()
-
-        llm_toggle_btn.config(command=_toggle_llm)
 
         # Preset selection + lengths
         preset_values = [
@@ -736,7 +754,6 @@ class SplitPointAnalyserGUI(tk.Tk):
         ttk.Label(llm_frame, text="Decode past (tokens):").grid(row=0, column=5, sticky="e", padx=(0, 4))
         ttk.Entry(llm_frame, textvariable=self.var_llm_decode, width=8).grid(row=0, column=6, sticky="w", padx=(0, 10))
 
-        # Mode: which scenario to apply for analysis
         ttk.Label(llm_frame, text="Apply as:").grid(row=1, column=1, sticky="e", padx=(0, 4), pady=(0, 4))
         ttk.Radiobutton(llm_frame, text="Decode", variable=self.var_llm_mode, value="decode").grid(
             row=1, column=2, sticky="w", padx=(0, 10), pady=(0, 4)
@@ -757,31 +774,11 @@ class SplitPointAnalyserGUI(tk.Tk):
             variable=self.var_llm_use_ort_symbolic,
         ).grid(row=2, column=1, columnspan=7, sticky="w", padx=(0, 6), pady=(0, 2))
 
-        # Apply default preset values to keep entries consistent
         _apply_llm_preset()
 
-        # Latency model (collapsible)
-        # This block is optional and can take a lot of vertical space. We keep a compact
-        # toggle row visible and show/hide the full settings panel.
-        self.var_lat_expanded = tk.BooleanVar(value=False)
-
-        self.lat_container = ttk.Frame(self.params_frame)
-        self.lat_container.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
-        self.lat_container.columnconfigure(0, weight=1)
-
-        lat_toggle = ttk.Frame(self.lat_container)
-        lat_toggle.grid(row=0, column=0, sticky="ew")
-        lat_toggle.columnconfigure(0, weight=1)
-
-        self.btn_lat_toggle = ttk.Button(
-            lat_toggle,
-            text="▶ Latency model (optional)",
-            command=self._toggle_latency_frame,
-        )
-        self.btn_lat_toggle.grid(row=0, column=0, sticky="w")
-
-        self.lat_frame = ttk.LabelFrame(self.lat_container, text="Latency model")
-        self.lat_frame.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        # Latency tab
+        self.lat_frame = ttk.LabelFrame(tab_lat, text="Latency model")
+        self.lat_frame.pack(fill=tk.X, padx=4, pady=4)
 
         l = ttk.Frame(self.lat_frame)
         l.pack(fill=tk.X, padx=8, pady=6)
@@ -810,7 +807,6 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.ent_overhead = ttk.Entry(l, textvariable=self.var_overhead, width=8)
         self.ent_overhead.grid(row=0, column=8, sticky="w")
 
-        # Row 1: link model + energy
         self.var_link_model = tk.StringVar(value="ideal")
         ttk.Label(l, text="Link model:").grid(row=1, column=0, sticky="w", pady=(6, 0))
         self.cb_link_model = ttk.Combobox(l, textvariable=self.var_link_model, values=["ideal", "packetized"], width=10, state="readonly")
@@ -837,7 +833,6 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.ent_link_pkt_ovh_bytes = ttk.Entry(l, textvariable=self.var_link_pkt_ovh_bytes, width=8)
         self.ent_link_pkt_ovh_bytes.grid(row=1, column=9, sticky="w", padx=(4, 0), pady=(6, 0))
 
-        # Row 2: link constraints + compute energy
         self.var_link_max_ms = tk.StringVar(value="")
         ttk.Label(l, text="Link max ms:").grid(row=2, column=0, sticky="w", pady=(6, 0))
         self.ent_link_max_ms = ttk.Entry(l, textvariable=self.var_link_max_ms, width=10)
@@ -863,58 +858,27 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.ent_energy_right = ttk.Entry(l, textvariable=self.var_energy_right, width=10)
         self.ent_energy_right.grid(row=2, column=9, sticky="w", padx=(4, 0), pady=(6, 0))
 
-        # Row 3: activation-memory constraints (peak)
         self.var_mem_left = tk.StringVar(value="")
-        ttk.Label(l, text="Max act mem left:").grid(row=3, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(l, text="Peak act L:").grid(row=3, column=0, sticky="w", pady=(6, 0))
         self.ent_mem_left = ttk.Entry(l, textvariable=self.var_mem_left, width=10)
-        self.ent_mem_left.grid(row=3, column=1, sticky="w", padx=(4, 6), pady=(6, 0))
+        self.ent_mem_left.grid(row=3, column=1, sticky="w", padx=(4, 4), pady=(6, 0))
 
         self.var_mem_left_unit = tk.StringVar(value="MiB")
-        self.cb_mem_left_unit = ttk.Combobox(l, textvariable=self.var_mem_left_unit, values=sorted(asc.UNIT_MULT.keys()), width=8, state="readonly")
+        self.cb_mem_left_unit = ttk.Combobox(l, textvariable=self.var_mem_left_unit, values=sorted(asc.UNIT_MULT.keys()), width=7, state="readonly")
         self.cb_mem_left_unit.grid(row=3, column=2, sticky="w", padx=(0, 12), pady=(6, 0))
 
         self.var_mem_right = tk.StringVar(value="")
-        ttk.Label(l, text="Max act mem right:").grid(row=3, column=3, sticky="w", pady=(6, 0))
+        ttk.Label(l, text="Peak act R:").grid(row=3, column=3, sticky="w", pady=(6, 0))
         self.ent_mem_right = ttk.Entry(l, textvariable=self.var_mem_right, width=10)
-        self.ent_mem_right.grid(row=3, column=4, sticky="w", padx=(4, 6), pady=(6, 0))
+        self.ent_mem_right.grid(row=3, column=4, sticky="w", padx=(4, 4), pady=(6, 0))
 
         self.var_mem_right_unit = tk.StringVar(value="MiB")
-        self.cb_mem_right_unit = ttk.Combobox(l, textvariable=self.var_mem_right_unit, values=sorted(asc.UNIT_MULT.keys()), width=8, state="readonly")
-        self.cb_mem_right_unit.grid(row=3, column=5, sticky="w", padx=(0, 0), pady=(6, 0))
+        self.cb_mem_right_unit = ttk.Combobox(l, textvariable=self.var_mem_right_unit, values=sorted(asc.UNIT_MULT.keys()), width=7, state="readonly")
+        self.cb_mem_right_unit.grid(row=3, column=5, sticky="w", padx=(0, 12), pady=(6, 0))
 
-        ToolTip(self.ent_mem_left, "Optional: constrain peak activation memory of part1 (approx, from value spans).")
-        ToolTip(self.ent_mem_right, "Optional: constrain peak activation memory of part2 (approx, from value spans).")
-
-        # Start collapsed by default, unless latency ranking is selected.
-        self._set_latency_expanded((self.var_rank.get() or "").strip().lower() == "latency")
-
-        # Hailo feasibility check (collapsible)
-        # The split ranking can optionally run a *parse-only* check via Hailo DFC/SDK
-        # for the top candidates. This is useful for Jetson↔Hailo mid-splits.
-        self.var_hailo_expanded = tk.BooleanVar(value=False)
-
-        self.hailo_container = ttk.Frame(self.params_frame)
-        self.hailo_container.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
-        self.hailo_container.columnconfigure(0, weight=1)
-
-        hailo_toggle = ttk.Frame(self.hailo_container)
-        hailo_toggle.grid(row=0, column=0, sticky="ew")
-        hailo_toggle.columnconfigure(0, weight=1)
-
-        self.btn_hailo_toggle = ttk.Button(
-            hailo_toggle,
-            text="▶ Hailo feasibility check (optional)",
-            command=self._toggle_hailo_frame,
-        )
-        self.btn_hailo_toggle.grid(row=0, column=0, sticky="w")
-        ToolTip(
-            self.btn_hailo_toggle,
-            "Optional: run a Hailo DFC/SDK translate (parse-only) on Part1/Part2 for top split candidates.\n"
-            "Candidates that cannot be translated for the selected partition are rejected during pick selection.",
-        )
-
-        self.hailo_frame = ttk.LabelFrame(self.hailo_container, text="Hailo feasibility check")
-        self.hailo_frame.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        # Hailo tab
+        self.hailo_frame = ttk.LabelFrame(tab_hailo, text="Hailo feasibility check")
+        self.hailo_frame.pack(fill=tk.X, padx=4, pady=4)
 
         hf = ttk.Frame(self.hailo_frame)
         hf.pack(fill=tk.X, padx=8, pady=6)
@@ -942,33 +906,20 @@ class SplitPointAnalyserGUI(tk.Tk):
             state="readonly",
         )
         self.cb_hailo_hw_arch.grid(row=0, column=2, sticky="w", padx=(0, 12))
-        ToolTip(self.cb_hailo_hw_arch, "Target Hailo device architecture for the parse check.")
 
         self.var_hailo_max_checks = tk.StringVar(value="25")
         ttk.Label(hf, text="Max checks:").grid(row=0, column=3, sticky="e", padx=(0, 2))
         self.ent_hailo_max_checks = ttk.Entry(hf, textvariable=self.var_hailo_max_checks, width=8)
         self.ent_hailo_max_checks.grid(row=0, column=4, sticky="w", padx=(0, 12))
-        ToolTip(self.ent_hailo_max_checks, "Limit how many candidates will be checked (protects against long runs).")
 
         self.var_hailo_fixup = tk.BooleanVar(value=True)
         self.chk_hailo_fixup = ttk.Checkbutton(hf, text="ONNX fixup", variable=self.var_hailo_fixup)
         self.chk_hailo_fixup.grid(row=0, column=5, sticky="w")
-        ToolTip(
-            self.chk_hailo_fixup,
-            "Apply small ONNX fixups before translating (e.g., fill missing Conv kernel_shape).",
-        )
 
         self.var_hailo_keep = tk.BooleanVar(value=False)
         self.chk_hailo_keep = ttk.Checkbutton(hf, text="Keep artifacts", variable=self.var_hailo_keep)
         self.chk_hailo_keep.grid(row=0, column=6, sticky="w", padx=(10, 0))
-        ToolTip(
-            self.chk_hailo_keep,
-            "Keep intermediate Part1/Part2 ONNX + parsed.har files in a hailo_check_* folder next to the model.\n"
-            "Useful for debugging. If disabled, temporary files are cleaned up.",
-        )
 
-        # Target partition policy
-        # Keep this on a second row to avoid squeezing the main settings.
         self.var_hailo_target = tk.StringVar(value="either")
         ttk.Label(hf, text="Target:").grid(row=1, column=0, sticky="w", pady=(6, 0))
         self.cb_hailo_target = ttk.Combobox(
@@ -979,16 +930,7 @@ class SplitPointAnalyserGUI(tk.Tk):
             state="readonly",
         )
         self.cb_hailo_target.grid(row=1, column=1, sticky="w", pady=(6, 0))
-        ToolTip(
-            self.cb_hailo_target,
-            "Which partition must be Hailo-translatable:\n"
-            "  - either: accept if Part1 OR Part2 translates\n"
-            "  - part2 : require Part2 (suffix) translates\n"
-            "  - part1 : require Part1 (prefix) translates\n"
-            "Tip: 'either' is useful when you are not sure yet whether Hailo will run the left or right side.",
-        )
 
-        # Backend selection (local vs WSL)
         self.var_hailo_backend = tk.StringVar(value="auto")
         ttk.Label(hf, text="Backend:").grid(row=1, column=2, sticky="e", padx=(18, 2), pady=(6, 0))
         self.cb_hailo_backend = ttk.Combobox(
@@ -999,55 +941,76 @@ class SplitPointAnalyserGUI(tk.Tk):
             state="readonly",
         )
         self.cb_hailo_backend.grid(row=1, column=3, sticky="w", pady=(6, 0))
-        ToolTip(
-            self.cb_hailo_backend,
-            "Select how the Hailo parse-check is executed:\n"
-            "  - auto : local SDK if available, else WSL (Windows)\n"
-            "  - local: require hailo_sdk_client in this Python env\n"
-            "  - wsl  : call Hailo DFC inside WSL2 via wsl.exe",
-        )
 
         self.var_hailo_wsl_distro = tk.StringVar(value="")
         ttk.Label(hf, text="WSL distro:").grid(row=1, column=4, sticky="e", padx=(14, 2), pady=(6, 0))
         self.ent_hailo_wsl_distro = ttk.Entry(hf, textvariable=self.var_hailo_wsl_distro, width=18)
         self.ent_hailo_wsl_distro.grid(row=1, column=5, sticky="w", pady=(6, 0))
-        ToolTip(
-            self.ent_hailo_wsl_distro,
-            "Optional: WSL distribution name (as shown by 'wsl -l').\n"
-            "Leave empty to use the default WSL distro.",
-        )
 
-        # Long path -> separate row
         self.var_hailo_wsl_venv = tk.StringVar(value="~/hailo_dfc_venv/bin/activate")
         ttk.Label(hf, text="WSL venv:").grid(row=2, column=0, sticky="w", pady=(6, 0))
         self.ent_hailo_wsl_venv = ttk.Entry(hf, textvariable=self.var_hailo_wsl_venv, width=56)
         self.ent_hailo_wsl_venv.grid(row=2, column=1, columnspan=5, sticky="w", pady=(6, 0))
-        ToolTip(
-            self.ent_hailo_wsl_venv,
-            "WSL path to the venv activation script that contains the Hailo DFC.\n"
-            "Default: ~/hailo_dfc_venv/bin/activate",
-        )
 
-        # Convenience actions for setup/debug.
         btns = ttk.Frame(hf)
         btns.grid(row=2, column=6, sticky="w", padx=(12, 0), pady=(6, 0))
         self.btn_hailo_test = ttk.Button(btns, text="Test backend", command=self._hailo_test_backend)
         self.btn_hailo_test.pack(side=tk.TOP, fill=tk.X)
         self.btn_hailo_clear_cache = ttk.Button(btns, text="Clear cache", command=self._hailo_clear_cache)
         self.btn_hailo_clear_cache.pack(side=tk.TOP, fill=tk.X, pady=(4, 0))
-        ToolTip(
-            self.btn_hailo_test,
-            "Run a quick sanity-check for the selected Hailo backend (local/WSL).\n"
-            "This does not translate a model; it only verifies the environment.",
-        )
-        ToolTip(
-            self.btn_hailo_clear_cache,
-            "Delete cached Hailo parse-check results stored in your home directory.\n"
-            "Useful if you upgraded the Hailo DFC and want to re-check everything.",
-        )
 
-        # Start collapsed by default.
-        self._set_hailo_expanded(False)
+        # Memory tab
+        self.var_memf_left_accel = tk.StringVar(value="")
+        self.var_memf_right_accel = tk.StringVar(value="")
+        self.var_memf_interface = tk.StringVar(value="")
+        self.var_memf_include_kv = tk.BooleanVar(value=True)
+        self.var_memf_include_comm = tk.BooleanVar(value=True)
+        self.var_memf_policy = tk.StringVar(value="max_peak_or_comm")
+        self.var_memf_filter_fit = tk.BooleanVar(value=False)
+        self.var_memf_left_text = tk.StringVar(value="Left: n/a")
+        self.var_memf_right_text = tk.StringVar(value="Right: n/a")
+
+        accel_names = [str(x.get("name")) for x in (self.accel_specs.get("accelerators") or [])]
+        iface_names = [str(x.get("name")) for x in (self.accel_specs.get("interfaces") or [])]
+        if accel_names:
+            self.var_memf_left_accel.set(accel_names[0])
+            self.var_memf_right_accel.set(accel_names[min(1, len(accel_names)-1)])
+        if iface_names:
+            self.var_memf_interface.set(iface_names[0])
+
+        memf = ttk.LabelFrame(tab_mem, text="Memory forecast")
+        memf.pack(fill=tk.X, padx=4, pady=4)
+        row0 = ttk.Frame(memf)
+        row0.pack(fill=tk.X, padx=8, pady=6)
+        ttk.Label(row0, text="Left accelerator:").pack(side=tk.LEFT)
+        ttk.Combobox(row0, textvariable=self.var_memf_left_accel, values=accel_names, width=28, state="readonly").pack(side=tk.LEFT, padx=(4, 10))
+        ttk.Label(row0, text="Right accelerator:").pack(side=tk.LEFT)
+        ttk.Combobox(row0, textvariable=self.var_memf_right_accel, values=accel_names, width=28, state="readonly").pack(side=tk.LEFT, padx=(4, 10))
+        ttk.Label(row0, text="Interface:").pack(side=tk.LEFT)
+        ttk.Combobox(row0, textvariable=self.var_memf_interface, values=iface_names, width=22, state="readonly").pack(side=tk.LEFT, padx=(4, 10))
+
+        row1 = ttk.Frame(memf)
+        row1.pack(fill=tk.X, padx=8, pady=(0, 6))
+        ttk.Checkbutton(row1, text="include KV cache", variable=self.var_memf_include_kv).pack(side=tk.LEFT)
+        ttk.Checkbutton(row1, text="include comm buffers", variable=self.var_memf_include_comm).pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Label(row1, text="Policy:").pack(side=tk.LEFT, padx=(12, 4))
+        ttk.Combobox(row1, textvariable=self.var_memf_policy, values=["max_peak_or_comm", "sum_peak_and_comm"], width=20, state="readonly").pack(side=tk.LEFT)
+        ttk.Checkbutton(row1, text="show only fitting candidates", variable=self.var_memf_filter_fit, command=self._refresh_memory_forecast).pack(side=tk.LEFT, padx=(12, 0))
+
+        try:
+            ttk.Style(self).configure("MemGreen.Horizontal.TProgressbar", troughcolor="#eeeeee", background="#1c9c4a")
+            ttk.Style(self).configure("MemRed.Horizontal.TProgressbar", troughcolor="#eeeeee", background="#c0392b")
+        except Exception:
+            pass
+        self.pb_mem_left = ttk.Progressbar(memf, orient="horizontal", mode="determinate", maximum=100, style="MemGreen.Horizontal.TProgressbar")
+        self.pb_mem_left.pack(fill=tk.X, padx=8, pady=(0, 2))
+        ttk.Label(memf, textvariable=self.var_memf_left_text).pack(anchor="w", padx=8)
+        self.pb_mem_right = ttk.Progressbar(memf, orient="horizontal", mode="determinate", maximum=100, style="MemGreen.Horizontal.TProgressbar")
+        self.pb_mem_right.pack(fill=tk.X, padx=8, pady=(2, 2))
+        ttk.Label(memf, textvariable=self.var_memf_right_text).pack(anchor="w", padx=8, pady=(0, 6))
+
+        for v in (self.var_memf_left_accel, self.var_memf_right_accel, self.var_memf_interface, self.var_memf_policy, self.var_memf_include_comm, self.var_memf_include_kv):
+            v.trace_add("write", lambda *_: self._refresh_memory_forecast())
 
         # Memory forecast (optional)
         self.var_memf_left_accel = tk.StringVar(value="")
@@ -1394,10 +1357,9 @@ class SplitPointAnalyserGUI(tk.Tk):
         ToolTip(self.chk_show_pareto, "Overlay the Pareto front (comm vs imbalance) in the Pareto plot.")
 
         ToolTip(
-            self.btn_lat_toggle,
-            "Show/hide optional latency/link settings.\n"
-            "This is only needed for 'latency' ranking or the latency plot.\n"
-            "Tip: the panel auto-expands when you switch Ranking to 'latency'.",
+            self.btn_adv_toggle,
+            "Show/hide additional option tabs (LLM, Latency, Hailo, Memory).\n"
+            "Use the Latency tab for latency ranking and the Memory tab for RAM fit forecast.",
         )
 
         ToolTip(self.ent_bw, "Link bandwidth for latency model.")
@@ -1458,72 +1420,21 @@ class SplitPointAnalyserGUI(tk.Tk):
         ToolTip(self.btn_export_svg_s, "Export each plot as its own SVG file.")
         ToolTip(self.btn_export_pdf_s, "Export each plot as its own PDF file.")
 
-    # ------------------------- Latency panel helpers ------------------------
+    # ------------------------- Advanced panel helpers ------------------------
 
     def _on_rank_changed(self):
-        """Auto-expand latency settings when the user selects latency ranking."""
+        """Auto-open advanced options and jump to Latency tab when needed."""
         if (self.var_rank.get() or "").strip().lower() == "latency":
-            self._set_latency_expanded(True)
-
-    def _toggle_latency_frame(self):
-        self._set_latency_expanded(not bool(self.var_lat_expanded.get()))
-
-    def _set_latency_expanded(self, expanded: bool):
-        expanded = bool(expanded)
-        self.var_lat_expanded.set(expanded)
-
-        if expanded:
-            # Restore the full panel.
+            if not bool(self.var_adv_expanded.get()):
+                self.var_adv_expanded.set(True)
+                self.btn_adv_toggle.configure(text="▼ Additional options (LLM / Latency / Hailo / Memory)")
+                self.adv_body.grid()
             try:
-                self.lat_frame.grid()
-            except Exception:
-                self.lat_frame.grid(row=1, column=0, sticky="ew", pady=(4, 0))
-            self.btn_lat_toggle.configure(text="▼ Latency model (optional)")
-        else:
-            # Hide the full panel and keep only the toggle row.
-            self.lat_frame.grid_remove()
-            self.btn_lat_toggle.configure(text="▶ Latency model (optional)")
-
-    # ------------------------- Layout helpers ------------------------
-
-    def _toggle_settings(self) -> None:
-        """Hide/show the settings panel to maximize plot/table area."""
-        is_visible = bool(self.var_settings_visible.get())
-        if is_visible:
-            try:
-                self.params_frame.pack_forget()
+                self.adv_tabs.select(1)
             except Exception:
                 pass
-            self.var_settings_visible.set(False)
-            self.btn_toggle_settings.configure(text="Show settings")
-        else:
-            # Re-pack the settings frame *before* the main pane (so it stays above plots).
-            try:
-                self.params_frame.pack(fill=tk.X, padx=10, pady=(0, 8), before=self.mid_pane)
-            except Exception:
-                # Fallback: normal packing order.
-                self.params_frame.pack(fill=tk.X, padx=10, pady=(0, 8))
-            self.var_settings_visible.set(True)
-            self.btn_toggle_settings.configure(text="Hide settings")
 
-    # --------------------------- Hailo panel helpers ------------------------
-
-    def _toggle_hailo_frame(self):
-        self._set_hailo_expanded(not bool(self.var_hailo_expanded.get()))
-
-    def _set_hailo_expanded(self, expanded: bool):
-        expanded = bool(expanded)
-        self.var_hailo_expanded.set(expanded)
-
-        if expanded:
-            try:
-                self.hailo_frame.grid()
-            except Exception:
-                self.hailo_frame.grid(row=1, column=0, sticky="ew", pady=(4, 0))
-            self.btn_hailo_toggle.configure(text="▼ Hailo feasibility check (optional)")
-        else:
-            self.hailo_frame.grid_remove()
-            self.btn_hailo_toggle.configure(text="▶ Hailo feasibility check (optional)")
+    # ------------------------- Layout helpers ------------------------
 
     def _hailo_test_backend(self) -> None:
         """Quick sanity-check that the selected Hailo backend is reachable."""
