@@ -60,6 +60,7 @@ from onnx import shape_inference
 
 from . import api as asc
 from .accelerator_specs import load_accelerator_specs
+from .gui.events import GuiEvents
 from .gui.state import AnalysisResult, GuiState, SelectedCandidate
 from .memory_utils import estimate_ram_bytes, kv_cache_bytes_per_layer, kv_for_boundary, layer_split_index_for_boundary, precompute_initializer_spans, weights_for_all_boundaries
 
@@ -470,6 +471,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.geometry("1250x860")
 
         self.gui_state = GuiState()
+        self.events = GuiEvents()
         self.model_path: Optional[str] = None
         self.analysis: Optional[Dict] = None
         self.current_picks: List[int] = []
@@ -487,7 +489,43 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.accel_specs = load_accelerator_specs()
         self.memory_by_boundary: Dict[int, Dict[str, Any]] = {}
 
+        self._register_event_handlers()
+
         self._build_ui()
+
+    def _register_event_handlers(self) -> None:
+        self.events.on_model_loaded(self._handle_model_loaded)
+        self.events.on_analysis_done(self._handle_analysis_done)
+        self.events.on_candidate_selected(self._handle_candidate_selected)
+        self.events.on_settings_changed(self._handle_settings_changed)
+
+    def _handle_model_loaded(self, _model_info: Dict[str, Any]) -> None:
+        self._clear_results()
+
+    def _handle_analysis_done(self, analysis_result: AnalysisResult) -> None:
+        payload = analysis_result.plot_data if isinstance(analysis_result.plot_data, dict) else {}
+        analysis = payload.get("analysis")
+        picks = payload.get("picks")
+        params = payload.get("params")
+        if not isinstance(analysis, dict) or not isinstance(picks, list) or not isinstance(params, Params):
+            return
+        self._update_diagnostics(analysis)
+        self._update_table(analysis, picks, params)
+        self._update_plots(analysis, picks, params)
+        self._update_action_buttons()
+        self._refresh_memory_forecast()
+
+    def _handle_candidate_selected(self, _candidate: Optional[SelectedCandidate]) -> None:
+        self._update_action_buttons()
+        self._refresh_memory_forecast()
+
+    def _handle_settings_changed(self) -> None:
+        self._update_action_buttons()
+        self._refresh_memory_forecast()
+
+    def _emit_settings_changed(self, *_args: Any) -> None:
+        self._sync_gui_state_from_vars()
+        self.events.emit_settings_changed()
 
     # -------------------------- UI construction --------------------------
 
@@ -635,6 +673,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.cb_rank = ttk.Combobox(r, textvariable=self.var_rank, values=["cut", "score", "latency"], width=10, state="readonly")
         self.cb_rank.grid(row=0, column=1, sticky="w", padx=(4, 10))
         self.cb_rank.bind("<<ComboboxSelected>>", lambda _e: self._on_rank_changed(), add=True)
+
 
         self.var_log_comm = tk.BooleanVar(value=True)
         self.chk_log_comm = ttk.Checkbutton(r, text="log10(1+comm)", variable=self.var_log_comm)
@@ -1277,8 +1316,6 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         # Enable split only when a boundary row (not a child tensor row) is selected
         self.tree.bind("<<TreeviewSelect>>", self._on_tree_selection_changed, add=True)
-        self.tree.bind("<<TreeviewSelect>>", lambda _e: self._update_action_buttons(), add=True)
-        self.tree.bind("<<TreeviewSelect>>", lambda _e: self._refresh_memory_forecast(), add=True)
 
         # ------------------------------ Plots ------------------------------
         plot_frame = ttk.LabelFrame(mid, text="Plots")
@@ -1425,6 +1462,19 @@ class SplitPointAnalyserGUI(tk.Tk):
         ToolTip(self.btn_export_svg_s, "Export each plot as its own SVG file.")
         ToolTip(self.btn_export_pdf_s, "Export each plot as its own PDF file.")
 
+        settings_vars = [
+            self.var_topk, self.var_min_gap, self.var_min_compute, self.var_batch, self.var_bpe,
+            self.var_unknown_mb, self.var_exclude_trivial, self.var_only_one, self.var_strict_boundary,
+            self.var_rank, self.var_memf_left_accel, self.var_memf_right_accel, self.var_memf_interface,
+            self.var_memf_include_kv, self.var_memf_include_comm, self.var_memf_policy,
+            self.var_split_validate, self.var_split_runner, self.var_split_folder,
+            self.var_split_ctx_full, self.var_split_ctx_cutflow, self.var_split_ctx_hops,
+            self.var_llm_enable, self.var_llm_preset, self.var_llm_mode, self.var_llm_prefill,
+            self.var_llm_decode, self.var_llm_use_ort_symbolic,
+        ]
+        for var in settings_vars:
+            var.trace_add("write", self._emit_settings_changed)
+
     # ------------------------- Advanced panel helpers ------------------------
 
     def _on_rank_changed(self):
@@ -1502,6 +1552,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         b = self._selected_boundary_index()
         if b is None:
             self.selected_candidate = None
+            self.events.emit_candidate_selected(None)
             return
         sem = ""
         if isinstance(self.analysis, dict):
@@ -1518,6 +1569,7 @@ class SplitPointAnalyserGUI(tk.Tk):
             if self.analysis_result and self.analysis_result.memory_estimate:
                 stats = dict(self.analysis_result.memory_estimate.get(int(b), {}))
         self.selected_candidate = SelectedCandidate(boundary_id=int(b), semantic_label=sem, cut_tensors=cut_tensors, stats=stats)
+        self.events.emit_candidate_selected(self.selected_candidate)
 
     def _sync_gui_state_from_vars(self) -> None:
         self.gui_state.analysis_params = {
@@ -1568,7 +1620,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.gui_state.current_model_path = path
         self.gui_state.model_type = "onnx"
         self.lbl_model.configure(text=os.path.basename(path))
-        self._clear_results()
+        self.events.emit_model_loaded({"path": path, "model_type": "onnx"})
 
     def _on_analyse(self):
         if not self.gui_state.current_model_path:
@@ -1630,13 +1682,12 @@ class SplitPointAnalyserGUI(tk.Tk):
                     elif kind == "ok":
                         self.analysis = item[1]
                         self.current_picks = item[2]
-                        self.analysis_result = AnalysisResult(candidates=list(self.current_picks))
+                        self.analysis_result = AnalysisResult(
+                            candidates=list(self.current_picks),
+                            plot_data={"analysis": self.analysis, "picks": list(self.current_picks), "params": params},
+                        )
                         self._last_params = params
-                        self._update_diagnostics(self.analysis)
-                        self._update_table(self.analysis, self.current_picks, params)
-                        self._update_plots(self.analysis, self.current_picks, params)
-                        self._update_action_buttons()
-                        self._refresh_memory_forecast()
+                        self.events.emit_analysis_done(self.analysis_result)
                         # Persist Hailo cache updates.
                         self._save_hailo_cache()
                         pb.stop()
