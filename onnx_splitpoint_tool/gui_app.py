@@ -360,8 +360,20 @@ class SplitPointAnalyserGUI(tk.Tk):
     # -------------------------- UI construction --------------------------
 
     def _build_ui(self):
+        # Notebook layout: Setup / Analysis / Export
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=8, pady=(8, 4))
+
+        self.tab_setup = ttk.Frame(self.notebook)
+        self.tab_analyze = ttk.Frame(self.notebook)
+        self.tab_export = ttk.Frame(self.notebook)
+
+        self.notebook.add(self.tab_setup, text=" 1. Setup & Load ")
+        self.notebook.add(self.tab_analyze, text=" 2. Analysis & Split ")
+        self.notebook.add(self.tab_export, text=" 3. Export & Deploy ")
+
         # --- Top bar: open model ---
-        top = ttk.Frame(self)
+        top = ttk.Frame(self.tab_setup)
         top.pack(fill=tk.X, padx=10, pady=8)
 
         self.btn_open = ttk.Button(top, text="Open Model…", command=self._on_open)
@@ -376,7 +388,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.btn_toggle_settings.pack(side=tk.RIGHT)
 
         # --- Parameters ---
-        self.params_frame = ttk.LabelFrame(self, text="Analysis Parameters")
+        self.params_frame = ttk.LabelFrame(self.tab_setup, text="Analysis Parameters")
         self.params_frame.pack(fill=tk.X, padx=10, pady=(0, 8))
 
         # General parameters row
@@ -928,13 +940,15 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         # ---------------- Actions (analyse + export/split) ----------------
         # Keep this compact (small Analyse button) and always visible.
-        action_bar = ttk.Frame(self.params_frame)
-        action_bar.grid(row=6, column=0, sticky="ew", padx=8, pady=(0, 8))
+        action_bar = ttk.LabelFrame(self.tab_export, text="Export & Deploy", padding=10)
+        action_bar.pack(fill=tk.X, padx=12, pady=12)
         action_bar.columnconfigure(0, weight=1)
+
+        ttk.Label(action_bar, text="Export, Split und Benchmark laufen hier gebündelt.").grid(row=0, column=0, sticky="w", pady=(0, 8))
 
         # Row 0: main actions
         main_actions = ttk.Frame(action_bar)
-        main_actions.grid(row=0, column=0, sticky="w")
+        main_actions.grid(row=1, column=0, sticky="w")
 
         self.btn_analyse = ttk.Button(main_actions, text="Analyse", command=self._on_analyse, width=12)
         self.btn_analyse.pack(side=tk.LEFT)
@@ -955,7 +969,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         # Row 1: split options (compact)
         split_opts = ttk.Frame(action_bar)
-        split_opts.grid(row=1, column=0, sticky="w", pady=(4, 0))
+        split_opts.grid(row=2, column=0, sticky="w", pady=(6, 0))
 
         self.var_split_validate = tk.BooleanVar(value=False)
         self.chk_split_validate = ttk.Checkbutton(split_opts, text="Validate (ORT)", variable=self.var_split_validate)
@@ -1015,16 +1029,58 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.btn_split.state(["disabled"])
         self.btn_benchmark.state(["disabled"])
 
-        # --- Results split: table + plots ---
-        self.mid_pane = ttk.PanedWindow(self, orient=tk.VERTICAL)
+        # --- Results split: graph left + controls/table right ---
+        self.mid_pane = ttk.PanedWindow(self.tab_analyze, orient=tk.HORIZONTAL)
         mid = self.mid_pane
         mid.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
-        # ------------------------------ Table ------------------------------
-        table_frame = ttk.LabelFrame(mid, text="Suggested Boundaries")
-        mid.add(table_frame, weight=1)
+        # Left side: plot area gets most space
+        left = ttk.Frame(mid)
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(0, weight=1)
+        mid.add(left, weight=4)
 
-        # Use grid so the bottom of the frame is never "eaten" by the Treeview.
+        plot_frame = ttk.LabelFrame(left, text="Plots")
+        plot_frame.grid(row=0, column=0, sticky="nsew")
+        plot_frame.columnconfigure(0, weight=1)
+        plot_frame.rowconfigure(0, weight=1)
+        plot_frame.rowconfigure(1, weight=0)
+
+        self.fig = Figure(figsize=(12, 7), constrained_layout=True)
+        self.ax_comm = self.fig.add_subplot(2, 2, 1)
+        self.ax_comp = self.fig.add_subplot(2, 2, 2)
+        self.ax_pareto = self.fig.add_subplot(2, 2, 3)
+        self.ax_lat = self.fig.add_subplot(2, 2, 4)
+
+        self.canvas = FigureCanvasTkAgg(self.fig, master=plot_frame)
+        self.canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+
+        toolbar_frame = ttk.Frame(plot_frame)
+        toolbar_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(2, 6))
+        self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
+        self.toolbar.update()
+        try:
+            self.toolbar.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        except Exception:
+            pass
+
+        # Right side: manual control + candidates table
+        right = ttk.Frame(mid)
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(1, weight=1)
+        mid.add(right, weight=2)
+
+        self.ctrl_box = ttk.LabelFrame(right, text="Manual Boundary Control")
+        self.ctrl_box.grid(row=0, column=0, sticky="ew", padx=(8, 0), pady=(0, 8))
+
+        self.var_boundary = tk.IntVar(value=0)
+        self.scale_boundary = ttk.Scale(self.ctrl_box, orient=tk.HORIZONTAL, from_=0, to=1, command=self._on_scale_drag)
+        self.scale_boundary.pack(fill=tk.X, padx=8, pady=(8, 2))
+        self.lbl_boundary_val = ttk.Label(self.ctrl_box, text="Boundary: -")
+        self.lbl_boundary_val.pack(anchor="center", pady=(0, 8))
+
+        table_frame = ttk.LabelFrame(right, text="Suggested Boundaries")
+        table_frame.grid(row=1, column=0, sticky="nsew", padx=(8, 0))
         table_frame.columnconfigure(0, weight=1)
         table_frame.rowconfigure(0, weight=1)
 
@@ -1062,15 +1118,15 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         self.tree.column("rank", width=40, anchor=tk.E)
         self.tree.column("boundary", width=80, anchor=tk.E)
-        self.tree.column("left_op", width=150)
-        self.tree.column("right_op", width=150)
-        self.tree.column("cut_mb", width=90, anchor=tk.E)
-        self.tree.column("num_tensors", width=80, anchor=tk.E)
-        self.tree.column("gflops_left", width=135, anchor=tk.E)
-        self.tree.column("gflops_right", width=135, anchor=tk.E)
-        self.tree.column("peak_left_mib", width=110, anchor=tk.E)
-        self.tree.column("peak_right_mib", width=110, anchor=tk.E)
-        self.tree.column("peak_max_mib", width=110, anchor=tk.E)
+        self.tree.column("left_op", width=130)
+        self.tree.column("right_op", width=130)
+        self.tree.column("cut_mb", width=80, anchor=tk.E)
+        self.tree.column("num_tensors", width=70, anchor=tk.E)
+        self.tree.column("gflops_left", width=120, anchor=tk.E)
+        self.tree.column("gflops_right", width=120, anchor=tk.E)
+        self.tree.column("peak_left_mib", width=90, anchor=tk.E)
+        self.tree.column("peak_right_mib", width=90, anchor=tk.E)
+        self.tree.column("peak_max_mib", width=90, anchor=tk.E)
 
         self.tree.grid(row=0, column=0, sticky="nsew")
 
@@ -1079,43 +1135,14 @@ class SplitPointAnalyserGUI(tk.Tk):
         vsb.grid(row=0, column=1, sticky="ns")
 
         self.tree.tag_configure("pick", background="#eef6ff")
-
-        # Enable split only when a boundary row (not a child tensor row) is selected
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self._update_action_buttons(), add=True)
+        self.tree.bind("<<TreeviewSelect>>", self._on_tree_selection_sync, add=True)
 
-        # ------------------------------ Plots ------------------------------
-        plot_frame = ttk.LabelFrame(mid, text="Plots")
-        mid.add(plot_frame, weight=3)
-
-        # Use grid so canvas does not hide the toolbar/export controls.
-        plot_frame.columnconfigure(0, weight=1)
-        plot_frame.rowconfigure(0, weight=1)
-        plot_frame.rowconfigure(1, weight=0)
-        plot_frame.rowconfigure(2, weight=0)
-
-        self.fig = Figure(figsize=(10, 6), constrained_layout=True)
-        self.ax_comm = self.fig.add_subplot(2, 2, 1)
-        self.ax_comp = self.fig.add_subplot(2, 2, 2)
-        self.ax_pareto = self.fig.add_subplot(2, 2, 3)
-        self.ax_lat = self.fig.add_subplot(2, 2, 4)
-
-        self.canvas = FigureCanvasTkAgg(self.fig, master=plot_frame)
-        self.canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
-
-        # Matplotlib navigation toolbar (zoom/pan/save/etc.)
-        toolbar_frame = ttk.Frame(plot_frame)
-        toolbar_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(2, 0))
-        self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
-        self.toolbar.update()
-        try:
-            # Some Matplotlib versions auto-pack; calling pack() is harmless and makes it robust.
-            self.toolbar.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        except Exception:
-            pass
-
-        # Export buttons near plots
-        export_bar = ttk.Frame(plot_frame)
-        export_bar.grid(row=2, column=0, sticky="ew", padx=6, pady=(2, 6))
+        # Plot export buttons are on the Export tab
+        plot_export = ttk.LabelFrame(self.tab_export, text="Plot Exports", padding=10)
+        plot_export.pack(fill=tk.X, padx=12, pady=(0, 12))
+        export_bar = ttk.Frame(plot_export)
+        export_bar.pack(fill=tk.X)
 
         self.btn_export_svg = ttk.Button(export_bar, text="Export SVG (overview)", command=lambda: self._export_overview("svg"))
         self.btn_export_pdf = ttk.Button(export_bar, text="Export PDF (overview)", command=lambda: self._export_overview("pdf"))
@@ -1127,6 +1154,19 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.btn_export_svg_s.pack(side=tk.LEFT, padx=(0, 6))
         self.btn_export_pdf_s.pack(side=tk.LEFT)
 
+        # Status bar at bottom (compact feedback + log dialog)
+        status = ttk.Frame(self)
+        status.pack(fill=tk.X, padx=8, pady=(0, 8))
+        self.var_status = tk.StringVar(value="Ready.")
+        ttk.Label(status, textvariable=self.var_status).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(status, text="Show Log", command=self._show_log_window).pack(side=tk.RIGHT)
+
+        # Internal status log storage
+        self._event_log: List[str] = []
+        self._log_win: Optional[tk.Toplevel] = None
+
+        # click in plot to select nearest boundary
+        self.canvas.mpl_connect("button_press_event", self._on_plot_click)
 
         # Tooltips
         self._add_tooltips()
@@ -1258,7 +1298,7 @@ class SplitPointAnalyserGUI(tk.Tk):
     # ------------------------- Layout helpers ------------------------
 
     def _toggle_settings(self) -> None:
-        """Hide/show the settings panel to maximize plot/table area."""
+        """Hide/show the setup settings panel."""
         is_visible = bool(self.var_settings_visible.get())
         if is_visible:
             try:
@@ -1268,14 +1308,115 @@ class SplitPointAnalyserGUI(tk.Tk):
             self.var_settings_visible.set(False)
             self.btn_toggle_settings.configure(text="Show settings")
         else:
-            # Re-pack the settings frame *before* the main pane (so it stays above plots).
             try:
-                self.params_frame.pack(fill=tk.X, padx=10, pady=(0, 8), before=self.mid_pane)
-            except Exception:
-                # Fallback: normal packing order.
                 self.params_frame.pack(fill=tk.X, padx=10, pady=(0, 8))
+            except Exception:
+                pass
             self.var_settings_visible.set(True)
             self.btn_toggle_settings.configure(text="Hide settings")
+
+    def _append_log(self, msg: str) -> None:
+        ts = datetime.now().strftime("%H:%M:%S")
+        line = f"[{ts}] {msg}"
+        self._event_log.append(line)
+        if len(self._event_log) > 500:
+            self._event_log = self._event_log[-500:]
+        if getattr(self, "_log_win", None) is not None and self._log_win.winfo_exists():
+            try:
+                self._log_text.configure(state="normal")
+                self._log_text.insert("end", line + "\n")
+                self._log_text.see("end")
+                self._log_text.configure(state="disabled")
+            except Exception:
+                pass
+
+    def _set_status(self, msg: str) -> None:
+        if hasattr(self, "var_status"):
+            self.var_status.set(msg)
+        self._append_log(msg)
+
+    def _show_log_window(self) -> None:
+        if getattr(self, "_log_win", None) is not None and self._log_win.winfo_exists():
+            self._log_win.lift()
+            return
+        win = tk.Toplevel(self)
+        win.title("Analysis Log")
+        win.geometry("920x380")
+        body = ttk.Frame(win)
+        body.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        txt = tk.Text(body, wrap="none")
+        ysb = ttk.Scrollbar(body, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=ysb.set)
+        txt.grid(row=0, column=0, sticky="nsew")
+        ysb.grid(row=0, column=1, sticky="ns")
+        body.rowconfigure(0, weight=1)
+        body.columnconfigure(0, weight=1)
+        txt.insert("1.0", "\n".join(self._event_log) + ("\n" if self._event_log else ""))
+        txt.configure(state="disabled")
+        self._log_win = win
+        self._log_text = txt
+
+    def _highlight_boundary(self, boundary: Optional[int]) -> None:
+        try:
+            for ax in (self.ax_comm, self.ax_comp, self.ax_lat):
+                if hasattr(ax, "_selected_boundary_line") and ax._selected_boundary_line is not None:
+                    try:
+                        ax._selected_boundary_line.remove()
+                    except Exception:
+                        pass
+                    ax._selected_boundary_line = None
+                if boundary is not None:
+                    ax._selected_boundary_line = ax.axvline(int(boundary), color="#ffcc00", linewidth=1.4)
+            self.lbl_boundary_val.configure(text=(f"Boundary: {int(boundary)}" if boundary is not None else "Boundary: -"))
+            self.canvas.draw_idle()
+        except Exception:
+            pass
+
+    def _on_tree_selection_sync(self, _evt=None) -> None:
+        b = self._selected_boundary_index()
+        if b is None:
+            return
+        try:
+            self.var_boundary.set(int(b))
+            self.scale_boundary.set(float(b))
+        except Exception:
+            pass
+        self._highlight_boundary(int(b))
+
+    def _on_scale_drag(self, value: str) -> None:
+        try:
+            b = int(round(float(value)))
+        except Exception:
+            return
+        self.var_boundary.set(b)
+        self._highlight_boundary(b)
+        # Select matching boundary row in table (if present)
+        for item in self.tree.get_children():
+            vals = self.tree.item(item, "values")
+            if len(vals) > 1:
+                try:
+                    if int(vals[1]) == b:
+                        self.tree.selection_set(item)
+                        self.tree.see(item)
+                        break
+                except Exception:
+                    pass
+
+    def _on_plot_click(self, event) -> None:
+        if event is None or event.xdata is None or self.analysis is None:
+            return
+        b = int(round(float(event.xdata)))
+        try:
+            max_b = max(0, len(self.analysis.get("costs_bytes") or []) - 1)
+            b = max(0, min(max_b, b))
+        except Exception:
+            pass
+        self.var_boundary.set(b)
+        try:
+            self.scale_boundary.set(float(b))
+        except Exception:
+            pass
+        self._on_scale_drag(str(b))
 
     # --------------------------- Hailo panel helpers ------------------------
 
@@ -1363,6 +1504,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.model_path = path
         self.lbl_model.configure(text=os.path.basename(path))
         self._clear_results()
+        self._set_status(f"Model loaded: {os.path.basename(path)}")
 
     def _on_analyse(self):
         if not self.model_path:
@@ -1420,7 +1562,9 @@ class SplitPointAnalyserGUI(tk.Tk):
                     item = q.get_nowait()
                     kind = item[0]
                     if kind == "progress":
-                        msg_var.set(str(item[1]))
+                        msg = str(item[1])
+                        msg_var.set(msg)
+                        self._set_status(msg)
                     elif kind == "ok":
                         self.analysis = item[1]
                         self.current_picks = item[2]
@@ -1433,12 +1577,15 @@ class SplitPointAnalyserGUI(tk.Tk):
                         pb.stop()
                         dlg.destroy()
                         self.btn_analyse.state(["!disabled"])
+                        self._set_status("Analysis completed.")
+                        self.notebook.select(self.tab_analyze)
                         return
                     elif kind == "err":
                         err_text = str(item[1])
                         pb.stop()
                         dlg.destroy()
                         self.btn_analyse.state(["!disabled"])
+                        self._set_status("Analysis failed.")
                         messagebox.showerror("Analysis failed", err_text)
                         return
             except queue.Empty:
@@ -2727,6 +2874,11 @@ class SplitPointAnalyserGUI(tk.Tk):
 
     def _update_table(self, a: Dict, picks: List[int], p: Params):
         self.tree.delete(*self.tree.get_children())
+        try:
+            max_b = max(0, len(a.get("costs_bytes") or []) - 1)
+            self.scale_boundary.configure(from_=0, to=max_b)
+        except Exception:
+            pass
 
         nodes = a["nodes"]
         order = a["order"]
@@ -2801,6 +2953,15 @@ class SplitPointAnalyserGUI(tk.Tk):
                             "",
                         ),
                     )
+
+        if picks:
+            b0 = int(picks[0])
+            try:
+                self.var_boundary.set(b0)
+                self.scale_boundary.set(float(b0))
+            except Exception:
+                pass
+            self._highlight_boundary(b0)
 
     # ----------------------------- Plotting -----------------------------
 
@@ -5248,6 +5409,13 @@ if __name__ == "__main__":
         self.var_shape_coverage.set("(run analysis)")
         self.var_unknown_crossing.set("(run analysis)")
         self.var_diag_note.set("")
+        try:
+            self.scale_boundary.configure(from_=0, to=1)
+            self.scale_boundary.set(0)
+            self.lbl_boundary_val.configure(text="Boundary: -")
+        except Exception:
+            pass
+        self._set_status("Ready.")
 
 
 def main():
