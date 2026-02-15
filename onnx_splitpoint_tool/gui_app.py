@@ -62,7 +62,8 @@ from . import api as asc
 from .accelerator_specs import load_accelerator_specs
 from .gui.events import GuiEvents
 from .gui.panels import panel_candidates as cand_panel
-from .gui.state import AnalysisResult, GuiState, SelectedCandidate
+from .gui.analysis_params import iter_specs
+from .gui.state import AppUiState, AnalysisResult, GuiState, SelectedCandidate
 from .memory_utils import estimate_ram_bytes, kv_cache_bytes_per_layer, kv_for_boundary, layer_split_index_for_boundary, precompute_initializer_spans, weights_for_all_boundaries
 
 from . import __version__ as TOOL_VERSION
@@ -479,6 +480,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.analysis_result: Optional[AnalysisResult] = None
         self.selected_candidate: Optional[SelectedCandidate] = None
         self._last_params: Optional[Params] = None
+        self.ui_state: AppUiState = AppUiState.NO_MODEL
 
         # Hailo feasibility-check result cache (persists across runs).
         # Keyed by (backend|hw_arch|fixup|sha1(model_bytes)).
@@ -500,6 +502,22 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.default_output_dir: Optional[str] = None
 
         self._build_ui()
+        self._set_ui_state(AppUiState.NO_MODEL)
+
+    def _infer_ui_state(self) -> AppUiState:
+        if self.gui_state.current_model_path is None:
+            return AppUiState.NO_MODEL
+        if "disabled" in self.btn_analyse.state():
+            return AppUiState.ANALYSING
+        if self.analysis is None:
+            return AppUiState.MODEL_LOADED
+        if self._selected_boundary_index() is not None:
+            return AppUiState.SPLIT_READY
+        return AppUiState.ANALYSED
+
+    def _set_ui_state(self, state: AppUiState) -> None:
+        self.ui_state = state
+        self._update_action_buttons()
 
     def _register_event_handlers(self) -> None:
         self.events.on_model_loaded(self._handle_model_loaded)
@@ -509,6 +527,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
     def _handle_model_loaded(self, _model_info: Dict[str, Any]) -> None:
         self._clear_results()
+        self._set_ui_state(AppUiState.MODEL_LOADED)
 
     def _handle_analysis_done(self, analysis_result: AnalysisResult) -> None:
         payload = analysis_result.plot_data if isinstance(analysis_result.plot_data, dict) else {}
@@ -520,16 +539,16 @@ class SplitPointAnalyserGUI(tk.Tk):
         self._update_diagnostics(analysis)
         self._update_table(analysis, picks, params)
         self._update_plots(analysis, picks, params)
-        self._update_action_buttons()
+        self._set_ui_state(self._infer_ui_state())
         self._refresh_memory_forecast()
 
     def _handle_candidate_selected(self, _candidate: Optional[SelectedCandidate]) -> None:
-        self._update_action_buttons()
+        self._set_ui_state(self._infer_ui_state())
         self._refresh_memory_forecast()
         self._highlight_selected_boundary_in_plots()
 
     def _handle_settings_changed(self) -> None:
-        self._update_action_buttons()
+        self._set_ui_state(self._infer_ui_state())
         self._refresh_memory_forecast()
 
     def _emit_settings_changed(self, *_args: Any) -> None:
@@ -1675,26 +1694,21 @@ class SplitPointAnalyserGUI(tk.Tk):
             pass
 
     def _sync_gui_state_from_vars(self) -> None:
-        self.gui_state.analysis_params = {
-            "topk": self.var_topk.get(),
-            "min_gap": self.var_min_gap.get(),
-            "min_compute_pct": self.var_min_compute.get(),
-            "batch_override": self.var_batch.get(),
-            "assume_bpe": self.var_bpe.get(),
-            "unknown_tensor_proxy_mb": self.var_unknown_mb.get(),
-            "exclude_trivial": bool(self.var_exclude_trivial.get()),
-            "only_single_tensor": bool(self.var_only_one.get()),
-            "strict_boundary": bool(self.var_strict_boundary.get()),
-            "rank": self.var_rank.get(),
-        }
-        self.gui_state.llm_params = {
-            "enable": bool(self.var_llm_enable.get()),
-            "preset": self.var_llm_preset.get(),
-            "mode": self.var_llm_mode.get(),
-            "prefill": self.var_llm_prefill.get(),
-            "decode": self.var_llm_decode.get(),
-            "use_ort_symbolic": bool(self.var_llm_use_ort_symbolic.get()),
-        }
+        analysis_params: Dict[str, Any] = {}
+        llm_params: Dict[str, Any] = {}
+        for spec in iter_specs():
+            if not spec.var_name:
+                continue
+            var = getattr(self, spec.var_name, None)
+            if var is None:
+                continue
+            value = var.get()
+            if spec.param_type == "bool":
+                value = bool(value)
+            target = llm_params if spec.scope == "llm" else analysis_params
+            target[spec.key] = value
+        self.gui_state.analysis_params = analysis_params
+        self.gui_state.llm_params = llm_params
         self.gui_state.hardware_selection = {
             "left_accel": self.var_memf_left_accel.get(),
             "right_accel": self.var_memf_right_accel.get(),
@@ -1717,41 +1731,17 @@ class SplitPointAnalyserGUI(tk.Tk):
         ap = dict(getattr(self.gui_state, "analysis_params", {}) or {})
         llm = dict(getattr(self.gui_state, "llm_params", {}) or {})
 
-        mapping = {
-            "topk": ("var_topk", str),
-            "min_gap": ("var_min_gap", str),
-            "min_compute_pct": ("var_min_compute", str),
-            "batch_override": ("var_batch", str),
-            "assume_bpe": ("var_bpe", str),
-            "unknown_tensor_proxy_mb": ("var_unknown_mb", str),
-            "exclude_trivial": ("var_exclude_trivial", bool),
-            "only_single_tensor": ("var_only_one", bool),
-            "strict_boundary": ("var_strict_boundary", bool),
-            "rank": ("var_rank", str),
-        }
-        for key, (var_name, caster) in mapping.items():
-            if key not in ap:
+        for spec in iter_specs():
+            if not spec.var_name:
                 continue
-            var = getattr(self, var_name, None)
+            source = llm if spec.scope == "llm" else ap
+            if spec.key not in source:
+                continue
+            var = getattr(self, spec.var_name, None)
             if var is None:
                 continue
-            var.set(caster(ap.get(key)))
-
-        llm_mapping = {
-            "enable": ("var_llm_enable", bool),
-            "preset": ("var_llm_preset", str),
-            "mode": ("var_llm_mode", str),
-            "prefill": ("var_llm_prefill", str),
-            "decode": ("var_llm_decode", str),
-            "use_ort_symbolic": ("var_llm_use_ort_symbolic", bool),
-        }
-        for key, (var_name, caster) in llm_mapping.items():
-            if key not in llm:
-                continue
-            var = getattr(self, var_name, None)
-            if var is None:
-                continue
-            var.set(caster(llm.get(key)))
+            caster = bool if spec.param_type == "bool" else str
+            var.set(caster(source.get(spec.key)))
 
     def _apply_analysis_global_preset(self, preset_name: str, presets: Dict[str, Dict[str, Dict[str, Any]]]) -> None:
         """Apply global analysis/LLM preset through GuiState dictionaries."""
@@ -1802,6 +1792,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         # Run analysis in a background thread (Hailo parse-checks can take a while).
         self.btn_analyse.state(["disabled"])
+        self._set_ui_state(AppUiState.ANALYSING)
 
         dlg = tk.Toplevel(self)
         dlg.title("Analysing model")
@@ -1860,12 +1851,14 @@ class SplitPointAnalyserGUI(tk.Tk):
                         pb.stop()
                         dlg.destroy()
                         self.btn_analyse.state(["!disabled"])
+                        self._set_ui_state(AppUiState.ANALYSED)
                         return
                     elif kind == "err":
                         err_text = str(item[1])
                         pb.stop()
                         dlg.destroy()
                         self.btn_analyse.state(["!disabled"])
+                        self._set_ui_state(self._infer_ui_state())
                         messagebox.showerror("Analysis failed", err_text)
                         return
             except queue.Empty:
@@ -3228,6 +3221,7 @@ class SplitPointAnalyserGUI(tk.Tk):
             self.var_diag_note.set("")
         self.var_memf_left_text.set("Left: n/a")
         self.var_memf_right_text.set("Right: n/a")
+        self._set_ui_state(self._infer_ui_state())
 
         # LLM preset info (helps interpret comm/shape numbers).
         llm_hints = a.get("llm_hints")
@@ -3955,44 +3949,26 @@ class SplitPointAnalyserGUI(tk.Tk):
             return None
 
     def _update_action_buttons(self) -> None:
-        """Enable/disable buttons based on current state + selection."""
-        if self.analysis is None:
-            try:
-                self.btn_export_tex.state(["disabled"])
-                self.btn_split.state(["disabled"])
-                self.btn_nordstern.state(["disabled"])
-                self.btn_benchmark.state(["disabled"])
-            except Exception:
-                pass
-            return
-
-        picks = self.analysis_result.candidates if self.analysis_result else self.current_picks
-
-        # Export table only if we have picks
-        if picks:
-            self.btn_export_tex.state(["!disabled"])
-        else:
-            self.btn_export_tex.state(["disabled"])
-
-        # Benchmark-set generation also requires picks
-        if picks:
-            self.btn_benchmark.state(["!disabled"])
-        else:
-            self.btn_benchmark.state(["disabled"])
-
-        # Split only if a boundary row is selected
-        if self._selected_boundary_index() is None:
-            self.btn_split.state(["disabled"])
-        else:
-            self.btn_split.state(["!disabled"])
-
-        # Nordstern only if unknown sizes exist
+        """Enable/disable buttons based on explicit app UI state."""
+        state = self.ui_state
         try:
-            ns = (self.analysis or {}).get("nordstern") or {}
-            if int(ns.get("unknown_count") or 0) > 0:
-                self.btn_nordstern.state(["!disabled"])
+            # Analyse is only blocked while a run is active.
+            if state == AppUiState.ANALYSING:
+                self.btn_analyse.state(["disabled"])
             else:
-                self.btn_nordstern.state(["disabled"])
+                self.btn_analyse.state(["!disabled"])
+
+            has_analysis = state in {AppUiState.ANALYSED, AppUiState.SPLIT_READY}
+            has_selection = state == AppUiState.SPLIT_READY
+
+            self.btn_export_tex.state(["!disabled"] if has_analysis else ["disabled"])
+            self.btn_split.state(["!disabled"] if has_selection else ["disabled"])
+            # Acceptance: no benchmark without split-ready selection.
+            self.btn_benchmark.state(["!disabled"] if has_selection else ["disabled"])
+
+            ns = (self.analysis or {}).get("nordstern") or {}
+            has_unknown = int(ns.get("unknown_count") or 0) > 0
+            self.btn_nordstern.state(["!disabled"] if has_analysis and has_unknown else ["disabled"])
         except Exception:
             pass
 
@@ -4424,6 +4400,12 @@ class SplitPointAnalyserGUI(tk.Tk):
             messagebox.showinfo(
                 "No candidates",
                 "No split candidates available. Try increasing Top-K and re-run Analyse.",
+            )
+            return
+        if self._selected_boundary_index() is None:
+            messagebox.showinfo(
+                "Select a boundary",
+                "Select a boundary row first; benchmark export is bound to split-ready state.",
             )
             return
 
@@ -6387,6 +6369,7 @@ if __name__ == "__main__":
         self.var_diag_note.set("")
         self.var_memf_left_text.set("Left: n/a")
         self.var_memf_right_text.set("Right: n/a")
+        self._set_ui_state(self._infer_ui_state())
 
 
 def main():
