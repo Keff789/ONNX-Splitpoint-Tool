@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from . import __version__
 
+# High-level analysis helper
+from .core_analysis import analyze_model
+
 # Units
 from .units import BANDWIDTH_MULT, FLOP_UNITS, UNIT_MULT, bandwidth_to_bytes_per_s
 
@@ -70,6 +73,7 @@ from .split_export import (
 
 __all__ = [
     "__version__",
+    "analyze_model",
     # units
     "UNIT_MULT",
     "BANDWIDTH_MULT",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import logging
+import threading
 import tkinter as tk
 from tkinter import ttk
 from typing import Dict
@@ -12,7 +13,7 @@ from .. import __version__ as TOOL_VERSION
 from .. import api as asc
 from ..gui_app import SplitPointAnalyserGUI as LegacySplitPointAnalyserGUI
 from ..gui_app import _setup_gui_logging
-from .panels import panel_analysis, panel_export, panel_hardware, panel_logs, panel_validate
+from .panels import panel_analysis, panel_split_export, panel_hardware, panel_logs, panel_validation
 
 __version__ = TOOL_VERSION
 logger = logging.getLogger(__name__)
@@ -48,8 +49,8 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
 
         self.panel_frames: Dict[str, ttk.Frame] = {
             "analysis": panel_analysis.build_panel(self.main_notebook, app=self),
-            "export": panel_export.build_panel(self.main_notebook, app=self),
-            "validate": panel_validate.build_panel(self.main_notebook, app=self),
+            "export": panel_split_export.build_panel(self.main_notebook, app=self),
+            "validate": panel_validation.build_panel(self.main_notebook, app=self),
             "hardware": panel_hardware.build_panel(self.main_notebook, app=self),
             "logs": panel_logs.build_panel(self.main_notebook, app=self),
         }
@@ -57,8 +58,25 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         for key, label in self.TAB_LABELS:
             self.main_notebook.add(self.panel_frames[key], text=label)
 
-        panel_analysis.mount_legacy_widgets(self.panel_frames["analysis"], root_children, self)
-        logger.info("Central notebook initialized and legacy widgets mounted")
+        panel_analysis.hide_legacy_widgets(root_children, self)
+        logger.info("Central notebook initialized")
+
+    def _handle_analysis_done(self, analysis_result) -> None:
+        """Route analysis rendering through panel_analysis in the Tk main thread."""
+
+        def _render() -> None:
+            panel = self.panel_frames.get("analysis") if hasattr(self, "panel_frames") else None
+            if panel is None:
+                logger.warning("Analysis panel not initialized; falling back to legacy handler")
+                super()._handle_analysis_done(analysis_result)
+                return
+            panel_analysis.render_analysis(panel, self, analysis_result)
+
+        if threading.current_thread() is threading.main_thread():
+            _render()
+        else:
+            self.after(0, _render)
+
 
     def _wire_model_type_state(self) -> None:
         if not hasattr(self, "gui_state"):

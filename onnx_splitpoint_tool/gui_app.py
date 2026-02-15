@@ -64,6 +64,7 @@ from .gui.events import GuiEvents
 from .gui.panels import panel_candidates as cand_panel
 from .gui.analysis_params import iter_specs
 from .gui.state import AppUiState, AnalysisResult, GuiState, SelectedCandidate
+from .core_params import Params
 from .memory_utils import estimate_ram_bytes, kv_cache_bytes_per_layer, kv_for_boundary, layer_split_index_for_boundary, precompute_initializer_spans, weights_for_all_boundaries
 
 from . import __version__ as TOOL_VERSION
@@ -308,101 +309,6 @@ class ToolTip:
 
 
 # ----------------------------- Helper logic -----------------------------
-
-@dataclass
-class Params:
-    topk: int
-    min_gap: int
-    min_compute_pct: float
-
-    batch_override: Optional[int]
-    llm_enable: bool
-    llm_preset: str
-    llm_mode: str
-    llm_prefill_len: int
-    llm_decode_past_len: int
-    llm_use_ort_symbolic: bool
-    assume_bpe: Optional[int]
-    unknown_tensor_proxy_mb: float
-
-    cluster_best_per_region: bool
-    # Clustering mode used when cluster_best_per_region is enabled:
-    #  - auto: semantic for LLM mode, uniform for other graphs
-    #  - uniform: fixed op windows (legacy "region ops")
-    #  - semantic: best split per (layer/block) transition
-    cluster_mode: str
-    cluster_region_ops: int  # <=0 => auto binning
-    exclude_trivial: bool
-    only_single_tensor: bool
-    strict_boundary: bool
-
-    # Skip-/Block-aware candidate pruning
-    prune_skip_block: bool
-    skip_min_span: int
-    skip_allow_last_n: int
-
-    ranking: str  # cut | score | latency
-    log_comm: bool
-    w_comm: float
-    w_imb: float
-    w_tensors: float
-    show_pareto_front: bool
-
-    # Link / system model (plugin-like, see core LinkModelSpec)
-    link_model: str
-    bw_value: Optional[float]
-    bw_unit: str
-    gops_left: Optional[float]
-    gops_right: Optional[float]
-    overhead_ms: float
-
-    link_energy_pj_per_byte: Optional[float]
-    link_mtu_payload_bytes: Optional[int]
-    link_per_packet_overhead_ms: Optional[float]
-    link_per_packet_overhead_bytes: Optional[int]
-
-    # Optional compute-energy model
-    energy_pj_per_flop_left: Optional[float]
-    energy_pj_per_flop_right: Optional[float]
-
-    # Optional link constraints (per inference)
-    link_max_latency_ms: Optional[float]
-    link_max_energy_mJ: Optional[float]
-    link_max_bytes: Optional[int]
-
-    # Optional activation-memory constraints (peak during execution)
-    max_peak_act_left: Optional[float]
-    max_peak_act_left_unit: str
-    max_peak_act_right: Optional[float]
-    max_peak_act_right_unit: str
-
-    # Optional: Hailo backend feasibility check (parse-only)
-    # Used to prune/rerank top candidates for Jetson↔Hailo type deployments.
-    hailo_check: bool
-    hailo_hw_arch: str
-    hailo_max_checks: int
-    hailo_fixup: bool
-    hailo_keep_artifacts: bool
-
-    # Which partition should be considered for the Hailo feasibility check.
-    #  - 'part2': only check Part2 (suffix)
-    #  - 'part1': only check Part1 (prefix)
-    #  - 'either': accept if Part1 OR Part2 can be translated
-    hailo_target: str
-
-    # Hailo backend selection:
-    #  - 'auto' : local SDK if available, else WSL (Windows)
-    #  - 'local': require hailo_sdk_client in this Python env
-    #  - 'wsl'  : call Hailo DFC inside WSL2 via wsl.exe
-    hailo_backend: str
-
-    # WSL bridge settings (only used when hailo_backend is 'wsl' or 'auto' on Windows)
-    hailo_wsl_distro: Optional[str]
-    hailo_wsl_venv_activate: str
-    hailo_wsl_timeout_s: int
-
-    show_top_tensors: int
-
 
 def _safe_float(s: str) -> Optional[float]:
     s = (s or "").strip()
@@ -1697,6 +1603,8 @@ class SplitPointAnalyserGUI(tk.Tk):
         analysis_params: Dict[str, Any] = {}
         llm_params: Dict[str, Any] = {}
         for spec in iter_specs():
+            if getattr(spec, "deprecated", False):
+                continue
             if not spec.var_name:
                 continue
             var = getattr(self, spec.var_name, None)
@@ -1732,6 +1640,8 @@ class SplitPointAnalyserGUI(tk.Tk):
         llm = dict(getattr(self.gui_state, "llm_params", {}) or {})
 
         for spec in iter_specs():
+            if getattr(spec, "deprecated", False):
+                continue
             if not spec.var_name:
                 continue
             source = llm if spec.scope == "llm" else ap
