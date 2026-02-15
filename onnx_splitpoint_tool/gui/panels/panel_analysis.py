@@ -256,8 +256,8 @@ def _build_center_results(parent: ttk.Frame, app: Any) -> None:
 
     app.chk_cand_advanced = ttk.Checkbutton(filter_row, text="Detail (Advanced)", variable=app.var_cand_advanced, command=app._refresh_candidates_table)
     app.chk_cand_advanced.grid(row=0, column=7, sticky="e")
-    app.ent_cand_search.bind("<KeyRelease>", app._refresh_candidates_table, add=True)
-    app.cb_cand_sort.bind("<<ComboboxSelected>>", app._refresh_candidates_table, add=True)
+    app.ent_cand_search.bind("<KeyRelease>", app._refresh_candidates_table, add="+")
+    app.cb_cand_sort.bind("<<ComboboxSelected>>", app._refresh_candidates_table, add="+")
 
     cols = ["rank", "clean", "boundary", "semantic", "cut_mb", "num_tensors", "gflops_left", "gflops_right", "left_op", "right_op", "peak_left_mib", "peak_right_mib", "peak_max_mib", "fits_left", "fits_right", "ram_left_gb", "ram_right_gb"]
     table_inner = ttk.Frame(table_frame)
@@ -299,9 +299,9 @@ def _build_center_results(parent: ttk.Frame, app: Any) -> None:
     app.tree.tag_configure("pick", background="#eef6ff")
     app.tree.tag_configure("dirty", background="#fff2f2")
     app._configure_candidate_columns()
-    app.tree.bind("<<TreeviewSelect>>", app._on_tree_selection_changed, add=True)
-    app.tree.bind("<Motion>", app._on_tree_motion_clean_tooltip, add=True)
-    app.tree.bind("<Leave>", app._hide_tree_clean_tooltip, add=True)
+    app.tree.bind("<<TreeviewSelect>>", app._on_tree_selection_changed, add="+")
+    app.tree.bind("<Motion>", app._on_tree_motion_clean_tooltip, add="+")
+    app.tree.bind("<Leave>", app._hide_tree_clean_tooltip, add="+")
 
     plot_frame = ttk.LabelFrame(mid, text="Plots")
     mid.add(plot_frame, weight=3)
