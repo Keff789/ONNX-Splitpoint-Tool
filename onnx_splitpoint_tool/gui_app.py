@@ -402,6 +402,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self._tree_clean_tooltips: Dict[str, str] = {}
         self._clean_tooltip_tip: Optional[tk.Toplevel] = None
         self._clean_tooltip_row: Optional[str] = None
+        self._last_selected_iid: Optional[str] = None
 
         self._register_event_handlers()
 
@@ -1258,7 +1259,14 @@ class SplitPointAnalyserGUI(tk.Tk):
             foreground=[("selected", "#ffffff")],
         )
 
-        self.tree = ttk.Treeview(table_inner, columns=cols, show="headings", style="Candidate.Treeview")
+        self.tree = ttk.Treeview(
+            table_inner,
+            columns=cols,
+            show="headings",
+            style="Candidate.Treeview",
+            selectmode="browse",
+            takefocus=True,
+        )
         self.tree.heading("rank", text="#")
         self.tree.heading("clean", text="Clean")
         self.tree.heading("boundary", text="Boundary")
@@ -1303,6 +1311,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         self.tree.tag_configure("pick", background="#eef6ff")
         self.tree.tag_configure("dirty", background="#fff2f2")
+        self.tree.tag_configure("selected_row", background="#cfe8ff", foreground="#000000")
 
         self._configure_candidate_columns()
 
@@ -1604,11 +1613,37 @@ class SplitPointAnalyserGUI(tk.Tk):
     def _on_tree_selection_changed(self, event=None) -> None:
         sel = self.tree.selection() if hasattr(self, "tree") else ()
         logger.debug("Tree selection event: sel=%s", sel)
+        self._sync_tree_selected_row_tag()
         boundary = self._selected_boundary_index()
         iid = sel[0] if sel else ""
         tags = self.tree.item(iid, "tags") if iid else ()
         logger.info("Tree selection changed: iid=%s, tags=%s, boundary=%s", iid, tags, boundary)
         self._set_selected_candidate_from_boundary(boundary)
+
+    def _sync_tree_selected_row_tag(self) -> None:
+        if not hasattr(self, "tree"):
+            self._last_selected_iid = None
+            return
+
+        sel = self.tree.selection()
+        new_iid = sel[0] if sel else None
+        old_iid = self._last_selected_iid
+
+        if old_iid and self.tree.exists(old_iid) and old_iid != new_iid:
+            old_tags = tuple(t for t in self.tree.item(old_iid, "tags") if t != "selected_row")
+            self.tree.item(old_iid, tags=old_tags)
+
+        if not new_iid or not self.tree.exists(new_iid):
+            self._last_selected_iid = None
+            return
+
+        current_tags = tuple(self.tree.item(new_iid, "tags"))
+        if "selected_row" not in current_tags:
+            self.tree.item(new_iid, tags=tuple([*current_tags, "selected_row"]))
+
+        self._last_selected_iid = new_iid
+        self.tree.focus(new_iid)
+        self.tree.see(new_iid)
 
     def _on_tree_button_1(self, evt=None):
         """Handle candidate-table left-clicks; only intercept clean-column clicks."""
@@ -1619,6 +1654,8 @@ class SplitPointAnalyserGUI(tk.Tk):
         logger.debug("Tree click: row=%s col=%s", row_id, col_id)
         if col_id == "#2" and row_id and row_id in self._cand_by_iid:
             logger.debug("Intercepted clean-column click for row=%s", row_id)
+            self.tree.selection_set(row_id)
+            self._on_tree_selection_changed()
             return "break"
         return None
 
@@ -3629,6 +3666,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self._hide_tree_clean_tooltip()
         self._cand_by_iid = {}
         self._tree_clean_tooltips = {}
+        self._last_selected_iid = None
 
         nodes = a["nodes"]
         order = a["order"]
