@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import os
+import logging
 import tkinter as tk
 from tkinter import ttk
 from typing import Any, Dict, Iterable
 
 from ..widgets.collapsible_section import CollapsibleSection
 from . import panel_candidates
+
+logger = logging.getLogger(__name__)
 
 
 GLOBAL_PRESETS: Dict[str, Dict[str, Dict[str, Any]]] = {
@@ -193,11 +196,11 @@ def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
         try:
             app.btn_toggle_settings.pack_forget()
         except Exception:
-            pass
+            logger.exception("Failed to hide legacy settings toggle with pack_forget")
         try:
             app.btn_toggle_settings.grid_forget()
         except Exception:
-            pass
+            logger.exception("Failed to hide legacy settings toggle with grid_forget")
 
     if hasattr(app, "lbl_model"):
         app.lbl_model.pack_forget()
@@ -232,7 +235,7 @@ def mount_legacy_widgets(frame: ttk.Frame, root_children: list[Any], app: Any) -
         try:
             params_frame.pack_forget()
         except Exception:
-            pass
+            logger.exception("Failed to hide legacy params_frame before remounting controls")
 
         for name, target in (
             ("general_frame", "candidate"),
@@ -248,28 +251,28 @@ def mount_legacy_widgets(frame: ttk.Frame, root_children: list[Any], app: Any) -
             try:
                 widget.grid_forget()
             except Exception:
-                pass
+                logger.exception("Failed to clear legacy geometry manager (grid) for widget '%s'", name)
             try:
                 widget.pack_forget()
             except Exception:
-                pass
+                logger.exception("Failed to clear legacy geometry manager (pack) for widget '%s'", name)
             try:
                 widget.pack(in_=frame.settings_sections[target].body, fill="x", pady=(0, 6))
             except Exception:
-                pass
+                logger.exception("Failed to mount legacy widget '%s' into settings section '%s'", name, target)
 
         try:
             frame.settings_sections["shape"].set_expanded(True)
             frame.settings_sections["llm"].set_expanded(True)
         except Exception:
-            pass
+            logger.exception("Failed to expand migrated settings sections after mounting")
 
     if mid_pane is not None:
         mid_pane.pack_forget()
         try:
             mid_pane.configure(orient=tk.VERTICAL)
         except Exception:
-            pass
+            logger.exception("Failed to set mid_pane orientation to vertical during mount")
         split = panel_candidates.mount_split_view(frame.results_host, app)
         mid_pane.pack(in_=split.left_host, fill="both", expand=True)
 
@@ -279,4 +282,6 @@ def mount_legacy_widgets(frame: ttk.Frame, root_children: list[Any], app: Any) -
         try:
             widget.pack_forget()
         except Exception:
-            pass
+            logger.exception("Failed to hide root widget during analysis panel mount: %r", widget)
+
+    logger.info("Analysis panel mounting completed")

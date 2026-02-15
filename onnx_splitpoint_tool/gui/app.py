@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import tkinter as tk
 from tkinter import ttk
 from typing import Dict
@@ -14,6 +15,7 @@ from ..gui_app import _setup_gui_logging
 from .panels import panel_analysis, panel_export, panel_hardware, panel_logs, panel_validate
 
 __version__ = TOOL_VERSION
+logger = logging.getLogger(__name__)
 
 
 class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
@@ -38,6 +40,7 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         self._apply_model_type_visibility()
 
     def _init_central_notebook(self) -> None:
+        logger.info("Initializing central notebook UI")
         root_children = list(self.winfo_children())
 
         self.main_notebook = ttk.Notebook(self)
@@ -55,6 +58,7 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
             self.main_notebook.add(self.panel_frames[key], text=label)
 
         panel_analysis.mount_legacy_widgets(self.panel_frames["analysis"], root_children, self)
+        logger.info("Central notebook initialized and legacy widgets mounted")
 
     def _wire_model_type_state(self) -> None:
         if not hasattr(self, "gui_state"):
@@ -62,6 +66,7 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         try:
             self.gui_state.model_type = str(getattr(self.gui_state, "model_type", "cv") or "cv")
         except Exception:
+            logger.exception("Failed to read gui_state.model_type, falling back to 'cv'")
             self.gui_state.model_type = "cv"
 
         if hasattr(self, "var_llm_enable"):
@@ -81,14 +86,14 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
                 if (not is_llm) and int(self.adv_tabs.index("current")) == 0:
                     self.adv_tabs.select(1)
             except Exception:
-                pass
+                logger.exception("Failed to update advanced tabs visibility for model_type=%s", model_type)
 
         for tab_key in ("export", "validate", "hardware"):
             if hasattr(self, "main_notebook"):
                 try:
                     self.main_notebook.tab(self.panel_frames[tab_key], state="normal")
                 except Exception:
-                    pass
+                    logger.exception("Failed to set notebook tab state for '%s'", tab_key)
 
 
 def main() -> None:
@@ -100,6 +105,6 @@ def main() -> None:
         if log_path:
             print(f"[LOG] {log_path}")
     except Exception:
-        pass
+        logger.exception("Failed to print GUI startup metadata")
     app = SplitPointAnalyserGUI()
     app.mainloop()
