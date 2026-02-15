@@ -3,7 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Dict, List, Optional
+
+
+class AppUiState(str, Enum):
+    NO_MODEL = "NO_MODEL"
+    MODEL_LOADED = "MODEL_LOADED"
+    ANALYSING = "ANALYSING"
+    ANALYSED = "ANALYSED"
+    SPLIT_READY = "SPLIT_READY"
 
 
 @dataclass
@@ -38,4 +47,4 @@ class SelectedCandidate:
     stats: Dict[str, Any] = field(default_factory=dict)
 
 
-__all__ = ["GuiState", "AnalysisResult", "SelectedCandidate"]
+__all__ = ["AppUiState", "GuiState", "AnalysisResult", "SelectedCandidate"]

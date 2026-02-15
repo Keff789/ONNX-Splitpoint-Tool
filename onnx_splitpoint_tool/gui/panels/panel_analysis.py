@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Any, Dict, Iterable
 
+from ..analysis_params import ANALYSIS_PARAM_SPECS
 from ..widgets.collapsible_section import CollapsibleSection
 from . import panel_candidates
 
@@ -147,8 +148,62 @@ def build_panel(parent, app=None) -> ttk.Frame:
     return frame
 
 
+def _build_controls_from_schema(frame: ttk.Frame, app: Any) -> None:
+    """Build analysis controls directly in the new accordion from central schema."""
+    sections = frame.settings_sections
+    section_hosts: Dict[str, ttk.Frame] = {}
+    for sec_key, sec in sections.items():
+        host = ttk.Frame(sec.body)
+        host.pack(fill="x", padx=6, pady=(0, 6))
+        section_hosts[sec_key] = host
+
+    row_by_section: Dict[str, int] = {k: 0 for k in section_hosts}
+    for spec in ANALYSIS_PARAM_SPECS:
+        var = getattr(app, spec.var_name, None) if spec.var_name else None
+        if var is None:
+            continue
+        host = section_hosts.get(spec.section)
+        if host is None:
+            continue
+
+        row = row_by_section[spec.section]
+        row_by_section[spec.section] = row + 1
+
+        if spec.param_type == "bool":
+            ttk.Checkbutton(host, text=spec.label, variable=var).grid(row=row, column=0, columnspan=2, sticky="w", pady=2)
+            continue
+
+        ttk.Label(host, text=f"{spec.label}:").grid(row=row, column=0, sticky="w", pady=2)
+        if spec.param_type == "choice" and spec.options:
+            w = ttk.Combobox(host, textvariable=var, values=list(spec.options), width=18, state="readonly")
+        else:
+            w = ttk.Entry(host, textvariable=var, width=10)
+        w.grid(row=row, column=1, sticky="w", padx=(6, 0), pady=2)
+
+    action_wrap = ttk.Frame(section_hosts["candidate"])
+    action_wrap.grid(row=row_by_section["candidate"] + 1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+    btn_analyse = ttk.Button(action_wrap, text="Analyse", command=app._on_analyse, width=12)
+    btn_analyse.pack(side=tk.LEFT)
+    btn_split = ttk.Button(action_wrap, text="Split selected…", command=app._split_selected_boundary)
+    btn_split.pack(side=tk.LEFT, padx=(8, 0))
+    btn_benchmark = ttk.Button(action_wrap, text="Benchmark set…", command=app._generate_benchmark_set)
+    btn_benchmark.pack(side=tk.LEFT, padx=(8, 0))
+    btn_export_tex = ttk.Button(action_wrap, text="Export TeX table…", command=app._export_tex_table)
+    btn_export_tex.pack(side=tk.LEFT, padx=(8, 0))
+
+    # Rebind action references so state-machine logic controls the new buttons.
+    app.btn_analyse = btn_analyse
+    app.btn_split = btn_split
+    app.btn_benchmark = btn_benchmark
+    app.btn_export_tex = btn_export_tex
+    if hasattr(app, "_set_ui_state") and hasattr(app, "_infer_ui_state"):
+        app._set_ui_state(app._infer_ui_state())
+
+
+
 def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
     preset_cb = frame.preset_cb
+    _build_controls_from_schema(frame, app)
 
     def _refresh_model_bar(_model_info: Any = None) -> None:
         path = str(getattr(app, "model_path", None) or getattr(getattr(app, "gui_state", None), "current_model_path", "") or "")
@@ -206,11 +261,7 @@ def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
         app.lbl_model.pack_forget()
 
     if hasattr(app, "_emit_settings_changed"):
-        vars_to_watch = [
-            "var_topk", "var_min_gap", "var_min_compute", "var_unknown_mb", "var_rank",
-            "var_exclude_trivial", "var_only_one", "var_strict_boundary", "var_llm_enable",
-            "var_llm_preset", "var_llm_mode", "var_llm_prefill", "var_llm_decode", "var_llm_use_ort_symbolic",
-        ]
+        vars_to_watch = [spec.var_name for spec in ANALYSIS_PARAM_SPECS if spec.var_name]
         for name in vars_to_watch:
             obj = getattr(app, name, None)
             if obj is not None and hasattr(obj, "trace_add"):
@@ -238,15 +289,33 @@ def mount_legacy_widgets(frame: ttk.Frame, root_children: list[Any], app: Any) -
             logger.exception("Failed to hide legacy params_frame before remounting controls")
 
         for name, target in (
-            ("general_frame", "candidate"),
-            ("rank_frame", "scoring"),
             ("diag_frame", "shape"),
             ("memf_frame", "shape"),
             ("adv_container", "llm"),
-            ("action_bar", "candidate"),
         ):
             widget = getattr(app, name, None)
             if widget is None:
+                continue
+            target_body = frame.settings_sections[target].body
+            widget_parent_path = ""
+            target_parent_path = ""
+            try:
+                widget_parent_path = str(widget.nametowidget(widget.winfo_parent()))
+                target_parent_path = str(target_body)
+            except Exception:
+                logger.exception("Failed to resolve Tk parent path while mounting '%s'", name)
+            # NOTE:
+            #   Legacy widgets were created as children of `params_frame`.
+            #   `pack(in_=...)` does not reparent widgets, it only changes geometry
+            #   management. If parent != target container, Tk rejects the mount
+            #   (`can't pack ... inside ...`), leaving accordion sections empty.
+            if widget_parent_path and target_parent_path and widget_parent_path != target_parent_path:
+                logger.warning(
+                    "Skipping legacy mount for '%s': pack(in_=...) would fail because widget parent (%s) != target (%s)",
+                    name,
+                    widget_parent_path,
+                    target_parent_path,
+                )
                 continue
             try:
                 widget.grid_forget()
