@@ -64,7 +64,7 @@ from .gui.events import GuiEvents
 from .gui.panels import panel_candidates as cand_panel
 from .gui.analysis_params import iter_specs
 from .gui.state import AppUiState, AnalysisResult, GuiState, SelectedCandidate
-from .core_params import Params
+from .core_params import Params, gui_state_to_params_dict
 from .memory_utils import estimate_ram_bytes, kv_cache_bytes_per_layer, kv_for_boundary, layer_split_index_for_boundary, precompute_initializer_spans, weights_for_all_boundaries
 
 from . import __version__ as TOOL_VERSION
@@ -570,21 +570,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         col += 1
 
         self.var_bpe = tk.StringVar(value="")
-        ttk.Label(general, text="Assume act bytes/elt:").grid(row=0, column=col, sticky="w")
-        col += 1
-        self.ent_bpe = ttk.Entry(general, textvariable=self.var_bpe, width=6)
-        self.ent_bpe.grid(row=0, column=col, sticky="w", padx=(4, 14))
-        col += 1
-
-        # Fallback for tensors whose shape cannot be inferred.
-        # If >0, each unknown-size tensor contributes this many MB to the
-        # communication cost estimate (guards against "0-byte" cuts).
         self.var_unknown_mb = tk.StringVar(value="2.0")
-        ttk.Label(general, text="Unknown MB/tensor:").grid(row=0, column=col, sticky="w")
-        col += 1
-        self.ent_unknown_mb = ttk.Entry(general, textvariable=self.var_unknown_mb, width=6)
-        self.ent_unknown_mb.grid(row=0, column=col, sticky="w", padx=(4, 14))
-        col += 1
 
         # second row
         self.var_exclude_trivial = tk.BooleanVar(value=True)
@@ -646,9 +632,24 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.cb_cluster_mode.grid(row=2, column=10, sticky="w", padx=(4, 0), pady=(4, 0))
         ToolTip(self.cb_cluster_mode, "Clustering mode for candidates. Auto: Semantic (LLM) if LLM presets are enabled, otherwise Uniform.")
 
+        self.shape_unknown_frame = ttk.LabelFrame(self.params_frame, text="Shape & Unknown Handling")
+        self.shape_unknown_frame.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
+        self.shape_unknown_frame.columnconfigure(0, weight=1)
+        su = ttk.Frame(self.shape_unknown_frame)
+        su.pack(fill=tk.X, padx=8, pady=6)
+
+        ttk.Label(su, text="Assume act bytes/elt:").grid(row=0, column=0, sticky="w")
+        self.ent_bpe = ttk.Entry(su, textvariable=self.var_bpe, width=6)
+        self.ent_bpe.grid(row=0, column=1, sticky="w", padx=(4, 14))
+
+        self.lbl_unknown_mb = ttk.Label(su, text="Unknown MB/tensor:")
+        self.lbl_unknown_mb.grid(row=0, column=2, sticky="w")
+        self.ent_unknown_mb = ttk.Entry(su, textvariable=self.var_unknown_mb, width=6)
+        self.ent_unknown_mb.grid(row=0, column=3, sticky="w", padx=(4, 14))
+
         # Ranking frame
         self.rank_frame = ttk.LabelFrame(self.params_frame, text="Ranking")
-        self.rank_frame.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
+        self.rank_frame.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
         self.rank_frame.columnconfigure(0, weight=1)
 
         r = ttk.Frame(self.rank_frame)
@@ -660,28 +661,43 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.cb_rank.grid(row=0, column=1, sticky="w", padx=(4, 10))
         self.cb_rank.bind("<<ComboboxSelected>>", lambda _e: self._on_rank_changed(), add=True)
 
+        self.var_score_advanced = tk.BooleanVar(value=False)
+        self.chk_score_advanced = ttk.Checkbutton(
+            r,
+            text="Detail (Advanced)",
+            variable=self.var_score_advanced,
+            command=self._toggle_scoring_advanced,
+        )
+        self.chk_score_advanced.grid(row=0, column=2, sticky="w", padx=(0, 10))
+
+        self.score_adv_frame = ttk.Frame(self.rank_frame)
+        self.score_adv_frame.pack(fill=tk.X, padx=8, pady=(0, 6))
 
         self.var_log_comm = tk.BooleanVar(value=True)
-        self.chk_log_comm = ttk.Checkbutton(r, text="log10(1+comm)", variable=self.var_log_comm)
-        self.chk_log_comm.grid(row=0, column=2, sticky="w", padx=(0, 10))
+        self.chk_log_comm = ttk.Checkbutton(self.score_adv_frame, text="log10(1+comm)", variable=self.var_log_comm)
+        self.chk_log_comm.grid(row=0, column=0, sticky="w", padx=(0, 10))
 
         self.var_w_comm = tk.StringVar(value="1.0")
         self.var_w_imb = tk.StringVar(value="3.0")
         self.var_w_tensors = tk.StringVar(value="0.2")
 
-        ttk.Label(r, text="w_comm").grid(row=0, column=3, sticky="e")
-        self.ent_w_comm = ttk.Entry(r, textvariable=self.var_w_comm, width=6)
-        self.ent_w_comm.grid(row=0, column=4, sticky="w", padx=(2, 6))
+        ttk.Label(self.score_adv_frame, text="w_comm").grid(row=0, column=1, sticky="e")
+        self.ent_w_comm = ttk.Entry(self.score_adv_frame, textvariable=self.var_w_comm, width=6)
+        self.ent_w_comm.grid(row=0, column=2, sticky="w", padx=(2, 6))
 
-        ttk.Label(r, text="w_imb").grid(row=0, column=5, sticky="e")
-        self.ent_w_imb = ttk.Entry(r, textvariable=self.var_w_imb, width=6)
-        self.ent_w_imb.grid(row=0, column=6, sticky="w", padx=(2, 6))
+        ttk.Label(self.score_adv_frame, text="w_imb").grid(row=0, column=3, sticky="e")
+        self.ent_w_imb = ttk.Entry(self.score_adv_frame, textvariable=self.var_w_imb, width=6)
+        self.ent_w_imb.grid(row=0, column=4, sticky="w", padx=(2, 6))
 
-        ttk.Label(r, text="w_tensors").grid(row=0, column=7, sticky="e")
-        self.ent_w_tensors = ttk.Entry(r, textvariable=self.var_w_tensors, width=6)
-        self.ent_w_tensors.grid(row=0, column=8, sticky="w", padx=(2, 10))
+        ttk.Label(self.score_adv_frame, text="w_tensors").grid(row=0, column=5, sticky="e")
+        self.ent_w_tensors = ttk.Entry(self.score_adv_frame, textvariable=self.var_w_tensors, width=6)
+        self.ent_w_tensors.grid(row=0, column=6, sticky="w", padx=(2, 10))
 
         self.var_show_pareto = tk.BooleanVar(value=True)
+        self.chk_show_pareto = ttk.Checkbutton(self.score_adv_frame, text="Show Pareto front", variable=self.var_show_pareto)
+        self.chk_show_pareto.grid(row=0, column=7, sticky="w")
+
+        self._toggle_scoring_advanced()
 
         # LLM shape presets (optional)
         # Useful for decoder-style models with KV-cache (e.g., Gemma/Llama) where
@@ -694,15 +710,11 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.var_llm_decode = tk.StringVar(value="2048")   # KV cache (past) length (tokens)
         self.var_llm_use_ort_symbolic = tk.BooleanVar(value=True)
 
-        self.chk_show_pareto = ttk.Checkbutton(r, text="Show Pareto front", variable=self.var_show_pareto)
-        self.chk_show_pareto.grid(row=0, column=9, sticky="w")
-
-        
 
         # Advanced options (collapsible + tabbed)
         self.var_adv_expanded = tk.BooleanVar(value=False)
         self.adv_container = ttk.Frame(self.params_frame)
-        self.adv_container.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
+        self.adv_container.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
         self.adv_container.columnconfigure(0, weight=1)
 
         adv_toggle = ttk.Frame(self.adv_container)
@@ -737,9 +749,11 @@ class SplitPointAnalyserGUI(tk.Tk):
             else:
                 self.btn_adv_toggle.configure(text="▶ Additional options (LLM / Latency / Hailo / Memory)")
                 self.adv_body.grid_remove()
+            self._update_dtype_proxy_visibility()
 
         self.btn_adv_toggle.configure(command=_toggle_adv)
         self.adv_body.grid_remove()
+        self._update_dtype_proxy_visibility()
 
         # LLM shape presets tab
         llm_frame = ttk.LabelFrame(tab_llm, text="LLM shape presets")
@@ -1237,7 +1251,14 @@ class SplitPointAnalyserGUI(tk.Tk):
         table_inner.columnconfigure(0, weight=1)
         table_inner.rowconfigure(0, weight=1)
 
-        self.tree = ttk.Treeview(table_inner, columns=cols, show="headings")
+        tree_style = ttk.Style(self)
+        tree_style.map(
+            "Candidate.Treeview",
+            background=[("selected", "#1f6feb")],
+            foreground=[("selected", "#ffffff")],
+        )
+
+        self.tree = ttk.Treeview(table_inner, columns=cols, show="headings", style="Candidate.Treeview")
         self.tree.heading("rank", text="#")
         self.tree.heading("clean", text="Clean")
         self.tree.heading("boundary", text="Boundary")
@@ -1365,7 +1386,10 @@ class SplitPointAnalyserGUI(tk.Tk):
             "Use this to still permit splits close to the merge op.",
         )
 
+        ToolTip(self.ent_cluster_region_ops, "Candidate clustering region width in ops (or 'auto').")
+
         ToolTip(self.cb_rank, "Ranking mode:\n- cut: minimise communication bytes\n- score: weighted trade-off (comm + imbalance + tensor penalty)\n- latency: minimise predicted latency (requires bandwidth + GOPS L/R)")
+        ToolTip(self.chk_score_advanced, "Show/hide advanced score-ranking controls (weights, log comm, Pareto overlay).")
         ToolTip(self.chk_log_comm, "Use log10(1+comm) inside the score to reduce domination by very large activations.")
         ToolTip(self.ent_w_comm, "Weight for communication term in the score.")
         ToolTip(self.ent_w_imb, "Weight for compute imbalance term in the score.")
@@ -1439,7 +1463,8 @@ class SplitPointAnalyserGUI(tk.Tk):
         settings_vars = [
             self.var_topk, self.var_min_gap, self.var_min_compute, self.var_batch, self.var_bpe,
             self.var_unknown_mb, self.var_exclude_trivial, self.var_only_one, self.var_strict_boundary,
-            self.var_rank, self.var_memf_left_accel, self.var_memf_right_accel, self.var_memf_interface,
+            self.var_rank, self.var_log_comm, self.var_w_comm, self.var_w_imb, self.var_w_tensors, self.var_show_pareto,
+            self.var_memf_left_accel, self.var_memf_right_accel, self.var_memf_interface,
             self.var_memf_include_kv, self.var_memf_include_comm, self.var_memf_policy,
             self.var_split_validate, self.var_split_runner, self.var_split_folder,
             self.var_split_ctx_full, self.var_split_ctx_cutflow, self.var_split_ctx_hops,
@@ -1450,6 +1475,27 @@ class SplitPointAnalyserGUI(tk.Tk):
             var.trace_add("write", self._emit_settings_changed)
 
     # ------------------------- Advanced panel helpers ------------------------
+
+    def _toggle_scoring_advanced(self) -> None:
+        if bool(getattr(self, "var_score_advanced", tk.BooleanVar(value=False)).get()):
+            self.score_adv_frame.pack(fill=tk.X, padx=8, pady=(0, 6))
+        else:
+            self.score_adv_frame.pack_forget()
+
+    def _update_dtype_proxy_visibility(self, coverage: Optional[float] = None) -> None:
+        """Show dtype/unknown proxy controls only in advanced mode or at low coverage."""
+        low_coverage = False
+        try:
+            low_coverage = (coverage is not None) and float(coverage) < 0.90
+        except Exception:
+            low_coverage = False
+        show_proxy = bool(getattr(self, "var_adv_expanded", tk.BooleanVar(value=False)).get()) or low_coverage
+        if show_proxy:
+            self.lbl_unknown_mb.grid()
+            self.ent_unknown_mb.grid()
+        else:
+            self.lbl_unknown_mb.grid_remove()
+            self.ent_unknown_mb.grid_remove()
 
     def _on_rank_changed(self):
         """Auto-open advanced options and jump to Latency tab when needed."""
@@ -1522,29 +1568,47 @@ class SplitPointAnalyserGUI(tk.Tk):
 
     # ----------------------------- Event handlers -----------------------------
 
-    def _on_tree_selection_changed(self, _evt=None) -> None:
-        logger.debug("Tree selection event: sel=%s", self.tree.selection() if hasattr(self, "tree") else ())
-        b = self._selected_boundary_index()
-        if b is None:
+    def _set_selected_candidate_from_boundary(self, boundary: Optional[int]) -> None:
+        """Set cached SelectedCandidate from boundary and emit selection event."""
+        if boundary is None:
             self.selected_candidate = None
             self.events.emit_candidate_selected(None)
             return
+
         sem = ""
         if isinstance(self.analysis, dict):
             labels = self.analysis.get("semantic_labels_by_boundary") or []
-            if b < len(labels):
-                sem = str(labels[b] or "")
+            if int(boundary) < len(labels):
+                sem = str(labels[int(boundary)] or "")
+
         cut_tensors: List[str] = []
         stats: Dict[str, Any] = {}
         if isinstance(self.analysis, dict):
             try:
-                cut_tensors = list(asc.cut_tensors_for_boundary(self.analysis["order"], self.analysis["nodes"], int(b)))
+                cut_tensors = list(
+                    asc.cut_tensors_for_boundary(self.analysis["order"], self.analysis["nodes"], int(boundary))
+                )
             except Exception:
                 cut_tensors = []
             if self.analysis_result and self.analysis_result.memory_estimate:
-                stats = dict(self.analysis_result.memory_estimate.get(int(b), {}))
-        self.selected_candidate = SelectedCandidate(boundary_id=int(b), semantic_label=sem, cut_tensors=cut_tensors, stats=stats)
+                stats = dict(self.analysis_result.memory_estimate.get(int(boundary), {}))
+
+        self.selected_candidate = SelectedCandidate(
+            boundary_id=int(boundary),
+            semantic_label=sem,
+            cut_tensors=cut_tensors,
+            stats=stats,
+        )
         self.events.emit_candidate_selected(self.selected_candidate)
+
+    def _on_tree_selection_changed(self, event=None) -> None:
+        sel = self.tree.selection() if hasattr(self, "tree") else ()
+        logger.debug("Tree selection event: sel=%s", sel)
+        boundary = self._selected_boundary_index()
+        iid = sel[0] if sel else ""
+        tags = self.tree.item(iid, "tags") if iid else ()
+        logger.info("Tree selection changed: iid=%s, tags=%s, boundary=%s", iid, tags, boundary)
+        self._set_selected_candidate_from_boundary(boundary)
 
     def _on_tree_button_1(self, evt=None):
         """Handle candidate-table left-clicks; only intercept clean-column clicks."""
@@ -1799,57 +1863,58 @@ class SplitPointAnalyserGUI(tk.Tk):
         ap = self.gui_state.analysis_params
         llm = self.gui_state.llm_params
         hw = self.gui_state.hardware_selection
+        mapped = gui_state_to_params_dict(ap, llm)
 
-        topk = _safe_int(str(ap.get("topk", "")))
+        topk = _safe_int(str(mapped.get("topk", "")))
         if topk is None or topk <= 0:
             raise ValueError("Top-k must be a positive integer.")
 
-        min_gap = _safe_int(str(ap.get("min_gap", "")))
+        min_gap = _safe_int(str(mapped.get("min_gap", "")))
         if min_gap is None or min_gap < 0:
             raise ValueError("Min gap must be an integer ≥ 0.")
 
-        min_comp = _safe_float(str(ap.get("min_compute_pct", "")))
+        min_comp = _safe_float(str(mapped.get("min_compute_pct", "")))
         if min_comp is None:
             min_comp = 0.0
         if min_comp < 0:
             raise ValueError("Min compute each side (%) must be ≥ 0.")
 
-        batch = _safe_int(str(ap.get("batch_override", "")))
-        bpe = _safe_int(str(ap.get("assume_bpe", "")))
+        batch = _safe_int(str(mapped.get("batch_override", "")))
+        bpe = _safe_int(str(mapped.get("assume_bpe", "")))
 
-        unknown_mb = _safe_float(str(ap.get("unknown_tensor_proxy_mb", "")))
+        unknown_mb = _safe_float(str(mapped.get("unknown_tensor_proxy_mb", "")))
         if unknown_mb is None:
             unknown_mb = 0.0
         if unknown_mb < 0:
             unknown_mb = 0.0
 
-        exclude_trivial = bool(ap.get("exclude_trivial", False))
-        only_one = bool(ap.get("only_single_tensor", False))
-        strict_boundary = bool(ap.get("strict_boundary", False))
+        exclude_trivial = bool(mapped.get("exclude_trivial", False))
+        only_one = bool(mapped.get("only_single_tensor", False))
+        strict_boundary = bool(mapped.get("strict_boundary", False))
 
-        prune_skip_block = bool(self.var_prune_skip_block.get())
-        skip_min_span = _safe_int(self.var_skip_min_span.get())
+        prune_skip_block = bool(mapped.get("prune_skip_block", False))
+        skip_min_span = _safe_int(str(mapped.get("skip_min_span", "")))
         if skip_min_span is None or skip_min_span < 0:
             raise ValueError("Min skip span must be an integer ≥ 0.")
-        skip_allow_last_n = _safe_int(self.var_skip_allow_last_n.get())
+        skip_allow_last_n = _safe_int(str(mapped.get("skip_allow_last_n", "")))
         if skip_allow_last_n is None:
             skip_allow_last_n = 0
         if skip_allow_last_n < 0:
             raise ValueError("Allow last N inside must be an integer ≥ 0.")
 
-        ranking = (str(ap.get("rank", "cut")) or "cut").strip().lower()
+        ranking = (str(mapped.get("ranking", "cut")) or "cut").strip().lower()
         if ranking not in {"cut", "score", "latency"}:
             raise ValueError("Ranking must be one of: cut, score, latency")
 
-        log_comm = bool(self.var_log_comm.get())
+        log_comm = bool(mapped.get("log_comm", True))
 
-        w_comm = _safe_float(self.var_w_comm.get())
-        w_imb = _safe_float(self.var_w_imb.get())
-        w_tensors = _safe_float(self.var_w_tensors.get())
+        w_comm = _safe_float(str(mapped.get("w_comm", "")))
+        w_imb = _safe_float(str(mapped.get("w_imb", "")))
+        w_tensors = _safe_float(str(mapped.get("w_tensors", "")))
         if w_comm is None or w_imb is None or w_tensors is None:
             raise ValueError("Weights w_comm, w_imb, w_tensors must be numeric.")
 
-        show_pareto_front = bool(self.var_show_pareto.get())
+        show_pareto_front = bool(mapped.get("show_pareto_front", True))
 
         bw_value = _safe_float(self.var_bw.get())
         bw_unit = (self.var_bw_unit.get() or "MB/s").strip()
@@ -1928,11 +1993,19 @@ class SplitPointAnalyserGUI(tk.Tk):
         # Keep this reasonably small to avoid 'stuck' GUI sessions if the backend hangs.
         hailo_wsl_timeout_s = 180
 
-        show_top_tensors = _safe_int(self.var_show_top_tensors.get())
+        show_top_tensors = _safe_int(str(mapped.get("show_top_tensors", "")))
         if show_top_tensors is None or show_top_tensors < 0:
             raise ValueError("Show top tensors must be an integer ≥ 0.")
 
-        cluster_mode = (self.var_cluster_mode.get() if hasattr(self, 'var_cluster_mode') else 'auto')
+        cluster_region_raw = str(mapped.get("cluster_region_ops", "auto") or "auto").strip().lower()
+        if not cluster_region_raw or cluster_region_raw == 'auto':
+            cluster_region_ops = None
+        else:
+            cluster_region_ops = _safe_int(cluster_region_raw)
+            if cluster_region_ops is None or cluster_region_ops < 0:
+                raise ValueError("Region (ops) must be 'auto' or an integer ≥ 0.")
+
+        cluster_mode = str(mapped.get("cluster_mode", "auto") or "auto")
         cluster_mode = (cluster_mode or 'auto').strip().lower()
         if cluster_mode.startswith('auto'):
             cluster_mode = 'auto'
@@ -1948,17 +2021,17 @@ class SplitPointAnalyserGUI(tk.Tk):
             min_gap=int(min_gap),
             min_compute_pct=float(min_comp),
             batch_override=batch,
-            llm_enable=bool(self.var_llm_enable.get()),
-            llm_preset=str(self.var_llm_preset.get()),
-            llm_mode=str(self.var_llm_mode.get()),
-            llm_prefill_len=int(self.var_llm_prefill.get() or 0),
-            llm_decode_past_len=int(self.var_llm_decode.get() or 0),
-            llm_use_ort_symbolic=bool(self.var_llm_use_ort_symbolic.get()),
+            llm_enable=bool(mapped.get("llm_enable", False)),
+            llm_preset=str(mapped.get("llm_preset", "Standard")),
+            llm_mode=str(mapped.get("llm_mode", "decode")),
+            llm_prefill_len=int(_safe_int(str(mapped.get("llm_prefill_len", "0"))) or 0),
+            llm_decode_past_len=int(_safe_int(str(mapped.get("llm_decode_past_len", "0"))) or 0),
+            llm_use_ort_symbolic=bool(mapped.get("llm_use_ort_symbolic", True)),
             assume_bpe=bpe,
             unknown_tensor_proxy_mb=float(unknown_mb),
-            cluster_best_per_region=bool(self.var_cluster_best_region.get()),
+            cluster_best_per_region=bool(mapped.get("cluster_best_per_region", True)),
             cluster_mode=str(cluster_mode),
-            cluster_region_ops=int((_safe_int(self.var_cluster_region_ops.get()) or 0)),
+            cluster_region_ops=cluster_region_ops,
 
             exclude_trivial=exclude_trivial,
             only_single_tensor=only_one,
@@ -2722,7 +2795,8 @@ class SplitPointAnalyserGUI(tk.Tk):
 
             # --- Uniform clustering: best split per fixed op window ---
             if cluster_mode == "uniform":
-                region_ops = int(getattr(p, "cluster_region_ops", 0) or 0)
+                region_ops_cfg = getattr(p, "cluster_region_ops", None)
+                region_ops = int(region_ops_cfg) if region_ops_cfg is not None else 0
                 if region_ops <= 0:
                     # Auto: choose a region/bin size proportional to the model's graph size.
                     #
@@ -3123,6 +3197,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         if self.analysis_result is None:
             self.analysis_result = AnalysisResult()
         cov = float(a.get("shape_coverage", 1.0))
+        self._update_dtype_proxy_visibility(cov)
         kp = int(a.get("known_produced", 0))
         tp = int(a.get("total_produced", 0))
         max_unk = int(a.get("max_unknown_crossing", 0))
@@ -3867,20 +3942,39 @@ class SplitPointAnalyserGUI(tk.Tk):
             return False
 
     def _selected_boundary_index(self) -> Optional[int]:
-        """Return the selected boundary index, but ONLY if a boundary row is selected."""
+        """Return selected boundary with tree selection priority and robust child-row handling."""
         sel = self.tree.selection()
-        if not sel:
+        if sel:
+            item = sel[0]
+
+            # Child rows (e.g., tensor rows) should resolve to their boundary parent row.
+            if not self._is_boundary_row(item):
+                parent = self.tree.parent(item)
+                if parent:
+                    item = parent
+
+            if self._is_boundary_row(item):
+                row = self._cand_by_iid.get(item)
+                if row is not None:
+                    try:
+                        return int(row.get("boundary", -1))
+                    except Exception:
+                        return None
+                vals = self.tree.item(item, "values")
+                if len(vals) >= 3:
+                    try:
+                        return int(vals[2])
+                    except Exception:
+                        return None
             return None
-        item = sel[0]
-        if not self._is_boundary_row(item):
-            return None
-        row = self._cand_by_iid.get(item)
-        if row is None:
-            return None
-        try:
-            return int(row.get("boundary", -1))
-        except Exception:
-            return None
+
+        # Fallback only when tree selection is empty.
+        if self.selected_candidate is not None:
+            try:
+                return int(self.selected_candidate.boundary_id)
+            except Exception:
+                return None
+        return None
 
     def _update_action_buttons(self) -> None:
         """Enable/disable buttons based on explicit app UI state."""
@@ -3975,11 +4069,11 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         strict_boundary = bool(self.var_strict_boundary.get())
 
-        prune_skip_block = bool(self.var_prune_skip_block.get())
-        skip_min_span = _safe_int(self.var_skip_min_span.get())
+        prune_skip_block = bool(mapped.get("prune_skip_block", False))
+        skip_min_span = _safe_int(str(mapped.get("skip_min_span", "")))
         if skip_min_span is None or skip_min_span < 0:
             raise ValueError("Min skip span must be an integer ≥ 0.")
-        skip_allow_last_n = _safe_int(self.var_skip_allow_last_n.get())
+        skip_allow_last_n = _safe_int(str(mapped.get("skip_allow_last_n", "")))
         if skip_allow_last_n is None:
             skip_allow_last_n = 0
         if skip_allow_last_n < 0:
@@ -4356,11 +4450,11 @@ class SplitPointAnalyserGUI(tk.Tk):
         a = self.analysis
         strict_boundary = bool(self.var_strict_boundary.get())
 
-        prune_skip_block = bool(self.var_prune_skip_block.get())
-        skip_min_span = _safe_int(self.var_skip_min_span.get())
+        prune_skip_block = bool(mapped.get("prune_skip_block", False))
+        skip_min_span = _safe_int(str(mapped.get("skip_min_span", "")))
         if skip_min_span is None or skip_min_span < 0:
             raise ValueError("Min skip span must be an integer ≥ 0.")
-        skip_allow_last_n = _safe_int(self.var_skip_allow_last_n.get())
+        skip_allow_last_n = _safe_int(str(mapped.get("skip_allow_last_n", "")))
         if skip_allow_last_n is None:
             skip_allow_last_n = 0
         if skip_allow_last_n < 0:
