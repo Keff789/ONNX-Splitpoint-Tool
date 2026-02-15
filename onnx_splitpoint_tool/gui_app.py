@@ -398,6 +398,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.accel_specs = load_accelerator_specs()
         self.memory_by_boundary: Dict[int, Dict[str, Any]] = {}
         self._candidate_rows: List[Dict[str, Any]] = []
+        self._cand_by_iid: Dict[str, Dict[str, Any]] = {}
         self._tree_clean_tooltips: Dict[str, str] = {}
         self._clean_tooltip_tip: Optional[tk.Toplevel] = None
         self._clean_tooltip_row: Optional[str] = None
@@ -1208,8 +1209,8 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.chk_cand_advanced = ttk.Checkbutton(filter_row, text="Detail (Advanced)", variable=self.var_cand_advanced, command=self._refresh_candidates_table)
         self.chk_cand_advanced.grid(row=0, column=7, sticky="e")
 
-        self.ent_cand_search.bind("<KeyRelease>", self._refresh_candidates_table, add=True)
-        self.cb_cand_sort.bind("<<ComboboxSelected>>", self._refresh_candidates_table, add=True)
+        self.ent_cand_search.bind("<KeyRelease>", self._refresh_candidates_table, add="+")
+        self.cb_cand_sort.bind("<<ComboboxSelected>>", self._refresh_candidates_table, add="+")
 
         cols = [
             "rank",
@@ -1285,9 +1286,10 @@ class SplitPointAnalyserGUI(tk.Tk):
         self._configure_candidate_columns()
 
         # Enable split only when a boundary row (not a child tensor row) is selected
-        self.tree.bind("<<TreeviewSelect>>", self._on_tree_selection_changed, add=True)
-        self.tree.bind("<Motion>", self._on_tree_motion_clean_tooltip, add=True)
-        self.tree.bind("<Leave>", self._hide_tree_clean_tooltip, add=True)
+        self.tree.bind("<<TreeviewSelect>>", self._on_tree_selection_changed, add="+")
+        self.tree.bind("<Button-1>", self._on_tree_button_1, add="+")
+        self.tree.bind("<Motion>", self._on_tree_motion_clean_tooltip, add="+")
+        self.tree.bind("<Leave>", self._hide_tree_clean_tooltip, add="+")
         # ------------------------------ Plots ------------------------------
         plot_frame = ttk.LabelFrame(mid, text="Plots")
         mid.add(plot_frame, weight=3)
@@ -1521,6 +1523,7 @@ class SplitPointAnalyserGUI(tk.Tk):
     # ----------------------------- Event handlers -----------------------------
 
     def _on_tree_selection_changed(self, _evt=None) -> None:
+        logger.debug("Tree selection event: sel=%s", self.tree.selection() if hasattr(self, "tree") else ())
         b = self._selected_boundary_index()
         if b is None:
             self.selected_candidate = None
@@ -1542,6 +1545,18 @@ class SplitPointAnalyserGUI(tk.Tk):
                 stats = dict(self.analysis_result.memory_estimate.get(int(b), {}))
         self.selected_candidate = SelectedCandidate(boundary_id=int(b), semantic_label=sem, cut_tensors=cut_tensors, stats=stats)
         self.events.emit_candidate_selected(self.selected_candidate)
+
+    def _on_tree_button_1(self, evt=None):
+        """Handle candidate-table left-clicks; only intercept clean-column clicks."""
+        if evt is None or not hasattr(self, "tree"):
+            return None
+        row_id = self.tree.identify_row(evt.y)
+        col_id = self.tree.identify_column(evt.x)
+        logger.debug("Tree click: row=%s col=%s", row_id, col_id)
+        if col_id == "#2" and row_id and row_id in self._cand_by_iid:
+            logger.debug("Intercepted clean-column click for row=%s", row_id)
+            return "break"
+        return None
 
     def _on_plot_click_select_candidate(self, event) -> None:
         """Map clicks in boundary-index plots back to tree/candidate selection."""
@@ -3535,7 +3550,9 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.analysis_result.candidates = list(picks)
         self._last_params = p
         self.tree.delete(*self.tree.get_children())
+        self.tree.state(("!disabled",))
         self._hide_tree_clean_tooltip()
+        self._cand_by_iid = {}
         self._tree_clean_tooltips = {}
 
         nodes = a["nodes"]
@@ -3655,9 +3672,11 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.analysis_result.candidates = [int(r["boundary"]) for r in rows_for_view]
 
         for row in rows_for_view:
+            iid = f"b{int(row['boundary'])}"
             parent = self.tree.insert(
                 "",
                 "end",
+                iid=iid,
                 values=(
                     row["rank"],
                     row["clean_symbol"],
@@ -3679,6 +3698,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                 ),
                 tags=(("pick", "dirty") if row["clean_symbol"] != "✅" else ("pick",)),
             )
+            self._cand_by_iid[iid] = row
             self._tree_clean_tooltips[parent] = str(row.get("clean_tooltip", ""))
 
             if int(row.get("unknown_count", 0)) > 0:
@@ -3703,6 +3723,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         if self.analysis_result is None:
             self.analysis_result = AnalysisResult()
         self.analysis_result.memory_estimate = dict(self.memory_by_boundary)
+        logger.debug("Candidate table populated: rows=%d mapped=%d", len(rows_for_view), len(self._cand_by_iid))
     # ----------------------------- Plotting -----------------------------
 
     def _update_plots(self, a: Dict, picks: List[int], p: Params):
@@ -3830,6 +3851,9 @@ class SplitPointAnalyserGUI(tk.Tk):
         """Return True if the item is a *top-level* boundary row (not a child tensor row)."""
         if not item:
             return False
+        if item not in self._cand_by_iid:
+            # Covers child rows and optional semantic-group header rows.
+            return False
         if self.tree.parent(item):
             return False
         vals = self.tree.item(item, "values")
@@ -3844,17 +3868,17 @@ class SplitPointAnalyserGUI(tk.Tk):
 
     def _selected_boundary_index(self) -> Optional[int]:
         """Return the selected boundary index, but ONLY if a boundary row is selected."""
-        if self.selected_candidate is not None:
-            return int(self.selected_candidate.boundary_id)
         sel = self.tree.selection()
         if not sel:
             return None
         item = sel[0]
         if not self._is_boundary_row(item):
             return None
-        vals = self.tree.item(item, "values")
+        row = self._cand_by_iid.get(item)
+        if row is None:
+            return None
         try:
-            return int(vals[2])
+            return int(row.get("boundary", -1))
         except Exception:
             return None
 
