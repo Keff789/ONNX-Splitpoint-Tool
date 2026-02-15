@@ -8,9 +8,11 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Any, Dict, Iterable
 
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.figure import Figure
+
 from ..analysis_params import ANALYSIS_PARAM_SPECS
 from ..widgets.collapsible_section import CollapsibleSection
-from . import panel_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -92,12 +94,17 @@ def build_panel(parent, app=None) -> ttk.Frame:
     settings_host = ttk.Frame(main)
     settings_host.columnconfigure(0, weight=1)
     settings_host.rowconfigure(0, weight=1)
-    main.add(settings_host, weight=0)
+    main.add(settings_host, weight=1)
 
-    results_host = ttk.Frame(main)
-    results_host.columnconfigure(0, weight=1)
-    results_host.rowconfigure(0, weight=1)
-    main.add(results_host, weight=1)
+    center_host = ttk.Frame(main)
+    center_host.columnconfigure(0, weight=1)
+    center_host.rowconfigure(0, weight=1)
+    main.add(center_host, weight=3)
+
+    inspector_host = ttk.LabelFrame(main, text="Candidate Inspector")
+    inspector_host.columnconfigure(0, weight=1)
+    inspector_host.rowconfigure(0, weight=1)
+    main.add(inspector_host, weight=2)
 
     canvas = tk.Canvas(settings_host, highlightthickness=0)
     yscroll = ttk.Scrollbar(settings_host, orient="vertical", command=canvas.yview)
@@ -140,7 +147,8 @@ def build_panel(parent, app=None) -> ttk.Frame:
         "shape": sec_shape,
         "llm": sec_llm,
     }  # type: ignore[attr-defined]
-    frame.results_host = results_host  # type: ignore[attr-defined]
+    frame.results_host = center_host  # type: ignore[attr-defined]
+    frame.inspector_host = inspector_host  # type: ignore[attr-defined]
 
     if app is not None:
         _wire_panel_logic(frame, app)
@@ -148,8 +156,8 @@ def build_panel(parent, app=None) -> ttk.Frame:
     return frame
 
 
-def _build_controls_from_schema(frame: ttk.Frame, app: Any) -> None:
-    """Build analysis controls directly in the new accordion from central schema."""
+def build_ui(frame: ttk.Frame, app: Any) -> None:
+    """Build analysis UI directly with the correct parent widgets."""
     sections = frame.settings_sections
     section_hosts: Dict[str, ttk.Frame] = {}
     for sec_key, sec in sections.items():
@@ -168,6 +176,11 @@ def _build_controls_from_schema(frame: ttk.Frame, app: Any) -> None:
 
         row = row_by_section[spec.section]
         row_by_section[spec.section] = row + 1
+
+        if spec.deprecated:
+            ttk.Label(host, text=f"{spec.label}:", foreground="#666666").grid(row=row, column=0, sticky="w", pady=2)
+            ttk.Label(host, text=f"Deprecated ({spec.validation})", foreground="#8a6d3b").grid(row=row, column=1, sticky="w", padx=(6, 0), pady=2)
+            continue
 
         if spec.param_type == "bool":
             ttk.Checkbutton(host, text=spec.label, variable=var).grid(row=row, column=0, columnspan=2, sticky="w", pady=2)
@@ -199,11 +212,253 @@ def _build_controls_from_schema(frame: ttk.Frame, app: Any) -> None:
     if hasattr(app, "_set_ui_state") and hasattr(app, "_infer_ui_state"):
         app._set_ui_state(app._infer_ui_state())
 
+    _build_center_results(frame.results_host, app)
+    _build_candidate_inspector(frame.inspector_host, app)
+
+
+
+def _build_center_results(parent: ttk.Frame, app: Any) -> None:
+    """Build center pane with candidate table (top) and plots (bottom)."""
+    mid = ttk.PanedWindow(parent, orient=tk.VERTICAL)
+    mid.grid(row=0, column=0, sticky="nsew")
+
+    table_frame = ttk.LabelFrame(mid, text="Suggested Boundaries")
+    mid.add(table_frame, weight=1)
+    table_frame.columnconfigure(0, weight=1)
+    table_frame.rowconfigure(1, weight=1)
+
+    filter_row = ttk.Frame(table_frame)
+    filter_row.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
+    for ci, w in enumerate((0, 0, 0, 0, 1)):
+        filter_row.columnconfigure(ci, weight=w)
+
+    app.var_cand_search = tk.StringVar(value="")
+    app.var_cand_search_regex = tk.BooleanVar(value=False)
+    app.var_cand_hide_dirty = tk.BooleanVar(value=False)
+    app.var_cand_group_semantic = tk.BooleanVar(value=False)
+    app.var_cand_sort = tk.StringVar(value="Rank ↑")
+    app.var_cand_advanced = tk.BooleanVar(value=False)
+
+    ttk.Label(filter_row, text="Search:").grid(row=0, column=0, sticky="w", padx=(0, 4))
+    app.ent_cand_search = ttk.Entry(filter_row, textvariable=app.var_cand_search, width=28)
+    app.ent_cand_search.grid(row=0, column=1, sticky="w", padx=(0, 6))
+    app.chk_cand_regex = ttk.Checkbutton(filter_row, text="Regex", variable=app.var_cand_search_regex, command=app._refresh_candidates_table)
+    app.chk_cand_regex.grid(row=0, column=2, sticky="w", padx=(0, 8))
+    app.chk_cand_dirty = ttk.Checkbutton(filter_row, text="Hide dirty splits", variable=app.var_cand_hide_dirty, command=app._refresh_candidates_table)
+    app.chk_cand_dirty.grid(row=0, column=3, sticky="w", padx=(0, 8))
+    app.chk_cand_group = ttk.Checkbutton(filter_row, text="Group by semantic transition", variable=app.var_cand_group_semantic, command=app._refresh_candidates_table)
+    app.chk_cand_group.grid(row=0, column=4, sticky="w", padx=(0, 8))
+
+    ttk.Label(filter_row, text="Sort:").grid(row=0, column=5, sticky="e", padx=(6, 4))
+    app.cb_cand_sort = ttk.Combobox(filter_row, textvariable=app.var_cand_sort, state="readonly", width=14,
+                                    values=["Rank ↑", "Boundary ↑", "Boundary ↓", "Cut MB ↑", "Cut MB ↓", "Clean (best)"])
+    app.cb_cand_sort.grid(row=0, column=6, sticky="e", padx=(0, 8))
+
+    app.chk_cand_advanced = ttk.Checkbutton(filter_row, text="Detail (Advanced)", variable=app.var_cand_advanced, command=app._refresh_candidates_table)
+    app.chk_cand_advanced.grid(row=0, column=7, sticky="e")
+    app.ent_cand_search.bind("<KeyRelease>", app._refresh_candidates_table, add=True)
+    app.cb_cand_sort.bind("<<ComboboxSelected>>", app._refresh_candidates_table, add=True)
+
+    cols = ["rank", "clean", "boundary", "semantic", "cut_mb", "num_tensors", "gflops_left", "gflops_right", "left_op", "right_op", "peak_left_mib", "peak_right_mib", "peak_max_mib", "fits_left", "fits_right", "ram_left_gb", "ram_right_gb"]
+    table_inner = ttk.Frame(table_frame)
+    table_inner.grid(row=1, column=0, sticky="nsew")
+    table_inner.columnconfigure(0, weight=1)
+    table_inner.rowconfigure(0, weight=1)
+
+    app.tree = ttk.Treeview(table_inner, columns=cols, show="headings")
+    for key, text in (
+        ("rank", "#"), ("clean", "Clean"), ("boundary", "Boundary"), ("semantic", "Semantic"),
+        ("left_op", "Left op"), ("right_op", "Right op"), ("cut_mb", "Cut (MB)"), ("num_tensors", "#Tensors"),
+        ("gflops_left", "Compute Left (GFLOPs)"), ("gflops_right", "Compute Right (GFLOPs)"),
+        ("peak_left_mib", "Peak L (MiB)"), ("peak_right_mib", "Peak R (MiB)"), ("peak_max_mib", "Peak max (MiB)"),
+        ("fits_left", "Fits L"), ("fits_right", "Fits R"), ("ram_left_gb", "RAM L (GB)"), ("ram_right_gb", "RAM R (GB)"),
+    ):
+        app.tree.heading(key, text=text)
+    app.tree.column("rank", width=40, anchor=tk.E)
+    app.tree.column("clean", width=60, anchor=tk.CENTER)
+    app.tree.column("boundary", width=80, anchor=tk.E)
+    app.tree.column("semantic", width=190)
+    app.tree.column("left_op", width=150)
+    app.tree.column("right_op", width=150)
+    app.tree.column("cut_mb", width=90, anchor=tk.E)
+    app.tree.column("num_tensors", width=80, anchor=tk.E)
+    app.tree.column("gflops_left", width=135, anchor=tk.E)
+    app.tree.column("gflops_right", width=135, anchor=tk.E)
+    app.tree.column("peak_left_mib", width=110, anchor=tk.E)
+    app.tree.column("peak_right_mib", width=110, anchor=tk.E)
+    app.tree.column("peak_max_mib", width=110, anchor=tk.E)
+    app.tree.column("fits_left", width=60, anchor=tk.CENTER)
+    app.tree.column("fits_right", width=60, anchor=tk.CENTER)
+    app.tree.column("ram_left_gb", width=95, anchor=tk.E)
+    app.tree.column("ram_right_gb", width=95, anchor=tk.E)
+    app.tree.grid(row=0, column=0, sticky="nsew")
+
+    vsb = ttk.Scrollbar(table_inner, orient="vertical", command=app.tree.yview)
+    app.tree.configure(yscroll=vsb.set)
+    vsb.grid(row=0, column=1, sticky="ns")
+    app.tree.tag_configure("pick", background="#eef6ff")
+    app.tree.tag_configure("dirty", background="#fff2f2")
+    app._configure_candidate_columns()
+    app.tree.bind("<<TreeviewSelect>>", app._on_tree_selection_changed, add=True)
+    app.tree.bind("<Motion>", app._on_tree_motion_clean_tooltip, add=True)
+    app.tree.bind("<Leave>", app._hide_tree_clean_tooltip, add=True)
+
+    plot_frame = ttk.LabelFrame(mid, text="Plots")
+    mid.add(plot_frame, weight=3)
+    plot_frame.columnconfigure(0, weight=1)
+    plot_frame.rowconfigure(0, weight=1)
+    plot_frame.rowconfigure(1, weight=0)
+    plot_frame.rowconfigure(2, weight=0)
+
+    app.fig = Figure(figsize=(10, 6), constrained_layout=True)
+    app.ax_comm = app.fig.add_subplot(2, 2, 1)
+    app.ax_comp = app.fig.add_subplot(2, 2, 2)
+    app.ax_pareto = app.fig.add_subplot(2, 2, 3)
+    app.ax_lat = app.fig.add_subplot(2, 2, 4)
+
+    app.canvas = FigureCanvasTkAgg(app.fig, master=plot_frame)
+    app.canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+    app.canvas.mpl_connect("button_press_event", app._on_plot_click_select_candidate)
+
+    toolbar_frame = ttk.Frame(plot_frame)
+    toolbar_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(2, 0))
+    app.toolbar = NavigationToolbar2Tk(app.canvas, toolbar_frame)
+    app.toolbar.update()
+    try:
+        app.toolbar.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    except Exception:
+        logger.exception("Failed to pack matplotlib toolbar")
+
+    export_bar = ttk.Frame(plot_frame)
+    export_bar.grid(row=2, column=0, sticky="ew", padx=6, pady=(2, 6))
+    app.btn_export_svg = ttk.Button(export_bar, text="Export SVG (overview)", command=lambda: app._export_overview("svg"))
+    app.btn_export_pdf = ttk.Button(export_bar, text="Export PDF (overview)", command=lambda: app._export_overview("pdf"))
+    app.btn_export_svg_s = ttk.Button(export_bar, text="Export SVGs (single)", command=lambda: app._export_single("svg"))
+    app.btn_export_pdf_s = ttk.Button(export_bar, text="Export PDFs (single)", command=lambda: app._export_single("pdf"))
+    app.btn_export_svg.pack(side=tk.LEFT, padx=(0, 6))
+    app.btn_export_pdf.pack(side=tk.LEFT, padx=(0, 6))
+    app.btn_export_svg_s.pack(side=tk.LEFT, padx=(0, 6))
+    app.btn_export_pdf_s.pack(side=tk.LEFT)
+
+
+
+def _build_candidate_inspector(parent: ttk.Frame, app: Any) -> None:
+    """Build the right-side candidate inspector directly in the analysis panel."""
+    summary = ttk.LabelFrame(parent, text="Summary")
+    summary.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 6))
+    summary.columnconfigure(1, weight=1)
+
+    vars_map = {
+        "boundary": tk.StringVar(value="–"),
+        "semantic": tk.StringVar(value="–"),
+        "compute": tk.StringVar(value="–"),
+        "cut": tk.StringVar(value="–"),
+        "counts": tk.StringVar(value="–"),
+        "llm": tk.StringVar(value="–"),
+        "proxy": tk.StringVar(value="Proxy: –"),
+    }
+    rows = [
+        ("Boundary", "boundary"),
+        ("Semantic transition", "semantic"),
+        ("Compute L/R", "compute"),
+        ("Cut MB", "cut"),
+        ("Tensor counts", "counts"),
+    ]
+    for r, (lbl, key) in enumerate(rows):
+        ttk.Label(summary, text=f"{lbl}:").grid(row=r, column=0, sticky="nw", padx=(6, 8), pady=2)
+        ttk.Label(summary, textvariable=vars_map[key], wraplength=360, justify="left").grid(row=r, column=1, sticky="ew", padx=(0, 6), pady=2)
+
+    llm_box = ttk.LabelFrame(parent, text="LLM Comm Breakdown")
+    llm_box.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
+    ttk.Label(llm_box, textvariable=vars_map["llm"], justify="left", wraplength=380).pack(anchor="w", padx=6, pady=(6, 2))
+    ttk.Label(llm_box, textvariable=vars_map["proxy"], foreground="#6b4f00", wraplength=380).pack(anchor="w", padx=6, pady=(0, 6))
+
+    notebook = ttk.Notebook(parent)
+    notebook.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 6))
+    lists: Dict[str, Any] = {}
+    for name in ("Activations", "Meta", "Constants"):
+        tab = ttk.Frame(notebook)
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(0, weight=1)
+        notebook.add(tab, text=name)
+        holder = tab
+        tv = ttk.Treeview(holder, columns=("name", "size"), show="headings", height=9)
+        tv.heading("name", text="Tensor")
+        tv.heading("size", text="MB")
+        tv.column("name", width=280, anchor=tk.W)
+        tv.column("size", width=80, anchor=tk.E)
+        holder.rowconfigure(0, weight=1)
+        tv.grid(row=0, column=0, sticky="nsew")
+        scroll = ttk.Scrollbar(holder, orient="vertical", command=tv.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        tv.configure(yscrollcommand=scroll.set)
+        lists[name.lower()] = tv
+
+    actions = ttk.Frame(parent)
+    actions.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
+    ttk.Button(actions, text="Split selected…", command=getattr(app, "_split_selected_boundary", None)).pack(side=tk.LEFT)
+    ttk.Button(actions, text="Export context…", command=getattr(app, "_split_selected_boundary", None)).pack(side=tk.LEFT, padx=(8, 0))
+    ttk.Button(actions, text="Benchmark this split…", command=getattr(app, "_generate_benchmark_set", None)).pack(side=tk.LEFT, padx=(8, 0))
+
+    def _classify_tensor(name: str, initializers: set[str]) -> str:
+        n = (name or "").lower()
+        if name in initializers:
+            return "constants"
+        if any(k in n for k in ("mask", "pos", "position", "rope", "cache", "past", "present", "token", "ids", "shape", "len")):
+            return "meta"
+        return "activations"
+
+    def _update(candidate=None):
+        cand = candidate if candidate is not None else getattr(app, "selected_candidate", None)
+        for tv in lists.values():
+            tv.delete(*tv.get_children())
+        if cand is None:
+            for k in vars_map:
+                vars_map[k].set("–" if k != "proxy" else "Proxy: –")
+            return
+
+        b = int(getattr(cand, "boundary_id", -1))
+        row = next((r for r in getattr(app, "_candidate_rows", []) if int(r.get("boundary", -1)) == b), {})
+        analysis = getattr(app, "analysis", {}) if isinstance(getattr(app, "analysis", {}), dict) else {}
+        costs = analysis.get("costs_bytes") or []
+        unknown_counts = analysis.get("unknown_crossing_counts") or []
+        proxy_mb = float(analysis.get("unknown_tensor_proxy_mb", 0.0) or 0.0)
+        proxy_kb = float(analysis.get("unknown_tensor_proxy_kb_int", 0.0) or 0.0)
+        value_bytes = analysis.get("value_bytes") or {}
+        inits = set(analysis.get("initializer_names") or [])
+
+        cut_tensors = list(getattr(cand, "cut_tensors", []) or row.get("cut_tensors") or [])
+        unknown_n = int(unknown_counts[b]) if b < len(unknown_counts) else int(row.get("unknown_count", 0) or 0)
+        cut_mb = (float(costs[b]) / 1e6) if b < len(costs) else float(row.get("cut_mb_val", 0.0) or 0.0)
+
+        vars_map["boundary"].set(str(b))
+        vars_map["semantic"].set(str(getattr(cand, "semantic_label", "") or row.get("semantic", "–")))
+        vars_map["compute"].set(f"{row.get('gflops_left', '–')} / {row.get('gflops_right', '–')} GFLOPs")
+        vars_map["cut"].set(f"{cut_mb:.3f} MB")
+        vars_map["counts"].set(f"total={len(cut_tensors)}, unknown={unknown_n}")
+
+        sums = {"activations": 0.0, "meta": 0.0, "constants": 0.0, "unknown": float(unknown_n) * proxy_mb}
+        for t in cut_tensors:
+            grp = _classify_tensor(str(t), inits)
+            size_mb = float(value_bytes.get(t, 0.0) or 0.0) / 1e6
+            sums[grp] += size_mb
+            lists[grp].insert("", "end", values=(t, f"{size_mb:.3f}" if size_mb > 0 else "?"))
+
+        vars_map["llm"].set(
+            f"Hidden/Act: {sums['activations']:.3f} MB\n"
+            f"Meta: {sums['meta']:.3f} MB\n"
+            f"Unknown (proxy): {sums['unknown']:.3f} MB"
+        )
+        vars_map["proxy"].set(f"Proxy-Hinweis: float={proxy_mb:g} MB/Tensor, int/bool={proxy_kb:g} KB/Tensor")
+
+    _update(None)
+    if hasattr(app, "events"):
+        app.events.on_candidate_selected(_update)
 
 
 def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
     preset_cb = frame.preset_cb
-    _build_controls_from_schema(frame, app)
+    build_ui(frame, app)
 
     def _refresh_model_bar(_model_info: Any = None) -> None:
         path = str(getattr(app, "model_path", None) or getattr(getattr(app, "gui_state", None), "current_model_path", "") or "")
@@ -274,76 +529,67 @@ def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
         app.events.on_model_loaded(_refresh_model_bar)
 
 
-def mount_legacy_widgets(frame: ttk.Frame, root_children: list[Any], app: Any) -> None:
+def render_analysis(frame: ttk.Frame, app: Any, analysis_result: Any) -> None:
+    """Single source of truth for analysis-result UI updates in the analysis panel."""
+    payload = getattr(analysis_result, "plot_data", None)
+    if not isinstance(payload, dict):
+        payload = analysis_result if isinstance(analysis_result, dict) else {}
+
+    result_dict: Dict[str, Any] = {}
+    if isinstance(analysis_result, dict):
+        result_dict = analysis_result
+    elif hasattr(analysis_result, "__dict__"):
+        try:
+            result_dict = dict(getattr(analysis_result, "__dict__", {}) or {})
+        except Exception:
+            result_dict = {}
+
+    candidates = result_dict.get("candidates", getattr(analysis_result, "candidates", []))
+    if not isinstance(candidates, list):
+        candidates = []
+    logger.info("UI render: candidates=%d keys=%s", len(candidates), sorted(result_dict.keys()))
+
+    analysis = payload.get("analysis")
+    picks = payload.get("picks")
+    params = payload.get("params")
+    if not isinstance(analysis, dict) or not isinstance(picks, list) or params is None:
+        logger.warning("render_analysis skipped: incomplete payload")
+        return
+
+    app._update_diagnostics(analysis)
+    app._update_table(analysis, picks, params)
+    table_rows = len(app.tree.get_children("")) if hasattr(app, "tree") else 0
+    logger.info("UI table rows after populate=%d", table_rows)
+    app._update_plots(analysis, picks, params)
+
+    # Ensure inspector and plot highlights are initialized from a concrete row.
+    try:
+        children = list(app.tree.get_children("")) if hasattr(app, "tree") else []
+        if children and not app.tree.selection():
+            first = children[0]
+            app.tree.selection_set(first)
+            app.tree.focus(first)
+            app.tree.see(first)
+            app._on_tree_selection_changed()
+    except Exception:
+        logger.exception("Failed to select initial candidate row after render_analysis")
+
+    app._set_ui_state(app._infer_ui_state())
+    app._refresh_memory_forecast()
+
+
+def hide_legacy_widgets(root_children: list[Any], app: Any) -> None:
+    """Hide legacy root-level widgets instead of re-parenting them."""
     params_frame = getattr(app, "params_frame", None)
     mid_pane = getattr(app, "mid_pane", None)
 
-    if params_frame is not None:
-        # Keep the legacy container hidden and mount its key content blocks into
-        # the new section bodies. This keeps the new left-side navigation usable
-        # (settings visible + Analyse button available) while the migration is in
-        # progress.
+    for widget in (params_frame, mid_pane):
+        if widget is None:
+            continue
         try:
-            params_frame.pack_forget()
+            widget.pack_forget()
         except Exception:
-            logger.exception("Failed to hide legacy params_frame before remounting controls")
-
-        for name, target in (
-            ("diag_frame", "shape"),
-            ("memf_frame", "shape"),
-            ("adv_container", "llm"),
-        ):
-            widget = getattr(app, name, None)
-            if widget is None:
-                continue
-            target_body = frame.settings_sections[target].body
-            widget_parent_path = ""
-            target_parent_path = ""
-            try:
-                widget_parent_path = str(widget.nametowidget(widget.winfo_parent()))
-                target_parent_path = str(target_body)
-            except Exception:
-                logger.exception("Failed to resolve Tk parent path while mounting '%s'", name)
-            # NOTE:
-            #   Legacy widgets were created as children of `params_frame`.
-            #   `pack(in_=...)` does not reparent widgets, it only changes geometry
-            #   management. If parent != target container, Tk rejects the mount
-            #   (`can't pack ... inside ...`), leaving accordion sections empty.
-            if widget_parent_path and target_parent_path and widget_parent_path != target_parent_path:
-                logger.warning(
-                    "Skipping legacy mount for '%s': pack(in_=...) would fail because widget parent (%s) != target (%s)",
-                    name,
-                    widget_parent_path,
-                    target_parent_path,
-                )
-                continue
-            try:
-                widget.grid_forget()
-            except Exception:
-                logger.exception("Failed to clear legacy geometry manager (grid) for widget '%s'", name)
-            try:
-                widget.pack_forget()
-            except Exception:
-                logger.exception("Failed to clear legacy geometry manager (pack) for widget '%s'", name)
-            try:
-                widget.pack(in_=frame.settings_sections[target].body, fill="x", pady=(0, 6))
-            except Exception:
-                logger.exception("Failed to mount legacy widget '%s' into settings section '%s'", name, target)
-
-        try:
-            frame.settings_sections["shape"].set_expanded(True)
-            frame.settings_sections["llm"].set_expanded(True)
-        except Exception:
-            logger.exception("Failed to expand migrated settings sections after mounting")
-
-    if mid_pane is not None:
-        mid_pane.pack_forget()
-        try:
-            mid_pane.configure(orient=tk.VERTICAL)
-        except Exception:
-            logger.exception("Failed to set mid_pane orientation to vertical during mount")
-        split = panel_candidates.mount_split_view(frame.results_host, app)
-        mid_pane.pack(in_=split.left_host, fill="both", expand=True)
+            logger.exception("Failed to hide legacy widget: %r", widget)
 
     for widget in root_children:
         if widget in {params_frame, mid_pane, getattr(app, "btn_open", None), getattr(app, "lbl_model", None), getattr(app, "btn_toggle_settings", None)}:
@@ -353,4 +599,4 @@ def mount_legacy_widgets(frame: ttk.Frame, root_children: list[Any], app: Any) -
         except Exception:
             logger.exception("Failed to hide root widget during analysis panel mount: %r", widget)
 
-    logger.info("Analysis panel mounting completed")
+    logger.info("Analysis panel initialized without legacy re-parenting")

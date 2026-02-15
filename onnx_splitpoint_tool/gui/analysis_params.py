@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, Literal, Optional, Sequence
 
+from ..core_params import mapping_for_key
+
 
 Visibility = Literal["cv", "llm", "both"]
 Scope = Literal["analysis", "llm"]
@@ -23,6 +25,9 @@ class AnalysisParamSpec:
     scope: Scope = "analysis"
     var_name: str = ""
     options: Optional[Sequence[str]] = None
+    validation: str = ""
+    deprecated: bool = False
+    deprecated_note: str = ""
 
 
 ANALYSIS_PARAM_SPECS: tuple[AnalysisParamSpec, ...] = (
@@ -43,6 +48,47 @@ ANALYSIS_PARAM_SPECS: tuple[AnalysisParamSpec, ...] = (
     AnalysisParamSpec("decode", "Decode past length", "int", "2048", "llm", scope="llm", var_name="var_llm_decode", visibility="llm"),
     AnalysisParamSpec("use_ort_symbolic", "Use ORT symbolic inference", "bool", True, "llm", scope="llm", var_name="var_llm_use_ort_symbolic", visibility="llm", advanced=True),
 )
+
+
+def _enrich_from_core_mapping(spec: AnalysisParamSpec) -> AnalysisParamSpec:
+    mapping = mapping_for_key(spec.key)
+    if mapping is None:
+        return AnalysisParamSpec(
+            key=spec.key,
+            label=spec.label,
+            param_type=spec.param_type,
+            default=spec.default,
+            section=spec.section,
+            tooltip=spec.tooltip,
+            visibility=spec.visibility,
+            advanced=spec.advanced,
+            scope=spec.scope,
+            var_name=spec.var_name,
+            options=spec.options,
+            validation="not mapped to core Params (deprecated)",
+            deprecated=True,
+            deprecated_note="Legacy option: not part of core Params mapping",
+        )
+
+    return AnalysisParamSpec(
+        key=spec.key,
+        label=spec.label,
+        param_type=spec.param_type,
+        default=spec.default,
+        section=spec.section,
+        tooltip=spec.tooltip,
+        visibility=mapping.visibility,
+        advanced=spec.advanced,
+        scope=spec.scope,
+        var_name=spec.var_name,
+        options=spec.options,
+        validation=mapping.validation,
+        deprecated=bool(mapping.deprecated),
+        deprecated_note=str(mapping.deprecated_note or ""),
+    )
+
+
+ANALYSIS_PARAM_SPECS = tuple(_enrich_from_core_mapping(spec) for spec in ANALYSIS_PARAM_SPECS)
 
 
 def iter_specs(scope: Scope | None = None) -> Iterable[AnalysisParamSpec]:

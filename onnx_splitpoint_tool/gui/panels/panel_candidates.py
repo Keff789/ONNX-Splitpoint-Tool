@@ -237,6 +237,11 @@ def _build_inspector(parent: ttk.Frame, app) -> None:
         app.events.on_candidate_selected(_update)
 
 
+def build_candidate_inspector(parent: ttk.Frame, app) -> None:
+    """Build only the right-side candidate inspector into an existing parent."""
+    _build_inspector(parent, app)
+
+
 __all__ = [
     "CUT_INSIDE_MLP",
     "CUT_INSIDE_ATTN",
@@ -246,4 +251,5 @@ __all__ = [
     "compute_candidate_clean_status",
     "build_panel",
     "mount_split_view",
+    "build_candidate_inspector",
 ]
