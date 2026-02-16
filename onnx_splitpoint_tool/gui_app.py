@@ -404,6 +404,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self._clean_tooltip_tip: Optional[tk.Toplevel] = None
         self._clean_tooltip_row: Optional[str] = None
         self._last_selected_iid: Optional[str] = None
+        self._suppress_tree_selection_event: bool = False
         self._selected_boundary: Optional[int] = None
         self._last_analysis_params: Optional[Dict[str, Any]] = None
         self._pareto_points_by_boundary: Dict[int, Tuple[float, float]] = {}
@@ -1618,6 +1619,8 @@ class SplitPointAnalyserGUI(tk.Tk):
     def _on_tree_selection_changed(self, event=None) -> None:
         if not hasattr(self, "tree"):
             return
+        if self._suppress_tree_selection_event:
+            return
         sel = self.tree.selection()
         iid = sel[0] if sel else (self.tree.focus() or "")
         if not iid:
@@ -1632,12 +1635,18 @@ class SplitPointAnalyserGUI(tk.Tk):
             logger.debug("Tree selection changed: ignoring non-boundary iid=%s", iid)
             return
 
-        self.tree.selection_set(iid)
-        self.tree.focus(iid)
+        if self.tree.selection() != (iid,):
+            self._suppress_tree_selection_event = True
+            try:
+                self.tree.selection_set(iid)
+            finally:
+                self._suppress_tree_selection_event = False
+        if self.tree.focus() != iid:
+            self.tree.focus(iid)
         self._sync_tree_selected_row_tag(iid)
         boundary = self._selected_boundary_index()
         tags = self.tree.item(iid, "tags") if iid else ()
-        logger.info("Tree selection changed: iid=%s, tags=%s, boundary=%s", iid, tags, boundary)
+        logger.debug("Tree selection changed: iid=%s, tags=%s, boundary=%s", iid, tags, boundary)
         self._set_selected_candidate_from_boundary(boundary)
 
     def _sync_tree_selected_row_tag(self, selected_iid: Optional[str] = None) -> None:
@@ -1739,8 +1748,11 @@ class SplitPointAnalyserGUI(tk.Tk):
         if self._pareto_selected_artist is not None:
             pt = self._pareto_points_by_boundary.get(int(b))
             if pt is None:
-                self._pareto_selected_artist.set_offsets([])
+                # Matplotlib expects offsets shaped as Nx2; hide marker instead of using [].
+                self._pareto_selected_artist.set_visible(False)
+                self._pareto_selected_artist.set_offsets([[0.0, 0.0]])
             else:
+                self._pareto_selected_artist.set_visible(True)
                 self._pareto_selected_artist.set_offsets([[float(pt[0]), float(pt[1])]])
         try:
             self.canvas.draw_idle()
@@ -1856,7 +1868,6 @@ class SplitPointAnalyserGUI(tk.Tk):
         except ValueError as e:
             messagebox.showerror("Invalid parameters", str(e))
             return
-        self._last_analysis_params = deepcopy(asdict(params))
 
         # Run analysis in a background thread (Hailo parse-checks can take a while).
         self.btn_analyse.state(["disabled"])
@@ -1913,6 +1924,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                             plot_data={"analysis": self.analysis, "picks": list(self.current_picks), "params": params},
                         )
                         self._last_params = params
+                        self._last_analysis_params = deepcopy(asdict(params))
                         self.events.emit_analysis_done(self.analysis_result)
                         # Persist Hailo cache updates.
                         self._save_hailo_cache()
@@ -1923,6 +1935,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                         return
                     elif kind == "err":
                         err_text = str(item[1])
+                        self._last_analysis_params = None
                         pb.stop()
                         dlg.destroy()
                         self.btn_analyse.state(["!disabled"])
