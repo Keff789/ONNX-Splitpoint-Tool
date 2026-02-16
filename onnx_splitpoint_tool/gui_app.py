@@ -1669,27 +1669,36 @@ class SplitPointAnalyserGUI(tk.Tk):
             self._last_selected_iid = None
             return
 
-        current_tags = set(self.tree.item(new_iid, "tags") or [])
-        if "selected_row" not in current_tags:
-            current_tags.add("selected_row")
-            self.tree.item(new_iid, tags=tuple(sorted(current_tags)))
+        current_tags = [t for t in (self.tree.item(new_iid, "tags") or []) if t != "selected_row"]
+        current_tags.append("selected_row")
+        self.tree.item(new_iid, tags=tuple(current_tags))
 
         self._last_selected_iid = new_iid
         self.tree.focus(new_iid)
         self.tree.see(new_iid)
 
     def _on_tree_button_1(self, evt=None):
-        """Handle candidate-table left-clicks; only intercept clean-column clicks."""
+        """Handle candidate-table clicks with stable row selection behavior."""
         if evt is None or not hasattr(self, "tree"):
             return None
         row_id = self.tree.identify_row(evt.y)
         col_id = self.tree.identify_column(evt.x)
-        logger.debug("Tree click: row=%s col=%s", row_id, col_id)
-        if col_id == "#2" and row_id and row_id in self._cand_by_iid:
-            logger.debug("Intercepted clean-column click for row=%s", row_id)
-            self.tree.selection_set(row_id)
-            self._on_tree_selection_changed()
-            return "break"
+        region = self.tree.identify("region", evt.x, evt.y)
+        logger.debug("Tree click: row=%s col=%s region=%s", row_id, col_id, region)
+
+        if row_id:
+            target_iid = row_id
+            if (row_id not in self._cand_by_iid) and self.tree.parent(row_id) in self._cand_by_iid:
+                target_iid = self.tree.parent(row_id)
+            if target_iid in self._cand_by_iid:
+                self.tree.selection_set(target_iid)
+                self.tree.focus(target_iid)
+                self.tree.see(target_iid)
+                self._on_tree_selection_changed()
+                return "break"
+
+        if region in {"nothing", "heading", "separator"}:
+            self.tree.selection_remove(self.tree.selection())
         return None
 
     def _on_plot_click_select_candidate(self, event) -> None:
@@ -1860,14 +1869,28 @@ class SplitPointAnalyserGUI(tk.Tk):
 
     def _on_analyse(self):
         if not self.gui_state.current_model_path:
+            logger.warning("Analyse clicked but no model_path is set")
             messagebox.showwarning("No model", "Please open an ONNX model first.")
             return
 
         try:
             params = self._read_params()
         except ValueError as e:
+            logger.warning("Analyse aborted due to invalid parameters: %s", e)
             messagebox.showerror("Invalid parameters", str(e))
             return
+
+        logger.info(
+            "Analyse clicked: model_path=%s params_summary=%s",
+            self.gui_state.current_model_path,
+            {
+                "topk": getattr(params, "topk", None),
+                "min_gap": getattr(params, "min_gap", None),
+                "ranking": getattr(params, "ranking", None),
+                "llm_enable": getattr(params, "llm_enable", None),
+                "cluster_mode": getattr(params, "cluster_mode", None),
+            },
+        )
 
         # Run analysis in a background thread (Hailo parse-checks can take a while).
         self.btn_analyse.state(["disabled"])
@@ -1884,6 +1907,13 @@ class SplitPointAnalyserGUI(tk.Tk):
         pb = ttk.Progressbar(dlg, mode="indeterminate", length=360)
         pb.pack(padx=14, pady=(0, 14))
         pb.start(10)
+        dlg_shown_at = time.perf_counter()
+        logger.info("Progress dialog shown")
+        try:
+            dlg.update_idletasks()
+            dlg.update()
+        except Exception:
+            logger.exception("Failed to force progress dialog render")
 
         # Avoid leaving a half-finished UI state if the user closes the dialog.
         dlg.protocol("WM_DELETE_WINDOW", lambda: None)
@@ -1894,20 +1924,34 @@ class SplitPointAnalyserGUI(tk.Tk):
             q.put(("progress", msg))
 
         def _worker() -> None:
+            started_at = time.perf_counter()
+            logger.info("Analysis thread start")
             try:
                 analysis = self._analyse_model(self.gui_state.current_model_path, params, progress_cb=_progress)
                 _progress("Selecting candidates...")
                 picks = self._select_picks(analysis, params, progress_cb=_progress)
                 _progress("Computing diagnostics...")
                 self._compute_nordstern(analysis, picks, params)
+                elapsed_s = time.perf_counter() - started_at
+                logger.info("Analysis thread end (secs=%.3f, candidates=%d)", elapsed_s, len(picks) if isinstance(picks, list) else -1)
                 q.put(("ok", analysis, picks))
             except Exception:
+                elapsed_s = time.perf_counter() - started_at
+                logger.info("Analysis thread end (secs=%.3f, candidates=%d)", elapsed_s, -1)
                 logging.exception("Analysis failed")
                 import traceback
 
                 q.put(("err", traceback.format_exc()))
 
         threading.Thread(target=_worker, daemon=True).start()
+
+        def _finish_with_min_dialog_time(done_fn: Callable[[], None]) -> None:
+            elapsed = time.perf_counter() - dlg_shown_at
+            remaining_s = max(0.0, 0.30 - elapsed)
+            if remaining_s > 0.0:
+                self.after(int(remaining_s * 1000), done_fn)
+            else:
+                done_fn()
 
         def _poll() -> None:
             try:
@@ -1928,19 +1972,26 @@ class SplitPointAnalyserGUI(tk.Tk):
                         self.events.emit_analysis_done(self.analysis_result)
                         # Persist Hailo cache updates.
                         self._save_hailo_cache()
-                        pb.stop()
-                        dlg.destroy()
-                        self.btn_analyse.state(["!disabled"])
-                        self._set_ui_state(AppUiState.ANALYSED)
+                        def _finish_ok() -> None:
+                            pb.stop()
+                            dlg.destroy()
+                            self.btn_analyse.state(["!disabled"])
+                            self._set_ui_state(AppUiState.ANALYSED)
+
+                        _finish_with_min_dialog_time(_finish_ok)
                         return
                     elif kind == "err":
                         err_text = str(item[1])
                         self._last_analysis_params = None
-                        pb.stop()
-                        dlg.destroy()
-                        self.btn_analyse.state(["!disabled"])
-                        self._set_ui_state(self._infer_ui_state())
-                        messagebox.showerror("Analysis failed", err_text)
+
+                        def _finish_err() -> None:
+                            pb.stop()
+                            dlg.destroy()
+                            self.btn_analyse.state(["!disabled"])
+                            self._set_ui_state(self._infer_ui_state())
+                            messagebox.showerror("Analysis failed", err_text)
+
+                        _finish_with_min_dialog_time(_finish_err)
                         return
             except queue.Empty:
                 pass
@@ -4126,9 +4177,16 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         b = self._selected_boundary_index()
         if b is None:
-            messagebox.showinfo(
+            logger.warning("Split aborted: no candidate boundary selected")
+            messagebox.showwarning(
                 "Select a boundary", "Select a *boundary* row in the table (not a ↳ tensor row)."
             )
+            return
+        try:
+            b = int(b)
+        except Exception:
+            logger.warning("Split aborted: selected boundary is not an int (value=%r)", b)
+            messagebox.showwarning("Invalid boundary", "Selected boundary is invalid. Please select a boundary row again.")
             return
 
         a = self.analysis
@@ -4184,10 +4242,18 @@ class SplitPointAnalyserGUI(tk.Tk):
         p2_path = os.path.join(out_dir, f"{base}_part2_b{b}.onnx")
         manifest_path = os.path.join(out_dir, "split_manifest.json")
 
-        params_dict = self._effective_split_params_dict()
+        params_dict = deepcopy(getattr(self, "_last_analysis_params", None))
         if not isinstance(params_dict, dict):
+            try:
+                params_dict = asdict(self._read_params())
+            except Exception:
+                params_dict = None
+        if not isinstance(params_dict, dict):
+            logger.warning("Split aborted: unable to resolve split params")
             messagebox.showwarning("Missing analysis settings", "Could not resolve analysis settings for split. Run Analyse first.")
             return
+
+        logger.info("Split selected boundary=%s, out_dir=%s", b, out_dir)
 
         strict_boundary = bool(params_dict.get("strict_boundary", self.var_strict_boundary.get()))
 
