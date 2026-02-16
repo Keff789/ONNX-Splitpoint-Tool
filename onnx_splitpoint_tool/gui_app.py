@@ -40,6 +40,7 @@ import sys
 import threading
 import queue
 import time
+from copy import deepcopy
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -403,6 +404,10 @@ class SplitPointAnalyserGUI(tk.Tk):
         self._clean_tooltip_tip: Optional[tk.Toplevel] = None
         self._clean_tooltip_row: Optional[str] = None
         self._last_selected_iid: Optional[str] = None
+        self._selected_boundary: Optional[int] = None
+        self._last_analysis_params: Optional[Dict[str, Any]] = None
+        self._pareto_points_by_boundary: Dict[int, Tuple[float, float]] = {}
+        self._pareto_selected_artist = None
 
         self._register_event_handlers()
 
@@ -1611,22 +1616,40 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.events.emit_candidate_selected(self.selected_candidate)
 
     def _on_tree_selection_changed(self, event=None) -> None:
-        sel = self.tree.selection() if hasattr(self, "tree") else ()
-        logger.debug("Tree selection event: sel=%s", sel)
-        self._sync_tree_selected_row_tag()
+        if not hasattr(self, "tree"):
+            return
+        sel = self.tree.selection()
+        iid = sel[0] if sel else (self.tree.focus() or "")
+        if not iid:
+            logger.debug("Tree selection changed: selection empty -> ignore")
+            return
+
+        if not self._is_boundary_row(iid):
+            parent = self.tree.parent(iid)
+            if parent and self._is_boundary_row(parent):
+                iid = parent
+        if not self._is_boundary_row(iid):
+            logger.debug("Tree selection changed: ignoring non-boundary iid=%s", iid)
+            return
+
+        self.tree.selection_set(iid)
+        self.tree.focus(iid)
+        self._sync_tree_selected_row_tag(iid)
         boundary = self._selected_boundary_index()
-        iid = sel[0] if sel else ""
         tags = self.tree.item(iid, "tags") if iid else ()
         logger.info("Tree selection changed: iid=%s, tags=%s, boundary=%s", iid, tags, boundary)
         self._set_selected_candidate_from_boundary(boundary)
 
-    def _sync_tree_selected_row_tag(self) -> None:
+    def _sync_tree_selected_row_tag(self, selected_iid: Optional[str] = None) -> None:
         if not hasattr(self, "tree"):
             self._last_selected_iid = None
             return
 
-        sel = self.tree.selection()
-        new_iid = sel[0] if sel else None
+        if selected_iid:
+            new_iid = selected_iid
+        else:
+            sel = self.tree.selection()
+            new_iid = sel[0] if sel else (self.tree.focus() or None)
         old_iid = self._last_selected_iid
 
         if old_iid and self.tree.exists(old_iid) and old_iid != new_iid:
@@ -1637,9 +1660,10 @@ class SplitPointAnalyserGUI(tk.Tk):
             self._last_selected_iid = None
             return
 
-        current_tags = tuple(self.tree.item(new_iid, "tags"))
+        current_tags = set(self.tree.item(new_iid, "tags") or [])
         if "selected_row" not in current_tags:
-            self.tree.item(new_iid, tags=tuple([*current_tags, "selected_row"]))
+            current_tags.add("selected_row")
+            self.tree.item(new_iid, tags=tuple(sorted(current_tags)))
 
         self._last_selected_iid = new_iid
         self.tree.focus(new_iid)
@@ -1692,6 +1716,7 @@ class SplitPointAnalyserGUI(tk.Tk):
     def _highlight_selected_boundary_in_plots(self) -> None:
         """Draw selection marker in plots so table↔plot↔inspector stay in sync."""
         b = self._selected_boundary_index()
+        self._selected_boundary = int(b) if b is not None else None
         for ax in (getattr(self, "ax_comm", None), getattr(self, "ax_comp", None), getattr(self, "ax_pareto", None), getattr(self, "ax_lat", None)):
             if ax is None:
                 continue
@@ -1710,10 +1735,26 @@ class SplitPointAnalyserGUI(tk.Tk):
         for ax in (self.ax_comm, self.ax_comp, self.ax_lat):
             marker = ax.axvline(float(b), color="#d32f2f", linestyle="-", linewidth=1.2, alpha=0.9)
             setattr(marker, "_split_selected_marker", True)
+
+        if self._pareto_selected_artist is not None:
+            pt = self._pareto_points_by_boundary.get(int(b))
+            if pt is None:
+                self._pareto_selected_artist.set_offsets([])
+            else:
+                self._pareto_selected_artist.set_offsets([[float(pt[0]), float(pt[1])]])
         try:
             self.canvas.draw_idle()
         except Exception:
             pass
+
+    def _effective_split_params_dict(self) -> Optional[Dict[str, Any]]:
+        params_dict = deepcopy(getattr(self, "_last_analysis_params", None))
+        if isinstance(params_dict, dict):
+            return params_dict
+        try:
+            return asdict(self._read_params())
+        except Exception:
+            return None
 
     def _sync_gui_state_from_vars(self) -> None:
         analysis_params: Dict[str, Any] = {}
@@ -1815,6 +1856,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         except ValueError as e:
             messagebox.showerror("Invalid parameters", str(e))
             return
+        self._last_analysis_params = deepcopy(asdict(params))
 
         # Run analysis in a background thread (Hailo parse-checks can take a while).
         self.btn_analyse.state(["disabled"])
@@ -3661,6 +3703,7 @@ class SplitPointAnalyserGUI(tk.Tk):
             self.analysis_result = AnalysisResult()
         self.analysis_result.candidates = list(picks)
         self._last_params = p
+        previously_selected = self._selected_boundary_index()
         self.tree.delete(*self.tree.get_children())
         self.tree.state(("!disabled",))
         self._hide_tree_clean_tooltip()
@@ -3836,6 +3879,14 @@ class SplitPointAnalyserGUI(tk.Tk):
         if self.analysis_result is None:
             self.analysis_result = AnalysisResult()
         self.analysis_result.memory_estimate = dict(self.memory_by_boundary)
+
+        if previously_selected is not None:
+            selected_iid = f"b{int(previously_selected)}"
+            if self.tree.exists(selected_iid):
+                self.tree.selection_set(selected_iid)
+                self.tree.focus(selected_iid)
+                self.tree.see(selected_iid)
+                self._sync_tree_selected_row_tag(selected_iid)
         logger.debug("Candidate table populated: rows=%d mapped=%d", len(rows_for_view), len(self._cand_by_iid))
     # ----------------------------- Plotting -----------------------------
 
@@ -3893,6 +3944,11 @@ class SplitPointAnalyserGUI(tk.Tk):
         # (3) Pareto plot: comm vs imbalance
         cand_bounds = a.get("candidate_bounds") or list(range(M))
         pts = [(float(costs[b]) / 1e6, float(imbalance[b])) for b in cand_bounds]
+        self._pareto_points_by_boundary = {
+            int(b): (float(costs[b]) / 1e6, float(imbalance[b]))
+            for b in cand_bounds
+            if 0 <= int(b) < len(costs) and 0 <= int(b) < len(imbalance)
+        }
         self.ax_pareto.scatter([pt[0] for pt in pts], [pt[1] for pt in pts], s=12)
         self.ax_pareto.set_title("Pareto: communication vs imbalance")
         self.ax_pareto.set_xlabel("Cut (MB)")
@@ -3907,6 +3963,16 @@ class SplitPointAnalyserGUI(tk.Tk):
             px = [float(costs[b]) / 1e6 for b in picks]
             py = [float(imbalance[b]) for b in picks]
             self.ax_pareto.scatter(px, py, s=40, marker="o", edgecolors="black")
+
+        self._pareto_selected_artist = self.ax_pareto.scatter(
+            [],
+            [],
+            s=120,
+            facecolors="none",
+            edgecolors="red",
+            linewidths=2,
+            zorder=10,
+        )
 
         # (4) Latency model plot
         bw_bps = asc.bandwidth_to_bytes_per_s(p.bw_value, p.bw_unit)
@@ -4105,13 +4171,18 @@ class SplitPointAnalyserGUI(tk.Tk):
         p2_path = os.path.join(out_dir, f"{base}_part2_b{b}.onnx")
         manifest_path = os.path.join(out_dir, "split_manifest.json")
 
-        strict_boundary = bool(self.var_strict_boundary.get())
+        params_dict = self._effective_split_params_dict()
+        if not isinstance(params_dict, dict):
+            messagebox.showwarning("Missing analysis settings", "Could not resolve analysis settings for split. Run Analyse first.")
+            return
 
-        prune_skip_block = bool(mapped.get("prune_skip_block", False))
-        skip_min_span = _safe_int(str(mapped.get("skip_min_span", "")))
+        strict_boundary = bool(params_dict.get("strict_boundary", self.var_strict_boundary.get()))
+
+        prune_skip_block = bool(params_dict.get("prune_skip_block", False))
+        skip_min_span = _safe_int(str(params_dict.get("skip_min_span", "")))
         if skip_min_span is None or skip_min_span < 0:
             raise ValueError("Min skip span must be an integer ≥ 0.")
-        skip_allow_last_n = _safe_int(str(mapped.get("skip_allow_last_n", "")))
+        skip_allow_last_n = _safe_int(str(params_dict.get("skip_allow_last_n", "")))
         if skip_allow_last_n is None:
             skip_allow_last_n = 0
         if skip_allow_last_n < 0:
@@ -4486,13 +4557,18 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         # Pull analysis objects once (used for strict-boundary filtering and TeX/plot export).
         a = self.analysis
-        strict_boundary = bool(self.var_strict_boundary.get())
+        params_dict = self._effective_split_params_dict()
+        if not isinstance(params_dict, dict):
+            messagebox.showwarning("Missing analysis settings", "Could not resolve analysis settings for benchmark export. Run Analyse first.")
+            return
 
-        prune_skip_block = bool(mapped.get("prune_skip_block", False))
-        skip_min_span = _safe_int(str(mapped.get("skip_min_span", "")))
+        strict_boundary = bool(params_dict.get("strict_boundary", self.var_strict_boundary.get()))
+
+        prune_skip_block = bool(params_dict.get("prune_skip_block", False))
+        skip_min_span = _safe_int(str(params_dict.get("skip_min_span", "")))
         if skip_min_span is None or skip_min_span < 0:
             raise ValueError("Min skip span must be an integer ≥ 0.")
-        skip_allow_last_n = _safe_int(str(mapped.get("skip_allow_last_n", "")))
+        skip_allow_last_n = _safe_int(str(params_dict.get("skip_allow_last_n", "")))
         if skip_allow_last_n is None:
             skip_allow_last_n = 0
         if skip_allow_last_n < 0:
@@ -6420,6 +6496,10 @@ if __name__ == "__main__":
         self.analysis_result = None
         self.selected_candidate = None
         self._last_params = None
+        self._last_analysis_params = None
+        self._selected_boundary = None
+        self._pareto_points_by_boundary = {}
+        self._pareto_selected_artist = None
         self.memory_by_boundary = {}
         try:
             self.btn_export_tex.state(["disabled"])
