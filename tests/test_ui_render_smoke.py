@@ -142,3 +142,26 @@ def test_render_analysis_smoke() -> None:
     assert app.canvas is not None
 
     root.destroy()
+
+
+def test_render_analysis_accepts_flat_payload_without_picks_params() -> None:
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk not available in environment: {exc}")
+
+    root.withdraw()
+    app = _MockApp(root)
+    app._last_params = object()
+    frame = panel_analysis.build_panel(root, app=app)
+    frame.pack(fill="both", expand=True)
+
+    mock_result = {
+        "candidates": [2, 3],
+        "analysis": {"costs_bytes": [100, 200, 300, 400], "unknown_crossing_counts": [0, 0, 0, 0]},
+    }
+    panel_analysis.render_analysis(frame, app, mock_result)
+
+    assert len(app.tree.get_children("")) == 2
+
+    root.destroy()

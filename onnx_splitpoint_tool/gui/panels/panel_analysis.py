@@ -625,9 +625,10 @@ def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
 
 def render_analysis(frame: ttk.Frame, app: Any, analysis_result: Any) -> None:
     """Single source of truth for analysis-result UI updates in the analysis panel."""
-    payload = getattr(analysis_result, "plot_data", None)
-    if not isinstance(payload, dict):
-        payload = analysis_result if isinstance(analysis_result, dict) else {}
+    payload = analysis_result if isinstance(analysis_result, dict) else {}
+    plot_data = getattr(analysis_result, "plot_data", None)
+    if isinstance(plot_data, dict):
+        payload = plot_data
 
     result_dict: Dict[str, Any] = {}
     if isinstance(analysis_result, dict):
@@ -643,10 +644,18 @@ def render_analysis(frame: ttk.Frame, app: Any, analysis_result: Any) -> None:
         candidates = []
     logger.info("UI render: candidates=%d keys=%s", len(candidates), sorted(result_dict.keys()))
 
-    analysis = payload.get("analysis")
+    analysis = payload.get("analysis", result_dict.get("analysis"))
     picks = payload.get("picks")
-    params = payload.get("params")
-    if not isinstance(analysis, dict) or not isinstance(picks, list) or params is None:
+    if not isinstance(picks, list):
+        picks = payload.get("candidates", result_dict.get("candidates"))
+    if not isinstance(picks, list):
+        picks = []
+
+    params = payload.get("params", result_dict.get("params"))
+    if params is None:
+        params = getattr(app, "_last_params", None)
+
+    if not isinstance(analysis, dict) or not picks or params is None:
         logger.warning("render_analysis skipped: incomplete payload")
         return
 
