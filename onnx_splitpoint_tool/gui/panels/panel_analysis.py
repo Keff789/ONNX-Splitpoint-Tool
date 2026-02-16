@@ -51,6 +51,20 @@ _PARAM_TOOLTIPS: Dict[str, str] = {
 def _tt(key: str, fallback: str = "") -> str:
     return _PARAM_TOOLTIPS.get(key, fallback)
 
+
+_PANEL_TOOLTIPS: Dict[str, str] = {
+    "search": "Filtert Kandidaten nach Text/Boundary zur schnellen Navigation.",
+    "search_regex": "Interpretiert den Suchtext als Regex (Fortgeschrittene).",
+    "hide_dirty": "Blendet Dirty-Splits aus und zeigt bevorzugt robuste Kandidaten.",
+    "group_semantic": "Gruppiert Kandidaten nach semantischem Übergang (z. B. Layer->Layer).",
+    "sort": "Sortiert Kandidaten nach Rang, Boundary, Cut-MB oder Clean-Status.",
+    "advanced": "Zeigt zusätzliche Kandidaten-Spalten für Detailanalyse.",
+}
+
+
+def _panel_tt(key: str, fallback: str = "") -> str:
+    return _PANEL_TOOLTIPS.get(key, fallback)
+
 GLOBAL_PRESETS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "CV Default": {
         "analysis": {
@@ -291,26 +305,26 @@ def _build_center_results(parent: ttk.Frame, app: Any) -> None:
     ttk.Label(filter_row, text="Search:").grid(row=0, column=0, sticky="w", padx=(0, 4))
     app.ent_cand_search = ttk.Entry(filter_row, textvariable=app.var_cand_search, width=28)
     app.ent_cand_search.grid(row=0, column=1, sticky="w", padx=(0, 6))
-    attach_tooltip(app.ent_cand_search, "Filtert Kandidaten nach Text oder Boundary und erleichtert die Auswahl.")
+    attach_tooltip(app.ent_cand_search, _panel_tt("search"))
     app.chk_cand_regex = ttk.Checkbutton(filter_row, text="Regex", variable=app.var_cand_search_regex, command=app._refresh_candidates_table)
     app.chk_cand_regex.grid(row=0, column=2, sticky="w", padx=(0, 8))
-    attach_tooltip(app.chk_cand_regex, "Interpretiert den Suchtext als regulären Ausdruck für präzise Filter.")
+    attach_tooltip(app.chk_cand_regex, _panel_tt("search_regex"))
     app.chk_cand_dirty = ttk.Checkbutton(filter_row, text="Hide dirty splits", variable=app.var_cand_hide_dirty, command=app._refresh_candidates_table)
     app.chk_cand_dirty.grid(row=0, column=3, sticky="w", padx=(0, 8))
-    attach_tooltip(app.chk_cand_dirty, "Blendet riskante/dirty Splits aus und zeigt nur saubere Kandidaten.")
+    attach_tooltip(app.chk_cand_dirty, _panel_tt("hide_dirty"))
     app.chk_cand_group = ttk.Checkbutton(filter_row, text="Group by semantic transition", variable=app.var_cand_group_semantic, command=app._refresh_candidates_table)
     app.chk_cand_group.grid(row=0, column=4, sticky="w", padx=(0, 8))
-    attach_tooltip(app.chk_cand_group, "Gruppiert Kandidaten nach semantischem Übergang für bessere Vergleichbarkeit.")
+    attach_tooltip(app.chk_cand_group, _panel_tt("group_semantic"))
 
     ttk.Label(filter_row, text="Sort:").grid(row=0, column=5, sticky="e", padx=(6, 4))
     app.cb_cand_sort = ttk.Combobox(filter_row, textvariable=app.var_cand_sort, state="readonly", width=14,
                                     values=["Rank ↑", "Boundary ↑", "Boundary ↓", "Cut MB ↑", "Cut MB ↓", "Clean (best)"])
     app.cb_cand_sort.grid(row=0, column=6, sticky="e", padx=(0, 8))
-    attach_tooltip(app.cb_cand_sort, "Sortiert Kandidaten nach Rang, Boundary, Cut-MB oder Clean-Qualität.")
+    attach_tooltip(app.cb_cand_sort, _panel_tt("sort"))
 
     app.chk_cand_advanced = ttk.Checkbutton(filter_row, text="Detail (Advanced)", variable=app.var_cand_advanced, command=app._refresh_candidates_table)
     app.chk_cand_advanced.grid(row=0, column=7, sticky="e")
-    attach_tooltip(app.chk_cand_advanced, "Zeigt zusätzliche Kandidaten-Spalten für tiefergehende Analyse.")
+    attach_tooltip(app.chk_cand_advanced, _panel_tt("advanced"))
     app.ent_cand_search.bind("<KeyRelease>", app._refresh_candidates_table, add="+")
     app.cb_cand_sort.bind("<<ComboboxSelected>>", app._refresh_candidates_table, add="+")
 
@@ -353,6 +367,7 @@ def _build_center_results(parent: ttk.Frame, app: Any) -> None:
     vsb.grid(row=0, column=1, sticky="ns")
     app.tree.tag_configure("pick", background="#eef6ff")
     app.tree.tag_configure("dirty", background="#fff2f2")
+    app.tree.tag_configure("selected_row", background="#b7d7ff", foreground="#000000")
     app._configure_candidate_columns()
     app.tree.bind("<<TreeviewSelect>>", app._on_tree_selection_changed, add="+")
     app.tree.bind("<Motion>", app._on_tree_motion_clean_tooltip, add="+")
@@ -629,6 +644,16 @@ def render_analysis(frame: ttk.Frame, app: Any, analysis_result: Any) -> None:
     plot_data = getattr(analysis_result, "plot_data", None)
     if isinstance(plot_data, dict):
         payload = plot_data
+
+    if not isinstance(payload, dict):
+        attr_names = [name for name in ("keys", "plot_data", "candidates", "analysis") if hasattr(analysis_result, name)]
+        logger.error(
+            "render_analysis payload is not dict: type=%s attrs=%s repr=%r",
+            type(payload).__name__,
+            attr_names,
+            analysis_result,
+        )
+        payload = {}
 
     result_dict: Dict[str, Any] = {}
     if isinstance(analysis_result, dict):
