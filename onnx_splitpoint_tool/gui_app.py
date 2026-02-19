@@ -40,7 +40,6 @@ import sys
 import threading
 import queue
 import time
-from copy import deepcopy
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -48,6 +47,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
+import tkinter.font as tkfont
 
 # Matplotlib backend must be selected BEFORE importing pyplot/backends
 import matplotlib
@@ -404,11 +404,6 @@ class SplitPointAnalyserGUI(tk.Tk):
         self._clean_tooltip_tip: Optional[tk.Toplevel] = None
         self._clean_tooltip_row: Optional[str] = None
         self._last_selected_iid: Optional[str] = None
-        self._suppress_tree_selection_event: bool = False
-        self._selected_boundary: Optional[int] = None
-        self._last_analysis_params: Optional[Dict[str, Any]] = None
-        self._pareto_points_by_boundary: Dict[int, Tuple[float, float]] = {}
-        self._pareto_selected_artist = None
 
         self._register_event_handlers()
 
@@ -1317,7 +1312,18 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         self.tree.tag_configure("pick", background="#eef6ff")
         self.tree.tag_configure("dirty", background="#fff2f2")
-        self.tree.tag_configure("selected_row", background="#cfe8ff", foreground="#000000")
+
+        # Selected row styling: prefer strong text styling over background.
+        # Background highlights can become hard to see depending on ttk theme
+        # and on top of our "pick" background.
+        try:
+            default_font = tkfont.nametofont("TkDefaultFont")
+            self._selected_row_font = tkfont.Font(self, font=default_font)
+            self._selected_row_font.configure(weight="bold")
+            self.tree.tag_configure("selected_row", foreground="#b71c1c", font=self._selected_row_font)
+        except Exception:
+            # Fallback: at least change the text color.
+            self.tree.tag_configure("selected_row", foreground="#b71c1c")
 
         self._configure_candidate_columns()
 
@@ -1617,88 +1623,102 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.events.emit_candidate_selected(self.selected_candidate)
 
     def _on_tree_selection_changed(self, event=None) -> None:
-        if not hasattr(self, "tree"):
-            return
-        if self._suppress_tree_selection_event:
-            return
-        sel = self.tree.selection()
-        iid = sel[0] if sel else (self.tree.focus() or "")
-        if not iid:
-            logger.debug("Tree selection changed: selection empty -> ignore")
-            return
-
-        if not self._is_boundary_row(iid):
-            parent = self.tree.parent(iid)
-            if parent and self._is_boundary_row(parent):
-                iid = parent
-        if not self._is_boundary_row(iid):
-            logger.debug("Tree selection changed: ignoring non-boundary iid=%s", iid)
-            return
-
-        if self.tree.selection() != (iid,):
-            self._suppress_tree_selection_event = True
-            try:
-                self.tree.selection_set(iid)
-            finally:
-                self._suppress_tree_selection_event = False
-        if self.tree.focus() != iid:
-            self.tree.focus(iid)
-        self._sync_tree_selected_row_tag(iid)
+        sel = self.tree.selection() if hasattr(self, "tree") else ()
+        logger.debug("Tree selection event: sel=%s", sel)
+        self._sync_tree_selected_row_tag()
         boundary = self._selected_boundary_index()
+        iid = sel[0] if sel else ""
         tags = self.tree.item(iid, "tags") if iid else ()
-        logger.debug("Tree selection changed: iid=%s, tags=%s, boundary=%s", iid, tags, boundary)
+        logger.info("Tree selection changed: iid=%s, tags=%s, boundary=%s", iid, tags, boundary)
         self._set_selected_candidate_from_boundary(boundary)
 
-    def _sync_tree_selected_row_tag(self, selected_iid: Optional[str] = None) -> None:
+    def _sync_tree_selected_row_tag(self) -> None:
+        """Keep the selected candidate row visually highlighted in the table.
+
+        We intentionally keep the highlight even if ttk temporarily reports an empty
+        selection (this was observed on some Windows 10 setups, especially when
+        clicking quickly or on icon columns).
+
+        The visual cue is implemented via the `selected_row` tag (red + bold text).
+        """
         if not hasattr(self, "tree"):
             self._last_selected_iid = None
             return
 
-        if selected_iid:
-            new_iid = selected_iid
-        else:
-            sel = self.tree.selection()
-            new_iid = sel[0] if sel else (self.tree.focus() or None)
-        old_iid = self._last_selected_iid
+        target_iid = None
 
-        if old_iid and self.tree.exists(old_iid) and old_iid != new_iid:
-            old_tags = tuple(t for t in self.tree.item(old_iid, "tags") if t != "selected_row")
-            self.tree.item(old_iid, tags=old_tags)
+        # Prefer current Treeview selection (map child row -> parent boundary row)
+        sel = self.tree.selection()
+        if sel:
+            iid0 = sel[0]
+            if iid0 and self.tree.exists(iid0):
+                if iid0 in self._cand_by_iid:
+                    target_iid = iid0
+                else:
+                    parent = self.tree.parent(iid0)
+                    if parent and parent in self._cand_by_iid:
+                        target_iid = parent
 
-        if not new_iid or not self.tree.exists(new_iid):
-            self._last_selected_iid = None
+        # Fallback: resolve by boundary using the fast lookup map.
+        boundary = self._selected_boundary_index()
+        if target_iid is None and boundary is not None:
+            try:
+                target_iid = getattr(self, "_iid_by_boundary", {}).get(int(boundary))
+            except Exception:
+                target_iid = None
+
+        # If we still cannot resolve a row, keep the previous highlight.
+        if not target_iid or not self.tree.exists(target_iid):
             return
 
-        current_tags = [t for t in (self.tree.item(new_iid, "tags") or []) if t != "selected_row"]
-        current_tags.append("selected_row")
-        self.tree.item(new_iid, tags=tuple(current_tags))
+        old_iid = getattr(self, "_last_selected_iid", None)
+        if old_iid and old_iid != target_iid and self.tree.exists(old_iid):
+            try:
+                old_tags = tuple(t for t in self.tree.item(old_iid, "tags") if t != "selected_row")
+                self.tree.item(old_iid, tags=old_tags)
+            except Exception:
+                pass
 
-        self._last_selected_iid = new_iid
-        self.tree.focus(new_iid)
-        self.tree.see(new_iid)
+        # Apply highlight to target row.
+        #
+        # IMPORTANT: ttk.Treeview does *not* support "tag raise" and tag priority
+        # is derived from the tag order on the item. When multiple tags define
+        # the same option (e.g. background), the earlier tags win.
+        #
+        # Since all rows carry the "pick" tag (with a background), we must place
+        # "selected_row" FIRST so its styling (foreground/font) is visible.
+        try:
+            tags = [t for t in self.tree.item(target_iid, "tags") if t != "selected_row"]
+            tags = ["selected_row"] + list(tags)
+            self.tree.item(target_iid, tags=tuple(tags))
+        except Exception:
+            pass
+
+        self._last_selected_iid = target_iid
+        try:
+            self.tree.focus(target_iid)
+            self.tree.see(target_iid)
+        except Exception:
+            pass
 
     def _on_tree_button_1(self, evt=None):
-        """Handle candidate-table clicks with stable row selection behavior."""
+        """Handle candidate-table left-clicks; only intercept clean-column clicks."""
         if evt is None or not hasattr(self, "tree"):
             return None
         row_id = self.tree.identify_row(evt.y)
         col_id = self.tree.identify_column(evt.x)
-        region = self.tree.identify("region", evt.x, evt.y)
-        logger.debug("Tree click: row=%s col=%s region=%s", row_id, col_id, region)
-
-        if row_id:
-            target_iid = row_id
-            if (row_id not in self._cand_by_iid) and self.tree.parent(row_id) in self._cand_by_iid:
-                target_iid = self.tree.parent(row_id)
-            if target_iid in self._cand_by_iid:
-                self.tree.selection_set(target_iid)
-                self.tree.focus(target_iid)
-                self.tree.see(target_iid)
-                self._on_tree_selection_changed()
-                return "break"
-
-        if region in {"nothing", "heading", "separator"}:
-            self.tree.selection_remove(self.tree.selection())
+        logger.debug("Tree click: row=%s col=%s", row_id, col_id)
+        if col_id == "#2" and row_id and row_id in self._cand_by_iid:
+            logger.debug("Intercepted clean-column click for row=%s", row_id)
+            self.tree.selection_set(row_id)
+            try:
+                # Ensure the widget keeps focus so native selection visuals (if any)
+                # remain visible.
+                self.tree.focus(row_id)
+                self.tree.focus_set()
+            except Exception:
+                pass
+            return "break"
         return None
 
     def _on_plot_click_select_candidate(self, event) -> None:
@@ -1734,48 +1754,58 @@ class SplitPointAnalyserGUI(tk.Tk):
     def _highlight_selected_boundary_in_plots(self) -> None:
         """Draw selection marker in plots so table↔plot↔inspector stay in sync."""
         b = self._selected_boundary_index()
-        self._selected_boundary = int(b) if b is not None else None
-        for ax in (getattr(self, "ax_comm", None), getattr(self, "ax_comp", None), getattr(self, "ax_pareto", None), getattr(self, "ax_lat", None)):
+
+        # Remove previous selection markers (we mark them via a private attribute)
+        for ax in (
+            getattr(self, "ax_comm", None),
+            getattr(self, "ax_comp", None),
+            getattr(self, "ax_pareto", None),
+            getattr(self, "ax_lat", None),
+        ):
             if ax is None:
                 continue
-            for line in list(ax.lines):
+            for line in list(getattr(ax, "lines", [])):
                 if getattr(line, "_split_selected_marker", False):
                     try:
                         line.remove()
                     except Exception:
                         pass
+
         if b is None:
             try:
                 self.canvas.draw_idle()
             except Exception:
                 pass
             return
+
+        # 1D plots: boundary index marker
         for ax in (self.ax_comm, self.ax_comp, self.ax_lat):
             marker = ax.axvline(float(b), color="#d32f2f", linestyle="-", linewidth=1.2, alpha=0.9)
             setattr(marker, "_split_selected_marker", True)
 
-        if self._pareto_selected_artist is not None:
-            pt = self._pareto_points_by_boundary.get(int(b))
-            if pt is None:
-                # Matplotlib expects offsets shaped as Nx2; hide marker instead of using [].
-                self._pareto_selected_artist.set_visible(False)
-                self._pareto_selected_artist.set_offsets([[0.0, 0.0]])
-            else:
-                self._pareto_selected_artist.set_visible(True)
-                self._pareto_selected_artist.set_offsets([[float(pt[0]), float(pt[1])]])
+        # Pareto plot: highlight the selected point with a simple cross (no picking)
+        try:
+            axp = getattr(self, "ax_pareto", None)
+            pd = getattr(getattr(self, "analysis_result", None), "plot_data", None)
+            if axp is not None and isinstance(pd, dict):
+                costs = pd.get("costs_bytes")
+                imb = pd.get("imbalance")
+                bi = int(b)
+                if isinstance(costs, (list, tuple)) and isinstance(imb, (list, tuple)) and 0 <= bi < len(costs) and 0 <= bi < len(imb):
+                    xb = costs[bi]
+                    yb = imb[bi]
+                    if xb is not None and yb is not None:
+                        x = float(xb) / 1e6  # bytes -> MB (matches pareto x-axis)
+                        y = float(yb)
+                        (pm,) = axp.plot([x], [y], marker="x", markersize=10, markeredgewidth=2, color="#d32f2f", linestyle="None")
+                        setattr(pm, "_split_selected_marker", True)
+        except Exception:
+            pass
+
         try:
             self.canvas.draw_idle()
         except Exception:
             pass
-
-    def _effective_split_params_dict(self) -> Optional[Dict[str, Any]]:
-        params_dict = deepcopy(getattr(self, "_last_analysis_params", None))
-        if isinstance(params_dict, dict):
-            return params_dict
-        try:
-            return asdict(self._read_params())
-        except Exception:
-            return None
 
     def _sync_gui_state_from_vars(self) -> None:
         analysis_params: Dict[str, Any] = {}
@@ -1869,28 +1899,14 @@ class SplitPointAnalyserGUI(tk.Tk):
 
     def _on_analyse(self):
         if not self.gui_state.current_model_path:
-            logger.warning("Analyse clicked but no model_path is set")
             messagebox.showwarning("No model", "Please open an ONNX model first.")
             return
 
         try:
             params = self._read_params()
         except ValueError as e:
-            logger.warning("Analyse aborted due to invalid parameters: %s", e)
             messagebox.showerror("Invalid parameters", str(e))
             return
-
-        logger.info(
-            "Analyse clicked: model_path=%s params_summary=%s",
-            self.gui_state.current_model_path,
-            {
-                "topk": getattr(params, "topk", None),
-                "min_gap": getattr(params, "min_gap", None),
-                "ranking": getattr(params, "ranking", None),
-                "llm_enable": getattr(params, "llm_enable", None),
-                "cluster_mode": getattr(params, "cluster_mode", None),
-            },
-        )
 
         # Run analysis in a background thread (Hailo parse-checks can take a while).
         self.btn_analyse.state(["disabled"])
@@ -1907,13 +1923,6 @@ class SplitPointAnalyserGUI(tk.Tk):
         pb = ttk.Progressbar(dlg, mode="indeterminate", length=360)
         pb.pack(padx=14, pady=(0, 14))
         pb.start(10)
-        dlg_shown_at = time.perf_counter()
-        logger.info("Progress dialog shown")
-        try:
-            dlg.update_idletasks()
-            dlg.update()
-        except Exception:
-            logger.exception("Failed to force progress dialog render")
 
         # Avoid leaving a half-finished UI state if the user closes the dialog.
         dlg.protocol("WM_DELETE_WINDOW", lambda: None)
@@ -1924,34 +1933,20 @@ class SplitPointAnalyserGUI(tk.Tk):
             q.put(("progress", msg))
 
         def _worker() -> None:
-            started_at = time.perf_counter()
-            logger.info("Analysis thread start")
             try:
                 analysis = self._analyse_model(self.gui_state.current_model_path, params, progress_cb=_progress)
                 _progress("Selecting candidates...")
                 picks = self._select_picks(analysis, params, progress_cb=_progress)
                 _progress("Computing diagnostics...")
                 self._compute_nordstern(analysis, picks, params)
-                elapsed_s = time.perf_counter() - started_at
-                logger.info("Analysis thread end (secs=%.3f, candidates=%d)", elapsed_s, len(picks) if isinstance(picks, list) else -1)
                 q.put(("ok", analysis, picks))
             except Exception:
-                elapsed_s = time.perf_counter() - started_at
-                logger.info("Analysis thread end (secs=%.3f, candidates=%d)", elapsed_s, -1)
                 logging.exception("Analysis failed")
                 import traceback
 
                 q.put(("err", traceback.format_exc()))
 
         threading.Thread(target=_worker, daemon=True).start()
-
-        def _finish_with_min_dialog_time(done_fn: Callable[[], None]) -> None:
-            elapsed = time.perf_counter() - dlg_shown_at
-            remaining_s = max(0.0, 0.30 - elapsed)
-            if remaining_s > 0.0:
-                self.after(int(remaining_s * 1000), done_fn)
-            else:
-                done_fn()
 
         def _poll() -> None:
             try:
@@ -1968,30 +1963,21 @@ class SplitPointAnalyserGUI(tk.Tk):
                             plot_data={"analysis": self.analysis, "picks": list(self.current_picks), "params": params},
                         )
                         self._last_params = params
-                        self._last_analysis_params = deepcopy(asdict(params))
                         self.events.emit_analysis_done(self.analysis_result)
                         # Persist Hailo cache updates.
                         self._save_hailo_cache()
-                        def _finish_ok() -> None:
-                            pb.stop()
-                            dlg.destroy()
-                            self.btn_analyse.state(["!disabled"])
-                            self._set_ui_state(AppUiState.ANALYSED)
-
-                        _finish_with_min_dialog_time(_finish_ok)
+                        pb.stop()
+                        dlg.destroy()
+                        self.btn_analyse.state(["!disabled"])
+                        self._set_ui_state(AppUiState.ANALYSED)
                         return
                     elif kind == "err":
                         err_text = str(item[1])
-                        self._last_analysis_params = None
-
-                        def _finish_err() -> None:
-                            pb.stop()
-                            dlg.destroy()
-                            self.btn_analyse.state(["!disabled"])
-                            self._set_ui_state(self._infer_ui_state())
-                            messagebox.showerror("Analysis failed", err_text)
-
-                        _finish_with_min_dialog_time(_finish_err)
+                        pb.stop()
+                        dlg.destroy()
+                        self.btn_analyse.state(["!disabled"])
+                        self._set_ui_state(self._infer_ui_state())
+                        messagebox.showerror("Analysis failed", err_text)
                         return
             except queue.Empty:
                 pass
@@ -3767,11 +3753,11 @@ class SplitPointAnalyserGUI(tk.Tk):
             self.analysis_result = AnalysisResult()
         self.analysis_result.candidates = list(picks)
         self._last_params = p
-        previously_selected = self._selected_boundary_index()
         self.tree.delete(*self.tree.get_children())
         self.tree.state(("!disabled",))
         self._hide_tree_clean_tooltip()
         self._cand_by_iid = {}
+        self._iid_by_boundary = {}
         self._tree_clean_tooltips = {}
         self._last_selected_iid = None
 
@@ -3919,6 +3905,10 @@ class SplitPointAnalyserGUI(tk.Tk):
                 tags=(("pick", "dirty") if row["clean_symbol"] != "✅" else ("pick",)),
             )
             self._cand_by_iid[iid] = row
+            try:
+                self._iid_by_boundary[int(row.get("boundary"))] = iid
+            except Exception:
+                pass
             self._tree_clean_tooltips[parent] = str(row.get("clean_tooltip", ""))
 
             if int(row.get("unknown_count", 0)) > 0:
@@ -3943,14 +3933,6 @@ class SplitPointAnalyserGUI(tk.Tk):
         if self.analysis_result is None:
             self.analysis_result = AnalysisResult()
         self.analysis_result.memory_estimate = dict(self.memory_by_boundary)
-
-        if previously_selected is not None:
-            selected_iid = f"b{int(previously_selected)}"
-            if self.tree.exists(selected_iid):
-                self.tree.selection_set(selected_iid)
-                self.tree.focus(selected_iid)
-                self.tree.see(selected_iid)
-                self._sync_tree_selected_row_tag(selected_iid)
         logger.debug("Candidate table populated: rows=%d mapped=%d", len(rows_for_view), len(self._cand_by_iid))
     # ----------------------------- Plotting -----------------------------
 
@@ -4008,11 +3990,6 @@ class SplitPointAnalyserGUI(tk.Tk):
         # (3) Pareto plot: comm vs imbalance
         cand_bounds = a.get("candidate_bounds") or list(range(M))
         pts = [(float(costs[b]) / 1e6, float(imbalance[b])) for b in cand_bounds]
-        self._pareto_points_by_boundary = {
-            int(b): (float(costs[b]) / 1e6, float(imbalance[b]))
-            for b in cand_bounds
-            if 0 <= int(b) < len(costs) and 0 <= int(b) < len(imbalance)
-        }
         self.ax_pareto.scatter([pt[0] for pt in pts], [pt[1] for pt in pts], s=12)
         self.ax_pareto.set_title("Pareto: communication vs imbalance")
         self.ax_pareto.set_xlabel("Cut (MB)")
@@ -4027,16 +4004,6 @@ class SplitPointAnalyserGUI(tk.Tk):
             px = [float(costs[b]) / 1e6 for b in picks]
             py = [float(imbalance[b]) for b in picks]
             self.ax_pareto.scatter(px, py, s=40, marker="o", edgecolors="black")
-
-        self._pareto_selected_artist = self.ax_pareto.scatter(
-            [],
-            [],
-            s=120,
-            facecolors="none",
-            edgecolors="red",
-            linewidths=2,
-            zorder=10,
-        )
 
         # (4) Latency model plot
         bw_bps = asc.bandwidth_to_bytes_per_s(p.bw_value, p.bw_unit)
@@ -4076,9 +4043,6 @@ class SplitPointAnalyserGUI(tk.Tk):
                 transform=self.ax_lat.transAxes,
             )
 
-        self._highlight_selected_boundary_in_plots()
-        self.canvas.draw_idle()
-
         self.analysis_result.plot_data = {
             "costs_bytes": list(costs),
             "flops_left_prefix": list(flops_left_prefix),
@@ -4086,6 +4050,9 @@ class SplitPointAnalyserGUI(tk.Tk):
             "imbalance": list(imbalance),
             "selected_candidates": list(picks),
         }
+
+        self._highlight_selected_boundary_in_plots()
+        self.canvas.draw_idle()
 
     # ----------------------------- Split models -----------------------------
 
@@ -4177,16 +4144,9 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         b = self._selected_boundary_index()
         if b is None:
-            logger.warning("Split aborted: no candidate boundary selected")
-            messagebox.showwarning(
+            messagebox.showinfo(
                 "Select a boundary", "Select a *boundary* row in the table (not a ↳ tensor row)."
             )
-            return
-        try:
-            b = int(b)
-        except Exception:
-            logger.warning("Split aborted: selected boundary is not an int (value=%r)", b)
-            messagebox.showwarning("Invalid boundary", "Selected boundary is invalid. Please select a boundary row again.")
             return
 
         a = self.analysis
@@ -4242,26 +4202,13 @@ class SplitPointAnalyserGUI(tk.Tk):
         p2_path = os.path.join(out_dir, f"{base}_part2_b{b}.onnx")
         manifest_path = os.path.join(out_dir, "split_manifest.json")
 
-        params_dict = deepcopy(getattr(self, "_last_analysis_params", None))
-        if not isinstance(params_dict, dict):
-            try:
-                params_dict = asdict(self._read_params())
-            except Exception:
-                params_dict = None
-        if not isinstance(params_dict, dict):
-            logger.warning("Split aborted: unable to resolve split params")
-            messagebox.showwarning("Missing analysis settings", "Could not resolve analysis settings for split. Run Analyse first.")
-            return
+        strict_boundary = bool(self.var_strict_boundary.get())
 
-        logger.info("Split selected boundary=%s, out_dir=%s", b, out_dir)
-
-        strict_boundary = bool(params_dict.get("strict_boundary", self.var_strict_boundary.get()))
-
-        prune_skip_block = bool(params_dict.get("prune_skip_block", False))
-        skip_min_span = _safe_int(str(params_dict.get("skip_min_span", "")))
+        prune_skip_block = bool(mapped.get("prune_skip_block", False))
+        skip_min_span = _safe_int(str(mapped.get("skip_min_span", "")))
         if skip_min_span is None or skip_min_span < 0:
             raise ValueError("Min skip span must be an integer ≥ 0.")
-        skip_allow_last_n = _safe_int(str(params_dict.get("skip_allow_last_n", "")))
+        skip_allow_last_n = _safe_int(str(mapped.get("skip_allow_last_n", "")))
         if skip_allow_last_n is None:
             skip_allow_last_n = 0
         if skip_allow_last_n < 0:
@@ -4636,18 +4583,13 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         # Pull analysis objects once (used for strict-boundary filtering and TeX/plot export).
         a = self.analysis
-        params_dict = self._effective_split_params_dict()
-        if not isinstance(params_dict, dict):
-            messagebox.showwarning("Missing analysis settings", "Could not resolve analysis settings for benchmark export. Run Analyse first.")
-            return
+        strict_boundary = bool(self.var_strict_boundary.get())
 
-        strict_boundary = bool(params_dict.get("strict_boundary", self.var_strict_boundary.get()))
-
-        prune_skip_block = bool(params_dict.get("prune_skip_block", False))
-        skip_min_span = _safe_int(str(params_dict.get("skip_min_span", "")))
+        prune_skip_block = bool(mapped.get("prune_skip_block", False))
+        skip_min_span = _safe_int(str(mapped.get("skip_min_span", "")))
         if skip_min_span is None or skip_min_span < 0:
             raise ValueError("Min skip span must be an integer ≥ 0.")
-        skip_allow_last_n = _safe_int(str(params_dict.get("skip_allow_last_n", "")))
+        skip_allow_last_n = _safe_int(str(mapped.get("skip_allow_last_n", "")))
         if skip_allow_last_n is None:
             skip_allow_last_n = 0
         if skip_allow_last_n < 0:
@@ -6575,10 +6517,6 @@ if __name__ == "__main__":
         self.analysis_result = None
         self.selected_candidate = None
         self._last_params = None
-        self._last_analysis_params = None
-        self._selected_boundary = None
-        self._pareto_points_by_boundary = {}
-        self._pareto_selected_artist = None
         self.memory_by_boundary = {}
         try:
             self.btn_export_tex.state(["disabled"])

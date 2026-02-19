@@ -64,20 +64,6 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
     def _handle_analysis_done(self, analysis_result) -> None:
         """Route analysis rendering through panel_analysis in the Tk main thread."""
 
-        keys = []
-        if isinstance(analysis_result, dict):
-            keys = sorted(str(k) for k in analysis_result.keys())
-        elif hasattr(analysis_result, "__dict__"):
-            try:
-                keys = sorted(str(k) for k in dict(getattr(analysis_result, "__dict__", {}) or {}).keys())
-            except Exception:
-                keys = []
-        logger.info(
-            "UI handle_analysis_done called, type(result)=%s, keys=%s",
-            type(analysis_result).__name__,
-            keys,
-        )
-
         def _render() -> None:
             panel = self.panel_frames.get("analysis") if hasattr(self, "panel_frames") else None
             if panel is None:
