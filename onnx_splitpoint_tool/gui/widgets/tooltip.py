@@ -1,153 +1,120 @@
-"""Lightweight tooltip helpers for Tk widgets."""
+"""Lightweight tooltip helper for Tkinter/ttk widgets.
+
+This module intentionally avoids external dependencies (e.g. ttkbootstrap) and
+works with plain Tkinter.
+
+Usage:
+    from ..widgets.tooltip import attach_tooltip
+    attach_tooltip(some_widget, "Hello")
+"""
 
 from __future__ import annotations
 
 import tkinter as tk
-import weakref
-from typing import Dict, Optional
+from typing import Optional
 
 
-class _TooltipController:
-    def __init__(self, widget: tk.Misc, text: str, delay_ms: int = 500):
-        self.widget = widget
-        self.text = str(text or "")
-        self.delay_ms = max(0, int(delay_ms))
-        self._after_id: Optional[str] = None
-        self._tip_window: Optional[tk.Toplevel] = None
-        self._label: Optional[tk.Label] = None
-        self._bind_ids: Dict[str, str] = {}
+def attach_tooltip(
+    widget: tk.Widget,
+    text: str,
+    *,
+    delay_ms: int = 500,
+    wraplength: int = 360,
+) -> None:
+    """Attach a hover tooltip to *widget*.
 
-        self._bind_ids["<Enter>"] = widget.bind("<Enter>", self._on_enter, add="+")
-        self._bind_ids["<Leave>"] = widget.bind("<Leave>", self._on_leave, add="+")
-        self._bind_ids["<ButtonPress>"] = widget.bind("<ButtonPress>", self._on_leave, add="+")
-        self._bind_ids["<FocusOut>"] = widget.bind("<FocusOut>", self._on_leave, add="+")
-        self._bind_ids["<Destroy>"] = widget.bind("<Destroy>", self._on_destroy, add="+")
+    Parameters
+    ----------
+    widget:
+        Tk widget to attach tooltip to.
+    text:
+        Tooltip text.
+    delay_ms:
+        Delay before showing tooltip.
+    wraplength:
+        Pixel wrap length for tooltip label.
 
-    def update_text(self, text: str) -> None:
-        self.text = str(text or "")
-        if self._label is not None:
-            self._label.configure(text=self.text)
+    Notes
+    -----
+    - Tooltip is destroyed on <Leave>, <ButtonPress>, and <Destroy>.
+    - Safe against widgets being destroyed while the tooltip is scheduled.
+    """
 
-    def detach(self) -> None:
-        self._cancel()
-        self._hide()
-        for seq, bind_id in list(self._bind_ids.items()):
+    if not text:
+        return
+
+    state: dict[str, Optional[object]] = {"after": None, "tip": None}
+
+    def _destroy_tip() -> None:
+        tip = state.get("tip")
+        if tip is not None:
             try:
-                self.widget.unbind(seq, bind_id)
+                if isinstance(tip, tk.Toplevel) and tip.winfo_exists():
+                    tip.destroy()
             except Exception:
                 pass
-        self._bind_ids.clear()
+        state["tip"] = None
 
-    def _on_enter(self, _event=None) -> None:
-        self._cancel()
-        if not self.text.strip():
-            return
-        try:
-            self._after_id = self.widget.after(self.delay_ms, self._show)
-        except Exception:
-            self._after_id = None
-
-    def _on_leave(self, _event=None) -> None:
-        self._cancel()
-        self._hide()
-
-    def _on_destroy(self, _event=None) -> None:
-        self.detach()
-
-    def _cancel(self) -> None:
-        if self._after_id is not None:
+    def _cancel_after() -> None:
+        after_id = state.get("after")
+        if after_id is not None:
             try:
-                self.widget.after_cancel(self._after_id)
+                widget.after_cancel(after_id)  # type: ignore[arg-type]
             except Exception:
                 pass
-            self._after_id = None
+        state["after"] = None
 
-    def _show(self) -> None:
-        self._after_id = None
-        if self._tip_window is not None:
-            return
+    def _hide(_event=None) -> None:
+        _cancel_after()
+        _destroy_tip()
+
+    def _show() -> None:
+        # If widget is gone, do nothing.
         try:
-            root = self.widget.winfo_toplevel()
-            tw = tk.Toplevel(root)
+            if not widget.winfo_exists():
+                return
         except Exception:
             return
-        tw.wm_overrideredirect(True)
-        try:
-            tw.attributes("-topmost", True)
-        except Exception:
-            pass
 
-        label = tk.Label(
-            tw,
-            text=self.text,
+        # Avoid duplicates.
+        _destroy_tip()
+
+        # Position below the widget.
+        try:
+            x = widget.winfo_rootx() + 12
+            y = widget.winfo_rooty() + widget.winfo_height() + 8
+        except Exception:
+            return
+
+        tip = tk.Toplevel(widget)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f"+{x}+{y}")
+
+        # Use a plain tk.Label so background/foreground are guaranteed.
+        lbl = tk.Label(
+            tip,
+            text=text,
             justify=tk.LEFT,
-            anchor="w",
+            background="#ffffe0",
+            foreground="#000000",
             relief=tk.SOLID,
             borderwidth=1,
-            background="#fffce8",
-            foreground="#222222",
-            padx=8,
-            pady=4,
-            font=("TkDefaultFont", 9),
+            wraplength=wraplength,
         )
-        label.pack()
-        self._tip_window = tw
-        self._label = label
+        lbl.pack(ipadx=6, ipady=4)
 
-        self._position_tip()
+        state["tip"] = tip
 
-    def _position_tip(self) -> None:
-        if self._tip_window is None:
-            return
-        tw = self._tip_window
+    def _schedule(_event=None) -> None:
+        _cancel_after()
+        _destroy_tip()
         try:
-            pointer_x = self.widget.winfo_pointerx()
-            pointer_y = self.widget.winfo_pointery()
-            x = pointer_x + 14
-            y = pointer_y + 18
+            state["after"] = widget.after(delay_ms, _show)
         except Exception:
-            x = self.widget.winfo_rootx() + self.widget.winfo_width() + 12
-            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+            state["after"] = None
 
-        tw.update_idletasks()
-        w = tw.winfo_reqwidth()
-        h = tw.winfo_reqheight()
-
-        screen_w = tw.winfo_screenwidth()
-        screen_h = tw.winfo_screenheight()
-        pad = 6
-        x = max(pad, min(int(x), int(screen_w - w - pad)))
-        y = max(pad, min(int(y), int(screen_h - h - pad)))
-
-        tw.geometry(f"+{x}+{y}")
-
-    def _hide(self) -> None:
-        if self._tip_window is not None:
-            try:
-                self._tip_window.destroy()
-            except Exception:
-                pass
-        self._tip_window = None
-        self._label = None
-
-
-_REGISTRY: "weakref.WeakKeyDictionary[tk.Misc, _TooltipController]" = weakref.WeakKeyDictionary()
-
-
-def attach_tooltip(widget: tk.Misc, text: str, delay_ms: int = 500) -> None:
-    """Attach or update a tooltip for a widget."""
-    if widget is None:
-        return
-    ctrl = _REGISTRY.get(widget)
-    if ctrl is None:
-        _REGISTRY[widget] = _TooltipController(widget, text=text, delay_ms=delay_ms)
-        return
-    ctrl.delay_ms = max(0, int(delay_ms))
-    ctrl.update_text(text)
-
-
-def detach_tooltip(widget: tk.Misc) -> None:
-    """Detach tooltip and cleanup bindings/window."""
-    ctrl = _REGISTRY.pop(widget, None)
-    if ctrl is not None:
-        ctrl.detach()
+    # Bind with add="+" to not override existing handlers.
+    widget.bind("<Enter>", _schedule, add="+")
+    widget.bind("<Leave>", _hide, add="+")
+    widget.bind("<ButtonPress>", _hide, add="+")
+    widget.bind("<Destroy>", _hide, add="+")

@@ -19,23 +19,85 @@ def initializer_nbytes(tensor_proto: TensorProto) -> int:
     return int(n) * int(dtype_nbytes(int(tensor_proto.data_type), default=4))
 
 
+def _constant_node_tensor_nbytes(node: onnx.NodeProto) -> int:
+    """Best-effort size (bytes) of a Constant node output tensor.
+
+    We mainly care about Constant nodes that hold large weight tensors (common for some
+    exporters). If we can't reliably infer the tensor, we return 0 and simply don't
+    count it as persistent weight memory.
+    """
+    try:
+        # Typical ONNX Constant uses an attribute named "value" with a TensorProto.
+        for a in getattr(node, "attribute", []) or []:
+            if getattr(a, "name", None) == "value" and getattr(a, "type", None) == onnx.AttributeProto.TENSOR:
+                t = getattr(a, "t", None)
+                if t is not None:
+                    return int(initializer_nbytes(t))
+        # Some Constant nodes use sparse_value.
+        for a in getattr(node, "attribute", []) or []:
+            if getattr(a, "name", None) == "sparse_value" and getattr(a, "type", None) == onnx.AttributeProto.SPARSE_TENSOR:
+                st = getattr(a, "sparse_tensor", None)
+                if st is not None and getattr(st, "values", None) is not None:
+                    return int(initializer_nbytes(st.values))
+    except Exception:
+        return 0
+    return 0
+
+
 def precompute_initializer_spans(model: onnx.ModelProto, nodes: List[onnx.NodeProto], order: List[int]) -> Dict[str, Tuple[int, int, int]]:
+    """Compute consumer-span ranges for persistent tensors.
+
+    Historically we only accounted for graph initializers. Some exporters, however,
+    encode large weight tensors as Constant nodes instead of initializers. Those
+    constants should still count towards RAM usage and are typically replicated into
+    the split subgraphs (similar to initializers).
+
+    We therefore treat BOTH:
+      - model.graph.initializer tensors
+      - outputs of Constant nodes (when we can infer their byte size)
+
+    as persistent tensors and compute (min_consumer_pos, max_consumer_pos, nbytes).
+    """
     pos_of = {int(n): i for i, n in enumerate(order)}
+
+    # Build consumer positions for every value name by scanning node inputs once.
     consumers: Dict[str, List[int]] = {}
     for idx, node in enumerate(nodes):
         p = pos_of.get(idx)
         if p is None:
             continue
-        for inp in node.input:
+        for inp in getattr(node, "input", []) or []:
             if inp:
-                consumers.setdefault(inp, []).append(int(p))
+                consumers.setdefault(str(inp), []).append(int(p))
 
     spans: Dict[str, Tuple[int, int, int]] = {}
+
+    # 1) Standard ONNX initializers
     for init in model.graph.initializer:
-        c = consumers.get(init.name) or []
+        name = str(init.name)
+        c = consumers.get(name) or []
         if not c:
             continue
-        spans[init.name] = (min(c), max(c), initializer_nbytes(init))
+        spans[name] = (min(c), max(c), initializer_nbytes(init))
+
+    # 2) Constant node outputs (weights encoded as nodes)
+    for node in nodes:
+        if str(getattr(node, "op_type", "")) != "Constant":
+            continue
+        nbytes = int(_constant_node_tensor_nbytes(node))
+        if nbytes <= 0:
+            continue
+        outs = [str(o) for o in getattr(node, "output", []) or [] if o]
+        if not outs:
+            continue
+        # Constant nodes are expected to have a single output; to avoid overcounting,
+        # assign the tensor size to the first output only.
+        out0 = outs[0]
+        c = consumers.get(out0) or []
+        if not c:
+            continue
+        spans[out0] = (min(c), max(c), nbytes)
+
     return spans
 
 

@@ -114,6 +114,51 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
                     logger.exception("Failed to set notebook tab state for '%s'", tab_key)
 
 
+    def _refresh_memory_fit_inspector(self) -> None:
+        """Refresh the Memory Fit widget in the Analyse tab (Candidate Inspector).
+
+        This is used when hardware selections (accelerators) change without changing the selected
+        candidate row, so the Memory Fit bars update immediately.
+        """
+        try:
+            panel = self.panel_frames.get("analysis") if hasattr(self, "panel_frames") else None
+            if panel is None or not hasattr(panel, "memory_fit"):
+                return
+
+            boundary = None
+            try:
+                boundary = self._selected_boundary_index()
+            except Exception:
+                boundary = None
+            if boundary is None:
+                return
+
+            # Use the Hardware tab selection as the source of truth (fallback to
+            # legacy memory-forecast vars if needed).
+            left_name = ""
+            right_name = ""
+            for attr in ("var_hw_left_accel", "var_memf_left_accel"):
+                try:
+                    left_name = getattr(self, attr).get()
+                    break
+                except Exception:
+                    pass
+            for attr in ("var_hw_right_accel", "var_memf_right_accel"):
+                try:
+                    right_name = getattr(self, attr).get()
+                    break
+                except Exception:
+                    pass
+
+            estimate = self._get_memory_stats_for_boundary(
+                boundary, left_accel_name=left_name, right_accel_name=right_name
+            )
+            panel.memory_fit.update(estimate)
+        except Exception:
+            # Keep UI responsive even if memory estimation fails.
+            return
+
+
 def main() -> None:
     """Start the Tk GUI application."""
     log_path = _setup_gui_logging()

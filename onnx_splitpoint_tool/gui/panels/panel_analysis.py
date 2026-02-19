@@ -14,42 +14,9 @@ from matplotlib.figure import Figure
 from ..analysis_params import ANALYSIS_PARAM_SPECS
 from ..widgets.collapsible_section import CollapsibleSection
 from ..widgets.memory_fit import MemoryFitWidget
-from ..widgets.tooltip import attach_tooltip
 
 logger = logging.getLogger(__name__)
 
-
-
-
-_PARAM_TOOLTIPS: Dict[str, str] = {
-    "topk": "Wie viele Kandidaten nach Score angezeigt werden (mehr = mehr Auswahl, aber mehr Aufwand).",
-    "min_gap": "Mindestabstand zwischen Splits in Operator-Schritten (vermeidet nahe Duplikate).",
-    "min_compute_pct": "Erzwingt Mindest-Compute auf beiden Seiten, damit keine triviale Seite entsteht.",
-    "batch_override": "Überschreibt die Batchgröße für Schätzungen, falls das Modell keine feste Batch hat.",
-    "assume_bpe": "Annahme für Bytes pro Aktivierungs-Element bei unbekanntem Datentyp.",
-    "exclude_trivial": "Blendet Splits an triviale Ops aus und reduziert unbrauchbare Vorschläge.",
-    "only_single_tensor": "Zeigt nur Splits mit genau einem Crossing-Tensor für einfache Schnittstellen.",
-    "cluster_best_per_region": "Nimmt pro Region nur den besten Kandidaten und macht die Liste übersichtlicher.",
-    "cluster_region_ops": "Regiongröße in Ops für das Kandidaten-Clustering (auto nutzt Heuristik).",
-    "cluster_mode": "Wählt das Clustering-Verfahren (Auto/LLM-semantisch/gleichmäßig).",
-    "rank": "Legt fest, ob nach Score, Cut oder Latenz sortiert wird.",
-    "w_comm": "Gewichtung der Kommunikationskosten im Score (höher = kleinerer Cut wichtiger).",
-    "w_imb": "Gewichtung der Compute-Balance im Score (höher = ausgeglichene Seiten wichtiger).",
-    "w_tensors": "Gewichtung der Anzahl Crossing-Tensoren im Score.",
-    "log_comm": "Nutzt log1p auf Comm und dämpft extreme Ausreißer bei der Bewertung.",
-    "unknown_tensor_proxy_mb": "Fallback-Größe für Tensoren mit unbekanntem Shape (Proxy für Comm-Schätzung).",
-    "strict_boundary": "Erzwingt Schnitt nur an gültigen Tensor-Grenzen (verhindert kaputte Splits).",
-    "use_ort_symbolic": "Aktiviert ORT symbolic inference für bessere Shape-Erkennung bei LLM-Modellen.",
-    "enable": "Schaltet LLM-Presets ein und zeigt modelltypische Analyseparameter an.",
-    "preset": "Wählt ein abgestimmtes LLM-Profil für typische Chat/RAG-Szenarien.",
-    "mode": "Wählt Decode oder Prefill zur passenden Kommunikations- und KV-Schätzung.",
-    "prefill": "Anzahl Prompt-Tokens für die Prefill-Phase in der LLM-Schätzung.",
-    "decode": "Anzahl vergangener Tokens (KV-Länge) für die Decode-Schätzung.",
-}
-
-
-def _tt(key: str, fallback: str = "") -> str:
-    return _PARAM_TOOLTIPS.get(key, fallback)
 
 GLOBAL_PRESETS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "CV Default": {
@@ -216,42 +183,27 @@ def build_ui(frame: ttk.Frame, app: Any) -> None:
             ttk.Label(host, text=f"Deprecated ({spec.validation})", foreground="#8a6d3b").grid(row=row, column=1, sticky="w", padx=(6, 0), pady=2)
             continue
 
-        tt_text = _tt(spec.key, spec.tooltip)
         if spec.param_type == "bool":
-            cb = ttk.Checkbutton(host, text=spec.label, variable=var)
-            cb.grid(row=row, column=0, columnspan=2, sticky="w", pady=2)
-            if tt_text:
-                attach_tooltip(cb, tt_text)
+            ttk.Checkbutton(host, text=spec.label, variable=var).grid(row=row, column=0, columnspan=2, sticky="w", pady=2)
             continue
 
-        lbl = ttk.Label(host, text=f"{spec.label}:")
-        lbl.grid(row=row, column=0, sticky="w", pady=2)
+        ttk.Label(host, text=f"{spec.label}:").grid(row=row, column=0, sticky="w", pady=2)
         if spec.param_type == "choice" and spec.options:
             w = ttk.Combobox(host, textvariable=var, values=list(spec.options), width=18, state="readonly")
         else:
             w = ttk.Entry(host, textvariable=var, width=10)
         w.grid(row=row, column=1, sticky="w", padx=(6, 0), pady=2)
-        if tt_text:
-            attach_tooltip(lbl, tt_text)
-            attach_tooltip(w, tt_text)
 
     action_wrap = ttk.Frame(section_hosts["candidate"])
     action_wrap.grid(row=row_by_section["candidate"] + 1, column=0, columnspan=2, sticky="w", pady=(8, 0))
     btn_analyse = ttk.Button(action_wrap, text="Analyse", command=app._on_analyse, width=12)
     btn_analyse.pack(side=tk.LEFT)
-    attach_tooltip(btn_analyse, "Startet die Analyse und berechnet Kandidaten, Score und Plots neu.")
-
     btn_split = ttk.Button(action_wrap, text="Split selected…", command=app._split_selected_boundary)
     btn_split.pack(side=tk.LEFT, padx=(8, 0))
-    attach_tooltip(btn_split, "Exportiert direkt den aktuell markierten Split als Teilmodelle.")
-
     btn_benchmark = ttk.Button(action_wrap, text="Benchmark set…", command=app._generate_benchmark_set)
     btn_benchmark.pack(side=tk.LEFT, padx=(8, 0))
-    attach_tooltip(btn_benchmark, "Erstellt ein Benchmark-Set mit mehreren Kandidaten für Laufzeitmessungen.")
-
     btn_export_tex = ttk.Button(action_wrap, text="Export TeX table…", command=app._export_tex_table)
     btn_export_tex.pack(side=tk.LEFT, padx=(8, 0))
-    attach_tooltip(btn_export_tex, "Exportiert eine LaTeX-Tabelle der Kandidaten für Berichte/Paper.")
 
     # Rebind action references so state-machine logic controls the new buttons.
     app.btn_analyse = btn_analyse
@@ -291,26 +243,20 @@ def _build_center_results(parent: ttk.Frame, app: Any) -> None:
     ttk.Label(filter_row, text="Search:").grid(row=0, column=0, sticky="w", padx=(0, 4))
     app.ent_cand_search = ttk.Entry(filter_row, textvariable=app.var_cand_search, width=28)
     app.ent_cand_search.grid(row=0, column=1, sticky="w", padx=(0, 6))
-    attach_tooltip(app.ent_cand_search, "Filtert Kandidaten nach Text oder Boundary und erleichtert die Auswahl.")
     app.chk_cand_regex = ttk.Checkbutton(filter_row, text="Regex", variable=app.var_cand_search_regex, command=app._refresh_candidates_table)
     app.chk_cand_regex.grid(row=0, column=2, sticky="w", padx=(0, 8))
-    attach_tooltip(app.chk_cand_regex, "Interpretiert den Suchtext als regulären Ausdruck für präzise Filter.")
     app.chk_cand_dirty = ttk.Checkbutton(filter_row, text="Hide dirty splits", variable=app.var_cand_hide_dirty, command=app._refresh_candidates_table)
     app.chk_cand_dirty.grid(row=0, column=3, sticky="w", padx=(0, 8))
-    attach_tooltip(app.chk_cand_dirty, "Blendet riskante/dirty Splits aus und zeigt nur saubere Kandidaten.")
     app.chk_cand_group = ttk.Checkbutton(filter_row, text="Group by semantic transition", variable=app.var_cand_group_semantic, command=app._refresh_candidates_table)
     app.chk_cand_group.grid(row=0, column=4, sticky="w", padx=(0, 8))
-    attach_tooltip(app.chk_cand_group, "Gruppiert Kandidaten nach semantischem Übergang für bessere Vergleichbarkeit.")
 
     ttk.Label(filter_row, text="Sort:").grid(row=0, column=5, sticky="e", padx=(6, 4))
     app.cb_cand_sort = ttk.Combobox(filter_row, textvariable=app.var_cand_sort, state="readonly", width=14,
                                     values=["Rank ↑", "Boundary ↑", "Boundary ↓", "Cut MB ↑", "Cut MB ↓", "Clean (best)"])
     app.cb_cand_sort.grid(row=0, column=6, sticky="e", padx=(0, 8))
-    attach_tooltip(app.cb_cand_sort, "Sortiert Kandidaten nach Rang, Boundary, Cut-MB oder Clean-Qualität.")
 
     app.chk_cand_advanced = ttk.Checkbutton(filter_row, text="Detail (Advanced)", variable=app.var_cand_advanced, command=app._refresh_candidates_table)
     app.chk_cand_advanced.grid(row=0, column=7, sticky="e")
-    attach_tooltip(app.chk_cand_advanced, "Zeigt zusätzliche Kandidaten-Spalten für tiefergehende Analyse.")
     app.ent_cand_search.bind("<KeyRelease>", app._refresh_candidates_table, add="+")
     app.cb_cand_sort.bind("<<ComboboxSelected>>", app._refresh_candidates_table, add="+")
 
@@ -351,20 +297,24 @@ def _build_center_results(parent: ttk.Frame, app: Any) -> None:
     vsb = ttk.Scrollbar(table_inner, orient="vertical", command=app.tree.yview)
     app.tree.configure(yscroll=vsb.set)
     vsb.grid(row=0, column=1, sticky="ns")
-    # Tree row tags
-    # NOTE: The central-notebook GUI creates a *new* Treeview instance, so any
-    # tag styling done in the legacy UI does not automatically apply here.
     app.tree.tag_configure("pick", background="#eef6ff")
     app.tree.tag_configure("dirty", background="#fff2f2")
-    # Persistently highlight the currently selected candidate/boundary.
-    # NOTE: ttk Treeview tag priority is tricky (and 'tag raise' is not supported).
-    # We therefore use a very visible text style (bold + red). The code that
-    # applies the tag ensures it has priority over other tags.
-    app.tree.tag_configure(
-        "selected_row",
-        foreground="#b00000",
-        font=("TkDefaultFont", 9, "bold"),
-    )
+    # Make the currently selected split-point clearly visible in the table.
+    # NOTE: We do this via a dedicated tag (red + bold) because row tags like
+    # 'pick'/'dirty' use background colors and can hide the native selection
+    # highlight on some Tk themes/platforms.
+    try:
+        import tkinter.font as tkfont
+
+        base_font = tkfont.nametofont("TkDefaultFont")
+        sel_font = base_font.copy()
+        sel_font.configure(weight="bold")
+        # Keep a reference to avoid the font being garbage-collected.
+        app._tree_selected_row_font = sel_font
+        app.tree.tag_configure("selected_row", foreground="#c62828", font=sel_font)
+    except Exception:
+        app.tree.tag_configure("selected_row", foreground="#c62828")
+
     app._configure_candidate_columns()
     app.tree.bind("<<TreeviewSelect>>", app._on_tree_selection_changed, add="+")
     app.tree.bind("<Motion>", app._on_tree_motion_clean_tooltip, add="+")
@@ -435,10 +385,21 @@ def _build_candidate_inspector(parent: ttk.Frame, app: Any) -> None:
         ttk.Label(summary, text=f"{lbl}:").grid(row=r, column=0, sticky="nw", padx=(6, 8), pady=2)
         ttk.Label(summary, textvariable=vars_map[key], wraplength=360, justify="left").grid(row=r, column=1, sticky="ew", padx=(0, 6), pady=2)
 
-    memory_box = ttk.LabelFrame(parent, text="Memory Fit")
-    memory_box.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
-    memory_widget = MemoryFitWidget(memory_box)
-    memory_widget.pack(fill="x", padx=6, pady=6)
+    # Memory fit
+    mem_fit_frame = ttk.LabelFrame(parent, text="Memory Fit")
+    mem_fit_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
+    memory_widget = MemoryFitWidget(mem_fit_frame)
+    memory_widget.pack(fill="x", padx=4, pady=4)
+
+    # Keep the bar titles generic ("Left/Right device") for readability, but show
+    # the currently selected accelerators underneath.
+    selected_accel_var = tk.StringVar(value="Selected left: –\nSelected right: –")
+    ttk.Label(
+        mem_fit_frame,
+        textvariable=selected_accel_var,
+        justify="left",
+        wraplength=520,
+    ).pack(fill="x", padx=6, pady=(0, 4))
 
     llm_box = ttk.LabelFrame(parent, text="LLM Comm Breakdown")
     llm_box.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 6))
@@ -468,17 +429,9 @@ def _build_candidate_inspector(parent: ttk.Frame, app: Any) -> None:
 
     actions = ttk.Frame(parent)
     actions.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
-    btn_split_selected = ttk.Button(actions, text="Split selected…", command=getattr(app, "_split_selected_boundary", None))
-    btn_split_selected.pack(side=tk.LEFT)
-    attach_tooltip(btn_split_selected, "Exportiert den aktuell ausgewählten Kandidaten direkt als Split.")
-
-    btn_export_context = ttk.Button(actions, text="Export context…", command=getattr(app, "_split_selected_boundary", None))
-    btn_export_context.pack(side=tk.LEFT, padx=(8, 0))
-    attach_tooltip(btn_export_context, "Schreibt Kontextdaten des ausgewählten Splits für Doku/Debugging.")
-
-    btn_benchmark_split = ttk.Button(actions, text="Benchmark this split…", command=getattr(app, "_generate_benchmark_set", None))
-    btn_benchmark_split.pack(side=tk.LEFT, padx=(8, 0))
-    attach_tooltip(btn_benchmark_split, "Startet einen Benchmark-Lauf ausgehend vom aktuell markierten Split.")
+    ttk.Button(actions, text="Split selected…", command=getattr(app, "_split_selected_boundary", None)).pack(side=tk.LEFT)
+    ttk.Button(actions, text="Export context…", command=getattr(app, "_split_selected_boundary", None)).pack(side=tk.LEFT, padx=(8, 0))
+    ttk.Button(actions, text="Benchmark this split…", command=getattr(app, "_generate_benchmark_set", None)).pack(side=tk.LEFT, padx=(8, 0))
 
     def _classify_tensor(name: str, initializers: set[str]) -> str:
         n = (name or "").lower()
@@ -495,10 +448,113 @@ def _build_candidate_inspector(parent: ttk.Frame, app: Any) -> None:
         if cand is None:
             for k in vars_map:
                 vars_map[k].set("–" if k != "proxy" else "Proxy: –")
-            memory_widget.update_from_estimate(None)
+            try:
+                memory_widget.update_from_estimate(None)
+            except Exception:
+                pass
+
+            # Still reflect current accelerator selections even when no candidate is selected.
+            try:
+                ln = str(getattr(app, "var_hw_left_accel", tk.StringVar(value="")).get() or "–")
+                rn = str(getattr(app, "var_hw_right_accel", tk.StringVar(value="")).get() or "–")
+                selected_accel_var.set(f"Selected left: {ln}\nSelected right: {rn}")
+            except Exception:
+                selected_accel_var.set("Selected left: –\nSelected right: –")
             return
 
         b = int(getattr(cand, "boundary_id", -1))
+        # Update memory fit (uses the legacy estimator populated during table build).
+        # Prefer the Hardware tab accelerator selection (fallback to legacy memory-forecast vars).
+        left_name = ""
+        right_name = ""
+        for attr in ("var_hw_left_accel", "var_memf_left_accel"):
+            try:
+                v = getattr(app, attr, None)
+                if v is not None:
+                    left_name = str(v.get() or "")
+                    break
+            except Exception:
+                pass
+        for attr in ("var_hw_right_accel", "var_memf_right_accel"):
+            try:
+                v = getattr(app, attr, None)
+                if v is not None:
+                    right_name = str(v.get() or "")
+                    break
+            except Exception:
+                pass
+
+        selected_accel_var.set(
+            f"Selected left: {left_name or '–'}\nSelected right: {right_name or '–'}"
+        )
+
+        # The memory estimate is computed during table build (gui_app._update_table) and stored in:
+        #   cand.stats["memory"]  (preferred)
+        # or
+        #   app.memory_by_boundary[boundary]
+        # or
+        #   app.analysis_result.memory_estimate[boundary]
+        # with the schema: {"left": {"total_mb": .., ...}, "right": {...}}
+        mem_est = None
+
+        # 1) Candidate-level stats (most up-to-date)
+        try:
+            if isinstance(getattr(cand, "stats", None), dict):
+                mem_est = cand.stats.get("memory")
+        except Exception:
+            mem_est = None
+
+        # 2) App-level cached mapping
+        if not isinstance(mem_est, dict):
+            try:
+                if isinstance(getattr(app, "memory_by_boundary", None), dict):
+                    mem_est = app.memory_by_boundary.get(b)
+            except Exception:
+                mem_est = None
+
+        # 3) analysis_result.memory_estimate mapping
+        if not isinstance(mem_est, dict):
+            try:
+                ar = getattr(app, "analysis_result", None)
+                mb = getattr(ar, "memory_estimate", None)
+                if isinstance(mb, dict):
+                    mem_est = mb.get(b)
+            except Exception:
+                mem_est = None
+
+        # Inject accelerator specs so the widget can compute % and label each row.
+        if isinstance(mem_est, dict):
+            left = dict(mem_est.get("left") or {})
+            right = dict(mem_est.get("right") or {})
+
+            left_spec: Dict[str, Any] = {}
+            right_spec: Dict[str, Any] = {}
+            try:
+                if hasattr(app, "_accel_by_name"):
+                    left_spec = app._accel_by_name(left_name) or {}
+                    right_spec = app._accel_by_name(right_name) or {}
+            except Exception:
+                left_spec, right_spec = {}, {}
+
+            left["ram_limit_mb"] = float(left_spec.get("ram_limit_mb", 0.0) or 0.0)
+            right["ram_limit_mb"] = float(right_spec.get("ram_limit_mb", 0.0) or 0.0)
+            left["name"] = left_spec.get("name") or left_name or "Left device"
+            right["name"] = right_spec.get("name") or right_name or "Right device"
+            mem_est = {"left": left, "right": right}
+
+        # Update widget
+        try:
+            memory_widget.update_from_estimate(mem_est or {})
+        except Exception:
+            pass
+
+        # Optional debug: print the raw estimate dict.
+        if os.environ.get("SPLITPOINT_DEBUG_MEMFIT", "").strip().lower() in {"1", "true", "yes"}:
+            try:
+                logger.info("MemFit debug: boundary=%s mem_est=%s", b, mem_est)
+            except Exception:
+                pass
+
         row = next((r for r in getattr(app, "_candidate_rows", []) if int(r.get("boundary", -1)) == b), {})
         analysis = getattr(app, "analysis", {}) if isinstance(getattr(app, "analysis", {}), dict) else {}
         costs = analysis.get("costs_bytes") or []
@@ -532,34 +588,26 @@ def _build_candidate_inspector(parent: ttk.Frame, app: Any) -> None:
         )
         vars_map["proxy"].set(f"Proxy-Hinweis: float={proxy_mb:g} MB/Tensor, int/bool={proxy_kb:g} KB/Tensor")
 
-        est = None
-        if isinstance(getattr(cand, "stats", None), dict) and getattr(cand, "stats", None):
-            est = dict(getattr(cand, "stats"))
-        elif isinstance(getattr(app, "memory_by_boundary", None), dict):
-            est = dict(getattr(app, "memory_by_boundary", {}).get(int(b), {}) or {})
-
-        if isinstance(est, dict):
-            left_name = str(getattr(getattr(app, "var_memf_left_accel", None), "get", lambda: "")())
-            right_name = str(getattr(getattr(app, "var_memf_right_accel", None), "get", lambda: "")())
-            left_acc = getattr(app, "_accel_by_name", lambda _n: {})(left_name)
-            right_acc = getattr(app, "_accel_by_name", lambda _n: {})(right_name)
-            left = dict(est.get("left", {}) or {})
-            right = dict(est.get("right", {}) or {})
-            if "name" not in left:
-                left["name"] = str(left_acc.get("name") or "Left device")
-            if "name" not in right:
-                right["name"] = str(right_acc.get("name") or "Right device")
-            if "ram_limit_mb" not in left and "limit_mb" not in left:
-                left["ram_limit_mb"] = float(left_acc.get("ram_limit_mb", 0.0) or 0.0)
-            if "ram_limit_mb" not in right and "limit_mb" not in right:
-                right["ram_limit_mb"] = float(right_acc.get("ram_limit_mb", 0.0) or 0.0)
-            est = {"left": left, "right": right}
-
-        memory_widget.update_from_estimate(est)
-
     _update(None)
     if hasattr(app, "events"):
         app.events.on_candidate_selected(_update)
+
+    # Also refresh memory-fit numbers when the selected accelerators change.
+    def _update_from_current(*_args: Any) -> None:
+        # Re-render using the currently selected candidate (if any).
+        _update(None)
+
+    for _var in (
+        getattr(app, "var_hw_left_accel", None),
+        getattr(app, "var_hw_right_accel", None),
+        getattr(app, "var_memf_left_accel", None),
+        getattr(app, "var_memf_right_accel", None),
+    ):
+        if _var is not None and hasattr(_var, "trace_add"):
+            try:
+                _var.trace_add("write", _update_from_current)
+            except Exception:
+                pass
 
 
 def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:

@@ -47,7 +47,6 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
-import tkinter.font as tkfont
 
 # Matplotlib backend must be selected BEFORE importing pyplot/backends
 import matplotlib
@@ -403,7 +402,6 @@ class SplitPointAnalyserGUI(tk.Tk):
         self._tree_clean_tooltips: Dict[str, str] = {}
         self._clean_tooltip_tip: Optional[tk.Toplevel] = None
         self._clean_tooltip_row: Optional[str] = None
-        self._last_selected_iid: Optional[str] = None
 
         self._register_event_handlers()
 
@@ -1260,14 +1258,7 @@ class SplitPointAnalyserGUI(tk.Tk):
             foreground=[("selected", "#ffffff")],
         )
 
-        self.tree = ttk.Treeview(
-            table_inner,
-            columns=cols,
-            show="headings",
-            style="Candidate.Treeview",
-            selectmode="browse",
-            takefocus=True,
-        )
+        self.tree = ttk.Treeview(table_inner, columns=cols, show="headings", style="Candidate.Treeview")
         self.tree.heading("rank", text="#")
         self.tree.heading("clean", text="Clean")
         self.tree.heading("boundary", text="Boundary")
@@ -1312,18 +1303,6 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         self.tree.tag_configure("pick", background="#eef6ff")
         self.tree.tag_configure("dirty", background="#fff2f2")
-
-        # Selected row styling: prefer strong text styling over background.
-        # Background highlights can become hard to see depending on ttk theme
-        # and on top of our "pick" background.
-        try:
-            default_font = tkfont.nametofont("TkDefaultFont")
-            self._selected_row_font = tkfont.Font(self, font=default_font)
-            self._selected_row_font.configure(weight="bold")
-            self.tree.tag_configure("selected_row", foreground="#b71c1c", font=self._selected_row_font)
-        except Exception:
-            # Fallback: at least change the text color.
-            self.tree.tag_configure("selected_row", foreground="#b71c1c")
 
         self._configure_candidate_columns()
 
@@ -1621,85 +1600,56 @@ class SplitPointAnalyserGUI(tk.Tk):
             stats=stats,
         )
         self.events.emit_candidate_selected(self.selected_candidate)
+    def _apply_selected_row_table_tag(self, boundary: Optional[int]) -> None:
+        """Highlight the currently selected boundary row in the candidates table.
+
+        We use a tag-based highlight (see panel_analysis.py tag_configure) instead of
+        relying on the native Treeview selection highlight, because per-row tag
+        backgrounds (e.g. 'pick'/'dirty') can hide the selection background on
+        some Tk themes/platforms.
+        """
+        tree = getattr(self, 'tree', None)
+        if tree is None or boundary is None:
+            return
+
+        iid = f"b{int(boundary)}"
+        try:
+            if not tree.exists(iid):
+                return
+        except Exception:
+            # If the widget is not a Treeview or already destroyed.
+            return
+
+        prev = getattr(self, '_selected_row_iid', None)
+        if prev and prev != iid:
+            try:
+                if tree.exists(prev):
+                    prev_tags = [t for t in tree.item(prev, 'tags') if t != 'selected_row']
+                    tree.item(prev, tags=tuple(prev_tags))
+            except Exception:
+                pass
+
+        try:
+            cur_tags = list(tree.item(iid, 'tags'))
+            if 'selected_row' not in cur_tags:
+                cur_tags.append('selected_row')
+                tree.item(iid, tags=tuple(cur_tags))
+        except Exception:
+            return
+
+        self._selected_row_iid = iid
+
 
     def _on_tree_selection_changed(self, event=None) -> None:
         sel = self.tree.selection() if hasattr(self, "tree") else ()
         logger.debug("Tree selection event: sel=%s", sel)
-        self._sync_tree_selected_row_tag()
         boundary = self._selected_boundary_index()
         iid = sel[0] if sel else ""
         tags = self.tree.item(iid, "tags") if iid else ()
         logger.info("Tree selection changed: iid=%s, tags=%s, boundary=%s", iid, tags, boundary)
         self._set_selected_candidate_from_boundary(boundary)
-
-    def _sync_tree_selected_row_tag(self) -> None:
-        """Keep the selected candidate row visually highlighted in the table.
-
-        We intentionally keep the highlight even if ttk temporarily reports an empty
-        selection (this was observed on some Windows 10 setups, especially when
-        clicking quickly or on icon columns).
-
-        The visual cue is implemented via the `selected_row` tag (red + bold text).
-        """
-        if not hasattr(self, "tree"):
-            self._last_selected_iid = None
-            return
-
-        target_iid = None
-
-        # Prefer current Treeview selection (map child row -> parent boundary row)
-        sel = self.tree.selection()
-        if sel:
-            iid0 = sel[0]
-            if iid0 and self.tree.exists(iid0):
-                if iid0 in self._cand_by_iid:
-                    target_iid = iid0
-                else:
-                    parent = self.tree.parent(iid0)
-                    if parent and parent in self._cand_by_iid:
-                        target_iid = parent
-
-        # Fallback: resolve by boundary using the fast lookup map.
-        boundary = self._selected_boundary_index()
-        if target_iid is None and boundary is not None:
-            try:
-                target_iid = getattr(self, "_iid_by_boundary", {}).get(int(boundary))
-            except Exception:
-                target_iid = None
-
-        # If we still cannot resolve a row, keep the previous highlight.
-        if not target_iid or not self.tree.exists(target_iid):
-            return
-
-        old_iid = getattr(self, "_last_selected_iid", None)
-        if old_iid and old_iid != target_iid and self.tree.exists(old_iid):
-            try:
-                old_tags = tuple(t for t in self.tree.item(old_iid, "tags") if t != "selected_row")
-                self.tree.item(old_iid, tags=old_tags)
-            except Exception:
-                pass
-
-        # Apply highlight to target row.
-        #
-        # IMPORTANT: ttk.Treeview does *not* support "tag raise" and tag priority
-        # is derived from the tag order on the item. When multiple tags define
-        # the same option (e.g. background), the earlier tags win.
-        #
-        # Since all rows carry the "pick" tag (with a background), we must place
-        # "selected_row" FIRST so its styling (foreground/font) is visible.
-        try:
-            tags = [t for t in self.tree.item(target_iid, "tags") if t != "selected_row"]
-            tags = ["selected_row"] + list(tags)
-            self.tree.item(target_iid, tags=tuple(tags))
-        except Exception:
-            pass
-
-        self._last_selected_iid = target_iid
-        try:
-            self.tree.focus(target_iid)
-            self.tree.see(target_iid)
-        except Exception:
-            pass
+        # Keep the selected row visually marked in the table.
+        self._apply_selected_row_table_tag(boundary)
 
     def _on_tree_button_1(self, evt=None):
         """Handle candidate-table left-clicks; only intercept clean-column clicks."""
@@ -1710,14 +1660,6 @@ class SplitPointAnalyserGUI(tk.Tk):
         logger.debug("Tree click: row=%s col=%s", row_id, col_id)
         if col_id == "#2" and row_id and row_id in self._cand_by_iid:
             logger.debug("Intercepted clean-column click for row=%s", row_id)
-            self.tree.selection_set(row_id)
-            try:
-                # Ensure the widget keeps focus so native selection visuals (if any)
-                # remain visible.
-                self.tree.focus(row_id)
-                self.tree.focus_set()
-            except Exception:
-                pass
             return "break"
         return None
 
@@ -1754,54 +1696,48 @@ class SplitPointAnalyserGUI(tk.Tk):
     def _highlight_selected_boundary_in_plots(self) -> None:
         """Draw selection marker in plots so table↔plot↔inspector stay in sync."""
         b = self._selected_boundary_index()
-
-        # Remove previous selection markers (we mark them via a private attribute)
-        for ax in (
-            getattr(self, "ax_comm", None),
-            getattr(self, "ax_comp", None),
-            getattr(self, "ax_pareto", None),
-            getattr(self, "ax_lat", None),
-        ):
+        for ax in (getattr(self, "ax_comm", None), getattr(self, "ax_comp", None), getattr(self, "ax_pareto", None), getattr(self, "ax_lat", None)):
             if ax is None:
                 continue
-            for line in list(getattr(ax, "lines", [])):
+            for line in list(ax.lines):
                 if getattr(line, "_split_selected_marker", False):
                     try:
                         line.remove()
                     except Exception:
                         pass
-
         if b is None:
             try:
                 self.canvas.draw_idle()
             except Exception:
                 pass
             return
-
-        # 1D plots: boundary index marker
         for ax in (self.ax_comm, self.ax_comp, self.ax_lat):
             marker = ax.axvline(float(b), color="#d32f2f", linestyle="-", linewidth=1.2, alpha=0.9)
             setattr(marker, "_split_selected_marker", True)
 
-        # Pareto plot: highlight the selected point with a simple cross (no picking)
-        try:
-            axp = getattr(self, "ax_pareto", None)
-            pd = getattr(getattr(self, "analysis_result", None), "plot_data", None)
-            if axp is not None and isinstance(pd, dict):
-                costs = pd.get("costs_bytes")
-                imb = pd.get("imbalance")
-                bi = int(b)
-                if isinstance(costs, (list, tuple)) and isinstance(imb, (list, tuple)) and 0 <= bi < len(costs) and 0 <= bi < len(imb):
-                    xb = costs[bi]
-                    yb = imb[bi]
-                    if xb is not None and yb is not None:
-                        x = float(xb) / 1e6  # bytes -> MB (matches pareto x-axis)
-                        y = float(yb)
-                        (pm,) = axp.plot([x], [y], marker="x", markersize=10, markeredgewidth=2, color="#d32f2f", linestyle="None")
-                        setattr(pm, "_split_selected_marker", True)
-        except Exception:
-            pass
-
+        # Pareto selection cross
+        axp = getattr(self, "ax_pareto", None)
+        if axp is not None:
+            try:
+                analysis_result = getattr(self, "analysis_result", None)
+                pd = getattr(analysis_result, "plot_data", {}) if analysis_result else {}
+                costs = pd.get("costs_bytes") or []
+                imb = pd.get("imbalance") or []
+                if isinstance(costs, (list, tuple)) and isinstance(imb, (list, tuple)) and b < len(costs) and b < len(imb):
+                    x = float(costs[b]) / 1e6
+                    y = float(imb[b])
+                    ln = axp.plot(
+                        [x], [y],
+                        marker="x",
+                        color="#d32f2f",
+                        markersize=9,
+                        markeredgewidth=2,
+                        linestyle="None",
+                        zorder=5,
+                    )[0]
+                    setattr(ln, "_split_selected_marker", True)
+            except Exception:
+                pass
         try:
             self.canvas.draw_idle()
         except Exception:
@@ -2021,13 +1957,14 @@ class SplitPointAnalyserGUI(tk.Tk):
         only_one = bool(mapped.get("only_single_tensor", False))
         strict_boundary = bool(mapped.get("strict_boundary", False))
 
+        # Read pruning params directly from the mapped GUI state.
+        # IMPORTANT: do NOT call _read_params() recursively here (would cause
+        # infinite recursion / RecursionError).
         prune_skip_block = bool(mapped.get("prune_skip_block", False))
-        skip_min_span = _safe_int(str(mapped.get("skip_min_span", "")))
-        if skip_min_span is None or skip_min_span < 0:
+        skip_min_span = _safe_int(str(mapped.get("skip_min_span", ""))) or 0
+        if skip_min_span < 0:
             raise ValueError("Min skip span must be an integer ≥ 0.")
-        skip_allow_last_n = _safe_int(str(mapped.get("skip_allow_last_n", "")))
-        if skip_allow_last_n is None:
-            skip_allow_last_n = 0
+        skip_allow_last_n = _safe_int(str(mapped.get("skip_allow_last_n", ""))) or 0
         if skip_allow_last_n < 0:
             raise ValueError("Allow last N inside must be an integer ≥ 0.")
 
@@ -3423,6 +3360,232 @@ class SplitPointAnalyserGUI(tk.Tk):
                 picks = [x for x in picks if (self.memory_by_boundary.get(int(x), {}).get("left", {}).get("fits") and self.memory_by_boundary.get(int(x), {}).get("right", {}).get("fits"))]
             self._update_table(a, picks, self._last_params)
 
+
+    def _get_memory_stats_for_boundary(self, boundary, left_accel_name=None, right_accel_name=None):
+        """Compute RAM usage for a given split boundary.
+
+        Returns a dict shaped for `gui.widgets.memory_fit.MemoryFitWidget`:
+            {"left": {...}, "right": {...}}
+
+        This is used by the refactored GUI (Analyse tab -> Candidate Inspector).
+        """
+        try:
+            b = int(boundary)
+        except Exception:
+            return {"left": {}, "right": {}}
+
+        # Resolve accelerator names (caller -> HW tab -> legacy memf vars)
+        if left_accel_name is None:
+            left_accel_name = left_accel or ""
+            if not left_accel_name:
+                for attr in ("var_hw_left_accel", "var_memf_left_accel"):
+                    try:
+                        v = getattr(self, attr, None)
+                        if v is not None:
+                            left_accel_name = v.get()
+                            break
+                    except Exception:
+                        pass
+        if right_accel_name is None:
+            right_accel_name = right_accel or ""
+            if not right_accel_name:
+                for attr in ("var_hw_right_accel", "var_memf_right_accel"):
+                    try:
+                        v = getattr(self, attr, None)
+                        if v is not None:
+                            right_accel_name = v.get()
+                            break
+                    except Exception:
+                        pass
+
+        left_accel_name = (left_accel_name or "").strip()
+        right_accel_name = (right_accel_name or "").strip()
+
+        left_accel = self._accel_by_name(left_accel_name) if left_accel_name else {}
+        right_accel = self._accel_by_name(right_accel_name) if right_accel_name else {}
+
+        def _to_float(x, default=0.0):
+            try:
+                if x is None:
+                    return default
+                return float(x)
+            except Exception:
+                return default
+
+        # Device limits / overheads (in MiB in the UI spec)
+        limit_l_mb = _to_float(left_accel.get("ram_limit_mb", 0.0), 0.0)
+        limit_r_mb = _to_float(right_accel.get("ram_limit_mb", 0.0), 0.0)
+        overhead_l_mb = _to_float(left_accel.get("runtime_overhead_mb", 0.0), 0.0)
+        overhead_r_mb = _to_float(right_accel.get("runtime_overhead_mb", 0.0), 0.0)
+
+        # Memory-fit options
+        pol = "max_peak_or_comm"
+        include_kv = False
+        include_comm = True
+        try:
+            pol = self.var_memf_policy.get()
+        except Exception:
+            pass
+        try:
+            include_kv = bool(self.var_memf_include_kv.get())
+        except Exception:
+            pass
+        try:
+            include_comm = bool(self.var_memf_include_comm.get())
+        except Exception:
+            pass
+
+        plot_data = None
+        try:
+            if getattr(self, "analysis_result", None) is not None:
+                plot_data = getattr(self.analysis_result, "plot_data", None)
+        except Exception:
+            plot_data = None
+        if plot_data is None:
+            plot_data = getattr(self, "_last_plot_data", None)
+
+        # plot_data is a wrapper in the refactored GUI; for Memory Fit we need the raw
+        # analysis dict that contains per-boundary arrays (weights/peak-mem/comm bytes).
+        data = plot_data
+        if isinstance(plot_data, dict):
+            _a = plot_data.get("analysis")
+            if isinstance(_a, dict):
+                data = _a
+
+        MiB = 1024.0 * 1024.0
+
+        def _at(arr, idx, default=0.0):
+            try:
+                return float(arr[idx])
+            except Exception:
+                return default
+
+        # Defaults
+        weights_l_b = weights_r_b = 0.0
+        peak_l_b = peak_r_b = 0.0
+        kv_l_b = kv_r_b = 0.0
+        comm_b = 0.0
+        total_l_mb = total_r_mb = 0.0
+
+        # ------------------------------------------------------------------
+        # Prefer cached per-boundary estimates (created during table render).
+        # They already contain device-aware totals in MB.
+        # ------------------------------------------------------------------
+        est = None
+        try:
+            if (
+                getattr(self, "analysis_result", None) is not None
+                and isinstance(getattr(self.analysis_result, "memory_estimate", None), dict)
+            ):
+                est = self.analysis_result.memory_estimate.get(b)
+                if est is None:
+                    est = self.analysis_result.memory_estimate.get(str(b))
+            if est is None and isinstance(getattr(self, "memory_by_boundary", None), dict):
+                est = self.memory_by_boundary.get(b)
+                if est is None:
+                    est = self.memory_by_boundary.get(str(b))
+        except Exception:
+            est = None
+
+        if isinstance(est, dict):
+            try:
+                le = est.get("left", {})
+                re = est.get("right", {})
+                if isinstance(le, dict) and isinstance(re, dict):
+                    total_l_mb = _to_float(le.get("total_mb", 0.0), 0.0)
+                    total_r_mb = _to_float(re.get("total_mb", 0.0), 0.0)
+
+                    # Optional breakdowns (stored in MB). Convert to bytes for the
+                    # below dict that expects *_b values.
+                    weights_l_b = _to_float(le.get("weights_mb", 0.0), 0.0) * MiB
+                    weights_r_b = _to_float(re.get("weights_mb", 0.0), 0.0) * MiB
+                    peak_l_b = _to_float(le.get("peak_activations_mb", le.get("peak_act_mb", 0.0)), 0.0) * MiB
+                    peak_r_b = _to_float(re.get("peak_activations_mb", re.get("peak_act_mb", 0.0)), 0.0) * MiB
+                    kv_l_b = _to_float(le.get("kv_mb", le.get("kv_cache_mb", 0.0)), 0.0) * MiB
+                    kv_r_b = _to_float(re.get("kv_mb", re.get("kv_cache_mb", 0.0)), 0.0) * MiB
+                    comm_b = _to_float(le.get("comm_mb", re.get("comm_mb", 0.0)), 0.0) * MiB
+            except Exception:
+                pass
+
+        # ------------------------------------------------------------------
+        # If we don't have cached totals (or they are 0), compute them from the
+        # raw analysis arrays in plot_data['analysis'].
+        # ------------------------------------------------------------------
+        has_arrays = isinstance(data, dict) and any(
+            k in data
+            for k in (
+                "weights_left_bytes",
+                "weights_right_bytes",
+                "peak_act_mem_left_bytes",
+                "peak_act_mem_right_bytes",
+            )
+        )
+
+        if (total_l_mb <= 0.0 and total_r_mb <= 0.0) and has_arrays:
+            weights_l_b = _at(data.get("weights_left_bytes", []), b, 0.0)
+            weights_r_b = _at(data.get("weights_right_bytes", []), b, 0.0)
+            peak_l_b = _at(data.get("peak_act_mem_left_bytes", []), b, 0.0)
+            peak_r_b = _at(data.get("peak_act_mem_right_bytes", []), b, 0.0)
+
+            if include_kv:
+                kv_l_b = _at(data.get("kv_left_bytes", []), b, 0.0)
+                kv_r_b = _at(data.get("kv_right_bytes", []), b, 0.0)
+
+            if include_comm:
+                costs = None
+                if isinstance(data.get("crossing_cost_bytes_by_boundary"), (list, tuple)):
+                    costs = data.get("crossing_cost_bytes_by_boundary")
+                elif isinstance(plot_data, dict):
+                    costs = plot_data.get("costs_bytes", [])
+                comm_b = _at(costs or [], b, 0.0)
+            else:
+                comm_b = 0.0
+
+            overhead_l_b = overhead_l_mb * MiB
+            overhead_r_b = overhead_r_mb * MiB
+
+            try:
+                mem_l_b = estimate_ram_bytes(weights_l_b, peak_l_b, kv_l_b, overhead_l_b, comm_b, policy=pol)
+            except Exception:
+                mem_l_b = weights_l_b + peak_l_b + kv_l_b + overhead_l_b + comm_b
+
+            try:
+                mem_r_b = estimate_ram_bytes(weights_r_b, peak_r_b, kv_r_b, overhead_r_b, comm_b, policy=pol)
+            except Exception:
+                mem_r_b = weights_r_b + peak_r_b + kv_r_b + overhead_r_b + comm_b
+
+            total_l_mb = mem_l_b / MiB
+            total_r_mb = mem_r_b / MiB
+
+        left = {
+            "name": left_accel_name or "Left",
+            "ram_limit_mb": limit_l_mb,
+            "total_mb": total_l_mb,
+            "weights_mb": weights_l_b / MiB if weights_l_b else 0.0,
+            "peak_act_mb": peak_l_b / MiB if peak_l_b else 0.0,
+            "kv_cache_mb": kv_l_b / MiB if kv_l_b else 0.0,
+            "comm_mb": comm_b / MiB if comm_b else 0.0,
+            "overhead_mb": overhead_l_mb,
+        }
+        right = {
+            "name": right_accel_name or "Right",
+            "ram_limit_mb": limit_r_mb,
+            "total_mb": total_r_mb,
+            "weights_mb": weights_r_b / MiB if weights_r_b else 0.0,
+            "peak_act_mb": peak_r_b / MiB if peak_r_b else 0.0,
+            "kv_cache_mb": kv_r_b / MiB if kv_r_b else 0.0,
+            "comm_mb": comm_b / MiB if comm_b else 0.0,
+            "overhead_mb": overhead_r_mb,
+        }
+
+        if limit_l_mb > 0:
+            left["fits"] = bool(total_l_mb <= limit_l_mb)
+        if limit_r_mb > 0:
+            right["fits"] = bool(total_r_mb <= limit_r_mb)
+
+        return {"left": left, "right": right}
+
+
     # ----------------------------- Nordstern -----------------------------
 
     def _compute_nordstern(self, a: Dict, picks: List[int], p: Params) -> None:
@@ -3757,9 +3920,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.tree.state(("!disabled",))
         self._hide_tree_clean_tooltip()
         self._cand_by_iid = {}
-        self._iid_by_boundary = {}
         self._tree_clean_tooltips = {}
-        self._last_selected_iid = None
 
         nodes = a["nodes"]
         order = a["order"]
@@ -3905,10 +4066,6 @@ class SplitPointAnalyserGUI(tk.Tk):
                 tags=(("pick", "dirty") if row["clean_symbol"] != "✅" else ("pick",)),
             )
             self._cand_by_iid[iid] = row
-            try:
-                self._iid_by_boundary[int(row.get("boundary"))] = iid
-            except Exception:
-                pass
             self._tree_clean_tooltips[parent] = str(row.get("clean_tooltip", ""))
 
             if int(row.get("unknown_count", 0)) > 0:
@@ -3933,6 +4090,59 @@ class SplitPointAnalyserGUI(tk.Tk):
         if self.analysis_result is None:
             self.analysis_result = AnalysisResult()
         self.analysis_result.memory_estimate = dict(self.memory_by_boundary)
+
+        # Optional debug dump for Memory Fit: write the full per-boundary table so we can
+        # inspect/plot it outside the GUI without guessing.
+        if os.environ.get("SPLITPOINT_DEBUG_MEMFIT", "").strip().lower() in {"1", "true", "yes"}:
+            try:
+                dbg_dir = Path.home() / ".onnx_splitpoint_tool"
+                dbg_dir.mkdir(parents=True, exist_ok=True)
+                dbg_csv = dbg_dir / "memfit_debug.csv"
+                with dbg_csv.open("w", newline="", encoding="utf-8") as fh:
+                    w = csv.writer(fh)
+                    w.writerow(
+                        [
+                            "boundary",
+                            "left_total_mb",
+                            "right_total_mb",
+                            "left_weights_mb",
+                            "right_weights_mb",
+                            "left_peak_activations_mb",
+                            "right_peak_activations_mb",
+                            "left_kv_mb",
+                            "right_kv_mb",
+                            "left_overhead_mb",
+                            "right_overhead_mb",
+                            "comm_mb",
+                            "left_fits",
+                            "right_fits",
+                        ]
+                    )
+                    for bb in sorted(self.memory_by_boundary.keys()):
+                        est = self.memory_by_boundary.get(bb) or {}
+                        l = est.get("left") or {}
+                        r = est.get("right") or {}
+                        w.writerow(
+                            [
+                                bb,
+                                l.get("total_mb", 0.0),
+                                r.get("total_mb", 0.0),
+                                l.get("weights_mb", 0.0),
+                                r.get("weights_mb", 0.0),
+                                l.get("peak_activations_mb", 0.0),
+                                r.get("peak_activations_mb", 0.0),
+                                l.get("kv_mb", 0.0),
+                                r.get("kv_mb", 0.0),
+                                l.get("overhead_mb", 0.0),
+                                r.get("overhead_mb", 0.0),
+                                l.get("comm_mb", 0.0),
+                                l.get("fits", False),
+                                r.get("fits", False),
+                            ]
+                        )
+                logger.info("MemFit debug CSV written: %s", dbg_csv)
+            except Exception:
+                logger.exception("Failed to write MemFit debug CSV")
         logger.debug("Candidate table populated: rows=%d mapped=%d", len(rows_for_view), len(self._cand_by_iid))
     # ----------------------------- Plotting -----------------------------
 
@@ -4043,16 +4253,25 @@ class SplitPointAnalyserGUI(tk.Tk):
                 transform=self.ax_lat.transAxes,
             )
 
-        self.analysis_result.plot_data = {
-            "costs_bytes": list(costs),
-            "flops_left_prefix": list(flops_left_prefix),
-            "total_flops": float(total_flops),
-            "imbalance": list(imbalance),
-            "selected_candidates": list(picks),
-        }
-
         self._highlight_selected_boundary_in_plots()
         self.canvas.draw_idle()
+
+        # IMPORTANT: do NOT clobber the original plot_data dict coming from the
+        # analysis thread. It contains additional arrays (e.g. weights / peak mem)
+        # that are required by other UI features like Memory Fit.
+        pd = self.analysis_result.plot_data
+        if not isinstance(pd, dict):
+            pd = {}
+        pd.update(
+            {
+                "costs_bytes": list(costs),
+                "flops_left_prefix": list(flops_left_prefix),
+                "total_flops": float(total_flops),
+                "imbalance": list(imbalance),
+                "selected_candidates": list(picks),
+            }
+        )
+        self.analysis_result.plot_data = pd
 
     # ----------------------------- Split models -----------------------------
 
@@ -4204,13 +4423,13 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         strict_boundary = bool(self.var_strict_boundary.get())
 
-        prune_skip_block = bool(mapped.get("prune_skip_block", False))
-        skip_min_span = _safe_int(str(mapped.get("skip_min_span", "")))
-        if skip_min_span is None or skip_min_span < 0:
+        # Read pruning params from the current GUI state (same source as Analyse).
+        _params_for_split = self._read_params()
+        prune_skip_block = bool(getattr(_params_for_split, "prune_skip_block", False))
+        skip_min_span = int(getattr(_params_for_split, "skip_min_span", 0) or 0)
+        if skip_min_span < 0:
             raise ValueError("Min skip span must be an integer ≥ 0.")
-        skip_allow_last_n = _safe_int(str(mapped.get("skip_allow_last_n", "")))
-        if skip_allow_last_n is None:
-            skip_allow_last_n = 0
+        skip_allow_last_n = int(getattr(_params_for_split, "skip_allow_last_n", 0) or 0)
         if skip_allow_last_n < 0:
             raise ValueError("Allow last N inside must be an integer ≥ 0.")
         do_validate = bool(self.var_split_validate.get())
@@ -4585,13 +4804,13 @@ class SplitPointAnalyserGUI(tk.Tk):
         a = self.analysis
         strict_boundary = bool(self.var_strict_boundary.get())
 
-        prune_skip_block = bool(mapped.get("prune_skip_block", False))
-        skip_min_span = _safe_int(str(mapped.get("skip_min_span", "")))
-        if skip_min_span is None or skip_min_span < 0:
+        # Read pruning params from the current GUI state (same source as Analyse).
+        _params_for_split = self._read_params()
+        prune_skip_block = bool(getattr(_params_for_split, "prune_skip_block", False))
+        skip_min_span = int(getattr(_params_for_split, "skip_min_span", 0) or 0)
+        if skip_min_span < 0:
             raise ValueError("Min skip span must be an integer ≥ 0.")
-        skip_allow_last_n = _safe_int(str(mapped.get("skip_allow_last_n", "")))
-        if skip_allow_last_n is None:
-            skip_allow_last_n = 0
+        skip_allow_last_n = int(getattr(_params_for_split, "skip_allow_last_n", 0) or 0)
         if skip_allow_last_n < 0:
             raise ValueError("Allow last N inside must be an integer ≥ 0.")
 
@@ -6452,6 +6671,86 @@ if __name__ == "__main__":
             lines.append("% Note: Some crossing tensors had unknown sizes; communication may be a lower bound.")
 
         return "\n".join(lines) + "\n"
+
+
+    # ------------------------ Memory Fit (refactor bridge) ------------------------
+
+    def _compute_memory_fit_estimate_from_selection(self, boundary: int):
+        # Return a MemoryFitWidget-compatible estimate dict for the given boundary.
+        #
+        # Used by the refactored Analysis panel (Candidate Inspector) to display RAM
+        # usage against the currently selected accelerators.
+        #
+        # Structure:
+        #   {"left": {"name": str, "ram_limit_mb": float, "total_mb": float, "fits": bool},
+        #    "right": {...}}
+        #
+        # Units are MiB (MB = 1024^2 bytes). We recompute runtime overhead based on
+        # the *current* device selection, so changing accelerators updates the
+        # estimate without re-running analysis.
+        try:
+            b = int(boundary)
+        except Exception:
+            return None
+
+        mem_by_b = getattr(self, "memory_by_boundary", None)
+        if not isinstance(mem_by_b, dict):
+            return None
+
+        mem = mem_by_b.get(b)
+        if not isinstance(mem, dict):
+            return None
+
+        left_base = mem.get("left") or {}
+        right_base = mem.get("right") or {}
+
+        def _base_sum(d: dict) -> float:
+            try:
+                return float(d.get("weights_mb") or 0.0) + float(d.get("peak_act_mb") or 0.0) + float(d.get("const_mb") or 0.0)
+            except Exception:
+                return 0.0
+
+        # Current accelerator selection (from Hardware tab)
+        try:
+            left_name = str(self.var_memf_left_accel.get())
+        except Exception:
+            left_name = ""
+        try:
+            right_name = str(self.var_memf_right_accel.get())
+        except Exception:
+            right_name = ""
+
+        try:
+            left_spec = self._get_accel_spec_by_name(left_name)
+        except Exception:
+            left_spec = None
+        try:
+            right_spec = self._get_accel_spec_by_name(right_name)
+        except Exception:
+            right_spec = None
+
+        left_limit_mb = float((left_spec or {}).get("ram_limit_mb") or 0.0)
+        right_limit_mb = float((right_spec or {}).get("ram_limit_mb") or 0.0)
+        left_over_mb = float((left_spec or {}).get("runtime_overhead_mb") or 0.0)
+        right_over_mb = float((right_spec or {}).get("runtime_overhead_mb") or 0.0)
+
+        left_total_mb = _base_sum(left_base) + left_over_mb
+        right_total_mb = _base_sum(right_base) + right_over_mb
+
+        return {
+            "left": {
+                "name": left_name,
+                "ram_limit_mb": left_limit_mb,
+                "total_mb": left_total_mb,
+                "fits": bool(left_limit_mb > 0 and left_total_mb <= left_limit_mb),
+            },
+            "right": {
+                "name": right_name,
+                "ram_limit_mb": right_limit_mb,
+                "total_mb": right_total_mb,
+                "fits": bool(right_limit_mb > 0 and right_total_mb <= right_limit_mb),
+            },
+        }
 
     # ----------------------------- Utilities -----------------------------
 
