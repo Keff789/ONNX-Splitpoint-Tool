@@ -391,15 +391,8 @@ def _build_candidate_inspector(parent: ttk.Frame, app: Any) -> None:
     memory_widget = MemoryFitWidget(mem_fit_frame)
     memory_widget.pack(fill="x", padx=4, pady=4)
 
-    # Keep the bar titles generic ("Left/Right device") for readability, but show
-    # the currently selected accelerators underneath.
-    selected_accel_var = tk.StringVar(value="Selected left: –\nSelected right: –")
-    ttk.Label(
-        mem_fit_frame,
-        textvariable=selected_accel_var,
-        justify="left",
-        wraplength=520,
-    ).pack(fill="x", padx=6, pady=(0, 4))
+    # The MemoryFitWidget already displays the selected device names as row labels.
+    # Showing them again below the widget is redundant and caused confusion.
 
     llm_box = ttk.LabelFrame(parent, text="LLM Comm Breakdown")
     llm_box.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 6))
@@ -453,13 +446,6 @@ def _build_candidate_inspector(parent: ttk.Frame, app: Any) -> None:
             except Exception:
                 pass
 
-            # Still reflect current accelerator selections even when no candidate is selected.
-            try:
-                ln = str(getattr(app, "var_hw_left_accel", tk.StringVar(value="")).get() or "–")
-                rn = str(getattr(app, "var_hw_right_accel", tk.StringVar(value="")).get() or "–")
-                selected_accel_var.set(f"Selected left: {ln}\nSelected right: {rn}")
-            except Exception:
-                selected_accel_var.set("Selected left: –\nSelected right: –")
             return
 
         b = int(getattr(cand, "boundary_id", -1))
@@ -483,10 +469,6 @@ def _build_candidate_inspector(parent: ttk.Frame, app: Any) -> None:
                     break
             except Exception:
                 pass
-
-        selected_accel_var.set(
-            f"Selected left: {left_name or '–'}\nSelected right: {right_name or '–'}"
-        )
 
         # The memory estimate is computed during table build (gui_app._update_table) and stored in:
         #   cand.stats["memory"]  (preferred)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -26,24 +27,80 @@ _DEFAULT: Dict[str, List[Dict[str, Any]]] = {
 }
 
 
-def _resource_json_path() -> Path:
-    return Path(__file__).resolve().parent / "resources" / "accelerators.json"
+# Allow power-users to override the accelerator DB without modifying the repo.
+# Example:
+#   set SPLITPOINT_ACCEL_DB=C:\path\to\accelerators.json
+_ENV_ACCEL_DB = "SPLITPOINT_ACCEL_DB"
+
+
+def _resource_dir() -> Path:
+    return Path(__file__).resolve().parent / "resources"
+
+
+def _user_db_path() -> Path:
+    # Keep consistent with the GUI log/config folder the tool already uses.
+    return Path.home() / ".onnx_splitpoint_tool" / "accelerators.json"
+
+
+def _bundled_db_candidates() -> List[Path]:
+    # Prefer richer schemas when present.
+    base = _resource_dir()
+    return [
+        base / "accelerators_updated_v2.json",
+        base / "accelerators_updated.json",
+        base / "accelerators.json",
+    ]
+
+
+def _iter_candidate_db_paths() -> List[Path]:
+    candidates: List[Path] = []
+
+    env = (os.environ.get(_ENV_ACCEL_DB) or "").strip()
+    if env:
+        candidates.append(Path(env).expanduser())
+
+    candidates.append(_user_db_path())
+    candidates.extend(_bundled_db_candidates())
+    return candidates
 
 
 def load_accelerator_specs() -> Dict[str, List[Dict[str, Any]]]:
-    p = _resource_json_path()
-    if not p.exists():
-        return dict(_DEFAULT)
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except Exception as e:
-        LOGGER.warning("Failed to parse accelerators.json; using defaults: %s", e)
-        return dict(_DEFAULT)
+    """Load accelerator/interface specs.
+
+    Search order:
+      1) $SPLITPOINT_ACCEL_DB (if set)
+      2) ~/.onnx_splitpoint_tool/accelerators.json (user override)
+      3) bundled resources (prefer richest schema)
+
+    Always returns a dict with keys: "accelerators" and "interfaces".
+    """
+
+    data: Dict[str, Any] | None = None
+    loaded_from: Path | None = None
+
+    for p in _iter_candidate_db_paths():
+        try:
+            if not p.exists():
+                continue
+            obj = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(obj, dict) and isinstance(obj.get("accelerators"), list) and isinstance(obj.get("interfaces"), list):
+                data = obj
+                loaded_from = p
+                break
+        except Exception as e:
+            LOGGER.warning("Failed to parse accelerator DB at %s: %s", p, e)
+            continue
+
     if not isinstance(data, dict):
-        return dict(_DEFAULT)
+        data = dict(_DEFAULT)
+
+    # Ensure minimal structure.
     accels = data.get("accelerators")
     if not isinstance(accels, list) or not accels:
         data["accelerators"] = list(_DEFAULT["accelerators"])
     if not isinstance(data.get("interfaces"), list):
         data["interfaces"] = list(_DEFAULT["interfaces"])
+
+    if loaded_from is not None:
+        LOGGER.info("Loaded accelerator DB: %s", loaded_from)
     return data

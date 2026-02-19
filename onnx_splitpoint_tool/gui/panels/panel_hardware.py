@@ -84,6 +84,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
         accel_names = [str(x.get("name")) for x in accelerators]
         iface_names = [str(x.get("name")) for x in interfaces]
         iface_by_name = {str(x.get("name")): x for x in interfaces}
+        accel_by_name = {str(x.get("name")): x for x in accelerators}
 
     accel = ttk.LabelFrame(frame, text="Accelerators")
     accel.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
@@ -109,6 +110,8 @@ def build_panel(parent, app=None) -> ttk.Frame:
 
     # Refresh the analysis-side Memory Fit widget when the user changes accelerators.
     # (The Memory Fit widget lives in the Analyse tab's Candidate Inspector.)
+    _sync_latency_defaults = None  # assigned further down
+
     def _on_accel_change(*_args):
         # Update the legacy RAM Fit bars (Hardware tab), if present.
         if hasattr(app, "_refresh_memory_forecast"):
@@ -120,6 +123,13 @@ def build_panel(parent, app=None) -> ttk.Frame:
         if hasattr(app, "_refresh_memory_fit_inspector"):
             try:
                 app._refresh_memory_fit_inspector()
+            except Exception:
+                pass
+
+        # Auto-fill latency model defaults from accelerator DB (GOPS + peak memory)
+        if callable(_sync_latency_defaults):
+            try:
+                _sync_latency_defaults()
             except Exception:
                 pass
 
@@ -164,6 +174,125 @@ def build_panel(parent, app=None) -> ttk.Frame:
     mem_l_unit_var = _str_var(app, "var_mem_left_unit", "MiB")
     mem_r_var = _str_var(app, "var_mem_right", "")
     mem_r_unit_var = _str_var(app, "var_mem_right_unit", "MiB")
+
+    # ---------------------------------------------------------------------
+    # Auto-fill (non-destructive) latency model defaults from accelerator DB
+    # ---------------------------------------------------------------------
+    def _autofill_cache() -> dict:
+        d = getattr(app, "_autofill_defaults", None)
+        if not isinstance(d, dict):
+            d = {}
+            setattr(app, "_autofill_defaults", d)
+        return d
+
+    def _autofill_set(var: tk.Variable, key: str, value: str) -> None:
+        """Set var only if it is empty or still equals the last auto-filled value."""
+        d = _autofill_cache()
+        cur = str(var.get() or "").strip()
+        prev = str(d.get(key, "") or "").strip()
+        if cur == "" or cur == prev:
+            var.set(value)
+            d[key] = value
+
+    def _to_float(x):
+        try:
+            if x is None:
+                return None
+            return float(x)
+        except Exception:
+            return None
+
+    def _fmt_num(x: float) -> str:
+        try:
+            xf = float(x)
+        except Exception:
+            return ""
+        # Keep the UI readable.
+        if xf >= 100:
+            return f"{xf:.0f}"
+        if xf >= 10:
+            return f"{xf:.1f}"
+        return f"{xf:.2f}"
+
+    def _default_gops_for(accel_spec):
+        if not isinstance(accel_spec, dict):
+            return None
+        perf = accel_spec.get("perf") or {}
+        prec = accel_spec.get("precision") or {}
+        pref = str(prec.get("preferred_default") or "").strip().upper()
+        eff = _to_float(perf.get("efficiency_factor"))
+        if eff is None or eff <= 0:
+            eff = 1.0
+
+        raw = None
+        if pref == "FP16":
+            raw = _to_float(perf.get("gflops_fp16"))
+            if not raw:
+                raw = _to_float(perf.get("gflops_fp32"))
+        elif pref == "FP32":
+            raw = _to_float(perf.get("gflops_fp32"))
+            if not raw:
+                raw = _to_float(perf.get("gflops_fp16"))
+        elif pref == "INT4":
+            t = _to_float(perf.get("tops_int4"))
+            if t:
+                raw = t * 1000.0
+        elif pref == "INT8":
+            t = _to_float(perf.get("tops_int8"))
+            if t:
+                raw = t * 1000.0
+
+        # Fallbacks if preferred_default is missing or the metric is absent.
+        if not raw:
+            raw = _to_float(perf.get("gflops_fp16")) or _to_float(perf.get("gflops_fp32"))
+        if not raw:
+            t = _to_float(perf.get("tops_int8"))
+            if t:
+                raw = t * 1000.0
+        if not raw:
+            t = _to_float(perf.get("tops_int4"))
+            if t:
+                raw = t * 1000.0
+
+        if not raw:
+            return None
+        return raw * eff
+
+    def _available_ram_mb(accel_spec):
+        if not isinstance(accel_spec, dict):
+            return None
+        ram = _to_float(accel_spec.get("ram_limit_mb"))
+        if ram is None:
+            mem = accel_spec.get("memory") or {}
+            ram_gb = _to_float(mem.get("ram_gb"))
+            if ram_gb is not None:
+                ram = ram_gb * 1024.0
+        if ram is None:
+            return None
+        ov = _to_float(accel_spec.get("runtime_overhead_mb")) or 0.0
+        return max(0.0, ram - ov)
+
+    def _sync_latency_defaults():
+        left_name = str(left_var.get() or "")
+        right_name = str(right_var.get() or "")
+        left_spec = accel_by_name.get(left_name)
+        right_spec = accel_by_name.get(right_name)
+
+        g_l = _default_gops_for(left_spec)
+        g_r = _default_gops_for(right_spec)
+        if g_l is not None:
+            _autofill_set(gops_l_var, "lat_gops_left", _fmt_num(g_l))
+        if g_r is not None:
+            _autofill_set(gops_r_var, "lat_gops_right", _fmt_num(g_r))
+
+        m_l = _available_ram_mb(left_spec)
+        m_r = _available_ram_mb(right_spec)
+        if m_l is not None:
+            _autofill_set(mem_l_unit_var, "lat_peak_left_unit", "MiB")
+            _autofill_set(mem_l_var, "lat_peak_left", f"{int(round(m_l))}")
+        if m_r is not None:
+            _autofill_set(mem_r_unit_var, "lat_peak_right_unit", "MiB")
+            _autofill_set(mem_r_var, "lat_peak_right", f"{int(round(m_r))}")
 
     ttk.Label(latency, text="Link bandwidth:").grid(row=0, column=0, sticky="w", padx=(8, 4), pady=8)
     ent_bw = ttk.Entry(latency, textvariable=bw_var, width=10)
@@ -330,11 +459,18 @@ def build_panel(parent, app=None) -> ttk.Frame:
         bw = iface.get("bandwidth_mb_s")
         ovh = iface.get("latency_overhead_ms")
         if bw is not None:
-            bw_var.set(str(bw))
+            _autofill_set(bw_unit_var, "lat_bw_unit", "MB/s")
+            _autofill_set(bw_var, "lat_bw", str(bw))
         if ovh is not None:
-            overhead_var.set(str(ovh))
+            _autofill_set(overhead_var, "lat_overhead_ms", str(ovh))
 
     iface_var.trace_add("write", _sync_link_from_interface)
     _sync_link_from_interface()
+
+    # Fill GOPS / peak mem defaults once on startup (without clobbering user edits).
+    try:
+        _sync_latency_defaults()
+    except Exception:
+        pass
 
     return frame
