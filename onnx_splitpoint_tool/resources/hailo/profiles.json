@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "hailo8": {
+      "profile_id": "hailo8",
+      "hw_arch_prefixes": ["hailo8"],
+      "wsl_venv_activate": "~/.onnx_splitpoint_tool/hailo/venv_hailo8/bin/activate",
+      "wsl_distro": "",
+      "wheel_dir": "hailo8",
+      "notes": "DFC 3.x (Hailo-8 family)"
+    },
+    "hailo10": {
+      "profile_id": "hailo10",
+      "hw_arch_prefixes": ["hailo10"],
+      "wsl_venv_activate": "~/.onnx_splitpoint_tool/hailo/venv_hailo10/bin/activate",
+      "wsl_distro": "",
+      "wheel_dir": "hailo10",
+      "notes": "DFC 5.x (Hailo-10 family)"
+    }
+  }
+}

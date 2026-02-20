@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://onnx-splitpoint-tool.local/schemas/benchmark_plan.schema.json",
+  "title": "ONNX Splitpoint Benchmark Plan",
+  "type": "object",
+  "required": [
+    "schema",
+    "schema_version",
+    "runs"
+  ],
+  "properties": {
+    "schema": {
+      "const": "onnx-splitpoint/benchmark-plan"
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "type"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "onnxruntime",
+              "ort",
+              "hailo"
+            ]
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "cpu",
+              "cuda",
+              "tensorrt"
+            ]
+          },
+          "hw_arch": {
+            "type": "string"
+          },
+          "stage1": {
+            "type": "object"
+          },
+          "stage2": {
+            "type": "object"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "matrix": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "defaults": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://onnx-splitpoint-tool.local/schemas/benchmark_set.schema.json",
+  "title": "ONNX Splitpoint Benchmark Set",
+  "type": "object",
+  "required": [
+    "schema",
+    "schema_version",
+    "cases"
+  ],
+  "properties": {
+    "schema": {
+      "const": "onnx-splitpoint/benchmark-set"
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "plan": {
+      "$ref": "benchmark_plan.schema.json"
+    }
+  },
+  "additionalProperties": true
+}

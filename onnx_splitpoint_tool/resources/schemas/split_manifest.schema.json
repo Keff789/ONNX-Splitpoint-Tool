@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://onnx-splitpoint-tool.local/schemas/split_manifest.schema.json",
+  "title": "ONNX Splitpoint Split Manifest",
+  "type": "object",
+  "required": [
+    "schema",
+    "schema_version",
+    "boundary",
+    "part1_model",
+    "part2_model"
+  ],
+  "properties": {
+    "schema": {
+      "const": "onnx-splitpoint/split-manifest"
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "boundary": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "strict_boundary": {
+      "type": "boolean"
+    },
+    "models": {
+      "type": "object"
+    },
+    "cut": {
+      "type": "object"
+    },
+    "io": {
+      "type": "object"
+    },
+    "pipeline": {
+      "type": "object"
+    },
+    "hailo": {
+      "type": "object"
+    },
+    "tool": {
+      "type": "object"
+    },
+    "part1_model": {
+      "type": "string"
+    },
+    "part2_model": {
+      "type": "string"
+    },
+    "full_model": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}
