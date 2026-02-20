@@ -43,13 +43,9 @@ def _user_db_path() -> Path:
 
 
 def _bundled_db_candidates() -> List[Path]:
-    # Prefer richer schemas when present.
+    # Keep exactly one bundled DB to avoid version drift and ambiguity.
     base = _resource_dir()
-    return [
-        base / "accelerators_updated_v2.json",
-        base / "accelerators_updated.json",
-        base / "accelerators.json",
-    ]
+    return [base / "accelerators.json"]
 
 
 def _iter_candidate_db_paths() -> List[Path]:
@@ -70,7 +66,7 @@ def load_accelerator_specs() -> Dict[str, List[Dict[str, Any]]]:
     Search order:
       1) $SPLITPOINT_ACCEL_DB (if set)
       2) ~/.onnx_splitpoint_tool/accelerators.json (user override)
-      3) bundled resources (prefer richest schema)
+      3) bundled resources
 
     Always returns a dict with keys: "accelerators" and "interfaces".
     """

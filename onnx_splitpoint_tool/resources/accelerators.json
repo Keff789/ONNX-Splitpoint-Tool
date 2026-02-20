@@ -5,64 +5,784 @@
       "name": "Jetson Xavier NX (8GB)",
       "ram_limit_mb": 8192,
       "runtime_overhead_mb": 400,
-      "notes": "Host RAM; ORT/TensorRT overhead included via runtime_overhead_mb",
-      "perf": { "tops_int8": 21, "gflops_fp16": 0, "efficiency_factor": 0.7 }
+      "notes": "Host RAM; ORT/TensorRT overhead included via runtime_overhead_mb Updated: FP16 peak 6 TFLOPS (secondary NVIDIA module comparison sheet; confidence medium).",
+      "perf": {
+        "tops_int8": 21,
+        "gflops_fp16": 6000,
+        "efficiency_factor": 0.7,
+        "gops_int8_peak": 14700,
+        "by_precision": {
+          "INT8": {
+            "tops_peak": 21,
+            "tops_by_power_mode": {
+              "10W": 14,
+              "15W": 21,
+              "20W": 21
+            },
+            "note": "NVIDIA Xavier NX datasheet states up to 21 TOPS; 10W/15W performance marketed as 14/21 TOPS."
+          },
+          "FP16": {
+            "tflops_peak": 6.0,
+            "note": "FP16 TFLOPS published in NVIDIA Jetson module comparison sheet."
+          },
+          "FP32": {
+            "tflops_peak": null,
+            "note": "FP32 peak not specified in consulted NVIDIA datasheets."
+          }
+        }
+      },
+      "category": "soc_module",
+      "compute": {
+        "ai_tops_int8_peak": 21,
+        "ai_tops_int8_power_modes": {
+          "10W": 14,
+          "15W": 21,
+          "20W": 21
+        },
+        "notes": "Peak AI TOPS depend on nvpmodel power mode."
+      },
+      "power": {
+        "modes_w": [
+          10,
+          15,
+          20
+        ]
+      },
+      "memory": {
+        "external_dram": {
+          "type": "LPDDR4x",
+          "size_mb": 8192,
+          "bus_bits": 128,
+          "bandwidth_gb_s": 59.7
+        },
+        "on_chip_memory": {
+          "l2_cache_mb": 6,
+          "l3_cache_mb": 4
+        },
+        "on_chip_sram_mb": null,
+        "notes": "SoC uses external LPDDR4x as main memory; on-chip caches exist but vendor does not publish a single 'SRAM pool' size like discrete NPUs."
+      },
+      "io": {
+        "pcie": [
+          {
+            "gen": 4,
+            "lanes": 4
+          },
+          {
+            "gen": 3,
+            "lanes": 1
+          }
+        ],
+        "ethernet": "1x GbE",
+        "csi": {
+          "mipi_csi2_lanes": 14,
+          "max_cameras": 6
+        }
+      },
+      "precision": {
+        "supported": [
+          "FP32",
+          "FP16",
+          "INT8"
+        ],
+        "notes": "TensorRT commonly uses FP16 or INT8 on Jetson for best perf/W; FP32 available but slower.",
+        "preferred_default": "FP16",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8 (wenn kalibrierbar), sonst FP16",
+          "transformer_llm_vlm": "FP16",
+          "classical_cv_prepost": "FP32/FP16 auf CPU/GPU (je nach Operatoren)"
+        },
+        "rationale": [
+          "FP16 nutzt Tensor Cores für guten Speed ohne Kalibrierungsaufwand.",
+          "INT8 bringt meist den besten Durchsatz/effizienz, benötigt aber Quantisierung/Kalibrierung und kann Accuracy kosten."
+        ],
+        "caveats": [
+          "INT8-Performance hängt stark von Operator-Abdeckung und TensorRT-Kalibrierung ab.",
+          "FP32 ist kompatibel, aber deutlich langsamer und bandbreitenlastiger."
+        ]
+      },
+      "sources": [
+        "https://docs.nvidia.com/deeplearning/tensorrt/archives/tensorrt-861/support-matrix/index.html",
+        "https://makerselectronics.com/wp-content/uploads/2023/04/Jetson-Xavier-NX-Series-Modules-DS-10184-001_v1.9.pdf",
+        "https://www.nvidia.com/en-sg/autonomous-machines/embedded-systems/jetson-xavier-nx/",
+        "https://developer.nvidia.com/blog/jetson-xavier-nx-the-worlds-smallest-ai-supercomputer/",
+        "https://docs.nvidia.com/deeplearning/tensorrt/archives/tensorrt-861/support-matrix/"
+      ],
+      "host_interface_ids": [
+        "pcie_gen4_x4",
+        "pcie_gen3_x1",
+        "ethernet_1g"
+      ]
     },
     {
       "id": "jetson_orin_nx_8gb",
       "name": "Jetson Orin NX (8GB)",
       "ram_limit_mb": 8192,
       "runtime_overhead_mb": 500,
-      "notes": "Conservative RAM budget placeholder.",
-      "perf": { "tops_int8": 70, "gflops_fp16": 0, "efficiency_factor": 0.75 }
+      "notes": "Conservative RAM budget placeholder. Note: NVIDIA datasheet distinguishes INT8 Dense vs Sparse. This JSON uses dense as perf.tops_int8=35; sparse values are in perf.tops_int8_sparse=70. MAXN_SUPER dense=58, sparse=117.",
+      "perf": {
+        "tops_int8": 35,
+        "gflops_fp16": 3120,
+        "efficiency_factor": 0.75,
+        "tops_int8_maxn_super": 58,
+        "gops_int8_peak": 26250.0,
+        "tops_int8_sparse": 70,
+        "tops_int8_maxn_super_sparse": 117,
+        "gflops_fp16_maxn_super": 4800,
+        "gflops_fp32": 1560,
+        "gflops_fp32_maxn_super": 2400,
+        "by_precision": {
+          "INT8": {
+            "tops_dense": {
+              "maxn": 35,
+              "maxn_super": 58
+            },
+            "tops_sparse": {
+              "maxn": 70,
+              "maxn_super": 117
+            },
+            "note": "NVIDIA datasheet distinguishes Dense vs Sparse INT8."
+          },
+          "FP16": {
+            "tflops": {
+              "maxn": 3.12,
+              "maxn_super": 4.8
+            }
+          },
+          "FP32": {
+            "tflops": {
+              "maxn": 1.56,
+              "maxn_super": 2.4
+            }
+          },
+          "DLA_INT8_sparse": {
+            "tops": {
+              "maxn": 20,
+              "maxn_super": 40
+            }
+          }
+        },
+        "gops_int8_peak_maxn_super": 43500.0,
+        "gops_int8_peak_sparse": 52500.0,
+        "gops_int8_peak_maxn_super_sparse": 87750.0
+      },
+      "category": "soc_module",
+      "compute": {
+        "ai_tops_int8_peak": 35,
+        "ai_tops_int8_maxn_super": 58,
+        "notes": "Peak AI TOPS depend on power mode. NVIDIA datasheet distinguishes INT8 dense vs sparse; dense=35 TOPS (maxn) / 58 TOPS (MAXN_SUPER), sparse=70 TOPS (maxn) / 117 TOPS (MAXN_SUPER).",
+        "ai_tops_int8_peak_sparse": 70,
+        "ai_tops_int8_maxn_super_sparse": 117
+      },
+      "power": {
+        "modes_w": [
+          10,
+          15,
+          20
+        ],
+        "maxn_super_w": 40
+      },
+      "memory": {
+        "external_dram": {
+          "type": "LPDDR5",
+          "size_mb": 8192,
+          "bus_bits": 128,
+          "bandwidth_gb_s": 102.0
+        },
+        "on_chip_sram_mb": null,
+        "notes": "Main memory is external LPDDR5 on-module."
+      },
+      "io": {
+        "pcie": [
+          {
+            "gen": 4,
+            "lanes": 4
+          },
+          {
+            "gen": 4,
+            "lanes": 1,
+            "count": 3
+          }
+        ],
+        "ethernet": "1x GbE",
+        "csi": {
+          "mipi_csi2_lanes": 8,
+          "max_cameras": 4
+        }
+      },
+      "precision": {
+        "supported": [
+          "FP32",
+          "TF32",
+          "FP16",
+          "INT8"
+        ],
+        "notes": "Ampere Tensor Cores support TF32/FP16/INT8 in practice on Jetson; BF16 may be hardware-capable but is not generally available in TensorRT for compute capability 8.7 (see tensorrt_precision_notes).",
+        "preferred_default": "FP16",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8 (ggf. sparsity), sonst FP16",
+          "transformer_llm_vlm": "FP16 (oder INT8/INT4 weight-only, wenn Toolchain passt)",
+          "diffusion": "FP16"
+        },
+        "rationale": [
+          "FP16 ist meist der Sweet Spot auf Jetson (Tensor Cores, gute Toolchain-Unterstützung).",
+          "INT8 ist ideal für CV/CNNs, wenn Quantisierung/Kalibrierung sauber möglich ist.",
+          "Für LLMs sind Weight-Only-Quantisierungen (z. B. INT8/INT4 Gewichte) oft sinnvoll, um Speicher/Bandbreite zu sparen."
+        ],
+        "caveats": [
+          "TensorRT-Precision-Support hängt von JetPack/TensorRT-Version und Operator-Abdeckung ab.",
+          "BF16 wird im Jetson-Kontext häufig erwähnt, ist aber in TensorRT für SM 8.7 nicht generell verfügbar."
+        ],
+        "tensorrt_precision_notes": "TensorRT support matrix (Feb 2026) lists BF16 as N/A for compute capability 8.7."
+      },
+      "sources": [
+        "https://docs.nvidia.com/deeplearning/tensorrt/latest/getting-started/support-matrix-10/10.15.1.html",
+        "https://docs.nvidia.com/jetson/archives/r36.5/DeveloperGuide/SD/PlatformPowerAndPerformance/JetsonOrinNanoSeriesJetsonOrinNxSeriesAndJetsonAgxOrinSeries.html",
+        "https://developer.nvidia.com/downloads/jetson-orin-nx-module-series-data-sheet",
+        "https://manuals.plus/m/329e10a6854b62f19917f0b34bb6d7c4944137fe621f3194d37dca5839ec2e70",
+        "https://developer.download.nvidia.com/assets/embedded/secure/jetson/orin_nx/docs/Jetson-Orin-NX-Series-Modules-Datasheet_DS-10712-001_v1.6.pdf",
+        "https://www.macnica.co.jp/en/business/semiconductor/manufacturers/nvidia/products/139797/"
+      ],
+      "host_interface_ids": [
+        "pcie_gen4_x4",
+        "ethernet_1g"
+      ]
     },
     {
       "id": "jetson_orin_nx_16gb",
       "name": "Jetson Orin NX (16GB)",
       "ram_limit_mb": 16384,
       "runtime_overhead_mb": 700,
-      "notes": "Conservative RAM budget placeholder.",
-      "perf": { "tops_int8": 100, "gflops_fp16": 0, "efficiency_factor": 0.75 }
+      "notes": "Conservative RAM budget placeholder. Note: NVIDIA datasheet distinguishes INT8 Dense vs Sparse. This JSON uses dense as perf.tops_int8=50; sparse values are in perf.tops_int8_sparse=100. MAXN_SUPER dense=78, sparse=157.",
+      "perf": {
+        "tops_int8": 50,
+        "gflops_fp16": 3760,
+        "efficiency_factor": 0.75,
+        "tops_int8_maxn_super": 78,
+        "gops_int8_peak": 37500.0,
+        "tops_int8_sparse": 100,
+        "tops_int8_maxn_super_sparse": 157,
+        "gflops_fp16_maxn_super": 4800,
+        "gflops_fp32": 1880,
+        "gflops_fp32_maxn_super": 2400,
+        "by_precision": {
+          "INT8": {
+            "tops_dense": {
+              "maxn": 50,
+              "maxn_super": 78
+            },
+            "tops_sparse": {
+              "maxn": 100,
+              "maxn_super": 157
+            },
+            "note": "NVIDIA datasheet distinguishes Dense vs Sparse INT8."
+          },
+          "FP16": {
+            "tflops": {
+              "maxn": 3.76,
+              "maxn_super": 4.8
+            }
+          },
+          "FP32": {
+            "tflops": {
+              "maxn": 1.88,
+              "maxn_super": 2.4
+            }
+          },
+          "DLA_INT8_sparse": {
+            "tops": {
+              "maxn": 40,
+              "maxn_super": 80
+            }
+          }
+        },
+        "gops_int8_peak_maxn_super": 58500.0,
+        "gops_int8_peak_sparse": 75000.0,
+        "gops_int8_peak_maxn_super_sparse": 117750.0
+      },
+      "category": "soc_module",
+      "compute": {
+        "ai_tops_int8_peak": 50,
+        "ai_tops_int8_maxn_super": 78,
+        "notes": "Peak AI TOPS depend on power mode. NVIDIA datasheet distinguishes INT8 dense vs sparse; dense=50 TOPS (maxn) / 78 TOPS (MAXN_SUPER), sparse=100 TOPS (maxn) / 157 TOPS (MAXN_SUPER).",
+        "ai_tops_int8_peak_sparse": 100,
+        "ai_tops_int8_maxn_super_sparse": 157
+      },
+      "power": {
+        "modes_w": [
+          10,
+          15,
+          25
+        ],
+        "maxn_super_w": 40
+      },
+      "memory": {
+        "external_dram": {
+          "type": "LPDDR5",
+          "size_mb": 16384,
+          "bus_bits": 128,
+          "bandwidth_gb_s": 102.0
+        },
+        "on_chip_sram_mb": null
+      },
+      "io": {
+        "pcie": [
+          {
+            "gen": 4,
+            "lanes": 4
+          },
+          {
+            "gen": 4,
+            "lanes": 1,
+            "count": 3
+          }
+        ],
+        "ethernet": "1x GbE",
+        "csi": {
+          "mipi_csi2_lanes": 8,
+          "max_cameras": 4
+        }
+      },
+      "precision": {
+        "supported": [
+          "FP32",
+          "TF32",
+          "FP16",
+          "INT8"
+        ],
+        "notes": "Ampere Tensor Cores support TF32/FP16/INT8 in practice on Jetson; BF16 may be hardware-capable but is not generally available in TensorRT for compute capability 8.7 (see tensorrt_precision_notes).",
+        "preferred_default": "FP16",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8 (ggf. sparsity), sonst FP16",
+          "transformer_llm_vlm": "FP16 (oder INT8/INT4 weight-only, wenn Toolchain passt)",
+          "diffusion": "FP16"
+        },
+        "rationale": [
+          "FP16 ist meist der Sweet Spot auf Jetson (Tensor Cores, gute Toolchain-Unterstützung).",
+          "INT8 ist ideal für CV/CNNs, wenn Quantisierung/Kalibrierung sauber möglich ist.",
+          "Für LLMs sind Weight-Only-Quantisierungen (z. B. INT8/INT4 Gewichte) oft sinnvoll, um Speicher/Bandbreite zu sparen."
+        ],
+        "caveats": [
+          "TensorRT-Precision-Support hängt von JetPack/TensorRT-Version und Operator-Abdeckung ab.",
+          "BF16 wird im Jetson-Kontext häufig erwähnt, ist aber in TensorRT für SM 8.7 nicht generell verfügbar."
+        ],
+        "tensorrt_precision_notes": "TensorRT support matrix (Feb 2026) lists BF16 as N/A for compute capability 8.7."
+      },
+      "sources": [
+        "https://docs.nvidia.com/deeplearning/tensorrt/latest/getting-started/support-matrix-10/10.15.1.html",
+        "https://docs.nvidia.com/jetson/archives/r36.5/DeveloperGuide/SD/PlatformPowerAndPerformance/JetsonOrinNanoSeriesJetsonOrinNxSeriesAndJetsonAgxOrinSeries.html",
+        "https://developer.nvidia.com/downloads/jetson-orin-nx-module-series-data-sheet",
+        "https://manuals.plus/m/329e10a6854b62f19917f0b34bb6d7c4944137fe621f3194d37dca5839ec2e70",
+        "https://developer.download.nvidia.com/assets/embedded/secure/jetson/orin_nx/docs/Jetson-Orin-NX-Series-Modules-Datasheet_DS-10712-001_v1.6.pdf",
+        "https://www.macnica.co.jp/en/business/semiconductor/manufacturers/nvidia/products/139797/"
+      ],
+      "host_interface_ids": [
+        "pcie_gen4_x4",
+        "ethernet_1g"
+      ]
     },
     {
       "id": "hailo_8",
       "name": "Hailo-8",
-      "ram_limit_mb": 4096,
-      "runtime_overhead_mb": 256,
-      "notes": "Conservative placeholder; verify host/device split for your deployment.",
-      "perf": { "tops_int8": 26, "gflops_fp16": 0, "efficiency_factor": 0.6 }
+      "ram_limit_mb": 32,
+      "runtime_overhead_mb": 2,
+      "notes": "Conservative placeholder; verify host/device split for your deployment. Updated: 26 TOPS INT8; typical ~2.5W (module-dependent), PCIe Gen3 x4 for Key-M modules; some B+M modules are PCIe Gen3 x2. Multi-context (context switching) supported via Hailo DFC/HailoRT.",
+      "perf": {
+        "tops_int8": 26,
+        "gflops_fp16": 0,
+        "efficiency_factor": 0.6,
+        "gops_int8_peak": 15600.0
+      },
+      "category": "pcie_npu_module",
+      "compute": {
+        "ai_tops_int8_peak": 26,
+        "efficiency_tops_per_w_marketing": 3,
+        "notes": "Hailo-8 M.2 modules are marketed as 26 TOPS INT8 and up to 3 TOPS/W."
+      },
+      "power": {
+        "typical_w": 2.5,
+        "max_w": 8.25,
+        "tdp_w": 8.65,
+        "typical_examples": [
+          {
+            "network": "ResNet-50 224x224",
+            "fps": 915,
+            "power_w": 3.3
+          },
+          {
+            "network": "MobileNet-SSD 300x300",
+            "fps": 996,
+            "power_w": 2.4
+          }
+        ]
+      },
+      "memory": {
+        "on_module_dram": null,
+        "on_chip_sram_mb": null,
+        "notes": "On-chip SRAM size is not specified in the referenced Hailo-8 M.2 Key B+M module datasheet; treat as undisclosed. Larger models may require multi-context compilation and context switching at runtime."
+      },
+      "io": {
+        "pcie": [
+          {
+            "gen": 3,
+            "lanes": 4,
+            "form_factor": "M.2 Key M (typical)"
+          },
+          {
+            "gen": 3,
+            "lanes": 2,
+            "form_factor": "M.2 B+M key (some modules)"
+          }
+        ],
+        "host_bandwidth_gb_s_reported": 4.0,
+        "pcie_module_variants_note": "Hailo-8 M.2 Key B+M module datasheet lists PCIe Gen3 x2; other M-key variants may be x4."
+      },
+      "precision": {
+        "supported": [
+          "INT8"
+        ],
+        "mixed_precision": false,
+        "notes": "Primary compute is INT8 quantized inference.",
+        "preferred_default": "INT8",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8",
+          "transformer_llm_vlm": "Nicht primär (INT8 nur, Modell muss in Hailo-8 Toolchain passen)"
+        },
+        "rationale": [
+          "Hailo-8 ist auf quantisierte INT8-Inferenz ausgelegt; das ist praktisch immer die optimale Wahl."
+        ],
+        "caveats": [
+          "Modelle müssen in den unterstützten Operator-/Graph-Subset passen.",
+          "Wenn das Modell größer ist als die On-Chip-Memory-Architektur erlaubt, kann das Mapping/Partitioning Einfluss auf Latenz/Durchsatz haben."
+        ]
+      },
+      "runtime_behavior": {
+        "multi_context": true,
+        "context_switch": "Automatic (compiler partitions model into contexts; runtime swaps contexts).",
+        "compiler_knobs": [
+          "context_switch_param(mode=...)",
+          "allocator_param(automatic_ddr=...)"
+        ],
+        "notes": "Context switching enables larger models but adds overhead from re-loading contexts; compiler can also add host-RAM (DDR) portals over PCIe."
+      },
+      "sources": [
+        "https://f.hubspotusercontent30.net/hubfs/3383687/TAPPAS%20User%20Guide.pdf",
+        "https://premio.blob.core.windows.net/premio/uploads/resource/data-sheet/Hailo-8/Hailo-8%20M.2%20Key%20B_M%20Datasheet%20Rev1.1.pdf",
+        "https://hailo.ai/de/products/ai-accelerators/hailo-8-m2-ai-acceleration-module/",
+        "https://manuals.plus/m/4d3534f593e65062666d42ca3e2fe52dad2484b31b4fd9f48d9642fa76879a51",
+        "https://note.mmmsk.myds.me/Projects/Embedded-AI/files/hailo_dataflow_compiler_v3.27.0_user_guide.pdf",
+        "https://www.macnica.co.jp/en/business/semiconductor/articles/hailo/145097/",
+        "https://community.hailo.ai/t/swap-hailo-8l-for-8/2503"
+      ],
+      "host_interface_ids": [
+        "pcie_gen3_x4",
+        "pcie_gen3_x2"
+      ]
     },
     {
       "id": "hailo_10h",
       "name": "Hailo-10H",
       "ram_limit_mb": 6144,
       "runtime_overhead_mb": 320,
-      "notes": "Conservative placeholder; verify with runtime toolchain.",
-      "perf": { "tops_int8": 40, "gflops_fp16": 0, "efficiency_factor": 0.6 }
+      "notes": "Updated: Hailo-10H marketed as 40|20 TOPS (INT4|INT8) with on-module LPDDR4/4X (4 or 8GB). OP definition for TOPS is not specified publicly; treat TOPS->GOPS conversion as vendor-scale.",
+      "perf": {
+        "tops_int8": 20,
+        "gflops_fp16": 0,
+        "efficiency_factor": 0.6,
+        "tops_int4": 40,
+        "gops_int8_peak": 12000.0,
+        "gops_int4_peak": 24000.0,
+        "gops_int4_peak_no_eff": 40000.0,
+        "ops_definition_note": "Hailo product brief markets 40|20 TOPS (INT4|INT8); OP definition (MAC vs op) not specified publicly."
+      },
+      "category": "pcie_npu_module",
+      "compute": {
+        "ai_tops_int4_peak": 40,
+        "ai_tops_int8_peak": 20,
+        "notes": "Hailo-10H is marketed with 40|20 TOPS (INT4|INT8)."
+      },
+      "power": {
+        "typical_w": 2.5
+      },
+      "memory": {
+        "on_module_dram": {
+          "type": "LPDDR4/LPDDR4X",
+          "size_gb_options": [
+            4,
+            8
+          ]
+        },
+        "on_chip_sram_mb": null,
+        "notes": "Unlike Hailo-8 M.2, Hailo-10H M.2 includes on-module LPDDR4/4X (4 or 8GB)."
+      },
+      "io": {
+        "pcie": [
+          {
+            "gen": 3,
+            "lanes": 4
+          }
+        ]
+      },
+      "precision": {
+        "supported": [
+          "INT4",
+          "INT8"
+        ],
+        "mixed_precision": true,
+        "preferred_default": "INT4",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8 (wenn Accuracy wichtiger), sonst INT4",
+          "transformer_llm_vlm": "INT4 (meist sinnvoll), ggf. INT8 für bessere Genauigkeit",
+          "diffusion": "INT4/INT8 (workload- und toolchain-abhängig)"
+        },
+        "rationale": [
+          "INT4 verdoppelt gegenüber INT8 typischerweise den Durchsatz (Peak) und reduziert Speicher/Bandbreite stark – hilfreich für GenAI/Transformer am Edge.",
+          "INT8 ist oft die sicherere Wahl, wenn Accuracy sehr kritisch ist."
+        ],
+        "caveats": [
+          "Die real erreichbare Performance hängt von Modellstruktur, Operator-Support und Memory-Footprint ab.",
+          "INT4 kann je nach Modell mehr Genauigkeitsverlust verursachen als INT8."
+        ],
+        "notes": "Public messaging beschreibt Hailo-10 als Integer-Precision (4/8/16-bit); produktseitig werden v. a. INT4/INT8 Peak-Werte beworben."
+      },
+      "sources": [
+        "https://hailo.ai/files/hailo-10h-product-brief-en/",
+        "https://hailo.ai/products/ai-accelerators/hailo-10h-m-2-generative-ai-acceleration-module/"
+      ],
+      "host_interface_ids": [
+        "pcie_gen3_x4"
+      ]
     },
     {
       "id": "axelera_metis",
       "name": "Axelera Metis",
-      "ram_limit_mb": 4096,
+      "ram_limit_mb": 1024,
       "runtime_overhead_mb": 320,
-      "notes": "Conservative placeholder.",
-      "perf": { "tops_int8": 80, "gflops_fp16": 0, "efficiency_factor": 0.65 }
+      "notes": "Updated: Metis M.2 module published as 214 TOPS INT8; AIPU memory 1GB DRAM (type not specified) and typical application power 3.5–9W. Axelera slides indicate 52MiB total on-chip memory (incl. 32MiB L2) and external memory bandwidth 34GB/s (LPDDR4x), internal aggregate ~200GB/s.",
+      "perf": {
+        "tops_int8": 214,
+        "gflops_fp16": 0,
+        "efficiency_factor": 0.65,
+        "gops_int8_peak": 139100.0
+      },
+      "category": "pcie_npu_module",
+      "compute": {
+        "ai_tops_int8_peak": 214,
+        "notes": "Metis AIPU peak performance published as 214 TOPS."
+      },
+      "power": {
+        "avg_w_range": [
+          3.5,
+          9.0
+        ],
+        "typical_application_w_range": [
+          3.5,
+          9.0
+        ]
+      },
+      "memory": {
+        "on_module_dram": {
+          "type": "DRAM (type not specified)",
+          "size_gb_options": [
+            1
+          ],
+          "size_gb": 1
+        },
+        "on_chip_high_speed_memory_mib_min": 52,
+        "notes": "Axelera states >52MiB multi-level on-chip high-speed memory; LPDDR4X controller connects to external DRAM.",
+        "on_chip_sram": {
+          "total_mib": 52,
+          "l2_mib": 32,
+          "l1_mib": 16
+        },
+        "bandwidth": {
+          "internal_aggregate_gb_s": 200,
+          "external_gb_s": 34
+        }
+      },
+      "io": {
+        "pcie": [
+          {
+            "gen": 3,
+            "lanes": 4
+          }
+        ]
+      },
+      "precision": {
+        "supported": [
+          "INT8"
+        ],
+        "notes": "Published energy-efficiency metric given at INT8.",
+        "preferred_default": "INT8",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8",
+          "transformer_llm_vlm": "INT8 (nur wenn von SDK unterstützt; ansonsten eher Jetson/CPU/GPU)"
+        },
+        "rationale": [
+          "Metis ist als INT8-Inferenzbeschleuniger positioniert; Voyager SDK quantisiert Modelle auf INT8 mit geringer Accuracy-Einbuße."
+        ],
+        "caveats": [
+          "„Mixed precision“ bezieht sich typischerweise auf interne Arithmetic/Accumulation; das Deployment-Ziel ist weiterhin quantisiert (praktisch INT8).",
+          "Für sehr große Transformer/LLMs ist Speicher/DRAM-Variante (z. B. Max) wichtiger als reine TOPS."
+        ],
+        "supported_additional": [
+          "INT4"
+        ]
+      },
+      "sources": [
+        "https://www.kisacoresearch.com/sites/default/files/presentations/evangelos_eleftheriou_-_axelera_ai_-_beyond_the_edge.pdf",
+        "https://axelera.ai/hubfs/Axelera_February2025/pdfs/axelera-ai-m2-ai-edge-accelerator-module.pdf",
+        "https://axelera.ai/ai-accelerators/aipu",
+        "https://axelera.ai/news/axelera-ai-announces-metis-ai-platform",
+        "https://axelera.ai/ai-accelerators/metis-pcie-ai-acceleration-card",
+        "https://www.rutronik.com/de/article/neue-massstaebe-fuer-ki-inferenz-axelera-metis-ai-accelerators-bei-rutronik",
+        "https://buyzero.de/en/collections/machine-learning/products/axelera-ai-1gb-quad-core-metis-m-2-m-key-accelerator-card-214-tops"
+      ],
+      "host_interface_ids": [
+        "pcie_gen3_x4"
+      ]
     },
     {
       "id": "axelera_metis_max",
       "name": "Axelera Metis Max",
-      "ram_limit_mb": 8192,
+      "ram_limit_mb": 16384,
       "runtime_overhead_mb": 384,
-      "notes": "Conservative placeholder.",
-      "perf": { "tops_int8": 120, "gflops_fp16": 0, "efficiency_factor": 0.65 }
+      "notes": "Updated: Metis M.2 Max supports LPDDR4x up to 16GB (sizes 4/8/16GB). Power is not specified in the referenced M.2 Max PDF (placeholders removed).",
+      "perf": {
+        "tops_int8": 214,
+        "gflops_fp16": 0,
+        "efficiency_factor": 0.65,
+        "gops_int8_peak": 139100.0
+      },
+      "category": "pcie_npu_module",
+      "compute": {
+        "ai_tops_int8_peak": 214,
+        "notes": "Metis M.2 Max uses Metis AIPU; performance gains for LLM/VLM are largely due to higher memory bandwidth."
+      },
+      "power": {
+        "typical_application_w_range": null,
+        "notes": "Power not specified in M.2 Max PDF; previous numeric placeholders removed."
+      },
+      "memory": {
+        "on_module_dram": {
+          "type": "LPDDR4x",
+          "max_gb": 16,
+          "size_gb_options": [
+            4,
+            8,
+            16
+          ]
+        },
+        "memory_bandwidth_vs_metis_m2_multiplier": 2.0,
+        "notes": "Vendor press release states double memory bandwidth vs Metis M.2; up to 16GB memory."
+      },
+      "io": {
+        "pcie": [
+          {
+            "gen": 3,
+            "lanes": 4,
+            "form_factor": "M.2 2280 M-key"
+          }
+        ]
+      },
+      "precision": {
+        "supported": [
+          "INT8"
+        ],
+        "preferred_default": "INT8",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8",
+          "transformer_llm_vlm": "INT8 (wenn SDK/Model-Support gegeben); Vorteil vor allem durch mehr DRAM/Model-Fit"
+        },
+        "rationale": [
+          "Wie Metis: INT8 ist die Zielpräzision; der Hauptunterschied der Max-Varianten ist typischerweise mehr externer DRAM für größere Modelle/Pipelines."
+        ],
+        "caveats": [
+          "LLM/Transformer-Eignung hängt stark an SDK-Operator-Support und Speicherbedarf, nicht nur an TOPS."
+        ]
+      },
+      "sources": [
+        "https://www.kisacoresearch.com/sites/default/files/presentations/evangelos_eleftheriou_-_axelera_ai_-_beyond_the_edge.pdf",
+        "https://axelera.ai/hubfs/Axelera%20AI%20M.2%20Max%20AI%20Edge%20accelerator%20Card.pdf?hsLang=en",
+        "https://axelera.ai/news/axelera-ai-boosts-llms-at-the-edge-by-2x-with-metis-m.2-max-introduction",
+        "https://store.axelera.ai/products/m-2-max-ai-inference-acceleration-card",
+        "https://www.cnx-software.com/2025/09/09/axelera-metis-m-2-max-edge-ai-module-doubles-llm-and-vlm-processing-speed/",
+        "https://convergedigest.com/axelera-ai-unveils-metis-m-2-max-for-edge-ai-and-llm-inference/"
+      ],
+      "host_interface_ids": [
+        "pcie_gen3_x4"
+      ]
     },
     {
       "id": "deepx_dx_m1",
       "name": "DeepX DX-M1",
       "ram_limit_mb": 4096,
       "runtime_overhead_mb": 256,
-      "notes": "Conservative placeholder.",
-      "perf": { "tops_int8": 25, "gflops_fp16": 0, "efficiency_factor": 0.6 }
+      "notes": "Updated: 25 TOPS INT8 at 2–5W; PCIe Gen3 x4 (reported 4GB/s); on-module 4GB LPDDR5 + 1Gbit NAND; memory interface shown as DQ 16-bit ×2 (two channels).",
+      "perf": {
+        "tops_int8": 25,
+        "gflops_fp16": 0,
+        "efficiency_factor": 0.6,
+        "gops_int8_peak": 15000.0
+      },
+      "category": "pcie_npu_module",
+      "compute": {
+        "ai_tops_int8_peak": 25,
+        "notes": "DX-M1 marketed as 25 TOPS (INT8)."
+      },
+      "power": {
+        "min_w": 2,
+        "max_w": 5
+      },
+      "memory": {
+        "on_module_dram": {
+          "type": "LPDDR5",
+          "size_mb": 4096,
+          "bus_width_bits_total": 32,
+          "channels": 2,
+          "channel_width_bits": 16
+        },
+        "flash": {
+          "type": "QSPI NAND",
+          "size_gbit": 1
+        },
+        "notes": "DX-M1 M.2 module includes 4GB LPDDR5 + 1Gbit NAND per product briefs."
+      },
+      "io": {
+        "pcie": [
+          {
+            "gen": 3,
+            "lanes": 4
+          }
+        ],
+        "host_bandwidth_gb_s_reported": 4.0
+      },
+      "precision": {
+        "supported": [
+          "INT8"
+        ],
+        "notes": "Vendor emphasizes quantized INT8 inference for GPU-like accuracy.",
+        "preferred_default": "INT8",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8",
+          "transformer_llm_vlm": "INT8 (nur wenn Toolchain/Model-Zoo es abdeckt; sonst eher Jetson)"
+        },
+        "rationale": [
+          "DX‑M1 wird als quantisierter INT8‑NPU vermarktet (IQ8) – das ist i. d. R. die optimale Performance-/Wahl."
+        ],
+        "caveats": [
+          "Operator-/Modellabdeckung über Compiler/Model-Zoo bestimmt, was praktikabel ist."
+        ]
+      },
+      "sources": [
+        "https://my.avnet.com/wcm/connect/18beed78-f8b1-4ea9-8a03-b9548105c124/DEEPX-DX-M1-M.2-LPDDR5x2-AI-Accelerator.pdf",
+        "https://deepx.ai/products/dx-m1/",
+        "https://deepx.ai/wp-content/uploads/2025/05/09183545/DEEPX-AI-Accelerator-Products-E-Brochure_2025-0509.pdf",
+        "https://www.digikey.de/en/product-highlight/d/deepx/dx-m1-m2-ai-acceleration-module"
+      ],
+      "host_interface_ids": [
+        "pcie_gen3_x4"
+      ]
     }
   ],
   "interfaces": [
@@ -70,19 +790,241 @@
       "id": "pcie_gen3_x4",
       "name": "PCIe Gen3 x4 (M.2 Key M)",
       "bandwidth_mb_s": 3500,
-      "latency_overhead_ms": 0.1
+      "latency_overhead_ms": 0.002,
+      "link_model": {
+        "type": "packetized",
+        "energy_pj_per_byte": 40.0,
+        "mtu_payload_bytes": 256,
+        "per_packet_overhead_ms": 1e-06,
+        "per_packet_overhead_bytes": 24,
+        "constraints": {
+          "max_latency_ms": null,
+          "max_energy_mJ": null,
+          "max_bytes": null,
+          "max_ms": null,
+          "max_mj": null
+        }
+      },
+      "bandwidth_mb_s_theoretical": 3940,
+      "sources": [
+        "https://www.cl.cam.ac.uk/research/srg/netos/projects/pcie-bench/neugebauer2018understanding-slides.pdf"
+      ]
     },
     {
       "id": "pcie_gen4_x4",
       "name": "PCIe Gen4 x4",
       "bandwidth_mb_s": 7000,
-      "latency_overhead_ms": 0.08
+      "latency_overhead_ms": 0.002,
+      "link_model": {
+        "type": "packetized",
+        "energy_pj_per_byte": 15.44,
+        "mtu_payload_bytes": 256,
+        "per_packet_overhead_ms": 1e-06,
+        "per_packet_overhead_bytes": 24,
+        "constraints": {
+          "max_latency_ms": null,
+          "max_energy_mJ": null,
+          "max_bytes": null,
+          "max_ms": null,
+          "max_mj": null
+        }
+      },
+      "bandwidth_mb_s_theoretical": 7876,
+      "sources": [
+        "https://www.cl.cam.ac.uk/research/srg/netos/projects/pcie-bench/neugebauer2018understanding-slides.pdf"
+      ]
     },
     {
       "id": "ethernet_10g",
-      "name": "Ethernet 10G",
-      "bandwidth_mb_s": 1100,
-      "latency_overhead_ms": 0.25
+      "name": "Ethernet 10G (Base-T)",
+      "bandwidth_mb_s": 1219,
+      "latency_overhead_ms": 0.03,
+      "link_model": {
+        "type": "packetized",
+        "energy_pj_per_byte": 2000.0,
+        "mtu_payload_bytes": 1500,
+        "per_packet_overhead_ms": 0.0001,
+        "per_packet_overhead_bytes": 38,
+        "constraints": {
+          "max_latency_ms": null,
+          "max_energy_mJ": null,
+          "max_bytes": null,
+          "max_ms": null,
+          "max_mj": null
+        }
+      },
+      "sources": [
+        "https://www.cisco.com/c/en/us/products/collateral/interfaces-modules/transceiver-modules/at-a-glance-c45-743937.html"
+      ]
+    },
+    {
+      "id": "pcie_gen3_x2",
+      "name": "PCIe Gen3 x2",
+      "bandwidth_mb_s": 1750,
+      "latency_overhead_ms": 0.002,
+      "link_model": {
+        "type": "packetized",
+        "energy_pj_per_byte": 40.0,
+        "mtu_payload_bytes": 256,
+        "per_packet_overhead_ms": 1e-06,
+        "per_packet_overhead_bytes": 24,
+        "constraints": {
+          "max_latency_ms": null,
+          "max_energy_mJ": null,
+          "max_bytes": null,
+          "max_ms": null,
+          "max_mj": null
+        }
+      },
+      "bandwidth_mb_s_theoretical": 1970,
+      "sources": [
+        "https://www.cl.cam.ac.uk/research/srg/netos/projects/pcie-bench/neugebauer2018understanding-slides.pdf"
+      ]
+    },
+    {
+      "id": "pcie_gen3_x1",
+      "name": "PCIe Gen3 x1",
+      "bandwidth_mb_s": 875,
+      "latency_overhead_ms": 0.002,
+      "link_model": {
+        "type": "packetized",
+        "energy_pj_per_byte": 40.0,
+        "mtu_payload_bytes": 256,
+        "per_packet_overhead_ms": 1e-06,
+        "per_packet_overhead_bytes": 24,
+        "constraints": {
+          "max_latency_ms": null,
+          "max_energy_mJ": null,
+          "max_bytes": null,
+          "max_ms": null,
+          "max_mj": null
+        }
+      },
+      "bandwidth_mb_s_theoretical": 985,
+      "sources": [
+        "https://www.cl.cam.ac.uk/research/srg/netos/projects/pcie-bench/neugebauer2018understanding-slides.pdf"
+      ]
+    },
+    {
+      "id": "ethernet_1g",
+      "name": "Ethernet 1G",
+      "bandwidth_mb_s": 121.8,
+      "latency_overhead_ms": 0.035,
+      "link_model": {
+        "type": "packetized",
+        "energy_pj_per_byte": 3920.0,
+        "mtu_payload_bytes": 1500,
+        "per_packet_overhead_ms": 0.0001,
+        "per_packet_overhead_bytes": 38,
+        "constraints": {
+          "max_latency_ms": null,
+          "max_energy_mJ": null,
+          "max_bytes": null,
+          "max_ms": null,
+          "max_mj": null
+        }
+      },
+      "sources": [
+        "https://www.ti.com/lit/ds/symlink/dp83867ir.pdf"
+      ]
+    },
+    {
+      "id": "usb3_gen1",
+      "name": "USB 3.0 / 3.1 Gen1",
+      "bandwidth_mb_s": 450,
+      "latency_overhead_ms": 0.03,
+      "link_model": {
+        "type": "packetized",
+        "energy_pj_per_byte": 88.0,
+        "mtu_payload_bytes": 1024,
+        "per_packet_overhead_ms": 0.0005,
+        "per_packet_overhead_bytes": 24,
+        "constraints": {
+          "max_latency_ms": null,
+          "max_energy_mJ": null,
+          "max_bytes": null,
+          "max_ms": null,
+          "max_mj": null
+        }
+      }
     }
-  ]
+  ],
+  "metadata": {
+    "last_updated_date": "2026-02-20",
+    "notes": "Specs compiled from vendor product pages/datasheets and selected third-party sources. Some internal SRAM sizes are not publicly disclosed; where estimates are used they are labeled as unofficial. Added preferred precision recommendations per accelerator/workload. Integrated Deep Research findings (Edge‑AI Accelerator Specs PDF) including manufacturer datasheets and updated JSON patch.",
+    "deep_research": {
+      "source_document": "Edge‑AI Accelerator Specs: Präzisions‑Perf, Power‑Modes, Memory‑Semantik, I/O‑Link‑Model – belastbar.pdf",
+      "applied_json_patch": true,
+      "applied_on": "2026-02-20"
+    }
+  },
+  "_docs": {
+    "_note": "JSON erlaubt keine Kommentare. Feldbeschreibungen stehen daher unter _docs. Alle Werte sind Defaults und können in der GUI überschrieben werden.",
+    "units": {
+      "bandwidth_mb_s": "MB/s (MegaBytes pro Sekunde, dezimal)",
+      "gops": "GOPS (Giga-Operationen pro Sekunde)",
+      "energy_pj_per_byte": "pJ/B (Picojoule pro Byte, Link-Energie)",
+      "energy_pj_per_flop": "pJ/F (Picojoule pro Operation/FLOP, Compute-Energie)",
+      "mtu_payload_bytes": "B (Payload pro Paket/Transfer, z.B. MTU ohne Header)",
+      "per_packet_overhead_bytes": "B (Header/Overhead pro Paket)",
+      "per_packet_overhead_ms": "ms (Fixe Zeit pro Paket)",
+      "max_ms": "ms (Maximales Kommunikations-Zeitbudget)",
+      "max_mj": "mJ (Maximales Energie-Budget)",
+      "max_bytes": "B (Maximales Datenvolumen)",
+      "dram_gb": "GB (dezimal) / GUI rechnet ggf. in GiB um",
+      "latency_overhead_ms": "ms (Millisekunden, Fix-Overhead pro Split-Kommunikation)"
+    },
+    "interface_schema": {
+      "id": "Eindeutige ID (wird intern gespeichert)",
+      "name": "Name in der GUI",
+      "bandwidth_mb_s": "Effektive Netto-Bandbreite (MB/s)",
+      "link_model": {
+        "type": "'ideal' (nur Bandbreite+Overhead) oder 'packetized' (zusätzlich MTU/Packet-Overhead)",
+        "energy_pj_per_byte": "E_link in pJ/B",
+        "mtu_payload_bytes": "MTU Payload in Bytes (nur packetized relevant)",
+        "per_packet_overhead_ms": "Zeit-Overhead pro Paket (ms)",
+        "per_packet_overhead_bytes": "Byte-Overhead pro Paket (Header etc.)",
+        "constraints": {
+          "max_ms": "Optionales max. Zeitbudget",
+          "max_mj": "Optionales max. Energie-Budget",
+          "max_bytes": "Optionales max. Datenbudget",
+          "max_latency_ms": "Optionales max. Zeitbudget (ms)",
+          "max_energy_mJ": "Optionales max. Energie-Budget (mJ)"
+        }
+      },
+      "latency_overhead_ms": "Fixer Overhead (ms) pro Transfer/Split"
+    },
+    "accelerator_schema": {
+      "id": "Eindeutige ID",
+      "name": "Name in der GUI",
+      "compute": {
+        "ai_tops_int8_peak": "Peak INT8 TOPS (falls bekannt)",
+        "cpu_gops_est": "GOPS Schätzung für CPU-only (falls vorhanden)"
+      },
+      "perf": {
+        "gops_int8_peak": "Peak GOPS (INT8) – wird direkt ins Latency-Model übernommen",
+        "tops_int8": "TOPS (INT8) – wird (falls gops_int8_peak fehlt) über 1000x + efficiency_factor angenähert",
+        "efficiency_factor": "0..1 Faktor für realistische GOPS (Default: 0.7)"
+      },
+      "memory": {
+        "dram_gb": "Geräte-RAM/DRAM in GB",
+        "usable_fraction": "Anteil 0..1 der für Model+Tensors nutzbar ist"
+      },
+      "power": {
+        "typical_w": "Typische Leistungsaufnahme in Watt",
+        "max_w": "Max/Peak in Watt",
+        "modes_w": "Liste möglicher Power-Modes (W)"
+      },
+      "derived": {
+        "energy_pj_per_flop": "Wenn nicht explizit im JSON, wird aus power/gops geschätzt: pJ/F = (W * 1000) / GOPS"
+      }
+    },
+    "abbreviations": {
+      "GOPS": "Giga operations per second",
+      "TOPS": "Tera operations per second",
+      "MTU": "Maximum Transmission Unit",
+      "ovh": "Overhead",
+      "pJ": "Picojoule (1e-12 J)"
+    }
+  }
 }

@@ -4176,6 +4176,17 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         # (1) Communication bytes per boundary
         bars = self.ax_comm.bar(xs, comm_mb)
+
+        # Candidate split markers (dashed) – keep consistent with the compute/latency plots.
+        if picks:
+            for b in picks:
+                self.ax_comm.axvline(
+                    b,
+                    linestyle="--",
+                    linewidth=1.0,
+                    alpha=0.8,
+                    zorder=3,
+                )
         self.ax_comm.set_title("Activation bytes crossing each boundary")
         self.ax_comm.set_xlabel("Boundary index")
         self.ax_comm.set_ylabel("Crossing size (MB)")
@@ -4247,6 +4258,11 @@ class SplitPointAnalyserGUI(tk.Tk):
             if has_gops:
                 self.ax_lat.plot(xs, total_ms, label="Total latency (ms)")
             self.ax_lat.plot(xs, comm_ms, label="Comm-only (ms)")
+
+            # Candidate split markers (dashed) – match the compute plot.
+            if picks:
+                for b in picks:
+                    self.ax_lat.axvline(b, linestyle="--", linewidth=1.0, alpha=0.8)
             self.ax_lat.legend()
 
         else:

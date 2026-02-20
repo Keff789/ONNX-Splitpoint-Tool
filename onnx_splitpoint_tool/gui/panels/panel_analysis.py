@@ -13,6 +13,7 @@ from matplotlib.figure import Figure
 
 from ..analysis_params import ANALYSIS_PARAM_SPECS
 from ..widgets.collapsible_section import CollapsibleSection
+from ..widgets.tooltip import attach_tooltip
 from ..widgets.memory_fit import MemoryFitWidget
 
 logger = logging.getLogger(__name__)
@@ -127,6 +128,37 @@ def build_panel(parent, app=None) -> ttk.Frame:
     sec_candidate.pack(fill="x", pady=(0, 6))
     sec_scoring = CollapsibleSection(settings_stack, "Scoring", expanded=True)
     sec_scoring.pack(fill="x", pady=(0, 6))
+
+    # Quick-access ORT validation controls (same vars as the Validation tab)
+    ort_group = ttk.LabelFrame(settings_stack, text="ORT validation")
+    ort_group.pack(fill="x", pady=(0, 6))
+    ort_group.columnconfigure(0, weight=1)
+
+    # Keep these bound to the canonical vars used by the export pipeline.
+    var_split_validate = getattr(app, "var_split_validate", tk.BooleanVar(value=False))
+    var_split_eps = getattr(app, "var_split_eps", tk.StringVar(value="1e-4"))
+
+    chk_ort = ttk.Checkbutton(
+        ort_group,
+        text="Validate split outputs (ORT)",
+        variable=var_split_validate,
+    )
+    chk_ort.grid(row=0, column=0, sticky="w", padx=(8, 10), pady=6)
+    ttk.Label(ort_group, text="eps:").grid(row=0, column=1, sticky="e", padx=(0, 4), pady=6)
+    ent_eps = ttk.Entry(ort_group, textvariable=var_split_eps, width=10)
+    ent_eps.grid(row=0, column=2, sticky="w", padx=(0, 8), pady=6)
+
+    attach_tooltip(
+        chk_ort,
+        "Run an ONNX Runtime sanity-check after splitting by comparing outputs of the original and split models.\n"
+        "When enabled, a validation_report.json will be produced during export.",
+    )
+    attach_tooltip(
+        ent_eps,
+        "Numerical tolerance for the ORT output comparison (epsilon).\n"
+        "Smaller = stricter. Typical values: 1e-4 … 1e-3.",
+    )
+
     sec_shape = CollapsibleSection(settings_stack, "Shape & Unknown Handling", expanded=False)
     sec_shape.pack(fill="x", pady=(0, 6))
     sec_llm = CollapsibleSection(settings_stack, "LLM Presets", expanded=False)

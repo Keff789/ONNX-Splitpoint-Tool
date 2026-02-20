@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from pathlib import Path
+from typing import Optional
 import shutil
 from tkinter import ttk
 
@@ -89,22 +90,67 @@ def build_panel(parent, app=None) -> ttk.Frame:
     text.grid(row=0, column=0, sticky="nsew")
     text.configure(state="disabled")
 
+    def _selected_boundary() -> Optional[int]:
+        """Best-effort: read current boundary selection from the main table."""
+        if app is None:
+            return None
+        fn = getattr(app, "_selected_boundary_index", None)
+        if not callable(fn):
+            return None
+        try:
+            return fn()
+        except Exception:
+            return None
+
     def _render_preview(*_args) -> None:
-        out_dir = Path.cwd() / "split_export"
+        # app.model_path can be None during early startup (before a model is opened).
+        mp = getattr(app, "model_path", None) if app is not None else None
+        if mp:
+            model_path = Path(mp)
+            base = model_path.stem or "model"
+        else:
+            model_path = Path.cwd()
+            base = "model"
+
+        b = _selected_boundary()
+        b_tag = f"b{b}" if isinstance(b, int) else "bXXX"
+
+        out_parent = getattr(app, "default_output_dir", None) if app is not None else None
+        out_parent = Path(out_parent) if out_parent else model_path.parent
+        out_dir = out_parent / f"{base}_split_{b_tag}" if bool(var_split_folder.get()) else out_parent
+
+        has_graphviz = shutil.which("dot") is not None
+        ctx_formats = ".dot/.svg/.pdf" if has_graphviz else ".dot"
+
         est = 0.0
         lines = [f"{out_dir}/"]
         if vars_map["models"].get():
-            lines += ["  - part1.onnx", "  - part2.onnx"]
-            est += 120 * 1024 * 1024
+            lines += [f"  - {base}_part1_{b_tag}.onnx", f"  - {base}_part2_{b_tag}.onnx"]
+            # rough estimate: assume similar size to original model
+            try:
+                est += float(model_path.stat().st_size)
+            except Exception:
+                est += 120 * 1024 * 1024
         if vars_map["runner"].get():
-            lines += ["  - run_split_onnxruntime.py"]
-            est += 16 * 1024
+            lines += ["  - run_split_onnxruntime.py", "  - run_split_onnxruntime.bat", "  - run_split_onnxruntime.sh"]
+            est += 48 * 1024
+
         if vars_map["context"].get():
-            lines += ["  - split_context_bXXX.dot/.svg/.pdf", "  - llm_compact_context_bXXX.json/.pdf"]
+            if bool(var_ctx_full.get()):
+                lines += [f"  - split_context_{b_tag}{ctx_formats}"]
+            if bool(var_ctx_cutflow.get()):
+                lines += [f"  - split_context_{b_tag}_cutflow{ctx_formats}"]
+                # Not part of filenames, but affects what is included.
+                lines += [f"    (cut-flow hops={var_ctx_hops.get()})"]
             est += 2 * 1024 * 1024
+
         if vars_map["reports"].get():
-            lines += ["  - split_manifest.json", "  - validation_report.json"]
+            lines += ["  - split_manifest.json"]
+            do_validate = bool(getattr(app, "var_split_validate", tk.BooleanVar(value=False)).get()) if app is not None else False
+            if do_validate:
+                lines += ["  - validation_report.json"]
             est += 128 * 1024
+
         lines += ["", f"Estimated size: ~{_human_size(est)}"]
 
         text.configure(state="normal")
@@ -112,9 +158,24 @@ def build_panel(parent, app=None) -> ttk.Frame:
         text.insert("1.0", "\n".join(lines))
         text.configure(state="disabled")
 
-    for v in vars_map.values():
+    for v in (
+        *vars_map.values(),
+        var_ctx_full,
+        var_ctx_cutflow,
+        var_ctx_hops,
+        var_split_folder,
+    ):
         v.trace_add("write", _render_preview)
     _render_preview()
+
+    # Keep preview in sync with boundary selection changes.
+    # This avoids requiring the user to toggle any checkbox to refresh.
+    if app is not None and hasattr(app, "events"):
+        try:
+            app.events.on_candidate_selected(lambda _b: _render_preview())
+        except Exception:
+            # Never let preview wiring break the UI.
+            pass
 
     frame.export_checklist_vars = vars_map  # type: ignore[attr-defined]
     return frame

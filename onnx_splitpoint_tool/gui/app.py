@@ -29,7 +29,7 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
     TAB_LABELS = (
         ("analysis", "Analyse"),
         ("export", "Split & Export"),
-        ("validate", "Validierung & Benchmark"),
+        ("validate", "Benchmark"),
         ("hardware", "Hardware"),
         ("logs", "Logs"),
     )
