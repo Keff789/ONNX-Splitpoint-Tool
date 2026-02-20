@@ -27,8 +27,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import onnx
 from onnx import AttributeProto, helper
+
+# Optional (pure python) helper to resolve multiple DFC versions (Hailo-8 vs Hailo-10)
+from .hailo.dfc_manager import get_dfc_manager
 
 
 def hailo_sdk_available() -> bool:
@@ -117,24 +121,54 @@ def hailo_probe_local() -> HailoProbeResult:
 
 def hailo_probe_via_wsl(
     *,
+    hw_arch: str = "hailo8",
     wsl_distro: str = "",
-    wsl_venv_activate: str = "~/hailo_dfc_venv/bin/activate",
+    wsl_venv_activate: str = "auto",
     timeout_s: int = 30,
 ) -> HailoProbeResult:
     """Check whether Hailo DFC is reachable inside WSL.
 
     This is meant for the Windows GUI, where the DFC lives in WSL.
+
+    If `wsl_venv_activate` is set to "auto" (or empty), we resolve a managed
+    venv based on `hw_arch` via :class:`~onnx_splitpoint_tool.hailo.dfc_manager.DfcManager`.
     """
     if not hailo_wsl_available():
         return HailoProbeResult(ok=False, backend="wsl", reason="wsl.exe not found (WSL not available)")
 
+    # Resolve managed venv/distro if requested.
+    try:
+        mgr = get_dfc_manager()
+        resolved = mgr.resolve_wsl_runtime(
+            hw_arch=str(hw_arch),
+            wsl_distro=(str(wsl_distro).strip() or None),
+            wsl_venv_activate=(str(wsl_venv_activate).strip() or "auto"),
+        )
+    except Exception as e:
+        return HailoProbeResult(ok=False, backend="wsl", reason=f"Failed to resolve DFC profile: {e}")
+
+    distro_eff = str(resolved.wsl_distro or "").strip()
+    venv_eff = str(resolved.wsl_venv_activate or "").strip()
+
+    if not venv_eff:
+        return HailoProbeResult(
+            ok=False,
+            backend="wsl",
+            reason=(
+                f"No managed DFC profile found for hw_arch={hw_arch!r}. "
+                "Set an explicit WSL venv path, or add a profile in resources/hailo/profiles.json."
+            ),
+            details={"hw_arch": str(hw_arch), "wsl_distro": distro_eff or None},
+        )
+
     wsl_exe = shutil.which("wsl.exe") or shutil.which("wsl") or "wsl.exe"
 
     cmd = [wsl_exe]
-    if wsl_distro:
-        cmd += ["-d", wsl_distro]
+    if distro_eff:
+        cmd += ["-d", distro_eff]
 
-    act = _bash_quote(wsl_venv_activate)
+    # NOTE: do not quote paths starting with '~' here; quoting prevents tilde expansion.
+    act = venv_eff
     # Print a unique marker so we can reliably detect success.
     bash = (
         "set -e; "
@@ -150,6 +184,9 @@ def hailo_probe_via_wsl(
         ok = "__HAILO_PROBE_OK__" in out
         details = {
             "returncode": proc.returncode,
+            "profile_id": resolved.profile_id,
+            "wsl_distro": distro_eff or None,
+            "wsl_venv_activate": venv_eff,
             "output_tail": "\n".join(out.strip().splitlines()[-30:]),
         }
         return HailoProbeResult(ok=ok, backend="wsl", reason=("" if ok else "Probe failed"), details=details)
@@ -162,8 +199,9 @@ def hailo_probe_via_wsl(
 def hailo_probe_auto(
     *,
     backend: str = "auto",
+    hw_arch: str = "hailo8",
     wsl_distro: str = "",
-    wsl_venv_activate: str = "~/hailo_dfc_venv/bin/activate",
+    wsl_venv_activate: str = "auto",
     timeout_s: int = 30,
 ) -> HailoProbeResult:
     backend = (backend or "auto").strip().lower()
@@ -173,12 +211,12 @@ def hailo_probe_auto(
     if backend == "local":
         return hailo_probe_local()
     if backend == "wsl":
-        return hailo_probe_via_wsl(wsl_distro=wsl_distro, wsl_venv_activate=wsl_venv_activate, timeout_s=timeout_s)
+        return hailo_probe_via_wsl(hw_arch=hw_arch, wsl_distro=wsl_distro, wsl_venv_activate=wsl_venv_activate, timeout_s=timeout_s)
 
     # auto
     if hailo_sdk_available():
         return hailo_probe_local()
-    return hailo_probe_via_wsl(wsl_distro=wsl_distro, wsl_venv_activate=wsl_venv_activate, timeout_s=timeout_s)
+    return hailo_probe_via_wsl(hw_arch=hw_arch, wsl_distro=wsl_distro, wsl_venv_activate=wsl_venv_activate, timeout_s=timeout_s)
 
 
 def _find_result_json(text: str) -> Optional[Dict[str, Any]]:
@@ -208,7 +246,7 @@ def hailo_parse_check_via_wsl(
     disable_rt_metadata_extraction: bool = True,
     # WSL bridge settings
     wsl_distro: Optional[str] = None,
-    wsl_venv_activate: str = "~/hailo_dfc_venv/bin/activate",
+    wsl_venv_activate: str = "auto",
     wsl_timeout_s: int = 180,
 ) -> "HailoParseResult":
     """Run the parse-check inside WSL (Windows host -> WSL2 Linux backend).
@@ -245,6 +283,39 @@ def hailo_parse_check_via_wsl(
             error="WSL backend not available (wsl.exe not found).",
         )
 
+    # Resolve managed venv/distro if requested.
+    try:
+        mgr = get_dfc_manager()
+        resolved = mgr.resolve_wsl_runtime(
+            hw_arch=str(hw_arch),
+            wsl_distro=(str(wsl_distro).strip() or None),
+            wsl_venv_activate=(str(wsl_venv_activate).strip() or "auto"),
+        )
+    except Exception as e:
+        return HailoParseResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend="wsl",
+            error=f"Failed to resolve DFC profile: {e}",
+        )
+
+    distro_eff = str(resolved.wsl_distro or "").strip() or None
+    venv_eff = str(resolved.wsl_venv_activate or "").strip()
+    if not venv_eff:
+        return HailoParseResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend="wsl",
+            error=(
+                f"No managed DFC profile found for hw_arch={hw_arch!r}. "
+                "Set an explicit WSL venv path, or add a profile in resources/hailo/profiles.json."
+            ),
+        )
+
     # Resolve helper script path on Windows and convert to WSL path.
     helper_win = (Path(__file__).resolve().parent / "wsl_hailo_check.py")
     helper_wsl = windows_path_to_wsl(str(helper_win))
@@ -256,10 +327,8 @@ def hailo_parse_check_via_wsl(
         outdir_wsl = windows_path_to_wsl(str(Path(outdir).resolve()))
 
     # Build a bash command that activates the venv and runs the helper.
-    # Note: do not quote '~/...' to keep tilde expansion working.
-    venv_activate = str(wsl_venv_activate).strip()
-    if not venv_activate:
-        venv_activate = "~/hailo_dfc_venv/bin/activate"
+    # NOTE: do not quote paths starting with '~' here; quoting prevents tilde expansion.
+    venv_activate = venv_eff
 
     cmd_parts = [
         "set -e",  # fail fast
@@ -286,8 +355,8 @@ def hailo_parse_check_via_wsl(
     bash_cmd = " && ".join(cmd_parts)
 
     wsl_cmd: List[str] = [_wsl_exe()]
-    if wsl_distro:
-        wsl_cmd += ["-d", str(wsl_distro)]
+    if distro_eff:
+        wsl_cmd += ["-d", str(distro_eff)]
     wsl_cmd += ["--", "bash", "-lc", bash_cmd]
 
     try:
@@ -363,7 +432,7 @@ def hailo_parse_check_auto(
     disable_rt_metadata_extraction: bool = True,
     # WSL bridge settings
     wsl_distro: Optional[str] = None,
-    wsl_venv_activate: str = "~/hailo_dfc_venv/bin/activate",
+    wsl_venv_activate: str = "auto",
     wsl_timeout_s: int = 180,
 ) -> "HailoParseResult":
     """Convenience wrapper: pick the best available backend.
@@ -674,3 +743,648 @@ def hailo_parse_check(
             fixed_onnx_path=str(fixed_path) if fixed_path is not None else None,
             fixup_report=fixup_report,
         )
+
+
+# ------------------------------- HEF build -------------------------------
+
+
+@dataclass
+class HailoHefBuildResult:
+    ok: bool
+    elapsed_s: float
+    hw_arch: str
+    net_name: str
+    backend: Optional[str] = None
+    error: Optional[str] = None
+    hef_path: Optional[str] = None
+    parsed_har_path: Optional[str] = None
+    quant_har_path: Optional[str] = None
+    fixed_onnx_path: Optional[str] = None
+    fixup_report: Optional[Dict[str, Any]] = None
+    skipped: bool = False
+    calib_info: Optional[Dict[str, Any]] = None
+
+
+def _safe_filename(s: str) -> str:
+    s = str(s or "").strip()
+    if not s:
+        return "model"
+    # Keep it cross-platform
+    out = []
+    for ch in s:
+        if ch.isalnum() or ch in ("-", "_", "."):
+            out.append(ch)
+        else:
+            out.append("_")
+    return "".join(out).strip("._") or "model"
+
+
+def _load_npy_any(path: Path) -> np.ndarray:
+    arr = np.load(path)
+    # Support .npz
+    if isinstance(arr, np.lib.npyio.NpzFile):
+        keys = list(arr.keys())
+        if not keys:
+            raise ValueError(f"Empty npz: {path}")
+        # common keys
+        for k in ["image", "images", "input", "data", "arr_0"]:
+            if k in keys:
+                return np.asarray(arr[k])
+        return np.asarray(arr[keys[0]])
+    return np.asarray(arr)
+
+
+def _hn_get_shape(meta: Dict[str, Any]) -> Optional[List[int]]:
+    """Best-effort extract of an input-layer shape from HN metadata.
+
+    Returns the *per-sample* shape (no dataset dim). For many CV models, this is
+    [H, W, C] (NHWC).
+    """
+
+    cand_keys = ["input_shape", "output_shape", "shape", "output_shapes", "input_shapes"]
+    shape = None
+    for k in cand_keys:
+        if k not in meta:
+            continue
+        v = meta.get(k)
+        if isinstance(v, list) and v and isinstance(v[0], list):
+            v = v[0]
+        if isinstance(v, list) and v:
+            shape = v
+            break
+    if shape is None:
+        return None
+
+    dims: List[Optional[int]] = []
+    for d in shape:
+        if d is None:
+            dims.append(None)
+        elif isinstance(d, int):
+            dims.append(None if d <= 0 else int(d))
+        else:
+            dims.append(None)
+
+    # Drop a leading batch dim if present
+    if len(dims) >= 2 and (dims[0] is None or dims[0] == 1):
+        dims = dims[1:]
+
+    if any(d is None for d in dims):
+        return None
+    return [int(d) for d in dims]  # type: ignore
+
+
+def _sort_hn_input_layers(hn_layers: Dict[str, Any]) -> List[str]:
+    inputs = []
+    for name, meta in hn_layers.items():
+        if not isinstance(meta, dict):
+            continue
+        if meta.get("type") == "input_layer":
+            inputs.append(str(name))
+
+    def keyfn(name: str) -> Tuple[int, str]:
+        m = re.search(r"input_layer(\d+)$", name)
+        if m:
+            try:
+                return (int(m.group(1)), name)
+            except Exception:
+                return (9999, name)
+        return (9999, name)
+
+    return sorted(inputs, key=keyfn)
+
+
+def _estimate_bytes(shape: List[int], n: int, dtype_bytes: int = 4) -> int:
+    total = dtype_bytes
+    for d in shape:
+        try:
+            total *= int(d)
+        except Exception:
+            return 0
+    return int(total * int(n))
+
+
+def _clamp_calib_count(shape: List[int], requested: int, *, cap_bytes: int = 256 * 1024 * 1024) -> int:
+    """Avoid accidentally allocating multi-GB random calibration sets."""
+
+    n = max(1, int(requested))
+    est = _estimate_bytes(shape, n, dtype_bytes=4)
+    if est <= 0:
+        return n
+    if est <= cap_bytes:
+        return n
+    per = max(1, _estimate_bytes(shape, 1, dtype_bytes=4))
+    if per <= 0:
+        return n
+    n2 = max(1, cap_bytes // per)
+    return min(n, int(n2))
+
+
+def _try_build_calib_from_dir(
+    *,
+    calib_dir: Path,
+    expected_shape: List[int],
+    limit: int,
+) -> Optional[np.ndarray]:
+    if not calib_dir.exists():
+        return None
+    items = sorted([p for p in calib_dir.iterdir() if p.suffix.lower() in (".npy", ".npz")])
+    if not items:
+        return None
+
+    batches: List[np.ndarray] = []
+    total = 0
+    for p in items:
+        a = _load_npy_any(p)
+        if a.ndim == len(expected_shape):
+            a = a[None, ...]
+        if a.ndim != len(expected_shape) + 1:
+            continue
+
+        # Convert dtype to float32 (Hailo optimize typically expects float)
+        if a.dtype == np.uint8:
+            a = a.astype(np.float32) / 255.0
+        else:
+            a = a.astype(np.float32, copy=False)
+
+        # Try to match shape; special-case NCHW->NHWC for 3D image shapes
+        sample = list(a.shape[1:])
+        tgt = list(expected_shape)
+        if sample == tgt:
+            pass
+        elif len(tgt) == 3 and sample == [tgt[2], tgt[0], tgt[1]]:
+            # NCHW -> NHWC
+            a = np.transpose(a, (0, 2, 3, 1))
+        else:
+            continue
+
+        batches.append(np.ascontiguousarray(a))
+        total += int(a.shape[0])
+        if total >= int(limit):
+            break
+
+    if not batches:
+        return None
+
+    ds = np.concatenate(batches, axis=0)
+    if ds.shape[0] > int(limit):
+        ds = ds[: int(limit)]
+    return np.ascontiguousarray(ds.astype(np.float32, copy=False))
+
+
+def hailo_build_hef(
+    onnx_path: Union[str, Path],
+    *,
+    hw_arch: str = "hailo8",
+    net_name: Optional[str] = None,
+    outdir: Optional[Union[str, Path]] = None,
+    net_input_shapes: Optional[Union[List[int], Dict[str, List[int]]]] = None,
+    fixup: bool = True,
+    add_conv_defaults: bool = True,
+    disable_rt_metadata_extraction: bool = True,
+    opt_level: int = 1,
+    calib_dir: Optional[Union[str, Path]] = None,
+    calib_count: int = 64,
+    calib_batch_size: int = 8,
+    force: bool = False,
+    keep_artifacts: bool = False,
+) -> HailoHefBuildResult:
+    """Translate + optimize + compile an ONNX to a HEF.
+
+    Notes
+    -----
+    - This function requires `hailo_sdk_client` (DFC) to be importable.
+    - If `calib_dir` is not provided or cannot be used, a *random* calibration
+      set is generated based on HN input-layer shapes.
+    """
+
+    t0 = time.time()
+    onnx_path = Path(onnx_path)
+    if net_name is None:
+        net_name = onnx_path.stem
+
+    out_dir = Path(outdir) if outdir is not None else onnx_path.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    hef_path = out_dir / "compiled.hef"
+    if hef_path.exists() and not bool(force):
+        return HailoHefBuildResult(
+            ok=True,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend="local",
+            hef_path=str(hef_path),
+            skipped=True,
+        )
+
+    try:
+        from hailo_sdk_client import ClientRunner
+    except Exception as e:
+        return HailoHefBuildResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend="local",
+            error=f"Hailo SDK not available: {e}",
+        )
+
+    fixed_path: Optional[Path] = None
+    fixup_report: Optional[Dict[str, Any]] = None
+    model_for_parse = onnx_path
+    if fixup:
+        try:
+            m = onnx.load(str(onnx_path))
+            m2, rep = fix_onnx_for_hailo(m, add_conv_defaults=add_conv_defaults)
+            fixup_report = rep
+            fixed_path = out_dir / (onnx_path.stem + "_hailo_fixed.onnx")
+            onnx.save(m2, str(fixed_path))
+            model_for_parse = fixed_path
+        except Exception as e:
+            fixup_report = {"error": str(e)}
+            model_for_parse = onnx_path
+            fixed_path = None
+
+    if net_input_shapes is None:
+        try:
+            m_tmp = onnx.load(str(model_for_parse))
+            net_input_shapes = infer_net_input_shapes_from_model(m_tmp)
+        except Exception:
+            net_input_shapes = None
+
+    try:
+        runner = ClientRunner(hw_arch=str(hw_arch))
+        runner.translate_onnx_model(
+            model=str(model_for_parse),
+            net_name=str(net_name),
+            net_input_shapes=net_input_shapes,
+            disable_rt_metadata_extraction=bool(disable_rt_metadata_extraction),
+        )
+
+        parsed_har = out_dir / "parsed.har"
+        if keep_artifacts:
+            try:
+                runner.save_har(str(parsed_har))
+            except Exception:
+                pass
+
+        # Build calibration dataset
+        hn = runner.get_hn_dict() or {}
+        hn_layers = hn.get("layers") or {}
+        if not isinstance(hn_layers, dict):
+            hn_layers = {}
+        input_layers = _sort_hn_input_layers(hn_layers)
+        if not input_layers:
+            raise RuntimeError("No HN input layers found after translate")
+
+        # Choose calibration data (dir -> fallback random)
+        calib_inputs: Dict[str, np.ndarray] = {}
+        calib_meta: Dict[str, Any] = {
+            "source": None,
+            "requested_count": int(calib_count),
+            "used_count": None,
+            "batch_size": None,
+            "inputs": {},
+        }
+
+        # Prepare expected shapes per input
+        expected_shapes: Dict[str, List[int]] = {}
+        for in_name in input_layers:
+            meta = hn_layers.get(in_name) if isinstance(hn_layers, dict) else None
+            shp = _hn_get_shape(meta) if isinstance(meta, dict) else None
+            if shp is None:
+                # fallback to net_input_shapes if available
+                if isinstance(net_input_shapes, dict) and in_name in net_input_shapes:
+                    shp = list(net_input_shapes[in_name])
+                elif isinstance(net_input_shapes, list) and len(input_layers) == 1:
+                    shp = list(net_input_shapes)
+            if shp is None:
+                # last resort
+                shp = [1]
+            expected_shapes[in_name] = [int(x) for x in shp]
+
+        # Decide an effective calib_count that won't explode memory
+        eff_count = int(calib_count)
+        for shp in expected_shapes.values():
+            eff_count = min(eff_count, _clamp_calib_count(shp, int(calib_count)))
+        eff_count = max(1, eff_count)
+
+        calib_dir_p = Path(calib_dir).expanduser().resolve() if calib_dir else None
+        used_dir = False
+        if calib_dir_p is not None and calib_dir_p.exists() and len(input_layers) == 1:
+            # For now, only support directory calibration for single-input networks.
+            in0 = input_layers[0]
+            ds = _try_build_calib_from_dir(calib_dir=calib_dir_p, expected_shape=expected_shapes[in0], limit=eff_count)
+            if ds is not None:
+                calib_inputs[in0] = ds
+                used_dir = True
+
+        if not used_dir:
+            rng = np.random.default_rng(0)
+            for in_name in input_layers:
+                shp = expected_shapes[in_name]
+                ds = rng.random((eff_count, *shp), dtype=np.float32)
+                calib_inputs[in_name] = np.ascontiguousarray(ds)
+
+        # Determine batch size
+        bs = max(1, min(int(calib_batch_size), int(eff_count)))
+        calib_meta["source"] = str(calib_dir_p) if used_dir and calib_dir_p is not None else "random"
+        calib_meta["used_count"] = int(eff_count)
+        calib_meta["batch_size"] = int(bs)
+        for k, shp in expected_shapes.items():
+            calib_meta["inputs"][k] = {"shape": list(shp)}
+
+        model_script = (
+            f"model_optimization_flavor(optimization_level={int(opt_level)}, batch_size={int(bs)})\n"
+            f"model_optimization_config(calibration, batch_size={int(bs)}, calibset_size={int(eff_count)})\n"
+        )
+        runner.load_model_script(model_script)
+
+        runner.optimize(calib_inputs)
+
+        quant_har = out_dir / "quantized.har"
+        if keep_artifacts:
+            try:
+                runner.save_har(str(quant_har))
+            except Exception:
+                pass
+
+        hef_bytes = runner.compile()
+        hef_path.write_bytes(hef_bytes)
+
+        return HailoHefBuildResult(
+            ok=True,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend="local",
+            hef_path=str(hef_path),
+            parsed_har_path=(str(parsed_har) if keep_artifacts else None),
+            quant_har_path=(str(quant_har) if keep_artifacts else None),
+            fixed_onnx_path=str(fixed_path) if fixed_path is not None else None,
+            fixup_report=fixup_report,
+            skipped=False,
+            calib_info=calib_meta,
+        )
+
+    except Exception as e:
+        return HailoHefBuildResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend="local",
+            error=str(e),
+            fixed_onnx_path=str(fixed_path) if fixed_path is not None else None,
+            fixup_report=fixup_report,
+        )
+
+
+def hailo_build_hef_via_wsl(
+    onnx_path: Union[str, Path],
+    *,
+    hw_arch: str = "hailo8",
+    net_name: Optional[str] = None,
+    outdir: Optional[Union[str, Path]] = None,
+    fixup: bool = True,
+    add_conv_defaults: bool = True,
+    disable_rt_metadata_extraction: bool = True,
+    opt_level: int = 1,
+    calib_dir: Optional[Union[str, Path]] = None,
+    calib_count: int = 64,
+    calib_batch_size: int = 8,
+    force: bool = False,
+    keep_artifacts: bool = False,
+    # WSL bridge settings
+    wsl_distro: Optional[str] = None,
+    wsl_venv_activate: str = "auto",
+    wsl_timeout_s: int = 3600,
+) -> HailoHefBuildResult:
+    """Build a HEF inside WSL (Windows host -> WSL2 backend)."""
+
+    t0 = time.time()
+    onnx_path = Path(onnx_path)
+    if net_name is None:
+        net_name = onnx_path.stem
+
+    if sys.platform != "win32":
+        return HailoHefBuildResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend="wsl",
+            error="WSL backend is only available when running on Windows.",
+        )
+
+    if not hailo_wsl_available():
+        return HailoHefBuildResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend="wsl",
+            error="WSL backend not available (wsl.exe not found).",
+        )
+
+    # Resolve managed venv/distro if requested.
+    try:
+        mgr = get_dfc_manager()
+        resolved = mgr.resolve_wsl_runtime(
+            hw_arch=str(hw_arch),
+            wsl_distro=(str(wsl_distro).strip() or None),
+            wsl_venv_activate=(str(wsl_venv_activate).strip() or "auto"),
+        )
+    except Exception as e:
+        return HailoHefBuildResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend="wsl",
+            error=f"Failed to resolve DFC profile: {e}",
+        )
+
+    distro_eff = str(resolved.wsl_distro or "").strip() or None
+    venv_eff = str(resolved.wsl_venv_activate or "").strip()
+    if not venv_eff:
+        return HailoHefBuildResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend="wsl",
+            error=(
+                f"No managed DFC profile found for hw_arch={hw_arch!r}. "
+                "Set an explicit WSL venv path, or add a profile in resources/hailo/profiles.json."
+            ),
+        )
+
+    helper_win = (Path(__file__).resolve().parent / "wsl_hailo_build_hef.py")
+    helper_wsl = windows_path_to_wsl(str(helper_win))
+
+    onnx_wsl = windows_path_to_wsl(str(onnx_path.resolve()))
+    outdir_wsl = None
+    if outdir is not None:
+        outdir_wsl = windows_path_to_wsl(str(Path(outdir).resolve()))
+    calib_wsl = None
+    if calib_dir is not None:
+        calib_wsl = windows_path_to_wsl(str(Path(calib_dir).resolve()))
+
+    venv_activate = venv_eff  # do not quote '~'
+
+    cmd = (
+        "set -e; "
+        f"source {venv_activate}; "
+        "export PYTHONUNBUFFERED=1; "
+        f"python3 {_bash_quote(helper_wsl)}"
+        f" --onnx {_bash_quote(onnx_wsl)}"
+        f" --hw-arch {_bash_quote(str(hw_arch))}"
+        f" --net-name {_bash_quote(str(net_name))}"
+        f" --fixup {'1' if fixup else '0'}"
+        f" --add-conv-defaults {'1' if add_conv_defaults else '0'}"
+        f" --disable-rt-metadata-extraction {'1' if disable_rt_metadata_extraction else '0'}"
+        f" --opt-level {int(opt_level)}"
+        f" --calib-count {int(calib_count)}"
+        f" --calib-batch-size {int(calib_batch_size)}"
+        f" --force {'1' if force else '0'}"
+        f" --keep-artifacts {'1' if keep_artifacts else '0'}"
+    )
+    if outdir_wsl is not None:
+        cmd += f" --outdir {_bash_quote(outdir_wsl)}"
+    if calib_wsl is not None:
+        cmd += f" --calib-dir {_bash_quote(calib_wsl)}"
+
+    wsl_cmd: List[str] = [_wsl_exe()]
+    if distro_eff:
+        wsl_cmd += ["-d", str(distro_eff)]
+    wsl_cmd += ["--", "bash", "-lc", cmd]
+
+    try:
+        proc = subprocess.run(wsl_cmd, capture_output=True, text=True, timeout=float(wsl_timeout_s))
+    except subprocess.TimeoutExpired:
+        return HailoHefBuildResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend="wsl",
+            error=f"WSL HEF build timed out after {wsl_timeout_s}s.",
+        )
+    except Exception as e:
+        return HailoHefBuildResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend="wsl",
+            error=f"WSL HEF build failed to launch: {type(e).__name__}: {e}",
+        )
+
+    mixed = "\n".join([proc.stdout or "", proc.stderr or ""]).strip()
+    payload = _find_result_json(mixed)
+    if payload is None:
+        tail = mixed[-2000:] if mixed else ""
+        return HailoHefBuildResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend="wsl",
+            error=(
+                "WSL HEF build did not return a structured result. "
+                f"exit_code={proc.returncode}. tail=\n{tail}"
+            ),
+        )
+
+    return HailoHefBuildResult(
+        ok=bool(payload.get("ok")),
+        elapsed_s=float(payload.get("elapsed_s", time.time() - t0)),
+        hw_arch=str(payload.get("hw_arch", hw_arch)),
+        net_name=str(payload.get("net_name", net_name)),
+        backend=str(payload.get("backend") or "wsl"),
+        error=payload.get("error"),
+        hef_path=payload.get("hef_path"),
+        parsed_har_path=payload.get("parsed_har_path"),
+        quant_har_path=payload.get("quant_har_path"),
+        fixed_onnx_path=payload.get("fixed_onnx_path"),
+        fixup_report=payload.get("fixup_report"),
+        skipped=bool(payload.get("skipped", False)),
+        calib_info=payload.get("calib_info"),
+    )
+
+
+def hailo_build_hef_auto(
+    onnx_path: Union[str, Path],
+    *,
+    backend: str = "auto",
+    hw_arch: str = "hailo8",
+    net_name: Optional[str] = None,
+    outdir: Optional[Union[str, Path]] = None,
+    net_input_shapes: Optional[Union[List[int], Dict[str, List[int]]]] = None,
+    fixup: bool = True,
+    add_conv_defaults: bool = True,
+    disable_rt_metadata_extraction: bool = True,
+    opt_level: int = 1,
+    calib_dir: Optional[Union[str, Path]] = None,
+    calib_count: int = 64,
+    calib_batch_size: int = 8,
+    force: bool = False,
+    keep_artifacts: bool = False,
+    # WSL bridge
+    wsl_distro: Optional[str] = None,
+    wsl_venv_activate: str = "auto",
+    wsl_timeout_s: int = 3600,
+) -> HailoHefBuildResult:
+    mode = str(backend or "auto").strip().lower()
+    if mode not in {"auto", "local", "wsl"}:
+        mode = "auto"
+
+    if mode in {"auto", "local"} and hailo_sdk_available():
+        return hailo_build_hef(
+            onnx_path,
+            hw_arch=hw_arch,
+            net_name=net_name,
+            outdir=outdir,
+            net_input_shapes=net_input_shapes,
+            fixup=fixup,
+            add_conv_defaults=add_conv_defaults,
+            disable_rt_metadata_extraction=disable_rt_metadata_extraction,
+            opt_level=int(opt_level),
+            calib_dir=calib_dir,
+            calib_count=int(calib_count),
+            calib_batch_size=int(calib_batch_size),
+            force=bool(force),
+            keep_artifacts=bool(keep_artifacts),
+        )
+
+    if mode in {"auto", "wsl"}:
+        return hailo_build_hef_via_wsl(
+            onnx_path,
+            hw_arch=hw_arch,
+            net_name=net_name,
+            outdir=outdir,
+            fixup=fixup,
+            add_conv_defaults=add_conv_defaults,
+            disable_rt_metadata_extraction=disable_rt_metadata_extraction,
+            opt_level=int(opt_level),
+            calib_dir=calib_dir,
+            calib_count=int(calib_count),
+            calib_batch_size=int(calib_batch_size),
+            force=bool(force),
+            keep_artifacts=bool(keep_artifacts),
+            wsl_distro=wsl_distro,
+            wsl_venv_activate=wsl_venv_activate,
+            wsl_timeout_s=int(wsl_timeout_s),
+        )
+
+    return HailoHefBuildResult(
+        ok=False,
+        elapsed_s=0.0,
+        hw_arch=str(hw_arch),
+        net_name=str(net_name or Path(str(onnx_path)).stem),
+        error=(
+            "No usable Hailo backend available. "
+            "Install hailo_sdk_client in this Python env, or configure the WSL backend on Windows."
+        ),
+    )

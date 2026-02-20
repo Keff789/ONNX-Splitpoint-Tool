@@ -658,7 +658,14 @@ def _run_case(case_dir: Path, provider: str, image: str, preset: str, warmup: in
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--provider", default="auto", choices=["auto", "cpu", "cuda", "tensorrt"], help="Execution provider to use.")
+    parser.add_argument("--provider", default="auto", choices=["auto", "cpu", "cuda", "tensorrt"], help="Execution provider to use (single-run mode).")
+    parser.add_argument(
+        "--plan",
+        default=None,
+        help="Optional benchmark plan JSON (default: benchmark_plan.json if present). If set, runs all runs listed in the plan.",
+    )
+    parser.add_argument("--run-id", default=None, help="If using --plan, run only this run id.")
+    parser.add_argument("--list-runs", action="store_true", help="List run ids from the plan and exit.")
     parser.add_argument("--image", default="default", help="Image path or 'default'.")
     parser.add_argument("--preset", default="auto", choices=["auto", "classification", "detection"], help="Output agreement preset.")
     parser.add_argument("--warmup", type=int, default=5)
@@ -676,58 +683,133 @@ def main() -> int:
         print("[warn] __BENCH_JSON__ has no cases")
         return 1
 
-    provider = args.provider
-    tag = f"{provider}_{args.preset}"
-
-    rows: List[Dict[str, Any]] = []
-    for i, c in enumerate(cases):
-        b = c.get("boundary")
-        case_dir_key = c.get("case_dir") or c.get("folder")
-        if case_dir_key is None:
-            case_dir_key = f"b{int(b):03d}" if b is not None else "case"
-        rel = Path(str(case_dir_key))
-        case_dir = (root / rel).resolve()
-        print(f"\n[{i+1}/{len(cases)}] Running {case_dir.name} (provider={provider})")
-        r = _run_case(case_dir, provider=provider, image=args.image, preset=args.preset, warmup=args.warmup, runs=args.runs, timeout_s=args.timeout)
-        if r is not None:
-            rows.append(r)
-
-    if not rows:
-        print("[warn] No results found to collect (did you run the suite?)")
-        return 2
-
-    results_json = root / f"benchmark_results_{tag}.json"
-    _write_json(results_json, rows)
-    print(f"Wrote {results_json.name}")
-
-    if not args.no_csv:
-        results_csv = root / f"benchmark_results_{tag}.csv"
-        _write_results_csv(results_csv, rows)
-        print(f"Wrote {results_csv.name}")
-
-    # Summary (1 page)
-    summary_md = root / f"benchmark_summary_{tag}.md"
-    _write_summary_md(summary_md, rows, tag=tag, objective=args.objective, topk=args.topk)
-    print(f"Wrote {summary_md.name}")
-
-    # Paper-ready LaTeX table
-    table_tex = root / f"benchmark_table_{tag}.tex"
-    _write_table_tex(table_tex, rows, tag=tag, objective=args.objective, topk=args.topk)
-    print(f"Wrote {table_tex.name}")
-
-    # Paper-ready figures
-    fig_dir = root / f"paper_figures_{tag}"
-    fig_files = _save_paper_figures(fig_dir, rows, tag=tag, objective=args.objective, topk=args.topk)
-    if fig_files:
-        print(f"Wrote {len(fig_files)} figure files to {fig_dir.name}/")
+    # Decide between plan-mode and single provider mode.
+    plan_path: Optional[Path] = None
+    if args.plan:
+        plan_path = (root / args.plan).resolve() if not os.path.isabs(args.plan) else Path(args.plan)
     else:
-        if not HAVE_PLOT:
-            print("[info] matplotlib not available; skipping figure export")
+        # Auto-enable plan mode only if the user did not explicitly request a provider.
+        # (provider='auto' is the default)
+        default_plan = root / "benchmark_plan.json"
+        if args.provider == "auto" and default_plan.exists():
+            plan_path = default_plan
+
+    plan: Optional[Dict[str, Any]] = None
+    runs_plan: List[Dict[str, Any]] = []
+    if plan_path is not None and plan_path.exists():
+        try:
+            plan = _read_json(plan_path)
+            if isinstance(plan, dict) and isinstance(plan.get("runs"), list):
+                runs_plan = [r for r in plan.get("runs") if isinstance(r, dict)]
+        except Exception as e:
+            print(f"[warn] Failed to read plan file {plan_path}: {type(e).__name__}: {e}")
+            plan = None
+            runs_plan = []
+
+    if args.list_runs:
+        if not runs_plan:
+            print("(no plan / no runs)")
+            return 0
+        for r in runs_plan:
+            rid = r.get("id") or r.get("name") or "(unnamed)"
+            rty = r.get("type") or r.get("kind") or "?"
+            print(f"{rid}\t{rty}")
+        return 0
+
+    if runs_plan:
+        # Optional filter
+        if args.run_id:
+            runs_plan = [r for r in runs_plan if str(r.get("id") or r.get("name") or "").strip() == str(args.run_id).strip()]
+            if not runs_plan:
+                print(f"[err] run id not found in plan: {args.run_id}")
+                return 2
+        runs = runs_plan
+    else:
+        # Fallback: single provider run
+        runs = [{"id": f"ort_{args.provider}", "type": "onnxruntime", "provider": args.provider}]
+
+    # Execute each run.
+    overall_rc = 0
+    for run in runs:
+        rtype = str(run.get("type") or run.get("kind") or "onnxruntime").strip().lower()
+        run_id = str(run.get("id") or run.get("name") or rtype).strip() or rtype
+
+        if rtype in {"onnxruntime", "ort"}:
+            provider = str(run.get("provider") or args.provider).strip().lower()
+            if provider not in {"auto", "cpu", "cuda", "tensorrt"}:
+                print(f"[warn] Unknown provider '{provider}' for run {run_id}; skipping")
+                continue
+
+            tag = f"{run_id}_{args.preset}"
+            rows: List[Dict[str, Any]] = []
+            for i, c in enumerate(cases):
+                b = c.get("boundary")
+                case_dir_key = c.get("case_dir") or c.get("folder")
+                if case_dir_key is None:
+                    case_dir_key = f"b{int(b):03d}" if b is not None else "case"
+                rel = Path(str(case_dir_key))
+                case_dir = (root / rel).resolve()
+                print(f"\n[{run_id}] [{i+1}/{len(cases)}] Running {case_dir.name} (provider={provider})")
+                r = _run_case(
+                    case_dir,
+                    provider=provider,
+                    image=args.image,
+                    preset=args.preset,
+                    warmup=args.warmup,
+                    runs=args.runs,
+                    timeout_s=args.timeout,
+                    case_meta=c,
+                )
+                if r is not None:
+                    rows.append(r)
+
+            if not rows:
+                print(f"[warn] No results collected for run {run_id}")
+                overall_rc = max(overall_rc, 2)
+                continue
+
+            results_json = root / f"benchmark_results_{tag}.json"
+            _write_json(results_json, rows)
+            print(f"Wrote {results_json.name}")
+
+            if not args.no_csv:
+                results_csv = root / f"benchmark_results_{tag}.csv"
+                _write_results_csv(results_csv, rows)
+                print(f"Wrote {results_csv.name}")
+
+            # Summary (1 page)
+            summary_md = root / f"benchmark_summary_{tag}.md"
+            _write_summary_md(summary_md, rows, tag=tag, objective=args.objective, topk=args.topk)
+            print(f"Wrote {summary_md.name}")
+
+            # Paper-ready LaTeX table
+            table_tex = root / f"benchmark_table_{tag}.tex"
+            _write_table_tex(table_tex, rows, tag=tag, objective=args.objective, topk=args.topk)
+            print(f"Wrote {table_tex.name}")
+
+            # Paper-ready figures
+            fig_dir = root / f"paper_figures_{tag}"
+            fig_files = _save_paper_figures(fig_dir, rows, tag=tag, objective=args.objective, topk=args.topk)
+            if fig_files:
+                print(f"Wrote {len(fig_files)} figure files to {fig_dir.name}/")
+            else:
+                if not HAVE_PLOT:
+                    print("[info] matplotlib not available; skipping figure export")
+                else:
+                    print("[info] no figures exported (no rows?)")
+
+        elif rtype in {"hailo"}:
+            # Placeholder: integrate a Hailo runner once HailoRT benchmarking is wired.
+            hw_arch = str(run.get("hw_arch") or run.get("arch") or "").strip()
+            print(f"[info] Run '{run_id}' requests Hailo ({hw_arch}). Hailo benchmark runner is not yet integrated in this harness.")
+            overall_rc = max(overall_rc, 0)
+            continue
         else:
-            print("[info] no figures exported (no rows?)")
+            print(f"[warn] Unknown run type '{rtype}' for run {run_id}; skipping")
+            continue
 
     print("\nDone.")
-    return 0
+    return overall_rc
 
 
 if __name__ == "__main__":

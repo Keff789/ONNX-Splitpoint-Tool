@@ -38,7 +38,9 @@ def _repo_root() -> Path:
 def main() -> int:
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument("--onnx", required=True, help="Path to ONNX model (WSL path)")
-    ap.add_argument("--hw-arch", default="hailo8", choices=["hailo8", "hailo8l", "hailo8r"])
+    # Do not restrict values here; new hw_arch strings may appear with newer DFCs
+    # (e.g. Hailo-10 family). Validation happens inside the DFC.
+    ap.add_argument("--hw-arch", default="hailo8")
     ap.add_argument("--net-name", default=None)
     ap.add_argument("--outdir", default=None)
     ap.add_argument("--fixup", default="1", choices=["0", "1"], help="Apply ONNX fixups")

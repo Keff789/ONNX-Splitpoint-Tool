@@ -31,41 +31,53 @@ pip install onnxruntime
 The GUI can optionally run a **Hailo feasibility check (parse-only)** during ranking.
 This is useful to automatically prune split candidates where a partition cannot be translated by the Hailo toolchain.
 
-### Linux (native)
+### Managed DFC profiles (Hailo-8 + Hailo-10)
 
-- Install the Hailo Dataflow Compiler (DFC) Python wheel into the same Python environment as this tool.
-- In the GUI enable **Hailo check** and set **Backend = local** (or keep **auto**).
+Hailo-8 and Hailo-10 require different DFC/SDK versions. This repo supports both via **managed profiles**:
 
-### Windows + WSL2 (recommended)
+- `hailo8`  → DFC 3.x (e.g. 3.33)
+- `hailo10` → DFC 5.x (e.g. 5.2)
 
-The Hailo DFC wheel is Linux-only. Recommended setup:
+You place the vendor wheels into:
 
-1. Install WSL2 + an Ubuntu distro.
-2. Create a WSL virtualenv (default expected path: `~/hailo_dfc_venv`) and install the Hailo DFC wheel there.
-   A helper script is included:
-   `./scripts/setup_hailo_dfc_wsl.sh /path/to/hailo_dataflow_compiler-*.whl`
-3. Run the GUI on Windows, enable **Hailo check**, set **Backend = wsl** (or **auto**), and point it to:
-   - **WSL venv**: `~/hailo_dfc_venv/bin/activate`
-   - **WSL distro**: optional (leave empty to use the default WSL distro)
+- `onnx_splitpoint_tool/resources/hailo/hailo8/`
+- `onnx_splitpoint_tool/resources/hailo/hailo10/`
+
+Then you run the provisioning helper (creates one venv per profile under `~/.onnx_splitpoint_tool/hailo/`):
+
+```bash
+# inside Linux (native) or inside WSL
+./scripts/provision_hailo_dfcs_wsl.sh --all
+```
+
+Important: the venvs must be created with **Python 3.10+** (DFC deps like `jax` have no wheels for Python 3.8).
+On Ubuntu/WSL you typically need:
+
+```bash
+sudo apt update
+sudo apt install -y python3.10 python3.10-venv
+```
+
+### GUI usage
+
+- Set **Backend = auto** (or **wsl** on Windows).
+- Leave **WSL venv override = auto** (recommended).
+- The hardware tab shows **status badges** (Hailo-8 / Hailo-10) at startup; use **Refresh status** if needed.
 
 Notes:
 
-- The tool calls `wsl.exe` and runs a helper script inside WSL; you do **not** need to activate the venv manually.
-- If your model files are on `C:`/`D:`, WSL can access them via `/mnt/c/...` and `/mnt/d/...`.
-- A small helper for interactive shells is included:
-  `source ./scripts/activate_hailo_dfc_venv.sh`
-
-Practical tips:
-
-- The GUI provides a **Test backend** button in the Hailo section to verify that the selected backend (local or WSL) can import the Hailo SDK.
-- Hailo parse-only results are cached across runs (by sub-model hash) to avoid re-running DFC translation during ranking.
-  You can clear the cache from the GUI (**Clear cache**) or delete `~/.onnx_splitpoint_tool/hailo_parse_cache.json`.
+- Parse-only results are cached across runs (by sub-model hash) to avoid re-running DFC translation during ranking.
+  Clear via **Clear cache** or delete `~/.onnx_splitpoint_tool/hailo_parse_cache.json`.
 
 ## Run
 
 ### GUI
 
 ```bash
+# New GUI (panel-based)
+python -m onnx_splitpoint_tool.gui.app
+
+# Legacy GUI (kept for compatibility)
 python analyse_and_split_gui.py
 ```
 

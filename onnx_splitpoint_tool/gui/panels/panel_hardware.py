@@ -7,6 +7,7 @@ from tkinter import ttk
 
 from ... import api as asc
 from ..widgets.tooltip import attach_tooltip
+from ..widgets.status_badge import StatusBadge
 
 
 _HARDWARE_TOOLTIPS = {
@@ -40,8 +41,9 @@ _HARDWARE_TOOLTIPS = {
     "hailo_target": "Welche Split-Seite mit Hailo geprüft wird.",
     "hailo_backend": "Backend-Auswahl: auto/local/wsl.",
     "hailo_wsl_distro": "Optionaler WSL-Distro-Name für Hailo-Backend.",
-    "hailo_wsl_venv": "Aktivierungsbefehl für das WSL-Python-Venv mit Hailo SDK.",
-    "hailo_test": "Prüft, ob das gewählte Hailo-Backend erreichbar ist.",
+    "hailo_wsl_venv": "Aktivierungsbefehl für das WSL-Python-Venv mit Hailo SDK. Tipp: 'auto' nutzt die DFC-Profile (Hailo-8 vs Hailo-10) aus resources/hailo/profiles.json.",
+    "hailo_status": "Zeigt, ob der Hailo DFC für Hailo-8/Hailo-10 erreichbar ist (automatisch beim Start + Refresh).",
+    "hailo_refresh": "Aktualisiert die Hailo-Statusanzeige (Probe).",
     "hailo_clear": "Leert den lokalen Hailo-Parse-Cache.",
 }
 
@@ -450,14 +452,20 @@ def build_panel(parent, app=None) -> ttk.Frame:
     hailo_target_var = _str_var(app, "var_hailo_target", "either")
     hailo_backend_var = _str_var(app, "var_hailo_backend", "auto")
     hailo_wsl_distro_var = _str_var(app, "var_hailo_wsl_distro", "")
-    hailo_wsl_venv_var = _str_var(app, "var_hailo_wsl_venv", "~/hailo_dfc_venv/bin/activate")
+    hailo_wsl_venv_var = _str_var(app, "var_hailo_wsl_venv", "auto")
 
     chk_hailo = ttk.Checkbutton(hailo, text="Enable parse-check in ranking", variable=hailo_check_var)
     chk_hailo.grid(row=0, column=0, sticky="w", padx=(8, 8), pady=8)
     attach_tooltip(chk_hailo, _tt("hailo_enable"))
 
     ttk.Label(hailo, text="HW arch:").grid(row=0, column=1, sticky="e", pady=8)
-    cb_hailo_hw = ttk.Combobox(hailo, textvariable=hailo_hw_var, values=["hailo8", "hailo8l", "hailo8r"], width=10, state="readonly")
+    cb_hailo_hw = ttk.Combobox(
+        hailo,
+        textvariable=hailo_hw_var,
+        values=["hailo8", "hailo8l", "hailo8r", "hailo10", "hailo10h"],
+        width=10,
+        state="normal",
+    )
     cb_hailo_hw.grid(row=0, column=2, sticky="w", padx=(4, 12), pady=8)
     attach_tooltip(cb_hailo_hw, _tt("hailo_hw"))
 
@@ -489,21 +497,55 @@ def build_panel(parent, app=None) -> ttk.Frame:
     ent_hailo_distro.grid(row=1, column=5, sticky="w", pady=(0, 8))
     attach_tooltip(ent_hailo_distro, _tt("hailo_wsl_distro"))
 
-    ttk.Label(hailo, text="WSL venv:").grid(row=2, column=0, sticky="w", padx=(8, 4), pady=(0, 8))
+    ttk.Label(hailo, text="WSL venv override:").grid(row=2, column=0, sticky="w", padx=(8, 4), pady=(0, 8))
     ent_hailo_venv = ttk.Entry(hailo, textvariable=hailo_wsl_venv_var, width=56)
     ent_hailo_venv.grid(row=2, column=1, columnspan=4, sticky="w", pady=(0, 8))
     attach_tooltip(ent_hailo_venv, _tt("hailo_wsl_venv"))
 
+    # Status badges (auto-detected on startup).
+    status_row = ttk.Frame(hailo)
+    status_row.grid(row=3, column=0, columnspan=6, sticky="w", padx=(8, 8), pady=(0, 8))
+    ttk.Label(status_row, text="DFC status:").pack(side=tk.LEFT)
+
+    badge_h8 = StatusBadge(status_row, text="Hailo-8 …", level="idle")
+    badge_h8.pack(side=tk.LEFT, padx=(6, 6))
+    badge_h10 = StatusBadge(status_row, text="Hailo-10 …", level="idle")
+    badge_h10.pack(side=tk.LEFT, padx=(0, 6))
+
+    status_details_var = _str_var(app, "var_hailo_status_details", "")
+    lbl_details = ttk.Label(status_row, textvariable=status_details_var)
+    lbl_details.pack(side=tk.LEFT, padx=(8, 0))
+    attach_tooltip(status_row, _tt("hailo_status"))
+
+    if app is not None:
+        # Expose widgets to the app so the probe worker can update them.
+        setattr(app, "hailo_badge_h8", badge_h8)
+        setattr(app, "hailo_badge_h10", badge_h10)
+
     btn_col = ttk.Frame(hailo)
     btn_col.grid(row=1, column=6, rowspan=2, sticky="ne", padx=(12, 8), pady=(0, 8))
-    if app is not None and hasattr(app, "_hailo_test_backend"):
-        btn_test = ttk.Button(btn_col, text="Test backend", command=app._hailo_test_backend)
-        btn_test.pack(side=tk.TOP, fill=tk.X)
-        attach_tooltip(btn_test, _tt("hailo_test"))
+    if app is not None and hasattr(app, "_hailo_refresh_status"):
+        btn_ref = ttk.Button(btn_col, text="Refresh status", command=app._hailo_refresh_status)
+        btn_ref.pack(side=tk.TOP, fill=tk.X)
+        attach_tooltip(btn_ref, _tt("hailo_refresh"))
     if app is not None and hasattr(app, "_hailo_clear_cache"):
         btn_clear = ttk.Button(btn_col, text="Clear cache", command=app._hailo_clear_cache)
         btn_clear.pack(side=tk.TOP, fill=tk.X, pady=(4, 0))
         attach_tooltip(btn_clear, _tt("hailo_clear"))
+
+    # Auto-refresh status when backend settings change.
+    if app is not None and hasattr(app, "_hailo_schedule_status_refresh"):
+        def _on_status_change(*_args) -> None:
+            try:
+                app._hailo_schedule_status_refresh()
+            except Exception:
+                pass
+
+        for v in (hailo_backend_var, hailo_wsl_distro_var, hailo_wsl_venv_var):
+            try:
+                v.trace_add("write", _on_status_change)
+            except Exception:
+                pass
 
     def _sync_link_from_interface(*_args) -> None:
         iface = iface_by_name.get(str(iface_var.get()))

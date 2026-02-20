@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import tkinter as tk
 from pathlib import Path
 from typing import Optional
 import shutil
-from tkinter import ttk
+from tkinter import ttk, filedialog
 
 
 def _human_size(num: float) -> str:
@@ -63,9 +64,95 @@ def build_panel(parent, app=None) -> ttk.Frame:
     var_split_folder = getattr(app, "var_split_folder", tk.BooleanVar(value=True)) if app is not None else tk.BooleanVar(value=True)
     ttk.Checkbutton(split_output_group, text="Export as folder", variable=var_split_folder).pack(side=tk.LEFT, padx=8, pady=8)
 
+    # Optional: build Hailo HEFs after export.
+    # (Settings are shared with benchmark-set generation.)
+    hef_group = ttk.LabelFrame(frame, text="Hailo HEF generation")
+    hef_group.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 8))
+
+    def _bool_on_app(name: str, default: bool) -> tk.BooleanVar:
+        if app is None:
+            return tk.BooleanVar(value=default)
+        if hasattr(app, name):
+            return getattr(app, name)
+        v = tk.BooleanVar(value=default)
+        setattr(app, name, v)
+        return v
+
+    def _str_on_app(name: str, default: str) -> tk.StringVar:
+        if app is None:
+            return tk.StringVar(value=default)
+        if hasattr(app, name):
+            return getattr(app, name)
+        v = tk.StringVar(value=default)
+        setattr(app, name, v)
+        return v
+
+    var_hef_part1 = _bool_on_app("var_hailo_hef_part1", False)
+    var_hef_part2 = _bool_on_app("var_hailo_hef_part2", False)
+    var_hef_h8_en = _bool_on_app("var_hailo_hef_hailo8_enable", True)
+    var_hef_h8_arch = _str_on_app("var_hailo_hef_hailo8_hw_arch", "hailo8")
+    var_hef_h10_en = _bool_on_app("var_hailo_hef_hailo10_enable", False)
+    var_hef_h10_arch = _str_on_app("var_hailo_hef_hailo10_hw_arch", "hailo10h")
+
+    # Compile knobs (used by HEF generation)
+    var_opt_level = _str_on_app("var_hailo_hef_opt_level", "1")
+    var_calib_count = _str_on_app("var_hailo_hef_calib_count", "64")
+    var_calib_bs = _str_on_app("var_hailo_hef_calib_batch_size", "8")
+    var_calib_dir = _str_on_app("var_hailo_hef_calib_dir", "")
+    var_force = _bool_on_app("var_hailo_hef_force", False)
+    var_keep = _bool_on_app("var_hailo_hef_keep_artifacts", False)
+
+    # Row 0: targets + parts
+    row0 = ttk.Frame(hef_group)
+    row0.pack(fill=tk.X, padx=8, pady=(8, 4))
+
+    ttk.Label(row0, text="Targets:").pack(side=tk.LEFT)
+    ttk.Checkbutton(row0, text="Hailo-8", variable=var_hef_h8_en).pack(side=tk.LEFT, padx=(6, 0))
+    ttk.Combobox(row0, textvariable=var_hef_h8_arch, values=["hailo8", "hailo8l", "hailo8r"], width=9, state="normal").pack(
+        side=tk.LEFT, padx=(4, 12)
+    )
+    ttk.Checkbutton(row0, text="Hailo-10", variable=var_hef_h10_en).pack(side=tk.LEFT)
+    ttk.Combobox(row0, textvariable=var_hef_h10_arch, values=["hailo10", "hailo10h"], width=9, state="normal").pack(
+        side=tk.LEFT, padx=(4, 12)
+    )
+
+    ttk.Label(row0, text="Build:").pack(side=tk.LEFT, padx=(8, 4))
+    ttk.Checkbutton(row0, text="part1", variable=var_hef_part1).pack(side=tk.LEFT)
+    ttk.Checkbutton(row0, text="part2", variable=var_hef_part2).pack(side=tk.LEFT, padx=(6, 0))
+
+    # Row 1: compile knobs
+    row1 = ttk.Frame(hef_group)
+    row1.pack(fill=tk.X, padx=8, pady=(0, 4))
+
+    ttk.Label(row1, text="Opt level:").pack(side=tk.LEFT)
+    ttk.Entry(row1, textvariable=var_opt_level, width=5).pack(side=tk.LEFT, padx=(4, 10))
+    ttk.Label(row1, text="Calib count:").pack(side=tk.LEFT)
+    ttk.Entry(row1, textvariable=var_calib_count, width=7).pack(side=tk.LEFT, padx=(4, 10))
+    ttk.Label(row1, text="Calib batch:").pack(side=tk.LEFT)
+    ttk.Entry(row1, textvariable=var_calib_bs, width=7).pack(side=tk.LEFT, padx=(4, 10))
+    ttk.Checkbutton(row1, text="Force rebuild", variable=var_force).pack(side=tk.LEFT, padx=(8, 0))
+    ttk.Checkbutton(row1, text="Keep HARs", variable=var_keep).pack(side=tk.LEFT, padx=(8, 0))
+
+    # Row 2: calib dir
+    row2 = ttk.Frame(hef_group)
+    row2.pack(fill=tk.X, padx=8, pady=(0, 8))
+    ttk.Label(row2, text="Calib dir:").pack(side=tk.LEFT)
+    ent_cal = ttk.Entry(row2, textvariable=var_calib_dir, width=48)
+    ent_cal.pack(side=tk.LEFT, padx=(4, 8))
+
+    def _browse_calib() -> None:
+        initial = (var_calib_dir.get() or "").strip()
+        if initial and not os.path.isdir(initial):
+            initial = ""
+        p = filedialog.askdirectory(title="Select calibration directory", initialdir=initial or None)
+        if p:
+            var_calib_dir.set(p)
+
+    ttk.Button(row2, text="Browse…", command=_browse_calib).pack(side=tk.LEFT)
+
     graphviz_status = tk.StringVar(value="")
     lbl_graphviz = ttk.Label(frame, textvariable=graphviz_status, foreground="#b36b00")
-    lbl_graphviz.grid(row=3, column=0, sticky="w", padx=12, pady=(0, 8))
+    lbl_graphviz.grid(row=4, column=0, sticky="w", padx=12, pady=(0, 8))
 
     def _update_graphviz_status(*_args) -> None:
         need_graphviz = bool(var_ctx_full.get() or var_ctx_cutflow.get())
@@ -82,7 +169,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
     _update_graphviz_status()
 
     preview = ttk.LabelFrame(frame, text="Will create:")
-    preview.grid(row=4, column=0, sticky="nsew", padx=12, pady=(0, 12))
+    preview.grid(row=5, column=0, sticky="nsew", padx=12, pady=(0, 12))
     preview.columnconfigure(0, weight=1)
     preview.rowconfigure(0, weight=1)
 
@@ -135,6 +222,20 @@ def build_panel(parent, app=None) -> ttk.Frame:
             lines += ["  - run_split_onnxruntime.py", "  - run_split_onnxruntime.bat", "  - run_split_onnxruntime.sh"]
             est += 48 * 1024
 
+        # Hailo HEFs (optional)
+        if bool(var_hef_part1.get() or var_hef_part2.get()):
+            targets = []
+            if bool(var_hef_h8_en.get()):
+                targets.append((var_hef_h8_arch.get() or "hailo8").strip() or "hailo8")
+            if bool(var_hef_h10_en.get()):
+                targets.append((var_hef_h10_arch.get() or "hailo10h").strip() or "hailo10h")
+            for hw in targets:
+                if bool(var_hef_part1.get()):
+                    lines += [f"  - hailo/{hw}/part1/compiled.hef"]
+                if bool(var_hef_part2.get()):
+                    lines += [f"  - hailo/{hw}/part2/compiled.hef"]
+            est += 512 * 1024  # placeholder
+
         if vars_map["context"].get():
             if bool(var_ctx_full.get()):
                 lines += [f"  - split_context_{b_tag}{ctx_formats}"]
@@ -164,6 +265,12 @@ def build_panel(parent, app=None) -> ttk.Frame:
         var_ctx_cutflow,
         var_ctx_hops,
         var_split_folder,
+        var_hef_part1,
+        var_hef_part2,
+        var_hef_h8_en,
+        var_hef_h8_arch,
+        var_hef_h10_en,
+        var_hef_h10_arch,
     ):
         v.trace_add("write", _render_preview)
     _render_preview()

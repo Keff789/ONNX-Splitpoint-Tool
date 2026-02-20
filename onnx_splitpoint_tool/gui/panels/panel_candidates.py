@@ -179,7 +179,7 @@ def _build_inspector(parent: ttk.Frame, app) -> None:
     actions.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
     ttk.Button(actions, text="Split selected…", command=getattr(app, "_split_selected_boundary", None)).pack(side=tk.LEFT)
     ttk.Button(actions, text="Export context…", command=getattr(app, "_split_selected_boundary", None)).pack(side=tk.LEFT, padx=(8, 0))
-    ttk.Button(actions, text="Benchmark this split…", command=getattr(app, "_generate_benchmark_set", None)).pack(side=tk.LEFT, padx=(8, 0))
+    # Benchmark-set generation moved to the "Benchmark" tab.
 
     def _classify_tensor(name: str, initializers: Set[str]) -> str:
         n = (name or "").lower()

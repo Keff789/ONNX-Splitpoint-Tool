@@ -40,6 +40,13 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         self._wire_model_type_state()
         self._apply_model_type_visibility()
 
+        # Auto-probe Hailo availability on startup so users immediately see
+        # whether Hailo-8 / Hailo-10 profiles are usable.
+        try:
+            self.after(250, getattr(self, "_hailo_refresh_status", lambda: None))
+        except Exception:
+            pass
+
     def _init_central_notebook(self) -> None:
         logger.info("Initializing central notebook UI")
         root_children = list(self.winfo_children())

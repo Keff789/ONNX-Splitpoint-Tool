@@ -232,15 +232,12 @@ def build_ui(frame: ttk.Frame, app: Any) -> None:
     btn_analyse.pack(side=tk.LEFT)
     btn_split = ttk.Button(action_wrap, text="Split selected…", command=app._split_selected_boundary)
     btn_split.pack(side=tk.LEFT, padx=(8, 0))
-    btn_benchmark = ttk.Button(action_wrap, text="Benchmark set…", command=app._generate_benchmark_set)
-    btn_benchmark.pack(side=tk.LEFT, padx=(8, 0))
     btn_export_tex = ttk.Button(action_wrap, text="Export TeX table…", command=app._export_tex_table)
     btn_export_tex.pack(side=tk.LEFT, padx=(8, 0))
 
     # Rebind action references so state-machine logic controls the new buttons.
     app.btn_analyse = btn_analyse
     app.btn_split = btn_split
-    app.btn_benchmark = btn_benchmark
     app.btn_export_tex = btn_export_tex
     if hasattr(app, "_set_ui_state") and hasattr(app, "_infer_ui_state"):
         app._set_ui_state(app._infer_ui_state())
