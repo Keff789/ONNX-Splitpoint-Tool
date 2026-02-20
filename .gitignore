@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.env
+
+# IDEs
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tool outputs
+model_zoo_downloads/
+benchmarks*/
+benchmark_*/
+results/
+*.onnx
+*.tar.gz
+*.zip
+
+# Matplotlib caches
+.matplotlib/
+
+# Graphviz renders
+*.dot.pdf
+*.dot.svg
+*.dot.png

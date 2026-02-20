@@ -1,0 +1,734 @@
+#!/usr/bin/env python3
+"""
+Benchmark harness for an ONNX split benchmark set.
+
+- Runs each case folder (bXXX/) via its generated runner (run_split_onnxruntime.py)
+- Collects validation reports (timing + eps-pass + optional agreement KPIs)
+- Writes:
+  * benchmark_results_<tag>.json  (canonical)
+  * benchmark_results_<tag>.csv   (optional convenience)
+  * benchmark_summary_<tag>.md    (1-page summary)
+  * benchmark_table_<tag>.tex     (paper-ready table)
+  * paper_figures_<tag>/...       (paper-ready plots as PDF + SVG)
+
+Notes:
+- For ARCS scope (single machine/provider), the default objective is end-to-end latency
+  measured by the composed graph (two sessions: part1 -> part2).
+- For future work (multi-device pipelining), the bottleneck objective max(part1, part2)
+  can be selected via --objective=max_parts.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import csv
+import math
+import os
+import subprocess
+import sys
+from dataclasses import dataclass, asdict
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+# Optional plotting
+try:
+    import matplotlib.pyplot as plt  # type: ignore
+    HAVE_PLOT = True
+except Exception:
+    HAVE_PLOT = False
+
+
+def _read_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_json(path: Path, obj: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=2)
+
+
+def _pearson(x: List[float], y: List[float]) -> float:
+    if len(x) != len(y) or len(x) < 2:
+        return float("nan")
+    xm = sum(x) / len(x)
+    ym = sum(y) / len(y)
+    num = sum((a - xm) * (b - ym) for a, b in zip(x, y))
+    denx = math.sqrt(sum((a - xm) ** 2 for a in x))
+    deny = math.sqrt(sum((b - ym) ** 2 for b in y))
+    den = denx * deny
+    return (num / den) if den > 0 else float("nan")
+
+
+def _spearman(x: List[float], y: List[float]) -> float:
+    # Spearman correlation via Pearson on ranks (average ranks for ties).
+    def _ranks(vals: List[float]) -> List[float]:
+        n = len(vals)
+        order = sorted(range(n), key=lambda i: vals[i])
+        ranks = [0.0] * n
+        i = 0
+        # ranks are 1..n
+        while i < n:
+            j = i
+            while j + 1 < n and vals[order[j + 1]] == vals[order[i]]:
+                j += 1
+            # average rank for ties
+            avg = (i + 1 + j + 1) / 2.0
+            for k in range(i, j + 1):
+                ranks[order[k]] = avg
+            i = j + 1
+        return ranks
+
+    if len(x) != len(y) or len(x) < 2:
+        return float("nan")
+    rx = _ranks([float(v) for v in x])
+    ry = _ranks([float(v) for v in y])
+    return _pearson(rx, ry)
+
+
+def _kendall_tau(x: List[float], y: List[float]) -> float:
+    # simple O(n^2) kendall tau-a (good enough for small K)
+    n = len(x)
+    if n != len(y) or n < 2:
+        return float("nan")
+    conc = 0
+    disc = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            dx = x[i] - x[j]
+            dy = y[i] - y[j]
+            s = dx * dy
+            if s > 0:
+                conc += 1
+            elif s < 0:
+                disc += 1
+    denom = conc + disc
+    return (conc - disc) / denom if denom > 0 else float("nan")
+
+
+def _linreg(x: List[float], y: List[float]) -> Tuple[float, float, float]:
+    # y = a*x + b, returns (a,b,R^2)
+    import numpy as np  # type: ignore
+
+    if len(x) != len(y) or len(x) < 2:
+        return float("nan"), float("nan"), float("nan")
+    X = np.asarray(x, dtype=float)
+    Y = np.asarray(y, dtype=float)
+    A = np.vstack([X, np.ones_like(X)]).T
+    a, b = np.linalg.lstsq(A, Y, rcond=None)[0]
+    Yhat = a * X + b
+    ss_res = float(((Y - Yhat) ** 2).sum())
+    ss_tot = float(((Y - float(Y.mean())) ** 2).sum())
+    r2 = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else float("nan")
+    return float(a), float(b), float(r2)
+
+
+def _fmt(x: Any, nd: int = 3) -> str:
+    try:
+        if x is None:
+            return "-"
+        if isinstance(x, bool):
+            return "True" if x else "False"
+        xf = float(x)
+        if math.isnan(xf):
+            return "nan"
+        return f"{xf:.{nd}f}"
+    except Exception:
+        return str(x)
+
+
+def _objective_value(row: Dict[str, Any], objective: str) -> Optional[float]:
+    full = row.get("full_mean_ms")
+    p1 = row.get("part1_mean_ms")
+    p2 = row.get("part2_mean_ms")
+    comp = row.get("composed_mean_ms")
+    if objective == "full":
+        return float(full) if full is not None else None
+    if objective == "composed":
+        return float(comp) if comp is not None else None
+    if objective == "sum_parts":
+        if p1 is None or p2 is None:
+            return None
+        return float(p1) + float(p2)
+    if objective == "max_parts":
+        if p1 is None or p2 is None:
+            return None
+        return max(float(p1), float(p2))
+    raise ValueError(f"unknown objective: {objective}")
+
+
+def _write_results_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
+    import csv
+
+    if not rows:
+        return
+    keys: List[str] = []
+    # stable-ish key order
+    preferred = [
+        "boundary",
+        "cut_mib",
+        "n_cut_tensors",
+        "flops_left",
+        "flops_right",
+        "imbalance_pred",
+        "score_pred",
+        "eps_pass",
+        "full_mean_ms",
+        "full_std_ms",
+        "part1_mean_ms",
+        "part1_std_ms",
+        "part2_mean_ms",
+        "part2_std_ms",
+        "composed_mean_ms",
+        "composed_std_ms",
+        "sum_parts_ms",
+        "overhead_ms",
+        "speedup_full_over_composed",
+    ]
+    for k in preferred:
+        if k in rows[0]:
+            keys.append(k)
+    for k in rows[0].keys():
+        if k not in keys:
+            keys.append(k)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=keys)
+        w.writeheader()
+        for r in rows:
+            w.writerow(r)
+
+
+def _write_table_tex(path: Path, rows: List[Dict[str, Any]], tag: str, objective: str, topk: int = 10) -> None:
+    def _tex_escape(text: str) -> str:
+        # minimal escaping for captions/tt
+        return (
+            text.replace("\\", "\\textbackslash{}")
+                .replace("_", "\\_")
+                .replace("%", "\\%")
+                .replace("&", "\\&")
+                .replace("#", "\\#")
+                .replace("$", "\\$")
+                .replace("{", "\\{")
+                .replace("}", "\\}")
+        )
+
+    label_tag = "bench-" + tag.replace("_", "-")
+    # top-k by objective (ascending)
+    def keyfn(r: Dict[str, Any]) -> float:
+        v = _objective_value(r, objective)
+        return float("inf") if v is None else float(v)
+
+    rows_sorted = sorted(rows, key=keyfn)[: max(1, min(topk, len(rows)))]
+
+    lines: List[str] = []
+    lines.append(r"\begin{table}[t]")
+    lines.append(r"\centering")
+    lines.append(r"\small")
+    lines.append(r"\setlength{\tabcolsep}{4pt}")
+    lines.append(r"\begin{tabular}{rrrrrrrr}")
+    lines.append(r"\toprule")
+    lines.append(r"Boundary & Cut (MiB) & \#T & $F_L$ (GFLOPs) & $F_R$ (GFLOPs) & $t_{\mathrm{full}}$ (ms) & $t_{\mathrm{comp}}$ (ms) & Pass \\")
+    lines.append(r"\midrule")
+    for r in rows_sorted:
+        b = r.get("boundary", "-")
+        cut = _fmt(r.get("cut_mib"), 3)
+        nt = r.get("cut_tensors", r.get("n_cut_tensors", "-"))
+        fl = _fmt(float(r.get("flops_left", 0.0)) / 1e9 if r.get("flops_left") is not None else None, 2)
+        fr = _fmt(float(r.get("flops_right", 0.0)) / 1e9 if r.get("flops_right") is not None else None, 2)
+        tf = _fmt(r.get("full_mean_ms"), 2)
+        tc = _fmt(r.get("composed_mean_ms"), 2)
+        ps = r.get("ok", r.get("eps_pass"))
+        ps_s = "True" if ps is True else ("False" if ps is False else "-")
+        lines.append(f"{b} & {cut} & {nt} & {fl} & {fr} & {tf} & {tc} & {ps_s} \\\\")
+    lines.append(r"\bottomrule")
+    lines.append(r"\end{tabular}")
+    tag_tt = _tex_escape(tag)
+    obj_tt = _tex_escape(objective)
+    lines.append(r"\\caption{Top split candidates for \\texttt{" + tag_tt + r"} (sorted by objective: \\texttt{" + obj_tt + r"}).}")
+    lines.append(r"\label{tab:benchmark_top_" + label_tag + r"}")
+    lines.append(r"\end{table}")
+    lines.append("")  # trailing newline
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+
+def _save_paper_figures(out_dir: Path, rows: List[Dict[str, Any]], tag: str, objective: str, topk: int = 10) -> List[Path]:
+    if not HAVE_PLOT or not rows:
+        return []
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # prepare arrays
+    flL = [float(r.get("flops_left", float("nan"))) / 1e9 for r in rows]
+    flR = [float(r.get("flops_right", float("nan"))) / 1e9 for r in rows]
+    t1 = [float(r.get("part1_mean_ms", float("nan"))) for r in rows]
+    t2 = [float(r.get("part2_mean_ms", float("nan"))) for r in rows]
+    score = [float(r.get("score", r.get("score_pred", float("nan")))) for r in rows]
+    cut = [float(r.get("cut_mib", float("nan"))) for r in rows]
+    comp = [float(r.get("composed_mean_ms", float("nan"))) for r in rows]
+    full = [float(r.get("full_mean_ms", float("nan"))) for r in rows]
+    sum_parts = [float(r.get("sum_parts_ms", float("nan"))) for r in rows]
+    overhead = [float(r.get("overhead_ms", float("nan"))) for r in rows]
+
+    obj = [float(_objective_value(r, objective) or float("nan")) for r in rows]
+
+    files: List[Path] = []
+
+    # Fig 1: FLOPs vs time (left)
+    a, b, r2 = _linreg(flL, t1)
+    r = _pearson(flL, t1)
+    plt.figure(figsize=(5.2, 4.0))
+    plt.scatter(flL, t1)
+    xline = [min(flL), max(flL)]
+    yline = [a * x + b for x in xline]
+    plt.plot(xline, yline)
+    plt.xlabel("FLOPs left (GFLOPs)")
+    plt.ylabel("Measured time part1 (ms)")
+    plt.title(f"Compute model plausibility (left)  r={_fmt(r,2)}, R$^2$={_fmt(r2,2)}")
+    p_pdf = out_dir / f"fig_flops_vs_time_left_{tag}.pdf"
+    p_svg = out_dir / f"fig_flops_vs_time_left_{tag}.svg"
+    plt.tight_layout()
+    plt.savefig(p_pdf)
+    plt.savefig(p_svg)
+    plt.close()
+    files += [p_pdf, p_svg]
+
+    # Fig 2: FLOPs vs time (right)
+    a, b, r2 = _linreg(flR, t2)
+    r = _pearson(flR, t2)
+    plt.figure(figsize=(5.2, 4.0))
+    plt.scatter(flR, t2)
+    xline = [min(flR), max(flR)]
+    yline = [a * x + b for x in xline]
+    plt.plot(xline, yline)
+    plt.xlabel("FLOPs right (GFLOPs)")
+    plt.ylabel("Measured time part2 (ms)")
+    plt.title(f"Compute model plausibility (right)  r={_fmt(r,2)}, R$^2$={_fmt(r2,2)}")
+    p_pdf = out_dir / f"fig_flops_vs_time_right_{tag}.pdf"
+    p_svg = out_dir / f"fig_flops_vs_time_right_{tag}.svg"
+    plt.tight_layout()
+    plt.savefig(p_pdf)
+    plt.savefig(p_svg)
+    plt.close()
+    files += [p_pdf, p_svg]
+
+    # Fig 3: score vs objective time (ranking quality proxy)
+    # highlight top-k predicted and top-k measured (objective)
+    import numpy as np  # type: ignore
+
+    score_arr = np.asarray(score, dtype=float)
+    obj_arr = np.asarray(obj, dtype=float)
+    valid = np.isfinite(score_arr) & np.isfinite(obj_arr)
+    score_v = score_arr[valid]
+    obj_v = obj_arr[valid]
+
+    if len(score_v) >= 2:
+        # indices in original list of valid points
+        valid_idx = np.where(valid)[0]
+        k = max(1, min(topk, len(score_v)))
+        pred_order = np.argsort(score_v)  # smaller score => better
+        meas_order = np.argsort(obj_v)    # smaller time => better
+        pred_top = set(valid_idx[pred_order[:k]].tolist())
+        meas_top = set(valid_idx[meas_order[:k]].tolist())
+
+        colors = []
+        for i in range(len(rows)):
+            if i in pred_top and i in meas_top:
+                colors.append("green")  # agree in top-k
+            elif i in pred_top:
+                colors.append("red")    # predicted top-k only
+            elif i in meas_top:
+                colors.append("orange") # measured top-k only
+            else:
+                colors.append(None)
+
+        plt.figure(figsize=(5.6, 4.2))
+        for i, r0 in enumerate(rows):
+            if not (math.isfinite(score[i]) and math.isfinite(obj[i])):
+                continue
+            if colors[i] is None:
+                plt.scatter(score[i], obj[i], alpha=0.6)
+            else:
+                plt.scatter(score[i], obj[i], edgecolors="black", linewidths=0.5, s=60, c=colors[i])
+        sp = _spearman([float(s) for s in score_v], [float(t) for t in obj_v])
+        kt = _kendall_tau([float(s) for s in score_v], [float(t) for t in obj_v])
+        plt.xlabel("Predicted score (higher is better)")
+        plt.ylabel(f"Measured objective time: {objective} (ms)")
+        plt.title(f"Ranking agreement: Spearman={_fmt(sp,2)}, Kendall={_fmt(kt,2)}")
+        p_pdf = out_dir / f"fig_score_vs_{objective}_{tag}.pdf"
+        p_svg = out_dir / f"fig_score_vs_{objective}_{tag}.svg"
+        plt.tight_layout()
+        plt.savefig(p_pdf)
+        plt.savefig(p_svg)
+        plt.close()
+        files += [p_pdf, p_svg]
+
+    # Fig 4: noise summary (CV%)
+    def cv(mean: float, std: float) -> float:
+        return (std / mean) * 100.0 if mean and mean > 0 else float("nan")
+
+    cv_full = [cv(float(r.get("full_mean_ms", float("nan"))), float(r.get("full_std_ms", float("nan")))) for r in rows]
+    cv_p1 = [cv(float(r.get("part1_mean_ms", float("nan"))), float(r.get("part1_std_ms", float("nan")))) for r in rows]
+    cv_p2 = [cv(float(r.get("part2_mean_ms", float("nan"))), float(r.get("part2_std_ms", float("nan")))) for r in rows]
+    cv_comp = [cv(float(r.get("composed_mean_ms", float("nan"))), float(r.get("composed_std_ms", float("nan")))) for r in rows]
+
+    def _mean_std(vals: List[float]) -> Tuple[float, float]:
+        vv = [v for v in vals if math.isfinite(v)]
+        if not vv:
+            return float("nan"), float("nan")
+        m = sum(vv) / len(vv)
+        s = math.sqrt(sum((v - m) ** 2 for v in vv) / max(1, len(vv) - 1))
+        return m, s
+
+    names = ["full", "part1", "part2", "composed"]
+    means = []
+    stds = []
+    for arr in [cv_full, cv_p1, cv_p2, cv_comp]:
+        m, s = _mean_std(arr)
+        means.append(m)
+        stds.append(s)
+
+    plt.figure(figsize=(5.4, 3.6))
+    plt.bar(names, means, yerr=stds)
+    plt.ylabel("CV (std/mean) [%]")
+    plt.title("Measurement noise (across benchmark cases)")
+    p_pdf = out_dir / f"fig_noise_cv_{tag}.pdf"
+    p_svg = out_dir / f"fig_noise_cv_{tag}.svg"
+    plt.tight_layout()
+    plt.savefig(p_pdf)
+    plt.savefig(p_svg)
+    plt.close()
+    files += [p_pdf, p_svg]
+
+    # Fig 5 (optional): overhead vs cut size
+    if any(math.isfinite(v) for v in overhead) and any(math.isfinite(v) for v in cut):
+        plt.figure(figsize=(5.4, 3.8))
+        plt.scatter(cut, overhead)
+        plt.axhline(0.0)
+        plt.xlabel("Cut size (MiB)")
+        plt.ylabel("Overhead: composed - (part1+part2) [ms]")
+        plt.title("Split overhead vs cut size")
+        p_pdf = out_dir / f"fig_overhead_vs_cut_{tag}.pdf"
+        p_svg = out_dir / f"fig_overhead_vs_cut_{tag}.svg"
+        plt.tight_layout()
+        plt.savefig(p_pdf)
+        plt.savefig(p_svg)
+        plt.close()
+        files += [p_pdf, p_svg]
+
+    return files
+
+
+def _write_summary_md(path: Path, rows: List[Dict[str, Any]], tag: str, objective: str, topk: int = 10) -> None:
+    if not rows:
+        path.write_text("# Benchmark summary\n\nNo results.\n", encoding="utf-8")
+        return
+
+    # derived objective arrays
+    obj = [(_objective_value(r, objective) or float("nan")) for r in rows]
+    score = [float(r.get("score", r.get("score_pred", float("nan")))) for r in rows]
+
+    # compute model plausibility
+    flL = [float(r["flops_left"]) / 1e9 for r in rows]
+    flR = [float(r["flops_right"]) / 1e9 for r in rows]
+    t1 = [float(r["part1_mean_ms"]) for r in rows]
+    t2 = [float(r["part2_mean_ms"]) for r in rows]
+    rL = _pearson(flL, t1)
+    rR = _pearson(flR, t2)
+    aL, bL, r2L = _linreg(flL, t1)
+    aR, bR, r2R = _linreg(flR, t2)
+
+    # ranking agreement (score vs objective time)
+    import numpy as np  # type: ignore
+
+    score_arr = np.asarray(score, dtype=float)
+    obj_arr = np.asarray(obj, dtype=float)
+    valid = np.isfinite(score_arr) & np.isfinite(obj_arr)
+    score_v = score_arr[valid].tolist()
+    obj_v = obj_arr[valid].tolist()
+    sp = _spearman([float(s) for s in score_v], [-float(t) for t in obj_v]) if len(score_v) >= 2 else float("nan")
+    kt = _kendall_tau([float(s) for s in score_v], [-float(t) for t in obj_v]) if len(score_v) >= 2 else float("nan")
+
+    # top-k overlap (pred score vs measured objective)
+    k = max(1, min(topk, len(score_v)))
+    pred_order = sorted(range(len(score_v)), key=lambda i: score_v[i], reverse=True)
+    meas_order = sorted(range(len(obj_v)), key=lambda i: obj_v[i])
+    overlap = len(set(pred_order[:k]).intersection(set(meas_order[:k])))
+    overlap_ratio = overlap / k
+
+    # noise summary (CV)
+    def cv(mean: float, std: float) -> float:
+        return (std / mean) * 100.0 if mean and mean > 0 else float("nan")
+
+    cv_comp = [cv(float(r.get("composed_mean_ms", float("nan"))), float(r.get("composed_std_ms", float("nan")))) for r in rows]
+    cv_comp_v = [v for v in cv_comp if math.isfinite(v)]
+    cv_comp_med = sorted(cv_comp_v)[len(cv_comp_v) // 2] if cv_comp_v else float("nan")
+
+    # best splits by objective
+    def keyfn(r: Dict[str, Any]) -> float:
+        v = _objective_value(r, objective)
+        return float("inf") if v is None else float(v)
+
+    best = sorted(rows, key=keyfn)[: min(10, len(rows))]
+
+    lines: List[str] = []
+    lines.append(f"# Benchmark summary: {tag}\n")
+    lines.append(f"- Objective: **{objective}** (lower is better)\n")
+    lines.append("## Compute-model plausibility (FLOPs vs measured time)\n")
+    lines.append(f"- Left:  Pearson r = {_fmt(rL,2)},  R^2 = {_fmt(r2L,2)},  fit: t(ms) ≈ {_fmt(aL,3)}·GFLOPs + {_fmt(bL,3)}\n")
+    lines.append(f"- Right: Pearson r = {_fmt(rR,2)},  R^2 = {_fmt(r2R,2)},  fit: t(ms) ≈ {_fmt(aR,3)}·GFLOPs + {_fmt(bR,3)}\n")
+    lines.append("## Ranking agreement (predicted score vs measured objective time)\n")
+    lines.append(f"- Spearman ρ = {_fmt(sp,2)}\n")
+    lines.append(f"- Kendall τ = {_fmt(kt,2)}\n")
+    lines.append(f"- Top-{k} overlap = {overlap}/{k} = {_fmt(overlap_ratio,2)}\n")
+    lines.append("## Measurement noise\n")
+    lines.append(f"- Median CV(composed) = {_fmt(cv_comp_med,2)} %\n")
+    lines.append("## Best splits by objective\n")
+    lines.append("| boundary | cut (MiB) | #T | t_full (ms) | t_comp (ms) | sum_parts (ms) | overhead (ms) | pass |\n")
+    lines.append("|---:|---:|---:|---:|---:|---:|---:|:---:|\n")
+    for r in best:
+        lines.append(
+            f"| {r.get('boundary','-')} | {_fmt(r.get('cut_mib'),3)} | {r.get('n_cut_tensors','-')} | "
+            f"{_fmt(r.get('full_mean_ms'),2)} | {_fmt(r.get('composed_mean_ms'),2)} | "
+            f"{_fmt(r.get('sum_parts_ms'),2)} | {_fmt(r.get('overhead_ms'),2)} | "
+            f"{'✅' if r.get('eps_pass') else '❌'} |\n"
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(lines), encoding="utf-8")
+
+
+def _run_case(case_dir: Path, provider: str, image: str, preset: str, warmup: int, runs: int, timeout_s: Optional[int], case_meta: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    # Each case contains run_split_onnxruntime.py
+    runner = case_dir / "run_split_onnxruntime.py"
+    if not runner.exists():
+        print(f"[warn] missing runner: {runner}")
+        return None
+
+    cmd = [sys.executable, str(runner), "--provider", provider, "--preset", preset, "--warmup", str(warmup), "--runs", str(runs), "--out-dir", f"results_{provider}"]
+    if image and str(image).lower() != "default":
+        cmd += ["--image", image]
+    try:
+        res = subprocess.run(cmd, cwd=str(case_dir), timeout=timeout_s)
+        if res.returncode != 0:
+            print(f"[warn] case failed: {case_dir.name} (rc={res.returncode})")
+            return None
+    except subprocess.TimeoutExpired:
+        print(f"[warn] timeout: {case_dir.name} (>{timeout_s}s)")
+        return None
+
+    # report location depends on runner (it writes into results_<provider> by default)
+    report = case_dir / f"results_{provider}" / "validation_report.json"
+    if not report.exists():
+        # some runners may use "results_auto"
+        report_auto = case_dir / "results_auto" / "validation_report.json"
+        report = report_auto if report_auto.exists() else report
+    if not report.exists():
+        print(f"[warn] missing report: {report}")
+        return None
+
+    r = _read_json(report)
+
+    # Flatten predicted fields from newer runner versions (runner may store them under "predicted")
+    pred = r.get("predicted")
+    if isinstance(pred, dict):
+        for k, v in pred.items():
+            if k not in r:
+                r[k] = v
+        # common aliases used by this suite
+        if "n_cut_tensors" not in r:
+            if "crossing_tensors_all" in pred:
+                r["n_cut_tensors"] = pred["crossing_tensors_all"]
+            elif "crossing_tensors_known" in pred:
+                r["n_cut_tensors"] = pred["crossing_tensors_known"]
+            elif isinstance(r.get("cut_tensors"), list):
+                r["n_cut_tensors"] = len(r["cut_tensors"])
+        if "score" in pred and "score_pred" not in r:
+            r["score_pred"] = pred["score"]
+        if "imbalance" in pred and "imbalance_pred" not in r:
+            r["imbalance_pred"] = pred["imbalance"]
+        if "total_flops" in pred and "flops_total" not in r:
+            r["flops_total"] = pred["total_flops"]
+    # derive total flops if possible
+    if "flops_total" not in r and ("flops_left" in r) and ("flops_right" in r):
+        try:
+            r["flops_total"] = float(r["flops_left"]) + float(r["flops_right"])
+        except Exception:
+            pass
+
+    # enrich with static case meta if present
+    manifest = case_dir / "split_manifest.json"
+    if manifest.exists():
+        m = _read_json(manifest)
+        for k in ["boundary", "cut_mib", "n_cut_tensors", "flops_left", "flops_right", "imbalance_pred", "score_pred"]:
+            if k in m and k not in r:
+                r[k] = m[k]
+        # keep all manifest fields (useful for later)
+        for k, v in m.items():
+            r.setdefault(k, v)
+
+
+    # Merge __BENCH_JSON__ metadata (predicted fields) if provided
+    if isinstance(case_meta, dict):
+        # merge predicted dict
+        mp = case_meta.get("predicted")
+        if isinstance(mp, dict):
+            if not isinstance(r.get("predicted"), dict):
+                r["predicted"] = mp
+            else:
+                for kk, vv in mp.items():
+                    r["predicted"].setdefault(kk, vv)
+        # surface a few helpful meta fields
+        for kk in ["boundary_index", "boundary_id", "boundary_name"]:
+            if kk in case_meta:
+                r.setdefault(kk, case_meta.get(kk))
+
+    # Ensure predicted fields are also available at top-level (compat)
+    pred2 = r.get("predicted")
+    if isinstance(pred2, dict):
+        for k, v in pred2.items():
+            r.setdefault(k, v)
+
+
+    # Compatibility aliases for older summary/table code
+    # - our predictor uses a *score* (higher is better); some scripts use score_pred (lower is better)
+    # - we keep score_pred as an alias to score for reporting
+    if "score_pred" not in r and "score" in r:
+        r["score_pred"] = r.get("score")
+    if "imbalance_pred" not in r and "imbalance" in r:
+        r["imbalance_pred"] = r.get("imbalance")
+    if "n_cut_tensors" not in r:
+        if "cut_tensors_toggle" in r:
+            r["n_cut_tensors"] = r.get("cut_tensors_toggle")
+        elif "cut_tensors" in r and isinstance(r.get("cut_tensors"), (int, float)):
+            r["n_cut_tensors"] = int(r.get("cut_tensors"))
+        elif isinstance(r.get("cut_tensors"), (list, tuple)):
+            r["n_cut_tensors"] = len(r.get("cut_tensors"))
+        else:
+            # fall back to predicted crossing tensors list if available
+            pred_tmp = r.get("predicted")
+            if isinstance(pred_tmp, dict):
+                if isinstance(pred_tmp.get("crossing_tensors_all"), (list, tuple)):
+                    r["n_cut_tensors"] = len(pred_tmp.get("crossing_tensors_all"))
+                elif isinstance(pred_tmp.get("crossing_tensors_known"), (list, tuple)):
+                    r["n_cut_tensors"] = len(pred_tmp.get("crossing_tensors_known"))
+    # pass flag alias
+    if "eps_pass" not in r and "ok" in r:
+        r["eps_pass"] = bool(r.get("ok"))
+
+    # Ensure timing fields are also available at top-level (compat)
+    tms = r.get("timing_ms") or r.get("timing")
+    if isinstance(tms, dict):
+        for _name in ("full", "part1", "part2", "composed"):
+            blk = tms.get(_name)
+            if isinstance(blk, dict):
+                mean = blk.get("mean", blk.get("mean_ms"))
+                std = blk.get("std", blk.get("std_ms"))
+                if mean is not None:
+                    r.setdefault(f"{_name}_mean_ms", mean)
+                if std is not None:
+                    r.setdefault(f"{_name}_std_ms", std)
+
+    # derived fields
+    try:
+        p1 = float(r.get("part1_mean_ms", float("nan")))
+        p2 = float(r.get("part2_mean_ms", float("nan")))
+        comp = float(r.get("composed_mean_ms", float("nan")))
+        if math.isfinite(p1) and math.isfinite(p2):
+            r["sum_parts_ms"] = p1 + p2
+            if math.isfinite(comp):
+                r["overhead_ms"] = comp - (p1 + p2)
+    except Exception:
+        pass
+    try:
+        full = float(r.get("full_mean_ms", float("nan")))
+        comp = float(r.get("composed_mean_ms", float("nan")))
+        if math.isfinite(full) and math.isfinite(comp) and comp > 0:
+            r["speedup_full_over_composed"] = full / comp
+    except Exception:
+        pass
+
+    return r
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--provider", default="auto", choices=["auto", "cpu", "cuda", "tensorrt"], help="Execution provider to use.")
+    parser.add_argument("--image", default="default", help="Image path or 'default'.")
+    parser.add_argument("--preset", default="auto", choices=["auto", "classification", "detection"], help="Output agreement preset.")
+    parser.add_argument("--warmup", type=int, default=5)
+    parser.add_argument("--runs", type=int, default=10)
+    parser.add_argument("--timeout", type=int, default=None, help="Per-case timeout in seconds.")
+    parser.add_argument("--objective", default="composed", choices=["composed", "sum_parts", "max_parts", "full"], help="Objective for ranking/summaries.")
+    parser.add_argument("--topk", type=int, default=10, help="Top-k for highlights/tables.")
+    parser.add_argument("--no-csv", action="store_true", help="Do not export CSV.")
+    args = parser.parse_args()
+
+    root = Path(__file__).resolve().parent
+    bench = _read_json(root / "__BENCH_JSON__")
+    cases: List[Dict[str, Any]] = bench.get("cases", [])
+    if not cases:
+        print("[warn] __BENCH_JSON__ has no cases")
+        return 1
+
+    provider = args.provider
+    tag = f"{provider}_{args.preset}"
+
+    rows: List[Dict[str, Any]] = []
+    for i, c in enumerate(cases):
+        b = c.get("boundary")
+        case_dir_key = c.get("case_dir") or c.get("folder")
+        if case_dir_key is None:
+            case_dir_key = f"b{int(b):03d}" if b is not None else "case"
+        rel = Path(str(case_dir_key))
+        case_dir = (root / rel).resolve()
+        print(f"\n[{i+1}/{len(cases)}] Running {case_dir.name} (provider={provider})")
+        r = _run_case(case_dir, provider=provider, image=args.image, preset=args.preset, warmup=args.warmup, runs=args.runs, timeout_s=args.timeout)
+        if r is not None:
+            rows.append(r)
+
+    if not rows:
+        print("[warn] No results found to collect (did you run the suite?)")
+        return 2
+
+    results_json = root / f"benchmark_results_{tag}.json"
+    _write_json(results_json, rows)
+    print(f"Wrote {results_json.name}")
+
+    if not args.no_csv:
+        results_csv = root / f"benchmark_results_{tag}.csv"
+        _write_results_csv(results_csv, rows)
+        print(f"Wrote {results_csv.name}")
+
+    # Summary (1 page)
+    summary_md = root / f"benchmark_summary_{tag}.md"
+    _write_summary_md(summary_md, rows, tag=tag, objective=args.objective, topk=args.topk)
+    print(f"Wrote {summary_md.name}")
+
+    # Paper-ready LaTeX table
+    table_tex = root / f"benchmark_table_{tag}.tex"
+    _write_table_tex(table_tex, rows, tag=tag, objective=args.objective, topk=args.topk)
+    print(f"Wrote {table_tex.name}")
+
+    # Paper-ready figures
+    fig_dir = root / f"paper_figures_{tag}"
+    fig_files = _save_paper_figures(fig_dir, rows, tag=tag, objective=args.objective, topk=args.topk)
+    if fig_files:
+        print(f"Wrote {len(fig_files)} figure files to {fig_dir.name}/")
+    else:
+        if not HAVE_PLOT:
+            print("[info] matplotlib not available; skipping figure export")
+        else:
+            print("[info] no figures exported (no rows?)")
+
+    print("\nDone.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

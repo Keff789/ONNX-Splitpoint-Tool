@@ -272,6 +272,51 @@ def build_panel(parent, app=None) -> ttk.Frame:
         ov = _to_float(accel_spec.get("runtime_overhead_mb")) or 0.0
         return max(0.0, ram - ov)
 
+
+    def _default_power_w(accel_spec):
+        # Best-effort power estimate (W) for energy estimation.
+        if not isinstance(accel_spec, dict):
+            return None
+        p = accel_spec.get("power") or {}
+        if not isinstance(p, dict):
+            p = {}
+
+        # Prefer explicit typical/max if provided
+        for k in ("typical_w", "max_w", "tdp_w", "tdp"):
+            v = p.get(k)
+            if v is None:
+                continue
+            try:
+                return float(v)
+            except Exception:
+                pass
+
+        # Otherwise, use the highest listed power mode
+        modes = p.get("modes_w")
+        if isinstance(modes, list) and modes:
+            vals = []
+            for v in modes:
+                try:
+                    vals.append(float(v))
+                except Exception:
+                    pass
+            if vals:
+                return max(vals)
+
+        return None
+
+    def _default_energy_pj_per_flop(accel_spec, gops):
+        # Compute energy estimate in pJ/F from (power W, throughput GOPS).
+        # pJ/F = (W * 1000) / GOPS
+        p_w = _default_power_w(accel_spec)
+        try:
+            g = float(gops) if gops is not None else None
+        except Exception:
+            g = None
+        if p_w is None or g is None or g <= 0:
+            return None
+        return (p_w * 1000.0) / g
+
     def _sync_latency_defaults():
         left_name = str(left_var.get() or "")
         right_name = str(right_var.get() or "")
@@ -293,6 +338,14 @@ def build_panel(parent, app=None) -> ttk.Frame:
         if m_r is not None:
             _autofill_set(mem_r_unit_var, "lat_peak_right_unit", "MiB")
             _autofill_set(mem_r_var, "lat_peak_right", f"{int(round(m_r))}")
+        # Derived compute energy (pJ/F) from power + throughput
+        e_l = _default_energy_pj_per_flop(left_spec, g_l)
+        e_r = _default_energy_pj_per_flop(right_spec, g_r)
+        if e_l is not None:
+            _autofill_set(energy_l_var, "lat_e_left_pjpf", _fmt_num(e_l))
+        if e_r is not None:
+            _autofill_set(energy_r_var, "lat_e_right_pjpf", _fmt_num(e_r))
+
 
     ttk.Label(latency, text="Link bandwidth:").grid(row=0, column=0, sticky="w", padx=(8, 4), pady=8)
     ent_bw = ttk.Entry(latency, textvariable=bw_var, width=10)
@@ -464,6 +517,53 @@ def build_panel(parent, app=None) -> ttk.Frame:
         if ovh is not None:
             _autofill_set(overhead_var, "lat_overhead_ms", str(ovh))
 
+        # Advanced link model defaults (optional)
+        lm = iface.get("link_model") or {}
+        if isinstance(lm, dict):
+            lm_type = str(lm.get("type") or "").strip()
+            if lm_type:
+                _autofill_set(link_model_var, "lat_link_model", lm_type)
+
+            e_pj_per_b = _to_float(lm.get("energy_pj_per_byte"))
+            if e_pj_per_b is not None:
+                _autofill_set(link_energy_var, "lat_E_link", _fmt_num(e_pj_per_b))
+
+            mtu = lm.get("mtu_payload_bytes")
+            if mtu is not None:
+                try:
+                    _autofill_set(mtu_var, "lat_mtu", str(int(mtu)))
+                except Exception:
+                    pass
+
+            pkt_ms = _to_float(lm.get("per_packet_overhead_ms"))
+            if pkt_ms is not None:
+                _autofill_set(pkt_ovh_ms_var, "lat_pkt_ms", _fmt_num(pkt_ms))
+
+            pkt_b = lm.get("per_packet_overhead_bytes")
+            if pkt_b is not None:
+                try:
+                    _autofill_set(pkt_ovh_bytes_var, "lat_pkt_b", str(int(pkt_b)))
+                except Exception:
+                    pass
+
+            cons = lm.get("constraints") or {}
+            if isinstance(cons, dict):
+                max_ms = _to_float(cons.get("max_latency_ms"))
+                if max_ms is not None:
+                    _autofill_set(link_max_ms_var, "lat_max_ms", _fmt_num(max_ms))
+
+                max_mj = _to_float(cons.get("max_energy_mJ"))
+                if max_mj is not None:
+                    _autofill_set(link_max_mj_var, "lat_max_mj", _fmt_num(max_mj))
+
+                max_bytes = cons.get("max_bytes")
+                if max_bytes is not None:
+                    try:
+                        _autofill_set(link_max_bytes_var, "lat_max_bytes", str(int(max_bytes)))
+                    except Exception:
+                        pass
+
+
     iface_var.trace_add("write", _sync_link_from_interface)
     _sync_link_from_interface()
 
@@ -472,5 +572,38 @@ def build_panel(parent, app=None) -> ttk.Frame:
         _sync_latency_defaults()
     except Exception:
         pass
+
+
+    # Latency plot should update when HW / link settings change.
+    def _request_latency_recompute(*_args: object) -> None:
+        try:
+            fn = getattr(app, "_schedule_latency_recompute", None)
+            if callable(fn):
+                fn("hw_change")
+        except Exception:
+            pass
+
+    for _v in (
+        left_var,
+        right_var,
+        iface_var,
+        bw_var,
+        bw_unit_var,
+        overhead_var,
+        gops_l_var,
+        gops_r_var,
+        link_model_var,
+        link_energy_var,
+        mtu_var,
+        pkt_ovh_ms_var,
+        pkt_ovh_bytes_var,
+        link_max_ms_var,
+        link_max_mj_var,
+        link_max_bytes_var,
+    ):
+        try:
+            _v.trace_add("write", _request_latency_recompute)
+        except Exception:
+            pass
 
     return frame
