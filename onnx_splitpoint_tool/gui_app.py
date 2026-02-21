@@ -1794,6 +1794,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         backend = (self.var_hailo_backend.get() or "auto").strip().lower()
         wsl_distro = (self.var_hailo_wsl_distro.get() or "").strip()
+        wsl_venv = (self.var_hailo_wsl_venv.get() or "auto").strip() or "auto"
 
         # Resolve repo root (contains scripts/).
         repo_root = Path(__file__).resolve().parents[1]
@@ -1801,6 +1802,10 @@ class SplitPointAnalyserGUI(tk.Tk):
         def _worker() -> None:
             ok = False
             summary = ""
+            prov_rc: Optional[int] = None
+            prov_err: Optional[str] = None
+            res_h8 = None
+            res_h10 = None
             try:
                 if sys.platform == "win32":
                     from .hailo_backend import hailo_wsl_available, windows_path_to_wsl, _wsl_exe
@@ -1845,15 +1850,90 @@ class SplitPointAnalyserGUI(tk.Tk):
                     logger.info("[hailo][provision] %s", line)
                 rc = proc.wait()
 
+                prov_rc = int(rc)
                 ok = (rc == 0)
-                if ok:
-                    summary = "Provisioning completed successfully."
-                else:
-                    summary = f"Provisioning failed (exit code {rc}). Check Logs tab (gui.log)."
             except Exception as e:
                 ok = False
-                summary = f"Provisioning failed: {type(e).__name__}: {e}"
+                prov_err = f"{type(e).__name__}: {e}"
+                summary = f"Provisioning failed: {prov_err}"
                 logger.exception("[hailo][provision] failed")
+
+            # Build a compact post-provision status summary (Hailo-8 / Hailo-10)
+            # so users immediately know what is usable.
+            try:
+                from .hailo_backend import hailo_probe_auto
+
+                res_h8 = hailo_probe_auto(
+                    backend=backend,
+                    hw_arch="hailo8",
+                    wsl_distro=wsl_distro,
+                    wsl_venv_activate=wsl_venv,
+                    timeout_s=45,
+                )
+                res_h10 = hailo_probe_auto(
+                    backend=backend,
+                    hw_arch="hailo10",
+                    wsl_distro=wsl_distro,
+                    wsl_venv_activate=wsl_venv,
+                    timeout_s=45,
+                )
+            except Exception:
+                logger.exception("[hailo][provision] post-provision probe failed")
+
+            # Format summary dialog.
+            try:
+                lines: List[str] = []
+                if prov_err:
+                    lines.append(f"Provisioning: FAILED ({prov_err})")
+                elif prov_rc is None:
+                    lines.append("Provisioning: FAILED (unknown error)")
+                else:
+                    lines.append(f"Provisioning: {'OK' if prov_rc == 0 else 'FAILED'} (exit code {prov_rc})")
+
+                def _fmt_res(label: str, r) -> None:
+                    if r is None:
+                        lines.append(f"{label}: (no result)")
+                        return
+                    if bool(getattr(r, "ok", False)):
+                        lines.append(f"{label}: OK ({getattr(r, 'backend', '')})")
+                    else:
+                        reason = str(getattr(r, "reason", "") or "").strip()
+                        backend_name = str(getattr(r, "backend", "") or "")
+                        if reason:
+                            lines.append(f"{label}: FAIL ({backend_name}) - {reason}")
+                        else:
+                            lines.append(f"{label}: FAIL ({backend_name})")
+
+                _fmt_res("Hailo-8", res_h8)
+                _fmt_res("Hailo-10", res_h10)
+
+                # Extra hints for common hard blockers.
+                hints: List[str] = []
+                for r, name in ((res_h8, "Hailo-8"), (res_h10, "Hailo-10")):
+                    if r is None or bool(getattr(r, "ok", False)):
+                        continue
+                    reason = str(getattr(r, "reason", "") or "")
+                    if "glibc" in reason.lower() or "GLIBC_" in reason:
+                        hints.append(
+                            f"{name}: Your Linux/WSL distro is too old for this DFC wheel (needs glibc >= 2.34). "
+                            "Use Ubuntu 22.04/24.04 for DFC provisioning and set the GUI 'WSL distro' field accordingly."
+                        )
+                    if "pkg_resources" in reason:
+                        hints.append(
+                            f"{name}: 'pkg_resources' is missing. Fix by pinning setuptools<82 (Provision DFC does this automatically)."
+                        )
+
+                if hints:
+                    lines.append("")
+                    lines.append("Hints:")
+                    for h in hints:
+                        lines.append(f"- {h}")
+
+                summary = "\n".join(lines)
+            except Exception:
+                # Fall back to a basic summary if formatting fails.
+                if not summary:
+                    summary = "Provisioning completed." if ok else "Provisioning failed. Check Logs tab."
 
             def _finish() -> None:
                 self._hailo_provision_running = False
@@ -1863,8 +1943,16 @@ class SplitPointAnalyserGUI(tk.Tk):
                 except Exception:
                     pass
 
-                if ok:
+                # Decide dialog icon based on overall state.
+                try:
+                    all_ok = bool(res_h8 is not None and getattr(res_h8, "ok", False)) and bool(res_h10 is not None and getattr(res_h10, "ok", False))
+                except Exception:
+                    all_ok = False
+
+                if ok and all_ok:
                     messagebox.showinfo("Hailo DFC provisioning", summary)
+                elif ok:
+                    messagebox.showwarning("Hailo DFC provisioning", summary)
                 else:
                     messagebox.showerror("Hailo DFC provisioning", summary)
 
