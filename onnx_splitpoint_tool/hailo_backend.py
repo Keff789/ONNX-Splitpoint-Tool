@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import time
+import logging
 from dataclasses import asdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +34,76 @@ from onnx import AttributeProto, helper
 
 # Optional (pure python) helper to resolve multiple DFC versions (Hailo-8 vs Hailo-10)
 from .hailo.dfc_manager import get_dfc_manager
+
+
+log = logging.getLogger(__name__)
+
+
+def _write_wsl_debug_log(
+    outdir_win: Optional[Union[str, Path]],
+    *,
+    filename: str,
+    wsl_cmd: List[str],
+    stdout: str,
+    stderr: str,
+) -> Optional[str]:
+    """Write a debug log file on the Windows side and return its path.
+
+    This is extremely helpful when a WSL call fails before producing the
+    structured JSON marker line.
+    """
+
+    def _wsl_to_win(p: str) -> str:
+        """Convert a common WSL path (/mnt/<drive>/...) back to a Windows path.
+
+        Some error paths pass WSL paths ("/mnt/c/...") into this function.
+        On Windows, Path("/mnt/c/...") resolves to "\\mnt\\c...", which is
+        typically not writable, and we'd silently fail to write the debug log.
+        """
+
+        s = str(p)
+        m = re.match(r"^/mnt/([a-zA-Z])/(.*)$", s)
+        if not m:
+            return s
+        drive = m.group(1).upper()
+        rest = m.group(2).replace("/", "\\")
+        return f"{drive}:\\{rest}"
+
+    try:
+        # Prefer writing next to the failing output (outdir), but always fall
+        # back to a stable location if that path is not writable.
+        if outdir_win:
+            out_s = str(outdir_win)
+            if sys.platform == "win32" and out_s.startswith("/mnt/"):
+                out_s = _wsl_to_win(out_s)
+            base = Path(out_s).expanduser().resolve()
+        else:
+            base = Path.home() / ".onnx_splitpoint_tool" / "wsl_debug"
+
+        # If the chosen base is not usable, fall back to ~/.onnx_splitpoint_tool/wsl_debug
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            base = Path.home() / ".onnx_splitpoint_tool" / "wsl_debug"
+            base.mkdir(parents=True, exist_ok=True)
+
+        p = base / filename
+
+        lines: List[str] = []
+        lines.append("# ONNX Splitpoint Tool - WSL debug log")
+        lines.append("")
+        lines.append(f"cmd: {' '.join(map(str, wsl_cmd))}")
+        lines.append("")
+        lines.append("--- stdout ---")
+        lines.append(stdout or "<empty>")
+        lines.append("")
+        lines.append("--- stderr ---")
+        lines.append(stderr or "<empty>")
+        lines.append("")
+        p.write_text("\n".join(lines), encoding="utf-8", errors="replace")
+        return str(p)
+    except Exception:
+        return None
 
 
 def hailo_sdk_available() -> bool:
@@ -106,6 +177,123 @@ def _bash_quote(s: str) -> str:
     return shlex.quote(str(s))
 
 
+# --------------------------- Managed venv bridge ---------------------------
+
+def _resolve_managed_venv_python(
+    *,
+    hw_arch: str,
+    venv_activate: str = "auto",
+) -> Tuple[str, Path, str]:
+    """Resolve the managed DFC venv python for a given hw_arch.
+
+    On Windows, the managed venv lives *inside WSL*, so you must use the WSL
+    bridge. On Linux (native or WSL), we can run the venv python directly.
+
+    Returns: (profile_id, venv_python_path, activate_path)
+    """
+
+    mgr = get_dfc_manager()
+    resolved = mgr.resolve_wsl_runtime(
+        hw_arch=str(hw_arch),
+        wsl_distro=None,
+        wsl_venv_activate=(str(venv_activate).strip() or "auto"),
+    )
+    act = str(resolved.wsl_venv_activate or "").strip()
+    if not act:
+        raise RuntimeError(
+            f"No managed DFC profile found for hw_arch={hw_arch!r}. "
+            "Set an explicit venv activate path, or add a profile in resources/hailo/profiles.json."
+        )
+
+    act_expanded = os.path.expanduser(act) if act.startswith("~") else act
+    act_path = Path(act_expanded).expanduser()
+    if not act_path.is_absolute():
+        # Be conservative; resolve relative paths against current working dir.
+        act_path = act_path.resolve()
+
+    # .../<venv>/bin/activate -> parents[1] == <venv>
+    venv_dir = act_path.parents[1]
+    py = venv_dir / "bin" / "python"
+    if not py.exists():
+        py = venv_dir / "bin" / "python3"
+    if not py.exists():
+        raise RuntimeError(f"Managed venv python not found (expected {venv_dir}/bin/python)")
+
+    return str(resolved.profile_id), py, str(act_path)
+
+
+def hailo_probe_via_venv(
+    *,
+    hw_arch: str = "hailo8",
+    venv_activate: str = "auto",
+    timeout_s: int = 30,
+) -> "HailoProbeResult":
+    """Probe a managed DFC venv *directly* (Linux / WSL).
+
+    This is the Linux counterpart of :func:`hailo_probe_via_wsl`.
+    """
+
+    if sys.platform == "win32":
+        return HailoProbeResult(ok=False, backend="venv", reason="Managed venv probe is not available on Windows (use WSL backend).")
+
+    def _summarize(out_text: str) -> str:
+        t = (out_text or "").strip()
+        if not t:
+            return "Probe failed"
+        for line in reversed(t.splitlines()):
+            if "__HAILO_PROBE_ERR__" in line:
+                msg = line.split("__HAILO_PROBE_ERR__", 1)[1].strip()
+                if msg:
+                    return msg[:240]
+        if "Descriptors cannot be created directly" in t or "CheckCalledFromGeneratedFile" in t:
+            return "protobuf version mismatch (env drift). Re-run provisioning."
+        if "No module named" in t and "pkg_resources" in t:
+            return "setuptools/pkg_resources missing in the DFC venv (re-run provisioning)"
+        lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
+        return (lines[-1] if lines else "Probe failed")[:240]
+
+    try:
+        profile_id, py, act_path = _resolve_managed_venv_python(hw_arch=str(hw_arch), venv_activate=str(venv_activate))
+    except Exception as e:
+        return HailoProbeResult(ok=False, backend="venv", reason=f"Failed to resolve DFC profile: {e}")
+
+    py_probe = (
+        "import sys; "
+        "\ntry:\n"
+        "  import pkg_resources, hailo_sdk_client, onnx, google.protobuf\n"
+        "  print('__HAILO_PROBE_OK__', getattr(hailo_sdk_client,'__version__','?'), onnx.__version__, google.protobuf.__version__)\n"
+        "except Exception as e:\n"
+        "  print('__HAILO_PROBE_ERR__', type(e).__name__ + ':', str(e))\n"
+        "  sys.exit(2)\n"
+    )
+
+    cmd = [str(py), "-c", py_probe]
+
+    try:
+        log.info("[hailo][probe][venv] hw_arch=%s profile=%s python=%s", hw_arch, profile_id, str(py))
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s, encoding="utf-8", errors="replace")
+        out = (proc.stdout or "") + (proc.stderr or "")
+        ok = "__HAILO_PROBE_OK__" in out
+        if not ok:
+            log.warning(
+                "[hailo][probe][venv] failed rc=%s tail=%s",
+                proc.returncode,
+                " ".join((out.strip().splitlines()[-5:] if out else ["<no output>"])),
+            )
+        details = {
+            "returncode": proc.returncode,
+            "profile_id": profile_id,
+            "venv_activate": act_path,
+            "venv_python": str(py),
+            "output_tail": "\n".join(out.strip().splitlines()[-30:]),
+        }
+        return HailoProbeResult(ok=ok, backend="venv", reason=("" if ok else _summarize(out)), details=details)
+    except subprocess.TimeoutExpired:
+        return HailoProbeResult(ok=False, backend="venv", reason=f"Venv probe timed out after {timeout_s}s")
+    except Exception as e:
+        return HailoProbeResult(ok=False, backend="venv", reason=str(e))
+
+
 def hailo_probe_local() -> HailoProbeResult:
     """Check whether the local Python environment can import the Hailo DFC SDK."""
     try:
@@ -156,6 +344,9 @@ def hailo_probe_via_wsl(
 
         if "No module named" in t and "hailo_sdk_client" in t:
             return "hailo_sdk_client not importable (DFC not installed)"
+
+        if "No module named" in t and "pkg_resources" in t:
+            return "setuptools/pkg_resources missing in the DFC venv (re-run provisioning)"
 
         if "No such file or directory" in t and "activate" in t:
             return "WSL venv activate script not found"
@@ -210,13 +401,31 @@ def hailo_probe_via_wsl(
         "  sys.exit(2)\n"
     )
 
-    bash = "set -e; " f"source {act}; " f"python3 -c {shlex.quote(py_probe)}; " "(hailo --version 2>/dev/null || true)"
+    # Use `python` (not `python3`) after activation. Some venvs do not provide a
+    # `python3` shim, which would accidentally run the *system* python3.
+    bash = (
+        "set -e; "
+        "echo __SPLITPOINT_WSL_BEGIN__; "
+        f"source {act}; "
+        "echo __SPLITPOINT_WSL_VENV_OK__; "
+        f"python -c {shlex.quote(py_probe)}; "
+        "(hailo --version 2>/dev/null || true)"
+    )
     cmd += ["--", "bash", "-lc", bash]
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
+        log.info("[hailo][probe][wsl] hw_arch=%s profile=%s distro=%s activate=%s", hw_arch, resolved.profile_id, distro_eff or "", venv_eff)
+        log.debug("[hailo][probe][wsl] cmd=%s", cmd)
+
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s, encoding="utf-8", errors="replace")
         out = (proc.stdout or "") + (proc.stderr or "")
         ok = "__HAILO_PROBE_OK__" in out
+        if not ok:
+            log.warning(
+                "[hailo][probe][wsl] failed rc=%s tail=%s",
+                proc.returncode,
+                " ".join((out.strip().splitlines()[-5:] if out else ["<no output>"]))
+            )
         details = {
             "returncode": proc.returncode,
             "profile_id": resolved.profile_id,
@@ -240,18 +449,26 @@ def hailo_probe_auto(
     timeout_s: int = 30,
 ) -> HailoProbeResult:
     backend = (backend or "auto").strip().lower()
-    if backend not in ("auto", "local", "wsl"):
+    if backend not in ("auto", "local", "wsl", "venv"):
         return HailoProbeResult(ok=False, backend=backend, reason=f"Unknown backend: {backend!r}")
 
     if backend == "local":
         return hailo_probe_local()
+    if backend == "venv":
+        return hailo_probe_via_venv(hw_arch=hw_arch, venv_activate=wsl_venv_activate, timeout_s=timeout_s)
     if backend == "wsl":
         return hailo_probe_via_wsl(hw_arch=hw_arch, wsl_distro=wsl_distro, wsl_venv_activate=wsl_venv_activate, timeout_s=timeout_s)
 
     # auto
     if hailo_sdk_available():
         return hailo_probe_local()
-    return hailo_probe_via_wsl(hw_arch=hw_arch, wsl_distro=wsl_distro, wsl_venv_activate=wsl_venv_activate, timeout_s=timeout_s)
+
+    # Windows: use WSL bridge; Linux: prefer managed venv probe (no need to
+    # install hailo_sdk_client into the tool's own Python env).
+    if sys.platform == "win32":
+        return hailo_probe_via_wsl(hw_arch=hw_arch, wsl_distro=wsl_distro, wsl_venv_activate=wsl_venv_activate, timeout_s=timeout_s)
+
+    return hailo_probe_via_venv(hw_arch=hw_arch, venv_activate=wsl_venv_activate, timeout_s=timeout_s)
 
 
 def _find_result_json(text: str) -> Optional[Dict[str, Any]]:
@@ -261,11 +478,31 @@ def _find_result_json(text: str) -> Optional[Dict[str, Any]]:
     idx = text.rfind(_WSL_RESULT_MARKER)
     if idx < 0:
         return None
-    payload = text[idx + len(_WSL_RESULT_MARKER):].strip()
+
+    # The helper prints a single marker line. Other libraries may print to
+    # stdout/stderr before/after, so we only parse the first line after marker.
+    payload_all = text[idx + len(_WSL_RESULT_MARKER):]
+    first_line = payload_all.strip().splitlines()[0].strip() if payload_all else ""
+    if not first_line:
+        return None
+
+    # 1) Best case: pure JSON
     try:
-        return json.loads(payload)
+        return json.loads(first_line)
+    except Exception:
+        pass
+
+    # 2) Fallback: extract the first {...} block (guards against accidental
+    # trailing logs appended on the same line).
+    try:
+        a = first_line.find("{")
+        b = first_line.rfind("}")
+        if a >= 0 and b > a:
+            return json.loads(first_line[a : b + 1])
     except Exception:
         return None
+
+    return None
 
 
 def hailo_parse_check_via_wsl(
@@ -367,10 +604,13 @@ def hailo_parse_check_via_wsl(
 
     cmd_parts = [
         "set -e",  # fail fast
+        "echo __SPLITPOINT_WSL_BEGIN__",
         f"source {venv_activate}",
+        "echo __SPLITPOINT_WSL_VENV_OK__",
         # Make sure we always flush output.
         "export PYTHONUNBUFFERED=1",
-        f"python3 {_bash_quote(helper_wsl)}"
+        # Use `python` after venv activation to ensure we run the venv interpreter.
+        f"python {_bash_quote(helper_wsl)}"
         f" --onnx {_bash_quote(onnx_wsl)}"
         f" --hw-arch {_bash_quote(str(hw_arch))}"
         f" --net-name {_bash_quote(str(net_name))}"
@@ -395,12 +635,25 @@ def hailo_parse_check_via_wsl(
     wsl_cmd += ["--", "bash", "-lc", bash_cmd]
 
     try:
+        log.info(
+            "[hailo][parse][wsl] hw_arch=%s profile=%s distro=%s activate=%s onnx=%s outdir=%s",
+            hw_arch,
+            resolved.profile_id,
+            distro_eff or "",
+            venv_eff,
+            onnx_wsl,
+            outdir_wsl or "",
+        )
+        log.debug("[hailo][parse][wsl] cmd=%s", wsl_cmd)
+
         proc = subprocess.run(
             wsl_cmd,
             capture_output=True,
             text=True,
             timeout=int(wsl_timeout_s),
             env=dict(os.environ),
+            encoding="utf-8",
+            errors="replace",
         )
     except subprocess.TimeoutExpired:
         return HailoParseResult(
@@ -421,12 +674,28 @@ def hailo_parse_check_via_wsl(
             error=f"WSL hailo check failed to launch: {type(e).__name__}: {e}",
         )
 
-    mixed = "\n".join([proc.stdout or "", proc.stderr or ""]).strip()
+    stdout = proc.stdout or ""
+    stderr = proc.stderr or ""
+    mixed = "\n".join([stdout, stderr]).strip()
     payload = _find_result_json(mixed)
 
     if payload is None:
         # Provide a short tail for debugging.
-        tail = mixed[-2000:] if mixed else ""
+        tail = mixed[-4000:] if mixed else "<no stdout/stderr captured>"
+        dbg_path = _write_wsl_debug_log(
+            outdir,
+            filename=f"hailo_wsl_parse_{net_name}_{int(time.time())}.log",
+            wsl_cmd=wsl_cmd,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        if dbg_path:
+            tail = tail + f"\n\n[debug_log] {dbg_path}"
+        log.warning(
+            "[hailo][parse][wsl] no structured result rc=%s debug_log=%s",
+            proc.returncode,
+            dbg_path or "-",
+        )
         return HailoParseResult(
             ok=False,
             elapsed_s=time.time() - t0,
@@ -446,6 +715,174 @@ def hailo_parse_check_via_wsl(
         hw_arch=str(payload.get("hw_arch", hw_arch)),
         net_name=str(payload.get("net_name", net_name)),
         backend=str(payload.get("backend") or "wsl"),
+        error=payload.get("error"),
+        har_path=payload.get("har_path"),
+        fixed_onnx_path=payload.get("fixed_onnx_path"),
+        fixup_report=payload.get("fixup_report"),
+    )
+
+
+def hailo_parse_check_via_venv(
+    onnx_path: Union[str, Path],
+    *,
+    hw_arch: str = "hailo8",
+    net_name: Optional[str] = None,
+    outdir: Optional[Union[str, Path]] = None,
+    net_input_shapes: Optional[Union[List[int], Dict[str, List[int]]]] = None,
+    fixup: bool = True,
+    add_conv_defaults: bool = True,
+    save_har: bool = True,
+    disable_rt_metadata_extraction: bool = True,
+    venv_activate: str = "auto",
+    timeout_s: int = 180,
+) -> "HailoParseResult":
+    """Run the parse-check helper inside a managed DFC venv (Linux / WSL).
+
+    This avoids installing Hailo SDK deps into the tool's own Python env.
+    """
+
+    if sys.platform == "win32":
+        return HailoParseResult(
+            ok=False,
+            elapsed_s=0.0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name or Path(str(onnx_path)).stem),
+            backend="venv",
+            error="Managed venv backend is not available on Windows (use WSL backend).",
+        )
+
+    t0 = time.time()
+    onnx_path = Path(str(onnx_path)).expanduser().resolve()
+    net_name_eff = str(net_name or onnx_path.stem)
+    outdir_path = Path(str(outdir)).expanduser().resolve() if outdir else None
+    if outdir_path is not None:
+        outdir_path.mkdir(parents=True, exist_ok=True)
+
+    # Resolve managed venv python.
+    try:
+        profile_id, py, _act = _resolve_managed_venv_python(hw_arch=str(hw_arch), venv_activate=str(venv_activate))
+    except Exception as e:
+        return HailoParseResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=net_name_eff,
+            backend="venv",
+            error=f"Failed to resolve managed DFC venv: {e}",
+        )
+
+    helper = Path(__file__).resolve().parent / "wsl_hailo_check.py"
+    if not helper.exists():
+        return HailoParseResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=net_name_eff,
+            backend="venv",
+            error=f"Helper script missing: {helper}",
+        )
+
+    cmd: List[str] = [
+        str(py),
+        str(helper),
+        "--onnx",
+        str(onnx_path),
+        "--hw-arch",
+        str(hw_arch),
+        "--net-name",
+        str(net_name_eff),
+        "--fixup",
+        "1" if fixup else "0",
+        "--add-conv-defaults",
+        "1" if add_conv_defaults else "0",
+        "--save-har",
+        "1" if save_har else "0",
+        "--disable-rt-metadata-extraction",
+        "1" if disable_rt_metadata_extraction else "0",
+    ]
+    if outdir_path is not None:
+        cmd += ["--outdir", str(outdir_path)]
+
+    # NOTE: net_input_shapes is ignored for now (same as WSL helper path).
+    if net_input_shapes is not None:
+        log.debug("[hailo][parse][venv] net_input_shapes ignored (not yet wired through helper)")
+
+    try:
+        log.info(
+            "[hailo][parse][venv] hw_arch=%s profile=%s python=%s onnx=%s outdir=%s",
+            hw_arch,
+            profile_id,
+            str(py),
+            str(onnx_path),
+            str(outdir_path or ""),
+        )
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=int(timeout_s),
+            env=dict(os.environ),
+            encoding="utf-8",
+            errors="replace",
+        )
+    except subprocess.TimeoutExpired:
+        return HailoParseResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=net_name_eff,
+            backend="venv",
+            error=f"Venv hailo check timed out after {timeout_s}s.",
+        )
+    except Exception as e:
+        return HailoParseResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=net_name_eff,
+            backend="venv",
+            error=f"Venv hailo check failed to launch: {type(e).__name__}: {e}",
+        )
+
+    stdout = proc.stdout or ""
+    stderr = proc.stderr or ""
+    mixed = "\n".join([stdout, stderr]).strip()
+    payload = _find_result_json(mixed)
+
+    if payload is None:
+        tail = mixed[-4000:] if mixed else "<no stdout/stderr captured>"
+        dbg_path = _write_wsl_debug_log(
+            str(outdir_path) if outdir_path is not None else None,
+            filename=f"hailo_venv_parse_{net_name_eff}_{int(time.time())}.log",
+            wsl_cmd=cmd,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        if dbg_path:
+            tail = tail + f"\n\n[debug_log] {dbg_path}"
+        log.warning(
+            "[hailo][parse][venv] no structured result rc=%s debug_log=%s",
+            proc.returncode,
+            dbg_path or "-",
+        )
+        return HailoParseResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=net_name_eff,
+            backend="venv",
+            error=(
+                "Venv hailo check did not return a structured result. "
+                f"exit_code={proc.returncode}. tail=\n{tail}"
+            ),
+        )
+
+    return HailoParseResult(
+        ok=bool(payload.get("ok")),
+        elapsed_s=float(payload.get("elapsed_s", time.time() - t0)),
+        hw_arch=str(payload.get("hw_arch", hw_arch)),
+        net_name=str(payload.get("net_name", net_name_eff)),
+        backend="venv",
         error=payload.get("error"),
         har_path=payload.get("har_path"),
         fixed_onnx_path=payload.get("fixed_onnx_path"),
@@ -479,7 +916,7 @@ def hailo_parse_check_auto(
     """
 
     mode = str(backend or "auto").strip().lower()
-    if mode not in {"auto", "local", "wsl"}:
+    if mode not in {"auto", "local", "wsl", "venv"}:
         mode = "auto"
 
     if mode in {"auto", "local"} and hailo_sdk_available():
@@ -495,7 +932,37 @@ def hailo_parse_check_auto(
             disable_rt_metadata_extraction=disable_rt_metadata_extraction,
         )
 
+    if mode == "venv":
+        return hailo_parse_check_via_venv(
+            onnx_path,
+            hw_arch=hw_arch,
+            net_name=net_name,
+            outdir=outdir,
+            net_input_shapes=net_input_shapes,
+            fixup=fixup,
+            add_conv_defaults=add_conv_defaults,
+            save_har=save_har,
+            disable_rt_metadata_extraction=disable_rt_metadata_extraction,
+            venv_activate=wsl_venv_activate,
+            timeout_s=wsl_timeout_s,
+        )
+
     if mode in {"auto", "wsl"}:
+        # Linux: auto should prefer the managed venv (no WSL bridge exists).
+        if mode == "auto" and sys.platform != "win32":
+            return hailo_parse_check_via_venv(
+                onnx_path,
+                hw_arch=hw_arch,
+                net_name=net_name,
+                outdir=outdir,
+                net_input_shapes=net_input_shapes,
+                fixup=fixup,
+                add_conv_defaults=add_conv_defaults,
+                save_har=save_har,
+                disable_rt_metadata_extraction=disable_rt_metadata_extraction,
+                venv_activate=wsl_venv_activate,
+                timeout_s=wsl_timeout_s,
+            )
         return hailo_parse_check_via_wsl(
             onnx_path,
             hw_arch=hw_arch,
@@ -1270,9 +1737,12 @@ def hailo_build_hef_via_wsl(
 
     cmd = (
         "set -e; "
+        "echo __SPLITPOINT_WSL_BEGIN__; "
         f"source {venv_activate}; "
+        "echo __SPLITPOINT_WSL_VENV_OK__; "
         "export PYTHONUNBUFFERED=1; "
-        f"python3 {_bash_quote(helper_wsl)}"
+        # Use `python` after venv activation to ensure we run the venv interpreter.
+        f"python {_bash_quote(helper_wsl)}"
         f" --onnx {_bash_quote(onnx_wsl)}"
         f" --hw-arch {_bash_quote(str(hw_arch))}"
         f" --net-name {_bash_quote(str(net_name))}"
@@ -1296,7 +1766,25 @@ def hailo_build_hef_via_wsl(
     wsl_cmd += ["--", "bash", "-lc", cmd]
 
     try:
-        proc = subprocess.run(wsl_cmd, capture_output=True, text=True, timeout=float(wsl_timeout_s))
+        log.info(
+            "[hailo][hef][wsl] hw_arch=%s profile=%s distro=%s activate=%s onnx=%s outdir=%s",
+            hw_arch,
+            resolved.profile_id,
+            distro_eff or "",
+            venv_eff,
+            onnx_wsl,
+            outdir_wsl or "",
+        )
+        log.debug("[hailo][hef][wsl] cmd=%s", wsl_cmd)
+
+        proc = subprocess.run(
+            wsl_cmd,
+            capture_output=True,
+            text=True,
+            timeout=float(wsl_timeout_s),
+            encoding="utf-8",
+            errors="replace",
+        )
     except subprocess.TimeoutExpired:
         return HailoHefBuildResult(
             ok=False,
@@ -1316,10 +1804,33 @@ def hailo_build_hef_via_wsl(
             error=f"WSL HEF build failed to launch: {type(e).__name__}: {e}",
         )
 
-    mixed = "\n".join([proc.stdout or "", proc.stderr or ""]).strip()
+    stdout = proc.stdout or ""
+    stderr = proc.stderr or ""
+    mixed = "\n".join([stdout, stderr]).strip()
     payload = _find_result_json(mixed)
     if payload is None:
-        tail = mixed[-2000:] if mixed else ""
+        # Convert Windows unsigned return code (e.g. 0xFFFFFFFF) to signed for readability.
+        rc = proc.returncode
+        if isinstance(rc, int) and rc > 0x7FFFFFFF:
+            rc_signed = rc - 0x100000000
+        else:
+            rc_signed = rc
+        tail = mixed[-4000:] if mixed else "<no stdout/stderr captured>"
+        dbg_path = _write_wsl_debug_log(
+            outdir,
+            filename=f"hailo_wsl_hef_{hw_arch}_{net_name}_{int(time.time())}.log",
+            wsl_cmd=wsl_cmd,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        if dbg_path:
+            tail = tail + f"\n\n[debug_log] {dbg_path}"
+        log.warning(
+            "[hailo][hef][wsl] no structured result rc=%s signed=%s debug_log=%s",
+            rc,
+            rc_signed,
+            dbg_path or "-",
+        )
         return HailoHefBuildResult(
             ok=False,
             elapsed_s=time.time() - t0,
@@ -1328,7 +1839,7 @@ def hailo_build_hef_via_wsl(
             backend="wsl",
             error=(
                 "WSL HEF build did not return a structured result. "
-                f"exit_code={proc.returncode}. tail=\n{tail}"
+                f"exit_code={proc.returncode} (signed {rc_signed}). tail=\n{tail}"
             ),
         )
 
@@ -1338,6 +1849,182 @@ def hailo_build_hef_via_wsl(
         hw_arch=str(payload.get("hw_arch", hw_arch)),
         net_name=str(payload.get("net_name", net_name)),
         backend=str(payload.get("backend") or "wsl"),
+        error=payload.get("error"),
+        hef_path=payload.get("hef_path"),
+        parsed_har_path=payload.get("parsed_har_path"),
+        quant_har_path=payload.get("quant_har_path"),
+        fixed_onnx_path=payload.get("fixed_onnx_path"),
+        fixup_report=payload.get("fixup_report"),
+        skipped=bool(payload.get("skipped", False)),
+        calib_info=payload.get("calib_info"),
+    )
+
+
+def hailo_build_hef_via_venv(
+    onnx_path: Union[str, Path],
+    *,
+    hw_arch: str = "hailo8",
+    net_name: Optional[str] = None,
+    outdir: Optional[Union[str, Path]] = None,
+    fixup: bool = True,
+    add_conv_defaults: bool = True,
+    disable_rt_metadata_extraction: bool = True,
+    opt_level: int = 1,
+    calib_dir: Optional[Union[str, Path]] = None,
+    calib_count: int = 64,
+    calib_batch_size: int = 8,
+    force: bool = False,
+    keep_artifacts: bool = False,
+    venv_activate: str = "auto",
+    timeout_s: int = 3600,
+) -> HailoHefBuildResult:
+    """Build a HEF inside a managed DFC venv (Linux / WSL)."""
+
+    t0 = time.time()
+    onnx_path = Path(str(onnx_path)).expanduser().resolve()
+    net_name_eff = str(net_name or onnx_path.stem)
+    outdir_path = Path(str(outdir)).expanduser().resolve() if outdir else None
+    if outdir_path is not None:
+        outdir_path.mkdir(parents=True, exist_ok=True)
+
+    if sys.platform == "win32":
+        return HailoHefBuildResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=net_name_eff,
+            backend="venv",
+            error="Managed venv HEF build is not available on Windows (use WSL backend).",
+        )
+
+    try:
+        profile_id, py, _act = _resolve_managed_venv_python(hw_arch=str(hw_arch), venv_activate=str(venv_activate))
+    except Exception as e:
+        return HailoHefBuildResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=net_name_eff,
+            backend="venv",
+            error=f"Failed to resolve managed DFC venv: {e}",
+        )
+
+    helper = Path(__file__).resolve().parent / "wsl_hailo_build_hef.py"
+    if not helper.exists():
+        return HailoHefBuildResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=net_name_eff,
+            backend="venv",
+            error=f"Helper script missing: {helper}",
+        )
+
+    cmd: List[str] = [
+        str(py),
+        str(helper),
+        "--onnx",
+        str(onnx_path),
+        "--hw-arch",
+        str(hw_arch),
+        "--net-name",
+        str(net_name_eff),
+        "--fixup",
+        "1" if fixup else "0",
+        "--add-conv-defaults",
+        "1" if add_conv_defaults else "0",
+        "--disable-rt-metadata-extraction",
+        "1" if disable_rt_metadata_extraction else "0",
+        "--opt-level",
+        str(int(opt_level)),
+        "--calib-count",
+        str(int(calib_count)),
+        "--calib-batch-size",
+        str(int(calib_batch_size)),
+        "--force",
+        "1" if force else "0",
+        "--keep-artifacts",
+        "1" if keep_artifacts else "0",
+    ]
+    if outdir_path is not None:
+        cmd += ["--outdir", str(outdir_path)]
+    if calib_dir is not None:
+        cmd += ["--calib-dir", str(Path(str(calib_dir)).expanduser().resolve())]
+
+    try:
+        log.info(
+            "[hailo][hef][venv] hw_arch=%s profile=%s python=%s onnx=%s outdir=%s",
+            hw_arch,
+            profile_id,
+            str(py),
+            str(onnx_path),
+            str(outdir_path or ""),
+        )
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=float(timeout_s),
+            encoding="utf-8",
+            errors="replace",
+        )
+    except subprocess.TimeoutExpired:
+        return HailoHefBuildResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=net_name_eff,
+            backend="venv",
+            error=f"Venv HEF build timed out after {timeout_s}s.",
+        )
+    except Exception as e:
+        return HailoHefBuildResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=net_name_eff,
+            backend="venv",
+            error=f"Venv HEF build failed to launch: {type(e).__name__}: {e}",
+        )
+
+    stdout = proc.stdout or ""
+    stderr = proc.stderr or ""
+    mixed = "\n".join([stdout, stderr]).strip()
+    payload = _find_result_json(mixed)
+    if payload is None:
+        tail = mixed[-4000:] if mixed else "<no stdout/stderr captured>"
+        dbg_path = _write_wsl_debug_log(
+            str(outdir_path) if outdir_path is not None else None,
+            filename=f"hailo_venv_hef_{hw_arch}_{net_name_eff}_{int(time.time())}.log",
+            wsl_cmd=cmd,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        if dbg_path:
+            tail = tail + f"\n\n[debug_log] {dbg_path}"
+        log.warning(
+            "[hailo][hef][venv] no structured result rc=%s debug_log=%s",
+            proc.returncode,
+            dbg_path or "-",
+        )
+        return HailoHefBuildResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=net_name_eff,
+            backend="venv",
+            error=(
+                "Venv HEF build did not return a structured result. "
+                f"exit_code={proc.returncode}. tail=\n{tail}"
+            ),
+        )
+
+    return HailoHefBuildResult(
+        ok=bool(payload.get("ok")),
+        elapsed_s=float(payload.get("elapsed_s", time.time() - t0)),
+        hw_arch=str(payload.get("hw_arch", hw_arch)),
+        net_name=str(payload.get("net_name", net_name_eff)),
+        backend="venv",
         error=payload.get("error"),
         hef_path=payload.get("hef_path"),
         parsed_har_path=payload.get("parsed_har_path"),
@@ -1372,7 +2059,7 @@ def hailo_build_hef_auto(
     wsl_timeout_s: int = 3600,
 ) -> HailoHefBuildResult:
     mode = str(backend or "auto").strip().lower()
-    if mode not in {"auto", "local", "wsl"}:
+    if mode not in {"auto", "local", "wsl", "venv"}:
         mode = "auto"
 
     if mode in {"auto", "local"} and hailo_sdk_available():
@@ -1393,7 +2080,45 @@ def hailo_build_hef_auto(
             keep_artifacts=bool(keep_artifacts),
         )
 
+    if mode == "venv":
+        return hailo_build_hef_via_venv(
+            onnx_path,
+            hw_arch=hw_arch,
+            net_name=net_name,
+            outdir=outdir,
+            fixup=fixup,
+            add_conv_defaults=add_conv_defaults,
+            disable_rt_metadata_extraction=disable_rt_metadata_extraction,
+            opt_level=int(opt_level),
+            calib_dir=calib_dir,
+            calib_count=int(calib_count),
+            calib_batch_size=int(calib_batch_size),
+            force=bool(force),
+            keep_artifacts=bool(keep_artifacts),
+            venv_activate=wsl_venv_activate,
+            timeout_s=int(wsl_timeout_s),
+        )
+
     if mode in {"auto", "wsl"}:
+        # Linux: auto should prefer the managed venv.
+        if mode == "auto" and sys.platform != "win32":
+            return hailo_build_hef_via_venv(
+                onnx_path,
+                hw_arch=hw_arch,
+                net_name=net_name,
+                outdir=outdir,
+                fixup=fixup,
+                add_conv_defaults=add_conv_defaults,
+                disable_rt_metadata_extraction=disable_rt_metadata_extraction,
+                opt_level=int(opt_level),
+                calib_dir=calib_dir,
+                calib_count=int(calib_count),
+                calib_batch_size=int(calib_batch_size),
+                force=bool(force),
+                keep_artifacts=bool(keep_artifacts),
+                venv_activate=wsl_venv_activate,
+                timeout_s=int(wsl_timeout_s),
+            )
         return hailo_build_hef_via_wsl(
             onnx_path,
             hw_arch=hw_arch,

@@ -37,7 +37,10 @@ def _resources_hailo_root() -> Path:
 
 
 def _venv_python(venv_dir: Path) -> Path:
-    return venv_dir / "bin" / "python3"
+    # Some venv layouts only ship `python` (without a `python3` shim).
+    # Prefer `python` for maximum portability, but keep a fallback.
+    py = venv_dir / "bin" / "python"
+    return py if py.exists() else (venv_dir / "bin" / "python3")
 
 
 def _run(cmd: List[str], *, cwd: Optional[Path] = None) -> None:
@@ -430,8 +433,12 @@ def provision_profile(
         return False, f"pip check reported dependency issues for {profile.profile_id}:\n{chk}"
 
     # Sanity import
+    # Sanity import:
+    # - pkg_resources is provided by setuptools and is needed by some SDK versions
+    # - hailo_sdk_client must import cleanly
+    # - onnx/protobuf versions should match the pins used by the DFC wheel
     code = (
-        "import hailo_sdk_client, onnx, google.protobuf; "
+        "import pkg_resources, hailo_sdk_client, onnx, google.protobuf; "
         "print(getattr(hailo_sdk_client,'__version__','unknown'), onnx.__version__, google.protobuf.__version__)"
     )
     try:

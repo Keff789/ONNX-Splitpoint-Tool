@@ -981,7 +981,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.cb_hailo_backend = ttk.Combobox(
             hf,
             textvariable=self.var_hailo_backend,
-            values=["auto", "local", "wsl"],
+            values=["auto", "local", "wsl", "venv"],
             width=10,
             state="readonly",
         )
@@ -995,7 +995,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         # Use managed DFC profiles by default (Hailo-8 vs Hailo-10). Users can
         # still override this with an explicit `source <venv>/bin/activate` path.
         self.var_hailo_wsl_venv = tk.StringVar(value="auto")
-        ttk.Label(hf, text="WSL venv override:").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(hf, text="Venv override:").grid(row=2, column=0, sticky="w", pady=(6, 0))
         self.ent_hailo_wsl_venv = ttk.Entry(hf, textvariable=self.var_hailo_wsl_venv, width=56)
         self.ent_hailo_wsl_venv.grid(row=2, column=1, columnspan=5, sticky="w", pady=(6, 0))
 
@@ -1558,14 +1558,17 @@ class SplitPointAnalyserGUI(tk.Tk):
                     hw_arch="hailo8",
                     wsl_distro=wsl_distro,
                     wsl_venv_activate=wsl_venv,
-                    timeout_s=20,
+                    # First import/probe can be slow on cold-start WSL (starting the VM,
+                    # importing large deps, JIT init, etc.). 20s was too aggressive and
+                    # produced false negatives.
+                    timeout_s=45,
                 )
                 res_h10 = hailo_probe_auto(
                     backend=backend,
                     hw_arch="hailo10",
                     wsl_distro=wsl_distro,
                     wsl_venv_activate=wsl_venv,
-                    timeout_s=20,
+                    timeout_s=45,
                 )
             except Exception as e:
                 res_h8 = None
@@ -1668,7 +1671,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
             det = getattr(res, "details", None) or {}
             if isinstance(det, dict):
-                for k in ("profile_id", "wsl_distro", "wsl_venv_activate", "returncode"):
+                for k in ("profile_id", "wsl_distro", "wsl_venv_activate", "venv_activate", "venv_python", "returncode"):
                     if k in det and det[k] is not None:
                         lines.append(f"{k}: {det[k]}")
 
