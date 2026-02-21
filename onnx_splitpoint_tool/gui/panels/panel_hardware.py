@@ -512,6 +512,15 @@ def build_panel(parent, app=None) -> ttk.Frame:
     badge_h10 = StatusBadge(status_row, text="Hailo-10 …", level="idle")
     badge_h10.pack(side=tk.LEFT, padx=(0, 6))
 
+    # Clicking a badge shows probe details (last output tail), which helps a lot
+    # when Hailo-10 fails due to missing wheel or dependency drift.
+    if app is not None and hasattr(app, "_hailo_show_probe_details"):
+        try:
+            badge_h8.bind("<Button-1>", lambda _e: app._hailo_show_probe_details("hailo8"))
+            badge_h10.bind("<Button-1>", lambda _e: app._hailo_show_probe_details("hailo10"))
+        except Exception:
+            pass
+
     status_details_var = _str_var(app, "var_hailo_status_details", "")
     lbl_details = ttk.Label(status_row, textvariable=status_details_var)
     lbl_details.pack(side=tk.LEFT, padx=(8, 0))

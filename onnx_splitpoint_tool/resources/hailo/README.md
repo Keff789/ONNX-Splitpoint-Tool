@@ -46,7 +46,12 @@ Upgrading `onnx` typically upgrades `protobuf` too, which breaks `hailo_sdk_clie
 
 `TypeError: Descriptors cannot be created directly.`
 
-The provision script therefore **does not upgrade onnx by default**. If you accidentally upgraded, delete the managed venv and re-provision.
+The provision script therefore **does not upgrade onnx by default**.
+
+To make this harder to break accidentally, provisioning also writes a small `pip_constraints.txt` inside each managed venv and patches `bin/activate` to export `PIP_CONSTRAINT=...`.
+That way, even if you run `pip install onnx` inside the managed venv, pip should keep the pinned versions (or fail loudly).
+
+If you *did* end up with a broken env, delete the managed venv and re-provision.
 
 > Note: Hailo DFC wheels are built for a specific Python version (often **Python 3.10**).
 > The provision script itself may run on an older Python, but the **venv** must be created

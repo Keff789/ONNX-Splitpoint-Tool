@@ -136,6 +136,34 @@ def hailo_probe_via_wsl(
     if not hailo_wsl_available():
         return HailoProbeResult(ok=False, backend="wsl", reason="wsl.exe not found (WSL not available)")
 
+    def _summarize(out_text: str) -> str:
+        """Extract a short, human-friendly failure reason from probe output."""
+
+        t = (out_text or "").strip()
+        if not t:
+            return "Probe failed"
+
+        # Explicit error marker from our probe snippet.
+        for line in reversed(t.splitlines()):
+            if "__HAILO_PROBE_ERR__" in line:
+                msg = line.split("__HAILO_PROBE_ERR__", 1)[1].strip()
+                if msg:
+                    return msg[:240]
+
+        # Common protobuf mismatch symptom.
+        if "Descriptors cannot be created directly" in t or "CheckCalledFromGeneratedFile" in t:
+            return "protobuf version mismatch (env drift). Re-run provisioning."
+
+        if "No module named" in t and "hailo_sdk_client" in t:
+            return "hailo_sdk_client not importable (DFC not installed)"
+
+        if "No such file or directory" in t and "activate" in t:
+            return "WSL venv activate script not found"
+
+        # Fallback: last non-empty line.
+        lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
+        return (lines[-1] if lines else "Probe failed")[:240]
+
     # Resolve managed venv/distro if requested.
     try:
         mgr = get_dfc_manager()
@@ -170,12 +198,19 @@ def hailo_probe_via_wsl(
     # NOTE: do not quote paths starting with '~' here; quoting prevents tilde expansion.
     act = venv_eff
     # Print a unique marker so we can reliably detect success.
-    bash = (
-        "set -e; "
-        f"source {act}; "
-        "python3 -c \"import hailo_sdk_client; print('__HAILO_PROBE_OK__')\"; "
-        "(hailo --version 2>/dev/null || true)"
+    # Compact probe: import hailo_sdk_client and also print versions of onnx/protobuf.
+    # We print a single-line marker to make it easy to show a meaningful error in the GUI.
+    py_probe = (
+        "import sys; "
+        "\ntry:\n"
+        "  import hailo_sdk_client, onnx, google.protobuf\n"
+        "  print('__HAILO_PROBE_OK__', getattr(hailo_sdk_client,'__version__','?'), onnx.__version__, google.protobuf.__version__)\n"
+        "except Exception as e:\n"
+        "  print('__HAILO_PROBE_ERR__', type(e).__name__ + ':', str(e))\n"
+        "  sys.exit(2)\n"
     )
+
+    bash = "set -e; " f"source {act}; " f"python3 -c {shlex.quote(py_probe)}; " "(hailo --version 2>/dev/null || true)"
     cmd += ["--", "bash", "-lc", bash]
 
     try:
@@ -189,7 +224,7 @@ def hailo_probe_via_wsl(
             "wsl_venv_activate": venv_eff,
             "output_tail": "\n".join(out.strip().splitlines()[-30:]),
         }
-        return HailoProbeResult(ok=ok, backend="wsl", reason=("" if ok else "Probe failed"), details=details)
+        return HailoProbeResult(ok=ok, backend="wsl", reason=("" if ok else _summarize(out)), details=details)
     except subprocess.TimeoutExpired:
         return HailoProbeResult(ok=False, backend="wsl", reason=f"WSL probe timed out after {timeout_s}s")
     except Exception as e:

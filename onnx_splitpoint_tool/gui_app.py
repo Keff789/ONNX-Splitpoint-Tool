@@ -1597,6 +1597,13 @@ class SplitPointAnalyserGUI(tk.Tk):
             def _apply() -> None:
                 self._hailo_status_probe_running = False
 
+                # Store last results so the user can inspect details by clicking the badges.
+                try:
+                    self._hailo_last_probe_h8 = res_h8
+                    self._hailo_last_probe_h10 = res_h10
+                except Exception:
+                    pass
+
                 def _badge_text(prefix: str, ok: bool, backend_name: str) -> str:
                     mark = "✓" if ok else "✗"
                     # Keep it compact; backend info is useful when 'auto' picks WSL.
@@ -1625,7 +1632,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                             msg_parts.append(f"H8: {res_h8.reason}")
                         if res_h10 is not None and (not res_h10.ok):
                             msg_parts.append(f"H10: {res_h10.reason}")
-                        details_var.set(" | ".join(msg_parts) if msg_parts else "")
+                        details_var.set((" | ".join(msg_parts) + "  (click badge for details)") if msg_parts else "")
                     except Exception:
                         pass
 
@@ -1635,6 +1642,51 @@ class SplitPointAnalyserGUI(tk.Tk):
                 _apply()
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _hailo_show_probe_details(self, which: str) -> None:
+        """Show a detail dialog for the last Hailo DFC probe (Hailo-8 / Hailo-10)."""
+
+        w = (which or "").strip().lower()
+        if w in ("hailo8", "h8"):
+            res = getattr(self, "_hailo_last_probe_h8", None)
+            title = "Hailo DFC status (Hailo-8)"
+        else:
+            res = getattr(self, "_hailo_last_probe_h10", None)
+            title = "Hailo DFC status (Hailo-10)"
+
+        if res is None:
+            messagebox.showinfo(title, "No probe result available yet. Click 'Refresh status' first.")
+            return
+
+        lines = []
+        try:
+            lines.append(f"OK: {bool(getattr(res, 'ok', False))}")
+            lines.append(f"Backend: {getattr(res, 'backend', '')}")
+            r = str(getattr(res, "reason", "") or "").strip()
+            if r:
+                lines.append(f"Reason: {r}")
+
+            det = getattr(res, "details", None) or {}
+            if isinstance(det, dict):
+                for k in ("profile_id", "wsl_distro", "wsl_venv_activate", "returncode"):
+                    if k in det and det[k] is not None:
+                        lines.append(f"{k}: {det[k]}")
+
+                tail = str(det.get("output_tail") or "").strip()
+                if tail:
+                    lines.append("")
+                    lines.append("Output (tail):")
+                    lines.append(tail)
+
+            # Small actionable hint for common failure.
+            if "protobuf" in r.lower() and "mismatch" in r.lower():
+                lines.append("")
+                lines.append("Hint: Your managed DFC venv likely drifted (protobuf upgraded).")
+                lines.append("Fix: delete the venv and re-run ./scripts/provision_hailo_dfcs_wsl.sh --all")
+        except Exception:
+            lines = ["Failed to format probe result."]
+
+        messagebox.showinfo(title, "\n".join(lines))
 
     # ------------------------- Layout helpers ------------------------
 
