@@ -39,6 +39,63 @@ from .hailo.dfc_manager import get_dfc_manager
 log = logging.getLogger(__name__)
 
 
+def _clean_opt_str(val: object) -> Optional[str]:
+    """Return a cleaned optional string.
+
+    - None -> None
+    - "" / whitespace -> None
+    - "None" / "null" (case-insensitive) -> None
+
+    This avoids the common bug where `str(None)` becomes the literal "None",
+    which then gets passed to `wsl.exe -d None`.
+    """
+    if val is None:
+        return None
+    try:
+        s = str(val).strip()
+    except Exception:
+        return None
+    if not s:
+        return None
+    if s.lower() in {"none", "null"}:
+        return None
+    return s
+
+
+def _sanitize_wsl_text(s: str) -> str:
+    """Sanitize WSL stdout/stderr for GUI/log consumption.
+
+    Some `wsl.exe` service errors are emitted as UTF-16LE and end up decoded
+    with embedded NULs when read as UTF-8. Tk message boxes may truncate at
+    NUL characters, so we remove them.
+    """
+    if not s:
+        return ""
+    return s.replace("\x00", "")
+
+
+def _truncate_log_text(s: str, *, max_chars: int = 20000) -> str:
+    """Truncate very long subprocess output for readable logs.
+
+    We keep a head+tail window and insert a truncation marker in the middle.
+    """
+    if not s:
+        return ""
+    try:
+        s = str(s)
+    except Exception:
+        return ""
+    if max_chars <= 0 or len(s) <= max_chars:
+        return s
+    # 30% head, 70% tail (tail usually contains the real error)
+    head_n = max(2000, int(max_chars * 0.3))
+    tail_n = max(2000, max_chars - head_n)
+    head = s[:head_n]
+    tail = s[-tail_n:]
+    return head + "\n\n… [TRUNCATED: output too long for gui.log] …\n\n" + tail
+
+
+
 def _write_wsl_debug_log(
     outdir_win: Optional[Union[str, Path]],
     *,
@@ -47,11 +104,42 @@ def _write_wsl_debug_log(
     stdout: str,
     stderr: str,
 ) -> Optional[str]:
-    """Write a debug log file on the Windows side and return its path.
+    """Write a debug log file (optional) OR pipe details into the main gui.log.
 
-    This is extremely helpful when a WSL call fails before producing the
-    structured JSON marker line.
+    Earlier versions wrote one debug log file per failing WSL call next to the
+    split outputs. That quickly becomes noisy.
+
+    Current behaviour:
+    - Default: do **not** create extra files. Instead, emit the full command +
+      stdout/stderr into the main logger (gui.log).
+    - Opt-in: set ONNX_SPLITPOINT_HAILO_DEBUG_FILES=1 to re-enable per-call
+      debug log files.
     """
+
+    debug_files = str(os.environ.get("ONNX_SPLITPOINT_HAILO_DEBUG_FILES", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+    # Always pipe details into gui.log.
+    try:
+        cmd_s = " ".join(map(str, wsl_cmd))
+        out_s = _truncate_log_text(_sanitize_wsl_text(stdout or ""), max_chars=50000)
+        err_s = _truncate_log_text(_sanitize_wsl_text(stderr or ""), max_chars=50000)
+        log.error(
+            "[hailo][debug] %s\ncmd: %s\n\n--- stdout ---\n%s\n\n--- stderr ---\n%s\n",
+            filename,
+            cmd_s,
+            out_s or "<empty>",
+            err_s or "<empty>",
+        )
+    except Exception:
+        pass
+
+    if not debug_files:
+        return None
 
     def _wsl_to_win(p: str) -> str:
         """Convert a common WSL path (/mnt/<drive>/...) back to a Windows path.
@@ -95,10 +183,10 @@ def _write_wsl_debug_log(
         lines.append(f"cmd: {' '.join(map(str, wsl_cmd))}")
         lines.append("")
         lines.append("--- stdout ---")
-        lines.append(stdout or "<empty>")
+        lines.append(_sanitize_wsl_text(stdout) or "<empty>")
         lines.append("")
         lines.append("--- stderr ---")
-        lines.append(stderr or "<empty>")
+        lines.append(_sanitize_wsl_text(stderr) or "<empty>")
         lines.append("")
         p.write_text("\n".join(lines), encoding="utf-8", errors="replace")
         return str(p)
@@ -196,7 +284,7 @@ def _resolve_managed_venv_python(
     resolved = mgr.resolve_wsl_runtime(
         hw_arch=str(hw_arch),
         wsl_distro=None,
-        wsl_venv_activate=(str(venv_activate).strip() or "auto"),
+        wsl_venv_activate=(_clean_opt_str(venv_activate) or "auto"),
     )
     act = str(resolved.wsl_venv_activate or "").strip()
     if not act:
@@ -244,23 +332,60 @@ def hailo_probe_via_venv(
             if "__HAILO_PROBE_ERR__" in line:
                 msg = line.split("__HAILO_PROBE_ERR__", 1)[1].strip()
                 if msg:
+                    # Map common low-level errors to helpful guidance.
+                    if "pkg_resources" in msg:
+                        return "pkg_resources missing (setuptools>=82 removed it). Install setuptools<82 or re-run provisioning."
+                    if "GLIBC_" in msg and "libc.so.6" in msg:
+                        return "glibc too old for this DFC wheel (needs >= 2.34). Use a newer distro / environment."
+                    if "Descriptors cannot be created directly" in msg or "CheckCalledFromGeneratedFile" in msg:
+                        return "protobuf version mismatch (env drift). Re-run provisioning."
                     return msg[:240]
         if "Descriptors cannot be created directly" in t or "CheckCalledFromGeneratedFile" in t:
             return "protobuf version mismatch (env drift). Re-run provisioning."
+
+        if "GLIBC_" in t and "libc.so.6" in t:
+            return "glibc too old for this DFC wheel (needs >= 2.34). Use a newer distro / environment."
         if "No module named" in t and "pkg_resources" in t:
-            return "setuptools/pkg_resources missing in the DFC venv (re-run provisioning)"
+            return "pkg_resources missing (setuptools>=82 removed it). Install setuptools<82 or re-run provisioning."
         lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
         return (lines[-1] if lines else "Probe failed")[:240]
 
     try:
-        profile_id, py, act_path = _resolve_managed_venv_python(hw_arch=str(hw_arch), venv_activate=str(venv_activate))
+        profile_id, py, act_path = _resolve_managed_venv_python(hw_arch=str(hw_arch), venv_activate=(_clean_opt_str(venv_activate) or "auto"))
     except Exception as e:
         return HailoProbeResult(ok=False, backend="venv", reason=f"Failed to resolve DFC profile: {e}")
+
+    # Self-heal: setuptools 82+ removed pkg_resources, but some Hailo SDK
+    # components still import it.
+    try:
+        _ = subprocess.check_output([str(py), "-c", "import pkg_resources"], text=True, stderr=subprocess.STDOUT)
+    except Exception:
+        try:
+            log.info("[hailo][probe][venv] pkg_resources missing -> installing setuptools<82 (self-heal)")
+            subprocess.run(
+                [str(py), "-m", "pip", "install", "--force-reinstall", "setuptools<82"],
+                capture_output=True,
+                text=True,
+                timeout=min(120, max(10, int(timeout_s))),
+                encoding="utf-8",
+                errors="replace",
+            )
+        except Exception:
+            # Keep probing even if the fix step fails; the probe error will
+            # provide a useful reason.
+            pass
 
     py_probe = (
         "import sys; "
         "\ntry:\n"
         "  import pkg_resources, hailo_sdk_client, onnx, google.protobuf\n"
+        "  # Try to load the emulator module as an early indicator for binary/GLIBC issues.\n"
+        "  try:\n"
+        "    import hailo_sdk_client.emulator.emulator  # noqa\n"
+        "  except Exception as _e:\n"
+        "    s = str(_e)\n"
+        "    if ('GLIBC_' in s) or ('libc.so.6' in s):\n"
+        "      raise\n"
         "  print('__HAILO_PROBE_OK__', getattr(hailo_sdk_client,'__version__','?'), onnx.__version__, google.protobuf.__version__)\n"
         "except Exception as e:\n"
         "  print('__HAILO_PROBE_ERR__', type(e).__name__ + ':', str(e))\n"
@@ -272,7 +397,7 @@ def hailo_probe_via_venv(
     try:
         log.info("[hailo][probe][venv] hw_arch=%s profile=%s python=%s", hw_arch, profile_id, str(py))
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s, encoding="utf-8", errors="replace")
-        out = (proc.stdout or "") + (proc.stderr or "")
+        out = _sanitize_wsl_text((proc.stdout or "") + (proc.stderr or ""))
         ok = "__HAILO_PROBE_OK__" in out
         if not ok:
             log.warning(
@@ -336,17 +461,27 @@ def hailo_probe_via_wsl(
             if "__HAILO_PROBE_ERR__" in line:
                 msg = line.split("__HAILO_PROBE_ERR__", 1)[1].strip()
                 if msg:
+                    # Map common low-level errors to helpful guidance.
+                    if "pkg_resources" in msg:
+                        return "pkg_resources missing (setuptools>=82 removed it). Install setuptools<82 or re-run provisioning."
+                    if "GLIBC_" in msg and "libc.so.6" in msg:
+                        return "glibc too old for this DFC wheel (needs >= 2.34). Use a newer distro / environment."
+                    if "Descriptors cannot be created directly" in msg or "CheckCalledFromGeneratedFile" in msg:
+                        return "protobuf version mismatch (env drift). Re-run provisioning."
                     return msg[:240]
 
         # Common protobuf mismatch symptom.
         if "Descriptors cannot be created directly" in t or "CheckCalledFromGeneratedFile" in t:
             return "protobuf version mismatch (env drift). Re-run provisioning."
 
+        if "GLIBC_" in t and "libc.so.6" in t:
+            return "glibc too old for this DFC wheel (needs >= 2.34). Use a newer distro / environment."
+
         if "No module named" in t and "hailo_sdk_client" in t:
             return "hailo_sdk_client not importable (DFC not installed)"
 
         if "No module named" in t and "pkg_resources" in t:
-            return "setuptools/pkg_resources missing in the DFC venv (re-run provisioning)"
+            return "pkg_resources missing (setuptools>=82 removed it). Install setuptools<82 or re-run provisioning."
 
         if "No such file or directory" in t and "activate" in t:
             return "WSL venv activate script not found"
@@ -360,8 +495,8 @@ def hailo_probe_via_wsl(
         mgr = get_dfc_manager()
         resolved = mgr.resolve_wsl_runtime(
             hw_arch=str(hw_arch),
-            wsl_distro=(str(wsl_distro).strip() or None),
-            wsl_venv_activate=(str(wsl_venv_activate).strip() or "auto"),
+            wsl_distro=_clean_opt_str(wsl_distro),
+            wsl_venv_activate=(_clean_opt_str(wsl_venv_activate) or "auto"),
         )
     except Exception as e:
         return HailoProbeResult(ok=False, backend="wsl", reason=f"Failed to resolve DFC profile: {e}")
@@ -395,6 +530,13 @@ def hailo_probe_via_wsl(
         "import sys; "
         "\ntry:\n"
         "  import hailo_sdk_client, onnx, google.protobuf\n"
+        "  # Try to load the emulator module as an early indicator for binary/GLIBC issues.\n"
+        "  try:\n"
+        "    import hailo_sdk_client.emulator.emulator  # noqa\n"
+        "  except Exception as _e:\n"
+        "    s = str(_e)\n"
+        "    if ('GLIBC_' in s) or ('libc.so.6' in s):\n"
+        "      raise\n"
         "  print('__HAILO_PROBE_OK__', getattr(hailo_sdk_client,'__version__','?'), onnx.__version__, google.protobuf.__version__)\n"
         "except Exception as e:\n"
         "  print('__HAILO_PROBE_ERR__', type(e).__name__ + ':', str(e))\n"
@@ -408,6 +550,10 @@ def hailo_probe_via_wsl(
         "echo __SPLITPOINT_WSL_BEGIN__; "
         f"source {act}; "
         "echo __SPLITPOINT_WSL_VENV_OK__; "
+        # Self-heal: setuptools 82+ removed pkg_resources. Some Hailo SDK
+        # components still import it.
+        "python -c \"import pkg_resources\" >/dev/null 2>&1 || "
+        "python -m pip install --force-reinstall \"setuptools<82\" >/dev/null 2>&1 || true; "
         f"python -c {shlex.quote(py_probe)}; "
         "(hailo --version 2>/dev/null || true)"
     )
@@ -418,7 +564,7 @@ def hailo_probe_via_wsl(
         log.debug("[hailo][probe][wsl] cmd=%s", cmd)
 
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s, encoding="utf-8", errors="replace")
-        out = (proc.stdout or "") + (proc.stderr or "")
+        out = _sanitize_wsl_text((proc.stdout or "") + (proc.stderr or ""))
         ok = "__HAILO_PROBE_OK__" in out
         if not ok:
             log.warning(
@@ -560,8 +706,8 @@ def hailo_parse_check_via_wsl(
         mgr = get_dfc_manager()
         resolved = mgr.resolve_wsl_runtime(
             hw_arch=str(hw_arch),
-            wsl_distro=(str(wsl_distro).strip() or None),
-            wsl_venv_activate=(str(wsl_venv_activate).strip() or "auto"),
+            wsl_distro=_clean_opt_str(wsl_distro),
+            wsl_venv_activate=(_clean_opt_str(wsl_venv_activate) or "auto"),
         )
     except Exception as e:
         return HailoParseResult(
@@ -609,6 +755,10 @@ def hailo_parse_check_via_wsl(
         "echo __SPLITPOINT_WSL_VENV_OK__",
         # Make sure we always flush output.
         "export PYTHONUNBUFFERED=1",
+        # Self-heal: setuptools 82+ removed pkg_resources, but some Hailo SDK
+        # components still import it.
+        "python -c \"import pkg_resources\" >/dev/null 2>&1 || "
+        "python -m pip install --force-reinstall \"setuptools<82\" >/dev/null 2>&1 || true",
         # Use `python` after venv activation to ensure we run the venv interpreter.
         f"python {_bash_quote(helper_wsl)}"
         f" --onnx {_bash_quote(onnx_wsl)}"
@@ -674,8 +824,8 @@ def hailo_parse_check_via_wsl(
             error=f"WSL hailo check failed to launch: {type(e).__name__}: {e}",
         )
 
-    stdout = proc.stdout or ""
-    stderr = proc.stderr or ""
+    stdout = _sanitize_wsl_text(proc.stdout or "")
+    stderr = _sanitize_wsl_text(proc.stderr or "")
     mixed = "\n".join([stdout, stderr]).strip()
     payload = _find_result_json(mixed)
 
@@ -704,7 +854,8 @@ def hailo_parse_check_via_wsl(
             backend="wsl",
             error=(
                 "WSL hailo check did not return a structured result. "
-                f"exit_code={proc.returncode}. tail=\n{tail}"
+                f"exit_code={proc.returncode}. tail=\n{tail}\n\n"
+                "Details were written to gui.log (Logs tab)."
             ),
         )
 
@@ -760,7 +911,7 @@ def hailo_parse_check_via_venv(
 
     # Resolve managed venv python.
     try:
-        profile_id, py, _act = _resolve_managed_venv_python(hw_arch=str(hw_arch), venv_activate=str(venv_activate))
+        profile_id, py, _act = _resolve_managed_venv_python(hw_arch=str(hw_arch), venv_activate=(_clean_opt_str(venv_activate) or "auto"))
     except Exception as e:
         return HailoParseResult(
             ok=False,
@@ -770,6 +921,42 @@ def hailo_parse_check_via_venv(
             backend="venv",
             error=f"Failed to resolve managed DFC venv: {e}",
         )
+
+    # Self-heal: setuptools 82+ removed pkg_resources, but some Hailo SDK
+    # components still import it.
+    try:
+        _ = subprocess.check_output([str(py), "-c", "import pkg_resources"], text=True, stderr=subprocess.STDOUT)
+    except Exception:
+        try:
+            log.info("[hailo][hef][venv] pkg_resources missing -> installing setuptools<82 (self-heal)")
+            subprocess.run(
+                [str(py), "-m", "pip", "install", "--force-reinstall", "setuptools<82"],
+                capture_output=True,
+                text=True,
+                timeout=min(300, max(10, int(timeout_s))),
+                encoding="utf-8",
+                errors="replace",
+            )
+        except Exception:
+            pass
+
+    # Self-heal: setuptools 82+ removed pkg_resources, but some Hailo SDK
+    # components still import it.
+    try:
+        _ = subprocess.check_output([str(py), "-c", "import pkg_resources"], text=True, stderr=subprocess.STDOUT)
+    except Exception:
+        try:
+            log.info("[hailo][parse][venv] pkg_resources missing -> installing setuptools<82 (self-heal)")
+            subprocess.run(
+                [str(py), "-m", "pip", "install", "--force-reinstall", "setuptools<82"],
+                capture_output=True,
+                text=True,
+                timeout=min(180, max(10, int(timeout_s))),
+                encoding="utf-8",
+                errors="replace",
+            )
+        except Exception:
+            pass
 
     helper = Path(__file__).resolve().parent / "wsl_hailo_check.py"
     if not helper.exists():
@@ -844,8 +1031,8 @@ def hailo_parse_check_via_venv(
             error=f"Venv hailo check failed to launch: {type(e).__name__}: {e}",
         )
 
-    stdout = proc.stdout or ""
-    stderr = proc.stderr or ""
+    stdout = _sanitize_wsl_text(proc.stdout or "")
+    stderr = _sanitize_wsl_text(proc.stderr or "")
     mixed = "\n".join([stdout, stderr]).strip()
     payload = _find_result_json(mixed)
 
@@ -873,7 +1060,8 @@ def hailo_parse_check_via_venv(
             backend="venv",
             error=(
                 "Venv hailo check did not return a structured result. "
-                f"exit_code={proc.returncode}. tail=\n{tail}"
+                f"exit_code={proc.returncode}. tail=\n{tail}\n\n"
+                "Details were written to gui.log (Logs tab)."
             ),
         )
 
@@ -1630,13 +1818,24 @@ def hailo_build_hef(
         )
 
     except Exception as e:
+        err = str(e)
+        # Helpful hint for a very common binary-compatibility issue in WSL/Linux.
+        # Example: "libc.so.6: version GLIBC_2.34 not found".
+        if "GLIBC_" in err and "libc.so.6" in err:
+            err = (
+                err
+                + "\n\n"
+                + "Hint: Your Linux/WSL distro ships an older glibc than the Hailo DFC wheel expects. "
+                + "Use a newer distro (e.g. Ubuntu 22.04/24.04) and provision the DFC venv there, "
+                + "or (on Windows) set the GUI 'WSL distro' field to that newer distro."
+            )
         return HailoHefBuildResult(
             ok=False,
             elapsed_s=time.time() - t0,
             hw_arch=str(hw_arch),
             net_name=str(net_name),
             backend="local",
-            error=str(e),
+            error=err,
             fixed_onnx_path=str(fixed_path) if fixed_path is not None else None,
             fixup_report=fixup_report,
         )
@@ -1694,8 +1893,8 @@ def hailo_build_hef_via_wsl(
         mgr = get_dfc_manager()
         resolved = mgr.resolve_wsl_runtime(
             hw_arch=str(hw_arch),
-            wsl_distro=(str(wsl_distro).strip() or None),
-            wsl_venv_activate=(str(wsl_venv_activate).strip() or "auto"),
+            wsl_distro=_clean_opt_str(wsl_distro),
+            wsl_venv_activate=(_clean_opt_str(wsl_venv_activate) or "auto"),
         )
     except Exception as e:
         return HailoHefBuildResult(
@@ -1741,6 +1940,10 @@ def hailo_build_hef_via_wsl(
         f"source {venv_activate}; "
         "echo __SPLITPOINT_WSL_VENV_OK__; "
         "export PYTHONUNBUFFERED=1; "
+        # Self-heal: setuptools 82+ removed pkg_resources, but some Hailo SDK
+        # components still import it.
+        "python -c \"import pkg_resources\" >/dev/null 2>&1 || "
+        "python -m pip install --force-reinstall \"setuptools<82\" >/dev/null 2>&1 || true; "
         # Use `python` after venv activation to ensure we run the venv interpreter.
         f"python {_bash_quote(helper_wsl)}"
         f" --onnx {_bash_quote(onnx_wsl)}"
@@ -1804,8 +2007,8 @@ def hailo_build_hef_via_wsl(
             error=f"WSL HEF build failed to launch: {type(e).__name__}: {e}",
         )
 
-    stdout = proc.stdout or ""
-    stderr = proc.stderr or ""
+    stdout = _sanitize_wsl_text(proc.stdout or "")
+    stderr = _sanitize_wsl_text(proc.stderr or "")
     mixed = "\n".join([stdout, stderr]).strip()
     payload = _find_result_json(mixed)
     if payload is None:
@@ -1839,9 +2042,28 @@ def hailo_build_hef_via_wsl(
             backend="wsl",
             error=(
                 "WSL HEF build did not return a structured result. "
-                f"exit_code={proc.returncode} (signed {rc_signed}). tail=\n{tail}"
+                f"exit_code={proc.returncode} (signed {rc_signed}). tail=\n{tail}\n\n"
+                "Details were written to gui.log (Logs tab)."
             ),
         )
+
+    # Structured result present. Still write a debug log on failures so users can
+    # inspect the full stdout/stderr from the DFC.
+    if not bool(payload.get("ok")):
+        dbg_path = _write_wsl_debug_log(
+            outdir,
+            filename=f"hailo_wsl_hef_fail_{hw_arch}_{net_name}_{int(time.time())}.log",
+            wsl_cmd=wsl_cmd,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        err_txt = str(payload.get("error") or "").rstrip()
+        if err_txt:
+            err_txt += "\n\n"
+        if dbg_path:
+            err_txt += f"[debug_log] {dbg_path}\n"
+        err_txt += "Details were written to gui.log (Logs tab)."
+        payload["error"] = err_txt
 
     return HailoHefBuildResult(
         ok=bool(payload.get("ok")),
@@ -1898,7 +2120,7 @@ def hailo_build_hef_via_venv(
         )
 
     try:
-        profile_id, py, _act = _resolve_managed_venv_python(hw_arch=str(hw_arch), venv_activate=str(venv_activate))
+        profile_id, py, _act = _resolve_managed_venv_python(hw_arch=str(hw_arch), venv_activate=(_clean_opt_str(venv_activate) or "auto"))
     except Exception as e:
         return HailoHefBuildResult(
             ok=False,
@@ -1987,8 +2209,8 @@ def hailo_build_hef_via_venv(
             error=f"Venv HEF build failed to launch: {type(e).__name__}: {e}",
         )
 
-    stdout = proc.stdout or ""
-    stderr = proc.stderr or ""
+    stdout = _sanitize_wsl_text(proc.stdout or "")
+    stderr = _sanitize_wsl_text(proc.stderr or "")
     mixed = "\n".join([stdout, stderr]).strip()
     payload = _find_result_json(mixed)
     if payload is None:
@@ -2015,9 +2237,28 @@ def hailo_build_hef_via_venv(
             backend="venv",
             error=(
                 "Venv HEF build did not return a structured result. "
-                f"exit_code={proc.returncode}. tail=\n{tail}"
+                f"exit_code={proc.returncode}. tail=\n{tail}\n\n"
+                "Details were written to gui.log (Logs tab)."
             ),
         )
+
+    # Structured result present. Still write a debug log on failures so users can
+    # inspect the full stdout/stderr from the DFC.
+    if not bool(payload.get("ok")):
+        dbg_path = _write_wsl_debug_log(
+            str(outdir_path) if outdir_path is not None else None,
+            filename=f"hailo_venv_hef_fail_{hw_arch}_{net_name_eff}_{int(time.time())}.log",
+            wsl_cmd=cmd,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        err_txt = str(payload.get("error") or "").rstrip()
+        if err_txt:
+            err_txt += "\n\n"
+        if dbg_path:
+            err_txt += f"[debug_log] {dbg_path}\n"
+        err_txt += "Details were written to gui.log (Logs tab)."
+        payload["error"] = err_txt
 
     return HailoHefBuildResult(
         ok=bool(payload.get("ok")),

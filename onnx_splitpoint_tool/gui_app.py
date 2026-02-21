@@ -38,6 +38,8 @@ import tempfile
 import logging
 import sys
 import threading
+import subprocess
+import shlex
 import queue
 import time
 from datetime import datetime
@@ -1591,6 +1593,14 @@ class SplitPointAnalyserGUI(tk.Tk):
                         except Exception:
                             pass
 
+                    # On errors we still allow provisioning attempts.
+                    btn_prov = getattr(self, "_hailo_btn_provision", None)
+                    if btn_prov is not None and not bool(getattr(self, "_hailo_provision_running", False)):
+                        try:
+                            btn_prov.configure(state="normal")
+                        except Exception:
+                            pass
+
                 try:
                     self.after(0, _apply_err)
                 except Exception:
@@ -1636,6 +1646,15 @@ class SplitPointAnalyserGUI(tk.Tk):
                         if res_h10 is not None and (not res_h10.ok):
                             msg_parts.append(f"H10: {res_h10.reason}")
                         details_var.set((" | ".join(msg_parts) + "  (click badge for details)") if msg_parts else "")
+                    except Exception:
+                        pass
+
+                # Enable the Provision button only when something is not OK.
+                btn_prov = getattr(self, "_hailo_btn_provision", None)
+                if btn_prov is not None and not bool(getattr(self, "_hailo_provision_running", False)):
+                    try:
+                        all_ok = bool(res_h8 is not None and res_h8.ok) and bool(res_h10 is not None and res_h10.ok)
+                        btn_prov.configure(state=("disabled" if all_ok else "normal"))
                     except Exception:
                         pass
 
@@ -1749,6 +1768,118 @@ class SplitPointAnalyserGUI(tk.Tk):
         except Exception:
             pass
         messagebox.showinfo("Hailo cache", "Cleared Hailo parse-check cache.")
+
+    def _hailo_provision_dfcs(self) -> None:
+        """Provision/repair managed Hailo DFC environments (Hailo-8/Hailo-10).
+
+        Runs the provisioning helper in the appropriate backend:
+        - Windows: via WSL
+        - Linux: directly
+
+        Output is streamed into gui.log (Logs tab).
+        """
+
+        if getattr(self, "_hailo_provision_running", False):
+            messagebox.showinfo("Hailo DFC provisioning", "Provisioning is already running. See Logs tab.")
+            return
+
+        self._hailo_provision_running = True
+
+        btn = getattr(self, "_hailo_btn_provision", None)
+        try:
+            if btn is not None:
+                btn.configure(state="disabled")
+        except Exception:
+            pass
+
+        backend = (self.var_hailo_backend.get() or "auto").strip().lower()
+        wsl_distro = (self.var_hailo_wsl_distro.get() or "").strip()
+
+        # Resolve repo root (contains scripts/).
+        repo_root = Path(__file__).resolve().parents[1]
+
+        def _worker() -> None:
+            ok = False
+            summary = ""
+            try:
+                if sys.platform == "win32":
+                    from .hailo_backend import hailo_wsl_available, windows_path_to_wsl, _wsl_exe
+
+                    if not hailo_wsl_available():
+                        raise RuntimeError("WSL backend not available (wsl.exe not found).")
+
+                    repo_wsl = windows_path_to_wsl(str(repo_root))
+                    bash = (
+                        "set -e; "
+                        f"cd {shlex.quote(repo_wsl)}; "
+                        "./scripts/provision_hailo_dfcs_wsl.sh --all --force-reinstall"
+                    )
+
+                    cmd: List[str] = [_wsl_exe()]
+                    if wsl_distro:
+                        cmd += ["-d", wsl_distro]
+                    cmd += ["--", "bash", "-lc", bash]
+                else:
+                    # Linux: call the same helper script directly.
+                    script = repo_root / "scripts" / "provision_hailo_dfcs_wsl.sh"
+                    if not script.exists():
+                        raise RuntimeError(f"Provision script missing: {script}")
+                    cmd = ["bash", str(script), "--all", "--force-reinstall"]
+
+                logger.info("[hailo][provision] starting provisioning (backend=%s)", backend)
+                logger.info("[hailo][provision] cmd=%s", cmd)
+
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    line = line.rstrip("\n")
+                    if not line:
+                        continue
+                    logger.info("[hailo][provision] %s", line)
+                rc = proc.wait()
+
+                ok = (rc == 0)
+                if ok:
+                    summary = "Provisioning completed successfully."
+                else:
+                    summary = f"Provisioning failed (exit code {rc}). Check Logs tab (gui.log)."
+            except Exception as e:
+                ok = False
+                summary = f"Provisioning failed: {type(e).__name__}: {e}"
+                logger.exception("[hailo][provision] failed")
+
+            def _finish() -> None:
+                self._hailo_provision_running = False
+                try:
+                    if btn is not None:
+                        btn.configure(state="normal")
+                except Exception:
+                    pass
+
+                if ok:
+                    messagebox.showinfo("Hailo DFC provisioning", summary)
+                else:
+                    messagebox.showerror("Hailo DFC provisioning", summary)
+
+                # Refresh badges after provisioning attempt.
+                try:
+                    self._hailo_refresh_status()
+                except Exception:
+                    pass
+
+            try:
+                self.after(0, _finish)
+            except Exception:
+                _finish()
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     # ----------------------------- Event handlers -----------------------------
 

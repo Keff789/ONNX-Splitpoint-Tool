@@ -75,7 +75,7 @@ fi
 source "${VENV_DIR}/bin/activate"
 
 echo "[INFO] Upgrading pip/setuptools…"
-python3 -m pip install --upgrade pip setuptools wheel
+python3 -m pip install --upgrade pip wheel "setuptools<82"
 
 echo "[INFO] Installing Hailo DFC wheel…"
 python3 -m pip install "${WHEEL_PATH}"

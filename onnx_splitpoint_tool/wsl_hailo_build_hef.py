@@ -85,6 +85,19 @@ def main() -> int:
     payload = asdict(res)
     payload["elapsed_s"] = float(payload.get("elapsed_s") or (time.time() - t0))
     payload["backend"] = "wsl"
+
+    # Persist the full payload next to the build outputs.
+    # This is useful for debugging and for downstream automation (runner/config generation).
+    try:
+        outdir_eff = Path(args.outdir) if args.outdir else onnx_path.parent
+        outdir_eff.mkdir(parents=True, exist_ok=True)
+        p_json = outdir_eff / "hailo_hef_build_result.json"
+        p_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        payload["result_json_path"] = str(p_json)
+    except Exception:
+        # Best-effort only.
+        pass
+
     print(RESULT_MARKER + json.dumps(payload, ensure_ascii=False))
 
     return 0 if res.ok else 3

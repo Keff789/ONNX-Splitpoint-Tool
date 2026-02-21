@@ -326,8 +326,26 @@ def provision_profile(
         if not py.exists():
             return False, f"Venv python not found at {py} after recreate"
 
-    # Upgrade pip tooling
-    _run([str(py), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"])
+    # Upgrade pip tooling.
+    #
+    # IMPORTANT (2025-11+): setuptools 82+ removed the legacy `pkg_resources`
+    # module, but several third-party packages (including some Hailo SDK
+    # components) still import it.
+    #
+    # Pin setuptools <82 to keep `pkg_resources` available.
+    _run([str(py), "-m", "pip", "install", "--upgrade", "pip", "wheel", "setuptools<82"])
+
+    # Self-heal: if setuptools got upgraded to 82+ anyway (e.g. due to a cached
+    # state or an external tool), force-reinstall a compatible version.
+    try:
+        _ = subprocess.check_output([str(py), "-c", "import pkg_resources; print('OK')"], text=True, stderr=subprocess.STDOUT)
+    except Exception:
+        print("[WARN] pkg_resources missing after pip tool upgrade. Forcing setuptools<82 …", flush=True)
+        try:
+            _run([str(py), "-m", "pip", "install", "--force-reinstall", "setuptools<82"])
+            _ = subprocess.check_output([str(py), "-c", "import pkg_resources; print('OK')"], text=True, stderr=subprocess.STDOUT)
+        except Exception as e:
+            return False, f"Failed to restore pkg_resources via setuptools<82: {type(e).__name__}: {e}"
 
     # Install wheel (offline, from directory)
     pip_cmd = [str(py), "-m", "pip", "install"]
@@ -349,6 +367,10 @@ def provision_profile(
     # managed venv, pip will keep the pinned versions instead of upgrading and
     # breaking hailo_sdk_client imports.
     pins = _extract_exact_pins_from_wheel(wheel)
+
+    # Guardrail: keep pkg_resources available.
+    if not any(str(p).strip().lower().startswith("setuptools") for p in pins):
+        pins.append("setuptools<82")
 
     # Ensure critical runtime deps are pinned, even if the wheel only specifies
     # ranges via transitive dependencies.

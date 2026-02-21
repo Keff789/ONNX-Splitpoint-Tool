@@ -45,6 +45,11 @@ _HARDWARE_TOOLTIPS = {
     "hailo_status": "Zeigt, ob der Hailo DFC für Hailo-8/Hailo-10 erreichbar ist (automatisch beim Start + Refresh).",
     "hailo_refresh": "Aktualisiert die Hailo-Statusanzeige (Probe).",
     "hailo_clear": "Leert den lokalen Hailo-Parse-Cache.",
+    "hailo_provision": (
+        "Installiert/Repariert die verwalteten Hailo-DFC-Umgebungen (Hailo-8/Hailo-10). "
+        "Erstellt bei Bedarf die venvs unter ~/.onnx_splitpoint_tool/hailo/ neu und pinnt bekannte Paketversionen. "
+        "Ausgabe/Fehler landen in gui.log (Logs-Tab)."
+    ),
 }
 
 
@@ -541,6 +546,15 @@ def build_panel(parent, app=None) -> ttk.Frame:
         btn_clear = ttk.Button(btn_col, text="Clear cache", command=app._hailo_clear_cache)
         btn_clear.pack(side=tk.TOP, fill=tk.X, pady=(4, 0))
         attach_tooltip(btn_clear, _tt("hailo_clear"))
+
+    if app is not None and hasattr(app, "_hailo_provision_dfcs"):
+        btn_prov = ttk.Button(btn_col, text="Provision DFC", command=app._hailo_provision_dfcs)
+        btn_prov.pack(side=tk.TOP, fill=tk.X, pady=(4, 0))
+        attach_tooltip(btn_prov, _tt("hailo_provision"))
+        try:
+            setattr(app, "_hailo_btn_provision", btn_prov)
+        except Exception:
+            pass
 
     # Auto-refresh status when backend settings change.
     if app is not None and hasattr(app, "_hailo_schedule_status_refresh"):
