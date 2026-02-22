@@ -538,19 +538,7 @@ def hailo_probe_via_venv(
 
     try:
         log.info("[hailo][probe][venv] hw_arch=%s profile=%s python=%s", hw_arch, profile_id, str(py))
-        # Importing hailo_sdk_client can trigger an *interactive* system requirements check
-        # on first use ("Continue? [Y/n]"). In a GUI / non-interactive context this would
-        # block forever and end in a timeout. We proactively feed "y".
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            encoding="utf-8",
-            errors="replace",
-            env=env,
-            input="y\n",
-        )
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s, encoding="utf-8", errors="replace")
         out = _sanitize_wsl_text((proc.stdout or "") + (proc.stderr or ""))
 
         glibc_seen: Optional[str] = None
@@ -678,10 +666,6 @@ def hailo_probe_via_wsl(
     distro_eff = str(resolved.wsl_distro or "").strip()
     venv_eff = str(resolved.wsl_venv_activate or "").strip()
 
-    # Keep a dedicated environment dict for subprocess calls. This also lets
-    # us feed stdin defaults (the first DFC import may prompt interactively).
-    env = os.environ.copy()
-
     if not venv_eff:
         return HailoProbeResult(
             ok=False,
@@ -803,19 +787,7 @@ def hailo_probe_via_wsl(
         log.info("[hailo][probe][wsl] hw_arch=%s profile=%s distro=%s activate=%s", hw_arch, resolved.profile_id, distro_eff or "", venv_eff)
         log.debug("[hailo][probe][wsl] cmd=%s", cmd)
 
-        # Importing hailo_sdk_client can trigger an *interactive* system requirements check
-        # on first use ("Continue? [Y/n]"). In a non-interactive WSL probe this would block
-        # forever and end in a timeout. We proactively feed "y".
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            encoding="utf-8",
-            errors="replace",
-            env=env,
-            input="y\n",
-        )
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s, encoding="utf-8", errors="replace")
         out = _sanitize_wsl_text((proc.stdout or "") + (proc.stderr or ""))
 
         ok = "__HAILO_PROBE_OK__" in out
@@ -1059,7 +1031,6 @@ def hailo_parse_check_via_wsl(
             env=dict(os.environ),
             encoding="utf-8",
             errors="replace",
-            input="y\n",
         )
     except subprocess.TimeoutExpired:
         return HailoParseResult(
@@ -1267,7 +1238,6 @@ def hailo_parse_check_via_venv(
             env=dict(os.environ),
             encoding="utf-8",
             errors="replace",
-            input="y\n",
         )
     except subprocess.TimeoutExpired:
         return HailoParseResult(
@@ -2255,22 +2225,12 @@ def hailo_build_hef_via_wsl(
             wsl_cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            stdin=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
             bufsize=1,
             universal_newlines=True,
         )
-
-        # The first DFC invocation may prompt for a system requirements check.
-        # Feed a default "yes" so the process never blocks in a GUI context.
-        try:
-            if popen.stdin is not None:
-                popen.stdin.write("y\n")
-                popen.stdin.flush()
-        except Exception:
-            pass
 
         def _reader(stream, sink: List[str], stream_name: str) -> None:
             if stream is None:
@@ -2535,22 +2495,12 @@ def hailo_build_hef_via_venv(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            stdin=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
             bufsize=1,
             universal_newlines=True,
         )
-
-        # The first DFC invocation may prompt for a system requirements check.
-        # Feed a default "yes" so the process never blocks in a GUI context.
-        try:
-            if popen.stdin is not None:
-                popen.stdin.write("y\n")
-                popen.stdin.flush()
-        except Exception:
-            pass
 
         def _reader(stream, sink: List[str], stream_name: str) -> None:
             if stream is None:

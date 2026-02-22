@@ -26,22 +26,9 @@ import shutil
 import zipfile
 from email.parser import Parser
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from .dfc_manager import DfcProfile, get_dfc_manager
-
-
-def _clean_env(env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-    """Return a copy of *env* with pip constraint env-vars removed.
-
-    This prevents a lingering PIP_CONSTRAINT (e.g. from another venv) from
-    poisoning our provisioning resolver (hailo8 vs hailo10 constraints).
-    """
-
-    run_env: Dict[str, str] = dict(env or os.environ)
-    run_env.pop("PIP_CONSTRAINT", None)
-    run_env.pop("PIP_BUILD_CONSTRAINT", None)
-    return run_env
 
 
 def _resources_hailo_root() -> Path:
@@ -56,10 +43,9 @@ def _venv_python(venv_dir: Path) -> Path:
     return py if py.exists() else (venv_dir / "bin" / "python3")
 
 
-def _run(cmd: List[str], *, cwd: Optional[Path] = None, env: Optional[Dict[str, str]] = None) -> None:
+def _run(cmd: List[str], *, cwd: Optional[Path] = None) -> None:
     print("[CMD]", " ".join(cmd), flush=True)
-
-    subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=True, env=_clean_env(env))
+    subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=True)
 
 
 def _py_version(py: str) -> Optional[Tuple[int, int]]:
@@ -567,12 +553,7 @@ def provision_profile(
 
     # Fail fast if dependencies are inconsistent.
     try:
-        chk = subprocess.check_output(
-            [str(py), "-m", "pip", "check"],
-            text=True,
-            stderr=subprocess.STDOUT,
-            env=_clean_env(),
-        ).strip()
+        chk = subprocess.check_output([str(py), "-m", "pip", "check"], text=True, stderr=subprocess.STDOUT).strip()
     except subprocess.CalledProcessError as e:
         return False, f"pip check failed for {profile.profile_id}:\n{e.output}"
     if chk:
@@ -588,13 +569,7 @@ def provision_profile(
         "print(getattr(hailo_sdk_client,'__version__','unknown'), onnx.__version__, google.protobuf.__version__)"
     )
     try:
-        out = subprocess.check_output(
-            [str(py), "-c", code],
-            text=True,
-            env=_clean_env(),
-            # First DFC import can be interactive (system requirements check).
-            input="y\n",
-        ).strip()
+        out = subprocess.check_output([str(py), "-c", code], text=True).strip()
     except Exception as e:
         return False, f"Installed wheel but import failed: {type(e).__name__}: {e}"
 
