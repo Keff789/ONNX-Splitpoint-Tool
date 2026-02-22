@@ -26,9 +26,22 @@ import shutil
 import zipfile
 from email.parser import Parser
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .dfc_manager import DfcProfile, get_dfc_manager
+
+
+def _clean_env(env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Return a copy of *env* with pip constraint env-vars removed.
+
+    This prevents a lingering PIP_CONSTRAINT (e.g. from another venv) from
+    poisoning our provisioning resolver (hailo8 vs hailo10 constraints).
+    """
+
+    run_env: Dict[str, str] = dict(env or os.environ)
+    run_env.pop("PIP_CONSTRAINT", None)
+    run_env.pop("PIP_BUILD_CONSTRAINT", None)
+    return run_env
 
 
 def _resources_hailo_root() -> Path:
@@ -43,9 +56,10 @@ def _venv_python(venv_dir: Path) -> Path:
     return py if py.exists() else (venv_dir / "bin" / "python3")
 
 
-def _run(cmd: List[str], *, cwd: Optional[Path] = None) -> None:
+def _run(cmd: List[str], *, cwd: Optional[Path] = None, env: Optional[Dict[str, str]] = None) -> None:
     print("[CMD]", " ".join(cmd), flush=True)
-    subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=True)
+
+    subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=True, env=_clean_env(env))
 
 
 def _py_version(py: str) -> Optional[Tuple[int, int]]:
@@ -62,6 +76,21 @@ def _py_version(py: str) -> Optional[Tuple[int, int]]:
         return int(parts[0]), int(parts[1])
     except Exception:
         return None
+
+
+def _graphviz_dev_headers_present() -> bool:
+    """Return True if Graphviz development headers are present.
+
+    Some Hailo DFC wheel dependencies (notably `pygraphviz`) may require the
+    Graphviz C headers (e.g. graphviz/cgraph.h) at install time.
+    """
+    candidates = [
+        Path('/usr/include/graphviz/cgraph.h'),
+        Path('/usr/local/include/graphviz/cgraph.h'),
+        Path('/usr/include/graphviz/graph.h'),
+        Path('/usr/local/include/graphviz/graph.h'),
+    ]
+    return any(p.exists() for p in candidates)
 
 
 def _pick_venv_python(min_version: Tuple[int, int] = (3, 10)) -> str:
@@ -231,18 +260,70 @@ def _patch_activate_for_constraints(venv_dir: Path, constraints_path: Path) -> N
     except Exception:
         return
 
-    if marker in txt:
+    # If the user has manually edited activation to set PIP_CONSTRAINT, do not touch it.
+    # (Our marker-based block is safe to update.)
+    if marker not in txt and "PIP_CONSTRAINT=" in txt:
         return
 
-    # Do not override if the user already set PIP_CONSTRAINT.
-    if "PIP_CONSTRAINT=" in txt:
-        return
+    # Remove any previously appended marker block (older tool versions only exported
+    # PIP_CONSTRAINT and caused the env var to "leak" across venvs).
+    if marker in txt:
+        try:
+            txt = txt.split(marker)[0].rstrip() + "\n"
+        except Exception:
+            # If split fails for any reason, keep original text.
+            pass
+
+    # Ensure deactivate() restores/unsets PIP_CONSTRAINT so constraints do not leak
+    # across profiles (hailo8 -> hailo10).
+    restore_snippet = """\
+    # --- ONNX Splitpoint Tool: restore pip constraints env ---
+    if [ "${_SPLITPOINT_PIP_CONSTRAINT_WAS_SET}" = "1" ]; then
+        export PIP_CONSTRAINT="${_SPLITPOINT_OLD_PIP_CONSTRAINT}"
+    else
+        unset PIP_CONSTRAINT
+    fi
+    unset _SPLITPOINT_PIP_CONSTRAINT_WAS_SET
+    unset _SPLITPOINT_OLD_PIP_CONSTRAINT
+    # --- end ONNX Splitpoint Tool restore ---
+"""
+
+    if "_SPLITPOINT_PIP_CONSTRAINT_WAS_SET" not in txt:
+        # Try the common pattern in python venv activation scripts.
+        if "unset -f deactivate" in txt:
+            txt = txt.replace("unset -f deactivate", restore_snippet + "\n    unset -f deactivate", 1)
+        else:
+            # Fallback: try to inject before the final '}' of the deactivate() function.
+            import re
+
+            m = re.search(r"(?ms)^deactivate \(\) \{.*?^\}\s*$", txt)
+            if m:
+                block = m.group(0)
+                # Insert before the last closing brace.
+                if block.rstrip().endswith("}"):
+                    block2 = block.rstrip()[:-1].rstrip() + "\n" + restore_snippet + "\n}"
+                    txt = txt[: m.start()] + block2 + txt[m.end() :]
+
+    # Append our marker block that saves the previous env value and sets the
+    # constraints for this specific profile.
+    append_block = """\
+
+{marker}
+if [ -n "${{PIP_CONSTRAINT+x}}" ]; then
+    _SPLITPOINT_PIP_CONSTRAINT_WAS_SET=1
+    _SPLITPOINT_OLD_PIP_CONSTRAINT="${{PIP_CONSTRAINT}}"
+else
+    _SPLITPOINT_PIP_CONSTRAINT_WAS_SET=0
+    _SPLITPOINT_OLD_PIP_CONSTRAINT=""
+fi
+{export_line}
+""".format(
+        marker=marker,
+        export_line=export_line,
+    )
 
     try:
-        with act.open("a", encoding="utf-8") as f:
-            f.write("\n")
-            f.write(marker + "\n")
-            f.write(export_line + "\n")
+        act.write_text(txt.rstrip() + append_block + "\n", encoding="utf-8")
     except Exception:
         return
 
@@ -284,6 +365,12 @@ def provision_profile(
 ) -> Tuple[bool, str]:
     """Provision a single profile. Returns (ok, message)."""
 
+    # IMPORTANT:
+    # This function must be robust: provisioning is often invoked from the GUI
+    # and we want to attempt *all* requested profiles (hailo8 + hailo10) even
+    # if one fails. Therefore we catch subprocess errors and return a failure
+    # status instead of aborting the whole process.
+
     hailo_root = _resources_hailo_root()
     wheel_sub = profile.wheel_dir or profile.profile_id
     wheel_dir = hailo_root / wheel_sub
@@ -301,63 +388,79 @@ def provision_profile(
     else:
         venv_dir = Path(venv_activate).expanduser().resolve().parents[1]
 
-    # Create venv if missing.
-    if not venv_dir.exists():
-        venv_dir.parent.mkdir(parents=True, exist_ok=True)
-        _run([venv_python, "-m", "venv", str(venv_dir)])
+    try:
+        # Create venv if missing.
+        if not venv_dir.exists():
+            venv_dir.parent.mkdir(parents=True, exist_ok=True)
+            _run([venv_python, "-m", "venv", str(venv_dir)])
 
-    py = _venv_python(venv_dir)
-    if not py.exists():
-        return False, f"Venv python not found at {py}"
-
-    # Ensure the venv uses a sufficiently new python.
-    ver = _py_version(str(py))
-    if ver is not None and ver < (3, 10):
-        # Common when the first run was made with the default python3=3.8.
-        # Recreate the venv automatically to keep UX smooth.
-        try:
-            print(f"[WARN] Existing venv for {profile.profile_id} uses Python {ver[0]}.{ver[1]} (<3.10). Recreating…", flush=True)
-            shutil.rmtree(venv_dir)
-        except Exception as e:
-            return False, f"Venv python is too old ({ver[0]}.{ver[1]}). Could not remove {venv_dir}: {type(e).__name__}: {e}"
-
-        _run([venv_python, "-m", "venv", str(venv_dir)])
         py = _venv_python(venv_dir)
         if not py.exists():
-            return False, f"Venv python not found at {py} after recreate"
+            return False, f"Venv python not found at {py}"
 
-    # Upgrade pip tooling.
-    #
-    # IMPORTANT (2025-11+): setuptools 82+ removed the legacy `pkg_resources`
-    # module, but several third-party packages (including some Hailo SDK
-    # components) still import it.
-    #
-    # Pin setuptools <82 to keep `pkg_resources` available.
-    _run([str(py), "-m", "pip", "install", "--upgrade", "pip", "wheel", "setuptools<82"])
+        # Ensure the venv uses a sufficiently new python.
+        ver = _py_version(str(py))
+        if ver is not None and ver < (3, 10):
+            # Common when the first run was made with the default python3=3.8.
+            # Recreate the venv automatically to keep UX smooth.
+            try:
+                print(f"[WARN] Existing venv for {profile.profile_id} uses Python {ver[0]}.{ver[1]} (<3.10). Recreating…", flush=True)
+                shutil.rmtree(venv_dir)
+            except Exception as e:
+                return False, f"Venv python is too old ({ver[0]}.{ver[1]}). Could not remove {venv_dir}: {type(e).__name__}: {e}"
 
-    # Self-heal: if setuptools got upgraded to 82+ anyway (e.g. due to a cached
-    # state or an external tool), force-reinstall a compatible version.
-    try:
-        _ = subprocess.check_output([str(py), "-c", "import pkg_resources; print('OK')"], text=True, stderr=subprocess.STDOUT)
-    except Exception:
-        print("[WARN] pkg_resources missing after pip tool upgrade. Forcing setuptools<82 …", flush=True)
+            _run([venv_python, "-m", "venv", str(venv_dir)])
+            py = _venv_python(venv_dir)
+            if not py.exists():
+                return False, f"Venv python not found at {py} after recreate"
+
+        # Upgrade pip tooling.
+        #
+        # IMPORTANT (2025-11+): setuptools 82+ removed the legacy `pkg_resources`
+        # module, but several third-party packages (including some Hailo SDK
+        # components) still import it.
+        #
+        # Pin setuptools <82 to keep `pkg_resources` available.
+        _run([str(py), "-m", "pip", "install", "--upgrade", "pip", "wheel", "setuptools<82"])
+
+        # Self-heal: if setuptools got upgraded to 82+ anyway (e.g. due to a cached
+        # state or an external tool), force-reinstall a compatible version.
         try:
-            _run([str(py), "-m", "pip", "install", "--force-reinstall", "setuptools<82"])
             _ = subprocess.check_output([str(py), "-c", "import pkg_resources; print('OK')"], text=True, stderr=subprocess.STDOUT)
-        except Exception as e:
-            return False, f"Failed to restore pkg_resources via setuptools<82: {type(e).__name__}: {e}"
+        except Exception:
+            print("[WARN] pkg_resources missing after pip tool upgrade. Forcing setuptools<82 …", flush=True)
+            try:
+                _run([str(py), "-m", "pip", "install", "--force-reinstall", "setuptools<82"])
+                _ = subprocess.check_output([str(py), "-c", "import pkg_resources; print('OK')"], text=True, stderr=subprocess.STDOUT)
+            except Exception as e:
+                return False, f"Failed to restore pkg_resources via setuptools<82: {type(e).__name__}: {e}"
 
-    # Install wheel (offline, from directory)
-    pip_cmd = [str(py), "-m", "pip", "install"]
-    if force_reinstall:
-        pip_cmd += ["--force-reinstall"]
+        # Preflight: ensure Graphviz development headers are available.
+        # Some DFC dependencies (pygraphviz) may need them at install time.
+        if not _graphviz_dev_headers_present():
+            return False, (
+                "Missing Graphviz development headers (graphviz/cgraph.h). "
+                "On Ubuntu/Debian install: sudo apt update && sudo apt install -y graphviz libgraphviz-dev pkg-config build-essential"
+            )
 
-    # Prefer local wheels, but allow pip index downloads unless --offline is set.
-    pip_cmd += ["--find-links", str(wheel_dir)]
-    if offline:
-        pip_cmd += ["--no-index"]
-    pip_cmd += [str(wheel)]
-    _run(pip_cmd)
+        # Install wheel (offline, from directory)
+        pip_cmd = [str(py), "-m", "pip", "install"]
+        if force_reinstall:
+            pip_cmd += ["--force-reinstall"]
+
+        # Prefer local wheels, but allow pip index downloads unless --offline is set.
+        pip_cmd += ["--find-links", str(wheel_dir)]
+        if offline:
+            pip_cmd += ["--no-index"]
+        pip_cmd += [str(wheel)]
+        _run(pip_cmd)
+    except subprocess.CalledProcessError as e:
+        cmd_s = " ".join(map(str, getattr(e, "cmd", []) or []))
+        if not cmd_s:
+            cmd_s = "<unknown command>"
+        return False, f"Command failed (rc={getattr(e, 'returncode', '?')}): {cmd_s}\nSee provisioning logs for details."
+    except Exception as e:
+        return False, f"Provisioning failed: {type(e).__name__}: {e}"
 
     # Write a constraints file based on exact pins inside the DFC wheel.
     # Additionally, we pin a few fragile runtime deps (onnx/protobuf/ml-dtypes)
@@ -432,7 +535,17 @@ def provision_profile(
                 if offline:
                     fix_cmd += ["--no-index"]
                 fix_cmd += mismatched
-                _run(fix_cmd)
+                try:
+                    _run(fix_cmd)
+                except subprocess.CalledProcessError as e:
+                    cmd_s = " ".join(map(str, getattr(e, "cmd", []) or []))
+                    if not cmd_s:
+                        cmd_s = "<unknown command>"
+                    return False, (
+                        f"Failed to restore pinned deps for {profile.profile_id} (rc={getattr(e, 'returncode', '?')}).\n"
+                        f"Command: {cmd_s}\n"
+                        "See provisioning logs for details."
+                    )
 
     # IMPORTANT:
     # Do NOT upgrade ONNX by default.
@@ -444,11 +557,22 @@ def provision_profile(
             "This is NOT recommended and may break DFC pinned dependencies.",
             flush=True,
         )
-        _run([str(py), "-m", "pip", "install", "--upgrade", "onnx"])
+        try:
+            _run([str(py), "-m", "pip", "install", "--upgrade", "onnx"])
+        except subprocess.CalledProcessError as e:
+            cmd_s = " ".join(map(str, getattr(e, "cmd", []) or []))
+            if not cmd_s:
+                cmd_s = "<unknown command>"
+            return False, f"Failed to upgrade onnx for {profile.profile_id} (rc={getattr(e, 'returncode', '?')}): {cmd_s}"
 
     # Fail fast if dependencies are inconsistent.
     try:
-        chk = subprocess.check_output([str(py), "-m", "pip", "check"], text=True, stderr=subprocess.STDOUT).strip()
+        chk = subprocess.check_output(
+            [str(py), "-m", "pip", "check"],
+            text=True,
+            stderr=subprocess.STDOUT,
+            env=_clean_env(),
+        ).strip()
     except subprocess.CalledProcessError as e:
         return False, f"pip check failed for {profile.profile_id}:\n{e.output}"
     if chk:
@@ -464,7 +588,13 @@ def provision_profile(
         "print(getattr(hailo_sdk_client,'__version__','unknown'), onnx.__version__, google.protobuf.__version__)"
     )
     try:
-        out = subprocess.check_output([str(py), "-c", code], text=True).strip()
+        out = subprocess.check_output(
+            [str(py), "-c", code],
+            text=True,
+            env=_clean_env(),
+            # First DFC import can be interactive (system requirements check).
+            input="y\n",
+        ).strip()
     except Exception as e:
         return False, f"Installed wheel but import failed: {type(e).__name__}: {e}"
 

@@ -20,13 +20,14 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
 import sys
 import time
 import logging
 from dataclasses import asdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import onnx
@@ -37,6 +38,40 @@ from .hailo.dfc_manager import get_dfc_manager
 
 
 log = logging.getLogger(__name__)
+
+
+def _parse_simple_version(ver: str) -> Optional[Tuple[int, int]]:
+    """Parse a simple 'major.minor' version string into a tuple.
+
+    Returns None if parsing fails.
+    """
+
+    s = str(ver or "").strip()
+    if not s:
+        return None
+    # Accept "2.35" and also "glibc 2.35" (from getconf output).
+    if " " in s:
+        s = s.split()[-1].strip()
+    if "." not in s:
+        return None
+    try:
+        a, b = s.split(".", 1)
+        return int(a), int(re.match(r"^(\d+)", b).group(1) if re.match(r"^(\d+)", b) else b)
+    except Exception:
+        return None
+
+
+def _version_lt(a: Tuple[int, int], b: Tuple[int, int]) -> bool:
+    return (a[0] < b[0]) or (a[0] == b[0] and a[1] < b[1])
+
+
+def _default_glibc_min_for_hw_arch(hw_arch: str) -> Optional[Tuple[int, int]]:
+    hw = str(hw_arch or "").strip().lower()
+    if hw.startswith("hailo8") or hw.startswith("hailo10"):
+        # Both current DFC wheels (3.33 / 5.2) are built on a baseline that
+        # requires glibc >= 2.34.
+        return (2, 34)
+    return None
 
 
 def _clean_opt_str(val: object) -> Optional[str]:
@@ -231,6 +266,78 @@ def _wsl_exe() -> str:
     return "wsl.exe" if shutil.which("wsl.exe") is not None else "wsl"
 
 
+def wsl_list_distros(*, timeout_s: float = 3.0) -> List[str]:
+    """Return available WSL distribution names (best-effort).
+
+    This is used to make the GUI less error-prone (avoid typos like
+    "Ubuntu_22.04" vs "Ubuntu-22.04").
+
+    Returns an empty list if WSL is not available.
+    """
+
+    if not hailo_wsl_available():
+        return []
+    exe = _wsl_exe()
+    try:
+        proc = subprocess.run(
+            [exe, "-l", "-q"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_s,
+        )
+        out = _sanitize_wsl_text((proc.stdout or "") + (proc.stderr or ""))
+        # `wsl -l -q` prints one distro name per line.
+        distros = [ln.strip() for ln in out.replace("\r", "\n").split("\n") if ln.strip()]
+        # De-duplicate while preserving order.
+        seen = set()
+        uniq: List[str] = []
+        for d in distros:
+            if d in seen:
+                continue
+            seen.add(d)
+            uniq.append(d)
+        return uniq
+    except Exception:
+        return []
+
+
+def normalize_wsl_distro_name(distro: str) -> str:
+    """Best-effort normalization of a user-provided WSL distro name.
+
+    - strips whitespace
+    - accepts empty string (meaning "default")
+    - auto-fixes a common typo: underscores instead of hyphens
+      if the fixed name exists in `wsl -l -q`.
+    """
+
+    s = (distro or "").strip()
+    if not s:
+        return ""
+
+    # If exact match exists, keep it.
+    distros = wsl_list_distros(timeout_s=2.0)
+    if s in distros:
+        return s
+
+    # Case-insensitive match.
+    for d in distros:
+        if d.lower() == s.lower():
+            return d
+
+    # Common typo: "Ubuntu_22.04" instead of "Ubuntu-22.04".
+    if "_" in s and "-" not in s:
+        alt = s.replace("_", "-")
+        if alt in distros:
+            return alt
+        for d in distros:
+            if d.lower() == alt.lower():
+                return d
+
+    return s
+
+
 def windows_path_to_wsl(path: Union[str, Path]) -> str:
     """Best-effort conversion of a Windows path to a WSL path.
 
@@ -355,6 +462,39 @@ def hailo_probe_via_venv(
     except Exception as e:
         return HailoProbeResult(ok=False, backend="venv", reason=f"Failed to resolve DFC profile: {e}")
 
+    # Fast pre-flight: glibc version check.
+    #
+    # Some Hailo SDK wheels ship native libraries that require newer glibc
+    # symbols (e.g. GLIBC_2.34). On older distros (Ubuntu 20.04 glibc 2.31),
+    # imports may appear to work, but HEF build fails later when the binary is
+    # actually loaded. We check up-front and provide a clear error.
+    try:
+        mgr = get_dfc_manager()
+        prof = mgr.get_profile(str(profile_id))
+        req = _parse_simple_version(getattr(prof, "glibc_min", "") or "") if prof is not None else None
+        req_tuple = req if req is not None else _default_glibc_min_for_hw_arch(str(hw_arch))
+        if req_tuple is not None:
+            out_glibc = subprocess.check_output(["getconf", "GNU_LIBC_VERSION"], text=True, stderr=subprocess.STDOUT).strip()
+            cur = _parse_simple_version(out_glibc)
+            if cur is not None and _version_lt(cur, req_tuple):
+                details = {
+                    "profile_id": profile_id,
+                    "venv_activate": act_path,
+                    "venv_python": str(py),
+                    "glibc": f"{cur[0]}.{cur[1]}",
+                    "glibc_required": f"{req_tuple[0]}.{req_tuple[1]}",
+                }
+                return HailoProbeResult(
+                    ok=False,
+                    backend="venv",
+                    reason=f"glibc too old (have {cur[0]}.{cur[1]}, need >= {req_tuple[0]}.{req_tuple[1]})",
+                    details=details,
+                )
+    except Exception:
+        # If the check fails for any reason (missing getconf etc.), do not
+        # block probing; the import probe will still provide a useful error.
+        pass
+
     # Self-heal: setuptools 82+ removed pkg_resources, but some Hailo SDK
     # components still import it.
     try:
@@ -376,7 +516,9 @@ def hailo_probe_via_venv(
             pass
 
     py_probe = (
-        "import sys; "
+        "import sys, os; "
+        "os.environ.setdefault('CUDA_VISIBLE_DEVICES','-1'); "
+        "os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL','3'); "
         "\ntry:\n"
         "  import pkg_resources, hailo_sdk_client, onnx, google.protobuf\n"
         "  # Try to load the emulator module as an early indicator for binary/GLIBC issues.\n"
@@ -396,8 +538,30 @@ def hailo_probe_via_venv(
 
     try:
         log.info("[hailo][probe][venv] hw_arch=%s profile=%s python=%s", hw_arch, profile_id, str(py))
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s, encoding="utf-8", errors="replace")
+        # Importing hailo_sdk_client can trigger an *interactive* system requirements check
+        # on first use ("Continue? [Y/n]"). In a GUI / non-interactive context this would
+        # block forever and end in a timeout. We proactively feed "y".
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            input="y\n",
+        )
         out = _sanitize_wsl_text((proc.stdout or "") + (proc.stderr or ""))
+
+        glibc_seen: Optional[str] = None
+        try:
+            for ln in out.splitlines():
+                if ln.strip().startswith("__SPLITPOINT_GLIBC__"):
+                    parts = ln.strip().split()
+                    if len(parts) >= 2:
+                        glibc_seen = parts[1].strip()
+        except Exception:
+            glibc_seen = None
         ok = "__HAILO_PROBE_OK__" in out
         if not ok:
             log.warning(
@@ -458,6 +622,13 @@ def hailo_probe_via_wsl(
 
         # Explicit error marker from our probe snippet.
         for line in reversed(t.splitlines()):
+            if "__HAILO_GLIBC_TOO_OLD__" in line:
+                # Example: "__HAILO_GLIBC_TOO_OLD__ glibc=2.31 required=2.34"
+                s = line.split("__HAILO_GLIBC_TOO_OLD__", 1)[1].strip()
+                # Keep it compact; full details are shown on badge click.
+                if s:
+                    return f"WSL distro too old ({s})"
+                return "WSL distro too old (glibc too old)"
             if "__HAILO_PROBE_ERR__" in line:
                 msg = line.split("__HAILO_PROBE_ERR__", 1)[1].strip()
                 if msg:
@@ -476,6 +647,9 @@ def hailo_probe_via_wsl(
 
         if "GLIBC_" in t and "libc.so.6" in t:
             return "glibc too old for this DFC wheel (needs >= 2.34). Use a newer distro / environment."
+
+        if "__HAILO_GLIBC_TOO_OLD__" in t:
+            return "WSL distro too old (glibc too old)"
 
         if "No module named" in t and "hailo_sdk_client" in t:
             return "hailo_sdk_client not importable (DFC not installed)"
@@ -504,6 +678,10 @@ def hailo_probe_via_wsl(
     distro_eff = str(resolved.wsl_distro or "").strip()
     venv_eff = str(resolved.wsl_venv_activate or "").strip()
 
+    # Keep a dedicated environment dict for subprocess calls. This also lets
+    # us feed stdin defaults (the first DFC import may prompt interactively).
+    env = os.environ.copy()
+
     if not venv_eff:
         return HailoProbeResult(
             ok=False,
@@ -516,6 +694,19 @@ def hailo_probe_via_wsl(
         )
 
     wsl_exe = shutil.which("wsl.exe") or shutil.which("wsl") or "wsl.exe"
+
+    # Determine the minimum required glibc for this profile (if known).
+    # We embed the check into the WSL probe bash script so we can fail fast
+    # (before importing heavy Python deps / touching the DFC).
+    glibc_req_tuple: Optional[Tuple[int, int]] = None
+    try:
+        prof = mgr.get_profile(str(resolved.profile_id or "")) if getattr(resolved, "profile_id", None) else None
+        if prof is not None and getattr(prof, "glibc_min", None):
+            glibc_req_tuple = _parse_simple_version(str(getattr(prof, "glibc_min")))
+    except Exception:
+        glibc_req_tuple = None
+    if glibc_req_tuple is None:
+        glibc_req_tuple = _default_glibc_min_for_hw_arch(str(hw_arch))
 
     cmd = [wsl_exe]
     if distro_eff:
@@ -545,26 +736,88 @@ def hailo_probe_via_wsl(
 
     # Use `python` (not `python3`) after activation. Some venvs do not provide a
     # `python3` shim, which would accidentally run the *system* python3.
+    #
+    # IMPORTANT: Do NOT embed a glibc preflight check inside the `bash -lc` script.
+    # On Windows, quoting/argument translation through `wsl.exe` can result in the
+    # command substitution output (e.g. "2.35") being treated as a standalone shell
+    # command, yielding: "bash: line 1: 2.35: command not found".
+    #
+    # Instead, perform the glibc check as a separate `wsl.exe -- getconf ...` call
+    # below (before sourcing the venv).
+
     bash = (
         "set -e; "
         "echo __SPLITPOINT_WSL_BEGIN__; "
         f"source {act}; "
         "echo __SPLITPOINT_WSL_VENV_OK__; "
+        # Keep probe fast/quiet: avoid GPU probing on import.
+        "export CUDA_VISIBLE_DEVICES=-1; "
+        "export TF_CPP_MIN_LOG_LEVEL=3; "
         # Self-heal: setuptools 82+ removed pkg_resources. Some Hailo SDK
         # components still import it.
-        "python -c \"import pkg_resources\" >/dev/null 2>&1 || "
-        "python -m pip install --force-reinstall \"setuptools<82\" >/dev/null 2>&1 || true; "
+        "python -c 'import pkg_resources' >/dev/null 2>&1 || "
+        "python -m pip install --force-reinstall 'setuptools<82' >/dev/null 2>&1 || true; "
         f"python -c {shlex.quote(py_probe)}; "
         "(hailo --version 2>/dev/null || true)"
     )
     cmd += ["--", "bash", "-lc", bash]
 
+    # Separate glibc pre-flight (WSL).
+    glibc_seen: Optional[str] = None
+    if glibc_req_tuple is not None:
+        try:
+            glibc_cmd = ["wsl.exe"]
+            if distro_eff:
+                glibc_cmd += ["-d", distro_eff]
+            glibc_cmd += ["--", "getconf", "GNU_LIBC_VERSION"]
+            gproc = subprocess.run(
+                glibc_cmd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                encoding="utf-8",
+                errors="replace",
+            )
+            gout = _sanitize_wsl_text((gproc.stdout or "") + (gproc.stderr or "")).strip()
+            cur = _parse_simple_version(gout)
+            if cur is not None:
+                glibc_seen = f"{cur[0]}.{cur[1]}"
+                if (cur[0], cur[1]) < (int(glibc_req_tuple[0]), int(glibc_req_tuple[1])):
+                    return HailoProbeResult(
+                        ok=False,
+                        backend="wsl",
+                        reason=f"glibc too old (have {cur[0]}.{cur[1]}, need >= {int(glibc_req_tuple[0])}.{int(glibc_req_tuple[1])})",
+                        details={
+                            "profile_id": resolved.profile_id,
+                            "wsl_distro": distro_eff or None,
+                            "wsl_venv_activate": venv_eff,
+                            "glibc": glibc_seen,
+                            "glibc_required": f"{int(glibc_req_tuple[0])}.{int(glibc_req_tuple[1])}",
+                            "output_tail": gout,
+                        },
+                    )
+        except Exception:
+            glibc_seen = None
+
     try:
         log.info("[hailo][probe][wsl] hw_arch=%s profile=%s distro=%s activate=%s", hw_arch, resolved.profile_id, distro_eff or "", venv_eff)
         log.debug("[hailo][probe][wsl] cmd=%s", cmd)
 
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s, encoding="utf-8", errors="replace")
+        # Importing hailo_sdk_client can trigger an *interactive* system requirements check
+        # on first use ("Continue? [Y/n]"). In a non-interactive WSL probe this would block
+        # forever and end in a timeout. We proactively feed "y".
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            input="y\n",
+        )
         out = _sanitize_wsl_text((proc.stdout or "") + (proc.stderr or ""))
+
         ok = "__HAILO_PROBE_OK__" in out
         if not ok:
             log.warning(
@@ -577,6 +830,8 @@ def hailo_probe_via_wsl(
             "profile_id": resolved.profile_id,
             "wsl_distro": distro_eff or None,
             "wsl_venv_activate": venv_eff,
+            "glibc": glibc_seen,
+            "glibc_required": (f"{glibc_req_tuple[0]}.{glibc_req_tuple[1]}" if glibc_req_tuple is not None else None),
             "output_tail": "\n".join(out.strip().splitlines()[-30:]),
         }
         return HailoProbeResult(ok=ok, backend="wsl", reason=("" if ok else _summarize(out)), details=details)
@@ -804,6 +1059,7 @@ def hailo_parse_check_via_wsl(
             env=dict(os.environ),
             encoding="utf-8",
             errors="replace",
+            input="y\n",
         )
     except subprocess.TimeoutExpired:
         return HailoParseResult(
@@ -1011,6 +1267,7 @@ def hailo_parse_check_via_venv(
             env=dict(os.environ),
             encoding="utf-8",
             errors="replace",
+            input="y\n",
         )
     except subprocess.TimeoutExpired:
         return HailoParseResult(
@@ -1860,6 +2117,7 @@ def hailo_build_hef_via_wsl(
     wsl_distro: Optional[str] = None,
     wsl_venv_activate: str = "auto",
     wsl_timeout_s: int = 3600,
+    on_log: Optional[Callable[[str, str], None]] = None,
 ) -> HailoHefBuildResult:
     """Build a HEF inside WSL (Windows host -> WSL2 backend)."""
 
@@ -1968,6 +2226,19 @@ def hailo_build_hef_via_wsl(
         wsl_cmd += ["-d", str(distro_eff)]
     wsl_cmd += ["--", "bash", "-lc", cmd]
 
+    stdout_lines: List[str] = []
+    stderr_lines: List[str] = []
+    timed_out = False
+
+    def _emit(stream_name: str, line: str) -> None:
+        if on_log is None:
+            return
+        try:
+            on_log(stream_name, line)
+        except Exception:
+            # Never let UI callbacks crash compilation.
+            return
+
     try:
         log.info(
             "[hailo][hef][wsl] hw_arch=%s profile=%s distro=%s activate=%s onnx=%s outdir=%s",
@@ -1980,23 +2251,64 @@ def hailo_build_hef_via_wsl(
         )
         log.debug("[hailo][hef][wsl] cmd=%s", wsl_cmd)
 
-        proc = subprocess.run(
+        popen = subprocess.Popen(
             wsl_cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.PIPE,
             text=True,
-            timeout=float(wsl_timeout_s),
             encoding="utf-8",
             errors="replace",
+            bufsize=1,
+            universal_newlines=True,
         )
-    except subprocess.TimeoutExpired:
-        return HailoHefBuildResult(
-            ok=False,
-            elapsed_s=time.time() - t0,
-            hw_arch=str(hw_arch),
-            net_name=str(net_name),
-            backend="wsl",
-            error=f"WSL HEF build timed out after {wsl_timeout_s}s.",
-        )
+
+        # The first DFC invocation may prompt for a system requirements check.
+        # Feed a default "yes" so the process never blocks in a GUI context.
+        try:
+            if popen.stdin is not None:
+                popen.stdin.write("y\n")
+                popen.stdin.flush()
+        except Exception:
+            pass
+
+        def _reader(stream, sink: List[str], stream_name: str) -> None:
+            if stream is None:
+                return
+            try:
+                for raw in iter(stream.readline, ""):
+                    if raw == "" and popen.poll() is not None:
+                        break
+                    line = raw.rstrip("\n")
+                    if line.endswith("\r"):
+                        line = line.rstrip("\r")
+                    line = _sanitize_wsl_text(line)
+                    sink.append(line)
+                    _emit(stream_name, line)
+            finally:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+
+        t_out = threading.Thread(target=_reader, args=(popen.stdout, stdout_lines, "stdout"), daemon=True)
+        t_err = threading.Thread(target=_reader, args=(popen.stderr, stderr_lines, "stderr"), daemon=True)
+        t_out.start()
+        t_err.start()
+        try:
+            popen.wait(timeout=float(wsl_timeout_s))
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                popen.kill()
+            except Exception:
+                pass
+            try:
+                popen.wait(timeout=10)
+            except Exception:
+                pass
+        t_out.join(timeout=2)
+        t_err.join(timeout=2)
     except Exception as e:
         return HailoHefBuildResult(
             ok=False,
@@ -2007,13 +2319,35 @@ def hailo_build_hef_via_wsl(
             error=f"WSL HEF build failed to launch: {type(e).__name__}: {e}",
         )
 
-    stdout = _sanitize_wsl_text(proc.stdout or "")
-    stderr = _sanitize_wsl_text(proc.stderr or "")
+    stdout = _sanitize_wsl_text("\n".join(stdout_lines))
+    stderr = _sanitize_wsl_text("\n".join(stderr_lines))
+    rc = int(getattr(popen, "returncode", 0) or 0)
+
+    if timed_out:
+        dbg_path = _write_wsl_debug_log(
+            outdir,
+            filename=f"hailo_wsl_hef_timeout_{hw_arch}_{net_name}_{int(time.time())}.log",
+            wsl_cmd=wsl_cmd,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        err = f"WSL HEF build timed out after {wsl_timeout_s}s."
+        if dbg_path:
+            err += f"\n\n[debug_log] {dbg_path}"
+        return HailoHefBuildResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend="wsl",
+            error=err,
+            returncode=124,
+            debug_log=dbg_path,
+        )
     mixed = "\n".join([stdout, stderr]).strip()
     payload = _find_result_json(mixed)
     if payload is None:
         # Convert Windows unsigned return code (e.g. 0xFFFFFFFF) to signed for readability.
-        rc = proc.returncode
         if isinstance(rc, int) and rc > 0x7FFFFFFF:
             rc_signed = rc - 0x100000000
         else:
@@ -2042,7 +2376,7 @@ def hailo_build_hef_via_wsl(
             backend="wsl",
             error=(
                 "WSL HEF build did not return a structured result. "
-                f"exit_code={proc.returncode} (signed {rc_signed}). tail=\n{tail}\n\n"
+                f"exit_code={rc} (signed {rc_signed}). tail=\n{tail}\n\n"
                 "Details were written to gui.log (Logs tab)."
             ),
         )
@@ -2099,6 +2433,7 @@ def hailo_build_hef_via_venv(
     keep_artifacts: bool = False,
     venv_activate: str = "auto",
     timeout_s: int = 3600,
+    on_log: Optional[Callable[[str, str], None]] = None,
 ) -> HailoHefBuildResult:
     """Build a HEF inside a managed DFC venv (Linux / WSL)."""
 
@@ -2173,6 +2508,18 @@ def hailo_build_hef_via_venv(
     if calib_dir is not None:
         cmd += ["--calib-dir", str(Path(str(calib_dir)).expanduser().resolve())]
 
+    stdout_lines: List[str] = []
+    stderr_lines: List[str] = []
+    timed_out = False
+
+    def _emit(stream_name: str, line: str) -> None:
+        if on_log is None:
+            return
+        try:
+            on_log(stream_name, line)
+        except Exception:
+            return
+
     try:
         log.info(
             "[hailo][hef][venv] hw_arch=%s profile=%s python=%s onnx=%s outdir=%s",
@@ -2182,23 +2529,66 @@ def hailo_build_hef_via_venv(
             str(onnx_path),
             str(outdir_path or ""),
         )
-        proc = subprocess.run(
+        log.debug("[hailo][hef][venv] cmd=%s", cmd)
+
+        popen = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.PIPE,
             text=True,
-            timeout=float(timeout_s),
             encoding="utf-8",
             errors="replace",
+            bufsize=1,
+            universal_newlines=True,
         )
-    except subprocess.TimeoutExpired:
-        return HailoHefBuildResult(
-            ok=False,
-            elapsed_s=time.time() - t0,
-            hw_arch=str(hw_arch),
-            net_name=net_name_eff,
-            backend="venv",
-            error=f"Venv HEF build timed out after {timeout_s}s.",
-        )
+
+        # The first DFC invocation may prompt for a system requirements check.
+        # Feed a default "yes" so the process never blocks in a GUI context.
+        try:
+            if popen.stdin is not None:
+                popen.stdin.write("y\n")
+                popen.stdin.flush()
+        except Exception:
+            pass
+
+        def _reader(stream, sink: List[str], stream_name: str) -> None:
+            if stream is None:
+                return
+            try:
+                for raw in iter(stream.readline, ""):
+                    if raw == "" and popen.poll() is not None:
+                        break
+                    line = raw.rstrip("\n")
+                    if line.endswith("\r"):
+                        line = line.rstrip("\r")
+                    line = _sanitize_wsl_text(line)
+                    sink.append(line)
+                    _emit(stream_name, line)
+            finally:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+
+        t_out = threading.Thread(target=_reader, args=(popen.stdout, stdout_lines, "stdout"), daemon=True)
+        t_err = threading.Thread(target=_reader, args=(popen.stderr, stderr_lines, "stderr"), daemon=True)
+        t_out.start()
+        t_err.start()
+        try:
+            popen.wait(timeout=float(timeout_s))
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                popen.kill()
+            except Exception:
+                pass
+            try:
+                popen.wait(timeout=10)
+            except Exception:
+                pass
+        t_out.join(timeout=2)
+        t_err.join(timeout=2)
     except Exception as e:
         return HailoHefBuildResult(
             ok=False,
@@ -2209,8 +2599,31 @@ def hailo_build_hef_via_venv(
             error=f"Venv HEF build failed to launch: {type(e).__name__}: {e}",
         )
 
-    stdout = _sanitize_wsl_text(proc.stdout or "")
-    stderr = _sanitize_wsl_text(proc.stderr or "")
+    stdout = _sanitize_wsl_text("\n".join(stdout_lines))
+    stderr = _sanitize_wsl_text("\n".join(stderr_lines))
+    rc = int(getattr(popen, "returncode", 0) or 0)
+
+    if timed_out:
+        dbg_path = _write_wsl_debug_log(
+            str(outdir_path) if outdir_path is not None else None,
+            filename=f"hailo_venv_hef_timeout_{hw_arch}_{net_name_eff}_{int(time.time())}.log",
+            wsl_cmd=cmd,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        err = f"Venv HEF build timed out after {timeout_s}s."
+        if dbg_path:
+            err += f"\n\n[debug_log] {dbg_path}"
+        return HailoHefBuildResult(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=net_name_eff,
+            backend="venv",
+            error=err,
+            returncode=124,
+            debug_log=dbg_path,
+        )
     mixed = "\n".join([stdout, stderr]).strip()
     payload = _find_result_json(mixed)
     if payload is None:
@@ -2226,7 +2639,7 @@ def hailo_build_hef_via_venv(
             tail = tail + f"\n\n[debug_log] {dbg_path}"
         log.warning(
             "[hailo][hef][venv] no structured result rc=%s debug_log=%s",
-            proc.returncode,
+            rc,
             dbg_path or "-",
         )
         return HailoHefBuildResult(
@@ -2237,7 +2650,7 @@ def hailo_build_hef_via_venv(
             backend="venv",
             error=(
                 "Venv HEF build did not return a structured result. "
-                f"exit_code={proc.returncode}. tail=\n{tail}\n\n"
+                f"exit_code={rc}. tail=\n{tail}\n\n"
                 "Details were written to gui.log (Logs tab)."
             ),
         )
@@ -2298,6 +2711,7 @@ def hailo_build_hef_auto(
     wsl_distro: Optional[str] = None,
     wsl_venv_activate: str = "auto",
     wsl_timeout_s: int = 3600,
+    on_log: Optional[Callable[[str, str], None]] = None,
 ) -> HailoHefBuildResult:
     mode = str(backend or "auto").strip().lower()
     if mode not in {"auto", "local", "wsl", "venv"}:
@@ -2359,6 +2773,7 @@ def hailo_build_hef_auto(
                 keep_artifacts=bool(keep_artifacts),
                 venv_activate=wsl_venv_activate,
                 timeout_s=int(wsl_timeout_s),
+                on_log=on_log,
             )
         return hailo_build_hef_via_wsl(
             onnx_path,
@@ -2377,6 +2792,7 @@ def hailo_build_hef_auto(
             wsl_distro=wsl_distro,
             wsl_venv_activate=wsl_venv_activate,
             wsl_timeout_s=int(wsl_timeout_s),
+            on_log=on_log,
         )
 
     return HailoHefBuildResult(

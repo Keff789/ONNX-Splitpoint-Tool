@@ -40,7 +40,7 @@ _HARDWARE_TOOLTIPS = {
     "hailo_keep": "Behält temporäre Hailo-Artefakte für Debugging.",
     "hailo_target": "Welche Split-Seite mit Hailo geprüft wird.",
     "hailo_backend": "Backend-Auswahl: auto/local/wsl.",
-    "hailo_wsl_distro": "Optionaler WSL-Distro-Name für Hailo-Backend.",
+    "hailo_wsl_distro": "Optionaler WSL-Distro-Name für Hailo-Backend. Leer lassen = Default-Distro. Tippfehler wie 'Ubuntu_22.04' werden nach Möglichkeit automatisch korrigiert.",
     "hailo_wsl_venv": "Aktivierungsbefehl für das WSL-Python-Venv mit Hailo SDK. Tipp: 'auto' nutzt die DFC-Profile (Hailo-8 vs Hailo-10) aus resources/hailo/profiles.json.",
     "hailo_status": "Zeigt, ob der Hailo DFC für Hailo-8/Hailo-10 erreichbar ist (automatisch beim Start + Refresh).",
     "hailo_refresh": "Aktualisiert die Hailo-Statusanzeige (Probe).",
@@ -498,9 +498,24 @@ def build_panel(parent, app=None) -> ttk.Frame:
     attach_tooltip(cb_hailo_backend, _tt("hailo_backend"))
 
     ttk.Label(hailo, text="WSL distro:").grid(row=1, column=4, sticky="e", pady=(0, 8))
-    ent_hailo_distro = ttk.Entry(hailo, textvariable=hailo_wsl_distro_var, width=18)
-    ent_hailo_distro.grid(row=1, column=5, sticky="w", pady=(0, 8))
-    attach_tooltip(ent_hailo_distro, _tt("hailo_wsl_distro"))
+    # Make typos less likely by offering a drop-down list of known distros.
+    # Leave empty to use the default WSL distro.
+    distro_values = [""]
+    try:
+        from ...hailo_backend import wsl_list_distros
+
+        distro_values += wsl_list_distros()
+    except Exception:
+        pass
+    cb_hailo_distro = ttk.Combobox(
+        hailo,
+        textvariable=hailo_wsl_distro_var,
+        values=distro_values,
+        width=18,
+        state="normal",
+    )
+    cb_hailo_distro.grid(row=1, column=5, sticky="w", pady=(0, 8))
+    attach_tooltip(cb_hailo_distro, _tt("hailo_wsl_distro"))
 
     ttk.Label(hailo, text="WSL venv override:").grid(row=2, column=0, sticky="w", padx=(8, 4), pady=(0, 8))
     ent_hailo_venv = ttk.Entry(hailo, textvariable=hailo_wsl_venv_var, width=56)

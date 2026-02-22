@@ -1551,6 +1551,20 @@ class SplitPointAnalyserGUI(tk.Tk):
         wsl_distro = (getattr(self, "var_hailo_wsl_distro", tk.StringVar(value="")).get() or "").strip()
         wsl_venv = (getattr(self, "var_hailo_wsl_venv", tk.StringVar(value="auto")).get() or "auto").strip() or "auto"
 
+        # Best-effort normalization (fix common typo "Ubuntu_22.04" -> "Ubuntu-22.04").
+        try:
+            from .hailo_backend import normalize_wsl_distro_name
+
+            norm = normalize_wsl_distro_name(wsl_distro)
+            if norm != wsl_distro:
+                wsl_distro = norm
+                try:
+                    getattr(self, "var_hailo_wsl_distro").set(norm)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         def _worker() -> None:
             try:
                 from .hailo_backend import hailo_probe_auto
@@ -1705,6 +1719,20 @@ class SplitPointAnalyserGUI(tk.Tk):
                 lines.append("")
                 lines.append("Hint: Your managed DFC venv likely drifted (protobuf upgraded).")
                 lines.append("Fix: delete the venv and re-run ./scripts/provision_hailo_dfcs_wsl.sh --all")
+
+            # Early glibc blocker (common on Ubuntu 20.04).
+            if "glibc" in r.lower() and ("too old" in r.lower() or "distro too old" in r.lower()):
+                lines.append("")
+                lines.append("Hint: Your selected Linux/WSL distro ships an older glibc than the Hailo DFC wheel requires.")
+                lines.append("This typically shows up on Ubuntu 20.04 (glibc 2.31) while the DFC wheels require glibc >= 2.34.")
+                lines.append("")
+                lines.append("Fix (Windows/WSL):")
+                lines.append("- Install a newer distro: wsl --install -d Ubuntu-22.04")
+                lines.append("- In the GUI, set 'WSL distro' to Ubuntu-22.04")
+                lines.append("- Click 'Provision DFC' (this creates venv_hailo8 / venv_hailo10 in that distro)")
+                lines.append("- Click 'Refresh status'")
+                lines.append("")
+                lines.append("Note: each WSL distro has its own home directory and managed venvs, so provisioning must run inside the target distro.")
         except Exception:
             lines = ["Failed to format probe result."]
 
@@ -1796,6 +1824,20 @@ class SplitPointAnalyserGUI(tk.Tk):
         wsl_distro = (self.var_hailo_wsl_distro.get() or "").strip()
         wsl_venv = (self.var_hailo_wsl_venv.get() or "auto").strip() or "auto"
 
+        # Best-effort normalization (fix common typo "Ubuntu_22.04" -> "Ubuntu-22.04").
+        try:
+            from .hailo_backend import normalize_wsl_distro_name
+
+            norm = normalize_wsl_distro_name(wsl_distro)
+            if norm != wsl_distro:
+                wsl_distro = norm
+                try:
+                    self.var_hailo_wsl_distro.set(norm)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         # Resolve repo root (contains scripts/).
         repo_root = Path(__file__).resolve().parents[1]
 
@@ -1806,7 +1848,18 @@ class SplitPointAnalyserGUI(tk.Tk):
             prov_err: Optional[str] = None
             res_h8 = None
             res_h10 = None
+            missing_wheels: List[str] = []
             try:
+                # Quick preflight: are the DFC wheels present in resources/?
+                try:
+                    base = repo_root / "onnx_splitpoint_tool" / "resources" / "hailo"
+                    for sub in ("hailo8", "hailo10"):
+                        d = base / sub
+                        if not d.exists() or not list(d.glob("*.whl")):
+                            missing_wheels.append(sub)
+                except Exception:
+                    pass
+
                 if sys.platform == "win32":
                     from .hailo_backend import hailo_wsl_available, windows_path_to_wsl, _wsl_exe
 
@@ -1833,6 +1886,8 @@ class SplitPointAnalyserGUI(tk.Tk):
 
                 logger.info("[hailo][provision] starting provisioning (backend=%s)", backend)
                 logger.info("[hailo][provision] cmd=%s", cmd)
+                if missing_wheels:
+                    logger.warning("[hailo][provision] missing DFC wheels for: %s", ", ".join(missing_wheels))
 
                 proc = subprocess.Popen(
                     cmd,
@@ -1922,12 +1977,24 @@ class SplitPointAnalyserGUI(tk.Tk):
                         hints.append(
                             f"{name}: 'pkg_resources' is missing. Fix by pinning setuptools<82 (Provision DFC does this automatically)."
                         )
+                    if "hailo_sdk_client" in reason and ("not importable" in reason or "not installed" in reason):
+                        hints.append(
+                            f"{name}: DFC not installed in the managed venv. Make sure the DFC wheel is present in onnx_splitpoint_tool/resources/hailo/<profile>/ and re-run 'Provision DFC'."
+                        )
 
                 if hints:
                     lines.append("")
                     lines.append("Hints:")
                     for h in hints:
                         lines.append(f"- {h}")
+
+                if missing_wheels:
+                    lines.append("")
+                    lines.append("Missing wheels:")
+                    for sub in missing_wheels:
+                        lines.append(
+                            f"- {sub}: place the matching hailo_dataflow_compiler-*.whl into onnx_splitpoint_tool/resources/hailo/{sub}/"
+                        )
 
                 summary = "\n".join(lines)
             except Exception:
@@ -5037,20 +5104,32 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         # ---- progress dialog + background worker ----
         dlg = tk.Toplevel(self)
-        dlg.title("Splitting…")
+        dlg.title("Split and Export")
         dlg.transient(self)
         try:
             dlg.grab_set()
         except Exception:
             pass
-        dlg.resizable(False, False)
+        dlg.resizable(True, True)
+        dlg.minsize(760, 420)
 
-        ttk.Label(dlg, text=f"Splitting boundary {b} and exporting artifacts…").pack(
-            padx=16, pady=(16, 8)
-        )
-        pb = ttk.Progressbar(dlg, mode="indeterminate", length=320)
-        pb.pack(padx=16, pady=(0, 16))
+        status_var = tk.StringVar(value=f"Splitting boundary {b} and exporting artifacts…")
+        ttk.Label(dlg, textvariable=status_var).pack(padx=16, pady=(16, 6), anchor="w")
+
+        pb = ttk.Progressbar(dlg, mode="indeterminate")
+        pb.pack(padx=16, pady=(0, 10), fill="x")
         pb.start(10)
+
+        log_frame = ttk.Frame(dlg)
+        log_frame.pack(padx=16, pady=(0, 16), fill="both", expand=True)
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+
+        log_txt = tk.Text(log_frame, height=14, wrap="none", state="disabled")
+        log_vsb = ttk.Scrollbar(log_frame, orient="vertical", command=log_txt.yview)
+        log_txt.configure(yscrollcommand=log_vsb.set)
+        log_txt.grid(row=0, column=0, sticky="nsew")
+        log_vsb.grid(row=0, column=1, sticky="ns")
 
         try:
             self.configure(cursor="watch")
@@ -5058,11 +5137,13 @@ class SplitPointAnalyserGUI(tk.Tk):
         except Exception:
             pass
 
-        q: "queue.Queue[tuple[str, str]]" = queue.Queue()
+        q: "queue.Queue[tuple]" = queue.Queue()
 
         def worker() -> None:
             try:
                 msg = []
+
+                q.put(("stage", f"Splitting boundary {b} and exporting artifacts…"))
 
                 # Split
                 p1, p2, split_manifest = asc.split_model_on_cut_tensors(
@@ -5332,6 +5413,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
                 # Optional: Build Hailo HEFs (part1/part2) for selected targets.
                 if hef_targets and (hef_part1 or hef_part2):
+                    q.put(("stage", "Building Hailo HEFs…"))
                     try:
                         from .hailo_backend import hailo_build_hef_auto
                     except Exception as e:
@@ -5352,12 +5434,20 @@ class SplitPointAnalyserGUI(tk.Tk):
                             "keep_artifacts": bool(hef_keep),
                         }
 
+                        def _hef_on_log(stream_name: str, line: str) -> None:
+                            # Stream build output to the progress dialog.
+                            try:
+                                q.put(("hef", stream_name, line))
+                            except Exception:
+                                pass
+
                         for hw_arch in hef_targets:
                             hw_arch = str(hw_arch).strip()
                             if not hw_arch:
                                 continue
                             tgt_out = {}
                             if hef_part1:
+                                q.put(("stage", f"Building HEF ({hw_arch}) part1…"))
                                 out_p1 = os.path.join(out_dir, "hailo", hw_arch, "part1")
                                 os.makedirs(out_p1, exist_ok=True)
                                 r1 = hailo_build_hef_auto(
@@ -5376,6 +5466,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                                     wsl_distro=hef_wsl_distro,
                                     wsl_venv_activate=hef_wsl_venv,
                                     wsl_timeout_s=3600,
+                                    on_log=_hef_on_log,
                                 )
                                 if r1.ok:
                                     rel = os.path.relpath(r1.hef_path or os.path.join(out_p1, "compiled.hef"), out_dir)
@@ -5386,6 +5477,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                                     msg.append(f"Hailo HEF ({hw_arch}) part1 failed: {r1.error}")
 
                             if hef_part2:
+                                q.put(("stage", f"Building HEF ({hw_arch}) part2…"))
                                 out_p2 = os.path.join(out_dir, "hailo", hw_arch, "part2")
                                 os.makedirs(out_p2, exist_ok=True)
                                 r2 = hailo_build_hef_auto(
@@ -5404,6 +5496,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                                     wsl_distro=hef_wsl_distro,
                                     wsl_venv_activate=hef_wsl_venv,
                                     wsl_timeout_s=3600,
+                                    on_log=_hef_on_log,
                                 )
                                 if r2.ok:
                                     rel = os.path.relpath(r2.hef_path or os.path.join(out_p2, "compiled.hef"), out_dir)
@@ -5434,17 +5527,111 @@ class SplitPointAnalyserGUI(tk.Tk):
                     pass
 
 
-                q.put(("ok", "\n".join(msg)))
+                q.put(("done", "ok", "\n".join(msg)))
             except Exception as e:
                 logging.exception("Split selected boundary failed")
-                q.put(("err", f"{type(e).__name__}: {e}"))
+                q.put(("done", "err", f"{type(e).__name__}: {e}"))
 
         threading.Thread(target=worker, daemon=True).start()
 
-        def poll() -> None:
+        prog_re = re.compile(r"^(?P<stage>[A-Za-z][A-Za-z0-9 _\-]+):\s*(?P<pct>\d{1,3})%\|")
+        last_prog: Dict[str, Any] = {"stage": None, "pct": None}
+
+        def _append_log(line: str) -> None:
+            if not line:
+                return
             try:
-                status, payload = q.get_nowait()
+                log_txt.configure(state="normal")
+                log_txt.insert("end", line + "\n")
+                # Trim to keep the UI responsive.
+                try:
+                    n_lines = int(log_txt.index("end-1c").split(".")[0])
+                    if n_lines > 1200:
+                        log_txt.delete("1.0", "200.0")
+                except Exception:
+                    pass
+                log_txt.see("end")
+                log_txt.configure(state="disabled")
+            except Exception:
+                pass
+
+        def _is_interesting(line: str) -> bool:
+            # Default to showing (almost) everything so users can see that work is ongoing.
+            s = (line or "").strip()
+            if not s:
+                return False
+            if s.startswith("__SPLITPOINT"):
+                return False
+            return True
+
+        done_status: Optional[str] = None
+        done_payload: str = ""
+
+        def poll() -> None:
+            nonlocal done_status, done_payload
+            processed = 0
+            try:
+                while processed < 250:
+                    item = q.get_nowait()
+                    processed += 1
+
+                    kind = item[0] if item else None
+                    if kind == "done":
+                        done_status = str(item[1]) if len(item) > 1 else "err"
+                        done_payload = str(item[2]) if len(item) > 2 else ""
+                        break
+                    elif kind == "stage":
+                        if len(item) > 1:
+                            status_var.set(str(item[1]))
+                            _append_log(f"[stage] {item[1]}")
+                    elif kind == "log":
+                        if len(item) > 1:
+                            _append_log(str(item[1]))
+                    elif kind == "hef":
+                        # ('hef', stream, line)
+                        line = str(item[2]) if len(item) > 2 else ""
+                        s = line.strip()
+
+                        # Update progress bar from tqdm-like lines.
+                        m = prog_re.match(s)
+                        if m:
+                            stage = (m.group("stage") or "").strip()
+                            try:
+                                pct = int(m.group("pct"))
+                            except Exception:
+                                pct = None
+                            if pct is not None:
+                                # Switch from indeterminate to determinate once we have real progress.
+                                try:
+                                    if str(pb["mode"]) != "determinate":
+                                        pb.stop()
+                                        pb.configure(mode="determinate", maximum=100)
+                                except Exception:
+                                    pass
+                                try:
+                                    pb["value"] = max(0, min(100, pct))
+                                except Exception:
+                                    pass
+
+                                # Avoid excessive UI churn.
+                                if last_prog.get("stage") != stage or last_prog.get("pct") != pct:
+                                    last_prog["stage"] = stage
+                                    last_prog["pct"] = pct
+                                    status_var.set(f"HEF build: {stage} {pct}%")
+
+                        # Only log lines that are likely useful.
+                        if _is_interesting(s):
+                            _append_log(s)
+                    else:
+                        # Unknown event type: best-effort display.
+                        try:
+                            _append_log(str(item))
+                        except Exception:
+                            pass
             except queue.Empty:
+                pass
+
+            if done_status is None:
                 self.after(100, poll)
                 return
 
@@ -5462,10 +5649,10 @@ class SplitPointAnalyserGUI(tk.Tk):
             except Exception:
                 pass
 
-            if status == "ok":
-                messagebox.showinfo("Split complete", payload)
+            if done_status == "ok":
+                messagebox.showinfo("Split complete", done_payload)
             else:
-                messagebox.showerror("Split failed", payload)
+                messagebox.showerror("Split failed", done_payload)
 
         self.after(100, poll)
 

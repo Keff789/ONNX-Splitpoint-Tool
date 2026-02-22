@@ -101,6 +101,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
     var_calib_dir = _str_on_app("var_hailo_hef_calib_dir", "")
     var_force = _bool_on_app("var_hailo_hef_force", False)
     var_keep = _bool_on_app("var_hailo_hef_keep_artifacts", False)
+    var_preset = _str_on_app("var_hailo_hef_preset", "Standard")
 
     # Row 0: targets + parts
     row0 = ttk.Frame(hef_group)
@@ -123,6 +124,44 @@ def build_panel(parent, app=None) -> ttk.Frame:
     # Row 1: compile knobs
     row1 = ttk.Frame(hef_group)
     row1.pack(fill=tk.X, padx=8, pady=(0, 4))
+
+    ttk.Label(row1, text="Preset:").pack(side=tk.LEFT)
+    preset_cb = ttk.Combobox(
+        row1,
+        textvariable=var_preset,
+        values=["Quick", "Standard", "Accurate"],
+        width=10,
+        state="readonly",
+    )
+    preset_cb.pack(side=tk.LEFT, padx=(4, 10))
+
+    def _apply_preset(*_):
+        p = (var_preset.get() or "Standard").strip().lower()
+        # Defaults are tuned for usability. Users can still override fields afterwards.
+        if p == "quick":
+            var_opt_level.set("0")
+            var_calib_count.set("16")
+            var_calib_bs.set("8")
+            var_force.set(False)
+            var_keep.set(False)
+        elif p == "accurate":
+            var_opt_level.set("2")
+            var_calib_count.set("256")
+            var_calib_bs.set("8")
+            var_force.set(False)
+            var_keep.set(True)
+        else:  # Standard
+            var_opt_level.set("1")
+            var_calib_count.set("64")
+            var_calib_bs.set("8")
+            var_force.set(False)
+            var_keep.set(False)
+
+    try:
+        var_preset.trace_add("write", _apply_preset)
+    except Exception:
+        pass
+    _apply_preset()
 
     ttk.Label(row1, text="Opt level:").pack(side=tk.LEFT)
     ttk.Entry(row1, textvariable=var_opt_level, width=5).pack(side=tk.LEFT, padx=(4, 10))

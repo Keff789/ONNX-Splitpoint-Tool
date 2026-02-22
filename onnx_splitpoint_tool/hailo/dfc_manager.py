@@ -49,6 +49,12 @@ class DfcProfile:
         DFC wheel(s) for this profile are stored.
     notes:
         Optional free-form note displayed in debug output.
+
+    glibc_min:
+        Optional minimum required glibc version ("major.minor") for the DFC
+        wheel/runtime on this profile. This is used for fast pre-flight checks
+        so we can warn users early when running on an older distro (e.g.
+        Ubuntu 20.04 glibc 2.31 vs. DFC wheels requiring >= 2.34).
     """
 
     profile_id: str
@@ -57,6 +63,7 @@ class DfcProfile:
     wsl_distro: Optional[str] = None
     wheel_dir: Optional[str] = None
     notes: str = ""
+    glibc_min: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -219,6 +226,7 @@ def default_profiles() -> List[DfcProfile]:
             wsl_distro=None,
             wheel_dir="hailo8",
             notes="DFC 3.x (Hailo-8 family)",
+            glibc_min="2.34",
         ),
         DfcProfile(
             profile_id="hailo10",
@@ -227,6 +235,7 @@ def default_profiles() -> List[DfcProfile]:
             wsl_distro=None,
             wheel_dir="hailo10",
             notes="DFC 5.x (Hailo-10 family)",
+            glibc_min="2.34",
         ),
     ]
 
@@ -272,6 +281,7 @@ def _parse_profiles_json(data: Dict[str, Any]) -> List[DfcProfile]:
         wsl_distro = str(v.get("wsl_distro") or "").strip() or None
         wheel_dir = str(v.get("wheel_dir") or "").strip() or None
         notes = str(v.get("notes") or "")
+        glibc_min = str(v.get("glibc_min") or "").strip() or None
 
         out.append(
             DfcProfile(
@@ -281,6 +291,7 @@ def _parse_profiles_json(data: Dict[str, Any]) -> List[DfcProfile]:
                 wsl_distro=wsl_distro,
                 wheel_dir=wheel_dir,
                 notes=notes,
+                glibc_min=glibc_min,
             )
         )
 

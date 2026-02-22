@@ -7,6 +7,7 @@
       "wsl_venv_activate": "~/.onnx_splitpoint_tool/hailo/venv_hailo8/bin/activate",
       "wsl_distro": "",
       "wheel_dir": "hailo8",
+      "glibc_min": "2.34",
       "notes": "DFC 3.x (Hailo-8 family)"
     },
     "hailo10": {
@@ -15,6 +16,7 @@
       "wsl_venv_activate": "~/.onnx_splitpoint_tool/hailo/venv_hailo10/bin/activate",
       "wsl_distro": "",
       "wheel_dir": "hailo10",
+      "glibc_min": "2.34",
       "notes": "DFC 5.x (Hailo-10 family)"
     }
   }
