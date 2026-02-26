@@ -47,6 +47,8 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
+from .workdir import ensure_workdir
+
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
@@ -497,7 +499,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.var_settings_visible.set(True)
 
     def _on_pick_output_folder(self) -> None:
-        """Choose and remember a default output folder for exports."""
+        """Choose and remember a default *working directory* for exports."""
         initial = self.default_output_dir
         if not initial:
             model_path = self.model_path if isinstance(self.model_path, str) else ""
@@ -506,13 +508,13 @@ class SplitPointAnalyserGUI(tk.Tk):
         if not initial:
             initial = os.getcwd()
 
-        picked = filedialog.askdirectory(title="Select default output folder", initialdir=initial)
+        picked = filedialog.askdirectory(title="Select working directory", initialdir=initial)
         if not picked:
             return
 
         self.default_output_dir = picked
         try:
-            self._set_status(f"Default output folder: {picked}")
+            self._set_status(f"Working directory: {picked}")
         except Exception:
             pass
 
@@ -1577,14 +1579,14 @@ class SplitPointAnalyserGUI(tk.Tk):
                     # First import/probe can be slow on cold-start WSL (starting the VM,
                     # importing large deps, JIT init, etc.). 20s was too aggressive and
                     # produced false negatives.
-                    timeout_s=45,
+                    timeout_s=90,
                 )
                 res_h10 = hailo_probe_auto(
                     backend=backend,
                     hw_arch="hailo10",
                     wsl_distro=wsl_distro,
                     wsl_venv_activate=wsl_venv,
-                    timeout_s=45,
+                    timeout_s=90,
                 )
             except Exception as e:
                 res_h8 = None
@@ -1915,6 +1917,9 @@ class SplitPointAnalyserGUI(tk.Tk):
 
             # Build a compact post-provision status summary (Hailo-8 / Hailo-10)
             # so users immediately know what is usable.
+            # Post-provision sanity probe (best effort).
+            res_h8 = None
+            res_h10 = None
             try:
                 from .hailo_backend import hailo_probe_auto
 
@@ -1923,14 +1928,14 @@ class SplitPointAnalyserGUI(tk.Tk):
                     hw_arch="hailo8",
                     wsl_distro=wsl_distro,
                     wsl_venv_activate=wsl_venv,
-                    timeout_s=45,
+                    timeout_s=90,
                 )
                 res_h10 = hailo_probe_auto(
                     backend=backend,
                     hw_arch="hailo10",
                     wsl_distro=wsl_distro,
                     wsl_venv_activate=wsl_venv,
-                    timeout_s=45,
+                    timeout_s=90,
                 )
             except Exception:
                 logger.exception("[hailo][provision] post-provision probe failed")
@@ -2495,8 +2500,8 @@ class SplitPointAnalyserGUI(tk.Tk):
         # Hailo feasibility check (optional)
         hailo_check = bool(self.var_hailo_check.get())
         hailo_hw_arch = (self.var_hailo_hw_arch.get() or "hailo8").strip()
-        if hailo_hw_arch not in {"hailo8", "hailo8l", "hailo8r"}:
-            raise ValueError("Hailo HW arch must be one of: hailo8, hailo8l, hailo8r")
+        if hailo_hw_arch not in {"hailo8", "hailo8l", "hailo8r", "hailo10", "hailo10h"}:
+            raise ValueError("Hailo HW arch must be one of: hailo8, hailo8l, hailo8r, hailo10, hailo10h")
 
         hailo_max_checks = _safe_int(self.var_hailo_max_checks.get())
         if hailo_max_checks is None:
@@ -5007,10 +5012,24 @@ class SplitPointAnalyserGUI(tk.Tk):
                     p2_cut_names = [new_name]
 
         initial_out = self.default_output_dir or os.path.dirname(model_path)
-        out_parent = filedialog.askdirectory(title="Select output folder", initialdir=initial_out)
+        try:
+            if self.default_output_dir:
+                initial_out = str(ensure_workdir(Path(self.default_output_dir)).split_networks)
+        except Exception:
+            pass
+        out_parent = filedialog.askdirectory(title="Select working directory", initialdir=initial_out)
         if not out_parent:
             return
-        self.default_output_dir = out_parent
+        # Keep the *working dir root* stable if the user picked a subfolder like
+        # <root>/SplitNetworks.
+        try:
+            base = os.path.basename(out_parent.rstrip(os.sep))
+            if base in ("SplitNetworks", "BenchmarkSets", "Results"):
+                self.default_output_dir = os.path.dirname(out_parent)
+            else:
+                self.default_output_dir = out_parent
+        except Exception:
+            self.default_output_dir = out_parent
 
         base = os.path.splitext(os.path.basename(model_path))[0]
         export_as_folder = bool(self.var_split_folder.get())
@@ -5687,7 +5706,13 @@ class SplitPointAnalyserGUI(tk.Tk):
             )
             return
 
-        out_parent = filedialog.askdirectory(title="Select parent folder for benchmark set")
+        initial_out = self.default_output_dir or os.path.dirname(model_path)
+        try:
+            if self.default_output_dir:
+                initial_out = str(ensure_workdir(Path(self.default_output_dir)).benchmark_sets)
+        except Exception:
+            pass
+        out_parent = filedialog.askdirectory(title="Select parent folder for benchmark set", initialdir=initial_out)
         if not out_parent:
             return
 
@@ -5815,17 +5840,24 @@ class SplitPointAnalyserGUI(tk.Tk):
         hailo8_hw = (getattr(self, "var_hailo_hef_hailo8_hw_arch", tk.StringVar(value="hailo8")).get() or "hailo8").strip()
         hailo10_hw = (getattr(self, "var_hailo_hef_hailo10_hw_arch", tk.StringVar(value="hailo10h")).get() or "hailo10h").strip()
 
+        # Per-run image scaling (passed through to the runner harness).
+        plan_image_scale = (getattr(self, "var_bench_image_scale", tk.StringVar(value="auto")).get() or "auto").strip().lower()
+        if plan_image_scale not in {"auto", "norm", "raw", "imagenet", "clip"}:
+            plan_image_scale = "auto"
+
         bench_plan_runs: List[Dict[str, Any]] = []
         if acc_cpu:
-            bench_plan_runs.append({"id": "ort_cpu", "type": "onnxruntime", "provider": "cpu", "stage1": {"type": "onnxruntime", "provider": "cpu"}, "stage2": {"type": "onnxruntime", "provider": "cpu"}})
+            bench_plan_runs.append({"id": "ort_cpu", "type": "onnxruntime", "provider": "cpu", "image_scale": plan_image_scale, "stage1": {"type": "onnxruntime", "provider": "cpu"}, "stage2": {"type": "onnxruntime", "provider": "cpu"}})
         if acc_cuda:
-            bench_plan_runs.append({"id": "ort_cuda", "type": "onnxruntime", "provider": "cuda", "stage1": {"type": "onnxruntime", "provider": "cuda"}, "stage2": {"type": "onnxruntime", "provider": "cuda"}})
+            bench_plan_runs.append({"id": "ort_cuda", "type": "onnxruntime", "provider": "cuda", "image_scale": plan_image_scale, "stage1": {"type": "onnxruntime", "provider": "cuda"}, "stage2": {"type": "onnxruntime", "provider": "cuda"}})
         if acc_trt:
-            bench_plan_runs.append({"id": "ort_tensorrt", "type": "onnxruntime", "provider": "tensorrt", "stage1": {"type": "onnxruntime", "provider": "tensorrt"}, "stage2": {"type": "onnxruntime", "provider": "tensorrt"}})
+            bench_plan_runs.append({"id": "ort_tensorrt", "type": "onnxruntime", "provider": "tensorrt", "image_scale": plan_image_scale, "stage1": {"type": "onnxruntime", "provider": "tensorrt"}, "stage2": {"type": "onnxruntime", "provider": "tensorrt"}})
+        # Hailo runs: Use the selected hw_arch as the run id, so results are self-describing
+        # (e.g. "hailo8l", "hailo10h").
         if acc_h8 and hailo8_hw:
-            bench_plan_runs.append({"id": "hailo8", "type": "hailo", "hw_arch": hailo8_hw, "stage1": {"type": "hailo", "hw_arch": hailo8_hw}, "stage2": {"type": "hailo", "hw_arch": hailo8_hw}})
+            bench_plan_runs.append({"id": hailo8_hw, "type": "hailo", "hw_arch": hailo8_hw, "image_scale": plan_image_scale, "stage1": {"type": "hailo", "hw_arch": hailo8_hw}, "stage2": {"type": "hailo", "hw_arch": hailo8_hw}})
         if acc_h10 and hailo10_hw:
-            bench_plan_runs.append({"id": "hailo10", "type": "hailo", "hw_arch": hailo10_hw, "stage1": {"type": "hailo", "hw_arch": hailo10_hw}, "stage2": {"type": "hailo", "hw_arch": hailo10_hw}})
+            bench_plan_runs.append({"id": hailo10_hw, "type": "hailo", "hw_arch": hailo10_hw, "image_scale": plan_image_scale, "stage1": {"type": "hailo", "hw_arch": hailo10_hw}, "stage2": {"type": "hailo", "hw_arch": hailo10_hw}})
 
         # ---------------- Hailo HEF build settings (reused by suite) ----------------
         hailo_selected = bool(acc_h8 or acc_h10)
@@ -5887,17 +5919,80 @@ class SplitPointAnalyserGUI(tk.Tk):
             dlg.grab_set()
         except Exception:
             pass
-        dlg.resizable(False, False)
+        dlg.resizable(True, True)
+        dlg.geometry("900x420")
+        dlg.minsize(700, 260)
 
         lbl = ttk.Label(dlg, text=f"Generating benchmark set with up to {k} cases…")
         lbl.pack(padx=16, pady=(16, 8))
 
-        pb = ttk.Progressbar(dlg, mode="determinate", length=360, maximum=max(1, k))
-        pb.pack(padx=16, pady=(0, 4))
+        pb = ttk.Progressbar(dlg, mode="determinate", maximum=max(1, k))
+        pb.pack(fill="x", padx=16, pady=(0, 4))
         pb["value"] = 0
 
         lbl2 = ttk.Label(dlg, text="")
-        lbl2.pack(padx=16, pady=(0, 16))
+        lbl2.pack(fill="x", padx=16, pady=(0, 8))
+
+        # Live log output (same idea as the Split & Export progress window)
+        log_frame = ttk.Frame(dlg)
+        log_frame.pack(fill="both", expand=True, padx=16, pady=(0, 8))
+
+        log_scroll = ttk.Scrollbar(log_frame)
+        log_scroll.pack(side="right", fill="y")
+
+        log_txt = tk.Text(
+            log_frame,
+            height=12,
+            wrap="none",
+            font=("TkFixedFont", 9),
+            yscrollcommand=log_scroll.set,
+        )
+        log_txt.pack(side="left", fill="both", expand=True)
+        log_scroll.config(command=log_txt.yview)
+        log_txt.configure(state="disabled")
+
+        # Buttons: copy is useful for bug reports; close is enabled after completion.
+        btn_row = ttk.Frame(dlg)
+        btn_row.pack(fill="x", padx=16, pady=(0, 16))
+
+        running_flag = {"running": True}
+
+        def _copy_log() -> None:
+            try:
+                text = log_txt.get("1.0", "end-1c")
+                dlg.clipboard_clear()
+                dlg.clipboard_append(text)
+                dlg.update_idletasks()
+                _append_log("[ui] Copied log to clipboard")
+            except Exception:
+                pass
+
+        def _close_dialog() -> None:
+            # Prevent closing while the worker is still updating the UI.
+            if running_flag.get("running"):
+                return
+            try:
+                dlg.destroy()
+            except Exception:
+                pass
+
+        btn_copy = ttk.Button(btn_row, text="Copy log", command=_copy_log)
+        btn_copy.pack(side="left")
+
+        btn_close = ttk.Button(btn_row, text="Close", command=_close_dialog)
+        btn_close.pack(side="right")
+        btn_close.state(["disabled"])
+
+        dlg.protocol("WM_DELETE_WINDOW", _close_dialog)
+
+        def _append_log(line: str) -> None:
+            line = (line or "").rstrip("\n")
+            if not line:
+                return
+            log_txt.configure(state="normal")
+            log_txt.insert("end", line + "\n")
+            log_txt.see("end")
+            log_txt.configure(state="disabled")
 
         try:
             self.configure(cursor="watch")
@@ -5918,6 +6013,15 @@ class SplitPointAnalyserGUI(tk.Tk):
                 errors = []
                 made = 0
 
+                def log(line: str) -> None:
+                    # Worker thread -> UI thread
+                    q.put(("log", line))
+
+                log("=== Generating benchmark set ===")
+                log(f"out_dir: {out_dir}")
+                log(f"model_path: {self.model_path}")
+                log(f"max_cases (top-k): {k}")
+
                 # Make the benchmark folder self-contained for portability.
                 # We copy the full model once into <benchmark_root>/models/ and reference it via
                 # relative paths from each case directory.
@@ -5931,6 +6035,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                 except Exception as e:
                     errors.append(f"full model copy failed: {type(e).__name__}: {e}")
                     full_model_dst = full_model_src
+                log(f"full model (suite copy): {full_model_dst}")
 
                 # Try candidates in ranked order and keep adding cases until we have k successful splits.
                 # We respect the GUI "Min gap" setting to avoid exporting near-duplicate boundaries.
@@ -5939,17 +6044,22 @@ class SplitPointAnalyserGUI(tk.Tk):
 
                 picks_iter = list(ranked_candidates)
 
+                log(f"min_gap: {gap}")
+                log(f"ranked candidates considered: {len(picks_iter)}")
+
                 for bi, b0 in enumerate(picks_iter):
                     if made >= k:
                         break
                     b = int(b0)
 
                     if gap > 0 and any(abs(b - bb) <= gap for bb in chosen):
+                        log(f"b{b}: skip (min_gap)")
                         continue
 
                     # Update the dialog label while keeping the progress value at the
                     # number of successfully generated cases so far.
                     q.put(("prog", made, f"Splitting b{b} ({made+1}/{k})..."))
+                    log(f"--- [{made+1}/{k}] Split boundary b{b} ---")
                     folder = f"b{b:0{pad}d}"
                     case_dir = os.path.join(out_dir, folder)
                     os.makedirs(case_dir, exist_ok=True)
@@ -5958,13 +6068,17 @@ class SplitPointAnalyserGUI(tk.Tk):
                         cut_tensors = asc.cut_tensors_for_boundary(order, nodes, b)
                     except Exception as e:
                         errors.append(f"b{b}: cut tensor error: {e}")
+                        log(f"b{b}: cut tensor error: {e}")
                         q.put(("prog", made, f"b{b} (skip)"))
                         continue
 
                     if not cut_tensors:
                         errors.append(f"b{b}: no cut tensors")
+                        log(f"b{b}: no cut tensors")
                         q.put(("prog", made, f"b{b} (skip)"))
                         continue
+
+                    log(f"b{b}: cut tensors: {len(cut_tensors)}")
 
                     p1_path = os.path.join(case_dir, f"{base}_part1_b{b}.onnx")
                     p2_path = os.path.join(case_dir, f"{base}_part2_b{b}.onnx")
@@ -5981,8 +6095,12 @@ class SplitPointAnalyserGUI(tk.Tk):
                         asc.save_model(p2, p2_path)
                     except Exception as e:
                         errors.append(f"b{b}: split failed: {type(e).__name__}: {e}")
+                        log(f"b{b}: split failed: {type(e).__name__}: {e}")
                         q.put(("prog", made, f"b{b} (split failed)"))
                         continue
+
+                    log(f"b{b}: wrote {os.path.basename(p1_path)}")
+                    log(f"b{b}: wrote {os.path.basename(p2_path)}")
 
                     # Predicted metrics (from current analysis)
                     pred = {}
@@ -6186,10 +6304,14 @@ class SplitPointAnalyserGUI(tk.Tk):
 
                     # Optional: Build Hailo HEFs (part1/part2) for selected targets.
                     if hef_targets and (hef_part1 or hef_part2):
+                        log(
+                            f"b{b}: Hailo HEF generation requested (backend={hef_backend}, targets={hef_targets}, part1={hef_part1}, part2={hef_part2})"
+                        )
                         try:
                             from .hailo_backend import hailo_build_hef_auto
                         except Exception as e:
                             manifest_out['hailo_error'] = f"Hailo HEF build unavailable: {e}"
+                            log(f"b{b}: Hailo HEF build unavailable: {e}")
                         else:
                             manifest_out.setdefault("hailo", {})
                             manifest_out["hailo"].setdefault("hefs", {})
@@ -6210,6 +6332,14 @@ class SplitPointAnalyserGUI(tk.Tk):
                                 hw_arch = str(hw_arch).strip()
                                 if not hw_arch:
                                     continue
+
+                                log(f"b{b}: build HEF for hw_arch={hw_arch}")
+
+                                def _on_hef_log(stream: str, line: str, _b: int = b, _hw: str = hw_arch) -> None:
+                                    # Forward Hailo build logs into the progress dialog.
+                                    # Use parentheses to avoid clashing with the runner's [n/m] progress regex.
+                                    q.put(("hef", stream, f"(b{_b} {_hw}) {line}"))
+
                                 tgt_out = {}
 
                                 if hef_part1:
@@ -6231,12 +6361,15 @@ class SplitPointAnalyserGUI(tk.Tk):
                                         wsl_distro=hef_wsl_distro,
                                         wsl_venv_activate=hef_wsl_venv,
                                         wsl_timeout_s=3600,
+                                        on_log=_on_hef_log,
                                     )
                                     if r1.ok:
                                         rel = os.path.relpath(r1.hef_path or os.path.join(out_p1, "compiled.hef"), case_dir)
                                         tgt_out["part1"] = rel.replace('\\', '/')
+                                        log(f"b{b}: HEF(part1,{hw_arch}) OK")
                                     else:
                                         tgt_out["part1_error"] = r1.error
+                                        log(f"b{b}: HEF(part1,{hw_arch}) FAILED: {r1.error}")
 
                                 if hef_part2:
                                     out_p2 = os.path.join(case_dir, "hailo", hw_arch, "part2")
@@ -6257,12 +6390,15 @@ class SplitPointAnalyserGUI(tk.Tk):
                                         wsl_distro=hef_wsl_distro,
                                         wsl_venv_activate=hef_wsl_venv,
                                         wsl_timeout_s=3600,
+                                        on_log=_on_hef_log,
                                     )
                                     if r2.ok:
                                         rel = os.path.relpath(r2.hef_path or os.path.join(out_p2, "compiled.hef"), case_dir)
                                         tgt_out["part2"] = rel.replace('\\', '/')
+                                        log(f"b{b}: HEF(part2,{hw_arch}) OK")
                                     else:
                                         tgt_out["part2_error"] = r2.error
+                                        log(f"b{b}: HEF(part2,{hw_arch}) FAILED: {r2.error}")
 
                                 if tgt_out:
                                     manifest_out["hailo"]["hefs"][hw_arch] = tgt_out
@@ -6458,54 +6594,98 @@ class SplitPointAnalyserGUI(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
         def poll() -> None:
-            try:
-                item = q.get_nowait()
-            except queue.Empty:
-                self.after(100, poll)
-                return
+            final_status: Optional[str] = None
+            final_msg: str = ""
 
-            if not item:
-                self.after(100, poll)
-                return
-
-            status = str(item[0])
-            if status == 'prog':
+            # Drain the queue so log output stays responsive even when a lot of
+            # lines arrive quickly (e.g. Hailo DFC compilation).
+            while True:
                 try:
-                    made = int(item[1])
-                    what = str(item[2]) if len(item) > 2 else ''
-                    pb['value'] = made
-                    lbl2.configure(text=f"{made}/{k}: {what}")
-                    self.update_idletasks()
-                except Exception:
-                    pass
-                self.after(50, poll)
-                return
+                    item = q.get_nowait()
+                except queue.Empty:
+                    break
 
-            # non-progress informational message (do not close the dialog)
-            if status in ('msg', 'note'):
-                try:
-                    what = str(item[1]) if len(item) > 1 else ''
-                    lbl2.configure(text=what)
-                    self.update_idletasks()
-                except Exception:
-                    pass
-                self.after(50, poll)
-                return
+                if not item:
+                    continue
 
-            # final
+                status = str(item[0])
+
+                if status == 'prog':
+                    try:
+                        made = int(item[1])
+                        what = str(item[2]) if len(item) > 2 else ''
+                        pb['value'] = made
+                        lbl2.configure(text=f"{made}/{k}: {what}")
+                    except Exception:
+                        pass
+                    continue
+
+                if status in ('log', 'hef'):
+                    try:
+                        if status == 'log':
+                            line = str(item[1]) if len(item) > 1 else ''
+                        else:
+                            # ('hef', stream, line)
+                            line = str(item[2]) if len(item) > 2 else ''
+                        _append_log(line)
+                        if status == 'hef' and line:
+                            lbl2.configure(text=line[:220])
+                    except Exception:
+                        pass
+                    continue
+
+                if status in ('msg', 'note'):
+                    try:
+                        what = str(item[1]) if len(item) > 1 else ''
+                        lbl2.configure(text=what)
+                    except Exception:
+                        pass
+                    continue
+
+                if status in ('ok', 'err'):
+                    final_status = status
+                    final_msg = str(item[1]) if len(item) > 1 else ''
+                    break
+
             try:
-                dlg.destroy()
+                self.update_idletasks()
             except Exception:
                 pass
+
+            if not final_status:
+                self.after(80, poll)
+                return
+
+            # final: keep the dialog open so logs can be inspected/copied
+            running_flag["running"] = False
+
+            try:
+                dlg.grab_release()
+            except Exception:
+                pass
+
+            try:
+                btn_close.state(["!disabled"])
+            except Exception:
+                try:
+                    btn_close.configure(state="normal")
+                except Exception:
+                    pass
+
+            try:
+                dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+            except Exception:
+                pass
+
             try:
                 self.configure(cursor="")
             except Exception:
                 pass
 
-            if status == 'ok':
-                messagebox.showinfo("Benchmark set created", str(item[1]))
+            if final_status == 'ok':
+                messagebox.showinfo("Benchmark set created", final_msg)
             else:
-                messagebox.showerror("Benchmark set failed", str(item[1]))
+                messagebox.showerror("Benchmark set failed", final_msg)
 
         poll()
 

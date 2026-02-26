@@ -198,6 +198,11 @@ def write_runner_skeleton_onnxruntime(out_dir: str, *, manifest_filename: str = 
     return out_path
 
 
+# Backwards compatible alias (older code imports this symbol).
+def write_runner_onnxruntime(out_dir: str, *, manifest_filename: str = "split_manifest.json", target: str = "auto") -> str:
+    return write_runner_skeleton_onnxruntime(out_dir, manifest_filename=manifest_filename, target=target)
+
+
 # Backwards-compatible alias (older GUI versions may call write_runner_skeleton)
 
 def write_runner_skeleton(out_dir: str, *, manifest_filename: str = "split_manifest.json", target: str = "auto") -> str:

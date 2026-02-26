@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import logging
+from pathlib import Path
 import tkinter as tk
 from tkinter import ttk
 from typing import Any, Dict, Iterable
@@ -17,6 +18,43 @@ from ..widgets.tooltip import attach_tooltip
 from ..widgets.memory_fit import MemoryFitWidget
 
 logger = logging.getLogger(__name__)
+
+
+def _external_data_label(onnx_path: str) -> str:
+    """Return a compact label describing whether the ONNX uses external tensor data.
+
+    We intentionally avoid loading external tensors here; we only inspect the model proto.
+    """
+    if not onnx_path:
+        return "External data: unknown"
+
+    try:
+        import onnx  # local import keeps GUI startup a bit snappier
+        from onnx_splitpoint_tool.split_export_graph import model_external_data_locations
+
+        model = onnx.load(onnx_path, load_external_data=False)
+        locs = model_external_data_locations(model)
+        if not locs:
+            return "External data: no"
+
+        base = Path(onnx_path).parent
+        missing = [loc for loc in locs if not (base / loc).exists()]
+        if missing:
+            if len(missing) == len(locs):
+                return f"External data: missing ({len(missing)})"
+            return f"External data: partial ({len(locs) - len(missing)}/{len(locs)})"
+
+        if len(locs) == 1:
+            return "External data: yes (1 file)"
+        return f"External data: yes ({len(locs)} files)"
+
+    except Exception as e:
+        # Legacy fallback for common patterns.
+        logger.debug("External-data detection failed for %s: %s", onnx_path, e)
+        legacy_data_path = f"{onnx_path}.data"
+        if os.path.exists(legacy_data_path):
+            return "External data: yes"
+        return "External data: unknown"
 
 
 GLOBAL_PRESETS: Dict[str, Dict[str, Dict[str, Any]]] = {
@@ -84,7 +122,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
     modified_var = tk.StringVar(value="")
     ttk.Label(preset_bar, textvariable=modified_var, foreground="#b26a00").grid(row=0, column=2, sticky="w")
 
-    output_btn = ttk.Button(top_model_bar, text="Output folder…")
+    output_btn = ttk.Button(top_model_bar, text="Working dir…")
     output_btn.grid(row=0, column=2, sticky="e")
 
     open_btn = ttk.Button(top_model_bar, text="Open Model…")
@@ -631,11 +669,7 @@ def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
         mtype = str(getattr(getattr(app, "gui_state", None), "model_type", "onnx") or "onnx").upper()
         frame.model_type_var.set(mtype)
 
-        has_external = False
-        if path:
-            guess = f"{path}.data"
-            has_external = os.path.exists(guess)
-        frame.external_var.set(f"External data: {'yes' if has_external else 'no/unknown'}")
+        frame.external_var.set(_external_data_label(path))
 
     def _refresh_modified_marker() -> None:
         preset_name = frame.preset_var.get()

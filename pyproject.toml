@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "onnx-splitpoint-tool"
-version = "0.10.39"
+version = "0.10.119"
 description = "Single-split boundary analysis for ONNX graphs (GUI + CLI)"
 readme = "README.md"
 requires-python = ">=3.8"

@@ -479,6 +479,55 @@
         "pcie_gen3_x2"
       ]
     },
+  {
+    "id": "hailo_8l",
+    "name": "Hailo-8L",
+    "category": "pcie_npu_module",
+    "notes": "Hailo-8L variant. Placeholder values; verify exact specs for your module. Uses the same Hailo DFC 'hailo8' profile family.",
+    "ram_limit_mb": 4096,
+    "runtime_overhead_mb": 256,
+    "perf": {
+      "tops_int8": 13,
+      "gops_int8_peak": 7800,
+      "efficiency_factor": 0.6,
+      "notes": "Placeholder scaling from Hailo-8. Actual performance depends on model + host integration."
+    },
+    "power": {
+      "typical_w": 2.0,
+      "notes": "Placeholder."
+    },
+    "compute": {
+      "ai_tops_int8_peak": 13,
+      "notes": "INT8 peak TOPS is a marketing figure; sustained throughput depends on network." 
+    },
+    "memory": {
+      "on_module_dram": null,
+      "on_chip_sram_mb": null,
+      "notes": "On-chip SRAM not modelled; use activation bytes only."
+    },
+    "io": {
+      "pcie": [
+        {
+          "gen": 3,
+          "lanes": 2
+        }
+      ],
+      "notes": "Many Hailo-8L modules expose PCIe Gen3 x1/x2 depending on carrier." 
+    },
+    "precision": {
+      "supported": [
+        "INT8"
+      ],
+      "mixed_precision": false,
+      "preferred_default": "INT8"
+    },
+    "sources": [
+      "https://community.hailo.ai/t/swap-hailo-8l-for-8/2503"
+    ],
+    "host_interface_ids": [
+      "pcie_gen3_x2"
+    ]
+  },
     {
       "id": "hailo_10h",
       "name": "Hailo-10H",

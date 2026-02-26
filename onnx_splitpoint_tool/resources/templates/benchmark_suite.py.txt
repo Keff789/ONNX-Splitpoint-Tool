@@ -114,15 +114,28 @@ def _linreg(x: List[float], y: List[float]) -> Tuple[float, float, float]:
 
     if len(x) != len(y) or len(x) < 2:
         return float("nan"), float("nan"), float("nan")
-    X = np.asarray(x, dtype=float)
-    Y = np.asarray(y, dtype=float)
+
+    X = np.asarray(x, dtype=np.float64).reshape(-1)
+    Y = np.asarray(y, dtype=np.float64).reshape(-1)
+    mask = np.isfinite(X) & np.isfinite(Y)
+    X = X[mask]
+    Y = Y[mask]
+
+    if X.size < 2:
+        return float("nan"), float("nan"), float("nan")
+
     A = np.vstack([X, np.ones_like(X)]).T
-    a, b = np.linalg.lstsq(A, Y, rcond=None)[0]
+    try:
+        a, b = np.linalg.lstsq(A, Y, rcond=None)[0]
+    except np.linalg.LinAlgError:
+        return float("nan"), float("nan"), float("nan")
+
     Yhat = a * X + b
-    ss_res = float(((Y - Yhat) ** 2).sum())
-    ss_tot = float(((Y - float(Y.mean())) ** 2).sum())
+    ss_res = float(np.sum((Y - Yhat) ** 2))
+    ss_tot = float(np.sum((Y - float(np.mean(Y))) ** 2))
     r2 = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else float("nan")
     return float(a), float(b), float(r2)
+
 
 
 def _fmt(x: Any, nd: int = 3) -> str:
@@ -433,15 +446,45 @@ def _write_summary_md(path: Path, rows: List[Dict[str, Any]], tag: str, objectiv
     obj = [(_objective_value(r, objective) or float("nan")) for r in rows]
     score = [float(r.get("score", r.get("score_pred", float("nan")))) for r in rows]
 
-    # compute model plausibility
-    flL = [float(r["flops_left"]) / 1e9 for r in rows]
-    flR = [float(r["flops_right"]) / 1e9 for r in rows]
-    t1 = [float(r["part1_mean_ms"]) for r in rows]
-    t2 = [float(r["part2_mean_ms"]) for r in rows]
-    rL = _pearson(flL, t1)
-    rR = _pearson(flR, t2)
-    aL, bL, r2L = _linreg(flL, t1)
-    aR, bR, r2R = _linreg(flR, t2)
+
+    # compute model plausibility (if FLOPs metadata is available)
+    def _sf(x):
+        try:
+            return float(x)
+        except Exception:
+            return float("nan")
+
+    flL = [_sf(r.get("flops_left")) / 1e9 for r in rows]
+    flR = [_sf(r.get("flops_right")) / 1e9 for r in rows]
+    t1 = [_sf(r.get("part1_mean_ms")) for r in rows]
+    t2 = [_sf(r.get("part2_mean_ms")) for r in rows]
+
+    def _finite_pairs(x: list[float], y: list[float]) -> tuple[list[float], list[float]]:
+        out_x: list[float] = []
+        out_y: list[float] = []
+        for a, b in zip(x, y):
+            if math.isfinite(a) and math.isfinite(b):
+                out_x.append(a)
+                out_y.append(b)
+        return out_x, out_y
+
+    flL_v, t1_v = _finite_pairs(flL, t1)
+    flR_v, t2_v = _finite_pairs(flR, t2)
+
+    if len(flL_v) >= 2:
+        rL = _pearson(flL_v, t1_v)
+        aL, bL, r2L = _linreg(flL_v, t1_v)
+    else:
+        rL = float("nan")
+        aL = bL = r2L = float("nan")
+
+    if len(flR_v) >= 2:
+        rR = _pearson(flR_v, t2_v)
+        aR, bR, r2R = _linreg(flR_v, t2_v)
+    else:
+        rR = float("nan")
+        aR = bR = r2R = float("nan")
+
 
     # ranking agreement (score vs objective time)
     import numpy as np  # type: ignore
@@ -503,14 +546,27 @@ def _write_summary_md(path: Path, rows: List[Dict[str, Any]], tag: str, objectiv
     path.write_text("".join(lines), encoding="utf-8")
 
 
-def _run_case(case_dir: Path, provider: str, image: str, preset: str, warmup: int, runs: int, timeout_s: Optional[int], case_meta: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+def _run_case(case_dir: Path, provider: str, image: str, preset: str, image_scale: str, warmup: int, runs: int, timeout_s: Optional[int], case_meta: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     # Each case contains run_split_onnxruntime.py
     runner = case_dir / "run_split_onnxruntime.py"
     if not runner.exists():
         print(f"[warn] missing runner: {runner}")
         return None
 
-    cmd = [sys.executable, str(runner), "--provider", provider, "--preset", preset, "--warmup", str(warmup), "--runs", str(runs), "--out-dir", f"results_{provider}"]
+    cmd = [
+        sys.executable,
+        str(runner),
+        "--provider",
+        provider,
+        "--image-scale",
+        image_scale,
+        "--warmup",
+        str(warmup),
+        "--runs",
+        str(runs),
+        "--out-dir",
+        f"results_{provider}",
+    ]
     if image and str(image).lower() != "default":
         cmd += ["--image", image]
     try:
@@ -653,6 +709,9 @@ def _run_case(case_dir: Path, provider: str, image: str, preset: str, warmup: in
     except Exception:
         pass
 
+    # Surface a few run parameters so downstream tables/CSV have them.
+    r.setdefault("provider", provider)
+    r.setdefault("image_scale", image_scale)
     return r
 
 
@@ -668,6 +727,12 @@ def main() -> int:
     parser.add_argument("--list-runs", action="store_true", help="List run ids from the plan and exit.")
     parser.add_argument("--image", default="default", help="Image path or 'default'.")
     parser.add_argument("--preset", default="auto", choices=["auto", "classification", "detection"], help="Output agreement preset.")
+    parser.add_argument(
+        "--image-scale",
+        default="auto",
+        choices=["auto", "norm", "raw", "imagenet", "clip"],
+        help="Input image scaling mode for the runner. In plan-mode, runs can override this via run.image_scale.",
+    )
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--runs", type=int, default=10)
     parser.add_argument("--timeout", type=int, default=None, help="Per-case timeout in seconds.")
@@ -726,7 +791,7 @@ def main() -> int:
         runs = runs_plan
     else:
         # Fallback: single provider run
-        runs = [{"id": f"ort_{args.provider}", "type": "onnxruntime", "provider": args.provider}]
+        runs = [{"id": f"ort_{args.provider}", "type": "onnxruntime", "provider": args.provider, "image_scale": args.image_scale}]
 
     # Execute each run.
     overall_rc = 0
@@ -750,11 +815,102 @@ def main() -> int:
                 rel = Path(str(case_dir_key))
                 case_dir = (root / rel).resolve()
                 print(f"\n[{run_id}] [{i+1}/{len(cases)}] Running {case_dir.name} (provider={provider})")
+
+                # Per-run image scaling (passed through to run_split_onnxruntime.py).
+                image_scale = str(run.get("image_scale") or getattr(args, "image_scale", "auto")).strip().lower()
+                if image_scale not in ("auto", "norm", "raw", "imagenet", "clip"):
+                    print(f"[warn] invalid image_scale={image_scale!r} in plan for run {run_id!r}; falling back to 'auto'")
+                    image_scale = "auto"
+
                 r = _run_case(
                     case_dir,
                     provider=provider,
                     image=args.image,
                     preset=args.preset,
+                    image_scale=image_scale,
+                    warmup=args.warmup,
+                    runs=args.runs,
+                    timeout_s=args.timeout,
+                    case_meta=c,
+                )
+                if r is not None:
+                    rows.append(r)
+
+            if not rows:
+                print(f"[warn] No results collected for run {run_id}")
+                overall_rc = max(overall_rc, 2)
+                continue
+
+            results_json = root / f"benchmark_results_{tag}.json"
+            _write_json(results_json, rows)
+            print(f"Wrote {results_json.name}")
+
+            if not args.no_csv:
+                results_csv = root / f"benchmark_results_{tag}.csv"
+                _write_results_csv(results_csv, rows)
+                print(f"Wrote {results_csv.name}")
+            # Summary outputs are best-effort: benchmarking should not fail if plotting/formatting fails.
+
+            # Summary (1 page)
+            summary_md = root / f"benchmark_summary_{tag}.md"
+            try:
+                _write_summary_md(summary_md, rows, tag=tag, objective=args.objective, topk=args.topk)
+                print(f"Wrote {summary_md.name}")
+            except Exception as e:
+                print(f"[warn] Failed to write {summary_md.name}: {e}")
+
+            # Paper-ready LaTeX table
+            table_tex = root / f"benchmark_table_{tag}.tex"
+            try:
+                _write_table_tex(table_tex, rows, tag=tag, objective=args.objective, topk=args.topk)
+                print(f"Wrote {table_tex.name}")
+            except Exception as e:
+                print(f"[warn] Failed to write {table_tex.name}: {e}")
+
+            # Paper-ready figures
+            fig_dir = root / f"paper_figures_{tag}"
+            try:
+                fig_files = _save_paper_figures(fig_dir, rows, tag=tag, objective=args.objective, topk=args.topk)
+                if fig_files:
+                    print(f"Wrote {len(fig_files)} figure files to {fig_dir.name}/")
+                else:
+                    if not HAVE_PLOT:
+                        print("[info] matplotlib not available; skipping figure export")
+                    else:
+                        print("[info] no figures exported (no rows?)")
+            except Exception as e:
+                print(f"[warn] Failed to generate figures in {fig_dir.name}/: {e}")
+
+        elif rtype in {"hailo"}:
+            # Hailo benchmark: reuse the per-case runner script, but select a provider tag
+            # that the runner interprets as a Hailo backend (e.g. "hailo8", "hailo8l",
+            # "hailo10h").
+            hw_arch = str(run.get("hw_arch") or run.get("arch") or run_id or "").strip()
+            provider_tag = hw_arch or "hailo"
+
+            tag = f"{run_id}_{args.preset}"
+            rows: List[Dict[str, Any]] = []
+            for i, c in enumerate(cases):
+                b = c.get("boundary")
+                case_dir_key = c.get("case_dir") or c.get("folder")
+                if case_dir_key is None:
+                    case_dir_key = f"b{int(b):03d}" if b is not None else "case"
+                rel = Path(str(case_dir_key))
+                case_dir = (root / rel).resolve()
+                print(f"\n[{run_id}] [{i+1}/{len(cases)}] Running {case_dir.name} (provider={provider_tag})")
+
+                # Per-run image scaling (passed through to run_split_onnxruntime.py).
+                image_scale = str(run.get("image_scale") or getattr(args, "image_scale", "auto")).strip().lower()
+                if image_scale not in ("auto", "norm", "raw", "imagenet", "clip"):
+                    print(f"[warn] invalid image_scale={image_scale!r} in plan for run {run_id!r}; falling back to 'auto'")
+                    image_scale = "auto"
+
+                r = _run_case(
+                    case_dir,
+                    provider=provider_tag,
+                    image=args.image,
+                    preset=args.preset,
+                    image_scale=image_scale,
                     warmup=args.warmup,
                     runs=args.runs,
                     timeout_s=args.timeout,
@@ -777,33 +933,33 @@ def main() -> int:
                 _write_results_csv(results_csv, rows)
                 print(f"Wrote {results_csv.name}")
 
-            # Summary (1 page)
+            # Summary outputs are best-effort: benchmarking should not fail if plotting/formatting fails.
             summary_md = root / f"benchmark_summary_{tag}.md"
-            _write_summary_md(summary_md, rows, tag=tag, objective=args.objective, topk=args.topk)
-            print(f"Wrote {summary_md.name}")
+            try:
+                _write_summary_md(summary_md, rows, tag=tag, objective=args.objective, topk=args.topk)
+                print(f"Wrote {summary_md.name}")
+            except Exception as e:
+                print(f"[warn] Failed to write {summary_md.name}: {e}")
 
-            # Paper-ready LaTeX table
             table_tex = root / f"benchmark_table_{tag}.tex"
-            _write_table_tex(table_tex, rows, tag=tag, objective=args.objective, topk=args.topk)
-            print(f"Wrote {table_tex.name}")
+            try:
+                _write_table_tex(table_tex, rows, tag=tag, objective=args.objective, topk=args.topk)
+                print(f"Wrote {table_tex.name}")
+            except Exception as e:
+                print(f"[warn] Failed to write {table_tex.name}: {e}")
 
-            # Paper-ready figures
             fig_dir = root / f"paper_figures_{tag}"
-            fig_files = _save_paper_figures(fig_dir, rows, tag=tag, objective=args.objective, topk=args.topk)
-            if fig_files:
-                print(f"Wrote {len(fig_files)} figure files to {fig_dir.name}/")
-            else:
-                if not HAVE_PLOT:
-                    print("[info] matplotlib not available; skipping figure export")
+            try:
+                fig_files = _save_paper_figures(fig_dir, rows, tag=tag, objective=args.objective, topk=args.topk)
+                if fig_files:
+                    print(f"Wrote {len(fig_files)} figure files to {fig_dir.name}/")
                 else:
-                    print("[info] no figures exported (no rows?)")
-
-        elif rtype in {"hailo"}:
-            # Placeholder: integrate a Hailo runner once HailoRT benchmarking is wired.
-            hw_arch = str(run.get("hw_arch") or run.get("arch") or "").strip()
-            print(f"[info] Run '{run_id}' requests Hailo ({hw_arch}). Hailo benchmark runner is not yet integrated in this harness.")
-            overall_rc = max(overall_rc, 0)
-            continue
+                    if not HAVE_PLOT:
+                        print("[info] matplotlib not available; skipping figure export")
+                    else:
+                        print("[info] no figures exported (no rows?)")
+            except Exception as e:
+                print(f"[warn] Failed to generate figures in {fig_dir.name}/: {e}")
         else:
             print(f"[warn] Unknown run type '{rtype}' for run {run_id}; skipping")
             continue

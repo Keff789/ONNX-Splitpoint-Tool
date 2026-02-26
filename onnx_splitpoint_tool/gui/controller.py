@@ -41,6 +41,15 @@ def write_benchmark_suite_script(dst_dir: str | Path, *, bench_json_name: str = 
     template = load_template_text("benchmark_suite.py.txt")
     script = template.replace("__BENCH_JSON__", bench_json_name)
 
+    # Only rewrite the script if the content actually changed. This keeps
+    # bundle caching effective (mtime stays stable on no-op updates).
+    if script_path.exists():
+        try:
+            if script_path.read_text(encoding="utf-8") == script:
+                return str(script_path)
+        except Exception:
+            pass
+
     script_path.write_text(script, encoding="utf-8")
     try:
         # Make executable on POSIX; harmless on Windows.

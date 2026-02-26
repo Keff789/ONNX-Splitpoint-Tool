@@ -1385,23 +1385,43 @@ def save_model(model: onnx.ModelProto, path: str, *, external_data: bool = False
 
 
 def model_external_data_locations(model: onnx.ModelProto) -> List[str]:
-    """Return a sorted list of external-data `location` strings used by initializers.
+    """Return a sorted list of external-data `location` strings referenced by the model.
 
-    Many large models (e.g. LLMs) store weights in an external *.data file. In that case
-    initializers have `data_location=EXTERNAL` and the actual payload is referenced via
-    `TensorProto.external_data` entries.
+    External data can appear in two common places:
+      1) graph.initializer tensors (most common)
+      2) Constant node tensor attributes (less common but valid)
+
+    Some exporters also forget to set `data_location=EXTERNAL` but still populate
+    `TensorProto.external_data`. We therefore scan for `external_data.location` first and
+    do not rely solely on `data_location`.
     """
+
     locs: Set[str] = set()
-    for init in model.graph.initializer:
-        if int(getattr(init, "data_location", 0)) != int(TensorProto.EXTERNAL):
-            continue
-        loc: Optional[str] = None
-        for kv in init.external_data:
-            if kv.key == "location":
-                loc = kv.value
-                break
-        if loc:
-            locs.add(loc)
+
+    def _scan_tensor(t: Optional[onnx.TensorProto]) -> None:
+        if t is None:
+            return
+        ext = getattr(t, "external_data", None)
+        if not ext:
+            return
+        for kv in ext:
+            if getattr(kv, "key", None) == "location" and getattr(kv, "value", None):
+                locs.add(kv.value)
+
+    # 1) Initializers
+    for init in getattr(model.graph, "initializer", []):
+        if int(getattr(init, "data_location", 0)) == int(TensorProto.EXTERNAL) or getattr(init, "external_data", None):
+            _scan_tensor(init)
+
+    # 2) Constant tensors stored in node attributes
+    for node in getattr(model.graph, "node", []):
+        for attr in getattr(node, "attribute", []):
+            if getattr(attr, "type", None) == onnx.AttributeProto.TENSOR:
+                _scan_tensor(getattr(attr, "t", None))
+            elif getattr(attr, "type", None) == onnx.AttributeProto.TENSORS:
+                for t in getattr(attr, "tensors", []):
+                    _scan_tensor(t)
+
     return sorted(locs)
 
 

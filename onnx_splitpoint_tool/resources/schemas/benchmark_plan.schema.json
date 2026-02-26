@@ -48,6 +48,16 @@
               "tensorrt"
             ]
           },
+          "image_scale": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "norm",
+              "raw",
+              "imagenet",
+              "clip"
+            ]
+          },
           "hw_arch": {
             "type": "string"
           },
