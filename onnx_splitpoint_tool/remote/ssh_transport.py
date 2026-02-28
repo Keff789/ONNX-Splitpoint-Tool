@@ -282,7 +282,10 @@ class SSHTransport:
                     proc.terminate()
                     break
 
-                if timeout is not None and (time.time() - t0) > timeout:
+                # `start` tracks elapsed time for this streaming call.
+                # (Bugfix) A previous refactor accidentally referenced `t0` here, which
+                # caused remote benchmark runs to fail with: "name 't0' is not defined".
+                if timeout is not None and (time.time() - start) > timeout:
                     on_line(f"[remote] timeout ({timeout}s) exceeded; terminating…")
                     proc.terminate()
                     break

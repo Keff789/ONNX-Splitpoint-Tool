@@ -1742,6 +1742,7 @@ def _load_image_as_nchw(
     target_hw: Tuple[int, int],
     dtype: np.dtype,
     scale: str,
+    letterbox: bool = False,
 ) -> Optional[np.ndarray]:
     if Image is None:
         print("[warn] PIL not available -> cannot load image input; using random inputs.")
@@ -1753,8 +1754,48 @@ def _load_image_as_nchw(
         return None
 
     w, h = target_hw[1], target_hw[0]
+
+    # For classification-like preprocessing, prefer resize-short-side + center-crop
+    # to avoid aspect-ratio distortion.
     try:
-        img_rs = img.resize((w, h))
+        if letterbox:
+            # Letterbox resize (preserve aspect ratio with padding). Used for
+            # YOLO-family detectors to keep box scaling correct on non-square
+            # images.
+            ow, oh = img.size
+            if ow <= 0 or oh <= 0:
+                img_rs = img.resize((w, h))
+            else:
+                gain = min(w / float(ow), h / float(oh))
+                new_w = int(round(ow * gain))
+                new_h = int(round(oh * gain))
+                img_resized = img.resize((new_w, new_h), resample=Image.BILINEAR)
+                canvas = Image.new("RGB", (w, h), (114, 114, 114))
+                pad_left = (w - new_w) // 2
+                pad_top = (h - new_h) // 2
+                canvas.paste(img_resized, (pad_left, pad_top))
+                img_rs = canvas
+        elif scale in ("imagenet", "clip"):
+            ow, oh = img.size
+            # Standard ImageNet-style: resize short side to 256 for 224x224 crops.
+            # Generalize for other target sizes.
+            short_side = int(round(min(h, w) / 224.0 * 256.0))
+            short_side = max(short_side, min(h, w))
+            if ow <= 0 or oh <= 0:
+                img_rs = img.resize((w, h))
+            else:
+                if ow < oh:
+                    new_w = short_side
+                    new_h = int(round(oh * (short_side / float(ow))))
+                else:
+                    new_h = short_side
+                    new_w = int(round(ow * (short_side / float(oh))))
+                img_tmp = img.resize((new_w, new_h))
+                left = max(0, (new_w - w) // 2)
+                top = max(0, (new_h - h) // 2)
+                img_rs = img_tmp.crop((left, top, left + w, top + h))
+        else:
+            img_rs = img.resize((w, h))
     except Exception:
         img_rs = img
 
@@ -2049,7 +2090,7 @@ def _select_validation_mode(user_mode: str, provider: str, output_format: str) -
     if m == "auto":
         if provider == "tensorrt":
             mode = "proxy_detections"
-        elif output_format == "bn6_detections":
+        elif output_format in ("bn6_detections", "ultralytics_regcls"):
             mode = "proxy_detections"
         else:
             mode = "strict_elementwise"
@@ -2061,7 +2102,7 @@ def _select_validation_mode(user_mode: str, provider: str, output_format: str) -
         return _select_validation_mode("auto", provider, output_format)
 
     # If proxy is requested but we don't know how to decode detections, fallback.
-    if mode == "proxy_detections" and output_format not in ("multiscale_head", "bn6_detections"):
+    if mode == "proxy_detections" and output_format not in ("multiscale_head", "ultralytics_regcls", "bn6_detections"):
         warnings.append("proxy_validation_unavailable_output_format")
         if provider == "tensorrt" and m == "auto":
             mode = "off"
@@ -2180,6 +2221,20 @@ def _extract_detections_for_proxy(
             # YOLOv7-style multiscale head
             dets = _decode_yolo(
                 outs=outputs,
+                output_names=output_names,
+                img_hw=img_hw,
+                conf_thr=float(yolo_conf),
+                iou_thr=float(yolo_iou),
+                max_det=int(yolo_max_det),
+                labels=labels,
+            )
+            return dets, warnings
+
+        if output_format == "ultralytics_regcls":
+            # Ultralytics YOLOv8/9/10/11-style split reg/cls heads
+            dets = _decode_yolo(
+                outs=outputs,
+                output_names=output_names,
                 img_hw=img_hw,
                 conf_thr=float(yolo_conf),
                 iou_thr=float(yolo_iou),
@@ -2300,9 +2355,216 @@ def _decode_yolo(
     conf_thr: float,
     iou_thr: float,
     max_det: int,
-) -> List[dict]:
-    # outs: list of 3 arrays, each (B,3,H,W,5+nc)
+    labels: Optional[List[str]] = None,
+    output_names: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """Decode common YOLO ONNX output formats into a unified detection list.
+
+    Supported (best effort):
+      - YOLOv5/v7-style multiscale head: [B,3,H,W,5+nc] per level
+      - Ultralytics YOLOv8/9/10/11-style split heads: reg{n}, cls{n} per level
+    """
     H_img, W_img = img_hw
+
+    # ---- Ultralytics split reg/cls heads (YOLOv8/9/10/11 exports) ----
+    # Example output_names: [reg1, cls1, reg2, cls2, reg3, cls3]
+    if output_names is not None and _is_yolo_ultralytics_regcls(outs, output_names):
+
+        def _sigmoid_local(x: np.ndarray) -> np.ndarray:
+            """Numerically stable sigmoid.
+
+            Avoids RuntimeWarning: overflow encountered in exp for large |x|.
+            """
+            x = x.astype(np.float32, copy=False)
+            out = np.empty_like(x, dtype=np.float32)
+            pos = x >= 0
+            # For positive x: exp(-x) is safe
+            out[pos] = 1.0 / (1.0 + np.exp(-x[pos]))
+            # For negative x: exp(x) is safe
+            expx = np.exp(x[~pos])
+            out[~pos] = expx / (1.0 + expx)
+            return out
+
+        def _to_nchw_any(t: np.ndarray, expected_hw: Optional[Tuple[int, int]] = None) -> Tuple[np.ndarray, int]:
+            a = np.asarray(t)
+            if a.ndim == 4:
+                # Candidate 1: NCHW
+                h1, w1 = int(a.shape[2]), int(a.shape[3])
+                ok1 = h1 > 1 and w1 > 1 and (H_img % h1 == 0) and (W_img % w1 == 0)
+                # Candidate 2: NHWC
+                h2, w2 = int(a.shape[1]), int(a.shape[2])
+                ok2 = h2 > 1 and w2 > 1 and (H_img % h2 == 0) and (W_img % w2 == 0)
+                if expected_hw is not None:
+                    ok1 = ok1 and (h1, w1) == expected_hw
+                    ok2 = ok2 and (h2, w2) == expected_hw
+
+                if ok1 and not ok2:
+                    return a.astype(np.float32, copy=False), max(1, W_img // w1)
+                if ok2 and not ok1:
+                    return np.transpose(a, (0, 3, 1, 2)).astype(np.float32, copy=False), max(1, W_img // w2)
+                if ok1 and ok2:
+                    # Ambiguous: both NCHW and NHWC look plausible.
+                    #
+                    # This happens frequently for YOLO heads because both C and H can be divisors
+                    # of the input (e.g. reg head [1,64,40,40] can be misread as NHWC -> H=64,W=40).
+                    # The previous heuristic ("prefer smaller channel dim") fails here and causes
+                    # shape mismatches later (boolean mask length != boxes length).
+                    #
+                    # Prefer the layout whose *spatial* aspect ratio matches the input image.
+                    in_ar = float(H_img) / float(W_img)
+                    ar1 = float(h1) / float(w1)
+                    ar2 = float(h2) / float(w2)
+                    d1 = abs(ar1 - in_ar)
+                    d2 = abs(ar2 - in_ar)
+
+                    if d1 + 1e-6 < d2:
+                        return a.astype(np.float32, copy=False), max(1, W_img // w1)
+                    if d2 + 1e-6 < d1:
+                        return np.transpose(a, (0, 3, 1, 2)).astype(np.float32, copy=False), max(1, W_img // w2)
+
+                    # Still ambiguous: prefer the *larger* channel dim as "channels".
+                    c_nchw = int(a.shape[1])
+                    c_nhwc = int(a.shape[3])
+                    if c_nchw >= c_nhwc:
+                        return a.astype(np.float32, copy=False), max(1, W_img // w1)
+                    return np.transpose(a, (0, 3, 1, 2)).astype(np.float32, copy=False), max(1, W_img // w2)
+
+                # Fallback: assume NCHW
+                return a.astype(np.float32, copy=False), max(1, W_img // int(a.shape[-1]))
+
+            if a.ndim == 3:
+                b, d1, d2 = a.shape
+
+                def _sqrt_int(n: int) -> Optional[int]:
+                    r = int(round(n ** 0.5))
+                    if r > 0 and r * r == n:
+                        return r
+                    return None
+
+                # Candidate A: (B, C, HW)
+                hw_a = _sqrt_int(int(d2))
+                ok_a = hw_a is not None and (H_img % hw_a == 0) and (W_img % hw_a == 0)
+                if expected_hw is not None:
+                    ok_a = ok_a and (hw_a, hw_a) == expected_hw
+
+                # Candidate B: (B, HW, C)
+                hw_b = _sqrt_int(int(d1))
+                ok_b = hw_b is not None and (H_img % hw_b == 0) and (W_img % hw_b == 0)
+                if expected_hw is not None:
+                    ok_b = ok_b and (hw_b, hw_b) == expected_hw
+
+                if ok_a and not ok_b:
+                    return a.reshape(b, d1, hw_a, hw_a).astype(np.float32, copy=False), max(1, W_img // hw_a)
+                if ok_b and not ok_a:
+                    return np.transpose(a, (0, 2, 1)).reshape(b, d2, hw_b, hw_b).astype(np.float32, copy=False), max(1, W_img // hw_b)
+                if ok_a and ok_b:
+                    if d1 <= d2:
+                        return a.reshape(b, d1, hw_a, hw_a).astype(np.float32, copy=False), max(1, W_img // hw_a)
+                    return np.transpose(a, (0, 2, 1)).reshape(b, d2, hw_b, hw_b).astype(np.float32, copy=False), max(1, W_img // hw_b)
+
+            raise ValueError(f"Unsupported tensor rank: {a.ndim}")
+
+        pairs = _get_yolo_ultralytics_regcls_pairs(output_names, outs)
+        raw: List[Dict[str, Any]] = []
+        for _lvl, reg_i, cls_i in pairs:
+            try:
+                reg_nchw, stride = _to_nchw_any(outs[reg_i])
+                h, w = int(reg_nchw.shape[2]), int(reg_nchw.shape[3])
+                cls_nchw, _ = _to_nchw_any(outs[cls_i], expected_hw=(h, w))
+            except Exception:
+                continue
+
+            if reg_nchw.shape[0] != 1 or cls_nchw.shape[0] != 1:
+                continue
+            reg_ch = int(reg_nchw.shape[1])
+            if reg_ch % 4 != 0:
+                continue
+            reg_max = reg_ch // 4
+
+            # Distances (ltrb)
+            if reg_max > 1:
+                x = reg_nchw.reshape(1, 4, reg_max, h, w)
+                x = x - np.max(x, axis=2, keepdims=True)
+                exp = np.exp(x)
+                prob = exp / np.sum(exp, axis=2, keepdims=True)
+                bins = np.arange(reg_max, dtype=np.float32).reshape(1, 1, reg_max, 1, 1)
+                dist = np.sum(prob * bins, axis=2) * float(stride)
+            else:
+                dist = np.maximum(reg_nchw.reshape(1, 4, h, w), 0.0) * float(stride)
+
+            gy, gx = np.meshgrid(np.arange(h), np.arange(w), indexing="ij")
+            cx = (gx.astype(np.float32) + 0.5) * float(stride)
+            cy = (gy.astype(np.float32) + 0.5) * float(stride)
+
+            l = dist[0, 0]
+            t = dist[0, 1]
+            r = dist[0, 2]
+            btm = dist[0, 3]
+            x1 = cx - l
+            y1 = cy - t
+            x2 = cx + r
+            y2 = cy + btm
+            boxes = np.stack([x1, y1, x2, y2], axis=-1).reshape(-1, 4)
+            boxes[:, 0] = np.clip(boxes[:, 0], 0.0, float(W_img))
+            boxes[:, 2] = np.clip(boxes[:, 2], 0.0, float(W_img))
+            boxes[:, 1] = np.clip(boxes[:, 1], 0.0, float(H_img))
+            boxes[:, 3] = np.clip(boxes[:, 3], 0.0, float(H_img))
+
+            cls_prob = _sigmoid_local(cls_nchw)[0]  # [C,h,w]
+            best_cls = np.argmax(cls_prob, axis=0).reshape(-1)
+            best_score = np.max(cls_prob, axis=0).reshape(-1)
+            keep = best_score >= float(conf_thr)
+            if not np.any(keep):
+                continue
+
+            for box, cls_id, sc in zip(boxes[keep], best_cls[keep], best_score[keep]):
+                x1, y1, x2, y2 = box.tolist()
+                raw.append(
+                    {
+                        "x1": float(x1),
+                        "y1": float(y1),
+                        "x2": float(x2),
+                        "y2": float(y2),
+                        "score": float(sc),
+                        "class_id": int(cls_id),
+                    }
+                )
+
+        if not raw:
+            return []
+
+        boxes_np = np.array([[d["x1"], d["y1"], d["x2"], d["y2"]] for d in raw], dtype=np.float32)
+        scores_np = np.array([d["score"] for d in raw], dtype=np.float32)
+        if boxes_np.shape[0] > 3000:
+            top = np.argsort(scores_np)[::-1][:3000]
+            boxes_np = boxes_np[top]
+            scores_np = scores_np[top]
+            raw = [raw[i] for i in top.tolist()]
+
+        keep_idx = _nms(boxes_np, scores_np, iou_thr=float(iou_thr), max_det=int(max_det))
+        out: List[Dict[str, Any]] = []
+        for i in keep_idx:
+            d = raw[int(i)]
+            cls_id = int(d["class_id"])
+            if labels and 0 <= cls_id < len(labels):
+                class_name = labels[cls_id]
+            elif 0 <= cls_id < len(_COCO80):
+                class_name = _COCO80[cls_id]
+            else:
+                class_name = str(cls_id)
+            out.append(
+                {
+                    "x1": float(d["x1"]),
+                    "y1": float(d["y1"]),
+                    "x2": float(d["x2"]),
+                    "y2": float(d["y2"]),
+                    "score": float(d["score"]),
+                    "cls": cls_id,
+                    "class_name": class_name,
+                }
+            )
+        return out
+
     # Sort by grid size desc to match anchor groups
     outs_sorted = sorted(outs, key=lambda a: int(a.shape[2]) * int(a.shape[3]), reverse=True)
 
@@ -2378,6 +2640,12 @@ def _decode_yolo(
     dets = []
     for i in keep:
         c = int(cls_ids[i])
+        if labels and 0 <= c < len(labels):
+            name = labels[c]
+        elif 0 <= c < len(_COCO80):
+            name = _COCO80[c]
+        else:
+            name = str(c)
         dets.append(
             {
                 "x1": float(boxes[i, 0]),
@@ -2386,13 +2654,20 @@ def _decode_yolo(
                 "y2": float(boxes[i, 3]),
                 "score": float(scores[i]),
                 "class_id": c,
-                "class_name": _COCO80[c] if 0 <= c < len(_COCO80) else str(c),
+                "class_name": name,
             }
         )
     return dets
 
 
-def _yolo_plausibility(outputs: Sequence[np.ndarray], img_hw: Tuple[int, int], conf_thr: float, iou_thr: float, max_det: int) -> Tuple[int, float]:
+def _yolo_plausibility(
+    outputs: Sequence[np.ndarray],
+    output_names: List[str],
+    img_hw: Tuple[int, int],
+    conf_thr: float,
+    iou_thr: float,
+    max_det: int,
+) -> Tuple[int, float]:
     """Heuristic plausibility for YOLO outputs.
 
     Used only for *auto* image scaling (norm vs raw). This must never crash.
@@ -2404,7 +2679,14 @@ def _yolo_plausibility(outputs: Sequence[np.ndarray], img_hw: Tuple[int, int], c
     """
 
     try:
-        dets = _decode_yolo(outputs, img_hw=img_hw, conf_thr=conf_thr, iou_thr=iou_thr, max_det=max_det)
+        dets = _decode_yolo(
+            list(outputs),
+            output_names=output_names,
+            img_hw=img_hw,
+            conf_thr=conf_thr,
+            iou_thr=iou_thr,
+            max_det=max_det,
+        )
 
         # Some forks might return numpy arrays or tuples instead of dicts.
         scores: List[float] = []
@@ -2532,13 +2814,38 @@ def _maybe_yolo_viz(
     if img_path is None or img_hw is None:
         print("[viz] no image input -> skipping YOLO visualization")
         return info
-    if not _is_yolo_multiscale(full_out) or not _is_yolo_multiscale(comp_out):
+    is_ms = _is_yolo_multiscale(full_out) and _is_yolo_multiscale(comp_out)
+    is_ultra = False
+    if output_names is not None:
+        is_ultra = _is_yolo_ultralytics_regcls(full_out, output_names) and _is_yolo_ultralytics_regcls(comp_out, output_names)
+
+    if not (is_ms or is_ultra):
         return info
 
-    info["output_format"] = "multiscale_head"
-    print("[viz] YOLO output format: multiscale head (B,3,H,W,...)")
-    dets_full = _decode_yolo(full_out, img_hw=img_hw, conf_thr=conf_thr, iou_thr=iou_thr, max_det=max_det)
-    dets_comp = _decode_yolo(comp_out, img_hw=img_hw, conf_thr=conf_thr, iou_thr=iou_thr, max_det=max_det)
+    info["output_format"] = "ultralytics_regcls" if is_ultra else "multiscale_head"
+    if is_ultra:
+        print("[viz] YOLO output format: Ultralytics split reg/cls heads")
+    else:
+        print("[viz] YOLO output format: multiscale head (B,3,H,W,...)")
+
+    dets_full = _decode_yolo(
+        full_out,
+        output_names=output_names,
+        img_hw=img_hw,
+        conf_thr=conf_thr,
+        iou_thr=iou_thr,
+        max_det=max_det,
+        labels=labels,
+    )
+    dets_comp = _decode_yolo(
+        comp_out,
+        output_names=output_names,
+        img_hw=img_hw,
+        conf_thr=conf_thr,
+        iou_thr=iou_thr,
+        max_det=max_det,
+        labels=labels,
+    )
 
     p_json_full = out_dir / "detections_full.json"
     p_json_comp = out_dir / "detections_composed.json"
@@ -2612,11 +2919,223 @@ def _is_bn6_detections(outputs: List[np.ndarray]) -> bool:
     return False
 
 
+def _try_parse_suffix_int(name: str) -> Optional[int]:
+    """Extract trailing integer from a string (e.g. 'reg1' -> 1).
+
+    Returns None if no trailing digits exist.
+    """
+
+    # Keep only basename-ish part to be robust against scopes like "/foo/bar/reg1".
+    base = name.strip().split("/")[-1].split(":")[-1]
+    i = len(base) - 1
+    while i >= 0 and base[i].isdigit():
+        i -= 1
+    if i == len(base) - 1:
+        return None
+    try:
+        return int(base[i + 1 :])
+    except Exception:
+        return None
+
+
+def _get_yolo_ultralytics_regcls_pairs(
+    output_names: List[str],
+    outputs: List[np.ndarray],
+) -> List[Tuple[int, int, int]]:
+    """Detect Ultralytics-style YOLO head outputs split into reg/cls per scale.
+
+    Typical example (YOLOv8/9/10/11 exports):
+      outputs: [reg1, cls1, reg2, cls2, reg3, cls3]
+    where each reg/cls tensor is 3D or 4D and encodes one pyramid level.
+
+    Returns list of tuples: (level_idx, reg_out_idx, cls_out_idx), sorted by level_idx.
+    """
+
+    # We prefer semantic output names ("reg1/cls1" ...), but some exports use
+    # generic names ("output0" ...). In those cases we fall back to shape
+    # heuristics.
+    names_ok = bool(output_names) and (len(output_names) == len(outputs))
+
+    pairs: List[Tuple[int, int, int]] = []
+
+    # --- 1) Name-based pairing (preferred) ---
+    if names_ok:
+        reg_map: Dict[int, int] = {}
+        cls_map: Dict[int, int] = {}
+        for i, n in enumerate(output_names):
+            base = n.strip().split("/")[-1].split(":")[-1]
+            low = base.lower()
+            if low.startswith("reg"):
+                k = _try_parse_suffix_int(low)
+                if k is not None:
+                    reg_map[k] = i
+            elif low.startswith("cls"):
+                k = _try_parse_suffix_int(low)
+                if k is not None:
+                    cls_map[k] = i
+
+        common = sorted(set(reg_map.keys()) & set(cls_map.keys()))
+        if len(common) >= 2:
+            for k in common:
+                ri = reg_map[k]
+                ci = cls_map[k]
+                r = outputs[ri]
+                c = outputs[ci]
+                if not (isinstance(r, np.ndarray) and isinstance(c, np.ndarray)):
+                    continue
+                if r.ndim not in (3, 4):
+                    continue
+                if c.ndim not in (3, 4):
+                    continue
+                pairs.append((k, ri, ci))
+
+    # If we found a reasonable set of pairs, return it.
+    if len(pairs) >= 2:
+        return pairs
+
+    # --- 2) Shape-based fallback ---
+    # Try to infer reg/cls tensors by:
+    #   - grouping outputs by inferred channel count
+    #   - taking the 2 most frequent channel counts
+    #   - pairing tensors that share the same spatial signature (H*W or HW)
+    # This is robust for exports that name outputs "output0..".
+
+    def _infer_ch_sp(x: np.ndarray) -> Tuple[Optional[int], Optional[int]]:
+        """Infer (channels, spatial_signature) from a 3D/4D tensor.
+
+        spatial_signature is H*W (4D) or HW (3D); it is used only to match levels.
+        """
+        try:
+            shp = tuple(int(s) for s in x.shape)
+        except Exception:
+            return None, None
+
+        if x.ndim == 4 and len(shp) == 4:
+            # (B,C,H,W) or (B,H,W,C)
+            d1, d2, d3 = shp[1], shp[2], shp[3]
+            if d1 <= 512 and d2 > 1 and d3 > 1:
+                return d1, d2 * d3
+            if d3 <= 512 and d1 > 1 and d2 > 1:
+                return d3, d1 * d2
+            # Ambiguous: choose smaller of d1/d3 as channels
+            if d1 <= d3:
+                return d1, d2 * d3
+            return d3, d1 * d2
+
+        if x.ndim == 3 and len(shp) == 3:
+            # (B,C,HW) or (B,HW,C)
+            d1, d2 = shp[1], shp[2]
+            if d1 <= 512 and d2 > d1:
+                return d1, d2
+            if d2 <= 512 and d1 > d2:
+                return d2, d1
+            return (d1, d2) if d1 <= d2 else (d2, d1)
+
+        return None, None
+
+    descs: List[Tuple[int, int, int]] = []  # (out_idx, ch, sp)
+    for i, out in enumerate(outputs):
+        if not isinstance(out, np.ndarray):
+            continue
+        if out.ndim not in (3, 4):
+            continue
+        ch, sp = _infer_ch_sp(out)
+        if ch is None or sp is None:
+            continue
+        descs.append((int(i), int(ch), int(sp)))
+
+    if len(descs) < 4:
+        return []
+
+    by_ch: Dict[int, List[Tuple[int, int]]] = {}
+    for out_idx, ch, sp in descs:
+        by_ch.setdefault(ch, []).append((out_idx, sp))
+
+    if len(by_ch) < 2:
+        return []
+
+    ch_sorted = sorted(by_ch.keys(), key=lambda c: len(by_ch[c]), reverse=True)
+    ch_a, ch_b = ch_sorted[0], ch_sorted[1]
+
+    def _sp_map(ch: int) -> Dict[int, List[int]]:
+        m: Dict[int, List[int]] = {}
+        for out_idx, sp in by_ch.get(ch, []):
+            m.setdefault(sp, []).append(out_idx)
+        return m
+
+    sp_a = _sp_map(ch_a)
+    sp_b = _sp_map(ch_b)
+    common_sp = sorted(set(sp_a.keys()) & set(sp_b.keys()), reverse=True)
+    if len(common_sp) < 2:
+        return []
+
+    def _reg_score(ch: int) -> int:
+        if ch % 4 != 0:
+            return -1
+        reg_max = ch // 4
+        if reg_max < 4 or reg_max > 64:
+            return 0
+        bonus = 0
+        if reg_max in (8, 16, 24, 32):
+            bonus += 2
+        if reg_max in (12, 20):
+            bonus += 1
+        return 1 + bonus
+
+    reg_ch, cls_ch = ch_a, ch_b
+    if _reg_score(ch_b) > _reg_score(ch_a):
+        reg_ch, cls_ch = ch_b, ch_a
+    elif _reg_score(ch_a) == _reg_score(ch_b):
+        if ch_b < ch_a:
+            reg_ch, cls_ch = ch_b, ch_a
+
+    sp_reg = _sp_map(reg_ch)
+    sp_cls = _sp_map(cls_ch)
+    pairs_fb: List[Tuple[int, int, int]] = []
+
+    for level_idx, sp in enumerate(common_sp[:3], start=1):
+        r_list = sp_reg.get(sp, [])
+        c_list = sp_cls.get(sp, [])
+        if len(r_list) != 1 or len(c_list) != 1:
+            continue
+        pairs_fb.append((int(level_idx), int(r_list[0]), int(c_list[0])))
+
+    if len(pairs_fb) >= 2:
+        return pairs_fb
+
+    return []
+
+
+def _is_yolo_ultralytics_regcls(outputs: List[np.ndarray], output_names: List[str]) -> bool:
+    pairs = _get_yolo_ultralytics_regcls_pairs(output_names, outputs)
+    if len(pairs) < 2:
+        return False
+    # Quick sanity: at least one reg tensor should have channels divisible by 4 (DFL or ltrb)
+    for _, ri, _ci in pairs:
+        r = outputs[ri]
+        # Infer channels-ish dimension in a weak way
+        if r.ndim == 4:
+            # NCHW or NHWC; channel is either dim 1 or dim -1
+            if r.shape[1] >= 4 and r.shape[1] % 4 == 0:
+                return True
+            if r.shape[-1] >= 4 and r.shape[-1] % 4 == 0:
+                return True
+        elif r.ndim == 3:
+            # (B,C,HW) or (B,HW,C)
+            if r.shape[1] >= 4 and r.shape[1] % 4 == 0:
+                return True
+            if r.shape[-1] >= 4 and r.shape[-1] % 4 == 0:
+                return True
+    return False
+
+
 def _detect_output_format(output_names: List[str], outputs: List[np.ndarray]) -> str:
     # Keep this super defensive — it must never crash.
     try:
         if _is_yolo_multiscale(outputs):
             return "multiscale_head"
+        if _is_yolo_ultralytics_regcls(outputs, output_names):
+            return "ultralytics_regcls"
         if _is_bn6_detections(outputs):
             return "bn6_detections"
         return "unknown"
@@ -3530,25 +4049,35 @@ def main() -> int:
                 W = int(shp[3]) if shp[3] else int(default_hw)
                 img_hw = (H, W)
                 img_path = p_img
-                if args.image_scale == "auto":
-                    img_candidates = {
-                        "raw": _load_image_as_nchw(p_img, target_hw=img_hw, dtype=dtype, scale="raw"),
-                        "norm": _load_image_as_nchw(p_img, target_hw=img_hw, dtype=dtype, scale="norm"),
-                        "imagenet": _load_image_as_nchw(p_img, target_hw=img_hw, dtype=dtype, scale="imagenet"),
-                        "clip": _load_image_as_nchw(p_img, target_hw=img_hw, dtype=dtype, scale="clip"),
-                        "name": vi.name,
-                    }
-                    # default to norm
-                    if img_candidates.get("norm") is not None:
-                        feeds_full[vi.name] = img_candidates["norm"]
-                        missing.remove(vi.name)
-                else:
-                    arr = _load_image_as_nchw(p_img, target_hw=img_hw, dtype=dtype, scale=args.image_scale)
-                    if arr is not None:
-                        feeds_full[vi.name] = arr
-                        missing.remove(vi.name)
+                img_candidates = {
+                    "raw": _load_image_as_nchw(p_img, target_hw=img_hw, dtype=dtype, scale="raw"),
+                    "norm": _load_image_as_nchw(p_img, target_hw=img_hw, dtype=dtype, scale="norm"),
+                    "imagenet": _load_image_as_nchw(p_img, target_hw=img_hw, dtype=dtype, scale="imagenet"),
+                    "clip": _load_image_as_nchw(p_img, target_hw=img_hw, dtype=dtype, scale="clip"),
+                    "name": vi.name,
+                    "dtype": dtype,
+                }
+
+                selected_scale = args.image_scale if args.image_scale != "auto" else "norm"
+                arr = img_candidates.get(selected_scale)
+
+                if arr is None:
+                    # Fallbacks: keep us running even if one preprocessing preset fails.
+                    for sc in ("norm", "raw", "imagenet", "clip"):
+                        if img_candidates.get(sc) is not None:
+                            selected_scale = sc
+                            arr = img_candidates[sc]
+                            break
+
+                if arr is not None:
+                    feeds_full[vi.name] = arr
+                    missing.remove(vi.name)
+
                 if vi.name in feeds_full:
-                    print(f"[inputs] using image '{p_img.name}' for input '{vi.name}' shape={list(feeds_full[vi.name].shape)} scale={args.image_scale}")
+                    print(
+                        f"[inputs] using image '{p_img.name}' for input '{vi.name}' "
+                        f"shape={list(feeds_full[vi.name].shape)} scale={selected_scale}"
+                    )
                     break
 
     if missing:
@@ -3630,6 +4159,28 @@ def main() -> int:
     if img_candidates is not None and args.image_scale == "auto":
         out_names = [o.name for o in sess_full.get_outputs()]
 
+    # If the user selected an explicit image_scale (not auto), we still want to
+    # apply YOLO-appropriate letterbox preprocessing when the model outputs look
+    # like YOLO. This keeps box scaling correct and matches the YOLO harness.
+    if args.image_scale != "auto" and img_candidates:
+        try:
+            out_probe = sess_full.run(out_names, feeds_full)
+            if _is_yolo_multiscale(out_probe) or _is_yolo_ultralytics_regcls(out_probe, out_names):
+                lb_norm = _load_image_as_nchw(p_img, target_hw=img_hw, dtype=img_candidates["dtype"], scale="norm", letterbox=True)
+                lb_raw = _load_image_as_nchw(p_img, target_hw=img_hw, dtype=img_candidates["dtype"], scale="raw", letterbox=True)
+                if lb_norm is not None:
+                    img_candidates["norm"] = lb_norm
+                if lb_raw is not None:
+                    img_candidates["raw"] = lb_raw
+
+                if args.image_scale in ("raw", "norm"):
+                    feeds_full[img_candidates["name"]] = img_candidates[args.image_scale]
+                elif args.image_scale in ("imagenet", "clip"):
+                    print(f"[warn] image_scale={args.image_scale} is unusual for YOLO outputs; using 'norm' instead.")
+                    feeds_full[img_candidates["name"]] = img_candidates["norm"]
+        except Exception:
+            pass
+
         def _run_full_with_scale(scale: str):
             feeds = dict(feeds_full)
             feeds[img_candidates["name"]] = img_candidates[scale]
@@ -3638,11 +4189,26 @@ def main() -> int:
         # Probe using "norm" once to identify output family (YOLO vs DETR-like vs unknown)
         out_norm = _run_full_with_scale("norm")
 
-        if _is_yolo_multiscale(out_norm):
+        if _is_yolo_multiscale(out_norm) or _is_yolo_ultralytics_regcls(out_norm, out_names):
+            # YOLO-family detectors expect letterbox resize (preserve aspect ratio
+            # with padding). Rebuild raw/norm candidates accordingly to keep box
+            # scaling correct on non-square images.
+            try:
+                lb_norm = _load_image_as_nchw(p_img, target_hw=img_hw, dtype=img_candidates["dtype"], scale="norm", letterbox=True)
+                lb_raw = _load_image_as_nchw(p_img, target_hw=img_hw, dtype=img_candidates["dtype"], scale="raw", letterbox=True)
+                if lb_norm is not None:
+                    img_candidates["norm"] = lb_norm
+                if lb_raw is not None:
+                    img_candidates["raw"] = lb_raw
+                # Re-probe with the updated (letterboxed) inputs for scoring.
+                out_norm = _run_full_with_scale("norm")
+            except Exception:
+                pass
+
             print("[auto] Probing YOLO input scaling (norm vs raw)...")
             out_raw = _run_full_with_scale("raw")
-            n_norm, p_norm = _yolo_plausibility(out_norm, img_hw, args.yolo_conf, args.yolo_iou, args.yolo_max_det)
-            n_raw, p_raw = _yolo_plausibility(out_raw, img_hw, args.yolo_conf, args.yolo_iou, args.yolo_max_det)
+            n_norm, p_norm = _yolo_plausibility(out_norm, out_names, img_hw, args.yolo_conf, args.yolo_iou, args.yolo_max_det)
+            n_raw, p_raw = _yolo_plausibility(out_raw, out_names, img_hw, args.yolo_conf, args.yolo_iou, args.yolo_max_det)
             print(f"  image_scale=norm: {n_norm} dets, plausibility={p_norm:.1f}")
             print(f"  image_scale=raw : {n_raw} dets, plausibility={p_raw:.1f}")
             selected = "norm" if p_norm >= p_raw else "raw"
@@ -3676,11 +4242,59 @@ def main() -> int:
             print(f"[auto] Selected image_scale={best_scale}.")
             feeds_full[img_candidates["name"]] = img_candidates.get(best_scale, img_candidates["norm"])
         else:
-            # Unknown outputs: choose a sensible default.
-            default_sc = "imagenet" if (int(default_hw) == 224 and "imagenet" in img_candidates) else "norm"
-            why = "classification-ish outputs" if default_sc == "imagenet" else "unknown outputs"
-            print(f"[auto] image_scale=auto -> defaulting to {default_sc} ({why}).")
-            feeds_full[img_candidates["name"]] = img_candidates[default_sc]
+            # Classification-ish outputs: probe common preprocessing presets.
+            def _pick_classification_logits(outs: List[np.ndarray]) -> Optional[np.ndarray]:
+                for o in outs:
+                    if not isinstance(o, np.ndarray):
+                        continue
+                    if o.ndim == 2 and o.shape[0] == 1 and 10 <= o.shape[1] <= 50000:
+                        return o
+                    if o.ndim == 1 and 10 <= o.shape[0] <= 50000:
+                        return o.reshape(1, -1)
+                return None
+
+            def _top1_prob_from_logits(logits: np.ndarray) -> float:
+                x = logits.astype(np.float64).reshape(-1)
+                if x.size == 0:
+                    return 0.0
+                x = x - np.max(x)
+                # Clamp for numeric stability.
+                x = np.clip(x, -80.0, 80.0)
+                ex = np.exp(x)
+                s = float(np.sum(ex))
+                if s <= 0.0:
+                    return 0.0
+                return float(np.max(ex) / s)
+
+            if _pick_classification_logits(out_norm) is not None:
+                print("[auto] Probing classification preprocessing (imagenet / norm / raw / clip)...")
+                best_scale = None
+                best_score = -1.0
+                for sc in ("imagenet", "norm", "raw", "clip"):
+                    if img_candidates.get(sc) is None:
+                        continue
+                    out_sc = out_norm if sc == "norm" else _run_full_with_scale(sc)
+                    logits = _pick_classification_logits(out_sc)
+                    if logits is None:
+                        continue
+                    score = _top1_prob_from_logits(logits)
+                    print(f"  image_scale={sc:8s}: top1_prob={score:.3f}")
+                    if score > best_score:
+                        best_score = score
+                        best_scale = sc
+
+                if best_scale is None:
+                    best_scale = "imagenet" if (int(default_hw) == 224 and "imagenet" in img_candidates) else "norm"
+                    print(f"[auto] image_scale=auto -> defaulting to {best_scale} (no usable logits for probing).")
+                else:
+                    print(f"[auto] Selected image_scale={best_scale}.")
+                feeds_full[img_candidates["name"]] = img_candidates.get(best_scale, img_candidates["norm"])
+            else:
+                # Unknown outputs: choose a sensible default.
+                default_sc = "imagenet" if (int(default_hw) == 224 and "imagenet" in img_candidates) else "norm"
+                why = "classification-ish outputs" if default_sc == "imagenet" else "unknown outputs"
+                print(f"[auto] image_scale=auto -> defaulting to {default_sc} ({why}).")
+                feeds_full[img_candidates["name"]] = img_candidates[default_sc]
 
     # Build feeds for part1/part2
     p1_inputs = [i.name for i in sess_p1.get_inputs()]
@@ -4198,26 +4812,68 @@ def main() -> int:
     # Write plots (png/pdf) best-effort
     _try_write_report_plots(out_dir, report)
 
-    # Visualization (best-effort)
+    # Visualization / postprocess (best-effort)
     if str(args.viz).lower() != 'none':
         try:
             viz_mode = str(args.viz).lower()
-            if viz_mode == 'yolo':
-                viz_info = _maybe_yolo_viz(
-                    out_dir=out_dir,
-                    img_path=img_path,
-                    img_hw=img_hw,
-                    labels=labels,
-                    output_names=output_names,
-                    full_out=full_out_list,
-                    comp_out=comp_out_list,
-                    conf_thr=float(args.yolo_conf),
-                    iou_thr=float(args.yolo_iou),
-                    max_det=int(args.yolo_max_det),
+
+            # Prefer harness-based postprocessing for YOLO + classification.
+            try:
+                from splitpoint_runners.harness.base import (
+                    postprocess_result_to_dict,
+                    validate_postprocess_result_dict,
                 )
-                if viz_info.get('enabled', False):
-                    report['viz'] = viz_info
-            elif viz_mode == 'detr':
+                from splitpoint_runners.harness.classification import ClassificationHarness
+                from splitpoint_runners.harness.yolo import YoloHarness
+
+                _HAS_HARNESS = True
+            except Exception:
+                _HAS_HARNESS = False
+
+            full_out_dict = {n: a for n, a in zip(output_names, full_out_list)}
+            comp_out_dict = {n: a for n, a in zip(output_names, comp_out_list)}
+
+            def _run_harness(task: str):
+                if not _HAS_HARNESS:
+                    return {"enabled": False, "error": "splitpoint_runners.harness unavailable"}
+                if task == "detection":
+                    h = YoloHarness(
+                        conf_thresh=float(args.yolo_conf),
+                        iou_thresh=float(args.yolo_iou),
+                        max_det=int(args.yolo_max_det),
+                        class_names=labels,
+                    )
+                elif task == "classification":
+                    h = ClassificationHarness(topk=5, labels=None)
+                else:
+                    return {"enabled": False, "error": f"Unsupported task={task}"}
+
+                ctx_common = {
+                    "output_dir": str(out_dir),
+                    "image_path": str(img_path),
+                    "input_hw": tuple(img_hw),
+                }
+                r_full = postprocess_result_to_dict(h.postprocess(full_out_dict, context={**ctx_common, "variant": "full"}))
+                r_comp = postprocess_result_to_dict(
+                    h.postprocess(comp_out_dict, context={**ctx_common, "variant": "composed"})
+                )
+
+                # Contract guardrail: keep the GUI/packaging stable even as
+                # new harnesses are added.
+                contract_error = None
+                try:
+                    validate_postprocess_result_dict(r_full)
+                    validate_postprocess_result_dict(r_comp)
+                except Exception as e:
+                    contract_error = str(e)
+
+                result = {"enabled": True, "task": task, "full": r_full, "composed": r_comp}
+                if contract_error:
+                    result["contract_error"] = contract_error
+                return result
+
+            if viz_mode == 'detr':
+                # Keep legacy DETR viz for now.
                 detr_info = _maybe_detr_viz(
                     out_dir=out_dir,
                     img_path=img_path,
@@ -4232,34 +4888,17 @@ def main() -> int:
                 )
                 if detr_info.get('enabled', False):
                     report['viz'] = detr_info
+            elif viz_mode == 'yolo':
+                report['viz'] = _run_harness("detection")
             elif viz_mode == 'cls':
-                cls_info = _maybe_classification_viz(
-                    out_dir=out_dir,
-                    img_path=img_path,
-                    output_names=output_names,
-                    full_out=full_out_list,
-                    comp_out=comp_out_list,
-                    labels=labels,
-                    topk=5,
-                )
-                if cls_info.get('enabled', False):
-                    report['viz'] = cls_info
+                report['viz'] = _run_harness("classification")
             else:  # auto
-                viz_info = _maybe_yolo_viz(
-                    out_dir=out_dir,
-                    img_path=img_path,
-                    img_hw=img_hw,
-                    labels=labels,
-                    output_names=output_names,
-                    full_out=full_out_list,
-                    comp_out=comp_out_list,
-                    conf_thr=float(args.yolo_conf),
-                    iou_thr=float(args.yolo_iou),
-                    max_det=int(args.yolo_max_det),
-                )
-                if viz_info.get('enabled', False):
-                    report['viz'] = viz_info
+                if output_format in ("bn6_detections", "ultralytics_regcls", "multiscale_head", "concat"):
+                    report['viz'] = _run_harness("detection")
+                elif output_format == "classification_logits":
+                    report['viz'] = _run_harness("classification")
                 else:
+                    # fallback to legacy DETR, then classification
                     detr_info = _maybe_detr_viz(
                         out_dir=out_dir,
                         img_path=img_path,
@@ -4275,17 +4914,7 @@ def main() -> int:
                     if detr_info.get('enabled', False):
                         report['viz'] = detr_info
                     else:
-                        cls_info = _maybe_classification_viz(
-                            out_dir=out_dir,
-                            img_path=img_path,
-                            output_names=output_names,
-                            full_out=full_out_list,
-                            comp_out=comp_out_list,
-                            labels=labels,
-                            topk=5,
-                        )
-                        if cls_info.get('enabled', False):
-                            report['viz'] = cls_info
+                        report['viz'] = _run_harness("classification")
         except Exception as e:
             warn = f"Visualization failed: {e}"
             print(f"[warn] {warn}")

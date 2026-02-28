@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import onnx
+import pytest
+
+onnx = pytest.importorskip("onnx")
 from onnx import TensorProto, helper
 
 from onnx_splitpoint_tool.api import analyze_model

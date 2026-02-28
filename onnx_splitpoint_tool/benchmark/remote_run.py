@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from onnx_splitpoint_tool.remote.bundle import BundleCancelled, build_suite_bundle
+from onnx_splitpoint_tool.log_utils import sanitize_log
 from onnx_splitpoint_tool.remote.ssh_transport import HostConfig as RemoteHost
 from onnx_splitpoint_tool.remote.ssh_transport import SSHTransport
 
@@ -351,10 +352,26 @@ def run_remote_benchmark(
     runner_log_path = local_run_dir / "logs" / "runner.log"
 
     def log(line: str) -> None:  # type: ignore[no-redef]
-        _gui_log(line)
+        """Log output to GUI and to a local transcript.
+
+        We sanitize logs to improve UX:
+        - replace carriage returns (\r) with newlines
+        - strip ANSI escape sequences
+        """
+
+        sanitized = sanitize_log("" if line is None else str(line))
+        if sanitized == "":
+            return
+
+        # sanitize_log may expand CR to multiple lines.
+        out_lines = sanitized.split("\n")
+        for out_line in out_lines:
+            _gui_log(out_line)
+
         try:
             with runner_log_path.open("a", encoding="utf-8") as f:
-                f.write(line.rstrip("\n") + "\n")
+                for out_line in out_lines:
+                    f.write(out_line + "\n")
         except Exception:
             # best-effort only
             pass

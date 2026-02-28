@@ -5,7 +5,9 @@ from pathlib import Path
 def test_parse_benchmark_suite_progress():
     from onnx_splitpoint_tool.benchmark.remote_run import parse_benchmark_suite_progress
 
-    assert parse_benchmark_suite_progress("[abc] [1/10] boundary=...") == (1, 10)
+    p = parse_benchmark_suite_progress("[abc] [1/10] boundary=...")
+    assert p is not None
+    assert (p.run_id, p.i, p.n, p.pct) == ("abc", 1, 10, 0.1)
     assert parse_benchmark_suite_progress("no match") is None
 
 

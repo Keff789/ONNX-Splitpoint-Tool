@@ -22,6 +22,7 @@ from ..benchmark.remote_run import RemoteBenchmarkArgs, run_remote_benchmark
 from ..workdir import ensure_workdir
 from ..gui_app import SplitPointAnalyserGUI as LegacySplitPointAnalyserGUI
 from ..gui_app import _setup_gui_logging
+from ..log_utils import sanitize_log
 from .panels import panel_analysis, panel_split_export, panel_hardware, panel_logs, panel_validation
 
 __version__ = TOOL_VERSION
@@ -540,7 +541,10 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         def _copy_log():
             """Copy current log window content to the clipboard."""
             try:
-                text = txt.get("1.0", "end-1c")
+                # Ensure the copied log is readable even if the captured output
+                # contained carriage returns (progress-style output) or ANSI
+                # color escape sequences.
+                text = sanitize_log(txt.get("1.0", "end-1c"))
                 dlg.clipboard_clear()
                 dlg.clipboard_append(text)
                 dlg.update_idletasks()
