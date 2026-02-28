@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "onnx-splitpoint-tool"
-version = "0.10.119"
+version = "0.10.39"
 description = "Single-split boundary analysis for ONNX graphs (GUI + CLI)"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -23,20 +23,7 @@ onnx-splitpoint = "onnx_splitpoint_tool.cli:main"
 onnx-splitpoint-gui = "onnx_splitpoint_tool.gui_app:main"
 
 [tool.setuptools]
-packages = [
-  "onnx_splitpoint_tool",
-  "onnx_splitpoint_tool.gui",
-  "onnx_splitpoint_tool.gui.panels",
-  "onnx_splitpoint_tool.gui.render",
-  "onnx_splitpoint_tool.gui.widgets",
-  "onnx_splitpoint_tool.hailo",
-]
+packages = ["onnx_splitpoint_tool"]
 
 [tool.setuptools.package-data]
-onnx_splitpoint_tool = [
-  "resources/*.json",
-  "resources/templates/*.txt",
-  "resources/hailo/*.json",
-  "resources/hailo/**/*.md",
-  "resources/hailo/**/.gitkeep",
-]
+onnx_splitpoint_tool = ["resources/*.json"]

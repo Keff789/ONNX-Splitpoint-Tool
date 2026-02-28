@@ -1275,8 +1275,8 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.tree.heading("right_op", text="Right op")
         self.tree.heading("cut_mb", text="Cut (MB)")
         self.tree.heading("num_tensors", text="#Tensors")
-        self.tree.heading("gflops_left", text="Compute Left (GFLOPs)")
-        self.tree.heading("gflops_right", text="Compute Right (GFLOPs)")
+        self.tree.heading("gflops_left", text="Compute Left (GMACs)")
+        self.tree.heading("gflops_right", text="Compute Right (GMACs)")
         self.tree.heading("peak_left_mib", text="Peak L (MiB)")
         self.tree.heading("peak_right_mib", text="Peak R (MiB)")
         self.tree.heading("peak_max_mib", text="Peak max (MiB)")
@@ -4673,11 +4673,11 @@ class SplitPointAnalyserGUI(tk.Tk):
                 b.set_hatch("//")
 
         # (2) Cumulative compute
-        self.ax_comp.plot(xs, fl_l_g, label="Compute left (GFLOPs)")
-        self.ax_comp.plot(xs, fl_r_g, label="Compute right (GFLOPs)")
+        self.ax_comp.plot(xs, fl_l_g, label="Compute left (GMACs)")
+        self.ax_comp.plot(xs, fl_r_g, label="Compute right (GMACs)")
         self.ax_comp.set_title("Cumulative compute around boundaries")
         self.ax_comp.set_xlabel("Boundary index")
-        self.ax_comp.set_ylabel("GFLOPs")
+        self.ax_comp.set_ylabel("GMACs")
         self.ax_comp.legend(loc="best")
 
         for b in picks:
@@ -6826,11 +6826,11 @@ class SplitPointAnalyserGUI(tk.Tk):
                     bar.set_hatch("//")
 
         def plot_comp(ax):
-            ax.plot(xs, fl_l_g, label="Compute left (GFLOPs)")
-            ax.plot(xs, fl_r_g, label="Compute right (GFLOPs)")
+            ax.plot(xs, fl_l_g, label="Compute left (GMACs)")
+            ax.plot(xs, fl_r_g, label="Compute right (GMACs)")
             ax.set_title("Cumulative compute around boundaries")
             ax.set_xlabel("Boundary index")
-            ax.set_ylabel("GFLOPs")
+            ax.set_ylabel("GMACs")
             ax.legend(loc="best")
             for b in picks:
                 ax.axvline(b, linestyle="--", linewidth=1)

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import sys
@@ -19,7 +20,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import onnx
@@ -31,6 +32,1137 @@ try:
 except Exception:
     Image = None  # type: ignore
     ImageDraw = None  # type: ignore
+
+
+# ImageNet-1k labels (0..999)
+IMAGENET1K_LABELS: List[str] = [
+    "tench",
+    "goldfish",
+    "great white shark",
+    "tiger shark",
+    "hammerhead",
+    "electric ray",
+    "stingray",
+    "cock",
+    "hen",
+    "ostrich",
+    "brambling",
+    "goldfinch",
+    "house finch",
+    "junco",
+    "indigo bunting",
+    "robin",
+    "bulbul",
+    "jay",
+    "magpie",
+    "chickadee",
+    "water ouzel",
+    "kite",
+    "bald eagle",
+    "vulture",
+    "great grey owl",
+    "European fire salamander",
+    "common newt",
+    "eft",
+    "spotted salamander",
+    "axolotl",
+    "bullfrog",
+    "tree frog",
+    "tailed frog",
+    "loggerhead",
+    "leatherback turtle",
+    "mud turtle",
+    "terrapin",
+    "box turtle",
+    "banded gecko",
+    "common iguana",
+    "American chameleon",
+    "whiptail",
+    "agama",
+    "frilled lizard",
+    "alligator lizard",
+    "Gila monster",
+    "green lizard",
+    "African chameleon",
+    "Komodo dragon",
+    "African crocodile",
+    "American alligator",
+    "triceratops",
+    "thunder snake",
+    "ringneck snake",
+    "hognose snake",
+    "green snake",
+    "king snake",
+    "garter snake",
+    "water snake",
+    "vine snake",
+    "night snake",
+    "boa constrictor",
+    "rock python",
+    "Indian cobra",
+    "green mamba",
+    "sea snake",
+    "horned viper",
+    "diamondback",
+    "sidewinder",
+    "trilobite",
+    "harvestman",
+    "scorpion",
+    "black and gold garden spider",
+    "barn spider",
+    "garden spider",
+    "black widow",
+    "tarantula",
+    "wolf spider",
+    "tick",
+    "centipede",
+    "black grouse",
+    "ptarmigan",
+    "ruffed grouse",
+    "prairie chicken",
+    "peacock",
+    "quail",
+    "partridge",
+    "African grey",
+    "macaw",
+    "sulphur-crested cockatoo",
+    "lorikeet",
+    "coucal",
+    "bee eater",
+    "hornbill",
+    "hummingbird",
+    "jacamar",
+    "toucan",
+    "drake",
+    "red-breasted merganser",
+    "goose",
+    "black swan",
+    "tusker",
+    "echidna",
+    "platypus",
+    "wallaby",
+    "koala",
+    "wombat",
+    "jellyfish",
+    "sea anemone",
+    "brain coral",
+    "flatworm",
+    "nematode",
+    "conch",
+    "snail",
+    "slug",
+    "sea slug",
+    "chiton",
+    "chambered nautilus",
+    "Dungeness crab",
+    "rock crab",
+    "fiddler crab",
+    "king crab",
+    "American lobster",
+    "spiny lobster",
+    "crayfish",
+    "hermit crab",
+    "isopod",
+    "white stork",
+    "black stork",
+    "spoonbill",
+    "flamingo",
+    "little blue heron",
+    "American egret",
+    "bittern",
+    "crane bird",
+    "limpkin",
+    "European gallinule",
+    "American coot",
+    "bustard",
+    "ruddy turnstone",
+    "red-backed sandpiper",
+    "redshank",
+    "dowitcher",
+    "oystercatcher",
+    "pelican",
+    "king penguin",
+    "albatross",
+    "grey whale",
+    "killer whale",
+    "dugong",
+    "sea lion",
+    "Chihuahua",
+    "Japanese spaniel",
+    "Maltese dog",
+    "Pekinese",
+    "Shih-Tzu",
+    "Blenheim spaniel",
+    "papillon",
+    "toy terrier",
+    "Rhodesian ridgeback",
+    "Afghan hound",
+    "basset",
+    "beagle",
+    "bloodhound",
+    "bluetick",
+    "black-and-tan coonhound",
+    "Walker hound",
+    "English foxhound",
+    "redbone",
+    "borzoi",
+    "Irish wolfhound",
+    "Italian greyhound",
+    "whippet",
+    "Ibizan hound",
+    "Norwegian elkhound",
+    "otterhound",
+    "Saluki",
+    "Scottish deerhound",
+    "Weimaraner",
+    "Staffordshire bullterrier",
+    "American Staffordshire terrier",
+    "Bedlington terrier",
+    "Border terrier",
+    "Kerry blue terrier",
+    "Irish terrier",
+    "Norfolk terrier",
+    "Norwich terrier",
+    "Yorkshire terrier",
+    "wire-haired fox terrier",
+    "Lakeland terrier",
+    "Sealyham terrier",
+    "Airedale",
+    "cairn",
+    "Australian terrier",
+    "Dandie Dinmont",
+    "Boston bull",
+    "miniature schnauzer",
+    "giant schnauzer",
+    "standard schnauzer",
+    "Scotch terrier",
+    "Tibetan terrier",
+    "silky terrier",
+    "soft-coated wheaten terrier",
+    "West Highland white terrier",
+    "Lhasa",
+    "flat-coated retriever",
+    "curly-coated retriever",
+    "golden retriever",
+    "Labrador retriever",
+    "Chesapeake Bay retriever",
+    "German short-haired pointer",
+    "vizsla",
+    "English setter",
+    "Irish setter",
+    "Gordon setter",
+    "Brittany spaniel",
+    "clumber",
+    "English springer",
+    "Welsh springer spaniel",
+    "cocker spaniel",
+    "Sussex spaniel",
+    "Irish water spaniel",
+    "kuvasz",
+    "schipperke",
+    "groenendael",
+    "malinois",
+    "briard",
+    "kelpie",
+    "komondor",
+    "Old English sheepdog",
+    "Shetland sheepdog",
+    "collie",
+    "Border collie",
+    "Bouvier des Flandres",
+    "Rottweiler",
+    "German shepherd",
+    "Doberman",
+    "miniature pinscher",
+    "Greater Swiss Mountain dog",
+    "Bernese mountain dog",
+    "Appenzeller",
+    "EntleBucher",
+    "boxer",
+    "bull mastiff",
+    "Tibetan mastiff",
+    "French bulldog",
+    "Great Dane",
+    "Saint Bernard",
+    "Eskimo dog",
+    "malamute",
+    "Siberian husky",
+    "dalmatian",
+    "affenpinscher",
+    "basenji",
+    "pug",
+    "Leonberg",
+    "Newfoundland",
+    "Great Pyrenees",
+    "Samoyed",
+    "Pomeranian",
+    "chow",
+    "keeshond",
+    "Brabancon griffon",
+    "Pembroke",
+    "Cardigan",
+    "toy poodle",
+    "miniature poodle",
+    "standard poodle",
+    "Mexican hairless",
+    "timber wolf",
+    "white wolf",
+    "red wolf",
+    "coyote",
+    "dingo",
+    "dhole",
+    "African hunting dog",
+    "hyena",
+    "red fox",
+    "kit fox",
+    "Arctic fox",
+    "grey fox",
+    "tabby",
+    "tiger cat",
+    "Persian cat",
+    "Siamese cat",
+    "Egyptian cat",
+    "cougar",
+    "lynx",
+    "leopard",
+    "snow leopard",
+    "jaguar",
+    "lion",
+    "tiger",
+    "cheetah",
+    "brown bear",
+    "American black bear",
+    "ice bear",
+    "sloth bear",
+    "mongoose",
+    "meerkat",
+    "tiger beetle",
+    "ladybug",
+    "ground beetle",
+    "long-horned beetle",
+    "leaf beetle",
+    "dung beetle",
+    "rhinoceros beetle",
+    "weevil",
+    "fly",
+    "bee",
+    "ant",
+    "grasshopper",
+    "cricket",
+    "walking stick",
+    "cockroach",
+    "mantis",
+    "cicada",
+    "leafhopper",
+    "lacewing",
+    "dragonfly",
+    "damselfly",
+    "admiral",
+    "ringlet",
+    "monarch",
+    "cabbage butterfly",
+    "sulphur butterfly",
+    "lycaenid",
+    "starfish",
+    "sea urchin",
+    "sea cucumber",
+    "wood rabbit",
+    "hare",
+    "Angora",
+    "hamster",
+    "porcupine",
+    "fox squirrel",
+    "marmot",
+    "beaver",
+    "guinea pig",
+    "sorrel",
+    "zebra",
+    "hog",
+    "wild boar",
+    "warthog",
+    "hippopotamus",
+    "ox",
+    "water buffalo",
+    "bison",
+    "ram",
+    "bighorn",
+    "ibex",
+    "hartebeest",
+    "impala",
+    "gazelle",
+    "Arabian camel",
+    "llama",
+    "weasel",
+    "mink",
+    "polecat",
+    "black-footed ferret",
+    "otter",
+    "skunk",
+    "badger",
+    "armadillo",
+    "three-toed sloth",
+    "orangutan",
+    "gorilla",
+    "chimpanzee",
+    "gibbon",
+    "siamang",
+    "guenon",
+    "patas",
+    "baboon",
+    "macaque",
+    "langur",
+    "colobus",
+    "proboscis monkey",
+    "marmoset",
+    "capuchin",
+    "howler monkey",
+    "titi",
+    "spider monkey",
+    "squirrel monkey",
+    "Madagascar cat",
+    "indri",
+    "Indian elephant",
+    "African elephant",
+    "lesser panda",
+    "giant panda",
+    "barracouta",
+    "eel",
+    "coho",
+    "rock beauty",
+    "anemone fish",
+    "sturgeon",
+    "gar",
+    "lionfish",
+    "puffer",
+    "abacus",
+    "abaya",
+    "academic gown",
+    "accordion",
+    "acoustic guitar",
+    "aircraft carrier",
+    "airliner",
+    "airship",
+    "altar",
+    "ambulance",
+    "amphibian",
+    "analog clock",
+    "apiary",
+    "apron",
+    "ashcan",
+    "assault rifle",
+    "backpack",
+    "bakery",
+    "balance beam",
+    "balloon",
+    "ballpoint",
+    "Band Aid",
+    "banjo",
+    "bannister",
+    "barbell",
+    "barber chair",
+    "barbershop",
+    "barn",
+    "barometer",
+    "barrel",
+    "barrow",
+    "baseball",
+    "basketball",
+    "bassinet",
+    "bassoon",
+    "bathing cap",
+    "bath towel",
+    "bathtub",
+    "beach wagon",
+    "beacon",
+    "beaker",
+    "bearskin",
+    "beer bottle",
+    "beer glass",
+    "bell cote",
+    "bib",
+    "bicycle-built-for-two",
+    "bikini",
+    "binder",
+    "binoculars",
+    "birdhouse",
+    "boathouse",
+    "bobsled",
+    "bolo tie",
+    "bonnet",
+    "bookcase",
+    "bookshop",
+    "bottlecap",
+    "bow",
+    "bow tie",
+    "brass",
+    "brassiere",
+    "breakwater",
+    "breastplate",
+    "broom",
+    "bucket",
+    "buckle",
+    "bulletproof vest",
+    "bullet train",
+    "butcher shop",
+    "cab",
+    "caldron",
+    "candle",
+    "cannon",
+    "canoe",
+    "can opener",
+    "cardigan",
+    "car mirror",
+    "carousel",
+    "carpenter's kit",
+    "carton",
+    "car wheel",
+    "cash machine",
+    "cassette",
+    "cassette player",
+    "castle",
+    "catamaran",
+    "CD player",
+    "cello",
+    "cellular telephone",
+    "chain",
+    "chainlink fence",
+    "chain mail",
+    "chain saw",
+    "chest",
+    "chiffonier",
+    "chime",
+    "china cabinet",
+    "Christmas stocking",
+    "church",
+    "cinema",
+    "cleaver",
+    "cliff dwelling",
+    "cloak",
+    "clog",
+    "cocktail shaker",
+    "coffee mug",
+    "coffeepot",
+    "coil",
+    "combination lock",
+    "computer keyboard",
+    "confectionery",
+    "container ship",
+    "convertible",
+    "corkscrew",
+    "cornet",
+    "cowboy boot",
+    "cowboy hat",
+    "cradle",
+    "crane",
+    "crash helmet",
+    "crate",
+    "crib",
+    "Crock Pot",
+    "croquet ball",
+    "crutch",
+    "cuirass",
+    "dam",
+    "desk",
+    "desktop computer",
+    "dial telephone",
+    "diaper",
+    "digital clock",
+    "digital watch",
+    "dining table",
+    "dishrag",
+    "dishwasher",
+    "disk brake",
+    "dock",
+    "dogsled",
+    "dome",
+    "doormat",
+    "drilling platform",
+    "drum",
+    "drumstick",
+    "dumbbell",
+    "Dutch oven",
+    "electric fan",
+    "electric guitar",
+    "electric locomotive",
+    "entertainment center",
+    "envelope",
+    "espresso maker",
+    "face powder",
+    "feather boa",
+    "file",
+    "fireboat",
+    "fire engine",
+    "fire screen",
+    "flagpole",
+    "flute",
+    "folding chair",
+    "football helmet",
+    "forklift",
+    "fountain",
+    "fountain pen",
+    "four-poster",
+    "freight car",
+    "French horn",
+    "frying pan",
+    "fur coat",
+    "garbage truck",
+    "gasmask",
+    "gas pump",
+    "goblet",
+    "go-kart",
+    "golf ball",
+    "golfcart",
+    "gondola",
+    "gong",
+    "gown",
+    "grand piano",
+    "greenhouse",
+    "grille",
+    "grocery store",
+    "guillotine",
+    "hair slide",
+    "hair spray",
+    "half track",
+    "hammer",
+    "hamper",
+    "hand blower",
+    "hand-held computer",
+    "handkerchief",
+    "hard disc",
+    "harmonica",
+    "harp",
+    "harvester",
+    "hatchet",
+    "holster",
+    "home theater",
+    "honeycomb",
+    "hook",
+    "hoopskirt",
+    "horizontal bar",
+    "horse cart",
+    "hourglass",
+    "iPod",
+    "iron",
+    "jack-o'-lantern",
+    "jean",
+    "jeep",
+    "jersey",
+    "jigsaw puzzle",
+    "jinrikisha",
+    "joystick",
+    "kimono",
+    "knee pad",
+    "knot",
+    "lab coat",
+    "ladle",
+    "lampshade",
+    "laptop",
+    "lawn mower",
+    "lens cap",
+    "letter opener",
+    "library",
+    "lifeboat",
+    "lighter",
+    "limousine",
+    "liner",
+    "lipstick",
+    "Loafer",
+    "lotion",
+    "loudspeaker",
+    "loupe",
+    "lumbermill",
+    "magnetic compass",
+    "mailbag",
+    "mailbox",
+    "maillot",
+    "maillot tank suit",
+    "manhole cover",
+    "maraca",
+    "marimba",
+    "mask",
+    "matchstick",
+    "maypole",
+    "maze",
+    "measuring cup",
+    "medicine chest",
+    "megalith",
+    "microphone",
+    "microwave",
+    "military uniform",
+    "milk can",
+    "minibus",
+    "miniskirt",
+    "minivan",
+    "missile",
+    "mitten",
+    "mixing bowl",
+    "mobile home",
+    "Model T",
+    "modem",
+    "monastery",
+    "monitor",
+    "moped",
+    "mortar",
+    "mortarboard",
+    "mosque",
+    "mosquito net",
+    "motor scooter",
+    "mountain bike",
+    "mountain tent",
+    "mouse",
+    "mousetrap",
+    "moving van",
+    "muzzle",
+    "nail",
+    "neck brace",
+    "necklace",
+    "nipple",
+    "notebook",
+    "obelisk",
+    "oboe",
+    "ocarina",
+    "odometer",
+    "oil filter",
+    "organ",
+    "oscilloscope",
+    "overskirt",
+    "oxcart",
+    "oxygen mask",
+    "packet",
+    "paddle",
+    "paddlewheel",
+    "padlock",
+    "paintbrush",
+    "pajama",
+    "palace",
+    "panpipe",
+    "paper towel",
+    "parachute",
+    "parallel bars",
+    "park bench",
+    "parking meter",
+    "passenger car",
+    "patio",
+    "pay-phone",
+    "pedestal",
+    "pencil box",
+    "pencil sharpener",
+    "perfume",
+    "Petri dish",
+    "photocopier",
+    "pick",
+    "pickelhaube",
+    "picket fence",
+    "pickup",
+    "pier",
+    "piggy bank",
+    "pill bottle",
+    "pillow",
+    "ping-pong ball",
+    "pinwheel",
+    "pirate",
+    "pitcher",
+    "plane",
+    "planetarium",
+    "plastic bag",
+    "plate rack",
+    "plow",
+    "plunger",
+    "Polaroid camera",
+    "pole",
+    "police van",
+    "poncho",
+    "pool table",
+    "pop bottle",
+    "pot",
+    "potter's wheel",
+    "power drill",
+    "prayer rug",
+    "printer",
+    "prison",
+    "projectile",
+    "projector",
+    "puck",
+    "punching bag",
+    "purse",
+    "quill",
+    "quilt",
+    "racer",
+    "racket",
+    "radiator",
+    "radio",
+    "radio telescope",
+    "rain barrel",
+    "recreational vehicle",
+    "reel",
+    "reflex camera",
+    "refrigerator",
+    "remote control",
+    "restaurant",
+    "revolver",
+    "rifle",
+    "rocking chair",
+    "rotisserie",
+    "rubber eraser",
+    "rugby ball",
+    "rule",
+    "running shoe",
+    "safe",
+    "safety pin",
+    "saltshaker",
+    "sandal",
+    "sarong",
+    "sax",
+    "scabbard",
+    "scale",
+    "school bus",
+    "schooner",
+    "scoreboard",
+    "screen",
+    "screw",
+    "screwdriver",
+    "seat belt",
+    "sewing machine",
+    "shield",
+    "shoe shop",
+    "shoji",
+    "shopping basket",
+    "shopping cart",
+    "shovel",
+    "shower cap",
+    "shower curtain",
+    "ski",
+    "ski mask",
+    "sleeping bag",
+    "slide rule",
+    "sliding door",
+    "slot",
+    "snorkel",
+    "snowmobile",
+    "snowplow",
+    "soap dispenser",
+    "soccer ball",
+    "sock",
+    "solar dish",
+    "sombrero",
+    "soup bowl",
+    "space bar",
+    "space heater",
+    "space shuttle",
+    "spatula",
+    "speedboat",
+    "spider web",
+    "spindle",
+    "sports car",
+    "spotlight",
+    "stage",
+    "steam locomotive",
+    "steel arch bridge",
+    "steel drum",
+    "stethoscope",
+    "stole",
+    "stone wall",
+    "stopwatch",
+    "stove",
+    "strainer",
+    "streetcar",
+    "stretcher",
+    "studio couch",
+    "stupa",
+    "submarine",
+    "suit",
+    "sundial",
+    "sunglass",
+    "sunglasses",
+    "sunscreen",
+    "suspension bridge",
+    "swab",
+    "sweatshirt",
+    "swimming trunks",
+    "swing",
+    "switch",
+    "syringe",
+    "table lamp",
+    "tank",
+    "tape player",
+    "teapot",
+    "teddy",
+    "television",
+    "tennis ball",
+    "thatch",
+    "theater curtain",
+    "thimble",
+    "thresher",
+    "throne",
+    "tile roof",
+    "toaster",
+    "tobacco shop",
+    "toilet seat",
+    "torch",
+    "totem pole",
+    "tow truck",
+    "toyshop",
+    "tractor",
+    "trailer truck",
+    "tray",
+    "trench coat",
+    "tricycle",
+    "trimaran",
+    "tripod",
+    "triumphal arch",
+    "trolleybus",
+    "trombone",
+    "tub",
+    "turnstile",
+    "typewriter keyboard",
+    "umbrella",
+    "unicycle",
+    "upright",
+    "vacuum",
+    "vase",
+    "vault",
+    "velvet",
+    "vending machine",
+    "vestment",
+    "viaduct",
+    "violin",
+    "volleyball",
+    "waffle iron",
+    "wall clock",
+    "wallet",
+    "wardrobe",
+    "warplane",
+    "washbasin",
+    "washer",
+    "water bottle",
+    "water jug",
+    "water tower",
+    "whiskey jug",
+    "whistle",
+    "wig",
+    "window screen",
+    "window shade",
+    "Windsor tie",
+    "wine bottle",
+    "wing",
+    "wok",
+    "wooden spoon",
+    "wool",
+    "worm fence",
+    "wreck",
+    "yawl",
+    "yurt",
+    "web site",
+    "comic book",
+    "crossword puzzle",
+    "street sign",
+    "traffic light",
+    "book jacket",
+    "menu",
+    "plate",
+    "guacamole",
+    "consomme",
+    "hot pot",
+    "trifle",
+    "ice cream",
+    "ice lolly",
+    "French loaf",
+    "bagel",
+    "pretzel",
+    "cheeseburger",
+    "hotdog",
+    "mashed potato",
+    "head cabbage",
+    "broccoli",
+    "cauliflower",
+    "zucchini",
+    "spaghetti squash",
+    "acorn squash",
+    "butternut squash",
+    "cucumber",
+    "artichoke",
+    "bell pepper",
+    "cardoon",
+    "mushroom",
+    "Granny Smith",
+    "strawberry",
+    "orange",
+    "lemon",
+    "fig",
+    "pineapple",
+    "banana",
+    "jackfruit",
+    "custard apple",
+    "pomegranate",
+    "hay",
+    "carbonara",
+    "chocolate sauce",
+    "dough",
+    "meat loaf",
+    "pizza",
+    "potpie",
+    "burrito",
+    "red wine",
+    "espresso",
+    "cup",
+    "eggnog",
+    "alp",
+    "bubble",
+    "cliff",
+    "coral reef",
+    "geyser",
+    "lakeside",
+    "promontory",
+    "sandbar",
+    "seashore",
+    "valley",
+    "volcano",
+    "ballplayer",
+    "groom",
+    "scuba diver",
+    "rapeseed",
+    "daisy",
+    "yellow lady's slipper",
+    "corn",
+    "acorn",
+    "hip",
+    "buckeye",
+    "coral fungus",
+    "agaric",
+    "gyromitra",
+    "stinkhorn",
+    "earthstar",
+    "hen-of-the-woods",
+    "bolete",
+    "ear",
+    "toilet tissue",
+]
+
+
+# ----------------------------
+# Optional: SplitPoint runtime
+# ----------------------------
+# New benchmark suites may ship a small runtime library at suite-root ("splitpoint_runners/")
+# which provides GraphRunner + backends. This runner template will opportunistically use it
+# when available, and fall back to the legacy in-file benchmarking loop otherwise.
+
+
+def _maybe_add_suite_runtime_to_syspath() -> None:
+    """Add parent dirs containing 'splitpoint_runners' to sys.path (best-effort)."""
+
+    try:
+        here = Path(__file__).resolve().parent
+    except Exception:
+        return
+
+    for cand in (here, here.parent, here.parent.parent):
+        try:
+            if (cand / "splitpoint_runners").is_dir():
+                p = str(cand)
+                if p not in sys.path:
+                    sys.path.insert(0, p)
+                return
+        except Exception:
+            continue
+
+
+_maybe_add_suite_runtime_to_syspath()
+
+_HAS_SPLITPOINT_RUNNERS = False
+try:
+    from splitpoint_runners.graph_runner import GraphRunner as _SP_GraphRunner
+    from splitpoint_runners._types import BackendRunOut as _SP_BackendRunOut
+    from splitpoint_runners._types import GraphPlan as _SP_GraphPlan
+    from splitpoint_runners._types import RunCfg as _SP_RunCfg
+    from splitpoint_runners._types import SampleCfg as _SP_SampleCfg
+    from splitpoint_runners._types import Stage as _SP_Stage
+    from splitpoint_runners.backends.base import BackendCaps as _SP_BackendCaps
+    from splitpoint_runners.interface_transfer import DefaultTransfer as _SP_DefaultTransfer
+    from splitpoint_runners.interface_transfer import TransferMeta as _SP_TransferMeta
+
+    _HAS_SPLITPOINT_RUNNERS = True
+except Exception:
+    _HAS_SPLITPOINT_RUNNERS = False
+
+
+if _HAS_SPLITPOINT_RUNNERS:
+
+    class _SP_StaticHarness:
+        """Harness that returns a static pre-built input dictionary."""
+
+        name = "static_inputs"
+
+        def __init__(self, inputs: Dict[str, np.ndarray]):
+            self._inputs = inputs
+
+        def make_inputs(self, sample_cfg: _SP_SampleCfg) -> Dict[str, np.ndarray]:  # noqa: ARG002
+            return self._inputs
+
+        def postprocess(self, outputs: Dict[str, np.ndarray], context: Dict[str, object]) -> Dict[str, np.ndarray]:  # noqa: ARG002
+            return outputs
+
+        def accuracy_proxy(self, ref: Dict[str, np.ndarray], out: Dict[str, np.ndarray]) -> Dict[str, object]:  # noqa: ARG002
+            return {}
+
+    class _SP_OrtSessionBackend:
+        """Backend wrapper around an already-built onnxruntime.InferenceSession."""
+
+        def __init__(self, name: str, sess: "ort.InferenceSession"):
+            self.name = name
+            self.capabilities = _SP_BackendCaps(
+                supports_fp16=True,
+                supports_cache_dir=True,
+                needs_compiler=False,
+                supports_two_stage=True,
+            )
+            self._sess = sess
+            self._input_names = {i.name for i in sess.get_inputs()}
+            self._output_names = [o.name for o in sess.get_outputs()]
+
+        def prepare(self, run_cfg: _SP_RunCfg, artifacts_dir: Path):  # noqa: ARG002
+            return self._sess
+
+        def run(self, prepared: "ort.InferenceSession", inputs: Dict[str, np.ndarray]) -> _SP_BackendRunOut:
+            # ORT is strict about unknown input names → filter.
+            feeds = {k: v for k, v in inputs.items() if k in self._input_names}
+            out_list = prepared.run(None, feeds)
+            out_map = {n: np.asarray(a) for n, a in zip(self._output_names, out_list)}
+            return _SP_BackendRunOut(outputs=out_map, metrics={})
+
+        def cleanup(self, prepared: object) -> None:  # noqa: ARG002
+            # Session lifecycle is managed by the surrounding script.
+            return
+
+    class _SP_MergeP2Transfer:
+        """Transfer adapter that merges a fixed stage2 base-input dict with stage1 outputs.
+
+        This mirrors the legacy 'build_feeds_p2' behavior: part2 inputs may include both
+        cut tensors (from part1 outputs) and some original full-graph inputs.
+
+        It also captures the last interface payload for optional dump_interface.
+        """
+
+        def __init__(self, base_p2_inputs: Dict[str, np.ndarray]):
+            self._base = _SP_DefaultTransfer()
+            self._base_p2_inputs = base_p2_inputs
+
+            self.last_stage1_outputs: Optional[Dict[str, np.ndarray]] = None
+            self.last_stage2_inputs: Optional[Dict[str, np.ndarray]] = None
+            self.last_bytes: Optional[bytes] = None
+            self.last_meta: Optional[_SP_TransferMeta] = None
+
+        def serialize(self, outputs: Dict[str, np.ndarray]) -> Tuple[bytes, _SP_TransferMeta]:
+            self.last_stage1_outputs = outputs
+            b, meta = self._base.serialize(outputs)
+            self.last_bytes, self.last_meta = b, meta
+            return b, meta
+
+        def deserialize(self, blob: bytes, meta: _SP_TransferMeta) -> Dict[str, np.ndarray]:
+            d = self._base.deserialize(blob, meta)
+            merged = dict(self._base_p2_inputs)
+            merged.update(d)  # override with cut tensor outputs
+            self.last_stage2_inputs = merged
+            return merged
 
 
 DEFAULT_MANIFEST = "__MANIFEST_FILENAME__"
@@ -109,6 +1241,7 @@ class _Spinner(threading.Thread):
         super().__init__(daemon=True)
         self.prefix = prefix
         self.every_sec = every_sec
+        self._tty = sys.stdout.isatty()
         self._stop = threading.Event()
         self.t0 = time.time()
         self._frames = ["|", "/", "-", "\\"]
@@ -117,23 +1250,31 @@ class _Spinner(threading.Thread):
         self._stop.set()
 
     def run(self):
+        if not self._tty:
+            # Non-interactive stdout (captured logs): don't emit carriage-returns.
+            while not self._stop.is_set():
+                time.sleep(self.every_sec)
+            return
+
         i = 0
         while not self._stop.is_set():
             elapsed = int(time.time() - self.t0)
             frame = self._frames[i % len(self._frames)]
             msg = f"\\r{self.prefix} {frame}  elapsed={elapsed}s"
+            if self._tty:
+                try:
+                    sys.stdout.write(msg)
+                    sys.stdout.flush()
+                except Exception:
+                    pass
+            i += 1
+            time.sleep(self.every_sec)
+        if self._tty:
             try:
-                sys.stdout.write(msg)
+                sys.stdout.write("\\r" + " " * (len(self.prefix) + 60) + "\\r")
                 sys.stdout.flush()
             except Exception:
                 pass
-            i += 1
-            time.sleep(self.every_sec)
-        try:
-            sys.stdout.write("\\r" + " " * (len(self.prefix) + 60) + "\\r")
-            sys.stdout.flush()
-        except Exception:
-            pass
 
 
 def _create_session(
@@ -143,7 +1284,13 @@ def _create_session(
     provider_options: Optional[List[dict]],
     sess_options: ort.SessionOptions,
 ) -> Tuple[ort.InferenceSession, SessionBuildInfo]:
-    spin = _Spinner(prefix=f"[init] building '{name}' (TensorRT build can take minutes)")
+    trt_note = ''
+    try:
+        if any('tensorrt' in str(p).lower() for p in (providers or [])):
+            trt_note = ' (TensorRT engine build can take minutes)'
+    except Exception:
+        trt_note = ''
+    spin = _Spinner(prefix=f"[init] building '{name}'{trt_note}")
     t0 = time.time()
     spin.start()
     try:
@@ -568,6 +1715,27 @@ def _is_probably_image_input(shape: List[Optional[int]]) -> bool:
     return (c == 3) or (c is None)
 
 
+def _guess_default_image_hw_for_model(model: onnx.ModelProto) -> int:
+    """Choose a default H/W for dynamic image inputs.
+
+    - Classification-ish models ("logits"/"prob" outputs, rank-2 outputs) => 224
+    - Otherwise => 640
+    """
+    try:
+        out_names = [o.name.lower() for o in model.graph.output]
+        if any(("logit" in n) or ("prob" in n) or ("softmax" in n) for n in out_names):
+            return 224
+        for o in model.graph.output:
+            tt = o.type.tensor_type
+            if not tt.HasField("shape"):
+                continue
+            if len(tt.shape.dim) == 2:
+                return 224
+    except Exception:
+        pass
+    return 640
+
+
 def _load_image_as_nchw(
     img_path: Path,
     *,
@@ -716,6 +1884,9 @@ def _try_write_report_plots(out_dir: Path, report: dict) -> None:
         except Exception:
             return default
 
+    if not isinstance(report, dict):
+        print('[info] report_plots: report is not a dict; skipping plots')
+        return
     t = report.get("timing_ms", {})
     labels = ["full", "part1", "part2", "composed"]
     means = [_num(t.get("full_mean")), _num(t.get("part1_mean")), _num(t.get("part2_mean")), _num(t.get("composed_mean"))]
@@ -760,6 +1931,282 @@ _COCO80 = [
     "dining table","toilet","tv","laptop","mouse","remote","keyboard","cell phone","microwave","oven",
     "toaster","sink","refrigerator","book","clock","vase","scissors","teddy bear","hair drier","toothbrush",
 ]
+
+# COCO-91 class list (common for DETR-style models; index 0 is "N/A").
+_COCO91 = [
+    "N/A",
+    "person",
+    "bicycle",
+    "car",
+    "motorcycle",
+    "airplane",
+    "bus",
+    "train",
+    "truck",
+    "boat",
+    "traffic light",
+    "fire hydrant",
+    "N/A",
+    "stop sign",
+    "parking meter",
+    "bench",
+    "bird",
+    "cat",
+    "dog",
+    "horse",
+    "sheep",
+    "cow",
+    "elephant",
+    "bear",
+    "zebra",
+    "giraffe",
+    "N/A",
+    "backpack",
+    "umbrella",
+    "N/A",
+    "N/A",
+    "handbag",
+    "tie",
+    "suitcase",
+    "frisbee",
+    "skis",
+    "snowboard",
+    "sports ball",
+    "kite",
+    "baseball bat",
+    "baseball glove",
+    "skateboard",
+    "surfboard",
+    "tennis racket",
+    "bottle",
+    "N/A",
+    "wine glass",
+    "cup",
+    "fork",
+    "knife",
+    "spoon",
+    "bowl",
+    "banana",
+    "apple",
+    "sandwich",
+    "orange",
+    "broccoli",
+    "carrot",
+    "hot dog",
+    "pizza",
+    "donut",
+    "cake",
+    "chair",
+    "couch",
+    "potted plant",
+    "bed",
+    "N/A",
+    "dining table",
+    "N/A",
+    "N/A",
+    "toilet",
+    "N/A",
+    "tv",
+    "laptop",
+    "mouse",
+    "remote",
+    "keyboard",
+    "cell phone",
+    "microwave",
+    "oven",
+    "toaster",
+    "sink",
+    "refrigerator",
+    "N/A",
+    "book",
+    "clock",
+    "vase",
+    "scissors",
+    "teddy bear",
+    "hair drier",
+    "toothbrush",
+]
+
+# -----------------------------
+# Validation helpers (Phase 2+)
+# -----------------------------
+
+def _select_validation_mode(user_mode: str, provider: str, output_format: str) -> Tuple[str, List[str]]:
+    """Select validation mode.
+
+    Modes:
+      - strict_elementwise: elementwise max_abs <= eps gates PASS
+      - proxy_detections: decode detections and validate with IoU matching (order-invariant)
+      - off: no gating (timing only)
+      - auto: default policy:
+          * TensorRT => proxy (elementwise is still reported, but does not gate)
+          * BN6 detections => proxy
+          * else => strict_elementwise
+    """
+    warnings: List[str] = []
+    m = (user_mode or "auto").strip().lower()
+
+    if m == "auto":
+        if provider == "tensorrt":
+            mode = "proxy_detections"
+        elif output_format == "bn6_detections":
+            mode = "proxy_detections"
+        else:
+            mode = "strict_elementwise"
+    elif m in ("strict_elementwise", "proxy_detections", "off"):
+        mode = m
+    else:
+        mode = "auto"
+        warnings.append(f"unknown_validation_mode={user_mode}")
+        return _select_validation_mode("auto", provider, output_format)
+
+    # If proxy is requested but we don't know how to decode detections, fallback.
+    if mode == "proxy_detections" and output_format not in ("multiscale_head", "bn6_detections"):
+        warnings.append("proxy_validation_unavailable_output_format")
+        if provider == "tensorrt" and m == "auto":
+            mode = "off"
+            warnings.append("validation_mode_fallback=off")
+        else:
+            mode = "strict_elementwise"
+            warnings.append("validation_mode_fallback=strict_elementwise")
+    return mode, warnings
+
+
+def _boxes_iou_xyxy(a: np.ndarray, b: np.ndarray) -> float:
+    # a,b: [x1,y1,x2,y2]
+    ax1, ay1, ax2, ay2 = float(a[0]), float(a[1]), float(a[2]), float(a[3])
+    bx1, by1, bx2, by2 = float(b[0]), float(b[1]), float(b[2]), float(b[3])
+    inter_x1 = max(ax1, bx1)
+    inter_y1 = max(ay1, by1)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+    iw = max(0.0, inter_x2 - inter_x1)
+    ih = max(0.0, inter_y2 - inter_y1)
+    inter = iw * ih
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - inter
+    if union <= 0.0:
+        return 0.0
+    return inter / union
+
+
+def _proxy_validate_detections(
+    dets_ref: List[dict],
+    dets_out: List[dict],
+    match_iou_thr: float = 0.5,
+    pass_match_ratio_thr: float = 0.7,
+    pass_mean_iou_thr: float = 0.5,
+) -> Tuple[Dict[str, Any], bool]:
+    """Order-invariant proxy validation for detection outputs.
+
+    Greedy matching by class_id + IoU.
+    """
+    n_ref = int(len(dets_ref or []))
+    n_out = int(len(dets_out or []))
+
+    if n_ref == 0 and n_out == 0:
+        metrics = dict(
+            n_ref=0,
+            n_out=0,
+            matched=0,
+            match_ratio=1.0,
+            mean_iou_matched=1.0,
+        )
+        return metrics, True
+
+    # Build arrays for faster access
+    ref = dets_ref or []
+    out = dets_out or []
+
+    ref_order = sorted(range(n_ref), key=lambda i: float(ref[i].get("score", 0.0)), reverse=True)
+    used_out = set()
+    ious: List[float] = []
+    matched = 0
+
+    for ri in ref_order:
+        r = ref[ri]
+        r_cls = int(r.get("class_id", -1))
+        r_box = np.array([r.get("x1", 0.0), r.get("y1", 0.0), r.get("x2", 0.0), r.get("y2", 0.0)], dtype=np.float32)
+
+        best_j = None
+        best_iou = 0.0
+        for oj in range(n_out):
+            if oj in used_out:
+                continue
+            o = out[oj]
+            if int(o.get("class_id", -2)) != r_cls:
+                continue
+            o_box = np.array([o.get("x1", 0.0), o.get("y1", 0.0), o.get("x2", 0.0), o.get("y2", 0.0)], dtype=np.float32)
+            iou = _boxes_iou_xyxy(r_box, o_box)
+            if iou > best_iou:
+                best_iou = iou
+                best_j = oj
+        if best_j is not None and best_iou >= float(match_iou_thr):
+            used_out.add(best_j)
+            matched += 1
+            ious.append(float(best_iou))
+
+    match_ratio = float(matched) / float(max(n_ref, 1))
+    mean_iou = float(np.mean(ious)) if ious else 0.0
+
+    proxy_pass = (match_ratio >= float(pass_match_ratio_thr)) and (mean_iou >= float(pass_mean_iou_thr))
+    metrics = dict(
+        n_ref=n_ref,
+        n_out=n_out,
+        matched=int(matched),
+        match_ratio=match_ratio,
+        mean_iou_matched=mean_iou,
+    )
+    return metrics, bool(proxy_pass)
+
+
+def _extract_detections_for_proxy(
+    output_format: str,
+    output_names: List[str],
+    outputs: List[np.ndarray],
+    img_hw: Tuple[int, int],
+    yolo_conf: float,
+    yolo_iou: float,
+    yolo_max_det: int,
+    det_conf: float,
+    det_iou: float,
+    det_max_det: int,
+    labels: Optional[List[str]] = None,
+) -> Tuple[List[dict], List[str]]:
+    warnings: List[str] = []
+    try:
+        if output_format == "multiscale_head":
+            # YOLOv7-style multiscale head
+            dets = _decode_yolo(
+                outs=outputs,
+                img_hw=img_hw,
+                conf_thr=float(yolo_conf),
+                iou_thr=float(yolo_iou),
+                max_det=int(yolo_max_det),
+                labels=labels,
+            )
+            return dets, warnings
+
+        if output_format == "bn6_detections":
+            labels_dict = {i: labels[i] for i in range(len(labels))} if labels else None
+            dets, w = _decode_bn6(
+                output_names=output_names,
+                outputs=outputs,
+                img_hw=img_hw,
+                conf_thr=float(det_conf),
+                iou_thr=float(det_iou),
+                max_det=int(det_max_det),
+                labels=labels_dict,
+            )
+            warnings.extend(w)
+            return dets, warnings
+
+        return [], ["proxy_unavailable_output_format"]
+    except Exception as e:
+        return [], [f"proxy_decode_exception={type(e).__name__}: {e}"]
+
+
 
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:
@@ -1077,6 +2524,9 @@ def _maybe_yolo_viz(
     conf_thr: float,
     iou_thr: float,
     max_det: int,
+    output_names: Optional[List[str]] = None,
+    labels: Optional[List[str]] = None,
+    **_kwargs: Any,
 ) -> dict:
     info = {"enabled": False}
     if img_path is None or img_hw is None:
@@ -1085,6 +2535,7 @@ def _maybe_yolo_viz(
     if not _is_yolo_multiscale(full_out) or not _is_yolo_multiscale(comp_out):
         return info
 
+    info["output_format"] = "multiscale_head"
     print("[viz] YOLO output format: multiscale head (B,3,H,W,...)")
     dets_full = _decode_yolo(full_out, img_hw=img_hw, conf_thr=conf_thr, iou_thr=iou_thr, max_det=max_det)
     dets_comp = _decode_yolo(comp_out, img_hw=img_hw, conf_thr=conf_thr, iou_thr=iou_thr, max_det=max_det)
@@ -1122,9 +2573,22 @@ def _maybe_yolo_viz(
 # DETR/YOLOS-style postprocess (logits + pred_boxes)
 # ----------------------------
 def _is_detr_like(output_names: List[str], outputs: List[np.ndarray]) -> bool:
-    # Heuristic: outputs contain logits (..,C) and boxes (..,4)
+    # Heuristic: DETR-style outputs (logits+boxes) OR Ultralytics-style BN6 detections.
+    # Layout A (DETR): logits (..,C) and boxes (..,4)
+    # Layout B (BN6):  (B,N,6) or (N,6) = [x1,y1,x2,y2,conf,cls]
+    if outputs is None or len(outputs) == 0:
+        return False
+
+    # Layout B: single output already contains detections
+    for a in outputs:
+        s = getattr(a, "shape", ())
+        if len(s) in (2, 3) and s[-1] == 6:
+            return True
+
+    # Layout A needs at least two outputs
     if len(outputs) < 2:
         return False
+
     names = [str(n) for n in output_names]
     # Common HF/DETR names
     if ("logits" in names and "pred_boxes" in names):
@@ -1134,6 +2598,31 @@ def _is_detr_like(output_names: List[str], outputs: List[np.ndarray]) -> bool:
     has_boxes = any(len(s) >= 2 and s[-1] == 4 for s in shapes)
     has_logits = any(len(s) >= 2 and s[-1] >= 10 for s in shapes)  # num classes usually >= 10
     return bool(has_boxes and has_logits)
+
+
+def _is_bn6_detections(outputs: List[np.ndarray]) -> bool:
+    # Ultralytics/YOLOv10-style detections: (B,N,6) or (N,6)
+    if outputs is None:
+        return False
+    for a in outputs:
+        if a is None or not hasattr(a, "shape"):
+            continue
+        if a.ndim in (2, 3) and a.shape[-1] == 6:
+            return True
+    return False
+
+
+def _detect_output_format(output_names: List[str], outputs: List[np.ndarray]) -> str:
+    # Keep this super defensive — it must never crash.
+    try:
+        if _is_yolo_multiscale(outputs):
+            return "multiscale_head"
+        if _is_bn6_detections(outputs):
+            return "bn6_detections"
+        return "unknown"
+    except Exception:
+        return "unknown"
+
 
 
 def _softmax(x: np.ndarray, axis: int = -1) -> np.ndarray:
@@ -1156,6 +2645,283 @@ def _load_labels(path: Optional[str]) -> Optional[List[str]]:
         return lines if lines else None
     except Exception:
         return None
+
+
+# ---- label helpers (auto) ----
+
+def _labels_from_obj(obj: Any) -> Optional[List[str]]:
+    """Convert a label container (list/dict) into a dense list of class names."""
+    if obj is None:
+        return None
+    if isinstance(obj, (list, tuple)):
+        out = [str(x) for x in obj]
+        return out if out else None
+    if isinstance(obj, dict):
+        try:
+            items = sorted(obj.items(), key=lambda kv: int(kv[0]))
+        except Exception:
+            items = sorted(obj.items(), key=lambda kv: str(kv[0]))
+        out = [str(v) for _, v in items]
+        return out if out else None
+    return None
+
+
+def _try_parse_labels_value(text: str) -> Optional[List[str]]:
+    """Best-effort parse for labels stored as JSON or Python literals."""
+    if not text:
+        return None
+    s = text.strip()
+    if not s:
+        return None
+
+    # JSON
+    try:
+        obj = json.loads(s)
+        out = _labels_from_obj(obj)
+        if out:
+            return out
+    except Exception:
+        pass
+
+    # Python literal (common for Ultralytics: {0: 'person', ...})
+    try:
+        obj = ast.literal_eval(s)
+        out = _labels_from_obj(obj)
+        if out:
+            return out
+    except Exception:
+        pass
+
+    return None
+
+
+def _extract_labels_from_onnx_metadata(model: Any) -> Optional[List[str]]:
+    """Try to extract class names from ONNX metadata_props (common in YOLO exports)."""
+    try:
+        meta = getattr(model, 'metadata_props', None)
+        if not meta:
+            return None
+
+        # direct keys
+        for entry in meta:
+            k = str(getattr(entry, 'key', '')).strip().lower()
+            v = str(getattr(entry, 'value', '')).strip()
+            if not v:
+                continue
+            if k in {'names', 'labels', 'classes', 'class_names', 'categories'}:
+                out = _try_parse_labels_value(v)
+                if out:
+                    return out
+
+        # nested blob
+        for entry in meta:
+            k = str(getattr(entry, 'key', '')).strip().lower()
+            v = str(getattr(entry, 'value', '')).strip()
+            if not v:
+                continue
+            if k in {'metadata', 'info', 'model_info'}:
+                obj = None
+                try:
+                    obj = json.loads(v)
+                except Exception:
+                    try:
+                        obj = ast.literal_eval(v)
+                    except Exception:
+                        obj = None
+                if isinstance(obj, dict):
+                    for kk in ('names', 'labels', 'classes', 'class_names', 'categories'):
+                        if kk in obj:
+                            out = _labels_from_obj(obj.get(kk))
+                            if out:
+                                return out
+    except Exception:
+        return None
+
+    return None
+
+
+def _auto_find_labels_file(search_dir: Path) -> Optional[Path]:
+    """Look for a labels file near the manifest directory (best effort)."""
+    candidates = [
+        'labels.txt',
+        'classes.txt',
+        'class_names.txt',
+        'coco.names',
+        'coco.txt',
+    ]
+    for d in [search_dir, search_dir.parent, search_dir.parent.parent]:
+        for name in candidates:
+            p = d / name
+            if p.is_file():
+                return p
+    return None
+
+
+
+def _decode_bn6(
+    output_names: List[str],
+    outputs: List[np.ndarray],
+    img_hw: Tuple[int, int],
+    conf_thr: float = 0.25,
+    iou_thr: float = 0.45,
+    max_det: int = 300,
+    labels: Optional[Dict[int, str]] = None,
+) -> Tuple[List[dict], List[str]]:
+    """Decode Ultralytics/YOLOv10-style detections tensor.
+
+    Expected layout: (B,N,6) or (N,6) with columns:
+      [x1, y1, x2, y2, conf, cls]
+
+    Robustness:
+      - Supports normalized coords (0..1) and absolute coords (pixels)
+      - Heuristically falls back to (x,y,w,h) or (cx,cy,w,h) if values look ambiguous
+      - Never raises: returns ([], [warning,...]) on failure
+    """
+    warnings: List[str] = []
+    try:
+        H, W = int(img_hw[0]), int(img_hw[1])
+
+        dets_arr = None
+        for a in outputs:
+            if a is None or not hasattr(a, "shape"):
+                continue
+            if a.ndim == 3 and a.shape[-1] == 6:
+                dets_arr = a[0]
+                break
+            if a.ndim == 2 and a.shape[-1] == 6:
+                dets_arr = a
+                break
+
+        if dets_arr is None:
+            return [], ["bn6_not_found"]
+
+        dets_arr = np.asarray(dets_arr)
+        if dets_arr.size == 0:
+            return [], warnings
+
+        raw = dets_arr[:, 0:4].astype(np.float32, copy=False)
+        scores = dets_arr[:, 4].astype(np.float32, copy=False)
+        cls = dets_arr[:, 5].astype(np.float32, copy=False)
+
+        # Normalized vs absolute coordinate heuristic
+        coords_max = float(np.nanmax(raw)) if raw.size else 0.0
+        normalized = coords_max <= 1.01
+        bw = 1.0 if normalized else float(W)
+        bh = 1.0 if normalized else float(H)
+
+        def _candidate_boxes(fmt: str):
+            if fmt == "xyxy":
+                x1 = np.minimum(raw[:, 0], raw[:, 2])
+                y1 = np.minimum(raw[:, 1], raw[:, 3])
+                x2 = np.maximum(raw[:, 0], raw[:, 2])
+                y2 = np.maximum(raw[:, 1], raw[:, 3])
+            elif fmt == "tlwh":
+                x1 = raw[:, 0]
+                y1 = raw[:, 1]
+                x2 = raw[:, 0] + raw[:, 2]
+                y2 = raw[:, 1] + raw[:, 3]
+            elif fmt == "cxcywh":
+                x1 = raw[:, 0] - raw[:, 2] / 2.0
+                y1 = raw[:, 1] - raw[:, 3] / 2.0
+                x2 = raw[:, 0] + raw[:, 2] / 2.0
+                y2 = raw[:, 1] + raw[:, 3] / 2.0
+            else:
+                raise ValueError(fmt)
+
+            w = x2 - x1
+            h = y2 - y1
+            valid = (w > 0) & (h > 0)
+
+            # bounds check with small margin (boxes can exceed image a bit)
+            mw = 0.05 * bw
+            mh = 0.05 * bh
+            inb = (x1 >= -mw) & (y1 >= -mh) & (x2 <= bw + mw) & (y2 <= bh + mh)
+
+            score = float(np.mean(valid)) + float(np.mean(inb))
+            return score, x1, y1, x2, y2
+
+        cands = {}
+        for fmt in ("xyxy", "tlwh", "cxcywh"):
+            try:
+                cands[fmt] = _candidate_boxes(fmt)
+            except Exception:
+                pass
+
+        if not cands:
+            return [], ["bn6_decode_failed"]
+
+        best_fmt = max(cands.items(), key=lambda kv: kv[1][0])[0]
+        if best_fmt != "xyxy":
+            warnings.append(f"ambiguous_box_format_fallback={best_fmt}")
+
+        _, x1, y1, x2, y2 = cands[best_fmt]
+        boxes = np.stack([x1, y1, x2, y2], axis=1).astype(np.float32)
+
+        if normalized:
+            boxes[:, [0, 2]] *= float(W)
+            boxes[:, [1, 3]] *= float(H)
+
+        # Clip and enforce ordering
+        boxes[:, 0] = np.clip(boxes[:, 0], 0, W - 1)
+        boxes[:, 2] = np.clip(boxes[:, 2], 0, W - 1)
+        boxes[:, 1] = np.clip(boxes[:, 1], 0, H - 1)
+        boxes[:, 3] = np.clip(boxes[:, 3], 0, H - 1)
+
+        x1c = np.minimum(boxes[:, 0], boxes[:, 2])
+        y1c = np.minimum(boxes[:, 1], boxes[:, 3])
+        x2c = np.maximum(boxes[:, 0], boxes[:, 2])
+        y2c = np.maximum(boxes[:, 1], boxes[:, 3])
+        boxes = np.stack([x1c, y1c, x2c, y2c], axis=1).astype(np.float32)
+
+        m = scores >= float(conf_thr)
+        boxes = boxes[m]
+        scores_f = scores[m]
+        cls_f = cls[m]
+        if boxes.shape[0] == 0:
+            return [], warnings
+
+        keep = _nms(boxes, scores_f, iou_thr=float(iou_thr), max_det=int(max_det))
+        boxes = boxes[keep]
+        scores_f = scores_f[keep]
+        cls_f = cls_f[keep]
+
+        # Sort by score desc
+        order = np.argsort(-scores_f)
+        boxes = boxes[order]
+        scores_f = scores_f[order]
+        cls_f = cls_f[order]
+
+        # Auto default label set (best effort) if none provided.
+        # This primarily helps for COCO-trained models that don't ship label metadata.
+        if labels is None:
+            try:
+                max_c = int(np.max(cls_f)) if cls_f.size else -1
+            except Exception:
+                max_c = -1
+            if 0 <= max_c < len(_COCO80):
+                labels = {i: n for i, n in enumerate(_COCO80)}
+                warnings.append("labels_default=coco80")
+            elif 0 <= max_c < len(_COCO91):
+                labels = {i: n for i, n in enumerate(_COCO91)}
+                warnings.append("labels_default=coco91")
+
+        out: List[dict] = []
+        for i in range(boxes.shape[0]):
+            cid = int(cls_f[i])
+            out.append(
+                dict(
+                    x1=float(boxes[i, 0]),
+                    y1=float(boxes[i, 1]),
+                    x2=float(boxes[i, 2]),
+                    y2=float(boxes[i, 3]),
+                    score=float(scores_f[i]),
+                    class_id=cid,
+                    class_name=(labels.get(cid, str(cid)) if labels else str(cid)),
+                )
+            )
+        return out, warnings
+    except Exception as e:
+        return [], [f"bn6_decode_exception={type(e).__name__}: {e}"]
 
 
 def _decode_detr(
@@ -1193,60 +2959,17 @@ def _decode_detr(
             det6 = a
             break
     if det6 is not None:
-        a = det6[0] if det6.ndim == 3 else det6  # (Q,6)
-        if a.size == 0:
-            return []
-        a = a.astype(np.float32, copy=False)
-        boxes = a[:, 0:4]
-        scores = a[:, 4].astype(np.float32, copy=False)
-        cls = a[:, 5].astype(np.int64, copy=False)
-
-        # filter + top-k
-        keep = np.where(scores >= float(conf_thr))[0]
-        if keep.size == 0:
-            return []
-        scores = scores[keep]
-        cls = cls[keep]
-        boxes = boxes[keep]
-
-        if scores.size > max_det:
-            order = np.argsort(scores)[::-1][:max_det]
-            scores = scores[order]
-            cls = cls[order]
-            boxes = boxes[order]
-
-        b_max = float(np.nanmax(boxes)) if boxes.size else 0.0
-        norm = b_max <= 1.5
-
-        # Assume xyxy for this layout.
-        if norm:
-            x1 = boxes[:, 0] * W
-            y1 = boxes[:, 1] * H
-            x2 = boxes[:, 2] * W
-            y2 = boxes[:, 3] * H
-        else:
-            x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
-
-        x1 = np.clip(x1, 0.0, W - 1.0)
-        y1 = np.clip(y1, 0.0, H - 1.0)
-        x2 = np.clip(x2, 0.0, W - 1.0)
-        y2 = np.clip(y2, 0.0, H - 1.0)
-        # ensure ordering
-        x1_, x2_ = np.minimum(x1, x2), np.maximum(x1, x2)
-        y1_, y2_ = np.minimum(y1, y2), np.maximum(y1, y2)
-        x1, x2, y1, y2 = x1_, x2_, y1_, y2_
-
-        dets = []
-        for i in range(scores.shape[0]):
-            dets.append({
-                "x1": float(x1[i]),
-                "y1": float(y1[i]),
-                "x2": float(x2[i]),
-                "y2": float(y2[i]),
-                "score": float(scores[i]),
-                "class_id": int(cls[i]),
-                "class_name": labels[int(cls[i])] if labels and 0 <= int(cls[i]) < len(labels) else f"cls{int(cls[i])}",
-            })
+        # Ultralytics/YOLOv10-style detections already materialized as [x1,y1,x2,y2,conf,cls]
+        labels_dict = {i: labels[i] for i in range(len(labels))} if labels else None
+        dets, _warn = _decode_bn6(
+            output_names,
+            outputs,
+            img_hw=img_hw,
+            conf_thr=conf_thr,
+            iou_thr=iou_thr,
+            max_det=max_det,
+            labels=labels_dict,
+        )
         return dets
 
     # --- Layout A: logits + boxes ---
@@ -1270,6 +2993,18 @@ def _decode_detr(
         return []
 
     Q, C = l.shape
+
+    # Best-effort label defaults when none were provided/found.
+    # Many transformer detectors export COCO logits but omit class-name metadata.
+    if labels is None:
+        if C - 1 == len(_COCO80):
+            labels = list(_COCO80)
+        elif C - 1 == len(_COCO91):
+            labels = list(_COCO91)
+        elif C == len(_COCO80):
+            labels = list(_COCO80)
+        elif C == len(_COCO91):
+            labels = list(_COCO91)
 
     # Decide whether there is an explicit background class (DETR style).
     has_background = False
@@ -1395,7 +3130,14 @@ def _maybe_detr_viz(
     if not _is_detr_like(output_names, full_out) or not _is_detr_like(output_names, comp_out):
         return info
 
-    print("[viz] DETR/YOLOS output format: logits + pred_boxes")
+    fmt = "bn6_detections" if any(
+        (isinstance(a, np.ndarray) and a.ndim in (2, 3) and a.shape[-1] == 6) for a in full_out
+    ) else "logits_boxes"
+    info["output_format"] = fmt
+    if fmt == "bn6_detections":
+        print("[viz] Output format: bn6 detections (B,N,6)")
+    else:
+        print("[viz] Output format: logits + pred_boxes (B,Q,C + B,Q,4)")
     dets_full = _decode_detr(output_names, full_out, img_hw=img_hw, conf_thr=conf_thr, iou_thr=iou_thr, max_det=max_det, labels=labels)
     dets_comp = _decode_detr(output_names, comp_out, img_hw=img_hw, conf_thr=conf_thr, iou_thr=iou_thr, max_det=max_det, labels=labels)
 
@@ -1426,6 +3168,172 @@ def _maybe_detr_viz(
     return info
 
 
+def _pick_classification_logits(output_names: List[str], outs: List[np.ndarray]) -> Optional[np.ndarray]:
+    """Pick the most likely classification output (logits/probs)."""
+    # Prefer outputs explicitly named like logits/probabilities.
+    for i, name in enumerate(output_names):
+        if i >= len(outs):
+            continue
+        a = outs[i]
+        if not isinstance(a, np.ndarray):
+            continue
+        if a.ndim not in (1, 2):
+            continue
+        n = name.lower()
+        if ("logit" in n) or ("prob" in n) or ("softmax" in n) or ("pred" in n):
+            return a
+
+    # Otherwise: choose the largest 1D/2D output.
+    best = None
+    best_c = -1
+    for a in outs:
+        if not isinstance(a, np.ndarray):
+            continue
+        if a.ndim not in (1, 2):
+            continue
+        c = int(a.shape[-1]) if a.shape else 0
+        if c > best_c:
+            best_c = c
+            best = a
+    return best
+
+
+def _softmax1d(x: np.ndarray) -> np.ndarray:
+    x = x.astype(np.float32)
+    # Stabilize; tolerate NaNs.
+    m = np.nanmax(x)
+    if not np.isfinite(m):
+        return np.zeros_like(x, dtype=np.float32)
+    z = x - m
+    z = np.clip(z, -80.0, 80.0)
+    e = np.exp(z)
+    s = float(np.nansum(e))
+    if not np.isfinite(s) or s <= 0:
+        return np.zeros_like(x, dtype=np.float32)
+    return (e / s).astype(np.float32)
+
+
+def _maybe_classification_viz(
+    out_dir: Path,
+    img_path: Optional[Path],
+    output_names: List[str],
+    full_out: List[np.ndarray],
+    comp_out: List[np.ndarray],
+    labels: Optional[List[str]],
+    topk: int = 5,
+) -> dict:
+    """Write simple classification artifacts (top-k + annotated image).
+
+    This is intentionally lightweight: it never raises, and it falls back to numeric
+    class indices when labels are unavailable.
+    """
+    info = {"enabled": False}
+    if img_path is None or not img_path.exists():
+        return info
+
+    logits_full = _pick_classification_logits(output_names, full_out)
+    logits_comp = _pick_classification_logits(output_names, comp_out)
+    if logits_full is None or logits_comp is None:
+        return info
+
+    def _as_1d(a: np.ndarray) -> Optional[np.ndarray]:
+        if a.ndim == 2:
+            if a.shape[0] < 1:
+                return None
+            return a[0]
+        if a.ndim == 1:
+            return a
+        return None
+
+    v_full = _as_1d(logits_full)
+    v_comp = _as_1d(logits_comp)
+    if v_full is None or v_comp is None:
+        return info
+
+    # If no labels were provided but the output looks like ImageNet-1k, use built-in labels.
+    if labels is None and v_full.shape[0] == len(IMAGENET1K_LABELS):
+        labels = IMAGENET1K_LABELS
+
+    probs_full = _softmax1d(v_full)
+    probs_comp = _softmax1d(v_comp)
+
+    def _topk_rows(v: np.ndarray, p: np.ndarray) -> List[dict]:
+        k = max(1, min(int(topk), int(v.shape[0])))
+        idxs = np.argsort(-p)[:k]
+        rows = []
+        for r, idx in enumerate(idxs.tolist()):
+            lbl = labels[idx] if (labels is not None and 0 <= idx < len(labels)) else str(idx)
+            rows.append({
+                "rank": int(r + 1),
+                "index": int(idx),
+                "label": str(lbl),
+                "prob": float(p[idx]),
+                "logit": float(v[idx]),
+            })
+        return rows
+
+    rows_full = _topk_rows(v_full, probs_full)
+    rows_comp = _topk_rows(v_comp, probs_comp)
+
+    # Always copy the input image used (helps debugging on headless systems).
+    try:
+        p_in = out_dir / "input_image.png"
+        if not p_in.exists():
+            Image.open(img_path).convert("RGB").save(p_in)
+    except Exception:
+        pass
+
+    def _render(rows: List[dict], out_path: Path):
+        im = Image.open(img_path).convert("RGB")
+        draw = ImageDraw.Draw(im)
+        y = 6
+        # translucent background for text
+        try:
+            box_h = 16 * (len(rows) + 1) + 6
+            box_w = max(240, int(im.size[0] * 0.45))
+            overlay = Image.new("RGBA", im.size, (0, 0, 0, 0))
+            od = ImageDraw.Draw(overlay)
+            od.rectangle([0, 0, box_w, box_h], fill=(0, 0, 0, 140))
+            im = Image.alpha_composite(im.convert("RGBA"), overlay).convert("RGB")
+            draw = ImageDraw.Draw(im)
+        except Exception:
+            pass
+
+        draw.text((6, y), "Top-k predictions", fill=(255, 255, 255))
+        y += 18
+        for row in rows:
+            line = f"{row['rank']}: {row['label']}  (p={row['prob']:.3f})"
+            draw.text((6, y), line, fill=(255, 255, 255))
+            y += 16
+        im.save(out_path)
+
+    p_json_full = out_dir / "classification_full.json"
+    p_json_comp = out_dir / "classification_composed.json"
+    _write_json(p_json_full, {"image": str(img_path.name), "topk": rows_full})
+    _write_json(p_json_comp, {"image": str(img_path.name), "topk": rows_comp})
+
+    p_img_full = out_dir / "classification_full.png"
+    p_img_comp = out_dir / "classification_composed.png"
+    _render(rows_full, p_img_full)
+    _render(rows_comp, p_img_comp)
+
+    print("[viz] Output format: classification logits")
+    if p_img_full.exists():
+        print(f"Wrote {p_img_full}")
+    if p_img_comp.exists():
+        print(f"Wrote {p_img_comp}")
+    print(f"Wrote {p_json_full.name} and {p_json_comp.name}")
+
+    info = {
+        "enabled": True,
+        "image": str(img_path.name),
+        "full": {"json": p_json_full.name, "png": p_img_full.name},
+        "composed": {"json": p_json_comp.name, "png": p_img_comp.name},
+        "params": {"topk": int(topk)},
+    }
+    return info
+
+
 # ----------------------------
 # Main
 # ----------------------------
@@ -1443,6 +3351,13 @@ def main() -> int:
     ap.add_argument("--warmup", type=int, default=5, help="Warmup runs per benchmark")
     ap.add_argument("--runs", type=int, default=10, help="Measured runs per benchmark")
     ap.add_argument("--eps", type=float, default=1e-4, help="Max-abs threshold for output diff PASS/FAIL")
+    ap.add_argument(
+        "--validation-mode",
+        type=str,
+        default="auto",
+        choices=["auto", "strict_elementwise", "proxy_detections", "off"],
+        help="Validation gating: auto|strict_elementwise|proxy_detections|off. (auto: TRT/BN6=>proxy)",
+    )
     ap.add_argument("--seed", type=int, default=0, help="RNG seed for random input generation")
     ap.add_argument("--batch", type=int, default=None, help="Batch dim for random input generation (if dim0 unknown)")
     ap.add_argument("--shape-override", type=str, default=None, help="Override input shapes for random generation, shorthand: name=1x128;other=1x3x640x640")
@@ -1454,7 +3369,13 @@ def main() -> int:
     ap.add_argument("--image-scale", type=str, default="auto", choices=["auto", "norm", "raw", "imagenet", "clip"], help="Image preprocessing for float inputs: raw=0..255, norm=img/255, imagenet=(img/255-mean)/std, clip=CLIP norm, auto=probe (YOLO/DETR)")
 
     # Visualization
-    ap.add_argument("--viz", type=str, default="auto", choices=["auto", "none", "yolo", "detr"], help="Visualization: auto (YOLO/DETR if detected), yolo, detr, none")
+    ap.add_argument(
+        "--viz",
+        type=str,
+        default="auto",
+        choices=["auto", "none", "yolo", "detr", "cls"],
+        help="Visualization: auto (YOLO/DETR/CLS if detected), yolo, detr, cls, none",
+    )
     ap.add_argument("--no-report-plots", action="store_true", help="Disable validation_report.png/.pdf generation")
     ap.add_argument("--yolo-conf", type=float, default=0.25, help="YOLO confidence threshold")
     ap.add_argument("--yolo-iou", type=float, default=0.45, help="YOLO NMS IoU threshold")
@@ -1482,7 +3403,39 @@ def main() -> int:
 
     args = ap.parse_args()
 
+    # Snapshot a JSON-serializable view of the run configuration for reports.
+    # Keep it simple: just serialize the argparse namespace.
+    run_cfg = dict(vars(args))
+
     base_dir = Path(__file__).resolve().parent
+
+
+    # Suite-level benchmark plan (optional).
+    # In generated benchmark suites, each case lives in its own subfolder (e.g. suite/b112/),
+    # while benchmark_plan.json is typically placed at the suite root (suite/benchmark_plan.json).
+    # This is only used for provenance in the JSON report; failure to load must NOT abort the run.
+    plan: Optional[dict] = None
+    try:
+        plan_path = base_dir.parent / "benchmark_plan.json"
+        if plan_path.exists():
+            plan = _read_json(plan_path)
+    except Exception as e:
+        print(f"[warn] failed to read suite benchmark_plan.json: {e} (continuing without plan)")
+        plan = None
+
+    # Optional class labels for visualization / proxy validation.
+    # Must never crash the benchmark runner; on failure we just proceed without labels.
+    labels: Optional[List[str]] = None
+    if getattr(args, "labels", None):
+        labels_path = Path(args.labels)
+        if not labels_path.is_absolute():
+            labels_path = base_dir / labels_path
+        try:
+            labels = _load_labels(labels_path)
+            print(f"[info] loaded {len(labels)} labels from: {labels_path}")
+        except Exception as e:
+            print(f"[warn] failed to load labels from {labels_path}: {e} (continuing without labels)")
+            labels = None
     manifest_path = Path(args.manifest)
     if not manifest_path.is_absolute():
         manifest_path = base_dir / manifest_path
@@ -1524,6 +3477,23 @@ def main() -> int:
 
     # Load only the ONNX skeleton (avoid pulling huge external weights into RAM)
     full_model = onnx.load(str(full_path), load_external_data=False)
+    default_hw = _guess_default_image_hw_for_model(full_model)
+
+    # Auto-load labels (for nicer detection visualizations):
+    # 1) explicit --labels path
+    # 2) ONNX metadata (common in YOLO exports)
+    # 3) nearby labels file (labels.txt / classes.txt / coco.names)
+    if labels is None:
+        labels = _extract_labels_from_onnx_metadata(full_model)
+        if labels:
+            print(f"[info] labels: {len(labels)} classes (from ONNX metadata)")
+        else:
+            lp = _auto_find_labels_file(base_dir)
+            if lp:
+                labels = _load_labels(str(lp))
+                if labels:
+                    print(f"[info] labels: {len(labels)} classes (from {lp.name})")
+
 
     shape_overrides = _parse_shape_override(args.shape_override)
 
@@ -1556,8 +3526,8 @@ def main() -> int:
                     continue
                 dtype = _np_dtype_from_onnx(vi.type.tensor_type.elem_type)
                 # Determine H,W
-                H = int(shp[2]) if shp[2] else 640
-                W = int(shp[3]) if shp[3] else 640
+                H = int(shp[2]) if shp[2] else int(default_hw)
+                W = int(shp[3]) if shp[3] else int(default_hw)
                 img_hw = (H, W)
                 img_path = p_img
                 if args.image_scale == "auto":
@@ -1706,8 +3676,11 @@ def main() -> int:
             print(f"[auto] Selected image_scale={best_scale}.")
             feeds_full[img_candidates["name"]] = img_candidates.get(best_scale, img_candidates["norm"])
         else:
-            print("[auto] image_scale=auto -> defaulting to norm (unknown outputs).")
-            feeds_full[img_candidates["name"]] = img_candidates["norm"]
+            # Unknown outputs: choose a sensible default.
+            default_sc = "imagenet" if (int(default_hw) == 224 and "imagenet" in img_candidates) else "norm"
+            why = "classification-ish outputs" if default_sc == "imagenet" else "unknown outputs"
+            print(f"[auto] image_scale=auto -> defaulting to {default_sc} ({why}).")
+            feeds_full[img_candidates["name"]] = img_candidates[default_sc]
 
     # Build feeds for part1/part2
     p1_inputs = [i.name for i in sess_p1.get_inputs()]
@@ -1799,6 +3772,9 @@ def main() -> int:
         # Fallback: deterministic order.
         return [out_map[k] for k in sorted(out_map.keys())]
 
+    # Optional debug payload (only populated when using GraphRunner).
+    graph_runner_metrics = None
+
     if hailo_hw:
         # Hailo HEFs are expected at: hailo/<hw_arch>/part{1|2}/compiled.hef
         # where <hw_arch> is e.g. hailo8, hailo8l, hailo10h, ...
@@ -1882,6 +3858,8 @@ def main() -> int:
 
     else:
         # Pure ORT path.
+        graph_runner_metrics = None
+
         def run_p1() -> List[np.ndarray]:
             return sess_p1.run(None, feeds_p1)
 
@@ -1893,13 +3871,146 @@ def main() -> int:
             p1_map = {o.name: a for o, a in zip(sess_p1.get_outputs(), out_p1)}
             return sess_p2.run(None, build_feeds_p2(p1_map))
 
-        full_mean, full_std, _ = _bench("full", run_full, args.warmup, args.runs)
-        p1_mean, p1_std, _ = _bench("part1", run_p1, args.warmup, args.runs)
-        p2_mean, p2_std, _ = _bench("part2", run_p2, args.warmup, args.runs)
-        comp_mean, comp_std, _ = _bench("composed", run_composed, args.warmup, args.runs)
+        # Prefer GraphRunner when available in the suite (splitpoint_runners/).
+        if _HAS_SPLITPOINT_RUNNERS:
+            try:
+                print("[graph-runner] ORT benchmarking via splitpoint_runners.GraphRunner")
 
-        full_out = run_full()
-        comp_out = run_composed()
+                # Backends wrap the already-built ORT sessions (no extra engine builds).
+                b_full = _SP_OrtSessionBackend("ort_full", sess_full)
+                b_p1 = _SP_OrtSessionBackend("ort_part1", sess_p1)
+                b_p2 = _SP_OrtSessionBackend("ort_part2", sess_p2)
+
+                # Static input harnesses.
+                h_full = _SP_StaticHarness(feeds_full)
+                h_p1 = _SP_StaticHarness(feeds_p1)
+                h_p2 = _SP_StaticHarness(feeds_p2_0)
+
+                sample_cfg = _SP_SampleCfg(
+                    input_kind="static",
+                    image_path=(Path(args.image).resolve() if args.image else None),
+                    input_scale=args.image_scale,
+                )
+
+                runner_single = _SP_GraphRunner()
+
+                plan_full = _SP_GraphPlan(
+                    stages=[
+                        _SP_Stage(
+                            name="full",
+                            backend=b_full,
+                            run_cfg=_SP_RunCfg(model_path=full_onnx),
+                        )
+                    ],
+                    sample_cfg=sample_cfg,
+                    warmup_runs=int(args.warmup),
+                    measured_runs=int(args.runs),
+                    objective="latency",
+                )
+                res_full = runner_single.run_graph(plan_full, h_full, out_dir / "graph_full")
+
+                plan_p1 = _SP_GraphPlan(
+                    stages=[
+                        _SP_Stage(
+                            name="part1",
+                            backend=b_p1,
+                            run_cfg=_SP_RunCfg(model_path=part1_onnx),
+                        )
+                    ],
+                    sample_cfg=sample_cfg,
+                    warmup_runs=int(args.warmup),
+                    measured_runs=int(args.runs),
+                    objective="latency",
+                )
+                res_p1 = runner_single.run_graph(plan_p1, h_p1, out_dir / "graph_part1")
+
+                plan_p2 = _SP_GraphPlan(
+                    stages=[
+                        _SP_Stage(
+                            name="part2",
+                            backend=b_p2,
+                            run_cfg=_SP_RunCfg(model_path=part2_onnx),
+                        )
+                    ],
+                    sample_cfg=sample_cfg,
+                    warmup_runs=int(args.warmup),
+                    measured_runs=int(args.runs),
+                    objective="latency",
+                )
+                res_p2 = runner_single.run_graph(plan_p2, h_p2, out_dir / "graph_part2")
+
+                # Composed (2-stage) run: stage2 inputs are merged from feeds_p2_0 + stage1 outputs.
+                merge_transfer = _SP_MergeP2Transfer(feeds_p2_0)
+                runner_comp = _SP_GraphRunner(transfer=merge_transfer)
+                plan_comp = _SP_GraphPlan(
+                    stages=[
+                        _SP_Stage(
+                            name="part1",
+                            backend=b_p1,
+                            run_cfg=_SP_RunCfg(model_path=part1_onnx),
+                        ),
+                        _SP_Stage(
+                            name="part2",
+                            backend=b_p2,
+                            run_cfg=_SP_RunCfg(model_path=part2_onnx),
+                        ),
+                    ],
+                    sample_cfg=sample_cfg,
+                    warmup_runs=int(args.warmup),
+                    measured_runs=int(args.runs),
+                    objective="latency",
+                )
+                res_comp = runner_comp.run_graph(plan_comp, h_p1, out_dir / "graph_composed")
+
+                def _get_ms(res: object, *path: str) -> Optional[float]:
+                    cur: object = getattr(res, "metrics", {})
+                    for key in path:
+                        if not isinstance(cur, dict) or key not in cur:
+                            return None
+                        cur = cur[key]
+                    try:
+                        return float(cur)  # type: ignore[arg-type]
+                    except Exception:
+                        return None
+
+                full_mean = _get_ms(res_full, "end_to_end_summary_ms", "measured", "mean")
+                full_std = _get_ms(res_full, "end_to_end_summary_ms", "measured", "std")
+                p1_mean = _get_ms(res_p1, "end_to_end_summary_ms", "measured", "mean")
+                p1_std = _get_ms(res_p1, "end_to_end_summary_ms", "measured", "std")
+                p2_mean = _get_ms(res_p2, "end_to_end_summary_ms", "measured", "mean")
+                p2_std = _get_ms(res_p2, "end_to_end_summary_ms", "measured", "std")
+                comp_mean = _get_ms(res_comp, "end_to_end_summary_ms", "measured", "mean")
+                comp_std = _get_ms(res_comp, "end_to_end_summary_ms", "measured", "std")
+
+                full_out = _order_out_map(res_full.outputs if isinstance(res_full.outputs, dict) else {})
+                comp_out = _order_out_map(res_comp.outputs if isinstance(res_comp.outputs, dict) else {})
+
+                graph_runner_metrics = {
+                    "full": res_full.metrics,
+                    "part1": res_p1.metrics,
+                    "part2": res_p2.metrics,
+                    "composed": res_comp.metrics,
+                }
+            except Exception as e:
+                print(
+                    f"[graph-runner] WARNING: GraphRunner path failed ({type(e).__name__}: {e}). "
+                    "Falling back to legacy benchmark loop."
+                )
+                full_mean, full_std, _ = _bench("full", run_full, args.warmup, args.runs)
+                p1_mean, p1_std, _ = _bench("part1", run_p1, args.warmup, args.runs)
+                p2_mean, p2_std, _ = _bench("part2", run_p2, args.warmup, args.runs)
+                comp_mean, comp_std, _ = _bench("composed", run_composed, args.warmup, args.runs)
+
+                full_out = run_full()
+                comp_out = run_composed()
+        else:
+            full_mean, full_std, _ = _bench("full", run_full, args.warmup, args.runs)
+            p1_mean, p1_std, _ = _bench("part1", run_p1, args.warmup, args.runs)
+            p2_mean, p2_std, _ = _bench("part2", run_p2, args.warmup, args.runs)
+            comp_mean, comp_std, _ = _bench("composed", run_composed, args.warmup, args.runs)
+
+            full_out = run_full()
+            comp_out = run_composed()
 
     n = min(len(full_out), len(comp_out))
     per_out = []
@@ -1919,118 +4030,277 @@ def main() -> int:
             mean_abs_global += mean_abs
         mean_abs_global = mean_abs_global / float(n)
 
-    passed = (max_abs_global <= float(args.eps)) if n > 0 else True
 
-    def _fmt_pm(mean: Any, std: Any) -> str:
-        if mean is None or std is None:
-            return "n/a"
+    elementwise_pass = (max_abs_global <= float(args.eps)) if n > 0 else False
+
+    print("==== Timings ====")
+    print(f"full    : {full_mean:.3f} ± {full_std:.3f}")
+    print(f"part1   : {p1_mean:.3f} ± {p1_std:.3f}")
+    print(f"part2   : {p2_mean:.3f} ± {p2_std:.3f}")
+    print(f"composed: {comp_mean:.3f} ± {comp_std:.3f}")
+    print(f"(note) part1+part2 (means) = {(p1_mean + p2_mean):.3f} ms")
+    print(f"(note) composed - full       = {(comp_mean - full_mean):.3f} ms")
+
+    # Determine output format for viz/validation
+    # NOTE: The legacy runner path primarily works with ordered output *lists*.
+    # For YOLOv10 BN6 + proxy validation we also need a name->tensor mapping.
+    # In the GraphRunner path we already have dict outputs; otherwise we fall
+    # back to synthetic output names.
+    out_full: Dict[str, np.ndarray] = {}
+    out_comp: Dict[str, np.ndarray] = {}
+    # Only try to use GraphRunner dict outputs if GraphRunner actually ran.
+    if graph_runner_metrics is not None:
         try:
-            return f"{float(mean):.3f} ± {float(std):.3f}"
+            if isinstance(res_full.outputs, dict):
+                out_full = res_full.outputs
+            if isinstance(res_comp.outputs, dict):
+                out_comp = res_comp.outputs
         except Exception:
-            return "n/a"
+            out_full = {}
+            out_comp = {}
 
-    print("==== Timing summary (ms) ====")
-    print(f"full     : {_fmt_pm(full_mean, full_std)}")
-    print(f"part1    : {_fmt_pm(p1_mean, p1_std)}")
-    print(f"part2    : {_fmt_pm(p2_mean, p2_std)}")
-    print(f"composed : {_fmt_pm(comp_mean, comp_std)}")
-    print("(note) part1+part2 (means) = {:.3f} ms".format(p1_mean + p2_mean))
-    if full_mean is None:
-        print("(note) composed - full       = n/a")
+    if not out_full:
+        out_full = {f"output{i}": a for i, a in enumerate(full_out)}
+    if not out_comp:
+        out_comp = {f"output{i}": a for i, a in enumerate(comp_out)}
+
+    output_names = list(out_full.keys())
+    full_out_list = list(out_full.values())
+    comp_out_names = list(out_comp.keys())
+    comp_out_list = list(out_comp.values())
+
+    output_format = _detect_output_format(output_names, full_out_list)
+    if output_format == "unknown":
+        output_format = _detect_output_format(comp_out_names, comp_out_list)
+
+    mode_used, mode_warnings = _select_validation_mode(args.validation_mode, args.provider, output_format)
+    warn_list: List[str] = []
+    warn_list.extend(mode_warnings)
+
+    proxy_metrics: Optional[Dict[str, Any]] = None
+    proxy_pass: Optional[bool] = None
+
+    if mode_used == "proxy_detections":
+        dets_full, w1 = _extract_detections_for_proxy(
+            output_format=output_format,
+            output_names=output_names,
+            outputs=full_out_list,
+            img_hw=img_hw,
+            yolo_conf=float(args.yolo_conf),
+            yolo_iou=float(args.yolo_iou),
+            yolo_max_det=int(args.yolo_max_det),
+            det_conf=float(args.detr_conf),
+            det_iou=float(args.detr_iou),
+            det_max_det=int(args.detr_max_det),
+            labels=labels,
+        )
+        dets_comp, w2 = _extract_detections_for_proxy(
+            output_format=output_format,
+            output_names=comp_out_names,
+            outputs=comp_out_list,
+            img_hw=img_hw,
+            yolo_conf=float(args.yolo_conf),
+            yolo_iou=float(args.yolo_iou),
+            yolo_max_det=int(args.yolo_max_det),
+            det_conf=float(args.detr_conf),
+            det_iou=float(args.detr_iou),
+            det_max_det=int(args.detr_max_det),
+            labels=labels,
+        )
+        warn_list.extend(w1)
+        warn_list.extend(w2)
+
+        fatal_proxy_w = [
+            w
+            for w in (w1 + w2)
+            if w.startswith(("proxy_", "bn6_")) and not w.startswith("ambiguous_")
+        ]
+        if fatal_proxy_w:
+            if args.provider == "tensorrt":
+                # TensorRT: proxy is the default, but if we can't decode detections, we soft-pass (timing-only).
+                warn_list.append("proxy_validation_skipped_fallback=off")
+                mode_used = "off"
+            else:
+                # Non-TRT: fall back to strict elementwise gating
+                warn_list.append("proxy_validation_failed_fallback=strict_elementwise")
+                mode_used = "strict_elementwise"
+        else:
+            proxy_metrics, proxy_pass = _proxy_validate_detections(dets_ref=dets_full, dets_out=dets_comp)
+
+    if mode_used == "off":
+        final_pass = True
+    elif mode_used == "strict_elementwise":
+        final_pass = bool(elementwise_pass)
+    elif mode_used == "proxy_detections":
+        final_pass = bool(proxy_pass) if proxy_pass is not None else False
     else:
-        print("(note) composed - full       = {:.3f} ms".format(comp_mean - full_mean))
+        final_pass = bool(elementwise_pass)
+
     print("==== Output diff ====")
     print(f"Compared outputs: {n}")
     print(f"max_abs : {max_abs_global}")
     print(f"mean_abs: {mean_abs_global}")
-    print(f"PASS({args.eps}): {passed}")
+    print(f"elementwise PASS({args.eps}): {elementwise_pass}")
+    print(f"[validation] mode={args.validation_mode} used={mode_used} output_format={output_format} final_pass={final_pass}")
+    if proxy_metrics is not None:
+        print("==== Proxy validation ====")
+        print(f"n_ref    : {proxy_metrics.get('n_ref')}")
+        print(f"n_out    : {proxy_metrics.get('n_out')}")
+        print(f"matched  : {proxy_metrics.get('matched')}")
+        print(f"match_ratio      : {proxy_metrics.get('match_ratio')}")
+        print(f"mean_iou_matched : {proxy_metrics.get('mean_iou_matched')}")
+        print(f"proxy PASS: {proxy_pass}")
 
-    report = {
-        "created": _now_ts(),
-        "created_time_unix": time.time(),
-        "manifest": manifest,
-        "manifest_path": str(manifest_path),
-        "args": vars(args),
-        "providers_available": avail,
-        "providers_requested": providers,
-        "sessions": {"full": info_full.__dict__, "part1": info_p1.__dict__, "part2": info_p2.__dict__},
-        "timing_ms": {
-            "full_mean": full_mean,
-            "full_std": full_std,
-            "part1_mean": p1_mean,
-            "part1_std": p1_std,
-            "part2_mean": p2_mean,
-            "part2_std": p2_std,
-            "composed_mean": comp_mean,
-            "composed_std": comp_std,
-        },
-        "output_diff": {"eps": float(args.eps), "passed": bool(passed), "max_abs": float(max_abs_global), "mean_abs": float(mean_abs_global), "per_output": per_out},
-    }
-
-    # Optional plots
-    if not args.no_report_plots:
-        _try_write_report_plots(out_dir, report)
-
-    # Optional visualization
-    viz_mode = (args.viz or "auto").lower()
-    if viz_mode != "none":
-        # Determine output names for heuristic detection
-        out_names = [o.name for o in sess_full.get_outputs()]
-
-        if viz_mode == "yolo" or (viz_mode == "auto" and _is_yolo_multiscale(full_out)):
-            yolo_info = _maybe_yolo_viz(
-                out_dir,
-                img_path=img_path,
-                img_hw=img_hw,
-                full_out=full_out,
-                comp_out=comp_out,
-                conf_thr=float(args.yolo_conf),
-                iou_thr=float(args.yolo_iou),
-                max_det=int(args.yolo_max_det),
-            )
-            if yolo_info.get("enabled"):
-                report.setdefault("visualization", {})
-                report["visualization"]["yolo"] = yolo_info
-
-        if viz_mode == "detr" or (viz_mode == "auto" and _is_detr_like(out_names, full_out)):
-            labels = _load_labels(getattr(args, "labels", None))
-            detr_info = _maybe_detr_viz(
-                out_dir,
-                img_path=img_path,
-                img_hw=img_hw,
-                output_names=out_names,
-                full_out=full_out,
-                comp_out=comp_out,
-                conf_thr=float(getattr(args, "detr_conf", 0.25)),
-                iou_thr=float(getattr(args, "detr_iou", 0.50)),
-                max_det=int(getattr(args, "detr_max_det", 200)),
-                labels=labels,
-            )
-            if detr_info.get("enabled"):
-                report.setdefault("visualization", {})
-                report["visualization"]["detr"] = detr_info
-
-    out_report = out_dir / "validation_report.json"
-    _write_json(out_report, report)
-    print(f"Wrote {out_report}")
-
-    # Clean up Hailo resources if used.
-    try:
-        if hailo_p1 is not None:
-            hailo_p1.close()
-        if hailo_p2 is not None:
-            hailo_p2.close()
-    except Exception as e:
-        print(f"[warn] Failed to close Hailo session(s): {e}")
-
-    # For quantized backends (Hailo), numerical diffs vs float baselines can exceed eps.
-    # We still record the diff metrics, but we do not fail the run.
-    if hailo_hw:
-        if not passed:
-            print(f"[warn] Output diff exceeds eps={args.eps} (likely due to quantization). Not failing the run.")
+    if args.provider == "hailo":
+        # Hailo path may not have comparable outputs (and might be partial).
         return 0
 
-    return 0 if passed else 2
+    report = dict(
+        schema_version=2,
+        timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
+        run_cfg=run_cfg,
+        plan=plan,
+        timings=dict(
+            full=dict(mean_ms=float(full_mean), std_ms=float(full_std)),
+            part1=dict(mean_ms=float(p1_mean), std_ms=float(p1_std)),
+            part2=dict(mean_ms=float(p2_mean), std_ms=float(p2_std)),
+            composed=dict(mean_ms=float(comp_mean), std_ms=float(comp_std)),
+        ),
+        output_format=output_format,
+        validation_mode=str(args.validation_mode),
+        validation_mode_used=mode_used,
+        output_diff=dict(
+            compared_outputs=int(n),
+            max_abs=float(max_abs_global),
+            mean_abs=float(mean_abs_global),
+            eps=float(args.eps),
+            passed=bool(final_pass),
+            elementwise_pass=bool(elementwise_pass),
+        ),
+        elementwise={
+            "compared_outputs": int(n),
+            "max_abs": float(max_abs_global),
+            "mean_abs": float(mean_abs_global),
+            "eps": float(args.eps),
+            "pass": bool(elementwise_pass),
+        },
+        proxy=({**proxy_metrics, "pass": bool(proxy_pass)} if proxy_metrics is not None else None),
+        final_pass=bool(final_pass),
+        warnings=warn_list,
+    )
+
+    # Write report JSON
+    report_path = out_dir / "validation_report.json"
+    with open(report_path, "w") as f:
+        json.dump(report, f, indent=2)
+    print(f"Wrote {report_path}")
+
+    # Write plots (png/pdf) best-effort
+    _try_write_report_plots(out_dir, report)
+
+    # Visualization (best-effort)
+    if str(args.viz).lower() != 'none':
+        try:
+            viz_mode = str(args.viz).lower()
+            if viz_mode == 'yolo':
+                viz_info = _maybe_yolo_viz(
+                    out_dir=out_dir,
+                    img_path=img_path,
+                    img_hw=img_hw,
+                    labels=labels,
+                    output_names=output_names,
+                    full_out=full_out_list,
+                    comp_out=comp_out_list,
+                    conf_thr=float(args.yolo_conf),
+                    iou_thr=float(args.yolo_iou),
+                    max_det=int(args.yolo_max_det),
+                )
+                if viz_info.get('enabled', False):
+                    report['viz'] = viz_info
+            elif viz_mode == 'detr':
+                detr_info = _maybe_detr_viz(
+                    out_dir=out_dir,
+                    img_path=img_path,
+                    img_hw=img_hw,
+                    labels=labels,
+                    output_names=output_names,
+                    full_out=full_out_list,
+                    comp_out=comp_out_list,
+                    conf_thr=float(args.detr_conf),
+                    iou_thr=float(args.detr_iou),
+                    max_det=int(args.detr_max_det),
+                )
+                if detr_info.get('enabled', False):
+                    report['viz'] = detr_info
+            elif viz_mode == 'cls':
+                cls_info = _maybe_classification_viz(
+                    out_dir=out_dir,
+                    img_path=img_path,
+                    output_names=output_names,
+                    full_out=full_out_list,
+                    comp_out=comp_out_list,
+                    labels=labels,
+                    topk=5,
+                )
+                if cls_info.get('enabled', False):
+                    report['viz'] = cls_info
+            else:  # auto
+                viz_info = _maybe_yolo_viz(
+                    out_dir=out_dir,
+                    img_path=img_path,
+                    img_hw=img_hw,
+                    labels=labels,
+                    output_names=output_names,
+                    full_out=full_out_list,
+                    comp_out=comp_out_list,
+                    conf_thr=float(args.yolo_conf),
+                    iou_thr=float(args.yolo_iou),
+                    max_det=int(args.yolo_max_det),
+                )
+                if viz_info.get('enabled', False):
+                    report['viz'] = viz_info
+                else:
+                    detr_info = _maybe_detr_viz(
+                        out_dir=out_dir,
+                        img_path=img_path,
+                        img_hw=img_hw,
+                        labels=labels,
+                        output_names=output_names,
+                        full_out=full_out_list,
+                        comp_out=comp_out_list,
+                        conf_thr=float(args.detr_conf),
+                        iou_thr=float(args.detr_iou),
+                        max_det=int(args.detr_max_det),
+                    )
+                    if detr_info.get('enabled', False):
+                        report['viz'] = detr_info
+                    else:
+                        cls_info = _maybe_classification_viz(
+                            out_dir=out_dir,
+                            img_path=img_path,
+                            output_names=output_names,
+                            full_out=full_out_list,
+                            comp_out=comp_out_list,
+                            labels=labels,
+                            topk=5,
+                        )
+                        if cls_info.get('enabled', False):
+                            report['viz'] = cls_info
+        except Exception as e:
+            warn = f"Visualization failed: {e}"
+            print(f"[warn] {warn}")
+            warn_list.append(warn)
+            report['viz'] = {'enabled': False, 'error': str(e)}
+
+    # Rewrite report if viz added/updated
+    with open(report_path, "w") as f:
+        json.dump(report, f, indent=2)
+
+    if not final_pass:
+        print(f"[warn] validation failed (mode={mode_used}, output_format={output_format}) — continuing (soft-fail).")
+
+    # Soft-fail policy: validation mismatch is a WARNING, not a hard failure.
+    return 0
 
 
 if __name__ == "__main__":

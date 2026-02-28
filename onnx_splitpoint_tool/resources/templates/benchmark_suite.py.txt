@@ -539,7 +539,7 @@ def _write_summary_md(path: Path, rows: List[Dict[str, Any]], tag: str, objectiv
             f"| {r.get('boundary','-')} | {_fmt(r.get('cut_mib'),3)} | {r.get('n_cut_tensors','-')} | "
             f"{_fmt(r.get('full_mean_ms'),2)} | {_fmt(r.get('composed_mean_ms'),2)} | "
             f"{_fmt(r.get('sum_parts_ms'),2)} | {_fmt(r.get('overhead_ms'),2)} | "
-            f"{'✅' if r.get('eps_pass') else '❌'} |\n"
+            f"{'✅' if r.get('final_pass', r.get('eps_pass')) else '❌'} |\n"
         )
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -678,7 +678,8 @@ def _run_case(case_dir: Path, provider: str, image: str, preset: str, image_scal
         r["eps_pass"] = bool(r.get("ok"))
 
     # Ensure timing fields are also available at top-level (compat)
-    tms = r.get("timing_ms") or r.get("timing")
+    # Runner reports have used multiple keys over time; accept all known ones.
+    tms = r.get("timing_ms") or r.get("timing") or r.get("timings")
     if isinstance(tms, dict):
         for _name in ("full", "part1", "part2", "composed"):
             blk = tms.get(_name)
@@ -794,7 +795,13 @@ def main() -> int:
         runs = [{"id": f"ort_{args.provider}", "type": "onnxruntime", "provider": args.provider, "image_scale": args.image_scale}]
 
     # Execute each run.
+    # Robust exit code policy:
+    # - If at least one configured run produced results, return rc=0 (success)
+    #   and write a status file listing runs with no results.
+    # - If *no* run produced results, return rc=2.
     overall_rc = 0
+    any_rows = False
+    failed_runs: List[Dict[str, Any]] = []
     for run in runs:
         rtype = str(run.get("type") or run.get("kind") or "onnxruntime").strip().lower()
         run_id = str(run.get("id") or run.get("name") or rtype).strip() or rtype
@@ -838,8 +845,21 @@ def main() -> int:
 
             if not rows:
                 print(f"[warn] No results collected for run {run_id}")
-                overall_rc = max(overall_rc, 2)
+                failed_runs.append({"run_id": run_id, "type": rtype, "provider": provider})
+
+                # Still write placeholder artifacts so UIs/parsers can show the run as "empty".
+                results_json = root / f"benchmark_results_{tag}.json"
+                _write_json(results_json, rows)
+                try:
+                    (root / f"benchmark_results_{tag}.error.txt").write_text(
+                        f"No results collected for run {run_id} (provider={provider}).\n",
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    pass
                 continue
+
+            any_rows = True
 
             results_json = root / f"benchmark_results_{tag}.json"
             _write_json(results_json, rows)
@@ -921,8 +941,21 @@ def main() -> int:
 
             if not rows:
                 print(f"[warn] No results collected for run {run_id}")
-                overall_rc = max(overall_rc, 2)
+                failed_runs.append({"run_id": run_id, "type": rtype, "provider": provider_tag})
+
+                # Still write placeholder artifacts so UIs/parsers can show the run as "empty".
+                results_json = root / f"benchmark_results_{tag}.json"
+                _write_json(results_json, rows)
+                try:
+                    (root / f"benchmark_results_{tag}.error.txt").write_text(
+                        f"No results collected for run {run_id} (provider={provider_tag}).\n",
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    pass
                 continue
+
+            any_rows = True
 
             results_json = root / f"benchmark_results_{tag}.json"
             _write_json(results_json, rows)
@@ -964,7 +997,28 @@ def main() -> int:
             print(f"[warn] Unknown run type '{rtype}' for run {run_id}; skipping")
             continue
 
+    # Always write a small status file so UIs can show partial success.
+    try:
+        status = {
+            "any_rows": any_rows,
+            "failed_runs": failed_runs,
+            "total_runs": len(runs),
+            "total_cases": len(cases),
+        }
+        status_path = root / "benchmark_suite_status.json"
+        _write_json(status_path, status)
+        if failed_runs:
+            print(f"[warn] Some runs produced no results; see {status_path.name}")
+    except Exception as e:
+        print(f"[warn] Failed to write benchmark_suite_status.json: {e}")
+
     print("\nDone.")
+
+    # Final exit code.
+    if not any_rows:
+        overall_rc = 2
+    else:
+        overall_rc = 0
     return overall_rc
 
 

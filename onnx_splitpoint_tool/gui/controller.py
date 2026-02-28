@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from shutil import copytree, rmtree
 from typing import Optional
 
 log = logging.getLogger(__name__)
@@ -58,4 +59,32 @@ def write_benchmark_suite_script(dst_dir: str | Path, *, bench_json_name: str = 
         pass
 
     log.info("Wrote benchmark suite script: %s", script_path)
+
+    # Phase-1: vendor the lightweight runner library into the suite root.
+    # This enables remote execution without requiring an installed
+    # onnx_splitpoint_tool package on the target.
+    try:
+        _copy_runner_lib(dst_dir)
+    except Exception as e:
+        # Do not hard-fail suite generation if vendoring fails.
+        log.warning("Could not copy runner lib into suite: %s: %s", type(e).__name__, e)
+
     return str(script_path)
+
+
+def _copy_runner_lib(suite_dir: Path) -> None:
+    src = Path(__file__).resolve().parents[1] / "runners"
+    if not src.exists():
+        return
+
+    dst = suite_dir / "splitpoint_runners"
+    if dst.exists():
+        rmtree(dst)
+
+    copytree(src, dst, ignore=_ignore_pycache)
+
+
+def _ignore_pycache(_dir: str, names: list[str]) -> set[str]:
+    ignored = {"__pycache__"}
+    ignored.update({n for n in names if n.endswith(".pyc")})
+    return ignored

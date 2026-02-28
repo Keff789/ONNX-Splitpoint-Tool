@@ -50,7 +50,7 @@ def _write_table_tex(path: Path, rows: List[Dict[str, Any]], tag: str, objective
         r"\small",
         r"\begin{tabular}{rrrrrr}",
         r"\toprule",
-        r"Boundary & Cut (MiB) & \#T & $F_L$ (GFLOPs) & $F_R$ (GFLOPs) & Pass \\",
+        r"Boundary & Cut (MiB) & \#T & $F_L$ (GMACs) & $F_R$ (GMACs) & Pass \\",
         r"\midrule",
     ]
     for r in rows_sorted:

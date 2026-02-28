@@ -417,7 +417,7 @@ def flops_conv(node: onnx.NodeProto, vimap, init_map, batch_override: Optional[i
     N, _, H, Wd = [int(d or 1) for d in out_shape]
     if batch_override is not None:
         N = int(batch_override)
-    return int(2 * N * H * Wd * int(C_out) * int(C_in_per_group) * int(kH) * int(kW))
+    return int(N * H * Wd * int(C_out) * int(C_in_per_group) * int(kH) * int(kW))
 
 
 def flops_qlinearconv(node: onnx.NodeProto, vimap, init_map, batch_override: Optional[int] = None) -> int:
@@ -434,7 +434,7 @@ def flops_qlinearconv(node: onnx.NodeProto, vimap, init_map, batch_override: Opt
     N, _, H, Wd = [int(d or 1) for d in out_shape]
     if batch_override is not None:
         N = int(batch_override)
-    return int(2 * N * H * Wd * int(C_out) * int(C_in_per_group) * int(kH) * int(kW))
+    return int(N * H * Wd * int(C_out) * int(C_in_per_group) * int(kH) * int(kW))
 
 
 def flops_convtranspose(node: onnx.NodeProto, vimap, init_map, batch_override: Optional[int] = None) -> int:
@@ -451,7 +451,7 @@ def flops_convtranspose(node: onnx.NodeProto, vimap, init_map, batch_override: O
     N, _, H, Wd = [int(d or 1) for d in out_shape]
     if batch_override is not None:
         N = int(batch_override)
-    return int(2 * N * H * Wd * int(C_in) * int(C_out_per_group) * int(kH) * int(kW))
+    return int(N * H * Wd * int(C_in) * int(C_out_per_group) * int(kH) * int(kW))
 
 
 def _shape_from_any(
@@ -492,9 +492,9 @@ def flops_matmul(node: onnx.NodeProto, vimap, init_map: Optional[Dict[str, objec
             m = out[-2] if len(out) >= 2 else 1
             n = out[-1] if len(out) >= 1 else 1
             k = int((sb[-2] if sb[-2] is not None else 1))
-            return int(2 * batch * m * n * k)
+            return int(batch * m * n * k)
         return 0
-    return int(2 * B * M * N * K)
+    return int(B * M * N * K)
 
 
 def flops_qlinearmatmul(node: onnx.NodeProto, vimap, init_map: Optional[Dict[str, object]] = None) -> int:
@@ -506,7 +506,7 @@ def flops_qlinearmatmul(node: onnx.NodeProto, vimap, init_map: Optional[Dict[str
     B, M, K, N = _matmul_dims(sa, sb)
     if B == 0:
         return 0
-    return int(2 * B * M * N * K)
+    return int(B * M * N * K)
 
 
 def flops_gemm(node: onnx.NodeProto, vimap, init_map: Optional[Dict[str, object]] = None) -> int:
@@ -517,7 +517,7 @@ def flops_gemm(node: onnx.NodeProto, vimap, init_map: Optional[Dict[str, object]
     B, M, K, N = _matmul_dims(sa, sb)
     if B == 0:
         return 0
-    return int(2 * B * M * N * K)
+    return int(B * M * N * K)
 
 
 def flops_batchnorm(node: onnx.NodeProto, vimap, batch_override: Optional[int], ops_per_elt: int = 4) -> int:
@@ -573,6 +573,11 @@ def per_node_flops(
             if has_bias:
                 fl += flops_per_output_element(node, vimap, batch_override)
 
+        elif op == "ConvInteger":
+            # Quantized integer conv (often produced by ORT quantization flows).
+            # FLOPs are computed the same way as Conv (MACs over the output tensor).
+            fl = flops_conv(node, vimap, init_map, batch_override)
+
         elif op == "QLinearConv":
             fl = flops_qlinearconv(node, vimap, init_map, batch_override)
             has_bias = len(node.input) > 8 and bool(node.input[8])
@@ -586,6 +591,11 @@ def per_node_flops(
                 fl += flops_per_output_element(node, vimap, batch_override)
 
         elif op == "MatMul":
+            fl = flops_matmul(node, vimap, init_map)
+
+        elif op == "MatMulInteger":
+            # Quantized integer matmul (often produced by ORT quantization flows).
+            # FLOPs are computed the same way as MatMul (2*M*N*K).
             fl = flops_matmul(node, vimap, init_map)
 
         elif op == "QLinearMatMul":

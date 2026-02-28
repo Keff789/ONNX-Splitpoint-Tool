@@ -337,7 +337,7 @@ def _build_center_results(parent: ttk.Frame, app: Any) -> None:
     for key, text in (
         ("rank", "#"), ("clean", "Clean"), ("boundary", "Boundary"), ("semantic", "Semantic"),
         ("left_op", "Left op"), ("right_op", "Right op"), ("cut_mb", "Cut (MB)"), ("num_tensors", "#Tensors"),
-        ("gflops_left", "Compute Left (GFLOPs)"), ("gflops_right", "Compute Right (GFLOPs)"),
+        ("gflops_left", "Compute Left (GMACs)"), ("gflops_right", "Compute Right (GMACs)"),
         ("peak_left_mib", "Peak L (MiB)"), ("peak_right_mib", "Peak R (MiB)"), ("peak_max_mib", "Peak max (MiB)"),
         ("fits_left", "Fits L"), ("fits_right", "Fits R"), ("ram_left_gb", "RAM L (GB)"), ("ram_right_gb", "RAM R (GB)"),
     ):
@@ -619,7 +619,7 @@ def _build_candidate_inspector(parent: ttk.Frame, app: Any) -> None:
 
         vars_map["boundary"].set(str(b))
         vars_map["semantic"].set(str(getattr(cand, "semantic_label", "") or row.get("semantic", "–")))
-        vars_map["compute"].set(f"{row.get('gflops_left', '–')} / {row.get('gflops_right', '–')} GFLOPs")
+        vars_map["compute"].set(f"{row.get('gflops_left', '–')} / {row.get('gflops_right', '–')} GMACs")
         vars_map["cut"].set(f"{cut_mb:.3f} MB")
         vars_map["counts"].set(f"total={len(cut_tensors)}, unknown={unknown_n}")
 

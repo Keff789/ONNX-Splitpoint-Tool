@@ -13,6 +13,7 @@ This module is used by the remote benchmarking flow.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 import time
@@ -263,24 +264,27 @@ class SSHTransport:
         start = time.time()
         assert proc.stdout is not None
         try:
-            for raw in proc.stdout:
-                line = raw.rstrip("\n")
-                on_line(line)
+            ansi_re = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+            ts_re = re.compile(r"(?<!^)(?<!\n)(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
 
-                if cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)():
-                    on_line("[cancel] requested, terminating remote command")
-                    try:
-                        proc.terminate()
-                    except Exception:
-                        pass
+            for raw in proc.stdout:
+                # raw is a line terminated by \n, but may contain \r progress updates / ANSI colors
+                chunk = raw.replace("\r", "\n")
+                chunk = ansi_re.sub("", chunk)
+                # If progress output and another log line got concatenated, split before timestamps.
+                chunk = ts_re.sub(r"\n\1", chunk)
+
+                for line in chunk.splitlines():
+                    on_line(line)
+
+                if cancel_event and cancel_event.is_set():
+                    on_line("[remote] cancel requested; terminating…")
+                    proc.terminate()
                     break
 
-                if timeout is not None and (time.time() - start) > timeout:
-                    on_line(f"[timeout] after {timeout}s, terminating remote command")
-                    try:
-                        proc.terminate()
-                    except Exception:
-                        pass
+                if timeout is not None and (time.time() - t0) > timeout:
+                    on_line(f"[remote] timeout ({timeout}s) exceeded; terminating…")
+                    proc.terminate()
                     break
         finally:
             try:

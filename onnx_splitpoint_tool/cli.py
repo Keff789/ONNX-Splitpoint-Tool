@@ -245,7 +245,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             f"{r:>2} boundary {b:>4}  {nodes[lidx].op_type:16s} -> {nodes[ridx].op_type:16s}  "
             f"comm={float(costs[b]) / mul:.{args.precision}f} {args.unit}  "
             f"#tensors={int(crossing_counts[b])}  "
-            f"F_L={fl_l/1e9:.3f} GFLOPs  F_R={fl_r/1e9:.3f} GFLOPs{extra}"
+            f"F_L={fl_l/1e9:.3f} GMACs  F_R={fl_r/1e9:.3f} GMACs{extra}"
         )
 
     if args.tex_out:

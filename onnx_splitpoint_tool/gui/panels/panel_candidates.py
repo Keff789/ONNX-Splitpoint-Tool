@@ -214,7 +214,7 @@ def _build_inspector(parent: ttk.Frame, app) -> None:
 
         vars_map["boundary"].set(str(b))
         vars_map["semantic"].set(str(getattr(cand, "semantic_label", "") or row.get("semantic", "–")))
-        vars_map["compute"].set(f"{row.get('gflops_left', '–')} / {row.get('gflops_right', '–')} GFLOPs")
+        vars_map["compute"].set(f"{row.get('gflops_left', '–')} / {row.get('gflops_right', '–')} GMACs")
         vars_map["cut"].set(f"{cut_mb:.3f} MB")
         vars_map["counts"].set(f"total={len(cut_tensors)}, unknown={unknown_n}")
 

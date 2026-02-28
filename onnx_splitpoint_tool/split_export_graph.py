@@ -31,6 +31,74 @@ from .onnx_utils import (
 )
 
 LOGGER = logging.getLogger("onnx_splitpoint_tool.split_export")
+
+
+def _guess_default_image_hw(model: onnx.ModelProto) -> int:
+    """Heuristic default for dynamic H/W on 4D image inputs.
+
+    Many vision models are exported with symbolic/dynamic spatial dims. That's fine
+    for execution, but it breaks static activation/FLOP estimates.
+
+    We keep this intentionally simple:
+    - Classification-ish outputs ("logits"/"prob" name or rank-2) => assume 224.
+    - Otherwise assume 640 (common for YOLO-style detectors).
+
+    Users can always override by exporting ONNX with concrete input dims.
+    """
+    try:
+        out_names = [o.name.lower() for o in model.graph.output]
+        if any(("logit" in n) or ("prob" in n) or ("softmax" in n) for n in out_names):
+            return 224
+
+        for o in model.graph.output:
+            tt = o.type.tensor_type
+            if not tt.HasField("shape"):
+                continue
+            dims = []
+            for d in tt.shape.dim:
+                v = int(d.dim_value) if d.dim_value else 0
+                dims.append(v if v > 0 else None)
+            # Classification-ish: [B, C]
+            if len(dims) == 2:
+                return 224
+            # Common detector heads: [B, N, 6] / [B, N, 85] etc.
+            if len(dims) == 3 and (dims[-1] in (6, 7, 85, 84, 91)):
+                return 640
+    except Exception:
+        pass
+
+    return 640
+
+
+def _apply_default_image_input_dims(model: onnx.ModelProto, *, hw: int, batch: int = 1) -> bool:
+    """Fill missing dims on likely image inputs so shape inference can propagate."""
+    changed = False
+    for inp in model.graph.input:
+        try:
+            tt = inp.type.tensor_type
+            if not tt.HasField("shape"):
+                continue
+            dims = tt.shape.dim
+            if len(dims) != 4:
+                continue
+
+            # Only patch inputs that look like images: NCHW with C==3 (or unknown).
+            c = int(dims[1].dim_value) if dims[1].dim_value else 0
+            if c not in (0, 3):
+                continue
+
+            if not dims[0].dim_value:
+                dims[0].dim_value = int(batch)
+                changed = True
+            if not dims[2].dim_value:
+                dims[2].dim_value = int(hw)
+                changed = True
+            if not dims[3].dim_value:
+                dims[3].dim_value = int(hw)
+                changed = True
+        except Exception:
+            continue
+    return changed
 from .metrics import compute_tensor_bytes_per_value
 
 
@@ -123,20 +191,41 @@ def infer_shapes_safe(
     """
     out = model
 
+    # Best-effort: if the model has dynamic image H/W, fill with a sensible default
+    # before running shape inference. This makes compute/activation estimates usable
+    # for common CV exports that otherwise keep symbolic spatial dims.
+    try:
+        hw = _guess_default_image_hw(out)
+        if _apply_default_image_input_dims(out, hw=hw, batch=1):
+            LOGGER.debug("Applied default image input dims for shape inference (hw=%s)", hw)
+    except Exception:
+        # Never fail shape inference because of this convenience patch.
+        pass
+
+    # Track whether ONNX shape inference completed successfully. Some models
+    # (especially quantized graphs with integer ops) can trip ONNX's built-in
+    # shape inference. In that case we automatically fall back to ORT's
+    # symbolic shape infer if available.
+    onnx_infer_ok = False
+
     # 1) ONNX shape inference
     try:
         out = shape_inference.infer_shapes(out, strict_mode=False)
+        onnx_infer_ok = True
     except TypeError:
         # Older onnx may not accept strict_mode
         try:
             out = shape_inference.infer_shapes(out)
+            onnx_infer_ok = True
         except Exception as e:
             LOGGER.debug("onnx.shape_inference failed (continuing): %s", e)
     except Exception as e:
         LOGGER.debug("onnx.shape_inference failed (continuing): %s", e)
 
-    # 2) ORT symbolic shape inference (optional)
-    if use_ort_symbolic:
+    # 2) ORT symbolic shape inference
+    # - If explicitly requested (use_ort_symbolic=True)
+    # - Or as a best-effort fallback when ONNX inference failed
+    if use_ort_symbolic or (not onnx_infer_ok):
         out = _infer_shapes_ort_symbolic_safe(out)
 
     # 3) Passthrough for custom/fused ops (optional)
