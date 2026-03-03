@@ -4,7 +4,7 @@
 #
 # Features:
 # - provider selection: CPU / CUDA / TensorRT (with cache + fast-build preset)
-# - inputs: random generation, optional --inputs-npz, optional image auto-feed (test_image.png)
+# - inputs: random generation, optional --inputs-npz, optional image auto-feed (bundled presets in resources/test_images)
 # - output diff (max_abs/mean_abs) with --eps
 # - optional report plots (validation_report.png/.pdf) if matplotlib is available
 # - optional YOLO visualization (detections_*.png/.json) if PIL is available
@@ -1718,21 +1718,98 @@ def _is_probably_image_input(shape: List[Optional[int]]) -> bool:
 def _guess_default_image_hw_for_model(model: onnx.ModelProto) -> int:
     """Choose a default H/W for dynamic image inputs.
 
-    - Classification-ish models ("logits"/"prob" outputs, rank-2 outputs) => 224
-    - Otherwise => 640
+    We ship two bundled test images:
+      - COCO-style (better for detection models like YOLO)
+      - ImageNet-style (better for classifiers like ResNet)
+
+    When the user passes --image=default/auto, we pick between them using a
+    lightweight heuristic.
+
+    Heuristic (in order):
+      1) Prefer *input* spatial dims from the ONNX graph (robust for YOLO vs ResNet).
+      2) Fallback: treat as ImageNet classification if output looks like logits
+         with 1000/1001 classes.
+      3) Otherwise: assume detection-ish (640).
+
+    Important:
+      We intentionally do NOT use output-name keywords like "prob" or
+      "predictions" because many detection models use similar names.
     """
+
+    def _pos_int(v: Any) -> Optional[int]:
+        try:
+            x = int(v)
+            return x if x > 0 else None
+        except Exception:
+            return None
+
+    input_hw: Optional[int] = None
+
+    # 1) Input shape hints (only used as a fallback if outputs are not conclusive).
     try:
-        out_names = [o.name.lower() for o in model.graph.output]
-        if any(("logit" in n) or ("prob" in n) or ("softmax" in n) for n in out_names):
-            return 224
+        for i in model.graph.input:
+            tt = i.type.tensor_type
+            if not tt.HasField("shape"):
+                continue
+            dims = [_pos_int(d.dim_value) for d in tt.shape.dim]
+            # Keep None for unknowns so we can still infer layout.
+            if len(dims) != 4:
+                continue
+
+            # NCHW: [N,3,H,W]
+            c = dims[1]
+            h = dims[2]
+            w = dims[3]
+            if (c in (3, None)) and (h is not None) and (w is not None):
+                input_hw = int(max(h, w))
+                break
+
+            # NHWC: [N,H,W,3]
+            c2 = dims[3]
+            h2 = dims[1]
+            w2 = dims[2]
+            if (c2 in (3, None)) and (h2 is not None) and (w2 is not None):
+                input_hw = int(max(h2, w2))
+                break
+    except Exception:
+        input_hw = None
+
+    # 2) Output shape hints (primary signal):
+    #    - ImageNet classifiers usually have logits with 1000/1001 classes
+    #    - Detection models often have rank>=3 outputs or very large rank-2 outputs
+    is_imagenet_logits = False
+    is_detectionish = False
+    try:
         for o in model.graph.output:
             tt = o.type.tensor_type
             if not tt.HasField("shape"):
                 continue
-            if len(tt.shape.dim) == 2:
-                return 224
+            rank = len(tt.shape.dim)
+            dims = [_pos_int(d.dim_value) for d in tt.shape.dim]
+            dims_clean = [d for d in dims if d is not None]
+
+            # Strong classification signal.
+            if rank == 2 and len(dims_clean) == 2 and dims_clean[1] in (1000, 1001):
+                is_imagenet_logits = True
+            if rank == 1 and len(dims_clean) == 1 and dims_clean[0] in (1000, 1001):
+                is_imagenet_logits = True
+
+            # Strong detection signal.
+            if rank >= 3:
+                is_detectionish = True
+            if rank == 2 and len(dims_clean) == 2 and dims_clean[1] > 5000:
+                is_detectionish = True
     except Exception:
         pass
+
+    if is_imagenet_logits:
+        return 224
+    if is_detectionish:
+        return 640
+
+    # 3) Fallback: use input resolution heuristic.
+    if input_hw is not None and input_hw <= 384:
+        return 224
     return 640
 
 
@@ -3884,7 +3961,15 @@ def main() -> int:
     ap.add_argument("--save-inputs-npz", type=str, default=None, help="Save the final full-model input feed dict to an .npz file (includes __meta__).")
 
     # Image helper (for CV models)
-    ap.add_argument("--image", type=str, default="test_image.png", help="Optional image file for CV inputs (default: test_image.png)")
+    ap.add_argument(
+        "--image",
+        type=str,
+        default="default",
+        help=(
+            "Optional image for CV inputs. Either a path or one of: 'default'|'coco'|'imagenet'. "
+            "'default' chooses based on the model input resolution (ImageNet for small inputs, COCO otherwise)."
+        ),
+    )
     ap.add_argument("--image-scale", type=str, default="auto", choices=["auto", "norm", "raw", "imagenet", "clip"], help="Image preprocessing for float inputs: raw=0..255, norm=img/255, imagenet=(img/255-mean)/std, clip=CLIP norm, auto=probe (YOLO/DETR)")
 
     # Visualization
@@ -3997,6 +4082,59 @@ def main() -> int:
     # Load only the ONNX skeleton (avoid pulling huge external weights into RAM)
     full_model = onnx.load(str(full_path), load_external_data=False)
     default_hw = _guess_default_image_hw_for_model(full_model)
+
+    # Resolve image presets ("default"|"coco"|"imagenet") to an actual file path.
+    #
+    # Rationale: our bundled test image for detection is a COCO image, which is great for YOLO,
+    # but confusing for ImageNet-style classifiers. So we ship two presets.
+    def _find_test_images_dir(start_dir: Path) -> Optional[Path]:
+        for root in (start_dir, start_dir.parent, start_dir.parent.parent):
+            d = root / "resources" / "test_images"
+            if d.is_dir():
+                return d
+        return None
+
+    def _resolve_image_spec(spec: str) -> Path:
+        raw = (spec or "").strip()
+        key = raw.lower()
+
+        if key in ("", "default", "auto"):
+            # Heuristic: small inputs (<=384) are usually ImageNet-style classification.
+            # `_guess_default_image_hw_for_model()` returns a *single* int (largest spatial
+            # dim). Earlier versions treated it as (H,W). Keep this robust.
+            if default_hw is not None:
+                try:
+                    max_dim = int(max(default_hw))  # type: ignore[arg-type]
+                except TypeError:
+                    max_dim = int(default_hw)
+                if max_dim <= 384:
+                    key = "imagenet"
+                else:
+                    key = "coco"
+            else:
+                key = "coco"
+
+        if key in ("coco", "coco2017", "coco2014"):
+            d = _find_test_images_dir(base_dir)
+            if d is None:
+                # Backwards compatibility: older suites used a single `test_image.png` next to the runner.
+                return (base_dir / "test_image.png").resolve()
+            return (d / "test_image_coco.png").resolve()
+
+        if key in ("imagenet", "imagenet1k", "imagenet-1k", "imagenet1kval"):
+            d = _find_test_images_dir(base_dir)
+            if d is None:
+                # Backwards compatibility: older suites used a single `test_image.png` next to the runner.
+                return (base_dir / "test_image.png").resolve()
+            return (d / "test_image_imagenet.png").resolve()
+
+        # Treat as filesystem path.
+        p = Path(raw)
+        if not p.is_absolute():
+            p = (base_dir / p).resolve()
+        return p
+
+    args.image = str(_resolve_image_spec(args.image))
 
     # Auto-load labels (for nicer detection visualizations):
     # 1) explicit --labels path

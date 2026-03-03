@@ -122,7 +122,9 @@ def write_runner_skeleton_onnxruntime(out_dir: str, *, manifest_filename: str = 
     The script is self-contained and can optionally use an image as input to "see something"
     (useful for CV models like ResNet/MobileNet/YOLO). If no image is provided, random inputs are used.
 
-    It also drops a small default test image into the export folder: test_image.png
+    It also drops two default test images into the export folder under:
+      resources/test_images/test_image_coco.png
+      resources/test_images/test_image_imagenet.png
     """
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "run_split_onnxruntime.py")
@@ -143,21 +145,52 @@ def write_runner_skeleton_onnxruntime(out_dir: str, *, manifest_filename: str = 
     except Exception:
         pass
 
-    # Also drop a default test image for convenience (so you can run the runner immediately).
-    # If the tool package provides a `test_image.png` next to this file, prefer that.
-    # Otherwise fall back to the embedded tiny placeholder.
+    # Drop bundled test images for convenience (so you can run the runner immediately).
+    #
+    # We keep them out of the folder root to avoid clutter and to support different tasks:
+    #   - resources/test_images/test_image_coco.png     (detection / YOLO)
+    #   - resources/test_images/test_image_imagenet.png (classification)
+    #
+    # For benchmark suites we de-duplicate by placing them at the suite root
+    # (one directory above the case folder) when `benchmark_set.json` exists.
     try:
-        img_path = os.path.join(out_dir, "test_image.png")
-        if not os.path.exists(img_path):
-            import shutil
-            pkg_dir = os.path.dirname(__file__)
-            src = os.path.join(pkg_dir, "test_image.png")
-            if os.path.exists(src):
-                shutil.copyfile(src, img_path)
-            else:
-                import base64 as _b64
-                with open(img_path, "wb") as f:
-                    f.write(_b64.b64decode(_TEST_IMAGE_PNG_B64))
+        import shutil
+
+        out_dir_p = Path(out_dir)
+        pkg_dir = Path(__file__).resolve().parent
+        src_dir = pkg_dir / "resources" / "test_images"
+        coco_src = src_dir / "test_image_coco.png"
+        imagenet_src = src_dir / "test_image_imagenet.png"
+
+        # Decide where to place the images.
+        suite_root = out_dir_p.parent
+        if (suite_root / "benchmark_set.json").is_file():
+            dest_root = suite_root
+        else:
+            dest_root = out_dir_p
+
+        dest_dir = dest_root / "resources" / "test_images"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        if coco_src.is_file():
+            dst = dest_dir / coco_src.name
+            if not dst.exists():
+                shutil.copyfile(coco_src, dst)
+        if imagenet_src.is_file():
+            dst = dest_dir / imagenet_src.name
+            if not dst.exists():
+                shutil.copyfile(imagenet_src, dst)
+
+        # Robust fallback: if the images are missing (e.g. stripped package), write the
+        # embedded placeholder as both presets.
+        if not (dest_dir / "test_image_coco.png").exists():
+            import base64 as _b64
+            with open(dest_dir / "test_image_coco.png", "wb") as f:
+                f.write(_b64.b64decode(_TEST_IMAGE_PNG_B64))
+        if not (dest_dir / "test_image_imagenet.png").exists():
+            import base64 as _b64
+            with open(dest_dir / "test_image_imagenet.png", "wb") as f:
+                f.write(_b64.b64decode(_TEST_IMAGE_PNG_B64))
     except Exception:
         pass
 

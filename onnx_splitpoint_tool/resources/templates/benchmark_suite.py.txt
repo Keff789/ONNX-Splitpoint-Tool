@@ -726,7 +726,14 @@ def main() -> int:
     )
     parser.add_argument("--run-id", default=None, help="If using --plan, run only this run id.")
     parser.add_argument("--list-runs", action="store_true", help="List run ids from the plan and exit.")
-    parser.add_argument("--image", default="default", help="Image path or 'default'.")
+    parser.add_argument(
+        "--image",
+        default="default",
+        help=(
+            "Image for CV inputs. Either a path or one of: 'default'|'coco'|'imagenet'. "
+            "(Passed through to per-case runners.)"
+        ),
+    )
     parser.add_argument("--preset", default="auto", choices=["auto", "classification", "detection"], help="Output agreement preset.")
     parser.add_argument(
         "--image-scale",
