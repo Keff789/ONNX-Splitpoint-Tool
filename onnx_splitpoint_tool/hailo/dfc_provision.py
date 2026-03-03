@@ -28,7 +28,7 @@ from email.parser import Parser
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from .dfc_manager import DfcProfile, get_dfc_manager
+from ..runners.backends.hailo_utils import DfcProfile, get_dfc_manager
 
 
 def _clean_env(env: Optional[Dict[str, str]] = None) -> Dict[str, str]:

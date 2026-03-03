@@ -34,7 +34,7 @@ import onnx
 from onnx import AttributeProto, helper
 
 # Optional (pure python) helper to resolve multiple DFC versions (Hailo-8 vs Hailo-10)
-from .hailo.dfc_manager import get_dfc_manager
+from .runners.backends.hailo_utils import get_dfc_manager
 
 
 log = logging.getLogger(__name__)
@@ -995,7 +995,7 @@ def hailo_parse_check_via_wsl(
         )
 
     # Resolve helper script path on Windows and convert to WSL path.
-    helper_win = (Path(__file__).resolve().parent / "wsl_hailo_check.py")
+    helper_win = (Path(__file__).resolve().parent / "wsl_inline_check")
     helper_wsl = windows_path_to_wsl(str(helper_win))
 
     # Convert ONNX and outdir paths.
@@ -1219,7 +1219,7 @@ def hailo_parse_check_via_venv(
         except Exception:
             pass
 
-    helper = Path(__file__).resolve().parent / "wsl_hailo_check.py"
+    helper = Path(__file__).resolve().parent / "wsl_inline_check"
     if not helper.exists():
         return HailoParseResult(
             ok=False,
@@ -2184,7 +2184,7 @@ def hailo_build_hef_via_wsl(
             ),
         )
 
-    helper_win = (Path(__file__).resolve().parent / "wsl_hailo_build_hef.py")
+    helper_win = (Path(__file__).resolve().parent / "wsl_inline_build_hef")
     helper_wsl = windows_path_to_wsl(str(helper_win))
 
     onnx_wsl = windows_path_to_wsl(str(onnx_path.resolve()))
@@ -2471,7 +2471,7 @@ def hailo_build_hef_via_venv(
             error=f"Failed to resolve managed DFC venv: {e}",
         )
 
-    helper = Path(__file__).resolve().parent / "wsl_hailo_build_hef.py"
+    helper = Path(__file__).resolve().parent / "wsl_inline_build_hef"
     if not helper.exists():
         return HailoHefBuildResult(
             ok=False,
