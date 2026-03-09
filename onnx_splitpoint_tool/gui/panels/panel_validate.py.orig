@@ -19,7 +19,6 @@ from tkinter import filedialog, messagebox, ttk
 
 from ...workdir import ensure_workdir
 from ..widgets.tooltip import attach_tooltip
-from ..widgets.status_badge import StatusBadge
 
 
 logger = logging.getLogger(__name__)
@@ -273,349 +272,10 @@ def build_panel(parent, app=None) -> ttk.Frame:
             pass
     _update_hailo_mode_ui()
 
-    
-    # ------------------------ Split pipeline matrix ------------------------
-
-    # Matrix runs benchmark split pipelines where stage1 and stage2 can use different backends
-    # (e.g. TensorRT for part1 and Hailo for part2).
-    var_matrix_preset = _str_var(app, "var_matrix_preset", "None")
-    var_matrix_trt_to_hailo = _bool_var(app, "var_matrix_trt_to_hailo", False)
-    var_matrix_hailo_to_trt = _bool_var(app, "var_matrix_hailo_to_trt", False)
-    var_matrix_info = _str_var(app, "var_matrix_info", "")
-
-    ttk.Label(acc_group, text="Split matrix:").grid(row=5, column=0, sticky="w", padx=(8, 6), pady=(0, 8))
-    cb_matrix = ttk.Combobox(
-        acc_group,
-        textvariable=var_matrix_preset,
-        values=["None", "TRT ↔ Hailo (split)", "Custom"],
-        width=20,
-        state="readonly",
-    )
-    cb_matrix.grid(row=5, column=1, sticky="w", padx=(0, 8), pady=(0, 8))
-    attach_tooltip(
-        cb_matrix,
-        "Generate additional matrix runs where the split stages use different backends.\n\n"
-        "TRT ↔ Hailo (split) adds:\n"
-        "  - TensorRT(part1) → Hailo(part2)\n"
-        "  - Hailo(part1) → TensorRT(part2)\n\n"
-        "Matrix runs benchmark: part1, part2, composed (no full).",
-    )
-
-    matrix_custom = ttk.Frame(acc_group)
-    matrix_custom.grid(row=6, column=1, columnspan=9, sticky="w", padx=(0, 8), pady=(0, 8))
-    chk_trt_to_hailo = ttk.Checkbutton(matrix_custom, text="TensorRT → Hailo", variable=var_matrix_trt_to_hailo)
-    chk_trt_to_hailo.pack(side=tk.LEFT)
-    chk_hailo_to_trt = ttk.Checkbutton(matrix_custom, text="Hailo → TensorRT", variable=var_matrix_hailo_to_trt)
-    chk_hailo_to_trt.pack(side=tk.LEFT, padx=(12, 0))
-
-    attach_tooltip(chk_trt_to_hailo, "Matrix run: stage1=TensorRT, stage2=Hailo (per selected Hailo target).")
-    attach_tooltip(chk_hailo_to_trt, "Matrix run: stage1=Hailo, stage2=TensorRT (per selected Hailo target).")
-
-    lbl_matrix = ttk.Label(acc_group, textvariable=var_matrix_info)
-    lbl_matrix.grid(row=7, column=0, columnspan=11, sticky="w", padx=(8, 8), pady=(0, 8))
-
-    _in_matrix = {"flag": False}
-
-    def _update_matrix_ui(*_args):
-        if _in_matrix["flag"]:
-            return
-        _in_matrix["flag"] = True
-        try:
-            trt_on = bool(var_acc_trt.get())
-            hailo_on = bool(var_acc_h8.get() or var_acc_h10.get())
-            enabled = trt_on and hailo_on
-
-            p = (var_matrix_preset.get() or "").strip().lower()
-            is_custom = p.startswith("custom")
-
-            if not enabled:
-                # Disable matrix UI when prerequisites are missing.
-                try:
-                    cb_matrix.configure(state="disabled")
-                except Exception:
-                    pass
-                try:
-                    chk_trt_to_hailo.configure(state="disabled")
-                    chk_hailo_to_trt.configure(state="disabled")
-                except Exception:
-                    pass
-                try:
-                    matrix_custom.grid_remove()
-                except Exception:
-                    pass
-                var_matrix_info.set("Matrix runs disabled (enable TensorRT + at least one Hailo target above).")
-                return
-
-            try:
-                cb_matrix.configure(state="readonly")
-            except Exception:
-                pass
-
-            if p.startswith("none"):
-                try:
-                    matrix_custom.grid_remove()
-                except Exception:
-                    pass
-                var_matrix_trt_to_hailo.set(False)
-                var_matrix_hailo_to_trt.set(False)
-            elif p.startswith("trt"):
-                try:
-                    matrix_custom.grid_remove()
-                except Exception:
-                    pass
-                var_matrix_trt_to_hailo.set(True)
-                var_matrix_hailo_to_trt.set(True)
-            else:
-                try:
-                    matrix_custom.grid()
-                except Exception:
-                    pass
-
-            st = "normal" if is_custom else "disabled"
-            try:
-                chk_trt_to_hailo.configure(state=st)
-                chk_hailo_to_trt.configure(state=st)
-            except Exception:
-                pass
-
-            runs = []
-            if bool(var_matrix_trt_to_hailo.get()):
-                runs.append("TensorRT→Hailo")
-            if bool(var_matrix_hailo_to_trt.get()):
-                runs.append("Hailo→TensorRT")
-            if runs:
-                var_matrix_info.set(
-                    f"Matrix runs: {', '.join(runs)} · Will benchmark: part1, part2, composed (per selected Hailo target)"
-                )
-            else:
-                var_matrix_info.set("Matrix runs: none")
-        finally:
-            _in_matrix["flag"] = False
-
-    for v in (
-        var_matrix_preset,
-        var_matrix_trt_to_hailo,
-        var_matrix_hailo_to_trt,
-        var_acc_trt,
-        var_acc_h8,
-        var_acc_h10,
-    ):
-        try:
-            v.trace_add("write", _update_matrix_ui)
-        except Exception:
-            pass
-    _update_matrix_ui()
-
-    # ------------------------ Accuracy / baseline ------------------------
-
-    accy_group = ttk.LabelFrame(frame, text="Accuracy / baseline")
-    accy_group.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 8))
-    accy_group.columnconfigure(1, weight=1)
-
-    ttk.Label(accy_group, text="Baseline:").grid(row=0, column=0, sticky="w", padx=(8, 6), pady=(8, 2))
-    badge_baseline = StatusBadge(accy_group, text="Full @ ORT CPU", level="idle")
-    badge_baseline.grid(row=0, column=1, sticky="w", padx=(0, 8), pady=(8, 2))
-    attach_tooltip(
-        badge_baseline,
-        "Reference output for accuracy checks.\n"
-        "A full-model inference is always executed on ONNXRuntime CPU.\n"
-        "All measured variants/providers are compared against this baseline.\n"
-        "Baseline outputs are cached per case and reused across runs when inputs match.\n"
-        "(cache file: baseline_full_cpu_outputs.npz)\n"
-        "The baseline is not part of the benchmark timing results.",
-    )
-
-    var_accy_compare_info = _str_var(app, "var_accuracy_compare_info", "")
-    var_accy_hef_info = _str_var(app, "var_accuracy_hef_info", "")
-
-    lbl_compare = ttk.Label(accy_group, textvariable=var_accy_compare_info)
-    lbl_compare.grid(row=1, column=0, columnspan=2, sticky="w", padx=(8, 8), pady=(0, 2))
-
-    lbl_hef = ttk.Label(accy_group, textvariable=var_accy_hef_info)
-    lbl_hef.grid(row=2, column=0, columnspan=2, sticky="w", padx=(8, 8), pady=(0, 8))
-    attach_tooltip(
-        lbl_hef,
-        "Derived automatically from your selected benchmark variants (Phase 6).\n"
-        "Full -> full HEF, part1 -> part1 HEF, part2 -> part2 HEF, composed -> part1+part2 HEFs.",
-    )
-
-    # Planned validations table (computed from current Benchmark tab selections).
-    table_frame = ttk.Frame(accy_group)
-    table_frame.grid(row=3, column=0, columnspan=2, sticky="ew", padx=(8, 8), pady=(0, 8))
-    table_frame.columnconfigure(0, weight=1)
-
-    _cols = ("run", "stage1", "stage2", "variants", "requires")
-    tv_plan = ttk.Treeview(table_frame, columns=_cols, show="headings", height=6)
-    tv_plan.grid(row=0, column=0, sticky="ew")
-
-    vsb_plan = ttk.Scrollbar(table_frame, orient="vertical", command=tv_plan.yview)
-    vsb_plan.grid(row=0, column=1, sticky="ns")
-    tv_plan.configure(yscrollcommand=vsb_plan.set)
-
-    tv_plan.heading("run", text="Run")
-    tv_plan.heading("stage1", text="Stage1")
-    tv_plan.heading("stage2", text="Stage2")
-    tv_plan.heading("variants", text="Variants compared")
-    tv_plan.heading("requires", text="Requires")
-
-    tv_plan.column("run", width=160, stretch=False)
-    tv_plan.column("stage1", width=110, stretch=False)
-    tv_plan.column("stage2", width=110, stretch=False)
-    tv_plan.column("variants", width=240, stretch=True)
-    tv_plan.column("requires", width=160, stretch=False)
-
-    attach_tooltip(
-        tv_plan,
-        "Planned accuracy comparisons (all compared against CPU full baseline).\n"
-        "This table is computed from the current Benchmark tab settings.",
-    )
-
-    def _get_hailo_hw(which: str) -> str:
-        """Resolve selected hw_arch strings from Split&Export settings."""
-        varname = f"var_hailo_hef_{which}_hw_arch"
-        fallback = "hailo8" if which == "hailo8" else "hailo10h"
-        try:
-            v = getattr(app, varname, None)
-            if v is not None:
-                s = str(v.get() or "").strip()
-                if s:
-                    if s == "hailo10":
-                        s = "hailo10h"
-                    return s
-        except Exception:
-            pass
-        return fallback
-
-    def _hef_req_for(stage1: str, stage2: str, variants: list[str]) -> list[str]:
-        vset = {str(v).strip().lower() for v in variants if str(v).strip()}
-        req: list[str] = []
-        is_h1 = str(stage1).strip().lower().startswith("hailo")
-        is_h2 = str(stage2).strip().lower().startswith("hailo")
-
-        if "full" in vset and (is_h1 or is_h2):
-            req.append("full")
-        if is_h1 and ("part1" in vset or "composed" in vset):
-            req.append("part1")
-        if is_h2 and ("part2" in vset or "composed" in vset):
-            req.append("part2")
-
-        order = ["full", "part1", "part2"]
-        return [x for x in order if x in req]
-
-    _in_accy = {"flag": False}
-
-    def _update_accuracy_ui(*_args):
-        if _in_accy["flag"]:
-            return
-        _in_accy["flag"] = True
-        try:
-            planned: list[tuple[str, str, str, list[str], str]] = []
-
-            ort_variants = ["full", "part1", "part2", "composed"]
-            if bool(var_acc_cpu.get()):
-                planned.append(("ORT CPU", "cpu", "cpu", ort_variants, "onnx"))
-            if bool(var_acc_cuda.get()):
-                planned.append(("ORT CUDA", "cuda", "cuda", ort_variants, "onnx"))
-            if bool(var_acc_trt.get()):
-                planned.append(("TensorRT", "tensorrt", "tensorrt", ort_variants, "onnx"))
-
-            hailo_targets: list[str] = []
-            if bool(var_acc_h8.get()):
-                hailo_targets.append(_get_hailo_hw("hailo8"))
-            if bool(var_acc_h10.get()):
-                hailo_targets.append(_get_hailo_hw("hailo10"))
-
-            hailo_variants = _variants_from_ui()
-            for hw in hailo_targets:
-                s1 = hw
-                s2 = hw
-                req = _hef_req_for(s1, s2, hailo_variants)
-                req_txt = f"hef: {', '.join(req)}" if req else "hef: none"
-                planned.append((f"Hailo ({hw})", s1, s2, list(hailo_variants), req_txt))
-
-            matrix_variants = ["part1", "part2", "composed"]
-            if bool(var_matrix_trt_to_hailo.get()):
-                for hw in hailo_targets:
-                    s1 = "tensorrt"
-                    s2 = hw
-                    req = _hef_req_for(s1, s2, matrix_variants)
-                    req_txt = f"hef: {', '.join(req)}" if req else "hef: none"
-                    planned.append((f"TensorRT→{hw}", s1, s2, list(matrix_variants), req_txt))
-
-            if bool(var_matrix_hailo_to_trt.get()):
-                for hw in hailo_targets:
-                    s1 = hw
-                    s2 = "tensorrt"
-                    req = _hef_req_for(s1, s2, matrix_variants)
-                    req_txt = f"hef: {', '.join(req)}" if req else "hef: none"
-                    planned.append((f"{hw}→TensorRT", s1, s2, list(matrix_variants), req_txt))
-
-            # Info lines
-            union_variants: set[str] = set()
-            hef_needed: set[str] = set()
-            for _name, s1, s2, vv, _reqtxt in planned:
-                for v in vv:
-                    union_variants.add(str(v).strip().lower())
-                for h in _hef_req_for(s1, s2, vv):
-                    hef_needed.add(h)
-
-            order_cmp = ["full", "composed", "part1", "part2"]
-            cmp_list = [v for v in order_cmp if v in union_variants]
-            if not cmp_list:
-                var_accy_compare_info.set("Will compare (against CPU full): none (no accelerators selected)")
-            else:
-                var_accy_compare_info.set(f"Will compare (against CPU full): {', '.join(cmp_list)}")
-
-            order_hef = ["full", "part1", "part2"]
-            hef_list = [h for h in order_hef if h in hef_needed]
-            if hef_list:
-                var_accy_hef_info.set(f"Hailo HEFs needed (auto): {', '.join(hef_list)}")
-            else:
-                var_accy_hef_info.set("Hailo HEFs needed (auto): none")
-
-            # Table
-            for item in tv_plan.get_children():
-                tv_plan.delete(item)
-            for name, s1, s2, vv, reqtxt in planned:
-                tv_plan.insert("", "end", values=(name, s1, s2, ", ".join(vv), reqtxt))
-        finally:
-            _in_accy["flag"] = False
-
-    for _v in (
-        var_acc_cpu,
-        var_acc_cuda,
-        var_acc_trt,
-        var_acc_h8,
-        var_acc_h10,
-        var_hailo_bench_preset,
-        var_hailo_custom_full,
-        var_hailo_custom_composed,
-        var_hailo_custom_part1,
-        var_hailo_custom_part2,
-        var_matrix_preset,
-        var_matrix_trt_to_hailo,
-        var_matrix_hailo_to_trt,
-    ):
-        try:
-            _v.trace_add("write", _update_accuracy_ui)
-        except Exception:
-            pass
-
-    # Also update when hw_arch selection changes in the Split&Export tab (if present).
-    for _nm in ("var_hailo_hef_hailo8_hw_arch", "var_hailo_hef_hailo10_hw_arch"):
-        try:
-            _hv = getattr(app, _nm, None)
-            if _hv is not None:
-                _hv.trace_add("write", _update_accuracy_ui)
-        except Exception:
-            pass
-
-    _update_accuracy_ui()
-
-# ----------------------------- Runner (ORT) ------------------------------
+    # ----------------------------- Runner (ORT) ------------------------------
 
     runner_group = ttk.LabelFrame(frame, text="Runner")
-    runner_group.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 12))
+    runner_group.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 12))
 
     var_split_runner = _bool_var(app, "var_split_runner", True)
     var_runner_target = _str_var(app, "var_runner_target", "auto")
@@ -652,7 +312,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
     # ------------------------- Remote Benchmark (SSH) -------------------------
 
     remote_group = ttk.LabelFrame(frame, text="Remote benchmark (SSH)")
-    remote_group.grid(row=4, column=0, sticky="ew", padx=12, pady=(0, 12))
+    remote_group.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 12))
     remote_group.columnconfigure(1, weight=1)
 
     if app is not None:
@@ -838,48 +498,32 @@ def build_panel(parent, app=None) -> ttk.Frame:
                 return 0
 
         def _update_total_runs(*_):
-            r = max(0, _safe_int(getattr(app, "var_remote_repeats", tk.StringVar(value="1")).get()))
-            it = max(0, _safe_int(getattr(app, "var_remote_iters", tk.StringVar(value="1")).get()))
-            warm = max(0, _safe_int(getattr(app, "var_remote_warmup", tk.StringVar(value="0")).get()))
-            measured_total = r * it
-            total_invocations = warm + measured_total
-            # Keep it compact: distinguish measured runs from all invocations.
-            total_runs_var.set(f"Measured: {measured_total} · Total/run: {total_invocations}")
+            r = _safe_int(getattr(app, "var_remote_repeats", tk.StringVar(value="1")).get())
+            it = _safe_int(getattr(app, "var_remote_iters", tk.StringVar(value="1")).get())
+            total = max(0, r) * max(0, it)
+            # Keep it short (this sits inline next to the entries)
+            total_runs_var.set(f"Total: {total} (= {r}×{it})")
 
-        # Update preview live when the user edits repeats/warmup/runs.
+        # Update preview live when the user edits repeats/runs.
         try:
             getattr(app, "var_remote_repeats", None).trace_add("write", _update_total_runs)  # type: ignore
-            getattr(app, "var_remote_warmup", None).trace_add("write", _update_total_runs)  # type: ignore
             getattr(app, "var_remote_iters", None).trace_add("write", _update_total_runs)  # type: ignore
         except Exception:
             # Older Tk versions may not have trace_add – ignore.
             pass
         _update_total_runs()
 
-        attach_tooltip(ent_rep, "Repeats multiplies the measured 'Runs'.")
-        attach_tooltip(ent_warm, "Warmup runs are executed once per benchmark run and are not measured.")
+        attach_tooltip(ent_rep, "Repeats multiplies the measured 'Runs' (Total = Repeats × Runs).")
+        attach_tooltip(ent_warm, "Warmup runs are not measured.")
         attach_tooltip(ent_runs, "Measured runs per benchmark case (will be multiplied by Repeats).")
-        attach_tooltip(lbl_total, "Measured = Repeats × Runs. Total/run = Warmup + measured runs. In remote mode, repeats are folded into the suite's --runs value, so warmup is applied once per benchmark run.")
 
-        ttk.Label(remote_group, text="Remote venv:").grid(row=4, column=0, sticky="w", padx=(8, 6), pady=(4, 0))
-        ent_venv = ttk.Entry(remote_group, textvariable=getattr(app, "var_remote_venv", None), width=55)
-        ent_venv.grid(row=4, column=1, columnspan=3, sticky="ew", padx=(0, 8), pady=(4, 0))
-        attach_tooltip(
-            ent_venv,
-            "Optional: activate a venv / environment on the remote host before running the suite.\n"
-            "If the activated env is missing core packages (onnx/onnxruntime), the tool falls back to the remote default python3 and appends the env site-packages to PYTHONPATH.\n"
-            "Examples:\n"
-            "  ~/hailo_py/bin/activate\n"
-            "  source /opt/hailo/setup_env.sh",
-        )
-
-        ttk.Label(remote_group, text="Extra args:").grid(row=5, column=0, sticky="w", padx=(8, 6), pady=(4, 8))
+        ttk.Label(remote_group, text="Extra args:").grid(row=4, column=0, sticky="w", padx=(8, 6), pady=(4, 8))
         ttk.Entry(remote_group, textvariable=getattr(app, "var_remote_add_args", None), width=55).grid(
-            row=5, column=1, columnspan=3, sticky="ew", padx=(0, 8), pady=(4, 8)
+            row=4, column=1, columnspan=3, sticky="ew", padx=(0, 8), pady=(4, 8)
         )
 
         btn_run = ttk.Button(remote_group, text="Run remote benchmark", command=getattr(app, "_remote_run_benchmark", None))
-        btn_run.grid(row=6, column=0, columnspan=4, sticky="w", padx=(8, 8), pady=(0, 10))
+        btn_run.grid(row=5, column=0, columnspan=4, sticky="w", padx=(8, 8), pady=(0, 10))
         attach_tooltip(
             btn_run,
             "Bundle → scp upload → ssh run benchmark_suite.py → download results.\n"

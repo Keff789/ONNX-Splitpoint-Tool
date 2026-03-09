@@ -459,6 +459,13 @@ def build_panel(parent, app=None) -> ttk.Frame:
     hailo_wsl_distro_var = _str_var(app, "var_hailo_wsl_distro", "")
     hailo_wsl_venv_var = _str_var(app, "var_hailo_wsl_venv", "auto")
 
+    # Backwards-compat: normalize deprecated "hailo10" -> "hailo10h".
+    try:
+        if (hailo_hw_var.get() or "").strip() == "hailo10":
+            hailo_hw_var.set("hailo10h")
+    except Exception:
+        pass
+
     chk_hailo = ttk.Checkbutton(hailo, text="Enable parse-check in ranking", variable=hailo_check_var)
     chk_hailo.grid(row=0, column=0, sticky="w", padx=(8, 8), pady=8)
     attach_tooltip(chk_hailo, _tt("hailo_enable"))
@@ -467,9 +474,9 @@ def build_panel(parent, app=None) -> ttk.Frame:
     cb_hailo_hw = ttk.Combobox(
         hailo,
         textvariable=hailo_hw_var,
-        values=["hailo8", "hailo8l", "hailo8r", "hailo10", "hailo10h"],
+        values=["hailo8", "hailo8l", "hailo8r", "hailo10h", "hailo10p"],
         width=10,
-        state="normal",
+        state="readonly",
     )
     cb_hailo_hw.grid(row=0, column=2, sticky="w", padx=(4, 12), pady=8)
     attach_tooltip(cb_hailo_hw, _tt("hailo_hw"))

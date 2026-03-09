@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""WSL/venv helper for Hailo parse-only checks.
+
+This script is launched from:
+
+- Windows host via WSL bridge ("wsl" backend)
+- Linux via a managed DFC virtualenv ("venv" backend)
+
+The output can contain mixed Hailo SDK logs on stdout/stderr; therefore the
+caller searches for a single marker line starting with
+``__SPLITPOINT_HAILO_RESULT__``.
+
+Just like ``wsl_inline_build_hef``, this helper is designed to work even if the
+tool itself is not installed inside the DFC venv: it adds the repository root to
+``sys.path``.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+from dataclasses import asdict
+from pathlib import Path
+
+
+RESULT_MARKER = "__SPLITPOINT_HAILO_RESULT__"
+
+
+def _repo_root() -> Path:
+    # <repo>/onnx_splitpoint_tool/wsl_inline_check -> parents[1] == <repo>
+    return Path(__file__).resolve().parents[1]
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("--onnx", required=True, help="Path to ONNX model")
+    ap.add_argument("--hw-arch", default="hailo8")
+    ap.add_argument("--net-name", default=None)
+    ap.add_argument("--outdir", default=None)
+    ap.add_argument("--fixup", default="1", choices=["0", "1"], help="Apply ONNX fixups")
+    ap.add_argument("--add-conv-defaults", default="1", choices=["0", "1"], help="Add Conv defaults during fixup")
+    ap.add_argument("--save-har", default="0", choices=["0", "1"], help="Save parsed.har to outdir")
+    ap.add_argument(
+        "--disable-rt-metadata-extraction",
+        default="1",
+        choices=["0", "1"],
+        help="Pass disable_rt_metadata_extraction to DFC translate",
+    )
+    args = ap.parse_args()
+
+    root = _repo_root()
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+
+    # Auto-select GPU vs CPU for the Hailo DFC (see wsl_inline_build_hef).
+    from onnx_splitpoint_tool.cuda_probe import auto_configure_cuda  # local import
+
+    cuda_info = auto_configure_cuda(prefer_gpu=True)
+    try:
+        print(f"[splitpoint][cuda] {cuda_info.get('summary') or ''}".rstrip(), flush=True)
+    except Exception:
+        pass
+
+    from onnx_splitpoint_tool.hailo_backend import hailo_parse_check  # local import
+
+    t0 = time.time()
+    onnx_path = Path(args.onnx)
+    outdir = Path(args.outdir) if args.outdir else None
+    net_name = args.net_name or onnx_path.stem
+
+    res = hailo_parse_check(
+        onnx_path,
+        hw_arch=str(args.hw_arch),
+        net_name=str(net_name),
+        outdir=str(outdir) if outdir is not None else None,
+        fixup=(args.fixup == "1"),
+        add_conv_defaults=(args.add_conv_defaults == "1"),
+        save_har=(args.save_har == "1"),
+        disable_rt_metadata_extraction=(args.disable_rt_metadata_extraction == "1"),
+    )
+
+    payload = asdict(res)
+    payload["elapsed_s"] = float(payload.get("elapsed_s") or (time.time() - t0))
+    payload["backend"] = "wsl"
+
+    # Include CUDA probe in case the GUI wants to show it.
+    try:
+        payload["cuda_probe"] = cuda_info
+    except Exception:
+        pass
+
+    print(RESULT_MARKER + json.dumps(payload, ensure_ascii=False), flush=True)
+    return 0 if bool(payload.get("ok")) else 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

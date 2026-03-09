@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import os
 import sys
@@ -21,6 +22,22 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+# Optional: extend sys.path with extra site-packages *after* the default paths.
+# This is safer than using PYTHONPATH to inject a venv site-packages, because PYTHONPATH
+# entries are searched before system site-packages and can accidentally shadow a GPU-enabled
+# onnxruntime with a CPU-only wheel.
+_extra_sites = os.environ.get("SPLITPOINT_EXTRA_SITES") or os.environ.get("SPLITPOINT_EXTRA_SITE")
+if _extra_sites:
+    try:
+        import site
+
+        for _p in _extra_sites.split(os.pathsep):
+            _p = (_p or "").strip()
+            if _p and os.path.isdir(_p):
+                site.addsitedir(_p)
+    except Exception:
+        pass
 
 import numpy as np
 import onnx
@@ -1323,10 +1340,10 @@ def _create_session(
 def _is_hailo_provider(p: str) -> bool:
     p = (p or "").lower().strip()
     # Hailo DFC uses `hw_arch` strings such as:
-    #   hailo8, hailo8l, hailo8r, hailo10, hailo10h
+    #   hailo8, hailo8l, hailo8r, hailo10h, hailo10p
     # Accept all known variants so a benchmark plan can refer to the exact
     # hardware architecture that was used to generate the HEF.
-    return p in {"hailo8", "hailo8l", "hailo8r", "hailo10", "hailo10h"}
+    return p in {"hailo8", "hailo8l", "hailo8r", "hailo10h", "hailo10p"}
 
 
 def _nchw_to_hwc_u8(x: np.ndarray) -> np.ndarray:
@@ -1367,7 +1384,7 @@ def _adapt_tensor(x: np.ndarray, target_shape: Tuple[int, ...]) -> np.ndarray:
     """Best-effort adaptation of a tensor to a target shape.
 
     Commonly needed when bridging between ORT (often NCHW) and Hailo vstreams
-    (often HWC / NHWC).
+    (often HWC / NHWC / FCR-like layouts).
     """
     arr = np.asarray(x)
     tgt = tuple(int(v) for v in target_shape)
@@ -1376,32 +1393,36 @@ def _adapt_tensor(x: np.ndarray, target_shape: Tuple[int, ...]) -> np.ndarray:
         return arr
 
     # Remove batch / frames dim.
-    if arr.ndim == 4 and arr.shape[0] == 1 and tuple(arr.shape[1:]) == tgt:
-        return arr[0]
-    if arr.ndim == 4 and arr.shape[0] == 1 and len(tgt) == 3 and tuple(arr.shape[1:]) == tgt:
+    if arr.ndim >= 1 and arr.shape[0] == 1 and tuple(arr.shape[1:]) == tgt:
         return arr[0]
 
-    # Add batch dim (rare).
-    if arr.ndim == 3 and len(tgt) == 4 and tgt[0] == 1 and tuple(arr.shape) == tgt[1:]:
+    # Add batch dim.
+    if arr.ndim + 1 == len(tgt) and len(tgt) >= 1 and tgt[0] == 1 and tuple(arr.shape) == tgt[1:]:
         return arr[None, ...]
 
-    # CHW <-> HWC
+    # Generic CHW <-> HWC / NCHW <-> NHWC permutations (not only RGB).
     if arr.ndim == 3 and len(tgt) == 3:
-        # HWC -> CHW
-        if arr.shape[-1] == 3 and tgt[0] == 3 and tgt[1] == arr.shape[0] and tgt[2] == arr.shape[1]:
-            return np.transpose(arr, (2, 0, 1))
         # CHW -> HWC
-        if arr.shape[0] == 3 and tgt[-1] == 3 and tgt[0] == arr.shape[1] and tgt[1] == arr.shape[2]:
+        if tuple(arr.shape) == (tgt[2], tgt[0], tgt[1]):
             return np.transpose(arr, (1, 2, 0))
+        # HWC -> CHW
+        if tuple(arr.shape) == (tgt[1], tgt[2], tgt[0]):
+            return np.transpose(arr, (2, 0, 1))
 
-    # NCHW <-> NHWC (with batch)
     if arr.ndim == 4 and len(tgt) == 4:
         # NCHW -> NHWC
-        if arr.shape[1] == 3 and tgt[-1] == 3 and tgt[0] == arr.shape[0] and tgt[1] == arr.shape[2] and tgt[2] == arr.shape[3]:
+        if tuple(arr.shape) == (tgt[0], tgt[3], tgt[1], tgt[2]):
             return np.transpose(arr, (0, 2, 3, 1))
         # NHWC -> NCHW
-        if arr.shape[-1] == 3 and tgt[1] == 3 and tgt[0] == arr.shape[0] and tgt[2] == arr.shape[1] and tgt[3] == arr.shape[2]:
+        if tuple(arr.shape) == (tgt[0], tgt[2], tgt[3], tgt[1]):
             return np.transpose(arr, (0, 3, 1, 2))
+
+    # 1xCHW -> HWC
+    if arr.ndim == 4 and arr.shape[0] == 1 and len(tgt) == 3 and tuple(arr.shape[1:]) == (tgt[2], tgt[0], tgt[1]):
+        return np.transpose(arr[0], (1, 2, 0))
+    # HWC -> 1xCHW
+    if arr.ndim == 3 and len(tgt) == 4 and tgt[0] == 1 and tuple(arr.shape) == (tgt[2], tgt[3], tgt[1]):
+        return np.transpose(arr, (2, 0, 1))[None, ...]
 
     # As a last resort, try reshape if the total element count matches.
     try:
@@ -1411,6 +1432,103 @@ def _adapt_tensor(x: np.ndarray, target_shape: Tuple[int, ...]) -> np.ndarray:
         pass
 
     raise ValueError(f"Cannot adapt tensor from shape {tuple(arr.shape)} to target shape {tgt}")
+
+
+def _try_adapt_tensor(x: np.ndarray, target_shape: Optional[Tuple[int, ...]]) -> Tuple[bool, np.ndarray]:
+    arr = np.asarray(x)
+    if target_shape is None:
+        return True, arr
+    try:
+        return True, _adapt_tensor(arr, target_shape)
+    except Exception:
+        return False, arr
+
+
+def _ort_type_to_numpy_dtype(type_str: str) -> Optional[np.dtype]:
+    t = str(type_str or "").strip().lower()
+    mapping = {
+        "tensor(float)": np.dtype(np.float32),
+        "tensor(float16)": np.dtype(np.float16),
+        "tensor(double)": np.dtype(np.float64),
+        "tensor(int64)": np.dtype(np.int64),
+        "tensor(int32)": np.dtype(np.int32),
+        "tensor(int16)": np.dtype(np.int16),
+        "tensor(int8)": np.dtype(np.int8),
+        "tensor(uint64)": np.dtype(np.uint64),
+        "tensor(uint32)": np.dtype(np.uint32),
+        "tensor(uint16)": np.dtype(np.uint16),
+        "tensor(uint8)": np.dtype(np.uint8),
+        "tensor(bool)": np.dtype(np.bool_),
+    }
+    return mapping.get(t)
+
+
+def _maybe_cast_for_onnx_input(x: np.ndarray, input_type: Optional[str]) -> np.ndarray:
+    arr = np.asarray(x)
+    tgt = _ort_type_to_numpy_dtype(str(input_type or ""))
+    if tgt is None or arr.dtype == tgt:
+        return arr
+    try:
+        if np.issubdtype(tgt, np.floating) and np.issubdtype(arr.dtype, np.integer):
+            return arr.astype(tgt, copy=False)
+        if np.can_cast(arr.dtype, tgt, casting="safe"):
+            return arr.astype(tgt, copy=False)
+    except Exception:
+        pass
+    return arr
+
+
+def _shape_from_ort_input(node_arg: object) -> Optional[Tuple[int, ...]]:
+    try:
+        shp = getattr(node_arg, "shape", None)
+        if not isinstance(shp, (list, tuple)):
+            return None
+        out = []
+        for d in shp:
+            if isinstance(d, int) and d > 0:
+                out.append(int(d))
+            else:
+                return None
+        return tuple(out)
+    except Exception:
+        return None
+
+
+def _select_source_tensor(
+    expected_name: str,
+    target_shape: Optional[Tuple[int, ...]],
+    produced_outputs: Dict[str, np.ndarray],
+    name_map: Optional[Dict[str, str]] = None,
+) -> Optional[Tuple[str, np.ndarray]]:
+    produced_names = list(produced_outputs.keys())
+    preferred: List[str] = []
+    if isinstance(name_map, dict) and expected_name in name_map:
+        preferred.append(str(name_map[expected_name]))
+    preferred.append(str(expected_name))
+    preferred.extend([n for n in produced_names if n.endswith(expected_name) or expected_name.endswith(n)])
+
+    seen: set[str] = set()
+
+    def _first_ok(cands: List[str]) -> Optional[Tuple[str, np.ndarray]]:
+        for src_name in cands:
+            if src_name in seen or src_name not in produced_outputs:
+                continue
+            seen.add(src_name)
+            ok, adapted = _try_adapt_tensor(produced_outputs[src_name], target_shape)
+            if ok:
+                return src_name, adapted
+        return None
+
+    hit = _first_ok(preferred)
+    if hit is not None:
+        return hit
+
+    # Shape-driven fallback: pick the first produced tensor that can be adapted.
+    hit = _first_ok(produced_names)
+    if hit is not None:
+        return hit
+
+    return None
 
 
 def _map_inputs_to_outputs(expected_inputs: List[str], produced_outputs: List[str]) -> Dict[str, str]:
@@ -1456,27 +1574,46 @@ def _map_inputs_to_outputs(expected_inputs: List[str], produced_outputs: List[st
 class HailoSession:
     """Reusable Hailo runtime wrapper around InferVStreams.
 
-    Keeps VDevice + network group + InferVStreams open across runs so that timings
-    measure inference, not setup.
+    Important behavior on single-device Hailo systems:
+    multiple network groups may be configured on the same VDevice, but only one
+    may be *active* at a time. We therefore keep the VDevice / InferVStreams open,
+    but activate the network group only for the duration of each inference.
     """
 
-    def __init__(self, hef_path: Path, *, quantized_inputs: bool, quantized_outputs: bool):
+    _activation_lock = threading.RLock()
+
+    def __init__(
+        self,
+        hef_path: Path,
+        *,
+        quantized_inputs: bool,
+        quantized_outputs: bool,
+        vdevice: Optional[object] = None,
+    ):
         self.hef_path = Path(hef_path)
         self.quantized_inputs = bool(quantized_inputs)
         self.quantized_outputs = bool(quantized_outputs)
 
+        # Optional shared VDevice (important for single-device systems)
+        self._external_vdevice = vdevice
+        self._owns_vdevice = vdevice is None
+
         try:
             import hailo_platform as hpf  # type: ignore
-        except Exception as e:
-            raise RuntimeError(
-                "Hailo backend requested, but 'hailo_platform' is not importable. "
-                "Install HailoRT + Python bindings on the target."
-            ) from e
+        except Exception:
+            try:
+                import hailort as hpf  # type: ignore
+            except Exception as e:
+                raise RuntimeError(
+                    "Hailo backend requested, but neither 'hailo_platform' nor 'hailort' is importable. "
+                    "Install HailoRT + Python bindings on the target."
+                ) from e
 
         self._hpf = hpf
         self._vdevice = None
         self._pipe = None
         self._network_group = None
+        self._network_group_params = None
         self._input_names: List[str] = []
         self._output_names: List[str] = []
         self.input_shapes: Dict[str, Tuple[int, ...]] = {}
@@ -1491,6 +1628,30 @@ class HailoSession:
     def output_names(self) -> List[str]:
         return list(self._output_names)
 
+    def _format_type(self, *, want_uint8: bool):
+        fmt = getattr(self._hpf, "FormatType", None)
+        if fmt is None:
+            return None
+        if want_uint8:
+            return getattr(fmt, "UINT8", getattr(fmt, "AUTO", None))
+        return getattr(fmt, "FLOAT32", getattr(fmt, "AUTO", None))
+
+    def _vstream_params(self, cls: object, *, quantized: bool, want_uint8: bool):
+        fmt_type = self._format_type(want_uint8=want_uint8)
+        kwargs = {"quantized": bool(quantized)}
+        if fmt_type is not None:
+            kwargs["format_type"] = fmt_type
+        else:
+            try:
+                kwargs["format_type"] = self._hpf.FormatType.AUTO
+            except Exception:
+                pass
+
+        maker = getattr(cls, "make", None)
+        if maker is None:
+            raise RuntimeError(f"{cls!r} does not expose make()")
+        return maker(self._network_group, **kwargs)
+
     def _open(self) -> None:
         hpf = self._hpf
         if not self.hef_path.exists():
@@ -1499,32 +1660,41 @@ class HailoSession:
         hef = hpf.HEF(str(self.hef_path))
 
         # Keep VDevice open.
-        self._vdevice = hpf.VDevice()
-        try:
-            if hasattr(self._vdevice, "__enter__"):
-                self._vdevice.__enter__()
-        except Exception:
-            pass
+        if self._external_vdevice is not None:
+            self._vdevice = self._external_vdevice
+        else:
+            self._vdevice = hpf.VDevice()
+            try:
+                if hasattr(self._vdevice, "__enter__"):
+                    self._vdevice.__enter__()
+            except Exception:
+                pass
 
         cfg_params = hpf.ConfigureParams.create_from_hef(hef, interface=hpf.HailoStreamInterface.PCIe)
         ngs = self._vdevice.configure(hef, cfg_params)
         if not ngs:
             raise RuntimeError("No network groups returned from VDevice.configure")
         self._network_group = ngs[0]
-
-        # Activate.
-        ng_params = self._network_group.create_params()
-        self._network_group.activate(ng_params)
+        self._network_group_params = self._network_group.create_params()
 
         self._input_names = [i.name for i in hef.get_input_vstream_infos()]
         self._output_names = [o.name for o in hef.get_output_vstream_infos()]
         self.input_shapes = {i.name: tuple(i.shape) for i in hef.get_input_vstream_infos()}
         self.output_shapes = {o.name: tuple(o.shape) for o in hef.get_output_vstream_infos()}
 
-        in_params = hpf.InputVStreamParams.make(self._network_group, quantized=self.quantized_inputs, format_type=hpf.FormatType.AUTO)
-        out_params = hpf.OutputVStreamParams.make(self._network_group, quantized=self.quantized_outputs, format_type=hpf.FormatType.AUTO)
+        in_params = self._vstream_params(
+            hpf.InputVStreamParams,
+            quantized=self.quantized_inputs,
+            want_uint8=self.quantized_inputs,
+        )
+        out_params = self._vstream_params(
+            hpf.OutputVStreamParams,
+            quantized=self.quantized_outputs,
+            want_uint8=self.quantized_outputs,
+        )
         self._pipe = hpf.InferVStreams(self._network_group, in_params, out_params)
-        self._pipe.__enter__()
+        if hasattr(self._pipe, "__enter__"):
+            self._pipe.__enter__()
 
     def close(self) -> None:
         try:
@@ -1533,13 +1703,13 @@ class HailoSession:
         finally:
             self._pipe = None
         try:
-            if self._vdevice is not None and hasattr(self._vdevice, "__exit__"):
+            if self._owns_vdevice and self._vdevice is not None and hasattr(self._vdevice, "__exit__"):
                 self._vdevice.__exit__(None, None, None)
         finally:
             self._vdevice = None
 
     def infer(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-        if self._pipe is None:
+        if self._pipe is None or self._network_group is None:
             raise RuntimeError("HailoSession is closed")
 
         in_dict: Dict[str, np.ndarray] = {}
@@ -1548,11 +1718,28 @@ class HailoSession:
                 raise KeyError(f"Missing Hailo input '{name}'. Provided keys: {list(inputs.keys())}")
             in_dict[name] = _ensure_frames_dim(np.asarray(inputs[name]))
 
-        outs = self._pipe.infer(in_dict)
+        with HailoSession._activation_lock:
+            act = self._network_group.activate(self._network_group_params)
+            entered = False
+            try:
+                if hasattr(act, "__enter__"):
+                    act.__enter__()
+                    entered = True
+                outs = self._pipe.infer(in_dict)
+            finally:
+                try:
+                    if entered and hasattr(act, "__exit__"):
+                        act.__exit__(None, None, None)
+                    elif hasattr(act, "release"):
+                        act.release()  # type: ignore[attr-defined]
+                    elif hasattr(act, "close"):
+                        act.close()  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
         out_dict: Dict[str, np.ndarray] = {}
         for k, v in outs.items():
             arr = np.asarray(v)
-            # Remove frames dim when present.
             if arr.ndim >= 1 and arr.shape[0] == 1:
                 try:
                     arr = np.squeeze(arr, axis=0)
@@ -1702,6 +1889,48 @@ def _load_inputs_npz(path: str) -> Tuple[Dict[str, np.ndarray], Optional[dict]]:
             continue
         out[k] = d[k]
     return out, meta
+
+
+def _fingerprint_tensors(tensors: Dict[str, np.ndarray]) -> str:
+    """Stable fingerprint of a feed dict.
+
+    Used to safely reuse per-case CPU baseline outputs across multiple benchmark
+    runs (CUDA/TRT/Hailo/matrix) as long as the inputs are identical.
+    """
+
+    h = hashlib.sha256()
+    for name in sorted(tensors.keys()):
+        h.update(name.encode("utf-8"))
+        arr = np.asarray(tensors[name])
+        h.update(str(arr.dtype).encode("utf-8"))
+        h.update(",".join(str(int(x)) for x in arr.shape).encode("utf-8"))
+        h.update(b"\0")
+
+        # Hash raw bytes (contiguous view) without materializing a big copy.
+        try:
+            arr_c = np.ascontiguousarray(arr)
+            h.update(memoryview(arr_c))
+        except Exception:
+            # Fallback (rare): use tobytes.
+            h.update(arr.tobytes(order="C"))
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def _atomic_save_npz(path: Path, arrays: Dict[str, np.ndarray], meta: dict) -> None:
+    """Write NPZ atomically (best-effort)."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / f"{path.stem}.tmp{os.getpid()}{path.suffix}"
+    _save_npz(str(tmp), arrays, meta)
+    try:
+        os.replace(str(tmp), str(path))
+    except Exception:
+        try:
+            tmp.replace(path)
+        except Exception:
+            # Best-effort; leave tmp behind for debugging.
+            pass
 
 
 # ----------------------------
@@ -3940,13 +4169,47 @@ def main() -> int:
         "--provider",
         type=str,
         default=DEFAULT_PROVIDER,
-        choices=["auto", "tensorrt", "cuda", "cpu", "hailo8", "hailo8l", "hailo8r", "hailo10", "hailo10h"],
-        help="Backend preference (ORT: auto/tensorrt/cuda/cpu; Hailo: hailo8/hailo8l/hailo8r/hailo10/hailo10h).",
+        choices=["auto", "tensorrt", "cuda", "cpu", "hailo8", "hailo8l", "hailo8r", "hailo10h", "hailo10p"],
+        help="Backend preference (ORT: auto/tensorrt/cuda/cpu; Hailo: hailo8/hailo8l/hailo8r/hailo10h/hailo10p).",
+    )
+
+    ap.add_argument(
+        "--variants",
+        type=str,
+        default="",
+        help="Comma-separated list of variants to benchmark: full,part1,part2,composed (default: all; for Hailo-only runs default remains part1,part2,composed).",
+    )
+    ap.add_argument(
+        "--full-provider",
+        type=str,
+        default="",
+        help="Override backend token for the full variant (same tokens as --provider).",
+    )
+    ap.add_argument(
+        "--stage1-provider",
+        type=str,
+        default="",
+        help="Override backend token for stage1/part1 in split runs (same tokens as --provider).",
+    )
+    ap.add_argument(
+        "--stage2-provider",
+        type=str,
+        default="",
+        help="Override backend token for stage2/part2 in split runs (same tokens as --provider).",
     )
     ap.add_argument("--out-dir", type=str, default="results", help="Output dir for reports (default: results/)")
     ap.add_argument("--warmup", type=int, default=5, help="Warmup runs per benchmark")
     ap.add_argument("--runs", type=int, default=10, help="Measured runs per benchmark")
     ap.add_argument("--eps", type=float, default=1e-4, help="Max-abs threshold for output diff PASS/FAIL")
+    ap.add_argument(
+        "--baseline-cache",
+        type=str,
+        default="auto",
+        help=(
+            "Cache CPU full baseline outputs per case and reuse across runs when inputs match. "
+            "'auto' uses <case_dir>/baseline_full_cpu_outputs.npz; 'off' disables; or pass an explicit .npz path."
+        ),
+    )
     ap.add_argument(
         "--validation-mode",
         type=str,
@@ -4001,9 +4264,24 @@ def main() -> int:
     ap.add_argument("--trt-cache-dir", type=str, default="trt_cache", help="TensorRT engine cache directory")
     ap.add_argument("--trt-cache", dest="trt_cache", action="store_true", default=True, help="Enable engine cache")
     ap.add_argument("--no-trt-cache", dest="trt_cache", action="store_false", help="Disable engine cache")
+    # Backwards compatible aliases (older runner templates referenced trt_engine_cache)
+    ap.add_argument("--trt-engine-cache", dest="trt_cache", action="store_true", help="Alias for --trt-cache")
+    ap.add_argument("--no-trt-engine-cache", dest="trt_cache", action="store_false", help="Alias for --no-trt-cache")
     ap.add_argument("--trt-fp16", action="store_true", help="Enable TRT FP16")
     ap.add_argument("--trt-dump-subgraphs", action="store_true", help="Enable TRT subgraph dump (ORT TensorRT EP)")
     ap.add_argument("--trt-fast-build", action="store_true", help="Faster TRT build preset (opt level 2)")
+
+    # TRT advanced options (optional)
+    ap.add_argument("--trt-dla-core", type=int, default=None, help="Use Jetson DLA core (0/1). If set, enables DLA.")
+    ap.add_argument(
+        "--trt-gpu-fallback",
+        dest="trt_gpu_fallback",
+        action="store_true",
+        default=True,
+        help="Allow GPU fallback when using DLA",
+    )
+    ap.add_argument("--no-trt-gpu-fallback", dest="trt_gpu_fallback", action="store_false", help="Disable GPU fallback when using DLA")
+    ap.add_argument("--trt-max-workspace-size", type=int, default=None, help="Max TRT workspace size (bytes)")
 
     args = ap.parse_args()
 
@@ -4247,18 +4525,71 @@ def main() -> int:
         _save_npz(str(out_npz), feeds_full, meta)
         print(f"[inputs] wrote {out_npz} (tensors={len(feeds_full)})")
 
-    req_provider = str(args.provider or "auto").lower().strip()
-    hailo_hw = req_provider if _is_hailo_provider(req_provider) else ""
+    provider_default = str(args.provider or "auto").lower().strip()
+
+    # Stage/backend overrides (for matrix-style runs).
+    stage1_provider = str(args.stage1_provider or "").lower().strip() or provider_default
+    stage2_provider = str(args.stage2_provider or "").lower().strip() or provider_default
+    full_provider = str(args.full_provider or "").lower().strip() or provider_default
+
+    # Variants selection.
+    ALL_VARIANTS = ["full", "part1", "part2", "composed"]
+
+    def _parse_variants_arg(s: str, default: List[str]) -> List[str]:
+        s = str(s or "").strip()
+        if not s:
+            return list(default)
+        parts = [p.strip().lower() for p in s.split(",") if p.strip()]
+        if not parts:
+            return list(default)
+        if "all" in parts:
+            return list(ALL_VARIANTS)
+
+        # normalize some common shorthands
+        norm_map = {
+            "p1": "part1",
+            "p2": "part2",
+            "comp": "composed",
+            "compose": "composed",
+        }
+        out: List[str] = []
+        seen = set()
+        for p in parts:
+            p = norm_map.get(p, p)
+            if p not in ALL_VARIANTS:
+                print(f"[warn] ignoring unknown variant '{p}' (allowed: {ALL_VARIANTS})")
+                continue
+            if p not in seen:
+                out.append(p)
+                seen.add(p)
+        return out or list(default)
+
+    default_variants = list(ALL_VARIANTS)
+    # Back-compat: if the run is explicitly "hailo*" and variants weren't specified,
+    # keep the historical default (part1/part2/composed, no full).
+    if _is_hailo_provider(provider_default) and not str(args.variants or "").strip():
+        default_variants = ["part1", "part2", "composed"]
+
+    variants = _parse_variants_arg(args.variants, default_variants)
+
+    hailo_any = any(_is_hailo_provider(x) for x in (provider_default, stage1_provider, stage2_provider, full_provider))
 
     avail = _available_providers()
     print(f"ORT available providers: {avail}")
 
-    # If a Hailo backend is requested, we still use ORT (CPU) for baseline outputs
-    # and for graph metadata (names/shapes). Timings are taken from Hailo.
-    ort_provider_hint = "cpu" if hailo_hw else req_provider
-    providers = _pick_providers(ort_provider_hint, avail)
-    if hailo_hw:
-        print(f"Using Hailo backend: {hailo_hw} (ORT baseline: {providers})")
+    # Baseline policy: always use ORT CPU for the reference "full" run.
+    #
+    # Rationale:
+    # - Makes accuracy comparisons consistent across backends (CUDA / TensorRT / Hailo).
+    # - Avoids silently using a GPU backend as the reference (which can mask errors).
+    ort_provider_hint = "cpu"
+    providers = _pick_providers("cpu", avail)
+
+    if hailo_any or provider_default not in ("cpu", ""):
+        print(
+            f"Using mixed backends: default={provider_default}, full={full_provider}, "
+            f"stage1={stage1_provider}, stage2={stage2_provider} (ORT baseline: {providers})"
+        )
     else:
         print(f"Using providers: {providers}")
 
@@ -4292,6 +4623,55 @@ def main() -> int:
     sess_full, info_full = _create_session("full", full_path, providers, provider_options, sess_options)
     sess_p1, info_p1 = _create_session("part1", p1_path, providers, provider_options, sess_options)
     sess_p2, info_p2 = _create_session("part2", p2_path, providers, provider_options, sess_options)
+
+    # ORT session cache for stage-specific providers (matrix runs).
+    ort_sessions: Dict[Tuple[str, str], ort.InferenceSession] = {
+        ("full", ort_provider_hint): sess_full,
+        ("part1", ort_provider_hint): sess_p1,
+        ("part2", ort_provider_hint): sess_p2,
+    }
+
+    def _make_provider_options_for(providers_local: List[str]) -> Optional[List[dict]]:
+        if "TensorrtExecutionProvider" not in providers_local:
+            return None
+
+        # Mirror the TRT provider options from the "single provider" path.
+        cache_dir = Path(args.trt_cache_dir)
+        if not cache_dir.is_absolute():
+            cache_dir = base_dir / cache_dir
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        trt_opts = {
+            "trt_engine_cache_enable": _as_ort_opt(bool(args.trt_cache)),
+            "trt_engine_cache_path": str(cache_dir),
+            "trt_timing_cache_enable": _as_ort_opt(bool(args.trt_cache)),
+            "trt_timing_cache_path": str(cache_dir / "timing.cache"),
+            "trt_fp16_enable": _as_ort_opt(bool(args.trt_fp16)),
+            "trt_dump_subgraphs": _as_ort_opt(bool(args.trt_dump_subgraphs)),
+        }
+        if args.trt_fast_build:
+            trt_opts["trt_builder_optimization_level"] = _as_ort_opt(2)
+            trt_opts["trt_build_heuristics_enable"] = _as_ort_opt(True)
+        if args.trt_dla_core is not None:
+            trt_opts["trt_dla_enable"] = _as_ort_opt(True)
+            trt_opts["trt_dla_core"] = str(int(args.trt_dla_core))
+            trt_opts["trt_gpu_fallback_enable"] = _as_ort_opt(bool(args.trt_gpu_fallback))
+        if args.trt_max_workspace_size is not None:
+            trt_opts["trt_max_workspace_size"] = str(int(args.trt_max_workspace_size))
+
+        return [trt_opts if p == "TensorrtExecutionProvider" else {} for p in providers_local]
+
+    def _get_ort_session(kind: str, model_path: Path, provider_hint: str) -> ort.InferenceSession:
+        ph = str(provider_hint or "auto").lower().strip()
+        key = (kind, ph)
+        if key in ort_sessions:
+            return ort_sessions[key]
+
+        provs = _pick_providers(ph, avail)
+        popts = _make_provider_options_for(provs)
+        sess, _info = _create_session(f"{kind}_{ph}", model_path, provs, popts, sess_options)
+        ort_sessions[key] = sess
+        return sess
 
     # If image_scale=auto, try to pick a sane preprocessing preset.
     if img_candidates is not None and args.image_scale == "auto":
@@ -4527,414 +4907,1058 @@ def main() -> int:
     # Optional debug payload (only populated when using GraphRunner).
     graph_runner_metrics = None
 
-    if hailo_hw:
-        # Hailo HEFs are expected at: hailo/<hw_arch>/part{1|2}/compiled.hef
-        # where <hw_arch> is e.g. hailo8, hailo8l, hailo10h, ...
-        hef_root = base_dir / "hailo" / hailo_hw
-        hef_p1 = hef_root / "part1" / "compiled.hef"
-        hef_p2 = hef_root / "part2" / "compiled.hef"
+        # ----------------------------
+    # Benchmark variants / matrix
+    # ----------------------------
+    stage1_tok = stage1_provider
+    stage2_tok = stage2_provider
+    full_tok = full_provider
 
-        hailo_p1 = HailoSession(hef_p1, quantized_inputs=True, quantized_outputs=False)
-        hailo_p2 = HailoSession(hef_p2, quantized_inputs=False, quantized_outputs=False)
+    # Timing placeholders (None means intentionally not measured / not available).
+    full_mean = full_std = None
+    p1_mean = p1_std = None
+    p2_mean = p2_std = None
+    comp_mean = comp_std = None
 
-        # Build Hailo stage1 inputs.
-        p1_inputs_hailo: Dict[str, np.ndarray] = {}
-        for name in hailo_p1.input_names:
-            src = feeds_p1.get(name)
-            if src is None:
-                # Fallback: single-input models.
-                src = next(iter(feeds_p1.values()))
+    # Per-run timing series (optional; present when measured).
+    full_runs_ms: Optional[List[float]] = None
+    p1_runs_ms: Optional[List[float]] = None
+    p2_runs_ms: Optional[List[float]] = None
+    comp_runs_ms: Optional[List[float]] = None
 
-            src_arr = np.asarray(src)
-            # For image-like tensors we convert to uint8 and let Hailo quantization handle scaling.
+    # Track per-variant status for transparency.
+    variant_status: Dict[str, str] = {v: "skipped" for v in ALL_VARIANTS}
+    variant_errors: Dict[str, str] = {}
+
+    # -------------------------------------------------------------------------
+    # Preflight: avoid *silent* CPU fallback for explicit ORT GPU backends.
+    #
+    # Without this, a run that is labelled "cuda"/"tensorrt" may still execute on
+    # CPU if the corresponding ORT ExecutionProvider is missing, which is highly
+    # misleading when you look at benchmark results.
+    # -------------------------------------------------------------------------
+    def _ort_required_eps(provider_hint: str) -> List[str]:
+        hint = (provider_hint or "").lower()
+        if hint == "cuda":
+            return ["CUDAExecutionProvider"]
+        if hint == "tensorrt":
+            # TensorRT EP is usually paired with CUDA EP.
+            return ["TensorrtExecutionProvider", "CUDAExecutionProvider"]
+        if hint == "cpu":
+            return ["CPUExecutionProvider"]
+        return []
+
+    def _ort_missing_eps(provider_hint: str, available_eps: List[str]) -> List[str]:
+        req = _ort_required_eps(provider_hint)
+        return [ep for ep in req if ep not in available_eps]
+
+    def _maybe_skip_variant_for_missing_ort(provider_hint: str, variant_key: str, *, label: str) -> None:
+        # Only applies to ORT-backed providers (cpu/cuda/tensorrt). 'auto' intentionally allows fallback.
+        if _is_hailo_provider(provider_hint) or (provider_hint or "").lower() in ("", "auto"):
+            return
+
+        missing = _ort_missing_eps(provider_hint, avail)
+        if not missing:
+            return
+
+        msg = (
+            f"Requested {label} provider '{provider_hint}' but required ORT EP(s) {missing} are not available. "
+            f"Available providers: {avail}"
+        )
+
+        # Keep first error if already present.
+        if variant_key not in variant_errors:
+            variant_errors[variant_key] = msg
+            print(f"[preflight] {variant_key}: {msg}")
+
+    _maybe_skip_variant_for_missing_ort(full_provider, "full", label="full")
+    _maybe_skip_variant_for_missing_ort(stage1_provider, "part1", label="stage1")
+    _maybe_skip_variant_for_missing_ort(stage2_provider, "part2", label="stage2")
+
+    # Composed depends on both stages.
+    if "composed" not in variant_errors:
+        missing_msgs: List[str] = []
+
+        if not _is_hailo_provider(stage1_provider) and (stage1_provider or "").lower() not in ("", "auto"):
+            m1 = _ort_missing_eps(stage1_provider, avail)
+            if m1:
+                missing_msgs.append(f"stage1='{stage1_provider}' missing {m1}")
+
+        if not _is_hailo_provider(stage2_provider) and (stage2_provider or "").lower() not in ("", "auto"):
+            m2 = _ort_missing_eps(stage2_provider, avail)
+            if m2:
+                missing_msgs.append(f"stage2='{stage2_provider}' missing {m2}")
+
+        if missing_msgs:
+            variant_errors["composed"] = (
+                "ORT provider(s) unavailable for composed run: "
+                + "; ".join(missing_msgs)
+                + f". Available providers: {avail}"
+            )
+            print(f"[preflight] composed: {variant_errors['composed']}")
+
+    def _resolve_hailo_hef(hw_arch: str, variant: str) -> Path:
+        # Resolve HEF path for a given hw_arch and variant.
+        #
+        # Search order supports both:
+        #   - single-split export layout: <case>/hailo/<hw>/<variant>/compiled.hef
+        #   - benchmark suite layout:    <suite>/hailo/<hw>/<variant>/compiled.hef
+        hw_arch = str(hw_arch or "").strip().lower()
+        variant = str(variant or "").strip().lower()
+        candidates = [
+            base_dir / "hailo" / hw_arch / variant / "compiled.hef",
+            base_dir.parent / "hailo" / hw_arch / variant / "compiled.hef",
+            base_dir.parent.parent / "hailo" / hw_arch / variant / "compiled.hef",
+        ]
+        for p in candidates:
+            if p.exists():
+                return p
+        return candidates[0]
+
+    def _is_hailo(tok: str) -> bool:
+        return _is_hailo_provider(str(tok or "").strip().lower())
+
+    def _hailo_runtime_check() -> Tuple[bool, str]:
+        """Conservative runtime availability check for Hailo.
+
+        Why so defensive?
+        - The Python bindings can import fine and /dev/hailo0 can exist,
+          yet the physical device can be busy/unavailable ("OUT_OF_PHYSICAL_DEVICES"),
+          which otherwise tends to lead to hard crashes (SIGSEGV) during benchmarking.
+
+        Strategy:
+        - Check /dev/hailo* nodes exist.
+        - Import hailo_platform.
+        - Best-effort Device.scan() (if available) for diagnostics.
+        - Probe VDevice allocation in an isolated subprocess and scan stdout/stderr
+          for known "no free devices" markers.
+
+        Returns:
+            (ok, reason). If ok is True, reason is "".
+        """
+
+        import glob
+        import subprocess
+        import sys
+        import textwrap
+
+        dev_nodes = sorted(glob.glob("/dev/hailo*"))
+        if not dev_nodes:
+            return False, "No /dev/hailo* device nodes found (driver not loaded or device missing). "
+
+        # Prefer hailo_platform, but fall back to hailort if that's what is installed.
+        hp = None
+        try:
+            import hailo_platform as hp  # type: ignore
+        except Exception:
             try:
-                img_u8 = _nchw_to_hwc_u8(src_arr)
-                tgt_shape = hailo_p1.input_shapes.get(name)
-                if tgt_shape is not None:
-                    img_u8 = _adapt_tensor(img_u8, tgt_shape)
-                p1_inputs_hailo[name] = img_u8
+                import hailort as hp  # type: ignore
+            except Exception as e:
+                return False, f"'hailo_platform'/'hailort' not importable: {e!r}"
+
+        scan_info = None
+        try:
+            if hp is not None and hasattr(hp, "Device") and hasattr(hp.Device, "scan"):
+                scan_info = hp.Device.scan()
+                if isinstance(scan_info, (list, tuple)) and len(scan_info) == 0:
+                    return False, "hailo_platform/hailort Device.scan() returned no devices."
+        except Exception as e:
+            scan_info = f"scan_error: {e!r}"
+
+        # Critical: Try to allocate a VDevice in a separate process so that a potential
+        # crash stays contained and we can gracefully skip Hailo variants.
+        probe_code = textwrap.dedent(
+            """
+            import sys
+            import os
+            import site
+            _extra = os.environ.get("SPLITPOINT_EXTRA_SITES", "")
+            if _extra:
+                for _p in _extra.split(os.pathsep):
+                    if _p:
+                        site.addsitedir(_p)
+
+            try:
+                try:
+                    import hailo_platform as hp
+                except Exception:
+                    import hailort as hp
+            except Exception as e:
+                print(f"import_failed: {e!r}", file=sys.stderr)
+                sys.exit(2)
+
+            try:
+                if hasattr(hp, "VDevice"):
+                    v = hp.VDevice()
+                    # Prefer context-manager semantics if provided.
+                    if hasattr(v, "__enter__"):
+                        v.__enter__()
+                    if hasattr(v, "__exit__"):
+                        v.__exit__(None, None, None)
+                    # Best-effort close/release if available
+                    for meth in ("release", "close"):
+                        if hasattr(v, meth):
+                            try:
+                                getattr(v, meth)()
+                            except Exception:
+                                pass
+                    del v
+                print("vdevice_ok")
+                sys.exit(0)
+            except Exception as e:
+                print(f"vdevice_failed: {e!r}", file=sys.stderr)
+                sys.exit(3)
+            """
+        ).strip()
+
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", probe_code],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except Exception as e:
+            return False, f"Hailo vdevice probe failed to run: {e!r}"
+
+        combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        low = combined.lower()
+
+        # If the probe process failed or crashed, bail out.
+        if proc.returncode != 0:
+            tail = (proc.stderr or proc.stdout or "").strip()
+            if len(tail) > 2000:
+                tail = tail[-2000:]
+            return False, f"Hailo vdevice probe failed (rc={proc.returncode}). {tail}"
+
+        # Even if rc==0, HailoRT can sometimes print errors to stderr without raising.
+        busy_markers = [
+            "not enough free devices",
+            "out_of_physical_devices",
+            "hailo_out_of_physical_devices",
+            "failed to create vdevice",
+            "network_group_not_activated",
+        ]
+        hits = [m for m in busy_markers if m in low]
+        if hits:
+            return (
+                False,
+                f"Hailo device appears busy/unavailable (markers: {hits}). dev_nodes={dev_nodes} scan={scan_info}",
+            )
+
+        return True, ""
+
+    hailo_runtime_ok = True
+    hailo_runtime_reason = ""
+    if any(_is_hailo(t) for t in (stage1_tok, stage2_tok, full_tok)):
+        hailo_runtime_ok, hailo_runtime_reason = _hailo_runtime_check()
+        if not hailo_runtime_ok:
+            print(f"[hailo] backend unavailable on this host: {hailo_runtime_reason}")
+
+    # If we need Hailo, allocate a *single* shared VDevice for all Hailo sessions.
+    # This avoids "not enough free devices" errors on single-device systems.
+    hailo_vdevice = None
+    if hailo_runtime_ok and any(_is_hailo(t) for t in (stage1_tok, stage2_tok, full_tok)):
+        try:
+            try:
+                import hailo_platform as _hp  # type: ignore
             except Exception:
-                # Non-image / already-quantized input
-                tgt_shape = hailo_p1.input_shapes.get(name)
-                p1_inputs_hailo[name] = _adapt_tensor(src_arr, tgt_shape) if tgt_shape is not None else src_arr
+                import hailort as _hp  # type: ignore
+            hailo_vdevice = _hp.VDevice()
+            if hasattr(hailo_vdevice, "__enter__"):
+                hailo_vdevice.__enter__()
 
-        def run_p1_map() -> Dict[str, np.ndarray]:
-            assert hailo_p1 is not None
+            # Ensure cleanup even on early exits.
+            import atexit
+
+            def _close_hailo_vdevice(v=hailo_vdevice):
+                try:
+                    if v is not None and hasattr(v, "__exit__"):
+                        v.__exit__(None, None, None)
+                except Exception:
+                    pass
+
+            atexit.register(_close_hailo_vdevice)
+        except Exception as e:
+            hailo_runtime_ok = False
+            hailo_runtime_reason = f"Failed to create shared VDevice: {e!r}"
+            print(f"[hailo] backend unavailable on this host: {hailo_runtime_reason}")
+            hailo_vdevice = None
+
+    # Stage1 is only required when we actually run part1 (or composed).
+    # part2 alone can be benchmarked using CPU-baseline cut tensors.
+    need_stage1 = any(v in variants for v in ("part1", "composed"))
+    need_stage2 = any(v in variants for v in ("part2", "composed"))
+
+    # Stage1 backend
+    hailo_p1: Optional[HailoSession] = None
+    p1_inputs_hailo: Optional[Dict[str, np.ndarray]] = None
+    ort_p1_sess: Optional[ort.InferenceSession] = None
+
+    if need_stage1:
+        if _is_hailo(stage1_tok):
+            if not hailo_runtime_ok:
+                msg = f"Hailo backend unavailable: {hailo_runtime_reason}"
+                variant_errors["part1"] = msg
+                if "composed" in variants:
+                    variant_errors["composed"] = msg
+            else:
+                hef_p1 = _resolve_hailo_hef(stage1_tok, "part1")
+                if not hef_p1.exists():
+                    msg = f"Missing HEF for stage1/part1: {hef_p1}"
+                    variant_errors["part1"] = msg
+                    if "composed" in variants:
+                        variant_errors["composed"] = msg
+                else:
+                    try:
+                        hailo_p1 = HailoSession(
+                            hef_p1,
+                            quantized_inputs=True,
+                            quantized_outputs=False,
+                            vdevice=hailo_vdevice,
+                        )
+                    except Exception as e:
+                        msg = f"Failed to init Hailo stage1/part1 session: {e}"
+                        variant_errors["part1"] = msg
+                        if "composed" in variants:
+                            variant_errors["composed"] = msg
+                    else:
+                        # Build fixed inputs for part1 on Hailo.
+                        p1_inputs_hailo = {}
+                        first_input_name = next(iter(feeds_full.keys()))
+                        first_input_val = feeds_full[first_input_name]
+                        for name in hailo_p1.input_names:
+                            src = feeds_full.get(name, first_input_val)
+                            src_arr = np.asarray(src)
+                            try:
+                                img_u8 = _nchw_to_hwc_u8(src_arr)
+                                tgt_shape = hailo_p1.input_shapes.get(name)
+                                if tgt_shape is not None:
+                                    img_u8 = _adapt_tensor(img_u8, tgt_shape)
+                                p1_inputs_hailo[name] = img_u8
+                            except Exception:
+                                tgt_shape = hailo_p1.input_shapes.get(name)
+                                p1_inputs_hailo[name] = _adapt_tensor(src_arr, tgt_shape) if tgt_shape is not None else src_arr
+        else:
+            ort_p1_sess = _get_ort_session("part1", p1_path, stage1_tok)
+
+    # Stage2 backend
+    hailo_p2: Optional[HailoSession] = None
+    ort_p2_sess: Optional[ort.InferenceSession] = None
+    p2_inputs_0: Optional[Dict[str, np.ndarray]] = None
+    p2_in_map: Optional[Dict[str, str]] = None
+    p2_in_map_src_keys: Optional[Tuple[str, ...]] = None
+
+    if need_stage2:
+        if _is_hailo(stage2_tok):
+            if not hailo_runtime_ok:
+                msg = f"Hailo backend unavailable: {hailo_runtime_reason}"
+                variant_errors["part2"] = msg
+                if "composed" in variants:
+                    variant_errors["composed"] = msg
+            else:
+                hef_p2 = _resolve_hailo_hef(stage2_tok, "part2")
+                if not hef_p2.exists():
+                    msg = f"Missing HEF for stage2/part2: {hef_p2}"
+                    variant_errors["part2"] = msg
+                    if "composed" in variants:
+                        variant_errors["composed"] = msg
+                else:
+                    try:
+                        hailo_p2 = HailoSession(
+                            hef_p2,
+                            quantized_inputs=False,
+                            quantized_outputs=False,
+                            vdevice=hailo_vdevice,
+                        )
+                    except Exception as e:
+                        msg = f"Failed to init Hailo stage2/part2 session: {e}"
+                        variant_errors["part2"] = msg
+                        if "composed" in variants:
+                            variant_errors["composed"] = msg
+        else:
+            ort_p2_sess = _get_ort_session("part2", p2_path, stage2_tok)
+
+    # Full backend (only if requested).
+    hailo_full: Optional[HailoSession] = None
+    full_inputs_hailo: Optional[Dict[str, np.ndarray]] = None
+    ort_full_sess: Optional[ort.InferenceSession] = None
+    if "full" in variants:
+        if _is_hailo(full_tok):
+            if not hailo_runtime_ok:
+                variant_errors["full"] = f"Hailo backend unavailable: {hailo_runtime_reason}"
+            else:
+                hef_full = _resolve_hailo_hef(full_tok, "full")
+                if not hef_full.exists():
+                    variant_errors["full"] = f"Missing HEF for full: {hef_full}"
+                else:
+                    try:
+                        hailo_full = HailoSession(
+                            hef_full,
+                            quantized_inputs=True,
+                            quantized_outputs=False,
+                            vdevice=hailo_vdevice,
+                        )
+                    except Exception as e:
+                        variant_errors["full"] = f"Failed to init Hailo full session: {e}"
+                    else:
+                        full_inputs_hailo = {}
+                        first_input_name = next(iter(feeds_full.keys()))
+                        first_input_val = feeds_full[first_input_name]
+                        for name in hailo_full.input_names:
+                            src = feeds_full.get(name, first_input_val)
+                            src_arr = np.asarray(src)
+                            try:
+                                img_u8 = _nchw_to_hwc_u8(src_arr)
+                                tgt_shape = hailo_full.input_shapes.get(name)
+                                if tgt_shape is not None:
+                                    img_u8 = _adapt_tensor(img_u8, tgt_shape)
+                                full_inputs_hailo[name] = img_u8
+                            except Exception:
+                                tgt_shape = hailo_full.input_shapes.get(name)
+                                full_inputs_hailo[name] = _adapt_tensor(src_arr, tgt_shape) if tgt_shape is not None else src_arr
+        else:
+            ort_full_sess = _get_ort_session("full", full_path, full_tok)
+
+    # ----------------------------
+    # Stage run helpers
+    # ----------------------------
+    def run_stage1_map() -> Dict[str, np.ndarray]:
+        if hailo_p1 is not None and p1_inputs_hailo is not None:
             return hailo_p1.infer(p1_inputs_hailo)
+        if ort_p1_sess is None:
+            raise RuntimeError("stage1 backend not initialized")
+        out = ort_p1_sess.run(None, feeds_p1)
+        return {o.name: a for o, a in zip(ort_p1_sess.get_outputs(), out)}
 
-        # Precompute mapping and a fixed stage2 input tensor for benchmarking stage2 alone.
-        p1_map0_h = run_p1_map()
-        p2_in_map = _map_inputs_to_outputs(hailo_p2.input_names, list(p1_map0_h.keys()))
-
-        def _build_p2_inputs_from_p1(out1_map: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-            assert hailo_p2 is not None
+    def _build_stage2_inputs(out1_map: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        # Build stage2 feed dict from stage1 outputs + passthrough full inputs.
+        nonlocal p2_in_map, p2_in_map_src_keys
+        src_keys = tuple(sorted(out1_map.keys()))
+        if hailo_p2 is not None:
+            expected = hailo_p2.input_names
+            if p2_in_map is None or p2_in_map_src_keys != src_keys:
+                p2_in_map = _map_inputs_to_outputs(expected, list(out1_map.keys()))
+                p2_in_map_src_keys = src_keys
             d: Dict[str, np.ndarray] = {}
-            for inp in hailo_p2.input_names:
-                src_name = p2_in_map.get(inp, inp)
-                if src_name in out1_map:
-                    src = out1_map[src_name]
+            for inp in expected:
+                tgt_shape = hailo_p2.input_shapes.get(inp)
+                hit = _select_source_tensor(inp, tgt_shape, out1_map, p2_in_map)
+                if hit is not None:
+                    src_name, src = hit
+                    p2_in_map[inp] = src_name
                 elif inp in feeds_full:
                     src = feeds_full[inp]
+                    ok, src = _try_adapt_tensor(src, tgt_shape)
+                    if not ok:
+                        raise ValueError(
+                            f"Cannot adapt passthrough full input '{inp}' from shape {tuple(np.asarray(feeds_full[inp]).shape)} to target shape {tgt_shape}"
+                        )
                 else:
                     raise KeyError(
-                        f"Cannot build part2 input '{inp}': not in part1 outputs and not in full inputs. "
-                        f"part1 outputs={list(out1_map.keys())} full inputs={list(feeds_full.keys())}"
+                        f"Cannot build stage2 input '{inp}': no compatible stage1 output and not in full inputs. "
+                        f"stage1 outputs={{ {', '.join(f'{k}:{tuple(np.asarray(v).shape)}' for k,v in out1_map.items())} }} full inputs={list(feeds_full.keys())}"
                     )
-                tgt_shape = hailo_p2.input_shapes.get(inp)
-                if tgt_shape is not None:
-                    src = _adapt_tensor(src, tgt_shape)
                 d[inp] = src
             return d
 
-        p2_inputs_hailo_0 = _build_p2_inputs_from_p1(p1_map0_h)
+        if ort_p2_sess is None:
+            raise RuntimeError("stage2 backend not initialized")
 
-        def run_p2_map() -> Dict[str, np.ndarray]:
-            assert hailo_p2 is not None
-            return hailo_p2.infer(p2_inputs_hailo_0)
+        ort_inputs = list(ort_p2_sess.get_inputs())
+        expected = [i.name for i in ort_inputs]
+        if p2_in_map is None or p2_in_map_src_keys != src_keys:
+            p2_in_map = _map_inputs_to_outputs(expected, list(out1_map.keys()))
+            p2_in_map_src_keys = src_keys
 
-        def run_composed_map() -> Dict[str, np.ndarray]:
-            out1 = run_p1_map()
-            assert hailo_p2 is not None
-            return hailo_p2.infer(_build_p2_inputs_from_p1(out1))
-
-        # Timings: skip full (ORT baseline) for Hailo runs.
-        print("[full] skipped timing (Hailo backend)")
-        full_mean, full_std = None, None
-        p1_mean, p1_std, _ = _bench("part1", run_p1_map, args.warmup, args.runs)
-        p2_mean, p2_std, _ = _bench("part2", run_p2_map, args.warmup, args.runs)
-        comp_mean, comp_std, _ = _bench("composed", run_composed_map, args.warmup, args.runs)
-
-        # Outputs for diff/viz.
-        full_out = run_full()
-        comp_out = _order_out_map(run_composed_map())
-
-    else:
-        # Pure ORT path.
-        graph_runner_metrics = None
-
-        def run_p1() -> List[np.ndarray]:
-            return sess_p1.run(None, feeds_p1)
-
-        def run_p2() -> List[np.ndarray]:
-            return sess_p2.run(None, feeds_p2_0)
-
-        def run_composed() -> List[np.ndarray]:
-            out_p1 = sess_p1.run(None, feeds_p1)
-            p1_map = {o.name: a for o, a in zip(sess_p1.get_outputs(), out_p1)}
-            return sess_p2.run(None, build_feeds_p2(p1_map))
-
-        # Prefer GraphRunner when available in the suite (splitpoint_runners/).
-        if _HAS_SPLITPOINT_RUNNERS:
-            try:
-                print("[graph-runner] ORT benchmarking via splitpoint_runners.GraphRunner")
-
-                # Backends wrap the already-built ORT sessions (no extra engine builds).
-                b_full = _SP_OrtSessionBackend("ort_full", sess_full)
-                b_p1 = _SP_OrtSessionBackend("ort_part1", sess_p1)
-                b_p2 = _SP_OrtSessionBackend("ort_part2", sess_p2)
-
-                # Static input harnesses.
-                h_full = _SP_StaticHarness(feeds_full)
-                h_p1 = _SP_StaticHarness(feeds_p1)
-                h_p2 = _SP_StaticHarness(feeds_p2_0)
-
-                sample_cfg = _SP_SampleCfg(
-                    input_kind="static",
-                    image_path=(Path(args.image).resolve() if args.image else None),
-                    input_scale=args.image_scale,
-                )
-
-                runner_single = _SP_GraphRunner()
-
-                plan_full = _SP_GraphPlan(
-                    stages=[
-                        _SP_Stage(
-                            name="full",
-                            backend=b_full,
-                            run_cfg=_SP_RunCfg(model_path=full_onnx),
-                        )
-                    ],
-                    sample_cfg=sample_cfg,
-                    warmup_runs=int(args.warmup),
-                    measured_runs=int(args.runs),
-                    objective="latency",
-                )
-                res_full = runner_single.run_graph(plan_full, h_full, out_dir / "graph_full")
-
-                plan_p1 = _SP_GraphPlan(
-                    stages=[
-                        _SP_Stage(
-                            name="part1",
-                            backend=b_p1,
-                            run_cfg=_SP_RunCfg(model_path=part1_onnx),
-                        )
-                    ],
-                    sample_cfg=sample_cfg,
-                    warmup_runs=int(args.warmup),
-                    measured_runs=int(args.runs),
-                    objective="latency",
-                )
-                res_p1 = runner_single.run_graph(plan_p1, h_p1, out_dir / "graph_part1")
-
-                plan_p2 = _SP_GraphPlan(
-                    stages=[
-                        _SP_Stage(
-                            name="part2",
-                            backend=b_p2,
-                            run_cfg=_SP_RunCfg(model_path=part2_onnx),
-                        )
-                    ],
-                    sample_cfg=sample_cfg,
-                    warmup_runs=int(args.warmup),
-                    measured_runs=int(args.runs),
-                    objective="latency",
-                )
-                res_p2 = runner_single.run_graph(plan_p2, h_p2, out_dir / "graph_part2")
-
-                # Composed (2-stage) run: stage2 inputs are merged from feeds_p2_0 + stage1 outputs.
-                merge_transfer = _SP_MergeP2Transfer(feeds_p2_0)
-                runner_comp = _SP_GraphRunner(transfer=merge_transfer)
-                plan_comp = _SP_GraphPlan(
-                    stages=[
-                        _SP_Stage(
-                            name="part1",
-                            backend=b_p1,
-                            run_cfg=_SP_RunCfg(model_path=part1_onnx),
-                        ),
-                        _SP_Stage(
-                            name="part2",
-                            backend=b_p2,
-                            run_cfg=_SP_RunCfg(model_path=part2_onnx),
-                        ),
-                    ],
-                    sample_cfg=sample_cfg,
-                    warmup_runs=int(args.warmup),
-                    measured_runs=int(args.runs),
-                    objective="latency",
-                )
-                res_comp = runner_comp.run_graph(plan_comp, h_p1, out_dir / "graph_composed")
-
-                def _get_ms(res: object, *path: str) -> Optional[float]:
-                    cur: object = getattr(res, "metrics", {})
-                    for key in path:
-                        if not isinstance(cur, dict) or key not in cur:
-                            return None
-                        cur = cur[key]
-                    try:
-                        return float(cur)  # type: ignore[arg-type]
-                    except Exception:
-                        return None
-
-                full_mean = _get_ms(res_full, "end_to_end_summary_ms", "measured", "mean")
-                full_std = _get_ms(res_full, "end_to_end_summary_ms", "measured", "std")
-                p1_mean = _get_ms(res_p1, "end_to_end_summary_ms", "measured", "mean")
-                p1_std = _get_ms(res_p1, "end_to_end_summary_ms", "measured", "std")
-                p2_mean = _get_ms(res_p2, "end_to_end_summary_ms", "measured", "mean")
-                p2_std = _get_ms(res_p2, "end_to_end_summary_ms", "measured", "std")
-                comp_mean = _get_ms(res_comp, "end_to_end_summary_ms", "measured", "mean")
-                comp_std = _get_ms(res_comp, "end_to_end_summary_ms", "measured", "std")
-
-                full_out = _order_out_map(res_full.outputs if isinstance(res_full.outputs, dict) else {})
-                comp_out = _order_out_map(res_comp.outputs if isinstance(res_comp.outputs, dict) else {})
-
-                graph_runner_metrics = {
-                    "full": res_full.metrics,
-                    "part1": res_p1.metrics,
-                    "part2": res_p2.metrics,
-                    "composed": res_comp.metrics,
-                }
-            except Exception as e:
-                print(
-                    f"[graph-runner] WARNING: GraphRunner path failed ({type(e).__name__}: {e}). "
-                    "Falling back to legacy benchmark loop."
-                )
-                full_mean, full_std, _ = _bench("full", run_full, args.warmup, args.runs)
-                p1_mean, p1_std, _ = _bench("part1", run_p1, args.warmup, args.runs)
-                p2_mean, p2_std, _ = _bench("part2", run_p2, args.warmup, args.runs)
-                comp_mean, comp_std, _ = _bench("composed", run_composed, args.warmup, args.runs)
-
-                full_out = run_full()
-                comp_out = run_composed()
-        else:
-            full_mean, full_std, _ = _bench("full", run_full, args.warmup, args.runs)
-            p1_mean, p1_std, _ = _bench("part1", run_p1, args.warmup, args.runs)
-            p2_mean, p2_std, _ = _bench("part2", run_p2, args.warmup, args.runs)
-            comp_mean, comp_std, _ = _bench("composed", run_composed, args.warmup, args.runs)
-
-            full_out = run_full()
-            comp_out = run_composed()
-
-    n = min(len(full_out), len(comp_out))
-    per_out = []
-    max_abs_global = 0.0
-    mean_abs_global = 0.0
-    if n > 0:
-        for i in range(n):
-            a = full_out[i]
-            b = comp_out[i]
-            da = a.astype(np.float32, copy=False) if isinstance(a, np.ndarray) else np.array(a, dtype=np.float32)
-            db = b.astype(np.float32, copy=False) if isinstance(b, np.ndarray) else np.array(b, dtype=np.float32)
-            diff = np.abs(da - db)
-            max_abs = float(np.max(diff)) if diff.size else 0.0
-            mean_abs = float(np.mean(diff)) if diff.size else 0.0
-            per_out.append({"index": i, "shape": list(getattr(a, "shape", [])), "max_abs": max_abs, "mean_abs": mean_abs})
-            max_abs_global = max(max_abs_global, max_abs)
-            mean_abs_global += mean_abs
-        mean_abs_global = mean_abs_global / float(n)
-
-
-    elementwise_pass = (max_abs_global <= float(args.eps)) if n > 0 else False
-
-    print("==== Timings ====")
-    print(f"full    : {full_mean:.3f} ± {full_std:.3f}")
-    print(f"part1   : {p1_mean:.3f} ± {p1_std:.3f}")
-    print(f"part2   : {p2_mean:.3f} ± {p2_std:.3f}")
-    print(f"composed: {comp_mean:.3f} ± {comp_std:.3f}")
-    print(f"(note) part1+part2 (means) = {(p1_mean + p2_mean):.3f} ms")
-    print(f"(note) composed - full       = {(comp_mean - full_mean):.3f} ms")
-
-    # Determine output format for viz/validation
-    # NOTE: The legacy runner path primarily works with ordered output *lists*.
-    # For YOLOv10 BN6 + proxy validation we also need a name->tensor mapping.
-    # In the GraphRunner path we already have dict outputs; otherwise we fall
-    # back to synthetic output names.
-    out_full: Dict[str, np.ndarray] = {}
-    out_comp: Dict[str, np.ndarray] = {}
-    # Only try to use GraphRunner dict outputs if GraphRunner actually ran.
-    if graph_runner_metrics is not None:
-        try:
-            if isinstance(res_full.outputs, dict):
-                out_full = res_full.outputs
-            if isinstance(res_comp.outputs, dict):
-                out_comp = res_comp.outputs
-        except Exception:
-            out_full = {}
-            out_comp = {}
-
-    if not out_full:
-        out_full = {f"output{i}": a for i, a in enumerate(full_out)}
-    if not out_comp:
-        out_comp = {f"output{i}": a for i, a in enumerate(comp_out)}
-
-    output_names = list(out_full.keys())
-    full_out_list = list(out_full.values())
-    comp_out_names = list(out_comp.keys())
-    comp_out_list = list(out_comp.values())
-
-    output_format = _detect_output_format(output_names, full_out_list)
-    if output_format == "unknown":
-        output_format = _detect_output_format(comp_out_names, comp_out_list)
-
-    mode_used, mode_warnings = _select_validation_mode(args.validation_mode, args.provider, output_format)
-    warn_list: List[str] = []
-    warn_list.extend(mode_warnings)
-
-    proxy_metrics: Optional[Dict[str, Any]] = None
-    proxy_pass: Optional[bool] = None
-
-    if mode_used == "proxy_detections":
-        dets_full, w1 = _extract_detections_for_proxy(
-            output_format=output_format,
-            output_names=output_names,
-            outputs=full_out_list,
-            img_hw=img_hw,
-            yolo_conf=float(args.yolo_conf),
-            yolo_iou=float(args.yolo_iou),
-            yolo_max_det=int(args.yolo_max_det),
-            det_conf=float(args.detr_conf),
-            det_iou=float(args.detr_iou),
-            det_max_det=int(args.detr_max_det),
-            labels=labels,
-        )
-        dets_comp, w2 = _extract_detections_for_proxy(
-            output_format=output_format,
-            output_names=comp_out_names,
-            outputs=comp_out_list,
-            img_hw=img_hw,
-            yolo_conf=float(args.yolo_conf),
-            yolo_iou=float(args.yolo_iou),
-            yolo_max_det=int(args.yolo_max_det),
-            det_conf=float(args.detr_conf),
-            det_iou=float(args.detr_iou),
-            det_max_det=int(args.detr_max_det),
-            labels=labels,
-        )
-        warn_list.extend(w1)
-        warn_list.extend(w2)
-
-        fatal_proxy_w = [
-            w
-            for w in (w1 + w2)
-            if w.startswith(("proxy_", "bn6_")) and not w.startswith("ambiguous_")
-        ]
-        if fatal_proxy_w:
-            if args.provider == "tensorrt":
-                # TensorRT: proxy is the default, but if we can't decode detections, we soft-pass (timing-only).
-                warn_list.append("proxy_validation_skipped_fallback=off")
-                mode_used = "off"
+        d: Dict[str, np.ndarray] = {}
+        for ii in ort_inputs:
+            inp = ii.name
+            tgt_shape = _shape_from_ort_input(ii)
+            hit = _select_source_tensor(inp, tgt_shape, out1_map, p2_in_map)
+            if hit is not None:
+                src_name, src = hit
+                p2_in_map[inp] = src_name
+            elif inp in feeds_full:
+                src = feeds_full[inp]
+                ok, src = _try_adapt_tensor(src, tgt_shape)
+                if not ok:
+                    raise ValueError(
+                        f"Cannot adapt passthrough full input '{inp}' from shape {tuple(np.asarray(feeds_full[inp]).shape)} to target shape {tgt_shape}"
+                    )
             else:
-                # Non-TRT: fall back to strict elementwise gating
-                warn_list.append("proxy_validation_failed_fallback=strict_elementwise")
-                mode_used = "strict_elementwise"
-        else:
-            proxy_metrics, proxy_pass = _proxy_validate_detections(dets_ref=dets_full, dets_out=dets_comp)
+                raise KeyError(
+                    f"Cannot build stage2 input '{inp}': no compatible stage1 output and not in full inputs. "
+                    f"stage1 outputs={{ {', '.join(f'{k}:{tuple(np.asarray(v).shape)}' for k,v in out1_map.items())} }} full inputs={list(feeds_full.keys())}"
+                )
+            d[inp] = _maybe_cast_for_onnx_input(src, str(getattr(ii, 'type', '') or ''))
+        return d
 
-    if mode_used == "off":
-        final_pass = True
-    elif mode_used == "strict_elementwise":
-        final_pass = bool(elementwise_pass)
-    elif mode_used == "proxy_detections":
-        final_pass = bool(proxy_pass) if proxy_pass is not None else False
+    def run_stage2_map(inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        if hailo_p2 is not None:
+            return hailo_p2.infer(inputs)
+        if ort_p2_sess is None:
+            raise RuntimeError("stage2 backend not initialized")
+        out = ort_p2_sess.run(None, inputs)
+        return {o.name: a for o, a in zip(ort_p2_sess.get_outputs(), out)}
+
+    # Precompute a fixed stage2 input for benchmarking part2 alone.
+    # Use CPU-baseline cut tensors so part2 can be isolated and compared against
+    # the CPU full reference output.
+    if need_stage2 and not variant_errors.get("part2"):
+        try:
+            p2_inputs_0 = _build_stage2_inputs(p1_map0)
+        except Exception as e:
+            variant_errors["part2"] = f"Failed to build part2 inputs from CPU baseline: {e}"
+
+    def run_composed_map() -> Dict[str, np.ndarray]:
+        out1 = run_stage1_map()
+        return run_stage2_map(_build_stage2_inputs(out1))
+
+    # ----------------------------
+    # Timings
+    # ----------------------------
+    if "full" in variants and not variant_errors.get("full"):
+        try:
+            if hailo_full is not None and full_inputs_hailo is not None:
+                full_mean, full_std, full_runs_ms = _bench("full", lambda: hailo_full.infer(full_inputs_hailo), args.warmup, args.runs)
+            else:
+                if ort_full_sess is None:
+                    raise RuntimeError("full backend not initialized")
+                full_mean, full_std, full_runs_ms = _bench("full", lambda: ort_full_sess.run(None, feeds_full), args.warmup, args.runs)
+            variant_status["full"] = "ok"
+        except Exception as e:
+            variant_errors["full"] = str(e)
+            variant_status["full"] = "error"
+
+    if "part1" in variants and not variant_errors.get("part1"):
+        try:
+            p1_mean, p1_std, p1_runs_ms = _bench("part1", run_stage1_map, args.warmup, args.runs)
+            variant_status["part1"] = "ok"
+        except Exception as e:
+            variant_errors["part1"] = str(e)
+            variant_status["part1"] = "error"
+
+    if "part2" in variants and not variant_errors.get("part2"):
+        try:
+            if p2_inputs_0 is None:
+                raise RuntimeError("part2 inputs not available")
+            p2_mean, p2_std, p2_runs_ms = _bench("part2", lambda: run_stage2_map(p2_inputs_0), args.warmup, args.runs)
+            variant_status["part2"] = "ok"
+        except Exception as e:
+            variant_errors["part2"] = str(e)
+            variant_status["part2"] = "error"
+
+    if "composed" in variants and not variant_errors.get("part1") and not variant_errors.get("part2"):
+        try:
+            comp_mean, comp_std, comp_runs_ms = _bench("composed", run_composed_map, args.warmup, args.runs)
+            variant_status["composed"] = "ok"
+        except Exception as e:
+            variant_errors["composed"] = str(e)
+            variant_status["composed"] = "error"
+            variant_status["composed"] = "error"
+
+    # ------------------------
+    # Reference + accuracy comparisons
+    # ------------------------
+
+    # Print timing summary (handle skipped variants gracefully).
+    def _fmt(x: Optional[float]) -> str:
+        return "-" if x is None else f"{x:.3f}"
+
+    print("\nBenchmark results (mean ± std, ms):")
+    print(f"  full    : {_fmt(full_mean)} ± {_fmt(full_std)}")
+    print(f"  part1   : {_fmt(p1_mean)} ± {_fmt(p1_std)}")
+    print(f"  part2   : {_fmt(p2_mean)} ± {_fmt(p2_std)}")
+    print(f"  composed: {_fmt(comp_mean)} ± {_fmt(comp_std)}")
+
+    if p1_mean is not None and p2_mean is not None and comp_mean is not None:
+        sum_parts = p1_mean + p2_mean
+        print(f"  overhead: {_fmt(comp_mean - sum_parts)}  (composed - (part1+part2))")
+
+    # Always compute (or reuse) a CPU reference output for the full model.
+    # This is the baseline for *all* variants/providers.
+    #
+    # IMPORTANT: The baseline is cached per-case and can be reused across
+    # multiple runs (CUDA/TRT/Hailo/matrix) as long as the input tensors match.
+    eps_global = float(getattr(args, "eps", 1e-3))
+    output_names = list(final_out_names)
+
+    # Baseline cache resolution.
+    baseline_cache_mode = str(getattr(args, "baseline_cache", "auto") or "auto").strip()
+    baseline_cache_path: Optional[Path] = None
+    if baseline_cache_mode.lower() in ("off", "none", "0", "false"):
+        baseline_cache_path = None
+    elif baseline_cache_mode.lower() in ("auto", "case", "1", "true"):
+        baseline_cache_path = base_dir / "baseline_full_cpu_outputs.npz"
     else:
-        final_pass = bool(elementwise_pass)
+        p = Path(baseline_cache_mode)
+        if not p.is_absolute():
+            p = base_dir / p
+        baseline_cache_path = p
 
-    print("==== Output diff ====")
-    print(f"Compared outputs: {n}")
-    print(f"max_abs : {max_abs_global}")
-    print(f"mean_abs: {mean_abs_global}")
-    print(f"elementwise PASS({args.eps}): {elementwise_pass}")
-    print(f"[validation] mode={args.validation_mode} used={mode_used} output_format={output_format} final_pass={final_pass}")
-    if proxy_metrics is not None:
-        print("==== Proxy validation ====")
-        print(f"n_ref    : {proxy_metrics.get('n_ref')}")
-        print(f"n_out    : {proxy_metrics.get('n_out')}")
-        print(f"matched  : {proxy_metrics.get('matched')}")
-        print(f"match_ratio      : {proxy_metrics.get('match_ratio')}")
-        print(f"mean_iou_matched : {proxy_metrics.get('mean_iou_matched')}")
-        print(f"proxy PASS: {proxy_pass}")
+    inputs_fp = _fingerprint_tensors(feeds_full)
+    baseline_cache_hit = False
 
-    if args.provider == "hailo":
-        # Hailo path may not have comparable outputs (and might be partial).
-        return 0
+    ref_full_out: Optional[List[np.ndarray]] = None
+    if baseline_cache_path is not None and baseline_cache_path.exists():
+        try:
+            cached, meta = _load_inputs_npz(str(baseline_cache_path))
+            ok = False
+            if isinstance(meta, dict) and str(meta.get("format") or "") == "baseline_full_cpu_outputs_npz_v1":
+                if str(meta.get("inputs_fingerprint") or "") == inputs_fp:
+                    if all(n in cached for n in output_names):
+                        ok = True
+            if ok:
+                ref_full_out = [cached[n] for n in output_names]
+                baseline_cache_hit = True
+                print(f"[baseline] reuse cached CPU full outputs: {baseline_cache_path.name}")
+            else:
+                print(f"[baseline] cache mismatch/invalid; recomputing CPU baseline: {baseline_cache_path.name}")
+        except Exception as e:
+            print(f"[baseline] failed to load cache {baseline_cache_path.name}: {e}; recomputing CPU baseline")
+
+    if ref_full_out is None:
+        ref_full_out = list(run_full())  # ORT CPU baseline
+        if baseline_cache_path is not None:
+            try:
+                out_map = {name: np.asarray(arr) for name, arr in zip(output_names, ref_full_out)}
+                meta = {
+                    "format": "baseline_full_cpu_outputs_npz_v1",
+                    "created": _now_ts(),
+                    "created_time_unix": time.time(),
+                    "manifest": str(manifest_path.name),
+                    "provider": "cpu",
+                    "inputs_fingerprint": inputs_fp,
+                    "output_names": list(output_names),
+                    "note": "CPU full baseline outputs for accuracy comparisons (reused per case when inputs match).",
+                }
+                _atomic_save_npz(baseline_cache_path, out_map, meta)
+                print(f"[baseline] wrote baseline cache: {baseline_cache_path.name}")
+            except Exception as e:
+                print(f"[warn] failed to write baseline cache {baseline_cache_path}: {e}")
+
+    full_out_list = list(ref_full_out)
+
+    # Try to detect output format based on the CPU reference.
+    output_format = _detect_output_format(output_names, full_out_list)
+
+    # Compute outputs for each requested variant (best-effort).
+    variant_outputs: Dict[str, List[np.ndarray]] = {}
+    variant_output_errors: Dict[str, str] = {}
+
+    def _ordered_list_from_ort_session(sess: ort.InferenceSession, outs: List[np.ndarray]) -> List[np.ndarray]:
+        try:
+            out_map = {o.name: a for o, a in zip(sess.get_outputs(), outs)}
+            return _order_out_map(out_map)
+        except Exception:
+            return list(outs)
+
+    # For the part1-only benchmark we still want to compare end-to-end output.
+    # We do that by running part1 on the selected backend, then completing the
+    # graph with **CPU part2** (not timed).
+    p2_cpu_inputs = list(sess_p2.get_inputs())
+    p2_cpu_in_names = [i.name for i in p2_cpu_inputs]
+    p2_cpu_in_map: Optional[Dict[str, str]] = None
+
+    def _shape_from_ort_input(ii: object) -> Optional[Tuple[int, ...]]:
+        try:
+            shp = getattr(ii, 'shape', None)
+            if not isinstance(shp, (list, tuple)):
+                return None
+            out = []
+            for d in shp:
+                if isinstance(d, int) and d > 0:
+                    out.append(int(d))
+                else:
+                    return None
+            return tuple(out)
+        except Exception:
+            return None
+
+    def _build_stage2_inputs_cpu(out1_map: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        nonlocal p2_cpu_in_map
+        if p2_cpu_in_map is None:
+            p2_cpu_in_map = _map_inputs_to_outputs(p2_cpu_in_names, list(out1_map.keys()))
+
+        out: Dict[str, np.ndarray] = {}
+        p2_shapes: Dict[str, Optional[Tuple[int, ...]]] = {ii.name: _shape_from_ort_input(ii) for ii in p2_cpu_inputs}
+        p2_types: Dict[str, str] = {ii.name: str(getattr(ii, 'type', '') or '') for ii in p2_cpu_inputs}
+
+        for name in p2_cpu_in_names:
+            tgt_shape = p2_shapes.get(name)
+            hit = _select_source_tensor(name, tgt_shape, out1_map, p2_cpu_in_map)
+            if hit is not None:
+                src_name, src = hit
+                if p2_cpu_in_map is None:
+                    p2_cpu_in_map = {}
+                p2_cpu_in_map[name] = src_name
+            elif name in feeds_full:
+                src = feeds_full[name]
+                ok, src = _try_adapt_tensor(src, tgt_shape)
+                if not ok:
+                    raise ValueError(f"Cannot adapt passthrough full input '{name}' from shape {tuple(np.asarray(feeds_full[name]).shape)} to target shape {tgt_shape}")
+            else:
+                raise KeyError(
+                    f"Missing input '{name}' (and no compatible mapping from stage1 outputs). "
+                    f"stage1 outputs={{ {', '.join(f'{k}:{tuple(np.asarray(v).shape)}' for k,v in out1_map.items())} }}"
+                )
+
+            out[name] = _maybe_cast_for_onnx_input(src, p2_types.get(name))
+        return out
+
+    def _run_stage2_cpu_map(inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        outs = sess_p2.run(None, inputs)
+        return {o.name: a for o, a in zip(sess_p2.get_outputs(), outs)}
+
+    # full
+    if "full" in variants and not variant_errors.get("full"):
+        try:
+            if hailo_full is not None:
+                if full_inputs_hailo is None:
+                    raise RuntimeError("Hailo full inputs not prepared")
+                variant_outputs["full"] = _order_out_map(hailo_full.infer(full_inputs_hailo))
+            else:
+                if ort_full_sess is None:
+                    raise RuntimeError("ORT full session not available")
+                outs = ort_full_sess.run(None, feeds_full)
+                variant_outputs["full"] = _ordered_list_from_ort_session(ort_full_sess, list(outs))
+        except Exception as e:
+            variant_output_errors["full"] = str(e)
+
+    # part2 (isolated): feed CPU-baseline cut tensors into stage2
+    if "part2" in variants and not variant_errors.get("part2"):
+        try:
+            if p2_inputs_0 is None:
+                raise RuntimeError("part2 inputs not available")
+            variant_outputs["part2"] = _order_out_map(run_stage2_map(p2_inputs_0))
+        except Exception as e:
+            variant_output_errors["part2"] = str(e)
+
+    # composed
+    if "composed" in variants and not variant_errors.get("composed") and not variant_errors.get("part1") and not variant_errors.get("part2"):
+        try:
+            variant_outputs["composed"] = _order_out_map(run_composed_map())
+        except Exception as e:
+            variant_output_errors["composed"] = str(e)
+
+    # part1 (accuracy completion via CPU part2)
+    if "part1" in variants and not variant_errors.get("part1"):
+        try:
+            out1_map = run_stage1_map()
+            p2_in = _build_stage2_inputs_cpu(out1_map)
+            out2_map = _run_stage2_cpu_map(p2_in)
+            variant_outputs["part1"] = _order_out_map(out2_map)
+        except Exception as e:
+            variant_output_errors["part1"] = str(e)
+
+    def _validation_provider_for_variant(v: str) -> str:
+        # We mainly use this for the auto policy (TRT => proxy).
+        vt = (v or "").strip().lower()
+        toks: List[str] = []
+        if vt == "full":
+            toks = [full_tok]
+        elif vt == "part1":
+            toks = [stage1_tok]
+        elif vt == "part2":
+            toks = [stage2_tok]
+        elif vt == "composed":
+            toks = [stage1_tok, stage2_tok]
+        toks = [str(t or "").strip().lower() for t in toks if str(t or "").strip()]
+        if any(t in ("tensorrt", "trt") for t in toks):
+            return "tensorrt"
+        if any(t in ("cuda", "gpu") for t in toks):
+            return "cuda"
+        return toks[0] if toks else str(provider_default or "auto")
+
+    def _elementwise_metrics(ref: List[np.ndarray], out: List[np.ndarray], eps: float) -> Dict[str, Any]:
+        n_local = min(len(ref), len(out))
+        max_abs = 0.0
+        mean_abs = 0.0
+        passed = True
+        compared = 0
+        for i in range(n_local):
+            a = np.asarray(ref[i])
+            b = np.asarray(out[i])
+            if a.shape != b.shape:
+                passed = False
+                continue
+            abs_diff = np.abs(a.astype(np.float32) - b.astype(np.float32))
+            mean_i = float(np.mean(abs_diff))
+            max_i = float(np.max(abs_diff))
+            mean_abs = max(mean_abs, mean_i)
+            max_abs = max(max_abs, max_i)
+            if max_i > eps:
+                passed = False
+            compared += 1
+        return {
+            "compared_outputs": int(n_local),
+            "compared_outputs_shape_matched": int(compared),
+            "max_abs": float(max_abs) if n_local > 0 else None,
+            "mean_abs": float(mean_abs) if n_local > 0 else None,
+            "eps": float(eps),
+            "pass": bool(passed) if n_local > 0 else None,
+        }
+
+    comparisons: Dict[str, Any] = {}
+    warn_list: List[str] = []
+
+    for v in variants:
+        if v not in variant_outputs:
+            err = variant_output_errors.get(v) or variant_errors.get(v)
+            st = "missing"
+            if err:
+                # Back-compat / artifact-missing cases: treat as "skipped" so old
+                # suites without full-HEF do not hard-fail.
+                st = "skipped" if variant_status.get(v) == "skipped" else "error"
+            comparisons[v] = {
+                "status": st,
+                "error": err,
+                "validation_provider": _validation_provider_for_variant(v),
+                "validation_mode_used": "off",
+                "passed": (False if st == "error" else None),
+                "elementwise": None,
+                "proxy": None,
+                "warnings": ([f"skipped_variant={v}"] if st == "skipped" else [])
+                + [f"missing_outputs_for_variant={v}"]
+                + ([f"error={err}"] if err else []),
+            }
+            warn_list.extend(comparisons[v]["warnings"])
+            continue
+
+        out_list = variant_outputs[v]
+        provider_for_val = _validation_provider_for_variant(v)
+        mode_used, mode_warnings = _select_validation_mode(args.validation_mode, provider_for_val, output_format)
+        local_warnings: List[str] = []
+        local_warnings.extend(mode_warnings)
+
+        elem = _elementwise_metrics(full_out_list, out_list, eps_global)
+        elem_pass = elem.get("pass")
+
+        proxy_metrics: Optional[Dict[str, Any]] = None
+        proxy_pass: Optional[bool] = None
+        if mode_used == "proxy_detections":
+            dets_ref, w1 = _extract_detections_for_proxy(
+                output_format=output_format,
+                output_names=output_names,
+                outputs=full_out_list,
+                img_hw=img_hw,
+                yolo_conf=float(args.yolo_conf),
+                yolo_iou=float(args.yolo_iou),
+                yolo_max_det=int(args.yolo_max_det),
+                det_conf=float(args.detr_conf),
+                det_iou=float(args.detr_iou),
+                det_max_det=int(args.detr_max_det),
+                labels=labels,
+            )
+            dets_out, w2 = _extract_detections_for_proxy(
+                output_format=output_format,
+                output_names=output_names,
+                outputs=out_list,
+                img_hw=img_hw,
+                yolo_conf=float(args.yolo_conf),
+                yolo_iou=float(args.yolo_iou),
+                yolo_max_det=int(args.yolo_max_det),
+                det_conf=float(args.detr_conf),
+                det_iou=float(args.detr_iou),
+                det_max_det=int(args.detr_max_det),
+                labels=labels,
+            )
+            local_warnings.extend(w1)
+            local_warnings.extend(w2)
+
+            fatal_proxy_w = [
+                w
+                for w in (w1 + w2)
+                if w.startswith(("proxy_", "bn6_")) and not w.startswith("ambiguous_")
+            ]
+            if fatal_proxy_w:
+                if provider_for_val == "tensorrt" and str(args.validation_mode).strip().lower() == "auto":
+                    # TensorRT: proxy is the default, but if we can't decode detections, soft-pass (timing-only)
+                    local_warnings.append("proxy_validation_skipped_fallback=off")
+                    mode_used = "off"
+                else:
+                    local_warnings.append("proxy_validation_failed_fallback=strict_elementwise")
+                    mode_used = "strict_elementwise"
+            else:
+                proxy_metrics, proxy_pass = _proxy_validate_detections(dets_ref=dets_ref, dets_out=dets_out)
+
+        if mode_used == "off":
+            passed = True
+        elif mode_used == "strict_elementwise":
+            passed = True if elem_pass is None else bool(elem_pass)
+        elif mode_used == "proxy_detections":
+            passed = bool(proxy_pass) if proxy_pass is not None else False
+        else:
+            passed = True if elem_pass is None else bool(elem_pass)
+
+        comparisons[v] = {
+            "status": "ok",
+            "validation_provider": provider_for_val,
+            "validation_mode_used": mode_used,
+            "passed": bool(passed),
+            "elementwise": elem,
+            "proxy": ({**proxy_metrics, "pass": bool(proxy_pass)} if proxy_metrics is not None else None),
+            "warnings": list(local_warnings),
+        }
+        warn_list.extend(local_warnings)
+
+    # Determine the primary variant for backwards-compatible report fields.
+    primary_variant = None
+    if "composed" in comparisons and comparisons.get("composed", {}).get("status") == "ok":
+        primary_variant = "composed"
+    elif "full" in comparisons and comparisons.get("full", {}).get("status") == "ok":
+        primary_variant = "full"
+    elif "part2" in comparisons and comparisons.get("part2", {}).get("status") == "ok":
+        primary_variant = "part2"
+
+    # Overall pass over all measured variants (excluding the implicit CPU reference).
+    final_pass_all = True
+    for v in variants:
+        c = comparisons.get(v)
+        if not isinstance(c, dict):
+            continue
+        if c.get("status") == "skipped":
+            # Treat skipped variants as non-gating (back-compat / missing artifact).
+            continue
+        if c.get("status") != "ok":
+            final_pass_all = False
+            continue
+        # only gate when validation is active
+        if str(c.get("validation_mode_used") or "off") != "off" and not bool(c.get("passed")):
+            final_pass_all = False
+
+    # Primary pass (used by suite pass column) defaults to composed.
+    if primary_variant is None:
+        final_pass = bool(final_pass_all)
+        mode_used = "off"
+        n = 0
+        max_abs_global = None
+        mean_abs_global = None
+        elementwise_pass = None
+        proxy_metrics = None
+        proxy_pass = None
+        comp_out_list: List[np.ndarray] = []
+    else:
+        prim = comparisons.get(primary_variant, {})
+        mode_used = str(prim.get("validation_mode_used") or "off")
+        final_pass = bool(prim.get("passed"))
+        elem = prim.get("elementwise") if isinstance(prim, dict) else None
+        if isinstance(elem, dict):
+            n = int(elem.get("compared_outputs") or 0)
+            max_abs_global = elem.get("max_abs")
+            mean_abs_global = elem.get("mean_abs")
+            elementwise_pass = elem.get("pass")
+        else:
+            n = 0
+            max_abs_global = None
+            mean_abs_global = None
+            elementwise_pass = None
+        proxy_blk = prim.get("proxy") if isinstance(prim, dict) else None
+        if isinstance(proxy_blk, dict):
+            proxy_metrics = {k: v for k, v in proxy_blk.items() if k != "pass"}
+            proxy_pass = bool(proxy_blk.get("pass"))
+        else:
+            proxy_metrics = None
+            proxy_pass = None
+
+        comp_out_list = list(variant_outputs.get(primary_variant) or [])
+
+    # Print a concise validation summary per variant.
+    print("==== Output validation (CPU full baseline) ====")
+    print(f"baseline: full@cpu ({len(full_out_list)} outputs)  output_format={output_format}")
+    for v in variants:
+        c = comparisons.get(v)
+        if not isinstance(c, dict):
+            continue
+        st = c.get("status")
+        pv = c.get("validation_provider")
+        mu = c.get("validation_mode_used")
+        ps = c.get("passed")
+        elem = c.get("elementwise") if isinstance(c.get("elementwise"), dict) else None
+        mx = elem.get("max_abs") if isinstance(elem, dict) else None
+        ma = elem.get("mean_abs") if isinstance(elem, dict) else None
+        print(f"  {v:7s}: status={st} provider={pv} mode={mu} pass={ps} max_abs={mx} mean_abs={ma}")
+        if st in ("error", "skipped") and c.get("error"):
+            print(f"           reason: {c.get('error')}")
+
+    print(f"[validation] mode={args.validation_mode} used(primary={primary_variant})={mode_used} final_pass={final_pass} final_pass_all={final_pass_all}")
+
+    requested_variants = list(variants)
+    measured_variants_actual = [v for v in requested_variants if variant_status.get(v) != "skipped"]
+    skipped_variants = [v for v in requested_variants if variant_status.get(v) == "skipped"]
 
     report = dict(
-        schema_version=2,
+        schema_version=3,
         timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
         run_cfg=run_cfg,
         plan=plan,
+        baseline={
+            "variant": "full",
+            "provider": "cpu",
+            "note": "CPU full model is always used as the reference baseline for all accuracy comparisons.",
+            "cache": {
+                "mode": str(baseline_cache_mode),
+                "path": (str(baseline_cache_path) if baseline_cache_path is not None else None),
+                "hit": bool(baseline_cache_hit),
+                "inputs_fingerprint": str(inputs_fp),
+            },
+        },
+        requested_variants=requested_variants,
+        measured_variants=measured_variants_actual,
+        skipped_variants=skipped_variants,
+        primary_variant=primary_variant,
+        final_pass_all=bool(final_pass_all),
+        backend_tokens=dict(
+            default=provider_default,
+            full=full_tok,
+            stage1=stage1_tok,
+            stage2=stage2_tok,
+        ),
+        variant_status=variant_status,
+        variant_errors=variant_errors,
+        variant_output_errors=variant_output_errors,
+        comparisons=comparisons,
         timings=dict(
-            full=dict(mean_ms=float(full_mean), std_ms=float(full_std)),
-            part1=dict(mean_ms=float(p1_mean), std_ms=float(p1_std)),
-            part2=dict(mean_ms=float(p2_mean), std_ms=float(p2_std)),
-            composed=dict(mean_ms=float(comp_mean), std_ms=float(comp_std)),
+            full=dict(
+                mean_ms=(float(full_mean) if full_mean is not None else None),
+                std_ms=(float(full_std) if full_std is not None else None),
+                runs_ms=full_runs_ms,
+            ),
+            part1=dict(
+                mean_ms=(float(p1_mean) if p1_mean is not None else None),
+                std_ms=(float(p1_std) if p1_std is not None else None),
+                runs_ms=p1_runs_ms,
+            ),
+            part2=dict(
+                mean_ms=(float(p2_mean) if p2_mean is not None else None),
+                std_ms=(float(p2_std) if p2_std is not None else None),
+                runs_ms=p2_runs_ms,
+            ),
+            composed=dict(
+                mean_ms=(float(comp_mean) if comp_mean is not None else None),
+                std_ms=(float(comp_std) if comp_std is not None else None),
+                runs_ms=comp_runs_ms,
+            ),
         ),
         output_format=output_format,
         validation_mode=str(args.validation_mode),
         validation_mode_used=mode_used,
         output_diff=dict(
+            variant=primary_variant,
             compared_outputs=int(n),
-            max_abs=float(max_abs_global),
-            mean_abs=float(mean_abs_global),
+            max_abs=(float(max_abs_global) if max_abs_global is not None else None),
+            mean_abs=(float(mean_abs_global) if mean_abs_global is not None else None),
             eps=float(args.eps),
             passed=bool(final_pass),
-            elementwise_pass=bool(elementwise_pass),
+            elementwise_pass=(bool(elementwise_pass) if elementwise_pass is not None else None),
         ),
         elementwise={
             "compared_outputs": int(n),
-            "max_abs": float(max_abs_global),
-            "mean_abs": float(mean_abs_global),
+            "max_abs": (float(max_abs_global) if max_abs_global is not None else None),
+            "mean_abs": (float(mean_abs_global) if mean_abs_global is not None else None),
             "eps": float(args.eps),
-            "pass": bool(elementwise_pass),
+            "pass": (bool(elementwise_pass) if elementwise_pass is not None else None),
         },
         proxy=({**proxy_metrics, "pass": bool(proxy_pass)} if proxy_metrics is not None else None),
         final_pass=bool(final_pass),

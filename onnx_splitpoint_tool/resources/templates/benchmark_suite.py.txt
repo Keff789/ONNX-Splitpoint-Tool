@@ -437,6 +437,15 @@ def _save_paper_figures(out_dir: Path, rows: List[Dict[str, Any]], tag: str, obj
     return files
 
 
+def _write_figures(out_dir: Path, rows: List[Dict[str, Any]], tag: str, objective: str, topk: int = 10) -> List[Path]:
+    """Compatibility alias for older scripts that called `_write_figures`.
+
+    The suite uses `_save_paper_figures` for all run types; `_write_figures` keeps
+    older call-sites working.
+    """
+    return _save_paper_figures(out_dir=out_dir, rows=rows, tag=tag, objective=objective, topk=topk)
+
+
 def _write_summary_md(path: Path, rows: List[Dict[str, Any]], tag: str, objective: str, topk: int = 10) -> None:
     if not rows:
         path.write_text("# Benchmark summary\n\nNo results.\n", encoding="utf-8")
@@ -546,12 +555,141 @@ def _write_summary_md(path: Path, rows: List[Dict[str, Any]], tag: str, objectiv
     path.write_text("".join(lines), encoding="utf-8")
 
 
-def _run_case(case_dir: Path, provider: str, image: str, preset: str, image_scale: str, warmup: int, runs: int, timeout_s: Optional[int], case_meta: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+
+def _slug(text: str) -> str:
+    """Convert an arbitrary id into a filesystem-friendly slug."""
+    s = str(text or "").strip()
+    if not s:
+        return "run"
+    out = []
+    for ch in s:
+        if ch.isalnum() or ch in ("-", "_", "."):
+            out.append(ch)
+        else:
+            out.append("_")
+    slug = "".join(out).strip("_")
+    while "__" in slug:
+        slug = slug.replace("__", "_")
+    return slug or "run"
+
+
+def _resolve_stage_token(stage: Any) -> Optional[str]:
+    """Resolve a stage config dict (from benchmark_plan.json) into a provider token.
+
+    Returns one of:
+    - ORT provider token: auto/cpu/cuda/tensorrt
+    - Hailo hw_arch token: hailo8/hailo8l/hailo8r/hailo10h/hailo10p
+    """
+    if not isinstance(stage, dict):
+        return None
+    ty = str(stage.get("type") or stage.get("kind") or "").strip().lower()
+    if ty in {"hailo"}:
+        hw = stage.get("hw_arch") or stage.get("arch") or stage.get("id")
+        hw = (str(hw).strip().lower() if hw else "")
+        return hw or None
+    if ty in {"onnxruntime", "ort"}:
+        p = stage.get("provider")
+        p = (str(p).strip().lower() if p else "")
+        return p or None
+    return None
+
+_STATUS_VARIANTS = ["full", "part1", "part2", "composed"]
+
+def _agg_status(values: List[str]) -> str:
+    """Aggregate a list of per-candidate statuses into one status.
+
+    Precedence is: ok > error > skipped > missing
+    """
+    vset = {v for v in values if v}
+    if "ok" in vset:
+        return "ok"
+    if "error" in vset:
+        return "error"
+    if "skipped" in vset:
+        return "skipped"
+    return "missing"
+
+def _status_symbol(status: str) -> str:
+    return {
+        "ok": "✅",
+        "error": "❌",
+        "skipped": "⏭️",
+        "missing": "—",
+    }.get(status, status)
+
+def _write_status_matrix(root: Path, planned_runs: List[Dict[str, Any]]) -> None:
+    """Write a compact status matrix across all planned runs.
+
+    Uses the `variant_status` dict written by the per-case runner.
+    """
+    rows_out: List[Dict[str, Any]] = []
+    for run in planned_runs:
+        tag = run.get("tag") or run.get("id") or ""
+        run_id = run.get("id") or tag
+        rtype = run.get("type", "?")
+        stage1 = _resolve_stage_token(run.get("stage1")) or run.get("provider", "")
+        stage2 = _resolve_stage_token(run.get("stage2")) or run.get("provider", "")
+        res_path = root / f"benchmark_results_{tag}.json"
+        agg: Dict[str, str] = {k: "missing" for k in _STATUS_VARIANTS}
+        if res_path.exists():
+            try:
+                data = _read_json(res_path)
+                if isinstance(data, list):
+                    for k in _STATUS_VARIANTS:
+                        vals: List[str] = []
+                        for rec in data:
+                            if not isinstance(rec, dict):
+                                continue
+                            vs = rec.get("variant_status")
+                            if isinstance(vs, dict) and k in vs:
+                                vals.append(str(vs.get(k) or ""))
+                        agg[k] = _agg_status(vals)
+            except Exception:
+                # Keep defaults if parsing fails
+                pass
+
+        row: Dict[str, Any] = {
+            "run": str(run_id),
+            "tag": str(tag),
+            "type": str(rtype),
+            "stage1": str(stage1),
+            "stage2": str(stage2),
+        }
+        row.update(agg)
+        rows_out.append(row)
+
+    _write_json(root / "benchmark_suite_status_matrix.json", rows_out)
+
+    csv_path = root / "benchmark_suite_status_matrix.csv"
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["run", "type", "stage1", "stage2"] + _STATUS_VARIANTS)
+        for r in rows_out:
+            w.writerow([r["run"], r["type"], r["stage1"], r["stage2"]] + [r[k] for k in _STATUS_VARIANTS])
+
+    md_path = root / "benchmark_suite_status_matrix.md"
+    lines: List[str] = []
+    lines.append("# Benchmark suite status matrix\n")
+    lines.append("Legend: ✅ ok, ❌ error, ⏭️ skipped, — missing\n")
+    lines.append("| run | type | stage1 | stage2 | full | part1 | part2 | composed |")
+    lines.append("|---|---|---|---|---|---|---|---|")
+    for r in rows_out:
+        sym = {k: _status_symbol(str(r.get(k, "missing"))) for k in _STATUS_VARIANTS}
+        lines.append(
+            f"| {r['run']} | {r['type']} | {r['stage1']} | {r['stage2']} | {sym['full']} | {sym['part1']} | {sym['part2']} | {sym['composed']} |"
+        )
+    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: str, image_scale: str, warmup: int, runs: int, timeout_s: Optional[int], stage1: Optional[str] = None, stage2: Optional[str] = None, variants: Optional[List[str]] = None, case_meta: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     # Each case contains run_split_onnxruntime.py
     runner = case_dir / "run_split_onnxruntime.py"
     if not runner.exists():
         print(f"[warn] missing runner: {runner}")
         return None
+
+    out_tag = _slug(run_id)
+    out_dir_name = f"results_{out_tag}"
 
     cmd = [
         sys.executable,
@@ -565,21 +703,29 @@ def _run_case(case_dir: Path, provider: str, image: str, preset: str, image_scal
         "--runs",
         str(runs),
         "--out-dir",
-        f"results_{provider}",
+        out_dir_name,
     ]
+    if variants:
+        cmd += ["--variants", ",".join([str(v) for v in variants])]
+    if stage1:
+        cmd += ["--stage1-provider", str(stage1)]
+    if stage2:
+        cmd += ["--stage2-provider", str(stage2)]
+
     if image and str(image).lower() != "default":
         cmd += ["--image", image]
+    rc = 0
     try:
         res = subprocess.run(cmd, cwd=str(case_dir), timeout=timeout_s)
-        if res.returncode != 0:
-            print(f"[warn] case failed: {case_dir.name} (rc={res.returncode})")
-            return None
+        rc = int(getattr(res, "returncode", 0) or 0)
+        if rc != 0:
+            print(f"[warn] case failed: {case_dir.name} (rc={rc})")
     except subprocess.TimeoutExpired:
         print(f"[warn] timeout: {case_dir.name} (>{timeout_s}s)")
         return None
 
     # report location depends on runner (it writes into results_<provider> by default)
-    report = case_dir / f"results_{provider}" / "validation_report.json"
+    report = case_dir / out_dir_name / "validation_report.json"
     if not report.exists():
         # some runners may use "results_auto"
         report_auto = case_dir / "results_auto" / "validation_report.json"
@@ -589,6 +735,19 @@ def _run_case(case_dir: Path, provider: str, image: str, preset: str, image_scal
         return None
 
     r = _read_json(report)
+
+    # Attach suite-side metadata
+    if isinstance(r, dict):
+        r.setdefault("run_id", run_id)
+        r.setdefault("provider", provider)
+        if stage1:
+            r.setdefault("stage1_provider", str(stage1))
+        if stage2:
+            r.setdefault("stage2_provider", str(stage2))
+        if variants:
+            r.setdefault("requested_variants", list(variants))
+        r["_runner_rc"] = rc
+
 
     # Flatten predicted fields from newer runner versions (runner may store them under "predicted")
     pred = r.get("predicted")
@@ -715,7 +874,6 @@ def _run_case(case_dir: Path, provider: str, image: str, preset: str, image_scal
     r.setdefault("image_scale", image_scale)
     return r
 
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--provider", default="auto", choices=["auto", "cpu", "cuda", "tensorrt"], help="Execution provider to use (single-run mode).")
@@ -747,6 +905,11 @@ def main() -> int:
     parser.add_argument("--objective", default="composed", choices=["composed", "sum_parts", "max_parts", "full"], help="Objective for ranking/summaries.")
     parser.add_argument("--topk", type=int, default=10, help="Top-k for highlights/tables.")
     parser.add_argument("--no-csv", action="store_true", help="Do not export CSV.")
+    parser.add_argument(
+        "--no-plot",
+        action="store_true",
+        help="Disable plot generation (paper figures / overview plots).",
+    )
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parent
@@ -819,6 +982,15 @@ def main() -> int:
                 print(f"[warn] Unknown provider '{provider}' for run {run_id}; skipping")
                 continue
 
+            # Optional stage config / variants (used for matrix-style runs).
+            stage1_tok = _resolve_stage_token(run.get("stage1")) or provider
+            stage2_tok = _resolve_stage_token(run.get("stage2")) or provider
+            variants = run.get("variants")
+            if isinstance(variants, list):
+                variants = [str(v).strip().lower() for v in variants if str(v).strip()]
+            else:
+                variants = None
+
             tag = f"{run_id}_{args.preset}"
             rows: List[Dict[str, Any]] = []
             for i, c in enumerate(cases):
@@ -838,7 +1010,11 @@ def main() -> int:
 
                 r = _run_case(
                     case_dir,
+                    run_id=run_id,
                     provider=provider,
+                    stage1=stage1_tok,
+                    stage2=stage2_tok,
+                    variants=variants,
                     image=args.image,
                     preset=args.preset,
                     image_scale=image_scale,
@@ -908,12 +1084,130 @@ def main() -> int:
             except Exception as e:
                 print(f"[warn] Failed to generate figures in {fig_dir.name}/: {e}")
 
+
+        elif rtype in {"matrix"}:
+            # Matrix run: stage1/stage2 can be on different backends (ORT vs Hailo, etc.)
+            stage1_tok = _resolve_stage_token(run.get("stage1"))
+            stage2_tok = _resolve_stage_token(run.get("stage2"))
+            if not stage1_tok or not stage2_tok:
+                print(f"[warn] matrix run {run_id!r} is missing stage1/stage2; skipping")
+                continue
+
+            # Default provider passed to the per-case runner (acts as a fallback). Use stage1.
+            provider_tag = str(run.get("provider") or stage1_tok).strip().lower() or stage1_tok
+
+            variants = run.get("variants")
+            if isinstance(variants, list):
+                variants = [str(v).strip().lower() for v in variants if str(v).strip()]
+            else:
+                variants = None
+
+            tag = f"{run_id}_{args.preset}"
+            rows: List[Dict[str, Any]] = []
+            for i, c in enumerate(cases):
+                b = c.get("boundary")
+                case_dir_key = c.get("case_dir") or c.get("folder")
+                if case_dir_key is None:
+                    case_dir_key = f"b{int(b):03d}" if b is not None else "case"
+                rel = Path(str(case_dir_key))
+                case_dir = (root / rel).resolve()
+                print(
+                    f"\n[{run_id}] [{i+1}/{len(cases)}] Running {case_dir.name} "
+                    f"(stage1={stage1_tok}, stage2={stage2_tok})"
+                )
+
+                # Per-run image scaling (passed through to run_split_onnxruntime.py).
+                image_scale = str(run.get("image_scale") or getattr(args, "image_scale", "auto")).strip().lower()
+                if image_scale not in ("auto", "norm", "raw", "imagenet", "clip"):
+                    print(f"[warn] invalid image_scale={image_scale!r} in plan for run {run_id!r}; falling back to 'auto'")
+                    image_scale = "auto"
+
+                r = _run_case(
+                    case_dir,
+                    run_id=run_id,
+                    provider=provider_tag,
+                    stage1=stage1_tok,
+                    stage2=stage2_tok,
+                    variants=variants,
+                    image=args.image,
+                    preset=args.preset,
+                    image_scale=image_scale,
+                    warmup=args.warmup,
+                    runs=args.runs,
+                    timeout_s=args.timeout,
+                    case_meta=c,
+                )
+                if r is not None:
+                    rows.append(r)
+
+            if not rows:
+                print(f"[warn] No results collected for run {run_id}")
+                failed_runs.append({"run_id": run_id, "type": rtype, "provider": provider_tag, "stage1": stage1_tok, "stage2": stage2_tok})
+
+                # Still write placeholder artifacts so UIs/parsers can show the run as "empty".
+                results_json = root / f"benchmark_results_{tag}.json"
+                _write_json(results_json, rows)
+                try:
+                    (root / f"benchmark_results_{tag}.error.txt").write_text(
+                        f"No results collected for run {run_id} (stage1={stage1_tok}, stage2={stage2_tok}).\n",
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    pass
+                continue
+
+            any_rows = True
+
+            results_json = root / f"benchmark_results_{tag}.json"
+            _write_json(results_json, rows)
+            print(f"Wrote {results_json.name}")
+
+            if not args.no_csv:
+                results_csv = root / f"benchmark_results_{tag}.csv"
+                _write_results_csv(results_csv, rows)
+                print(f"Wrote {results_csv.name}")
+
+            # Summary outputs are best-effort: benchmarking should not fail if plotting/formatting fails.
+
+            summary_md = root / f"benchmark_summary_{tag}.md"
+            try:
+                _write_summary_md(summary_md, rows, tag=tag, objective=args.objective, topk=args.topk)
+                print(f"Wrote {summary_md.name}")
+            except Exception as e:
+                print(f"[warn] Failed to write summary md: {e}")
+
+            table_tex = root / f"benchmark_table_{tag}.tex"
+            try:
+                _write_table_tex(table_tex, rows, tag=tag, objective=args.objective, topk=args.topk)
+                print(f"Wrote {table_tex.name}")
+            except Exception as e:
+                print(f"[warn] Failed to write TeX table: {e}")
+
+            # Paper-ready figures (plots)
+            # NOTE: args.no_plot was added after some suites were already generated.
+            # Using getattr keeps older bundles runnable even if the flag is missing.
+            if HAVE_PLOT and not getattr(args, "no_plot", False):
+                fig_dir = root / f"paper_figures_{tag}"
+                try:
+                    _write_figures(fig_dir, rows, tag=tag, objective=args.objective)
+                    print(f"Wrote figures in {fig_dir.name}/")
+                except Exception as e:
+                    print(f"[warn] Failed to generate figures in {fig_dir.name}/: {e}")
+
         elif rtype in {"hailo"}:
             # Hailo benchmark: reuse the per-case runner script, but select a provider tag
             # that the runner interprets as a Hailo backend (e.g. "hailo8", "hailo8l",
-            # "hailo10h").
+            # "hailo10h", "hailo10p").
             hw_arch = str(run.get("hw_arch") or run.get("arch") or run_id or "").strip()
             provider_tag = hw_arch or "hailo"
+
+            stage1_tok = _resolve_stage_token(run.get("stage1")) or provider_tag
+            stage2_tok = _resolve_stage_token(run.get("stage2")) or provider_tag
+            variants = run.get("variants")
+            if isinstance(variants, list):
+                variants = [str(v).strip().lower() for v in variants if str(v).strip()]
+            else:
+                variants = None
 
             tag = f"{run_id}_{args.preset}"
             rows: List[Dict[str, Any]] = []
@@ -934,7 +1228,11 @@ def main() -> int:
 
                 r = _run_case(
                     case_dir,
+                    run_id=run_id,
                     provider=provider_tag,
+                    stage1=stage1_tok,
+                    stage2=stage2_tok,
+                    variants=variants,
                     image=args.image,
                     preset=args.preset,
                     image_scale=image_scale,
@@ -1014,6 +1312,11 @@ def main() -> int:
         }
         status_path = root / "benchmark_suite_status.json"
         _write_json(status_path, status)
+        try:
+            _write_status_matrix(root, runs)
+            print("Wrote benchmark_suite_status_matrix.md/csv/json")
+        except Exception as e:
+            print(f"[warn] Failed to write benchmark_suite_status_matrix: {e}")
         if failed_runs:
             print(f"[warn] Some runs produced no results; see {status_path.name}")
     except Exception as e:

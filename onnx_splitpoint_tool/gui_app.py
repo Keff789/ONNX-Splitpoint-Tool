@@ -215,9 +215,59 @@ def _setup_gui_logging() -> Optional[str]:
     """
 
     try:
-        log_dir = Path.home() / ".onnx_splitpoint_tool"
-        log_dir.mkdir(parents=True, exist_ok=True)
+        # Keep logs out of the current working directory to avoid littering the
+        # repo/project folder with per-run log files.
+        from .paths import ensure_dir, splitpoint_logs_dir
+        from .log_retention import LogRetentionPolicy, apply_log_retention, policy_from_env
+        from pathlib import Path
+
+        log_dir = ensure_dir(splitpoint_logs_dir())
         log_path = log_dir / "gui.log"
+
+        # ------------------------------------------------------------------
+        # Best-effort log rotation (size-based) for gui.log.
+        # ------------------------------------------------------------------
+        try:
+            max_mb_raw = os.environ.get("ONNX_SPLITPOINT_GUI_LOG_MAX_MB", "20").strip()
+            max_mb = float(max_mb_raw) if max_mb_raw else 20.0
+            max_bytes = int(max(1.0, max_mb) * 1024 * 1024)
+            if log_path.exists():
+                try:
+                    sz = log_path.stat().st_size
+                except Exception:
+                    sz = 0
+                if sz > max_bytes:
+                    ts = time.strftime("%Y%m%d_%H%M%S")
+                    rotated = log_dir / f"gui.{ts}.log"
+                    try:
+                        log_path.rename(rotated)
+                    except Exception:
+                        # If rename fails (Windows locks, etc.), fall back to truncation.
+                        try:
+                            log_path.write_text("", encoding="utf-8")
+                        except Exception:
+                            pass
+        except Exception:
+            # Rotation must never prevent GUI startup.
+            pass
+
+        # ------------------------------------------------------------------
+        # Log retention (age + count based).
+        # ------------------------------------------------------------------
+        try:
+            pol = policy_from_env()
+            # Always keep gui.log even if it exceeds max_files.
+            pol = LogRetentionPolicy(
+                enabled=pol.enabled,
+                max_age_days=pol.max_age_days,
+                max_files=pol.max_files,
+                patterns=pol.patterns,
+                keep_names=tuple(set(pol.keep_names) | {"gui.log"}),
+            )
+            home = Path.home() / ".onnx_splitpoint_tool"
+            apply_log_retention([log_dir, home / "wsl_debug"], policy=pol, recursive=True)
+        except Exception:
+            pass
 
         # Don't clobber an existing logging configuration (e.g. when embedded).
         root = logging.getLogger()
@@ -231,18 +281,19 @@ def _setup_gui_logging() -> Optional[str]:
                 ],
             )
 
-        # Convenience: also write a `./gui.log` in the current working directory
-        # (best-effort). This helps when users expect a local log file next to the
-        # repo or the launcher script.
-        try:
-            cwd_log_path = Path.cwd() / "gui.log"
-            if str(cwd_log_path) != str(log_path):
-                fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-                cwd_fh = logging.FileHandler(str(cwd_log_path), mode="a", encoding="utf-8")
-                cwd_fh.setFormatter(fmt)
-                logging.getLogger().addHandler(cwd_fh)
-        except Exception:
-            pass
+        # Optional legacy behavior: also write a `./gui.log` in the current
+        # working directory (best-effort). Disabled by default because it clutters
+        # the project folder.
+        if os.environ.get("SPLITPOINT_WRITE_CWD_LOG", "0").strip() == "1":
+            try:
+                cwd_log_path = Path.cwd() / "gui.log"
+                if str(cwd_log_path) != str(log_path):
+                    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+                    cwd_fh = logging.FileHandler(str(cwd_log_path), mode="a", encoding="utf-8")
+                    cwd_fh.setFormatter(fmt)
+                    logging.getLogger().addHandler(cwd_fh)
+            except Exception:
+                pass
 
         # Hook unhandled exceptions so we get a traceback in the log file.
         def _excepthook(exc_type, exc, tb):
@@ -950,7 +1001,7 @@ class SplitPointAnalyserGUI(tk.Tk):
             textvariable=self.var_hailo_hw_arch,
             # Editable so future arch strings (hailo10*, etc.) do not require
             # a GUI patch.
-            values=["hailo8", "hailo8l", "hailo8r", "hailo10", "hailo10h"],
+            values=["hailo8", "hailo8l", "hailo8r", "hailo10h", "hailo10p"],
             width=10,
             state="normal",
         )
@@ -1583,7 +1634,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                 )
                 res_h10 = hailo_probe_auto(
                     backend=backend,
-                    hw_arch="hailo10",
+                    hw_arch="hailo10h",
                     wsl_distro=wsl_distro,
                     wsl_venv_activate=wsl_venv,
                     timeout_s=90,
@@ -1656,11 +1707,43 @@ class SplitPointAnalyserGUI(tk.Tk):
                 details_var = getattr(self, "var_hailo_status_details", None)
                 if details_var is not None:
                     try:
+                        # Compute (GPU/CPU) summary from the CUDA probe (best-effort).
+                        cuda_probe = None
+                        for _r in (res_h10, res_h8):
+                            try:
+                                det = getattr(_r, "details", None) or {}
+                                if isinstance(det, dict) and det.get("cuda_probe"):
+                                    cuda_probe = det.get("cuda_probe")
+                                    break
+                            except Exception:
+                                continue
+
+                        compute_summary = ""
+                        if isinstance(cuda_probe, dict):
+                            compute_summary = str(cuda_probe.get("summary") or "").strip()
+
+                        # Expose it as a dedicated var so the Split & Export tab can show it.
+                        v_compute = getattr(self, "var_hailo_compute_status", None)
+                        if v_compute is None:
+                            try:
+                                v_compute = tk.StringVar(value="")
+                                setattr(self, "var_hailo_compute_status", v_compute)
+                            except Exception:
+                                v_compute = None
+                        if v_compute is not None:
+                            try:
+                                v_compute.set(compute_summary)
+                            except Exception:
+                                pass
+
                         msg_parts = []
+                        if compute_summary:
+                            msg_parts.append(compute_summary)
                         if res_h8 is not None and (not res_h8.ok):
                             msg_parts.append(f"H8: {res_h8.reason}")
                         if res_h10 is not None and (not res_h10.ok):
                             msg_parts.append(f"H10: {res_h10.reason}")
+
                         details_var.set((" | ".join(msg_parts) + "  (click badge for details)") if msg_parts else "")
                     except Exception:
                         pass
@@ -1709,6 +1792,22 @@ class SplitPointAnalyserGUI(tk.Tk):
                 for k in ("profile_id", "wsl_distro", "wsl_venv_activate", "venv_activate", "venv_python", "returncode"):
                     if k in det and det[k] is not None:
                         lines.append(f"{k}: {det[k]}")
+
+                cuda = det.get("cuda_probe")
+                if isinstance(cuda, dict) and cuda:
+                    try:
+                        s = str(cuda.get("summary") or "").strip()
+                        if s:
+                            lines.append(f"{s}")
+                        rr = str(cuda.get("reason") or "").strip()
+                        if rr:
+                            lines.append(f"CUDA probe: {rr}")
+                        if cuda.get("cuda_root"):
+                            lines.append(f"CUDA root: {cuda.get('cuda_root')}")
+                        if cuda.get("libdevice_path"):
+                            lines.append(f"libdevice: {cuda.get('libdevice_path')}")
+                    except Exception:
+                        pass
 
                 tail = str(det.get("output_tail") or "").strip()
                 if tail:
@@ -1932,7 +2031,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                 )
                 res_h10 = hailo_probe_auto(
                     backend=backend,
-                    hw_arch="hailo10",
+                    hw_arch="hailo10h",
                     wsl_distro=wsl_distro,
                     wsl_venv_activate=wsl_venv,
                     timeout_s=90,
@@ -2500,8 +2599,16 @@ class SplitPointAnalyserGUI(tk.Tk):
         # Hailo feasibility check (optional)
         hailo_check = bool(self.var_hailo_check.get())
         hailo_hw_arch = (self.var_hailo_hw_arch.get() or "hailo8").strip()
-        if hailo_hw_arch not in {"hailo8", "hailo8l", "hailo8r", "hailo10", "hailo10h"}:
-            raise ValueError("Hailo HW arch must be one of: hailo8, hailo8l, hailo8r, hailo10, hailo10h")
+        # Backwards-compat: older configs used the deprecated generic "hailo10".
+        if hailo_hw_arch == "hailo10":
+            hailo_hw_arch = "hailo10h"
+            try:
+                self.var_hailo_hw_arch.set(hailo_hw_arch)
+            except Exception:
+                pass
+
+        if hailo_hw_arch not in {"hailo8", "hailo8l", "hailo8r", "hailo10h", "hailo10p"}:
+            raise ValueError("Hailo HW arch must be one of: hailo8, hailo8l, hailo8r, hailo10h, hailo10p")
 
         hailo_max_checks = _safe_int(self.var_hailo_max_checks.get())
         if hailo_max_checks is None:
@@ -5095,6 +5202,7 @@ class SplitPointAnalyserGUI(tk.Tk):
             batch_override = None
 
         # -------- Hailo HEF generation (optional) --------
+        hef_full = bool(getattr(self, "var_hailo_hef_full", tk.BooleanVar(value=False)).get())
         hef_part1 = bool(getattr(self, "var_hailo_hef_part1", tk.BooleanVar(value=False)).get())
         hef_part2 = bool(getattr(self, "var_hailo_hef_part2", tk.BooleanVar(value=False)).get())
 
@@ -5430,8 +5538,8 @@ class SplitPointAnalyserGUI(tk.Tk):
                     except Exception as e:
                         msg.append(f"ORT validation failed: {e}")
 
-                # Optional: Build Hailo HEFs (part1/part2) for selected targets.
-                if hef_targets and (hef_part1 or hef_part2):
+                # Optional: Build Hailo HEFs (full / part1 / part2) for selected targets.
+                if hef_targets and (hef_full or hef_part1 or hef_part2):
                     q.put(("stage", "Building Hailo HEFs…"))
                     try:
                         from .hailo_backend import hailo_build_hef_auto
@@ -5451,6 +5559,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                             "fixup": bool(hef_fixup),
                             "force": bool(hef_force),
                             "keep_artifacts": bool(hef_keep),
+                            "build": {"full": bool(hef_full), "part1": bool(hef_part1), "part2": bool(hef_part2)},
                         }
 
                         def _hef_on_log(stream_name: str, line: str) -> None:
@@ -5465,6 +5574,36 @@ class SplitPointAnalyserGUI(tk.Tk):
                             if not hw_arch:
                                 continue
                             tgt_out = {}
+                            if hef_full:
+                                q.put(("stage", f"Building HEF ({hw_arch}) full…"))
+                                out_full = os.path.join(out_dir, "hailo", hw_arch, "full")
+                                os.makedirs(out_full, exist_ok=True)
+                                r_full = hailo_build_hef_auto(
+                                    full_model_src,
+                                    backend=hef_backend,
+                                    hw_arch=hw_arch,
+                                    net_name=f"{base}_full_b{b}",
+                                    outdir=out_full,
+                                    fixup=hef_fixup,
+                                    opt_level=int(hef_opt_level),
+                                    calib_dir=hef_calib_dir,
+                                    calib_count=int(hef_calib_count),
+                                    calib_batch_size=int(hef_calib_bs),
+                                    force=hef_force,
+                                    keep_artifacts=hef_keep,
+                                    wsl_distro=hef_wsl_distro,
+                                    wsl_venv_activate=hef_wsl_venv,
+                                    wsl_timeout_s=3600,
+                                    on_log=_hef_on_log,
+                                )
+                                if r_full.ok:
+                                    rel = os.path.relpath(r_full.hef_path or os.path.join(out_full, "compiled.hef"), out_dir)
+                                    tgt_out["full"] = rel.replace('\\', '/')
+                                    msg.append(f"Hailo HEF ({hw_arch}) full: {tgt_out['full']}")
+                                else:
+                                    tgt_out["full_error"] = r_full.error
+                                    msg.append(f"Hailo HEF ({hw_arch}) full failed: {r_full.error}")
+
                             if hef_part1:
                                 q.put(("stage", f"Building HEF ({hw_arch}) part1…"))
                                 out_p1 = os.path.join(out_dir, "hailo", hw_arch, "part1")
@@ -5845,6 +5984,48 @@ class SplitPointAnalyserGUI(tk.Tk):
         if plan_image_scale not in {"auto", "norm", "raw", "imagenet", "clip"}:
             plan_image_scale = "auto"
 
+        # Hailo benchmark variants: selected in the Benchmark tab. We keep the
+        # default behaviour (full+composed) for backwards compatibility.
+        hailo_variants: List[str] = ["full", "composed"]
+        try:
+            preset = (
+                getattr(self, "var_hailo_bench_preset", tk.StringVar(value="End-to-end compare")).get() or ""
+            )
+            p = str(preset).strip().lower()
+            if p.startswith("end"):
+                hailo_variants = ["full", "composed"]
+            elif p.startswith("split"):
+                hailo_variants = ["composed", "part1", "part2"]
+            elif p.startswith("every"):
+                hailo_variants = ["full", "composed", "part1", "part2"]
+            else:
+                # Custom
+                vv: List[str] = []
+                if bool(getattr(self, "var_hailo_bench_custom_full", tk.BooleanVar(value=True)).get()):
+                    vv.append("full")
+                if bool(getattr(self, "var_hailo_bench_custom_composed", tk.BooleanVar(value=True)).get()):
+                    vv.append("composed")
+                if bool(getattr(self, "var_hailo_bench_custom_part1", tk.BooleanVar(value=False)).get()):
+                    vv.append("part1")
+                if bool(getattr(self, "var_hailo_bench_custom_part2", tk.BooleanVar(value=False)).get()):
+                    vv.append("part2")
+                hailo_variants = vv or ["full", "composed"]
+        except Exception:
+            hailo_variants = ["full", "composed"]
+
+        # Sanitize / de-dupe while keeping order.
+        _allowed = {"full", "composed", "part1", "part2"}
+        _seen = set()
+        hailo_variants = [v for v in hailo_variants if v in _allowed and (v not in _seen and not _seen.add(v))]
+
+        # ---------------- Matrix runner options (Benchmark tab) ----------------
+        # Matrix runs allow stage1 and stage2 to use different backends (e.g. TensorRT -> Hailo).
+        matrix_trt_to_hailo = bool(getattr(self, "var_matrix_trt_to_hailo", tk.BooleanVar(value=False)).get())
+        matrix_hailo_to_trt = bool(getattr(self, "var_matrix_hailo_to_trt", tk.BooleanVar(value=False)).get())
+
+        # Matrix runs are intended for split pipelines, so we measure stage timings + composed.
+        matrix_variants: List[str] = ["part1", "part2", "composed"]
+
         bench_plan_runs: List[Dict[str, Any]] = []
         if acc_cpu:
             bench_plan_runs.append({"id": "ort_cpu", "type": "onnxruntime", "provider": "cpu", "image_scale": plan_image_scale, "stage1": {"type": "onnxruntime", "provider": "cpu"}, "stage2": {"type": "onnxruntime", "provider": "cpu"}})
@@ -5852,28 +6033,101 @@ class SplitPointAnalyserGUI(tk.Tk):
             bench_plan_runs.append({"id": "ort_cuda", "type": "onnxruntime", "provider": "cuda", "image_scale": plan_image_scale, "stage1": {"type": "onnxruntime", "provider": "cuda"}, "stage2": {"type": "onnxruntime", "provider": "cuda"}})
         if acc_trt:
             bench_plan_runs.append({"id": "ort_tensorrt", "type": "onnxruntime", "provider": "tensorrt", "image_scale": plan_image_scale, "stage1": {"type": "onnxruntime", "provider": "tensorrt"}, "stage2": {"type": "onnxruntime", "provider": "tensorrt"}})
+
         # Hailo runs: Use the selected hw_arch as the run id, so results are self-describing
         # (e.g. "hailo8l", "hailo10h").
         if acc_h8 and hailo8_hw:
-            bench_plan_runs.append({"id": hailo8_hw, "type": "hailo", "hw_arch": hailo8_hw, "image_scale": plan_image_scale, "stage1": {"type": "hailo", "hw_arch": hailo8_hw}, "stage2": {"type": "hailo", "hw_arch": hailo8_hw}})
+            bench_plan_runs.append({"id": hailo8_hw, "type": "hailo", "hw_arch": hailo8_hw, "variants": list(hailo_variants), "image_scale": plan_image_scale, "stage1": {"type": "hailo", "hw_arch": hailo8_hw}, "stage2": {"type": "hailo", "hw_arch": hailo8_hw}})
         if acc_h10 and hailo10_hw:
-            bench_plan_runs.append({"id": hailo10_hw, "type": "hailo", "hw_arch": hailo10_hw, "image_scale": plan_image_scale, "stage1": {"type": "hailo", "hw_arch": hailo10_hw}, "stage2": {"type": "hailo", "hw_arch": hailo10_hw}})
+            bench_plan_runs.append({"id": hailo10_hw, "type": "hailo", "hw_arch": hailo10_hw, "variants": list(hailo_variants), "image_scale": plan_image_scale, "stage1": {"type": "hailo", "hw_arch": hailo10_hw}, "stage2": {"type": "hailo", "hw_arch": hailo10_hw}})
+
+        # Matrix runs: stage1/stage2 on different backends.
+        # Note: These are expanded per selected Hailo target (Hailo-8 and/or Hailo-10).
+        if acc_trt and (matrix_trt_to_hailo or matrix_hailo_to_trt):
+            hailo_targets_for_matrix: List[str] = []
+            if acc_h8 and hailo8_hw:
+                hailo_targets_for_matrix.append(hailo8_hw)
+            if acc_h10 and hailo10_hw:
+                hailo_targets_for_matrix.append(hailo10_hw)
+
+            for hw in hailo_targets_for_matrix:
+                if matrix_trt_to_hailo:
+                    bench_plan_runs.append(
+                        {
+                            "id": f"trt_to_{hw}",
+                            "type": "matrix",
+                            "provider": "tensorrt",
+                            "variants": list(matrix_variants),
+                            "image_scale": plan_image_scale,
+                            "stage1": {"type": "onnxruntime", "provider": "tensorrt"},
+                            "stage2": {"type": "hailo", "hw_arch": hw},
+                        }
+                    )
+                if matrix_hailo_to_trt:
+                    bench_plan_runs.append(
+                        {
+                            "id": f"{hw}_to_trt",
+                            "type": "matrix",
+                            "provider": "tensorrt",
+                            "variants": list(matrix_variants),
+                            "image_scale": plan_image_scale,
+                            "stage1": {"type": "hailo", "hw_arch": hw},
+                            "stage2": {"type": "onnxruntime", "provider": "tensorrt"},
+                        }
+                    )
 
         # ---------------- Hailo HEF build settings (reused by suite) ----------------
-        hailo_selected = bool(acc_h8 or acc_h10)
+        # Determine which Hailo hw_arch targets are actually used in the benchmark plan.
+        hailo_targets_set: set[str] = set()
+        for run in bench_plan_runs:
+            # Legacy hailo run format: type==hailo with hw_arch at the top level.
+            if str(run.get("type") or "").strip().lower() == "hailo":
+                hw = (run.get("hw_arch") or run.get("id") or "")
+                hw = str(hw).strip()
+                if hw:
+                    hailo_targets_set.add(hw)
 
-        # For benchmark sets, we build HEFs if (and only if) Hailo is selected as an accelerator.
-        # Which parts to build is derived from the benchmark plan (currently: both parts).
-        hef_targets: List[str] = []
-        if hailo_selected:
-            if acc_h8 and hailo8_hw:
-                hef_targets.append(hailo8_hw)
-            if acc_h10 and hailo10_hw:
-                hef_targets.append(hailo10_hw)
+            for st_key in ("stage1", "stage2"):
+                st = run.get(st_key)
+                if not isinstance(st, dict):
+                    continue
+                if str(st.get("type") or "").strip().lower() != "hailo":
+                    continue
+                hw = (st.get("hw_arch") or st.get("arch") or st.get("id") or "")
+                hw = str(hw).strip()
+                if hw:
+                    hailo_targets_set.add(hw)
 
-        # Build both parts for now (single-device benchmark plan). Matrix support can narrow this later.
-        hef_part1 = bool(hailo_selected)
-        hef_part2 = bool(hailo_selected)
+        hef_targets: List[str] = sorted(hailo_targets_set)
+        hailo_selected = bool(hef_targets)
+
+        # Decide which HEF variants are required (full/part1/part2) based on the plan.
+        need_full = False
+        need_part1 = False
+        need_part2 = False
+
+        for run in bench_plan_runs:
+            vv = run.get("variants")
+            if not isinstance(vv, list):
+                continue
+            vset = {str(x).strip().lower() for x in vv if str(x).strip()}
+
+            st1 = run.get("stage1")
+            st2 = run.get("stage2")
+            st1_h = isinstance(st1, dict) and str(st1.get("type") or "").strip().lower() == "hailo"
+            st2_h = isinstance(st2, dict) and str(st2.get("type") or "").strip().lower() == "hailo"
+            is_hailo_run = str(run.get("type") or "").strip().lower() == "hailo"
+
+            if "full" in vset and (is_hailo_run or st1_h or st2_h):
+                need_full = True
+            if st1_h and ("part1" in vset or "composed" in vset):
+                need_part1 = True
+            if st2_h and ("part2" in vset or "composed" in vset):
+                need_part2 = True
+
+        hef_full = bool(hailo_selected and need_full)
+        hef_part1 = bool(hailo_selected and need_part1)
+        hef_part2 = bool(hailo_selected and need_part2)
 
         hef_opt_level = _safe_int((getattr(self, "var_hailo_hef_opt_level", tk.StringVar(value="1")).get() or "").strip()) or 1
         hef_calib_count = _safe_int((getattr(self, "var_hailo_hef_calib_count", tk.StringVar(value="64")).get() or "").strip()) or 64
@@ -6036,6 +6290,65 @@ class SplitPointAnalyserGUI(tk.Tk):
                     errors.append(f"full model copy failed: {type(e).__name__}: {e}")
                     full_model_dst = full_model_src
                 log(f"full model (suite copy): {full_model_dst}")
+
+                # Resolve the Hailo build helper once and, when requested, build the suite-level
+                # full-model HEFs exactly once per target. Per-case manifests reference these via
+                # a relative path, while part1/part2 remain case-local artifacts.
+                hailo_build_hef_fn = None
+                hailo_build_unavailable: Optional[str] = None
+                suite_hailo_hefs: Dict[str, Dict[str, Any]] = {}
+                if hef_targets and (hef_full or hef_part1 or hef_part2):
+                    try:
+                        from .hailo_backend import hailo_build_hef_auto as hailo_build_hef_fn
+                    except Exception as e:
+                        hailo_build_unavailable = f"Hailo HEF build unavailable: {e}"
+                        errors.append(hailo_build_unavailable)
+                        log(hailo_build_unavailable)
+
+                if hailo_build_hef_fn is not None and hef_targets and hef_full:
+                    log(
+                        f"suite: Hailo HEF generation requested (backend={hef_backend}, targets={hef_targets}, full={hef_full}, part1={hef_part1}, part2={hef_part2})"
+                    )
+
+                    for hw_arch in hef_targets:
+                        hw_arch = str(hw_arch).strip()
+                        if not hw_arch:
+                            continue
+
+                        def _on_suite_hef_log(stream: str, line: str, _hw: str = hw_arch) -> None:
+                            q.put(("hef", stream, f"(suite {_hw}) {line}"))
+
+                        log(f"suite: build HEF(full,{hw_arch})")
+                        out_full = os.path.join(out_dir, "hailo", hw_arch, "full")
+                        os.makedirs(out_full, exist_ok=True)
+                        r_full = hailo_build_hef_fn(
+                            full_model_src,
+                            backend=hef_backend,
+                            hw_arch=hw_arch,
+                            net_name=f"{base}_full",
+                            outdir=out_full,
+                            fixup=hef_fixup,
+                            opt_level=int(hef_opt_level),
+                            calib_dir=hef_calib_dir,
+                            calib_count=int(hef_calib_count),
+                            calib_batch_size=int(hef_calib_bs),
+                            force=hef_force,
+                            keep_artifacts=hef_keep,
+                            wsl_distro=hef_wsl_distro,
+                            wsl_venv_activate=hef_wsl_venv,
+                            wsl_timeout_s=3600,
+                            on_log=_on_suite_hef_log,
+                        )
+                        tgt_suite = suite_hailo_hefs.setdefault(hw_arch, {})
+                        if r_full.ok:
+                            rel = os.path.relpath(r_full.hef_path or os.path.join(out_full, "compiled.hef"), out_dir)
+                            tgt_suite["full"] = rel.replace('\\', '/')
+                            log(f"suite: HEF(full,{hw_arch}) OK")
+                        else:
+                            tgt_suite["full_error"] = r_full.error
+                            err_line = f"suite: HEF(full,{hw_arch}) FAILED: {r_full.error}"
+                            errors.append(err_line)
+                            log(err_line)
 
                 # Try candidates in ranked order and keep adding cases until we have k successful splits.
                 # We respect the GUI "Min gap" setting to avoid exporting near-duplicate boundaries.
@@ -6302,16 +6615,15 @@ class SplitPointAnalyserGUI(tk.Tk):
                     except Exception as e:
                         errors.append(f"b{b}: runner skeleton failed: {e}")
 
-                    # Optional: Build Hailo HEFs (part1/part2) for selected targets.
-                    if hef_targets and (hef_part1 or hef_part2):
+                    # Optional: Build Hailo HEFs (full / part1 / part2) for selected targets.
+                    if hef_targets and (hef_full or hef_part1 or hef_part2):
                         log(
-                            f"b{b}: Hailo HEF generation requested (backend={hef_backend}, targets={hef_targets}, part1={hef_part1}, part2={hef_part2})"
+                            f"b{b}: Hailo HEF generation requested (backend={hef_backend}, targets={hef_targets}, full={hef_full}, part1={hef_part1}, part2={hef_part2})"
                         )
-                        try:
-                            from .hailo_backend import hailo_build_hef_auto
-                        except Exception as e:
-                            manifest_out['hailo_error'] = f"Hailo HEF build unavailable: {e}"
-                            log(f"b{b}: Hailo HEF build unavailable: {e}")
+                        if hailo_build_hef_fn is None:
+                            manifest_out['hailo_error'] = str(hailo_build_unavailable or "Hailo HEF build unavailable")
+                            log(f"b{b}: {manifest_out['hailo_error']}")
+                            errors.append(f"b{b}: {manifest_out['hailo_error']}")
                         else:
                             manifest_out.setdefault("hailo", {})
                             manifest_out["hailo"].setdefault("hefs", {})
@@ -6326,6 +6638,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                                 "fixup": bool(hef_fixup),
                                 "force": bool(hef_force),
                                 "keep_artifacts": bool(hef_keep),
+                                "build": {"full": bool(hef_full), "part1": bool(hef_part1), "part2": bool(hef_part2)},
                             }
 
                             for hw_arch in hef_targets:
@@ -6341,11 +6654,18 @@ class SplitPointAnalyserGUI(tk.Tk):
                                     q.put(("hef", stream, f"(b{_b} {_hw}) {line}"))
 
                                 tgt_out = {}
+                                suite_tgt = suite_hailo_hefs.get(hw_arch) or {}
+                                full_rel = suite_tgt.get("full") if isinstance(suite_tgt, dict) else None
+                                if full_rel:
+                                    abs_full = os.path.join(out_dir, str(full_rel))
+                                    tgt_out["full"] = os.path.relpath(abs_full, case_dir).replace('\\', '/')
+                                if isinstance(suite_tgt, dict) and suite_tgt.get("full_error"):
+                                    tgt_out["full_error"] = suite_tgt.get("full_error")
 
                                 if hef_part1:
                                     out_p1 = os.path.join(case_dir, "hailo", hw_arch, "part1")
                                     os.makedirs(out_p1, exist_ok=True)
-                                    r1 = hailo_build_hef_auto(
+                                    r1 = hailo_build_hef_fn(
                                         p1_path,
                                         backend=hef_backend,
                                         hw_arch=hw_arch,
@@ -6369,12 +6689,14 @@ class SplitPointAnalyserGUI(tk.Tk):
                                         log(f"b{b}: HEF(part1,{hw_arch}) OK")
                                     else:
                                         tgt_out["part1_error"] = r1.error
-                                        log(f"b{b}: HEF(part1,{hw_arch}) FAILED: {r1.error}")
+                                        err_line = f"b{b}: HEF(part1,{hw_arch}) FAILED: {r1.error}"
+                                        errors.append(err_line)
+                                        log(err_line)
 
                                 if hef_part2:
                                     out_p2 = os.path.join(case_dir, "hailo", hw_arch, "part2")
                                     os.makedirs(out_p2, exist_ok=True)
-                                    r2 = hailo_build_hef_auto(
+                                    r2 = hailo_build_hef_fn(
                                         p2_path,
                                         backend=hef_backend,
                                         hw_arch=hw_arch,
@@ -6398,7 +6720,9 @@ class SplitPointAnalyserGUI(tk.Tk):
                                         log(f"b{b}: HEF(part2,{hw_arch}) OK")
                                     else:
                                         tgt_out["part2_error"] = r2.error
-                                        log(f"b{b}: HEF(part2,{hw_arch}) FAILED: {r2.error}")
+                                        err_line = f"b{b}: HEF(part2,{hw_arch}) FAILED: {r2.error}"
+                                        errors.append(err_line)
+                                        log(err_line)
 
                                 if tgt_out:
                                     manifest_out["hailo"]["hefs"][hw_arch] = tgt_out
@@ -6502,10 +6826,10 @@ class SplitPointAnalyserGUI(tk.Tk):
                     pass
 
                 # Record requested Hailo artifact generation at suite-level.
-                if hef_targets and (hef_part1 or hef_part2):
+                if hef_targets and (hef_full or hef_part1 or hef_part2):
                     bench['hailo'] = {
                         'targets': [str(x) for x in hef_targets],
-                        'build': {'part1': bool(hef_part1), 'part2': bool(hef_part2)},
+                        'build': {'full': bool(hef_full), 'part1': bool(hef_part1), 'part2': bool(hef_part2)},
                         'config': {
                             'backend': str(hef_backend),
                             'wsl_distro': hef_wsl_distro,
@@ -6519,6 +6843,8 @@ class SplitPointAnalyserGUI(tk.Tk):
                             'keep_artifacts': bool(hef_keep),
                         },
                     }
+                    if suite_hailo_hefs:
+                        bench['hailo']['hefs'] = suite_hailo_hefs
                 bench_path = os.path.join(out_dir, 'benchmark_set.json')
                 with open(bench_path, 'w', encoding='utf-8') as f:
                     json.dump(bench, f, indent=2)
@@ -6565,7 +6891,8 @@ class SplitPointAnalyserGUI(tk.Tk):
                     if bench.get('hailo'):
                         txt += (
                             "\nHailo artifacts:\n"
-                            "  - HEFs (if enabled) are under each case folder: case_*/hailo/<hw_arch>/(part1|part2)/compiled.hef\n"
+                            "  - Suite-level full HEFs (if enabled): hailo/<hw_arch>/full/compiled.hef\n"
+                            "  - Per-case split HEFs (if enabled):  b*/hailo/<hw_arch>/(part1|part2)/compiled.hef\n"
                             "  - Suite-level config is recorded in benchmark_set.json under 'hailo'.\n"
                         )
                     f.write(txt)
@@ -6586,7 +6913,10 @@ class SplitPointAnalyserGUI(tk.Tk):
                     msg.extend([f"  - {e}" for e in errors[:10]])
                     if len(errors) > 10:
                         msg.append(f"  ... and {len(errors)-10} more")
-                q.put(("ok", "\n".join(msg)))
+                if errors:
+                    q.put(("warn", "\n".join(msg)))
+                else:
+                    q.put(("ok", "\n".join(msg)))
             except Exception as e:
                 logging.exception("Benchmark set generation failed")
                 q.put(("err", f"{type(e).__name__}: {e}"))
@@ -6642,7 +6972,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                         pass
                     continue
 
-                if status in ('ok', 'err'):
+                if status in ('ok', 'warn', 'err'):
                     final_status = status
                     final_msg = str(item[1]) if len(item) > 1 else ''
                     break
@@ -6684,6 +7014,8 @@ class SplitPointAnalyserGUI(tk.Tk):
 
             if final_status == 'ok':
                 messagebox.showinfo("Benchmark set created", final_msg)
+            elif final_status == 'warn':
+                messagebox.showwarning("Benchmark set created (with warnings)", final_msg)
             else:
                 messagebox.showerror("Benchmark set failed", final_msg)
 

@@ -4,6 +4,7 @@ import json
 import shlex
 import tarfile
 import time
+import textwrap
 import posixpath
 import traceback
 from datetime import datetime, timezone
@@ -215,6 +216,9 @@ def _finalize_run_results(
 class RemoteBenchmarkArgs:
     # NOTE: provider='auto' means "run the embedded plan".
     provider: str = "auto"
+    # Optional: shell snippet or path to a venv activate script that should run before the suite.
+    # Examples: "~/hailo_py/bin/activate" or "source /opt/hailo/setup_env.sh"
+    remote_venv: str = ""
     repeats: int = 1
     warmup: int = 10
     iters: int = 100
@@ -400,17 +404,57 @@ def run_remote_benchmark(
             shutil.copy2(src, dst)
             return True
 
-        # --- Refresh suite-level benchmark_suite.py from the latest template (best-effort). ---
-        # Generate into a temp dir and only overwrite if content changed.
+        # --- Refresh suite-level benchmark_suite.py (+ splitpoint_runners) from the latest template (best-effort). ---
+        # Generate into a temp dir and only overwrite files whose *content* changed.
+        # This keeps suite_bundle caching effective while making old benchmark sets runnable.
         try:
             from ..gui.controller import write_benchmark_suite_script
 
+            # Determine the benchmark JSON file name used by this suite.
+            # - When the user points to a directory, the suite normally contains benchmark_set.json.
+            # - When the user points directly to a JSON file, keep that name.
+            bench_json_name = 'benchmark_set.json'
+            try:
+                if suite_path.is_file() and suite_path.suffix.lower() == '.json':
+                    bench_json_name = suite_path.name
+            except Exception:
+                pass
+
+            # If the chosen file does not exist, try a reasonable fallback.
+            if not (suite_dir / bench_json_name).exists():
+                if (suite_dir / 'benchmark_set.json').exists():
+                    bench_json_name = 'benchmark_set.json'
+                else:
+                    cand = sorted([p.name for p in suite_dir.glob('*.json')])
+                    if cand:
+                        bench_json_name = cand[0]
+
             with tempfile.TemporaryDirectory(prefix='osp_suite_refresh_') as _td:
                 tmp_dir = Path(_td)
-                tmp_path = Path(write_benchmark_suite_script(tmp_dir, bench_json_name='benchmark_set.json'))
+
+                # write_benchmark_suite_script() writes benchmark_suite.py and vendors splitpoint_runners
+                # into the provided directory.
+                tmp_path = Path(write_benchmark_suite_script(tmp_dir, bench_json_name=bench_json_name))
+
+                # 1) Refresh benchmark_suite.py
                 dst_path = suite_dir / 'benchmark_suite.py'
                 if tmp_path.exists() and _copy_if_changed(tmp_path, dst_path):
                     log(f'[info] Refreshed benchmark_suite.py: {dst_path}')
+
+                # 2) Refresh splitpoint_runners (keep in sync with the suite script)
+                src_runners = tmp_dir / 'splitpoint_runners'
+                if src_runners.exists() and src_runners.is_dir():
+                    dst_runners = suite_dir / 'splitpoint_runners'
+                    n_updated = 0
+                    for src_file in src_runners.rglob('*'):
+                        if src_file.is_dir():
+                            continue
+                        rel = src_file.relative_to(src_runners)
+                        dst_file = dst_runners / rel
+                        if _copy_if_changed(src_file, dst_file):
+                            n_updated += 1
+                    if n_updated:
+                        log(f'[info] Refreshed splitpoint_runners: {n_updated} file(s) updated')
         except Exception as e:
             log(f"[warn] Could not refresh benchmark_suite.py: {e}")
 
@@ -522,6 +566,379 @@ def run_remote_benchmark(
         log(f"[remote] {mkdir_cmd}")
         run_checked(mkdir_cmd)
         progress(0.05, "Remote dirs ready")
+        # ---------------------------------------------------------------------
+        # Remote preflight (cheap sanity check before transferring a huge bundle).
+        #
+        # This does *not* require the suite to be uploaded yet and helps catch:
+        # - missing Python modules (onnx / onnxruntime)
+        # - missing ORT ExecutionProviders (CUDA / TensorRT)
+        # - Hailo runtime / device availability problems
+        #
+        # A JSON report is written to: <remote_results_dir>/preflight.json
+        # (and will be downloaded together with the benchmark results).
+        # ---------------------------------------------------------------------
+        progress(0.055, "Remote preflight (python / onnx / ort / hailo)")
+
+        want_hailo = False
+        want_cuda = False
+        want_tensorrt = False
+
+        plan_path = suite_dir / "benchmark_plan.json"
+        if plan_path.exists():
+            try:
+                plan = json.loads(plan_path.read_text(encoding="utf-8"))
+                for run in plan.get("runs", []):
+                    if not isinstance(run, dict):
+                        continue
+
+                    for k in ("provider", "full_provider", "stage1_provider", "stage2_provider"):
+                        v = run.get(k)
+                        if not isinstance(v, str):
+                            continue
+                        tok = v.strip().lower()
+                        if tok.startswith("hailo"):
+                            want_hailo = True
+                        elif tok == "cuda":
+                            want_cuda = True
+                        elif tok == "tensorrt":
+                            want_tensorrt = True
+
+                    t = run.get("type")
+                    if isinstance(t, str) and t.strip().lower() == "hailo":
+                        want_hailo = True
+            except Exception as e:
+                log(f"[preflight] warning: could not parse benchmark_plan.json: {e!r}")
+
+        preflight_remote_path = posixpath.join(remote_results_dir, "preflight.json")
+
+        # Build a small bash script (run remotely) that selects the same Python as the benchmark run.
+        preflight_lines: List[str] = []
+        preflight_lines.append("set -e")
+        preflight_lines.append("SYS_PY=$(command -v python3 || command -v python || true)")
+        preflight_lines.append('if [ -z "$SYS_PY" ]; then echo "[preflight] ERROR: python not found" >&2; exit 2; fi')
+        preflight_lines.append("ENV_PY=''")
+
+        if args.remote_venv:
+            remote_venv_cmd = args.remote_venv.strip()
+            if any(ch.isspace() for ch in remote_venv_cmd):
+                # Treat as shell snippet (e.g. "source /opt/hailo/setup_env.sh")
+                preflight_lines.append(remote_venv_cmd)
+            else:
+                # Treat as path to activate script (e.g. "~/hailo_py/bin/activate").
+                # Important: avoid single-quote shlex.quote here because it prevents "~/" and "$HOME" expansion.
+                venv_path = remote_venv_cmd
+                if venv_path.startswith("~/"):
+                    venv_path = "$HOME/" + venv_path[2:]
+                preflight_lines.append(f'if [ -f "{venv_path}" ]; then source "{venv_path}"; fi')
+            preflight_lines.append("ENV_PY=$(command -v python3 || command -v python || true)")
+
+        # Embed the expected provider needs into the remote script so we can pick a
+        # python interpreter that actually has the required ORT EPs (CUDA/TRT live
+        # in host on many setups, while Hailo lives in a venv).
+        preflight_lines.append(f"WANT_HAILO={'1' if want_hailo else '0'}")
+        preflight_lines.append(f"WANT_CUDA={'1' if want_cuda else '0'}")
+        preflight_lines.append(f"WANT_TRT={'1' if want_tensorrt else '0'}")
+
+        # Select python for the benchmark run:
+        # - If CUDA/TRT are requested, prefer the interpreter that exposes those EPs.
+        # - Otherwise, prefer ENV_PY if it has core deps.
+        # Also: do NOT use PYTHONPATH to inject venv site-packages, because PYTHONPATH
+        # entries are searched *before* system site-packages and may shadow onnxruntime-gpu.
+        # Instead we pass the venv site-packages via SPLITPOINT_EXTRA_SITES and append it
+        # using site.addsitedir() inside the runner.
+        preflight_lines.append('RUN_PY="$SYS_PY"')
+        preflight_lines.append('ENV_SITE=""')
+        preflight_lines.append('SYS_EPS=""')
+        preflight_lines.append('ENV_EPS=""')
+        preflight_lines.append('has_cuda() { case "$1" in *CUDAExecutionProvider*) return 0;; *) return 1;; esac; }')
+        preflight_lines.append('has_trt() { case "$1" in *TensorrtExecutionProvider*) return 0;; *) return 1;; esac; }')
+        preflight_lines.append('if [ -n "$ENV_PY" ] && [ -x "$ENV_PY" ]; then')
+        preflight_lines.append('  ENV_SITE=$("$ENV_PY" -c \'import site,os; ps=[]; getsp=getattr(site,"getsitepackages",None); ps.extend(getsp() if getsp else []); usp=getattr(site,"getusersitepackages",lambda:None)(); ps.append(usp); ps=[p for p in ps if p and os.path.isdir(p)]; out=[]; [out.append(p) for p in ps if p not in out]; print(":".join(out))\' 2>/dev/null || true)')
+        preflight_lines.append('  SYS_EPS=$("$SYS_PY" -c \'import onnxruntime as ort; print("|".join(ort.get_available_providers()))\' 2>/dev/null || true)')
+        preflight_lines.append('  ENV_EPS=$("$ENV_PY" -c \'import onnxruntime as ort; print("|".join(ort.get_available_providers()))\' 2>/dev/null || true)')
+        preflight_lines.append('  if [ "$WANT_TRT" = "1" ]; then')
+        preflight_lines.append('    if has_cuda "$SYS_EPS" && has_trt "$SYS_EPS"; then RUN_PY="$SYS_PY"; elif has_cuda "$ENV_EPS" && has_trt "$ENV_EPS"; then RUN_PY="$ENV_PY"; fi')
+        preflight_lines.append('  elif [ "$WANT_CUDA" = "1" ]; then')
+        preflight_lines.append('    if has_cuda "$SYS_EPS"; then RUN_PY="$SYS_PY"; elif has_cuda "$ENV_EPS"; then RUN_PY="$ENV_PY"; fi')
+        preflight_lines.append('  else')
+        preflight_lines.append('    if "$ENV_PY" -c "import onnx,onnxruntime" >/dev/null 2>&1; then RUN_PY="$ENV_PY"; fi')
+        preflight_lines.append('  fi')
+        preflight_lines.append('fi')
+        preflight_lines.append('if [ "$WANT_HAILO" = "1" ] && [ -n "$ENV_SITE" ]; then export SPLITPOINT_EXTRA_SITES="$ENV_SITE"; fi')
+        preflight_lines.append('export PRECHECK_SYS_PY="$SYS_PY"')
+        preflight_lines.append('export PRECHECK_ENV_PY="$ENV_PY"')
+        preflight_lines.append('export PRECHECK_RUN_PY="$RUN_PY"')
+        preflight_lines.append('export PRECHECK_ENV_SITE="$ENV_SITE"')
+
+        preflight_lines.append(f"export PRECHECK_OUT={shlex.quote(preflight_remote_path)}")
+        preflight_lines.append(f"export PRECHECK_WANT_HAILO={'1' if want_hailo else '0'}")
+        preflight_lines.append(f"export PRECHECK_WANT_CUDA={'1' if want_cuda else '0'}")
+        preflight_lines.append(f"export PRECHECK_WANT_TRT={'1' if want_tensorrt else '0'}")
+        preflight_lines.append('echo "[preflight] SYS_PY=$SYS_PY ENV_PY=$ENV_PY RUN_PY=$RUN_PY"')
+
+        preflight_py = textwrap.dedent(r"""
+        import glob
+        import json
+        import os
+        import platform
+        import subprocess
+        import sys
+        import time
+
+        # Optional: add extra site-packages *after* default sys.path.
+        # This avoids shadowing a system onnxruntime-gpu with a cpu-only wheel from a venv.
+        _extra = os.environ.get("SPLITPOINT_EXTRA_SITES") or os.environ.get("SPLITPOINT_EXTRA_SITE")
+        if _extra:
+            try:
+                import site
+
+                for _p in _extra.split(os.pathsep):
+                    _p = (_p or "").strip()
+                    if _p and os.path.isdir(_p):
+                        site.addsitedir(_p)
+            except Exception:
+                pass
+
+        out_path = os.environ.get("PRECHECK_OUT", "preflight.json")
+        want_hailo = os.environ.get("PRECHECK_WANT_HAILO", "0") == "1"
+        want_cuda = os.environ.get("PRECHECK_WANT_CUDA", "0") == "1"
+        want_trt = os.environ.get("PRECHECK_WANT_TRT", "0") == "1"
+
+        info = {
+            "schema_version": 1,
+            "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "python": {
+                "executable": sys.executable,
+                "version": sys.version,
+                "sys_py": os.environ.get("PRECHECK_SYS_PY"),
+                "env_py": os.environ.get("PRECHECK_ENV_PY"),
+                "run_py": os.environ.get("PRECHECK_RUN_PY"),
+                "env_site": os.environ.get("PRECHECK_ENV_SITE"),
+            },
+            "platform": {"platform": platform.platform(), "machine": platform.machine()},
+            "wants": {"hailo": want_hailo, "cuda": want_cuda, "tensorrt": want_trt},
+        }
+
+        critical_missing = []
+
+        try:
+            import onnx  # type: ignore
+            info["onnx"] = {"ok": True, "version": getattr(onnx, "__version__", None)}
+        except Exception as e:
+            info["onnx"] = {"ok": False, "error": repr(e)}
+            critical_missing.append("onnx")
+
+        try:
+            import onnxruntime as ort  # type: ignore
+            info["onnxruntime"] = {
+                "ok": True,
+                "version": getattr(ort, "__version__", None),
+                "available_providers": ort.get_available_providers(),
+            }
+        except Exception as e:
+            info["onnxruntime"] = {"ok": False, "error": repr(e)}
+            critical_missing.append("onnxruntime")
+
+        # Provider availability hints
+        if info.get("onnxruntime", {}).get("ok"):
+            eps = info["onnxruntime"]["available_providers"]
+            warnings = []
+            if want_cuda and "CUDAExecutionProvider" not in eps:
+                warnings.append(f"CUDAExecutionProvider missing (available: {eps})")
+            if want_trt and "TensorrtExecutionProvider" not in eps:
+                warnings.append(f"TensorrtExecutionProvider missing (available: {eps})")
+            info["onnxruntime"]["warnings"] = warnings
+
+        hailo = {"dev_nodes": sorted(glob.glob("/dev/hailo*"))}
+
+        # Collect some system-level hints (best effort, no sudo)
+        try:
+            hailo["ps_hailo"] = subprocess.run(
+                ["bash", "-lc", "ps aux | grep -i hailo | grep -v grep || true"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            ).stdout.strip()
+        except Exception:
+            pass
+        try:
+            hailo["ls_dev_hailo"] = subprocess.run(
+                ["bash", "-lc", "ls -l /dev/hailo* 2>/dev/null || true"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            ).stdout.strip()
+        except Exception:
+            pass
+
+        if want_hailo:
+            try:
+                # Prefer hailo_platform, but fall back to hailort if that's what is installed.
+                hp = None
+                try:
+                    import hailo_platform as hp  # type: ignore
+
+                    hailo["hailo_module"] = "hailo_platform"
+                    hailo["hailo_import_ok"] = True
+                    hailo["hailo_module_path"] = getattr(hp, "__file__", None)
+                except Exception as e_platform:
+                    try:
+                        import hailort as hp  # type: ignore
+
+                        hailo["hailo_module"] = "hailort"
+                        hailo["hailo_import_ok"] = True
+                        hailo["hailo_module_path"] = getattr(hp, "__file__", None)
+                    except Exception as e_hailort:
+                        hailo["hailo_module"] = None
+                        hailo["hailo_import_ok"] = False
+                        hailo["hailo_import_error"] = {
+                            "hailo_platform": repr(e_platform),
+                            "hailort": repr(e_hailort),
+                        }
+                        hp = None
+
+                # Device scan (best effort)
+                scan = None
+                if hp is not None and hasattr(hp, "Device") and hasattr(hp.Device, "scan"):
+                    try:
+                        scan = hp.Device.scan()
+                    except Exception as e:
+                        scan = {"error": repr(e)}
+                hailo["device_scan"] = scan
+
+                # Probe VDevice allocation in a subprocess (contains potential crashes).
+                # Probe VDevice allocation in a subprocess (contains potential crashes).
+                # Important: the child must extend sys.path with SPLITPOINT_EXTRA_SITES too,
+                # otherwise the parent can import hailo_platform while the child probe fails.
+                probe_code = r'''
+        import os
+        import site
+        import sys
+        import traceback
+
+        _extra = os.environ.get("SPLITPOINT_EXTRA_SITES") or os.environ.get("SPLITPOINT_EXTRA_SITE")
+        if _extra:
+            for _p in _extra.split(os.pathsep):
+                _p = (_p or "").strip()
+                if _p and os.path.isdir(_p):
+                    site.addsitedir(_p)
+
+        try:
+            try:
+                import hailo_platform as hp
+            except Exception:
+                import hailort as hp
+        except Exception as e:
+            print(f"import_failed: {e!r}", file=sys.stderr)
+            sys.exit(2)
+
+        try:
+            if hasattr(hp, "VDevice"):
+                v = hp.VDevice()
+                if hasattr(v, "__enter__"):
+                    v.__enter__()
+                if hasattr(v, "__exit__"):
+                    v.__exit__(None, None, None)
+                for meth in ("release", "close"):
+                    if hasattr(v, meth):
+                        try:
+                            getattr(v, meth)()
+                        except Exception:
+                            pass
+                del v
+            print("vdevice_ok")
+            sys.exit(0)
+        except Exception as e:
+            traceback.print_exc()
+            print(f"vdevice_failed: {e!r}", file=sys.stderr)
+            sys.exit(3)
+        '''
+                proc = subprocess.run(
+                    [sys.executable, "-c", probe_code],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                hailo["vdevice_probe"] = {
+                    "rc": proc.returncode,
+                    "stdout": (proc.stdout or "")[-4000:],
+                    "stderr": (proc.stderr or "")[-4000:],
+                }
+
+                combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
+                low = combined.lower()
+                markers = [
+                    "not enough free devices",
+                    "out_of_physical_devices",
+                    "hailo_out_of_physical_devices",
+                    "failed to create vdevice",
+                    "network_group_not_activated",
+                ]
+                hits = [m for m in markers if m in low]
+                hailo["vdevice_probe_markers"] = hits
+                hailo["vdevice_ok"] = (proc.returncode == 0 and not hits)
+
+            except Exception as e:
+                hailo["hailo_import_ok"] = False
+                hailo["error"] = repr(e)
+
+        info["hailo"] = hailo
+
+        # write file
+        try:
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(info, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[preflight] ERROR: failed to write {out_path}: {e!r}", file=sys.stderr)
+
+        # human summary
+        print(f"[preflight] wrote {out_path}")
+        print(f"[preflight] python: {info['python']['executable']}")
+
+        if info.get("onnx", {}).get("ok") and info.get("onnxruntime", {}).get("ok"):
+            print(f"[preflight] onnx {info['onnx'].get('version')} / onnxruntime {info['onnxruntime'].get('version')}")
+
+        if info.get("onnxruntime", {}).get("ok"):
+            print(f"[preflight] ort eps: {info['onnxruntime']['available_providers']}")
+            for w in info["onnxruntime"].get("warnings", []):
+                print(f"[preflight] WARNING: {w}")
+
+        if want_hailo:
+            print(f"[preflight] /dev/hailo*: {hailo.get('dev_nodes')}")
+            if hailo.get("ps_hailo"):
+                print(f"[preflight] ps hailo:\n{hailo.get('ps_hailo')}")
+            if hailo.get("hailo_import_ok"):
+                if hailo.get("device_scan") is not None:
+                    print(f"[preflight] Device.scan: {hailo.get('device_scan')}")
+                if "vdevice_ok" in hailo:
+                    print(f"[preflight] vdevice_ok: {hailo.get('vdevice_ok')} (markers={hailo.get('vdevice_probe_markers')})")
+                    if not hailo.get("vdevice_ok"):
+                        probe = hailo.get("vdevice_probe") or {}
+                        tail = (probe.get("stderr") or probe.get("stdout") or "").strip()
+                        if tail:
+                            print(f"[preflight] vdevice probe tail: {tail[-400:]}")
+            else:
+                err = hailo.get('hailo_import_error') or hailo.get('error')
+                print(f"[preflight] WARNING: hailo import failed: {err}")
+
+        if critical_missing:
+            print(f"[preflight] ERROR: missing critical python modules: {critical_missing}", file=sys.stderr)
+            sys.exit(10)
+
+        sys.exit(0)
+        """).strip()
+
+        preflight_lines.append("\"$RUN_PY\" - <<'PY'\n" + preflight_py + "\nPY")
+
+        preflight_cmd = "bash -lc " + shlex.quote("\n".join(preflight_lines))
+
+        rc, out = transport.run(preflight_cmd, timeout=120)
+        log(out)
+        if rc != 0:
+            raise RuntimeError(f"Remote preflight failed (rc={rc}). See output above.")
+
+        progress(0.06, "Preflight OK")
+
 
         # ----------------------------
         # Transfer suite
@@ -614,8 +1031,23 @@ def run_remote_benchmark(
         if repeats != 1:
             log(f"[ui] NOTE: repeats={repeats} folded into --runs (effective runs={effective_runs})")
 
+        # Persist the effective execution counts so the local run metadata matches
+        # what we actually ask benchmark_suite.py to execute remotely.
+        try:
+            run_meta["effective_args"] = {
+                "provider": provider,
+                "warmup": warmup,
+                "repeats": repeats,
+                "iters": iters,
+                "effective_runs": effective_runs,
+                "total_invocations_per_benchmark": warmup + effective_runs,
+            }
+            _write_json(local_run_dir / "run_meta.json", run_meta)
+        except Exception:
+            pass
+
         bench_cmd = (
-            f"python3 -u benchmark_suite.py"
+            f'"$RUN_PY" -u benchmark_suite.py'
             f" --provider {shlex.quote(provider)}"
             f" --plan benchmark_plan.json"
             f" --warmup {warmup}"
@@ -631,13 +1063,59 @@ def run_remote_benchmark(
             if sp is not None:
                 # Map suite progress into 40%..90%
                 progress(0.40 + 0.50 * sp.pct, f"Running {sp.i}/{sp.n}")
-
         # Make sure we also have remote stdout/stderr files for debugging.
-        bench_inner = (
-            f"set -e; cd {shlex.quote(remote_suite_dir)}; mkdir -p logs; "
-            f"{bench_cmd} "
-            "1> >(tee logs/stdout.txt) 2> >(tee logs/stderr.txt >&2)"
-        )
+        remote_venv_cmd = (args.remote_venv or "").strip()
+        env_snippet = ""
+        if remote_venv_cmd:
+            # If user provided a full shell snippet (contains whitespace), use it as-is.
+            # Otherwise treat it as a path to an activate script and source it.
+            if any(ch.isspace() for ch in remote_venv_cmd):
+                env_snippet = remote_venv_cmd
+            else:
+                # Keep ~ expansion working by translating to $HOME when possible.
+                if remote_venv_cmd.startswith("~/"):
+                    remote_venv_cmd = "$HOME/" + remote_venv_cmd[2:]
+                env_snippet = f"source {remote_venv_cmd}"
+
+        bench_inner_lines = [
+            "set -e",
+            f"cd {shlex.quote(remote_suite_dir)}",
+            "mkdir -p logs",
+            'SYS_PY="$(command -v python3)"',
+        ]
+        if env_snippet:
+            bench_inner_lines.append(env_snippet)
+
+        bench_inner_lines += [
+            'ENV_PY="$(command -v python3)"',
+            f"WANT_HAILO={'1' if want_hailo else '0'}",
+            f"WANT_CUDA={'1' if want_cuda else '0'}",
+            f"WANT_TRT={'1' if want_tensorrt else '0'}",
+            'RUN_PY="$SYS_PY"',
+            'ENV_SITE=""',
+            'SYS_EPS=""',
+            'ENV_EPS=""',
+            'has_cuda() { case "$1" in *CUDAExecutionProvider*) return 0;; *) return 1;; esac; }',
+            'has_trt() { case "$1" in *TensorrtExecutionProvider*) return 0;; *) return 1;; esac; }',
+            # Collect venv site-packages (for Hailo) without using PYTHONPATH.
+            'if [ -n "$ENV_PY" ] && [ -x "$ENV_PY" ]; then',
+            '  ENV_SITE=$("$ENV_PY" -c \'import site,os; ps=[]; getsp=getattr(site,"getsitepackages",None); ps.extend(getsp() if getsp else []); usp=getattr(site,"getusersitepackages",lambda:None)(); ps.append(usp); ps=[p for p in ps if p and os.path.isdir(p)]; out=[]; [out.append(p) for p in ps if p not in out]; print(":".join(out))\' 2>/dev/null || true)',
+            '  SYS_EPS=$("$SYS_PY" -c \'import onnxruntime as ort; print("|".join(ort.get_available_providers()))\' 2>/dev/null || true)',
+            '  ENV_EPS=$("$ENV_PY" -c \'import onnxruntime as ort; print("|".join(ort.get_available_providers()))\' 2>/dev/null || true)',
+            '  if [ "$WANT_TRT" = "1" ]; then',
+            '    if has_cuda "$SYS_EPS" && has_trt "$SYS_EPS"; then RUN_PY="$SYS_PY"; elif has_cuda "$ENV_EPS" && has_trt "$ENV_EPS"; then RUN_PY="$ENV_PY"; fi',
+            '  elif [ "$WANT_CUDA" = "1" ]; then',
+            '    if has_cuda "$SYS_EPS"; then RUN_PY="$SYS_PY"; elif has_cuda "$ENV_EPS"; then RUN_PY="$ENV_PY"; fi',
+            '  else',
+            '    if "$ENV_PY" -c "import onnx,onnxruntime" >/dev/null 2>&1; then RUN_PY="$ENV_PY"; fi',
+            '  fi',
+            'fi',
+            # Make Hailo python wheels visible without shadowing system packages.
+            'if [ "$WANT_HAILO" = "1" ] && [ -n "$ENV_SITE" ]; then export SPLITPOINT_EXTRA_SITES="$ENV_SITE"; fi',
+            'echo "[remote] python: SYS_PY=${SYS_PY} ENV_PY=${ENV_PY} RUN_PY=${RUN_PY} | SYS_EPS=${SYS_EPS} | ENV_EPS=${ENV_EPS} | EXTRA_SITES=${SPLITPOINT_EXTRA_SITES:-}" >&2',
+            f"{bench_cmd} 1> >(tee logs/stdout.txt) 2> >(tee logs/stderr.txt >&2)",
+        ]
+        bench_inner = "\n".join(bench_inner_lines)
         bench_remote_cmd = "bash -lc " + shlex.quote(bench_inner)
 
         remote_rc = transport.run_streaming(

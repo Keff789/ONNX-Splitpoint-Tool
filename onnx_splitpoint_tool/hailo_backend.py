@@ -74,6 +74,34 @@ def _default_glibc_min_for_hw_arch(hw_arch: str) -> Optional[Tuple[int, int]]:
     return None
 
 
+_HAILO_HW_ARCH_ALIASES: Dict[str, str] = {
+    # DFC 5.x expects explicit variants (hailo10h / hailo10p). Older configs
+    # (and earlier versions of this tool) used the generic "hailo10" string.
+    #
+    # We intentionally map to *hailo10h* as a sensible default for most Hailo-10
+    # modules. Users targeting Hailo-10P should select "hailo10p" explicitly.
+    "hailo10": "hailo10h",
+    # Future-proofing: if users pass "hailo15" as a family name, pick a default.
+    "hailo15": "hailo15h",
+}
+
+
+def _normalize_hailo_hw_arch(hw_arch: str) -> str:
+    """Normalize user-provided Hailo `hw_arch` strings for the DFC.
+
+    The Hailo DFC (`hailo_sdk_client.ClientRunner`) validates `hw_arch` against
+    a fixed set of strings. Some DFC versions changed these identifiers (e.g.
+    "hailo10" -> "hailo10h"/"hailo10p").
+
+    We keep backwards compatibility by mapping known legacy aliases.
+    """
+
+    hw = str(hw_arch or "").strip().lower()
+    if not hw:
+        return "hailo8"
+    return _HAILO_HW_ARCH_ALIASES.get(hw, hw)
+
+
 def _clean_opt_str(val: object) -> Optional[str]:
     """Return a cleaned optional string.
 
@@ -252,6 +280,39 @@ class HailoProbeResult:
 # ------------------------------- WSL bridge -------------------------------
 
 _WSL_RESULT_MARKER = "__SPLITPOINT_HAILO_RESULT__"
+
+# Printed by our CUDA probe helper (see onnx_splitpoint_tool/cuda_probe.py).
+_CUDA_PROBE_MARKER = "__SPLITPOINT_CUDA_PROBE__"
+
+
+def _find_marker_json(text: str, marker: str) -> Optional[Dict[str, Any]]:
+    """Extract the JSON payload following a marker from mixed output."""
+    if not text or not marker:
+        return None
+    idx = text.rfind(marker)
+    if idx < 0:
+        return None
+    payload_all = text[idx + len(marker):]
+    first_line = payload_all.strip().splitlines()[0].strip() if payload_all else ""
+    if not first_line:
+        return None
+
+    # 1) Best case: pure JSON
+    try:
+        return json.loads(first_line)
+    except Exception:
+        pass
+
+    # 2) Fallback: extract the first {...} block
+    try:
+        a = first_line.find("{")
+        b = first_line.rfind("}")
+        if a >= 0 and b > a:
+            return json.loads(first_line[a : b + 1])
+    except Exception:
+        return None
+
+    return None
 
 
 def hailo_wsl_available() -> bool:
@@ -515,8 +576,18 @@ def hailo_probe_via_venv(
             # provide a useful reason.
             pass
 
+    # Also run a lightweight CUDA probe (for GUI visibility). We do it before
+    # forcing CPU for the import probe, so the reported capability reflects the
+    # *system* and not the probe's CUDA_VISIBLE_DEVICES override.
     py_probe = (
-        "import sys, os; "
+        "import sys, os, json; "
+        "\n# CUDA probe (best-effort)\n"
+        "try:\n"
+        "  from onnx_splitpoint_tool.cuda_probe import probe_cuda_environment\n"
+        f"  print('{_CUDA_PROBE_MARKER}' + json.dumps(probe_cuda_environment(), ensure_ascii=False))\n"
+        "except Exception as _e:\n"
+        f"  print('{_CUDA_PROBE_MARKER}' + json.dumps({{'error': str(_e)}}, ensure_ascii=False))\n"
+        "\n# Import probe (keep quiet / avoid GPU init)\n"
         "os.environ.setdefault('CUDA_VISIBLE_DEVICES','-1'); "
         "os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL','3'); "
         "\ntry:\n"
@@ -539,6 +610,15 @@ def hailo_probe_via_venv(
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
 
+    # Make the tool package importable inside the managed venv probe so we can
+    # run the CUDA probe helper.
+    try:
+        repo_root = Path(__file__).resolve().parents[1]
+        pp = str(env.get("PYTHONPATH") or "").strip()
+        env["PYTHONPATH"] = (str(repo_root) + (os.pathsep + pp if pp else "")).strip()
+    except Exception:
+        pass
+
     cmd = [str(py), "-c", py_probe]
 
     try:
@@ -557,6 +637,8 @@ def hailo_probe_via_venv(
             input="y\n",
         )
         out = _sanitize_wsl_text((proc.stdout or "") + (proc.stderr or ""))
+
+        cuda_probe = _find_marker_json(out, _CUDA_PROBE_MARKER)
 
         glibc_seen: Optional[str] = None
         try:
@@ -579,6 +661,7 @@ def hailo_probe_via_venv(
             "profile_id": profile_id,
             "venv_activate": act_path,
             "venv_python": str(py),
+            "cuda_probe": cuda_probe,
             "output_tail": "\n".join(out.strip().splitlines()[-30:]),
         }
         return HailoProbeResult(ok=ok, backend="venv", reason=("" if ok else _summarize(out)), details=details)
@@ -739,6 +822,63 @@ def hailo_probe_via_wsl(
         "  sys.exit(2)\n"
     )
 
+    # Lightweight CUDA probe for GUI visibility (best-effort). This runs *before*
+    # we force CUDA_VISIBLE_DEVICES=-1 for the import probe, so the result
+    # reflects whether GPU acceleration is actually usable.
+    py_cuda_probe = (
+        "import json, os, shutil, subprocess, sys; "
+        "from pathlib import Path; "
+        "def _run(cmd, t=2.5):\n"
+        "  try:\n"
+        "    p = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=t)\n"
+        "    return int(p.returncode), ((p.stdout or '') + (p.stderr or '')).strip()\n"
+        "  except Exception as e:\n"
+        "    return 127, f'{type(e).__name__}: {e}'\n"
+        "exe = shutil.which('nvidia-smi'); "
+        "smi_found = bool(exe); smi_ok = False; gpus = []; smi_err = ''; "
+        "\nif exe:\n"
+        "  rc, out = _run([exe, '-L']);\n"
+        "  if rc == 0:\n"
+        "    gpus = [ln.strip() for ln in out.splitlines() if ln.strip()];\n"
+        "    smi_ok = bool(gpus);\n"
+        "  else:\n"
+        "    smi_err = out or f'nvidia-smi rc={rc}';\n"
+        "\nroots = [];\n"
+        "for k in ('CUDA_HOME','CUDA_PATH','CUDA_DIR'):\n"
+        "  v = (os.environ.get(k) or '').strip();\n"
+        "  if v: roots.append(Path(v).expanduser());\n"
+        "roots.append(Path('/usr/local/cuda'));\n"
+        "try:\n"
+        "  roots += sorted(Path('/usr/local').glob('cuda-*'));\n"
+        "except Exception:\n"
+        "  pass\n"
+        "def _find_lib(root: Path):\n"
+        "  d = root/'nvvm'/'libdevice'\n"
+        "  if d.is_dir():\n"
+        "    for f in sorted(d.glob('libdevice*.bc')):\n"
+        "      if f.is_file():\n"
+        "        return str(f)\n"
+        "  return None\n"
+        "lib = None; root_ok = None;\n"
+        "for r in roots:\n"
+        "  try:\n"
+        "    lib = _find_lib(r)\n"
+        "  except Exception:\n"
+        "    lib = None\n"
+        "  if lib:\n"
+        "    root_ok = str(r);\n"
+        "    break\n"
+        "gpu_ok = bool(smi_ok) and bool(lib);\n"
+        "payload = {\n"
+        "  'nvidia_smi': {'found': smi_found, 'ok': smi_ok, 'gpus': gpus[:8], 'error': smi_err},\n"
+        "  'cuda_root': root_ok,\n"
+        "  'libdevice_path': lib,\n"
+        "  'gpu_ok': gpu_ok,\n"
+        "  'summary': ('Compute: GPU (auto)' if gpu_ok else 'Compute: CPU (auto: CUDA/libdevice missing)')\n"
+        "};\n"
+        f"print('{_CUDA_PROBE_MARKER}' + json.dumps(payload, ensure_ascii=False))\n"
+    )
+
     # Use `python` (not `python3`) after activation. Some venvs do not provide a
     # `python3` shim, which would accidentally run the *system* python3.
     #
@@ -755,6 +895,8 @@ def hailo_probe_via_wsl(
         "echo __SPLITPOINT_WSL_BEGIN__; "
         f"source {act}; "
         "echo __SPLITPOINT_WSL_VENV_OK__; "
+        # CUDA probe (best-effort, non-fatal)
+        f"python -c {shlex.quote(py_cuda_probe)} || true; "
         # Keep probe fast/quiet: avoid GPU probing on import.
         "export CUDA_VISIBLE_DEVICES=-1; "
         "export TF_CPP_MIN_LOG_LEVEL=3; "
@@ -823,6 +965,8 @@ def hailo_probe_via_wsl(
         )
         out = _sanitize_wsl_text((proc.stdout or "") + (proc.stderr or ""))
 
+        cuda_probe = _find_marker_json(out, _CUDA_PROBE_MARKER)
+
         ok = "__HAILO_PROBE_OK__" in out
         if not ok:
             log.warning(
@@ -837,6 +981,7 @@ def hailo_probe_via_wsl(
             "wsl_venv_activate": venv_eff,
             "glibc": glibc_seen,
             "glibc_required": (f"{glibc_req_tuple[0]}.{glibc_req_tuple[1]}" if glibc_req_tuple is not None else None),
+            "cuda_probe": cuda_probe,
             "output_tail": "\n".join(out.strip().splitlines()[-30:]),
         }
         return HailoProbeResult(ok=ok, backend="wsl", reason=("" if ok else _summarize(out)), details=details)
@@ -1264,12 +1409,43 @@ def hailo_parse_check_via_venv(
             str(onnx_path),
             str(outdir_path or ""),
         )
+
+        # The Hailo SDK drops multiple `hailo_sdk.*.log` files into the current
+        # working directory. Run helpers from a dedicated log folder to avoid
+        # cluttering the user's project/repo directory.
+        from .paths import ensure_dir, splitpoint_logs_dir
+
+        hailo_log_cwd = ensure_dir(splitpoint_logs_dir() / "hailo_sdk" / str(profile_id))
+
+        # Best-effort log retention for Hailo SDK logs. The SDK tends to drop
+        # multiple rotating log files into the working directory.
+        try:
+            from .log_retention import LogRetentionPolicy, apply_log_retention
+
+            apply_log_retention(
+                [hailo_log_cwd],
+                policy=LogRetentionPolicy(
+                    enabled=True,
+                    max_age_days=14,
+                    max_files=80,
+                    patterns=("*.log",),
+                    keep_names=(),
+                ),
+                recursive=False,
+            )
+        except Exception:
+            pass
+        env = dict(os.environ)
+        # HailoRT can be configured to write logs to a single file.
+        env.setdefault("HAILORT_LOGGER_PATH", str(hailo_log_cwd / "hailort.log"))
+
         proc = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=int(timeout_s),
-            env=dict(os.environ),
+            env=env,
+            cwd=str(hailo_log_cwd),
             encoding="utf-8",
             errors="replace",
             input="y\n",
@@ -1624,11 +1800,15 @@ def hailo_parse_check(
         return HailoParseResult(
             ok=False,
             elapsed_s=time.time() - t0,
-            hw_arch=str(hw_arch),
+            hw_arch=str(_normalize_hailo_hw_arch(hw_arch)),
             net_name=str(net_name),
             backend="local",
             error=f"Hailo SDK not available: {e}",
         )
+
+    hw_arch_eff = _normalize_hailo_hw_arch(hw_arch)
+    if hw_arch_eff != str(hw_arch or "").strip().lower():
+        log.warning("[hailo] hw_arch alias: '%s' -> '%s'", str(hw_arch), hw_arch_eff)
 
     fixed_path: Optional[Path] = None
     fixup_report: Optional[Dict[str, Any]] = None
@@ -1658,7 +1838,7 @@ def hailo_parse_check(
             net_input_shapes = None
 
     try:
-        runner = ClientRunner(hw_arch=str(hw_arch))
+        runner = ClientRunner(hw_arch=str(hw_arch_eff))
         runner.translate_onnx_model(
             model=str(model_for_parse),
             net_name=str(net_name),
@@ -1675,7 +1855,7 @@ def hailo_parse_check(
         return HailoParseResult(
             ok=True,
             elapsed_s=time.time() - t0,
-            hw_arch=str(hw_arch),
+            hw_arch=str(hw_arch_eff),
             net_name=str(net_name),
             backend="local",
             har_path=har_path,
@@ -1687,7 +1867,7 @@ def hailo_parse_check(
         return HailoParseResult(
             ok=False,
             elapsed_s=time.time() - t0,
-            hw_arch=str(hw_arch),
+            hw_arch=str(hw_arch_eff),
             net_name=str(net_name),
             backend="local",
             error=str(e),
@@ -1914,6 +2094,10 @@ def hailo_build_hef(
     if net_name is None:
         net_name = onnx_path.stem
 
+    hw_arch_eff = _normalize_hailo_hw_arch(hw_arch)
+    if hw_arch_eff != str(hw_arch or "").strip().lower():
+        log.warning("[hailo] hw_arch alias: '%s' -> '%s'", str(hw_arch), hw_arch_eff)
+
     out_dir = Path(outdir) if outdir is not None else onnx_path.parent
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1922,7 +2106,7 @@ def hailo_build_hef(
         return HailoHefBuildResult(
             ok=True,
             elapsed_s=time.time() - t0,
-            hw_arch=str(hw_arch),
+            hw_arch=str(hw_arch_eff),
             net_name=str(net_name),
             backend="local",
             hef_path=str(hef_path),
@@ -1935,7 +2119,7 @@ def hailo_build_hef(
         return HailoHefBuildResult(
             ok=False,
             elapsed_s=time.time() - t0,
-            hw_arch=str(hw_arch),
+            hw_arch=str(hw_arch_eff),
             net_name=str(net_name),
             backend="local",
             error=f"Hailo SDK not available: {e}",
@@ -1965,7 +2149,7 @@ def hailo_build_hef(
             net_input_shapes = None
 
     try:
-        runner = ClientRunner(hw_arch=str(hw_arch))
+        runner = ClientRunner(hw_arch=str(hw_arch_eff))
         runner.translate_onnx_model(
             model=str(model_for_parse),
             net_name=str(net_name),
@@ -2067,7 +2251,7 @@ def hailo_build_hef(
         return HailoHefBuildResult(
             ok=True,
             elapsed_s=time.time() - t0,
-            hw_arch=str(hw_arch),
+            hw_arch=str(hw_arch_eff),
             net_name=str(net_name),
             backend="local",
             hef_path=str(hef_path),
@@ -2094,7 +2278,7 @@ def hailo_build_hef(
         return HailoHefBuildResult(
             ok=False,
             elapsed_s=time.time() - t0,
-            hw_arch=str(hw_arch),
+            hw_arch=str(hw_arch_eff),
             net_name=str(net_name),
             backend="local",
             error=err,
@@ -2536,6 +2720,33 @@ def hailo_build_hef_via_venv(
         )
         log.debug("[hailo][hef][venv] cmd=%s", cmd)
 
+        # The Hailo SDK drops multiple `hailo_sdk.*.log` files into the current
+        # working directory. Run helpers from a dedicated log folder to avoid
+        # cluttering the user's project/repo directory.
+        from .paths import ensure_dir, splitpoint_logs_dir
+
+        hailo_log_cwd = ensure_dir(splitpoint_logs_dir() / "hailo_sdk" / str(profile_id))
+
+        # Best-effort log retention for Hailo SDK logs.
+        try:
+            from .log_retention import LogRetentionPolicy, apply_log_retention
+
+            apply_log_retention(
+                [hailo_log_cwd],
+                policy=LogRetentionPolicy(
+                    enabled=True,
+                    max_age_days=14,
+                    max_files=80,
+                    patterns=("*.log",),
+                    keep_names=(),
+                ),
+                recursive=False,
+            )
+        except Exception:
+            pass
+        env = dict(os.environ)
+        env.setdefault("HAILORT_LOGGER_PATH", str(hailo_log_cwd / "hailort.log"))
+
         popen = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -2546,6 +2757,8 @@ def hailo_build_hef_via_venv(
             errors="replace",
             bufsize=1,
             universal_newlines=True,
+            cwd=str(hailo_log_cwd),
+            env=env,
         )
 
         # The first DFC invocation may prompt for a system requirements check.

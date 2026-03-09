@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -22,6 +23,26 @@ from .._types import BackendCaps, BackendRunOut, RunCfg
 _RESULT_MARKER = "__SPLITPOINT_HAILO_RESULT__"
 
 
+def _import_hailo_module() -> Any:
+    """Import Hailo Python bindings.
+
+    Hailo packages have used different top-level module names over time.
+    Prefer `hailo_platform` when available, and fall back to `hailort`.
+    """
+    try:
+        import hailo_platform as hpf  # type: ignore
+        return hpf
+    except Exception as exc_platform:
+        try:
+            import hailort as hpf  # type: ignore
+            return hpf
+        except Exception as exc_hailort:
+            raise RuntimeError(
+                "Hailo runtime is unavailable: cannot import 'hailo_platform' or 'hailort'. "
+                "Install HailoRT Python bindings in the runtime environment."
+            ) from exc_hailort
+
+
 @dataclass
 class _HailoSession:
     hef_path: Path
@@ -30,11 +51,14 @@ class _HailoSession:
     _hpf: Any = None
     _vdevice: Any = None
     _network_group: Any = None
+    _network_group_params: Any = None
     _pipe: Any = None
     input_names: list[str] = None  # type: ignore[assignment]
     output_names: list[str] = None  # type: ignore[assignment]
     input_shapes: dict[str, tuple[int, ...]] = None  # type: ignore[assignment]
     output_shapes: dict[str, tuple[int, ...]] = None  # type: ignore[assignment]
+
+    _activation_lock = threading.RLock()
 
     def __post_init__(self) -> None:
         self.input_names = []
@@ -43,14 +67,16 @@ class _HailoSession:
         self.output_shapes = {}
         self._open()
 
+    def _format_type(self, *, want_uint8: bool):
+        fmt = getattr(self._hpf, "FormatType", None)
+        if fmt is None:
+            return None
+        if want_uint8:
+            return getattr(fmt, "UINT8", getattr(fmt, "AUTO", None))
+        return getattr(fmt, "FLOAT32", getattr(fmt, "AUTO", None))
+
     def _open(self) -> None:
-        try:
-            import hailo_platform as hpf  # type: ignore
-        except Exception as exc:
-            raise RuntimeError(
-                "Hailo runtime is unavailable: cannot import 'hailo_platform'. "
-                "Install HailoRT Python bindings in the runtime environment."
-            ) from exc
+        hpf = _import_hailo_module()
 
         if not self.hef_path.exists() or self.hef_path.stat().st_size <= 0:
             raise RuntimeError(f"Invalid HEF file: {self.hef_path}")
@@ -66,8 +92,7 @@ class _HailoSession:
         if not network_groups:
             raise RuntimeError("No network groups returned by Hailo VDevice.configure")
         self._network_group = network_groups[0]
-        params = self._network_group.create_params()
-        self._network_group.activate(params)
+        self._network_group_params = self._network_group.create_params()
 
         in_infos = list(hef.get_input_vstream_infos())
         out_infos = list(hef.get_output_vstream_infos())
@@ -79,19 +104,19 @@ class _HailoSession:
         in_params = hpf.InputVStreamParams.make(
             self._network_group,
             quantized=bool(self.quantized_inputs),
-            format_type=hpf.FormatType.AUTO,
+            format_type=self._format_type(want_uint8=bool(self.quantized_inputs)) or hpf.FormatType.AUTO,
         )
         out_params = hpf.OutputVStreamParams.make(
             self._network_group,
             quantized=bool(self.quantized_outputs),
-            format_type=hpf.FormatType.AUTO,
+            format_type=self._format_type(want_uint8=bool(self.quantized_outputs)) or hpf.FormatType.AUTO,
         )
         self._pipe = hpf.InferVStreams(self._network_group, in_params, out_params)
         if hasattr(self._pipe, "__enter__"):
             self._pipe.__enter__()
 
     def infer(self, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-        if self._pipe is None:
+        if self._pipe is None or self._network_group is None:
             raise RuntimeError("Hailo session is closed")
 
         infer_inputs: Dict[str, np.ndarray] = {}
@@ -99,13 +124,29 @@ class _HailoSession:
             if name not in inputs:
                 raise KeyError(f"Missing required Hailo input '{name}'")
             arr = np.asarray(inputs[name])
-            if arr.ndim >= 1 and (len(self.input_shapes.get(name, ())) + 1) == arr.ndim:
-                pass
-            elif arr.ndim == len(self.input_shapes.get(name, ())):
+            if arr.ndim == len(self.input_shapes.get(name, ())):
                 arr = arr[None, ...]
             infer_inputs[name] = arr
 
-        out_raw = self._pipe.infer(infer_inputs)
+        with _HailoSession._activation_lock:
+            activation = self._network_group.activate(self._network_group_params)
+            entered = False
+            try:
+                if hasattr(activation, "__enter__"):
+                    activation.__enter__()
+                    entered = True
+                out_raw = self._pipe.infer(infer_inputs)
+            finally:
+                try:
+                    if entered and hasattr(activation, "__exit__"):
+                        activation.__exit__(None, None, None)
+                    elif hasattr(activation, "release"):
+                        activation.release()  # type: ignore[attr-defined]
+                    elif hasattr(activation, "close"):
+                        activation.close()  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
         out: dict[str, np.ndarray] = {}
         for key, value in out_raw.items():
             arr = np.asarray(value)
@@ -171,8 +212,11 @@ class HailoBackend:
             try:
                 __import__("hailo_platform")
             except Exception:
-                if backend == "local":
-                    raise RuntimeError("Cannot import hailo_platform. Install HailoRT python bindings.")
+                try:
+                    __import__("hailort")
+                except Exception:
+                    if backend == "local":
+                        raise RuntimeError("Cannot import hailo_platform/hailort. Install HailoRT python bindings.")
 
     def prepare(self, run_cfg: RunCfg, artifacts_dir: Path) -> PreparedHandle:
         artifacts_dir.mkdir(parents=True, exist_ok=True)

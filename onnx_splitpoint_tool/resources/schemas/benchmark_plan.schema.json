@@ -61,6 +61,19 @@
           "hw_arch": {
             "type": "string"
           },
+          "variants": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "full",
+                "part1",
+                "part2",
+                "composed"
+              ]
+            },
+            "uniqueItems": true
+          },
           "stage1": {
             "type": "object"
           },

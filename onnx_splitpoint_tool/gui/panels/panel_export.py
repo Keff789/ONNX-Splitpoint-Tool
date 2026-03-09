@@ -87,12 +87,22 @@ def build_panel(parent, app=None) -> ttk.Frame:
         setattr(app, name, v)
         return v
 
+    var_hef_full = _bool_on_app("var_hailo_hef_full", False)
     var_hef_part1 = _bool_on_app("var_hailo_hef_part1", False)
     var_hef_part2 = _bool_on_app("var_hailo_hef_part2", False)
     var_hef_h8_en = _bool_on_app("var_hailo_hef_hailo8_enable", True)
     var_hef_h8_arch = _str_on_app("var_hailo_hef_hailo8_hw_arch", "hailo8")
     var_hef_h10_en = _bool_on_app("var_hailo_hef_hailo10_enable", False)
     var_hef_h10_arch = _str_on_app("var_hailo_hef_hailo10_hw_arch", "hailo10h")
+
+    # Backwards-compat: older configs used the generic "hailo10" string which
+    # newer DFC versions reject. Normalize it to the common default (hailo10h)
+    # so users do not accidentally select an invalid arch.
+    try:
+        if (var_hef_h10_arch.get() or "").strip() == "hailo10":
+            var_hef_h10_arch.set("hailo10h")
+    except Exception:
+        pass
 
     # Compile knobs (used by HEF generation)
     var_opt_level = _str_on_app("var_hailo_hef_opt_level", "1")
@@ -109,16 +119,25 @@ def build_panel(parent, app=None) -> ttk.Frame:
 
     ttk.Label(row0, text="Targets:").pack(side=tk.LEFT)
     ttk.Checkbutton(row0, text="Hailo-8", variable=var_hef_h8_en).pack(side=tk.LEFT, padx=(6, 0))
-    ttk.Combobox(row0, textvariable=var_hef_h8_arch, values=["hailo8", "hailo8l", "hailo8r"], width=9, state="normal").pack(
+    ttk.Combobox(row0, textvariable=var_hef_h8_arch, values=["hailo8", "hailo8l", "hailo8r"], width=9, state="readonly").pack(
         side=tk.LEFT, padx=(4, 12)
     )
     ttk.Checkbutton(row0, text="Hailo-10", variable=var_hef_h10_en).pack(side=tk.LEFT)
-    ttk.Combobox(row0, textvariable=var_hef_h10_arch, values=["hailo10", "hailo10h"], width=9, state="normal").pack(
+    ttk.Combobox(row0, textvariable=var_hef_h10_arch, values=["hailo10h", "hailo10p"], width=9, state="readonly").pack(
         side=tk.LEFT, padx=(4, 12)
     )
 
+    # Row 0b: compute mode (GPU/CPU) used by the managed DFC.
+    # This is populated by the Hailo probe on startup and updated when the
+    # backend settings change.
+    var_compute = _str_on_app("var_hailo_compute_status", "")
+    row0b = ttk.Frame(hef_group)
+    row0b.pack(fill=tk.X, padx=8, pady=(0, 4))
+    ttk.Label(row0b, textvariable=var_compute, foreground="#444").pack(side=tk.LEFT)
+
     ttk.Label(row0, text="Build:").pack(side=tk.LEFT, padx=(8, 4))
-    ttk.Checkbutton(row0, text="part1", variable=var_hef_part1).pack(side=tk.LEFT)
+    ttk.Checkbutton(row0, text="full", variable=var_hef_full).pack(side=tk.LEFT)
+    ttk.Checkbutton(row0, text="part1", variable=var_hef_part1).pack(side=tk.LEFT, padx=(6, 0))
     ttk.Checkbutton(row0, text="part2", variable=var_hef_part2).pack(side=tk.LEFT, padx=(6, 0))
 
     # Row 1: compile knobs
@@ -262,13 +281,15 @@ def build_panel(parent, app=None) -> ttk.Frame:
             est += 48 * 1024
 
         # Hailo HEFs (optional)
-        if bool(var_hef_part1.get() or var_hef_part2.get()):
+        if bool(var_hef_full.get() or var_hef_part1.get() or var_hef_part2.get()):
             targets = []
             if bool(var_hef_h8_en.get()):
                 targets.append((var_hef_h8_arch.get() or "hailo8").strip() or "hailo8")
             if bool(var_hef_h10_en.get()):
                 targets.append((var_hef_h10_arch.get() or "hailo10h").strip() or "hailo10h")
             for hw in targets:
+                if bool(var_hef_full.get()):
+                    lines += [f"  - hailo/{hw}/full/compiled.hef"]
                 if bool(var_hef_part1.get()):
                     lines += [f"  - hailo/{hw}/part1/compiled.hef"]
                 if bool(var_hef_part2.get()):
@@ -304,6 +325,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
         var_ctx_cutflow,
         var_ctx_hops,
         var_split_folder,
+        var_hef_full,
         var_hef_part1,
         var_hef_part2,
         var_hef_h8_en,

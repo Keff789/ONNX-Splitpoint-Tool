@@ -23,6 +23,12 @@ Design goals:
   - `pipeline`: explicit links for part1→part2 tensor handoff
   - `hailo`: optional HEF/HAR artifacts per `hw_arch`
 
+Hailo artifact layout:
+- Single split export: `hailo/<hw_arch>/(full|part1|part2)/compiled.hef`
+- Benchmark suites:
+  - Suite-level full HEF (optional): `hailo/<hw_arch>/full/compiled.hef`
+  - Per-case split HEFs (optional): `b*/hailo/<hw_arch>/(part1|part2)/compiled.hef`
+
 ### `benchmark_plan.json` (suite-level)
 - Purpose: tells the suite runner which runs to execute (ORT CPU/CUDA/TRT, Hailo-8/10, etc.)
 - Required keys (v1):
@@ -33,6 +39,7 @@ Design goals:
   - `id`
   - `type` (`onnxruntime`/`ort` or `hailo`)
   - `provider` (for ORT) and/or `hw_arch` (for Hailo)
+  - Optional `variants` for Hailo runs (e.g. `full`, `part1`, `part2`, `composed`)
   - Optional `stage1`/`stage2` for future matrix support
 
 ### `benchmark_set.json` (suite-level)

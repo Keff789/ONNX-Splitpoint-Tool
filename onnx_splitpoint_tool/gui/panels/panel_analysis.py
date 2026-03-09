@@ -108,7 +108,14 @@ def build_panel(parent, app=None) -> ttk.Frame:
     type_badge.grid(row=0, column=1, sticky="w", padx=(8, 6))
 
     external_var = tk.StringVar(value="External data: unknown")
-    ttk.Label(model_info, textvariable=external_var).grid(row=0, column=2, sticky="w", padx=(6, 0))
+    external_lbl = ttk.Label(model_info, textvariable=external_var)
+    external_lbl.grid(row=0, column=2, sticky="w", padx=(6, 0))
+    attach_tooltip(
+        external_lbl,
+        "Shows whether the ONNX stores tensor weights inside the .onnx file or in separate external-data file(s).\n"
+        "yes = sidecar data files are referenced next to the model\n"
+        "missing / partial = one or more referenced weight files are not present",
+    )
 
     preset_bar = ttk.Frame(frame)
     preset_bar.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))

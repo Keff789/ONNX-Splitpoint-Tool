@@ -65,8 +65,15 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         self.var_remote_iters = tk.IntVar(value=100)
         self.var_remote_repeats = tk.IntVar(value=1)
         self.var_remote_add_args = tk.StringVar(value="")
+        self.var_remote_venv = tk.StringVar(value="")
         self.var_remote_transfer_mode = tk.StringVar(value="bundle")
         self.var_remote_reuse_bundle = tk.BooleanVar(value=True)
+
+        # Log retention (cleanup)
+        # These are persisted automatically (all var_* Tk variables are saved).
+        self.var_log_retention_enabled = tk.BooleanVar(value=True)
+        self.var_log_retention_days = tk.IntVar(value=30)
+        self.var_log_retention_max_files = tk.IntVar(value=300)
 
         # Persistent settings
         # NOTE: Some Tk variables are created by notebook panels. We therefore apply settings
@@ -90,6 +97,12 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         self._apply_persistent_settings(persisted)
         self._wire_model_type_state()
         self._apply_model_type_visibility()
+
+        # Apply log retention shortly after startup (best-effort).
+        try:
+            self.after(800, lambda: self._apply_log_retention(show_popup=False))
+        except Exception:
+            pass
 
         # Save settings on close
         try:
@@ -197,6 +210,60 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
     def _on_pick_output_folder(self):
         super()._on_pick_output_folder()
         self._persist_settings()
+
+    # ------------------------------------------------------------------
+    # Log retention helpers (Logs tab)
+    # ------------------------------------------------------------------
+
+    def _apply_log_retention(self, *, show_popup: bool = False) -> None:
+        """Best-effort cleanup of old log files.
+
+        This is intentionally non-fatal. Any exception is swallowed.
+        """
+
+        try:
+            enabled = True
+            try:
+                enabled = bool(self.var_log_retention_enabled.get())
+            except Exception:
+                enabled = True
+            if not enabled:
+                return
+
+            try:
+                days = int(self.var_log_retention_days.get())
+            except Exception:
+                days = 30
+            try:
+                max_files = int(self.var_log_retention_max_files.get())
+            except Exception:
+                max_files = 300
+
+            from ..paths import splitpoint_logs_dir
+            from ..log_retention import LogRetentionPolicy, apply_log_retention
+
+            roots = [splitpoint_logs_dir(), Path.home() / ".onnx_splitpoint_tool" / "wsl_debug"]
+            pol = LogRetentionPolicy(enabled=True, max_age_days=days, max_files=max_files)
+            stats = apply_log_retention(roots, policy=pol, recursive=True)
+
+            removed = int(stats.get("removed") or 0)
+            freed_mb = float(stats.get("freed_bytes") or 0) / (1024.0 * 1024.0)
+            errs = int(stats.get("errors") or 0)
+            logger.info("Log retention: removed=%s freed=%.1fMB errors=%s", removed, freed_mb, errs)
+
+            if show_popup:
+                messagebox.showinfo(
+                    "Log retention",
+                    f"Removed {removed} log file(s) (freed {freed_mb:.1f} MB).\nErrors: {errs}",
+                )
+        except Exception:
+            # Never crash the GUI for a cleanup failure.
+            if show_popup:
+                try:
+                    messagebox.showwarning("Log retention", "Log cleanup failed (see gui.log).")
+                except Exception:
+                    pass
+            return
 
     # ------------------------------------------------------------------
     # Remote benchmark helpers (Benchmark tab)
@@ -564,6 +631,7 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
                     iters=int(self.var_remote_iters.get()) if hasattr(self, "var_remote_iters") else 100,
                     repeats=int(self.var_remote_repeats.get()) if hasattr(self, "var_remote_repeats") else 1,
                     add_args=self.var_remote_add_args.get() if hasattr(self, "var_remote_add_args") else "",
+                    remote_venv=self.var_remote_venv.get() if hasattr(self, "var_remote_venv") else "",
                     transfer_mode=self.var_remote_transfer_mode.get() if hasattr(self, "var_remote_transfer_mode") else "bundle",
                     reuse_bundle=bool(self.var_remote_reuse_bundle.get()) if hasattr(self, "var_remote_reuse_bundle") else True,
                 )
@@ -581,6 +649,17 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
                 if out.get("ok"):
                     self.root.after(0, _append, f"[ui] DONE: results saved to {out.get('local_run_dir')}")
                     self.root.after(0, _set_progress, 1.0, "Done")
+                    try:
+                        local_dir = Path(str(out.get("local_run_dir") or ""))
+                        matrix_md = local_dir / "results" / "benchmark_suite_status_matrix.md"
+                        if matrix_md.exists():
+                            matrix_text = matrix_md.read_text(encoding="utf-8")
+                            self.root.after(0, _append, "")
+                            self.root.after(0, _append, "--- Status matrix ---")
+                            for line in matrix_text.splitlines():
+                                self.root.after(0, _append, line)
+                    except Exception as e:
+                        self.root.after(0, _append, f"[warn] Could not read status matrix: {e}")
                 else:
                     self.root.after(0, _append, f"[ui] FAILED: {out.get('error')}")
                     self.root.after(0, _set_progress, 1.0, "Failed")
