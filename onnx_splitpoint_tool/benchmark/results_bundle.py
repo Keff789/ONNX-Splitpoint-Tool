@@ -22,8 +22,23 @@ SUITE_LEVEL_PATTERNS: List[str] = [
     "benchmark_results_*.csv",
     "benchmark_summary_*.md",
     "benchmark_table_*.tex",
+    "benchmark_report_*.md",
+    "benchmark_suite_status_matrix.*",
+    "benchmark_plan.json",
+    "benchmark_set.json",
+    "run_meta.json",
+    "preflight.json",
     "analysis_*.pdf",
     "analysis_*.svg",
+]
+
+
+SUITE_LEVEL_DIR_PATTERNS: List[str] = [
+    "analysis_tables",
+    "analysis_plots",
+    "benchmark_tables_*",
+    "paper_figures_*",
+    "logs",
 ]
 
 
@@ -55,6 +70,10 @@ def collect_results_from_suite(suite_dir: Path, dst_results_dir: Path) -> None:
         for p in suite_dir.glob(pat):
             if p.is_file():
                 shutil.copy2(p, dst_results_dir / p.name)
+    for pat in SUITE_LEVEL_DIR_PATTERNS:
+        for p in suite_dir.glob(pat):
+            if p.is_dir():
+                shutil.copytree(p, dst_results_dir / p.name, dirs_exist_ok=True)
 
     # Per-case artifacts.
     for case_dir in sorted([p for p in suite_dir.iterdir() if p.is_dir()]):

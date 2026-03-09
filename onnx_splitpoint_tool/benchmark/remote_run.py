@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from onnx_splitpoint_tool.remote.bundle import BundleCancelled, build_suite_bundle
+from onnx_splitpoint_tool.evaluation import evaluate_results_vs_predictions
 from onnx_splitpoint_tool.log_utils import sanitize_log
 from onnx_splitpoint_tool.remote.ssh_transport import HostConfig as RemoteHost
 from onnx_splitpoint_tool.remote.ssh_transport import SSHTransport
@@ -545,6 +546,7 @@ def run_remote_benchmark(
     remote_rc: Optional[int] = None
     cancelled: bool = False
     results_downloaded: bool = False
+    evaluation_info: dict[str, Any] | None = None
 
     try:
         # Resolve remote base (expands ~ and symlinks)
@@ -1165,7 +1167,7 @@ def run_remote_benchmark(
                 f"suite=\"{_rs}\"; "
                 f"mkdir -p \"{_rr}\"; "
                 # Suite-level artifacts (including suite logs)
-                f"for p in \"$suite\"/benchmark_results_* \"$suite\"/benchmark_summary_* \"$suite\"/benchmark_table_* \"$suite\"/benchmark_tables_* \"$suite\"/benchmark_report_* \"$suite\"/paper_figures_* \"$suite\"/benchmark_plan.json \"$suite\"/benchmark_set.json \"$suite\"/run_meta.json \"$suite\"/benchmark_suite.py \"$suite\"/logs; do "
+                f"for p in \"$suite\"/benchmark_results_* \"$suite\"/benchmark_summary_* \"$suite\"/benchmark_table_* \"$suite\"/benchmark_tables_* \"$suite\"/benchmark_report_* \"$suite\"/paper_figures_* \"$suite\"/benchmark_suite_status_matrix.* \"$suite\"/benchmark_plan.json \"$suite\"/benchmark_set.json \"$suite\"/run_meta.json \"$suite\"/preflight.json \"$suite\"/benchmark_suite.py \"$suite\"/analysis_tables \"$suite\"/analysis_plots \"$suite\"/logs; do "
                 f"  [ -e \"$p\" ] && cp -a \"$p\" \"{_rr}/\" || true; "
                 "done; "
                 # Per-case artifacts (preserve case-id to avoid collisions)
@@ -1268,6 +1270,18 @@ def run_remote_benchmark(
     results_dir_local = local_run_dir / "results"
     has_results = _detect_useful_results(results_dir_local)
 
+    if has_results:
+        try:
+            log("Evaluating downloaded results locally")
+            evaluation_info = evaluate_results_vs_predictions(
+                results_dir_local,
+                suite_dir=suite_dir,
+                out_dir=local_run_dir / "evaluation",
+                log=log,
+            )
+        except Exception as e:
+            log(f"[warn] local evaluation failed: {e}")
+
     if cancelled or (cancel_event and cancel_event.is_set()) or remote_rc == 130:
         final_status = "cancelled"
     elif remote_rc == 0 and bench_error is None and exception_text is None:
@@ -1304,6 +1318,23 @@ def run_remote_benchmark(
         br_csv = sorted(results_dir_local.glob("benchmark_results_*.csv"))
         if br_csv:
             artifact_index["benchmark_results_csv"] = [str(p.relative_to(local_run_dir)) for p in br_csv]
+        analysis_tables = results_dir_local / "analysis_tables"
+        if analysis_tables.is_dir():
+            artifact_index["analysis_tables_dir"] = str(analysis_tables.relative_to(local_run_dir))
+        status_matrix = sorted(results_dir_local.glob("benchmark_suite_status_matrix.*"))
+        if status_matrix:
+            artifact_index["benchmark_suite_status_matrix"] = [str(p.relative_to(local_run_dir)) for p in status_matrix]
+        if evaluation_info and isinstance(evaluation_info.get("artifacts"), dict):
+            eval_dir = Path(str(evaluation_info.get("evaluation_dir") or local_run_dir / "evaluation"))
+            artifact_index["evaluation"] = {
+                key: (
+                    [str(Path(item).relative_to(local_run_dir)) for item in value]
+                    if isinstance(value, list)
+                    else str(Path(value).relative_to(local_run_dir))
+                )
+                for key, value in evaluation_info["artifacts"].items()
+                if value not in (None, [])
+            }
 
         plan_path = results_dir_local / "benchmark_plan.json"
         if not plan_path.exists():
@@ -1402,4 +1433,5 @@ def run_remote_benchmark(
         "local_run_dir": str(local_run_dir),
         "remote_run_dir": remote_run_dir,
         "error": None if final_status == "ok" else (bench_error or "Run failed"),
+        "evaluation": evaluation_info,
     }

@@ -19,11 +19,13 @@ def test_gui_state_mapping_has_defaults_and_roundtrip() -> None:
     assert "topk" in mapped
     assert "ranking" in mapped
     assert "llm_enable" in mapped
+    assert mapped["use_calibration"] is False
 
     state = params_dict_to_gui_state(
         {
             "topk": "23",
             "ranking": "latency",
+            "use_calibration": True,
             "llm_enable": True,
             "llm_preset": "Standard",
             "llm_mode": "decode",
@@ -31,5 +33,6 @@ def test_gui_state_mapping_has_defaults_and_roundtrip() -> None:
     )
     assert state["analysis"]["topk"] == "23"
     assert state["analysis"]["rank"] == "latency"
+    assert state["analysis"]["use_calibration"] is True
     assert state["llm"]["enable"] is True
     assert state["llm"]["preset"] == "Standard"

@@ -304,10 +304,10 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         return None
 
     def _remote_hosts_values_for_combo(self):
-        # Combobox values are "<id> — <label>"
+        # Combobox values are "<id> ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â <label>"
         vals = []
         for h in self._remote_host_configs():
-            vals.append(f"{h.id} — {h.label}")
+            vals.append(f"{h.id} ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â {h.label}")
         return vals
 
     def _remote_on_host_combo_selected(self, event=None):
@@ -316,8 +316,8 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
             v = event.widget.get()
         except Exception:
             return
-        if "—" in v:
-            host_id = v.split("—", 1)[0].strip()
+        if "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â" in v:
+            host_id = v.split("ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â", 1)[0].strip()
         else:
             host_id = v.strip()
         try:
@@ -410,10 +410,10 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         def _reload_list(select_id: str | None = None):
             lst.delete(0, tk.END)
             for h in self._remote_host_configs():
-                lst.insert(tk.END, f"{h.id} — {h.label}")
+                lst.insert(tk.END, f"{h.id} ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â {h.label}")
             if select_id:
                 for i in range(lst.size()):
-                    if lst.get(i).startswith(select_id + " ") or lst.get(i).startswith(select_id + "—") or lst.get(i).startswith(select_id + " —"):
+                    if lst.get(i).startswith(select_id + " ") or lst.get(i).startswith(select_id + "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â") or lst.get(i).startswith(select_id + " ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â"):
                         lst.selection_set(i)
                         break
 
@@ -442,7 +442,7 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
             if not sel:
                 return None
             txt = lst.get(sel[0])
-            return txt.split("—", 1)[0].strip() if "—" in txt else txt.strip()
+            return txt.split("ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â", 1)[0].strip() if "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â" in txt else txt.strip()
 
         def _load_selected(event=None):
             hid = _get_selected_id()
@@ -543,17 +543,29 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         dlg.geometry("760x460")
         dlg.transient(self.root)
 
-        status_var = tk.StringVar(value="Starting…")
+        status_var = tk.StringVar(value="StartingÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦")
         ttk.Label(dlg, textvariable=status_var).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(10, 0))
         pb = ttk.Progressbar(dlg, orient="horizontal", length=400, mode="determinate")
         pb.pack(side=tk.TOP, fill=tk.X, padx=10, pady=6)
 
-        txt = tk.Text(dlg, height=18, wrap="word")
-        txt.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=6)
+        notebook = ttk.Notebook(dlg)
+        notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=6)
+
+        log_tab = ttk.Frame(notebook)
+        eval_tab = ttk.Frame(notebook)
+        notebook.add(log_tab, text="Run log")
+        notebook.add(eval_tab, text="Prediction vs Measurement")
+
+        txt = tk.Text(log_tab, height=18, wrap="word")
+        txt.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         txt.insert("end", f"Remote host: {host.user_host}\n")
         txt.insert("end", f"Suite: {bench_path.parent}\n")
         txt.see("end")
 
+        eval_txt = tk.Text(eval_tab, height=18, wrap="word")
+        eval_txt.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        eval_txt.insert("end", "Local evaluation will appear here after the downloaded results are analyzed.\n")
+        eval_txt.configure(state="disabled")
         btn_row = ttk.Frame(dlg)
         btn_row.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
 
@@ -587,6 +599,20 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
                 # Never crash the UI on logging issues
                 pass
 
+        def _set_eval_text(text: str):
+            if not alive.get("ok", False):
+                return
+            try:
+                eval_txt.configure(state="normal")
+                eval_txt.delete("1.0", "end")
+                eval_txt.insert("end", text)
+                eval_txt.see("1.0")
+                eval_txt.configure(state="disabled")
+                notebook.select(eval_tab)
+            except tk.TclError:
+                alive["ok"] = False
+            except Exception:
+                pass
         def _set_progress(p: float, label: str):
             if not alive.get("ok", False):
                 return
@@ -603,7 +629,7 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
 
         def _on_cancel():
             cancel_event.set()
-            _append("[ui] Cancel requested…")
+            _append("[ui] Cancel requestedÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦")
 
         def _copy_log():
             """Copy current log window content to the clipboard."""
@@ -660,6 +686,23 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
                                 self.root.after(0, _append, line)
                     except Exception as e:
                         self.root.after(0, _append, f"[warn] Could not read status matrix: {e}")
+                    try:
+                        local_dir = Path(str(out.get("local_run_dir") or ""))
+                        eval_summary = local_dir / "evaluation" / "comparison_summary.md"
+                        if eval_summary.exists():
+                            eval_text = eval_summary.read_text(encoding="utf-8")
+                            self.root.after(0, _set_eval_text, eval_text)
+                            self.root.after(0, _append, f"[ui] Local evaluation saved to {eval_summary.parent}")
+                        elif out.get("evaluation"):
+                            eval_info = out.get("evaluation") or {}
+                            summary_lines = ["Prediction vs Measurement", "", f"Rows: {eval_info.get('row_count')}"]
+                            for item in eval_info.get("backend_summaries") or []:
+                                summary_lines.append(
+                                    f"- {item.get('backend')}: ok={item.get('ok_count')} failed={item.get('failed_count')} mae_composed={item.get('mean_abs_error_composed_ms')}"
+                                )
+                            self.root.after(0, _set_eval_text, "\n".join(summary_lines) + "\n")
+                    except Exception as e:
+                        self.root.after(0, _append, f"[warn] Could not read evaluation summary: {e}")
                 else:
                     self.root.after(0, _append, f"[ui] FAILED: {out.get('error')}")
                     self.root.after(0, _set_progress, 1.0, "Failed")
