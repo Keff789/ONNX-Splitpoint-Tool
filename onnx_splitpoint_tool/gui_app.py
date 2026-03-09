@@ -2627,8 +2627,8 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         hailo_backend = (self.var_hailo_backend.get() if hasattr(self, 'var_hailo_backend') else 'auto')
         hailo_backend = (hailo_backend or 'auto').strip().lower()
-        if hailo_backend not in {'auto', 'local', 'wsl'}:
-            raise ValueError("Hailo backend must be one of: auto, local, wsl")
+        if hailo_backend not in {'auto', 'local', 'venv', 'wsl'}:
+            raise ValueError("Hailo backend must be one of: auto, local, venv, wsl")
 
         hailo_wsl_distro = (self.var_hailo_wsl_distro.get() if hasattr(self, 'var_hailo_wsl_distro') else '')
         hailo_wsl_distro = (hailo_wsl_distro or '').strip()
@@ -2636,7 +2636,7 @@ class SplitPointAnalyserGUI(tk.Tk):
             hailo_wsl_distro = None
 
         hailo_wsl_venv_activate = (self.var_hailo_wsl_venv.get() if hasattr(self, 'var_hailo_wsl_venv') else '')
-        hailo_wsl_venv_activate = (hailo_wsl_venv_activate or '').strip() or "~/hailo_dfc_venv/bin/activate"
+        hailo_wsl_venv_activate = (hailo_wsl_venv_activate or '').strip() or "auto"
 
         # Keep this reasonably small to avoid 'stuck' GUI sessions if the backend hangs.
         hailo_wsl_timeout_s = 180
@@ -3499,32 +3499,33 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         hailo_work_root: Optional[Path] = None
         if hailo_enabled:
-            from .hailo_backend import hailo_sdk_available, hailo_wsl_available
+            from .hailo_backend import hailo_probe_auto
 
             if progress_cb:
                 progress_cb("Hailo check enabled: verifying environment…")
 
             backend = str(getattr(p, "hailo_backend", "auto") or "auto").strip().lower()
-            if backend not in {"auto", "local", "wsl"}:
+            if backend not in {"auto", "local", "venv", "wsl"}:
                 backend = "auto"
 
-            have_local = bool(hailo_sdk_available())
-            have_wsl = bool(hailo_wsl_available())
+            probe = hailo_probe_auto(
+                backend=backend,
+                hw_arch=str(getattr(p, "hailo_hw_arch", "hailo8") or "hailo8"),
+                wsl_distro=str(getattr(p, "hailo_wsl_distro", "") or ""),
+                wsl_venv_activate=str(getattr(p, "hailo_wsl_venv_activate", "auto") or "auto"),
+                timeout_s=int(getattr(p, "hailo_wsl_timeout_s", 180) or 180),
+            )
+            hailo_summary["backend_requested"] = backend
+            hailo_summary["backend_resolved"] = str(getattr(probe, "backend", backend) or backend)
+            hailo_summary["probe_reason"] = str(getattr(probe, "reason", "") or "")
+            if getattr(probe, "details", None) is not None:
+                hailo_summary["probe_details"] = probe.details
 
-            if backend == "local" and not have_local:
+            if not bool(getattr(probe, "ok", False)):
+                reason = str(getattr(probe, "reason", "") or "probe failed")
                 raise RuntimeError(
-                    "Hailo check backend is set to 'local', but hailo_sdk_client is not importable in this Python env. "
-                    "Either install the Hailo DFC/SDK into this environment, or switch the backend to 'wsl'."
-                )
-            if backend == "wsl" and not have_wsl:
-                raise RuntimeError(
-                    "Hailo check backend is set to 'wsl', but WSL is not available (wsl.exe not found). "
-                    "Install WSL2 and a Linux distro, or switch backend to 'local'."
-                )
-            if backend == "auto" and not (have_local or have_wsl):
-                raise RuntimeError(
-                    "Hailo check is enabled, but no backend is available. "
-                    "Install hailo_sdk_client in this Python environment, or configure the WSL backend on Windows."
+                    "Hailo check is enabled, but the configured backend is not ready "
+                    f"({backend} -> {getattr(probe, 'backend', backend)}). {reason}"
                 )
 
             if bool(getattr(p, "hailo_keep_artifacts", False)) and getattr(self, "model_path", None):
@@ -3659,7 +3660,10 @@ class SplitPointAnalyserGUI(tk.Tk):
                     if backend_req == "auto":
                         from .hailo_backend import hailo_sdk_available
 
-                        backend_eff = "local" if hailo_sdk_available() else "wsl"
+                        if hailo_sdk_available():
+                            backend_eff = "local"
+                        else:
+                            backend_eff = "wsl" if sys.platform == "win32" else "venv"
                     sha1 = self._sha1_bytes(submodel.SerializeToString())
                     cache_key = f"{backend_eff}|{hw_arch}|fixup={int(fixup)}|{which}|sha1={sha1}"
                     cached = self._hailo_cache_get(cache_key)
@@ -3688,7 +3692,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                 fixup=fixup,
                 save_har=keep,
                 wsl_distro=getattr(p, "hailo_wsl_distro", None),
-                wsl_venv_activate=str(getattr(p, "hailo_wsl_venv_activate", "~/hailo_dfc_venv/bin/activate")),
+                wsl_venv_activate=str(getattr(p, "hailo_wsl_venv_activate", "auto")),
                 wsl_timeout_s=int(getattr(p, "hailo_wsl_timeout_s", 180)),
             )
 

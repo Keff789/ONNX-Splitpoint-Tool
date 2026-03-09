@@ -1612,7 +1612,7 @@ def hailo_parse_check_auto(
         net_name=str(net_name or Path(str(onnx_path)).stem),
         error=(
             "No usable Hailo backend available. "
-            "Install hailo_sdk_client in this Python env, or configure the WSL backend on Windows."
+            "Install hailo_sdk_client in this Python env, or use the managed Hailo DFC venv/backend (auto/venv). On Windows you can also configure the WSL backend."
         ),
     )
 
@@ -3020,6 +3020,6 @@ def hailo_build_hef_auto(
         net_name=str(net_name or Path(str(onnx_path)).stem),
         error=(
             "No usable Hailo backend available. "
-            "Install hailo_sdk_client in this Python env, or configure the WSL backend on Windows."
+            "Install hailo_sdk_client in this Python env, or use the managed Hailo DFC venv/backend (auto/venv). On Windows you can also configure the WSL backend."
         ),
     )

@@ -39,9 +39,9 @@ _HARDWARE_TOOLTIPS = {
     "hailo_fixup": "Wendet ONNX-Fixups vor dem Hailo-Parse an.",
     "hailo_keep": "Behält temporäre Hailo-Artefakte für Debugging.",
     "hailo_target": "Welche Split-Seite mit Hailo geprüft wird.",
-    "hailo_backend": "Backend-Auswahl: auto/local/wsl.",
-    "hailo_wsl_distro": "Optionaler WSL-Distro-Name für Hailo-Backend. Leer lassen = Default-Distro. Tippfehler wie 'Ubuntu_22.04' werden nach Möglichkeit automatisch korrigiert.",
-    "hailo_wsl_venv": "Aktivierungsbefehl für das WSL-Python-Venv mit Hailo SDK. Tipp: 'auto' nutzt die DFC-Profile (Hailo-8 vs Hailo-10) aus resources/hailo/profiles.json.",
+    "hailo_backend": "Backend-Auswahl: auto/local/venv/wsl. Auf Linux nutzt auto typischerweise das verwaltete DFC-Venv; auf Windows den WSL-Bridge-Backend.",
+    "hailo_wsl_distro": "Optionaler WSL-Distro-Name für den Windows/WSL-Hailo-Backend. Unter Linux wird dieses Feld ignoriert. Leer lassen = Default-Distro. Tippfehler wie 'Ubuntu_22.04' werden nach Möglichkeit automatisch korrigiert.",
+    "hailo_wsl_venv": "Optionaler Aktivierungsbefehl/Override für das Hailo-DFC-Venv. Tipp: 'auto' nutzt die verwalteten DFC-Profile (Hailo-8 vs Hailo-10) aus resources/hailo/profiles.json. Unter Linux ist das der bevorzugte Pfad, unter Windows wird es in WSL verwendet.",
     "hailo_status": "Zeigt, ob der Hailo DFC für Hailo-8/Hailo-10 erreichbar ist (automatisch beim Start + Refresh).",
     "hailo_refresh": "Aktualisiert die Hailo-Statusanzeige (Probe).",
     "hailo_clear": "Leert den lokalen Hailo-Parse-Cache.",
@@ -500,7 +500,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
     attach_tooltip(cb_hailo_target, _tt("hailo_target"))
 
     ttk.Label(hailo, text="Backend:").grid(row=1, column=2, sticky="e", pady=(0, 8))
-    cb_hailo_backend = ttk.Combobox(hailo, textvariable=hailo_backend_var, values=["auto", "local", "wsl"], width=10, state="readonly")
+    cb_hailo_backend = ttk.Combobox(hailo, textvariable=hailo_backend_var, values=["auto", "local", "venv", "wsl"], width=10, state="readonly")
     cb_hailo_backend.grid(row=1, column=3, sticky="w", padx=(4, 12), pady=(0, 8))
     attach_tooltip(cb_hailo_backend, _tt("hailo_backend"))
 
@@ -524,7 +524,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
     cb_hailo_distro.grid(row=1, column=5, sticky="w", pady=(0, 8))
     attach_tooltip(cb_hailo_distro, _tt("hailo_wsl_distro"))
 
-    ttk.Label(hailo, text="WSL venv override:").grid(row=2, column=0, sticky="w", padx=(8, 4), pady=(0, 8))
+    ttk.Label(hailo, text="Venv override:").grid(row=2, column=0, sticky="w", padx=(8, 4), pady=(0, 8))
     ent_hailo_venv = ttk.Entry(hailo, textvariable=hailo_wsl_venv_var, width=56)
     ent_hailo_venv.grid(row=2, column=1, columnspan=4, sticky="w", pady=(0, 8))
     attach_tooltip(ent_hailo_venv, _tt("hailo_wsl_venv"))

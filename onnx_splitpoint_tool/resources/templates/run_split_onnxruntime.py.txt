@@ -5561,7 +5561,7 @@ def main() -> int:
     p2_cpu_in_names = [i.name for i in p2_cpu_inputs]
     p2_cpu_in_map: Optional[Dict[str, str]] = None
 
-    def _shape_from_ort_input(ii: object) -> Optional[Tuple[int, ...]]:
+    def _shape_from_ort_input_cpu(ii: object) -> Optional[Tuple[int, ...]]:
         try:
             shp = getattr(ii, 'shape', None)
             if not isinstance(shp, (list, tuple)):
@@ -5582,7 +5582,7 @@ def main() -> int:
             p2_cpu_in_map = _map_inputs_to_outputs(p2_cpu_in_names, list(out1_map.keys()))
 
         out: Dict[str, np.ndarray] = {}
-        p2_shapes: Dict[str, Optional[Tuple[int, ...]]] = {ii.name: _shape_from_ort_input(ii) for ii in p2_cpu_inputs}
+        p2_shapes: Dict[str, Optional[Tuple[int, ...]]] = {ii.name: _shape_from_ort_input_cpu(ii) for ii in p2_cpu_inputs}
         p2_types: Dict[str, str] = {ii.name: str(getattr(ii, 'type', '') or '') for ii in p2_cpu_inputs}
 
         for name in p2_cpu_in_names:
@@ -5992,12 +5992,22 @@ def main() -> int:
             except Exception:
                 _HAS_HARNESS = False
 
-            full_out_dict = {n: a for n, a in zip(output_names, full_out_list)}
-            comp_out_dict = {n: a for n, a in zip(output_names, comp_out_list)}
+            # IMPORTANT: for visualization we must use *actual outputs from this run*,
+            # not the always-present CPU baseline reference used for validation.
+            # Otherwise matrix runs (e.g. TRT->Hailo) end up with misleading
+            # detections_full.* artifacts derived from the CPU baseline.
+            viz_outputs: Dict[str, Dict[str, np.ndarray]] = {}
+            if "full" in variant_outputs:
+                viz_outputs["full"] = {n: a for n, a in zip(output_names, variant_outputs["full"])}
+            if "composed" in variant_outputs:
+                viz_outputs["composed"] = {n: a for n, a in zip(output_names, variant_outputs["composed"])}
 
             def _run_harness(task: str):
                 if not _HAS_HARNESS:
                     return {"enabled": False, "error": "splitpoint_runners.harness unavailable"}
+                if not viz_outputs:
+                    return {"enabled": False, "error": "no renderable variants for visualization"}
+
                 if task == "detection":
                     h = YoloHarness(
                         conf_thresh=float(args.yolo_conf),
@@ -6015,24 +6025,54 @@ def main() -> int:
                     "image_path": str(img_path),
                     "input_hw": tuple(img_hw),
                 }
-                r_full = postprocess_result_to_dict(h.postprocess(full_out_dict, context={**ctx_common, "variant": "full"}))
-                r_comp = postprocess_result_to_dict(
-                    h.postprocess(comp_out_dict, context={**ctx_common, "variant": "composed"})
-                )
 
-                # Contract guardrail: keep the GUI/packaging stable even as
-                # new harnesses are added.
-                contract_error = None
+                # Cleanup guard: if a later variant fails, we must not leave a
+                # misleading partial detections_*.png/.json artifact behind.
+                preexisting = set()
                 try:
-                    validate_postprocess_result_dict(r_full)
-                    validate_postprocess_result_dict(r_comp)
-                except Exception as e:
-                    contract_error = str(e)
+                    preexisting = {
+                        pp.resolve() for pp in list(out_dir.glob("detections_*.png")) + list(out_dir.glob("detections_*.json"))
+                    }
+                except Exception:
+                    preexisting = set()
 
-                result = {"enabled": True, "task": task, "full": r_full, "composed": r_comp}
-                if contract_error:
-                    result["contract_error"] = contract_error
-                return result
+                try:
+                    rendered: Dict[str, Dict[str, object]] = {}
+                    contract_error = None
+                    for variant_name in ("full", "composed"):
+                        out_dict = viz_outputs.get(variant_name)
+                        if not out_dict:
+                            continue
+                        r_var = postprocess_result_to_dict(
+                            h.postprocess(out_dict, context={**ctx_common, "variant": variant_name})
+                        )
+                        try:
+                            validate_postprocess_result_dict(r_var)
+                        except Exception as e:
+                            contract_error = str(e)
+                        rendered[variant_name] = r_var
+
+                    if not rendered:
+                        return {"enabled": False, "error": "no rendered visualization variants"}
+
+                    result = {"enabled": True, "task": task, **rendered, "rendered_variants": list(rendered.keys())}
+                    if contract_error:
+                        result["contract_error"] = contract_error
+                    return result
+                except Exception:
+                    try:
+                        created = [
+                            pp for pp in list(out_dir.glob("detections_*.png")) + list(out_dir.glob("detections_*.json"))
+                            if pp.resolve() not in preexisting
+                        ]
+                        for pp in created:
+                            try:
+                                pp.unlink(missing_ok=True)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    raise
 
             if viz_mode == 'detr':
                 # Keep legacy DETR viz for now.
