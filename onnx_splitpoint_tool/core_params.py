@@ -41,7 +41,6 @@ class Params:
     w_imb: float
     w_tensors: float
     show_pareto_front: bool
-    use_calibration: bool
 
     link_model: str
     bw_value: Optional[float]
@@ -115,7 +114,6 @@ ANALYSIS_GUI_PARAM_MAP: tuple[GuiParamMapping, ...] = (
     GuiParamMapping("var_w_imb", "w_imb", "3.0", "float", "both"),
     GuiParamMapping("var_w_tensors", "w_tensors", "0.2", "float", "both"),
     GuiParamMapping("var_show_pareto", "show_pareto_front", True, "bool", "both"),
-    GuiParamMapping("var_use_calibration", "use_calibration", False, "bool", "both"),
     GuiParamMapping("var_llm_enable", "enable", False, "bool", "llm"),
     GuiParamMapping("var_llm_preset", "preset", "Standard", "choice", "llm"),
     GuiParamMapping("var_llm_mode", "mode", "decode", "choice: decode|prefill", "llm"),

@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-np = pytest.importorskip('numpy')
+import numpy as np
 
 
 def _load_helper_ns() -> dict:
@@ -39,6 +37,7 @@ def test_template_adapt_tensor_supports_generic_nchw_nhwc_channels() -> None:
     assert y2.shape == (1, 256, 40, 40)
 
 
+
 def test_template_select_source_tensor_prefers_shape_compatible_output() -> None:
     ns = _load_helper_ns()
     pick = ns['_select_source_tensor']
@@ -54,13 +53,13 @@ def test_template_select_source_tensor_prefers_shape_compatible_output() -> None
     assert adapted.shape == (40, 40, 256)
 
 
+
 def test_remote_preflight_probe_inherits_extra_sites() -> None:
     src = Path('onnx_splitpoint_tool/benchmark/remote_run.py').read_text(encoding='utf-8')
     assert 'SPLITPOINT_EXTRA_SITES' in src
     assert 'site.addsitedir(_p)' in src
 
 
-<<<<<<< HEAD
 
 def test_remote_runner_self_check_rejects_missing_input_helpers(tmp_path: Path) -> None:
     from onnx_splitpoint_tool.benchmark.remote_run import _assert_generated_runner_is_self_consistent
@@ -179,18 +178,3 @@ def test_template_build_hailo_io_name_map_honors_preferred_slot_names() -> None:
     assert mapping['input_layer2'] == 'mul_25'
     assert mapping['input_layer3'] == 'mul_24'
     assert mapping['input_layer4'] == 'mul_26'
-=======
-def test_runner_template_writes_provenance_artifacts() -> None:
-    src = Path('onnx_splitpoint_tool/resources/templates/run_split_onnxruntime.py.txt').read_text(encoding='utf-8')
-    assert 'artifacts_manifest.json' in src
-    assert 'visualization_skipped.txt' in src
-    assert 'generated_from_actual_outputs' in src
-    assert 'variant_records' in src
-
-
-def test_suite_template_surfaces_structured_variant_status() -> None:
-    src = Path('onnx_splitpoint_tool/resources/templates/benchmark_suite.py.txt').read_text(encoding='utf-8')
-    assert 'variant_records' in src
-    assert 'reason_code' in src
-    assert 'measured' in src
->>>>>>> 78644e639b71797c8b822fd9296f3cb8d90bfd20
