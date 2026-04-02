@@ -807,10 +807,10 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         return self._remote_service.get_selected_host(getattr(self, "remote_hosts", []) or [], sel)
 
     def _remote_hosts_values_for_combo(self):
-        # Combobox values are "<id> — <label>"
+        # Combobox values are "<id> ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â <label>"
         vals = []
         for h in self._remote_host_configs():
-            vals.append(f"{h.id} — {h.label}")
+            vals.append(f"{h.id} ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â {h.label}")
         return vals
 
     def _remote_on_host_combo_selected(self, event=None):
@@ -819,8 +819,8 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
             v = event.widget.get()
         except Exception:
             return
-        if "—" in v:
-            host_id = v.split("—", 1)[0].strip()
+        if "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â" in v:
+            host_id = v.split("ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â", 1)[0].strip()
         else:
             host_id = v.strip()
         try:
@@ -978,10 +978,10 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         def _reload_list(select_id: str | None = None):
             lst.delete(0, tk.END)
             for h in self._remote_host_configs():
-                lst.insert(tk.END, f"{h.id} — {h.label}")
+                lst.insert(tk.END, f"{h.id} ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â {h.label}")
             if select_id:
                 for i in range(lst.size()):
-                    if lst.get(i).startswith(select_id + " ") or lst.get(i).startswith(select_id + "—") or lst.get(i).startswith(select_id + " —"):
+                    if lst.get(i).startswith(select_id + " ") or lst.get(i).startswith(select_id + "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â") or lst.get(i).startswith(select_id + " ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â"):
                         lst.selection_set(i)
                         break
 
@@ -1010,7 +1010,7 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
             if not sel:
                 return None
             txt = lst.get(sel[0])
-            return txt.split("—", 1)[0].strip() if "—" in txt else txt.strip()
+            return txt.split("ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â", 1)[0].strip() if "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â" in txt else txt.strip()
 
         def _load_selected(event=None):
             hid = _get_selected_id()
@@ -1239,7 +1239,43 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
             return
 
         run_id = time.strftime("%Y%m%d_%H%M%S")
+<<<<<<< HEAD
         job_id = f"remote-run-{run_id}"
+=======
+
+        # Progress window (reuse style of split/export)
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Remote benchmark")
+        dlg.geometry("760x460")
+        dlg.transient(self.root)
+
+        status_var = tk.StringVar(value="StartingÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦")
+        ttk.Label(dlg, textvariable=status_var).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(10, 0))
+        pb = ttk.Progressbar(dlg, orient="horizontal", length=400, mode="determinate")
+        pb.pack(side=tk.TOP, fill=tk.X, padx=10, pady=6)
+
+        notebook = ttk.Notebook(dlg)
+        notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=6)
+
+        log_tab = ttk.Frame(notebook)
+        eval_tab = ttk.Frame(notebook)
+        notebook.add(log_tab, text="Run log")
+        notebook.add(eval_tab, text="Prediction vs Measurement")
+
+        txt = tk.Text(log_tab, height=18, wrap="word")
+        txt.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        txt.insert("end", f"Remote host: {host.user_host}\n")
+        txt.insert("end", f"Suite: {bench_path.parent}\n")
+        txt.see("end")
+
+        eval_txt = tk.Text(eval_tab, height=18, wrap="word")
+        eval_txt.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        eval_txt.insert("end", "Local evaluation will appear here after the downloaded results are analyzed.\n")
+        eval_txt.configure(state="disabled")
+        btn_row = ttk.Frame(dlg)
+        btn_row.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
+
+>>>>>>> 78644e639b71797c8b822fd9296f3cb8d90bfd20
         cancel_event = threading.Event()
 
         try:
@@ -1354,6 +1390,7 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
                 callbacks=callbacks,
             )
         except Exception:
+<<<<<<< HEAD
             self._set_background_job_active("remote_run", False)
             self._jobs_finish(job_id, status="error", message="Failed to start remote benchmark thread")
             raise
@@ -1397,6 +1434,134 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
             messagebox.showerror("Remote benchmark", f"Run failed:\n\n{out.get('error')}")
         elif final_kind == "error":
             messagebox.showerror("Remote benchmark", f"Run errored:\n\n{out.get('error')}")
+=======
+            pass
+
+        def _append(line: str):
+            if not alive.get("ok", False):
+                return
+            try:
+                txt.insert("end", line + "\n")
+                txt.see("end")
+            except tk.TclError:
+                alive["ok"] = False
+            except Exception:
+                # Never crash the UI on logging issues
+                pass
+
+        def _set_eval_text(text: str):
+            if not alive.get("ok", False):
+                return
+            try:
+                eval_txt.configure(state="normal")
+                eval_txt.delete("1.0", "end")
+                eval_txt.insert("end", text)
+                eval_txt.see("1.0")
+                eval_txt.configure(state="disabled")
+                notebook.select(eval_tab)
+            except tk.TclError:
+                alive["ok"] = False
+            except Exception:
+                pass
+        def _set_progress(p: float, label: str):
+            if not alive.get("ok", False):
+                return
+            try:
+                status_var.set(label)
+            except Exception:
+                pass
+            try:
+                pb["value"] = max(0.0, min(100.0, p * 100.0))
+            except tk.TclError:
+                alive["ok"] = False
+            except Exception:
+                pass
+
+        def _on_cancel():
+            cancel_event.set()
+            _append("[ui] Cancel requestedÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦")
+
+        def _copy_log():
+            """Copy current log window content to the clipboard."""
+            try:
+                # Ensure the copied log is readable even if the captured output
+                # contained carriage returns (progress-style output) or ANSI
+                # color escape sequences.
+                text = sanitize_log(txt.get("1.0", "end-1c"))
+                dlg.clipboard_clear()
+                dlg.clipboard_append(text)
+                dlg.update_idletasks()
+                _append("[ui] Copied log to clipboard")
+            except Exception as e:
+                _append(f"[ui] Copy log failed: {e}")
+
+        ttk.Button(btn_row, text="Cancel", command=_on_cancel).pack(side=tk.LEFT)
+        ttk.Button(btn_row, text="Copy log", command=_copy_log).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(btn_row, text="Close", command=_on_close).pack(side=tk.RIGHT)
+
+        def _worker():
+            try:
+                args = RemoteBenchmarkArgs(
+                    provider=self.var_remote_provider.get() if hasattr(self, "var_remote_provider") else "auto",
+                    warmup=int(self.var_remote_warmup.get()) if hasattr(self, "var_remote_warmup") else 10,
+                    iters=int(self.var_remote_iters.get()) if hasattr(self, "var_remote_iters") else 100,
+                    repeats=int(self.var_remote_repeats.get()) if hasattr(self, "var_remote_repeats") else 1,
+                    add_args=self.var_remote_add_args.get() if hasattr(self, "var_remote_add_args") else "",
+                    remote_venv=self.var_remote_venv.get() if hasattr(self, "var_remote_venv") else "",
+                    transfer_mode=self.var_remote_transfer_mode.get() if hasattr(self, "var_remote_transfer_mode") else "bundle",
+                    reuse_bundle=bool(self.var_remote_reuse_bundle.get()) if hasattr(self, "var_remote_reuse_bundle") else True,
+                )
+                out = run_remote_benchmark(
+                    host=host,
+                    benchmark_set_json=bench_path,
+                    repeats_idx="1",
+                    local_working_dir=Path(getattr(self, "default_output_dir", ".")),
+                    run_id=run_id,
+                    args=args,
+                    log=lambda s: self.root.after(0, _append, s),
+                    progress=lambda p, lbl: self.root.after(0, _set_progress, p, lbl),
+                    cancel_event=cancel_event,
+                )
+                if out.get("ok"):
+                    self.root.after(0, _append, f"[ui] DONE: results saved to {out.get('local_run_dir')}")
+                    self.root.after(0, _set_progress, 1.0, "Done")
+                    try:
+                        local_dir = Path(str(out.get("local_run_dir") or ""))
+                        matrix_md = local_dir / "results" / "benchmark_suite_status_matrix.md"
+                        if matrix_md.exists():
+                            matrix_text = matrix_md.read_text(encoding="utf-8")
+                            self.root.after(0, _append, "")
+                            self.root.after(0, _append, "--- Status matrix ---")
+                            for line in matrix_text.splitlines():
+                                self.root.after(0, _append, line)
+                    except Exception as e:
+                        self.root.after(0, _append, f"[warn] Could not read status matrix: {e}")
+                    try:
+                        local_dir = Path(str(out.get("local_run_dir") or ""))
+                        eval_summary = local_dir / "evaluation" / "comparison_summary.md"
+                        if eval_summary.exists():
+                            eval_text = eval_summary.read_text(encoding="utf-8")
+                            self.root.after(0, _set_eval_text, eval_text)
+                            self.root.after(0, _append, f"[ui] Local evaluation saved to {eval_summary.parent}")
+                        elif out.get("evaluation"):
+                            eval_info = out.get("evaluation") or {}
+                            summary_lines = ["Prediction vs Measurement", "", f"Rows: {eval_info.get('row_count')}"]
+                            for item in eval_info.get("backend_summaries") or []:
+                                summary_lines.append(
+                                    f"- {item.get('backend')}: ok={item.get('ok_count')} failed={item.get('failed_count')} mae_composed={item.get('mean_abs_error_composed_ms')}"
+                                )
+                            self.root.after(0, _set_eval_text, "\n".join(summary_lines) + "\n")
+                    except Exception as e:
+                        self.root.after(0, _append, f"[warn] Could not read evaluation summary: {e}")
+                else:
+                    self.root.after(0, _append, f"[ui] FAILED: {out.get('error')}")
+                    self.root.after(0, _set_progress, 1.0, "Failed")
+            except Exception as e:
+                self.root.after(0, _append, f"[ui] ERROR: {e}")
+                self.root.after(0, _set_progress, 1.0, "Error")
+
+        threading.Thread(target=_worker, daemon=True).start()
+>>>>>>> 78644e639b71797c8b822fd9296f3cb8d90bfd20
 
 
     def _init_central_notebook(self) -> None:

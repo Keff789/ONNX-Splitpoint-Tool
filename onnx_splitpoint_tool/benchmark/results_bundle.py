@@ -29,11 +29,18 @@ SUITE_LEVEL_PATTERNS: List[str] = [
     "benchmark_results_*.csv",
     "benchmark_summary_*.md",
     "benchmark_table_*.tex",
+    "benchmark_report_*.md",
+    "benchmark_suite_status_matrix.*",
+    "benchmark_plan.json",
+    "benchmark_set.json",
+    "run_meta.json",
+    "preflight.json",
     "analysis_*.pdf",
     "analysis_*.svg",
 ]
 
 
+<<<<<<< HEAD
 LEAN_SUITE_LEVEL_PATTERNS: List[str] = [
     "benchmark_results_*.json",
     "benchmark_results_*.csv",
@@ -42,6 +49,14 @@ LEAN_SUITE_LEVEL_PATTERNS: List[str] = [
     "benchmark_plan.json",
     "benchmark_set.json",
     "run_meta.json",
+=======
+SUITE_LEVEL_DIR_PATTERNS: List[str] = [
+    "analysis_tables",
+    "analysis_plots",
+    "benchmark_tables_*",
+    "paper_figures_*",
+    "logs",
+>>>>>>> 78644e639b71797c8b822fd9296f3cb8d90bfd20
 ]
 
 
@@ -113,8 +128,17 @@ def collect_results_from_suite(suite_dir: Path, dst_results_dir: Path, *, mode: 
 
     for pat in suite_patterns:
         for p in suite_dir.glob(pat):
+<<<<<<< HEAD
             if _copy_if_file(p, dst_results_dir / p.name):
                 copied_files += 1
+=======
+            if p.is_file():
+                shutil.copy2(p, dst_results_dir / p.name)
+    for pat in SUITE_LEVEL_DIR_PATTERNS:
+        for p in suite_dir.glob(pat):
+            if p.is_dir():
+                shutil.copytree(p, dst_results_dir / p.name, dirs_exist_ok=True)
+>>>>>>> 78644e639b71797c8b822fd9296f3cb8d90bfd20
 
     for case_dir in sorted([p for p in suite_dir.iterdir() if p.is_dir() and p.name.startswith('b')]):
         cid = case_dir.name
@@ -186,6 +210,7 @@ def create_results_bundle(results_dir: Path, tar_gz_path: Path, *, mode: BundleM
     tar_gz_path.parent.mkdir(parents=True, exist_ok=True)
 
     with tarfile.open(tar_gz_path, "w:gz") as tf:
+<<<<<<< HEAD
         tf.add(results_dir, arcname=".")
 
 
@@ -219,3 +244,7 @@ def create_results_bundle_from_results_dir(results_dir: Path, tar_gz_path: Path,
         create_results_bundle(tmp_results, tar_gz_path, mode=mode)
     finally:
         shutil.rmtree(tmp_results, ignore_errors=True)
+=======
+        # Use '.' arcname to match the remote bundling behavior.
+        tf.add(results_dir, arcname=".")
+>>>>>>> 78644e639b71797c8b822fd9296f3cb8d90bfd20

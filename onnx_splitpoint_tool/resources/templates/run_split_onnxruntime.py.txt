@@ -16,8 +16,12 @@ import ast
 import hashlib
 import json
 import os
+<<<<<<< HEAD
 import queue
 import re
+=======
+import shutil
+>>>>>>> 78644e639b71797c8b822fd9296f3cb8d90bfd20
 import sys
 import threading
 import time
@@ -1142,7 +1146,7 @@ if _HAS_SPLITPOINT_RUNNERS:
             return self._sess
 
         def run(self, prepared: "ort.InferenceSession", inputs: Dict[str, np.ndarray]) -> _SP_BackendRunOut:
-            # ORT is strict about unknown input names → filter.
+            # ORT is strict about unknown input names ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ filter.
             feeds = {k: v for k, v in inputs.items() if k in self._input_names}
             out_list = prepared.run(None, feeds)
             out_map = {n: np.asarray(a) for n, a in zip(self._output_names, out_list)}
@@ -1200,6 +1204,82 @@ def _write_json(path: Path, obj: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(obj, f, indent=2, ensure_ascii=False)
+
+
+def _write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def _clear_dir_contents(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    for child in path.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            try:
+                child.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _reason_code_from_text(detail: Any, default: str = "runtime_fail") -> str:
+    text = str(detail or "").lower()
+    if not text:
+        return default
+    if "parse" in text:
+        return "parse_fail"
+    if "provider" in text or "executionprovider" in text or "not available" in text:
+        return "backend_unavailable"
+    if "dtype" in text:
+        return "dtype_mismatch"
+    if "adapt" in text or "adapter" in text:
+        return "shape_adapter_fail"
+    if "validation" in text or "elementwise" in text or "proxy" in text:
+        return "validation_fail"
+    if "no outputs" in text or "missing outputs" in text:
+        return "no_outputs"
+    if "visualization" in text or "render" in text:
+        return "visualization_fail"
+    return default
+
+
+def _artifact_backend_label(variant: str, full_tok: str, stage1_tok: str, stage2_tok: str) -> str:
+    if variant == "full":
+        return str(full_tok or "full")
+    if variant == "part1":
+        return str(stage1_tok or "stage1")
+    if variant == "part2":
+        return str(stage2_tok or "stage2")
+    if variant == "composed":
+        left = str(stage1_tok or "stage1")
+        right = str(stage2_tok or "stage2")
+        return left if left == right else f"{left}->{right}"
+    return str(variant)
+
+
+def _build_artifact_record(
+    *,
+    variant_id: str,
+    artifact_type: str,
+    generated_from_outputs: bool,
+    source_backend: Optional[str],
+    source_case: Optional[str],
+    validation_pass: Optional[bool],
+    output_hash: Optional[str],
+    input_hash: Optional[str],
+) -> dict:
+    return {
+        "variant_id": str(variant_id),
+        "artifact_type": str(artifact_type),
+        "generated_from_outputs": bool(generated_from_outputs),
+        "source_backend": source_backend,
+        "source_case": source_case,
+        "validation_pass": validation_pass,
+        "output_hash": output_hash,
+        "input_hash": input_hash,
+    }
 
 
 def _now_ts() -> str:
@@ -4472,7 +4552,7 @@ def _is_yolo_ultralytics_regcls(outputs: List[np.ndarray], output_names: List[st
 
 
 def _detect_output_format(output_names: List[str], outputs: List[np.ndarray]) -> str:
-    # Keep this super defensive — it must never crash.
+    # Keep this super defensive ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â it must never crash.
     try:
         if _is_yolo_multiscale(outputs):
             return "multiscale_head"
@@ -5391,8 +5471,10 @@ def main() -> int:
     out_dir = Path(args.out_dir)
     if not out_dir.is_absolute():
         out_dir = base_dir / out_dir
-    out_dir.mkdir(parents=True, exist_ok=True)
-
+    if out_dir.exists():
+        _clear_dir_contents(out_dir)
+    else:
+        out_dir.mkdir(parents=True, exist_ok=True)
     manifest = _read_json(manifest_path)
 
     part1_cut_names_manifest = [str(x) for x in (manifest.get("part1_cut_names") or [])]
@@ -6692,11 +6774,11 @@ def main() -> int:
     def _fmt(x: Optional[float]) -> str:
         return "-" if x is None else f"{x:.3f}"
 
-    print("\nBenchmark results (mean ± std, ms):")
-    print(f"  full    : {_fmt(full_mean)} ± {_fmt(full_std)}")
-    print(f"  part1   : {_fmt(p1_mean)} ± {_fmt(p1_std)}")
-    print(f"  part2   : {_fmt(p2_mean)} ± {_fmt(p2_std)}")
-    print(f"  composed: {_fmt(comp_mean)} ± {_fmt(comp_std)}")
+    print("\nBenchmark results (mean ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â± std, ms):")
+    print(f"  full    : {_fmt(full_mean)} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â± {_fmt(full_std)}")
+    print(f"  part1   : {_fmt(p1_mean)} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â± {_fmt(p1_std)}")
+    print(f"  part2   : {_fmt(p2_mean)} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â± {_fmt(p2_std)}")
+    print(f"  composed: {_fmt(comp_mean)} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â± {_fmt(comp_std)}")
 
     if p1_mean is not None and p2_mean is not None and comp_mean is not None:
         sum_parts = p1_mean + p2_mean
@@ -7375,6 +7457,45 @@ def main() -> int:
 
     print(f"[validation] mode={args.validation_mode} used(primary={primary_variant})={mode_used} final_pass={final_pass} final_pass_all={final_pass_all}")
 
+    variant_output_hashes: Dict[str, Optional[str]] = {}
+    variant_records: Dict[str, Dict[str, Any]] = {}
+    timing_by_variant = {
+        "full": full_mean,
+        "part1": p1_mean,
+        "part2": p2_mean,
+        "composed": comp_mean,
+    }
+    for v in ALL_VARIANTS:
+        if v in variant_outputs:
+            try:
+                variant_output_hashes[v] = _fingerprint_tensors({name: arr for name, arr in zip(output_names, variant_outputs[v])})
+            except Exception:
+                variant_output_hashes[v] = None
+        else:
+            variant_output_hashes[v] = None
+        comp_v = comparisons.get(v) or {}
+        detail = comp_v.get("error") or variant_output_errors.get(v) or variant_errors.get(v) or ""
+        status_v = str(comp_v.get("status") or variant_status.get(v) or ("ok" if v in variant_outputs else "missing"))
+        if status_v == "missing" and v in variant_outputs:
+            status_v = "ok"
+        if status_v == "ok":
+            reason_code_v = ""
+        elif status_v == "missing":
+            reason_code_v = _reason_code_from_text(detail, default="missing")
+        elif status_v == "skipped":
+            reason_code_v = _reason_code_from_text(detail, default="backend_unavailable")
+        else:
+            reason_code_v = _reason_code_from_text(detail, default="runtime_fail")
+        variant_records[v] = {
+            "status": status_v,
+            "reason_code": reason_code_v,
+            "reason_detail": (str(detail) if detail else ""),
+            "measured": bool(timing_by_variant.get(v) is not None),
+            "validation_mode": comp_v.get("validation_mode_used") or "off",
+            "validation_pass": comp_v.get("passed"),
+            "output_hash": variant_output_hashes.get(v),
+        }
+
     requested_variants = list(variants)
     measured_variants_actual = [v for v in requested_variants if variant_status.get(v) != "skipped"]
     skipped_variants = [v for v in requested_variants if variant_status.get(v) == "skipped"]
@@ -7384,6 +7505,10 @@ def main() -> int:
         timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
         run_cfg=run_cfg,
         plan=plan,
+        suite_id=str(base_dir.parent.name),
+        candidate_id=str(manifest.get('candidate_id') or manifest.get('case_id') or base_dir.name),
+        case_id=str(manifest.get('case_id') or base_dir.name),
+        split_id=str(manifest.get('split_id') or manifest.get('boundary') or base_dir.name),
         baseline={
             "variant": "full",
             "provider": "cpu",
@@ -7412,6 +7537,8 @@ def main() -> int:
         variant_status=variant_status,
         variant_errors=variant_errors,
         variant_output_errors=variant_output_errors,
+        variant_records=variant_records,
+        input_hash=str(inputs_fp),
         comparisons=comparisons,
         timings=dict(
             full=dict(
@@ -7774,17 +7901,86 @@ def main() -> int:
             warn_list.append(warn)
             report['viz'] = {'enabled': False, 'error': str(e)}
 
+<<<<<<< HEAD
         try:
             report['viz'] = _finalize_viz_result(report.get('viz'))
         except Exception:
             pass
 
+=======
+    viz_report = report.get("viz") if isinstance(report.get("viz"), dict) else {"enabled": False, "error": "visualization disabled"}
+    report["viz"] = viz_report
+    viz_validation_pass = None
+    for preferred_variant in ("composed", "full"):
+        record = variant_records.get(preferred_variant) or {}
+        if record.get("validation_pass") is not None:
+            viz_validation_pass = record.get("validation_pass")
+            break
+    viz_report.setdefault("generated_from_actual_outputs", bool(viz_report.get("enabled")))
+    viz_report.setdefault("validation_pass", viz_validation_pass)
+    if not bool(viz_report.get("enabled")):
+        _write_text(out_dir / "visualization_skipped.txt", str(viz_report.get("error") or "visualization skipped") + "\n")
+
+    artifact_records: List[Dict[str, Any]] = []
+    source_case = str(manifest.get("case_id") or base_dir.name)
+    artifact_name_map = {
+        "full": [
+            ("detections_full.png", "detection_png"),
+            ("detections_full.json", "detection_json"),
+            ("classification_full.png", "classification_png"),
+            ("classification_full.json", "classification_json"),
+        ],
+        "composed": [
+            ("detections_composed.png", "detection_png"),
+            ("detections_composed.json", "detection_json"),
+            ("classification_composed.png", "classification_png"),
+            ("classification_composed.json", "classification_json"),
+        ],
+    }
+    for variant_name, file_defs in artifact_name_map.items():
+        backend_label = _artifact_backend_label(variant_name, full_tok, stage1_tok, stage2_tok)
+        validation_pass = (variant_records.get(variant_name) or {}).get("validation_pass")
+        output_hash = variant_output_hashes.get(variant_name)
+        generated_any = False
+        for file_name, artifact_type in file_defs:
+            artifact_path = out_dir / file_name
+            if not artifact_path.exists():
+                continue
+            generated_any = True
+            artifact_records.append(
+                _build_artifact_record(
+                    variant_id=variant_name,
+                    artifact_type=artifact_type,
+                    generated_from_outputs=bool(variant_name in variant_outputs),
+                    source_backend=backend_label,
+                    source_case=source_case,
+                    validation_pass=validation_pass,
+                    output_hash=output_hash,
+                    input_hash=str(inputs_fp),
+                )
+            )
+        artifact_records.append(
+            _build_artifact_record(
+                variant_id=variant_name,
+                artifact_type="visualization",
+                generated_from_outputs=bool(generated_any and variant_name in variant_outputs),
+                source_backend=backend_label,
+                source_case=source_case,
+                validation_pass=validation_pass,
+                output_hash=output_hash,
+                input_hash=str(inputs_fp),
+            )
+        )
+    _write_json(out_dir / "artifacts_manifest.json", {"schema_version": 1, "artifacts": artifact_records})
+    report.setdefault("artifacts", {})
+    report["artifacts"]["artifacts_manifest_json"] = "artifacts_manifest.json"
+>>>>>>> 78644e639b71797c8b822fd9296f3cb8d90bfd20
     # Rewrite report if viz added/updated
     with open(report_path, "w") as f:
         json.dump(report, f, indent=2)
 
     if not final_pass:
-        print(f"[warn] validation failed (mode={mode_used}, output_format={output_format}) — continuing (soft-fail).")
+        print(f"[warn] validation failed (mode={mode_used}, output_format={output_format}) ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â continuing (soft-fail).")
 
     # Soft-fail policy: validation mismatch is a WARNING, not a hard failure.
     return 0

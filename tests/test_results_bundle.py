@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tarfile
 from pathlib import Path
 
@@ -18,7 +19,11 @@ def test_results_bundle_contains_postprocess_artifacts(tmp_path: Path) -> None:
 
     # Minimal expected artifacts.
     (out_dir / "validation_report.json").write_text("{}", encoding="utf-8")
-    (out_dir / "detections_full.json").write_text("{\"detections\": []}", encoding="utf-8")
+    (out_dir / "detections_full.json").write_text('{"detections": []}', encoding="utf-8")
+    (suite_dir / "benchmark_suite_status_matrix.json").write_text(json.dumps([{"status": "ok"}]), encoding="utf-8")
+    tables_dir = suite_dir / "analysis_tables"
+    tables_dir.mkdir(parents=True)
+    (tables_dir / "prediction_snapshot.json").write_text(json.dumps({"rows": []}), encoding="utf-8")
 
     # Collect into a results dir and then bundle.
     results_dir = tmp_path / "results"
@@ -34,3 +39,5 @@ def test_results_bundle_contains_postprocess_artifacts(tmp_path: Path) -> None:
     # We used arcname='.' so paths will be relative to '.' in the archive.
     assert any(name.endswith("b001/results_cpu/validation_report.json") for name in names)
     assert any(name.endswith("b001/results_cpu/detections_full.json") for name in names)
+    assert any(name.endswith("analysis_tables/prediction_snapshot.json") for name in names)
+    assert any(name.endswith("benchmark_suite_status_matrix.json") for name in names)

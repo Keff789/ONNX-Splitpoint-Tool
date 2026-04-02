@@ -537,11 +537,11 @@ def _write_summary_md(path: Path, rows: List[Dict[str, Any]], tag: str, objectiv
     lines.append(f"# Benchmark summary: {tag}\n")
     lines.append(f"- Objective: **{objective}** (lower is better)\n")
     lines.append("## Compute-model plausibility (FLOPs vs measured time)\n")
-    lines.append(f"- Left:  Pearson r = {_fmt(rL,2)},  R^2 = {_fmt(r2L,2)},  fit: t(ms) ≈ {_fmt(aL,3)}·GFLOPs + {_fmt(bL,3)}\n")
-    lines.append(f"- Right: Pearson r = {_fmt(rR,2)},  R^2 = {_fmt(r2R,2)},  fit: t(ms) ≈ {_fmt(aR,3)}·GFLOPs + {_fmt(bR,3)}\n")
+    lines.append(f"- Left:  Pearson r = {_fmt(rL,2)},  R^2 = {_fmt(r2L,2)},  fit: t(ms) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€¹Ã¢â‚¬Â  {_fmt(aL,3)}ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â·GFLOPs + {_fmt(bL,3)}\n")
+    lines.append(f"- Right: Pearson r = {_fmt(rR,2)},  R^2 = {_fmt(r2R,2)},  fit: t(ms) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€¹Ã¢â‚¬Â  {_fmt(aR,3)}ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â·GFLOPs + {_fmt(bR,3)}\n")
     lines.append("## Ranking agreement (predicted score vs measured objective time)\n")
-    lines.append(f"- Spearman ρ = {_fmt(sp,2)}\n")
-    lines.append(f"- Kendall τ = {_fmt(kt,2)}\n")
+    lines.append(f"- Spearman ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â = {_fmt(sp,2)}\n")
+    lines.append(f"- Kendall ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ = {_fmt(kt,2)}\n")
     lines.append(f"- Top-{k} overlap = {overlap}/{k} = {_fmt(overlap_ratio,2)}\n")
     lines.append("## Measurement noise\n")
     lines.append(f"- Median CV(composed) = {_fmt(cv_comp_med,2)} %\n")
@@ -553,7 +553,7 @@ def _write_summary_md(path: Path, rows: List[Dict[str, Any]], tag: str, objectiv
             f"| {r.get('boundary','-')} | {_fmt(r.get('cut_mib'),3)} | {r.get('n_cut_tensors','-')} | "
             f"{_fmt(r.get('full_mean_ms'),2)} | {_fmt(r.get('composed_mean_ms'),2)} | "
             f"{_fmt(r.get('sum_parts_ms'),2)} | {_fmt(r.get('overhead_ms'),2)} | "
-            f"{'✅' if r.get('final_pass', r.get('eps_pass')) else '❌'} |\n"
+            f"{'ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦' if r.get('final_pass', r.get('eps_pass')) else 'ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢'} |\n"
         )
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -748,10 +748,10 @@ def _agg_status(values: List[str]) -> str:
 
 def _status_symbol(status: str) -> str:
     return {
-        "ok": "✅",
-        "error": "❌",
-        "skipped": "⏭️",
-        "missing": "—",
+        "ok": "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦",
+        "error": "ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢",
+        "skipped": "ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â­ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â",
+        "missing": "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â",
     }.get(status, status)
 
 def _write_status_matrix(root: Path, planned_runs: List[Dict[str, Any]]) -> None:
@@ -768,19 +768,33 @@ def _write_status_matrix(root: Path, planned_runs: List[Dict[str, Any]]) -> None
         stage2 = _resolve_stage_token(run.get("stage2")) or run.get("provider", "")
         res_path = root / f"benchmark_results_{tag}.json"
         agg: Dict[str, str] = {k: "missing" for k in _STATUS_VARIANTS}
+        agg_reason: Dict[str, str] = {k: "" for k in _STATUS_VARIANTS}
+        agg_measured: Dict[str, bool] = {k: False for k in _STATUS_VARIANTS}
         if res_path.exists():
             try:
                 data = _read_json(res_path)
                 if isinstance(data, list):
                     for k in _STATUS_VARIANTS:
                         vals: List[str] = []
+                        reasons: List[str] = []
+                        measured_vals: List[bool] = []
                         for rec in data:
                             if not isinstance(rec, dict):
+                                continue
+                            vr = rec.get("variant_records")
+                            if isinstance(vr, dict) and isinstance(vr.get(k), dict):
+                                vals.append(str(vr[k].get("status") or ""))
+                                if vr[k].get("reason_code"):
+                                    reasons.append(str(vr[k].get("reason_code") or ""))
+                                if vr[k].get("measured") is not None:
+                                    measured_vals.append(bool(vr[k].get("measured")))
                                 continue
                             vs = rec.get("variant_status")
                             if isinstance(vs, dict) and k in vs:
                                 vals.append(str(vs.get(k) or ""))
                         agg[k] = _agg_status(vals)
+                        agg_reason[k] = reasons[0] if reasons else ""
+                        agg_measured[k] = any(measured_vals)
             except Exception:
                 # Keep defaults if parsing fails
                 pass
@@ -793,6 +807,9 @@ def _write_status_matrix(root: Path, planned_runs: List[Dict[str, Any]]) -> None
             "stage2": str(stage2),
         }
         row.update(agg)
+        for key in _STATUS_VARIANTS:
+            row[f"{key}_reason_code"] = agg_reason.get(key) or ""
+            row[f"{key}_measured"] = bool(agg_measured.get(key))
         rows_out.append(row)
 
     _write_json(root / "benchmark_suite_status_matrix.json", rows_out)
@@ -800,14 +817,20 @@ def _write_status_matrix(root: Path, planned_runs: List[Dict[str, Any]]) -> None
     csv_path = root / "benchmark_suite_status_matrix.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["run", "type", "stage1", "stage2"] + _STATUS_VARIANTS)
+        extra_cols: List[str] = []
+        for key in _STATUS_VARIANTS:
+            extra_cols.extend([f"{key}_reason_code", f"{key}_measured"])
+        w.writerow(["run", "type", "stage1", "stage2"] + _STATUS_VARIANTS + extra_cols)
         for r in rows_out:
-            w.writerow([r["run"], r["type"], r["stage1"], r["stage2"]] + [r[k] for k in _STATUS_VARIANTS])
-
+            w.writerow(
+                [r["run"], r["type"], r["stage1"], r["stage2"]]
+                + [r[k] for k in _STATUS_VARIANTS]
+                + [r.get(col) for col in extra_cols]
+            )
     md_path = root / "benchmark_suite_status_matrix.md"
     lines: List[str] = []
     lines.append("# Benchmark suite status matrix\n")
-    lines.append("Legend: ✅ ok, ❌ error, ⏭️ skipped, — missing\n")
+    lines.append("Legend: ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ ok, ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ error, ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â­ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â skipped, ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â missing\n")
     lines.append("| run | type | stage1 | stage2 | full | part1 | part2 | composed |")
     lines.append("|---|---|---|---|---|---|---|---|")
     for r in rows_out:
@@ -1014,8 +1037,8 @@ def _collect_case_result(case_dir: Path, out_dir_name: str, run_id: str, provide
 
     r.setdefault("provider", provider)
     r.setdefault("image_scale", image_scale)
-    return r
 
+<<<<<<< HEAD
 
 def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: str, image_scale: str, warmup: int, runs: int, timeout_s: Optional[int], stage1: Optional[str] = None, stage2: Optional[str] = None, variants: Optional[List[str]] = None, case_meta: Optional[Dict[str, Any]] = None, *, resume: bool = False, verbose_runs: bool = False, progress_every: int = 25, trt_cache_root: Optional[str] = None, throughput_frames: int = 24, throughput_warmup_frames: int = 6, throughput_queue_depth: int = 2, validation_images: Optional[str] = None, validation_max_images: int = 0) -> Optional[Dict[str, Any]]:
     # Each case contains run_split_onnxruntime.py
@@ -1127,6 +1150,58 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
         runner_rc=rc,
     )
 
+=======
+    variant_records = r.get("variant_records")
+    if not isinstance(variant_records, dict):
+        variant_records = {}
+    if not variant_records:
+        variant_status = r.get("variant_status") if isinstance(r.get("variant_status"), dict) else {}
+        variant_errors = r.get("variant_errors") if isinstance(r.get("variant_errors"), dict) else {}
+        variant_output_errors = r.get("variant_output_errors") if isinstance(r.get("variant_output_errors"), dict) else {}
+        for key in _STATUS_VARIANTS:
+            detail = variant_output_errors.get(key) or variant_errors.get(key) or ""
+            variant_records[key] = {
+                "status": str(variant_status.get(key) or ("ok" if r.get(f"{key}_mean_ms") is not None else "missing")),
+                "reason_code": "" if not detail else str(detail),
+                "reason_detail": str(detail),
+                "measured": bool(r.get(f"{key}_mean_ms") is not None),
+                "validation_mode": "off",
+                "validation_pass": None,
+            }
+    r["variant_records"] = variant_records
+
+    primary_variant = str(r.get("primary_variant") or "").strip() or "composed"
+    primary_record = variant_records.get(primary_variant) if isinstance(variant_records, dict) else None
+    if not isinstance(primary_record, dict) or not primary_record:
+        for fallback_variant in ("composed", "full", "part2", "part1"):
+            candidate_record = variant_records.get(fallback_variant)
+            if isinstance(candidate_record, dict) and candidate_record:
+                primary_variant = fallback_variant
+                primary_record = candidate_record
+                break
+    primary_record = primary_record or {}
+
+    r.setdefault("suite_id", str(r.get("suite_id") or case_dir.parent.name))
+    r.setdefault("candidate_id", str(r.get("candidate_id") or r.get("case_id") or case_dir.name))
+    r.setdefault("case_id", str(r.get("case_id") or case_dir.name))
+    r.setdefault("split_id", str(r.get("split_id") or r.get("candidate_id") or case_dir.name))
+    r["variant_id"] = str(r.get("variant_id") or run_id)
+    r["backend_stage1"] = str(r.get("backend_stage1") or stage1 or provider)
+    r["backend_stage2"] = str(r.get("backend_stage2") or stage2 or provider)
+    r["status"] = str(primary_record.get("status") or "missing")
+    r["reason_code"] = str(primary_record.get("reason_code") or "")
+    r["reason_detail"] = str(primary_record.get("reason_detail") or "")
+    r["validation_mode"] = str(primary_record.get("validation_mode") or r.get("validation_mode_used") or "off")
+    r["validation_pass"] = primary_record.get("validation_pass")
+    r["measured"] = bool(any(bool((variant_records.get(key) or {}).get("measured")) for key in _STATUS_VARIANTS))
+    r["measured_full_ms"] = r.get("full_mean_ms")
+    r["measured_part1_ms"] = r.get("part1_mean_ms")
+    r["measured_part2_ms"] = r.get("part2_mean_ms")
+    r["measured_composed_ms"] = r.get("composed_mean_ms")
+    r["measured_overhead_ms"] = r.get("overhead_ms")
+    r["artifacts_present"] = bool((case_dir / out_dir_name / "artifacts_manifest.json").exists() or r.get("artifacts"))
+    return r
+>>>>>>> 78644e639b71797c8b822fd9296f3cb8d90bfd20
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--provider", default="auto", choices=["auto", "cpu", "cuda", "tensorrt"], help="Execution provider to use (single-run mode).")
