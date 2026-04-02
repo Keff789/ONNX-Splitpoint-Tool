@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from ... import api as asc
+from ...hailo.backend_mode import backend_display_values
 from ..widgets.tooltip import attach_tooltip
 from ..widgets.status_badge import StatusBadge
 
@@ -35,11 +36,11 @@ _HARDWARE_TOOLTIPS = {
     "peak_right_unit": "Einheit des rechten Peak-Aktivierungslimits.",
     "hailo_enable": "Aktiviert Parse-Checks für Top-Kandidaten gegen den Hailo-Compiler.",
     "hailo_hw": "Ziel-Hailo-Architektur für den Parse-Check.",
-    "hailo_max": "Maximale Anzahl Kandidaten, die mit Hailo geprüft werden.",
+    "hailo_max": "Maximale Anzahl Kandidaten, die zusätzlich mit Hailo geprüft werden. Danach läuft die Top-K-Auswahl ohne weitere Hailo-Checks weiter. Leer/auto = folgt Top-k.",
     "hailo_fixup": "Wendet ONNX-Fixups vor dem Hailo-Parse an.",
     "hailo_keep": "Behält temporäre Hailo-Artefakte für Debugging.",
     "hailo_target": "Welche Split-Seite mit Hailo geprüft wird.",
-    "hailo_backend": "Backend-Auswahl: auto/local/venv/wsl. Auf Linux nutzt auto typischerweise das verwaltete DFC-Venv; auf Windows den WSL-Bridge-Backend.",
+    "hailo_backend": "Backend-Auswahl: auto/subprocess/local/venv/wsl. subprocess erzwingt immer den Subprozess-Backend (Linux: verwaltetes DFC-Venv, Windows: WSL-Bridge).",
     "hailo_wsl_distro": "Optionaler WSL-Distro-Name für den Windows/WSL-Hailo-Backend. Unter Linux wird dieses Feld ignoriert. Leer lassen = Default-Distro. Tippfehler wie 'Ubuntu_22.04' werden nach Möglichkeit automatisch korrigiert.",
     "hailo_wsl_venv": "Optionaler Aktivierungsbefehl/Override für das Hailo-DFC-Venv. Tipp: 'auto' nutzt die verwalteten DFC-Profile (Hailo-8 vs Hailo-10) aus resources/hailo/profiles.json. Unter Linux ist das der bevorzugte Pfad, unter Windows wird es in WSL verwendet.",
     "hailo_status": "Zeigt, ob der Hailo DFC für Hailo-8/Hailo-10 erreichbar ist (automatisch beim Start + Refresh).",
@@ -451,10 +452,10 @@ def build_panel(parent, app=None) -> ttk.Frame:
 
     hailo_check_var = _bool_var(app, "var_hailo_check", False)
     hailo_hw_var = _str_var(app, "var_hailo_hw_arch", "hailo8")
-    hailo_max_var = _str_var(app, "var_hailo_max_checks", "25")
+    hailo_max_var = _str_var(app, "var_hailo_max_checks", "auto")
     hailo_fixup_var = _bool_var(app, "var_hailo_fixup", True)
     hailo_keep_var = _bool_var(app, "var_hailo_keep", False)
-    hailo_target_var = _str_var(app, "var_hailo_target", "either")
+    hailo_target_var = _str_var(app, "var_hailo_target", "part2")
     hailo_backend_var = _str_var(app, "var_hailo_backend", "auto")
     hailo_wsl_distro_var = _str_var(app, "var_hailo_wsl_distro", "")
     hailo_wsl_venv_var = _str_var(app, "var_hailo_wsl_venv", "auto")
@@ -481,7 +482,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
     cb_hailo_hw.grid(row=0, column=2, sticky="w", padx=(4, 12), pady=8)
     attach_tooltip(cb_hailo_hw, _tt("hailo_hw"))
 
-    ttk.Label(hailo, text="Max checks:").grid(row=0, column=3, sticky="e", pady=8)
+    ttk.Label(hailo, text="Max Hailo checks:").grid(row=0, column=3, sticky="e", pady=8)
     ent_hailo_max = ttk.Entry(hailo, textvariable=hailo_max_var, width=8)
     ent_hailo_max.grid(row=0, column=4, sticky="w", padx=(4, 12), pady=8)
     attach_tooltip(ent_hailo_max, _tt("hailo_max"))
@@ -500,7 +501,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
     attach_tooltip(cb_hailo_target, _tt("hailo_target"))
 
     ttk.Label(hailo, text="Backend:").grid(row=1, column=2, sticky="e", pady=(0, 8))
-    cb_hailo_backend = ttk.Combobox(hailo, textvariable=hailo_backend_var, values=["auto", "local", "venv", "wsl"], width=10, state="readonly")
+    cb_hailo_backend = ttk.Combobox(hailo, textvariable=hailo_backend_var, values=list(backend_display_values()), width=12, state="readonly")
     cb_hailo_backend.grid(row=1, column=3, sticky="w", padx=(4, 12), pady=(0, 8))
     attach_tooltip(cb_hailo_backend, _tt("hailo_backend"))
 

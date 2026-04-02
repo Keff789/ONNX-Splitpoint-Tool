@@ -1,0 +1,245 @@
+{
+  "accelerators": [
+    {
+      "id": "jetson_xavier_nx_8gb",
+      "name": "Jetson Xavier NX (8GB)",
+      "ram_limit_mb": 8192,
+      "runtime_overhead_mb": 400,
+      "perf": {
+        "tops_int8": 21,
+        "gflops_fp16": 0,
+        "efficiency_factor": 0.7
+      },
+      "category": "soc_module",
+      "compute": {
+        "ai_tops_int8_peak": 21,
+        "ai_tops_int8_power_modes": {
+          "10W": 14,
+          "15W": 21,
+          "20W": 21
+        }
+      },
+      "memory": {
+        "external_dram": {
+          "type": "LPDDR4x",
+          "size_mb": 8192,
+          "bandwidth_gb_s": 59.7
+        },
+        "on_chip_memory": {
+          "l2_cache_mb": 6,
+          "l3_cache_mb": 4
+        }
+      },
+      "precision": {
+        "supported": ["FP32", "FP16", "INT8"],
+        "preferred_default": "FP16",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8 (wenn kalibrierbar), sonst FP16",
+          "transformer_llm_vlm": "FP16",
+          "classical_cv_prepost": "FP32/FP16 auf CPU/GPU"
+        },
+        "notes": "Auf Jetson ist FP16 meist der Kompatibilitäts-/Performance-Sweet-Spot; INT8 liefert maximalen Durchsatz, braucht aber Quantisierung."
+      }
+    },
+    {
+      "id": "jetson_orin_nx_8gb",
+      "name": "Jetson Orin NX (8GB)",
+      "ram_limit_mb": 8192,
+      "runtime_overhead_mb": 500,
+      "perf": {
+        "tops_int8": 70,
+        "tops_int8_maxn_super": 117,
+        "efficiency_factor": 0.75
+      },
+      "memory": {
+        "external_dram": {
+          "type": "LPDDR5",
+          "size_mb": 8192,
+          "bandwidth_gb_s": 102.4
+        }
+      },
+      "precision": {
+        "supported": ["FP32", "TF32", "FP16", "INT8"],
+        "preferred_default": "FP16",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8 (ggf. sparsity), sonst FP16",
+          "transformer_llm_vlm": "FP16 (oder INT8/INT4 weight-only)",
+          "diffusion": "FP16"
+        },
+        "notes": "TensorRT auf Orin nutzt typischerweise FP16/INT8; TF32 hilft bei FP32-Workloads. Weight-only Quantisierung spart Speicher bei LLMs."
+      }
+    },
+    {
+      "id": "jetson_orin_nx_16gb",
+      "name": "Jetson Orin NX (16GB)",
+      "ram_limit_mb": 16384,
+      "runtime_overhead_mb": 700,
+      "perf": {
+        "tops_int8": 100,
+        "tops_int8_maxn_super": 157,
+        "efficiency_factor": 0.75
+      },
+      "memory": {
+        "external_dram": {
+          "type": "LPDDR5",
+          "size_mb": 16384,
+          "bandwidth_gb_s": 102.4
+        }
+      },
+      "precision": {
+        "supported": ["FP32", "TF32", "FP16", "INT8"],
+        "preferred_default": "FP16",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8 (ggf. sparsity), sonst FP16",
+          "transformer_llm_vlm": "FP16 (oder INT8/INT4 weight-only)",
+          "diffusion": "FP16"
+        }
+      }
+    },
+    {
+      "id": "hailo_8",
+      "name": "Hailo-8",
+      "ram_limit_mb": 4096,
+      "runtime_overhead_mb": 256,
+      "perf": {
+        "tops_int8": 26,
+        "efficiency_factor": 0.6
+      },
+      "precision": {
+        "supported": ["INT8"],
+        "preferred_default": "INT8",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8",
+          "transformer_llm_vlm": "Nicht primär (INT8)"
+        },
+        "notes": "Hailo-8 ist nativ auf INT8 quantisierte Inferenz ausgelegt."
+      }
+    },
+    {
+      "id": "hailo_10h",
+      "name": "Hailo-10H",
+      "ram_limit_mb": 6144,
+      "runtime_overhead_mb": 320,
+      "perf": {
+        "tops_int8": 20,
+        "tops_int4": 40,
+        "efficiency_factor": 0.6
+      },
+      "memory": {
+        "on_module_dram": {
+          "type": "LPDDR4/LPDDR4X",
+          "size_gb_options": [4, 8]
+        }
+      },
+      "precision": {
+        "supported": ["INT4", "INT8"],
+        "preferred_default": "INT4",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8 (Accuracy) oder INT4 (Speed)",
+          "transformer_llm_vlm": "INT4 (empfohlen)",
+          "diffusion": "INT4/INT8"
+        },
+        "notes": "INT4 verdoppelt den Peak-Durchsatz gegenüber INT8 und ist ideal für GenAI am Edge."
+      }
+    },
+    {
+      "id": "axelera_metis",
+      "name": "Axelera Metis",
+      "ram_limit_mb": 4096,
+      "runtime_overhead_mb": 320,
+      "perf": {
+        "tops_int8": 214,
+        "efficiency_factor": 0.65
+      },
+      "memory": {
+        "on_chip_high_speed_memory_mib_min": 52,
+        "on_module_dram": { "type": "LPDDR4X", "size_gb_options": [1, 4, 16] }
+      },
+      "precision": {
+        "supported": ["INT8"],
+        "preferred_default": "INT8",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8",
+          "transformer_llm_vlm": "INT8 (falls SDK-Support)"
+        },
+        "notes": "Metis nutzt das Voyager SDK für die INT8-Quantisierung."
+      }
+    },
+    {
+      "id": "axelera_metis_max",
+      "name": "Axelera Metis Max",
+      "ram_limit_mb": 8192,
+      "runtime_overhead_mb": 384,
+      "perf": {
+        "tops_int8": 214,
+        "efficiency_factor": 0.65
+      },
+      "memory": {
+        "max_gb": 16,
+        "bandwidth_multiplier": 2.0
+      },
+      "precision": {
+        "supported": ["INT8"],
+        "preferred_default": "INT8",
+        "notes": "Hauptvorteil der Max-Variante ist die höhere Speicherbandbreite für LLM/VLM."
+      }
+    },
+    {
+      "id": "deepx_dx_m1",
+      "name": "DeepX DX-M1",
+      "ram_limit_mb": 4096,
+      "runtime_overhead_mb": 256,
+      "perf": {
+        "tops_int8": 25,
+        "efficiency_factor": 0.6
+      },
+      "memory": {
+        "on_module_dram": { "type": "LPDDR5", "size_mb": 4096 }
+      },
+      "precision": {
+        "supported": ["INT8"],
+        "preferred_default": "INT8",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8"
+        },
+        "notes": "DX-M1 ist auf quantisierte INT8-Inferenz (IQ8) spezialisiert."
+      }
+    }
+  ],
+  "interfaces": [
+    {
+      "id": "pcie_gen4_x4",
+      "name": "PCIe Gen4 x4",
+      "bandwidth_mb_s": 7000,
+      "latency_overhead_ms": 0.08
+    },
+    {
+      "id": "pcie_gen3_x4",
+      "name": "PCIe Gen3 x4 (M.2 Key M)",
+      "bandwidth_mb_s": 3500,
+      "latency_overhead_ms": 0.1
+    },
+    {
+      "id": "pcie_gen3_x2",
+      "name": "PCIe Gen3 x2",
+      "bandwidth_mb_s": 1750,
+      "latency_overhead_ms": 0.11
+    },
+    {
+      "id": "ethernet_10g",
+      "name": "Ethernet 10G",
+      "bandwidth_mb_s": 1100,
+      "latency_overhead_ms": 0.25
+    },
+    {
+      "id": "ethernet_1g",
+      "name": "Ethernet 1G",
+      "bandwidth_mb_s": 110,
+      "latency_overhead_ms": 0.3
+    }
+  ],
+  "metadata": {
+    "last_updated_date": "2026-02-14",
+    "status": "merged_v2_with_reco"
+  }
+}

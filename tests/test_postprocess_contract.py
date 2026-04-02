@@ -91,6 +91,40 @@ def test_yolo_postprocess_multiscale_head_does_not_crash(tmp_path: Path):
     assert (tmp_path / "detections_full.png").is_file()
 
 
+def test_yolo_postprocess_hailo_rank3_multiscale_and_provenance(tmp_path: Path):
+    img = tmp_path / "img.png"
+    _write_dummy_rgb(img, w=640, h=640)
+
+    h = YoloHarness(conf_thresh=0.1, iou_thresh=0.5)
+
+    # Hailo commonly returns channels-last YOLO heads without a batch dim.
+    p3 = np.zeros((80, 80, 255), dtype=np.float32)
+    p4 = np.zeros((40, 40, 255), dtype=np.float32)
+    p5 = np.zeros((20, 20, 255), dtype=np.float32)
+
+    # Inject one confident prediction in the first anchor block.
+    p3[0, 0, 0:4] = 0.0
+    p3[0, 0, 4] = 10.0
+    p3[0, 0, 5] = 10.0
+
+    res = postprocess_result_to_dict(
+        h.postprocess(
+            {"p3": p3, "p4": p4, "p5": p5},
+            context={"output_dir": tmp_path, "variant": "full", "image_path": img, "input_hw": (640, 640)},
+        )
+    )
+
+    assert res["task"] == "detection"
+    assert len(res["json"].get("detections", [])) >= 1
+    provenance = res["json"].get("provenance") or {}
+    assert provenance.get("source") == "actual_variant_outputs"
+    assert provenance.get("variant") == "full"
+    assert provenance.get("output_shapes", {}).get("p3") == [80, 80, 255]
+    assert res["json"].get("artifacts", {}).get("json") == "detections_full.json"
+    assert (tmp_path / "detections_full.json").is_file()
+    assert (tmp_path / "detections_full.png").is_file()
+
+
 def test_yolo_postprocess_letterbox_rescale(tmp_path):
     """Boxes should be mapped back correctly when YOLO preprocessing uses letterbox."""
     from PIL import Image
@@ -127,3 +161,34 @@ def test_yolo_postprocess_letterbox_rescale(tmp_path):
     assert abs(box["y2"] - y2) < 1e-3
 
 
+
+
+def test_yolo_postprocess_hailo_rank4_bhwc_multiscale_and_explicit_variant_fields(tmp_path: Path):
+    img = tmp_path / "img.png"
+    _write_dummy_rgb(img, w=640, h=640)
+
+    h = YoloHarness(conf_thresh=0.1, iou_thresh=0.5)
+
+    p3 = np.zeros((1, 80, 80, 255), dtype=np.float32)
+    p4 = np.zeros((1, 40, 40, 255), dtype=np.float32)
+    p5 = np.zeros((1, 20, 20, 255), dtype=np.float32)
+
+    p3[0, 0, 0, 0:4] = 0.0
+    p3[0, 0, 0, 4] = 10.0
+    p3[0, 0, 0, 5] = 10.0
+
+    res = postprocess_result_to_dict(
+        h.postprocess(
+            {"p3": p3, "p4": p4, "p5": p5},
+            context={"output_dir": tmp_path, "variant": "composed", "image_path": img, "input_hw": (640, 640)},
+        )
+    )
+
+    assert res["task"] == "detection"
+    assert len(res["json"].get("detections", [])) >= 1
+    assert res["json"].get("variant") == "composed"
+    assert res["json"].get("detections_generated_from_variant") == "composed"
+    assert res["json"].get("viz_enabled") is True
+    assert res["json"].get("viz_error") is None
+    assert (tmp_path / "detections_composed.json").is_file()
+    assert (tmp_path / "detections_composed.png").is_file()

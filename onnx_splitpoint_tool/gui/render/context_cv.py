@@ -31,9 +31,16 @@ def _write_results_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
     if not rows:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    keys = list(rows[0].keys())
+    keys: List[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        for k in row.keys():
+            ks = str(k)
+            if ks not in seen:
+                seen.add(ks)
+                keys.append(ks)
     with path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=keys)
+        w = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
 

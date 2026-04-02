@@ -3,34 +3,21 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+import sys
 from typing import List, Optional
 
-import onnx
-from onnx import shape_inference
-
-from .metrics import (
-    boundary_costs,
-    boundary_tensor_counts,
-    compute_boundary_flops_prefix,
-    compute_scores_for_candidates,
-    compute_tensor_bytes_per_value,
-    per_node_flops,
-)
-from .onnx_utils import (
-    backfill_quant_shapes,
-    build_producers_consumers,
-    topo_sort,
-    value_info_map,
-    apply_dim_param_overrides,
-    make_llm_symbolic_dim_overrides,
-    llm_preset_to_lengths,
-)
 from .units import (
     BANDWIDTH_MULT,
     FLOP_UNITS,
     UNIT_MULT,
     bandwidth_to_bytes_per_s,
 )
+
+
+from .benchmark.services import BenchmarkAnalysisService, BenchmarkBundleService, BenchmarkSchemaService, RemoteBenchmarkService
+from .benchmark.remote_run import RemoteBenchmarkArgs
+from .remote.ssh_transport import HostConfig as SSHHostConfig
 
 
 def _pick_unit_auto(total_flops: float) -> str:
@@ -49,7 +36,25 @@ def _scale(value: float, unit_map: dict, unit: str) -> float:
     return float(value) / float(unit_map[unit])
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def _legacy_main(argv: Optional[List[str]] = None) -> int:
+    from .metrics import (
+        boundary_costs,
+        boundary_tensor_counts,
+        compute_boundary_flops_prefix,
+        compute_scores_for_candidates,
+        compute_tensor_bytes_per_value,
+        per_node_flops,
+    )
+    from .onnx_utils import (
+        backfill_quant_shapes,
+        build_producers_consumers,
+        topo_sort,
+        value_info_map,
+        apply_dim_param_overrides,
+        make_llm_symbolic_dim_overrides,
+        llm_preset_to_lengths,
+    )
+
     ap = argparse.ArgumentParser(description="Analyse ONNX models and suggest split points.")
     ap.add_argument("onnx_model", help="Path to ONNX model")
 
@@ -97,6 +102,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
 
     args = ap.parse_args(argv)
+
+    import onnx
+    from onnx import shape_inference
 
     # For analysis we only need shapes/metadata; avoid pulling large external weights into RAM.
     try:
@@ -348,6 +356,170 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"\nWrote LaTeX table to: {args.tex_out}")
 
     return 0
+
+
+SERVICE_COMMANDS = {"benchmark-analyze", "benchmark-compare", "benchmark-bundle", "benchmark-schema", "benchmark-remote"}
+
+
+def _service_main(argv: Optional[List[str]] = None) -> int:
+    argv = list(argv or [])
+    ap = argparse.ArgumentParser(description="Benchmark utility CLI for ONNX Split-Point Tool services.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p_an = sub.add_parser("benchmark-analyze", help="Load and export a single benchmark analysis.")
+    p_an.add_argument("source", help="Benchmark suite / results folder / archive")
+    p_an.add_argument("--output-dir", required=True, help="Where to write the exported report")
+    p_an.add_argument("--cache-base", default=None, help="Optional cache directory for extracted archives")
+
+    p_cmp = sub.add_parser("benchmark-compare", help="Load and export a comparison of two benchmark runs.")
+    p_cmp.add_argument("left", help="Source A")
+    p_cmp.add_argument("right", help="Source B")
+    p_cmp.add_argument("--output-dir", required=True, help="Where to write the exported comparison")
+    p_cmp.add_argument("--cache-base", default=None, help="Optional cache directory for extracted archives")
+
+    p_bun = sub.add_parser("benchmark-bundle", help="Create a results bundle from a benchmark suite.")
+    p_bun.add_argument("suite_dir", help="Benchmark suite directory")
+    p_bun.add_argument("--out", required=True, help="Target bundle path (.tar.gz)")
+    p_bun.add_argument("--mode", default="full", choices=["full", "lean"], help="Bundle mode")
+
+    p_sch = sub.add_parser("benchmark-schema", help="Inspect or migrate a benchmark_set.json payload.")
+    p_sch.add_argument("path", help="Path to benchmark_set.json")
+    p_sch.add_argument("--rewrite", action="store_true", help="Rewrite the migrated payload in-place")
+    p_sch.add_argument("--out", default=None, help="Optional output path for the migrated payload")
+
+    p_rem = sub.add_parser("benchmark-remote", help="Run a benchmark set on a remote SSH host.")
+    p_rem.add_argument("benchmark_set_json", help="Path to benchmark_set.json")
+    p_rem.add_argument("--host", required=True, help="Remote host (host or user@host)")
+    p_rem.add_argument("--port", type=int, default=22, help="SSH port")
+    p_rem.add_argument("--user", default="", help="SSH user (overrides user@host)")
+    p_rem.add_argument("--remote-base-dir", default="~/splitpoint_runs", help="Remote suite root directory")
+    p_rem.add_argument("--ssh-extra-args", default="", help="Extra args passed to ssh/scp")
+    p_rem.add_argument("--working-dir", required=True, help="Local working directory for downloaded results")
+    p_rem.add_argument("--run-id", default="cli", help="Local run id suffix")
+    p_rem.add_argument("--provider", default="auto", choices=["auto", "cpu", "cuda", "tensorrt", "openvino"], help="Provider override")
+    p_rem.add_argument("--remote-venv", default="", help="Remote venv activate snippet/path")
+    p_rem.add_argument("--repeats", type=int, default=1)
+    p_rem.add_argument("--warmup", type=int, default=10)
+    p_rem.add_argument("--iters", type=int, default=50)
+    p_rem.add_argument("--timeout-s", type=int, default=0, help="Outer timeout in seconds, 0 disables")
+    p_rem.add_argument("--transfer-mode", default="bundle", choices=["bundle", "direct"])
+    p_rem.add_argument("--no-reuse-bundle", action="store_true")
+    p_rem.add_argument("--no-resume", action="store_true")
+    p_rem.add_argument("--throughput-frames", type=int, default=24)
+    p_rem.add_argument("--throughput-warmup-frames", type=int, default=6)
+    p_rem.add_argument("--throughput-queue-depth", type=int, default=2)
+    p_rem.add_argument("--add-args", default="", help="Extra args appended to benchmark_suite.py")
+
+    ns = ap.parse_args(argv)
+    cmd = str(ns.cmd)
+    if cmd == "benchmark-analyze":
+        cache_base = Path(ns.cache_base).expanduser() if ns.cache_base else Path.cwd() / ".benchmark_analysis_cache"
+        service = BenchmarkAnalysisService(cache_base=cache_base)
+        loaded = service.load_single(ns.source)
+        out = service.export_single(loaded, Path(ns.output_dir))
+        print(f"[ok] benchmark-analyze -> {ns.output_dir}")
+        for key, path in sorted(out.items()):
+            print(f"  {key}: {path}")
+        return 0
+    if cmd == "benchmark-compare":
+        cache_base = Path(ns.cache_base).expanduser() if ns.cache_base else Path.cwd() / ".benchmark_analysis_cache"
+        service = BenchmarkAnalysisService(cache_base=cache_base)
+        loaded = service.load_comparison(ns.left, ns.right)
+        out = service.export_comparison(loaded, Path(ns.output_dir))
+        print(f"[ok] benchmark-compare -> {ns.output_dir}")
+        for key, path in sorted(out.items()):
+            print(f"  {key}: {path}")
+        return 0
+    if cmd == "benchmark-bundle":
+        service = BenchmarkBundleService()
+        target = service.create_results_bundle_from_suite(Path(ns.suite_dir), Path(ns.out), mode=str(ns.mode))
+        print(f"[ok] benchmark-bundle -> {target}")
+        return 0
+    if cmd == "benchmark-remote":
+        host_arg = str(ns.host).strip()
+        user = str(ns.user or '').strip()
+        host = host_arg
+        if '@' in host_arg:
+            parsed_user, parsed_host = host_arg.split('@', 1)
+            if not user:
+                user = parsed_user.strip()
+            host = parsed_host.strip()
+        if not host:
+            ap.error('benchmark-remote requires a non-empty host')
+        host_cfg = SSHHostConfig(
+            id=f"{user + '@' if user else ''}{host}:{int(ns.port)}",
+            label=f"{user + '@' if user else ''}{host}",
+            host=host,
+            user=user,
+            port=int(ns.port),
+            remote_base_dir=str(ns.remote_base_dir),
+            ssh_extra_args=str(ns.ssh_extra_args or ''),
+        )
+        args = RemoteBenchmarkArgs(
+            provider=str(ns.provider),
+            remote_venv=str(ns.remote_venv or ''),
+            repeats=int(ns.repeats),
+            warmup=int(ns.warmup),
+            iters=int(ns.iters),
+            add_args=str(ns.add_args or ''),
+            timeout_s=(None if int(ns.timeout_s) <= 0 else int(ns.timeout_s)),
+            transfer_mode=str(ns.transfer_mode),
+            reuse_bundle=not bool(ns.no_reuse_bundle),
+            resume=not bool(ns.no_resume),
+            throughput_frames=int(ns.throughput_frames),
+            throughput_warmup_frames=int(ns.throughput_warmup_frames),
+            throughput_queue_depth=max(1, int(ns.throughput_queue_depth)),
+        )
+        service = RemoteBenchmarkService()
+        def _log(msg: str) -> None:
+            print(msg, flush=True)
+        def _progress(pct: float, msg: str) -> None:
+            print(f"[{100.0 * float(pct):5.1f}%] {msg}", flush=True)
+        out = service.run(
+            host=host_cfg,
+            benchmark_set_json=Path(ns.benchmark_set_json),
+            local_working_dir=Path(ns.working_dir),
+            run_id=str(ns.run_id),
+            args=args,
+            log=_log,
+            progress=_progress,
+            cancel_event=None,
+        )
+        import json
+        print(json.dumps(out, indent=2), flush=True)
+        status = str(out.get('status') or ('ok' if out.get('ok') else 'failed')).strip().lower()
+        return 0 if status in {'ok', 'partial'} else 1
+    if cmd == "benchmark-schema":
+        service = BenchmarkSchemaService()
+        payload = service.load(Path(ns.path))
+        migrated = service.migrate(payload)
+        schema_version = migrated.get("schema_version")
+        tool_version = (migrated.get("tool") or {}).get("gui") or (migrated.get("tool") or {}).get("version")
+        print(f"schema_version={schema_version}")
+        if tool_version:
+            print(f"tool_version={tool_version}")
+        changed = migrated != payload
+        print(f"changed={str(changed).lower()}")
+        target_path = None
+        if ns.out:
+            target_path = Path(ns.out)
+        elif ns.rewrite:
+            target_path = Path(ns.path)
+        if target_path is not None:
+            import json
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(json.dumps(migrated, indent=2), encoding="utf-8")
+            print(f"[ok] wrote {target_path}")
+        return 0
+    ap.error(f"Unknown command: {cmd}")
+    return 2
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in SERVICE_COMMANDS:
+        return _service_main(argv)
+    return _legacy_main(argv)
 
 
 if __name__ == "__main__":

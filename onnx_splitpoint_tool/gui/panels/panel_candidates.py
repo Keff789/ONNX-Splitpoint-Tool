@@ -129,6 +129,7 @@ def _build_inspector(parent: ttk.Frame, app) -> None:
         "compute": tk.StringVar(value="–"),
         "cut": tk.StringVar(value="–"),
         "counts": tk.StringVar(value="–"),
+        "hailo_parse": tk.StringVar(value="–"),
         "llm": tk.StringVar(value="–"),
         "proxy": tk.StringVar(value="Proxy: –"),
     }
@@ -138,6 +139,7 @@ def _build_inspector(parent: ttk.Frame, app) -> None:
         ("Compute L/R", "compute"),
         ("Cut MB", "cut"),
         ("Tensor counts", "counts"),
+        ("Hailo parse", "hailo_parse"),
     ]
     for r, (lbl, key) in enumerate(rows):
         ttk.Label(summary, text=f"{lbl}:").grid(row=r, column=0, sticky="nw", padx=(6, 8), pady=2)
@@ -217,6 +219,7 @@ def _build_inspector(parent: ttk.Frame, app) -> None:
         vars_map["compute"].set(f"{row.get('gflops_left', '–')} / {row.get('gflops_right', '–')} GMACs")
         vars_map["cut"].set(f"{cut_mb:.3f} MB")
         vars_map["counts"].set(f"total={len(cut_tensors)}, unknown={unknown_n}")
+        vars_map["hailo_parse"].set(str(row.get("hailo_parse_message", row.get("hailo_parse_detail", "–")) or "–"))
 
         sums = {"activations": 0.0, "meta": 0.0, "constants": 0.0, "unknown": float(unknown_n) * proxy_mb}
         for t in cut_tensors:

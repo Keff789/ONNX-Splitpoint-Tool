@@ -28,6 +28,7 @@ from email.parser import Parser
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from ..resources_utils import persistent_resource_path
 from ..runners.backends.hailo_utils import DfcProfile, get_dfc_manager
 
 
@@ -45,8 +46,7 @@ def _clean_env(env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
 
 
 def _resources_hailo_root() -> Path:
-    # .../onnx_splitpoint_tool/hailo/dfc_provision.py -> parents[1] == onnx_splitpoint_tool
-    return Path(__file__).resolve().parents[1] / "resources" / "hailo"
+    return persistent_resource_path("resources", "hailo")
 
 
 def _venv_python(venv_dir: Path) -> Path:

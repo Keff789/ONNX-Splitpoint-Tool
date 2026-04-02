@@ -1366,6 +1366,8 @@ def split_model_on_cut_tensors(
     # Preferred names
     p1_cut_names: Optional[List[str]] = None,
     p2_cut_names: Optional[List[str]] = None,
+    # Optional override for the effective outputs of part2 (uses original output tensor names by default).
+    part2_output_names: Optional[List[str]] = None,
     # Backwards-compatible aliases (older GUI versions)
     rename_cut_tensor_part1: Optional[List[str]] = None,
     rename_cut_tensor_part2: Optional[List[str]] = None,
@@ -1374,7 +1376,13 @@ def split_model_on_cut_tensors(
     """Split full_model into (part1, part2) given explicit cut tensors.
 
     part1: original_inputs -> cut_tensors
-    part2: cut_tensors (+ any other external inputs) -> original_outputs
+    part2: cut_tensors (+ any other external inputs) -> effective_part2_outputs
+
+    By default the right submodel keeps the original model outputs. When
+    ``part2_output_names`` is provided, the right submodel is truncated to those
+    tensor names instead. This is primarily used for Hailo parser fallbacks
+    where the blocked tail (for example post-processing ops such as ``TopK``)
+    should be excluded while still benchmarking a meaningful right-hand side.
 
     Returns: (p1_model, p2_model, manifest_dict)
     """
@@ -1405,9 +1413,21 @@ def split_model_on_cut_tensors(
     )
 
     stop = set(cut_tensors) | set(orig_inputs)
+    if part2_output_names is None:
+        part2_outputs_eff = list(orig_outputs)
+    else:
+        part2_outputs_eff = []
+        seen_part2_outs = set()
+        for raw_name in list(part2_output_names):
+            name = str(raw_name or '').strip()
+            if name and name not in seen_part2_outs:
+                part2_outputs_eff.append(name)
+                seen_part2_outs.add(name)
+        if not part2_outputs_eff:
+            raise ValueError('part2_output_names did not contain any usable tensor names')
     p2_model, p2_external_inputs = build_submodel(
         model,
-        outputs=list(orig_outputs),
+        outputs=list(part2_outputs_eff),
         stop_names=stop,
         model_name="part2",
     )
@@ -1452,6 +1472,9 @@ def split_model_on_cut_tensors(
         "cut_tensors_full": list(cut_tensors),
         "orig_inputs": list(orig_inputs),
         "orig_outputs": list(orig_outputs),
+        "part2_outputs_original": list(orig_outputs),
+        "part2_outputs_effective": list(part2_outputs_eff),
+        "part2_output_strategy": ("override" if part2_output_names is not None else "original"),
         "part1_external_inputs": list(p1_external_inputs),
         "part2_external_inputs": list(p2_external_inputs),
     }

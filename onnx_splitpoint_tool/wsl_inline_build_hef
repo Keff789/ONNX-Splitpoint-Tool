@@ -28,6 +28,7 @@ script adds the repository root to ``sys.path`` so it can import
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import sys
@@ -64,8 +65,11 @@ def main() -> int:
     ap.add_argument("--calib-dir", default=None)
     ap.add_argument("--calib-count", type=int, default=64)
     ap.add_argument("--calib-batch-size", type=int, default=8)
+    ap.add_argument("--activation-part1-onnx", default=None, help="Optional Part1 ONNX used to generate activation calibration for multi-input Part2 models")
+    ap.add_argument("--activation-gen-batch", type=int, default=8, help="Batch size when running Part1 to generate activation calibration")
     ap.add_argument("--force", default="0", choices=["0", "1"], help="Overwrite compiled.hef if it exists")
     ap.add_argument("--keep-artifacts", default="0", choices=["0", "1"], help="Save parsed/quantized HAR")
+    ap.add_argument("--extra-model-script-b64", default=None, help="Optional base64-encoded Hailo model script appended before compile")
     args = ap.parse_args()
 
     # Ensure we can import the tool package even if it isn't installed in the venv.
@@ -98,6 +102,23 @@ def main() -> int:
     outdir = Path(args.outdir) if args.outdir else None
     net_name = args.net_name or onnx_path.stem
 
+    extra_model_script = None
+    if args.extra_model_script_b64:
+        try:
+            extra_model_script = base64.b64decode(str(args.extra_model_script_b64).encode('ascii')).decode('utf-8')
+        except Exception as exc:
+            payload = {
+                'ok': False,
+                'elapsed_s': float(time.time() - t0),
+                'hw_arch': str(args.hw_arch),
+                'net_name': str(net_name),
+                'backend': str(os.environ.get('ONNX_SPLITPOINT_HAILO_HELPER_BACKEND') or 'wsl'),
+                'error': f'Invalid --extra-model-script-b64: {type(exc).__name__}: {exc}',
+                'returncode': 2,
+            }
+            print(RESULT_MARKER + json.dumps(payload, ensure_ascii=False), flush=True)
+            return 2
+
     res = hailo_build_hef(
         onnx_path,
         hw_arch=str(args.hw_arch),
@@ -110,15 +131,18 @@ def main() -> int:
         calib_dir=str(args.calib_dir) if args.calib_dir else None,
         calib_count=int(args.calib_count),
         calib_batch_size=int(args.calib_batch_size),
+        activation_part1_onnx=str(args.activation_part1_onnx) if args.activation_part1_onnx else None,
+        activation_gen_batch=int(args.activation_gen_batch),
         force=(args.force == "1"),
         keep_artifacts=(args.keep_artifacts == "1"),
+        extra_model_script=extra_model_script,
     )
 
     payload = asdict(res)
     payload["elapsed_s"] = float(payload.get("elapsed_s") or (time.time() - t0))
     # The compilation happens *inside* WSL/venv, even though the inner function
     # may label it as "local".
-    payload["backend"] = "wsl"
+    payload["backend"] = str(os.environ.get("ONNX_SPLITPOINT_HAILO_HELPER_BACKEND") or "wsl")
 
     # Attach CUDA probe info so the GUI can surface the chosen compute mode.
     try:

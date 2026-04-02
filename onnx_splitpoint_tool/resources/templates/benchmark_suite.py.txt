@@ -178,7 +178,7 @@ def _write_results_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
     if not rows:
         return
     keys: List[str] = []
-    # stable-ish key order
+    # stable-ish key order; rows can be heterogeneous when some cases were skipped
     preferred = [
         "boundary",
         "cut_mib",
@@ -200,16 +200,21 @@ def _write_results_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
         "overhead_ms",
         "speedup_full_over_composed",
     ]
+    seen: set[str] = set()
+    for row in rows:
+        seen.update(str(k) for k in row.keys())
     for k in preferred:
-        if k in rows[0]:
+        if k in seen:
             keys.append(k)
-    for k in rows[0].keys():
-        if k not in keys:
-            keys.append(k)
+    for row in rows:
+        for k in row.keys():
+            ks = str(k)
+            if ks not in keys:
+                keys.append(ks)
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=keys)
+        w = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
         w.writeheader()
         for r in rows:
             w.writerow(r)
@@ -573,6 +578,57 @@ def _slug(text: str) -> str:
     return slug or "run"
 
 
+def _flatten_hailo_compile_meta(case_meta: Dict[str, Any]) -> Dict[str, Any]:
+    flat: Dict[str, Any] = {}
+    payload = case_meta.get("hailo_compile") if isinstance(case_meta, dict) else None
+    if not isinstance(payload, dict):
+        return flat
+
+    def _ctx_single(meta: Dict[str, Any]) -> bool:
+        mode = str(meta.get("context_mode") or "").strip()
+        try:
+            count = int(float(meta.get("context_count"))) if meta.get("context_count") not in (None, "") else None
+        except Exception:
+            count = None
+        return bool(mode == "single_context_used" or count == 1)
+
+    for hw_arch, hw_meta in payload.items():
+        if not isinstance(hw_meta, dict):
+            continue
+        arch = _slug(str(hw_arch)).lower()
+        p1 = hw_meta.get("part1") if isinstance(hw_meta.get("part1"), dict) else {}
+        p2 = hw_meta.get("part2") if isinstance(hw_meta.get("part2"), dict) else {}
+        for stage, meta in (("part1", p1), ("part2", p2)):
+            if not isinstance(meta, dict):
+                continue
+            for field in (
+                "ok",
+                "skipped",
+                "timed_out",
+                "error",
+                "failure_kind",
+                "unsupported_reason",
+                "elapsed_s",
+                "context_count",
+                "context_mode",
+                "partition_iterations",
+                "partition_time_s",
+                "allocation_time_s",
+                "compilation_time_s",
+                "calib_source",
+                "single_context_failed",
+                "single_context_used",
+                "multi_context_used",
+                "mapping_failed",
+                "watchdog_expired",
+            ):
+                if field in meta:
+                    flat[f"hailo_{arch}_{stage}_{field}"] = meta.get(field)
+        flat[f"hailo_{arch}_part2_single_context"] = _ctx_single(p2)
+        flat[f"hailo_{arch}_both_parts_single_context"] = bool(_ctx_single(p1) and _ctx_single(p2))
+    return flat
+
+
 def _resolve_stage_token(stage: Any) -> Optional[str]:
     """Resolve a stage config dict (from benchmark_plan.json) into a provider token.
 
@@ -592,6 +648,87 @@ def _resolve_stage_token(stage: Any) -> Optional[str]:
         p = (str(p).strip().lower() if p else "")
         return p or None
     return None
+
+
+def _normalize_variants(values: Any) -> Optional[List[str]]:
+    if not isinstance(values, list):
+        return None
+    out: List[str] = []
+    seen: set[str] = set()
+    for value in values:
+        name = str(value or "").strip().lower()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
+def _variant_hailo_requirements_for_run(run: Dict[str, Any], variant: str) -> List[Tuple[str, str]]:
+    variant_key = str(variant or "").strip().lower()
+    stage1_tok = _resolve_stage_token(run.get("stage1"))
+    stage2_tok = _resolve_stage_token(run.get("stage2"))
+    run_type = str(run.get("type") or "").strip().lower()
+    run_hw = str(run.get("hw_arch") or run.get("id") or "").strip().lower() or None
+
+    req: List[Tuple[str, str]] = []
+    if variant_key == "full":
+        if run_type == "hailo":
+            hw = run_hw or stage1_tok or stage2_tok
+            if hw:
+                req.append((str(hw), "full"))
+        return req
+    if variant_key == "part1":
+        if stage1_tok and stage1_tok.startswith("hailo"):
+            req.append((str(stage1_tok), "part1"))
+        return req
+    if variant_key == "part2":
+        if stage2_tok and stage2_tok.startswith("hailo"):
+            req.append((str(stage2_tok), "part2"))
+        return req
+    if variant_key == "composed":
+        if stage1_tok and stage1_tok.startswith("hailo"):
+            req.append((str(stage1_tok), "part1"))
+        if stage2_tok and stage2_tok.startswith("hailo"):
+            req.append((str(stage2_tok), "part2"))
+        return req
+    return req
+
+
+def _prune_case_variants_for_run(
+    run: Dict[str, Any],
+    variants: Optional[List[str]],
+    case_meta: Optional[Dict[str, Any]],
+    suite_hailo_hefs: Optional[Dict[str, Any]] = None,
+) -> Optional[List[str]]:
+    if variants is None:
+        return variants
+    availability = case_meta.get("hailo_case_variant_availability") if isinstance(case_meta, dict) else None
+    availability = availability if isinstance(availability, dict) else {}
+    suite_hailo_hefs = suite_hailo_hefs if isinstance(suite_hailo_hefs, dict) else {}
+
+    out: List[str] = []
+    for variant in variants:
+        req = _variant_hailo_requirements_for_run(run, variant)
+        if not req:
+            out.append(variant)
+            continue
+        ok = True
+        for hw, kind in req:
+            hw_key = str(hw)
+            case_ok = bool((availability.get(hw_key) or {}).get(kind))
+            if kind == "full":
+                suite_meta = suite_hailo_hefs.get(hw_key) if isinstance(suite_hailo_hefs, dict) else None
+                suite_meta = suite_meta if isinstance(suite_meta, dict) else {}
+                suite_ok = bool(suite_meta.get("full")) and not bool(suite_meta.get("full_error"))
+                ok = ok and bool(case_ok or suite_ok)
+            else:
+                ok = ok and bool(case_ok)
+            if not ok:
+                break
+        if ok:
+            out.append(variant)
+    return out
 
 _STATUS_VARIANTS = ["full", "part1", "part2", "composed"]
 
@@ -681,53 +818,14 @@ def _write_status_matrix(root: Path, planned_runs: List[Dict[str, Any]]) -> None
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: str, image_scale: str, warmup: int, runs: int, timeout_s: Optional[int], stage1: Optional[str] = None, stage2: Optional[str] = None, variants: Optional[List[str]] = None, case_meta: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-    # Each case contains run_split_onnxruntime.py
-    runner = case_dir / "run_split_onnxruntime.py"
-    if not runner.exists():
-        print(f"[warn] missing runner: {runner}")
-        return None
+def _collect_case_result(case_dir: Path, out_dir_name: str, run_id: str, provider: str, image_scale: str, stage1: Optional[str] = None, stage2: Optional[str] = None, variants: Optional[List[str]] = None, case_meta: Optional[Dict[str, Any]] = None, *, runner_rc: int = 0) -> Optional[Dict[str, Any]]:
+    """Load and normalize an existing per-case validation report.
 
-    out_tag = _slug(run_id)
-    out_dir_name = f"results_{out_tag}"
-
-    cmd = [
-        sys.executable,
-        str(runner),
-        "--provider",
-        provider,
-        "--image-scale",
-        image_scale,
-        "--warmup",
-        str(warmup),
-        "--runs",
-        str(runs),
-        "--out-dir",
-        out_dir_name,
-    ]
-    if variants:
-        cmd += ["--variants", ",".join([str(v) for v in variants])]
-    if stage1:
-        cmd += ["--stage1-provider", str(stage1)]
-    if stage2:
-        cmd += ["--stage2-provider", str(stage2)]
-
-    if image and str(image).lower() != "default":
-        cmd += ["--image", image]
-    rc = 0
-    try:
-        res = subprocess.run(cmd, cwd=str(case_dir), timeout=timeout_s)
-        rc = int(getattr(res, "returncode", 0) or 0)
-        if rc != 0:
-            print(f"[warn] case failed: {case_dir.name} (rc={rc})")
-    except subprocess.TimeoutExpired:
-        print(f"[warn] timeout: {case_dir.name} (>{timeout_s}s)")
-        return None
-
-    # report location depends on runner (it writes into results_<provider> by default)
+    This is used both after a freshly executed case and in --resume mode to
+    reuse results that are already present on disk.
+    """
     report = case_dir / out_dir_name / "validation_report.json"
     if not report.exists():
-        # some runners may use "results_auto"
         report_auto = case_dir / "results_auto" / "validation_report.json"
         report = report_auto if report_auto.exists() else report
     if not report.exists():
@@ -735,19 +833,21 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
         return None
 
     r = _read_json(report)
+    if not isinstance(r, dict):
+        print(f"[warn] invalid report payload: {report}")
+        return None
 
     # Attach suite-side metadata
-    if isinstance(r, dict):
-        r.setdefault("run_id", run_id)
-        r.setdefault("provider", provider)
-        if stage1:
-            r.setdefault("stage1_provider", str(stage1))
-        if stage2:
-            r.setdefault("stage2_provider", str(stage2))
-        if variants:
-            r.setdefault("requested_variants", list(variants))
-        r["_runner_rc"] = rc
-
+    r.setdefault("run_id", run_id)
+    r.setdefault("provider", provider)
+    r.setdefault("case_dir", case_dir.name)
+    if stage1:
+        r.setdefault("stage1_provider", str(stage1))
+    if stage2:
+        r.setdefault("stage2_provider", str(stage2))
+    if variants:
+        r.setdefault("requested_variants", list(variants))
+    r["_runner_rc"] = runner_rc
 
     # Flatten predicted fields from newer runner versions (runner may store them under "predicted")
     pred = r.get("predicted")
@@ -783,14 +883,11 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
         for k in ["boundary", "cut_mib", "n_cut_tensors", "flops_left", "flops_right", "imbalance_pred", "score_pred"]:
             if k in m and k not in r:
                 r[k] = m[k]
-        # keep all manifest fields (useful for later)
         for k, v in m.items():
             r.setdefault(k, v)
 
-
     # Merge __BENCH_JSON__ metadata (predicted fields) if provided
     if isinstance(case_meta, dict):
-        # merge predicted dict
         mp = case_meta.get("predicted")
         if isinstance(mp, dict):
             if not isinstance(r.get("predicted"), dict):
@@ -798,21 +895,17 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
             else:
                 for kk, vv in mp.items():
                     r["predicted"].setdefault(kk, vv)
-        # surface a few helpful meta fields
-        for kk in ["boundary_index", "boundary_id", "boundary_name"]:
+        for kk in ["boundary_index", "boundary_id", "boundary_name", "case_dir", "folder"]:
             if kk in case_meta:
                 r.setdefault(kk, case_meta.get(kk))
+        for kk, vv in _flatten_hailo_compile_meta(case_meta).items():
+            r.setdefault(kk, vv)
 
-    # Ensure predicted fields are also available at top-level (compat)
     pred2 = r.get("predicted")
     if isinstance(pred2, dict):
         for k, v in pred2.items():
             r.setdefault(k, v)
 
-
-    # Compatibility aliases for older summary/table code
-    # - our predictor uses a *score* (higher is better); some scripts use score_pred (lower is better)
-    # - we keep score_pred as an alias to score for reporting
     if "score_pred" not in r and "score" in r:
         r["score_pred"] = r.get("score")
     if "imbalance_pred" not in r and "imbalance" in r:
@@ -825,19 +918,15 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
         elif isinstance(r.get("cut_tensors"), (list, tuple)):
             r["n_cut_tensors"] = len(r.get("cut_tensors"))
         else:
-            # fall back to predicted crossing tensors list if available
             pred_tmp = r.get("predicted")
             if isinstance(pred_tmp, dict):
                 if isinstance(pred_tmp.get("crossing_tensors_all"), (list, tuple)):
                     r["n_cut_tensors"] = len(pred_tmp.get("crossing_tensors_all"))
                 elif isinstance(pred_tmp.get("crossing_tensors_known"), (list, tuple)):
                     r["n_cut_tensors"] = len(pred_tmp.get("crossing_tensors_known"))
-    # pass flag alias
     if "eps_pass" not in r and "ok" in r:
         r["eps_pass"] = bool(r.get("ok"))
 
-    # Ensure timing fields are also available at top-level (compat)
-    # Runner reports have used multiple keys over time; accept all known ones.
     tms = r.get("timing_ms") or r.get("timing") or r.get("timings")
     if isinstance(tms, dict):
         for _name in ("full", "part1", "part2", "composed"):
@@ -850,7 +939,27 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
                 if std is not None:
                     r.setdefault(f"{_name}_std_ms", std)
 
-    # derived fields
+    throughput = r.get("throughput")
+    if isinstance(throughput, dict):
+        for key in (
+            "mode",
+            "queue_depth",
+            "warmup_frames",
+            "measured_frames",
+            "fps_makespan",
+            "fps_cycle_est",
+            "cycle_est_ms",
+            "makespan_ms",
+            "latency_mean_ms",
+            "latency_p50_ms",
+            "latency_p95_ms",
+            "stage1_mean_ms",
+            "stage2_mean_ms",
+            "frame_count_total",
+        ):
+            if key in throughput:
+                r.setdefault(f"throughput_{key}", throughput.get(key))
+
     try:
         p1 = float(r.get("part1_mean_ms", float("nan")))
         p2 = float(r.get("part2_mean_ms", float("nan")))
@@ -869,10 +978,154 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
     except Exception:
         pass
 
-    # Surface a few run parameters so downstream tables/CSV have them.
+    sessions = r.get("sessions")
+    if isinstance(sessions, dict):
+        runtime_sessions = sessions.get("ort_runtime") if isinstance(sessions.get("ort_runtime"), dict) else {}
+        baseline_sessions = sessions.get("baseline_ort_cpu") if isinstance(sessions.get("baseline_ort_cpu"), dict) else {}
+
+        def _pick_session_payload(kind: str, provider_hint: Optional[str]) -> Optional[Dict[str, Any]]:
+            hint = str(provider_hint or "").strip().lower()
+            candidates: List[str] = []
+            if hint:
+                candidates.append(f"{kind}:{hint}")
+            default_hint = str(provider or "").strip().lower()
+            if default_hint and f"{kind}:{default_hint}" not in candidates:
+                candidates.append(f"{kind}:{default_hint}")
+            for key in candidates:
+                payload = runtime_sessions.get(key)
+                if isinstance(payload, dict):
+                    return payload
+            payload = baseline_sessions.get(kind)
+            return payload if isinstance(payload, dict) else None
+
+        for kind, hint in (("full", provider), ("part1", stage1 or provider), ("part2", stage2 or provider)):
+            payload = _pick_session_payload(kind, hint)
+            if not isinstance(payload, dict):
+                continue
+            build_s = payload.get("build_seconds")
+            if build_s is not None:
+                r.setdefault(f"{kind}_session_build_s", build_s)
+            req = payload.get("providers_requested")
+            if isinstance(req, list):
+                r.setdefault(f"{kind}_session_providers_requested", "|".join(str(x) for x in req))
+            use = payload.get("providers_in_use")
+            if isinstance(use, list):
+                r.setdefault(f"{kind}_session_providers_in_use", "|".join(str(x) for x in use))
+
     r.setdefault("provider", provider)
     r.setdefault("image_scale", image_scale)
     return r
+
+
+def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: str, image_scale: str, warmup: int, runs: int, timeout_s: Optional[int], stage1: Optional[str] = None, stage2: Optional[str] = None, variants: Optional[List[str]] = None, case_meta: Optional[Dict[str, Any]] = None, *, resume: bool = False, verbose_runs: bool = False, progress_every: int = 25, trt_cache_root: Optional[str] = None, throughput_frames: int = 24, throughput_warmup_frames: int = 6, throughput_queue_depth: int = 2, validation_images: Optional[str] = None, validation_max_images: int = 0) -> Optional[Dict[str, Any]]:
+    # Each case contains run_split_onnxruntime.py
+    runner = case_dir / "run_split_onnxruntime.py"
+    if not runner.exists():
+        print(f"[warn] missing runner: {runner}")
+        return None
+
+    out_tag = _slug(run_id)
+    out_dir_name = f"results_{out_tag}"
+
+    if resume:
+        existing = _collect_case_result(
+            case_dir,
+            out_dir_name,
+            run_id,
+            provider,
+            image_scale,
+            stage1=stage1,
+            stage2=stage2,
+            variants=variants,
+            case_meta=case_meta,
+            runner_rc=0,
+        )
+        if existing is not None:
+            existing.setdefault("_resumed", True)
+            print(f"[resume] {case_dir.name}: using existing results from {out_dir_name}/validation_report.json")
+            return existing
+
+    cmd = [
+        sys.executable,
+        str(runner),
+        "--provider",
+        provider,
+        "--image-scale",
+        image_scale,
+        "--warmup",
+        str(warmup),
+        "--runs",
+        str(runs),
+        "--out-dir",
+        out_dir_name,
+        "--throughput-frames",
+        str(max(0, int(throughput_frames))),
+        "--throughput-warmup-frames",
+        str(max(0, int(throughput_warmup_frames))),
+        "--throughput-queue-depth",
+        str(max(1, int(throughput_queue_depth))),
+    ]
+    if variants:
+        cmd += ["--variants", ",".join([str(v) for v in variants])]
+    if verbose_runs:
+        cmd += ["--verbose-runs"]
+    if stage1:
+        cmd += ["--stage1-provider", str(stage1)]
+    if stage2:
+        cmd += ["--stage2-provider", str(stage2)]
+    val_img: Optional[Path] = None
+    if validation_images:
+        val_img = Path(str(validation_images))
+        if not val_img.is_absolute():
+            # benchmark_plan.json lives at suite root; resolve relative semantic
+            # validation paths against the suite root, not the case directory.
+            val_img = (case_dir.parent / val_img).resolve()
+    else:
+        default_val = (case_dir.parent / "resources" / "validation" / "coco_50_data").resolve()
+        if default_val.exists():
+            val_img = default_val
+            if int(validation_max_images or 0) <= 0:
+                validation_max_images = 50
+    if val_img is not None:
+        cmd += ["--validation-images", str(val_img)]
+    if int(validation_max_images or 0) > 0:
+        cmd += ["--validation-max-images", str(int(validation_max_images))]
+
+    def _uses_tensorrt_token(token: Optional[str]) -> bool:
+        return str(token or "").strip().lower() in {"tensorrt", "trt"}
+
+    if trt_cache_root and any(_uses_tensorrt_token(tok) for tok in (provider, stage1, stage2)):
+        cache_root = Path(str(trt_cache_root))
+        if not cache_root.is_absolute():
+            cache_root = (case_dir.parent / cache_root).resolve()
+        cache_dir = cache_root / case_dir.name
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cmd += ["--trt-cache-dir", str(cache_dir)]
+
+    if image and str(image).lower() != "default":
+        cmd += ["--image", image]
+    rc = 0
+    try:
+        res = subprocess.run(cmd, cwd=str(case_dir), timeout=timeout_s)
+        rc = int(getattr(res, "returncode", 0) or 0)
+        if rc != 0:
+            print(f"[warn] case failed: {case_dir.name} (rc={rc})")
+    except subprocess.TimeoutExpired:
+        print(f"[warn] timeout: {case_dir.name} (>{timeout_s}s)")
+        return None
+
+    return _collect_case_result(
+        case_dir,
+        out_dir_name,
+        run_id,
+        provider,
+        image_scale,
+        stage1=stage1,
+        stage2=stage2,
+        variants=variants,
+        case_meta=case_meta,
+        runner_rc=rc,
+    )
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -899,9 +1152,18 @@ def main() -> int:
         choices=["auto", "norm", "raw", "imagenet", "clip"],
         help="Input image scaling mode for the runner. In plan-mode, runs can override this via run.image_scale.",
     )
+    parser.add_argument("--validation-images", default="", help="Optional semantic-validation image set for detection models (directory / image / text / JSON list). In plan-mode, runs can override this via run.validation_images.")
+    parser.add_argument("--validation-max-images", type=int, default=0, help="Max images from --validation-images to use per case (0 disables dataset semantic validation).")
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--runs", type=int, default=10)
+    parser.add_argument("--throughput-frames", type=int, default=24, help="Measured streaming/interleaving frames for heterogeneous stage1→stage2 pipelines (0 disables).")
+    parser.add_argument("--throughput-warmup-frames", type=int, default=6, help="Warmup frames before measured streaming/interleaving throughput.")
+    parser.add_argument("--throughput-queue-depth", type=int, default=2, help="Queue depth for the streaming/interleaving throughput probe.")
+    parser.add_argument("--verbose-runs", action="store_true", help="Forward --verbose-runs to the per-case runner.")
+    parser.add_argument("--progress-every", type=int, default=25, help="Forward sparse progress reporting to the per-case runner (0 disables it).")
     parser.add_argument("--timeout", type=int, default=None, help="Per-case timeout in seconds.")
+    parser.add_argument("--resume", action="store_true", help="Reuse existing per-case results_<run_id>/validation_report.json files and skip already finished cases.")
+    parser.add_argument("--trt-cache-root", default=None, help="Optional shared TensorRT cache root. When set, each case uses <root>/<case_dir>/ as --trt-cache-dir so TRT engines/timing caches can be reused across suite reruns.")
     parser.add_argument("--objective", default="composed", choices=["composed", "sum_parts", "max_parts", "full"], help="Objective for ranking/summaries.")
     parser.add_argument("--topk", type=int, default=10, help="Top-k for highlights/tables.")
     parser.add_argument("--no-csv", action="store_true", help="Do not export CSV.")
@@ -918,6 +1180,8 @@ def main() -> int:
     if not cases:
         print("[warn] __BENCH_JSON__ has no cases")
         return 1
+    suite_hailo_hefs = ((bench.get("hailo") or {}).get("hefs") if isinstance(bench.get("hailo"), dict) else None)
+    suite_hailo_hefs = suite_hailo_hefs if isinstance(suite_hailo_hefs, dict) else {}
 
     # Decide between plan-mode and single provider mode.
     plan_path: Optional[Path] = None
@@ -985,11 +1249,7 @@ def main() -> int:
             # Optional stage config / variants (used for matrix-style runs).
             stage1_tok = _resolve_stage_token(run.get("stage1")) or provider
             stage2_tok = _resolve_stage_token(run.get("stage2")) or provider
-            variants = run.get("variants")
-            if isinstance(variants, list):
-                variants = [str(v).strip().lower() for v in variants if str(v).strip()]
-            else:
-                variants = None
+            variants = _normalize_variants(run.get("variants"))
 
             tag = f"{run_id}_{args.preset}"
             rows: List[Dict[str, Any]] = []
@@ -1000,6 +1260,11 @@ def main() -> int:
                     case_dir_key = f"b{int(b):03d}" if b is not None else "case"
                 rel = Path(str(case_dir_key))
                 case_dir = (root / rel).resolve()
+                variants_eff = _prune_case_variants_for_run(run, variants, c, suite_hailo_hefs)
+                if variants is not None and not variants_eff:
+                    print(f"\n[{run_id}] [{i+1}/{len(cases)}] Skipping {case_dir.name} (no usable variants after Hailo availability pruning)")
+                    continue
+
                 print(f"\n[{run_id}] [{i+1}/{len(cases)}] Running {case_dir.name} (provider={provider})")
 
                 # Per-run image scaling (passed through to run_split_onnxruntime.py).
@@ -1007,6 +1272,8 @@ def main() -> int:
                 if image_scale not in ("auto", "norm", "raw", "imagenet", "clip"):
                     print(f"[warn] invalid image_scale={image_scale!r} in plan for run {run_id!r}; falling back to 'auto'")
                     image_scale = "auto"
+                validation_images = str(run.get("validation_images") or getattr(args, "validation_images", "") or "").strip()
+                validation_max_images = int(run.get("validation_max_images") or getattr(args, "validation_max_images", 0) or 0)
 
                 r = _run_case(
                     case_dir,
@@ -1014,7 +1281,7 @@ def main() -> int:
                     provider=provider,
                     stage1=stage1_tok,
                     stage2=stage2_tok,
-                    variants=variants,
+                    variants=variants_eff,
                     image=args.image,
                     preset=args.preset,
                     image_scale=image_scale,
@@ -1022,6 +1289,15 @@ def main() -> int:
                     runs=args.runs,
                     timeout_s=args.timeout,
                     case_meta=c,
+                    resume=getattr(args, "resume", False),
+                    verbose_runs=args.verbose_runs,
+                    progress_every=args.progress_every,
+                    trt_cache_root=args.trt_cache_root,
+                    throughput_frames=args.throughput_frames,
+                    throughput_warmup_frames=args.throughput_warmup_frames,
+                    throughput_queue_depth=args.throughput_queue_depth,
+                    validation_images=validation_images,
+                    validation_max_images=validation_max_images,
                 )
                 if r is not None:
                     rows.append(r)
@@ -1096,11 +1372,7 @@ def main() -> int:
             # Default provider passed to the per-case runner (acts as a fallback). Use stage1.
             provider_tag = str(run.get("provider") or stage1_tok).strip().lower() or stage1_tok
 
-            variants = run.get("variants")
-            if isinstance(variants, list):
-                variants = [str(v).strip().lower() for v in variants if str(v).strip()]
-            else:
-                variants = None
+            variants = _normalize_variants(run.get("variants"))
 
             tag = f"{run_id}_{args.preset}"
             rows: List[Dict[str, Any]] = []
@@ -1111,6 +1383,14 @@ def main() -> int:
                     case_dir_key = f"b{int(b):03d}" if b is not None else "case"
                 rel = Path(str(case_dir_key))
                 case_dir = (root / rel).resolve()
+                variants_eff = _prune_case_variants_for_run(run, variants, c, suite_hailo_hefs)
+                if variants is not None and not variants_eff:
+                    print(
+                        f"\n[{run_id}] [{i+1}/{len(cases)}] Skipping {case_dir.name} "
+                        f"(no usable variants after Hailo availability pruning)"
+                    )
+                    continue
+
                 print(
                     f"\n[{run_id}] [{i+1}/{len(cases)}] Running {case_dir.name} "
                     f"(stage1={stage1_tok}, stage2={stage2_tok})"
@@ -1121,6 +1401,8 @@ def main() -> int:
                 if image_scale not in ("auto", "norm", "raw", "imagenet", "clip"):
                     print(f"[warn] invalid image_scale={image_scale!r} in plan for run {run_id!r}; falling back to 'auto'")
                     image_scale = "auto"
+                validation_images = str(run.get("validation_images") or getattr(args, "validation_images", "") or "").strip()
+                validation_max_images = int(run.get("validation_max_images") or getattr(args, "validation_max_images", 0) or 0)
 
                 r = _run_case(
                     case_dir,
@@ -1128,7 +1410,7 @@ def main() -> int:
                     provider=provider_tag,
                     stage1=stage1_tok,
                     stage2=stage2_tok,
-                    variants=variants,
+                    variants=variants_eff,
                     image=args.image,
                     preset=args.preset,
                     image_scale=image_scale,
@@ -1136,6 +1418,15 @@ def main() -> int:
                     runs=args.runs,
                     timeout_s=args.timeout,
                     case_meta=c,
+                    resume=getattr(args, "resume", False),
+                    verbose_runs=args.verbose_runs,
+                    progress_every=args.progress_every,
+                    trt_cache_root=args.trt_cache_root,
+                    throughput_frames=args.throughput_frames,
+                    throughput_warmup_frames=args.throughput_warmup_frames,
+                    throughput_queue_depth=args.throughput_queue_depth,
+                    validation_images=validation_images,
+                    validation_max_images=validation_max_images,
                 )
                 if r is not None:
                     rows.append(r)
@@ -1203,11 +1494,7 @@ def main() -> int:
 
             stage1_tok = _resolve_stage_token(run.get("stage1")) or provider_tag
             stage2_tok = _resolve_stage_token(run.get("stage2")) or provider_tag
-            variants = run.get("variants")
-            if isinstance(variants, list):
-                variants = [str(v).strip().lower() for v in variants if str(v).strip()]
-            else:
-                variants = None
+            variants = _normalize_variants(run.get("variants"))
 
             tag = f"{run_id}_{args.preset}"
             rows: List[Dict[str, Any]] = []
@@ -1218,6 +1505,11 @@ def main() -> int:
                     case_dir_key = f"b{int(b):03d}" if b is not None else "case"
                 rel = Path(str(case_dir_key))
                 case_dir = (root / rel).resolve()
+                variants_eff = _prune_case_variants_for_run(run, variants, c, suite_hailo_hefs)
+                if variants is not None and not variants_eff:
+                    print(f"\n[{run_id}] [{i+1}/{len(cases)}] Skipping {case_dir.name} (no usable variants after Hailo availability pruning)")
+                    continue
+
                 print(f"\n[{run_id}] [{i+1}/{len(cases)}] Running {case_dir.name} (provider={provider_tag})")
 
                 # Per-run image scaling (passed through to run_split_onnxruntime.py).
@@ -1225,6 +1517,8 @@ def main() -> int:
                 if image_scale not in ("auto", "norm", "raw", "imagenet", "clip"):
                     print(f"[warn] invalid image_scale={image_scale!r} in plan for run {run_id!r}; falling back to 'auto'")
                     image_scale = "auto"
+                validation_images = str(run.get("validation_images") or getattr(args, "validation_images", "") or "").strip()
+                validation_max_images = int(run.get("validation_max_images") or getattr(args, "validation_max_images", 0) or 0)
 
                 r = _run_case(
                     case_dir,
@@ -1232,7 +1526,7 @@ def main() -> int:
                     provider=provider_tag,
                     stage1=stage1_tok,
                     stage2=stage2_tok,
-                    variants=variants,
+                    variants=variants_eff,
                     image=args.image,
                     preset=args.preset,
                     image_scale=image_scale,
@@ -1240,6 +1534,15 @@ def main() -> int:
                     runs=args.runs,
                     timeout_s=args.timeout,
                     case_meta=c,
+                    resume=getattr(args, "resume", False),
+                    verbose_runs=args.verbose_runs,
+                    progress_every=args.progress_every,
+                    trt_cache_root=args.trt_cache_root,
+                    throughput_frames=args.throughput_frames,
+                    throughput_warmup_frames=args.throughput_warmup_frames,
+                    throughput_queue_depth=args.throughput_queue_depth,
+                    validation_images=validation_images,
+                    validation_max_images=validation_max_images,
                 )
                 if r is not None:
                     rows.append(r)

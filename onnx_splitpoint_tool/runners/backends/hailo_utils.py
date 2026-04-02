@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from ...resources_utils import persistent_resource_path
+
 
 _AUTO_SENTINELS = {"", "auto", "managed", "default"}
 
@@ -37,7 +39,7 @@ class DfcManager:
 
     @staticmethod
     def _resources_root() -> Path:
-        return Path(__file__).resolve().parents[2] / "resources" / "hailo"
+        return persistent_resource_path("resources", "hailo")
 
     @classmethod
     def from_resources(cls) -> "DfcManager":

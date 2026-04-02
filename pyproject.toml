@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "onnx-splitpoint-tool"
-version = "0.10.39"
+version = "0.10.136.post21"
 description = "Single-split boundary analysis for ONNX graphs (GUI + CLI)"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -23,11 +23,21 @@ onnx-splitpoint = "onnx_splitpoint_tool.cli:main"
 onnx-splitpoint-gui = "onnx_splitpoint_tool.gui_app:main"
 
 [tool.setuptools]
-packages = ["onnx_splitpoint_tool"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["onnx_splitpoint_tool*"]
 
 [tool.setuptools.package-data]
 onnx_splitpoint_tool = [
   "resources/*.json",
+  "resources/**/*.json",
+  "resources/**/*.md",
+  "resources/**/*.txt",
+  "resources/test_images/*.png",
+  "runners/assets/*",
+  "runners/harness/*.json",
+  "runners/harness/*.txt",
   # Helper scripts invoked inside WSL / managed DFC venv.
   "wsl_inline_check",
   "wsl_inline_build_hef",

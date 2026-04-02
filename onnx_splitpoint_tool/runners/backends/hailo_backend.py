@@ -23,6 +23,337 @@ from .._types import BackendCaps, BackendRunOut, RunCfg
 _RESULT_MARKER = "__SPLITPOINT_HAILO_RESULT__"
 
 
+def _hailo_layer_slot(name: str) -> Optional[int]:
+    lname = str(name or '').strip().lower()
+    if not lname:
+        return None
+    import re
+    m = re.search(r'(?:^|[/:._-])(?:input|output)_layer[_-]?(\d+)(?:$|[/:._-])', lname)
+    if not m:
+        return None
+    try:
+        idx = int(m.group(1)) - 1
+    except Exception:
+        return None
+    return idx if idx >= 0 else None
+
+
+def _hailo_stream_sort_key(name: str, default_index: int = 0) -> tuple[int, int, int, str]:
+    slot = _hailo_layer_slot(name)
+    if slot is not None:
+        return (0, int(slot), int(default_index), str(name))
+    return (1, int(default_index), 0, str(name))
+
+
+def _hailo_stream_names_ordered(infos: list[Any]) -> list[str]:
+    indexed: list[tuple[int, str]] = []
+    for idx, info in enumerate(infos):
+        indexed.append((int(idx), str(getattr(info, 'name', ''))))
+    indexed.sort(key=lambda item: _hailo_stream_sort_key(item[1], item[0]))
+    return [name for _, name in indexed]
+
+
+def _onnx_value_info_shape(value_info: Any) -> Optional[tuple[int, ...]]:
+    try:
+        tensor_type = getattr(getattr(value_info, "type", None), "tensor_type", None)
+        shape = getattr(tensor_type, "shape", None)
+        dims = getattr(shape, "dim", None)
+        if dims is None:
+            return None
+        out: list[int] = []
+        for dim in dims:
+            dim_value = getattr(dim, "dim_value", None)
+            if isinstance(dim_value, int) and dim_value > 0:
+                out.append(int(dim_value))
+            else:
+                return None
+        return tuple(out)
+    except Exception:
+        return None
+
+
+def _load_onnx_io_names_and_shapes(model_path: Optional[Path]) -> tuple[list[str], list[str], dict[str, tuple[int, ...]], dict[str, tuple[int, ...]]]:
+    if model_path is None:
+        return [], [], {}, {}
+    try:
+        import onnx  # type: ignore
+
+        model = onnx.load(str(model_path), load_external_data=False)
+    except Exception:
+        return [], [], {}, {}
+
+    initializer_names = {str(getattr(t, "name", "") or "") for t in getattr(model.graph, "initializer", [])}
+
+    input_names: list[str] = []
+    output_names: list[str] = []
+    input_shapes: dict[str, tuple[int, ...]] = {}
+    output_shapes: dict[str, tuple[int, ...]] = {}
+
+    for value_info in getattr(model.graph, "input", []):
+        name = str(getattr(value_info, "name", "") or "")
+        if not name or name in initializer_names:
+            continue
+        input_names.append(name)
+        shape = _onnx_value_info_shape(value_info)
+        if shape is not None:
+            input_shapes[name] = shape
+
+    for value_info in getattr(model.graph, "output", []):
+        name = str(getattr(value_info, "name", "") or "")
+        if not name:
+            continue
+        output_names.append(name)
+        shape = _onnx_value_info_shape(value_info)
+        if shape is not None:
+            output_shapes[name] = shape
+
+    return input_names, output_names, input_shapes, output_shapes
+
+
+def _shape_numel_ignoring_batch(shape: Optional[tuple[int, ...]]) -> Optional[int]:
+    if not shape:
+        return None
+    dims = [int(x) for x in shape if isinstance(x, int) and int(x) > 0]
+    if len(dims) > 1 and dims[0] == 1:
+        dims = dims[1:]
+    if not dims:
+        return None
+    total = 1
+    for dim in dims:
+        total *= int(dim)
+    return int(total)
+
+
+def _canonical_slot_name_order(
+    onnx_names: list[str],
+    preferred_names: Optional[list[str]] = None,
+) -> list[str]:
+    """Return canonical slot order.
+
+    For split part2 Hailo HEFs generated from part2 ONNX, generic input_layerN
+    follows the exported part2 ONNX input order. Callers should therefore avoid
+    overriding that order with manifest cut-name permutations unless they know
+    the HEF was built with that exact slot contract.
+    """
+    onnx_list = [str(x) for x in (onnx_names or []) if str(x)]
+    preferred_list = [str(x) for x in (preferred_names or []) if str(x)]
+    if not onnx_list:
+        out: list[str] = []
+        seen: set[str] = set()
+        for name in preferred_list:
+            if name in seen:
+                continue
+            seen.add(name)
+            out.append(name)
+        return out
+    if not preferred_list:
+        return list(onnx_list)
+    out: list[str] = []
+    seen: set[str] = set()
+    for name in preferred_list:
+        if name not in onnx_list or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    for name in onnx_list:
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
+def _build_hailo_io_name_map(
+    hailo_names: list[str],
+    onnx_names: list[str],
+    *,
+    hailo_shapes: Optional[dict[str, tuple[int, ...]]] = None,
+    onnx_shapes: Optional[dict[str, tuple[int, ...]]] = None,
+    slot_names: Optional[list[str]] = None,
+) -> dict[str, str]:
+    """Best-effort alias map from HEF stream names to source-ONNX IO names.
+
+    Why:
+      Hailo often rewrites split-model IO names to generic stream names such as
+      ``input_layer1`` / ``output_layer1``. The split benchmark logic, however,
+      reasons about the original ONNX boundary tensor names. Re-exposing HEF
+      streams under the source-ONNX IO names keeps stage1 -> stage2 wiring
+      deterministic and lets the existing manifest-aware mapping logic do exact
+      matches again.
+    """
+    mapping: dict[str, str] = {}
+    used_onnx: set[str] = set()
+
+    hailo_list = [str(x) for x in hailo_names or []]
+    onnx_list = _canonical_slot_name_order([str(x) for x in onnx_names or []], slot_names)
+
+    # 1) Exact-name matches first.
+    for name in hailo_list:
+        if name in onnx_list and name not in used_onnx:
+            mapping[name] = name
+            used_onnx.add(name)
+
+    # 2) Unique element-count matches (ignoring a leading batch dim).
+    remaining_hailo = [name for name in hailo_list if name not in mapping]
+    remaining_onnx = [name for name in onnx_list if name not in used_onnx]
+    if hailo_shapes and onnx_shapes and remaining_hailo and remaining_onnx:
+        hailo_by_numel: dict[int, list[str]] = {}
+        onnx_by_numel: dict[int, list[str]] = {}
+        for name in remaining_hailo:
+            numel = _shape_numel_ignoring_batch(hailo_shapes.get(name))
+            if numel is not None:
+                hailo_by_numel.setdefault(int(numel), []).append(name)
+        for name in remaining_onnx:
+            numel = _shape_numel_ignoring_batch(onnx_shapes.get(name))
+            if numel is not None:
+                onnx_by_numel.setdefault(int(numel), []).append(name)
+        for numel, hailo_group in hailo_by_numel.items():
+            onnx_group = onnx_by_numel.get(int(numel)) or []
+            if len(hailo_group) == 1 and len(onnx_group) == 1:
+                h_name = hailo_group[0]
+                o_name = onnx_group[0]
+                if h_name not in mapping and o_name not in used_onnx:
+                    mapping[h_name] = o_name
+                    used_onnx.add(o_name)
+
+    # 3) Generic ``input_layerN`` / ``output_layerN`` slot names map by slot.
+    remaining_hailo = [name for name in hailo_list if name not in mapping]
+    remaining_onnx = [name for name in onnx_list if name not in used_onnx]
+    for name in remaining_hailo:
+        slot = _hailo_layer_slot(name)
+        if slot is None or slot < 0 or slot >= len(onnx_list):
+            continue
+        target = onnx_list[int(slot)]
+        if target not in remaining_onnx or target in used_onnx:
+            continue
+        mapping[name] = target
+        used_onnx.add(target)
+
+    # 4) Conservative positional fallback when counts still line up.
+    remaining_hailo = [name for name in hailo_list if name not in mapping]
+    remaining_onnx = [name for name in onnx_list if name not in used_onnx]
+    if remaining_hailo and len(remaining_hailo) == len(remaining_onnx):
+        for h_name, o_name in zip(remaining_hailo, remaining_onnx):
+            if o_name in used_onnx:
+                continue
+            mapping[h_name] = o_name
+            used_onnx.add(o_name)
+
+    return mapping
+
+
+def _ensure_c_contiguous_cached(cache: dict[str, np.ndarray], key: str, arr: np.ndarray) -> np.ndarray:
+    """Return a C-contiguous tensor while reusing a per-input staging buffer."""
+    a = np.asarray(arr)
+    if a.flags.c_contiguous:
+        return a
+
+    buf = cache.get(key)
+    if buf is None or buf.shape != a.shape or buf.dtype != a.dtype:
+        buf = np.empty(a.shape, dtype=a.dtype, order="C")
+        cache[key] = buf
+    np.copyto(buf, a)
+    return buf
+
+
+def _ensure_frames_dim(x: np.ndarray) -> np.ndarray:
+    """Ensure a leading frames dimension for Hailo InferVStreams."""
+    arr = np.asarray(x)
+    if arr.ndim == 3:
+        return arr[None, ...]
+    return arr
+
+
+def _adapt_tensor(x: np.ndarray, target_shape: tuple[int, ...]) -> np.ndarray:
+    """Best-effort tensor adaptation between canonical ONNX and Hailo runtime layouts.
+
+    This covers the common NCHW <-> NHWC / CHW <-> HWC cases and also the
+    packed YOLO-head layouts that Hailo frequently exposes as ``H x W x (na*ch)``
+    while the ONNX-side canonical layout is ``1 x na x H x W x ch``.
+    """
+    arr = np.asarray(x)
+    tgt = tuple(int(v) for v in target_shape)
+
+    if tuple(arr.shape) == tgt:
+        return arr
+
+    # Remove / add a leading batch or frames dimension.
+    if arr.ndim >= 1 and arr.shape[0] == 1 and tuple(arr.shape[1:]) == tgt:
+        return arr[0]
+    if arr.ndim + 1 == len(tgt) and len(tgt) >= 1 and tgt[0] == 1 and tuple(arr.shape) == tgt[1:]:
+        return arr[None, ...]
+
+    # Packed YOLO head: HWC/NHWC -> canonical 1xA xH xW xC.
+    if arr.ndim == 3 and len(tgt) == 5 and tgt[0] == 1:
+        gh, gw, flat = (int(v) for v in arr.shape)
+        _, na, tgt_h, tgt_w, ch = tgt
+        if gh == tgt_h and gw == tgt_w and flat == int(na) * int(ch):
+            return arr.reshape(gh, gw, int(na), int(ch)).transpose(2, 0, 1, 3)[None, ...]
+    if arr.ndim == 4 and len(tgt) == 5 and tgt[0] == 1 and arr.shape[0] == 1:
+        _, gh, gw, flat = (int(v) for v in arr.shape)
+        _, na, tgt_h, tgt_w, ch = tgt
+        if gh == tgt_h and gw == tgt_w and flat == int(na) * int(ch):
+            return arr.reshape(1, gh, gw, int(na), int(ch)).transpose(0, 3, 1, 2, 4)
+    if arr.ndim == 4 and len(tgt) == 3:
+        # [na, H, W, ch] -> [H, W, na*ch]
+        na, gh, gw, ch = (int(v) for v in arr.shape)
+        if tgt == (gh, gw, na * ch):
+            return arr.transpose(1, 2, 0, 3).reshape(tgt)
+    if arr.ndim == 5 and len(tgt) == 3 and arr.shape[0] == 1:
+        # [1, na, H, W, ch] -> [H, W, na*ch]
+        _, na, gh, gw, ch = (int(v) for v in arr.shape)
+        if tgt == (gh, gw, na * ch):
+            return arr.transpose(0, 2, 3, 1, 4).reshape(tgt)
+    if arr.ndim == 5 and len(tgt) == 4 and arr.shape[0] == 1 and tgt[0] == 1:
+        # [1, na, H, W, ch] -> [1, H, W, na*ch]
+        _, na, gh, gw, ch = (int(v) for v in arr.shape)
+        if tgt == (1, gh, gw, na * ch):
+            return arr.transpose(0, 2, 3, 1, 4).reshape(tgt)
+    if arr.ndim == 3 and len(tgt) == 4 and tgt[0] == 1:
+        # [H, W, na*ch] -> [1, H, W, na*ch]
+        if tuple(arr.shape) == tuple(tgt[1:]):
+            return arr[None, ...]
+
+    # Generic CHW <-> HWC / NCHW <-> NHWC permutations.
+    if arr.ndim == 3 and len(tgt) == 3:
+        if tuple(arr.shape) == (tgt[2], tgt[0], tgt[1]):
+            return np.transpose(arr, (1, 2, 0))
+        if tuple(arr.shape) == (tgt[1], tgt[2], tgt[0]):
+            return np.transpose(arr, (2, 0, 1))
+
+    if arr.ndim == 4 and len(tgt) == 4:
+        if tuple(arr.shape) == (tgt[0], tgt[3], tgt[1], tgt[2]):
+            return np.transpose(arr, (0, 2, 3, 1))
+        if tuple(arr.shape) == (tgt[0], tgt[2], tgt[3], tgt[1]):
+            return np.transpose(arr, (0, 3, 1, 2))
+
+    # 1xCHW -> HWC
+    if arr.ndim == 4 and arr.shape[0] == 1 and len(tgt) == 3 and tuple(arr.shape[1:]) == (tgt[2], tgt[0], tgt[1]):
+        return np.transpose(arr[0], (1, 2, 0))
+    # HWC -> 1xCHW
+    if arr.ndim == 3 and len(tgt) == 4 and tgt[0] == 1 and tuple(arr.shape) == (tgt[2], tgt[3], tgt[1]):
+        return np.transpose(arr, (2, 0, 1))[None, ...]
+
+    # As a last resort, only reshape when the element count matches.
+    try:
+        if int(np.prod(arr.shape)) == int(np.prod(tgt)):
+            return np.reshape(arr, tgt)
+    except Exception:
+        pass
+
+    raise ValueError(f"Cannot adapt tensor from shape {tuple(arr.shape)} to target shape {tgt}")
+
+
+def _try_adapt_tensor(x: np.ndarray, target_shape: Optional[tuple[int, ...]]) -> tuple[bool, np.ndarray]:
+    arr = np.asarray(x)
+    if target_shape is None:
+        return True, arr
+    try:
+        return True, _adapt_tensor(arr, target_shape)
+    except Exception:
+        return False, arr
+
+
 def _import_hailo_module() -> Any:
     """Import Hailo Python bindings.
 
@@ -48,6 +379,9 @@ class _HailoSession:
     hef_path: Path
     quantized_inputs: bool
     quantized_outputs: bool
+    onnx_model_path: Optional[Path] = None
+    canonical_input_slot_names: Optional[list[str]] = None
+    canonical_output_slot_names: Optional[list[str]] = None
     _hpf: Any = None
     _vdevice: Any = None
     _network_group: Any = None
@@ -57,14 +391,30 @@ class _HailoSession:
     output_names: list[str] = None  # type: ignore[assignment]
     input_shapes: dict[str, tuple[int, ...]] = None  # type: ignore[assignment]
     output_shapes: dict[str, tuple[int, ...]] = None  # type: ignore[assignment]
+    runtime_input_shapes: dict[str, tuple[int, ...]] = None  # type: ignore[assignment]
+    runtime_output_shapes: dict[str, tuple[int, ...]] = None  # type: ignore[assignment]
 
     _activation_lock = threading.RLock()
 
     def __post_init__(self) -> None:
         self.input_names = []
         self.output_names = []
+        if self.canonical_input_slot_names is None:
+            self.canonical_input_slot_names = []
+        if self.canonical_output_slot_names is None:
+            self.canonical_output_slot_names = []
         self.input_shapes = {}
         self.output_shapes = {}
+        self.runtime_input_shapes = {}
+        self.runtime_output_shapes = {}
+        self._input_contig_cache: dict[str, np.ndarray] = {}
+        self._hef_input_names: list[str] = []
+        self._hef_output_names: list[str] = []
+        self._hef_input_shapes: dict[str, tuple[int, ...]] = {}
+        self._hef_output_shapes: dict[str, tuple[int, ...]] = {}
+        self._input_name_hef_to_canonical: dict[str, str] = {}
+        self._input_name_canonical_to_hef: dict[str, str] = {}
+        self._output_name_hef_to_canonical: dict[str, str] = {}
         self._open()
 
     def _format_type(self, *, want_uint8: bool):
@@ -96,10 +446,57 @@ class _HailoSession:
 
         in_infos = list(hef.get_input_vstream_infos())
         out_infos = list(hef.get_output_vstream_infos())
-        self.input_names = [x.name for x in in_infos]
-        self.output_names = [x.name for x in out_infos]
-        self.input_shapes = {x.name: tuple(x.shape) for x in in_infos}
-        self.output_shapes = {x.name: tuple(x.shape) for x in out_infos}
+        self._hef_input_names = _hailo_stream_names_ordered(in_infos)
+        self._hef_output_names = _hailo_stream_names_ordered(out_infos)
+        self._hef_input_shapes = {str(x.name): tuple(x.shape) for x in in_infos}
+        self._hef_output_shapes = {str(x.name): tuple(x.shape) for x in out_infos}
+
+        onnx_input_names, onnx_output_names, onnx_input_shapes, onnx_output_shapes = _load_onnx_io_names_and_shapes(self.onnx_model_path)
+        input_aliases = _build_hailo_io_name_map(
+            self._hef_input_names,
+            onnx_input_names,
+            hailo_shapes=self._hef_input_shapes,
+            onnx_shapes=onnx_input_shapes,
+            slot_names=self.canonical_input_slot_names,
+        )
+        output_aliases = _build_hailo_io_name_map(
+            self._hef_output_names,
+            onnx_output_names,
+            hailo_shapes=self._hef_output_shapes,
+            onnx_shapes=onnx_output_shapes,
+            slot_names=self.canonical_output_slot_names,
+        )
+
+        self._input_name_hef_to_canonical = {name: str(input_aliases.get(name, name)) for name in self._hef_input_names}
+        self._input_name_canonical_to_hef = {}
+        for name in self._hef_input_names:
+            canonical = self._input_name_hef_to_canonical.get(name, name)
+            self._input_name_canonical_to_hef.setdefault(str(canonical), str(name))
+
+        self._output_name_hef_to_canonical = {name: str(output_aliases.get(name, name)) for name in self._hef_output_names}
+
+        self.input_names = [self._input_name_hef_to_canonical.get(name, name) for name in self._hef_input_names]
+        self.output_names = [self._output_name_hef_to_canonical.get(name, name) for name in self._hef_output_names]
+        self.runtime_input_shapes = {
+            self._input_name_hef_to_canonical.get(name, name): tuple(self._hef_input_shapes.get(name, ()))
+            for name in self._hef_input_names
+        }
+        self.runtime_output_shapes = {
+            self._output_name_hef_to_canonical.get(name, name): tuple(self._hef_output_shapes.get(name, ()))
+            for name in self._hef_output_names
+        }
+        self.input_shapes = {
+            self._input_name_hef_to_canonical.get(name, name): tuple(
+                onnx_input_shapes.get(self._input_name_hef_to_canonical.get(name, name), self._hef_input_shapes.get(name, ()))
+            )
+            for name in self._hef_input_names
+        }
+        self.output_shapes = {
+            self._output_name_hef_to_canonical.get(name, name): tuple(
+                onnx_output_shapes.get(self._output_name_hef_to_canonical.get(name, name), self._hef_output_shapes.get(name, ()))
+            )
+            for name in self._hef_output_names
+        }
 
         in_params = hpf.InputVStreamParams.make(
             self._network_group,
@@ -120,13 +517,20 @@ class _HailoSession:
             raise RuntimeError("Hailo session is closed")
 
         infer_inputs: Dict[str, np.ndarray] = {}
-        for name in self.input_names:
-            if name not in inputs:
-                raise KeyError(f"Missing required Hailo input '{name}'")
-            arr = np.asarray(inputs[name])
-            if arr.ndim == len(self.input_shapes.get(name, ())):
-                arr = arr[None, ...]
-            infer_inputs[name] = arr
+        for canonical_name in self.input_names:
+            hef_name = self._input_name_canonical_to_hef.get(str(canonical_name), str(canonical_name))
+            if canonical_name in inputs:
+                arr = np.asarray(inputs[canonical_name])
+            elif hef_name in inputs:
+                arr = np.asarray(inputs[hef_name])
+            else:
+                raise KeyError(f"Missing required Hailo input '{canonical_name}'")
+
+            runtime_shape = self.runtime_input_shapes.get(str(canonical_name))
+            ok, adapted = _try_adapt_tensor(arr, runtime_shape)
+            arr = adapted if ok else arr
+            arr = _ensure_frames_dim(arr)
+            infer_inputs[hef_name] = _ensure_c_contiguous_cached(self._input_contig_cache, str(canonical_name), arr)
 
         with _HailoSession._activation_lock:
             activation = self._network_group.activate(self._network_group_params)
@@ -147,7 +551,7 @@ class _HailoSession:
                 except Exception:
                     pass
 
-        out: dict[str, np.ndarray] = {}
+        raw_outputs: dict[str, np.ndarray] = {}
         for key, value in out_raw.items():
             arr = np.asarray(value)
             if arr.ndim > 0 and arr.shape[0] == 1:
@@ -155,7 +559,18 @@ class _HailoSession:
                     arr = np.squeeze(arr, axis=0)
                 except Exception:
                     pass
-            out[str(key)] = arr
+            raw_outputs[str(key)] = arr
+
+        ordered_raw_names = [name for name in self._hef_output_names if name in raw_outputs]
+        ordered_raw_names.extend([name for name in raw_outputs.keys() if name not in ordered_raw_names])
+
+        out: dict[str, np.ndarray] = {}
+        for raw_name in ordered_raw_names:
+            canonical_name = self._output_name_hef_to_canonical.get(str(raw_name), str(raw_name))
+            arr = raw_outputs[raw_name]
+            canonical_shape = self.output_shapes.get(str(canonical_name))
+            ok, adapted = _try_adapt_tensor(arr, canonical_shape)
+            out[str(canonical_name)] = adapted if ok else arr
         return out
 
     def close(self) -> None:
@@ -179,6 +594,8 @@ class _HailoPrepared:
     output_names: list[str]
     input_shapes: dict[str, tuple[int, ...]]
     output_shapes: dict[str, tuple[int, ...]]
+    runtime_input_shapes: dict[str, tuple[int, ...]]
+    runtime_output_shapes: dict[str, tuple[int, ...]]
     quantized_inputs: bool
     quantized_outputs: bool
 
@@ -293,6 +710,9 @@ class HailoBackend:
             hef_path=hef_path,
             quantized_inputs=quantized_inputs,
             quantized_outputs=quantized_outputs,
+            onnx_model_path=model_path,
+            canonical_input_slot_names=[str(x) for x in (options.get("canonical_input_slot_names") or []) if str(x)],
+            canonical_output_slot_names=[str(x) for x in (options.get("canonical_output_slot_names") or []) if str(x)],
         )
 
         prepared = _HailoPrepared(
@@ -302,6 +722,8 @@ class HailoBackend:
             output_names=list(session.output_names),
             input_shapes=dict(session.input_shapes),
             output_shapes=dict(session.output_shapes),
+            runtime_input_shapes=dict(session.runtime_input_shapes),
+            runtime_output_shapes=dict(session.runtime_output_shapes),
             quantized_inputs=quantized_inputs,
             quantized_outputs=quantized_outputs,
         )

@@ -9,16 +9,18 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from shutil import copytree, rmtree
 from typing import Optional
+
+from ..resources_utils import copy_resource_tree, read_text
 
 log = logging.getLogger(__name__)
 
 
 def _templates_dir() -> Path:
-    # controller.py lives in onnx_splitpoint_tool/gui/
-    # resources/ lives in onnx_splitpoint_tool/resources/
-    return Path(__file__).resolve().parents[1] / "resources" / "templates"
+    # Kept for backwards-compatible callers that still inspect the path.
+    from ..resources_utils import persistent_resource_path
+
+    return persistent_resource_path("resources", "templates")
 
 
 def load_template_text(filename: str, *, encoding: str = "utf-8") -> str:
@@ -26,8 +28,7 @@ def load_template_text(filename: str, *, encoding: str = "utf-8") -> str:
 
     Raises FileNotFoundError if missing.
     """
-    path = _templates_dir() / filename
-    return path.read_text(encoding=encoding)
+    return read_text("resources", "templates", filename, encoding=encoding)
 
 
 def write_benchmark_suite_script(dst_dir: str | Path, *, bench_json_name: str = "benchmark_set.json") -> str:
@@ -44,25 +45,27 @@ def write_benchmark_suite_script(dst_dir: str | Path, *, bench_json_name: str = 
 
     # Only rewrite the script if the content actually changed. This keeps
     # bundle caching effective (mtime stays stable on no-op updates).
+    script_changed = True
     if script_path.exists():
         try:
             if script_path.read_text(encoding="utf-8") == script:
-                return str(script_path)
+                script_changed = False
         except Exception:
             pass
 
-    script_path.write_text(script, encoding="utf-8")
-    try:
-        # Make executable on POSIX; harmless on Windows.
-        os.chmod(script_path, 0o755)
-    except Exception:
-        pass
-
-    log.info("Wrote benchmark suite script: %s", script_path)
+    if script_changed:
+        script_path.write_text(script, encoding="utf-8")
+        try:
+            # Make executable on POSIX; harmless on Windows.
+            os.chmod(script_path, 0o755)
+        except Exception:
+            pass
+        log.info("Wrote benchmark suite script: %s", script_path)
 
     # Phase-1: vendor the lightweight runner library into the suite root.
-    # This enables remote execution without requiring an installed
-    # onnx_splitpoint_tool package on the target.
+    # This must run even when benchmark_suite.py itself did not change,
+    # because benchmark bundles for existing suites rely on the vendored
+    # splitpoint_runners package being refreshed independently.
     try:
         _copy_runner_lib(dst_dir)
     except Exception as e:
@@ -73,15 +76,8 @@ def write_benchmark_suite_script(dst_dir: str | Path, *, bench_json_name: str = 
 
 
 def _copy_runner_lib(suite_dir: Path) -> None:
-    src = Path(__file__).resolve().parents[1] / "runners"
-    if not src.exists():
-        return
-
     dst = suite_dir / "splitpoint_runners"
-    if dst.exists():
-        rmtree(dst)
-
-    copytree(src, dst, ignore=_ignore_pycache)
+    copy_resource_tree("runners", dest=dst)
 
 
 def _ignore_pycache(_dir: str, names: list[str]) -> set[str]:

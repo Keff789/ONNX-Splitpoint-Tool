@@ -42,6 +42,7 @@ class _MockApp:
         self.analysis = {}
         self._candidate_rows = []
         self.gui_state = SimpleNamespace(current_model_path="", model_type="onnx")
+        self.selection_sync_calls = []
 
     def _on_analyse(self):
         return None
@@ -86,6 +87,10 @@ class _MockApp:
         return None
 
     def _refresh_memory_forecast(self):
+        return None
+
+    def _schedule_tree_selection_sync(self, boundary=None):
+        self.selection_sync_calls.append(boundary)
         return None
 
     def _update_diagnostics(self, _analysis):
@@ -137,8 +142,11 @@ def test_render_analysis_smoke() -> None:
         "params": object(),
     }
     panel_analysis.render_analysis(frame, app, mock_result)
+    root.update()
 
     assert len(app.tree.get_children("")) > 0
     assert app.canvas is not None
+    assert app.tree.selection()
+    assert len(app.selection_sync_calls) == 1
 
     root.destroy()

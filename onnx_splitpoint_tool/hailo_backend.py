@@ -14,18 +14,22 @@ quickly reject candidates that cannot be parsed/translated at all.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
 import shlex
 import shutil
 import subprocess
+import signal
 import threading
 import sys
 import time
 import logging
+import platform
 from dataclasses import asdict
 from dataclasses import dataclass
+from dataclasses import fields
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -34,6 +38,7 @@ import onnx
 from onnx import AttributeProto, helper
 
 # Optional (pure python) helper to resolve multiple DFC versions (Hailo-8 vs Hailo-10)
+from .hailo.backend_mode import auto_prefers_subprocess, normalize_hailo_backend, subprocess_backend_for_platform
 from .runners.backends.hailo_utils import get_dfc_manager
 
 
@@ -999,27 +1004,33 @@ def hailo_probe_auto(
     wsl_venv_activate: str = "auto",
     timeout_s: int = 30,
 ) -> HailoProbeResult:
-    backend = (backend or "auto").strip().lower()
-    if backend not in ("auto", "local", "wsl", "venv"):
-        return HailoProbeResult(ok=False, backend=backend, reason=f"Unknown backend: {backend!r}")
+    mode = normalize_hailo_backend(backend)
 
-    if backend == "local":
+    if mode == "subprocess":
+        mode = subprocess_backend_for_platform()
+
+    if mode == "local":
         return hailo_probe_local()
-    if backend == "venv":
+    if mode == "venv":
         return hailo_probe_via_venv(hw_arch=hw_arch, venv_activate=wsl_venv_activate, timeout_s=timeout_s)
-    if backend == "wsl":
+    if mode == "wsl":
         return hailo_probe_via_wsl(hw_arch=hw_arch, wsl_distro=wsl_distro, wsl_venv_activate=wsl_venv_activate, timeout_s=timeout_s)
 
     # auto
-    if hailo_sdk_available():
+    prefer_subprocess = auto_prefers_subprocess()
+    if not prefer_subprocess and hailo_sdk_available():
         return hailo_probe_local()
 
-    # Windows: use WSL bridge; Linux: prefer managed venv probe (no need to
-    # install hailo_sdk_client into the tool's own Python env).
     if sys.platform == "win32":
-        return hailo_probe_via_wsl(hw_arch=hw_arch, wsl_distro=wsl_distro, wsl_venv_activate=wsl_venv_activate, timeout_s=timeout_s)
+        res = hailo_probe_via_wsl(hw_arch=hw_arch, wsl_distro=wsl_distro, wsl_venv_activate=wsl_venv_activate, timeout_s=timeout_s)
+    else:
+        res = hailo_probe_via_venv(hw_arch=hw_arch, venv_activate=wsl_venv_activate, timeout_s=timeout_s)
 
-    return hailo_probe_via_venv(hw_arch=hw_arch, venv_activate=wsl_venv_activate, timeout_s=timeout_s)
+    if bool(getattr(res, "ok", False)) or not hailo_sdk_available():
+        return res
+    if hailo_sdk_available():
+        return hailo_probe_local()
+    return res
 
 
 def _find_result_json(text: str) -> Optional[Dict[str, Any]]:
@@ -1054,6 +1065,559 @@ def _find_result_json(text: str) -> Optional[Dict[str, Any]]:
         return None
 
     return None
+
+
+@dataclass
+class _StreamedSubprocessResult:
+    returncode: int
+    stdout: str
+    stderr: str
+    timed_out: bool = False
+    timeout_kind: Optional[str] = None
+    last_stage: Optional[str] = None
+    stage_history: Optional[List[Dict[str, Any]]] = None
+    elapsed_s: float = 0.0
+
+
+def _hailo_stage_from_line(line: str) -> Optional[str]:
+    s = str(line or '').strip().lower()
+    if not s:
+        return None
+    if 'statistics collector' in s or s.startswith('calibration:'):
+        return 'statistics_collector'
+    if 'bias correction' in s:
+        return 'bias_correction'
+    if 'layer noise analysis' in s or 'full quant analysis' in s:
+        return 'layer_noise_analysis'
+    if 'searching for a better partition' in s or 'found valid partition' in s or 'iteration #' in s:
+        return 'partition_search'
+    if 'building optimization options' in s:
+        return 'compile_prep'
+    if 'single context flow' in s or 'multi context flow' in s or 'allocat' in s or 'validating layers feasibility' in s or 'context:' in s or 'mapping prepost' in s:
+        return 'allocation'
+    if 'model optimization' in s or 'optimization level' in s:
+        return 'optimization'
+    if 'activation calibration' in s or ('calib' in s and 'part1' in s):
+        return 'activation_calibration'
+    if 'translate' in s or 'translation' in s or 'parsing' in s:
+        return 'translation'
+    if 'compiling kernels' in s or 'building hef' in s or 'successful compilation' in s or 'compiled.hef' in s or 'hef written' in s:
+        return 'compile'
+    return None
+
+
+def _env_int_first_positive(*names: str) -> Optional[int]:
+    for name in names:
+        raw = str(os.environ.get(name) or '').strip()
+        if not raw:
+            continue
+        try:
+            val = int(raw)
+        except Exception:
+            continue
+        if val > 0:
+            return int(val)
+    return None
+
+
+def _resolve_hef_timeout_policy(requested_timeout_s: int) -> Tuple[int, Optional[int]]:
+    """Return ``(hard_timeout_s, idle_timeout_s)`` for HEF helper processes.
+
+    Legacy GUI code passes ``3600`` unconditionally. Treat that as the old
+    default and upgrade it to a safer 3h hard timeout unless the user overrides
+    it via environment variables.
+    """
+
+    env_hard = _env_int_first_positive('ONNX_SPLITPOINT_HAILO_HEF_TIMEOUT_S', 'OSP_HAILO_HARD_TIMEOUT_S')
+    env_idle = _env_int_first_positive('ONNX_SPLITPOINT_HAILO_HEF_IDLE_TIMEOUT_S', 'OSP_HAILO_IDLE_TIMEOUT_S')
+
+    try:
+        requested = int(requested_timeout_s)
+    except Exception:
+        requested = 0
+
+    if env_hard is not None:
+        hard_timeout_s = int(env_hard)
+    elif requested <= 0:
+        hard_timeout_s = 10800
+    elif requested == 3600:
+        hard_timeout_s = 10800
+    else:
+        hard_timeout_s = max(60, int(requested))
+
+    if env_idle is not None:
+        idle_timeout_s: Optional[int] = int(env_idle)
+    else:
+        idle_timeout_s = min(3600, max(1800, int(hard_timeout_s // 3)))
+
+    if idle_timeout_s is not None and idle_timeout_s <= 0:
+        idle_timeout_s = None
+    return int(hard_timeout_s), idle_timeout_s
+
+
+def _parse_hailo_duration_to_s(text: str) -> Optional[float]:
+    """Parse common Hailo duration formats into seconds.
+
+    Supported examples:
+    - ``2m 4s 589ms``
+    - ``1h 2m 39s``
+    - ``00:08:38.97``
+    """
+
+    s = str(text or "").strip()
+    if not s:
+        return None
+
+    m_hms = re.match(r"^(?:(\d+):)?(\d{2}):(\d{2})(?:\.(\d+))?$", s)
+    if m_hms is not None:
+        hours = int(m_hms.group(1) or 0)
+        minutes = int(m_hms.group(2) or 0)
+        seconds = int(m_hms.group(3) or 0)
+        frac_s = float(f"0.{m_hms.group(4)}") if m_hms.group(4) else 0.0
+        return float(hours * 3600 + minutes * 60 + seconds) + frac_s
+
+    total = 0.0
+    matched = False
+    for pat, scale in ((r"(\d+)h", 3600.0), (r"(\d+)m", 60.0), (r"(\d+)s", 1.0), (r"(\d+)ms", 0.001)):
+        m = re.search(pat, s)
+        if m is None:
+            continue
+        total += float(int(m.group(1))) * scale
+        matched = True
+    if matched:
+        return total
+    return None
+
+
+def _merge_detail_dict(base: Optional[Dict[str, Any]], extra: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Merge nested result-detail dictionaries without losing existing keys."""
+
+    out = dict(base or {})
+    if not extra:
+        return out or None
+    for key, value in extra.items():
+        if value is None:
+            continue
+        if isinstance(out.get(key), dict) and isinstance(value, dict):
+            merged = dict(out[key])
+            merged.update(value)
+            out[key] = merged
+        else:
+            out[key] = value
+    return out or None
+
+
+def _capture_command_snapshot(cmd: List[str], *, timeout_s: float = 2.0, max_chars: int = 4000) -> Optional[Dict[str, Any]]:
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=timeout_s,
+            check=False,
+        )
+        out = _truncate_log_text(_sanitize_wsl_text(proc.stdout or ''), max_chars=max_chars)
+        return {
+            'cmd': list(map(str, cmd)),
+            'returncode': int(proc.returncode or 0),
+            'output': out,
+        }
+    except FileNotFoundError:
+        return None
+    except subprocess.TimeoutExpired as e:
+        out = _truncate_log_text(_sanitize_wsl_text((getattr(e, 'stdout', '') or '') + (getattr(e, 'stderr', '') or '')), max_chars=max_chars)
+        return {
+            'cmd': list(map(str, cmd)),
+            'returncode': 124,
+            'output': out,
+            'timed_out': True,
+        }
+    except Exception as e:
+        return {
+            'cmd': list(map(str, cmd)),
+            'returncode': None,
+            'error': f'{type(e).__name__}: {e}',
+        }
+
+
+def _capture_parent_system_snapshot() -> Dict[str, Any]:
+    """Best-effort system diagnostics for timeout/failure reports."""
+
+    snap: Dict[str, Any] = {
+        'platform': sys.platform,
+        'platform_release': platform.release(),
+        'python': sys.version.split()[0],
+        'pid': int(os.getpid()),
+        'captured_at': float(time.time()),
+    }
+    commands: Dict[str, Any] = {}
+
+    if os.name == 'nt':
+        for name, cmd in (
+            ('nvidia_smi', ['nvidia-smi']),
+            ('os_info', ['cmd', '/c', 'ver']),
+        ):
+            res = _capture_command_snapshot(cmd)
+            if res is not None:
+                commands[name] = res
+    else:
+        for name, cmd in (
+            ('nvidia_smi', ['nvidia-smi']),
+            ('free_m', ['free', '-m']),
+            ('df_h', ['df', '-h', '.']),
+        ):
+            res = _capture_command_snapshot(cmd)
+            if res is not None:
+                commands[name] = res
+
+    if commands:
+        snap['commands'] = commands
+    return snap
+
+
+def _extract_hailo_process_summary(
+    stdout: str,
+    stderr: str,
+    *,
+    stage_history: Optional[List[Dict[str, Any]]] = None,
+    elapsed_s: Optional[float] = None,
+    last_stage: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Summarize useful timing/debug signals from Hailo helper stdout/stderr."""
+
+    text = "\n".join([stdout or "", stderr or ""]).strip()
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    summary: Dict[str, Any] = {}
+    detected: Dict[str, Any] = {}
+    algo_times_s: Dict[str, float] = {}
+    snr_db: Dict[str, float] = {}
+    row_per_cut_hints: List[str] = []
+    validator_failed_nodes: List[str] = []
+
+    if stage_history:
+        hist: List[Dict[str, Any]] = []
+        stage_durations: Dict[str, float] = {}
+        prev_t: Optional[float] = None
+        prev_stage: Optional[str] = None
+        for item in stage_history:
+            stage = str(item.get('stage') or '').strip()
+            try:
+                t_s = float(item.get('t_s') or 0.0)
+            except Exception:
+                t_s = 0.0
+            if not stage:
+                continue
+            hist.append({'stage': stage, 't_s': round(t_s, 3)})
+            if prev_stage is not None and prev_t is not None:
+                stage_durations[prev_stage] = round(max(0.0, t_s - prev_t), 3)
+            prev_stage = stage
+            prev_t = t_s
+        if prev_stage is not None and prev_t is not None and elapsed_s is not None:
+            stage_durations[prev_stage] = round(max(0.0, float(elapsed_s) - prev_t), 3)
+        if hist:
+            summary['stage_history'] = hist
+        if stage_durations:
+            summary['stage_durations_s'] = stage_durations
+
+    if last_stage:
+        summary['last_stage'] = str(last_stage)
+    if elapsed_s is not None:
+        summary['elapsed_s_observed'] = round(float(elapsed_s), 3)
+
+    context_count: Optional[int] = None
+    for line in lines:
+        low = line.lower()
+        if 'calibration set seems to not be normalized' in low:
+            detected['normalization_warning'] = True
+        if 'single context flow failed' in low:
+            detected['single_context_failed'] = True
+            summary['single_context_failure'] = line
+        if 'using multi-context flow' in low:
+            detected['multi_context_used'] = True
+        if 'using single-context flow' in low:
+            detected['single_context_used'] = True
+        if 'watchdog expired' in low:
+            detected['watchdog_expired'] = True
+        if 'mapping failed' in low:
+            detected['mapping_failed'] = True
+
+        m_ctx = re.search(r'found valid partition to\s+(\d+)\s+contexts', low)
+        if m_ctx is not None:
+            context_count = int(m_ctx.group(1))
+        m_apply = re.search(r'applying selected partition to\s+(\d+)\s+contexts', low)
+        if m_apply is not None:
+            context_count = int(m_apply.group(1))
+
+        m_part = re.search(r'partitioner finished after\s+(\d+)\s+iterations,\s*time it took:\s*(.+)$', line, flags=re.I)
+        if m_part is not None:
+            summary['partition_iterations'] = int(m_part.group(1))
+            dur = _parse_hailo_duration_to_s(m_part.group(2))
+            if dur is not None:
+                summary['partition_time_s'] = round(dur, 3)
+
+        m_alloc = re.search(r'successful mapping \(allocation time:\s*(.+?)\)$', line, flags=re.I)
+        if m_alloc is not None:
+            dur = _parse_hailo_duration_to_s(m_alloc.group(1))
+            if dur is not None:
+                summary['allocation_time_s'] = round(dur, 3)
+
+        m_comp = re.search(r'successful compilation \(compilation time:\s*(.+?)\)$', line, flags=re.I)
+        if m_comp is not None:
+            dur = _parse_hailo_duration_to_s(m_comp.group(1))
+            if dur is not None:
+                summary['compilation_time_s'] = round(dur, 3)
+
+        m_opt = re.search(r'Model Optimization Algorithm\s+(.+?)\s+is done \(completion time is\s+(.+?)\)', line, flags=re.I)
+        if m_opt is not None:
+            dur = _parse_hailo_duration_to_s(m_opt.group(2))
+            if dur is not None:
+                algo_times_s[str(m_opt.group(1)).strip()] = round(dur, 3)
+
+        m_snr = re.search(r'([^\s]+)\s+SNR:\s*([0-9]+(?:\.[0-9]+)?)\s*dB', line, flags=re.I)
+        if m_snr is not None:
+            snr_db[str(m_snr.group(1)).strip()] = float(m_snr.group(2))
+
+        m_row_cut = re.search(r'Node needed ROW_PER_CUT due to low halts FPS but was not set:\s*(.+)$', line, flags=re.I)
+        if m_row_cut is not None:
+            raw_names = [str(x).strip() for x in m_row_cut.group(1).split(',')]
+            for name in raw_names:
+                if name and name not in row_per_cut_hints:
+                    row_per_cut_hints.append(name)
+
+        m_validator = re.search(r'Validator failed on node:\s*([A-Za-z0-9_./-]+)\s+with Agent infeasible', line, flags=re.I)
+        if m_validator is not None:
+            node_name = str(m_validator.group(1)).strip()
+            if node_name and node_name not in validator_failed_nodes:
+                validator_failed_nodes.append(node_name)
+
+    if context_count is not None:
+        summary['context_count'] = int(context_count)
+    if algo_times_s:
+        summary['algo_times_s'] = algo_times_s
+    if snr_db:
+        summary['snr_db'] = snr_db
+    if row_per_cut_hints:
+        summary['row_per_cut_hints'] = list(row_per_cut_hints)
+    if validator_failed_nodes:
+        summary['validator_failed_nodes'] = list(validator_failed_nodes)
+    if detected:
+        summary['detected'] = detected
+    return summary
+
+
+def _build_subprocess_detail_bundle(
+    run: _StreamedSubprocessResult,
+    stdout: str,
+    stderr: str,
+    *,
+    include_system_snapshot: bool,
+) -> Optional[Dict[str, Any]]:
+    details: Dict[str, Any] = {}
+    proc_summary = _extract_hailo_process_summary(
+        stdout,
+        stderr,
+        stage_history=run.stage_history,
+        elapsed_s=run.elapsed_s,
+        last_stage=run.last_stage,
+    )
+    if proc_summary:
+        details['process_summary'] = proc_summary
+    if include_system_snapshot:
+        details['system_snapshot'] = _capture_parent_system_snapshot()
+    return details or None
+
+
+def _kill_process_tree(proc: subprocess.Popen[Any], *, grace_s: float = 10.0) -> None:
+    if proc.poll() is not None:
+        return
+
+    if os.name == 'nt':
+        try:
+            subprocess.run(
+                ['taskkill', '/PID', str(proc.pid), '/T', '/F'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                text=True,
+            )
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        return
+
+    try:
+        pgid = os.getpgid(proc.pid)
+    except Exception:
+        pgid = None
+
+    try:
+        if pgid is not None:
+            os.killpg(pgid, signal.SIGTERM)
+        else:
+            proc.terminate()
+    except Exception:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+    deadline = time.monotonic() + max(0.1, float(grace_s))
+    while proc.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.1)
+
+    if proc.poll() is not None:
+        return
+
+    try:
+        if pgid is not None:
+            os.killpg(pgid, signal.SIGKILL)
+        else:
+            proc.kill()
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def _run_streamed_subprocess(
+    cmd: List[str],
+    *,
+    cwd: Optional[str] = None,
+    env: Optional[Dict[str, str]] = None,
+    stdin_yes: bool = False,
+    on_log: Optional[Callable[[str, str], None]] = None,
+    hard_timeout_s: Optional[int] = None,
+    idle_timeout_s: Optional[int] = None,
+) -> _StreamedSubprocessResult:
+    stdout_lines: List[str] = []
+    stderr_lines: List[str] = []
+    state: Dict[str, Any] = {
+        'last_output_ts': time.monotonic(),
+        'last_stage': None,
+        'stage_history': [],
+    }
+    t0 = time.monotonic()
+
+    def _emit(stream_name: str, line: str) -> None:
+        if on_log is None:
+            return
+        try:
+            on_log(stream_name, line)
+        except Exception:
+            return
+
+    popen_kwargs: Dict[str, Any] = {
+        'stdout': subprocess.PIPE,
+        'stderr': subprocess.PIPE,
+        'stdin': subprocess.PIPE,
+        'text': True,
+        'encoding': 'utf-8',
+        'errors': 'replace',
+        'bufsize': 1,
+        'universal_newlines': True,
+    }
+    if cwd is not None:
+        popen_kwargs['cwd'] = str(cwd)
+    if env is not None:
+        popen_kwargs['env'] = env
+
+    if os.name == 'nt':
+        popen_kwargs['creationflags'] = int(getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0) or 0)
+    else:
+        popen_kwargs['start_new_session'] = True
+
+    proc = subprocess.Popen(cmd, **popen_kwargs)
+
+    if stdin_yes:
+        try:
+            if proc.stdin is not None:
+                proc.stdin.write('y\n')
+                proc.stdin.flush()
+        except Exception:
+            pass
+
+    def _reader(stream: Any, sink: List[str], stream_name: str) -> None:
+        if stream is None:
+            return
+        try:
+            for raw in iter(stream.readline, ''):
+                if raw == '' and proc.poll() is not None:
+                    break
+                line = raw.rstrip('\n')
+                if line.endswith('\r'):
+                    line = line.rstrip('\r')
+                line = _sanitize_wsl_text(line)
+                sink.append(line)
+                state['last_output_ts'] = time.monotonic()
+                stage = _hailo_stage_from_line(line)
+                if stage:
+                    prev_stage = state.get('last_stage')
+                    if prev_stage != stage:
+                        state['stage_history'].append({
+                            'stage': str(stage),
+                            't_s': float(round(time.monotonic() - t0, 3)),
+                        })
+                    state['last_stage'] = stage
+                _emit(stream_name, line)
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+    t_out = threading.Thread(target=_reader, args=(proc.stdout, stdout_lines, 'stdout'), daemon=True)
+    t_err = threading.Thread(target=_reader, args=(proc.stderr, stderr_lines, 'stderr'), daemon=True)
+    t_out.start()
+    t_err.start()
+
+    timed_out = False
+    timeout_kind: Optional[str] = None
+    while True:
+        rc = proc.poll()
+        if rc is not None:
+            break
+        now = time.monotonic()
+        if hard_timeout_s is not None and hard_timeout_s > 0 and (now - t0) > float(hard_timeout_s):
+            timed_out = True
+            timeout_kind = 'hard'
+            break
+        if idle_timeout_s is not None and idle_timeout_s > 0 and (now - float(state['last_output_ts'])) > float(idle_timeout_s):
+            timed_out = True
+            timeout_kind = 'idle'
+            break
+        time.sleep(0.2)
+
+    if timed_out:
+        _kill_process_tree(proc)
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+    else:
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+
+    t_out.join(timeout=2)
+    t_err.join(timeout=2)
+
+    return _StreamedSubprocessResult(
+        returncode=int(getattr(proc, 'returncode', 0) or 0),
+        stdout=_sanitize_wsl_text('\n'.join(stdout_lines)),
+        stderr=_sanitize_wsl_text('\n'.join(stderr_lines)),
+        timed_out=bool(timed_out),
+        timeout_kind=timeout_kind,
+        last_stage=(str(state.get('last_stage')) if state.get('last_stage') else None),
+        stage_history=list(state.get('stage_history') or []),
+        elapsed_s=float(time.monotonic() - t0),
+    )
 
 
 def hailo_parse_check_via_wsl(
@@ -1533,19 +2097,13 @@ def hailo_parse_check_auto(
     wsl_venv_activate: str = "auto",
     wsl_timeout_s: int = 180,
 ) -> "HailoParseResult":
-    """Convenience wrapper: pick the best available backend.
+    """Convenience wrapper: pick the best available backend."""
 
-    backend:
-      - "auto": local SDK if importable, else WSL (Windows only)
-      - "local": require local SDK
-      - "wsl": require WSL bridge
-    """
+    mode = normalize_hailo_backend(backend)
+    if mode == "subprocess":
+        mode = subprocess_backend_for_platform()
 
-    mode = str(backend or "auto").strip().lower()
-    if mode not in {"auto", "local", "wsl", "venv"}:
-        mode = "auto"
-
-    if mode in {"auto", "local"} and hailo_sdk_available():
+    def _run_local() -> HailoParseResult:
         return hailo_parse_check(
             onnx_path,
             hw_arch=hw_arch,
@@ -1558,7 +2116,7 @@ def hailo_parse_check_auto(
             disable_rt_metadata_extraction=disable_rt_metadata_extraction,
         )
 
-    if mode == "venv":
+    def _run_venv() -> HailoParseResult:
         return hailo_parse_check_via_venv(
             onnx_path,
             hw_arch=hw_arch,
@@ -1573,22 +2131,7 @@ def hailo_parse_check_auto(
             timeout_s=wsl_timeout_s,
         )
 
-    if mode in {"auto", "wsl"}:
-        # Linux: auto should prefer the managed venv (no WSL bridge exists).
-        if mode == "auto" and sys.platform != "win32":
-            return hailo_parse_check_via_venv(
-                onnx_path,
-                hw_arch=hw_arch,
-                net_name=net_name,
-                outdir=outdir,
-                net_input_shapes=net_input_shapes,
-                fixup=fixup,
-                add_conv_defaults=add_conv_defaults,
-                save_har=save_har,
-                disable_rt_metadata_extraction=disable_rt_metadata_extraction,
-                venv_activate=wsl_venv_activate,
-                timeout_s=wsl_timeout_s,
-            )
+    def _run_wsl() -> HailoParseResult:
         return hailo_parse_check_via_wsl(
             onnx_path,
             hw_arch=hw_arch,
@@ -1604,17 +2147,24 @@ def hailo_parse_check_auto(
             wsl_timeout_s=wsl_timeout_s,
         )
 
-    # Nothing available.
-    return HailoParseResult(
-        ok=False,
-        elapsed_s=0.0,
-        hw_arch=str(hw_arch),
-        net_name=str(net_name or Path(str(onnx_path)).stem),
-        error=(
-            "No usable Hailo backend available. "
-            "Install hailo_sdk_client in this Python env, or use the managed Hailo DFC venv/backend (auto/venv). On Windows you can also configure the WSL backend."
-        ),
-    )
+    if mode == "local":
+        return _run_local()
+    if mode == "venv":
+        return _run_venv()
+    if mode == "wsl":
+        return _run_wsl()
+
+    # auto
+    prefer_subprocess = auto_prefers_subprocess()
+    if not prefer_subprocess and hailo_sdk_available():
+        return _run_local()
+
+    res = _run_wsl() if sys.platform == "win32" else _run_venv()
+    if bool(getattr(res, "ok", False)) or bool(getattr(res, "skipped", False)) or not hailo_sdk_available():
+        return res
+    if hailo_sdk_available():
+        return _run_local()
+    return res
 
 
 # ------------------------------- ONNX fixups -------------------------------
@@ -1895,6 +2445,77 @@ class HailoHefBuildResult:
     fixup_report: Optional[Dict[str, Any]] = None
     skipped: bool = False
     calib_info: Optional[Dict[str, Any]] = None
+    returncode: Optional[int] = None
+    debug_log: Optional[str] = None
+    timed_out: bool = False
+    timeout_kind: Optional[str] = None
+    last_stage: Optional[str] = None
+    failure_kind: Optional[str] = None
+    unsupported_reason: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
+
+
+_HAILO_HEF_RESULT_FIELDS = {f.name for f in fields(HailoHefBuildResult)}
+
+
+def _make_hef_result(**kwargs: Any) -> HailoHefBuildResult:
+    """Build a HEF result without crashing on newly added metadata keys."""
+
+    data: Dict[str, Any] = {}
+    extras: Dict[str, Any] = {}
+    for key, value in kwargs.items():
+        if key in _HAILO_HEF_RESULT_FIELDS:
+            data[key] = value
+        else:
+            extras[key] = value
+
+    detail_dict = dict(data.get("details") or {})
+    if extras:
+        detail_dict.setdefault("extra_fields", {}).update(extras)
+    if detail_dict:
+        data["details"] = detail_dict
+
+    return HailoHefBuildResult(**data)
+
+
+def _hef_result_from_payload(
+    payload: Optional[Dict[str, Any]],
+    *,
+    elapsed_default: float,
+    hw_arch: str,
+    net_name: str,
+    backend_default: str,
+    returncode: Optional[int] = None,
+    last_stage: Optional[str] = None,
+    debug_log: Optional[str] = None,
+) -> HailoHefBuildResult:
+    body = dict(payload or {})
+    body["ok"] = bool(body.get("ok"))
+    body["elapsed_s"] = float(body.get("elapsed_s", elapsed_default))
+    body["hw_arch"] = str(body.get("hw_arch", hw_arch))
+    body["net_name"] = str(body.get("net_name", net_name))
+    body["backend"] = str(body.get("backend") or backend_default)
+
+    if returncode is not None and body.get("returncode") is None:
+        body["returncode"] = int(returncode)
+    if debug_log and not body.get("debug_log"):
+        body["debug_log"] = str(debug_log)
+    if last_stage and not body.get("last_stage"):
+        body["last_stage"] = str(last_stage)
+
+    # Best-effort: if the helper already persisted a result JSON and that path is
+    # directly accessible from this process (managed venv / native Linux), refresh
+    # it with any parent-side metadata we merged in here (e.g. stage summary).
+    try:
+        p_raw = body.get("result_json_path")
+        if isinstance(p_raw, str) and p_raw.strip():
+            p_json = Path(p_raw).expanduser()
+            if p_json.exists():
+                p_json.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+    return _make_hef_result(**body)
 
 
 def _safe_filename(s: str) -> str:
@@ -1911,6 +2532,9 @@ def _safe_filename(s: str) -> str:
     return "".join(out).strip("._") or "model"
 
 
+_CALIB_ITEM_EXTS = {".npy", ".npz", ".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+
+
 def _load_npy_any(path: Path) -> np.ndarray:
     arr = np.load(path)
     # Support .npz
@@ -1924,6 +2548,139 @@ def _load_npy_any(path: Path) -> np.ndarray:
                 return np.asarray(arr[k])
         return np.asarray(arr[keys[0]])
     return np.asarray(arr)
+
+
+def _iter_calib_items(calib_dir: Path, *, recursive: bool = True) -> List[Path]:
+    if not calib_dir.exists():
+        return []
+    try:
+        if recursive:
+            items = [p for p in calib_dir.rglob('*') if p.is_file() and p.suffix.lower() in _CALIB_ITEM_EXTS]
+        else:
+            items = [p for p in calib_dir.iterdir() if p.is_file() and p.suffix.lower() in _CALIB_ITEM_EXTS]
+    except Exception:
+        return []
+    return sorted(items)
+
+
+def _scan_calib_dir(calib_dir: Path, *, recursive: bool = True, limit: Optional[int] = None) -> Dict[str, Any]:
+    if recursive:
+        items = _iter_calib_items(calib_dir, recursive=True)
+    else:
+        items = _iter_calib_items(calib_dir, recursive=False)
+    if limit is not None and int(limit) > 0:
+        items = items[: int(limit)]
+
+    array_items = [p for p in items if p.suffix.lower() in {'.npy', '.npz'}]
+    image_items = [p for p in items if p.suffix.lower() in {'.png', '.jpg', '.jpeg', '.bmp', '.webp'}]
+
+    kind = 'empty'
+    if array_items and image_items:
+        kind = 'mixed'
+    elif array_items:
+        kind = 'array'
+    elif image_items:
+        kind = 'image'
+
+    return {
+        'dir': str(calib_dir),
+        'recursive': bool(recursive),
+        'kind': kind,
+        'count': int(len(items)),
+        'array_count': int(len(array_items)),
+        'image_count': int(len(image_items)),
+        'suffixes': sorted({p.suffix.lower() for p in items}),
+        'items': items,
+        'preview': [str(p) for p in items[: min(8, len(items))]],
+    }
+
+
+def _load_calib_item_any(path: Path) -> np.ndarray:
+    if path.suffix.lower() in ('.npy', '.npz'):
+        return _load_npy_any(path)
+
+    try:
+        from PIL import Image
+    except Exception as exc:
+        raise RuntimeError(f'Pillow is required to load image calibration items: {type(exc).__name__}: {exc}')
+
+    with Image.open(path) as im:
+        if im.mode != 'RGB':
+            im = im.convert('RGB')
+        return np.asarray(im)
+
+
+def _coerce_hwc_image(arr: np.ndarray) -> np.ndarray:
+    x = np.asarray(arr)
+    if x.ndim == 4 and x.shape[0] == 1:
+        x = x[0]
+    if x.ndim == 3 and x.shape[0] in (1, 3, 4) and x.shape[-1] not in (1, 3, 4):
+        x = np.transpose(x, (1, 2, 0))
+    if x.ndim == 2:
+        x = x[..., None]
+    if x.ndim != 3:
+        raise ValueError(f'Calibration item is not image-like. shape={tuple(x.shape)}')
+    if x.shape[-1] == 4:
+        x = x[..., :3]
+    if x.shape[-1] not in (1, 3):
+        raise ValueError(f'Unsupported calibration image channels: shape={tuple(x.shape)}')
+    return np.ascontiguousarray(x)
+
+
+def _resize_hwc_image(
+    arr: np.ndarray,
+    target_h: Optional[int],
+    target_w: Optional[int],
+    *,
+    target_c: Optional[int] = None,
+) -> np.ndarray:
+    x = _coerce_hwc_image(arr)
+
+    if target_c is not None:
+        if x.shape[-1] == target_c:
+            pass
+        elif x.shape[-1] == 1 and target_c == 3:
+            x = np.repeat(x, 3, axis=-1)
+        elif x.shape[-1] == 3 and target_c == 1:
+            x = np.mean(x, axis=-1, keepdims=True)
+        else:
+            raise ValueError(f'Cannot convert calibration channels {x.shape[-1]} -> {target_c}')
+
+    if target_h is None or target_w is None or (x.shape[0] == int(target_h) and x.shape[1] == int(target_w)):
+        return np.ascontiguousarray(x)
+
+    try:
+        from PIL import Image
+    except Exception as exc:
+        raise RuntimeError(f'Pillow is required to resize image calibration items: {type(exc).__name__}: {exc}')
+
+    is_float = np.issubdtype(x.dtype, np.floating)
+    unit_float = bool(is_float and x.size and float(np.nanmax(x)) <= 1.5)
+    if is_float:
+        if unit_float:
+            x8 = np.clip(x, 0.0, 1.0) * 255.0
+        else:
+            x8 = np.clip(x, 0.0, 255.0)
+        x8 = x8.astype(np.uint8)
+    elif x.dtype != np.uint8:
+        x8 = np.clip(x, 0, 255).astype(np.uint8)
+    else:
+        x8 = x
+
+    if x8.shape[-1] == 1:
+        im = Image.fromarray(x8[..., 0], mode='L')
+        im = im.resize((int(target_w), int(target_h)), resample=Image.BILINEAR)
+        y = np.asarray(im)[..., None]
+    else:
+        im = Image.fromarray(x8, mode='RGB')
+        im = im.resize((int(target_w), int(target_h)), resample=Image.BILINEAR)
+        y = np.asarray(im)
+
+    if is_float:
+        y = y.astype(np.float32)
+        if unit_float:
+            y /= 255.0
+    return np.ascontiguousarray(y)
 
 
 def _hn_get_shape(meta: Dict[str, Any]) -> Optional[List[int]]:
@@ -2019,33 +2776,47 @@ def _try_build_calib_from_dir(
 ) -> Optional[np.ndarray]:
     if not calib_dir.exists():
         return None
-    items = sorted([p for p in calib_dir.iterdir() if p.suffix.lower() in (".npy", ".npz")])
+    calib_scan = _scan_calib_dir(calib_dir, recursive=True, limit=int(limit))
+    items = list(calib_scan.get('items') or [])
     if not items:
         return None
 
     batches: List[np.ndarray] = []
     total = 0
+    tgt = [int(v) for v in expected_shape]
     for p in items:
-        a = _load_npy_any(p)
-        if a.ndim == len(expected_shape):
-            a = a[None, ...]
-        if a.ndim != len(expected_shape) + 1:
+        try:
+            a = _load_calib_item_any(p)
+        except Exception:
             continue
 
-        # Convert dtype to float32 (Hailo optimize typically expects float)
+        a = np.asarray(a)
+        if len(tgt) == 3 and a.ndim in (2, 3, 4):
+            try:
+                a = _resize_hwc_image(a, tgt[0], tgt[1], target_c=tgt[2])[None, ...]
+            except Exception:
+                pass
+
+        if a.ndim == len(tgt):
+            a = a[None, ...]
+        if a.ndim != len(tgt) + 1:
+            continue
+
         if a.dtype == np.uint8:
             a = a.astype(np.float32) / 255.0
         else:
             a = a.astype(np.float32, copy=False)
 
-        # Try to match shape; special-case NCHW->NHWC for 3D image shapes
         sample = list(a.shape[1:])
-        tgt = list(expected_shape)
         if sample == tgt:
             pass
         elif len(tgt) == 3 and sample == [tgt[2], tgt[0], tgt[1]]:
-            # NCHW -> NHWC
             a = np.transpose(a, (0, 2, 3, 1))
+        elif len(tgt) == 3:
+            try:
+                a = np.stack([_resize_hwc_image(ss, tgt[0], tgt[1], target_c=tgt[2]) for ss in a], axis=0)
+            except Exception:
+                continue
         else:
             continue
 
@@ -2063,6 +2834,496 @@ def _try_build_calib_from_dir(
     return np.ascontiguousarray(ds.astype(np.float32, copy=False))
 
 
+
+def _nname(s: str) -> str:
+    s = (s or '').replace('\\', '/')
+    s = s.split('/')[-1]
+    s = s.split(':')[0]
+    return s.lower().strip()
+
+
+def _load_onnx_input_names(model_path: Path) -> List[str]:
+    try:
+        m = onnx.load(str(model_path), load_external_data=False)
+    except Exception:
+        return []
+    init_names = {str(getattr(x, 'name', '') or '') for x in getattr(m.graph, 'initializer', [])}
+    out: List[str] = []
+    for vi in getattr(m.graph, 'input', []):
+        name = str(getattr(vi, 'name', '') or '')
+        if not name or name in init_names:
+            continue
+        out.append(name)
+    return out
+
+
+def _load_onnx_output_names(model_path: Path) -> List[str]:
+    try:
+        m = onnx.load(str(model_path), load_external_data=False)
+    except Exception:
+        return []
+    out: List[str] = []
+    for vi in getattr(m.graph, 'output', []):
+        name = str(getattr(vi, 'name', '') or '')
+        if not name:
+            continue
+        out.append(name)
+    return out
+
+
+def _map_part2_inputs_to_part1_outputs(
+    part1_outputs: List[str],
+    part2_inputs: List[str],
+) -> Tuple[Dict[str, str], List[str], Dict[str, Any]]:
+    mapping: Dict[str, str] = {}
+    mapping_how: Dict[str, str] = {}
+    p1_out_norm = {_nname(n): n for n in part1_outputs}
+
+    for raw in part2_inputs:
+        nrm = _nname(raw)
+        if raw in part1_outputs:
+            mapping[raw] = raw
+            mapping_how[raw] = 'exact'
+        elif nrm in p1_out_norm:
+            mapping[raw] = p1_out_norm[nrm]
+            mapping_how[raw] = 'normalized'
+
+    if len(mapping) != len(part2_inputs) and len(part2_inputs) == len(part1_outputs):
+        for idx, raw in enumerate(part2_inputs):
+            if raw in mapping:
+                continue
+            mapping[raw] = part1_outputs[idx]
+            mapping_how[raw] = 'positional_fallback'
+
+    missing = [n for n in part2_inputs if n not in mapping]
+    debug = {
+        'mapping': dict(mapping),
+        'mapping_how': dict(mapping_how),
+        'part1_outputs': list(part1_outputs),
+        'part2_inputs': list(part2_inputs),
+        'missing_inputs': list(missing),
+    }
+    return mapping, missing, debug
+
+
+def hailo_part2_activation_precheck_from_io(
+    *,
+    part1_outputs: List[str],
+    part2_inputs: List[str],
+    original_inputs: Optional[List[str]] = None,
+    part1_inputs: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Classify whether Part2 activation-calibration can be driven from Part1.
+
+    This is the compatibility rule used by the Hailo Part2 activation-calib
+    path: every Part2 external input must be producible by Part1 outputs.
+    Missing inputs that also belong to the original full-model inputs are
+    surfaced as ``likely_original_inputs`` for clearer diagnostics.
+    """
+
+    p1_out = [str(x) for x in (part1_outputs or []) if str(x)]
+    p2_in = [str(x) for x in (part2_inputs or []) if str(x)]
+    p1_inputs_eff = [str(x) for x in (part1_inputs or original_inputs or []) if str(x)]
+
+    mapping, missing, debug = _map_part2_inputs_to_part1_outputs(p1_out, p2_in)
+    p1_input_norm = {_nname(n) for n in p1_inputs_eff}
+    likely_original_inputs = [n for n in missing if _nname(n) in p1_input_norm]
+
+    info: Dict[str, Any] = dict(debug)
+    info.update(
+        {
+            'inspect_ok': True,
+            'compatible': not bool(missing),
+            'part1_inputs': list(p1_inputs_eff),
+            'likely_original_inputs': list(likely_original_inputs),
+        }
+    )
+    return info
+
+
+def hailo_part2_activation_precheck_from_manifest(split_manifest: Dict[str, Any]) -> Dict[str, Any]:
+    """Run the cheap Part2 activation-calibration precheck from split metadata.
+
+    The benchmark exporter already has ``split_manifest`` in memory, so it does
+    not need to re-open ONNX files just to detect the classic
+    ``missing=['images']`` cases.
+    """
+
+    manifest = dict(split_manifest or {})
+    part1_outputs = manifest.get('cut_tensors_full') or manifest.get('part1_cut_names') or []
+    part2_inputs = manifest.get('part2_external_inputs') or []
+    original_inputs = manifest.get('orig_inputs') or []
+
+    info = hailo_part2_activation_precheck_from_io(
+        part1_outputs=list(part1_outputs) if isinstance(part1_outputs, list) else [],
+        part2_inputs=list(part2_inputs) if isinstance(part2_inputs, list) else [],
+        original_inputs=list(original_inputs) if isinstance(original_inputs, list) else [],
+    )
+    info['source'] = 'split_manifest'
+    return info
+
+
+def format_hailo_part2_activation_precheck_error(info: Dict[str, Any]) -> str:
+    return _format_activation_calib_preflight_error(info)
+
+
+_HAILO_PART2_HARD_PARSER_BLOCKER_OPS = {"TopK", "GatherElements"}
+_HAILO_PART2_SOFT_PARSER_BLOCKER_OPS = {"ReduceMax"}
+
+
+def _path_parent_prefix(name: str) -> str:
+    s = str(name or "").strip()
+    if not s:
+        return ""
+    if "/" not in s.strip("/"):
+        return s.rsplit("/", 1)[0] if "/" in s else s
+    parent = s.rsplit("/", 1)[0]
+    return parent or s
+
+
+def _dominant_parser_blocked_prefix(names: List[str]) -> Optional[str]:
+    counts: Dict[str, int] = {}
+    best_prefix: Optional[str] = None
+    best_count = -1
+    for raw in names or []:
+        prefix = _path_parent_prefix(str(raw))
+        if not prefix:
+            continue
+        counts[prefix] = int(counts.get(prefix, 0)) + 1
+        if counts[prefix] > best_count or (counts[prefix] == best_count and best_prefix is not None and len(prefix) > len(best_prefix)):
+            best_prefix = prefix
+            best_count = counts[prefix]
+    return best_prefix
+
+
+def hailo_part2_parser_blocker_precheck_from_model(
+    part2_model: onnx.ModelProto,
+    *,
+    split_manifest: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Cheap static scan for known Hailo Part2 parser blockers.
+
+    This intentionally does *not* invoke the Hailo parser. It scans the split's
+    Part2 ONNX graph for operator types that are known to fail translation with
+    the currently supported Hailo DFC stack (for example ``TopK`` and
+    ``GatherElements`` in YOLO-style post-processing heads).
+
+    The precheck is conservative: only hard blockers make the split incompatible.
+    Soft blockers are reported for diagnostics but do not reject on their own.
+    """
+
+    info: Dict[str, Any] = {
+        'inspect_ok': False,
+        'compatible': None,
+        'source': 'part2_model_scan',
+    }
+    try:
+        g = getattr(part2_model, 'graph', None)
+        nodes = list(getattr(g, 'node', []) or [])
+        hard_blockers: List[Dict[str, Any]] = []
+        soft_blockers: List[Dict[str, Any]] = []
+        transpose_candidates: List[Tuple[int, str]] = []
+        for idx, node in enumerate(nodes):
+            name = str(getattr(node, 'name', '') or '')
+            op_type = str(getattr(node, 'op_type', '') or '')
+            rec = {'name': name, 'op_type': op_type, 'index': int(idx)}
+            if op_type in _HAILO_PART2_HARD_PARSER_BLOCKER_OPS:
+                hard_blockers.append(rec)
+            elif op_type in _HAILO_PART2_SOFT_PARSER_BLOCKER_OPS:
+                soft_blockers.append(rec)
+            if op_type == 'Transpose' and name:
+                transpose_candidates.append((int(idx), name))
+
+        blocked_names = [str(rec.get('name') or '') for rec in hard_blockers if str(rec.get('name') or '')]
+        dominant_prefix = _dominant_parser_blocked_prefix(blocked_names)
+        first_blocked_idx = min((int(rec.get('index', 0)) for rec in hard_blockers), default=None)
+        suggested_end_nodes: List[str] = []
+        if dominant_prefix and first_blocked_idx is not None:
+            prefix_eff = dominant_prefix.rstrip('/') + '/'
+            candidates = [
+                name for idx, name in transpose_candidates
+                if idx < int(first_blocked_idx) and str(name).startswith(prefix_eff)
+            ]
+            if candidates:
+                # Prefer the latest transpose nodes before the blocked tail.
+                ordered = list(reversed(candidates))
+                dedup: List[str] = []
+                seen: set[str] = set()
+                for cand in ordered:
+                    if cand not in seen:
+                        dedup.append(cand)
+                        seen.add(cand)
+                suggested_end_nodes = dedup[:4]
+
+        manifest = dict(split_manifest or {}) if isinstance(split_manifest, dict) else {}
+        info.update({
+            'inspect_ok': True,
+            'compatible': not bool(hard_blockers),
+            'hard_blocker_count': int(len(hard_blockers)),
+            'soft_blocker_count': int(len(soft_blockers)),
+            'blocked_ops': sorted({str(rec.get('op_type') or '') for rec in hard_blockers if str(rec.get('op_type') or '')}),
+            'blocked_nodes': blocked_names,
+            'soft_blocker_ops': sorted({str(rec.get('op_type') or '') for rec in soft_blockers if str(rec.get('op_type') or '')}),
+            'soft_blocker_nodes': [str(rec.get('name') or '') for rec in soft_blockers if str(rec.get('name') or '')],
+            'blocked_prefix': dominant_prefix,
+            'suggested_end_nodes': list(suggested_end_nodes),
+            'part2_inputs': list(manifest.get('part2_external_inputs') or []),
+            'part1_outputs': list(manifest.get('cut_tensors_full') or manifest.get('part1_cut_names') or []),
+        })
+        return info
+    except Exception as exc:
+        info['error'] = f'{type(exc).__name__}: {exc}'
+        return info
+
+
+def format_hailo_part2_parser_blocker_error(info: Dict[str, Any]) -> str:
+    blocked_ops = list(info.get('blocked_ops') or [])
+    blocked_nodes = list(info.get('blocked_nodes') or [])
+    blocked_prefix = str(info.get('blocked_prefix') or '').strip()
+    suggested_end_nodes = list(info.get('suggested_end_nodes') or [])
+
+    msg = 'Unsupported Hailo Part2 parser-blocking head detected'
+    if blocked_prefix:
+        msg += f': blocked_prefix={blocked_prefix}'
+    if blocked_ops:
+        msg += f' blocked_ops={blocked_ops}'
+    if suggested_end_nodes:
+        msg += f' suggested_end_nodes={suggested_end_nodes}'
+    if blocked_nodes:
+        preview = blocked_nodes[:6]
+        msg += f' blocked_nodes={preview}'
+        if len(blocked_nodes) > len(preview):
+            msg += f' (+{len(blocked_nodes) - len(preview)} more)'
+    return msg
+
+
+def _activation_calib_preflight(
+    *,
+    part1_onnx: Path,
+    part2_onnx: Path,
+) -> Dict[str, Any]:
+    info: Dict[str, Any] = {
+        'inspect_ok': False,
+        'compatible': None,
+        'part1_onnx': str(part1_onnx),
+        'part2_onnx': str(part2_onnx),
+    }
+
+    try:
+        part1_inputs = _load_onnx_input_names(part1_onnx)
+        part1_outputs = _load_onnx_output_names(part1_onnx)
+        part2_inputs = _load_onnx_input_names(part2_onnx)
+    except Exception as exc:
+        info['error'] = f'{type(exc).__name__}: {exc}'
+        return info
+
+    if not part1_outputs or not part2_inputs:
+        info.update(
+            {
+                'inspect_ok': True,
+                'compatible': True,
+                'part1_inputs': list(part1_inputs),
+                'part1_outputs': list(part1_outputs),
+                'part2_inputs': list(part2_inputs),
+            }
+        )
+        return info
+
+    info.update(
+        hailo_part2_activation_precheck_from_io(
+            part1_outputs=part1_outputs,
+            part2_inputs=part2_inputs,
+            part1_inputs=part1_inputs,
+        )
+    )
+    return info
+
+
+def _format_activation_calib_preflight_error(info: Dict[str, Any]) -> str:
+    missing = list(info.get('missing_inputs') or [])
+    likely_original_inputs = list(info.get('likely_original_inputs') or [])
+    part1_outputs = list(info.get('part1_outputs') or [])
+    part2_inputs = list(info.get('part2_inputs') or [])
+    msg = (
+        'Unsupported Hailo Part2 activation-calibration splitpoint: '
+        'part2 inputs are not fully produced by part1 outputs. '
+        f'missing={missing}'
+    )
+    if likely_original_inputs:
+        msg += f' likely_original_inputs={likely_original_inputs}'
+    msg += f' part1_outputs={part1_outputs} part2_inputs={part2_inputs}'
+    return msg
+
+
+def _detect_part1_layout_ort(inp: Any) -> str:
+    shp = list(getattr(inp, 'shape', []) or [])
+    if len(shp) == 4:
+        if isinstance(shp[1], int) and shp[1] == 3:
+            return 'NCHW'
+        if isinstance(shp[3], int) and shp[3] == 3:
+            return 'NHWC'
+    return 'NCHW'
+
+
+def _ort_input_hwc_spec(inp: Any) -> Tuple[Optional[int], Optional[int], Optional[int], str]:
+    shp = list(getattr(inp, 'shape', []) or [])
+    layout = _detect_part1_layout_ort(inp)
+
+    def _to_dim(v: Any) -> Optional[int]:
+        try:
+            iv = int(v)
+        except Exception:
+            return None
+        return iv if iv > 0 else None
+
+    dims = [_to_dim(v) for v in shp]
+    if len(dims) == 4:
+        if layout == 'NCHW':
+            return dims[2], dims[3], dims[1], layout
+        return dims[1], dims[2], dims[3], layout
+    if len(dims) == 3:
+        if layout == 'NCHW':
+            return dims[1], dims[2], dims[0], layout
+        return dims[0], dims[1], dims[2], layout
+    return None, None, None, layout
+
+
+def _prepare_part1_input_for_activation_calib(arr: np.ndarray, inp: Any) -> np.ndarray:
+    tgt_h, tgt_w, tgt_c, layout = _ort_input_hwc_spec(inp)
+    x = _resize_hwc_image(arr, tgt_h, tgt_w, target_c=tgt_c)
+
+    exp_type = str(getattr(inp, 'type', '') or '').lower()
+    if 'float' in exp_type:
+        x = x.astype(np.float32)
+        if x.size and float(np.nanmax(x)) > 1.5:
+            x = x / 255.0
+    else:
+        if np.issubdtype(x.dtype, np.floating):
+            if x.size and float(np.nanmax(x)) <= 1.5:
+                x = x * 255.0
+            x = np.clip(x, 0.0, 255.0)
+        x = x.astype(np.uint8)
+
+    if layout == 'NCHW':
+        x = np.transpose(x, (2, 0, 1))[None, ...]
+    else:
+        x = x[None, ...]
+    return np.ascontiguousarray(x)
+
+
+def _convert_calib_dataset_to_hn_shape(ds: np.ndarray, hn_shape: List[int]) -> Tuple[np.ndarray, str]:
+    x = np.asarray(ds)
+    if x.ndim < 2:
+        raise ValueError(f'Bad calib dataset rank: {x.ndim}')
+    while x.ndim >= 3 and x.shape[1] == 1 and (x.ndim - 1) > len(hn_shape):
+        x = np.squeeze(x, axis=1)
+    sample_shape = list(x.shape[1:])
+    target = [int(v) for v in hn_shape]
+    if sample_shape == target:
+        return np.ascontiguousarray(x.astype(np.float32, copy=False)), 'ok (already matches)'
+    if len(target) == 3 and x.ndim == 4:
+        if sample_shape == [target[2], target[0], target[1]]:
+            y = np.transpose(x, (0, 2, 3, 1))
+            return np.ascontiguousarray(y.astype(np.float32, copy=False)), 'transpose NCHW->NHWC'
+        if sample_shape == [target[0], target[1], target[2]]:
+            return np.ascontiguousarray(x.astype(np.float32, copy=False)), 'ok (NHWC)'
+    raise ValueError(f'Cannot convert calib dataset sample_shape={sample_shape} to hn_shape={target}')
+
+
+def _build_activation_calib_from_part1_onnx(
+    *,
+    part1_onnx: Path,
+    part2_onnx: Path,
+    calib_dir: Path,
+    limit: int,
+    gen_batch: int,
+) -> Tuple[List[str], Dict[str, np.ndarray], Dict[str, Any]]:
+    try:
+        import onnxruntime as ort  # type: ignore
+    except Exception as exc:
+        raise RuntimeError(f'onnxruntime is required to generate multi-input activation calibration: {type(exc).__name__}: {exc}')
+
+    if not calib_dir.exists():
+        raise FileNotFoundError(f'Calibration dir not found: {calib_dir}')
+    calib_scan = _scan_calib_dir(calib_dir, recursive=True, limit=max(1, int(limit)))
+    calib_items = list(calib_scan.get('items') or [])
+    if not calib_items:
+        raise FileNotFoundError(f'No calibration items (.npy/.npz/images) in: {calib_dir}')
+
+    so = ort.SessionOptions()
+    so.intra_op_num_threads = 1
+    so.inter_op_num_threads = 1
+    so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    p1_sess = ort.InferenceSession(str(part1_onnx), sess_options=so, providers=['CPUExecutionProvider'])
+    p2_sess = ort.InferenceSession(str(part2_onnx), providers=['CPUExecutionProvider'])
+
+    p1_in = p1_sess.get_inputs()[0]
+    p1_in_name = p1_in.name
+    p1_out_names = [o.name for o in p1_sess.get_outputs()]
+
+    p2_inputs = list(p2_sess.get_inputs())
+    p2_in_names = [m.name for m in p2_inputs]
+    mapping, missing, mapping_debug = _map_part2_inputs_to_part1_outputs(p1_out_names, p2_in_names)
+    if missing:
+        preflight = _activation_calib_preflight(part1_onnx=part1_onnx, part2_onnx=part2_onnx)
+        raise RuntimeError(_format_activation_calib_preflight_error(preflight if preflight.get('inspect_ok') else mapping_debug))
+    req_out_names = [mapping[n] for n in p2_in_names]
+    per_input_samples: Dict[str, List[np.ndarray]] = {n: [] for n in p2_in_names}
+
+    debug: Dict[str, Any] = {
+        'part1_input': {'name': p1_in_name, 'type': str(getattr(p1_in, 'type', '') or ''), 'shape': list(getattr(p1_in, 'shape', []) or [])},
+        'mapping_part2in_to_part1out': dict(mapping),
+        'mapping_debug': mapping_debug,
+        'part2_inputs': {m.name: {'type': str(getattr(m, 'type', '') or ''), 'shape': [d if isinstance(d, int) else None for d in (getattr(m, 'shape', []) or [])]} for m in p2_inputs},
+        'calib_source_dir': str(calib_dir),
+        'calib_items_total': int(len(calib_items)),
+        'calib_items_preview': list(calib_scan.get('preview') or []),
+        'calib_item_suffixes': list(calib_scan.get('suffixes') or []),
+        'calib_scan_recursive': bool(calib_scan.get('recursive', True)),
+        'calib_scan_kind': str(calib_scan.get('kind') or 'unknown'),
+        'calib_scan': {k: v for k, v in calib_scan.items() if k != 'items'},
+    }
+
+    bdim = None
+    try:
+        bdim = getattr(p1_in, 'shape', [None])[0]
+    except Exception:
+        bdim = None
+    gen_batch = max(1, int(gen_batch))
+    if isinstance(bdim, int) and bdim == 1 and gen_batch != 1:
+        gen_batch = 1
+
+    idx = 0
+    N = len(calib_items)
+    while idx < N:
+        batch_paths = calib_items[idx: idx + gen_batch]
+        xs: List[np.ndarray] = []
+        for pp in batch_paths:
+            arr = _load_calib_item_any(pp)
+            xs.append(_prepare_part1_input_for_activation_calib(arr, p1_in))
+        xb = np.concatenate(xs, axis=0) if len(xs) > 1 else xs[0]
+        outs = p1_sess.run(req_out_names, {p1_in_name: xb})
+        for p2_name, out_arr in zip(p2_in_names, outs):
+            oa = np.asarray(out_arr)
+            if oa.ndim >= 1 and oa.shape[0] == xb.shape[0]:
+                for bi in range(int(oa.shape[0])):
+                    feat = np.asarray(oa[bi]).astype(np.float32, copy=False)
+                    per_input_samples[p2_name].append(np.ascontiguousarray(feat))
+            else:
+                feat = np.asarray(oa).astype(np.float32, copy=False)
+                per_input_samples[p2_name].append(np.ascontiguousarray(feat))
+        idx += gen_batch
+
+    calib_arrays: Dict[str, np.ndarray] = {}
+    for p2_name, samples in per_input_samples.items():
+        if not samples:
+            raise RuntimeError(f'No activation calibration samples generated for part2 input {p2_name}')
+        calib_arrays[p2_name] = np.stack(samples, axis=0).astype(np.float32)
+
+    debug['calib_shapes_before_hn'] = {k: {'dataset_shape': list(v.shape), 'dtype': str(v.dtype)} for k, v in calib_arrays.items()}
+    return p2_in_names, calib_arrays, debug
+
+
 def hailo_build_hef(
     onnx_path: Union[str, Path],
     *,
@@ -2077,16 +3338,23 @@ def hailo_build_hef(
     calib_dir: Optional[Union[str, Path]] = None,
     calib_count: int = 64,
     calib_batch_size: int = 8,
+    activation_part1_onnx: Optional[Union[str, Path]] = None,
+    activation_gen_batch: int = 8,
     force: bool = False,
     keep_artifacts: bool = False,
+    extra_model_script: Optional[str] = None,
 ) -> HailoHefBuildResult:
     """Translate + optimize + compile an ONNX to a HEF.
 
     Notes
     -----
     - This function requires `hailo_sdk_client` (DFC) to be importable.
-    - If `calib_dir` is not provided or cannot be used, a *random* calibration
-      set is generated based on HN input-layer shapes.
+    - For single-input networks, `calib_dir` can point to image/input `.npy` / `.npz` samples.
+- For multi-input split stage2 networks, pass `activation_part1_onnx` together with
+  `calib_dir` containing image calibration samples. The tool will run Part1 with
+  ONNXRuntime to generate activation calibration for Part2 (splitbench-style).
+- If calibration data cannot be used, a *random* calibration set is generated based
+  on HN input-layer shapes.
     """
 
     t0 = time.time()
@@ -2100,6 +3368,29 @@ def hailo_build_hef(
 
     out_dir = Path(outdir) if outdir is not None else onnx_path.parent
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    activation_part1_onnx_p = Path(activation_part1_onnx).expanduser().resolve() if activation_part1_onnx else None
+    calib_dir_p = Path(calib_dir).expanduser().resolve() if calib_dir else None
+
+    if activation_part1_onnx_p is not None:
+        preflight = _activation_calib_preflight(part1_onnx=activation_part1_onnx_p, part2_onnx=onnx_path)
+        if preflight.get('inspect_ok') and preflight.get('compatible') is False:
+            return _make_hef_result(
+                ok=False,
+                elapsed_s=time.time() - t0,
+                hw_arch=str(hw_arch_eff),
+                net_name=str(net_name),
+                backend='local',
+                skipped=True,
+                failure_kind='unsupported_splitpoint',
+                unsupported_reason='activation_preflight_missing_inputs',
+                error=_format_activation_calib_preflight_error(preflight),
+                calib_info={
+                    'source': 'activation_from_part1',
+                    'requested_count': int(calib_count),
+                    'preflight': preflight,
+                },
+            )
 
     hef_path = out_dir / "compiled.hef"
     if hef_path.exists() and not bool(force):
@@ -2205,17 +3496,111 @@ def hailo_build_hef(
             eff_count = min(eff_count, _clamp_calib_count(shp, int(calib_count)))
         eff_count = max(1, eff_count)
 
-        calib_dir_p = Path(calib_dir).expanduser().resolve() if calib_dir else None
         used_dir = False
-        if calib_dir_p is not None and calib_dir_p.exists() and len(input_layers) == 1:
-            # For now, only support directory calibration for single-input networks.
-            in0 = input_layers[0]
-            ds = _try_build_calib_from_dir(calib_dir=calib_dir_p, expected_shape=expected_shapes[in0], limit=eff_count)
-            if ds is not None:
-                calib_inputs[in0] = ds
-                used_dir = True
+        used_activation = False
+        activation_debug: Optional[Dict[str, Any]] = None
+        activation_part2_names: Optional[List[str]] = None
 
-        if not used_dir:
+        if calib_dir_p is not None and calib_dir_p.exists():
+            # IMPORTANT:
+            # For exported Part2 models we prefer activation calibration whenever
+            # Part1 is available, even when HN exposes only a single input layer.
+            #
+            # Rationale:
+            # - The single-input HN case often still corresponds to an internal
+            #   cut-tensor / activation tensor, not to a raw image input.
+            # - Resizing image samples directly into that tensor shape can produce
+            #   a syntactically valid but semantically wrong calibration set.
+            # - Several real splits (for example late YOLOv7 boundaries such as
+            #   b066) only fail on Hailo-part2 because the previous logic routed
+            #   single-input Part2 models through `_try_build_calib_from_dir()`.
+            #
+            # Therefore: whenever `activation_part1_onnx` is available, treat the
+            # model as a Part2 split and generate calibration activations from
+            # Part1 first. Direct image calibration from `calib_dir` remains the
+            # fallback only for models without a Part1 activation source.
+            if activation_part1_onnx_p is not None:
+                try:
+                    activation_part2_names, calib_by_part2_input, activation_debug = _build_activation_calib_from_part1_onnx(
+                        part1_onnx=activation_part1_onnx_p,
+                        part2_onnx=model_for_parse,
+                        calib_dir=calib_dir_p,
+                        limit=eff_count,
+                        gen_batch=max(1, int(activation_gen_batch)),
+                    )
+                    if len(activation_part2_names) != len(input_layers):
+                        raise RuntimeError(
+                            f'Multi-input activation calib count mismatch: part2_onnx_inputs={len(activation_part2_names)} hn_inputs={len(input_layers)}'
+                        )
+                    conv_info: Dict[str, Any] = {'hn_inputs': list(input_layers), 'conversions': {}}
+                    for i, hn_in in enumerate(input_layers):
+                        onnx_in = activation_part2_names[i]
+                        ds = calib_by_part2_input[onnx_in]
+                        hn_shape = expected_shapes[hn_in]
+                        before = list(ds.shape)
+                        ds2, how = _convert_calib_dataset_to_hn_shape(ds, hn_shape)
+                        calib_inputs[hn_in] = ds2
+                        conv_info['conversions'][hn_in] = {
+                            'onnx_input': onnx_in,
+                            'before': before,
+                            'hn_shape': list(hn_shape),
+                            'after': list(ds2.shape),
+                            'how': how,
+                        }
+                    if activation_debug is None:
+                        activation_debug = {}
+                    activation_debug['strategy'] = 'activation_from_part1_preferred'
+                    activation_debug['hn_inputs'] = list(input_layers)
+                    activation_debug['hn_input_shapes'] = {hn_in: list(expected_shapes[hn_in]) for hn_in in input_layers}
+                    activation_debug['calib_shapes_after_hn'] = {k: {'dataset_shape': list(v.shape), 'dtype': str(v.dtype)} for k, v in calib_inputs.items()}
+                    activation_debug['calib_conversion'] = conv_info
+                    try:
+                        (out_dir / 'calib_activations_shapes.json').write_text(json.dumps(activation_debug, indent=2), encoding='utf-8')
+                    except Exception:
+                        pass
+                    used_activation = True
+                except Exception as exc:
+                    msg = (
+                        'Failed to build activation calibration for multi-input Hailo model. '
+                        f'part1={activation_part1_onnx_p} part2={model_for_parse} calib_dir={calib_dir_p}. '
+                        f'Details: {type(exc).__name__}: {exc}'
+                    )
+                    preflight = _activation_calib_preflight(part1_onnx=activation_part1_onnx_p, part2_onnx=model_for_parse)
+                    failure_kind = 'invalid_calibration_set'
+                    skipped = False
+                    unsupported_reason = None
+                    if preflight.get('inspect_ok') and preflight.get('compatible') is False:
+                        msg = _format_activation_calib_preflight_error(preflight)
+                        failure_kind = 'unsupported_splitpoint'
+                        skipped = True
+                        unsupported_reason = 'activation_preflight_missing_inputs'
+                    return _make_hef_result(
+                        ok=False,
+                        elapsed_s=time.time() - t0,
+                        hw_arch=str(hw_arch_eff),
+                        net_name=str(net_name),
+                        backend='local',
+                        fixed_onnx_path=str(fixed_path) if fixed_path is not None else None,
+                        fixup_report=fixup_report,
+                        error=msg,
+                        skipped=skipped,
+                        failure_kind=failure_kind,
+                        unsupported_reason=unsupported_reason,
+                        calib_info={
+                            'source': 'activation_from_part1',
+                            'requested_count': int(calib_count),
+                            'preflight': preflight,
+                            'calib_dir': str(calib_dir_p) if calib_dir_p is not None else None,
+                        },
+                    )
+            elif len(input_layers) == 1:
+                in0 = input_layers[0]
+                ds = _try_build_calib_from_dir(calib_dir=calib_dir_p, expected_shape=expected_shapes[in0], limit=eff_count)
+                if ds is not None:
+                    calib_inputs[in0] = ds
+                    used_dir = True
+
+        if not used_dir and not used_activation:
             rng = np.random.default_rng(0)
             for in_name in input_layers:
                 shp = expected_shapes[in_name]
@@ -2224,16 +3609,28 @@ def hailo_build_hef(
 
         # Determine batch size
         bs = max(1, min(int(calib_batch_size), int(eff_count)))
-        calib_meta["source"] = str(calib_dir_p) if used_dir and calib_dir_p is not None else "random"
-        calib_meta["used_count"] = int(eff_count)
-        calib_meta["batch_size"] = int(bs)
+        if used_activation:
+            calib_meta['source'] = 'activation_from_part1'
+            calib_meta['activation_part1_onnx'] = str(activation_part1_onnx_p) if activation_part1_onnx_p is not None else None
+            calib_meta['activation_gen_batch'] = int(max(1, int(activation_gen_batch)))
+            if activation_debug is not None:
+                calib_meta['activation_debug_path'] = str(out_dir / 'calib_activations_shapes.json')
+        else:
+            calib_meta['source'] = str(calib_dir_p) if used_dir and calib_dir_p is not None else 'random'
+        calib_meta['used_count'] = int(next(iter(calib_inputs.values())).shape[0]) if calib_inputs else int(eff_count)
+        calib_meta['batch_size'] = int(bs)
         for k, shp in expected_shapes.items():
-            calib_meta["inputs"][k] = {"shape": list(shp)}
+            calib_meta['inputs'][k] = {'shape': list(shp)}
 
         model_script = (
             f"model_optimization_flavor(optimization_level={int(opt_level)}, batch_size={int(bs)})\n"
             f"model_optimization_config(calibration, batch_size={int(bs)}, calibset_size={int(eff_count)})\n"
         )
+        extra_script = str(extra_model_script or "").strip()
+        if extra_script:
+            model_script += extra_script
+            if not model_script.endswith("\n"):
+                model_script += "\n"
         runner.load_model_script(model_script)
 
         runner.optimize(calib_inputs)
@@ -2300,8 +3697,11 @@ def hailo_build_hef_via_wsl(
     calib_dir: Optional[Union[str, Path]] = None,
     calib_count: int = 64,
     calib_batch_size: int = 8,
+    activation_part1_onnx: Optional[Union[str, Path]] = None,
+    activation_gen_batch: int = 8,
     force: bool = False,
     keep_artifacts: bool = False,
+    extra_model_script: Optional[str] = None,
     # WSL bridge settings
     wsl_distro: Optional[str] = None,
     wsl_venv_activate: str = "auto",
@@ -2314,6 +3714,25 @@ def hailo_build_hef_via_wsl(
     onnx_path = Path(onnx_path)
     if net_name is None:
         net_name = onnx_path.stem
+
+    activation_part1_onnx_p = Path(activation_part1_onnx).expanduser().resolve() if activation_part1_onnx else None
+    if activation_part1_onnx_p is not None:
+        preflight = _activation_calib_preflight(part1_onnx=activation_part1_onnx_p, part2_onnx=onnx_path)
+        if preflight.get('inspect_ok') and preflight.get('compatible') is False:
+            return _make_hef_result(
+                ok=False,
+                elapsed_s=time.time() - t0,
+                hw_arch=str(hw_arch),
+                net_name=str(net_name),
+                backend='wsl',
+                skipped=True,
+                failure_kind='unsupported_splitpoint',
+                unsupported_reason='activation_preflight_missing_inputs',
+                error=_format_activation_calib_preflight_error(preflight),
+                calib_info={'source': 'activation_from_part1', 'preflight': preflight},
+            )
+
+    hard_timeout_s, idle_timeout_s = _resolve_hef_timeout_policy(int(wsl_timeout_s))
 
     if sys.platform != "win32":
         return HailoHefBuildResult(
@@ -2378,6 +3797,9 @@ def hailo_build_hef_via_wsl(
     calib_wsl = None
     if calib_dir is not None:
         calib_wsl = windows_path_to_wsl(str(Path(calib_dir).resolve()))
+    activation_part1_onnx_wsl = None
+    if activation_part1_onnx is not None:
+        activation_part1_onnx_wsl = windows_path_to_wsl(str(Path(activation_part1_onnx).resolve()))
 
     venv_activate = venv_eff  # do not quote '~'
 
@@ -2409,110 +3831,61 @@ def hailo_build_hef_via_wsl(
         cmd += f" --outdir {_bash_quote(outdir_wsl)}"
     if calib_wsl is not None:
         cmd += f" --calib-dir {_bash_quote(calib_wsl)}"
+    if activation_part1_onnx_wsl is not None:
+        cmd += f" --activation-part1-onnx {_bash_quote(activation_part1_onnx_wsl)}"
+    cmd += f" --activation-gen-batch {int(activation_gen_batch)}"
+    extra_script = str(extra_model_script or "").strip()
+    if extra_script:
+        encoded = base64.b64encode(extra_script.encode('utf-8')).decode('ascii')
+        cmd += f" --extra-model-script-b64 {_bash_quote(encoded)}"
 
     wsl_cmd: List[str] = [_wsl_exe()]
     if distro_eff:
         wsl_cmd += ["-d", str(distro_eff)]
     wsl_cmd += ["--", "bash", "-lc", cmd]
 
-    stdout_lines: List[str] = []
-    stderr_lines: List[str] = []
-    timed_out = False
-
-    def _emit(stream_name: str, line: str) -> None:
-        if on_log is None:
-            return
-        try:
-            on_log(stream_name, line)
-        except Exception:
-            # Never let UI callbacks crash compilation.
-            return
-
     try:
         log.info(
-            "[hailo][hef][wsl] hw_arch=%s profile=%s distro=%s activate=%s onnx=%s outdir=%s",
+            "[hailo][hef][wsl] hw_arch=%s profile=%s distro=%s activate=%s onnx=%s outdir=%s hard_timeout_s=%s idle_timeout_s=%s",
             hw_arch,
             resolved.profile_id,
             distro_eff or "",
             venv_eff,
             onnx_wsl,
             outdir_wsl or "",
+            hard_timeout_s,
+            idle_timeout_s if idle_timeout_s is not None else "off",
         )
         log.debug("[hailo][hef][wsl] cmd=%s", wsl_cmd)
-
-        popen = subprocess.Popen(
+        run = _run_streamed_subprocess(
             wsl_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            stdin=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-            universal_newlines=True,
+            stdin_yes=True,
+            on_log=on_log,
+            hard_timeout_s=hard_timeout_s,
+            idle_timeout_s=idle_timeout_s,
         )
-
-        # The first DFC invocation may prompt for a system requirements check.
-        # Feed a default "yes" so the process never blocks in a GUI context.
-        try:
-            if popen.stdin is not None:
-                popen.stdin.write("y\n")
-                popen.stdin.flush()
-        except Exception:
-            pass
-
-        def _reader(stream, sink: List[str], stream_name: str) -> None:
-            if stream is None:
-                return
-            try:
-                for raw in iter(stream.readline, ""):
-                    if raw == "" and popen.poll() is not None:
-                        break
-                    line = raw.rstrip("\n")
-                    if line.endswith("\r"):
-                        line = line.rstrip("\r")
-                    line = _sanitize_wsl_text(line)
-                    sink.append(line)
-                    _emit(stream_name, line)
-            finally:
-                try:
-                    stream.close()
-                except Exception:
-                    pass
-
-        t_out = threading.Thread(target=_reader, args=(popen.stdout, stdout_lines, "stdout"), daemon=True)
-        t_err = threading.Thread(target=_reader, args=(popen.stderr, stderr_lines, "stderr"), daemon=True)
-        t_out.start()
-        t_err.start()
-        try:
-            popen.wait(timeout=float(wsl_timeout_s))
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            try:
-                popen.kill()
-            except Exception:
-                pass
-            try:
-                popen.wait(timeout=10)
-            except Exception:
-                pass
-        t_out.join(timeout=2)
-        t_err.join(timeout=2)
     except Exception as e:
-        return HailoHefBuildResult(
+        return _make_hef_result(
             ok=False,
             elapsed_s=time.time() - t0,
             hw_arch=str(hw_arch),
             net_name=str(net_name),
             backend="wsl",
             error=f"WSL HEF build failed to launch: {type(e).__name__}: {e}",
+            failure_kind='launch_error',
         )
 
-    stdout = _sanitize_wsl_text("\n".join(stdout_lines))
-    stderr = _sanitize_wsl_text("\n".join(stderr_lines))
-    rc = int(getattr(popen, "returncode", 0) or 0)
+    stdout = run.stdout
+    stderr = run.stderr
+    rc = int(run.returncode or 0)
+    proc_details = _build_subprocess_detail_bundle(
+        run,
+        stdout,
+        stderr,
+        include_system_snapshot=bool(run.timed_out),
+    )
 
-    if timed_out:
+    if run.timed_out:
         dbg_path = _write_wsl_debug_log(
             outdir,
             filename=f"hailo_wsl_hef_timeout_{hw_arch}_{net_name}_{int(time.time())}.log",
@@ -2520,18 +3893,34 @@ def hailo_build_hef_via_wsl(
             stdout=stdout,
             stderr=stderr,
         )
-        err = f"WSL HEF build timed out after {wsl_timeout_s}s."
+        timeout_budget = hard_timeout_s if run.timeout_kind != 'idle' or idle_timeout_s is None else idle_timeout_s
+        err = f"WSL HEF build timed out ({run.timeout_kind or 'hard'}) after {timeout_budget}s."
+        if run.last_stage:
+            err += f" Last active stage: {run.last_stage}."
         if dbg_path:
             err += f"\n\n[debug_log] {dbg_path}"
-        return HailoHefBuildResult(
+        timeout_details = _merge_detail_dict(
+            proc_details,
+            {
+                'hard_timeout_s': int(hard_timeout_s),
+                'idle_timeout_s': int(idle_timeout_s) if idle_timeout_s is not None else None,
+                'effective_timeout_kind': run.timeout_kind,
+            },
+        )
+        return _make_hef_result(
             ok=False,
             elapsed_s=time.time() - t0,
             hw_arch=str(hw_arch),
             net_name=str(net_name),
             backend="wsl",
             error=err,
-            returncode=124,
+            returncode=(124 if rc == 0 else rc),
             debug_log=dbg_path,
+            timed_out=True,
+            timeout_kind=run.timeout_kind,
+            last_stage=run.last_stage,
+            failure_kind='timeout',
+            details=timeout_details,
         )
     mixed = "\n".join([stdout, stderr]).strip()
     payload = _find_result_json(mixed)
@@ -2557,7 +3946,7 @@ def hailo_build_hef_via_wsl(
             rc_signed,
             dbg_path or "-",
         )
-        return HailoHefBuildResult(
+        return _make_hef_result(
             ok=False,
             elapsed_s=time.time() - t0,
             hw_arch=str(hw_arch),
@@ -2568,6 +3957,11 @@ def hailo_build_hef_via_wsl(
                 f"exit_code={rc} (signed {rc_signed}). tail=\n{tail}\n\n"
                 "Details were written to gui.log (Logs tab)."
             ),
+            returncode=rc,
+            debug_log=dbg_path,
+            last_stage=run.last_stage,
+            failure_kind='missing_structured_result',
+            details=_build_subprocess_detail_bundle(run, stdout, stderr, include_system_snapshot=True),
         )
 
     # Structured result present. Still write a debug log on failures so users can
@@ -2587,21 +3981,27 @@ def hailo_build_hef_via_wsl(
             err_txt += f"[debug_log] {dbg_path}\n"
         err_txt += "Details were written to gui.log (Logs tab)."
         payload["error"] = err_txt
+        payload.setdefault('debug_log', dbg_path)
+        payload.setdefault('returncode', rc)
+        payload.setdefault('last_stage', run.last_stage)
 
-    return HailoHefBuildResult(
-        ok=bool(payload.get("ok")),
-        elapsed_s=float(payload.get("elapsed_s", time.time() - t0)),
-        hw_arch=str(payload.get("hw_arch", hw_arch)),
-        net_name=str(payload.get("net_name", net_name)),
-        backend=str(payload.get("backend") or "wsl"),
-        error=payload.get("error"),
-        hef_path=payload.get("hef_path"),
-        parsed_har_path=payload.get("parsed_har_path"),
-        quant_har_path=payload.get("quant_har_path"),
-        fixed_onnx_path=payload.get("fixed_onnx_path"),
-        fixup_report=payload.get("fixup_report"),
-        skipped=bool(payload.get("skipped", False)),
-        calib_info=payload.get("calib_info"),
+    merged_payload_details = _build_subprocess_detail_bundle(
+        run,
+        stdout,
+        stderr,
+        include_system_snapshot=not bool(payload.get("ok")),
+    )
+    if merged_payload_details:
+        payload['details'] = _merge_detail_dict(payload.get('details'), merged_payload_details)
+
+    return _hef_result_from_payload(
+        payload,
+        elapsed_default=time.time() - t0,
+        hw_arch=str(hw_arch),
+        net_name=str(net_name),
+        backend_default='wsl',
+        returncode=rc,
+        last_stage=run.last_stage,
     )
 
 
@@ -2618,8 +4018,11 @@ def hailo_build_hef_via_venv(
     calib_dir: Optional[Union[str, Path]] = None,
     calib_count: int = 64,
     calib_batch_size: int = 8,
+    activation_part1_onnx: Optional[Union[str, Path]] = None,
+    activation_gen_batch: int = 8,
     force: bool = False,
     keep_artifacts: bool = False,
+    extra_model_script: Optional[str] = None,
     venv_activate: str = "auto",
     timeout_s: int = 3600,
     on_log: Optional[Callable[[str, str], None]] = None,
@@ -2632,6 +4035,25 @@ def hailo_build_hef_via_venv(
     outdir_path = Path(str(outdir)).expanduser().resolve() if outdir else None
     if outdir_path is not None:
         outdir_path.mkdir(parents=True, exist_ok=True)
+
+    activation_part1_onnx_p = Path(str(activation_part1_onnx)).expanduser().resolve() if activation_part1_onnx else None
+    if activation_part1_onnx_p is not None:
+        preflight = _activation_calib_preflight(part1_onnx=activation_part1_onnx_p, part2_onnx=onnx_path)
+        if preflight.get('inspect_ok') and preflight.get('compatible') is False:
+            return _make_hef_result(
+                ok=False,
+                elapsed_s=time.time() - t0,
+                hw_arch=str(hw_arch),
+                net_name=net_name_eff,
+                backend='venv',
+                skipped=True,
+                failure_kind='unsupported_splitpoint',
+                unsupported_reason='activation_preflight_missing_inputs',
+                error=_format_activation_calib_preflight_error(preflight),
+                calib_info={'source': 'activation_from_part1', 'preflight': preflight},
+            )
+
+    hard_timeout_s, idle_timeout_s = _resolve_hef_timeout_policy(int(timeout_s))
 
     if sys.platform == "win32":
         return HailoHefBuildResult(
@@ -2696,27 +4118,24 @@ def hailo_build_hef_via_venv(
         cmd += ["--outdir", str(outdir_path)]
     if calib_dir is not None:
         cmd += ["--calib-dir", str(Path(str(calib_dir)).expanduser().resolve())]
-
-    stdout_lines: List[str] = []
-    stderr_lines: List[str] = []
-    timed_out = False
-
-    def _emit(stream_name: str, line: str) -> None:
-        if on_log is None:
-            return
-        try:
-            on_log(stream_name, line)
-        except Exception:
-            return
+    if activation_part1_onnx_p is not None:
+        cmd += ["--activation-part1-onnx", str(activation_part1_onnx_p)]
+    cmd += ["--activation-gen-batch", str(int(activation_gen_batch))]
+    extra_script = str(extra_model_script or "").strip()
+    if extra_script:
+        encoded = base64.b64encode(extra_script.encode('utf-8')).decode('ascii')
+        cmd += ["--extra-model-script-b64", encoded]
 
     try:
         log.info(
-            "[hailo][hef][venv] hw_arch=%s profile=%s python=%s onnx=%s outdir=%s",
+            "[hailo][hef][venv] hw_arch=%s profile=%s python=%s onnx=%s outdir=%s hard_timeout_s=%s idle_timeout_s=%s",
             hw_arch,
             profile_id,
             str(py),
             str(onnx_path),
             str(outdir_path or ""),
+            hard_timeout_s,
+            idle_timeout_s if idle_timeout_s is not None else "off",
         )
         log.debug("[hailo][hef][venv] cmd=%s", cmd)
 
@@ -2746,82 +4165,39 @@ def hailo_build_hef_via_venv(
             pass
         env = dict(os.environ)
         env.setdefault("HAILORT_LOGGER_PATH", str(hailo_log_cwd / "hailort.log"))
+        env.setdefault("ONNX_SPLITPOINT_HAILO_HELPER_BACKEND", "venv")
 
-        popen = subprocess.Popen(
+        run = _run_streamed_subprocess(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            stdin=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-            universal_newlines=True,
             cwd=str(hailo_log_cwd),
             env=env,
+            stdin_yes=True,
+            on_log=on_log,
+            hard_timeout_s=hard_timeout_s,
+            idle_timeout_s=idle_timeout_s,
         )
-
-        # The first DFC invocation may prompt for a system requirements check.
-        # Feed a default "yes" so the process never blocks in a GUI context.
-        try:
-            if popen.stdin is not None:
-                popen.stdin.write("y\n")
-                popen.stdin.flush()
-        except Exception:
-            pass
-
-        def _reader(stream, sink: List[str], stream_name: str) -> None:
-            if stream is None:
-                return
-            try:
-                for raw in iter(stream.readline, ""):
-                    if raw == "" and popen.poll() is not None:
-                        break
-                    line = raw.rstrip("\n")
-                    if line.endswith("\r"):
-                        line = line.rstrip("\r")
-                    line = _sanitize_wsl_text(line)
-                    sink.append(line)
-                    _emit(stream_name, line)
-            finally:
-                try:
-                    stream.close()
-                except Exception:
-                    pass
-
-        t_out = threading.Thread(target=_reader, args=(popen.stdout, stdout_lines, "stdout"), daemon=True)
-        t_err = threading.Thread(target=_reader, args=(popen.stderr, stderr_lines, "stderr"), daemon=True)
-        t_out.start()
-        t_err.start()
-        try:
-            popen.wait(timeout=float(timeout_s))
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            try:
-                popen.kill()
-            except Exception:
-                pass
-            try:
-                popen.wait(timeout=10)
-            except Exception:
-                pass
-        t_out.join(timeout=2)
-        t_err.join(timeout=2)
     except Exception as e:
-        return HailoHefBuildResult(
+        return _make_hef_result(
             ok=False,
             elapsed_s=time.time() - t0,
             hw_arch=str(hw_arch),
             net_name=net_name_eff,
             backend="venv",
             error=f"Venv HEF build failed to launch: {type(e).__name__}: {e}",
+            failure_kind='launch_error',
         )
 
-    stdout = _sanitize_wsl_text("\n".join(stdout_lines))
-    stderr = _sanitize_wsl_text("\n".join(stderr_lines))
-    rc = int(getattr(popen, "returncode", 0) or 0)
+    stdout = run.stdout
+    stderr = run.stderr
+    rc = int(run.returncode or 0)
+    proc_details = _build_subprocess_detail_bundle(
+        run,
+        stdout,
+        stderr,
+        include_system_snapshot=bool(run.timed_out),
+    )
 
-    if timed_out:
+    if run.timed_out:
         dbg_path = _write_wsl_debug_log(
             str(outdir_path) if outdir_path is not None else None,
             filename=f"hailo_venv_hef_timeout_{hw_arch}_{net_name_eff}_{int(time.time())}.log",
@@ -2829,18 +4205,34 @@ def hailo_build_hef_via_venv(
             stdout=stdout,
             stderr=stderr,
         )
-        err = f"Venv HEF build timed out after {timeout_s}s."
+        timeout_budget = hard_timeout_s if run.timeout_kind != 'idle' or idle_timeout_s is None else idle_timeout_s
+        err = f"Venv HEF build timed out ({run.timeout_kind or 'hard'}) after {timeout_budget}s."
+        if run.last_stage:
+            err += f" Last active stage: {run.last_stage}."
         if dbg_path:
             err += f"\n\n[debug_log] {dbg_path}"
-        return HailoHefBuildResult(
+        timeout_details = _merge_detail_dict(
+            proc_details,
+            {
+                'hard_timeout_s': int(hard_timeout_s),
+                'idle_timeout_s': int(idle_timeout_s) if idle_timeout_s is not None else None,
+                'effective_timeout_kind': run.timeout_kind,
+            },
+        )
+        return _make_hef_result(
             ok=False,
             elapsed_s=time.time() - t0,
             hw_arch=str(hw_arch),
             net_name=net_name_eff,
             backend="venv",
             error=err,
-            returncode=124,
+            returncode=(124 if rc == 0 else rc),
             debug_log=dbg_path,
+            timed_out=True,
+            timeout_kind=run.timeout_kind,
+            last_stage=run.last_stage,
+            failure_kind='timeout',
+            details=timeout_details,
         )
     mixed = "\n".join([stdout, stderr]).strip()
     payload = _find_result_json(mixed)
@@ -2860,7 +4252,7 @@ def hailo_build_hef_via_venv(
             rc,
             dbg_path or "-",
         )
-        return HailoHefBuildResult(
+        return _make_hef_result(
             ok=False,
             elapsed_s=time.time() - t0,
             hw_arch=str(hw_arch),
@@ -2871,6 +4263,11 @@ def hailo_build_hef_via_venv(
                 f"exit_code={rc}. tail=\n{tail}\n\n"
                 "Details were written to gui.log (Logs tab)."
             ),
+            returncode=rc,
+            debug_log=dbg_path,
+            last_stage=run.last_stage,
+            failure_kind='missing_structured_result',
+            details=_build_subprocess_detail_bundle(run, stdout, stderr, include_system_snapshot=True),
         )
 
     # Structured result present. Still write a debug log on failures so users can
@@ -2890,21 +4287,27 @@ def hailo_build_hef_via_venv(
             err_txt += f"[debug_log] {dbg_path}\n"
         err_txt += "Details were written to gui.log (Logs tab)."
         payload["error"] = err_txt
+        payload.setdefault('debug_log', dbg_path)
+        payload.setdefault('returncode', rc)
+        payload.setdefault('last_stage', run.last_stage)
 
-    return HailoHefBuildResult(
-        ok=bool(payload.get("ok")),
-        elapsed_s=float(payload.get("elapsed_s", time.time() - t0)),
-        hw_arch=str(payload.get("hw_arch", hw_arch)),
-        net_name=str(payload.get("net_name", net_name_eff)),
-        backend="venv",
-        error=payload.get("error"),
-        hef_path=payload.get("hef_path"),
-        parsed_har_path=payload.get("parsed_har_path"),
-        quant_har_path=payload.get("quant_har_path"),
-        fixed_onnx_path=payload.get("fixed_onnx_path"),
-        fixup_report=payload.get("fixup_report"),
-        skipped=bool(payload.get("skipped", False)),
-        calib_info=payload.get("calib_info"),
+    merged_payload_details = _build_subprocess_detail_bundle(
+        run,
+        stdout,
+        stderr,
+        include_system_snapshot=not bool(payload.get("ok")),
+    )
+    if merged_payload_details:
+        payload['details'] = _merge_detail_dict(payload.get('details'), merged_payload_details)
+
+    return _hef_result_from_payload(
+        payload,
+        elapsed_default=time.time() - t0,
+        hw_arch=str(hw_arch),
+        net_name=net_name_eff,
+        backend_default='venv',
+        returncode=rc,
+        last_stage=run.last_stage,
     )
 
 
@@ -2923,19 +4326,22 @@ def hailo_build_hef_auto(
     calib_dir: Optional[Union[str, Path]] = None,
     calib_count: int = 64,
     calib_batch_size: int = 8,
+    activation_part1_onnx: Optional[Union[str, Path]] = None,
+    activation_gen_batch: int = 8,
     force: bool = False,
     keep_artifacts: bool = False,
+    extra_model_script: Optional[str] = None,
     # WSL bridge
     wsl_distro: Optional[str] = None,
     wsl_venv_activate: str = "auto",
     wsl_timeout_s: int = 3600,
     on_log: Optional[Callable[[str, str], None]] = None,
 ) -> HailoHefBuildResult:
-    mode = str(backend or "auto").strip().lower()
-    if mode not in {"auto", "local", "wsl", "venv"}:
-        mode = "auto"
+    mode = normalize_hailo_backend(backend)
+    if mode == "subprocess":
+        mode = subprocess_backend_for_platform()
 
-    if mode in {"auto", "local"} and hailo_sdk_available():
+    def _run_local() -> HailoHefBuildResult:
         return hailo_build_hef(
             onnx_path,
             hw_arch=hw_arch,
@@ -2949,11 +4355,14 @@ def hailo_build_hef_auto(
             calib_dir=calib_dir,
             calib_count=int(calib_count),
             calib_batch_size=int(calib_batch_size),
+            activation_part1_onnx=activation_part1_onnx,
+            activation_gen_batch=int(activation_gen_batch),
             force=bool(force),
             keep_artifacts=bool(keep_artifacts),
+            extra_model_script=extra_model_script,
         )
 
-    if mode == "venv":
+    def _run_venv() -> HailoHefBuildResult:
         return hailo_build_hef_via_venv(
             onnx_path,
             hw_arch=hw_arch,
@@ -2966,33 +4375,21 @@ def hailo_build_hef_auto(
             calib_dir=calib_dir,
             calib_count=int(calib_count),
             calib_batch_size=int(calib_batch_size),
+            activation_part1_onnx=activation_part1_onnx,
+            activation_gen_batch=int(activation_gen_batch),
             force=bool(force),
             keep_artifacts=bool(keep_artifacts),
+            extra_model_script=extra_model_script,
             venv_activate=wsl_venv_activate,
             timeout_s=int(wsl_timeout_s),
+            on_log=on_log,
         )
 
-    if mode in {"auto", "wsl"}:
-        # Linux: auto should prefer the managed venv.
-        if mode == "auto" and sys.platform != "win32":
-            return hailo_build_hef_via_venv(
-                onnx_path,
-                hw_arch=hw_arch,
-                net_name=net_name,
-                outdir=outdir,
-                fixup=fixup,
-                add_conv_defaults=add_conv_defaults,
-                disable_rt_metadata_extraction=disable_rt_metadata_extraction,
-                opt_level=int(opt_level),
-                calib_dir=calib_dir,
-                calib_count=int(calib_count),
-                calib_batch_size=int(calib_batch_size),
-                force=bool(force),
-                keep_artifacts=bool(keep_artifacts),
-                venv_activate=wsl_venv_activate,
-                timeout_s=int(wsl_timeout_s),
-                on_log=on_log,
-            )
+    if mode == "local":
+        return _run_local()
+    if mode == "venv":
+        return _run_venv()
+    if mode == "wsl":
         return hailo_build_hef_via_wsl(
             onnx_path,
             hw_arch=hw_arch,
@@ -3005,8 +4402,53 @@ def hailo_build_hef_auto(
             calib_dir=calib_dir,
             calib_count=int(calib_count),
             calib_batch_size=int(calib_batch_size),
+            activation_part1_onnx=activation_part1_onnx,
+            activation_gen_batch=int(activation_gen_batch),
             force=bool(force),
             keep_artifacts=bool(keep_artifacts),
+            extra_model_script=extra_model_script,
+            wsl_distro=wsl_distro,
+            wsl_venv_activate=wsl_venv_activate,
+            wsl_timeout_s=int(wsl_timeout_s),
+            on_log=on_log,
+        )
+
+    if mode == "auto" and sys.platform != "win32":
+        prefer_subprocess = auto_prefers_subprocess()
+        if prefer_subprocess:
+            res = _run_venv()
+            err_text = str(getattr(res, "error", "") or "")
+            if bool(getattr(res, "ok", False)) or bool(getattr(res, "skipped", False)) or not hailo_sdk_available():
+                return res
+            if "Failed to resolve managed DFC venv" not in err_text:
+                return res
+        if hailo_sdk_available():
+            return _run_local()
+
+    if mode in {"auto", "local"} and hailo_sdk_available():
+        return _run_local()
+
+    if mode == "auto":
+        # Linux: auto should prefer the managed venv.
+        if sys.platform != "win32":
+            return _run_venv()
+        return hailo_build_hef_via_wsl(
+            onnx_path,
+            hw_arch=hw_arch,
+            net_name=net_name,
+            outdir=outdir,
+            fixup=fixup,
+            add_conv_defaults=add_conv_defaults,
+            disable_rt_metadata_extraction=disable_rt_metadata_extraction,
+            opt_level=int(opt_level),
+            calib_dir=calib_dir,
+            calib_count=int(calib_count),
+            calib_batch_size=int(calib_batch_size),
+            activation_part1_onnx=activation_part1_onnx,
+            activation_gen_batch=int(activation_gen_batch),
+            force=bool(force),
+            keep_artifacts=bool(keep_artifacts),
+            extra_model_script=extra_model_script,
             wsl_distro=wsl_distro,
             wsl_venv_activate=wsl_venv_activate,
             wsl_timeout_s=int(wsl_timeout_s),
@@ -3020,6 +4462,6 @@ def hailo_build_hef_auto(
         net_name=str(net_name or Path(str(onnx_path)).stem),
         error=(
             "No usable Hailo backend available. "
-            "Install hailo_sdk_client in this Python env, or use the managed Hailo DFC venv/backend (auto/venv). On Windows you can also configure the WSL backend."
+            "Install hailo_sdk_client in this Python env, or use the managed Hailo DFC venv/backend (auto/subprocess/venv). On Windows you can also configure the WSL backend."
         ),
     )

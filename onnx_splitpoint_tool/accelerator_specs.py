@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List
 
+from .resources_utils import persistent_resource_path
+
 LOGGER = logging.getLogger(__name__)
 
 _DEFAULT: Dict[str, List[Dict[str, Any]]] = {
@@ -35,7 +37,7 @@ _ENV_ACCEL_DB = "SPLITPOINT_ACCEL_DB"
 
 
 def _resource_dir() -> Path:
-    return Path(__file__).resolve().parent / "resources"
+    return persistent_resource_path("resources")
 
 
 def _user_db_path() -> Path:

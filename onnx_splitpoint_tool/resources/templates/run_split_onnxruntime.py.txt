@@ -16,6 +16,8 @@ import ast
 import hashlib
 import json
 import os
+import queue
+import re
 import sys
 import threading
 import time
@@ -1259,22 +1261,23 @@ class _Spinner(threading.Thread):
         self.prefix = prefix
         self.every_sec = every_sec
         self._tty = sys.stdout.isatty()
-        self._stop = threading.Event()
+        # Do not shadow threading.Thread._stop(); join() calls it internally.
+        self._stop_event = threading.Event()
         self.t0 = time.time()
         self._frames = ["|", "/", "-", "\\"]
 
     def stop(self):
-        self._stop.set()
+        self._stop_event.set()
 
     def run(self):
         if not self._tty:
             # Non-interactive stdout (captured logs): don't emit carriage-returns.
-            while not self._stop.is_set():
+            while not self._stop_event.is_set():
                 time.sleep(self.every_sec)
             return
 
         i = 0
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             elapsed = int(time.time() - self.t0)
             frame = self._frames[i % len(self._frames)]
             msg = f"\\r{self.prefix} {frame}  elapsed={elapsed}s"
@@ -1380,11 +1383,39 @@ def _ensure_frames_dim(x: np.ndarray) -> np.ndarray:
     return x
 
 
+def _ensure_c_contiguous_cached(cache: Dict[str, np.ndarray], key: str, arr: np.ndarray) -> np.ndarray:
+    """Return a C-contiguous tensor while reusing a per-input staging buffer.
+
+    Hailo's Python bindings will internally materialize contiguous copies for
+    non-C-contiguous tensors and print noisy conversion messages for every run.
+    We stage such tensors explicitly here so repeated composed runs can reuse
+    the same buffer instead of reallocating every inference.
+    """
+    a = np.asarray(arr)
+    if a.flags.c_contiguous:
+        return a
+
+    buf = cache.get(key)
+    if buf is None or buf.shape != a.shape or buf.dtype != a.dtype:
+        buf = np.empty(a.shape, dtype=a.dtype, order="C")
+        cache[key] = buf
+    np.copyto(buf, a)
+    return buf
+
+
+def _make_tensor_map_contiguous(tensors: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    out: Dict[str, np.ndarray] = {}
+    for key, value in tensors.items():
+        arr = np.asarray(value)
+        out[str(key)] = arr if arr.flags.c_contiguous else np.ascontiguousarray(arr)
+    return out
+
+
 def _adapt_tensor(x: np.ndarray, target_shape: Tuple[int, ...]) -> np.ndarray:
     """Best-effort adaptation of a tensor to a target shape.
 
     Commonly needed when bridging between ORT (often NCHW) and Hailo vstreams
-    (often HWC / NHWC / FCR-like layouts).
+    (often HWC / NHWC / packed channels-last layouts).
     """
     arr = np.asarray(x)
     tgt = tuple(int(v) for v in target_shape)
@@ -1399,6 +1430,26 @@ def _adapt_tensor(x: np.ndarray, target_shape: Tuple[int, ...]) -> np.ndarray:
     # Add batch dim.
     if arr.ndim + 1 == len(tgt) and len(tgt) >= 1 and tgt[0] == 1 and tuple(arr.shape) == tgt[1:]:
         return arr[None, ...]
+
+    # Packed YOLO head: HWC/NHWC -> canonical 1xA xH xW xC.
+    if arr.ndim == 3 and len(tgt) == 5 and tgt[0] == 1:
+        gh, gw, flat = (int(v) for v in arr.shape)
+        _, na, tgt_h, tgt_w, ch = tgt
+        if gh == tgt_h and gw == tgt_w and flat == int(na) * int(ch):
+            return arr.reshape(gh, gw, int(na), int(ch)).transpose(2, 0, 1, 3)[None, ...]
+    if arr.ndim == 4 and len(tgt) == 5 and tgt[0] == 1 and arr.shape[0] == 1:
+        _, gh, gw, flat = (int(v) for v in arr.shape)
+        _, na, tgt_h, tgt_w, ch = tgt
+        if gh == tgt_h and gw == tgt_w and flat == int(na) * int(ch):
+            return arr.reshape(1, gh, gw, int(na), int(ch)).transpose(0, 3, 1, 2, 4)
+    if arr.ndim == 5 and len(tgt) == 3 and arr.shape[0] == 1:
+        _, na, gh, gw, ch = (int(v) for v in arr.shape)
+        if tgt == (gh, gw, na * ch):
+            return arr.transpose(0, 2, 3, 1, 4).reshape(tgt)
+    if arr.ndim == 5 and len(tgt) == 4 and arr.shape[0] == 1 and tgt[0] == 1:
+        _, na, gh, gw, ch = (int(v) for v in arr.shape)
+        if tgt == (1, gh, gw, na * ch):
+            return arr.transpose(0, 2, 3, 1, 4).reshape(tgt)
 
     # Generic CHW <-> HWC / NCHW <-> NHWC permutations (not only RGB).
     if arr.ndim == 3 and len(tgt) == 3:
@@ -1443,7 +1494,6 @@ def _try_adapt_tensor(x: np.ndarray, target_shape: Optional[Tuple[int, ...]]) ->
     except Exception:
         return False, arr
 
-
 def _ort_type_to_numpy_dtype(type_str: str) -> Optional[np.dtype]:
     t = str(type_str or "").strip().lower()
     mapping = {
@@ -1478,6 +1528,201 @@ def _maybe_cast_for_onnx_input(x: np.ndarray, input_type: Optional[str]) -> np.n
     return arr
 
 
+def _hailo_stream_sort_key(name: str, default_index: int = 0) -> Tuple[int, int, int, str]:
+    slot = _hailo_layer_slot(name)
+    if slot is not None:
+        return (0, int(slot), int(default_index), str(name))
+    # Preserve the original HEF stream order for non-generic names. Lexical
+    # sorting can silently reshuffle split-boundary tensors and break stage1 ->
+    # stage2 wiring for older benchmark suites.
+    return (1, int(default_index), 0, str(name))
+
+
+def _hailo_stream_names_ordered(infos: Sequence[object]) -> List[str]:
+    indexed: List[Tuple[int, str]] = []
+    for idx, info in enumerate(infos):
+        indexed.append((int(idx), str(getattr(info, 'name', ''))))
+    indexed.sort(key=lambda item: _hailo_stream_sort_key(item[1], item[0]))
+    return [name for _, name in indexed]
+
+
+def _onnx_value_info_shape(value_info: object) -> Optional[Tuple[int, ...]]:
+    try:
+        tensor_type = getattr(getattr(value_info, "type", None), "tensor_type", None)
+        shape = getattr(tensor_type, "shape", None)
+        dims = getattr(shape, "dim", None)
+        if dims is None:
+            return None
+        out: List[int] = []
+        for dim in dims:
+            dim_value = getattr(dim, "dim_value", None)
+            if isinstance(dim_value, int) and dim_value > 0:
+                out.append(int(dim_value))
+            else:
+                return None
+        return tuple(out)
+    except Exception:
+        return None
+
+
+def _load_onnx_io_names_and_shapes(model_path: Optional[Path]) -> Tuple[List[str], List[str], Dict[str, Tuple[int, ...]], Dict[str, Tuple[int, ...]]]:
+    if model_path is None:
+        return [], [], {}, {}
+    try:
+        model = onnx.load(str(model_path), load_external_data=False)
+    except Exception:
+        return [], [], {}, {}
+
+    initializer_names = {str(getattr(t, "name", "") or "") for t in getattr(model.graph, "initializer", [])}
+    input_names: List[str] = []
+    output_names: List[str] = []
+    input_shapes: Dict[str, Tuple[int, ...]] = {}
+    output_shapes: Dict[str, Tuple[int, ...]] = {}
+
+    for value_info in getattr(model.graph, "input", []):
+        name = str(getattr(value_info, "name", "") or "")
+        if not name or name in initializer_names:
+            continue
+        input_names.append(name)
+        shp = _onnx_value_info_shape(value_info)
+        if shp is not None:
+            input_shapes[name] = shp
+
+    for value_info in getattr(model.graph, "output", []):
+        name = str(getattr(value_info, "name", "") or "")
+        if not name:
+            continue
+        output_names.append(name)
+        shp = _onnx_value_info_shape(value_info)
+        if shp is not None:
+            output_shapes[name] = shp
+
+    return input_names, output_names, input_shapes, output_shapes
+
+
+def _shape_numel_ignoring_batch(shape: Optional[Tuple[int, ...]]) -> Optional[int]:
+    if not shape:
+        return None
+    dims = [int(x) for x in shape if isinstance(x, int) and int(x) > 0]
+    if len(dims) > 1 and dims[0] == 1:
+        dims = dims[1:]
+    if not dims:
+        return None
+    total = 1
+    for dim in dims:
+        total *= int(dim)
+    return int(total)
+
+
+def _canonical_slot_name_order(
+    onnx_names: Sequence[str],
+    preferred_names: Optional[Sequence[str]] = None,
+) -> List[str]:
+    """Return the canonical name order for generic Hailo slot mapping.
+
+    Split part2 HEFs often expose several boundary tensors with identical shapes.
+    In that situation only the manifest cut-name order is reliable; the ONNX
+    graph-input order is incidental and may differ from the HEF slot order.
+    """
+    onnx_list = [str(x) for x in (onnx_names or []) if str(x)]
+    preferred_list = [str(x) for x in (preferred_names or []) if str(x)]
+    if not onnx_list:
+        out: List[str] = []
+        seen: set[str] = set()
+        for name in preferred_list:
+            if name in seen:
+                continue
+            seen.add(name)
+            out.append(name)
+        return out
+    if not preferred_list:
+        return list(onnx_list)
+    out: List[str] = []
+    seen: set[str] = set()
+    for name in preferred_list:
+        if name not in onnx_list or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    for name in onnx_list:
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
+def _build_hailo_io_name_map(
+    hailo_names: Sequence[str],
+    onnx_names: Sequence[str],
+    *,
+    hailo_shapes: Optional[Dict[str, Tuple[int, ...]]] = None,
+    onnx_shapes: Optional[Dict[str, Tuple[int, ...]]] = None,
+    slot_names: Optional[Sequence[str]] = None,
+) -> Dict[str, str]:
+    """Best-effort alias map from HEF stream names to source-ONNX IO names.
+
+    ``slot_names`` overrides the canonical order used when generic Hailo stream
+    names (``input_layerN`` / ``output_layerN``) must be resolved by slot.
+    This is required for split part2 HEFs whose boundary tensors share shapes.
+    """
+    mapping: Dict[str, str] = {}
+    used_onnx: set[str] = set()
+
+    hailo_list = [str(x) for x in hailo_names or []]
+    onnx_list = _canonical_slot_name_order([str(x) for x in onnx_names or []], slot_names)
+
+    for name in hailo_list:
+        if name in onnx_list and name not in used_onnx:
+            mapping[name] = name
+            used_onnx.add(name)
+
+    remaining_hailo = [name for name in hailo_list if name not in mapping]
+    remaining_onnx = [name for name in onnx_list if name not in used_onnx]
+    if hailo_shapes and onnx_shapes and remaining_hailo and remaining_onnx:
+        hailo_by_numel: Dict[int, List[str]] = {}
+        onnx_by_numel: Dict[int, List[str]] = {}
+        for name in remaining_hailo:
+            numel = _shape_numel_ignoring_batch(hailo_shapes.get(name))
+            if numel is not None:
+                hailo_by_numel.setdefault(int(numel), []).append(name)
+        for name in remaining_onnx:
+            numel = _shape_numel_ignoring_batch(onnx_shapes.get(name))
+            if numel is not None:
+                onnx_by_numel.setdefault(int(numel), []).append(name)
+        for numel, hailo_group in hailo_by_numel.items():
+            onnx_group = onnx_by_numel.get(int(numel)) or []
+            if len(hailo_group) == 1 and len(onnx_group) == 1:
+                h_name = hailo_group[0]
+                o_name = onnx_group[0]
+                if h_name not in mapping and o_name not in used_onnx:
+                    mapping[h_name] = o_name
+                    used_onnx.add(o_name)
+
+    remaining_hailo = [name for name in hailo_list if name not in mapping]
+    remaining_onnx = [name for name in onnx_list if name not in used_onnx]
+    for name in remaining_hailo:
+        slot = _hailo_layer_slot(name)
+        if slot is None or slot < 0 or slot >= len(onnx_list):
+            continue
+        target = onnx_list[int(slot)]
+        if target not in remaining_onnx or target in used_onnx:
+            continue
+        mapping[name] = target
+        used_onnx.add(target)
+
+    remaining_hailo = [name for name in hailo_list if name not in mapping]
+    remaining_onnx = [name for name in onnx_list if name not in used_onnx]
+    if remaining_hailo and len(remaining_hailo) == len(remaining_onnx):
+        for h_name, o_name in zip(remaining_hailo, remaining_onnx):
+            if o_name in used_onnx:
+                continue
+            mapping[h_name] = o_name
+            used_onnx.add(o_name)
+
+    return mapping
+
+
 def _shape_from_ort_input(node_arg: object) -> Optional[Tuple[int, ...]]:
     try:
         shp = getattr(node_arg, "shape", None)
@@ -1494,24 +1739,114 @@ def _shape_from_ort_input(node_arg: object) -> Optional[Tuple[int, ...]]:
         return None
 
 
+def _hailo_layer_slot(name: str) -> Optional[int]:
+    """Best-effort boundary slot index for Hailo generic stream names.
+
+    Examples matched:
+      - input_layer1
+      - output_layer4
+      - yolov7_part2_b89/input_layer3
+    Returns a zero-based slot index when the pattern is recognized.
+    """
+    import re as _re
+
+    lname = str(name or '').strip().lower()
+    if not lname:
+        return None
+    m = _re.search(r'(?:^|[/:._-])(?:input|output)_layer[_-]?(\d+)(?:$|[/:._-])', lname)
+    if not m:
+        return None
+    try:
+        idx = int(m.group(1)) - 1
+    except Exception:
+        return None
+    return idx if idx >= 0 else None
+
+
+def _overlay_boundary_slot_mapping(
+    name_map: Dict[str, str],
+    *,
+    expected_inputs: Sequence[str],
+    produced_outputs: Sequence[str],
+    part1_cut_names_manifest: Sequence[str],
+    part2_cut_names_manifest: Sequence[str],
+) -> Dict[str, str]:
+    """Overlay a manifest-aware slot mapping for split boundary tensors.
+
+    Why:
+      Hailo frequently renames split boundary streams to generic names such as
+      ``input_layer1`` / ``output_layer1``. Exact-name mapping from the split
+      manifest then stops working, and ambiguous shape-only fallback can wire the
+      same stage1 tensor into multiple stage2 inputs.
+
+    Strategy:
+      - Use manifest cut-name order as the canonical boundary-slot contract.
+      - Map ORT/TRT names by exact manifest membership.
+      - Map Hailo names by ``input_layerN`` / ``output_layerN`` slot index.
+      - Only apply a slot mapping when both sides resolve to a unique slot.
+    """
+    mapping = dict(name_map or {})
+
+    p1_slot = {str(n): i for i, n in enumerate(part1_cut_names_manifest or [])}
+    p2_slot = {str(n): i for i, n in enumerate(part2_cut_names_manifest or [])}
+
+    produced_by_slot: Dict[int, str] = {}
+    for pos, out_name in enumerate(produced_outputs or []):
+        slot = p1_slot.get(str(out_name))
+        if slot is None:
+            slot = _hailo_layer_slot(str(out_name))
+        if slot is None:
+            continue
+        produced_by_slot.setdefault(int(slot), str(out_name))
+
+    # Conservative positional fallback: if the manifest is present and every
+    # produced output is unresolved by name, treat the current produced order as
+    # boundary-slot order. This is mainly for Hailo generic stream names where
+    # the HEF keeps a stable layer order but not the original cut names.
+    if (part1_cut_names_manifest and len(produced_by_slot) == 0 and
+            len(produced_outputs or []) == len(part1_cut_names_manifest)):
+        for pos, out_name in enumerate(produced_outputs or []):
+            produced_by_slot.setdefault(int(pos), str(out_name))
+
+    for pos, inp_name in enumerate(expected_inputs or []):
+        slot = p2_slot.get(str(inp_name))
+        if slot is None:
+            slot = _hailo_layer_slot(str(inp_name))
+        if slot is None and part2_cut_names_manifest and len(expected_inputs or []) == len(part2_cut_names_manifest):
+            slot = int(pos)
+        if slot is None:
+            continue
+        src = produced_by_slot.get(int(slot))
+        if src is not None:
+            mapping[str(inp_name)] = str(src)
+
+    return mapping
+
+
 def _select_source_tensor(
     expected_name: str,
     target_shape: Optional[Tuple[int, ...]],
     produced_outputs: Dict[str, np.ndarray],
     name_map: Optional[Dict[str, str]] = None,
+    used_names: Optional[set[str]] = None,
 ) -> Optional[Tuple[str, np.ndarray]]:
     produced_names = list(produced_outputs.keys())
+    expected_l = str(expected_name or "")
     preferred: List[str] = []
     if isinstance(name_map, dict) and expected_name in name_map:
         preferred.append(str(name_map[expected_name]))
-    preferred.append(str(expected_name))
-    preferred.extend([n for n in produced_names if n.endswith(expected_name) or expected_name.endswith(n)])
+    preferred.append(expected_l)
+    preferred.extend([n for n in produced_names if n.endswith(expected_l) or expected_l.endswith(n)])
+    # case-insensitive hinting as a final name-based fallback
+    expected_lc = expected_l.lower()
+    preferred.extend([n for n in produced_names if n.lower() == expected_lc])
 
     seen: set[str] = set()
+    blocked = {str(x) for x in (used_names or set())}
 
     def _first_ok(cands: List[str]) -> Optional[Tuple[str, np.ndarray]]:
         for src_name in cands:
-            if src_name in seen or src_name not in produced_outputs:
+            if src_name in seen or src_name not in produced_outputs or src_name in blocked:
                 continue
             seen.add(src_name)
             ok, adapted = _try_adapt_tensor(produced_outputs[src_name], target_shape)
@@ -1523,7 +1858,7 @@ def _select_source_tensor(
     if hit is not None:
         return hit
 
-    # Shape-driven fallback: pick the first produced tensor that can be adapted.
+    # Shape-driven fallback: pick the first *unused* produced tensor that can be adapted.
     hit = _first_ok(produced_names)
     if hit is not None:
         return hit
@@ -1589,10 +1924,16 @@ class HailoSession:
         quantized_inputs: bool,
         quantized_outputs: bool,
         vdevice: Optional[object] = None,
+        onnx_model_path: Optional[Path] = None,
+        canonical_input_slot_names: Optional[Sequence[str]] = None,
+        canonical_output_slot_names: Optional[Sequence[str]] = None,
     ):
         self.hef_path = Path(hef_path)
         self.quantized_inputs = bool(quantized_inputs)
         self.quantized_outputs = bool(quantized_outputs)
+        self.onnx_model_path = Path(onnx_model_path) if onnx_model_path is not None else None
+        self._canonical_input_slot_names = [str(x) for x in (canonical_input_slot_names or []) if str(x)]
+        self._canonical_output_slot_names = [str(x) for x in (canonical_output_slot_names or []) if str(x)]
 
         # Optional shared VDevice (important for single-device systems)
         self._external_vdevice = vdevice
@@ -1618,6 +1959,16 @@ class HailoSession:
         self._output_names: List[str] = []
         self.input_shapes: Dict[str, Tuple[int, ...]] = {}
         self.output_shapes: Dict[str, Tuple[int, ...]] = {}
+        self.runtime_input_shapes: Dict[str, Tuple[int, ...]] = {}
+        self.runtime_output_shapes: Dict[str, Tuple[int, ...]] = {}
+        self._input_contig_cache: Dict[str, np.ndarray] = {}
+        self._hef_input_names: List[str] = []
+        self._hef_output_names: List[str] = []
+        self._hef_input_shapes: Dict[str, Tuple[int, ...]] = {}
+        self._hef_output_shapes: Dict[str, Tuple[int, ...]] = {}
+        self._input_name_hef_to_canonical: Dict[str, str] = {}
+        self._input_name_canonical_to_hef: Dict[str, str] = {}
+        self._output_name_hef_to_canonical: Dict[str, str] = {}
         self._open()
 
     @property
@@ -1677,10 +2028,58 @@ class HailoSession:
         self._network_group = ngs[0]
         self._network_group_params = self._network_group.create_params()
 
-        self._input_names = [i.name for i in hef.get_input_vstream_infos()]
-        self._output_names = [o.name for o in hef.get_output_vstream_infos()]
-        self.input_shapes = {i.name: tuple(i.shape) for i in hef.get_input_vstream_infos()}
-        self.output_shapes = {o.name: tuple(o.shape) for o in hef.get_output_vstream_infos()}
+        in_infos = list(hef.get_input_vstream_infos())
+        out_infos = list(hef.get_output_vstream_infos())
+        self._hef_input_names = _hailo_stream_names_ordered(in_infos)
+        self._hef_output_names = _hailo_stream_names_ordered(out_infos)
+        self._hef_input_shapes = {str(i.name): tuple(i.shape) for i in in_infos}
+        self._hef_output_shapes = {str(o.name): tuple(o.shape) for o in out_infos}
+
+        onnx_input_names, onnx_output_names, onnx_input_shapes, onnx_output_shapes = _load_onnx_io_names_and_shapes(self.onnx_model_path)
+        input_aliases = _build_hailo_io_name_map(
+            self._hef_input_names,
+            onnx_input_names,
+            hailo_shapes=self._hef_input_shapes,
+            onnx_shapes=onnx_input_shapes,
+            slot_names=self._canonical_input_slot_names,
+        )
+        output_aliases = _build_hailo_io_name_map(
+            self._hef_output_names,
+            onnx_output_names,
+            hailo_shapes=self._hef_output_shapes,
+            onnx_shapes=onnx_output_shapes,
+            slot_names=self._canonical_output_slot_names,
+        )
+
+        self._input_name_hef_to_canonical = {name: str(input_aliases.get(name, name)) for name in self._hef_input_names}
+        self._input_name_canonical_to_hef = {}
+        for name in self._hef_input_names:
+            canonical = self._input_name_hef_to_canonical.get(name, name)
+            self._input_name_canonical_to_hef.setdefault(str(canonical), str(name))
+        self._output_name_hef_to_canonical = {name: str(output_aliases.get(name, name)) for name in self._hef_output_names}
+
+        self._input_names = [self._input_name_hef_to_canonical.get(name, name) for name in self._hef_input_names]
+        self._output_names = [self._output_name_hef_to_canonical.get(name, name) for name in self._hef_output_names]
+        self.runtime_input_shapes = {
+            self._input_name_hef_to_canonical.get(name, name): tuple(self._hef_input_shapes.get(name, ()))
+            for name in self._hef_input_names
+        }
+        self.runtime_output_shapes = {
+            self._output_name_hef_to_canonical.get(name, name): tuple(self._hef_output_shapes.get(name, ()))
+            for name in self._hef_output_names
+        }
+        self.input_shapes = {
+            self._input_name_hef_to_canonical.get(name, name): tuple(
+                onnx_input_shapes.get(self._input_name_hef_to_canonical.get(name, name), self._hef_input_shapes.get(name, ()))
+            )
+            for name in self._hef_input_names
+        }
+        self.output_shapes = {
+            self._output_name_hef_to_canonical.get(name, name): tuple(
+                onnx_output_shapes.get(self._output_name_hef_to_canonical.get(name, name), self._hef_output_shapes.get(name, ()))
+            )
+            for name in self._hef_output_names
+        }
 
         in_params = self._vstream_params(
             hpf.InputVStreamParams,
@@ -1695,6 +2094,18 @@ class HailoSession:
         self._pipe = hpf.InferVStreams(self._network_group, in_params, out_params)
         if hasattr(self._pipe, "__enter__"):
             self._pipe.__enter__()
+
+    def describe_io(self) -> Dict[str, object]:
+        return {
+            "hef_inputs": list(self._hef_input_names),
+            "canonical_inputs": list(self._input_names),
+            "hef_outputs": list(self._hef_output_names),
+            "canonical_outputs": list(self._output_names),
+            "input_aliases": dict(self._input_name_hef_to_canonical),
+            "output_aliases": dict(self._output_name_hef_to_canonical),
+            "runtime_input_shapes": {k: [int(x) for x in v] for k, v in self.runtime_input_shapes.items()},
+            "runtime_output_shapes": {k: [int(x) for x in v] for k, v in self.runtime_output_shapes.items()},
+        }
 
     def close(self) -> None:
         try:
@@ -1713,10 +2124,20 @@ class HailoSession:
             raise RuntimeError("HailoSession is closed")
 
         in_dict: Dict[str, np.ndarray] = {}
-        for name in self._input_names:
-            if name not in inputs:
-                raise KeyError(f"Missing Hailo input '{name}'. Provided keys: {list(inputs.keys())}")
-            in_dict[name] = _ensure_frames_dim(np.asarray(inputs[name]))
+        for canonical_name in self._input_names:
+            hef_name = self._input_name_canonical_to_hef.get(str(canonical_name), str(canonical_name))
+            if canonical_name in inputs:
+                src = inputs[canonical_name]
+            elif hef_name in inputs:
+                src = inputs[hef_name]
+            else:
+                raise KeyError(f"Missing Hailo input '{canonical_name}'. Provided keys: {list(inputs.keys())}")
+            runtime_shape = self.runtime_input_shapes.get(str(canonical_name))
+            ok, arr = _try_adapt_tensor(np.asarray(src), runtime_shape)
+            if not ok:
+                arr = np.asarray(src)
+            arr = _ensure_frames_dim(arr)
+            in_dict[hef_name] = _ensure_c_contiguous_cached(self._input_contig_cache, str(canonical_name), arr)
 
         with HailoSession._activation_lock:
             act = self._network_group.activate(self._network_group_params)
@@ -1737,7 +2158,7 @@ class HailoSession:
                 except Exception:
                     pass
 
-        out_dict: Dict[str, np.ndarray] = {}
+        raw_outputs: Dict[str, np.ndarray] = {}
         for k, v in outs.items():
             arr = np.asarray(v)
             if arr.ndim >= 1 and arr.shape[0] == 1:
@@ -1745,7 +2166,17 @@ class HailoSession:
                     arr = np.squeeze(arr, axis=0)
                 except Exception:
                     pass
-            out_dict[str(k)] = arr
+            raw_outputs[str(k)] = arr
+
+        ordered_raw_names = [name for name in self._hef_output_names if name in raw_outputs]
+        ordered_raw_names.extend([name for name in raw_outputs.keys() if name not in ordered_raw_names])
+
+        out_dict: Dict[str, np.ndarray] = {}
+        for raw_name in ordered_raw_names:
+            canonical_name = self._output_name_hef_to_canonical.get(str(raw_name), str(raw_name))
+            canonical_shape = self.output_shapes.get(str(canonical_name))
+            ok, adapted = _try_adapt_tensor(raw_outputs[raw_name], canonical_shape)
+            out_dict[str(canonical_name)] = adapted if ok else raw_outputs[raw_name]
         return out_dict
 
     def __enter__(self) -> "HailoSession":
@@ -2198,19 +2629,164 @@ def _dump_interface_npz(
 # ----------------------------
 # Benchmark + report
 # ----------------------------
-def _bench(tag: str, fn, warmup: int, runs: int) -> Tuple[float, float, List[float]]:
+def _bench(
+    tag: str,
+    fn,
+    warmup: int,
+    runs: int,
+    *,
+    verbose_runs: bool = False,
+    progress_every: int = 0,
+) -> Tuple[float, float, List[float]]:
     print(f"[{tag}] warmup: {warmup} runs (not measured)")
-    for i in range(warmup):
+    for _i in range(warmup):
         fn()
     print(f"[{tag}] measured: {runs} runs")
     times = []
+    every = max(0, int(progress_every or 0))
     for i in range(runs):
         t0 = time.time()
         fn()
         dt = (time.time() - t0) * 1000.0
         times.append(dt)
-        print(f"  run {i+1}/{runs}: {dt:.3f} ms")
+        idx = i + 1
+        if verbose_runs:
+            print(f"  run {idx}/{runs}: {dt:.3f} ms")
+        elif every > 0 and (idx == 1 or idx == runs or idx % every == 0):
+            print(f"  progress {idx}/{runs}")
     return float(np.mean(times)), float(np.std(times)), times
+
+
+def _clone_tensor_map(src: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    out: Dict[str, np.ndarray] = {}
+    for k, v in src.items():
+        out[str(k)] = np.ascontiguousarray(np.array(np.asarray(v), copy=True))
+    return out
+
+
+def _percentile(values: List[float], q: float) -> Optional[float]:
+    if not values:
+        return None
+    try:
+        return float(np.percentile(np.asarray(values, dtype=np.float64), q))
+    except Exception:
+        return None
+
+
+def _bench_streaming_pipeline(
+    tag: str,
+    stage1_fn,
+    stage2_inputs_builder,
+    stage2_fn,
+    *,
+    warmup_frames: int,
+    measured_frames: int,
+    queue_depth: int,
+) -> Dict[str, Any]:
+    total_frames = int(max(0, warmup_frames)) + int(max(0, measured_frames))
+    if total_frames <= 0:
+        raise ValueError("throughput probe requires at least one frame")
+    qdepth = max(1, int(queue_depth))
+    print(f"[{tag}] streaming warmup frames: {warmup_frames}")
+    print(f"[{tag}] streaming measured frames: {measured_frames} (queue_depth={qdepth})")
+    qobj: "queue.Queue[Any]" = queue.Queue(maxsize=qdepth)
+    sentinel = object()
+    err: Dict[str, BaseException] = {}
+    latency_ms: List[float] = []
+    stage1_ms: List[float] = []
+    stage2_ms: List[float] = []
+    completion_ts: List[float] = []
+    measured_start_ts: Optional[float] = None
+    measured_end_ts: Optional[float] = None
+
+    def producer() -> None:
+        nonlocal measured_start_ts
+        try:
+            for idx in range(total_frames):
+                frame_start_ts = time.perf_counter()
+                if idx == int(max(0, warmup_frames)):
+                    measured_start_ts = frame_start_ts
+                t0 = time.perf_counter()
+                out1 = stage1_fn()
+                s1_ms = (time.perf_counter() - t0) * 1000.0
+                qobj.put((idx, frame_start_ts, s1_ms, _clone_tensor_map(out1)))
+        except BaseException as e:  # noqa: BLE001
+            err["producer"] = e
+        finally:
+            qobj.put(sentinel)
+
+    def consumer() -> None:
+        nonlocal measured_end_ts
+        try:
+            while True:
+                item = qobj.get()
+                if item is sentinel:
+                    qobj.task_done()
+                    break
+                idx, frame_start_ts, s1_ms, out1 = item
+                t0 = time.perf_counter()
+                p2_inputs = stage2_inputs_builder(out1)
+                stage2_fn(p2_inputs)
+                done_ts = time.perf_counter()
+                s2_ms = (done_ts - t0) * 1000.0
+                if int(idx) >= int(max(0, warmup_frames)):
+                    stage1_ms.append(float(s1_ms))
+                    stage2_ms.append(float(s2_ms))
+                    latency_ms.append((done_ts - float(frame_start_ts)) * 1000.0)
+                    completion_ts.append(done_ts)
+                    measured_end_ts = done_ts
+                qobj.task_done()
+        except BaseException as e:  # noqa: BLE001
+            err["consumer"] = e
+            try:
+                qobj.task_done()
+            except Exception:
+                pass
+
+    t_prod = threading.Thread(target=producer, name=f"{tag}_producer", daemon=True)
+    t_cons = threading.Thread(target=consumer, name=f"{tag}_consumer", daemon=True)
+    t_prod.start()
+    t_cons.start()
+    t_prod.join()
+    qobj.join()
+    t_cons.join()
+
+    if err:
+        first = next(iter(err.values()))
+        raise RuntimeError(f"streaming pipeline failed: {type(first).__name__}: {first}")
+    if not latency_ms or measured_start_ts is None or measured_end_ts is None:
+        raise RuntimeError("streaming pipeline produced no measured samples")
+
+    makespan_ms = max(0.0, (measured_end_ts - measured_start_ts) * 1000.0)
+    cycle_est_ms = None
+    if len(completion_ts) >= 2:
+        deltas = [(completion_ts[i] - completion_ts[i - 1]) * 1000.0 for i in range(1, len(completion_ts))]
+        if deltas:
+            cycle_est_ms = float(np.mean(np.asarray(deltas, dtype=np.float64)))
+    fps_makespan = (float(measured_frames) * 1000.0 / makespan_ms) if makespan_ms > 0 else None
+    fps_cycle = (1000.0 / float(cycle_est_ms)) if cycle_est_ms and cycle_est_ms > 0 else None
+    result = {
+        "mode": "measured_streaming",
+        "queue_depth": int(qdepth),
+        "warmup_frames": int(max(0, warmup_frames)),
+        "measured_frames": int(max(0, measured_frames)),
+        "frame_count_total": int(total_frames),
+        "makespan_ms": makespan_ms,
+        "cycle_est_ms": cycle_est_ms,
+        "fps_makespan": fps_makespan,
+        "fps_cycle_est": fps_cycle,
+        "stage1_mean_ms": float(np.mean(np.asarray(stage1_ms, dtype=np.float64))) if stage1_ms else None,
+        "stage2_mean_ms": float(np.mean(np.asarray(stage2_ms, dtype=np.float64))) if stage2_ms else None,
+        "latency_mean_ms": float(np.mean(np.asarray(latency_ms, dtype=np.float64))) if latency_ms else None,
+        "latency_p50_ms": _percentile(latency_ms, 50.0),
+        "latency_p95_ms": _percentile(latency_ms, 95.0),
+    }
+    fps_cycle_txt = f"{result['fps_cycle_est']:.3f}" if result['fps_cycle_est'] is not None else '-'
+    print(
+        f"[{tag}] streaming throughput: fps(makespan)={result['fps_makespan']:.3f} "
+        f"fps(cycle)={fps_cycle_txt} latency p50={result['latency_p50_ms']:.3f} ms p95={result['latency_p95_ms']:.3f} ms"
+    )
+    return result
 
 
 def _try_write_report_plots(out_dir: Path, report: dict) -> None:
@@ -2386,17 +2962,23 @@ def _select_validation_mode(user_mode: str, provider: str, output_format: str) -
       - proxy_detections: decode detections and validate with IoU matching (order-invariant)
       - off: no gating (timing only)
       - auto: default policy:
-          * TensorRT => proxy (elementwise is still reported, but does not gate)
-          * BN6 detections => proxy
+          * DETR / RT-DETR / YOLOv10-style end-to-end detection outputs => proxy_detections
+          * TensorRT / Hailo multiscale detection-style outputs => proxy_detections
+          * BN6 detections => proxy_detections
           * else => strict_elementwise
     """
     warnings: List[str] = []
     m = (user_mode or "auto").strip().lower()
+    provider_l = str(provider or "").strip().lower()
+    detection_like = output_format in ("multiscale_head", "ultralytics_regcls", "bn6_detections", "detr_like")
+    accel_proxy = provider_l in ("cuda", "gpu", "tensorrt", "trt") or provider_l.startswith("hailo")
 
     if m == "auto":
-        if provider == "tensorrt":
+        if output_format in ("bn6_detections", "ultralytics_regcls", "detr_like"):
             mode = "proxy_detections"
-        elif output_format in ("bn6_detections", "ultralytics_regcls"):
+        elif output_format == "multiscale_head" and accel_proxy:
+            mode = "proxy_detections"
+        elif provider_l == "tensorrt":
             mode = "proxy_detections"
         else:
             mode = "strict_elementwise"
@@ -2407,15 +2989,13 @@ def _select_validation_mode(user_mode: str, provider: str, output_format: str) -
         warnings.append(f"unknown_validation_mode={user_mode}")
         return _select_validation_mode("auto", provider, output_format)
 
-    # If proxy is requested but we don't know how to decode detections, fallback.
-    if mode == "proxy_detections" and output_format not in ("multiscale_head", "ultralytics_regcls", "bn6_detections"):
+    # If proxy is requested but the output format is unsupported, fall back to a
+    # deterministic non-proxy mode. Do NOT silently downgrade supported YOLO/Hailo
+    # cases to timing-only validation.
+    if mode == "proxy_detections" and not detection_like:
         warnings.append("proxy_validation_unavailable_output_format")
-        if provider == "tensorrt" and m == "auto":
-            mode = "off"
-            warnings.append("validation_mode_fallback=off")
-        else:
-            mode = "strict_elementwise"
-            warnings.append("validation_mode_fallback=strict_elementwise")
+        mode = "strict_elementwise"
+        warnings.append("validation_mode_fallback=strict_elementwise")
     return mode, warnings
 
 
@@ -2459,10 +3039,12 @@ def _proxy_validate_detections(
             matched=0,
             match_ratio=1.0,
             mean_iou_matched=1.0,
+            iou_sum_matched=0.0,
+            count_delta=0,
+            count_delta_abs=0,
         )
         return metrics, True
 
-    # Build arrays for faster access
     ref = dets_ref or []
     out = dets_out or []
 
@@ -2495,7 +3077,8 @@ def _proxy_validate_detections(
             ious.append(float(best_iou))
 
     match_ratio = float(matched) / float(max(n_ref, 1))
-    mean_iou = float(np.mean(ious)) if ious else 0.0
+    iou_sum = float(np.sum(ious)) if ious else 0.0
+    mean_iou = float(iou_sum / float(max(matched, 1))) if matched > 0 else 0.0
 
     proxy_pass = (match_ratio >= float(pass_match_ratio_thr)) and (mean_iou >= float(pass_mean_iou_thr))
     metrics = dict(
@@ -2504,8 +3087,201 @@ def _proxy_validate_detections(
         matched=int(matched),
         match_ratio=match_ratio,
         mean_iou_matched=mean_iou,
+        iou_sum_matched=iou_sum,
+        count_delta=int(n_out - n_ref),
+        count_delta_abs=int(abs(n_out - n_ref)),
     )
     return metrics, bool(proxy_pass)
+
+
+def _detections_from_postprocess_payload(payload: Dict[str, Any]) -> List[dict]:
+    dets_in = list(payload.get("detections") or [])
+    dets_out: List[dict] = []
+    for d in dets_in:
+        try:
+            dets_out.append(
+                {
+                    "x1": float(d.get("x1", 0.0)),
+                    "y1": float(d.get("y1", 0.0)),
+                    "x2": float(d.get("x2", 0.0)),
+                    "y2": float(d.get("y2", 0.0)),
+                    "score": float(d.get("score", 0.0)),
+                    "class_id": int(d.get("class_id", d.get("cls", -1))),
+                    "class_name": str(d.get("label", d.get("class_name", d.get("class_id", "")))),
+                }
+            )
+        except Exception:
+            continue
+    return dets_out
+
+
+
+
+
+_IMAGE_FILE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+
+def _is_image_file(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in _IMAGE_FILE_EXTS
+
+
+def _read_image_list_file(path: Path, base_dir: Path) -> List[Path]:
+    out: List[Path] = []
+    suf = path.suffix.lower()
+    try:
+        if suf == ".jsonl":
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                cand = obj if isinstance(obj, str) else (obj.get("image") or obj.get("path") or obj.get("file") if isinstance(obj, dict) else None)
+                if not cand:
+                    continue
+                pp = Path(str(cand))
+                if not pp.is_absolute():
+                    pp = (base_dir / pp).resolve()
+                if _is_image_file(pp):
+                    out.append(pp)
+        elif suf == ".json":
+            try:
+                obj = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                obj = None
+            seq = obj if isinstance(obj, list) else (obj.get("images") or obj.get("files") or obj.get("paths") if isinstance(obj, dict) else None)
+            if isinstance(seq, list):
+                for cand in seq:
+                    pp = Path(str(cand))
+                    if not pp.is_absolute():
+                        pp = (base_dir / pp).resolve()
+                    if _is_image_file(pp):
+                        out.append(pp)
+        else:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                pp = Path(line)
+                if not pp.is_absolute():
+                    pp = (base_dir / pp).resolve()
+                if _is_image_file(pp):
+                    out.append(pp)
+    except Exception:
+        return []
+    return out
+
+
+def _collect_validation_image_paths(spec: str, base_dir: Path, max_images: int) -> List[Path]:
+    raw = str(spec or "").strip()
+    if not raw:
+        if max_images <= 0:
+            max_images = 50
+        for cand in ((base_dir.parent / "resources" / "validation" / "coco_50_data"), (base_dir / "resources" / "validation" / "coco_50_data")):
+            if cand.exists():
+                raw = str(cand)
+                break
+    if max_images <= 0:
+        return []
+    if not raw:
+        return []
+    p = Path(raw)
+    if not p.is_absolute():
+        p = (base_dir / p).resolve()
+    imgs: List[Path] = []
+    if p.is_dir():
+        imgs = sorted([q.resolve() for q in p.rglob("*") if _is_image_file(q)])
+    elif _is_image_file(p):
+        imgs = [p.resolve()]
+    elif p.is_file():
+        imgs = _read_image_list_file(p.resolve(), base_dir)
+    out: List[Path] = []
+    seen = set()
+    for img in imgs:
+        key = str(img)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(img)
+        if len(out) >= int(max_images):
+            break
+    return out
+
+
+def _aggregate_proxy_dataset_results(
+    per_image: List[Dict[str, Any]],
+    *,
+    pass_image_ratio_thr: float = 0.8,
+    pass_match_ratio_thr: float = 0.7,
+    pass_mean_iou_thr: float = 0.5,
+) -> Tuple[Dict[str, Any], bool]:
+    n_images = int(len(per_image or []))
+    if n_images <= 0:
+        metrics = {
+            "n_images": 0,
+            "images_passed": 0,
+            "image_pass_ratio": 0.0,
+            "total_ref": 0,
+            "total_out": 0,
+            "total_matched": 0,
+            "global_match_ratio": 0.0,
+            "global_mean_iou_matched": 0.0,
+            "count_delta": 0,
+            "count_delta_abs": 0,
+        }
+        return metrics, False
+
+    images_passed = 0
+    total_ref = 0
+    total_out = 0
+    total_matched = 0
+    iou_sum = 0.0
+    errors = 0
+    warnings_count = 0
+    for row in per_image:
+        if bool(row.get("pass")):
+            images_passed += 1
+        if row.get("error"):
+            errors += 1
+        warnings_count += len(list(row.get("warnings") or []))
+        m = row.get("metrics") if isinstance(row.get("metrics"), dict) else {}
+        total_ref += int(m.get("n_ref", 0) or 0)
+        total_out += int(m.get("n_out", 0) or 0)
+        total_matched += int(m.get("matched", 0) or 0)
+        iou_sum += float(m.get("iou_sum_matched", 0.0) or 0.0)
+
+    if total_ref == 0 and total_out == 0:
+        global_match_ratio = 1.0
+        global_mean_iou = 1.0
+    else:
+        global_match_ratio = float(total_matched) / float(max(total_ref, 1))
+        global_mean_iou = float(iou_sum) / float(max(total_matched, 1)) if total_matched > 0 else 0.0
+
+    image_pass_ratio = float(images_passed) / float(max(n_images, 1))
+    metrics = {
+        "n_images": n_images,
+        "images_passed": int(images_passed),
+        "image_pass_ratio": float(image_pass_ratio),
+        "total_ref": int(total_ref),
+        "total_out": int(total_out),
+        "total_matched": int(total_matched),
+        "global_match_ratio": float(global_match_ratio),
+        "global_mean_iou_matched": float(global_mean_iou),
+        "count_delta": int(total_out - total_ref),
+        "count_delta_abs": int(abs(total_out - total_ref)),
+        "errors": int(errors),
+        "warnings": int(warnings_count),
+    }
+    passed = (
+        image_pass_ratio >= float(pass_image_ratio_thr)
+        and global_match_ratio >= float(pass_match_ratio_thr)
+        and global_mean_iou >= float(pass_mean_iou_thr)
+        and errors == 0
+    )
+    return metrics, bool(passed)
 
 
 def _extract_detections_for_proxy(
@@ -2522,9 +3298,61 @@ def _extract_detections_for_proxy(
     labels: Optional[List[str]] = None,
 ) -> Tuple[List[dict], List[str]]:
     warnings: List[str] = []
+
+    if output_format == "detr_like":
+        try:
+            dets = _decode_detr(
+                output_names=output_names,
+                outputs=outputs,
+                img_hw=img_hw,
+                conf_thr=float(det_conf),
+                iou_thr=float(det_iou),
+                max_det=int(det_max_det),
+                labels=labels,
+            )
+            return dets, warnings
+        except Exception as e:
+            warnings.append(f"detr_proxy_decode_exception={type(e).__name__}: {e}")
+            return [], warnings
+
+    # First try the vendored harness so validation and visualization both operate
+    # on the same normalized YOLO outputs / decoder logic.
+    try:
+        from splitpoint_runners.harness.base import postprocess_result_to_dict, validate_postprocess_result_dict
+        from splitpoint_runners.harness.yolo import YoloHarness
+
+        out_names_local = list(output_names)
+        out_list_local = [np.asarray(o) for o in outputs]
+        if output_format == "multiscale_head":
+            try:
+                out_names_local, out_list_local, _ = _normalize_yolo_multiscale_outputs(
+                    out_list_local,
+                    output_names=out_names_local,
+                )
+            except Exception:
+                # Fall through to the harness with raw outputs; it has its own normalization.
+                pass
+
+        harness = YoloHarness(
+            conf_thresh=float(yolo_conf),
+            iou_thresh=float(yolo_iou),
+            max_det=int(yolo_max_det),
+            class_names=labels,
+        )
+        outputs_map = {n: a for n, a in zip(out_names_local, out_list_local)}
+        pp = harness.postprocess(outputs_map, context={"input_hw": img_hw})
+        pp_dict = postprocess_result_to_dict(pp)
+        validate_postprocess_result_dict(pp_dict)
+        payload = dict(pp_dict.get("json") or {})
+        if str(payload.get("task") or "").strip().lower() == "detection":
+            return _detections_from_postprocess_payload(payload), warnings
+        warnings.append("harness_proxy_non_detection_payload")
+    except Exception as e:
+        warnings.append(f"harness_proxy_exception={type(e).__name__}: {e}")
+
+    # Fallback to the local lightweight decoders.
     try:
         if output_format == "multiscale_head":
-            # YOLOv7-style multiscale head
             dets = _decode_yolo(
                 outs=outputs,
                 output_names=output_names,
@@ -2537,7 +3365,6 @@ def _extract_detections_for_proxy(
             return dets, warnings
 
         if output_format == "ultralytics_regcls":
-            # Ultralytics YOLOv8/9/10/11-style split reg/cls heads
             dets = _decode_yolo(
                 outs=outputs,
                 output_names=output_names,
@@ -2563,9 +3390,11 @@ def _extract_detections_for_proxy(
             warnings.extend(w)
             return dets, warnings
 
-        return [], ["proxy_unavailable_output_format"]
+        warnings.append("proxy_unavailable_output_format")
+        return [], warnings
     except Exception as e:
-        return [], [f"proxy_decode_exception={type(e).__name__}: {e}"]
+        warnings.append(f"proxy_decode_exception={type(e).__name__}: {e}")
+        return [], warnings
 
 
 
@@ -2609,7 +3438,9 @@ def _is_yolo_multiscale(outputs: List[np.ndarray]) -> bool:
     for o in outputs:
         if not isinstance(o, np.ndarray):
             return False
-        if o.ndim != 5:
+        try:
+            o = _canonicalize_yolo_multiscale_output(o)
+        except Exception:
             return False
         if o.shape[1] != 3:
             return False
@@ -2624,6 +3455,207 @@ _YOLO_ANCHORS = [
     [(36, 75), (76, 55), (72, 146)],
     [(142, 110), (192, 243), (459, 401)],
 ]
+
+
+def _yolo_multiscale_name_hint(name: str) -> Tuple[int, int]:
+    """Best-effort rank hint for multiscale YOLO output names.
+
+    Lower values mean "prefer earlier" when two heads are otherwise ambiguous.
+    This is only a tie-breaker; the primary ordering signal is always the
+    canonicalized grid size.
+    """
+
+    import re as _re
+
+    lname = str(name or "").strip().lower()
+    if not lname:
+        return (99, 9999)
+
+    token_ranks = (
+        (r"\bp3\b", 0),
+        (r"\bp4\b", 1),
+        (r"\bp5\b", 2),
+        (r"\bsmall\b", 0),
+        (r"\bmedium\b", 1),
+        (r"\blarge\b", 2),
+        (r"stride[_:/-]?8\b", 0),
+        (r"stride[_:/-]?16\b", 1),
+        (r"stride[_:/-]?32\b", 2),
+        (r"\bs8\b", 0),
+        (r"\bs16\b", 1),
+        (r"\bs32\b", 2),
+    )
+    for pattern, rank in token_ranks:
+        if _re.search(pattern, lname):
+            return (rank, 0)
+
+    m = _re.search(r"(?:layer|head|output|out|branch|scale)[_:/-]?(\d+)", lname)
+    if m:
+        try:
+            return (10, int(m.group(1)))
+        except Exception:
+            pass
+
+    return (99, 9999)
+
+
+def _normalize_yolo_multiscale_outputs(
+    outputs: Sequence[np.ndarray],
+    output_names: Optional[Sequence[str]] = None,
+    *,
+    ref_hws: Optional[Sequence[Tuple[int, int]]] = None,
+    na_hint: int = 3,
+) -> Tuple[List[str], List[np.ndarray], Dict[str, Any]]:
+    """Normalize multi-head YOLO outputs to a canonical list/order.
+
+    Returns
+    -------
+    output_names_canonical:
+        Canonical per-head names such as ``yolo_head_80x80``.
+    outputs_canonical:
+        Tensors normalized to ``[B,na,H,W,C]`` and ordered to match the
+        canonical multi-scale head order.
+    meta:
+        Mapping/provenance information for debugging and report JSONs.
+    """
+
+    raw_names = [str(n) for n in (list(output_names) if output_names is not None else [])]
+    if len(raw_names) < len(outputs):
+        raw_names.extend([f"output_{i}" for i in range(len(raw_names), len(outputs))])
+
+    records: List[Dict[str, Any]] = []
+    for idx, out in enumerate(outputs):
+        raw = np.asarray(out)
+        can = _canonicalize_yolo_multiscale_output(raw, na_hint=na_hint)
+        gh = int(can.shape[2])
+        gw = int(can.shape[3])
+        records.append(
+            {
+                "index": int(idx),
+                "raw_name": raw_names[idx],
+                "raw_shape": tuple(int(x) for x in raw.shape),
+                "tensor": can.astype(np.float32, copy=False),
+                "gh": gh,
+                "gw": gw,
+                "ch": int(can.shape[-1]),
+            }
+        )
+
+    def _sort_key(rec: Dict[str, Any]) -> Tuple[int, int, int, int, int, int]:
+        hint_rank, hint_index = _yolo_multiscale_name_hint(str(rec.get("raw_name") or ""))
+        gh = int(rec["gh"])
+        gw = int(rec["gw"])
+        area = gh * gw
+        return (-area, -gh, -gw, hint_rank, hint_index, int(rec["index"]))
+
+    ordered: List[Dict[str, Any]] = []
+    used: set[int] = set()
+
+    if ref_hws:
+        targets = [(int(hw[0]), int(hw[1])) for hw in ref_hws]
+        for target_hw in targets:
+            matches = [
+                rec
+                for rec in records
+                if int(rec["index"]) not in used and (int(rec["gh"]), int(rec["gw"])) == target_hw
+            ]
+            if not matches:
+                continue
+            rec = sorted(matches, key=_sort_key)[0]
+            ordered.append(rec)
+            used.add(int(rec["index"]))
+
+        ordered.extend(sorted([rec for rec in records if int(rec["index"]) not in used], key=_sort_key))
+    else:
+        ordered = sorted(records, key=_sort_key)
+
+    counts: Dict[str, int] = {}
+    canonical_names: List[str] = []
+    canonical_outputs: List[np.ndarray] = []
+    mappings: List[Dict[str, Any]] = []
+
+    for rec in ordered:
+        base_name = f"yolo_head_{int(rec['gh'])}x{int(rec['gw'])}"
+        counts[base_name] = counts.get(base_name, 0) + 1
+        canonical_name = base_name if counts[base_name] == 1 else f"{base_name}_{counts[base_name]}"
+
+        canonical_names.append(canonical_name)
+        canonical_outputs.append(rec["tensor"])
+        mappings.append(
+            {
+                "raw_name": str(rec["raw_name"]),
+                "raw_shape": [int(x) for x in rec["raw_shape"]],
+                "canonical_name": canonical_name,
+                "canonical_shape": [int(x) for x in np.asarray(rec["tensor"]).shape],
+                "grid_hw": [int(rec["gh"]), int(rec["gw"])],
+                "channels": int(rec["ch"]),
+            }
+        )
+
+    meta: Dict[str, Any] = {
+        "format": "multiscale_head",
+        "normalized": True,
+        "mappings": mappings,
+    }
+    if ref_hws:
+        meta["reference_grid_order"] = [[int(hw[0]), int(hw[1])] for hw in ref_hws]
+
+    return canonical_names, canonical_outputs, meta
+
+
+def _canonicalize_yolo_multiscale_output(output: np.ndarray, na_hint: int = 3) -> np.ndarray:
+    """Normalize one multiscale YOLO tensor to ``[B,na,H,W,C]``.
+
+    Hailo often exposes YOLO heads as channels-last tensors without an explicit
+    batch dimension (for example ``(80, 80, 255)``). Those outputs are valid,
+    but older validation/visualization code rejected them.
+    """
+
+    a = np.asarray(output)
+
+    if a.ndim == 5:
+        if a.shape[1] == na_hint and a.shape[-1] >= 6:
+            return a.astype(np.float32, copy=False)
+        if a.shape[-2] == na_hint and a.shape[-1] >= 6:
+            return np.transpose(a, (0, 3, 1, 2, 4)).astype(np.float32, copy=False)
+        raise ValueError(f"Unsupported multiscale head layout: {a.shape}")
+
+    if a.ndim == 4:
+        # [B,C,H,W]
+        if a.shape[0] == 1 and a.shape[1] >= 6 * na_hint and a.shape[1] % na_hint == 0:
+            b, ch, gh, gw = a.shape
+            return a.reshape(b, na_hint, ch // na_hint, gh, gw).transpose(0, 1, 3, 4, 2).astype(np.float32, copy=False)
+
+        # [B,H,W,C]
+        if a.shape[0] == 1 and a.shape[-1] >= 6 * na_hint and a.shape[-1] % na_hint == 0:
+            b, gh, gw, ch = a.shape
+            return a.reshape(b, gh, gw, na_hint, ch // na_hint).transpose(0, 3, 1, 2, 4).astype(np.float32, copy=False)
+
+        # [na,H,W,C]
+        if a.shape[0] == na_hint and a.shape[-1] >= 6:
+            return a[None, ...].astype(np.float32, copy=False)
+
+        # [H,W,na,C]
+        if a.shape[-2] == na_hint and a.shape[-1] >= 6:
+            return np.transpose(a, (2, 0, 1, 3))[None, ...].astype(np.float32, copy=False)
+
+        raise ValueError(f"Unsupported multiscale head layout: {a.shape}")
+
+    if a.ndim == 3:
+        gh, gw, ch = a.shape
+        if ch >= 6 * na_hint and ch % na_hint == 0:
+            return a.reshape(1, gh, gw, na_hint, ch // na_hint).transpose(0, 3, 1, 2, 4).astype(np.float32, copy=False)
+
+    raise ValueError(f"Unsupported multiscale head output rank: {a.shape}")
+
+def _describe_named_outputs(outputs: Dict[str, np.ndarray]) -> Dict[str, List[int]]:
+    out: Dict[str, List[int]] = {}
+    for name, value in outputs.items():
+        try:
+            out[str(name)] = [int(x) for x in np.asarray(value).shape]
+        except Exception:
+            out[str(name)] = []
+    return out
 
 
 def _nms(boxes: np.ndarray, scores: np.ndarray, iou_thr: float, max_det: int) -> List[int]:
@@ -2871,8 +3903,12 @@ def _decode_yolo(
             )
         return out
 
-    # Sort by grid size desc to match anchor groups
-    outs_sorted = sorted(outs, key=lambda a: int(a.shape[2]) * int(a.shape[3]), reverse=True)
+    # Normalize to a canonical head order. This makes proxy decoding robust to
+    # Hailo channels-last outputs and to provider-specific output-name ordering.
+    _norm_names, outs_sorted, _norm_meta = _normalize_yolo_multiscale_outputs(
+        outs,
+        output_names=output_names,
+    )
 
     all_boxes = []
     all_scores = []
@@ -3444,6 +4480,8 @@ def _detect_output_format(output_names: List[str], outputs: List[np.ndarray]) ->
             return "ultralytics_regcls"
         if _is_bn6_detections(outputs):
             return "bn6_detections"
+        if _is_detr_like(output_names, outputs):
+            return "detr_like"
         return "unknown"
     except Exception:
         return "unknown"
@@ -4200,6 +5238,11 @@ def main() -> int:
     ap.add_argument("--out-dir", type=str, default="results", help="Output dir for reports (default: results/)")
     ap.add_argument("--warmup", type=int, default=5, help="Warmup runs per benchmark")
     ap.add_argument("--runs", type=int, default=10, help="Measured runs per benchmark")
+    ap.add_argument("--throughput-frames", type=int, default=24, help="Measured frames for the heterogenous streaming/interleaving throughput probe (0 disables).")
+    ap.add_argument("--throughput-warmup-frames", type=int, default=6, help="Warmup frames before measured streaming/interleaving throughput.")
+    ap.add_argument("--throughput-queue-depth", type=int, default=2, help="Queue depth for the streaming/interleaving throughput probe.")
+    ap.add_argument("--verbose-runs", action="store_true", help="Print one latency line per measured run.")
+    ap.add_argument("--progress-every", type=int, default=0, help="Print sparse per-run progress every N measured runs (0 disables it).")
     ap.add_argument("--eps", type=float, default=1e-4, help="Max-abs threshold for output diff PASS/FAIL")
     ap.add_argument(
         "--baseline-cache",
@@ -4216,6 +5259,27 @@ def main() -> int:
         default="auto",
         choices=["auto", "strict_elementwise", "proxy_detections", "off"],
         help="Validation gating: auto|strict_elementwise|proxy_detections|off. (auto: TRT/BN6=>proxy)",
+    )
+    ap.add_argument(
+        "--validation-images",
+        type=str,
+        default="",
+        help=(
+            "Optional semantic-validation image set for detection models. Accepts a directory, a single image, "
+            "or a text/JSON file listing images. Used only for proxy_detections validation."
+        ),
+    )
+    ap.add_argument(
+        "--validation-max-images",
+        type=int,
+        default=0,
+        help="Max images from --validation-images to use for semantic proxy validation. If no custom path is given, default is 50 from the built-in COCO-50 set. Use 0 only to explicitly disable dataset validation.",
+    )
+    ap.add_argument(
+        "--validation-pass-image-ratio",
+        type=float,
+        default=0.8,
+        help="Dataset semantic validation pass threshold on the fraction of images that individually pass proxy validation.",
     )
     ap.add_argument("--seed", type=int, default=0, help="RNG seed for random input generation")
     ap.add_argument("--batch", type=int, default=None, help="Batch dim for random input generation (if dim0 unknown)")
@@ -4330,6 +5394,15 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     manifest = _read_json(manifest_path)
+
+    part1_cut_names_manifest = [str(x) for x in (manifest.get("part1_cut_names") or [])]
+    part2_cut_names_manifest = [str(x) for x in (manifest.get("part2_cut_names") or [])]
+    manifest_cut_name_map_p2_to_p1: Dict[str, str] = {}
+    if part1_cut_names_manifest and part2_cut_names_manifest and len(part1_cut_names_manifest) == len(part2_cut_names_manifest):
+        manifest_cut_name_map_p2_to_p1 = {
+            str(p2_name): str(p1_name)
+            for p1_name, p2_name in zip(part1_cut_names_manifest, part2_cut_names_manifest)
+        }
 
     # Manifest schema compatibility
     full_rel = manifest.get("full_model") or manifest.get("full") or manifest.get("model")
@@ -4630,6 +5703,11 @@ def main() -> int:
         ("part1", ort_provider_hint): sess_p1,
         ("part2", ort_provider_hint): sess_p2,
     }
+    ort_session_infos: Dict[Tuple[str, str], SessionBuildInfo] = {
+        ("full", ort_provider_hint): info_full,
+        ("part1", ort_provider_hint): info_p1,
+        ("part2", ort_provider_hint): info_p2,
+    }
 
     def _make_provider_options_for(providers_local: List[str]) -> Optional[List[dict]]:
         if "TensorrtExecutionProvider" not in providers_local:
@@ -4671,7 +5749,10 @@ def main() -> int:
         popts = _make_provider_options_for(provs)
         sess, _info = _create_session(f"{kind}_{ph}", model_path, provs, popts, sess_options)
         ort_sessions[key] = sess
+        ort_session_infos[key] = _info
         return sess
+
+    resolved_image_scale = str(args.image_scale or "auto").strip().lower()
 
     # If image_scale=auto, try to pick a sane preprocessing preset.
     if img_candidates is not None and args.image_scale == "auto":
@@ -4693,9 +5774,11 @@ def main() -> int:
 
                 if args.image_scale in ("raw", "norm"):
                     feeds_full[img_candidates["name"]] = img_candidates[args.image_scale]
+                    resolved_image_scale = str(args.image_scale)
                 elif args.image_scale in ("imagenet", "clip"):
                     print(f"[warn] image_scale={args.image_scale} is unusual for YOLO outputs; using 'norm' instead.")
                     feeds_full[img_candidates["name"]] = img_candidates["norm"]
+                    resolved_image_scale = "norm"
         except Exception:
             pass
 
@@ -4732,6 +5815,7 @@ def main() -> int:
             selected = "norm" if p_norm >= p_raw else "raw"
             print(f"[auto] Selected image_scale={selected}.")
             feeds_full[img_candidates["name"]] = img_candidates[selected]
+            resolved_image_scale = selected
 
         elif _is_detr_like(out_norm, out_names):
             print("[auto] Probing DETR/YOLOS input normalization (imagenet/norm/raw/clip)...")
@@ -4759,6 +5843,7 @@ def main() -> int:
                 best_scale = "norm"
             print(f"[auto] Selected image_scale={best_scale}.")
             feeds_full[img_candidates["name"]] = img_candidates.get(best_scale, img_candidates["norm"])
+            resolved_image_scale = best_scale
         else:
             # Classification-ish outputs: probe common preprocessing presets.
             def _pick_classification_logits(outs: List[np.ndarray]) -> Optional[np.ndarray]:
@@ -4813,6 +5898,7 @@ def main() -> int:
                 why = "classification-ish outputs" if default_sc == "imagenet" else "unknown outputs"
                 print(f"[auto] image_scale=auto -> defaulting to {default_sc} ({why}).")
                 feeds_full[img_candidates["name"]] = img_candidates[default_sc]
+                resolved_image_scale = default_sc
 
     # Build feeds for part1/part2
     p1_inputs = [i.name for i in sess_p1.get_inputs()]
@@ -4890,19 +5976,22 @@ def main() -> int:
     hailo_p1: Optional[HailoSession] = None
     hailo_p2: Optional[HailoSession] = None
 
-    def _order_out_map(out_map: Dict[str, np.ndarray]) -> List[np.ndarray]:
+    def _ordered_out_names(out_map: Dict[str, np.ndarray]) -> List[str]:
         # Primary: order like the full graph outputs.
-        ordered = [out_map[n] for n in final_out_names if n in out_map]
-        if ordered and len(ordered) == len(final_out_names):
-            return ordered
+        ordered_names = [n for n in final_out_names if n in out_map]
+        if ordered_names and len(ordered_names) == len(final_out_names):
+            return ordered_names
 
         # Secondary: order like the right/part2 outputs.
-        alt = [out_map[n] for n in [o.name for o in sess_p2.get_outputs()] if n in out_map]
-        if alt:
-            return alt
+        alt_names = [o.name for o in sess_p2.get_outputs() if o.name in out_map]
+        if alt_names:
+            return alt_names
 
         # Fallback: deterministic order.
-        return [out_map[k] for k in sorted(out_map.keys())]
+        return sorted(out_map.keys())
+
+    def _order_out_map(out_map: Dict[str, np.ndarray]) -> List[np.ndarray]:
+        return [out_map[n] for n in _ordered_out_names(out_map)]
 
     # Optional debug payload (only populated when using GraphRunner).
     graph_runner_metrics = None
@@ -4925,6 +6014,8 @@ def main() -> int:
     p1_runs_ms: Optional[List[float]] = None
     p2_runs_ms: Optional[List[float]] = None
     comp_runs_ms: Optional[List[float]] = None
+    throughput_report: Optional[Dict[str, Any]] = None
+    throughput_error: Optional[str] = None
 
     # Track per-variant status for transparency.
     variant_status: Dict[str, str] = {v: "skipped" for v in ALL_VARIANTS}
@@ -5216,6 +6307,9 @@ def main() -> int:
                             quantized_inputs=True,
                             quantized_outputs=False,
                             vdevice=hailo_vdevice,
+                            onnx_model_path=p1_path,
+                            canonical_input_slot_names=[str(x) for x in (manifest.get("part1_external_inputs") or manifest.get("orig_inputs") or [])],
+                            canonical_output_slot_names=part1_cut_names_manifest,
                         )
                     except Exception as e:
                         msg = f"Failed to init Hailo stage1/part1 session: {e}"
@@ -5223,6 +6317,13 @@ def main() -> int:
                         if "composed" in variants:
                             variant_errors["composed"] = msg
                     else:
+                        try:
+                            _io = hailo_p1.describe_io()
+                            print(f"[hailo][io] part1 hef_inputs={_io['hef_inputs']} canonical_inputs={_io['canonical_inputs']}")
+                            print(f"[hailo][io] part1 hef_outputs={_io['hef_outputs']} canonical_outputs={_io['canonical_outputs']}")
+                            print(f"[hailo][io] part1 input_aliases={_io['input_aliases']}")
+                        except Exception:
+                            pass
                         # Build fixed inputs for part1 on Hailo.
                         p1_inputs_hailo = {}
                         first_input_name = next(iter(feeds_full.keys()))
@@ -5232,13 +6333,14 @@ def main() -> int:
                             src_arr = np.asarray(src)
                             try:
                                 img_u8 = _nchw_to_hwc_u8(src_arr)
-                                tgt_shape = hailo_p1.input_shapes.get(name)
+                                tgt_shape = hailo_p1.runtime_input_shapes.get(name) or hailo_p1.input_shapes.get(name)
                                 if tgt_shape is not None:
                                     img_u8 = _adapt_tensor(img_u8, tgt_shape)
                                 p1_inputs_hailo[name] = img_u8
                             except Exception:
-                                tgt_shape = hailo_p1.input_shapes.get(name)
+                                tgt_shape = hailo_p1.runtime_input_shapes.get(name) or hailo_p1.input_shapes.get(name)
                                 p1_inputs_hailo[name] = _adapt_tensor(src_arr, tgt_shape) if tgt_shape is not None else src_arr
+                        p1_inputs_hailo = _make_tensor_map_contiguous(p1_inputs_hailo)
         else:
             ort_p1_sess = _get_ort_session("part1", p1_path, stage1_tok)
 
@@ -5270,12 +6372,29 @@ def main() -> int:
                             quantized_inputs=False,
                             quantized_outputs=False,
                             vdevice=hailo_vdevice,
+                            onnx_model_path=p2_path,
+                            # Important: splitbench shows that Hailo part2 input_layerN
+                            # follows the exported part2 ONNX *input order*, not the
+                            # manifest cut-name order. Using part2_cut_names_manifest here
+                            # can swap same-shaped boundary tensors (e.g. input_layer1 <->
+                            # input_layer3) and breaks TRT->Hailo / Hailo composed runs.
+                            # Therefore we let HailoSession bind generic HEF input slots to
+                            # the part2 ONNX input order from p2_path itself.
+                            canonical_output_slot_names=[str(x) for x in (manifest.get("orig_outputs") or [])],
                         )
                     except Exception as e:
                         msg = f"Failed to init Hailo stage2/part2 session: {e}"
                         variant_errors["part2"] = msg
                         if "composed" in variants:
                             variant_errors["composed"] = msg
+                    else:
+                        try:
+                            _io = hailo_p2.describe_io()
+                            print(f"[hailo][io] part2 hef_inputs={_io['hef_inputs']} canonical_inputs={_io['canonical_inputs']}")
+                            print(f"[hailo][io] part2 hef_outputs={_io['hef_outputs']} canonical_outputs={_io['canonical_outputs']}")
+                            print(f"[hailo][io] part2 input_aliases={_io['input_aliases']}")
+                        except Exception:
+                            pass
         else:
             ort_p2_sess = _get_ort_session("part2", p2_path, stage2_tok)
 
@@ -5298,10 +6417,20 @@ def main() -> int:
                             quantized_inputs=True,
                             quantized_outputs=False,
                             vdevice=hailo_vdevice,
+                            onnx_model_path=full_path,
+                            canonical_input_slot_names=[str(x) for x in (manifest.get("orig_inputs") or [])],
+                            canonical_output_slot_names=[str(x) for x in (manifest.get("orig_outputs") or [])],
                         )
                     except Exception as e:
                         variant_errors["full"] = f"Failed to init Hailo full session: {e}"
                     else:
+                        try:
+                            _io = hailo_full.describe_io()
+                            print(f"[hailo][io] full hef_inputs={_io['hef_inputs']} canonical_inputs={_io['canonical_inputs']}")
+                            print(f"[hailo][io] full hef_outputs={_io['hef_outputs']} canonical_outputs={_io['canonical_outputs']}")
+                            print(f"[hailo][io] full input_aliases={_io['input_aliases']}")
+                        except Exception:
+                            pass
                         full_inputs_hailo = {}
                         first_input_name = next(iter(feeds_full.keys()))
                         first_input_val = feeds_full[first_input_name]
@@ -5310,54 +6439,93 @@ def main() -> int:
                             src_arr = np.asarray(src)
                             try:
                                 img_u8 = _nchw_to_hwc_u8(src_arr)
-                                tgt_shape = hailo_full.input_shapes.get(name)
+                                tgt_shape = hailo_full.runtime_input_shapes.get(name) or hailo_full.input_shapes.get(name)
                                 if tgt_shape is not None:
                                     img_u8 = _adapt_tensor(img_u8, tgt_shape)
                                 full_inputs_hailo[name] = img_u8
                             except Exception:
-                                tgt_shape = hailo_full.input_shapes.get(name)
+                                tgt_shape = hailo_full.runtime_input_shapes.get(name) or hailo_full.input_shapes.get(name)
                                 full_inputs_hailo[name] = _adapt_tensor(src_arr, tgt_shape) if tgt_shape is not None else src_arr
+                        full_inputs_hailo = _make_tensor_map_contiguous(full_inputs_hailo)
         else:
             ort_full_sess = _get_ort_session("full", full_path, full_tok)
 
     # ----------------------------
     # Stage run helpers
     # ----------------------------
-    def run_stage1_map() -> Dict[str, np.ndarray]:
-        if hailo_p1 is not None and p1_inputs_hailo is not None:
-            return hailo_p1.infer(p1_inputs_hailo)
+    def _build_hailo_input_map(session: HailoSession, source_feeds: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        in_map: Dict[str, np.ndarray] = {}
+        first_input_name = next(iter(source_feeds.keys()))
+        first_input_val = source_feeds[first_input_name]
+        for name in session.input_names:
+            src = source_feeds.get(name, first_input_val)
+            src_arr = np.asarray(src)
+            try:
+                img_u8 = _nchw_to_hwc_u8(src_arr)
+                tgt_shape = session.runtime_input_shapes.get(name) or session.input_shapes.get(name)
+                if tgt_shape is not None:
+                    img_u8 = _adapt_tensor(img_u8, tgt_shape)
+                in_map[name] = img_u8
+            except Exception:
+                tgt_shape = session.runtime_input_shapes.get(name) or session.input_shapes.get(name)
+                in_map[name] = _adapt_tensor(src_arr, tgt_shape) if tgt_shape is not None else src_arr
+        return _make_tensor_map_contiguous(in_map)
+
+
+    def run_stage1_map(feeds_p1_override: Optional[Dict[str, np.ndarray]] = None) -> Dict[str, np.ndarray]:
+        if hailo_p1 is not None:
+            local_inputs = p1_inputs_hailo if feeds_p1_override is None and p1_inputs_hailo is not None else _build_hailo_input_map(hailo_p1, feeds_p1_override or feeds_p1)
+            return hailo_p1.infer(local_inputs)
         if ort_p1_sess is None:
             raise RuntimeError("stage1 backend not initialized")
-        out = ort_p1_sess.run(None, feeds_p1)
+        local_feeds = feeds_p1_override or feeds_p1
+        out = ort_p1_sess.run(None, local_feeds)
         return {o.name: a for o, a in zip(ort_p1_sess.get_outputs(), out)}
 
-    def _build_stage2_inputs(out1_map: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    def _build_stage2_inputs(out1_map: Dict[str, np.ndarray], feeds_full_override: Optional[Dict[str, np.ndarray]] = None) -> Dict[str, np.ndarray]:
         # Build stage2 feed dict from stage1 outputs + passthrough full inputs.
         nonlocal p2_in_map, p2_in_map_src_keys
         src_keys = tuple(sorted(out1_map.keys()))
+        feeds_full_local = feeds_full_override or feeds_full
         if hailo_p2 is not None:
             expected = hailo_p2.input_names
             if p2_in_map is None or p2_in_map_src_keys != src_keys:
                 p2_in_map = _map_inputs_to_outputs(expected, list(out1_map.keys()))
+                for p2_name, p1_name in manifest_cut_name_map_p2_to_p1.items():
+                    if p2_name in expected and p1_name in out1_map:
+                        p2_in_map[p2_name] = p1_name
+                p2_in_map = _overlay_boundary_slot_mapping(
+                    p2_in_map,
+                    expected_inputs=expected,
+                    produced_outputs=list(out1_map.keys()),
+                    part1_cut_names_manifest=part1_cut_names_manifest,
+                    part2_cut_names_manifest=part2_cut_names_manifest,
+                )
                 p2_in_map_src_keys = src_keys
+                try:
+                    print(f"[interface][p2-map][hailo] {p2_in_map}")
+                except Exception:
+                    pass
             d: Dict[str, np.ndarray] = {}
+            used_stage1_sources: set[str] = set()
             for inp in expected:
                 tgt_shape = hailo_p2.input_shapes.get(inp)
-                hit = _select_source_tensor(inp, tgt_shape, out1_map, p2_in_map)
+                hit = _select_source_tensor(inp, tgt_shape, out1_map, p2_in_map, used_names=used_stage1_sources)
                 if hit is not None:
                     src_name, src = hit
                     p2_in_map[inp] = src_name
+                    used_stage1_sources.add(src_name)
                 elif inp in feeds_full:
                     src = feeds_full[inp]
                     ok, src = _try_adapt_tensor(src, tgt_shape)
                     if not ok:
                         raise ValueError(
-                            f"Cannot adapt passthrough full input '{inp}' from shape {tuple(np.asarray(feeds_full[inp]).shape)} to target shape {tgt_shape}"
+                            f"Cannot adapt passthrough full input '{inp}' from shape {tuple(np.asarray(feeds_full_local[inp]).shape)} to target shape {tgt_shape}"
                         )
                 else:
                     raise KeyError(
                         f"Cannot build stage2 input '{inp}': no compatible stage1 output and not in full inputs. "
-                        f"stage1 outputs={{ {', '.join(f'{k}:{tuple(np.asarray(v).shape)}' for k,v in out1_map.items())} }} full inputs={list(feeds_full.keys())}"
+                        f"stage1 outputs={{ {', '.join(f'{k}:{tuple(np.asarray(v).shape)}' for k,v in out1_map.items())} }} full inputs={list(feeds_full_local.keys())} mapping={p2_in_map}"
                     )
                 d[inp] = src
             return d
@@ -5369,27 +6537,43 @@ def main() -> int:
         expected = [i.name for i in ort_inputs]
         if p2_in_map is None or p2_in_map_src_keys != src_keys:
             p2_in_map = _map_inputs_to_outputs(expected, list(out1_map.keys()))
+            for p2_name, p1_name in manifest_cut_name_map_p2_to_p1.items():
+                if p2_name in expected and p1_name in out1_map:
+                    p2_in_map[p2_name] = p1_name
+            p2_in_map = _overlay_boundary_slot_mapping(
+                p2_in_map,
+                expected_inputs=expected,
+                produced_outputs=list(out1_map.keys()),
+                part1_cut_names_manifest=part1_cut_names_manifest,
+                part2_cut_names_manifest=part2_cut_names_manifest,
+            )
             p2_in_map_src_keys = src_keys
+            try:
+                print(f"[interface][p2-map][ort] {p2_in_map}")
+            except Exception:
+                pass
 
         d: Dict[str, np.ndarray] = {}
+        used_stage1_sources: set[str] = set()
         for ii in ort_inputs:
             inp = ii.name
             tgt_shape = _shape_from_ort_input(ii)
-            hit = _select_source_tensor(inp, tgt_shape, out1_map, p2_in_map)
+            hit = _select_source_tensor(inp, tgt_shape, out1_map, p2_in_map, used_names=used_stage1_sources)
             if hit is not None:
                 src_name, src = hit
                 p2_in_map[inp] = src_name
-            elif inp in feeds_full:
-                src = feeds_full[inp]
+                used_stage1_sources.add(src_name)
+            elif inp in feeds_full_local:
+                src = feeds_full_local[inp]
                 ok, src = _try_adapt_tensor(src, tgt_shape)
                 if not ok:
                     raise ValueError(
-                        f"Cannot adapt passthrough full input '{inp}' from shape {tuple(np.asarray(feeds_full[inp]).shape)} to target shape {tgt_shape}"
+                        f"Cannot adapt passthrough full input '{inp}' from shape {tuple(np.asarray(feeds_full_local[inp]).shape)} to target shape {tgt_shape}"
                     )
             else:
                 raise KeyError(
                     f"Cannot build stage2 input '{inp}': no compatible stage1 output and not in full inputs. "
-                    f"stage1 outputs={{ {', '.join(f'{k}:{tuple(np.asarray(v).shape)}' for k,v in out1_map.items())} }} full inputs={list(feeds_full.keys())}"
+                    f"stage1 outputs={{ {', '.join(f'{k}:{tuple(np.asarray(v).shape)}' for k,v in out1_map.items())} }} full inputs={list(feeds_full_local.keys())} mapping={p2_in_map}"
                 )
             d[inp] = _maybe_cast_for_onnx_input(src, str(getattr(ii, 'type', '') or ''))
         return d
@@ -5408,12 +6592,29 @@ def main() -> int:
     if need_stage2 and not variant_errors.get("part2"):
         try:
             p2_inputs_0 = _build_stage2_inputs(p1_map0)
+            if hailo_p2 is not None and p2_inputs_0 is not None:
+                p2_inputs_0 = _make_tensor_map_contiguous(p2_inputs_0)
         except Exception as e:
             variant_errors["part2"] = f"Failed to build part2 inputs from CPU baseline: {e}"
 
-    def run_composed_map() -> Dict[str, np.ndarray]:
-        out1 = run_stage1_map()
-        return run_stage2_map(_build_stage2_inputs(out1))
+    def run_composed_map(
+        feeds_full_override: Optional[Dict[str, np.ndarray]] = None,
+        feeds_p1_override: Optional[Dict[str, np.ndarray]] = None,
+    ) -> Dict[str, np.ndarray]:
+        out1 = run_stage1_map(feeds_p1_override)
+        return run_stage2_map(_build_stage2_inputs(out1, feeds_full_override=feeds_full_override))
+
+    def _run_full_variant_outputs(feeds_full_override: Optional[Dict[str, np.ndarray]] = None) -> List[np.ndarray]:
+        feeds_local = feeds_full_override or feeds_full
+        if hailo_full is not None:
+            local_inputs = full_inputs_hailo if feeds_full_override is None and full_inputs_hailo is not None else _build_hailo_input_map(hailo_full, feeds_local)
+            out_map = hailo_full.infer(local_inputs)
+            ordered_names = _ordered_out_names(out_map)
+            return [out_map[n] for n in ordered_names]
+        if ort_full_sess is None:
+            raise RuntimeError("full backend not initialized")
+        outs = ort_full_sess.run(None, feeds_local)
+        return _ordered_list_from_ort_session(ort_full_sess, list(outs))
 
     # ----------------------------
     # Timings
@@ -5421,11 +6622,11 @@ def main() -> int:
     if "full" in variants and not variant_errors.get("full"):
         try:
             if hailo_full is not None and full_inputs_hailo is not None:
-                full_mean, full_std, full_runs_ms = _bench("full", lambda: hailo_full.infer(full_inputs_hailo), args.warmup, args.runs)
+                full_mean, full_std, full_runs_ms = _bench("full", lambda: hailo_full.infer(full_inputs_hailo), args.warmup, args.runs, verbose_runs=args.verbose_runs, progress_every=args.progress_every)
             else:
                 if ort_full_sess is None:
                     raise RuntimeError("full backend not initialized")
-                full_mean, full_std, full_runs_ms = _bench("full", lambda: ort_full_sess.run(None, feeds_full), args.warmup, args.runs)
+                full_mean, full_std, full_runs_ms = _bench("full", lambda: ort_full_sess.run(None, feeds_full), args.warmup, args.runs, verbose_runs=args.verbose_runs, progress_every=args.progress_every)
             variant_status["full"] = "ok"
         except Exception as e:
             variant_errors["full"] = str(e)
@@ -5433,7 +6634,7 @@ def main() -> int:
 
     if "part1" in variants and not variant_errors.get("part1"):
         try:
-            p1_mean, p1_std, p1_runs_ms = _bench("part1", run_stage1_map, args.warmup, args.runs)
+            p1_mean, p1_std, p1_runs_ms = _bench("part1", run_stage1_map, args.warmup, args.runs, verbose_runs=args.verbose_runs, progress_every=args.progress_every)
             variant_status["part1"] = "ok"
         except Exception as e:
             variant_errors["part1"] = str(e)
@@ -5443,7 +6644,7 @@ def main() -> int:
         try:
             if p2_inputs_0 is None:
                 raise RuntimeError("part2 inputs not available")
-            p2_mean, p2_std, p2_runs_ms = _bench("part2", lambda: run_stage2_map(p2_inputs_0), args.warmup, args.runs)
+            p2_mean, p2_std, p2_runs_ms = _bench("part2", lambda: run_stage2_map(p2_inputs_0), args.warmup, args.runs, verbose_runs=args.verbose_runs, progress_every=args.progress_every)
             variant_status["part2"] = "ok"
         except Exception as e:
             variant_errors["part2"] = str(e)
@@ -5451,12 +6652,37 @@ def main() -> int:
 
     if "composed" in variants and not variant_errors.get("part1") and not variant_errors.get("part2"):
         try:
-            comp_mean, comp_std, comp_runs_ms = _bench("composed", run_composed_map, args.warmup, args.runs)
+            comp_mean, comp_std, comp_runs_ms = _bench("composed", run_composed_map, args.warmup, args.runs, verbose_runs=args.verbose_runs, progress_every=args.progress_every)
             variant_status["composed"] = "ok"
         except Exception as e:
             variant_errors["composed"] = str(e)
             variant_status["composed"] = "error"
             variant_status["composed"] = "error"
+
+    hetero_pipeline = bool(str(stage1_tok or '').strip().lower() != str(stage2_tok or '').strip().lower())
+    if (
+        hetero_pipeline
+        and "composed" in variants
+        and variant_status.get("composed") == "ok"
+        and int(getattr(args, "throughput_frames", 0) or 0) > 0
+    ):
+        try:
+            def _stage2_inputs_for_stream(out1: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+                built = _build_stage2_inputs(out1)
+                return _make_tensor_map_contiguous(built) if hailo_p2 is not None else built
+
+            throughput_report = _bench_streaming_pipeline(
+                "streaming",
+                run_stage1_map,
+                _stage2_inputs_for_stream,
+                run_stage2_map,
+                warmup_frames=int(getattr(args, "throughput_warmup_frames", 0) or 0),
+                measured_frames=int(getattr(args, "throughput_frames", 0) or 0),
+                queue_depth=int(getattr(args, "throughput_queue_depth", 2) or 2),
+            )
+        except Exception as e:
+            throughput_error = str(e)
+            print(f"[warn] streaming throughput probe failed: {e}")
 
     # ------------------------
     # Reference + accuracy comparisons
@@ -5475,6 +6701,13 @@ def main() -> int:
     if p1_mean is not None and p2_mean is not None and comp_mean is not None:
         sum_parts = p1_mean + p2_mean
         print(f"  overhead: {_fmt(comp_mean - sum_parts)}  (composed - (part1+part2))")
+    if throughput_report is not None:
+        print("Streaming throughput (heterogeneous pipeline):")
+        print(f"  fps_makespan : {_fmt(throughput_report.get('fps_makespan'))}")
+        print(f"  fps_cycle    : {_fmt(throughput_report.get('fps_cycle_est'))}")
+        print(f"  lat p50/p95  : {_fmt(throughput_report.get('latency_p50_ms'))} / {_fmt(throughput_report.get('latency_p95_ms'))} ms")
+    elif throughput_error:
+        print(f"  streaming    : failed ({throughput_error})")
 
     # Always compute (or reuse) a CPU reference output for the full model.
     # This is the baseline for *all* variants/providers.
@@ -5543,8 +6776,31 @@ def main() -> int:
     # Try to detect output format based on the CPU reference.
     output_format = _detect_output_format(output_names, full_out_list)
 
+    normalized_ref_output_names = list(output_names)
+    normalized_ref_outputs = list(full_out_list)
+    normalized_ref_hws: Optional[List[Tuple[int, int]]] = None
+    reference_output_normalization: Optional[Dict[str, Any]] = None
+    pre_norm_warnings: List[str] = []
+    if output_format == "multiscale_head":
+        try:
+            normalized_ref_output_names, normalized_ref_outputs, reference_output_normalization = _normalize_yolo_multiscale_outputs(
+                full_out_list,
+                output_names=output_names,
+            )
+            normalized_ref_hws = [
+                (int(np.asarray(arr).shape[2]), int(np.asarray(arr).shape[3]))
+                for arr in normalized_ref_outputs
+            ]
+        except Exception as e:
+            pre_norm_warnings.append(f"multiscale_reference_normalize_failed={type(e).__name__}: {e}")
+            normalized_ref_output_names = list(output_names)
+            normalized_ref_outputs = list(full_out_list)
+            normalized_ref_hws = None
+            reference_output_normalization = None
+
     # Compute outputs for each requested variant (best-effort).
     variant_outputs: Dict[str, List[np.ndarray]] = {}
+    variant_output_names: Dict[str, List[str]] = {}
     variant_output_errors: Dict[str, str] = {}
 
     def _ordered_list_from_ort_session(sess: ort.InferenceSession, outs: List[np.ndarray]) -> List[np.ndarray]:
@@ -5576,28 +6832,38 @@ def main() -> int:
         except Exception:
             return None
 
-    def _build_stage2_inputs_cpu(out1_map: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    def _build_stage2_inputs_cpu(out1_map: Dict[str, np.ndarray], feeds_full_override: Optional[Dict[str, np.ndarray]] = None) -> Dict[str, np.ndarray]:
         nonlocal p2_cpu_in_map
+        feeds_full_local = feeds_full_override or feeds_full
         if p2_cpu_in_map is None:
             p2_cpu_in_map = _map_inputs_to_outputs(p2_cpu_in_names, list(out1_map.keys()))
+        p2_cpu_in_map = _overlay_boundary_slot_mapping(
+            p2_cpu_in_map,
+            expected_inputs=p2_cpu_in_names,
+            produced_outputs=list(out1_map.keys()),
+            part1_cut_names_manifest=part1_cut_names_manifest,
+            part2_cut_names_manifest=part2_cut_names_manifest,
+        )
 
         out: Dict[str, np.ndarray] = {}
         p2_shapes: Dict[str, Optional[Tuple[int, ...]]] = {ii.name: _shape_from_ort_input_cpu(ii) for ii in p2_cpu_inputs}
         p2_types: Dict[str, str] = {ii.name: str(getattr(ii, 'type', '') or '') for ii in p2_cpu_inputs}
+        used_stage1_sources: set[str] = set()
 
         for name in p2_cpu_in_names:
             tgt_shape = p2_shapes.get(name)
-            hit = _select_source_tensor(name, tgt_shape, out1_map, p2_cpu_in_map)
+            hit = _select_source_tensor(name, tgt_shape, out1_map, p2_cpu_in_map, used_names=used_stage1_sources)
             if hit is not None:
                 src_name, src = hit
                 if p2_cpu_in_map is None:
                     p2_cpu_in_map = {}
                 p2_cpu_in_map[name] = src_name
-            elif name in feeds_full:
-                src = feeds_full[name]
+                used_stage1_sources.add(src_name)
+            elif name in feeds_full_local:
+                src = feeds_full_local[name]
                 ok, src = _try_adapt_tensor(src, tgt_shape)
                 if not ok:
-                    raise ValueError(f"Cannot adapt passthrough full input '{name}' from shape {tuple(np.asarray(feeds_full[name]).shape)} to target shape {tgt_shape}")
+                    raise ValueError(f"Cannot adapt passthrough full input '{name}' from shape {tuple(np.asarray(feeds_full_local[name]).shape)} to target shape {tgt_shape}")
             else:
                 raise KeyError(
                     f"Missing input '{name}' (and no compatible mapping from stage1 outputs). "
@@ -5617,11 +6883,14 @@ def main() -> int:
             if hailo_full is not None:
                 if full_inputs_hailo is None:
                     raise RuntimeError("Hailo full inputs not prepared")
-                variant_outputs["full"] = _order_out_map(hailo_full.infer(full_inputs_hailo))
+                _full_map = hailo_full.infer(full_inputs_hailo)
+                variant_output_names["full"] = _ordered_out_names(_full_map)
+                variant_outputs["full"] = [_full_map[n] for n in variant_output_names["full"]]
             else:
                 if ort_full_sess is None:
                     raise RuntimeError("ORT full session not available")
                 outs = ort_full_sess.run(None, feeds_full)
+                variant_output_names["full"] = [o.name for o in ort_full_sess.get_outputs()]
                 variant_outputs["full"] = _ordered_list_from_ort_session(ort_full_sess, list(outs))
         except Exception as e:
             variant_output_errors["full"] = str(e)
@@ -5631,14 +6900,18 @@ def main() -> int:
         try:
             if p2_inputs_0 is None:
                 raise RuntimeError("part2 inputs not available")
-            variant_outputs["part2"] = _order_out_map(run_stage2_map(p2_inputs_0))
+            _part2_map = run_stage2_map(p2_inputs_0)
+            variant_output_names["part2"] = _ordered_out_names(_part2_map)
+            variant_outputs["part2"] = [_part2_map[n] for n in variant_output_names["part2"]]
         except Exception as e:
             variant_output_errors["part2"] = str(e)
 
     # composed
     if "composed" in variants and not variant_errors.get("composed") and not variant_errors.get("part1") and not variant_errors.get("part2"):
         try:
-            variant_outputs["composed"] = _order_out_map(run_composed_map())
+            _composed_map = run_composed_map()
+            variant_output_names["composed"] = _ordered_out_names(_composed_map)
+            variant_outputs["composed"] = [_composed_map[n] for n in variant_output_names["composed"]]
         except Exception as e:
             variant_output_errors["composed"] = str(e)
 
@@ -5648,7 +6921,8 @@ def main() -> int:
             out1_map = run_stage1_map()
             p2_in = _build_stage2_inputs_cpu(out1_map)
             out2_map = _run_stage2_cpu_map(p2_in)
-            variant_outputs["part1"] = _order_out_map(out2_map)
+            variant_output_names["part1"] = _ordered_out_names(out2_map)
+            variant_outputs["part1"] = [out2_map[n] for n in variant_output_names["part1"]]
         except Exception as e:
             variant_output_errors["part1"] = str(e)
 
@@ -5677,11 +6951,13 @@ def main() -> int:
         mean_abs = 0.0
         passed = True
         compared = 0
+        shape_mismatch_indices: List[int] = []
         for i in range(n_local):
             a = np.asarray(ref[i])
             b = np.asarray(out[i])
             if a.shape != b.shape:
                 passed = False
+                shape_mismatch_indices.append(int(i))
                 continue
             abs_diff = np.abs(a.astype(np.float32) - b.astype(np.float32))
             mean_i = float(np.mean(abs_diff))
@@ -5691,13 +6967,18 @@ def main() -> int:
             if max_i > eps:
                 passed = False
             compared += 1
+
+        no_shape_match = n_local > 0 and compared == 0
         return {
             "compared_outputs": int(n_local),
             "compared_outputs_shape_matched": int(compared),
-            "max_abs": float(max_abs) if n_local > 0 else None,
-            "mean_abs": float(mean_abs) if n_local > 0 else None,
+            "shape_mismatch_outputs": int(len(shape_mismatch_indices)),
+            "shape_mismatch_indices": shape_mismatch_indices[:8],
+            "max_abs": (float(max_abs) if compared > 0 else None),
+            "mean_abs": (float(mean_abs) if compared > 0 else None),
             "eps": float(eps),
-            "pass": bool(passed) if n_local > 0 else None,
+            "pass": (False if no_shape_match else (bool(passed) if n_local > 0 else None)),
+            "reason": ("no shape-matched outputs" if no_shape_match else None),
         }
 
     comparisons: Dict[str, Any] = {}
@@ -5708,9 +6989,11 @@ def main() -> int:
             err = variant_output_errors.get(v) or variant_errors.get(v)
             st = "missing"
             if err:
-                # Back-compat / artifact-missing cases: treat as "skipped" so old
-                # suites without full-HEF do not hard-fail.
-                st = "skipped" if variant_status.get(v) == "skipped" else "error"
+                # Be honest about explicit backend/init/runtime failures.
+                # A requested variant that could not initialize or run is an error,
+                # not a harmless skip. This prevents matrix runs from falsely
+                # reporting success by silently falling back to a different variant.
+                st = "error"
             comparisons[v] = {
                 "status": st,
                 "error": err,
@@ -5727,12 +7010,37 @@ def main() -> int:
             continue
 
         out_list = variant_outputs[v]
+        out_names = list(variant_output_names.get(v) or output_names)
         provider_for_val = _validation_provider_for_variant(v)
         mode_used, mode_warnings = _select_validation_mode(args.validation_mode, provider_for_val, output_format)
         local_warnings: List[str] = []
+        local_warnings.extend(pre_norm_warnings)
         local_warnings.extend(mode_warnings)
 
-        elem = _elementwise_metrics(full_out_list, out_list, eps_global)
+        compare_ref_names = list(normalized_ref_output_names)
+        compare_ref_outputs = list(normalized_ref_outputs)
+        compare_out_names = list(out_names)
+        compare_out_outputs = list(out_list)
+        output_normalization: Optional[Dict[str, Any]] = None
+
+        if output_format == "multiscale_head":
+            try:
+                compare_out_names, compare_out_outputs, output_normalization = _normalize_yolo_multiscale_outputs(
+                    out_list,
+                    output_names=out_names,
+                    ref_hws=normalized_ref_hws,
+                )
+                if output_normalization is not None:
+                    local_warnings.append("multiscale_outputs_normalized")
+            except Exception as e:
+                local_warnings.append(f"multiscale_variant_normalize_failed={type(e).__name__}: {e}")
+                compare_ref_names = list(output_names)
+                compare_ref_outputs = list(full_out_list)
+                compare_out_names = list(out_names)
+                compare_out_outputs = list(out_list)
+                output_normalization = None
+
+        elem = _elementwise_metrics(compare_ref_outputs, compare_out_outputs, eps_global)
         elem_pass = elem.get("pass")
 
         proxy_metrics: Optional[Dict[str, Any]] = None
@@ -5740,8 +7048,8 @@ def main() -> int:
         if mode_used == "proxy_detections":
             dets_ref, w1 = _extract_detections_for_proxy(
                 output_format=output_format,
-                output_names=output_names,
-                outputs=full_out_list,
+                output_names=compare_ref_names,
+                outputs=compare_ref_outputs,
                 img_hw=img_hw,
                 yolo_conf=float(args.yolo_conf),
                 yolo_iou=float(args.yolo_iou),
@@ -5753,8 +7061,8 @@ def main() -> int:
             )
             dets_out, w2 = _extract_detections_for_proxy(
                 output_format=output_format,
-                output_names=output_names,
-                outputs=out_list,
+                output_names=compare_out_names,
+                outputs=compare_out_outputs,
                 img_hw=img_hw,
                 yolo_conf=float(args.yolo_conf),
                 yolo_iou=float(args.yolo_iou),
@@ -5773,13 +7081,15 @@ def main() -> int:
                 if w.startswith(("proxy_", "bn6_")) and not w.startswith("ambiguous_")
             ]
             if fatal_proxy_w:
-                if provider_for_val == "tensorrt" and str(args.validation_mode).strip().lower() == "auto":
-                    # TensorRT: proxy is the default, but if we can't decode detections, soft-pass (timing-only)
-                    local_warnings.append("proxy_validation_skipped_fallback=off")
-                    mode_used = "off"
-                else:
-                    local_warnings.append("proxy_validation_failed_fallback=strict_elementwise")
-                    mode_used = "strict_elementwise"
+                local_warnings.append("proxy_validation_decode_failed")
+                proxy_metrics = dict(
+                    n_ref=int(len(dets_ref or [])),
+                    n_out=int(len(dets_out or [])),
+                    matched=0,
+                    match_ratio=0.0,
+                    mean_iou_matched=0.0,
+                )
+                proxy_pass = False
             else:
                 proxy_metrics, proxy_pass = _proxy_validate_detections(dets_ref=dets_ref, dets_out=dets_out)
 
@@ -5792,25 +7102,187 @@ def main() -> int:
         else:
             passed = True if elem_pass is None else bool(elem_pass)
 
+        no_shape_match = bool(isinstance(elem, dict) and str(elem.get("reason") or "") == "no shape-matched outputs")
+        comp_status = "skipped_layout_mismatch" if no_shape_match else "ok"
+        comp_reason = (str(elem.get("reason")) if no_shape_match else None) if isinstance(elem, dict) else None
+        if mode_used == "proxy_detections" and proxy_pass is True:
+            if no_shape_match:
+                local_warnings.append("elementwise_layout_mismatch_proxy_used")
+            comp_status = "ok"
+            comp_reason = None
+
         comparisons[v] = {
-            "status": "ok",
+            "status": comp_status,
+            "reason": comp_reason,
             "validation_provider": provider_for_val,
             "validation_mode_used": mode_used,
             "passed": bool(passed),
             "elementwise": elem,
             "proxy": ({**proxy_metrics, "pass": bool(proxy_pass)} if proxy_metrics is not None else None),
+            "normalized_outputs": output_normalization,
+            "output_names_normalized": list(compare_out_names),
             "warnings": list(local_warnings),
         }
         warn_list.extend(local_warnings)
 
-    # Determine the primary variant for backwards-compatible report fields.
+    validation_dataset_summary: Optional[Dict[str, Any]] = None
+    validation_dataset_images = _collect_validation_image_paths(
+        str(args.validation_images or ""),
+        base_dir=base_dir,
+        max_images=max(0, int(args.validation_max_images or 0)),
+    )
+    image_input_name = str(img_candidates.get("name")) if isinstance(img_candidates, dict) and img_candidates.get("name") is not None else None
+    image_input_dtype = img_candidates.get("dtype") if isinstance(img_candidates, dict) else None
+
+    if validation_dataset_images and image_input_name and img_hw is not None:
+        print(f"[validation][dataset] semantic proxy validation on {len(validation_dataset_images)} image(s)")
+        base_static_full_inputs = {k: np.asarray(v) for k, v in feeds_full.items() if k != image_input_name}
+
+        def _build_feeds_for_validation_image(img_file: Path) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], Tuple[int, int]]:
+            local_feeds_full = {k: np.asarray(v) for k, v in base_static_full_inputs.items()}
+            letterbox = output_format in ("multiscale_head", "ultralytics_regcls") and str(resolved_image_scale or "norm") in ("raw", "norm")
+            arr = _load_image_as_nchw(
+                img_file,
+                target_hw=img_hw,
+                dtype=image_input_dtype,
+                scale=str(resolved_image_scale or "norm"),
+                letterbox=bool(letterbox),
+            )
+            if arr is None and str(resolved_image_scale or "norm") != "norm":
+                arr = _load_image_as_nchw(
+                    img_file,
+                    target_hw=img_hw,
+                    dtype=image_input_dtype,
+                    scale="norm",
+                    letterbox=bool(letterbox),
+                )
+            if arr is None:
+                raise RuntimeError(f"failed to load validation image {img_file}")
+            local_feeds_full[image_input_name] = arr
+            local_feeds_p1 = {name: local_feeds_full[name] for name in p1_inputs}
+            return local_feeds_full, local_feeds_p1, tuple(img_hw)
+
+        proxy_dataset_by_variant: Dict[str, Dict[str, Any]] = {}
+        for v in variants:
+            c = comparisons.get(v)
+            if not isinstance(c, dict):
+                continue
+            if str(c.get("validation_mode_used") or "off") != "proxy_detections":
+                continue
+            if c.get("status") not in ("ok", "skipped_layout_mismatch"):
+                continue
+
+            per_image_rows: List[Dict[str, Any]] = []
+            for img_file in validation_dataset_images:
+                row: Dict[str, Any] = {"image": str(img_file.name)}
+                try:
+                    local_feeds_full, local_feeds_p1, local_img_hw = _build_feeds_for_validation_image(img_file)
+                    ref_out_local = list(sess_full.run(None, local_feeds_full))
+                    if v == "full":
+                        out_local = _run_full_variant_outputs(local_feeds_full)
+                        out_names_local = list(output_names)
+                    elif v == "part1":
+                        out1_map_local = run_stage1_map(local_feeds_p1)
+                        p2_in_local = _build_stage2_inputs_cpu(out1_map_local, feeds_full_override=local_feeds_full)
+                        out2_map_local = _run_stage2_cpu_map(p2_in_local)
+                        out_names_local = _ordered_out_names(out2_map_local)
+                        out_local = [out2_map_local[n] for n in out_names_local]
+                    elif v == "part2":
+                        p1_base_local = sess_p1.run(None, local_feeds_p1)
+                        p1_base_map_local = {o.name: a for o, a in zip(sess_p1.get_outputs(), p1_base_local)}
+                        p2_inputs_local = _build_stage2_inputs(p1_base_map_local, feeds_full_override=local_feeds_full)
+                        out_map_local = run_stage2_map(p2_inputs_local)
+                        out_names_local = _ordered_out_names(out_map_local)
+                        out_local = [out_map_local[n] for n in out_names_local]
+                    elif v == "composed":
+                        out_map_local = run_composed_map(local_feeds_full, local_feeds_p1)
+                        out_names_local = _ordered_out_names(out_map_local)
+                        out_local = [out_map_local[n] for n in out_names_local]
+                    else:
+                        continue
+
+                    dets_ref, warn_ref = _extract_detections_for_proxy(
+                        output_format=output_format,
+                        output_names=list(output_names),
+                        outputs=list(ref_out_local),
+                        img_hw=local_img_hw,
+                        yolo_conf=float(args.yolo_conf),
+                        yolo_iou=float(args.yolo_iou),
+                        yolo_max_det=int(args.yolo_max_det),
+                        det_conf=float(args.viz_conf),
+                        det_iou=float(args.viz_iou),
+                        det_max_det=int(args.viz_max_det),
+                        labels=labels,
+                    )
+                    dets_out, warn_out = _extract_detections_for_proxy(
+                        output_format=output_format,
+                        output_names=list(out_names_local),
+                        outputs=list(out_local),
+                        img_hw=local_img_hw,
+                        yolo_conf=float(args.yolo_conf),
+                        yolo_iou=float(args.yolo_iou),
+                        yolo_max_det=int(args.yolo_max_det),
+                        det_conf=float(args.viz_conf),
+                        det_iou=float(args.viz_iou),
+                        det_max_det=int(args.viz_max_det),
+                        labels=labels,
+                    )
+                    metrics_img, pass_img = _proxy_validate_detections(dets_ref=dets_ref, dets_out=dets_out)
+                    row["metrics"] = metrics_img
+                    row["pass"] = bool(pass_img)
+                    row["warnings"] = list(warn_ref) + list(warn_out)
+                except Exception as e:
+                    row["pass"] = False
+                    row["error"] = f"{type(e).__name__}: {e}"
+                per_image_rows.append(row)
+
+            agg_metrics, agg_pass = _aggregate_proxy_dataset_results(
+                per_image_rows,
+                pass_image_ratio_thr=float(args.validation_pass_image_ratio),
+            )
+            preview_rows = [{
+                "image": rr.get("image"),
+                "pass": bool(rr.get("pass")),
+                "error": rr.get("error"),
+                "metrics": rr.get("metrics"),
+                "warnings": list(rr.get("warnings") or []),
+            } for rr in per_image_rows[: min(12, len(per_image_rows))]]
+            proxy_dataset_by_variant[v] = {
+                "images": preview_rows,
+                "metrics": agg_metrics,
+                "pass": bool(agg_pass),
+                "requested_images": int(len(validation_dataset_images)),
+            }
+            comparisons[v]["proxy_single_sample"] = comparisons[v].get("proxy")
+            comparisons[v]["proxy_dataset"] = proxy_dataset_by_variant[v]
+            comparisons[v]["passed_single_sample"] = bool(comparisons[v].get("passed"))
+            comparisons[v]["passed"] = bool(agg_pass)
+            print(
+                f"[validation][dataset] {v}: pass={agg_pass} images={agg_metrics.get('n_images')} "
+                f"image_pass_ratio={agg_metrics.get('image_pass_ratio')} global_match_ratio={agg_metrics.get('global_match_ratio')} "
+                f"global_mean_iou={agg_metrics.get('global_mean_iou_matched')}"
+            )
+
+        validation_dataset_summary = {
+            "enabled": True,
+            "requested_images": int(len(validation_dataset_images)),
+            "images": [str(p.name) for p in validation_dataset_images[: min(32, len(validation_dataset_images))]],
+            "resolved_scale": str(resolved_image_scale or args.image_scale),
+            "variants": proxy_dataset_by_variant,
+        }
+
+    # Determine the primary variant from the *requested* run plan, not from the
+    # best surviving fallback. This keeps failures visible for mixed matrix runs
+    # where composed is the actual target but only part2 happened to succeed.
+    def _comparison_available(name: str) -> bool:
+        st = comparisons.get(name, {}).get("status")
+        return st in ("ok", "skipped_layout_mismatch")
+
     primary_variant = None
-    if "composed" in comparisons and comparisons.get("composed", {}).get("status") == "ok":
-        primary_variant = "composed"
-    elif "full" in comparisons and comparisons.get("full", {}).get("status") == "ok":
-        primary_variant = "full"
-    elif "part2" in comparisons and comparisons.get("part2", {}).get("status") == "ok":
-        primary_variant = "part2"
+    for candidate in ("composed", "full", "part2", "part1"):
+        if candidate in variants:
+            primary_variant = candidate
+            break
 
     # Overall pass over all measured variants (excluding the implicit CPU reference).
     final_pass_all = True
@@ -5821,7 +7293,7 @@ def main() -> int:
         if c.get("status") == "skipped":
             # Treat skipped variants as non-gating (back-compat / missing artifact).
             continue
-        if c.get("status") != "ok":
+        if c.get("status") not in ("ok", "skipped_layout_mismatch"):
             final_pass_all = False
             continue
         # only gate when validation is active
@@ -5833,6 +7305,9 @@ def main() -> int:
         final_pass = bool(final_pass_all)
         mode_used = "off"
         n = 0
+        n_total = 0
+        shape_mismatch_outputs = 0
+        elementwise_reason = None
         max_abs_global = None
         mean_abs_global = None
         elementwise_pass = None
@@ -5842,15 +7317,22 @@ def main() -> int:
     else:
         prim = comparisons.get(primary_variant, {})
         mode_used = str(prim.get("validation_mode_used") or "off")
-        final_pass = bool(prim.get("passed"))
+        prim_status = str(prim.get("status") or "missing")
+        final_pass = bool(prim.get("passed")) if prim_status in ("ok", "skipped_layout_mismatch") else False
         elem = prim.get("elementwise") if isinstance(prim, dict) else None
         if isinstance(elem, dict):
-            n = int(elem.get("compared_outputs") or 0)
+            n_total = int(elem.get("compared_outputs") or 0)
+            n = int(elem.get("compared_outputs_shape_matched") or n_total)
+            shape_mismatch_outputs = int(elem.get("shape_mismatch_outputs") or 0)
+            elementwise_reason = elem.get("reason")
             max_abs_global = elem.get("max_abs")
             mean_abs_global = elem.get("mean_abs")
             elementwise_pass = elem.get("pass")
         else:
             n = 0
+            n_total = 0
+            shape_mismatch_outputs = 0
+            elementwise_reason = None
             max_abs_global = None
             mean_abs_global = None
             elementwise_pass = None
@@ -5879,6 +7361,15 @@ def main() -> int:
         mx = elem.get("max_abs") if isinstance(elem, dict) else None
         ma = elem.get("mean_abs") if isinstance(elem, dict) else None
         print(f"  {v:7s}: status={st} provider={pv} mode={mu} pass={ps} max_abs={mx} mean_abs={ma}")
+        if isinstance(elem, dict) and elem.get("reason"):
+            print(f"           elementwise: {elem.get('reason')}")
+        proxy_blk = c.get("proxy") if isinstance(c.get("proxy"), dict) else None
+        if isinstance(proxy_blk, dict):
+            print(
+                f"           proxy: n_ref={proxy_blk.get('n_ref')} n_out={proxy_blk.get('n_out')} "
+                f"matched={proxy_blk.get('matched')} ratio={proxy_blk.get('match_ratio')} "
+                f"mean_iou={proxy_blk.get('mean_iou_matched')}"
+            )
         if st in ("error", "skipped") and c.get("error"):
             print(f"           reason: {c.get('error')}")
 
@@ -5889,7 +7380,7 @@ def main() -> int:
     skipped_variants = [v for v in requested_variants if variant_status.get(v) == "skipped"]
 
     report = dict(
-        schema_version=3,
+        schema_version=4,
         timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
         run_cfg=run_cfg,
         plan=plan,
@@ -5903,9 +7394,12 @@ def main() -> int:
                 "hit": bool(baseline_cache_hit),
                 "inputs_fingerprint": str(inputs_fp),
             },
+            "normalized_output_names": list(normalized_ref_output_names),
+            "normalized_outputs": reference_output_normalization,
         },
         requested_variants=requested_variants,
         measured_variants=measured_variants_actual,
+        validation_dataset=validation_dataset_summary,
         skipped_variants=skipped_variants,
         primary_variant=primary_variant,
         final_pass_all=bool(final_pass_all),
@@ -5941,24 +7435,45 @@ def main() -> int:
                 runs_ms=comp_runs_ms,
             ),
         ),
+        throughput=(dict(throughput_report) if isinstance(throughput_report, dict) else None),
+        throughput_error=throughput_error,
+        sessions={
+            "baseline_ort_cpu": {
+                "full": dict(info_full.__dict__),
+                "part1": dict(info_p1.__dict__),
+                "part2": dict(info_p2.__dict__),
+            },
+            "ort_runtime": {
+                f"{kind}:{provider_hint}": dict(info.__dict__)
+                for (kind, provider_hint), info in sorted(ort_session_infos.items())
+            },
+        },
         output_format=output_format,
         validation_mode=str(args.validation_mode),
         validation_mode_used=mode_used,
         output_diff=dict(
             variant=primary_variant,
+            status=(str(comparisons.get(primary_variant, {}).get("status")) if primary_variant is not None else None),
             compared_outputs=int(n),
+            compared_outputs_total=int(n_total),
+            shape_mismatch_outputs=int(shape_mismatch_outputs),
             max_abs=(float(max_abs_global) if max_abs_global is not None else None),
             mean_abs=(float(mean_abs_global) if mean_abs_global is not None else None),
             eps=float(args.eps),
             passed=bool(final_pass),
             elementwise_pass=(bool(elementwise_pass) if elementwise_pass is not None else None),
+            reason=elementwise_reason,
         ),
         elementwise={
+            "status": (str(comparisons.get(primary_variant, {}).get("status")) if primary_variant is not None else None),
             "compared_outputs": int(n),
+            "compared_outputs_total": int(n_total),
+            "shape_mismatch_outputs": int(shape_mismatch_outputs),
             "max_abs": (float(max_abs_global) if max_abs_global is not None else None),
             "mean_abs": (float(mean_abs_global) if mean_abs_global is not None else None),
             "eps": float(args.eps),
             "pass": (bool(elementwise_pass) if elementwise_pass is not None else None),
+            "reason": elementwise_reason,
         },
         proxy=({**proxy_metrics, "pass": bool(proxy_pass)} if proxy_metrics is not None else None),
         final_pass=bool(final_pass),
@@ -5997,10 +7512,119 @@ def main() -> int:
             # Otherwise matrix runs (e.g. TRT->Hailo) end up with misleading
             # detections_full.* artifacts derived from the CPU baseline.
             viz_outputs: Dict[str, Dict[str, np.ndarray]] = {}
-            if "full" in variant_outputs:
-                viz_outputs["full"] = {n: a for n, a in zip(output_names, variant_outputs["full"])}
-            if "composed" in variant_outputs:
-                viz_outputs["composed"] = {n: a for n, a in zip(output_names, variant_outputs["composed"])}
+
+            def _viz_output_map_for_variant(variant_name: str) -> Optional[Dict[str, np.ndarray]]:
+                if variant_name not in variant_outputs:
+                    return None
+                names = list(variant_output_names.get(variant_name) or output_names)
+                outs_local = list(variant_outputs.get(variant_name) or [])
+                if output_format == "multiscale_head":
+                    try:
+                        names, outs_local, _ = _normalize_yolo_multiscale_outputs(
+                            outs_local,
+                            output_names=names,
+                            ref_hws=normalized_ref_hws,
+                        )
+                    except Exception:
+                        pass
+                return {n: a for n, a in zip(names, outs_local)}
+
+            _viz_full = _viz_output_map_for_variant("full")
+            if _viz_full is not None:
+                viz_outputs["full"] = _viz_full
+            _viz_composed = _viz_output_map_for_variant("composed")
+            if _viz_composed is not None:
+                viz_outputs["composed"] = _viz_composed
+
+            def _cleanup_variant_artifacts(variant_name: str) -> None:
+                for stem in (
+                    f"detections_{variant_name}",
+                    f"classification_{variant_name}",
+                ):
+                    for suffix in (".png", ".json"):
+                        try:
+                            (out_dir / f"{stem}{suffix}").unlink(missing_ok=True)
+                        except Exception:
+                            pass
+
+            def _finalize_viz_result(viz_result: Any) -> Dict[str, Any]:
+                available_variants = [v for v in ("full", "composed") if v in viz_outputs]
+                if not isinstance(viz_result, dict):
+                    viz_result = {"enabled": False, "error": "invalid visualization result"}
+
+                variants_meta = viz_result.get("variants") if isinstance(viz_result.get("variants"), dict) else {}
+                provenance = viz_result.get("provenance") if isinstance(viz_result.get("provenance"), dict) else {}
+                variant_errors = viz_result.get("variant_errors") if isinstance(viz_result.get("variant_errors"), dict) else {}
+                rendered_variants = viz_result.get("rendered_variants")
+                if not isinstance(rendered_variants, list):
+                    rendered_variants = [v for v in ("full", "composed") if isinstance(viz_result.get(v), dict)]
+                task_name = str(viz_result.get("task") or ("detection" if any(isinstance(viz_result.get(v), dict) for v in ("full", "composed")) else ""))
+                overall_error = viz_result.get("error")
+
+                for variant_name in available_variants:
+                    if variant_name in variants_meta and isinstance(variants_meta[variant_name], dict):
+                        meta = dict(variants_meta[variant_name])
+                    else:
+                        meta = {}
+
+                    sub = viz_result.get(variant_name) if isinstance(viz_result.get(variant_name), dict) else None
+                    sub_json = sub.get("json") if isinstance(sub, dict) and isinstance(sub.get("json"), dict) else {}
+                    prov = provenance.get(variant_name) if isinstance(provenance.get(variant_name), dict) else {}
+
+                    n_detections = meta.get("n_detections")
+                    if n_detections is None:
+                        if isinstance(sub_json, dict) and sub_json.get("n_detections") is not None:
+                            n_detections = sub_json.get("n_detections")
+                        elif isinstance(sub, dict) and sub.get("count") is not None:
+                            n_detections = sub.get("count")
+                        else:
+                            n_detections = 0
+                    try:
+                        n_detections = int(n_detections or 0)
+                    except Exception:
+                        n_detections = 0
+
+                    viz_error = meta.get("viz_error")
+                    if viz_error is None:
+                        viz_error = variant_errors.get(variant_name)
+                    if viz_error is None and variant_name not in rendered_variants and overall_error:
+                        viz_error = overall_error
+
+                    if meta.get("viz_enabled") is None:
+                        meta["viz_enabled"] = bool(sub is not None and variant_name in rendered_variants)
+                    meta.setdefault("viz_error", viz_error)
+                    meta.setdefault(
+                        "detections_generated_from_variant",
+                        (variant_name if task_name == "detection" and bool(meta.get("viz_enabled")) else None),
+                    )
+                    meta["n_detections"] = n_detections
+                    meta.setdefault("variant", variant_name)
+                    meta.setdefault("used_actual_outputs", True)
+                    meta.setdefault("source", "variant_outputs")
+                    if prov.get("output_names") is not None:
+                        meta.setdefault("output_names", prov.get("output_names"))
+                    if prov.get("output_shapes") is not None:
+                        meta.setdefault("output_shapes", prov.get("output_shapes"))
+                    if isinstance(sub, dict):
+                        if isinstance(sub.get("overlays"), dict):
+                            meta.setdefault("overlays", dict(sub.get("overlays") or {}))
+                        if isinstance(sub_json, dict):
+                            if isinstance(sub_json.get("artifacts"), dict):
+                                meta.setdefault("artifacts", dict(sub_json.get("artifacts") or {}))
+                            if sub_json.get("summary") is not None:
+                                meta.setdefault("summary", sub_json.get("summary"))
+                    variants_meta[variant_name] = meta
+
+                viz_result["variants"] = variants_meta
+                viz_result.setdefault("available_variants", available_variants)
+                viz_result["rendered_variants"] = [
+                    v for v, meta in variants_meta.items() if isinstance(meta, dict) and bool(meta.get("viz_enabled"))
+                ]
+                viz_result["enabled"] = bool(viz_result["rendered_variants"]) if viz_result.get("enabled") is None else bool(viz_result.get("enabled"))
+                if not viz_result.get("enabled") and not viz_result.get("error"):
+                    errs = [str(meta.get("viz_error")) for meta in variants_meta.values() if isinstance(meta, dict) and meta.get("viz_error")]
+                    viz_result["error"] = errs[0] if errs else "no rendered visualization variants"
+                return viz_result
 
             def _run_harness(task: str):
                 if not _HAS_HARNESS:
@@ -6026,53 +7650,63 @@ def main() -> int:
                     "input_hw": tuple(img_hw),
                 }
 
-                # Cleanup guard: if a later variant fails, we must not leave a
-                # misleading partial detections_*.png/.json artifact behind.
-                preexisting = set()
-                try:
-                    preexisting = {
-                        pp.resolve() for pp in list(out_dir.glob("detections_*.png")) + list(out_dir.glob("detections_*.json"))
-                    }
-                except Exception:
-                    preexisting = set()
+                rendered: Dict[str, Dict[str, object]] = {}
+                provenance: Dict[str, Dict[str, object]] = {}
+                contract_errors: Dict[str, str] = {}
+                variant_errors: Dict[str, str] = {}
 
-                try:
-                    rendered: Dict[str, Dict[str, object]] = {}
-                    contract_error = None
-                    for variant_name in ("full", "composed"):
-                        out_dict = viz_outputs.get(variant_name)
-                        if not out_dict:
-                            continue
+                for variant_name in ("full", "composed"):
+                    out_dict = viz_outputs.get(variant_name)
+                    if not out_dict:
+                        variant_errors[variant_name] = "empty outputs for visualization"
+                        provenance[variant_name] = {
+                            "used_actual_outputs": True,
+                            "source": "variant_outputs",
+                            "variant": variant_name,
+                            "output_names": [],
+                            "output_shapes": {},
+                        }
+                        continue
+
+                    provenance[variant_name] = {
+                        "used_actual_outputs": True,
+                        "source": "variant_outputs",
+                        "variant": variant_name,
+                        "output_names": [str(k) for k in out_dict.keys()],
+                        "output_shapes": _describe_named_outputs(out_dict),
+                    }
+
+                    try:
                         r_var = postprocess_result_to_dict(
                             h.postprocess(out_dict, context={**ctx_common, "variant": variant_name})
                         )
-                        try:
-                            validate_postprocess_result_dict(r_var)
-                        except Exception as e:
-                            contract_error = str(e)
-                        rendered[variant_name] = r_var
+                    except Exception as e:
+                        variant_errors[variant_name] = f"{type(e).__name__}: {e}"
+                        _cleanup_variant_artifacts(variant_name)
+                        continue
 
-                    if not rendered:
-                        return {"enabled": False, "error": "no rendered visualization variants"}
-
-                    result = {"enabled": True, "task": task, **rendered, "rendered_variants": list(rendered.keys())}
-                    if contract_error:
-                        result["contract_error"] = contract_error
-                    return result
-                except Exception:
                     try:
-                        created = [
-                            pp for pp in list(out_dir.glob("detections_*.png")) + list(out_dir.glob("detections_*.json"))
-                            if pp.resolve() not in preexisting
-                        ]
-                        for pp in created:
-                            try:
-                                pp.unlink(missing_ok=True)
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-                    raise
+                        validate_postprocess_result_dict(r_var)
+                    except Exception as e:
+                        contract_errors[variant_name] = str(e)
+                    rendered[variant_name] = r_var
+
+                result: Dict[str, Any] = {
+                    "enabled": bool(rendered),
+                    "task": task,
+                    **rendered,
+                    "available_variants": [v for v in ("full", "composed") if v in viz_outputs],
+                    "rendered_variants": list(rendered.keys()),
+                    "used_actual_outputs": True,
+                    "provenance": provenance,
+                }
+                if variant_errors:
+                    result["variant_errors"] = variant_errors
+                if contract_errors:
+                    result["contract_errors"] = contract_errors
+                if not rendered:
+                    result["error"] = "no rendered visualization variants"
+                return _finalize_viz_result(result)
 
             if viz_mode == 'detr':
                 # Keep legacy DETR viz for now.
@@ -6097,6 +7731,23 @@ def main() -> int:
             else:  # auto
                 if output_format in ("bn6_detections", "ultralytics_regcls", "multiscale_head", "concat"):
                     report['viz'] = _run_harness("detection")
+                elif output_format == "detr_like":
+                    detr_info = _maybe_detr_viz(
+                        out_dir=out_dir,
+                        img_path=img_path,
+                        img_hw=img_hw,
+                        labels=labels,
+                        output_names=output_names,
+                        full_out=full_out_list,
+                        comp_out=comp_out_list,
+                        conf_thr=float(args.detr_conf),
+                        iou_thr=float(args.detr_iou),
+                        max_det=int(args.detr_max_det),
+                    )
+                    if detr_info.get('enabled', False):
+                        report['viz'] = detr_info
+                    else:
+                        report['viz'] = _run_harness("classification")
                 elif output_format == "classification_logits":
                     report['viz'] = _run_harness("classification")
                 else:
@@ -6122,6 +7773,11 @@ def main() -> int:
             print(f"[warn] {warn}")
             warn_list.append(warn)
             report['viz'] = {'enabled': False, 'error': str(e)}
+
+        try:
+            report['viz'] = _finalize_viz_result(report.get('viz'))
+        except Exception:
+            pass
 
     # Rewrite report if viz added/updated
     with open(report_path, "w") as f:

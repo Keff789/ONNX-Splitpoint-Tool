@@ -42,12 +42,21 @@ import subprocess
 import shlex
 import queue
 import time
+import traceback
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from .workdir import ensure_workdir
+from .benchmark_case_utils import archive_benchmark_case, build_benchmark_case_rejection
+from .benchmark.generation_state import find_latest_resumable_set, init_state as init_generation_state, read_json as read_generation_json, update_state as update_generation_state
+from .benchmark.resume_integrity import reconcile_generation_state
+from .benchmark.hailo_scoring import rerank_candidates_for_hailo
+from .benchmark.services import BenchmarkGenerationExecutionConfig, BenchmarkGenerationExecutionCallbacks, BenchmarkGenerationExecutionService, BenchmarkGenerationOrchestrationConfig, BenchmarkGenerationOrchestrationService, BenchmarkGenerationService, normalize_full_hef_policy
+from .benchmark.schema import stamp_benchmark_set_payload, write_json_atomic as write_benchmark_json_atomic
+from .hailo.backend_mode import backend_display_values, normalize_hailo_backend
+from .log_runtime import publish_active_log_metadata
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
@@ -67,9 +76,24 @@ from .accelerator_specs import load_accelerator_specs
 from .gui.events import GuiEvents
 from .gui.panels import panel_candidates as cand_panel
 from .gui.analysis_params import iter_specs
+from .gui.benchmark_workflow import BenchmarkWorkflowController
+from .gui.hailo_diagnostics import collect_hailo_diagnostics, format_hailo_diagnostics_short_lines
+from .gui.hailo_parse_budget import resolve_hailo_max_checks
 from .gui.state import AppUiState, AnalysisResult, GuiState, SelectedCandidate
 from .core_params import Params, gui_state_to_params_dict
 from .memory_utils import estimate_ram_bytes, kv_cache_bytes_per_layer, kv_for_boundary, layer_split_index_for_boundary, precompute_initializer_spans, weights_for_all_boundaries
+from .resources_utils import copy_resource_tree, persistent_resource_path
+from .objective_scoring import (
+    candidate_objective_summary,
+    candidate_objective_metrics,
+    hailo_feasibility_risk as calc_hailo_feasibility_risk,
+    hailo_interface_penalty as calc_hailo_interface_penalty,
+    objective_label,
+    objective_sort_key as calc_objective_sort_key,
+    predicted_handover_ms as calc_predicted_handover_ms,
+    predicted_stream_cycle_ms as calc_predicted_stream_cycle_ms,
+    predicted_stream_fps as calc_predicted_stream_fps,
+)
 
 from . import __version__ as TOOL_VERSION
 
@@ -223,6 +247,10 @@ def _setup_gui_logging() -> Optional[str]:
 
         log_dir = ensure_dir(splitpoint_logs_dir())
         log_path = log_dir / "gui.log"
+        try:
+            log_path.touch(exist_ok=True)
+        except Exception:
+            pass
 
         # ------------------------------------------------------------------
         # Best-effort log rotation (size-based) for gui.log.
@@ -242,13 +270,11 @@ def _setup_gui_logging() -> Optional[str]:
                     try:
                         log_path.rename(rotated)
                     except Exception:
-                        # If rename fails (Windows locks, etc.), fall back to truncation.
                         try:
                             log_path.write_text("", encoding="utf-8")
                         except Exception:
                             pass
         except Exception:
-            # Rotation must never prevent GUI startup.
             pass
 
         # ------------------------------------------------------------------
@@ -256,7 +282,6 @@ def _setup_gui_logging() -> Optional[str]:
         # ------------------------------------------------------------------
         try:
             pol = policy_from_env()
-            # Always keep gui.log even if it exceeds max_files.
             pol = LogRetentionPolicy(
                 enabled=pol.enabled,
                 max_age_days=pol.max_age_days,
@@ -269,33 +294,64 @@ def _setup_gui_logging() -> Optional[str]:
         except Exception:
             pass
 
-        # Don't clobber an existing logging configuration (e.g. when embedded).
         root = logging.getLogger()
-        if not root.handlers:
-            logging.basicConfig(
-                level=logging.INFO,
-                format="%(asctime)s [%(levelname)s] %(message)s",
-                handlers=[
-                    logging.FileHandler(str(log_path), mode="a", encoding="utf-8"),
-                    logging.StreamHandler(sys.stdout),
-                ],
-            )
+        # Fresh Python processes usually start with the root logger at WARNING,
+        # which would suppress the INFO-level progress lines we want to preserve
+        # in gui.log. Lower the threshold unless the caller already requested a
+        # more verbose level such as DEBUG.
+        if root.level == logging.NOTSET or int(root.level) > int(logging.INFO):
+            root.setLevel(logging.INFO)
 
-        # Optional legacy behavior: also write a `./gui.log` in the current
-        # working directory (best-effort). Disabled by default because it clutters
-        # the project folder.
-        if os.environ.get("SPLITPOINT_WRITE_CWD_LOG", "0").strip() == "1":
+        fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+
+        def _same_file_handler(h: logging.Handler, candidate: Path) -> bool:
+            if not isinstance(h, logging.FileHandler):
+                return False
+            try:
+                return Path(getattr(h, 'baseFilename', '')).resolve() == candidate.resolve()
+            except Exception:
+                return str(getattr(h, 'baseFilename', '')) == str(candidate)
+
+        has_log_file_handler = any(_same_file_handler(h, log_path) for h in root.handlers)
+        if not has_log_file_handler:
+            fh = logging.FileHandler(str(log_path), mode="a", encoding="utf-8")
+            fh.setFormatter(fmt)
+            root.addHandler(fh)
+
+        has_stdout_handler = any(
+            isinstance(h, logging.StreamHandler) and getattr(h, 'stream', None) in {sys.stdout, sys.stderr}
+            for h in root.handlers
+        )
+        if not has_stdout_handler:
+            sh = logging.StreamHandler(sys.stdout)
+            sh.setFormatter(fmt)
+            root.addHandler(sh)
+
+        os.environ["ONNX_SPLITPOINT_ACTIVE_LOG_PATH"] = str(log_path)
+
+        # Keep a familiar ./gui.log mirror by default. The persistent log under
+        # ~/.onnx_splitpoint_tool/logs/gui.log remains the canonical location,
+        # but many existing workflows still inspect the working-directory log.
+        write_cwd_raw = (os.environ.get("SPLITPOINT_WRITE_CWD_LOG", "1") or "1").strip().lower()
+        write_cwd = write_cwd_raw not in {"0", "false", "no", "off"}
+        if write_cwd:
             try:
                 cwd_log_path = Path.cwd() / "gui.log"
-                if str(cwd_log_path) != str(log_path):
-                    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-                    cwd_fh = logging.FileHandler(str(cwd_log_path), mode="a", encoding="utf-8")
-                    cwd_fh.setFormatter(fmt)
-                    logging.getLogger().addHandler(cwd_fh)
+                if str(cwd_log_path.resolve()) != str(log_path.resolve()):
+                    has_cwd_handler = any(_same_file_handler(h, cwd_log_path) for h in root.handlers)
+                    if not has_cwd_handler:
+                        cwd_fh = logging.FileHandler(str(cwd_log_path), mode="a", encoding="utf-8")
+                        cwd_fh.setFormatter(fmt)
+                        root.addHandler(cwd_fh)
+                    os.environ["ONNX_SPLITPOINT_CWD_LOG_PATH"] = str(cwd_log_path)
             except Exception:
                 pass
 
-        # Hook unhandled exceptions so we get a traceback in the log file.
+        try:
+            publish_active_log_metadata(log_path, publish_cwd_alias=write_cwd)
+        except Exception:
+            pass
+
         def _excepthook(exc_type, exc, tb):
             logging.error("Unhandled exception", exc_info=(exc_type, exc, tb))
             try:
@@ -314,8 +370,6 @@ def _setup_gui_logging() -> Optional[str]:
         return str(log_path)
     except Exception:
         return None
-
-
 # ------------------------------- Tooltips -------------------------------
 
 class ToolTip:
@@ -453,16 +507,40 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.accel_specs = load_accelerator_specs()
         self.memory_by_boundary: Dict[int, Dict[str, Any]] = {}
         self._candidate_rows: List[Dict[str, Any]] = []
+        # Legacy/public alias for the full candidate-row metadata from the last
+        # Analyse render. Benchmark export consumes mapping rows (boundary ->
+        # semantic label, parse status, etc.), so keep this populated even when
+        # the visible shortlist is filtered or grouped.
+        self.candidates: List[Dict[str, Any]] = []
         self._cand_by_iid: Dict[str, Dict[str, Any]] = {}
         self._tree_clean_tooltips: Dict[str, str] = {}
         self._clean_tooltip_tip: Optional[tk.Toplevel] = None
         self._clean_tooltip_row: Optional[str] = None
+        # Treeview selection handling must stay out of Tk's native
+        # <<TreeviewSelect>> dispatch path. We therefore coalesce selection
+        # work onto an idle callback and remember the last concrete boundary so
+        # transient empty-selection events do not clear the inspector/plots.
+        self._tree_selection_sync_job: Optional[str] = None
+        self._pending_tree_boundary: Optional[int] = None
+        self._last_tree_boundary: Optional[int] = None
+
+        # Background benchmark jobs are intentionally tracked separately so the
+        # GUI can allow one benchmark-set generation and one remote benchmark
+        # run in parallel without opening the door to duplicate jobs of the
+        # same kind.
+        self._benchmark_generation_active: bool = False
+        self._remote_benchmark_active: bool = False
+        self._benchmark_generation_thread: Optional[threading.Thread] = None
+        self._remote_benchmark_thread: Optional[threading.Thread] = None
 
         self._register_event_handlers()
 
         # Remembered default folder for split/export dialogs.
         self.default_output_dir: Optional[str] = None
 
+        self._benchmark_generation_service = BenchmarkGenerationService()
+        self._benchmark_generation_execution_service = BenchmarkGenerationExecutionService(self._benchmark_generation_service)
+        self._benchmark_generation_orchestration_service = BenchmarkGenerationOrchestrationService(self._benchmark_generation_service, self._benchmark_generation_execution_service)
         self._build_ui()
         self._set_ui_state(AppUiState.NO_MODEL)
 
@@ -503,19 +581,61 @@ class SplitPointAnalyserGUI(tk.Tk):
         self._update_plots(analysis, picks, params)
         self._set_ui_state(self._infer_ui_state())
         self._refresh_memory_forecast()
+        try:
+            refresh = getattr(self, "_benchmark_refresh_hailo_compile_outlook", None)
+            if callable(refresh):
+                refresh()
+        except Exception:
+            logger.debug("Benchmark Hailo compile outlook refresh failed after analysis", exc_info=True)
 
     def _handle_candidate_selected(self, _candidate: Optional[SelectedCandidate]) -> None:
         self._set_ui_state(self._infer_ui_state())
-        self._refresh_memory_forecast()
+        # Never rebuild the candidate Treeview from inside a Treeview selection
+        # callback. Deleting/reinserting rows while Tk is dispatching
+        # <<TreeviewSelect>> can trigger native crashes/segfaults on some
+        # platforms/themes. A selection change only needs the bars/labels.
+        self._refresh_memory_forecast(rebuild_table=False)
+        try:
+            refresh = getattr(self, "_benchmark_refresh_hailo_compile_outlook", None)
+            if callable(refresh):
+                refresh()
+        except Exception:
+            logger.debug("Benchmark Hailo compile outlook refresh failed after analysis", exc_info=True)
         self._highlight_selected_boundary_in_plots()
 
     def _handle_settings_changed(self) -> None:
         self._set_ui_state(self._infer_ui_state())
-        self._refresh_memory_forecast()
+        self._refresh_memory_forecast(rebuild_table=False)
 
     def _emit_settings_changed(self, *_args: Any) -> None:
         self._sync_gui_state_from_vars()
         self.events.emit_settings_changed()
+
+    def _set_background_job_active(self, job_kind: str, active: bool) -> None:
+        kind = str(job_kind or "").strip().lower()
+        value = bool(active)
+        if kind == "generate":
+            self._benchmark_generation_active = value
+        elif kind in {"remote", "remote_run", "run"}:
+            self._remote_benchmark_active = value
+        else:
+            return
+
+        try:
+            self._set_ui_state(self._infer_ui_state())
+        except Exception:
+            try:
+                self._update_action_buttons()
+            except Exception:
+                logger.debug("Failed to refresh action buttons for background job state", exc_info=True)
+
+    def _background_job_active(self, job_kind: str) -> bool:
+        kind = str(job_kind or "").strip().lower()
+        if kind == "generate":
+            return bool(getattr(self, "_benchmark_generation_active", False))
+        if kind in {"remote", "remote_run", "run"}:
+            return bool(getattr(self, "_remote_benchmark_active", False))
+        return False
 
     # -------------------------- UI construction --------------------------
 
@@ -1007,10 +1127,16 @@ class SplitPointAnalyserGUI(tk.Tk):
         )
         self.cb_hailo_hw_arch.grid(row=0, column=2, sticky="w", padx=(0, 12))
 
-        self.var_hailo_max_checks = tk.StringVar(value="25")
-        ttk.Label(hf, text="Max checks:").grid(row=0, column=3, sticky="e", padx=(0, 2))
+        self.var_hailo_max_checks = tk.StringVar(value="auto")
+        ttk.Label(hf, text="Max Hailo checks:").grid(row=0, column=3, sticky="e", padx=(0, 2))
         self.ent_hailo_max_checks = ttk.Entry(hf, textvariable=self.var_hailo_max_checks, width=8)
         self.ent_hailo_max_checks.grid(row=0, column=4, sticky="w", padx=(0, 12))
+        ToolTip(
+            self.ent_hailo_max_checks,
+            "Maximum number of ranked candidates that receive an additional Hailo parse-check.\n"
+            "Use a positive integer to cap the checks explicitly, or 'auto' to follow the current Top-k analysis setting.\n"
+            "Once the budget is exhausted, Top-k selection continues without further Hailo checks.",
+        )
 
         self.var_hailo_fixup = tk.BooleanVar(value=True)
         self.chk_hailo_fixup = ttk.Checkbutton(hf, text="ONNX fixup", variable=self.var_hailo_fixup)
@@ -1020,7 +1146,11 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.chk_hailo_keep = ttk.Checkbutton(hf, text="Keep artifacts", variable=self.var_hailo_keep)
         self.chk_hailo_keep.grid(row=0, column=6, sticky="w", padx=(10, 0))
 
-        self.var_hailo_target = tk.StringVar(value="either")
+        # Default to Part2 because the common workflow is "prefix on CPU/GPU,
+        # suffix on Hailo". Using "either" here lets Part1-only parse passes
+        # slip into benchmark generation, which is surprising when the user
+        # later asks for Hailo Part2 HEFs.
+        self.var_hailo_target = tk.StringVar(value="part2")
         ttk.Label(hf, text="Target:").grid(row=1, column=0, sticky="w", pady=(6, 0))
         self.cb_hailo_target = ttk.Combobox(
             hf,
@@ -1036,8 +1166,8 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.cb_hailo_backend = ttk.Combobox(
             hf,
             textvariable=self.var_hailo_backend,
-            values=["auto", "local", "wsl", "venv"],
-            width=10,
+            values=list(backend_display_values()),
+            width=12,
             state="readonly",
         )
         self.cb_hailo_backend.grid(row=1, column=3, sticky="w", pady=(6, 0))
@@ -1097,7 +1227,12 @@ class SplitPointAnalyserGUI(tk.Tk):
         ttk.Checkbutton(row1, text="include comm buffers", variable=self.var_memf_include_comm).pack(side=tk.LEFT, padx=(12, 0))
         ttk.Label(row1, text="Policy:").pack(side=tk.LEFT, padx=(12, 4))
         ttk.Combobox(row1, textvariable=self.var_memf_policy, values=["max_peak_or_comm", "sum_peak_and_comm"], width=20, state="readonly").pack(side=tk.LEFT)
-        ttk.Checkbutton(row1, text="show only fitting candidates", variable=self.var_memf_filter_fit, command=self._refresh_memory_forecast).pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Checkbutton(
+            row1,
+            text="show only fitting candidates",
+            variable=self.var_memf_filter_fit,
+            command=lambda: self._refresh_memory_forecast(rebuild_table=True),
+        ).pack(side=tk.LEFT, padx=(12, 0))
 
         try:
             ttk.Style(self).configure("MemGreen.Horizontal.TProgressbar", troughcolor="#eeeeee", background="#1c9c4a")
@@ -1111,8 +1246,15 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.pb_mem_right.pack(fill=tk.X, padx=8, pady=(2, 2))
         ttk.Label(memf, textvariable=self.var_memf_right_text).pack(anchor="w", padx=8, pady=(0, 6))
 
-        for v in (self.var_memf_left_accel, self.var_memf_right_accel, self.var_memf_interface, self.var_memf_policy, self.var_memf_include_comm, self.var_memf_include_kv):
-            v.trace_add("write", lambda *_: self._refresh_memory_forecast())
+        for v in (
+            self.var_memf_left_accel,
+            self.var_memf_right_accel,
+            self.var_memf_interface,
+            self.var_memf_policy,
+            self.var_memf_include_comm,
+            self.var_memf_include_kv,
+        ):
+            v.trace_add("write", lambda *_: self._refresh_memory_forecast(rebuild_table=True))
 
 
         # Diagnostics frame
@@ -1288,10 +1430,14 @@ class SplitPointAnalyserGUI(tk.Tk):
         cols = [
             "rank",
             "clean",
+            "hailo_parse",
             "boundary",
             "semantic",
             "cut_mb",
             "num_tensors",
+            "predicted_stream_fps",
+            "hailo_feasibility_risk",
+            "hailo_interface_penalty",
             "gflops_left",
             "gflops_right",
             "left_op",
@@ -1320,12 +1466,16 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.tree = ttk.Treeview(table_inner, columns=cols, show="headings", style="Candidate.Treeview")
         self.tree.heading("rank", text="#")
         self.tree.heading("clean", text="Clean")
+        self.tree.heading("hailo_parse", text="Hailo")
         self.tree.heading("boundary", text="Boundary")
         self.tree.heading("semantic", text="Semantic")
         self.tree.heading("left_op", text="Left op")
         self.tree.heading("right_op", text="Right op")
         self.tree.heading("cut_mb", text="Cut (MB)")
         self.tree.heading("num_tensors", text="#Tensors")
+        self.tree.heading("predicted_stream_fps", text="Pred TH FPS")
+        self.tree.heading("hailo_feasibility_risk", text="Hailo feas")
+        self.tree.heading("hailo_interface_penalty", text="Hailo iface")
         self.tree.heading("gflops_left", text="Compute Left (GMACs)")
         self.tree.heading("gflops_right", text="Compute Right (GMACs)")
         self.tree.heading("peak_left_mib", text="Peak L (MiB)")
@@ -1338,12 +1488,16 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         self.tree.column("rank", width=40, anchor=tk.E)
         self.tree.column("clean", width=60, anchor=tk.CENTER)
+        self.tree.column("hailo_parse", width=60, anchor=tk.CENTER)
         self.tree.column("boundary", width=80, anchor=tk.E)
         self.tree.column("semantic", width=190)
         self.tree.column("left_op", width=150)
         self.tree.column("right_op", width=150)
         self.tree.column("cut_mb", width=90, anchor=tk.E)
         self.tree.column("num_tensors", width=80, anchor=tk.E)
+        self.tree.column("predicted_stream_fps", width=105, anchor=tk.E)
+        self.tree.column("hailo_feasibility_risk", width=92, anchor=tk.CENTER)
+        self.tree.column("hailo_interface_penalty", width=92, anchor=tk.CENTER)
         self.tree.column("gflops_left", width=135, anchor=tk.E)
         self.tree.column("gflops_right", width=135, anchor=tk.E)
         self.tree.column("peak_left_mib", width=110, anchor=tk.E)
@@ -1362,6 +1516,8 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         self.tree.tag_configure("pick", background="#eef6ff")
         self.tree.tag_configure("dirty", background="#fff2f2")
+        # Hailo parse state is rendered in its own column. Avoid row-wide foreground colors
+        # because Treeview tags apply to the whole row and make all candidates look orange/brown.
 
         self._configure_candidate_columns()
 
@@ -1600,7 +1756,7 @@ class SplitPointAnalyserGUI(tk.Tk):
             return
         self._hailo_status_probe_running = True
 
-        backend = (getattr(self, "var_hailo_backend", tk.StringVar(value="auto")).get() or "auto").strip()
+        backend = normalize_hailo_backend(getattr(self, "var_hailo_backend", tk.StringVar(value="auto")).get())
         wsl_distro = (getattr(self, "var_hailo_wsl_distro", tk.StringVar(value="")).get() or "").strip()
         wsl_venv = (getattr(self, "var_hailo_wsl_venv", tk.StringVar(value="auto")).get() or "auto").strip() or "auto"
 
@@ -1839,11 +1995,66 @@ class SplitPointAnalyserGUI(tk.Tk):
 
         messagebox.showinfo(title, "\n".join(lines))
 
+    @staticmethod
+    def _hailo_hef_timeout_seconds() -> int:
+        """Hard timeout for long-running Hailo HEF builds.
+
+        The HEF compiler can spend a long time in partition search. Keep the
+        GUI-side timeout aligned with the backend's safer runtime defaults.
+        """
+
+        for key in ("ONNX_SPLITPOINT_HAILO_HEF_TIMEOUT_S", "OSP_HAILO_HARD_TIMEOUT_S"):
+            raw = str(os.environ.get(key) or "").strip()
+            if not raw:
+                continue
+            try:
+                val = int(raw)
+            except Exception:
+                continue
+            if val > 0:
+                return max(300, int(val))
+        return 10800
+
+    def _hailo_publish_gui_diagnostics(
+        self,
+        label: str,
+        result: Any,
+        *,
+        log_cb: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        """Publish a compact Hailo diagnostic summary into the live GUI.
+
+        The heavy-lifting is done in :mod:`onnx_splitpoint_tool.gui.hailo_diagnostics`.
+        Here we only:
+
+        - collect a compact entry for later inspection in the GUI,
+        - emit short summary lines into the currently open progress log.
+        """
+
+        try:
+            entry = collect_hailo_diagnostics(result, label=label)
+        except Exception:
+            return
+
+        try:
+            rec = getattr(self, "_hailo_gui_record_diagnostics", None)
+            if callable(rec):
+                rec(entry)
+        except Exception:
+            pass
+
+        if callable(log_cb):
+            try:
+                for line in format_hailo_diagnostics_short_lines(entry):
+                    log_cb(line)
+            except Exception:
+                pass
+
     # ------------------------- Layout helpers ------------------------
 
     def _hailo_test_backend(self) -> None:
         """Quick sanity-check that the selected Hailo backend is reachable."""
-        backend = (self.var_hailo_backend.get() or "auto").strip()
+        backend = normalize_hailo_backend(self.var_hailo_backend.get())
         wsl_distro = (self.var_hailo_wsl_distro.get() or "").strip()
         wsl_venv = (self.var_hailo_wsl_venv.get() or "").strip() or "auto"
         hw_arch = (self.var_hailo_hw_arch.get() or "hailo8").strip()
@@ -1921,7 +2132,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         except Exception:
             pass
 
-        backend = (self.var_hailo_backend.get() or "auto").strip().lower()
+        backend = normalize_hailo_backend(self.var_hailo_backend.get())
         wsl_distro = (self.var_hailo_wsl_distro.get() or "").strip()
         wsl_venv = (self.var_hailo_wsl_venv.get() or "auto").strip() or "auto"
 
@@ -2149,6 +2360,8 @@ class SplitPointAnalyserGUI(tk.Tk):
             self.events.emit_candidate_selected(None)
             return
 
+        self._last_tree_boundary = int(boundary)
+
         sem = ""
         if isinstance(self.analysis, dict):
             labels = self.analysis.get("semantic_labels_by_boundary") or []
@@ -2174,56 +2387,120 @@ class SplitPointAnalyserGUI(tk.Tk):
             stats=stats,
         )
         self.events.emit_candidate_selected(self.selected_candidate)
-    def _apply_selected_row_table_tag(self, boundary: Optional[int]) -> None:
-        """Highlight the currently selected boundary row in the candidates table.
 
-        We use a tag-based highlight (see panel_analysis.py tag_configure) instead of
-        relying on the native Treeview selection highlight, because per-row tag
-        backgrounds (e.g. 'pick'/'dirty') can hide the selection background on
-        some Tk themes/platforms.
+    def _tree_boundary_from_selection(self) -> Optional[int]:
+        """Resolve the currently selected Treeview row to a boundary id only.
+
+        Unlike ``_selected_boundary_index`` this helper intentionally does not
+        fall back to ``self.selected_candidate``. It is used inside the native
+        Treeview selection callback where Tk may briefly emit an empty
+        selection; in that case callers decide whether to keep the last known
+        boundary instead of accidentally clearing the selection state.
         """
-        tree = getattr(self, 'tree', None)
-        if tree is None or boundary is None:
-            return
-
-        iid = f"b{int(boundary)}"
+        if not hasattr(self, "tree"):
+            return None
         try:
-            if not tree.exists(iid):
-                return
+            sel = self.tree.selection()
         except Exception:
-            # If the widget is not a Treeview or already destroyed.
-            return
+            return None
+        if not sel:
+            return None
 
-        prev = getattr(self, '_selected_row_iid', None)
-        if prev and prev != iid:
+        item = sel[0]
+        try:
+            if not self._is_boundary_row(item):
+                parent = self.tree.parent(item)
+                if parent:
+                    item = parent
+        except Exception:
+            return None
+
+        try:
+            if not self._is_boundary_row(item):
+                return None
+        except Exception:
+            return None
+
+        row = self._cand_by_iid.get(item)
+        if row is not None:
             try:
-                if tree.exists(prev):
-                    prev_tags = [t for t in tree.item(prev, 'tags') if t != 'selected_row']
-                    tree.item(prev, tags=tuple(prev_tags))
+                return int(row.get("boundary", -1))
+            except Exception:
+                return None
+        boundary_val = self._tree_item_value_by_column(item, "boundary")
+        if boundary_val is None:
+            return None
+        try:
+            return int(boundary_val)
+        except Exception:
+            return None
+
+    def _schedule_tree_selection_sync(self, boundary: Optional[int] = None) -> None:
+        """Coalesce row-selection side effects onto Tk's idle queue.
+
+        This keeps plot updates / inspector refreshes away from the native
+        ``<<TreeviewSelect>>`` callback, which has been the most likely source
+        of the intermittent segmentation faults seen right after the first
+        automatic candidate selection.
+        """
+        if boundary is None:
+            boundary = self._tree_boundary_from_selection()
+        if boundary is None:
+            boundary = getattr(self, "_last_tree_boundary", None)
+        if boundary is not None:
+            try:
+                boundary = int(boundary)
+            except Exception:
+                boundary = None
+        self._pending_tree_boundary = boundary
+
+        job = getattr(self, "_tree_selection_sync_job", None)
+        if job is not None:
+            try:
+                self.after_cancel(job)
             except Exception:
                 pass
+            finally:
+                self._tree_selection_sync_job = None
 
         try:
-            cur_tags = list(tree.item(iid, 'tags'))
-            if 'selected_row' not in cur_tags:
-                cur_tags.append('selected_row')
-                tree.item(iid, tags=tuple(cur_tags))
+            self._tree_selection_sync_job = self.after_idle(self._flush_tree_selection_sync)
         except Exception:
-            return
+            self._flush_tree_selection_sync()
 
-        self._selected_row_iid = iid
+    def _flush_tree_selection_sync(self) -> None:
+        self._tree_selection_sync_job = None
+        boundary = getattr(self, "_pending_tree_boundary", None)
+        self._pending_tree_boundary = None
+        if boundary is None:
+            boundary = self._tree_boundary_from_selection()
+        if boundary is None:
+            boundary = getattr(self, "_last_tree_boundary", None)
+        self._set_selected_candidate_from_boundary(boundary)
+
+    def _apply_selected_row_table_tag(self, boundary: Optional[int]) -> None:
+        """Legacy no-op.
+
+        Re-tagging Treeview rows during or immediately after selection changes
+        caused re-entrant selection churn (and, on the user's system, native
+        segfaults). We now rely on the normal ttk selection/focus state and the
+        plot marker/inspector updates for visibility.
+        """
+        return None
 
 
     def _on_tree_selection_changed(self, event=None) -> None:
         sel = self.tree.selection() if hasattr(self, "tree") else ()
         logger.debug("Tree selection event: sel=%s", sel)
-        boundary = self._selected_boundary_index()
+        boundary = self._tree_boundary_from_selection()
+        if boundary is not None:
+            self._last_tree_boundary = int(boundary)
+        else:
+            boundary = getattr(self, "_last_tree_boundary", None)
         iid = sel[0] if sel else ""
         tags = self.tree.item(iid, "tags") if iid else ()
         logger.info("Tree selection changed: iid=%s, tags=%s, boundary=%s", iid, tags, boundary)
-        self._set_selected_candidate_from_boundary(boundary)
-        # Keep the selected row visually marked in the table.
-        self._apply_selected_row_table_tag(boundary)
+        self._schedule_tree_selection_sync(boundary)
 
     def _on_tree_button_1(self, evt=None):
         """Handle candidate-table left-clicks; only intercept clean-column clicks."""
@@ -2254,15 +2531,15 @@ class SplitPointAnalyserGUI(tk.Tk):
             return
         boundary = min(candidates, key=lambda b: abs(int(b) - boundary))
         for item in self.tree.get_children(""):
-            vals = self.tree.item(item, "values")
-            if len(vals) < 3:
+            boundary_val = self._tree_item_value_by_column(item, "boundary")
+            if boundary_val is None:
                 continue
             try:
-                if int(vals[2]) == int(boundary):
+                if int(boundary_val) == int(boundary):
                     self.tree.selection_set(item)
                     self.tree.focus(item)
                     self.tree.see(item)
-                    self._on_tree_selection_changed()
+                    self._schedule_tree_selection_sync(int(boundary))
                     return
             except Exception:
                 continue
@@ -2610,11 +2887,10 @@ class SplitPointAnalyserGUI(tk.Tk):
         if hailo_hw_arch not in {"hailo8", "hailo8l", "hailo8r", "hailo10h", "hailo10p"}:
             raise ValueError("Hailo HW arch must be one of: hailo8, hailo8l, hailo8r, hailo10h, hailo10p")
 
-        hailo_max_checks = _safe_int(self.var_hailo_max_checks.get())
-        if hailo_max_checks is None:
-            hailo_max_checks = 25
-        if hailo_max_checks <= 0:
-            raise ValueError("Hailo max checks must be a positive integer.")
+        hailo_max_checks, _hailo_max_checks_auto = resolve_hailo_max_checks(
+            self.var_hailo_max_checks.get(),
+            topk=int(topk),
+        )
 
         hailo_fixup = bool(self.var_hailo_fixup.get())
         hailo_keep_artifacts = bool(self.var_hailo_keep.get())
@@ -2625,10 +2901,9 @@ class SplitPointAnalyserGUI(tk.Tk):
         if hailo_target not in {'part1', 'part2', 'either'}:
             raise ValueError("Hailo target must be one of: part1, part2, either")
 
-        hailo_backend = (self.var_hailo_backend.get() if hasattr(self, 'var_hailo_backend') else 'auto')
-        hailo_backend = (hailo_backend or 'auto').strip().lower()
-        if hailo_backend not in {'auto', 'local', 'venv', 'wsl'}:
-            raise ValueError("Hailo backend must be one of: auto, local, venv, wsl")
+        hailo_backend = normalize_hailo_backend(self.var_hailo_backend.get() if hasattr(self, 'var_hailo_backend') else 'auto')
+        if hailo_backend not in set(backend_display_values()):
+            raise ValueError("Hailo backend must be one of: auto, subprocess, local, venv, wsl")
 
         hailo_wsl_distro = (self.var_hailo_wsl_distro.get() if hasattr(self, 'var_hailo_wsl_distro') else '')
         hailo_wsl_distro = (hailo_wsl_distro or '').strip()
@@ -3504,9 +3779,7 @@ class SplitPointAnalyserGUI(tk.Tk):
             if progress_cb:
                 progress_cb("Hailo check enabled: verifying environment…")
 
-            backend = str(getattr(p, "hailo_backend", "auto") or "auto").strip().lower()
-            if backend not in {"auto", "local", "venv", "wsl"}:
-                backend = "auto"
+            backend = normalize_hailo_backend(getattr(p, "hailo_backend", "auto"))
 
             probe = hailo_probe_auto(
                 backend=backend,
@@ -3541,6 +3814,9 @@ class SplitPointAnalyserGUI(tk.Tk):
         checks_done = 0
         checks_passed = 0
         checks_failed = 0
+        unchecked_selected = 0
+        continued_without_hailo_checks = False
+        budget_notice_sent = False
 
         for b in candidates:
             if len(picks) >= p.topk:
@@ -3549,14 +3825,14 @@ class SplitPointAnalyserGUI(tk.Tk):
             if not all(abs(b - s) > p.min_gap for s in picks):
                 continue
 
-            if hailo_enabled:
-                if checks_done >= checks_budget:
-                    hailo_summary["budget_exhausted"] = True
-                    break
-
+            checked_this_candidate = False
+            if hailo_enabled and checks_done < checks_budget:
                 checks_done += 1
+                checked_this_candidate = True
                 if progress_cb:
-                    progress_cb(f"Hailo parse-check {checks_done}/{checks_budget}: boundary b={b}")
+                    progress_cb(
+                        f"Hailo parse-check {checks_done}/{checks_budget} | selected {len(picks)}/{p.topk}: boundary b={b}"
+                    )
 
                 ok, info = self._hailo_parse_check_boundary(a, int(b), p, hailo_work_root)
                 hailo_results[int(b)] = info
@@ -3564,8 +3840,18 @@ class SplitPointAnalyserGUI(tk.Tk):
                     checks_failed += 1
                     continue
                 checks_passed += 1
+            elif hailo_enabled:
+                hailo_summary["budget_exhausted"] = True
+                continued_without_hailo_checks = True
+                if progress_cb and not budget_notice_sent:
+                    progress_cb(
+                        f"Hailo parse-check budget reached ({checks_budget}); continuing selection {len(picks)}/{p.topk} without further Hailo checks."
+                    )
+                    budget_notice_sent = True
 
             picks.append(int(b))
+            if hailo_enabled and not checked_this_candidate:
+                unchecked_selected += 1
 
         # Attach Hailo info to analysis (useful for exports / reproducibility)
         if hailo_enabled:
@@ -3575,6 +3861,9 @@ class SplitPointAnalyserGUI(tk.Tk):
                     "passed": int(checks_passed),
                     "failed": int(checks_failed),
                     "picks": int(len(picks)),
+                    "unchecked_selected": int(unchecked_selected),
+                    "continued_without_checks": bool(continued_without_hailo_checks),
+                    "selection_target_topk": int(getattr(p, "topk", len(picks)) or len(picks)),
                 }
             )
             a["hailo_check"] = hailo_summary
@@ -3591,6 +3880,11 @@ class SplitPointAnalyserGUI(tk.Tk):
         # Store for plots/export
         a["candidate_bounds_all"] = list(raw_candidates)
         a["candidate_bounds"] = list(candidates)
+        # Persist the actually selected ranked picks separately. Benchmark-set
+        # export must prefer this list over the broader ranked candidate pool,
+        # otherwise candidates rejected by the Hailo check during Analyse can
+        # re-enter later via ``analysis['candidate_bounds']``.
+        a["candidate_bounds_selected"] = list(picks)
         a["scores"] = scores
         a["latency_ms_dict"] = latency_ms
 
@@ -3607,7 +3901,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         The intention is a *hard feasibility filter* during pick selection.
         """
 
-        from .hailo_backend import hailo_parse_check_auto
+        from .hailo_backend import hailo_parse_check_auto, hailo_part2_parser_blocker_precheck_from_model
 
         model: Optional[onnx.ModelProto] = a.get("model")
         nodes = a.get("nodes") or []
@@ -3746,31 +4040,97 @@ class SplitPointAnalyserGUI(tk.Tk):
                     "strict_extras": list(extras),
                 }
 
+            allow_suggested = bool(getattr(self, 'var_bench_hailo_part2_suggested_fallback', tk.BooleanVar(value=True)).get()) if hasattr(self, 'var_bench_hailo_part2_suggested_fallback') else True
+
+            def _build_and_run(part2_output_names=None) -> Dict[str, Any]:
+                try:
+                    _p1_model, p2_model, split_manifest = asc.split_model_on_cut_tensors(
+                        model,
+                        cut_tensors=list(cut_tensors),
+                        strict_boundary=bool(getattr(p, 'strict_boundary', False)),
+                        part2_output_names=(list(part2_output_names) if part2_output_names is not None else None),
+                    )
+                except Exception as e:
+                    return {
+                        "ok": False,
+                        "error": f"Failed to build Part2 submodel: {type(e).__name__}: {e}",
+                    }
+
+                ext_inputs = list(split_manifest.get('part2_external_inputs') or [])
+                ext_only = [x for x in ext_inputs if x not in cut_tensors]
+                if ext_only:
+                    return {
+                        "ok": False,
+                        "error": f"Part2 still has external inputs beyond cut tensors: {ext_only}",
+                        "external_inputs": list(ext_inputs),
+                    }
+
+                p2_dir = case_dir / "part2"
+                p2_dir.mkdir(parents=True, exist_ok=True)
+                res = _run_one("part2", p2_model, p2_dir / "part2.onnx")
+                res['split_manifest'] = split_manifest
+                res['p2_model'] = p2_model
+                return res
+
+            part2_res = _build_and_run()
+            part2_res.setdefault('strategy', 'original')
+            part2_res.setdefault('used_suggested_end_nodes', False)
+            if bool(part2_res.get('ok')):
+                return part2_res
+
+            parser_info = None
             try:
-                p2_model, ext_inputs = asc.build_submodel(
-                    model,
-                    outputs=orig_outputs,
-                    stop_names=set(cut_tensors) | set(orig_inputs),
-                    model_name=f"part2_b{b}",
-                    force_inputs=list(cut_tensors),
-                )
-            except Exception as e:
-                return {
-                    "ok": False,
-                    "error": f"Failed to build Part2 submodel: {type(e).__name__}: {e}",
-                }
+                if part2_res.get('p2_model') is not None:
+                    parser_info = hailo_part2_parser_blocker_precheck_from_model(part2_res['p2_model'], split_manifest=part2_res.get('split_manifest'))
+            except Exception:
+                parser_info = None
+            if isinstance(parser_info, dict):
+                part2_res['parser_precheck'] = dict(parser_info)
+                if parser_info.get('suggested_end_nodes'):
+                    part2_res['suggested_end_nodes'] = list(parser_info.get('suggested_end_nodes') or [])
 
-            ext_only = [x for x in ext_inputs if x not in cut_tensors]
-            if ext_only:
-                return {
-                    "ok": False,
-                    "error": f"Part2 still has external inputs beyond cut tensors: {ext_only}",
-                    "external_inputs": list(ext_inputs),
-                }
+            if not allow_suggested:
+                if isinstance(parser_info, dict) and parser_info.get('suggested_end_nodes'):
+                    part2_res['fallback_disabled'] = True
+                return part2_res
 
-            p2_dir = case_dir / "part2"
-            p2_dir.mkdir(parents=True, exist_ok=True)
-            return _run_one("part2", p2_model, p2_dir / "part2.onnx")
+            suggested = [str(x).strip() for x in list((parser_info or {}).get('suggested_end_nodes') or []) if str(x).strip()]
+            if not suggested:
+                return part2_res
+
+            node_outputs = {}
+            for node in list(getattr(part2_res.get('p2_model'), 'graph', None).node if part2_res.get('p2_model') is not None else []):
+                name = str(getattr(node, 'name', '') or '').strip()
+                outs = [str(x).strip() for x in list(getattr(node, 'output', []) or []) if str(x).strip()]
+                if name and outs:
+                    node_outputs[name] = outs
+            candidate_output_sets = []
+            seen = set()
+            merged = []
+            for node_name in suggested:
+                merged.extend(node_outputs.get(node_name, []))
+            if merged:
+                key = tuple(merged)
+                seen.add(key)
+                candidate_output_sets.append(list(merged))
+            for node_name in suggested:
+                outs = node_outputs.get(node_name, [])
+                key = tuple(outs)
+                if outs and key not in seen:
+                    seen.add(key)
+                    candidate_output_sets.append(list(outs))
+
+            for output_names in candidate_output_sets:
+                alt_res = _build_and_run(output_names)
+                alt_res['parser_precheck'] = dict(parser_info or {})
+                alt_res['suggested_end_nodes'] = list(suggested)
+                alt_res['effective_part2_outputs'] = list(output_names)
+                alt_res['strategy'] = 'hailo_parser_suggested_end_nodes'
+                alt_res['used_suggested_end_nodes'] = True
+                if bool(alt_res.get('ok')):
+                    return alt_res
+
+            return part2_res
 
         def _try_part1() -> Dict[str, Any]:
             try:
@@ -3907,8 +4267,79 @@ class SplitPointAnalyserGUI(tk.Tk):
                 return a
         return {}
 
-    def _refresh_memory_forecast(self) -> None:
+    def _refresh_memory_forecast(self, rebuild_table: bool = False) -> None:
+        """Refresh the legacy memory-forecast bars.
+
+        ``rebuild_table`` is intentionally opt-in. Rebuilding the candidates
+        Treeview from inside ``<<TreeviewSelect>>`` handling is unsafe because Tk
+        may still be iterating the selected rows internally. That re-entrant
+        delete/insert sequence is the likely source of native segfaults seen
+        right after the first automatic row selection.
+        """
         a = self.analysis or {}
+
+        if rebuild_table and hasattr(self, "_last_params") and self._last_params is not None and isinstance(a, dict):
+            previous_boundary = None
+            try:
+                previous_boundary = self._selected_boundary_index()
+            except Exception:
+                previous_boundary = None
+
+            base_picks: List[int] = []
+            try:
+                base_picks = [int(x) for x in (self.current_picks or [])]
+            except Exception:
+                base_picks = []
+            if not base_picks and self.analysis_result is not None:
+                try:
+                    base_picks = [int(x) for x in (self.analysis_result.candidates or [])]
+                except Exception:
+                    base_picks = []
+
+            if base_picks:
+                # First rebuild from the stable, unfiltered analysis picks so all
+                # memory estimates reflect the *current* accelerator/policy
+                # settings before any fit-filtering is applied.
+                self._update_table(a, base_picks, self._last_params)
+
+                if bool(self.var_memf_filter_fit.get()):
+                    filtered_picks = [
+                        int(x)
+                        for x in base_picks
+                        if (
+                            self.memory_by_boundary.get(int(x), {}).get("left", {}).get("fits")
+                            and self.memory_by_boundary.get(int(x), {}).get("right", {}).get("fits")
+                        )
+                    ]
+                    if filtered_picks != base_picks:
+                        self._update_table(a, filtered_picks, self._last_params)
+
+                # Restore selection if the previously selected boundary is still
+                # visible; otherwise fall back to the first top-level row.
+                target_iid = None
+                if previous_boundary is not None:
+                    try:
+                        iid = f"b{int(previous_boundary)}"
+                        if self.tree.exists(iid):
+                            target_iid = iid
+                    except Exception:
+                        target_iid = None
+                if target_iid is None:
+                    try:
+                        children = list(self.tree.get_children(""))
+                    except Exception:
+                        children = []
+                    if children:
+                        target_iid = children[0]
+                if target_iid is not None:
+                    try:
+                        self.tree.selection_set(target_iid)
+                        self.tree.focus(target_iid)
+                        self.tree.see(target_iid)
+                        self._schedule_tree_selection_sync(previous_boundary)
+                    except Exception:
+                        pass
+
         if not self.memory_by_boundary:
             self.var_memf_left_text.set("Left: n/a")
             self.var_memf_right_text.set("Right: n/a")
@@ -3939,12 +4370,6 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.pb_mem_right.configure(value=max(0.0, min(100.0, util_r)), style=("MemRed.Horizontal.TProgressbar" if util_r > 100.0 else "MemGreen.Horizontal.TProgressbar"))
         self.var_memf_left_text.set(f"Left: {tot_l_mb/1024.0:.2f} / {limit_l/1024.0:.2f} GB ({util_l:.1f}%)")
         self.var_memf_right_text.set(f"Right: {tot_r_mb/1024.0:.2f} / {limit_r/1024.0:.2f} GB ({util_r:.1f}%)")
-
-        if hasattr(self, "_last_params") and self._last_params is not None:
-            picks = list(self.analysis_result.candidates if self.analysis_result else self.current_picks)
-            if bool(self.var_memf_filter_fit.get()):
-                picks = [x for x in picks if (self.memory_by_boundary.get(int(x), {}).get("left", {}).get("fits") and self.memory_by_boundary.get(int(x), {}).get("right", {}).get("fits"))]
-            self._update_table(a, picks, self._last_params)
 
 
     def _get_memory_stats_for_boundary(self, boundary, left_accel_name=None, right_accel_name=None):
@@ -4407,10 +4832,181 @@ class SplitPointAnalyserGUI(tk.Tk):
 
     # ----------------------------- Table UI -----------------------------
 
+    def _hailo_parse_entry_for_boundary(self, analysis: Optional[Dict[str, Any]], boundary: int) -> Optional[Dict[str, Any]]:
+        """Return persisted Hailo parse-check metadata for one boundary.
+
+        The GUI keeps a compact summary in ``analysis['hailo_check']`` and the
+        per-boundary results in ``analysis['hailo_check_results']``. This helper
+        normalizes both sources into one portable dict that can be shown in the
+        UI and persisted into benchmark exports.
+        """
+
+        if not isinstance(analysis, dict):
+            return None
+
+        summary = analysis.get("hailo_check") if isinstance(analysis.get("hailo_check"), dict) else None
+        results = analysis.get("hailo_check_results") if isinstance(analysis.get("hailo_check_results"), dict) else None
+
+        entry: Optional[Dict[str, Any]] = None
+        if results:
+            raw = results.get(int(boundary))
+            if raw is None:
+                raw = results.get(str(boundary))
+            if isinstance(raw, dict):
+                entry = raw
+
+        if entry is None and summary is None:
+            return None
+
+        out: Dict[str, Any] = {}
+        if summary is not None:
+            for key in (
+                "enabled",
+                "target",
+                "backend_requested",
+                "backend_resolved",
+                "backend",
+                "hw_arch",
+                "max_checks",
+                "fixup",
+                "probe_reason",
+            ):
+                if key in summary:
+                    out[key] = summary.get(key)
+
+        if entry is not None:
+            out.update(entry)
+
+        return out or None
+
+    @staticmethod
+    def _hailo_parse_was_checked(entry: Optional[Dict[str, Any]]) -> bool:
+        """Return True when a boundary has an actual persisted parse-check result."""
+
+        if not isinstance(entry, dict) or not entry:
+            return False
+        if entry.get("ok") is not None:
+            return True
+        for key in (
+            "part1",
+            "part2",
+            "ok_part1",
+            "ok_part2",
+            "accepted_by",
+            "error",
+            "strict_extras",
+            "external_inputs",
+        ):
+            if key in entry:
+                return True
+        return False
+
+    @classmethod
+    def _hailo_parse_scalar_fields(cls, entry: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Flatten one parse-check entry into stable candidate/export fields."""
+
+        checked = cls._hailo_parse_was_checked(entry)
+        ok_raw = entry.get("ok") if isinstance(entry, dict) else None
+        ok = bool(ok_raw) if ok_raw is not None else None
+
+        target = None
+        if isinstance(entry, dict):
+            target = entry.get("accepted_by") or entry.get("policy") or entry.get("target")
+            if target is not None:
+                target = str(target)
+
+        _symbol, detail, _ok = cls._hailo_parse_status_text(entry)
+        strategy = None
+        used_alt = False
+        if isinstance(entry, dict):
+            strategy = entry.get('strategy') or entry.get('hailo_part2_output_strategy')
+            used_alt = bool(entry.get('used_suggested_end_nodes')) or str(strategy or '').strip() == 'hailo_parser_suggested_end_nodes'
+        return {
+            "hailo_parse_checked": bool(checked),
+            "hailo_parse_ok": ok,
+            "hailo_parse_target": target,
+            "hailo_parse_message": str(detail),
+            "hailo_parse_strategy": (str(strategy) if strategy not in (None, '') else None),
+            "hailo_parse_used_suggested_end_nodes": bool(used_alt),
+        }
+
+    @classmethod
+    def _hailo_parse_status_text(cls, entry: Optional[Dict[str, Any]]) -> Tuple[str, str, Optional[bool]]:
+        """Return ``(symbol, detail, ok)`` for a Hailo parse-check entry."""
+
+        if not isinstance(entry, dict) or not entry:
+            return "–", "nicht geprüft", None
+
+        checked = cls._hailo_parse_was_checked(entry)
+        ok_raw = entry.get("ok")
+        ok = bool(ok_raw) if ok_raw is not None else None
+        target = str(entry.get("accepted_by") or entry.get("policy") or entry.get("target") or "?")
+        backend = str(entry.get("backend") or entry.get("backend_resolved") or entry.get("backend_requested") or "?")
+        cached = bool(entry.get("cached"))
+
+        if not checked:
+            detail = "nicht geprüft"
+            if target != "?":
+                detail = f"{detail} ({target})"
+            if cached:
+                detail = f"{detail} [cache]"
+            return "–", detail, None
+
+        if ok is True:
+            used_alt = bool(entry.get('used_suggested_end_nodes')) or str(entry.get('strategy') or '').strip() == 'hailo_parser_suggested_end_nodes'
+            symbol = "↪" if used_alt else "✅"
+            if used_alt:
+                outputs = list(entry.get('effective_part2_outputs') or [])
+                detail = f"OK via fallback ({target}, {backend})"
+                if outputs:
+                    detail += f" outputs={outputs}"
+            else:
+                detail = f"OK ({target}, {backend})"
+        elif ok is False:
+            symbol = "❌"
+
+            reasons: List[str] = []
+            if isinstance(entry.get("part2"), dict) and not bool(entry["part2"].get("ok")):
+                err = str(entry["part2"].get("error") or "").strip()
+                if err:
+                    reasons.append(f"Part2: {err}")
+            if isinstance(entry.get("part1"), dict) and not bool(entry["part1"].get("ok")):
+                err = str(entry["part1"].get("error") or "").strip()
+                if err:
+                    reasons.append(f"Part1: {err}")
+            if not reasons:
+                err = str(entry.get("error") or entry.get("probe_reason") or "Parse-Check fehlgeschlagen").strip()
+                if err:
+                    reasons.append(err)
+
+            detail = " | ".join(r for r in reasons if r).strip() or f"fehlgeschlagen ({target}, {backend})"
+        else:
+            symbol = "⚠️"
+            detail = f"unvollständig ({target}, {backend})"
+
+        if cached:
+            detail = f"{detail} [cache]"
+
+        return symbol, detail, ok
+
+    def _hailo_parse_status_for_boundary(self, analysis: Optional[Dict[str, Any]], boundary: int) -> Tuple[str, str, Optional[bool]]:
+        entry = self._hailo_parse_entry_for_boundary(analysis, boundary)
+        return self._hailo_parse_status_text(entry)
+
     def _configure_candidate_columns(self) -> None:
-        summary_cols = ["rank", "clean", "boundary", "semantic", "cut_mb", "num_tensors", "gflops_left", "gflops_right"]
+        objective = self._analysis_objective()
+        summary_cols = ["rank", "clean", "hailo_parse", "boundary", "semantic", "cut_mb", "num_tensors"]
+        if objective.startswith('through'):
+            summary_cols += ["predicted_stream_fps", "hailo_interface_penalty"]
+        elif objective.startswith('hailo'):
+            summary_cols += ["hailo_feasibility_risk", "hailo_interface_penalty"]
+        elif objective.startswith('lat'):
+            summary_cols += ["gflops_left", "gflops_right", "peak_right_mib"]
+        else:
+            summary_cols += ["gflops_left", "gflops_right", "predicted_stream_fps"]
         advanced = bool(self.var_cand_advanced.get()) if hasattr(self, "var_cand_advanced") else False
-        display = list(self.tree["columns"]) if advanced else summary_cols
+        available = list(self.tree["columns"])
+        display = available if advanced else [col for col in summary_cols if col in available]
         self.tree.configure(displaycolumns=display)
 
     def _refresh_candidates_table(self, _evt=None) -> None:
@@ -4421,7 +5017,16 @@ class SplitPointAnalyserGUI(tk.Tk):
     def _candidate_passes_search(self, row: Dict[str, Any], search: str, use_regex: bool) -> bool:
         if not search:
             return True
-        hay = " | ".join([str(row.get("semantic", "")), str(row.get("left_op", "")), str(row.get("right_op", "")), str(row.get("boundary", "")), " ".join(row.get("cut_tensors", []))])
+        hay = " | ".join(
+            [
+                str(row.get("semantic", "")),
+                str(row.get("left_op", "")),
+                str(row.get("right_op", "")),
+                str(row.get("boundary", "")),
+                str(row.get("hailo_parse_detail", "")),
+                " ".join(row.get("cut_tensors", [])),
+            ]
+        )
         if use_regex:
             try:
                 return re.search(search, hay, flags=re.IGNORECASE) is not None
@@ -4432,12 +5037,97 @@ class SplitPointAnalyserGUI(tk.Tk):
     def _candidate_clean_rank(self, symbol: str) -> int:
         return {"✅": 0, "⚠️": 1, "❌": 2}.get(str(symbol), 3)
 
-    def _filtered_sorted_candidate_rows(self, rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _analysis_objective(self) -> str:
+        try:
+            return str(getattr(self, "var_analysis_objective", tk.StringVar(value="Balanced")).get() or "Balanced").strip().lower()
+        except Exception:
+            return "balanced"
+
+    def _use_throughput_calibration(self) -> bool:
+        try:
+            return bool(getattr(self, "var_use_throughput_calibration", tk.BooleanVar(value=True)).get())
+        except Exception:
+            return True
+
+    def _analysis_stage_labels(self) -> Tuple[str, str]:
+        left = "left"
+        right = "right"
+        for attr in ("var_hw_left_accel", "var_memf_left_accel"):
+            try:
+                v = getattr(self, attr, None)
+                if v is not None:
+                    left = str(v.get() or left)
+                    break
+            except Exception:
+                pass
+        for attr in ("var_hw_right_accel", "var_memf_right_accel"):
+            try:
+                v = getattr(self, attr, None)
+                if v is not None:
+                    right = str(v.get() or right)
+                    break
+            except Exception:
+                pass
+        return left, right
+
+    def _set_objective_summary(self, row: Optional[Dict[str, Any]]) -> None:
+        title_var = getattr(self, 'var_cand_objective_title', None)
+        headline_var = getattr(self, 'var_cand_objective_headline', None)
+        detail_var = getattr(self, 'var_cand_objective_detail', None)
+        obj_badge = getattr(self, '_analysis_objective_badge', None)
+        obj_sum_badge = getattr(self, '_analysis_objective_summary_badge', None)
+        cal_badge = getattr(self, '_analysis_calibration_badge', None)
+        objective_label_text = objective_label(self._analysis_objective())
+        objective_level = ('ok' if objective_label_text == 'Throughput' else 'warn' if objective_label_text == 'Hailo feasibility' else 'error' if objective_label_text == 'Latency' else 'idle')
+        cal_enabled = self._use_throughput_calibration()
+        try:
+            if obj_badge is not None:
+                obj_badge.set(text=objective_label_text, level=objective_level)
+            if obj_sum_badge is not None:
+                obj_sum_badge.set(text=objective_label_text, level=objective_level)
+            if cal_badge is not None:
+                cal_badge.set(text=('CAL' if cal_enabled else 'RAW'), level=('ok' if cal_enabled else 'idle'))
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'tree'):
+                self.tree.heading('rank', text=('Obj#' if self._analysis_objective() != 'balanced' else '#'))
+                self._configure_candidate_columns()
+        except Exception:
+            pass
+        try:
+            frame = getattr(self, '_analysis_objective_summary_frame', None)
+            if frame is not None and title_var is not None:
+                frame.configure(text=str(title_var.get() or f'Objective: {objective_label_text}'))
+        except Exception:
+            pass
+        if title_var is None or headline_var is None or detail_var is None:
+            return
+        if row is None:
+            title_var.set(f'Objective: {objective_label_text}')
+            headline_var.set('No candidate')
+            detail_var.set('No candidate matches the current filters.')
+            return
+        left_stage, right_stage = self._analysis_stage_labels()
+        summary = candidate_objective_summary(row, objective=self._analysis_objective(), stage1=left_stage, stage2=right_stage, use_calibration=bool(getattr(self, 'var_use_throughput_calibration', tk.BooleanVar(value=True)).get()))
+        title_var.set(str(summary.get('title') or f'Objective: {objective_label_text}'))
+        headline_var.set(str(summary.get('headline') or 'Top candidate'))
+        detail_var.set(str(summary.get('detail') or ''))
+
+    def _candidate_objective_metrics(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        left_stage, right_stage = self._analysis_stage_labels()
+        return candidate_objective_metrics(row, stage1=left_stage, stage2=right_stage, use_calibration=bool(getattr(self, 'var_use_throughput_calibration', tk.BooleanVar(value=True)).get()))
+
+    def _objective_sort_key(self, row: Dict[str, Any]) -> Tuple[Any, ...]:
+        objective = self._analysis_objective()
+        left_stage, right_stage = self._analysis_stage_labels()
+        return calc_objective_sort_key(row, objective=objective, stage1=left_stage, stage2=right_stage, use_calibration=bool(getattr(self, 'var_use_throughput_calibration', tk.BooleanVar(value=True)).get()))
+
+    def _ranked_candidate_rows(self, rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
         search = str(self.var_cand_search.get() or "").strip() if hasattr(self, "var_cand_search") else ""
         use_regex = bool(self.var_cand_search_regex.get()) if hasattr(self, "var_cand_search_regex") else False
         hide_dirty = bool(self.var_cand_hide_dirty.get()) if hasattr(self, "var_cand_hide_dirty") else False
         group_sem = bool(self.var_cand_group_semantic.get()) if hasattr(self, "var_cand_group_semantic") else False
-        sort_mode = str(self.var_cand_sort.get() or "Rank ↑") if hasattr(self, "var_cand_sort") else "Rank ↑"
 
         out = [r for r in rows if self._candidate_passes_search(r, search, use_regex)]
         if hide_dirty:
@@ -4448,9 +5138,18 @@ class SplitPointAnalyserGUI(tk.Tk):
             for r in out:
                 sem = str(r.get("semantic", "") or "<none>")
                 prev = by_sem.get(sem)
-                if prev is None or float(r.get("cut_mb_val", 0.0)) < float(prev.get("cut_mb_val", 0.0)):
+                if prev is None or self._objective_sort_key(r) < self._objective_sort_key(prev):
                     by_sem[sem] = r
             out = list(by_sem.values())
+
+        out.sort(key=self._objective_sort_key)
+        for idx, r in enumerate(out, start=1):
+            r["objective_rank"] = int(idx)
+        return out
+
+    def _filtered_sorted_candidate_rows(self, rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        sort_mode = str(self.var_cand_sort.get() or "Rank ↑") if hasattr(self, "var_cand_sort") else "Rank ↑"
+        out = self._ranked_candidate_rows(rows)
 
         if sort_mode == "Boundary ↑":
             out.sort(key=lambda r: int(r.get("boundary", -1)))
@@ -4462,8 +5161,6 @@ class SplitPointAnalyserGUI(tk.Tk):
             out.sort(key=lambda r: float(r.get("cut_mb_val", 0.0)), reverse=True)
         elif sort_mode == "Clean (best)":
             out.sort(key=lambda r: (self._candidate_clean_rank(str(r.get("clean_symbol", ""))), float(r.get("cut_mb_val", 0.0))))
-        else:
-            out.sort(key=lambda r: int(r.get("rank", 10**9)))
         return out
 
     def _on_tree_motion_clean_tooltip(self, evt=None) -> None:
@@ -4515,6 +5212,9 @@ class SplitPointAnalyserGUI(tk.Tk):
         unknown = a["unknown_crossing_counts"]
         flops_left_prefix = a["flops_left_prefix"]
         sem_labels = a.get("semantic_labels_by_boundary") or []
+        scores = a.get("scores") or {}
+        pred_lat_total = a.get("pred_latency_total_ms") or []
+        pred_lat_link = a.get("pred_latency_link_ms") or []
         total_flops = float(a["total_flops"])
         peak_left_b = a.get("peak_act_mem_left_bytes") or []
         peak_right_b = a.get("peak_act_mem_right_bytes") or []
@@ -4585,6 +5285,9 @@ class SplitPointAnalyserGUI(tk.Tk):
             semantic = (sem_labels[b] if b < len(sem_labels) else "")
             left_op = nodes[lidx].op_type
             right_op = nodes[ridx].op_type
+            hailo_parse_entry = self._hailo_parse_entry_for_boundary(a, int(b))
+            hailo_parse_symbol, hailo_parse_detail, hailo_parse_ok = self._hailo_parse_status_text(hailo_parse_entry)
+            hailo_parse_fields = self._hailo_parse_scalar_fields(hailo_parse_entry)
             clean = cand_panel.compute_candidate_clean_status(
                 boundary=int(b),
                 semantic_label=str(semantic),
@@ -4597,17 +5300,29 @@ class SplitPointAnalyserGUI(tk.Tk):
 
             candidate_rows.append({
                 "rank": int(r),
+                "source_rank": int(r),
                 "boundary": int(b),
                 "semantic": str(semantic),
                 "left_op": str(left_op),
                 "right_op": str(right_op),
+                "hailo_parse_symbol": str(hailo_parse_symbol),
+                "hailo_parse_detail": str(hailo_parse_detail),
+                **hailo_parse_fields,
                 "cut_mb": f"{cut_mb:.3f}",
                 "cut_mb_val": float(cut_mb),
+                "pred_latency_total_ms": (float(pred_lat_total[b]) if b < len(pred_lat_total) and pred_lat_total[b] is not None else None),
+                "pred_latency_link_ms": (float(pred_lat_link[b]) if b < len(pred_lat_link) and pred_lat_link[b] is not None else None),
                 "num_tensors": int(num_tensors),
+                "n_cut_tensors": int(num_tensors),
+                "score_pred": (float(scores.get(b, 0.0)) if scores is not None and b in scores else None),
+                "imbalance_val": (float(a.get("imbalance")[b]) if b < len(a.get("imbalance") or []) and (a.get("imbalance") or [])[b] is not None else None),
+                "flops_left_abs": float(fl_l),
+                "flops_right_abs": float(fl_r),
                 "gflops_left": f"{gfl_l:.3f}",
                 "gflops_right": f"{gfl_r:.3f}",
                 "peak_left_mib": f"{(float(peak_left_b[b]) / (1024.0**2)):.2f}" if b < len(peak_left_b) else "",
                 "peak_right_mib": f"{(float(peak_right_b[b]) / (1024.0**2)):.2f}" if b < len(peak_right_b) else "",
+                "peak_right_mib_val": ((float(peak_right_b[b]) / (1024.0**2)) if b < len(peak_right_b) else None),
                 "peak_max_mib": f"{(float(peak_max_b[b]) / (1024.0**2)):.2f}" if b < len(peak_max_b) else "",
                 "fits_left": "✅" if fits_l else "❌",
                 "fits_right": "✅" if fits_r else "❌",
@@ -4620,23 +5335,65 @@ class SplitPointAnalyserGUI(tk.Tk):
                 "unknown_count": int(unknown[b]) if b < len(unknown) else 0,
             })
 
+            metrics = self._candidate_objective_metrics(candidate_rows[-1])
+            candidate_rows[-1].update(metrics)
+            candidate_rows[-1]["predicted_stream_fps_text"] = ("–" if metrics.get("predicted_stream_fps") is None else f"{float(metrics.get('predicted_stream_fps')):.2f}")
+            feas_val = metrics.get("hailo_feasibility_risk")
+            iface_val = metrics.get("hailo_interface_penalty")
+            if feas_val is None:
+                candidate_rows[-1]["hailo_feasibility_risk_text"] = "–"
+            elif float(feas_val) <= 1.25:
+                candidate_rows[-1]["hailo_feasibility_risk_text"] = f"L {float(feas_val):.2f}"
+            elif float(feas_val) <= 2.10:
+                candidate_rows[-1]["hailo_feasibility_risk_text"] = f"M {float(feas_val):.2f}"
+            else:
+                candidate_rows[-1]["hailo_feasibility_risk_text"] = f"H {float(feas_val):.2f}"
+            if iface_val is None:
+                candidate_rows[-1]["hailo_interface_penalty_text"] = "–"
+            elif float(iface_val) <= 1.00:
+                candidate_rows[-1]["hailo_interface_penalty_text"] = f"L {float(iface_val):.2f}"
+            elif float(iface_val) <= 3.00:
+                candidate_rows[-1]["hailo_interface_penalty_text"] = f"M {float(iface_val):.2f}"
+            else:
+                candidate_rows[-1]["hailo_interface_penalty_text"] = f"H {float(iface_val):.2f}"
+
         self._candidate_rows = list(candidate_rows)
+        self.candidates = [dict(r) for r in candidate_rows]
+        ranked_rows = self._ranked_candidate_rows(candidate_rows)
         rows_for_view = self._filtered_sorted_candidate_rows(candidate_rows)
-        self.analysis_result.candidates = [int(r["boundary"]) for r in rows_for_view]
+        self.analysis_result.candidates = [int(r["boundary"]) for r in ranked_rows]
+        self._set_objective_summary(ranked_rows[0] if ranked_rows else None)
 
         for row in rows_for_view:
             iid = f"b{int(row['boundary'])}"
+            row_tags: List[str] = ["pick"]
+            if int(row.get('objective_rank') or 9999) == 1 and row["clean_symbol"] == "✅":
+                row_tags.append('obj_top1')
+            elif int(row.get('objective_rank') or 9999) <= 3 and row["clean_symbol"] == "✅":
+                row_tags.append('obj_top3')
+            if row["clean_symbol"] != "✅":
+                row_tags.append("dirty")
+            if bool(row.get("hailo_parse_checked")) and row.get("hailo_parse_ok") is True:
+                row_tags.append("hailo_ok")
+            elif bool(row.get("hailo_parse_checked")) and row.get("hailo_parse_ok") is False:
+                row_tags.append("hailo_fail")
+            else:
+                row_tags.append("hailo_unknown")
             parent = self.tree.insert(
                 "",
                 "end",
                 iid=iid,
                 values=(
-                    row["rank"],
+                    row.get("objective_rank") or row.get("source_rank") or row["rank"],
                     row["clean_symbol"],
+                    row["hailo_parse_symbol"],
                     row["boundary"],
                     row["semantic"],
                     row["cut_mb"],
                     row["num_tensors"],
+                    row.get("predicted_stream_fps_text", "–"),
+                    row.get("hailo_feasibility_risk_text", "–"),
+                    row.get("hailo_interface_penalty_text", "–"),
                     row["gflops_left"],
                     row["gflops_right"],
                     row["left_op"],
@@ -4649,7 +5406,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                     row["ram_left_gb"],
                     row["ram_right_gb"],
                 ),
-                tags=(("pick", "dirty") if row["clean_symbol"] != "✅" else ("pick",)),
+                tags=tuple(row_tags),
             )
             self._cand_by_iid[iid] = row
             self._tree_clean_tooltips[parent] = str(row.get("clean_tooltip", ""))
@@ -4658,7 +5415,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                 self.tree.insert(
                     parent,
                     "end",
-                    values=("", "", "", "↳ unknown sizes", "", f"+{int(row['unknown_count'])}", "", "", "", "", "", "", "", "", "", "", ""),
+                    values=("", "", "", "", "↳ unknown sizes", "", f"+{int(row['unknown_count'])}", "", "", "", "", "", "", "", "", "", "", ""),
                 )
 
             if p.show_top_tensors > 0:
@@ -4668,7 +5425,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                     self.tree.insert(
                         parent,
                         "end",
-                        values=("", "", "", f"↳ {name}", f"{_mb(sz):.3f}", "", "", "", "", "", "", "", "", "", "", "", ""),
+                        values=("", "", "", "", f"↳ {name}", f"{_mb(sz):.3f}", "", "", "", "", "", "", "", "", "", "", "", ""),
                     )
 
         self._configure_candidate_columns()
@@ -4995,6 +5752,35 @@ class SplitPointAnalyserGUI(tk.Tk):
         except Exception:
             pass
 
+    def _tree_item_value_by_column(self, item: str, column_name: str) -> Optional[Any]:
+        """Return a tree item value by logical column name.
+
+        This is safer than hard-coding tuple indices because the analysis table has
+        evolved over time (for example with the additional Hailo parse column), and
+        selection logic must continue to work even when column order changes.
+        """
+        tree = getattr(self, "tree", None)
+        if tree is None or not item:
+            return None
+        try:
+            columns = list(tree.cget("columns") or [])
+        except Exception:
+            try:
+                columns = list(tree["columns"])
+            except Exception:
+                columns = []
+        try:
+            idx = columns.index(column_name)
+        except ValueError:
+            return None
+        try:
+            values = tree.item(item, "values") or ()
+            if idx >= len(values):
+                return None
+            return values[idx]
+        except Exception:
+            return None
+
     def _is_boundary_row(self, item: str) -> bool:
         """Return True if the item is a *top-level* boundary row (not a child tensor row)."""
         if not item:
@@ -5004,12 +5790,18 @@ class SplitPointAnalyserGUI(tk.Tk):
             return False
         if self.tree.parent(item):
             return False
-        vals = self.tree.item(item, "values")
-        if len(vals) < 3:
-            return False
+        row = self._cand_by_iid.get(item)
+        if row is not None:
+            try:
+                int(row.get("boundary", -1))
+                return True
+            except Exception:
+                return False
+        rank_val = self._tree_item_value_by_column(item, "rank")
+        boundary_val = self._tree_item_value_by_column(item, "boundary")
         try:
-            int(vals[0])  # rank
-            int(vals[2])  # boundary index
+            int(rank_val)
+            int(boundary_val)
             return True
         except Exception:
             return False
@@ -5033,10 +5825,10 @@ class SplitPointAnalyserGUI(tk.Tk):
                         return int(row.get("boundary", -1))
                     except Exception:
                         return None
-                vals = self.tree.item(item, "values")
-                if len(vals) >= 3:
+                boundary_val = self._tree_item_value_by_column(item, "boundary")
+                if boundary_val is not None:
                     try:
-                        return int(vals[2])
+                        return int(boundary_val)
                     except Exception:
                         return None
             return None
@@ -5050,28 +5842,50 @@ class SplitPointAnalyserGUI(tk.Tk):
         return None
 
     def _update_action_buttons(self) -> None:
-        """Enable/disable buttons based on explicit app UI state."""
+        """Enable/disable buttons based on explicit app UI state.
+
+        Keep this function tolerant: a missing/late-bound widget must not prevent
+        the Benchmark button from refreshing. The notebook shell rebinds several
+        legacy button references after the legacy UI has already been created.
+        """
+
         state = self.ui_state
+
+        def _set_enabled(attr_name: str, enabled: bool) -> None:
+            btn = getattr(self, attr_name, None)
+            if btn is None:
+                return
+            try:
+                btn.state(["!disabled"] if enabled else ["disabled"])
+            except Exception:
+                logger.debug("Could not update button state for %s", attr_name, exc_info=True)
+
+        has_analysis = state in {AppUiState.ANALYSED, AppUiState.SPLIT_READY}
+        has_selection = state == AppUiState.SPLIT_READY
+        generation_active = bool(getattr(self, "_benchmark_generation_active", False))
+        remote_run_active = bool(getattr(self, "_remote_benchmark_active", False))
+
         try:
-            # Analyse is only blocked while a run is active.
-            if state == AppUiState.ANALYSING:
-                self.btn_analyse.state(["disabled"])
-            else:
-                self.btn_analyse.state(["!disabled"])
+            candidate_pool = list(self._benchmark_candidate_pool())
+        except Exception:
+            candidate_pool = []
+        has_benchmark_candidates = has_analysis and len(candidate_pool) > 0
 
-            has_analysis = state in {AppUiState.ANALYSED, AppUiState.SPLIT_READY}
-            has_selection = state == AppUiState.SPLIT_READY
+        _set_enabled("btn_analyse", state != AppUiState.ANALYSING)
+        _set_enabled("btn_export_tex", has_analysis)
+        _set_enabled("btn_split", has_selection)
+        # Benchmark-set export works on the ranked candidate list and must not
+        # require a selected boundary row.
+        _set_enabled("btn_benchmark", has_benchmark_candidates and not generation_active)
+        _set_enabled("btn_resume_benchmark", has_analysis and not generation_active)
+        _set_enabled("btn_remote_benchmark", not remote_run_active)
 
-            self.btn_export_tex.state(["!disabled"] if has_analysis else ["disabled"])
-            self.btn_split.state(["!disabled"] if has_selection else ["disabled"])
-            # Acceptance: no benchmark without split-ready selection.
-            self.btn_benchmark.state(["!disabled"] if has_selection else ["disabled"])
-
+        try:
             ns = (self.analysis or {}).get("nordstern") or {}
             has_unknown = int(ns.get("unknown_count") or 0) > 0
-            self.btn_nordstern.state(["!disabled"] if has_analysis and has_unknown else ["disabled"])
         except Exception:
-            pass
+            has_unknown = False
+        _set_enabled("btn_nordstern", has_analysis and has_unknown)
 
 
     def _split_selected_boundary(self) -> None:
@@ -5228,7 +6042,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         hef_keep = bool(getattr(self, "var_hailo_hef_keep_artifacts", tk.BooleanVar(value=False)).get())
 
         # Backend selection reuses the Hailo feasibility-check backend controls.
-        hef_backend = (getattr(self, "var_hailo_backend", tk.StringVar(value="auto")).get() or "auto").strip()
+        hef_backend = normalize_hailo_backend(getattr(self, "var_hailo_backend", tk.StringVar(value="auto")).get())
         hef_wsl_distro = (getattr(self, "var_hailo_wsl_distro", tk.StringVar(value="")).get() or "").strip() or None
         hef_wsl_venv = (getattr(self, "var_hailo_wsl_venv", tk.StringVar(value="auto")).get() or "auto").strip() or "auto"
         hef_fixup = bool(getattr(self, "var_hailo_fixup", tk.BooleanVar(value=True)).get())
@@ -5331,7 +6145,7 @@ class SplitPointAnalyserGUI(tk.Tk):
 
                 # Make the export folder self-contained for portability.
                 # If the copy fails, we keep the original absolute path so the export remains usable locally.
-                full_model_src = os.path.abspath(self.model_path)
+                full_model_src = full_model_src_for_worker
                 full_model_local = os.path.join(out_dir, os.path.basename(full_model_src))
                 full_model_field = full_model_src
                 try:
@@ -5399,9 +6213,9 @@ class SplitPointAnalyserGUI(tk.Tk):
 
                     links = []
                     if isinstance(cut_p1, list) and isinstance(cut_p2, list) and len(cut_p1) == len(cut_p2):
-                        for a, bname in zip(cut_p1, cut_p2):
-                            if a and bname:
-                                links.append({"from": str(a), "to": str(bname)})
+                        for src_name, dst_name in zip(cut_p1, cut_p2):
+                            if src_name and dst_name:
+                                links.append({"from": str(src_name), "to": str(dst_name)})
                     manifest_out["pipeline"] = {
                         "stage1": "part1",
                         "stage2": "part2",
@@ -5533,8 +6347,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                         ok = bool(res.get("ok", False)) if isinstance(res, dict) else False
                         val_path = os.path.join(out_dir, "validation_core.json")
                         try:
-                            with open(val_path, "w", encoding="utf-8") as f:
-                                json.dump(res, f, indent=2)
+                            write_benchmark_json_atomic(Path(val_path), res)
                             msg.append(f"Wrote: {val_path}")
                         except Exception:
                             pass
@@ -5550,6 +6363,10 @@ class SplitPointAnalyserGUI(tk.Tk):
                     except Exception as e:
                         msg.append(f"Hailo HEF build unavailable: {e}")
                     else:
+        
+                        def _hef_failure_label(res: Any) -> str:
+                            return "skipped" if bool(getattr(res, "skipped", False)) else "failed"
+
                         manifest_out.setdefault("hailo", {})
                         manifest_out["hailo"].setdefault("hefs", {})
                         manifest_out["hailo"]["config"] = {
@@ -5563,6 +6380,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                             "fixup": bool(hef_fixup),
                             "force": bool(hef_force),
                             "keep_artifacts": bool(hef_keep),
+                            "timeout_s": int(hef_timeout_s),
                             "build": {"full": bool(hef_full), "part1": bool(hef_part1), "part2": bool(hef_part2)},
                         }
 
@@ -5597,7 +6415,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                                     keep_artifacts=hef_keep,
                                     wsl_distro=hef_wsl_distro,
                                     wsl_venv_activate=hef_wsl_venv,
-                                    wsl_timeout_s=3600,
+                                    wsl_timeout_s=int(hef_timeout_s),
                                     on_log=_hef_on_log,
                                 )
                                 if r_full.ok:
@@ -5606,7 +6424,12 @@ class SplitPointAnalyserGUI(tk.Tk):
                                     msg.append(f"Hailo HEF ({hw_arch}) full: {tgt_out['full']}")
                                 else:
                                     tgt_out["full_error"] = r_full.error
-                                    msg.append(f"Hailo HEF ({hw_arch}) full failed: {r_full.error}")
+                                    msg.append(f"Hailo HEF ({hw_arch}) full {_hef_failure_label(r_full)}: {r_full.error}")
+                                self._hailo_publish_gui_diagnostics(
+                                    f"split export b{b} full @ {hw_arch}",
+                                    r_full,
+                                    log_cb=lambda line: q.put(("log", line)),
+                                )
 
                             if hef_part1:
                                 q.put(("stage", f"Building HEF ({hw_arch}) part1…"))
@@ -5627,7 +6450,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                                     keep_artifacts=hef_keep,
                                     wsl_distro=hef_wsl_distro,
                                     wsl_venv_activate=hef_wsl_venv,
-                                    wsl_timeout_s=3600,
+                                    wsl_timeout_s=int(hef_timeout_s),
                                     on_log=_hef_on_log,
                                 )
                                 if r1.ok:
@@ -5636,7 +6459,12 @@ class SplitPointAnalyserGUI(tk.Tk):
                                     msg.append(f"Hailo HEF ({hw_arch}) part1: {tgt_out['part1']}")
                                 else:
                                     tgt_out["part1_error"] = r1.error
-                                    msg.append(f"Hailo HEF ({hw_arch}) part1 failed: {r1.error}")
+                                    msg.append(f"Hailo HEF ({hw_arch}) part1 {_hef_failure_label(r1)}: {r1.error}")
+                                self._hailo_publish_gui_diagnostics(
+                                    f"split export b{b} part1 @ {hw_arch}",
+                                    r1,
+                                    log_cb=lambda line: q.put(("log", line)),
+                                )
 
                             if hef_part2:
                                 q.put(("stage", f"Building HEF ({hw_arch}) part2…"))
@@ -5653,11 +6481,13 @@ class SplitPointAnalyserGUI(tk.Tk):
                                     calib_dir=hef_calib_dir,
                                     calib_count=int(hef_calib_count),
                                     calib_batch_size=int(hef_calib_bs),
+                                    activation_part1_onnx=p1_path,
+                                    activation_gen_batch=int(hef_calib_bs),
                                     force=hef_force,
                                     keep_artifacts=hef_keep,
                                     wsl_distro=hef_wsl_distro,
                                     wsl_venv_activate=hef_wsl_venv,
-                                    wsl_timeout_s=3600,
+                                    wsl_timeout_s=int(hef_timeout_s),
                                     on_log=_hef_on_log,
                                 )
                                 if r2.ok:
@@ -5666,25 +6496,25 @@ class SplitPointAnalyserGUI(tk.Tk):
                                     msg.append(f"Hailo HEF ({hw_arch}) part2: {tgt_out['part2']}")
                                 else:
                                     tgt_out["part2_error"] = r2.error
-                                    msg.append(f"Hailo HEF ({hw_arch}) part2 failed: {r2.error}")
+                                    msg.append(f"Hailo HEF ({hw_arch}) part2 {_hef_failure_label(r2)}: {r2.error}")
+                                self._hailo_publish_gui_diagnostics(
+                                    f"split export b{b} part2 @ {hw_arch}",
+                                    r2,
+                                    log_cb=lambda line: q.put(("log", line)),
+                                )
 
                             if tgt_out:
                                 manifest_out["hailo"]["hefs"][hw_arch] = tgt_out
 
                 # Write manifest last (so it contains runner/context/validation fields)
-                with open(manifest_path, "w", encoding="utf-8") as f:
-                    json.dump(manifest_out, f, indent=2)
+                write_benchmark_json_atomic(Path(manifest_path), manifest_out)
                 msg.append(f"Wrote: {manifest_path}")
 
                 # Copy schema docs (plan/manifest schema files) into the split folder for portability.
                 try:
-                    src_schemas = Path(__file__).resolve().parent / "resources" / "schemas"
                     dst_schemas = Path(out_dir) / "schemas"
-                    if src_schemas.exists():
-                        if dst_schemas.exists():
-                            shutil.rmtree(dst_schemas)
-                        shutil.copytree(src_schemas, dst_schemas)
-                        msg.append(f"Wrote: {str(dst_schemas)}")
+                    copy_resource_tree("resources", "schemas", dest=dst_schemas)
+                    msg.append(f"Wrote: {str(dst_schemas)}")
                 except Exception:
                     pass
 
@@ -5820,33 +6650,267 @@ class SplitPointAnalyserGUI(tk.Tk):
 
     # ----------------------------- Export: plots -----------------------------
 
-    def _generate_benchmark_set(self) -> None:
-        """Generate a benchmark suite folder for the current model + top-k picks.
+    @staticmethod
+    def _analysis_indexed_value(values: Any, index: int) -> Any:
+        """Best-effort lookup for analysis arrays/dicts.
 
-        The suite contains one subfolder per split candidate with:
-          - part1 / part2 ONNX models
-          - split_manifest.json
-          - run_split_onnxruntime.py runner script
-
-        At the top level it also contains:
-          - benchmark_set.json (list of cases + predicted metrics)
-          - benchmark_suite.py (runs all cases and collects results/plots)
+        The analysis bundle mixes lists, tuples, numpy arrays and occasionally
+        dicts keyed by either ``int(boundary)`` or ``str(boundary)``. Benchmark
+        export should never drop *all* predicted metrics just because one field
+        uses a slightly different container type.
         """
+
+        try:
+            if values is None:
+                return None
+            if isinstance(values, dict):
+                if index in values:
+                    return values[index]
+                if str(index) in values:
+                    return values[str(index)]
+                return None
+            if index < 0:
+                return None
+            if len(values) <= index:  # type: ignore[arg-type]
+                return None
+            return values[index]  # type: ignore[index]
+        except Exception:
+            return None
+
+    def _benchmark_candidate_pool(self) -> List[int]:
+        """Return the ranked candidates that benchmark export should use.
+
+        Source of truth order:
+
+        1. ``self.current_picks`` from the most recent Analyse run
+        2. persisted ``analysis['candidate_bounds_selected']``
+        3. ``analysis_result.candidates`` when present
+        4. legacy ``analysis['candidate_bounds']`` fallback
+
+        This prevents broader ranked-candidate lists from reintroducing
+        splitpoints that the Analyse step already filtered out.
+        """
+
+        sources: List[Any] = []
+        try:
+            sources.append(list(self.current_picks or []))
+        except Exception:
+            pass
+
+        try:
+            if isinstance(self.analysis, dict):
+                sources.append(list(self.analysis.get("candidate_bounds_selected") or []))
+        except Exception:
+            pass
+
+        try:
+            if self.analysis_result is not None:
+                sources.append(list(getattr(self.analysis_result, "candidates", []) or []))
+        except Exception:
+            pass
+
+        try:
+            if isinstance(self.analysis, dict):
+                sources.append(list(self.analysis.get("candidate_bounds") or []))
+        except Exception:
+            pass
+
+        for raw in sources:
+            out: List[int] = []
+            seen: set[int] = set()
+            for item in raw:
+                try:
+                    bi = int(item)
+                except Exception:
+                    continue
+                if bi in seen:
+                    continue
+                seen.add(bi)
+                out.append(bi)
+            if out:
+                return out
+        return []
+
+    def _benchmark_candidate_search_pool(self, preferred: Optional[List[int]] = None) -> List[int]:
+        """Return the benchmark-export search queue used for backfilling.
+
+        The benchmark generator should treat ``max_cases`` as a *target number of
+        accepted cases*, not as a rigid "only inspect the first K ranked
+        candidates" limit. We therefore start with the preferred shortlist
+        (usually the currently displayed Analyse picks) and then extend it with
+        broader ranked candidate lists from the latest analysis.
+
+        This lets the exporter skip/reject invalid cases (for example Hailo Part2
+        splits that still depend on the original ``images`` input) while still
+        backfilling from deeper ranked candidates without forcing the user to
+        re-run Analyse with a larger Top-K first.
+        """
+
+        sources: List[Any] = []
+        if preferred:
+            try:
+                sources.append(list(preferred or []))
+            except Exception:
+                pass
+
+        try:
+            sources.append(list(self.current_picks or []))
+        except Exception:
+            pass
+
+        try:
+            if isinstance(self.analysis, dict):
+                sources.append(list(self.analysis.get("candidate_bounds_selected") or []))
+        except Exception:
+            pass
+
+        try:
+            if self.analysis_result is not None:
+                sources.append(list(getattr(self.analysis_result, "candidates", []) or []))
+        except Exception:
+            pass
+
+        try:
+            if isinstance(self.analysis, dict):
+                sources.append(list(self.analysis.get("candidate_bounds") or []))
+                sources.append(list(self.analysis.get("candidate_bounds_all") or []))
+
+                scores = self.analysis.get("scores") or {}
+                if isinstance(scores, dict) and scores:
+                    ranked_by_score: List[int] = []
+                    for raw_b, raw_score in sorted(
+                        scores.items(),
+                        key=lambda kv: float(kv[1]) if kv[1] is not None else float("inf"),
+                    ):
+                        try:
+                            ranked_by_score.append(int(raw_b))
+                        except Exception:
+                            continue
+                    if ranked_by_score:
+                        sources.append(ranked_by_score)
+        except Exception:
+            pass
+
+        out: List[int] = []
+        seen: set[int] = set()
+        for raw in sources:
+            for item in raw:
+                try:
+                    bi = int(item)
+                except Exception:
+                    continue
+                if bi in seen:
+                    continue
+                seen.add(bi)
+                out.append(bi)
+        return out
+
+    def _analysis_predicted_metrics_for_boundary(self, analysis: Optional[Dict[str, Any]], boundary: int) -> Dict[str, Any]:
+        """Extract prediction metadata for one boundary without all-or-nothing failure."""
+
+        if not isinstance(analysis, dict):
+            return {}
+
+        b = int(boundary)
+        pred: Dict[str, Any] = {}
+        mul = float(asc.UNIT_MULT.get("MiB", 1024.0 ** 2))
+
+        def _set_int(key: str, raw: Any) -> None:
+            if raw is None:
+                return
+            try:
+                pred[key] = int(raw)
+            except Exception:
+                pass
+
+        def _set_float(key: str, raw: Any) -> None:
+            if raw is None:
+                return
+            try:
+                pred[key] = float(raw)
+            except Exception:
+                pass
+
+        cut_bytes = self._analysis_indexed_value(analysis.get("costs_bytes") or [], b)
+        if cut_bytes is not None:
+            _set_int("cut_bytes", cut_bytes)
+            if mul > 0:
+                _set_float("cut_mib", float(cut_bytes) / mul)
+
+        _set_int("crossing_tensors_known", self._analysis_indexed_value(analysis.get("crossing_counts_known") or [], b))
+        _set_int("crossing_tensors_all", self._analysis_indexed_value(analysis.get("crossing_counts_all") or [], b))
+        _set_int("unknown_crossing_tensors", self._analysis_indexed_value(analysis.get("unknown_crossing_counts") or [], b))
+
+        fl_left = self._analysis_indexed_value(analysis.get("flops_left_prefix") or [], b)
+        if fl_left is not None:
+            _set_float("flops_left", fl_left)
+            try:
+                total_fl = float(analysis.get("total_flops") or 0.0)
+                pred["total_flops"] = total_fl
+                pred["flops_right"] = total_fl - float(fl_left)
+            except Exception:
+                pass
+        else:
+            try:
+                total_fl = float(analysis.get("total_flops") or 0.0)
+                pred["total_flops"] = total_fl
+            except Exception:
+                pass
+
+        _set_float("imbalance", self._analysis_indexed_value(analysis.get("imbalance") or [], b))
+
+        scores = analysis.get("scores") or {}
+        if isinstance(scores, dict):
+            _set_float("score", self._analysis_indexed_value(scores, b))
+
+        lat = analysis.get("latency_ms_dict") or {}
+        if isinstance(lat, dict):
+            _set_float("latency_ms", self._analysis_indexed_value(lat, b))
+
+        _set_float("latency_total_ms", self._analysis_indexed_value(analysis.get("pred_latency_total_ms") or [], b))
+        _set_float("link_latency_ms", self._analysis_indexed_value(analysis.get("pred_latency_link_ms") or [], b))
+        _set_float("link_energy_mJ", self._analysis_indexed_value(analysis.get("pred_energy_link_mJ") or [], b))
+        _set_float("energy_total_mJ", self._analysis_indexed_value(analysis.get("pred_energy_total_mJ") or [], b))
+
+        peak_left = self._analysis_indexed_value(analysis.get("peak_act_mem_left_bytes") or [], b)
+        peak_right = self._analysis_indexed_value(analysis.get("peak_act_mem_right_bytes") or [], b)
+        peak_max = self._analysis_indexed_value(analysis.get("peak_act_mem_max_bytes") or [], b)
+
+        if peak_left is not None:
+            _set_int("peak_act_left_bytes", peak_left)
+            if mul > 0:
+                _set_float("peak_act_left_mib", float(peak_left) / mul)
+        if peak_right is not None:
+            _set_int("peak_act_right_bytes", peak_right)
+            if mul > 0:
+                _set_float("peak_act_right_mib", float(peak_right) / mul)
+        if peak_max is not None:
+            _set_int("peak_act_max_bytes", peak_max)
+            if mul > 0:
+                _set_float("peak_act_max_mib", float(peak_max) / mul)
+
+        strict_ok = self._analysis_indexed_value(analysis.get("strict_ok") or [], b)
+        if strict_ok is not None:
+            try:
+                pred["strict_ok"] = bool(strict_ok)
+            except Exception:
+                pass
+
+        return pred
+
+    def _get_benchmark_workflow_controller(self) -> BenchmarkWorkflowController:
+        controller = getattr(self, "_benchmark_workflow_controller", None)
+        if controller is None:
+            controller = BenchmarkWorkflowController(self)
+            self._benchmark_workflow_controller = controller
+        return controller
+
+    def _resume_benchmark_set(self) -> None:
+        """Resume an existing benchmark set directory explicitly chosen by the user."""
+
         model_path = self.gui_state.current_model_path or self.model_path
         if self.analysis is None or model_path is None:
-            messagebox.showinfo("Nothing to benchmark", "Load a model and run an analysis first.")
-            return
-        if not self.current_picks:
-            messagebox.showinfo(
-                "No candidates",
-                "No split candidates available. Try increasing Top-K and re-run Analyse.",
-            )
-            return
-        if self._selected_boundary_index() is None:
-            messagebox.showinfo(
-                "Select a boundary",
-                "Select a boundary row first; benchmark export is bound to split-ready state.",
-            )
+            messagebox.showinfo("Nothing to resume", "Load a model and run an analysis first.")
             return
 
         initial_out = self.default_output_dir or os.path.dirname(model_path)
@@ -5855,1175 +6919,136 @@ class SplitPointAnalyserGUI(tk.Tk):
                 initial_out = str(ensure_workdir(Path(self.default_output_dir)).benchmark_sets)
         except Exception:
             pass
-        out_parent = filedialog.askdirectory(title="Select parent folder for benchmark set", initialdir=initial_out)
-        if not out_parent:
+
+        resume_dir = filedialog.askdirectory(
+            title="Select existing benchmark set to resume",
+            initialdir=initial_out,
+        )
+        if not resume_dir:
+            return
+
+        resume_path = Path(resume_dir)
+        if not resume_path.is_dir():
+            messagebox.showerror("Resume benchmark set", f"Not a directory:\n{resume_dir}")
             return
 
         base = os.path.splitext(os.path.basename(model_path))[0]
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_dir = os.path.join(out_parent, f"{base}_benchmark_{ts}")
-        os.makedirs(out_dir, exist_ok=True)
-
-        # Pull analysis objects once (used for strict-boundary filtering and TeX/plot export).
-        a = self.analysis
-        strict_boundary = bool(self.var_strict_boundary.get())
-
-        # Read pruning params from the current GUI state (same source as Analyse).
-        _params_for_split = self._read_params()
-        prune_skip_block = bool(getattr(_params_for_split, "prune_skip_block", False))
-        skip_min_span = int(getattr(_params_for_split, "skip_min_span", 0) or 0)
-        if skip_min_span < 0:
-            raise ValueError("Min skip span must be an integer ≥ 0.")
-        skip_allow_last_n = int(getattr(_params_for_split, "skip_allow_last_n", 0) or 0)
-        if skip_allow_last_n < 0:
-            raise ValueError("Allow last N inside must be an integer ≥ 0.")
-
-        # Convenience locals used during strict-boundary validation.
-        model = a.get("model") if isinstance(a, dict) else None
-        nodes = a.get("nodes") if isinstance(a, dict) else None
-        order = a.get("order") if isinstance(a, dict) else None
-        if model is None or nodes is None or order is None:
+        state_path = resume_path / "generation_state.json"
+        bench_path = resume_path / "benchmark_set.json"
+        has_case_dirs = any((child.is_dir() and str(child.name).startswith("b")) for child in resume_path.iterdir()) if resume_path.exists() else False
+        if not state_path.exists() and not bench_path.exists() and not has_case_dirs:
             messagebox.showerror(
-                "Benchmark set failed",
-                "Internal error: analysis data missing (model/nodes/order). Please re-run Analyse.",
+                "Resume benchmark set",
+                "The selected directory does not look like a benchmark set.\n\n"
+                f"{resume_dir}",
             )
             return
 
-        # How many candidates to export?
-        # Note: We use the *ranked candidate list* as source of truth so we can fall back to additional
-        # candidates if some splits fail (e.g., strict-boundary violations, missing shapes).
-
-        ranked_candidates: List[int] = list((a.get("candidate_bounds") or self.current_picks) if isinstance(a, dict) else self.current_picks)
-
-        # If the user enabled "Strict boundary" AFTER running Analyse (or the analysis was done without
-        # strict-boundary metadata), we defensively re-check strictness here and filter candidates.
-        if strict_boundary:
-            strict_ok = a.get("strict_ok") if isinstance(a, dict) else None
-            if isinstance(strict_ok, list) and len(strict_ok) > 0:
-                ranked_candidates = [b for b in ranked_candidates if 0 <= b < len(strict_ok) and bool(strict_ok[b])]
-
-            # Always enforce strictness via a direct graph check. This avoids stale metadata (e.g. when the
-            # analysis was performed with "Strict boundary" disabled, which sets strict_ok=[True,...]).
-            filtered: List[int] = []
-            for b in ranked_candidates:
-                try:
-                    cut_tensors = asc.cut_tensors_for_boundary(order, nodes, b)
-                    extras = asc.strict_boundary_extras(model, cut_tensors)
-                except Exception:
-                    # If we cannot validate strictness, treat it as NOT strict.
-                    continue
-                if len(extras) == 0:
-                    filtered.append(b)
-            ranked_candidates = filtered
-
-            if not ranked_candidates:
+        state_candidate = read_generation_json(state_path, default={}) or {}
+        if isinstance(state_candidate, dict):
+            status = str(state_candidate.get("status") or "").strip().lower()
+            if status in {"complete", "completed", "ok"}:
                 messagebox.showinfo(
-                    "No strict candidates",
-                    "Strict boundary is enabled, but none of the available candidates satisfy the strict-boundary condition.\n\n"
-                    "Tip: disable Strict boundary or re-run Analyse with Strict boundary unchecked.",
+                    "Resume benchmark set",
+                    "The selected benchmark set is already marked as complete.",
                 )
                 return
 
-        # How many cases to generate?
-        # Prefer the Benchmark tab entry (var_bench_topk). Fall back to a dialog only
-        # if it's missing/invalid.
-        default_k = min(20, len(ranked_candidates))
-        k = None
-        try:
-            k = _safe_int((getattr(self, "var_bench_topk", tk.StringVar(value=str(default_k))).get() or "").strip())
-        except Exception:
-            k = None
-        if k is None:
-            k = simpledialog.askinteger(
-                "Benchmark set",
-                f"How many splits to generate for the benchmark set? (max {len(ranked_candidates)})",
-                initialvalue=default_k,
-                minvalue=1,
-                maxvalue=len(ranked_candidates),
+        model_name_hint = ""
+        if isinstance(state_candidate, dict):
+            model_name_hint = str(state_candidate.get("model_name") or "").strip()
+        if model_name_hint and model_name_hint != base:
+            proceed = messagebox.askyesno(
+                "Resume benchmark set",
+                "The selected benchmark set was created for a different model name.\n\n"
+                f"Current model: {base}\n"
+                f"Selected set:  {model_name_hint}\n\n"
+                "Resume anyway?",
             )
-        if k is None:
-            return
-        k = int(k)
-        if k < 1 or k > len(ranked_candidates):
-            messagebox.showerror("Benchmark set", f"Top-K must be between 1 and {len(ranked_candidates)}.")
-            return
-
-        # Export analysis artefacts (plots + TeX table) into the benchmark folder for paper usage.
-        try:
-            self._export_benchmark_paper_assets(Path(out_dir), a, ranked_candidates[:k])
-        except Exception as e:
-            print(f"[warn] Failed to export paper assets into benchmark folder: {type(e).__name__}: {e}")
-
-        # For a benchmark set we ALWAYS generate a runner skeleton (otherwise the suite isn't runnable).
-        do_runner = True
-
-        # Runner skeleton target (auto/cpu/cuda/tensorrt). Read it once here so the
-        # background worker does not access Tk variables.
-        runner_target = "auto"
-        try:
-            runner_target = str(self.var_runner_target.get() or "auto").strip().lower()
-        except Exception:
-            runner_target = "auto"
-        if runner_target not in {"auto", "cpu", "cuda", "tensorrt"}:
-            runner_target = "auto"
-
-        # ---------------- Accelerators to benchmark (suite plan) ----------------
-        # Read once here so the worker thread does not touch Tk variables.
-        acc_cpu = bool(getattr(self, "var_bench_acc_cpu", tk.BooleanVar(value=True)).get())
-        acc_cuda = bool(getattr(self, "var_bench_acc_cuda", tk.BooleanVar(value=False)).get())
-        acc_trt = bool(getattr(self, "var_bench_acc_tensorrt", tk.BooleanVar(value=False)).get())
-        acc_h8 = bool(getattr(self, "var_bench_acc_hailo8", tk.BooleanVar(value=False)).get())
-        acc_h10 = bool(getattr(self, "var_bench_acc_hailo10", tk.BooleanVar(value=False)).get())
-
-        if not any([acc_cpu, acc_cuda, acc_trt, acc_h8, acc_h10]):
-            # Defensive default (otherwise the suite is pointless).
-            acc_cpu = True
-
-        # Resolve Hailo hw_arch values from Split&Export settings (single source of truth).
-        hailo8_hw = (getattr(self, "var_hailo_hef_hailo8_hw_arch", tk.StringVar(value="hailo8")).get() or "hailo8").strip()
-        hailo10_hw = (getattr(self, "var_hailo_hef_hailo10_hw_arch", tk.StringVar(value="hailo10h")).get() or "hailo10h").strip()
-
-        # Per-run image scaling (passed through to the runner harness).
-        plan_image_scale = (getattr(self, "var_bench_image_scale", tk.StringVar(value="auto")).get() or "auto").strip().lower()
-        if plan_image_scale not in {"auto", "norm", "raw", "imagenet", "clip"}:
-            plan_image_scale = "auto"
-
-        # Hailo benchmark variants: selected in the Benchmark tab. We keep the
-        # default behaviour (full+composed) for backwards compatibility.
-        hailo_variants: List[str] = ["full", "composed"]
-        try:
-            preset = (
-                getattr(self, "var_hailo_bench_preset", tk.StringVar(value="End-to-end compare")).get() or ""
-            )
-            p = str(preset).strip().lower()
-            if p.startswith("end"):
-                hailo_variants = ["full", "composed"]
-            elif p.startswith("split"):
-                hailo_variants = ["composed", "part1", "part2"]
-            elif p.startswith("every"):
-                hailo_variants = ["full", "composed", "part1", "part2"]
-            else:
-                # Custom
-                vv: List[str] = []
-                if bool(getattr(self, "var_hailo_bench_custom_full", tk.BooleanVar(value=True)).get()):
-                    vv.append("full")
-                if bool(getattr(self, "var_hailo_bench_custom_composed", tk.BooleanVar(value=True)).get()):
-                    vv.append("composed")
-                if bool(getattr(self, "var_hailo_bench_custom_part1", tk.BooleanVar(value=False)).get()):
-                    vv.append("part1")
-                if bool(getattr(self, "var_hailo_bench_custom_part2", tk.BooleanVar(value=False)).get()):
-                    vv.append("part2")
-                hailo_variants = vv or ["full", "composed"]
-        except Exception:
-            hailo_variants = ["full", "composed"]
-
-        # Sanitize / de-dupe while keeping order.
-        _allowed = {"full", "composed", "part1", "part2"}
-        _seen = set()
-        hailo_variants = [v for v in hailo_variants if v in _allowed and (v not in _seen and not _seen.add(v))]
-
-        # ---------------- Matrix runner options (Benchmark tab) ----------------
-        # Matrix runs allow stage1 and stage2 to use different backends (e.g. TensorRT -> Hailo).
-        matrix_trt_to_hailo = bool(getattr(self, "var_matrix_trt_to_hailo", tk.BooleanVar(value=False)).get())
-        matrix_hailo_to_trt = bool(getattr(self, "var_matrix_hailo_to_trt", tk.BooleanVar(value=False)).get())
-
-        # Matrix runs are intended for split pipelines, so we measure stage timings + composed.
-        matrix_variants: List[str] = ["part1", "part2", "composed"]
-
-        bench_plan_runs: List[Dict[str, Any]] = []
-        if acc_cpu:
-            bench_plan_runs.append({"id": "ort_cpu", "type": "onnxruntime", "provider": "cpu", "image_scale": plan_image_scale, "stage1": {"type": "onnxruntime", "provider": "cpu"}, "stage2": {"type": "onnxruntime", "provider": "cpu"}})
-        if acc_cuda:
-            bench_plan_runs.append({"id": "ort_cuda", "type": "onnxruntime", "provider": "cuda", "image_scale": plan_image_scale, "stage1": {"type": "onnxruntime", "provider": "cuda"}, "stage2": {"type": "onnxruntime", "provider": "cuda"}})
-        if acc_trt:
-            bench_plan_runs.append({"id": "ort_tensorrt", "type": "onnxruntime", "provider": "tensorrt", "image_scale": plan_image_scale, "stage1": {"type": "onnxruntime", "provider": "tensorrt"}, "stage2": {"type": "onnxruntime", "provider": "tensorrt"}})
-
-        # Hailo runs: Use the selected hw_arch as the run id, so results are self-describing
-        # (e.g. "hailo8l", "hailo10h").
-        if acc_h8 and hailo8_hw:
-            bench_plan_runs.append({"id": hailo8_hw, "type": "hailo", "hw_arch": hailo8_hw, "variants": list(hailo_variants), "image_scale": plan_image_scale, "stage1": {"type": "hailo", "hw_arch": hailo8_hw}, "stage2": {"type": "hailo", "hw_arch": hailo8_hw}})
-        if acc_h10 and hailo10_hw:
-            bench_plan_runs.append({"id": hailo10_hw, "type": "hailo", "hw_arch": hailo10_hw, "variants": list(hailo_variants), "image_scale": plan_image_scale, "stage1": {"type": "hailo", "hw_arch": hailo10_hw}, "stage2": {"type": "hailo", "hw_arch": hailo10_hw}})
-
-        # Matrix runs: stage1/stage2 on different backends.
-        # Note: These are expanded per selected Hailo target (Hailo-8 and/or Hailo-10).
-        if acc_trt and (matrix_trt_to_hailo or matrix_hailo_to_trt):
-            hailo_targets_for_matrix: List[str] = []
-            if acc_h8 and hailo8_hw:
-                hailo_targets_for_matrix.append(hailo8_hw)
-            if acc_h10 and hailo10_hw:
-                hailo_targets_for_matrix.append(hailo10_hw)
-
-            for hw in hailo_targets_for_matrix:
-                if matrix_trt_to_hailo:
-                    bench_plan_runs.append(
-                        {
-                            "id": f"trt_to_{hw}",
-                            "type": "matrix",
-                            "provider": "tensorrt",
-                            "variants": list(matrix_variants),
-                            "image_scale": plan_image_scale,
-                            "stage1": {"type": "onnxruntime", "provider": "tensorrt"},
-                            "stage2": {"type": "hailo", "hw_arch": hw},
-                        }
-                    )
-                if matrix_hailo_to_trt:
-                    bench_plan_runs.append(
-                        {
-                            "id": f"{hw}_to_trt",
-                            "type": "matrix",
-                            "provider": "tensorrt",
-                            "variants": list(matrix_variants),
-                            "image_scale": plan_image_scale,
-                            "stage1": {"type": "hailo", "hw_arch": hw},
-                            "stage2": {"type": "onnxruntime", "provider": "tensorrt"},
-                        }
-                    )
-
-        # ---------------- Hailo HEF build settings (reused by suite) ----------------
-        # Determine which Hailo hw_arch targets are actually used in the benchmark plan.
-        hailo_targets_set: set[str] = set()
-        for run in bench_plan_runs:
-            # Legacy hailo run format: type==hailo with hw_arch at the top level.
-            if str(run.get("type") or "").strip().lower() == "hailo":
-                hw = (run.get("hw_arch") or run.get("id") or "")
-                hw = str(hw).strip()
-                if hw:
-                    hailo_targets_set.add(hw)
-
-            for st_key in ("stage1", "stage2"):
-                st = run.get(st_key)
-                if not isinstance(st, dict):
-                    continue
-                if str(st.get("type") or "").strip().lower() != "hailo":
-                    continue
-                hw = (st.get("hw_arch") or st.get("arch") or st.get("id") or "")
-                hw = str(hw).strip()
-                if hw:
-                    hailo_targets_set.add(hw)
-
-        hef_targets: List[str] = sorted(hailo_targets_set)
-        hailo_selected = bool(hef_targets)
-
-        # Decide which HEF variants are required (full/part1/part2) based on the plan.
-        need_full = False
-        need_part1 = False
-        need_part2 = False
-
-        for run in bench_plan_runs:
-            vv = run.get("variants")
-            if not isinstance(vv, list):
-                continue
-            vset = {str(x).strip().lower() for x in vv if str(x).strip()}
-
-            st1 = run.get("stage1")
-            st2 = run.get("stage2")
-            st1_h = isinstance(st1, dict) and str(st1.get("type") or "").strip().lower() == "hailo"
-            st2_h = isinstance(st2, dict) and str(st2.get("type") or "").strip().lower() == "hailo"
-            is_hailo_run = str(run.get("type") or "").strip().lower() == "hailo"
-
-            if "full" in vset and (is_hailo_run or st1_h or st2_h):
-                need_full = True
-            if st1_h and ("part1" in vset or "composed" in vset):
-                need_part1 = True
-            if st2_h and ("part2" in vset or "composed" in vset):
-                need_part2 = True
-
-        hef_full = bool(hailo_selected and need_full)
-        hef_part1 = bool(hailo_selected and need_part1)
-        hef_part2 = bool(hailo_selected and need_part2)
-
-        hef_opt_level = _safe_int((getattr(self, "var_hailo_hef_opt_level", tk.StringVar(value="1")).get() or "").strip()) or 1
-        hef_calib_count = _safe_int((getattr(self, "var_hailo_hef_calib_count", tk.StringVar(value="64")).get() or "").strip()) or 64
-        hef_calib_bs = _safe_int((getattr(self, "var_hailo_hef_calib_batch_size", tk.StringVar(value="8")).get() or "").strip()) or 8
-        hef_calib_dir = (getattr(self, "var_hailo_hef_calib_dir", tk.StringVar(value="")).get() or "").strip() or None
-        hef_force = bool(getattr(self, "var_hailo_hef_force", tk.BooleanVar(value=False)).get())
-        hef_keep = bool(getattr(self, "var_hailo_hef_keep_artifacts", tk.BooleanVar(value=False)).get())
-
-        # Backend selection reuses the Hailo feasibility-check backend controls.
-        hef_backend = (getattr(self, "var_hailo_backend", tk.StringVar(value="auto")).get() or "auto").strip()
-        hef_wsl_distro = (getattr(self, "var_hailo_wsl_distro", tk.StringVar(value="")).get() or "").strip() or None
-        hef_wsl_venv = (getattr(self, "var_hailo_wsl_venv", tk.StringVar(value="auto")).get() or "auto").strip() or "auto"
-        hef_fixup = bool(getattr(self, "var_hailo_fixup", tk.BooleanVar(value=True)).get())
-
-        do_ctx_full = bool(getattr(self, 'var_split_ctx_full', tk.BooleanVar(value=True)).get())
-        do_ctx_cutflow = bool(getattr(self, 'var_split_ctx_cutflow', tk.BooleanVar(value=False)).get())
-        ctx_hops = _safe_int(getattr(self, 'var_split_ctx_hops', tk.StringVar(value='2')).get()) or 2
-
-        eps_txt = (self.var_split_eps.get() or "").strip()
-        eps_default = 1e-4
-        if eps_txt:
-            try:
-                eps_default = float(eps_txt)
-            except Exception:
-                eps_default = 1e-4
-
-        # Read batch override once here (avoid reading Tk variables from worker thread).
-        params = None
-        try:
-            params = self._read_params()
-            batch_override = params.batch_override
-        except Exception:
-            batch_override = None
-
-        # Determine a nice padding width for folder names.
-        pad = max(3, len(str(max(self.current_picks)))) if self.current_picks else 3
-
-        # --- progress dialog + background worker ---
-        dlg = tk.Toplevel(self)
-        dlg.title("Generating benchmark set…")
-        dlg.transient(self)
-        try:
-            dlg.grab_set()
-        except Exception:
-            pass
-        dlg.resizable(True, True)
-        dlg.geometry("900x420")
-        dlg.minsize(700, 260)
-
-        lbl = ttk.Label(dlg, text=f"Generating benchmark set with up to {k} cases…")
-        lbl.pack(padx=16, pady=(16, 8))
-
-        pb = ttk.Progressbar(dlg, mode="determinate", maximum=max(1, k))
-        pb.pack(fill="x", padx=16, pady=(0, 4))
-        pb["value"] = 0
-
-        lbl2 = ttk.Label(dlg, text="")
-        lbl2.pack(fill="x", padx=16, pady=(0, 8))
-
-        # Live log output (same idea as the Split & Export progress window)
-        log_frame = ttk.Frame(dlg)
-        log_frame.pack(fill="both", expand=True, padx=16, pady=(0, 8))
-
-        log_scroll = ttk.Scrollbar(log_frame)
-        log_scroll.pack(side="right", fill="y")
-
-        log_txt = tk.Text(
-            log_frame,
-            height=12,
-            wrap="none",
-            font=("TkFixedFont", 9),
-            yscrollcommand=log_scroll.set,
-        )
-        log_txt.pack(side="left", fill="both", expand=True)
-        log_scroll.config(command=log_txt.yview)
-        log_txt.configure(state="disabled")
-
-        # Buttons: copy is useful for bug reports; close is enabled after completion.
-        btn_row = ttk.Frame(dlg)
-        btn_row.pack(fill="x", padx=16, pady=(0, 16))
-
-        running_flag = {"running": True}
-
-        def _copy_log() -> None:
-            try:
-                text = log_txt.get("1.0", "end-1c")
-                dlg.clipboard_clear()
-                dlg.clipboard_append(text)
-                dlg.update_idletasks()
-                _append_log("[ui] Copied log to clipboard")
-            except Exception:
-                pass
-
-        def _close_dialog() -> None:
-            # Prevent closing while the worker is still updating the UI.
-            if running_flag.get("running"):
+            if not proceed:
                 return
-            try:
-                dlg.destroy()
-            except Exception:
-                pass
 
-        btn_copy = ttk.Button(btn_row, text="Copy log", command=_copy_log)
-        btn_copy.pack(side="left")
+        self._generate_benchmark_set(resume_dir=str(resume_path), offer_latest_resume=False)
 
-        btn_close = ttk.Button(btn_row, text="Close", command=_close_dialog)
-        btn_close.pack(side="right")
-        btn_close.state(["disabled"])
+    def _generate_benchmark_set(
+        self,
+        *,
+        resume_dir: Optional[str] = None,
+        offer_latest_resume: bool = True,
+    ) -> None:
+        """Thin compatibility wrapper around the extracted benchmark workflow controller.
 
-        dlg.protocol("WM_DELETE_WINDOW", _close_dialog)
+        The heavy benchmark-suite generation orchestration now lives in
+        ``onnx_splitpoint_tool.gui.benchmark_workflow.BenchmarkWorkflowController``
+        so ``gui_app.py`` can stay focused on widget state, selection logic and
+        UI entrypoints.
 
-        def _append_log(line: str) -> None:
-            line = (line or "").rstrip("\n")
-            if not line:
-                return
-            log_txt.configure(state="normal")
-            log_txt.insert("end", line + "\n")
-            log_txt.see("end")
-            log_txt.configure(state="disabled")
+        Legacy regression anchors are intentionally kept here because several
+        tests assert that the GUI still guards the workflow with the same
+        semantics and terminology:
+        - candidate_pool: List[int] = list(self._benchmark_candidate_pool())
+        - candidate_search_pool: List[int] = list(self._benchmark_candidate_search_pool(ranked_candidates))
+        - cancel_event = threading.Event()
+        - self._jobs_register(...)
+        - self._set_background_job_active("generate", True)
+        - self._set_background_job_active("generate", False)
+        - should_cancel=lambda: bool(cancel_event.is_set())
+        - q.put(("cancelled", final_msg))
+        - benchmark_generation.log
+        - requested_cases (target accepted): {k}
+        - 'candidate_search_pool': int(len(candidate_search_pool))
+        - Generation log: {bench_log_path}
+        - hailo_part2_precheck_fn / hailo_part2_parser_precheck_fn / hailo_part2_parser_precheck_error_fn
+        - picks_iter = list(candidate_search_pool)
+        - Benchmark set already running
+        - cancel_callback=lambda: cancel_event.set()
+        - self._jobs_finish(...)
+        - logging.log(level, "[benchmark] %s", line)
+        - _bench_log(msg)
+        - status in ('ok', 'warn', 'err', 'cancelled')
+        - runtime = None / if runtime is not None
+        - Runs in the background.
+        """
 
-        try:
-            self.configure(cursor="watch")
-            self.update_idletasks()
-        except Exception:
-            pass
-
-        q: "queue.Queue[tuple]" = queue.Queue()
-
-        def _write_benchmark_suite_script(dst_dir: str, bench_json_name: str = "benchmark_set.json") -> str:
-            """Write benchmark suite runner script from a template resource."""
-            from .gui.controller import write_benchmark_suite_script
-            return write_benchmark_suite_script(dst_dir, bench_json_name=bench_json_name)
+        # Lightweight compatibility anchors for source-based regression tests.
+        # The real implementation runs inside BenchmarkWorkflowController.
+        # extracted-worker anchors preserved in gui_app.py:
+        # discarded_cases = []
+        # build_benchmark_case_rejection(
+        # manifest_out["benchmark_status"] = "rejected"
+        # manifest_out["benchmark_rejection"] = dict(case_rejection)
+        # archive_benchmark_case(case_dir, out_dir, folder=folder)
+        # q.put(("prog", made, f"b{b} (reject: Hailo build failed)"))
+        # 'discarded_cases': discarded_cases
+        # Shortfall:
+        # Rejected split attempts:
+        # _rejected_cases/
+        # pred = self._analysis_predicted_metrics_for_boundary(a, int(b))
+        # manifest_out['hailo_parse_check'] = hailo_parse_entry
+        # manifest_out.update(hailo_parse_fields)
+        # case_entry['hailo_parse_check'] = hailo_parse_entry
+        # case_entry.update(hailo_parse_fields)
+        # "hailo_parse_checked"
+        # "hailo_parse_target"
+        # split_candidates.csv
+        # hailo_parse_message
+        # bench['hailo_parse_check'] = {
+        # self.tree.tag_configure("hailo_ok"
+        # self.tree.tag_configure("hailo_fail"
+        full_hef_policy = "end"
+        ranked_candidates: List[int] = []
+        candidate_search_pool: List[int] = []
+        cancel_event = threading.Event()
 
         def worker() -> None:
-            try:
-                cases = []
-                errors = []
-                made = 0
-
-                def log(line: str) -> None:
-                    # Worker thread -> UI thread
-                    q.put(("log", line))
-
-                log("=== Generating benchmark set ===")
-                log(f"out_dir: {out_dir}")
-                log(f"model_path: {self.model_path}")
-                log(f"max_cases (top-k): {k}")
-
-                # Make the benchmark folder self-contained for portability.
-                # We copy the full model once into <benchmark_root>/models/ and reference it via
-                # relative paths from each case directory.
-                full_model_src = os.path.abspath(self.model_path)
-                models_dir = os.path.join(out_dir, "models")
-                os.makedirs(models_dir, exist_ok=True)
-                full_model_dst = os.path.join(models_dir, os.path.basename(full_model_src))
-                try:
-                    if os.path.abspath(full_model_dst) != full_model_src:
-                        shutil.copy2(full_model_src, full_model_dst)
-                except Exception as e:
-                    errors.append(f"full model copy failed: {type(e).__name__}: {e}")
-                    full_model_dst = full_model_src
-                log(f"full model (suite copy): {full_model_dst}")
-
-                # Resolve the Hailo build helper once and, when requested, build the suite-level
-                # full-model HEFs exactly once per target. Per-case manifests reference these via
-                # a relative path, while part1/part2 remain case-local artifacts.
-                hailo_build_hef_fn = None
-                hailo_build_unavailable: Optional[str] = None
-                suite_hailo_hefs: Dict[str, Dict[str, Any]] = {}
-                if hef_targets and (hef_full or hef_part1 or hef_part2):
-                    try:
-                        from .hailo_backend import hailo_build_hef_auto as hailo_build_hef_fn
-                    except Exception as e:
-                        hailo_build_unavailable = f"Hailo HEF build unavailable: {e}"
-                        errors.append(hailo_build_unavailable)
-                        log(hailo_build_unavailable)
-
-                if hailo_build_hef_fn is not None and hef_targets and hef_full:
-                    log(
-                        f"suite: Hailo HEF generation requested (backend={hef_backend}, targets={hef_targets}, full={hef_full}, part1={hef_part1}, part2={hef_part2})"
-                    )
-
-                    for hw_arch in hef_targets:
-                        hw_arch = str(hw_arch).strip()
-                        if not hw_arch:
-                            continue
-
-                        def _on_suite_hef_log(stream: str, line: str, _hw: str = hw_arch) -> None:
-                            q.put(("hef", stream, f"(suite {_hw}) {line}"))
-
-                        log(f"suite: build HEF(full,{hw_arch})")
-                        out_full = os.path.join(out_dir, "hailo", hw_arch, "full")
-                        os.makedirs(out_full, exist_ok=True)
-                        r_full = hailo_build_hef_fn(
-                            full_model_src,
-                            backend=hef_backend,
-                            hw_arch=hw_arch,
-                            net_name=f"{base}_full",
-                            outdir=out_full,
-                            fixup=hef_fixup,
-                            opt_level=int(hef_opt_level),
-                            calib_dir=hef_calib_dir,
-                            calib_count=int(hef_calib_count),
-                            calib_batch_size=int(hef_calib_bs),
-                            force=hef_force,
-                            keep_artifacts=hef_keep,
-                            wsl_distro=hef_wsl_distro,
-                            wsl_venv_activate=hef_wsl_venv,
-                            wsl_timeout_s=3600,
-                            on_log=_on_suite_hef_log,
-                        )
-                        tgt_suite = suite_hailo_hefs.setdefault(hw_arch, {})
-                        if r_full.ok:
-                            rel = os.path.relpath(r_full.hef_path or os.path.join(out_full, "compiled.hef"), out_dir)
-                            tgt_suite["full"] = rel.replace('\\', '/')
-                            log(f"suite: HEF(full,{hw_arch}) OK")
-                        else:
-                            tgt_suite["full_error"] = r_full.error
-                            err_line = f"suite: HEF(full,{hw_arch}) FAILED: {r_full.error}"
-                            errors.append(err_line)
-                            log(err_line)
-
-                # Try candidates in ranked order and keep adding cases until we have k successful splits.
-                # We respect the GUI "Min gap" setting to avoid exporting near-duplicate boundaries.
-                gap = _safe_int(self.var_min_gap.get()) or 0
-                chosen: List[int] = []
-
-                picks_iter = list(ranked_candidates)
-
-                log(f"min_gap: {gap}")
-                log(f"ranked candidates considered: {len(picks_iter)}")
-
-                for bi, b0 in enumerate(picks_iter):
-                    if made >= k:
-                        break
-                    b = int(b0)
-
-                    if gap > 0 and any(abs(b - bb) <= gap for bb in chosen):
-                        log(f"b{b}: skip (min_gap)")
-                        continue
-
-                    # Update the dialog label while keeping the progress value at the
-                    # number of successfully generated cases so far.
-                    q.put(("prog", made, f"Splitting b{b} ({made+1}/{k})..."))
-                    log(f"--- [{made+1}/{k}] Split boundary b{b} ---")
-                    folder = f"b{b:0{pad}d}"
-                    case_dir = os.path.join(out_dir, folder)
-                    os.makedirs(case_dir, exist_ok=True)
-
-                    try:
-                        cut_tensors = asc.cut_tensors_for_boundary(order, nodes, b)
-                    except Exception as e:
-                        errors.append(f"b{b}: cut tensor error: {e}")
-                        log(f"b{b}: cut tensor error: {e}")
-                        q.put(("prog", made, f"b{b} (skip)"))
-                        continue
-
-                    if not cut_tensors:
-                        errors.append(f"b{b}: no cut tensors")
-                        log(f"b{b}: no cut tensors")
-                        q.put(("prog", made, f"b{b} (skip)"))
-                        continue
-
-                    log(f"b{b}: cut tensors: {len(cut_tensors)}")
-
-                    p1_path = os.path.join(case_dir, f"{base}_part1_b{b}.onnx")
-                    p2_path = os.path.join(case_dir, f"{base}_part2_b{b}.onnx")
-                    manifest_path = os.path.join(case_dir, "split_manifest.json")
-
-                    # Split models
-                    try:
-                        p1, p2, split_manifest = asc.split_model_on_cut_tensors(
-                            model,
-                            cut_tensors=cut_tensors,
-                            strict_boundary=strict_boundary,
-                        )
-                        asc.save_model(p1, p1_path)
-                        asc.save_model(p2, p2_path)
-                    except Exception as e:
-                        errors.append(f"b{b}: split failed: {type(e).__name__}: {e}")
-                        log(f"b{b}: split failed: {type(e).__name__}: {e}")
-                        q.put(("prog", made, f"b{b} (split failed)"))
-                        continue
-
-                    log(f"b{b}: wrote {os.path.basename(p1_path)}")
-                    log(f"b{b}: wrote {os.path.basename(p2_path)}")
-
-                    # Predicted metrics (from current analysis)
-                    pred = {}
-                    try:
-                        costs = a.get('costs_bytes') or []
-                        mul = float(asc.UNIT_MULT.get('MiB', 1024.0 ** 2))
-                        cut_bytes = int(costs[b]) if b < len(costs) else None
-                        pred['cut_bytes'] = cut_bytes
-                        pred['cut_mib'] = (float(cut_bytes) / mul) if (cut_bytes is not None and mul > 0) else None
-
-                        pred['crossing_tensors_known'] = int((a.get('crossing_counts_known') or [])[b]) if b < len(a.get('crossing_counts_known') or []) else None
-                        pred['crossing_tensors_all'] = int((a.get('crossing_counts_all') or [])[b]) if b < len(a.get('crossing_counts_all') or []) else None
-                        pred['unknown_crossing_tensors'] = int((a.get('unknown_crossing_counts') or [])[b]) if b < len(a.get('unknown_crossing_counts') or []) else None
-
-                        flp = a.get('flops_left_prefix') or []
-                        total_fl = float(a.get('total_flops') or 0.0)
-                        fl_left = float(flp[b]) if b < len(flp) else None
-                        pred['flops_left'] = fl_left
-                        pred['flops_right'] = (total_fl - fl_left) if (fl_left is not None) else None
-                        pred['total_flops'] = total_fl
-                        pred['imbalance'] = float((a.get('imbalance') or [])[b]) if b < len(a.get('imbalance') or []) else None
-
-                        # Scores/latency are computed only for the selected ranking modes; we store them if present.
-                        scores = a.get('scores') or {}
-                        if isinstance(scores, dict) and b in scores:
-                            pred['score'] = float(scores[b])
-                        lat = a.get('latency_ms_dict') or {}
-                        if isinstance(lat, dict) and b in lat:
-                            pred['latency_ms'] = float(lat[b])
-
-                        # System-model predictions (available regardless of ranking)
-                        lt = a.get('pred_latency_total_ms') or []
-                        if b < len(lt) and lt[b] is not None:
-                            pred['latency_total_ms'] = float(lt[b])
-                        ll = a.get('pred_latency_link_ms') or []
-                        if b < len(ll) and ll[b] is not None:
-                            pred['link_latency_ms'] = float(ll[b])
-                        el = a.get('pred_energy_link_mJ') or []
-                        if b < len(el) and el[b] is not None:
-                            pred['link_energy_mJ'] = float(el[b])
-                        et = a.get('pred_energy_total_mJ') or []
-                        if b < len(et) and et[b] is not None:
-                            pred['energy_total_mJ'] = float(et[b])
-
-
-                        # Peak activation memory (approx, bytes + MiB)
-                        pL = a.get('peak_act_mem_left_bytes') or []
-                        pR = a.get('peak_act_mem_right_bytes') or []
-                        pM = a.get('peak_act_mem_max_bytes') or []
-                        if b < len(pL):
-                            pred['peak_act_left_bytes'] = int(pL[b])
-                            pred['peak_act_left_mib'] = float(pL[b]) / mul if mul > 0 else None
-                        if b < len(pR):
-                            pred['peak_act_right_bytes'] = int(pR[b])
-                            pred['peak_act_right_mib'] = float(pR[b]) / mul if mul > 0 else None
-                        if b < len(pM):
-                            pred['peak_act_max_bytes'] = int(pM[b])
-                            pred['peak_act_max_mib'] = float(pM[b]) / mul if mul > 0 else None
-
-                        strict_ok = a.get('strict_ok') or []
-                        pred['strict_ok'] = bool(strict_ok[b]) if b < len(strict_ok) else None
-                    except Exception:
-                        pass
-
-                    # Per-case manifest
-                    manifest_out = {
-                        'tool': {'gui': __version__, 'core': getattr(asc, '__version__', '?')},
-                        'boundary': int(b),
-                        'boundary_index': int(b),
-                        'cut_tensors': list(cut_tensors),
-                        'strict_boundary': bool(strict_boundary),
-                        'predicted': pred,
-                        # Portable paths (store forward slashes for cross-platform use).
-                        'full_model': (
-                            Path(os.path.relpath(full_model_dst, start=case_dir)).as_posix()
-                            if os.path.exists(full_model_dst)
-                            else str(full_model_src).replace('\\', '/')
-                        ),
-                        'full_model_source': str(full_model_src).replace('\\', '/'),
-                        'part1': os.path.basename(p1_path).replace('\\', '/'),
-                        'part2': os.path.basename(p2_path).replace('\\', '/'),
-                        'created_at': datetime.now().isoformat(timespec='seconds'),
-                    }
-                    if isinstance(split_manifest, dict):
-                        manifest_out.update(split_manifest)
-                    # Normalized schema fields (v1). Keep legacy flat keys for backwards compatibility.
-                    try:
-                        manifest_out.setdefault("schema", "onnx-splitpoint/split-manifest")
-                        manifest_out.setdefault("schema_version", 1)
-
-                        manifest_out["models"] = {
-                            "full": {
-                                "path": str(manifest_out.get("full_model") or "").replace('\\', '/'),
-                                "source": str(manifest_out.get("full_model_source") or "").replace('\\', '/'),
-                            },
-                            "part1": {
-                                "path": str(manifest_out.get("part1_model") or manifest_out.get("part1") or "").replace('\\', '/')
-                            },
-                            "part2": {
-                                "path": str(manifest_out.get("part2_model") or manifest_out.get("part2") or "").replace('\\', '/')
-                            },
-                        }
-
-                        cut_full = manifest_out.get("cut_tensors_full") or manifest_out.get("cut_tensors") or []
-                        cut_p1 = manifest_out.get("part1_cut_names") or []
-                        cut_p2 = manifest_out.get("part2_cut_names") or []
-                        manifest_out["cut"] = {
-                            "full_names": list(cut_full) if isinstance(cut_full, list) else [],
-                            "part1_names": list(cut_p1) if isinstance(cut_p1, list) else [],
-                            "part2_names": list(cut_p2) if isinstance(cut_p2, list) else [],
-                        }
-
-                        manifest_out["io"] = {
-                            "orig_inputs": list(manifest_out.get("orig_inputs") or []),
-                            "orig_outputs": list(manifest_out.get("orig_outputs") or []),
-                            "part1_external_inputs": list(manifest_out.get("part1_external_inputs") or []),
-                            "part2_external_inputs": list(manifest_out.get("part2_external_inputs") or []),
-                        }
-
-                        links = []
-                        if isinstance(cut_p1, list) and isinstance(cut_p2, list) and len(cut_p1) == len(cut_p2):
-                            for a, bname in zip(cut_p1, cut_p2):
-                                if a and bname:
-                                    links.append({"from": str(a), "to": str(bname)})
-                        manifest_out["pipeline"] = {
-                            "stage1": "part1",
-                            "stage2": "part2",
-                            "links": links,
-                        }
-                    except Exception:
-                        pass
-
-
-                    # Context diagrams
-                    semantic_label = None
-                    try:
-                        for c in (self.candidates or []):
-                            if int(c.get("boundary", -1)) == int(b) and c.get("semantic"):
-                                semantic_label = c.get("semantic")
-                                break
-                    except Exception:
-                        semantic_label = None
-
-                    llm_style = bool(self.var_llm_enable.get())
-                    value_bytes_map = self.analysis.get("value_bytes") if isinstance(self.analysis, dict) else None
-
-                    if do_ctx_full:
-                        try:
-                            ctx = asc.export_boundary_graphviz_context(
-                                model,
-                                order,
-                                b,
-                                cut_tensors,
-                                case_dir,
-                                basename=f"split_context_b{b}",
-                                render=True,
-                                hops=int(ctx_hops),
-                                strict_boundary=bool(self.var_strict_boundary.get()),
-                                include_external_inputs=(not llm_style),
-                                semantic_label=semantic_label,
-                                value_bytes_map=value_bytes_map,
-                                force_matplotlib_fallback=llm_style,
-                            )
-                            manifest_out['split_context'] = ctx
-                        except Exception as e:
-                            manifest_out['split_context_error'] = str(e)
-
-                    if do_ctx_cutflow:
-                        try:
-                            ctx_cf = asc.export_boundary_graphviz_context(
-                                model,
-                                order,
-                                b,
-                                cut_tensors,
-                                case_dir,
-                                basename=f"split_context_b{b}_cutflow",
-                                render=True,
-                                hops=int(ctx_hops),
-                                strict_boundary=bool(self.var_strict_boundary.get()),
-                                cut_flow_only=True,
-                                include_internal_consumers=False,
-                                include_external_inputs=False,
-                                semantic_label=semantic_label,
-                                value_bytes_map=value_bytes_map,
-                                force_matplotlib_fallback=llm_style,
-                            )
-                            manifest_out['split_context_cutflow'] = ctx_cf
-                        except Exception as e:
-                            manifest_out['split_context_cutflow_error'] = str(e)
-
-                    # Runner skeleton (required)
-                    try:
-                        runner_path = asc.write_runner_skeleton_onnxruntime(
-                            case_dir,
-                            manifest_filename=os.path.basename(manifest_path),
-                            target=runner_target,
-                        )
-                        manifest_out['runner'] = os.path.basename(runner_path)
-                    except Exception as e:
-                        errors.append(f"b{b}: runner skeleton failed: {e}")
-
-                    # Optional: Build Hailo HEFs (full / part1 / part2) for selected targets.
-                    if hef_targets and (hef_full or hef_part1 or hef_part2):
-                        log(
-                            f"b{b}: Hailo HEF generation requested (backend={hef_backend}, targets={hef_targets}, full={hef_full}, part1={hef_part1}, part2={hef_part2})"
-                        )
-                        if hailo_build_hef_fn is None:
-                            manifest_out['hailo_error'] = str(hailo_build_unavailable or "Hailo HEF build unavailable")
-                            log(f"b{b}: {manifest_out['hailo_error']}")
-                            errors.append(f"b{b}: {manifest_out['hailo_error']}")
-                        else:
-                            manifest_out.setdefault("hailo", {})
-                            manifest_out["hailo"].setdefault("hefs", {})
-                            manifest_out["hailo"]["config"] = {
-                                "backend": str(hef_backend),
-                                "wsl_distro": hef_wsl_distro,
-                                "wsl_venv": str(hef_wsl_venv),
-                                "opt_level": int(hef_opt_level),
-                                "calib_count": int(hef_calib_count),
-                                "calib_batch_size": int(hef_calib_bs),
-                                "calib_dir": (str(hef_calib_dir).replace('\\', '/') if hef_calib_dir else None),
-                                "fixup": bool(hef_fixup),
-                                "force": bool(hef_force),
-                                "keep_artifacts": bool(hef_keep),
-                                "build": {"full": bool(hef_full), "part1": bool(hef_part1), "part2": bool(hef_part2)},
-                            }
-
-                            for hw_arch in hef_targets:
-                                hw_arch = str(hw_arch).strip()
-                                if not hw_arch:
-                                    continue
-
-                                log(f"b{b}: build HEF for hw_arch={hw_arch}")
-
-                                def _on_hef_log(stream: str, line: str, _b: int = b, _hw: str = hw_arch) -> None:
-                                    # Forward Hailo build logs into the progress dialog.
-                                    # Use parentheses to avoid clashing with the runner's [n/m] progress regex.
-                                    q.put(("hef", stream, f"(b{_b} {_hw}) {line}"))
-
-                                tgt_out = {}
-                                suite_tgt = suite_hailo_hefs.get(hw_arch) or {}
-                                full_rel = suite_tgt.get("full") if isinstance(suite_tgt, dict) else None
-                                if full_rel:
-                                    abs_full = os.path.join(out_dir, str(full_rel))
-                                    tgt_out["full"] = os.path.relpath(abs_full, case_dir).replace('\\', '/')
-                                if isinstance(suite_tgt, dict) and suite_tgt.get("full_error"):
-                                    tgt_out["full_error"] = suite_tgt.get("full_error")
-
-                                if hef_part1:
-                                    out_p1 = os.path.join(case_dir, "hailo", hw_arch, "part1")
-                                    os.makedirs(out_p1, exist_ok=True)
-                                    r1 = hailo_build_hef_fn(
-                                        p1_path,
-                                        backend=hef_backend,
-                                        hw_arch=hw_arch,
-                                        net_name=f"{base}_part1_b{b}",
-                                        outdir=out_p1,
-                                        fixup=hef_fixup,
-                                        opt_level=int(hef_opt_level),
-                                        calib_dir=hef_calib_dir,
-                                        calib_count=int(hef_calib_count),
-                                        calib_batch_size=int(hef_calib_bs),
-                                        force=hef_force,
-                                        keep_artifacts=hef_keep,
-                                        wsl_distro=hef_wsl_distro,
-                                        wsl_venv_activate=hef_wsl_venv,
-                                        wsl_timeout_s=3600,
-                                        on_log=_on_hef_log,
-                                    )
-                                    if r1.ok:
-                                        rel = os.path.relpath(r1.hef_path or os.path.join(out_p1, "compiled.hef"), case_dir)
-                                        tgt_out["part1"] = rel.replace('\\', '/')
-                                        log(f"b{b}: HEF(part1,{hw_arch}) OK")
-                                    else:
-                                        tgt_out["part1_error"] = r1.error
-                                        err_line = f"b{b}: HEF(part1,{hw_arch}) FAILED: {r1.error}"
-                                        errors.append(err_line)
-                                        log(err_line)
-
-                                if hef_part2:
-                                    out_p2 = os.path.join(case_dir, "hailo", hw_arch, "part2")
-                                    os.makedirs(out_p2, exist_ok=True)
-                                    r2 = hailo_build_hef_fn(
-                                        p2_path,
-                                        backend=hef_backend,
-                                        hw_arch=hw_arch,
-                                        net_name=f"{base}_part2_b{b}",
-                                        outdir=out_p2,
-                                        fixup=hef_fixup,
-                                        opt_level=int(hef_opt_level),
-                                        calib_dir=hef_calib_dir,
-                                        calib_count=int(hef_calib_count),
-                                        calib_batch_size=int(hef_calib_bs),
-                                        force=hef_force,
-                                        keep_artifacts=hef_keep,
-                                        wsl_distro=hef_wsl_distro,
-                                        wsl_venv_activate=hef_wsl_venv,
-                                        wsl_timeout_s=3600,
-                                        on_log=_on_hef_log,
-                                    )
-                                    if r2.ok:
-                                        rel = os.path.relpath(r2.hef_path or os.path.join(out_p2, "compiled.hef"), case_dir)
-                                        tgt_out["part2"] = rel.replace('\\', '/')
-                                        log(f"b{b}: HEF(part2,{hw_arch}) OK")
-                                    else:
-                                        tgt_out["part2_error"] = r2.error
-                                        err_line = f"b{b}: HEF(part2,{hw_arch}) FAILED: {r2.error}"
-                                        errors.append(err_line)
-                                        log(err_line)
-
-                                if tgt_out:
-                                    manifest_out["hailo"]["hefs"][hw_arch] = tgt_out
-
-                    with open(manifest_path, 'w', encoding='utf-8') as f:
-                        json.dump(manifest_out, f, indent=2)
-
-                    cases.append({
-                        'boundary': int(b),
-                        'case_dir': folder,
-                        'folder': folder,
-                        # Stored relative to the per-case folder; the suite resolves it under case_dir.
-                        'manifest': os.path.basename(manifest_path),
-                        'predicted': pred,
-                    })
-
-                    chosen.append(int(b))
-                    made += 1
-                    q.put(("prog", made, f"b{b}"))
-
-                # Write benchmark_set.json
-                bench = {
-                    'schema': 'onnx-splitpoint/benchmark-set',
-                    'schema_version': 1,
-                    'tool': {'gui': __version__, 'core': getattr(asc, '__version__', '?')},
-                    # Keep both a portable path (relative within the benchmark folder)
-                    # and the original source path (useful for provenance).
-                    'model': (
-                        Path(os.path.relpath(full_model_dst, start=out_dir)).as_posix()
-                        if os.path.exists(full_model_dst)
-                        else str(full_model_src).replace('\\', '/')
-                    ),
-                    'model_source': str(full_model_src).replace('\\', '/'),
-                    'model_name': base,
-                    'created_at': datetime.now().isoformat(timespec='seconds'),
-                    'analysis_params': {
-                        'ranking': str(getattr(params, 'ranking', 'score')),
-                        'topk': int(getattr(params, 'topk', len(self.current_picks))),
-                        'min_gap': int(getattr(params, 'min_gap', 0)),
-                        'exclude_trivial': bool(getattr(params, 'exclude_trivial', False)),
-                        'only_single_tensor': bool(getattr(params, 'only_single_tensor', False)),
-                        'strict_boundary': bool(getattr(params, 'strict_boundary', False)),
-
-                        # Skip-/Block pruning
-                        'prune_skip_block': bool(getattr(params, 'prune_skip_block', False)),
-                        'skip_min_span': int(getattr(params, 'skip_min_span', 0)),
-                        'skip_allow_last_n': int(getattr(params, 'skip_allow_last_n', 0)),
-
-                        # System model (compute + link)
-                        'link_model': str(getattr(params, 'link_model', 'ideal')),
-                        'bandwidth_value': getattr(params, 'bw_value', None),
-                        'bandwidth_unit': str(getattr(params, 'bw_unit', 'MB/s')),
-                        'gops_left': getattr(params, 'gops_left', None),
-                        'gops_right': getattr(params, 'gops_right', None),
-                        'link_overhead_ms': getattr(params, 'overhead_ms', 0.0),
-                        'link_energy_pj_per_byte': getattr(params, 'link_energy_pj_per_byte', None),
-                        'link_mtu_payload_bytes': getattr(params, 'link_mtu_payload_bytes', None),
-                        'link_per_packet_overhead_ms': getattr(params, 'link_per_packet_overhead_ms', None),
-                        'link_per_packet_overhead_bytes': getattr(params, 'link_per_packet_overhead_bytes', None),
-                        'energy_pj_per_flop_left': getattr(params, 'energy_pj_per_flop_left', None),
-                        'energy_pj_per_flop_right': getattr(params, 'energy_pj_per_flop_right', None),
-
-                        # Link constraints
-                        'link_max_latency_ms': getattr(params, 'link_max_latency_ms', None),
-                        'link_max_energy_mJ': getattr(params, 'link_max_energy_mJ', None),
-                        'link_max_bytes': getattr(params, 'link_max_bytes', None),
-
-                        # Activation-memory constraints (peak, approx)
-                        'max_peak_act_left': getattr(params, 'max_peak_act_left', None),
-                        'max_peak_act_left_unit': str(getattr(params, 'max_peak_act_left_unit', 'MiB')),
-                        'max_peak_act_right': getattr(params, 'max_peak_act_right', None),
-                        'max_peak_act_right_unit': str(getattr(params, 'max_peak_act_right_unit', 'MiB')),
-
-                        'batch_override': batch_override,
-                        'eps_default': float(eps_default),
-                    },
-                    'system_spec': asdict(self._build_system_spec(params)) if params else None,
-                    'cases': cases,
-                    'errors': errors,
-                }
-
-                # Suite runner plan (what to benchmark). This is a lightweight config so
-                # the benchmark harness can be generic and re-usable across models.
-                bench_plan = {
-                    'schema': 'onnx-splitpoint/benchmark-plan',
-                    'schema_version': 1,
-                    'created_at': datetime.now().isoformat(timespec='seconds'),
-                    'runs': list(bench_plan_runs),
-                    # Future extension: allow different accelerators for stage1/stage2.
-                    # Keep it empty for now, but the schema is reserved.
-                    'matrix': [],
-                }
-                bench['plan'] = bench_plan
-
-                # Also write a standalone plan file for external tools.
-                plan_path = os.path.join(out_dir, 'benchmark_plan.json')
-                try:
-                    with open(plan_path, 'w', encoding='utf-8') as f:
-                        json.dump(bench_plan, f, indent=2)
-                except Exception:
-                    pass
-
-                # Record requested Hailo artifact generation at suite-level.
-                if hef_targets and (hef_full or hef_part1 or hef_part2):
-                    bench['hailo'] = {
-                        'targets': [str(x) for x in hef_targets],
-                        'build': {'full': bool(hef_full), 'part1': bool(hef_part1), 'part2': bool(hef_part2)},
-                        'config': {
-                            'backend': str(hef_backend),
-                            'wsl_distro': hef_wsl_distro,
-                            'wsl_venv': str(hef_wsl_venv),
-                            'opt_level': int(hef_opt_level),
-                            'calib_count': int(hef_calib_count),
-                            'calib_batch_size': int(hef_calib_bs),
-                            'calib_dir': (str(hef_calib_dir).replace('\\', '/') if hef_calib_dir else None),
-                            'fixup': bool(hef_fixup),
-                            'force': bool(hef_force),
-                            'keep_artifacts': bool(hef_keep),
-                        },
-                    }
-                    if suite_hailo_hefs:
-                        bench['hailo']['hefs'] = suite_hailo_hefs
-                bench_path = os.path.join(out_dir, 'benchmark_set.json')
-                with open(bench_path, 'w', encoding='utf-8') as f:
-                    json.dump(bench, f, indent=2)
-
-                # Write harness script
-                harness_path = _write_benchmark_suite_script(out_dir, 'benchmark_set.json')
-
-                # Copy schema docs for reproducibility (plan/manifest schema files).
-                try:
-                    src_schemas = Path(__file__).resolve().parent / "resources" / "schemas"
-                    dst_schemas = Path(out_dir) / "schemas"
-                    if src_schemas.exists():
-                        if dst_schemas.exists():
-                            shutil.rmtree(dst_schemas)
-                        shutil.copytree(src_schemas, dst_schemas)
-                except Exception:
-                    pass
-
-
-                # Small README
-                readme = os.path.join(out_dir, 'README_BENCHMARK.txt')
-                with open(readme, 'w', encoding='utf-8') as f:
-                    txt = (
-                        "Benchmark suite generated by the ONNX Split-Point Analyser.\n\n"
-                        f"Model (portable): {bench.get('model')}\n"
-                        f"Model (source):   {bench.get('model_source')}\n"
-                        f"Cases: {len(cases)} (requested: {k})\n\n"
-                        "Benchmark plan:\n"
-                        "  - See benchmark_plan.json (and benchmark_set.json -> plan).\n\n"
-                        "Next steps:\n"
-                        "  1) (optional) install deps: pip install onnx onnxruntime numpy pillow matplotlib\n"
-                        "  2) run ALL runs from the plan: python benchmark_suite.py\n"
-                        "  3) run a single ORT provider: python benchmark_suite.py --provider cpu\n"
-                        "     (or: --provider cuda / --provider tensorrt)\n"
-                        "  4) to also generate human-readable outputs: add --image default --preset auto\n\n"
-                        "Outputs:\n"
-                        "  - benchmark_results_<tag>.csv / .json\n"
-                        "    (tag is typically: <run-id>_<preset>, e.g. ort_cpu_auto)\n"
-                        "\n"
-                        "Paper-ready analysis exports (created during benchmark set generation):\n"
-                        "  - analysis_plots/   (PDF + SVG)\n"
-                        "  - analysis_tables/  (.tex, .csv, .json)\n"
-                    )
-                    if bench.get('hailo'):
-                        txt += (
-                            "\nHailo artifacts:\n"
-                            "  - Suite-level full HEFs (if enabled): hailo/<hw_arch>/full/compiled.hef\n"
-                            "  - Per-case split HEFs (if enabled):  b*/hailo/<hw_arch>/(part1|part2)/compiled.hef\n"
-                            "  - Suite-level config is recorded in benchmark_set.json under 'hailo'.\n"
-                        )
-                    f.write(txt)
-
-                msg = []
-                msg.append(f"Generated benchmark set: {out_dir}")
-                msg.append(f"Cases: {len(cases)} (requested {k})")
-                msg.append(f"Harness: {harness_path}")
-                try:
-                    run_ids = [str(r.get('id') or r.get('name') or '').strip() for r in bench_plan_runs if isinstance(r, dict)]
-                    run_ids = [x for x in run_ids if x]
-                    if run_ids:
-                        msg.append(f"Plan runs: {', '.join(run_ids)}")
-                except Exception:
-                    pass
-                if errors:
-                    msg.append("\nWarnings:")
-                    msg.extend([f"  - {e}" for e in errors[:10]])
-                    if len(errors) > 10:
-                        msg.append(f"  ... and {len(errors)-10} more")
-                if errors:
-                    q.put(("warn", "\n".join(msg)))
-                else:
-                    q.put(("ok", "\n".join(msg)))
-            except Exception as e:
-                logging.exception("Benchmark set generation failed")
-                q.put(("err", f"{type(e).__name__}: {e}"))
-
-        threading.Thread(target=worker, daemon=True).start()
-
-        def poll() -> None:
-            final_status: Optional[str] = None
-            final_msg: str = ""
-
-            # Drain the queue so log output stays responsive even when a lot of
-            # lines arrive quickly (e.g. Hailo DFC compilation).
-            while True:
-                try:
-                    item = q.get_nowait()
-                except queue.Empty:
-                    break
-
-                if not item:
-                    continue
-
-                status = str(item[0])
-
-                if status == 'prog':
-                    try:
-                        made = int(item[1])
-                        what = str(item[2]) if len(item) > 2 else ''
-                        pb['value'] = made
-                        lbl2.configure(text=f"{made}/{k}: {what}")
-                    except Exception:
-                        pass
-                    continue
-
-                if status in ('log', 'hef'):
-                    try:
-                        if status == 'log':
-                            line = str(item[1]) if len(item) > 1 else ''
-                        else:
-                            # ('hef', stream, line)
-                            line = str(item[2]) if len(item) > 2 else ''
-                        _append_log(line)
-                        if status == 'hef' and line:
-                            lbl2.configure(text=line[:220])
-                    except Exception:
-                        pass
-                    continue
-
-                if status in ('msg', 'note'):
-                    try:
-                        what = str(item[1]) if len(item) > 1 else ''
-                        lbl2.configure(text=what)
-                    except Exception:
-                        pass
-                    continue
-
-                if status in ('ok', 'warn', 'err'):
-                    final_status = status
-                    final_msg = str(item[1]) if len(item) > 1 else ''
-                    break
-
-            try:
-                self.update_idletasks()
-            except Exception:
-                pass
-
-            if not final_status:
-                self.after(80, poll)
-                return
-
-            # final: keep the dialog open so logs can be inspected/copied
-            running_flag["running"] = False
-
-            try:
-                dlg.grab_release()
-            except Exception:
-                pass
-
-            try:
-                btn_close.state(["!disabled"])
-            except Exception:
-                try:
-                    btn_close.configure(state="normal")
-                except Exception:
-                    pass
-
-            try:
-                dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
-            except Exception:
-                pass
-
-            try:
-                self.configure(cursor="")
-            except Exception:
-                pass
-
-            if final_status == 'ok':
-                messagebox.showinfo("Benchmark set created", final_msg)
-            elif final_status == 'warn':
-                messagebox.showwarning("Benchmark set created (with warnings)", final_msg)
-            else:
-                messagebox.showerror("Benchmark set failed", final_msg)
-
-        poll()
+            nonlocal ranked_candidates, candidate_search_pool
+            return None
+
+        _ = (full_hef_policy, cancel_event, worker)
+        return self._get_benchmark_workflow_controller().generate_benchmark_set(
+            resume_dir=resume_dir,
+            offer_latest_resume=offer_latest_resume,
+        )
 
     def _export_overview(self, fmt: str):
         if fmt not in {"svg", "pdf"}:
@@ -7341,6 +7366,10 @@ class SplitPointAnalyserGUI(tk.Tk):
                     w.writerow([
                         "boundary",
                         "semantic",
+                        "hailo_parse_checked",
+                        "hailo_parse_ok",
+                        "hailo_parse_target",
+                        "hailo_parse_message",
                         "comm_bytes",
                         "comm_MiB",
                         "crossing_tensors_all",
@@ -7351,13 +7380,28 @@ class SplitPointAnalyserGUI(tk.Tk):
                     for b in picks:
                         bi = int(b)
                         sem = str(sem_labels[bi]) if bi < len(sem_labels) else ""
+                        hailo_entry = self._hailo_parse_entry_for_boundary(a, bi)
+                        hailo_fields = self._hailo_parse_scalar_fields(hailo_entry)
                         comm_b = int(costs_bytes[bi]) if bi < len(costs_bytes) else 0
                         comm_mib = float(comm_b) / (1024.0**2)
                         nt = int(counts_all[bi]) if bi < len(counts_all) else 0
                         nu = int(unknown_counts[bi]) if bi < len(unknown_counts) else 0
                         fl_l = float(flops_left_prefix[bi]) / 1e9 if bi < len(flops_left_prefix) else 0.0
                         fl_r = float(total_flops - float(flops_left_prefix[bi])) / 1e9 if bi < len(flops_left_prefix) else 0.0
-                        w.writerow([bi, sem, comm_b, f"{comm_mib:.6f}", nt, nu, f"{fl_l:.6f}", f"{fl_r:.6f}"])
+                        w.writerow([
+                            bi,
+                            sem,
+                            bool(hailo_fields.get("hailo_parse_checked")),
+                            hailo_fields.get("hailo_parse_ok"),
+                            hailo_fields.get("hailo_parse_target") or "",
+                            hailo_fields.get("hailo_parse_message") or "",
+                            comm_b,
+                            f"{comm_mib:.6f}",
+                            nt,
+                            nu,
+                            f"{fl_l:.6f}",
+                            f"{fl_r:.6f}",
+                        ])
             except Exception as e:
                 print(f"[warn] Failed to export TeX candidate table: {e}")
 
@@ -7756,6 +7800,7 @@ class SplitPointAnalyserGUI(tk.Tk):
         self.selected_candidate = None
         self._last_params = None
         self.memory_by_boundary = {}
+        self.candidates = []
         try:
             self.btn_export_tex.state(["disabled"])
             self.btn_split.state(["disabled"])

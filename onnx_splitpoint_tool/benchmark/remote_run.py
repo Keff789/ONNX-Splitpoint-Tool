@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import tarfile
 import time
@@ -12,14 +13,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from onnx_splitpoint_tool.remote.bundle import BundleCancelled, build_suite_bundle
+from onnx_splitpoint_tool.remote.bundle import BundleCancelled, build_suite_bundle, remote_minimal_bundle_patterns
+from onnx_splitpoint_tool.benchmark.results_bundle import create_results_bundle_from_results_dir
 from onnx_splitpoint_tool.log_utils import sanitize_log
 from onnx_splitpoint_tool.remote.ssh_transport import HostConfig as RemoteHost
 from onnx_splitpoint_tool.remote.ssh_transport import SSHTransport
+from onnx_splitpoint_tool.benchmark.suite_refresh import refresh_suite_harness
 
 
 RUN_STATUS_SCHEMA_VERSION = 1
 RUN_RESULTS_SCHEMA_VERSION = 1
+_CASE_DIR_RE = re.compile(r"^b\d+$")
 
 
 def _utc_now_iso() -> str:
@@ -79,6 +83,53 @@ def _detect_useful_results(results_dir: Path) -> bool:
         if p.is_file() and p.stat().st_size > 0:
             return True
     return False
+
+
+def _assert_generated_runner_is_self_consistent(path: Path) -> None:
+    """Reject generated runner scripts that are obviously stale or broken.
+
+    This catches partial refreshes before we upload a large bundle to the remote host.
+    The checks stay intentionally static/lightweight so they do not require importing
+    heavyweight runtime dependencies such as onnxruntime or Hailo bindings.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception as e:
+        raise RuntimeError(f"Could not read generated runner for self-check: {path}: {e}") from e
+
+    try:
+        compile(text, str(path), "exec")
+    except SyntaxError as e:
+        raise RuntimeError(f"{path} failed syntax self-check: {e}") from e
+
+    required_helpers = (
+        "_maybe_cast_for_onnx_input",
+        "_shape_from_ort_input",
+    )
+    missing: list[str] = []
+    for helper_name in required_helpers:
+        referenced = helper_name in text
+        defined = f"def {helper_name}(" in text
+        if referenced and not defined:
+            missing.append(helper_name)
+
+    if missing:
+        raise RuntimeError(
+            f"{path} references helper(s) {', '.join(missing)} but does not define them. "
+            "Refusing to package a stale or broken runner."
+        )
+
+    module_requirements = {
+        "re": r"\bre\.(?:search|match|sub|compile|fullmatch|findall|finditer)\b",
+    }
+    for module_name, usage_pattern in module_requirements.items():
+        uses_module = re.search(usage_pattern, text) is not None
+        has_import = re.search(rf"^\s*(?:import\s+{module_name}\b|from\s+{module_name}\s+import\b)", text, flags=re.M) is not None
+        if uses_module and not has_import:
+            raise RuntimeError(
+                f"{path} references module '{module_name}' helpers but does not import '{module_name}'. "
+                "Refusing to package a stale or broken runner."
+            )
 
 
 # ------------------------------
@@ -168,6 +219,7 @@ def _finalize_run_status(
     exception_text: str | None = None,
     stdout_tail: list[str] | None = None,
     stderr_tail: list[str] | None = None,
+    extra_fail_reason: Optional[dict[str, Any]] = None,
 ) -> None:
     """Write final run_status.json."""
     if stdout_tail is None:
@@ -182,12 +234,15 @@ def _finalize_run_status(
         "remote_rc": remote_rc,
     }
     if status != "ok":
-        payload["fail_reason"] = {
+        fail_reason: dict[str, Any] = {
             "message": fail_message or "Run failed.",
             "exception": exception_text,
             "stderr_tail": stderr_tail,
             "stdout_tail": stdout_tail,
         }
+        if isinstance(extra_fail_reason, dict) and extra_fail_reason:
+            fail_reason.update(extra_fail_reason)
+        payload["fail_reason"] = fail_reason
     else:
         payload["fail_reason"] = None
     _write_json(local_run_dir / "run_status.json", payload)
@@ -225,7 +280,7 @@ class RemoteBenchmarkArgs:
     add_args: str = ""
 
     # Total timeout for the remote benchmark command.
-    timeout_s: int = 7200
+    timeout_s: Optional[int] = 7200
 
     # Transfer mode for the suite:
     # - bundle: tar.gz (fast for many small files, supports caching)
@@ -234,6 +289,13 @@ class RemoteBenchmarkArgs:
 
     # Only relevant for transfer_mode='bundle'
     reuse_bundle: bool = True
+    # Resume a previous partial run for the same suite/host/settings when possible.
+    resume: bool = True
+
+    # Optional streaming/interleaving parameters for heterogeneous pipelines.
+    throughput_frames: int = 24
+    throughput_warmup_frames: int = 6
+    throughput_queue_depth: int = 2
 
 
 @dataclass
@@ -277,8 +339,265 @@ def parse_benchmark_suite_progress(line: str) -> SuiteProgress | None:
         return None
 
 
+def _iter_suite_case_dirs(suite_dir: Path) -> list[Path]:
+    """Return benchmark case directories in a suite.
+
+    We intentionally only count directories that look like real benchmark cases
+    (``bXXX/`` with a ``split_manifest.json``). This avoids inflating timeout
+    estimates with auxiliary folders.
+    """
+
+    case_dirs: list[Path] = []
+    try:
+        for child in sorted(suite_dir.iterdir()):
+            if not child.is_dir():
+                continue
+            if _CASE_DIR_RE.match(child.name) is None:
+                continue
+            if not (child / "split_manifest.json").exists():
+                continue
+            case_dirs.append(child)
+    except Exception:
+        return []
+    return case_dirs
+
+
+def _load_plan_runs_from_suite(suite_dir: Path) -> list[dict[str, Any]]:
+    """Best-effort load of ``benchmark_plan.json`` runs from a suite."""
+
+    plan_path = suite_dir / "benchmark_plan.json"
+    if not plan_path.exists():
+        return []
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    runs = plan.get("runs") if isinstance(plan, dict) else None
+    if not isinstance(runs, list):
+        return []
+    return [r for r in runs if isinstance(r, dict)]
+
+
+def _run_likely_uses_hailo(run: dict[str, Any]) -> bool:
+    """Return True if a plan run likely exercises Hailo at runtime."""
+
+    try:
+        run_type = str(run.get("type") or run.get("kind") or "").strip().lower()
+    except Exception:
+        run_type = ""
+    if run_type == "hailo":
+        return True
+
+    for key in ("provider", "full_provider", "stage1_provider", "stage2_provider"):
+        try:
+            tok = str(run.get(key) or "").strip().lower()
+        except Exception:
+            tok = ""
+        if tok.startswith("hailo"):
+            return True
+
+    for key in ("stage1", "stage2"):
+        st = run.get(key)
+        if isinstance(st, dict):
+            try:
+                tok = str(st.get("type") or st.get("provider") or st.get("hw_arch") or "").strip().lower()
+            except Exception:
+                tok = ""
+            if tok.startswith("hailo"):
+                return True
+        elif isinstance(st, str) and st.strip().lower().startswith("hailo"):
+            return True
+
+    return False
+
+
+def estimate_remote_timeout_hint(suite_dir: Path, args: "RemoteBenchmarkArgs") -> dict[str, Any]:
+    """Estimate a sane outer timeout for a remote benchmark run.
+
+    This is intentionally heuristic. The goal is not exact runtime prediction,
+    but to catch obviously too-small outer timeouts before a long remote run is
+    aborted after hours of useful work.
+    """
+
+    case_count = len(_iter_suite_case_dirs(suite_dir))
+    plan_runs = _load_plan_runs_from_suite(suite_dir)
+    if not plan_runs:
+        # Fallback: approximate a single provider run.
+        plan_runs = [{"id": f"ort_{getattr(args, 'provider', 'auto')}", "type": "onnxruntime", "provider": getattr(args, 'provider', 'auto')}]
+
+    try:
+        warmup = max(0, int(getattr(args, "warmup", 0) or 0))
+    except Exception:
+        warmup = 0
+    try:
+        repeats = max(1, int(getattr(args, "repeats", 1) or 1))
+    except Exception:
+        repeats = 1
+    try:
+        iters = max(1, int(getattr(args, "iters", 1) or 1))
+    except Exception:
+        iters = 1
+
+    effective_runs = max(1, repeats * iters)
+    invocations_per_case_run = 4 * (warmup + effective_runs)
+
+    per_run_lower_bounds_s: list[float] = []
+    for run in plan_runs:
+        uses_hailo = _run_likely_uses_hailo(run)
+        # Lower-bound wall-clock heuristic:
+        # - 4 timed phases per case (full / part1 / part2 / composed)
+        # - even "fast" cases incur session init, validation and file IO
+        phase_floor_s = 0.08 if uses_hailo else 0.05
+        per_case_overhead_s = 4.0 if uses_hailo else 1.0
+        per_case_run_s = float(invocations_per_case_run) * phase_floor_s + per_case_overhead_s
+        per_run_lower_bounds_s.append(float(case_count) * per_case_run_s)
+
+    lower_bound_s = float(sum(per_run_lower_bounds_s))
+    recommended_timeout_s = int(max(600.0, min(172800.0, lower_bound_s * 1.5 + 600.0)))
+
+    return {
+        "heuristic": "lower_bound_cases_x_runs_x_4phases",
+        "case_count": int(case_count),
+        "planned_run_count": int(len(plan_runs)),
+        "warmup": int(warmup),
+        "repeats": int(repeats),
+        "iters": int(iters),
+        "effective_runs": int(effective_runs),
+        "invocations_per_case_run": int(invocations_per_case_run),
+        "total_phase_invocations": int(case_count * len(plan_runs) * invocations_per_case_run),
+        "lower_bound_s": float(round(lower_bound_s, 3)),
+        "recommended_timeout_s": int(recommended_timeout_s),
+        "plan_run_ids": [str(r.get("id") or r.get("name") or "") for r in plan_runs],
+        "plan_uses_hailo": bool(any(_run_likely_uses_hailo(r) for r in plan_runs)),
+    }
+
+
+def apply_remote_timeout_hint(requested_timeout_s: Optional[int], hint: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """Return an adjusted timeout decision for the remote outer timeout.
+
+    Policy:
+    - if the current timeout is disabled/None, leave it disabled
+    - if the timeout equals the legacy default (7200 s) and the heuristic says
+      this is too low, auto-raise to the recommendation
+    - otherwise keep the user's explicit value and only emit a warning
+    """
+
+    try:
+        requested = None if requested_timeout_s is None else int(requested_timeout_s)
+    except Exception:
+        requested = None
+
+    if requested is not None and requested <= 0:
+        requested = None
+
+    result: dict[str, Any] = {
+        "requested_timeout_s": requested,
+        "effective_timeout_s": requested,
+        "auto_raised": False,
+        "warn_too_low": False,
+        "hint": dict(hint or {}),
+    }
+    if requested is None or not hint:
+        return result
+
+    try:
+        recommended = int(hint.get("recommended_timeout_s") or 0)
+    except Exception:
+        recommended = 0
+    if recommended <= 0 or requested >= recommended:
+        return result
+
+    if requested == 7200:
+        result["effective_timeout_s"] = recommended
+        result["auto_raised"] = True
+    else:
+        result["warn_too_low"] = True
+    return result
+
+
 def _safe_local_name(s: str) -> str:
     return "".join(c if c.isalnum() or c in ("-", "_", ".") else "_" for c in s)
+
+
+def _read_json_dict(path: Path) -> dict[str, Any] | None:
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _find_resumable_local_run(
+    *,
+    local_working_dir: Path,
+    suite_dir: Path,
+    benchmark_set_json: Path,
+    repeat_dir: str,
+    host: RemoteHost,
+    args: RemoteBenchmarkArgs,
+) -> tuple[Path, dict[str, Any], dict[str, Any]] | None:
+    """Return the newest local partial run that looks safe to resume.
+
+    Matching is intentionally strict enough to avoid mixing unrelated runs while
+    still allowing the user to increase the timeout between retries.
+    """
+    root = Path(local_working_dir).expanduser().resolve() / "Results" / suite_dir.name / repeat_dir
+    if not root.exists() or not root.is_dir():
+        return None
+
+    wanted_bench = str(Path(benchmark_set_json).expanduser().resolve())
+    wanted_provider = str(args.provider or "auto").strip()
+    wanted_add_args = str(args.add_args or "").strip()
+    wanted_warmup = int(args.warmup)
+    wanted_iters = int(args.iters)
+    wanted_repeats = int(args.repeats)
+    wanted_port = int(host.port or 22)
+
+    candidates: list[tuple[str, Path, dict[str, Any], dict[str, Any]]] = []
+    for run_dir in sorted(root.iterdir(), reverse=True):
+        if not run_dir.is_dir():
+            continue
+        meta = _read_json_dict(run_dir / "run_meta.json")
+        status = _read_json_dict(run_dir / "run_status.json")
+        if not meta or not status:
+            continue
+        if str(meta.get("benchmark_set_json") or "") != wanted_bench:
+            continue
+
+        meta_host = meta.get("host") or {}
+        if str(meta_host.get("user") or "") != str(host.user or ""):
+            continue
+        if str(meta_host.get("host") or "") != str(host.host or ""):
+            continue
+        if int(meta_host.get("port") or 22) != wanted_port:
+            continue
+
+        meta_args = meta.get("args") or {}
+        if str(meta_args.get("provider") or "auto").strip() != wanted_provider:
+            continue
+        if int(meta_args.get("warmup") or 0) != wanted_warmup:
+            continue
+        if int(meta_args.get("iters") or 0) != wanted_iters:
+            continue
+        if int(meta_args.get("repeats") or 0) != wanted_repeats:
+            continue
+        if str(meta_args.get("add_args") or "").strip() != wanted_add_args:
+            continue
+
+        status_name = str(status.get("status") or "").strip().lower()
+        if status_name in {"ok", "running"}:
+            continue
+        if not _detect_useful_results(run_dir / "results"):
+            continue
+
+        ended = str(status.get("ended_at") or meta.get("started_at") or run_dir.name)
+        candidates.append((ended, run_dir, meta, status))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    _ended, run_dir, meta, status = candidates[0]
+    return run_dir, meta, status
 
 
 def run_remote_benchmark(
@@ -306,15 +625,42 @@ def run_remote_benchmark(
 
     benchmark_set_json = Path(benchmark_set_json).expanduser().resolve()
     suite_dir = benchmark_set_json.parent
+    bench_payload = _read_json_dict(benchmark_set_json) or {}
+    plan_payload = bench_payload.get('plan') if isinstance(bench_payload.get('plan'), dict) else {}
+    objective_value = str(plan_payload.get('objective') or bench_payload.get('objective') or 'latency').strip().lower() or 'latency'
+    timeout_hint = estimate_remote_timeout_hint(suite_dir, args)
+    timeout_decision = apply_remote_timeout_hint(getattr(args, "timeout_s", None), timeout_hint)
+    effective_outer_timeout_s = timeout_decision.get("effective_timeout_s")
 
+    requested_run_id = str(run_id)
     repeat_dir = _safe_local_name(str(repeats_idx).strip() or "1")
-    local_run_dir = (
-        Path(local_working_dir).expanduser().resolve()
-        / "Results"
-        / suite_dir.name
-        / repeat_dir
-        / run_id
-    )
+    resume_requested = False
+    resume_meta: dict[str, Any] | None = None
+    local_results_root = Path(local_working_dir).expanduser().resolve() / "Results" / suite_dir.name / repeat_dir
+
+    if bool(getattr(args, "resume", True)):
+        resume_hit = _find_resumable_local_run(
+            local_working_dir=Path(local_working_dir),
+            suite_dir=suite_dir,
+            benchmark_set_json=benchmark_set_json,
+            repeat_dir=repeat_dir,
+            host=host,
+            args=args,
+        )
+        if resume_hit is not None:
+            local_run_dir, prev_meta, _prev_status = resume_hit
+            prev_run_id = str(prev_meta.get("run_id") or local_run_dir.name)
+            run_id = prev_run_id
+            resume_requested = True
+            resume_meta = {
+                "requested_run_id": requested_run_id,
+                "resumed_run_id": prev_run_id,
+                "previous_started_at": prev_meta.get("started_at"),
+            }
+        else:
+            local_run_dir = local_results_root / run_id
+    else:
+        local_run_dir = local_results_root / run_id
 
     started_at = _utc_now_iso()
     run_meta: dict[str, Any] = {
@@ -340,11 +686,25 @@ def run_remote_benchmark(
             "iters": args.iters,
             "add_args": args.add_args,
             "timeout_s": args.timeout_s,
+            "timeout_s_effective": effective_outer_timeout_s,
             "transfer_mode": args.transfer_mode,
             "reuse_bundle": args.reuse_bundle,
+            "resume": bool(getattr(args, "resume", True)),
         },
-        # Keep an explicit objective for future-proofing.
-        "objective": "latency",
+        "timeout_estimate": {
+            **timeout_hint,
+            "auto_raised": bool(timeout_decision.get("auto_raised")),
+            "warn_too_low": bool(timeout_decision.get("warn_too_low")),
+        },
+        "resume": {
+            "enabled": bool(getattr(args, "resume", True)),
+            "reused_previous_run": resume_requested,
+            "requested_run_id": requested_run_id,
+            "active_run_id": str(run_id),
+            "details": resume_meta,
+        },
+        # Keep an explicit objective for future-proofing and dissertation exports.
+        "objective": objective_value,
     }
 
     # Phase-0 invariant: create artifacts BEFORE any SSH work happens.
@@ -380,137 +740,53 @@ def run_remote_benchmark(
             # best-effort only
             pass
     
+    if resume_requested:
+        try:
+            log(f"[resume] Reusing previous partial run: {run_id} (requested new run id was {requested_run_id})")
+            log(f"[resume] Local resume dir: {local_run_dir}")
+        except Exception:
+            pass
+
+    try:
+        log(
+            "[timeout-estimate] "
+            f"cases={timeout_hint.get('case_count')} plan_runs={timeout_hint.get('planned_run_count')} "
+            f"effective_runs={timeout_hint.get('effective_runs')} total_phase_invocations≈{timeout_hint.get('total_phase_invocations')} "
+            f"lower_bound≈{timeout_hint.get('lower_bound_s')}s recommended≈{timeout_hint.get('recommended_timeout_s')}s"
+        )
+        if bool(timeout_decision.get("auto_raised")):
+            log(
+                "[timeout-estimate] "
+                f"auto-raised remote outer timeout from {timeout_decision.get('requested_timeout_s')}s "
+                f"to {timeout_decision.get('effective_timeout_s')}s because the legacy default looked too low for this suite."
+            )
+        elif bool(timeout_decision.get("warn_too_low")):
+            log(
+                "[timeout-estimate] warning: current remote outer timeout "
+                f"({timeout_decision.get('requested_timeout_s')}s) is below the heuristic recommendation "
+                f"({timeout_hint.get('recommended_timeout_s')}s)."
+            )
+    except Exception:
+        pass
+
     # Keep this available for error reporting (even if we fail mid-way).
     remote_run_dir: Optional[str] = None
+    force_bundle_rebuild = False
+    last_suite_progress: dict[str, Any] | None = None
+    recent_remote_lines: list[str] = []
 
     # Best-effort: refresh runner scripts inside an existing suite.
-    # Older suites may contain stale runner scripts; bundling should be self-healing.
-    #
-    # IMPORTANT: Don't touch files if they're already up-to-date, otherwise we
-    # break bundle caching (mtime changes force rebuild every run).
+    # Older suites may contain stale harness files; bundling should be self-healing.
+    # IMPORTANT: Only touch files whose content actually changed so bundle caching
+    # remains effective.
     try:
-        import shutil
-        import tempfile
-
-        def _copy_if_changed(src: Path, dst: Path) -> bool:
-            """Copy src -> dst only if bytes differ (preserves suite_bundle caching)."""
-            try:
-                if dst.exists() and src.read_bytes() == dst.read_bytes():
-                    return False
-            except Exception:
-                # If comparison fails for any reason, overwrite as safest default.
-                pass
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-            return True
-
-        # --- Refresh suite-level benchmark_suite.py (+ splitpoint_runners) from the latest template (best-effort). ---
-        # Generate into a temp dir and only overwrite files whose *content* changed.
-        # This keeps suite_bundle caching effective while making old benchmark sets runnable.
-        try:
-            from ..gui.controller import write_benchmark_suite_script
-
-            # Determine the benchmark JSON file name used by this suite.
-            # - When the user points to a directory, the suite normally contains benchmark_set.json.
-            # - When the user points directly to a JSON file, keep that name.
-            bench_json_name = 'benchmark_set.json'
-            try:
-                if suite_path.is_file() and suite_path.suffix.lower() == '.json':
-                    bench_json_name = suite_path.name
-            except Exception:
-                pass
-
-            # If the chosen file does not exist, try a reasonable fallback.
-            if not (suite_dir / bench_json_name).exists():
-                if (suite_dir / 'benchmark_set.json').exists():
-                    bench_json_name = 'benchmark_set.json'
-                else:
-                    cand = sorted([p.name for p in suite_dir.glob('*.json')])
-                    if cand:
-                        bench_json_name = cand[0]
-
-            with tempfile.TemporaryDirectory(prefix='osp_suite_refresh_') as _td:
-                tmp_dir = Path(_td)
-
-                # write_benchmark_suite_script() writes benchmark_suite.py and vendors splitpoint_runners
-                # into the provided directory.
-                tmp_path = Path(write_benchmark_suite_script(tmp_dir, bench_json_name=bench_json_name))
-
-                # 1) Refresh benchmark_suite.py
-                dst_path = suite_dir / 'benchmark_suite.py'
-                if tmp_path.exists() and _copy_if_changed(tmp_path, dst_path):
-                    log(f'[info] Refreshed benchmark_suite.py: {dst_path}')
-
-                # 2) Refresh splitpoint_runners (keep in sync with the suite script)
-                src_runners = tmp_dir / 'splitpoint_runners'
-                if src_runners.exists() and src_runners.is_dir():
-                    dst_runners = suite_dir / 'splitpoint_runners'
-                    n_updated = 0
-                    for src_file in src_runners.rglob('*'):
-                        if src_file.is_dir():
-                            continue
-                        rel = src_file.relative_to(src_runners)
-                        dst_file = dst_runners / rel
-                        if _copy_if_changed(src_file, dst_file):
-                            n_updated += 1
-                    if n_updated:
-                        log(f'[info] Refreshed splitpoint_runners: {n_updated} file(s) updated')
-        except Exception as e:
-            log(f"[warn] Could not refresh benchmark_suite.py: {e}")
-
-        # --- Refresh per-case ONNXRuntime runner skeletons ---
-        # Runner generator function name changed over time; support both.
-        try:
-            from ..split_export_runners import write_runner_skeleton_onnxruntime as _write_runner_onnxruntime
-        except Exception:  # pragma: no cover
-            from ..split_export_runners import write_runner_onnxruntime as _write_runner_onnxruntime  # type: ignore
-
-        def _refresh_case_runner(case_dir: Path, manifest_filename: str) -> int:
-            """Regenerate ORT runner skeleton into temp dir and copy changed files into case_dir.
-
-            Returns number of updated files.
-            """
-            updated = 0
-            with tempfile.TemporaryDirectory(prefix='osp_runner_refresh_') as _td:
-                tmp_case = Path(_td)
-                try:
-                    _write_runner_onnxruntime(str(tmp_case), manifest_filename=manifest_filename, target='auto')  # type: ignore[arg-type]
-                except TypeError:
-                    # Legacy API
-                    _write_runner_onnxruntime(str(tmp_case), Path(manifest_filename), export_mode='folder')  # type: ignore[misc]
-
-                for fname in (
-                    'run_split_onnxruntime.py',
-                    'run_split_onnxruntime.sh',
-                    'run_split_onnxruntime.bat',
-                ):
-                    src = tmp_case / fname
-                    if not src.exists():
-                        continue
-                    dst = case_dir / fname
-                    if _copy_if_changed(src, dst):
-                        updated += 1
-            return updated
-
-        # Discover case folders by manifest presence (robust vs relying on split_candidates.csv)
-        case_manifests = sorted(suite_dir.glob('b*/split_manifest.json'))
-        total_updated_files = 0
-        total_updated_cases = 0
-        for manifest in case_manifests:
-            case_dir = manifest.parent
-            if case_dir.parent != suite_dir:
-                continue
-            n = _refresh_case_runner(case_dir, manifest.name)
-            if n:
-                total_updated_cases += 1
-                total_updated_files += n
-
-        if total_updated_files:
-            log(
-                f"[info] Refreshed runner scripts in {total_updated_cases}/{len(case_manifests)} cases "
-                f"(files updated: {total_updated_files})."
-            )
-
+        refresh_stats = refresh_suite_harness(
+            suite_dir,
+            benchmark_set_json=benchmark_set_json,
+            log=log,
+        )
+        if bool(refresh_stats.get("changed")):
+            force_bundle_rebuild = True
     except Exception as e:
         log(f'[warn] Could not refresh suite runner scripts: {e}')
 
@@ -545,6 +821,7 @@ def run_remote_benchmark(
     remote_rc: Optional[int] = None
     cancelled: bool = False
     results_downloaded: bool = False
+    remote_resume_state_found: bool = False
 
     try:
         # Resolve remote base (expands ~ and symlinks)
@@ -553,12 +830,20 @@ def run_remote_benchmark(
         remote_suite_dir = f"{remote_run_dir}/suite"
         remote_results_dir = f"{remote_run_dir}/results"
         remote_results_tar = f"{remote_run_dir}/results.tar.gz"
+        remote_trt_cache_root = f"{remote_base}/{suite_dir.name}/_shared_trt_cache"
 
         # RemoteHost.user_host is a plain string ("user@host").
         # We keep a pretty variant that includes the port for logs.
         log(f"Remote host: {host.user_host_pretty}")
         log(f"Suite (local): {suite_dir}")
         log(f"[remote] run_dir={remote_run_dir}")
+        if resume_requested:
+            rc_resume_check, _out_resume_check = transport.run(f"test -d {shlex.quote(remote_suite_dir)}", timeout=10)
+            remote_resume_state_found = (rc_resume_check == 0)
+            if remote_resume_state_found:
+                log(f"[resume] Remote suite state found at {remote_suite_dir}; remote benchmark will continue there.")
+            else:
+                log(f"[resume] Remote suite state not found at {remote_suite_dir}; remote benchmark will restart from scratch but keep the same run id.")
 
         # Explicit phases so the UI shows where it hangs (mkdir vs untar vs run).
         progress(0.01, "Remote mkdir (run/results)")
@@ -962,12 +1247,17 @@ def run_remote_benchmark(
                 log(f"[package] {msg}")
 
             log("Packaging suite (bundle)")
+            if force_bundle_rebuild and bool(args.reuse_bundle):
+                log('[package] Rebuilding bundle because suite files were refreshed locally.')
+            bundle_includes, bundle_extra_excludes = remote_minimal_bundle_patterns()
             stats = build_suite_bundle(
                 suite_dir=suite_dir,
                 out_path=bundle_path,
+                includes=bundle_includes,
+                excludes=bundle_extra_excludes,
                 progress_cb=_bundle_progress,
                 should_cancel=(lambda: bool(cancel_event and cancel_event.is_set())),
-                reuse_if_unchanged=bool(args.reuse_bundle),
+                reuse_if_unchanged=bool(args.reuse_bundle) and not force_bundle_rebuild,
             )
 
             raw_mb = stats.total_bytes / (1024 * 1024) if stats.total_bytes else 0.0
@@ -1006,6 +1296,20 @@ def run_remote_benchmark(
             log(f"[remote] suite_dir={remote_suite_dir}")
             progress(0.40, "Suite uploaded")
 
+        if resume_requested and not remote_resume_state_found:
+            local_resume_overlay = local_run_dir / "results"
+            if local_resume_overlay.is_dir() and any(local_resume_overlay.iterdir()):
+                log("[resume] Uploading local partial results overlay to remote suite")
+                uploaded_overlay_items = 0
+                for child in sorted(local_resume_overlay.iterdir()):
+                    try:
+                        scp_upload_checked(child, remote_suite_dir + "/", recursive=child.is_dir())
+                        uploaded_overlay_items += 1
+                    except Exception as e:
+                        log(f"[warn] resume overlay upload failed for {child.name}: {e}")
+                if uploaded_overlay_items:
+                    log(f"[resume] Uploaded {uploaded_overlay_items} local result item(s) into {remote_suite_dir}")
+
         # ----------------------------
         # Run benchmark on remote
         # ----------------------------
@@ -1041,10 +1345,17 @@ def run_remote_benchmark(
                 "iters": iters,
                 "effective_runs": effective_runs,
                 "total_invocations_per_benchmark": warmup + effective_runs,
+                "throughput_frames": int(getattr(args, "throughput_frames", 24) or 0),
+                "throughput_warmup_frames": int(getattr(args, "throughput_warmup_frames", 6) or 0),
+                "throughput_queue_depth": int(getattr(args, "throughput_queue_depth", 2) or 1),
             }
             _write_json(local_run_dir / "run_meta.json", run_meta)
         except Exception:
             pass
+
+        throughput_frames = max(0, int(getattr(args, "throughput_frames", 24) or 0))
+        throughput_warmup_frames = max(0, int(getattr(args, "throughput_warmup_frames", 6) or 0))
+        throughput_queue_depth = max(1, int(getattr(args, "throughput_queue_depth", 2) or 1))
 
         bench_cmd = (
             f'"$RUN_PY" -u benchmark_suite.py'
@@ -1052,15 +1363,37 @@ def run_remote_benchmark(
             f" --plan benchmark_plan.json"
             f" --warmup {warmup}"
             f" --runs {effective_runs}"
+            f" --trt-cache-root {shlex.quote(remote_trt_cache_root)}"
+            f" --throughput-frames {throughput_frames}"
+            f" --throughput-warmup-frames {throughput_warmup_frames}"
+            f" --throughput-queue-depth {throughput_queue_depth}"
         )
+        if bool(getattr(args, "resume", True)):
+            bench_cmd += " --resume"
         if args.add_args:
             # Advanced args supported by benchmark_suite.py (raw passthrough).
             bench_cmd += f" {args.add_args}"
 
+        case_progress_re = re.compile(r"^\[(?P<run_id>[^\]]+)\]\s+\[(?P<i>\d+)/(?P<n>\d+)\]\s+Running\s+(?P<case>b\d+)\b")
+
         def on_line(line: str) -> None:
+            nonlocal last_suite_progress
+            recent_remote_lines.append(str(line))
+            if len(recent_remote_lines) > 200:
+                del recent_remote_lines[:-200]
             log(line)
             sp = parse_benchmark_suite_progress(line)
             if sp is not None:
+                last_suite_progress = {
+                    "run_id": sp.run_id,
+                    "index": int(sp.i),
+                    "count": int(sp.n),
+                    "pct": float(round(sp.pct, 6)),
+                    "line": str(line),
+                }
+                m_case = case_progress_re.match(str(line).strip())
+                if m_case is not None:
+                    last_suite_progress["case_id"] = str(m_case.group("case"))
                 # Map suite progress into 40%..90%
                 progress(0.40 + 0.50 * sp.pct, f"Running {sp.i}/{sp.n}")
         # Make sure we also have remote stdout/stderr files for debugging.
@@ -1118,15 +1451,28 @@ def run_remote_benchmark(
         bench_inner = "\n".join(bench_inner_lines)
         bench_remote_cmd = "bash -lc " + shlex.quote(bench_inner)
 
+        outer_timeout_s = None
+        try:
+            if effective_outer_timeout_s is not None and int(effective_outer_timeout_s) > 0:
+                outer_timeout_s = int(effective_outer_timeout_s)
+        except Exception:
+            outer_timeout_s = 7200
+
         remote_rc = transport.run_streaming(
             bench_remote_cmd,
-            timeout=args.timeout_s,
+            timeout=outer_timeout_s,
             on_line=on_line,
             cancel_event=cancel_event,
         )
 
         if remote_rc != 0:
-            bench_error = f"Remote benchmark failed (rc={remote_rc})"
+            if remote_rc == 124:
+                timeout_label = f"{int(outer_timeout_s)}s" if outer_timeout_s is not None else "the configured limit"
+                bench_error = f"Remote benchmark timed out after {timeout_label}"
+            elif remote_rc == 130:
+                bench_error = "Remote benchmark cancelled"
+            else:
+                bench_error = f"Remote benchmark failed (rc={remote_rc})"
             log(f"[warn] {bench_error} (continuing to collect/download results)")
 
     except BundleCancelled:
@@ -1151,7 +1497,7 @@ def run_remote_benchmark(
         cancel_requested = bool(cancelled or (cancel_event and cancel_event.is_set()) or remote_rc == 130)
         collect_timeout = 20 if cancel_requested else 60
         pack_timeout = 60 if cancel_requested else 300
-        scp_timeout = 60 if cancel_requested else (args.timeout_s or 300)
+        scp_timeout = 60 if cancel_requested else (int(args.timeout_s) if args.timeout_s is not None and int(args.timeout_s) > 0 else 300)
 
         log("Collecting results on remote (best effort)")
         # Quote remote paths inside the script (the *whole* script is single-quoted
@@ -1221,6 +1567,14 @@ def run_remote_benchmark(
                     log("Extracting results locally")
                     _extract_tarball(local_tar, local_run_dir, log=log)
                     results_downloaded = True
+                    try:
+                        local_results_dir = local_run_dir / "results"
+                        if local_results_dir.is_dir():
+                            lean_tar = local_run_dir / "results_bundle_lean.tar.gz"
+                            create_results_bundle_from_results_dir(local_results_dir, lean_tar, mode="lean")
+                            log(f"[info] wrote lean results bundle: {lean_tar}")
+                    except Exception as lean_exc:
+                        log(f"[warn] failed to create lean results bundle: {lean_exc}")
                 except Exception as e:
                     log(f"[warn] failed to extract results tar: {e}")
 
@@ -1236,6 +1590,14 @@ def run_remote_benchmark(
                     log(out_dl2.strip()[-2000:])
             else:
                 results_downloaded = True
+                try:
+                    local_results_dir = local_run_dir / "results"
+                    if local_results_dir.is_dir():
+                        lean_tar = local_run_dir / "results_bundle_lean.tar.gz"
+                        create_results_bundle_from_results_dir(local_results_dir, lean_tar, mode="lean")
+                        log(f"[info] wrote lean results bundle: {lean_tar}")
+                except Exception as lean_exc:
+                    log(f"[warn] failed to create lean results bundle: {lean_exc}")
 
     except BaseException as e:
         # Best-effort only (including KeyboardInterrupt).
@@ -1281,6 +1643,19 @@ def run_remote_benchmark(
     if not stdout_tail and not stderr_tail:
         stdout_tail = _read_tail_lines(local_run_dir / "logs" / "runner.log")
 
+    extra_fail_reason: dict[str, Any] = {}
+    if isinstance(last_suite_progress, dict) and last_suite_progress:
+        extra_fail_reason["last_suite_progress"] = dict(last_suite_progress)
+    if recent_remote_lines:
+        extra_fail_reason["recent_remote_lines"] = list(recent_remote_lines[-50:])
+    if isinstance(timeout_hint, dict) and timeout_hint:
+        extra_fail_reason["timeout_estimate"] = {
+            **timeout_hint,
+            "effective_timeout_s": effective_outer_timeout_s,
+            "auto_raised": bool(timeout_decision.get("auto_raised")),
+            "warn_too_low": bool(timeout_decision.get("warn_too_low")),
+        }
+
     _finalize_run_status(
         local_run_dir,
         status=final_status,
@@ -1291,6 +1666,7 @@ def run_remote_benchmark(
         exception_text=exception_text,
         stdout_tail=stdout_tail,
         stderr_tail=stderr_tail,
+        extra_fail_reason=(extra_fail_reason or None),
     )
 
     planned_runs: list[dict[str, Any]] = []
@@ -1396,10 +1772,22 @@ def run_remote_benchmark(
     log(f"DONE in {dt:.1f}s. Results in: {local_run_dir}")
     progress(1.0, "Done" if final_status == "ok" else "Done (with errors)")
 
+    final_error: Optional[str]
+    if final_status == "ok":
+        final_error = None
+    elif final_status == "partial" and bool(getattr(args, "resume", True)):
+        base_msg = bench_error or "Run ended early"
+        final_error = f"{base_msg}. Partial results were collected; rerun the remote benchmark to resume the same run."
+    else:
+        final_error = bench_error or "Run failed"
+
     return {
         "ok": final_status == "ok",
         "status": final_status,
         "local_run_dir": str(local_run_dir),
         "remote_run_dir": remote_run_dir,
-        "error": None if final_status == "ok" else (bench_error or "Run failed"),
+        "error": final_error,
+        "resumed": resume_requested,
+        "requested_run_id": requested_run_id,
+        "active_run_id": str(run_id),
     }

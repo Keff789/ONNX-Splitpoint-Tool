@@ -1,0 +1,213 @@
+{
+  "accelerators": [
+    {
+      "id": "jetson_xavier_nx_8gb",
+      "name": "Jetson Xavier NX (8GB)",
+      "ram_limit_mb": 8192,
+      "runtime_overhead_mb": 400,
+      "notes": "Host RAM; ORT/TensorRT overhead included via runtime_overhead_mb",
+      "perf": {
+        "tops_int8": 21,
+        "gflops_fp16": 0,
+        "efficiency_factor": 0.7
+      },
+      "precision": {
+        "supported": [
+          "FP32",
+          "FP16",
+          "INT8"
+        ],
+        "preferred_default": "FP16",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8 (wenn kalibrierbar), sonst FP16",
+          "transformer_llm_vlm": "FP16"
+        },
+        "notes": "Auf Jetson ist FP16 meist der Kompatibilitäts-/Performance-Sweet-Spot; INT8 liefert maximalen Durchsatz, braucht aber Quantisierung/Kalibrierung."
+      }
+    },
+    {
+      "id": "jetson_orin_nx_8gb",
+      "name": "Jetson Orin NX (8GB)",
+      "ram_limit_mb": 8192,
+      "runtime_overhead_mb": 500,
+      "notes": "Conservative RAM budget placeholder.",
+      "perf": {
+        "tops_int8": 70,
+        "gflops_fp16": 0,
+        "efficiency_factor": 0.75
+      },
+      "precision": {
+        "supported": [
+          "FP32",
+          "TF32",
+          "FP16",
+          "INT8"
+        ],
+        "preferred_default": "FP16",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8 (ggf. sparsity), sonst FP16",
+          "transformer_llm_vlm": "FP16 (oder INT8/INT4 weight-only, wenn Toolchain passt)"
+        },
+        "notes": "TensorRT auf Orin (SM 8.7) nutzt typischerweise FP16/INT8; TF32 kann für FP32-Workloads helfen. Weight-only Quantisierung kann bei LLMs Speicher/Bandbreite sparen."
+      }
+    },
+    {
+      "id": "jetson_orin_nx_16gb",
+      "name": "Jetson Orin NX (16GB)",
+      "ram_limit_mb": 16384,
+      "runtime_overhead_mb": 700,
+      "notes": "Conservative RAM budget placeholder.",
+      "perf": {
+        "tops_int8": 100,
+        "gflops_fp16": 0,
+        "efficiency_factor": 0.75
+      },
+      "precision": {
+        "supported": [
+          "FP32",
+          "TF32",
+          "FP16",
+          "INT8"
+        ],
+        "preferred_default": "FP16",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8 (ggf. sparsity), sonst FP16",
+          "transformer_llm_vlm": "FP16 (oder INT8/INT4 weight-only, wenn Toolchain passt)"
+        },
+        "notes": "TensorRT auf Orin (SM 8.7) nutzt typischerweise FP16/INT8; TF32 kann für FP32-Workloads helfen. Weight-only Quantisierung kann bei LLMs Speicher/Bandbreite sparen."
+      }
+    },
+    {
+      "id": "hailo_8",
+      "name": "Hailo-8",
+      "ram_limit_mb": 4096,
+      "runtime_overhead_mb": 256,
+      "notes": "Conservative placeholder; verify host/device split for your deployment.",
+      "perf": {
+        "tops_int8": 26,
+        "gflops_fp16": 0,
+        "efficiency_factor": 0.6
+      },
+      "precision": {
+        "supported": [
+          "INT8"
+        ],
+        "preferred_default": "INT8",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8"
+        },
+        "notes": "Hailo-8 ist auf INT8 quantisierte Inferenz ausgelegt."
+      }
+    },
+    {
+      "id": "hailo_10h",
+      "name": "Hailo-10H",
+      "ram_limit_mb": 6144,
+      "runtime_overhead_mb": 320,
+      "notes": "Conservative placeholder; verify with runtime toolchain.",
+      "perf": {
+        "tops_int8": 40,
+        "gflops_fp16": 0,
+        "efficiency_factor": 0.6
+      },
+      "precision": {
+        "supported": [
+          "INT4",
+          "INT8"
+        ],
+        "preferred_default": "INT4",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8 (wenn Accuracy wichtiger), sonst INT4",
+          "transformer_llm_vlm": "INT4 (meist sinnvoll), ggf. INT8 für bessere Genauigkeit"
+        },
+        "notes": "Hailo-10H bewirbt Peak-Performance für INT4/INT8. INT4 ist oft sinnvoll für GenAI/Transformer, INT8 ist die sicherere Accuracy-Wahl."
+      }
+    },
+    {
+      "id": "axelera_metis",
+      "name": "Axelera Metis",
+      "ram_limit_mb": 4096,
+      "runtime_overhead_mb": 320,
+      "notes": "Conservative placeholder.",
+      "perf": {
+        "tops_int8": 80,
+        "gflops_fp16": 0,
+        "efficiency_factor": 0.65
+      },
+      "precision": {
+        "supported": [
+          "INT8"
+        ],
+        "preferred_default": "INT8",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8"
+        },
+        "notes": "Metis ist als INT8 Inferenzbeschleuniger positioniert; Modelle werden typischerweise per SDK quantisiert."
+      }
+    },
+    {
+      "id": "axelera_metis_max",
+      "name": "Axelera Metis Max",
+      "ram_limit_mb": 8192,
+      "runtime_overhead_mb": 384,
+      "notes": "Conservative placeholder.",
+      "perf": {
+        "tops_int8": 120,
+        "gflops_fp16": 0,
+        "efficiency_factor": 0.65
+      },
+      "precision": {
+        "supported": [
+          "INT8"
+        ],
+        "preferred_default": "INT8",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8"
+        },
+        "notes": "Metis ist als INT8 Inferenzbeschleuniger positioniert; Modelle werden typischerweise per SDK quantisiert."
+      }
+    },
+    {
+      "id": "deepx_dx_m1",
+      "name": "DeepX DX-M1",
+      "ram_limit_mb": 4096,
+      "runtime_overhead_mb": 256,
+      "notes": "Conservative placeholder.",
+      "perf": {
+        "tops_int8": 25,
+        "gflops_fp16": 0,
+        "efficiency_factor": 0.6
+      },
+      "precision": {
+        "supported": [
+          "INT8"
+        ],
+        "preferred_default": "INT8",
+        "preferred_by_workload": {
+          "vision_cnn_detection_segmentation": "INT8"
+        },
+        "notes": "DX-M1 ist auf quantisierte INT8 Inferenz ausgelegt."
+      }
+    }
+  ],
+  "interfaces": [
+    {
+      "id": "pcie_gen3_x4",
+      "name": "PCIe Gen3 x4 (M.2 Key M)",
+      "bandwidth_mb_s": 3500,
+      "latency_overhead_ms": 0.1
+    },
+    {
+      "id": "pcie_gen4_x4",
+      "name": "PCIe Gen4 x4",
+      "bandwidth_mb_s": 7000,
+      "latency_overhead_ms": 0.08
+    },
+    {
+      "id": "ethernet_10g",
+      "name": "Ethernet 10G",
+      "bandwidth_mb_s": 1100,
+      "latency_overhead_ms": 0.25
+    }
+  ]
+}

@@ -26,6 +26,30 @@ class SerializedTensors:
         return len(self.blob)
 
 
+@dataclass
+class TransferMeta:
+    """Backwards-compatible metadata wrapper for serialized tensor payloads."""
+
+    specs: list[TensorSpec]
+
+
+class DefaultTransfer:
+    """Backwards-compatible transfer adapter used by older runner templates.
+
+    Newer code paths use ``serialize_tensors`` / ``deserialize_tensors`` directly,
+    but some vendored runner templates still import ``DefaultTransfer`` and
+    ``TransferMeta``. Keep both APIs alive so old suites can be refreshed safely.
+    """
+
+    def serialize(self, tensors: dict[str, np.ndarray]) -> tuple[bytes, TransferMeta]:
+        ser = serialize_tensors(tensors)
+        return ser.blob, TransferMeta(specs=list(ser.specs))
+
+    def deserialize(self, blob: bytes, meta: TransferMeta) -> dict[str, np.ndarray]:
+        ser = SerializedTensors(specs=list(meta.specs), blob=blob)
+        return deserialize_tensors(ser)
+
+
 def serialize_tensors(tensors: dict[str, np.ndarray]) -> SerializedTensors:
     specs: list[TensorSpec] = []
     chunks: list[bytes] = []
@@ -33,7 +57,7 @@ def serialize_tensors(tensors: dict[str, np.ndarray]) -> SerializedTensors:
     for key, arr in tensors.items():
         a = np.ascontiguousarray(arr)
         b = a.tobytes()
-        specs.append(TensorSpec(key=str(key), shape=tuple(a.shape), dtype=str(a.dtype), nbytes=len(b)))
+        specs.append(TensorSpec(key=str(key), shape=tuple(int(x) for x in a.shape), dtype=str(a.dtype), nbytes=len(b)))
         chunks.append(b)
 
     return SerializedTensors(specs=specs, blob=b"".join(chunks))

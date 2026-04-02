@@ -30,6 +30,16 @@
     },
     "plan": {
       "$ref": "benchmark_plan.schema.json"
+    },
+    "analysis_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "artifact_manifest": {
+      "type": "object"
+    },
+    "bundle_options": {
+      "type": "object"
     }
   },
   "additionalProperties": true

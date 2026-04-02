@@ -15,6 +15,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from .resources_utils import copy_resource_file, read_text
+
 
 # ---------------------------- Runner resources ----------------------------
 
@@ -130,8 +132,7 @@ def write_runner_skeleton_onnxruntime(out_dir: str, *, manifest_filename: str = 
     out_path = os.path.join(out_dir, "run_split_onnxruntime.py")
 
     # Runner script (template + placeholder replacement)
-    script_template_path = Path(__file__).resolve().parent / "resources" / "templates" / "run_split_onnxruntime.py.txt"
-    script = script_template_path.read_text(encoding="utf-8")
+    script = read_text("resources", "templates", "run_split_onnxruntime.py.txt")
     script = script.replace("__MANIFEST_FILENAME__", str(manifest_filename))
     target = (target or "auto").lower()
     if target not in {"auto","cpu","cuda","tensorrt"}:

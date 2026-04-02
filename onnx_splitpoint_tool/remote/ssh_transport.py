@@ -262,6 +262,8 @@ class SSHTransport:
             return 1
 
         start = time.time()
+        timed_out = False
+        cancelled = False
         assert proc.stdout is not None
         try:
             ansi_re = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
@@ -278,6 +280,7 @@ class SSHTransport:
                     on_line(line)
 
                 if cancel_event and cancel_event.is_set():
+                    cancelled = True
                     on_line("[remote] cancel requested; terminating…")
                     proc.terminate()
                     break
@@ -286,6 +289,7 @@ class SSHTransport:
                 # (Bugfix) A previous refactor accidentally referenced `t0` here, which
                 # caused remote benchmark runs to fail with: "name 't0' is not defined".
                 if timeout is not None and (time.time() - start) > timeout:
+                    timed_out = True
                     on_line(f"[remote] timeout ({timeout}s) exceeded; terminating…")
                     proc.terminate()
                     break
@@ -303,6 +307,11 @@ class SSHTransport:
             except Exception:
                 pass
             rc = 1
+
+        if cancelled:
+            return 130
+        if timed_out:
+            return 124
         return int(rc)
 
     def scp_upload(

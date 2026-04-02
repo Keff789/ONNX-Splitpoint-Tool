@@ -9,6 +9,8 @@ from typing import Optional
 import shutil
 from tkinter import ttk, filedialog
 
+from ..widgets.tooltip import attach_tooltip
+
 
 def _human_size(num: float) -> str:
     units = ["B", "KB", "MB", "GB"]
@@ -134,6 +136,22 @@ def build_panel(parent, app=None) -> ttk.Frame:
     row0b = ttk.Frame(hef_group)
     row0b.pack(fill=tk.X, padx=8, pady=(0, 4))
     ttk.Label(row0b, textvariable=var_compute, foreground="#444").pack(side=tk.LEFT)
+
+    diag_tools = ttk.Frame(row0b)
+    diag_tools.pack(side=tk.RIGHT)
+    btn_last_diag = ttk.Button(diag_tools, text="Last diagnostics…", command=getattr(app, "_hailo_gui_show_last_diagnostics", None))
+    btn_last_diag.pack(side=tk.LEFT)
+    attach_tooltip(
+        btn_last_diag,
+        "Show the most recent Hailo HEF build diagnostics collected in this GUI session.\n"
+        "This includes the structured process summary (partition time, contexts, SNR, warnings, system snapshot on failures).",
+    )
+    btn_open_diag = ttk.Button(diag_tools, text="Open result JSON…", command=getattr(app, "_hailo_gui_open_result_json", None))
+    btn_open_diag.pack(side=tk.LEFT, padx=(8, 0))
+    attach_tooltip(
+        btn_open_diag,
+        "Open a hailo_hef_build_result.json from disk and render the extracted diagnostics in a scrollable popup.",
+    )
 
     ttk.Label(row0, text="Build:").pack(side=tk.LEFT, padx=(8, 4))
     ttk.Checkbutton(row0, text="full", variable=var_hef_full).pack(side=tk.LEFT)
