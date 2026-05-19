@@ -441,14 +441,35 @@ def _normalize_run_variants(run: Mapping[str, Any]) -> List[str]:
     return out
 
 
+def _normalize_physical_hailo_hw(value: Any) -> Optional[str]:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if text in {"hailo8", "hailo8r", "hailo8l", "hailo10", "hailo10h", "hailo10p"}:
+        return text
+    if "hailo8r" in text:
+        return "hailo8r"
+    if "hailo8l" in text:
+        return "hailo8l"
+    if "hailo8" in text:
+        return "hailo8"
+    if "hailo10h" in text:
+        return "hailo10h"
+    if "hailo10p" in text:
+        return "hailo10p"
+    if "hailo10" in text:
+        return "hailo10"
+    return None
+
+
 def _hailo_stage_hw(run: Mapping[str, Any], stage_key: str) -> Optional[str]:
     stage = run.get(stage_key)
-    if not isinstance(stage, Mapping):
-        return None
-    if str(stage.get("type") or "").strip().lower() != "hailo":
-        return None
-    hw = str(stage.get("hw_arch") or stage.get("arch") or stage.get("id") or "").strip()
-    return hw or None
+    if isinstance(stage, Mapping):
+        if str(stage.get("type") or "").strip().lower() != "hailo":
+            return None
+        hw = _normalize_physical_hailo_hw(stage.get("hw_arch") or stage.get("arch") or stage.get("id") or "")
+        return hw or None
+    return _normalize_physical_hailo_hw(stage)
 
 
 def run_variant_hailo_requirements(run: Mapping[str, Any], variant: str) -> List[Tuple[str, str]]:
@@ -456,7 +477,7 @@ def run_variant_hailo_requirements(run: Mapping[str, Any], variant: str) -> List
     stage1_hw = _hailo_stage_hw(run, "stage1")
     stage2_hw = _hailo_stage_hw(run, "stage2")
     run_type = str(run.get("type") or "").strip().lower()
-    run_hw = str(run.get("hw_arch") or run.get("id") or "").strip() or None
+    run_hw = _normalize_physical_hailo_hw(run.get("hw_arch") or run.get("id") or "")
 
     req: List[Tuple[str, str]] = []
     if variant_key == "full":

@@ -60,7 +60,9 @@ def _summary_header(summary: Mapping[str, Any]) -> tuple[str, str]:
         details.append(f"{rejected} rejected")
     if auto_skipped > 0:
         details.append(f"{auto_skipped} auto-skipped")
-    if preflight and bool(preflight.get("aborted")):
+    if preflight and bool(preflight.get("skipped")):
+        details.append("Hailo parser preflight skipped")
+    elif preflight and bool(preflight.get("aborted")):
         details.append("Hailo parser preflight blocked generation")
     elif preflight and bool(preflight.get("plan_adjusted")):
         details.append("Hailo parser preflight adjusted the plan")
@@ -158,7 +160,7 @@ def show_benchmark_completion_dialog(
             ttk.Label(outlook_frame, text="Top Hailo candidates: " + ", ".join(top_candidates)).pack(anchor="w", pady=(4, 0))
 
     preflight = summary_data.get("hailo_full_model_preflight") if isinstance(summary_data.get("hailo_full_model_preflight"), Mapping) else None
-    if preflight and bool(preflight.get("checked")):
+    if preflight and (bool(preflight.get("checked")) or bool(preflight.get("skipped"))):
         preflight_frame = ttk.LabelFrame(tab_overview, text="Hailo parser preflight", padding=10)
         preflight_frame.pack(fill="x", pady=(10, 0))
 
@@ -167,7 +169,9 @@ def show_benchmark_completion_dialog(
         failed_count = int(preflight.get("failed_count") or 0)
         unsupported_count = int(preflight.get("unsupported_failure_count") or 0)
 
-        if bool(preflight.get("aborted")):
+        if bool(preflight.get("skipped")):
+            headline = "Status: SKIPPED — full-model HEF build will be attempted directly without parser preflight."
+        elif bool(preflight.get("aborted")):
             headline = "Status: FAILED — benchmark generation was stopped before the candidate loop."
         elif bool(preflight.get("plan_adjusted")):
             headline = "Status: WARN — plan-aware preflight adjustment was applied and generation continued."

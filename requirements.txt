@@ -3,5 +3,7 @@ numpy
 matplotlib
 pillow
 
+PyYAML
+jsonschema
 # optional:
 # onnxruntime

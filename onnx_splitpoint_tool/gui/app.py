@@ -32,6 +32,18 @@ from ..gui_app import _setup_gui_logging
 from .hailo_diagnostics import format_hailo_diagnostics_text, load_hailo_result_json
 from .hailo_parse_budget import normalize_persisted_hailo_max_checks
 from .panels import panel_analysis, panel_split_export, panel_benchmark_analysis, panel_hardware, panel_jobs, panel_logs, panel_validation
+from .profile_campaign import (
+    ProfileCampaignOptions,
+    run_profile_campaign,
+    snapshot_preparation_runtime,
+    snapshot_remote_defaults,
+)
+from ..benchmark.evaluation_profiles import load_export_metadata_for_model
+from ..benchmark.model_preparation import (
+    normalize_model_preparation_mode,
+    prepare_model_for_benchmark,
+    preparation_result_is_selected_model,
+)
 from .widgets.text_progress_dialog import TextProgressDialog
 
 __version__ = TOOL_VERSION
@@ -164,7 +176,8 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         # Auto-probe Hailo availability on startup so users immediately see
         # whether Hailo-8 / Hailo-10 profiles are usable.
         try:
-            self.after(250, getattr(self, "_hailo_refresh_status", lambda: None))
+            probe_delay_ms = int(str(os.environ.get("ONNX_SPLITPOINT_STARTUP_HAILO_PROBE_DELAY_MS", "1500") or "1500").strip() or "1500")
+            self.after(max(0, probe_delay_ms), getattr(self, "_hailo_refresh_status", lambda: None))
         except Exception:
             pass
 
@@ -698,6 +711,25 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
             except Exception:
                 pass
 
+        # Clean up stale semantic-validation paths loaded from persisted UI state.
+        try:
+            from ..benchmark.suite_refresh import normalize_semantic_validation_request
+
+            var_imgs = getattr(self, "var_bench_validation_images", None)
+            var_max = getattr(self, "var_bench_validation_max_images", None)
+            var_task = getattr(self, "var_bench_task", None)
+            if isinstance(var_imgs, tk.Variable):
+                raw_imgs = (var_imgs.get() or "")
+                raw_max = (var_max.get() if isinstance(var_max, tk.Variable) else "50") or "50"
+                raw_task = (var_task.get() if isinstance(var_task, tk.Variable) else "auto") or "auto"
+                norm_imgs, norm_max, use_embedded = normalize_semantic_validation_request(raw_imgs, raw_max, benchmark_task=raw_task)
+                if use_embedded and str(raw_imgs).strip():
+                    var_imgs.set("")
+                if isinstance(var_max, tk.Variable):
+                    var_max.set(str(int(norm_max or 0)))
+        except Exception:
+            pass
+
     def _collect_persistent_settings(self) -> dict:
         tk_vars = {}
         for name, value in self.__dict__.items():
@@ -765,10 +797,10 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
             except Exception:
                 max_files = 300
 
-            from ..paths import splitpoint_logs_dir
+            from ..paths import splitpoint_logs_dir, splitpoint_wsl_debug_dir
             from ..log_retention import LogRetentionPolicy, apply_log_retention
 
-            roots = [splitpoint_logs_dir(), Path.home() / ".onnx_splitpoint_tool" / "wsl_debug"]
+            roots = [splitpoint_logs_dir(), splitpoint_wsl_debug_dir()]
             pol = LogRetentionPolicy(enabled=True, max_age_days=days, max_files=max_files)
             stats = apply_log_retention(roots, policy=pol, recursive=True)
 
@@ -1086,7 +1118,9 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         _load_selected()
 
     def _remote_selected_suite_dir(self) -> Path | None:
-        bench_json = self.var_remote_benchmark_set.get().strip() if hasattr(self, "var_remote_benchmark_set") else ""
+        bench_json = str(benchmark_set_json_override or '').strip()
+        if not bench_json:
+            bench_json = self.var_remote_benchmark_set.get().strip() if hasattr(self, "var_remote_benchmark_set") else ""
         if not bench_json:
             return None
         p = Path(bench_json).expanduser()
@@ -1147,10 +1181,50 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
 
         bench_json = self._remote_selected_benchmark_json()
         messages: list[str] = []
+        validation_images = None
+        validation_max_images = None
+        validation_reference_mode = None
+        benchmark_task = 'auto'
+        mini_coco_ap50 = False
+        mini_classification_eval = False
+        try:
+            validation_images = (getattr(self, 'var_bench_validation_images', None).get() if hasattr(self, 'var_bench_validation_images') else '') or ''
+            validation_images = str(validation_images).strip() or None
+        except Exception:
+            validation_images = None
+        try:
+            raw_max = (getattr(self, 'var_bench_validation_max_images', None).get() if hasattr(self, 'var_bench_validation_max_images') else '') or ''
+            validation_max_images = int(str(raw_max).strip()) if str(raw_max).strip() else 0
+        except Exception:
+            validation_max_images = 0
+        try:
+            validation_reference_mode = (getattr(self, 'var_bench_validation_reference_mode', None).get() if hasattr(self, 'var_bench_validation_reference_mode') else 'auto') or 'auto'
+            validation_reference_mode = str(validation_reference_mode).strip() or 'auto'
+        except Exception:
+            validation_reference_mode = 'auto'
+        try:
+            benchmark_task = (getattr(self, 'var_bench_task', None).get() if hasattr(self, 'var_bench_task') else 'auto') or 'auto'
+            benchmark_task = str(benchmark_task).strip() or 'auto'
+        except Exception:
+            benchmark_task = 'auto'
+        try:
+            mini_coco_ap50 = bool((getattr(self, 'var_bench_mini_coco_ap50', None).get() if hasattr(self, 'var_bench_mini_coco_ap50') else False))
+        except Exception:
+            mini_coco_ap50 = False
+        try:
+            mini_classification_eval = bool((getattr(self, 'var_bench_mini_classification_eval', None).get() if hasattr(self, 'var_bench_mini_classification_eval') else False))
+        except Exception:
+            mini_classification_eval = False
         try:
             stats = self._remote_service.refresh_suite_harness(
                 suite_dir,
                 benchmark_set_json=bench_json,
+                validation_images=validation_images,
+                validation_max_images=validation_max_images,
+                validation_reference_mode=validation_reference_mode,
+                mini_coco_ap50=mini_coco_ap50,
+                benchmark_task=benchmark_task,
+                mini_classification_eval=mini_classification_eval,
                 log=lambda line: messages.append(str(line)),
             )
         except Exception as e:
@@ -1165,6 +1239,15 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
             f"splitpoint_runners files updated: {stats.get('runner_lib_files_updated', 0)}",
             f"Case runner files updated: {stats.get('case_runner_files_updated', 0)}",
             f"Case folders changed: {stats.get('case_runner_cases_updated', 0)}",
+            f"Validation defaults normalized: {'yes' if stats.get('validation_changed') else 'no'}",
+            f"Validation images: {stats.get('validation_images') or '(unchanged)'}",
+            f"Validation max images: {stats.get('validation_max_images')}",
+            f"Validation reference mode: {stats.get('validation_reference_mode')}",
+            f"Benchmark task: {stats.get('benchmark_task')}",
+            f"Mini-COCO AP50: {'enabled' if stats.get('mini_coco_ap50') else 'disabled'}",
+            f"Mini-Classification eval: {'enabled' if stats.get('mini_classification_eval') else 'disabled'}",
+            f"Validation resource provisioned: {'yes' if stats.get('validation_resource_provisioned') else 'no'}",
+            f"Patched files: {', '.join(stats.get('validation_patched_files') or []) or '-'}",
             "",
             "The cached suite bundle will rebuild automatically on the next remote run if files changed.",
         ]
@@ -1213,7 +1296,15 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
                 f"Checked: {dist_dir}",
             )
 
-    def _remote_run_benchmark(self):
+    def _remote_run_benchmark(
+        self,
+        *,
+        benchmark_set_json_override: str | Path | None = None,
+        local_working_dir_override: str | Path | None = None,
+        completion_callback=None,
+        show_result_dialogs: bool = True,
+        job_name_override: str = "",
+    ) -> Optional[str]:
         if bool(getattr(self, "_remote_benchmark_active", False)):
             messagebox.showinfo(
                 "Remote benchmark already running",
@@ -1284,8 +1375,8 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
             messagebox.showerror("Remote benchmark", f"Invalid benchmark settings:\n\n{exc}")
             return
 
-        local_working_dir = Path(getattr(self, "default_output_dir", "."))
-        suite_name = bench_path.parent.name or bench_path.stem or f"remote_run_{run_id}"
+        local_working_dir = Path(local_working_dir_override).expanduser() if local_working_dir_override else Path(getattr(self, "default_output_dir", "."))
+        suite_name = str(job_name_override or (bench_path.parent.name or bench_path.stem or f"remote_run_{run_id}"))
         self._jobs_register(
             job_id=job_id,
             kind="remote_run",
@@ -1313,6 +1404,12 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
             throughput_frames=throughput_frames,
             throughput_warmup_frames=throughput_warmup_frames,
             throughput_queue_depth=throughput_queue_depth,
+            validation_images=(self.var_bench_validation_images.get() if hasattr(self, "var_bench_validation_images") else ""),
+            validation_max_images=int(((self.var_bench_validation_max_images.get() if hasattr(self, "var_bench_validation_max_images") else "50") or "50")),
+            validation_reference_mode=(self.var_bench_validation_reference_mode.get() if hasattr(self, "var_bench_validation_reference_mode") else "auto"),
+            mini_coco_ap50=(bool(self.var_bench_mini_coco_ap50.get()) if hasattr(self, "var_bench_mini_coco_ap50") else False),
+            benchmark_task=(self.var_bench_task.get() if hasattr(self, "var_bench_task") else "auto"),
+            mini_classification_eval=(bool(self.var_bench_mini_classification_eval.get()) if hasattr(self, "var_bench_mini_classification_eval") else False),
             add_args=self.var_remote_add_args.get() if hasattr(self, "var_remote_add_args") else "",
             remote_venv=self.var_remote_venv.get() if hasattr(self, "var_remote_venv") else "",
             transfer_mode=self.var_remote_transfer_mode.get() if hasattr(self, "var_remote_transfer_mode") else "bundle",
@@ -1339,7 +1436,7 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
                     label=str(_status or ""),
                 ),
             ),
-            result=lambda kind, out: self.root.after(0, lambda _kind=kind, _out=out: self._finalize_remote_benchmark_job(job_id, _kind, _out)),
+            result=lambda kind, out: self.root.after(0, lambda _kind=kind, _out=out: self._finalize_remote_benchmark_job(job_id, _kind, _out, show_result_dialogs=show_result_dialogs, completion_callback=completion_callback)),
         )
 
         self._set_background_job_active("remote_run", True)
@@ -1353,12 +1450,18 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
                 cancel_event=cancel_event,
                 callbacks=callbacks,
             )
-        except Exception:
+        except Exception as exc:
             self._set_background_job_active("remote_run", False)
             self._jobs_finish(job_id, status="error", message="Failed to start remote benchmark thread")
+            if callable(completion_callback):
+                try:
+                    completion_callback('error', {'error': f'{type(exc).__name__}: {exc}'})
+                except Exception:
+                    logger.debug('Remote benchmark completion callback failed during startup', exc_info=True)
             raise
+        return job_id
 
-    def _finalize_remote_benchmark_job(self, job_id: str, final_kind: str, out: Dict[str, Any]) -> None:
+    def _finalize_remote_benchmark_job(self, job_id: str, final_kind: str, out: Dict[str, Any], *, show_result_dialogs: bool = True, completion_callback=None) -> None:
         self._set_background_job_active("remote_run", False)
         local_run_dir = str(out.get("local_run_dir") or "").strip()
         log_path = ""
@@ -1384,7 +1487,13 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
             output_dir=(local_run_dir or None),
             log_path=(log_path or None),
         )
-        self._handle_remote_benchmark_result(final_kind, out)
+        if callable(completion_callback):
+            try:
+                completion_callback(final_kind, out)
+            except Exception:
+                logger.debug('Remote benchmark completion callback failed', exc_info=True)
+        if show_result_dialogs:
+            self._handle_remote_benchmark_result(final_kind, out)
 
     def _handle_remote_benchmark_result(self, final_kind: str, out: Dict[str, Any]) -> None:
         if final_kind == "ok":
@@ -1399,6 +1508,217 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
             messagebox.showerror("Remote benchmark", f"Run errored:\n\n{out.get('error')}")
 
 
+
+    def _apply_prepared_model_selection(self, selected_model_path: str, *, message: str = '') -> None:
+        path = str(selected_model_path or '').strip()
+        if not path:
+            return
+        try:
+            clear = getattr(self, '_clear_results', None)
+            if callable(clear):
+                clear()
+        except Exception:
+            logger.debug('Failed to clear analysis state before applying prepared model', exc_info=True)
+        self.model_path = path
+        self.gui_state.current_model_path = path
+        self.gui_state.model_type = 'onnx'
+        try:
+            if hasattr(self, 'lbl_model'):
+                self.lbl_model.configure(text=os.path.basename(path))
+        except Exception:
+            pass
+        try:
+            self.events.emit_model_loaded({'path': path, 'model_type': 'onnx'})
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'var_bench_model_preparation_info'):
+                info = f"Prepared model selected: {os.path.basename(path)}"
+                if message:
+                    info += f" · {message}"
+                self.var_bench_model_preparation_info.set(info)
+        except Exception:
+            pass
+
+    def _queue_prepare_current_model(self) -> Optional[str]:
+        model_path = str(getattr(getattr(self, 'gui_state', None), 'current_model_path', None) or getattr(self, 'model_path', None) or '').strip()
+        if not model_path:
+            messagebox.showwarning('Model preparation', 'Please load a model first.')
+            return None
+        prep_mode_raw = str(getattr(self, 'var_bench_model_preparation_mode', tk.StringVar(value='Use current ONNX')).get() or '').strip()
+        prep_mode = normalize_model_preparation_mode(prep_mode_raw)
+        if prep_mode == 'current':
+            messagebox.showinfo('Model preparation', 'Preparation mode is set to "Use current ONNX". Nothing to prepare.')
+            return None
+        export_meta = load_export_metadata_for_model(model_path)
+        try:
+            prep_root = ensure_workdir(Path(getattr(self, 'default_output_dir', '.') or '.')).benchmark_sets / '_prepared_models'
+        except Exception:
+            prep_root = Path(getattr(self, 'default_output_dir', '.') or '.').expanduser() / '_prepared_models'
+        run_id = time.strftime('%Y%m%d_%H%M%S')
+        job_id = f'prepare-model-{run_id}'
+        cancel_event = threading.Event()
+        self._jobs_register(
+            job_id=job_id,
+            kind='prepare_model',
+            type_label='Model preparation',
+            title=f'Model preparation — {os.path.basename(model_path)}',
+            name=os.path.basename(model_path),
+            output_dir=str(prep_root),
+            initial_status='Preparing model…',
+            initial_lines=[
+                f'Model: {model_path}',
+                f'Mode: {prep_mode}',
+                'The tool will probe the current ONNX as full Hailo and, for supported YOLO detection models, export a small set of fallback variants until one succeeds.',
+            ],
+            progress_maximum=1.0,
+            cancel_callback=lambda: cancel_event.set(),
+            can_cancel=True,
+            geometry='900x460',
+        )
+
+        def _log(line: str) -> None:
+            self.root.after(0, lambda _s=str(line): self._jobs_append_log(job_id, _s))
+
+        def worker() -> None:
+            try:
+                runtime = snapshot_preparation_runtime(self)
+                out = prepare_model_for_benchmark(
+                    model_path,
+                    export_metadata=export_meta,
+                    requested_mode=prep_mode,
+                    output_root=prep_root,
+                    runtime=runtime,
+                    log=_log,
+                    cancel_event=cancel_event,
+                )
+                status = 'warning' if (out.skipped or getattr(out, 'tier2_success', False)) else ('success' if out.success else 'error')
+                msg = str(out.message or '')
+                self.root.after(0, lambda _out=out, _status=status, _msg=msg: self._jobs_finish(job_id, status=_status, message=_msg, output_dir=str(_out.screening_dir or prep_root)))
+                if out.skipped:
+                    self.root.after(0, lambda _out=out: messagebox.showwarning('Model preparation', str(_out.message or 'Preparation was skipped and the current ONNX remains selected.')))
+                elif out.success:
+                    self.root.after(0, lambda _out=out: self._apply_prepared_model_selection(_out.selected_model_path, message=_out.message))
+                    self.root.after(0, lambda _out=out: messagebox.showinfo('Model preparation', f"Preparation finished.\n\nSelected model:\n{_out.selected_model_path}\n\nPlease run Analyse again for this prepared ONNX."))
+                else:
+                    self.root.after(0, lambda _out=out: messagebox.showwarning('Model preparation', f"No suitable full-Hailo export variant was found.\n\n{_out.message}"))
+            except Exception as exc:
+                logger.exception('Model preparation failed')
+                msg = f'{type(exc).__name__}: {exc}'
+                status = 'cancelled' if cancel_event.is_set() else 'error'
+                self.root.after(0, lambda _msg=msg, _status=status: self._jobs_finish(job_id, status=_status, message=_msg, output_dir=str(prep_root)))
+                if cancel_event.is_set():
+                    self.root.after(0, lambda _msg=msg: messagebox.showwarning('Model preparation', _msg))
+                else:
+                    self.root.after(0, lambda _msg=msg: messagebox.showerror('Model preparation', _msg))
+
+        threading.Thread(target=worker, daemon=True).start()
+        return job_id
+
+    def _queue_profile_campaign(self) -> Optional[str]:
+        profile_request = str(getattr(self, 'var_bench_evaluation_profile', tk.StringVar(value='')).get() or '').strip()
+        if not profile_request:
+            messagebox.showwarning('Evaluation profile', 'Please select an evaluation profile first.')
+            return None
+        models_root_raw = str(getattr(self, 'var_bench_profile_models_root', tk.StringVar(value='')).get() or '').strip()
+        if not models_root_raw:
+            messagebox.showwarning('Evaluation profile', 'Please choose a model root folder for the profile campaign.')
+            return None
+        include_reserve = bool(getattr(self, 'var_bench_profile_include_reserve', tk.BooleanVar(value=False)).get())
+        auto_remote_run = bool(getattr(self, 'var_bench_profile_auto_remote', tk.BooleanVar(value=False)).get())
+        auto_export_analysis = bool(getattr(self, 'var_bench_profile_auto_analysis', tk.BooleanVar(value=False)).get())
+        model_preparation_mode = normalize_model_preparation_mode(str(getattr(self, 'var_bench_model_preparation_mode', tk.StringVar(value='Use current ONNX')).get() or '').strip())
+        benchmark_parent_dir = Path(getattr(self, 'default_output_dir', '.') or '.').expanduser()
+        try:
+            benchmark_parent_dir = ensure_workdir(benchmark_parent_dir).benchmark_sets
+        except Exception:
+            benchmark_parent_dir = benchmark_parent_dir
+
+        remote_defaults = None
+        if auto_remote_run:
+            try:
+                remote_defaults = snapshot_remote_defaults(self)
+            except Exception as exc:
+                messagebox.showerror('Profile campaign', f'Invalid remote benchmark settings:\n\n{exc}')
+                return None
+            if remote_defaults.get('host') is None:
+                messagebox.showwarning('Profile campaign', 'Auto remote run is enabled, but no remote host is selected.')
+                return None
+
+        options = ProfileCampaignOptions(
+            profile_request=profile_request,
+            models_root=Path(models_root_raw).expanduser(),
+            benchmark_parent_dir=Path(benchmark_parent_dir),
+            include_reserve=include_reserve,
+            auto_remote_run=auto_remote_run,
+            auto_export_analysis=auto_export_analysis,
+            remote_host=(remote_defaults or {}).get('host'),
+            remote_defaults=remote_defaults,
+            model_preparation_mode=model_preparation_mode,
+            preparation_output_root=Path(benchmark_parent_dir) / '_prepared_models',
+            preparation_runtime=snapshot_preparation_runtime(self),
+        )
+
+        run_id = time.strftime('%Y%m%d_%H%M%S')
+        job_id = f'profile-campaign-{run_id}'
+        cancel_event = threading.Event()
+        self._jobs_register(
+            job_id=job_id,
+            kind='profile_campaign',
+            type_label='Profile campaign',
+            title=f'Profile campaign — {profile_request}',
+            name=str(Path(models_root_raw).name or profile_request),
+            output_dir=str(options.benchmark_parent_dir),
+            initial_status='Preparing queued model campaign…',
+            initial_lines=[
+                f'Profile: {profile_request}',
+                f'Model root: {models_root_raw}',
+                f'Include reserve models: {include_reserve}',
+                f'Auto remote run: {auto_remote_run}',
+                f'Auto export analysis: {auto_export_analysis}',
+                f'Model preparation: {model_preparation_mode}',
+                'The queue runs per model as: optional preparation → analysis → benchmark set → optional remote run → optional benchmark analysis.',
+            ],
+            progress_maximum=1.0,
+            cancel_callback=lambda: cancel_event.set(),
+            can_cancel=True,
+            geometry='980x480',
+        )
+
+        def _log(line: str) -> None:
+            self.root.after(0, lambda _s=str(line): self._jobs_append_log(job_id, _s))
+
+        def _progress(pct: float, label: str) -> None:
+            self.root.after(
+                0,
+                lambda _p=float(pct), _lbl=str(label): self._jobs_set_progress(
+                    job_id,
+                    value=max(0.0, min(1.0, _p)),
+                    label=_lbl,
+                    display=f"{int(round(max(0.0, min(1.0, _p)) * 100.0))}%",
+                    progress_maximum=1.0,
+                ),
+            )
+
+        def worker() -> None:
+            try:
+                out = run_profile_campaign(self, options, job_id=job_id, log=_log, progress=_progress, cancel_event=cancel_event)
+                self.root.after(0, lambda _out=out: self._jobs_finish(job_id, status='success', message=f"Processed {int(_out.get('models_processed') or 0)} model(s).", output_dir=str(options.benchmark_parent_dir)))
+                self.root.after(0, lambda _out=out: messagebox.showinfo('Profile campaign', f"Campaign finished.\n\nProcessed models: {int(_out.get('models_processed') or 0)}\nOutput root: {options.benchmark_parent_dir}"))
+            except Exception as exc:
+                logger.exception('Profile campaign failed')
+                msg = f'{type(exc).__name__}: {exc}'
+                status = 'cancelled' if cancel_event.is_set() else 'error'
+                self.root.after(0, lambda _msg=msg, _status=status: self._jobs_finish(job_id, status=_status, message=_msg, output_dir=str(options.benchmark_parent_dir)))
+                if cancel_event.is_set():
+                    self.root.after(0, lambda _msg=msg: messagebox.showwarning('Profile campaign', _msg))
+                else:
+                    self.root.after(0, lambda _msg=msg: messagebox.showerror('Profile campaign', _msg))
+
+        threading.Thread(target=worker, daemon=True).start()
+        return job_id
+
+
     def _init_central_notebook(self) -> None:
         logger.info("Initializing central notebook UI")
         root_children = list(self.winfo_children())
@@ -1406,15 +1726,21 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         self.main_notebook = ttk.Notebook(self)
         self.main_notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
-        self.panel_frames: Dict[str, ttk.Frame] = {
-            "analysis": panel_analysis.build_panel(self.main_notebook, app=self),
-            "export": panel_split_export.build_panel(self.main_notebook, app=self),
-            "validate": panel_validation.build_panel(self.main_notebook, app=self),
-            "bench_analysis": panel_benchmark_analysis.build_panel(self.main_notebook, app=self),
-            "jobs": panel_jobs.build_panel(self.main_notebook, app=self),
-            "hardware": panel_hardware.build_panel(self.main_notebook, app=self),
-            "logs": panel_logs.build_panel(self.main_notebook, app=self),
-        }
+        panel_builders = (
+            ("analysis", panel_analysis.build_panel),
+            ("export", panel_split_export.build_panel),
+            ("validate", panel_validation.build_panel),
+            ("bench_analysis", panel_benchmark_analysis.build_panel),
+            ("jobs", panel_jobs.build_panel),
+            ("hardware", panel_hardware.build_panel),
+            ("logs", panel_logs.build_panel),
+        )
+        self.panel_frames: Dict[str, ttk.Frame] = {}
+        for key, builder in panel_builders:
+            t0 = time.perf_counter()
+            logger.info("Initializing panel: %s", key)
+            self.panel_frames[key] = builder(self.main_notebook, app=self)
+            logger.info("Panel initialized: %s in %.3fs", key, time.perf_counter() - t0)
 
         for key, label in self.TAB_LABELS:
             self.main_notebook.add(self.panel_frames[key], text=label)

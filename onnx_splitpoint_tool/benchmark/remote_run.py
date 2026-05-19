@@ -18,7 +18,12 @@ from onnx_splitpoint_tool.benchmark.results_bundle import create_results_bundle_
 from onnx_splitpoint_tool.log_utils import sanitize_log
 from onnx_splitpoint_tool.remote.ssh_transport import HostConfig as RemoteHost
 from onnx_splitpoint_tool.remote.ssh_transport import SSHTransport
-from onnx_splitpoint_tool.benchmark.suite_refresh import refresh_suite_harness
+from onnx_splitpoint_tool.benchmark.suite_refresh import (
+    refresh_suite_harness,
+    normalize_benchmark_task,
+    normalize_mini_classification_eval,
+    normalize_semantic_validation_request,
+)
 
 
 RUN_STATUS_SCHEMA_VERSION = 1
@@ -130,6 +135,66 @@ def _assert_generated_runner_is_self_consistent(path: Path) -> None:
                 f"{path} references module '{module_name}' helpers but does not import '{module_name}'. "
                 "Refusing to package a stale or broken runner."
             )
+
+
+
+def _remote_preflight_stage_token(stage: Any) -> Optional[str]:
+    """Resolve a benchmark-plan stage config into a provider token for remote preflight.
+
+    Returns either an ORT provider token (cpu/cuda/tensorrt/auto) or a Hailo
+    hardware token (hailo8/hailo8l/...). The helper mirrors the benchmark-suite
+    side stage resolution so the remote launcher can correctly decide whether it
+    needs Hailo python bindings even for matrix runs that encode backends in
+    nested ``stage1``/``stage2`` dicts instead of legacy flat ``stage1_provider``
+    fields.
+    """
+    if not isinstance(stage, dict):
+        return None
+    ty = str(stage.get("type") or stage.get("kind") or "").strip().lower()
+    if ty == "hailo":
+        hw = stage.get("hw_arch") or stage.get("arch") or stage.get("id")
+        hw = str(hw or "").strip().lower()
+        return hw or "hailo"
+    if ty in {"onnxruntime", "ort"}:
+        provider = str(stage.get("provider") or "").strip().lower()
+        return provider or None
+    return None
+
+
+def _update_remote_preflight_wants_from_token(token: Optional[str], *, wants: dict[str, bool]) -> None:
+    tok = str(token or "").strip().lower()
+    if not tok:
+        return
+    if tok.startswith("hailo"):
+        wants["hailo"] = True
+    elif tok == "cuda":
+        wants["cuda"] = True
+    elif tok == "tensorrt":
+        wants["tensorrt"] = True
+
+
+def _scan_remote_preflight_requirements_from_plan(plan: dict[str, Any]) -> dict[str, bool]:
+    """Infer whether the remote benchmark run needs Hailo / CUDA / TensorRT.
+
+    Supports both legacy flat provider fields and the current nested stage
+    dictionaries used by matrix runs such as ``hailo8_to_trt``.
+    """
+    wants = {"hailo": False, "cuda": False, "tensorrt": False}
+    for run in plan.get("runs", []):
+        if not isinstance(run, dict):
+            continue
+        for k in ("provider", "full_provider", "stage1_provider", "stage2_provider"):
+            _update_remote_preflight_wants_from_token(run.get(k), wants=wants)
+        for stage_key in ("stage1", "stage2"):
+            _update_remote_preflight_wants_from_token(
+                _remote_preflight_stage_token(run.get(stage_key)),
+                wants=wants,
+            )
+        run_type = str(run.get("type") or "").strip().lower()
+        if run_type == "hailo":
+            wants["hailo"] = True
+            _update_remote_preflight_wants_from_token(run.get("hw_arch"), wants=wants)
+    return wants
 
 
 # ------------------------------
@@ -296,6 +361,16 @@ class RemoteBenchmarkArgs:
     throughput_frames: int = 24
     throughput_warmup_frames: int = 6
     throughput_queue_depth: int = 2
+    phase_runs: int = 5
+
+    # Optional semantic validation source. Detection can fall back to the suite-embedded
+    # COCO-50 dataset; classification requires a labeled dataset path from the user.
+    validation_images: str = ""
+    validation_max_images: int = 50
+    validation_reference_mode: str = "auto"
+    mini_coco_ap50: bool = False
+    benchmark_task: str = "auto"
+    mini_classification_eval: bool = False
 
 
 @dataclass
@@ -775,6 +850,19 @@ def run_remote_benchmark(
     last_suite_progress: dict[str, Any] | None = None
     recent_remote_lines: list[str] = []
 
+    benchmark_task_norm = normalize_benchmark_task(getattr(args, "benchmark_task", "auto"), log=log)
+    mini_classification_eval_norm = normalize_mini_classification_eval(getattr(args, "mini_classification_eval", False), log=log)
+    validation_images_norm, validation_max_images_norm, validation_use_embedded = normalize_semantic_validation_request(
+        getattr(args, "validation_images", ""),
+        getattr(args, "validation_max_images", 50),
+        benchmark_task=benchmark_task_norm,
+        log=log,
+    )
+    if validation_use_embedded:
+        log("[validation] Using prepared COCO-50 as the suite semantic validation source.")
+    elif benchmark_task_norm == "classification" and not str(validation_images_norm or "").strip():
+        log("[validation] Classification benchmark task selected without a labeled dataset; dataset semantic validation stays disabled.")
+
     # Best-effort: refresh runner scripts inside an existing suite.
     # Older suites may contain stale harness files; bundling should be self-healing.
     # IMPORTANT: Only touch files whose content actually changed so bundle caching
@@ -783,10 +871,22 @@ def run_remote_benchmark(
         refresh_stats = refresh_suite_harness(
             suite_dir,
             benchmark_set_json=benchmark_set_json,
+            validation_images=validation_images_norm,
+            validation_max_images=int(validation_max_images_norm or 0),
+            validation_reference_mode=str(getattr(args, "validation_reference_mode", "auto") or "auto"),
+            mini_coco_ap50=bool(getattr(args, "mini_coco_ap50", False)),
+            benchmark_task=benchmark_task_norm,
+            mini_classification_eval=mini_classification_eval_norm,
             log=log,
         )
         if bool(refresh_stats.get("changed")):
             force_bundle_rebuild = True
+        if bool(refresh_stats.get("requires_regeneration_for_part2_host_tail")):
+            log(
+                "[suite-check] This suite was generated before the Part2 host-tail artifacts were available. "
+                "Remote benchmark can still run existing variants, but Hailo Part2 host-tail will stay unavailable "
+                "until the benchmark set is regenerated."
+            )
     except Exception as e:
         log(f'[warn] Could not refresh suite runner scripts: {e}')
 
@@ -872,25 +972,10 @@ def run_remote_benchmark(
         if plan_path.exists():
             try:
                 plan = json.loads(plan_path.read_text(encoding="utf-8"))
-                for run in plan.get("runs", []):
-                    if not isinstance(run, dict):
-                        continue
-
-                    for k in ("provider", "full_provider", "stage1_provider", "stage2_provider"):
-                        v = run.get(k)
-                        if not isinstance(v, str):
-                            continue
-                        tok = v.strip().lower()
-                        if tok.startswith("hailo"):
-                            want_hailo = True
-                        elif tok == "cuda":
-                            want_cuda = True
-                        elif tok == "tensorrt":
-                            want_tensorrt = True
-
-                    t = run.get("type")
-                    if isinstance(t, str) and t.strip().lower() == "hailo":
-                        want_hailo = True
+                wants = _scan_remote_preflight_requirements_from_plan(plan)
+                want_hailo = bool(wants.get("hailo"))
+                want_cuda = bool(wants.get("cuda"))
+                want_tensorrt = bool(wants.get("tensorrt"))
             except Exception as e:
                 log(f"[preflight] warning: could not parse benchmark_plan.json: {e!r}")
 
@@ -1348,6 +1433,13 @@ def run_remote_benchmark(
                 "throughput_frames": int(getattr(args, "throughput_frames", 24) or 0),
                 "throughput_warmup_frames": int(getattr(args, "throughput_warmup_frames", 6) or 0),
                 "throughput_queue_depth": int(getattr(args, "throughput_queue_depth", 2) or 1),
+                "phase_runs": int(getattr(args, "phase_runs", 5) or 0),
+                "validation_images": validation_images_norm or ("resources/validation/coco_50_data" if benchmark_task_norm != "classification" else ""),
+                "validation_max_images": int(validation_max_images_norm or (50 if benchmark_task_norm != "classification" else 0)),
+                "validation_reference_mode": str(getattr(args, "validation_reference_mode", "auto") or "auto"),
+                "mini_coco_ap50": bool(getattr(args, "mini_coco_ap50", False)),
+                "benchmark_task": str(benchmark_task_norm),
+                "mini_classification_eval": bool(mini_classification_eval_norm),
             }
             _write_json(local_run_dir / "run_meta.json", run_meta)
         except Exception:
@@ -1356,6 +1448,7 @@ def run_remote_benchmark(
         throughput_frames = max(0, int(getattr(args, "throughput_frames", 24) or 0))
         throughput_warmup_frames = max(0, int(getattr(args, "throughput_warmup_frames", 6) or 0))
         throughput_queue_depth = max(1, int(getattr(args, "throughput_queue_depth", 2) or 1))
+        phase_runs = max(0, int(getattr(args, "phase_runs", 5) or 0))
 
         bench_cmd = (
             f'"$RUN_PY" -u benchmark_suite.py'
@@ -1367,7 +1460,21 @@ def run_remote_benchmark(
             f" --throughput-frames {throughput_frames}"
             f" --throughput-warmup-frames {throughput_warmup_frames}"
             f" --throughput-queue-depth {throughput_queue_depth}"
+            f" --phase-runs {phase_runs}"
         )
+        effective_validation_images = validation_images_norm or ("resources/validation/coco_50_data" if benchmark_task_norm != "classification" else "")
+        effective_validation_max_images = int(validation_max_images_norm or (50 if benchmark_task_norm != "classification" else 0))
+        validation_reference_mode = str(getattr(args, "validation_reference_mode", "auto") or "auto").strip().lower() or "auto"
+        bench_cmd += (
+            f" --validation-images {shlex.quote(str(effective_validation_images))}"
+            f" --validation-max-images {max(0, effective_validation_max_images)}"
+            f" --validation-reference-mode {shlex.quote(validation_reference_mode)}"
+            f" --benchmark-task {shlex.quote(str(benchmark_task_norm))}"
+        )
+        if bool(getattr(args, "mini_coco_ap50", False)):
+            bench_cmd += " --mini-coco-ap50"
+        if bool(mini_classification_eval_norm):
+            bench_cmd += " --mini-classification-eval"
         if bool(getattr(args, "resume", True)):
             bench_cmd += " --resume"
         if args.add_args:

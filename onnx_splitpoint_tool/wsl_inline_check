@@ -42,6 +42,8 @@ def main() -> int:
     ap.add_argument("--hw-arch", default="hailo8")
     ap.add_argument("--net-name", default=None)
     ap.add_argument("--outdir", default=None)
+    ap.add_argument("--start-node-names-json", default=None, help="Optional JSON array of parser start node names")
+    ap.add_argument("--end-node-names-json", default=None, help="Optional JSON array of parser end node names")
     ap.add_argument("--fixup", default="1", choices=["0", "1"], help="Apply ONNX fixups")
     ap.add_argument("--add-conv-defaults", default="1", choices=["0", "1"], help="Add Conv defaults during fixup")
     ap.add_argument("--save-har", default="0", choices=["0", "1"], help="Save parsed.har to outdir")
@@ -73,6 +75,26 @@ def main() -> int:
     outdir = Path(args.outdir) if args.outdir else None
     net_name = args.net_name or onnx_path.stem
 
+    start_node_names = None
+    end_node_names = None
+    try:
+        if args.start_node_names_json:
+            start_node_names = list(json.loads(str(args.start_node_names_json)) or [])
+        if args.end_node_names_json:
+            end_node_names = list(json.loads(str(args.end_node_names_json)) or [])
+    except Exception as exc:
+        payload = {
+            'ok': False,
+            'elapsed_s': float(time.time() - t0),
+            'hw_arch': str(args.hw_arch),
+            'net_name': str(net_name),
+            'backend': str(os.environ.get('ONNX_SPLITPOINT_HAILO_HELPER_BACKEND') or 'wsl'),
+            'error': f'Invalid parser node override JSON: {type(exc).__name__}: {exc}',
+            'returncode': 2,
+        }
+        print(RESULT_MARKER + json.dumps(payload, ensure_ascii=False), flush=True)
+        return 2
+
     res = hailo_parse_check(
         onnx_path,
         hw_arch=str(args.hw_arch),
@@ -82,6 +104,8 @@ def main() -> int:
         add_conv_defaults=(args.add_conv_defaults == "1"),
         save_har=(args.save_har == "1"),
         disable_rt_metadata_extraction=(args.disable_rt_metadata_extraction == "1"),
+        start_node_names=start_node_names,
+        end_node_names=end_node_names,
     )
 
     payload = asdict(res)

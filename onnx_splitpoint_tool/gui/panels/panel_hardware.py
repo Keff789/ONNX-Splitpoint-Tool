@@ -49,7 +49,7 @@ _HARDWARE_TOOLTIPS = {
     "hailo_provision": (
         "Installiert/Repariert die verwalteten Hailo-DFC-Umgebungen (Hailo-8/Hailo-10). "
         "Erstellt bei Bedarf die venvs unter ~/.onnx_splitpoint_tool/hailo/ neu und pinnt bekannte Paketversionen. "
-        "Ausgabe/Fehler landen in gui.log (Logs-Tab)."
+        "Ausgabe/Fehler landen unter logs/gui/gui.log (Logs-Tab)."
     ),
 }
 

@@ -10,21 +10,254 @@ set generator reuses those settings when building a suite.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import threading
+import time
 from pathlib import Path
+from typing import Any, Mapping, Optional, Sequence
 
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, ttk, scrolledtext
 
 from ...workdir import ensure_workdir
 from ..widgets.tooltip import attach_tooltip
 from ..widgets.status_badge import StatusBadge
 from ..widgets.collapsible_section import CollapsibleSection
 from ...benchmark.services import BenchmarkGenerationService
+from ...benchmark.classification_validation_presets import (
+    list_available_presets,
+    build_imagenet_validation_preset,
+    classification_validation_default_root,
+    resolve_classification_validation_source,
+)
+from ...benchmark.validation_assets import (
+    validation_assets_status,
+)
+from ...benchmark.evaluation_profiles import (
+    evaluation_profile_default_root,
+    format_profile_comparison_text,
+    list_available_evaluation_profiles,
+    load_evaluation_profile,
+    profile_brief_text,
+    resolve_evaluation_profile,
+    resolve_evaluation_profile_source,
+    save_evaluation_profile_yaml,
+    validate_evaluation_profile_payload,
+)
+from ...benchmark.model_preparation import (
+    model_preparation_label,
+    normalize_model_preparation_mode,
+    preparation_result_is_selected_model,
+)
+from ...benchmark.validation_assets import (
+    prepare_all_validation_assets,
+    prepare_coco50,
+    prepare_imagenette_mini_dataset,
+    status_coco50,
+    validation_assets_summary,
+)
 
 
 logger = logging.getLogger(__name__)
+
+
+def _stage_label_from_run_stage(stage: object, fallback: str = "") -> str:
+    if isinstance(stage, Mapping):
+        stage_type = str(stage.get("type") or "").strip().lower()
+        if stage_type == "onnxruntime":
+            provider = str(stage.get("provider") or fallback or "onnxruntime").strip().lower()
+            if provider in {"cuda", "gpu"}:
+                return "cuda"
+            if provider in {"tensorrt", "trt"}:
+                return "tensorrt"
+            if provider in {"cpu"}:
+                return "cpu"
+            return provider or "onnxruntime"
+        if stage_type == "hailo":
+            hw_arch = str(stage.get("hw_arch") or stage.get("arch") or stage.get("id") or fallback or "hailo").strip()
+            return hw_arch or "hailo"
+        if stage_type:
+            return stage_type
+    s = str(fallback or "").strip().lower()
+    return s
+
+
+def _pretty_plan_run_name(run: Mapping[str, Any]) -> str:
+    run_id = str(run.get("id") or run.get("name") or "").strip()
+    if run_id == "ort_cpu":
+        return "ORT CPU"
+    if run_id == "ort_cuda":
+        return "ORT CUDA"
+    if run_id == "ort_tensorrt":
+        return "TensorRT"
+
+    stage1 = _stage_label_from_run_stage(run.get("stage1"), fallback=str(run.get("provider") or run.get("hw_arch") or ""))
+    stage2 = _stage_label_from_run_stage(run.get("stage2"), fallback=str(run.get("provider") or run.get("hw_arch") or ""))
+    run_type = str(run.get("type") or "").strip().lower()
+    if run_type == "hailo" and stage1 and stage2 and stage1 == stage2:
+        return f"Hailo ({stage1})"
+    if stage1 and stage2 and stage1 != stage2:
+        left = "TensorRT" if stage1 == "tensorrt" else stage1
+        right = "TensorRT" if stage2 == "tensorrt" else stage2
+        return f"{left}→{right}"
+    return run_id or "Run"
+
+
+def _variants_for_plan_run(run: Mapping[str, Any]) -> list[str]:
+    variants = [str(x).strip().lower() for x in list(run.get("variants") or []) if str(x).strip()]
+    if variants:
+        return variants
+    run_type = str(run.get("type") or "").strip().lower()
+    if run_type == "matrix":
+        return ["part1", "part2", "composed"]
+    if run_type == "hailo":
+        return ["full", "composed"]
+    return ["full", "part1", "part2", "composed"]
+
+
+def _hef_req_for_labels(stage1: str, stage2: str, variants: Sequence[str]) -> list[str]:
+    vset = {str(v).strip().lower() for v in variants if str(v).strip()}
+    req: list[str] = []
+    is_h1 = str(stage1).strip().lower().startswith("hailo")
+    is_h2 = str(stage2).strip().lower().startswith("hailo")
+    if "full" in vset and (is_h1 or is_h2):
+        req.append("full")
+    if is_h1 and ({"part1", "composed"} & vset):
+        req.append("part1")
+    if is_h2 and ({"part2", "composed"} & vset):
+        req.append("part2")
+    order = ["full", "part1", "part2"]
+    return [x for x in order if x in req]
+
+
+def _reference_label_for_plan_run(run: Mapping[str, Any]) -> str:
+    mode = str(run.get("validation_reference_mode") or "auto").strip().lower()
+    if mode and mode != "auto":
+        return mode
+    stage1 = _stage_label_from_run_stage(run.get("stage1"), fallback=str(run.get("provider") or run.get("hw_arch") or ""))
+    stage2 = _stage_label_from_run_stage(run.get("stage2"), fallback=str(run.get("provider") or run.get("hw_arch") or ""))
+    run_type = str(run.get("type") or "").strip().lower()
+    if run_type == "matrix":
+        return "cpu_full"
+    if stage1 and stage2 and stage1 == stage2:
+        return "same_backend_full"
+    return "cpu_full"
+
+
+def _load_actual_suite_plan_preview(bench_json_path: Path) -> Optional[dict[str, Any]]:
+    p = Path(bench_json_path).expanduser()
+    if p.is_dir():
+        p = p / "benchmark_set.json"
+    if not p.is_file():
+        return None
+    try:
+        payload = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        logger.exception("Failed to read benchmark_set preview from %s", p)
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    plan = payload.get("plan") if isinstance(payload.get("plan"), Mapping) else {}
+    runs = [dict(x) for x in list(plan.get("runs") or []) if isinstance(x, Mapping)]
+    if not runs:
+        return None
+
+    hailo = payload.get("hailo") if isinstance(payload.get("hailo"), Mapping) else {}
+    build = dict(hailo.get("build") or {}) if isinstance(hailo.get("build"), Mapping) else {}
+    preflight = hailo.get("full_model_preflight") if isinstance(hailo.get("full_model_preflight"), Mapping) else {}
+    dropped_runs = [str(x) for x in list(preflight.get("dropped_runs") or []) if str(x).strip()]
+    adjusted_runs = [str(x) for x in list(preflight.get("adjusted_runs") or []) if str(x).strip()]
+    blocked_by_hw_raw = preflight.get("blocked_by_hw") if isinstance(preflight.get("blocked_by_hw"), Mapping) else {}
+    blocked_by_hw = {str(k): [str(x) for x in list(v or []) if str(x).strip()] for k, v in dict(blocked_by_hw_raw).items()}
+
+    rows: list[tuple[str, str, str, str, list[str], str]] = []
+    all_variants: set[str] = set()
+    hef_needed: set[str] = set()
+    hef_blocked: set[str] = set()
+
+    for run in runs:
+        variants = _variants_for_plan_run(run)
+        stage1 = _stage_label_from_run_stage(run.get("stage1"), fallback=str(run.get("provider") or run.get("hw_arch") or ""))
+        stage2 = _stage_label_from_run_stage(run.get("stage2"), fallback=str(run.get("provider") or run.get("hw_arch") or ""))
+        reference = _reference_label_for_plan_run(run)
+        req = _hef_req_for_labels(stage1, stage2, variants)
+        for variant in variants:
+            all_variants.add(str(variant).strip().lower())
+        for kind in req:
+            if kind in build and build.get(kind) is False:
+                hef_blocked.add(kind)
+            else:
+                hef_needed.add(kind)
+        req_parts: list[str] = []
+        actual_req = [kind for kind in req if kind not in hef_blocked]
+        blocked_req = [kind for kind in req if kind in hef_blocked]
+        if actual_req:
+            req_parts.append(f"hef: {', '.join(actual_req)}")
+        if blocked_req:
+            req_parts.append(f"blocked: {', '.join(blocked_req)}")
+        if not req_parts:
+            req_parts.append("onnx")
+        rows.append((
+            _pretty_plan_run_name(run),
+            stage1 or "-",
+            stage2 or "-",
+            reference,
+            list(variants),
+            " · ".join(req_parts),
+        ))
+
+    order_cmp = ["full", "composed", "part1", "part2"]
+    cmp_list = [v for v in order_cmp if v in all_variants]
+    compare_bits = [f"Preview source: actual selected suite ({len(rows)} run{'s' if len(rows) != 1 else ''})"]
+    if dropped_runs:
+        compare_bits.append(f"dropped by preflight: {', '.join(dropped_runs[:6])}{' …' if len(dropped_runs) > 6 else ''}")
+    elif adjusted_runs:
+        compare_bits.append(f"adjusted by preflight: {len(adjusted_runs)}")
+    if cmp_list:
+        compare_bits.append(f"variants: {', '.join(cmp_list)}")
+    compare_info = " · ".join(compare_bits)
+
+    hef_bits: list[str] = []
+    order_hef = ["full", "part1", "part2"]
+    actual_hef = [h for h in order_hef if h in hef_needed]
+    blocked_hef = [h for h in order_hef if h in hef_blocked or (h in build and build.get(h) is False)]
+    if actual_hef:
+        hef_bits.append(f"Suite Hailo HEFs (actual): {', '.join(actual_hef)}")
+    else:
+        hef_bits.append("Suite Hailo HEFs (actual): none")
+    if blocked_hef:
+        hef_bits.append(f"blocked by preflight: {', '.join(blocked_hef)}")
+    if blocked_by_hw:
+        hw_notes = []
+        for hw, kinds in sorted(blocked_by_hw.items()):
+            if kinds:
+                hw_notes.append(f"{hw}→{', '.join(kinds)}")
+        if hw_notes:
+            hef_bits.append(f"blocked_by_hw: {'; '.join(hw_notes)}")
+    eval_profile = payload.get("evaluation_profile") if isinstance(payload.get("evaluation_profile"), Mapping) else {}
+    profile_info = ''
+    if eval_profile:
+        prof_id = str(eval_profile.get('profile_id') or eval_profile.get('requested') or '').strip()
+        matched = str(eval_profile.get('matched_model_id') or '').strip()
+        if prof_id:
+            profile_info = f"Evaluation profile: {prof_id}" + (f" → {matched}" if matched else '')
+    source_info = f"Using actual suite plan from {p.name} (post-preflight)"
+    if profile_info:
+        source_info += f" · {profile_info}"
+    return {
+        "rows": rows,
+        "compare_info": compare_info,
+        "hef_info": " · ".join(hef_bits),
+        "source_info": source_info,
+        "benchmark_set_path": str(p),
+        "dropped_runs": list(dropped_runs),
+        "adjusted_runs": list(adjusted_runs),
+        "blocked_by_hw": dict(blocked_by_hw),
+        "evaluation_profile": dict(eval_profile),
+    }
 
 
 def _bool_var(app, name: str, default: bool) -> tk.BooleanVar:
@@ -262,7 +495,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
 
     acc_group = ttk.LabelFrame(sec_plan.body, text="Accelerators to benchmark")
     acc_group.grid(row=0, column=0, sticky="ew")
-    acc_group.columnconfigure(10, weight=1)
+    acc_group.columnconfigure(12, weight=1)
 
     var_acc_cpu = _bool_var(app, "var_bench_acc_cpu", True)
     var_acc_cuda = _bool_var(app, "var_bench_acc_cuda", False)
@@ -270,6 +503,10 @@ def build_panel(parent, app=None) -> ttk.Frame:
     var_acc_h8 = _bool_var(app, "var_bench_acc_hailo8", False)
     var_acc_h10 = _bool_var(app, "var_bench_acc_hailo10", False)
     var_image_scale = _str_var(app, "var_bench_image_scale", "auto")
+    var_validation_reference_mode = _str_var(app, "var_bench_validation_reference_mode", "auto")
+    var_bench_task = _str_var(app, "var_bench_task", "auto")
+    var_mini_coco_ap50 = _bool_var(app, "var_bench_mini_coco_ap50", False)
+    var_mini_classification_eval = _bool_var(app, "var_bench_mini_classification_eval", False)
 
     ttk.Label(acc_group, text="ONNXRuntime:").grid(row=0, column=0, sticky="w", padx=(8, 6), pady=8)
     chk_cpu = ttk.Checkbutton(acc_group, text="ORT CPU", variable=var_acc_cpu)
@@ -284,6 +521,24 @@ def build_panel(parent, app=None) -> ttk.Frame:
     chk_h8.grid(row=0, column=6, sticky="w", padx=(0, 8), pady=8)
     chk_h10 = ttk.Checkbutton(acc_group, text="Hailo-10", variable=var_acc_h10)
     chk_h10.grid(row=0, column=7, sticky="w", padx=(0, 8), pady=8)
+    ttk.Label(acc_group, text="Validation ref:").grid(row=0, column=8, sticky="e", padx=(18, 6), pady=8)
+    cb_val_ref = ttk.Combobox(
+        acc_group,
+        textvariable=var_validation_reference_mode,
+        values=["auto", "same_backend_full", "cpu_full", "annotations"],
+        width=18,
+        state="readonly",
+    )
+    cb_val_ref.grid(row=0, column=9, sticky="w", padx=(0, 8), pady=8)
+    ttk.Label(acc_group, text="Task:").grid(row=0, column=10, sticky="e", padx=(8, 6), pady=8)
+    cb_task = ttk.Combobox(
+        acc_group,
+        textvariable=var_bench_task,
+        values=["auto", "detection", "classification"],
+        width=16,
+        state="readonly",
+    )
+    cb_task.grid(row=0, column=11, sticky="w", padx=(0, 8), pady=8)
 
     attach_tooltip(chk_cpu, "Benchmark split cases with ONNXRuntime on CPU.")
     attach_tooltip(
@@ -301,6 +556,10 @@ def build_panel(parent, app=None) -> ttk.Frame:
     attach_tooltip(
         chk_h10,
         "Include Hailo-10 in the benchmark plan. HEFs will be built using the settings in 'Split & Export'.",
+    )
+    attach_tooltip(
+        cb_val_ref,
+        "Reference policy for detection validation. auto prefers same_backend_full for homogeneous runs and falls back to cpu_full for mixed runs. annotations keeps GT sidecars for dataset-only absolute checks.",
     )
 
     # Input scaling (passed through to run_split_onnxruntime.py)
@@ -342,6 +601,61 @@ def build_panel(parent, app=None) -> ttk.Frame:
         if p_sel:
             var_validation_images.set(str(p_sel))
 
+    def _classification_preset_root(preset: str) -> Optional[Path]:
+        try:
+            resolved = resolve_classification_validation_source(str(preset or ""))
+            if resolved is None:
+                return None
+            rp = Path(resolved)
+            if rp.is_file():
+                return rp.parent.resolve()
+            return rp.resolve()
+        except Exception:
+            logger.debug("Could not resolve classification preset root", exc_info=True)
+            return None
+
+    def _classification_preset_images_dir(preset: str) -> Optional[Path]:
+        root = _classification_preset_root(preset)
+        if root is None:
+            return None
+        images = root / "images"
+        return images if images.is_dir() else root
+
+    def _apply_classification_preset_defaults(preset: str, *, update_hailo_calib: bool = False) -> None:
+        preset = str(preset or "").strip()
+        if not preset:
+            return
+        var_bench_task.set("classification")
+        var_validation_images.set(preset)
+        if preset == "imagenet_val_mini_500":
+            var_validation_max_images.set("500")
+        else:
+            var_validation_max_images.set("200")
+        var_mini_classification_eval.set(True)
+        try:
+            cur_scale = str(var_image_scale.get() or "").strip().lower()
+            if cur_scale in {"", "auto", "norm"}:
+                var_image_scale.set("imagenet")
+        except Exception:
+            pass
+        if update_hailo_calib:
+            img_root = _classification_preset_images_dir(preset)
+            if img_root is not None:
+                calib_dir_var = _str_var(app, "var_hailo_hef_calib_dir", "")
+                calib_count_var = _str_var(app, "var_hailo_hef_calib_count", "64")
+                calib_bs_var = _str_var(app, "var_hailo_hef_calib_batch_size", "8")
+                calib_dir_var.set(str(img_root))
+                try:
+                    if int(str(calib_count_var.get() or "0")) <= 0:
+                        calib_count_var.set("64")
+                except Exception:
+                    calib_count_var.set("64")
+                try:
+                    if int(str(calib_bs_var.get() or "0")) <= 0:
+                        calib_bs_var.set("8")
+                except Exception:
+                    calib_bs_var.set("8")
+
     btn_val_file = ttk.Button(acc_group, text="Datei…", command=_browse_validation_images_file)
     btn_val_file.grid(row=1, column=7, sticky="w", padx=(0, 6), pady=(0, 2))
     btn_val_dir = ttk.Button(acc_group, text="Ordner…", command=_browse_validation_images_dir)
@@ -350,20 +664,318 @@ def build_panel(parent, app=None) -> ttk.Frame:
     ent_val_max = ttk.Entry(acc_group, textvariable=var_validation_max_images, width=5)
     ent_val_max.grid(row=1, column=10, sticky="w", padx=(0, 8), pady=(0, 2))
 
+    chk_mini_coco = ttk.Checkbutton(acc_group, text="Mini-COCO AP50", variable=var_mini_coco_ap50)
+    chk_mini_coco.grid(row=2, column=8, columnspan=2, sticky="w", padx=(0, 8), pady=(0, 8))
+    chk_mini_cls = ttk.Checkbutton(acc_group, text="Mini-Classification", variable=var_mini_classification_eval)
+    chk_mini_cls.grid(row=2, column=10, columnspan=2, sticky="w", padx=(0, 8), pady=(0, 8))
+
+    ttk.Label(acc_group, text="Classification preset:").grid(row=2, column=3, sticky="e", padx=(18, 6), pady=(0, 8))
+    preset_values = [""] + list_available_presets()
+    var_validation_preset = _str_var(app, "var_bench_validation_preset", "")
+    cb_val_preset = ttk.Combobox(
+        acc_group,
+        textvariable=var_validation_preset,
+        values=preset_values,
+        width=24,
+        state="readonly",
+    )
+    cb_val_preset.grid(row=2, column=4, columnspan=2, sticky="w", padx=(0, 6), pady=(0, 8))
+
+    def _refresh_classification_preset_status() -> None:
+        try:
+            vals = [""] + list_available_presets()
+            cb_val_preset.configure(values=vals)
+        except Exception:
+            pass
+        preset = str(var_validation_preset.get() or var_validation_images.get() or "").strip()
+        if preset in list_available_presets():
+            root = _classification_preset_root(preset)
+            if root is not None:
+                lbl_cls_preset_status.configure(text=f"Preset ready: {preset} → {root}", foreground="#2b6b2b")
+            else:
+                lbl_cls_preset_status.configure(text=f"Preset not imported locally yet: {preset}", foreground="#9a6500")
+        else:
+            lbl_cls_preset_status.configure(text="ImageNet/Imagenette mini preset optional for classification", foreground="#666")
+
+    def _on_validation_preset_selected(_event=None):
+        preset = str(var_validation_preset.get() or "").strip()
+        if not preset:
+            _refresh_classification_preset_status()
+            return
+        _apply_classification_preset_defaults(preset, update_hailo_calib=False)
+        _refresh_classification_preset_status()
+
+    def _use_preset_for_hailo_calib():
+        preset = str(var_validation_preset.get() or var_validation_images.get() or "").strip()
+        if preset not in list_available_presets():
+            messagebox.showinfo("Classification preset", "Bitte zuerst ein Classification-Preset auswählen oder importieren.")
+            return
+        root = _classification_preset_images_dir(preset)
+        if root is None:
+            messagebox.showwarning("Classification preset", f"Preset {preset} ist lokal noch nicht verfügbar. Bitte zuerst importieren.")
+            return
+        _apply_classification_preset_defaults(preset, update_hailo_calib=True)
+        _refresh_classification_preset_status()
+        messagebox.showinfo(
+            "Hailo calibration",
+            f"Hailo calibration dir wurde auf das Classification-Preset gesetzt:\n{root}\n\nDas vermeidet COCO-Bilder als Kalibrierquelle für Classification-Modelle.",
+        )
+
+    def _open_imagenet_preset_import_dialog():
+        dlg = tk.Toplevel(acc_group)
+        dlg.title("Import ImageNet mini preset")
+        dlg.transient(acc_group.winfo_toplevel())
+        dlg.grab_set()
+        dlg.columnconfigure(1, weight=1)
+        preset_var = tk.StringVar(value=str(var_validation_preset.get() or "imagenet_val_mini_200"))
+        val_dir_var = tk.StringVar(value="")
+        gt_file_var = tk.StringVar(value="")
+        copy_mode_var = tk.StringVar(value="copy")
+        overwrite_var = tk.BooleanVar(value=True)
+        set_calib_var = tk.BooleanVar(value=True)
+        status_var = tk.StringVar(value=f"Output: {classification_validation_default_root()}")
+
+        ttk.Label(dlg, text="Preset:").grid(row=0, column=0, sticky="e", padx=(12, 6), pady=(12, 4))
+        ttk.Combobox(dlg, textvariable=preset_var, values=list_available_presets(), state="readonly", width=28).grid(row=0, column=1, sticky="ew", padx=(0, 12), pady=(12, 4))
+
+        ttk.Label(dlg, text="ImageNet val folder:").grid(row=1, column=0, sticky="e", padx=(12, 6), pady=4)
+        ttk.Entry(dlg, textvariable=val_dir_var, width=64).grid(row=1, column=1, sticky="ew", padx=(0, 6), pady=4)
+        ttk.Button(dlg, text="Browse…", command=lambda: (lambda p: val_dir_var.set(p) if p else None)(filedialog.askdirectory(title="Select ILSVRC2012_img_val folder"))).grid(row=1, column=2, sticky="w", padx=(0, 12), pady=4)
+
+        ttk.Label(dlg, text="Ground truth txt:").grid(row=2, column=0, sticky="e", padx=(12, 6), pady=4)
+        ttk.Entry(dlg, textvariable=gt_file_var, width=64).grid(row=2, column=1, sticky="ew", padx=(0, 6), pady=4)
+        ttk.Button(dlg, text="Browse…", command=lambda: (lambda p: gt_file_var.set(p) if p else None)(filedialog.askopenfilename(title="Select ILSVRC2012_validation_ground_truth.txt", filetypes=[("Text", "*.txt"), ("All", "*")]))).grid(row=2, column=2, sticky="w", padx=(0, 12), pady=4)
+
+        opts = ttk.Frame(dlg)
+        opts.grid(row=3, column=1, columnspan=2, sticky="w", padx=(0, 12), pady=4)
+        ttk.Label(opts, text="Copy mode:").pack(side=tk.LEFT)
+        ttk.Combobox(opts, textvariable=copy_mode_var, values=["copy", "symlink", "manifest-only"], state="readonly", width=14).pack(side=tk.LEFT, padx=(6, 12))
+        ttk.Checkbutton(opts, text="Overwrite existing", variable=overwrite_var).pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Checkbutton(opts, text="Use as Hailo calib", variable=set_calib_var).pack(side=tk.LEFT)
+
+        ttk.Label(dlg, textvariable=status_var, foreground="#555", wraplength=760).grid(row=4, column=0, columnspan=3, sticky="ew", padx=12, pady=(6, 4))
+
+        btns = ttk.Frame(dlg)
+        btns.grid(row=5, column=0, columnspan=3, sticky="e", padx=12, pady=(8, 12))
+
+        def _do_import():
+            preset = str(preset_var.get() or "").strip()
+            val_dir = Path(str(val_dir_var.get() or "")).expanduser()
+            gt_file = Path(str(gt_file_var.get() or "")).expanduser()
+            if not preset:
+                messagebox.showwarning("Import ImageNet mini", "Bitte ein Preset auswählen.", parent=dlg)
+                return
+            if not val_dir.is_dir():
+                messagebox.showwarning("Import ImageNet mini", "Bitte den ImageNet-val-Ordner auswählen.", parent=dlg)
+                return
+            if not gt_file.is_file():
+                messagebox.showwarning("Import ImageNet mini", "Bitte die Ground-Truth-Textdatei auswählen.", parent=dlg)
+                return
+            for child in btns.winfo_children():
+                try:
+                    child.configure(state="disabled")
+                except Exception:
+                    pass
+            status_var.set("Import läuft…")
+
+            def _worker():
+                try:
+                    out = build_imagenet_validation_preset(
+                        preset_name=preset,
+                        imagenet_val_dir=val_dir,
+                        ground_truth_file=gt_file,
+                        copy_mode=str(copy_mode_var.get() or "copy"),
+                        overwrite=bool(overwrite_var.get()),
+                    )
+                except Exception as exc:
+                    dlg.after(0, lambda: _finish_import(None, exc))
+                    return
+                dlg.after(0, lambda: _finish_import(out, None))
+
+            def _finish_import(out_path, exc):
+                for child in btns.winfo_children():
+                    try:
+                        child.configure(state="normal")
+                    except Exception:
+                        pass
+                if exc is not None:
+                    status_var.set(f"Import failed: {type(exc).__name__}: {exc}")
+                    messagebox.showerror("Import ImageNet mini", f"Import failed:\n{type(exc).__name__}: {exc}", parent=dlg)
+                    return
+                var_validation_preset.set(preset)
+                _apply_classification_preset_defaults(preset, update_hailo_calib=bool(set_calib_var.get()))
+                _refresh_classification_preset_status()
+                status_var.set(f"Import fertig: {out_path}")
+                messagebox.showinfo("Import ImageNet mini", f"Preset importiert:\n{out_path}", parent=dlg)
+                try:
+                    dlg.destroy()
+                except Exception:
+                    pass
+
+            threading.Thread(target=_worker, daemon=True).start()
+
+        ttk.Button(btns, text="Import", command=_do_import).pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(btns, text="Cancel", command=dlg.destroy).pack(side=tk.RIGHT)
+        try:
+            dlg.geometry("900x260")
+            dlg.update_idletasks()
+        except Exception:
+            pass
+
+    def _open_prepare_validation_sets_dialog():
+        dlg = tk.Toplevel(acc_group)
+        dlg.title("Prepare validation sets")
+        dlg.transient(acc_group.winfo_toplevel())
+        dlg.grab_set()
+        dlg.columnconfigure(0, weight=1)
+
+        status = status_coco50()
+        summary = validation_assets_summary()
+        imagenette200_ready = bool(summary.get("imagenette200_ready"))
+        imagenette500_ready = bool(summary.get("imagenette500_ready"))
+        imagenette200_images = int(summary.get("imagenette200_images") or 0)
+        imagenette500_images = int(summary.get("imagenette500_images") or 0)
+
+        coco_var = tk.BooleanVar(value=not bool(status.ready))
+        img200_var = tk.BooleanVar(value=not imagenette200_ready)
+        img500_var = tk.BooleanVar(value=False)
+        test_var = tk.BooleanVar(value=True)
+        overwrite_var = tk.BooleanVar(value=False)
+
+        header = (
+            f"COCO-50 detection: {'ready' if status.ready else 'not ready'} · {status.note}\n"
+            f"Location: {status.path}\n"
+            "COCO images are downloaded from the public COCO val2017 image host; HTTP fallback is used if HTTPS certificates fail.\n\n"
+            f"Imagenette mini-200 classification: {'ready' if imagenette200_ready else 'not ready'} · {imagenette200_images}/200 images\n"
+            f"Location: {summary.get('imagenette200_dir', '')}\n"
+            f"Imagenette mini-500 classification: {'ready' if imagenette500_ready else 'not ready'} · {imagenette500_images}/500 images\n"
+            f"Location: {summary.get('imagenette500_dir', '')}\n"
+            "Classification download uses fast.ai Imagenette2-320 mapped to ImageNet-1k class IDs. It is a public fallback, not the original ImageNet validation set.\n"
+        )
+
+        text = scrolledtext.ScrolledText(dlg, width=110, height=16, wrap=tk.WORD)
+        text.grid(row=0, column=0, columnspan=3, sticky="nsew", padx=12, pady=(12, 6))
+        text.insert(tk.END, header + "\n")
+        text.configure(state="disabled")
+        dlg.rowconfigure(0, weight=1)
+
+        opts = ttk.LabelFrame(dlg, text="Assets to prepare")
+        opts.grid(row=1, column=0, columnspan=3, sticky="ew", padx=12, pady=(0, 6))
+        opts.columnconfigure(1, weight=1)
+        ttk.Checkbutton(opts, text="COCO-50 detection", variable=coco_var).grid(row=0, column=0, sticky="w", padx=(8, 12), pady=4)
+        ttk.Checkbutton(opts, text="Imagenette mini-200 classification", variable=img200_var).grid(row=0, column=1, sticky="w", padx=(8, 12), pady=4)
+        ttk.Checkbutton(opts, text="Imagenette mini-500 classification", variable=img500_var).grid(row=1, column=1, sticky="w", padx=(8, 12), pady=4)
+        ttk.Checkbutton(opts, text="Runner test images", variable=test_var).grid(row=1, column=0, sticky="w", padx=(8, 12), pady=4)
+        ttk.Checkbutton(opts, text="Overwrite existing files", variable=overwrite_var).grid(row=2, column=0, columnspan=2, sticky="w", padx=(8, 12), pady=(4, 8))
+
+        btns = ttk.Frame(dlg)
+        btns.grid(row=2, column=0, columnspan=3, sticky="e", padx=12, pady=(6, 12))
+
+        def _append(line: str):
+            try:
+                text.configure(state="normal")
+                text.insert(tk.END, str(line).rstrip() + "\n")
+                text.see(tk.END)
+                text.configure(state="disabled")
+            except Exception:
+                pass
+
+        def _start():
+            selected_coco = bool(coco_var.get())
+            selected_i200 = bool(img200_var.get())
+            selected_i500 = bool(img500_var.get())
+            selected_test = bool(test_var.get())
+            if not any([selected_coco, selected_i200, selected_i500, selected_test]):
+                messagebox.showwarning("Prepare validation sets", "Please select at least one asset set.", parent=dlg)
+                return
+            for child in btns.winfo_children():
+                try:
+                    child.configure(state="disabled")
+                except Exception:
+                    pass
+            _append("Starting validation asset preparation…")
+            if selected_i200 or selected_i500:
+                _append("Note: Imagenette2-320 download is about 326 MB; only the selected mini subset is stored in the preset folder.")
+
+            def _worker():
+                try:
+                    def _progress(msg: str):
+                        dlg.after(0, lambda m=msg: _append(m))
+                    result = prepare_all_validation_assets(
+                        include_coco50=selected_coco,
+                        include_imagenette200=selected_i200,
+                        include_imagenette500=selected_i500,
+                        include_test_images=selected_test,
+                        overwrite=bool(overwrite_var.get()),
+                        log=_progress,
+                    )
+                except Exception as exc:
+                    dlg.after(0, lambda: _finish(None, exc))
+                    return
+                dlg.after(0, lambda: _finish(result, None))
+
+            def _finish(result, exc):
+                for child in btns.winfo_children():
+                    try:
+                        child.configure(state="normal")
+                    except Exception:
+                        pass
+                if exc is not None:
+                    _append(f"FAILED: {type(exc).__name__}: {exc}")
+                    messagebox.showerror("Prepare validation sets", f"Preparation failed:\n{type(exc).__name__}: {exc}", parent=dlg)
+                    return
+                st = validation_assets_summary()
+                _append("Done.")
+                _append(f"COCO-50: {st.get('coco50_images', 0)}/50 images, {st.get('coco50_annotations', 0)}/50 annotation files")
+                _append(f"Imagenette mini-200: {st.get('imagenette200_images', 0)}/200 images")
+                _append(f"Imagenette mini-500: {st.get('imagenette500_images', 0)}/500 images")
+                try:
+                    _refresh_classification_preset_status()
+                except Exception:
+                    pass
+                messagebox.showinfo("Prepare validation sets", "Validation assets are ready or updated.", parent=dlg)
+
+            threading.Thread(target=_worker, daemon=True).start()
+
+        ttk.Button(btns, text="Prepare selected", command=_start).pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(btns, text="Close", command=dlg.destroy).pack(side=tk.RIGHT)
+        try:
+            dlg.geometry("980x470")
+            dlg.update_idletasks()
+        except Exception:
+            pass
+
+    cb_val_preset.bind("<<ComboboxSelected>>", _on_validation_preset_selected)
+    btn_import_cls = ttk.Button(acc_group, text="Import…", command=_open_imagenet_preset_import_dialog)
+    btn_import_cls.grid(row=2, column=6, sticky="w", padx=(0, 6), pady=(0, 8))
+    btn_prepare_val = ttk.Button(acc_group, text="Prepare validation sets…", command=_open_prepare_validation_sets_dialog)
+    btn_prepare_val.grid(row=2, column=7, sticky="w", padx=(0, 6), pady=(0, 8))
+    btn_cls_calib = ttk.Button(acc_group, text="Use for Hailo calib", command=_use_preset_for_hailo_calib)
+    btn_cls_calib.grid(row=3, column=7, sticky="w", padx=(0, 6), pady=(0, 4))
+    lbl_cls_preset_status = ttk.Label(acc_group, text="ImageNet/Imagenette mini preset optional for classification", foreground="#666")
+    lbl_cls_preset_status.grid(row=3, column=3, columnspan=4, sticky="w", padx=(18, 6), pady=(0, 4))
+    attach_tooltip(btn_import_cls, "Importiert imagenet_val_mini_200/500 aus einem lokalen ImageNet-Validation-Ordner plus Ground-Truth-Datei. Die Bilder werden lokal unter ~/.onnx_splitpoint_tool/validation_datasets/classification abgelegt.")
+    attach_tooltip(btn_prepare_val, "Bereitet herunterladbare Validation-Sets außerhalb der Tool-ZIP vor. COCO-50 Detection und downloadbares Imagenette-mini für Classification werden außerhalb der Tool-ZIP vorbereitet.")
+    attach_tooltip(btn_cls_calib, "Setzt das Hailo-HEF-Kalibrierverzeichnis auf das ausgewählte Classification-Preset. Sinnvoll für ResNet/MobileNet/EfficientNet, damit nicht versehentlich COCO-Kalibrierbilder verwendet werden.")
+    _refresh_classification_preset_status()
+
     lbl_val_default = ttk.Label(
         acc_group,
-        text="Default if empty: built-in COCO-50 (50 images, embedded once per suite)",
+        text="Detection default if empty: prepared COCO-50 · Classification: local ImageNet mini preset or labeled dataset",
     )
-    lbl_val_default.grid(row=2, column=4, columnspan=7, sticky="w", padx=(0, 6), pady=(0, 8))
+    lbl_val_default.grid(row=7, column=4, columnspan=8, sticky="w", padx=(0, 6), pady=(0, 8))
     attach_tooltip(
         ent_val_images,
         "Optional image folder / image / text / JSON list for dataset-based semantic validation.\n"
-        "Used only for proxy detection validation (Boxes / Scores / Klassen nach Decoding/NMS).\n"
-        "If left empty, generated YOLO benchmark suites automatically embed the built-in COCO-50 set once at suite level.\n"
-        "0 images = disabled. Recommended for tool-validation: ~50 images.",
+        "Detection: empty means the locally prepared COCO-50 set.\n"
+        "Classification: enter a labeled dataset path or a preset alias such as imagenet_val_mini_200.\n"
+        "0 images = disabled. Recommended defaults: 50 for COCO-50, 200 for ImageNet mini.",
     )
-    attach_tooltip(ent_val_max, "How many images from the semantic validation set should be used per case/run. Default: 50 from the built-in COCO-50 set when no custom path is given. Use 0 only if you explicitly want to disable dataset validation.")
-    attach_tooltip(lbl_val_default, "If no file or folder is selected, the built-in COCO-50 validation set is used automatically.")
+    attach_tooltip(ent_val_max, "How many images from the semantic validation set should be used per case/run. Detection default: 50 from prepared COCO-50. Classification preset defaults: 200 or 500 depending on the selected ImageNet mini preset. Use 0 only if you explicitly want to disable dataset validation.")
+    attach_tooltip(cb_val_preset, "Built-in classification preset aliases. They resolve to a locally imported dataset under ~/.onnx_splitpoint_tool/validation_datasets/classification and are copied into the suite for remote runs.")
+    attach_tooltip(chk_mini_coco, "Optional report-only Mini-COCO AP50 on the semantic validation set. Reuses decoded detections + annotations, adds no extra inference passes, and never gates final_pass.")
+    attach_tooltip(chk_mini_cls, "Optional report-only Mini-Classification Top-1/Top-5 report on the semantic validation set. Requires a labeled classification dataset or a local ImageNet-mini preset and never gates final_pass.")
+    attach_tooltip(lbl_val_default, "Detection: a locally prepared COCO-50 set is used automatically when the field is empty. Use ‘Prepare validation sets…’ once after installing the clean release. Classification: if a local ImageNet-mini or downloadable Imagenette-mini preset is available, it becomes the default; otherwise provide a labeled dataset path.")
 
     # ------------------------ Hailo benchmark modes ------------------------
 
@@ -376,6 +988,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
     var_hailo_custom_part2 = _bool_var(app, "var_hailo_bench_custom_part2", False)
     var_hailo_bench_info = _str_var(app, "var_hailo_bench_info", "")
     var_hailo_full_hef_order = _str_var(app, "var_hailo_full_hef_order", "Build at end (recommended)")
+    var_hailo_full_model_preflight = _str_var(app, "var_hailo_full_model_preflight", "Enabled (plan-aware)")
 
     ttk.Label(acc_group, text="Hailo benchmark mode:").grid(row=2, column=0, sticky="w", padx=(8, 6), pady=(0, 8))
     cb_hailo_mode = ttk.Combobox(
@@ -429,6 +1042,23 @@ def build_panel(parent, app=None) -> ttk.Frame:
         "Skip full-model HEF: do not plan/run full-model Hailo benchmarks for this suite.",
     )
 
+    ttk.Label(acc_group, text="Full-model parser preflight:").grid(row=5, column=3, sticky="w", padx=(8, 6), pady=(0, 8))
+    cb_full_preflight = ttk.Combobox(
+        acc_group,
+        textvariable=var_hailo_full_model_preflight,
+        values=["Enabled (plan-aware)", "Disabled (always try full HEF)"],
+        width=28,
+        state="readonly",
+    )
+    cb_full_preflight.grid(row=5, column=4, sticky="w", padx=(0, 8), pady=(0, 8), columnspan=3)
+    attach_tooltip(
+        cb_full_preflight,
+        "Control the suite-level parser preflight for the unsplit full Hailo model.\n\n"
+        "Enabled (plan-aware): run the fast parser preflight first and allow it to adjust the benchmark plan.\n"
+        "Disabled (always try full HEF): skip the parser preflight and still attempt the actual full-model HEF build later.\n"
+        "Useful when you want final-evaluation comparability and prefer a real DFC build attempt over an early parser block.",
+    )
+
     diag_tools = ttk.Frame(acc_group)
     diag_tools.grid(row=6, column=0, columnspan=11, sticky="w", padx=(8, 8), pady=(0, 8))
     btn_last_diag = ttk.Button(
@@ -480,6 +1110,13 @@ def build_panel(parent, app=None) -> ttk.Frame:
             out = ["full", "composed"]
         return out
 
+    def _effective_hailo_variants_for_validation() -> list[str]:
+        variants = _variants_from_ui()
+        ref_mode = (var_validation_reference_mode.get() or "auto").strip().lower()
+        if ref_mode in ("auto", "same_backend_full") and "full" not in variants:
+            return ["full", *variants]
+        return variants
+
     def _required_hefs(variants: list[str]) -> list[str]:
         v = set(variants)
         req: list[str] = []
@@ -509,7 +1146,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
                 except Exception:
                     pass
 
-            variants = _variants_from_ui()
+            variants = _effective_hailo_variants_for_validation()
             req = _required_hefs(variants)
             hailo_selected = bool(var_acc_h8.get() or var_acc_h10.get())
             if not hailo_selected:
@@ -522,8 +1159,12 @@ def build_panel(parent, app=None) -> ttk.Frame:
                     full_note = "full HEF first"
                 else:
                     full_note = "full HEF last"
+                ref_mode = (var_validation_reference_mode.get() or "auto").strip().lower()
+                ref_note = "same_backend_full" if ref_mode in ("auto", "same_backend_full") else ref_mode
+                preflight_mode = (var_hailo_full_model_preflight.get() or "Enabled (plan-aware)").strip().lower()
+                preflight_note = "preflight off" if preflight_mode.startswith("disabled") else "preflight on"
                 var_hailo_bench_info.set(
-                    f"Will benchmark (Hailo): {', '.join(variants)} · Requires HEFs: {', '.join(req)} · {full_note}"
+                    f"Will benchmark (Hailo): {', '.join(variants)} · Reference: {ref_note} · Requires HEFs: {', '.join(req)} · {full_note} · {preflight_note}"
                 )
         finally:
             _in_update["flag"] = False
@@ -538,6 +1179,8 @@ def build_panel(parent, app=None) -> ttk.Frame:
         var_acc_h8,
         var_acc_h10,
         var_hailo_full_hef_order,
+        var_hailo_full_model_preflight,
+        var_validation_reference_mode,
     ):
         try:
             v.trace_add("write", _update_hailo_mode_ui)
@@ -771,10 +1414,12 @@ def build_panel(parent, app=None) -> ttk.Frame:
         var_matrix_preset,
         var_matrix_trt_to_hailo,
         var_matrix_hailo_to_trt,
+        var_validation_reference_mode,
         var_acc_trt,
         var_acc_h8,
         var_acc_h10,
         var_hailo_full_hef_order,
+        var_validation_reference_mode,
     ):
         try:
             v.trace_add("write", _update_matrix_ui)
@@ -782,6 +1427,437 @@ def build_panel(parent, app=None) -> ttk.Frame:
             pass
     _update_matrix_ui()
 
+    # ------------------------ Evaluation profile ------------------------
+
+    var_eval_profile = _str_var(app, "var_bench_evaluation_profile", "")
+    var_eval_profile_info = _str_var(app, "var_bench_evaluation_profile_info", "No evaluation profile selected.")
+    var_profile_models_root = _str_var(app, "var_bench_profile_models_root", "")
+    var_profile_include_reserve = _bool_var(app, "var_bench_profile_include_reserve", False)
+    var_profile_auto_remote = _bool_var(app, "var_bench_profile_auto_remote", False)
+    var_profile_auto_analysis = _bool_var(app, "var_bench_profile_auto_analysis", False)
+    var_profile_queue_info = _str_var(app, "var_bench_profile_queue_info", "Campaign queue inactive.")
+    var_model_preparation_mode = _str_var(app, "var_bench_model_preparation_mode", "Use current ONNX")
+    var_model_preparation_info = _str_var(app, "var_bench_model_preparation_info", "Uses the current ONNX unchanged.")
+
+    ttk.Label(acc_group, text="Evaluation profile:").grid(row=10, column=0, sticky="w", padx=(8, 6), pady=(0, 6))
+    cb_eval_profile = ttk.Combobox(
+        acc_group,
+        textvariable=var_eval_profile,
+        values=[""] + list_available_evaluation_profiles(),
+        width=28,
+        state="readonly",
+    )
+    cb_eval_profile.grid(row=10, column=1, columnspan=2, sticky="w", padx=(0, 6), pady=(0, 6))
+
+    def _current_model_path_for_profile() -> Optional[Path]:
+        try:
+            mp = (getattr(getattr(app, 'gui_state', None), 'current_model_path', None) or getattr(app, 'model_path', None) or '') if app is not None else ''
+        except Exception:
+            mp = ''
+        mp = str(mp or '').strip()
+        return Path(mp) if mp else None
+
+    def _resolve_profile_path(req: str) -> Optional[Path]:
+        req = str(req or '').strip()
+        if not req:
+            return None
+        return resolve_evaluation_profile_source(req)
+
+    def _refresh_eval_profile_info(*_args):
+        req = str(var_eval_profile.get() or '').strip()
+        if not req:
+            var_eval_profile_info.set('No evaluation profile selected.')
+            return
+        try:
+            resolved = resolve_evaluation_profile(req, model_path=_current_model_path_for_profile())
+        except Exception as exc:
+            logger.exception('Failed to resolve evaluation profile %s', req)
+            var_eval_profile_info.set(f'Profile resolve failed: {type(exc).__name__}: {exc}')
+            return
+        if resolved is None:
+            var_eval_profile_info.set(f'Profile not found: {req}')
+            return
+        var_eval_profile_info.set(profile_brief_text(resolved))
+
+    def _apply_eval_profile_to_ui():
+        req = str(var_eval_profile.get() or '').strip()
+        if not req:
+            _refresh_eval_profile_info()
+            return
+        try:
+            resolved = resolve_evaluation_profile(req, model_path=_current_model_path_for_profile())
+        except Exception as exc:
+            messagebox.showerror('Evaluation profile', f'Profile resolve failed:\n{type(exc).__name__}: {exc}')
+            return
+        if resolved is None:
+            messagebox.showwarning('Evaluation profile', f'Profile not found: {req}')
+            _refresh_eval_profile_info()
+            return
+        if not resolved.matched:
+            _refresh_eval_profile_info()
+            messagebox.showinfo('Evaluation profile', 'Das aktuelle Modell gehört nicht zur ausgewählten Profil-Suite. Die Auswahl wird gespeichert, aber es wurden keine GUI-Werte überschrieben.')
+            return
+        ov = dict(resolved.overrides or {})
+        try:
+            var_bench_task.set(str(ov.get('benchmark_task') or var_bench_task.get() or 'auto'))
+        except Exception:
+            pass
+        try:
+            if str(ov.get('image_scale') or '').strip():
+                var_image_scale.set(str(ov.get('image_scale')))
+        except Exception:
+            pass
+        try:
+            if 'validation_images' in ov:
+                var_validation_images.set(str(ov.get('validation_images') or ''))
+                if str(ov.get('validation_images') or '').strip() in list_available_presets():
+                    var_validation_preset.set(str(ov.get('validation_images') or '').strip())
+            if int(ov.get('validation_max_images') or 0) > 0:
+                var_validation_max_images.set(str(int(ov.get('validation_max_images'))))
+        except Exception:
+            pass
+        try:
+            if str(ov.get('validation_reference_mode') or '').strip():
+                var_validation_reference_mode.set(str(ov.get('validation_reference_mode')))
+        except Exception:
+            pass
+        try:
+            var_mini_coco_ap50.set(bool(ov.get('mini_coco_ap50')))
+        except Exception:
+            pass
+        try:
+            var_mini_classification_eval.set(bool(ov.get('mini_classification_eval')))
+        except Exception:
+            pass
+        for vname, key in ((var_acc_cpu, 'acc_cpu'), (var_acc_cuda, 'acc_cuda'), (var_acc_trt, 'acc_trt'), (var_acc_h8, 'acc_h8'), (var_acc_h10, 'acc_h10')):
+            try:
+                if key in ov:
+                    vname.set(bool(ov.get(key)))
+            except Exception:
+                pass
+        try:
+            if str(ov.get('hailo_preset') or '').strip():
+                var_hailo_bench_preset.set(str(ov.get('hailo_preset')))
+        except Exception:
+            pass
+        for vname, key in ((var_hailo_custom_full, 'hailo_custom_full'), (var_hailo_custom_composed, 'hailo_custom_composed'), (var_hailo_custom_part1, 'hailo_custom_part1'), (var_hailo_custom_part2, 'hailo_custom_part2')):
+            try:
+                if key in ov:
+                    vname.set(bool(ov.get(key)))
+            except Exception:
+                pass
+        try:
+            if str(ov.get('full_model_preflight_policy') or '').strip():
+                pol = str(ov.get('full_model_preflight_policy') or '').strip().lower()
+                var_hailo_full_model_preflight.set('Disabled (always try full HEF)' if pol == 'skip' else 'Enabled (plan-aware)')
+        except Exception:
+            pass
+        try:
+            prep_mode = str(ov.get('model_preparation_mode') or '').strip()
+            if prep_mode:
+                var_model_preparation_mode.set(model_preparation_label(prep_mode))
+        except Exception:
+            pass
+        try:
+            trt_h = bool(ov.get('matrix_trt_to_hailo'))
+            h_trt = bool(ov.get('matrix_hailo_to_trt'))
+            var_matrix_trt_to_hailo.set(trt_h)
+            var_matrix_hailo_to_trt.set(h_trt)
+            if trt_h and h_trt:
+                var_matrix_preset.set('TRT ↔ Hailo (split)')
+            elif trt_h or h_trt:
+                var_matrix_preset.set('Custom')
+            else:
+                var_matrix_preset.set('None')
+        except Exception:
+            pass
+        try:
+            if int(ov.get('requested_cases') or 0) > 0:
+                _str_var(app, 'var_bench_topk', '').set(str(int(ov.get('requested_cases'))))
+        except Exception:
+            pass
+        try:
+            if int(ov.get('min_gap') or 0) >= 0 and hasattr(app, 'var_min_gap'):
+                app.var_min_gap.set(str(int(ov.get('min_gap'))))
+        except Exception:
+            pass
+        _refresh_classification_preset_status()
+        _refresh_eval_profile_info()
+
+    def _browse_eval_profile_file():
+        p_sel = filedialog.askopenfilename(title='Select evaluation profile YAML', filetypes=[('YAML', '*.yaml *.yml'), ('All', '*')])
+        if p_sel:
+            var_eval_profile.set(str(p_sel))
+            _refresh_eval_profile_info()
+
+    def _validate_eval_profile_source(show_popup: bool = True) -> bool:
+        req = str(var_eval_profile.get() or '').strip()
+        if not req:
+            if show_popup:
+                messagebox.showwarning('Evaluation profile', 'No profile selected.')
+            return False
+        src = _resolve_profile_path(req)
+        if src is None:
+            if show_popup:
+                messagebox.showerror('Evaluation profile', f'Profile not found: {req}')
+            return False
+        try:
+            loaded = load_evaluation_profile(src, validate=True)
+            if loaded is None or isinstance(loaded, tuple):
+                raise FileNotFoundError(f'Profile not found: {src}')
+        except Exception as exc:
+            if show_popup:
+                messagebox.showerror('Evaluation profile', f'Validation failed:\n\n{type(exc).__name__}: {exc}')
+            return False
+        if show_popup:
+            raw = dict(loaded.raw_profile or {})
+            name = str(raw.get('name') or loaded.profile_id).strip() or loaded.profile_id
+            purpose = str(raw.get('purpose') or '').strip()
+            msg = f'Profile schema validation passed.\n\nName: {name}\nSource: {loaded.profile_path}\nKind: {loaded.source}'
+            if purpose:
+                msg += f'\nPurpose: {purpose}'
+            messagebox.showinfo('Evaluation profile', msg)
+        return True
+
+    def _open_eval_profile_editor():
+        req = str(var_eval_profile.get() or '').strip()
+        src = _resolve_profile_path(req)
+        initial_text = ''
+        initial_path: Optional[Path] = None
+        if src is not None and src.exists():
+            initial_path = src
+            try:
+                initial_text = src.read_text(encoding='utf-8')
+            except Exception as exc:
+                messagebox.showerror('Profile editor', f'Failed to read profile:\n\n{exc}')
+                return
+        elif req:
+            initial_text = (
+                f"name: {req}\n"
+                "purpose: ''\n"
+                "selection_policy: {}\n"
+                "model_suite:\n"
+                "  primary: []\n"
+                "  reserve: []\n"
+                "run_profiles: []\n"
+                "validation: {}\n"
+                "reporting: {}\n"
+            )
+        else:
+            initial_text = (
+                "name: new_profile_v1\n"
+                "purpose: ''\n"
+                "selection_policy: {}\n"
+                "model_suite:\n"
+                "  primary: []\n"
+                "  reserve: []\n"
+                "run_profiles: []\n"
+                "validation: {}\n"
+                "reporting: {}\n"
+            )
+
+        top = tk.Toplevel(outer)
+        top.title('Evaluation profile editor')
+        top.geometry('980x720')
+        top.columnconfigure(0, weight=1)
+        top.rowconfigure(1, weight=1)
+
+        info_var = tk.StringVar(value=str(initial_path or 'Unsaved profile buffer'))
+        ttk.Label(top, textvariable=info_var).grid(row=0, column=0, sticky='ew', padx=8, pady=(8, 4))
+        txt = scrolledtext.ScrolledText(top, wrap='none', undo=True)
+        txt.grid(row=1, column=0, sticky='nsew', padx=8, pady=(0, 8))
+        txt.insert('1.0', initial_text)
+
+        btns = ttk.Frame(top)
+        btns.grid(row=2, column=0, sticky='ew', padx=8, pady=(0, 8))
+
+        def _editor_parse_payload() -> Dict[str, Any]:
+            text_buf = txt.get('1.0', 'end-1c')
+            try:
+                import yaml as _yaml
+                payload = _yaml.safe_load(text_buf)
+            except Exception as exc:
+                raise ValueError(f'YAML parse failed: {exc}') from exc
+            if payload is None:
+                payload = {}
+            if not isinstance(payload, Mapping):
+                raise ValueError('Profile YAML root must be a mapping/object.')
+            return dict(payload)
+
+        def _editor_validate() -> bool:
+            try:
+                payload = _editor_parse_payload()
+                validate_evaluation_profile_payload(payload, source=(str(initial_path) if initial_path is not None else 'unsaved_profile.yaml'))
+            except Exception as exc:
+                messagebox.showerror('Profile editor', f'Validation failed:\n\n{type(exc).__name__}: {exc}')
+                return False
+            messagebox.showinfo('Profile editor', 'Profile schema validation passed.')
+            return True
+
+        def _editor_open() -> None:
+            nonlocal initial_path
+            p_sel = filedialog.askopenfilename(title='Open evaluation profile YAML', filetypes=[('YAML', '*.yaml *.yml'), ('All', '*')])
+            if not p_sel:
+                return
+            path = Path(p_sel)
+            try:
+                buf = path.read_text(encoding='utf-8')
+            except Exception as exc:
+                messagebox.showerror('Profile editor', f'Failed to open profile:\n\n{exc}')
+                return
+            txt.delete('1.0', 'end')
+            txt.insert('1.0', buf)
+            initial_path = path
+            info_var.set(str(path))
+
+        def _editor_write(target: Path) -> bool:
+            nonlocal initial_path
+            try:
+                payload = _editor_parse_payload()
+                out = save_evaluation_profile_yaml(target, payload, validate=True)
+            except Exception as exc:
+                messagebox.showerror('Profile editor', f'Save failed:\n\n{type(exc).__name__}: {exc}')
+                return False
+            initial_path = out
+            info_var.set(str(out))
+            var_eval_profile.set(str(out))
+            _refresh_eval_profile_info()
+            try:
+                cb_eval_profile.configure(values=[''] + list_available_evaluation_profiles())
+            except Exception:
+                pass
+            return True
+
+        def _editor_save() -> None:
+            if initial_path is None:
+                _editor_save_as()
+                return
+            _editor_write(Path(initial_path))
+
+        def _editor_save_as() -> None:
+            p_sel = filedialog.asksaveasfilename(title='Save evaluation profile YAML', defaultextension='.yaml', filetypes=[('YAML', '*.yaml *.yml'), ('All', '*')])
+            if not p_sel:
+                return
+            _editor_write(Path(p_sel))
+
+        def _editor_use() -> None:
+            if initial_path is None or not Path(initial_path).exists():
+                if not messagebox.askyesno('Profile editor', 'The profile is not saved yet. Save it now?'):
+                    return
+                _editor_save_as()
+                if initial_path is None or not Path(initial_path).exists():
+                    return
+            var_eval_profile.set(str(initial_path))
+            _refresh_eval_profile_info()
+            top.destroy()
+
+        ttk.Button(btns, text='Open…', command=_editor_open).pack(side='left')
+        ttk.Button(btns, text='Validate', command=_editor_validate).pack(side='left', padx=(6, 0))
+        ttk.Button(btns, text='Save', command=_editor_save).pack(side='left', padx=(6, 0))
+        ttk.Button(btns, text='Save As…', command=_editor_save_as).pack(side='left', padx=(6, 0))
+        ttk.Button(btns, text='Use', command=_editor_use).pack(side='left', padx=(12, 0))
+        ttk.Button(btns, text='Close', command=top.destroy).pack(side='right')
+
+    def _browse_profile_models_root():
+        initial = str(var_profile_models_root.get() or (app.default_output_dir if app is not None else '') or os.getcwd())
+        picked = filedialog.askdirectory(title='Select model root for profile campaign', initialdir=initial)
+        if picked:
+            var_profile_models_root.set(str(picked))
+
+    def _refresh_profile_queue_info(*_args):
+        root = str(var_profile_models_root.get() or '').strip()
+        reserve = bool(var_profile_include_reserve.get())
+        auto_remote = bool(var_profile_auto_remote.get())
+        auto_analysis = bool(var_profile_auto_analysis.get())
+        prep_mode = normalize_model_preparation_mode(var_model_preparation_mode.get())
+        prep_label = model_preparation_label(prep_mode)
+        if not root:
+            var_profile_queue_info.set('Campaign queue inactive. Select a model root to enable batch processing for the profile.')
+            return
+        desc = f'Model root: {root} · reserve={reserve} · remote={auto_remote} · analysis={auto_analysis} · prep={prep_label}'
+        if auto_analysis and not auto_remote:
+            desc += ' · note: auto analysis runs after remote benchmarks only'
+        var_profile_queue_info.set(desc)
+
+    def _refresh_model_preparation_info(*_args):
+        prep_mode = normalize_model_preparation_mode(var_model_preparation_mode.get())
+        current_model = _current_model_path_for_profile()
+        if prep_mode == 'current':
+            var_model_preparation_info.set('Uses the current ONNX unchanged. Good default for classifiers and already screened models.')
+            return
+        if current_model is None:
+            var_model_preparation_info.set('Auto-screen YOLO full-Hailo is enabled. Load a model and use “Prepare current model…” or run a profile campaign.')
+            return
+        if preparation_result_is_selected_model(current_model):
+            var_model_preparation_info.set('Current ONNX already comes from a preparation-screening result. Re-run Analyse on this prepared model before generating the benchmark set.')
+            return
+        var_model_preparation_info.set('Manual use: click “Prepare current model…” before Analyse. Profile campaigns run preparation automatically as the first queue stage.')
+
+    ttk.Button(acc_group, text='Profile YAML…', command=_browse_eval_profile_file).grid(row=10, column=3, sticky='w', padx=(0, 6), pady=(0, 6))
+    ttk.Button(acc_group, text='Apply', command=_apply_eval_profile_to_ui).grid(row=10, column=4, sticky='w', padx=(0, 6), pady=(0, 6))
+    ttk.Button(acc_group, text='Edit…', command=_open_eval_profile_editor).grid(row=10, column=5, sticky='w', padx=(0, 6), pady=(0, 6))
+    ttk.Button(acc_group, text='Validate', command=_validate_eval_profile_source).grid(row=10, column=6, sticky='w', padx=(0, 6), pady=(0, 6))
+
+    lbl_eval_profile = ttk.Label(acc_group, textvariable=var_eval_profile_info, foreground='#555')
+    lbl_eval_profile.grid(row=11, column=0, columnspan=11, sticky='w', padx=(8, 8), pady=(0, 4))
+
+    ttk.Label(acc_group, text='Profile model root:').grid(row=12, column=0, sticky='w', padx=(8, 6), pady=(0, 6))
+    ent_profile_root = ttk.Entry(acc_group, textvariable=var_profile_models_root, width=56)
+    ent_profile_root.grid(row=12, column=1, columnspan=3, sticky='ew', padx=(0, 6), pady=(0, 6))
+    ttk.Button(acc_group, text='Browse…', command=_browse_profile_models_root).grid(row=12, column=4, sticky='w', padx=(0, 6), pady=(0, 6))
+    ttk.Button(acc_group, text='Queue profile…', command=getattr(app, '_queue_profile_campaign', None)).grid(row=12, column=5, sticky='w', padx=(0, 6), pady=(0, 6))
+
+    chk_profile_reserve = ttk.Checkbutton(acc_group, text='Include reserve', variable=var_profile_include_reserve)
+    chk_profile_reserve.grid(row=13, column=1, sticky='w', padx=(0, 8), pady=(0, 4))
+    chk_profile_remote = ttk.Checkbutton(acc_group, text='Auto remote run', variable=var_profile_auto_remote)
+    chk_profile_remote.grid(row=13, column=2, sticky='w', padx=(0, 8), pady=(0, 4))
+    chk_profile_analysis = ttk.Checkbutton(acc_group, text='Auto export analysis', variable=var_profile_auto_analysis)
+    chk_profile_analysis.grid(row=13, column=3, sticky='w', padx=(0, 8), pady=(0, 4))
+
+    lbl_profile_queue = ttk.Label(acc_group, textvariable=var_profile_queue_info, foreground='#555')
+    lbl_profile_queue.grid(row=14, column=0, columnspan=11, sticky='w', padx=(8, 8), pady=(0, 8))
+
+    prep_section = CollapsibleSection(acc_group, 'Model preparation', expanded=False)
+    prep_section.grid(row=15, column=0, columnspan=11, sticky='ew', padx=(8, 8), pady=(0, 8))
+    try:
+        prep_section.body.columnconfigure(1, weight=1)
+    except Exception:
+        pass
+    ttk.Label(prep_section.body, text='Preparation mode:').grid(row=0, column=0, sticky='w', padx=(0, 6), pady=(6, 4))
+    cb_prep_mode = ttk.Combobox(
+        prep_section.body,
+        textvariable=var_model_preparation_mode,
+        values=['Use current ONNX', 'Auto-screen YOLO full-Hailo'],
+        width=28,
+        state='readonly',
+    )
+    cb_prep_mode.grid(row=0, column=1, sticky='w', padx=(0, 6), pady=(6, 4))
+    ttk.Button(prep_section.body, text='Prepare current model…', command=getattr(app, '_queue_prepare_current_model', None)).grid(row=0, column=2, sticky='w', padx=(0, 6), pady=(6, 4))
+    lbl_prep_info = ttk.Label(prep_section.body, textvariable=var_model_preparation_info, foreground='#555')
+    lbl_prep_info.grid(row=1, column=0, columnspan=3, sticky='w', padx=(0, 6), pady=(0, 6))
+
+    attach_tooltip(cb_eval_profile, 'Versionierte Evaluationsprofile setzen eine feste Run-Matrix und task-spezifische Defaults für die finale Kampagne. Die eigentlichen Cases werden weiter normal generiert; das Profil überschreibt nur die Plan-/Validierungsdefaults.')
+    attach_tooltip(lbl_eval_profile, 'Zeigt, ob das aktuelle Modell von der ausgewählten Profil-Suite abgedeckt wird und welche Run-Matrix/Defaults daraus abgeleitet werden.')
+    attach_tooltip(ent_profile_root, 'Root folder containing the exported ONNX models referenced by the selected profile. The profile campaign scans this folder recursively and matches models by export metadata / file name.')
+    attach_tooltip(lbl_profile_queue, 'The profile campaign uses the existing Jobs infrastructure as a sequential queue: optional model preparation → analysis → benchmark-set generation → optional remote execution → optional automatic benchmark-analysis export.')
+    attach_tooltip(cb_prep_mode, 'Keeps the everyday UI simple. “Use current ONNX” does nothing extra. “Auto-screen YOLO full-Hailo” is the compact advanced mode: it tries the current ONNX first, then a tiny built-in set of Ultralytics export variants until one passes the full-Hailo probe.')
+    attach_tooltip(lbl_prep_info, 'Manual workflow: use “Prepare current model…” first, then rerun Analyse on the selected prepared ONNX. Profile campaigns perform this stage automatically before analysis.')
+    try:
+        var_eval_profile.trace_add('write', _refresh_eval_profile_info)
+    except Exception:
+        pass
+    for _v in (var_profile_models_root, var_profile_include_reserve, var_profile_auto_remote, var_profile_auto_analysis, var_model_preparation_mode):
+        try:
+            _v.trace_add('write', _refresh_profile_queue_info)
+        except Exception:
+            pass
+    try:
+        var_model_preparation_mode.trace_add('write', _refresh_model_preparation_info)
+    except Exception:
+        pass
+    _refresh_eval_profile_info()
+    _refresh_profile_queue_info()
+    _refresh_model_preparation_info()
     # ------------------------ Accuracy / baseline ------------------------
 
     accy_group = ttk.LabelFrame(sec_plan.body, text="Accuracy / baseline")
@@ -803,12 +1879,16 @@ def build_panel(parent, app=None) -> ttk.Frame:
 
     var_accy_compare_info = _str_var(app, "var_accuracy_compare_info", "")
     var_accy_hef_info = _str_var(app, "var_accuracy_hef_info", "")
+    var_accy_plan_source_info = _str_var(app, "var_accuracy_plan_source_info", "")
 
     lbl_compare = ttk.Label(accy_group, textvariable=var_accy_compare_info)
     lbl_compare.grid(row=1, column=0, columnspan=2, sticky="w", padx=(8, 8), pady=(0, 2))
 
     lbl_hef = ttk.Label(accy_group, textvariable=var_accy_hef_info)
-    lbl_hef.grid(row=2, column=0, columnspan=2, sticky="w", padx=(8, 8), pady=(0, 8))
+    lbl_hef.grid(row=2, column=0, columnspan=2, sticky="w", padx=(8, 8), pady=(0, 2))
+
+    lbl_plan_source = ttk.Label(accy_group, textvariable=var_accy_plan_source_info)
+    lbl_plan_source.grid(row=3, column=0, columnspan=2, sticky="w", padx=(8, 8), pady=(0, 8))
     attach_tooltip(
         lbl_hef,
         "Derived automatically from your selected benchmark variants (Phase 6).\n"
@@ -817,10 +1897,10 @@ def build_panel(parent, app=None) -> ttk.Frame:
 
     # Planned validations table (computed from current Benchmark tab selections).
     table_frame = ttk.Frame(accy_group)
-    table_frame.grid(row=3, column=0, columnspan=2, sticky="ew", padx=(8, 8), pady=(0, 8))
+    table_frame.grid(row=4, column=0, columnspan=2, sticky="ew", padx=(8, 8), pady=(0, 8))
     table_frame.columnconfigure(0, weight=1)
 
-    _cols = ("run", "stage1", "stage2", "variants", "requires")
+    _cols = ("run", "stage1", "stage2", "reference", "variants", "requires")
     tv_plan = ttk.Treeview(table_frame, columns=_cols, show="headings", height=6)
     tv_plan.grid(row=0, column=0, sticky="ew")
 
@@ -831,19 +1911,21 @@ def build_panel(parent, app=None) -> ttk.Frame:
     tv_plan.heading("run", text="Run")
     tv_plan.heading("stage1", text="Stage1")
     tv_plan.heading("stage2", text="Stage2")
+    tv_plan.heading("reference", text="Reference")
     tv_plan.heading("variants", text="Variants compared")
     tv_plan.heading("requires", text="Requires")
 
     tv_plan.column("run", width=160, stretch=False)
     tv_plan.column("stage1", width=110, stretch=False)
     tv_plan.column("stage2", width=110, stretch=False)
+    tv_plan.column("reference", width=150, stretch=False)
     tv_plan.column("variants", width=240, stretch=True)
     tv_plan.column("requires", width=160, stretch=False)
 
     attach_tooltip(
         tv_plan,
-        "Planned accuracy comparisons (all compared against CPU full baseline).\n"
-        "This table is computed from the current Benchmark tab settings.",
+        "Planned accuracy comparisons with the selected validation reference policy.\n"
+        "Homogeneous runs prefer same_backend_full; mixed runs fall back to cpu_full unless you explicitly choose another mode.",
     )
 
     def _get_hailo_hw(which: str) -> str:
@@ -885,75 +1967,111 @@ def build_panel(parent, app=None) -> ttk.Frame:
             return
         _in_accy["flag"] = True
         try:
-            planned: list[tuple[str, str, str, list[str], str]] = []
+            planned: list[tuple[str, str, str, str, list[str], str]] = []
+            suite_preview: Optional[dict[str, Any]] = None
+            suite_path = ""
+            try:
+                suite_path = str(getattr(app, "var_remote_benchmark_set", None).get() or "").strip() if app is not None else ""
+            except Exception:
+                suite_path = ""
+            if suite_path:
+                try:
+                    suite_preview = _load_actual_suite_plan_preview(Path(suite_path))
+                except Exception:
+                    logger.exception("Failed to load actual suite plan preview from %s", suite_path)
+                    suite_preview = None
 
-            ort_variants = ["full", "part1", "part2", "composed"]
-            if bool(var_acc_cpu.get()):
-                planned.append(("ORT CPU", "cpu", "cpu", ort_variants, "onnx"))
-            if bool(var_acc_cuda.get()):
-                planned.append(("ORT CUDA", "cuda", "cuda", ort_variants, "onnx"))
-            if bool(var_acc_trt.get()):
-                planned.append(("TensorRT", "tensorrt", "tensorrt", ort_variants, "onnx"))
+            if suite_preview:
+                planned = [
+                    (
+                        str(name),
+                        str(s1),
+                        str(s2),
+                        str(ref_mode),
+                        list(vv),
+                        str(reqtxt),
+                    )
+                    for name, s1, s2, ref_mode, vv, reqtxt in list(suite_preview.get("rows") or [])
+                ]
+                var_accy_compare_info.set(str(suite_preview.get("compare_info") or ""))
+                var_accy_hef_info.set(str(suite_preview.get("hef_info") or ""))
+                var_accy_plan_source_info.set(str(suite_preview.get("source_info") or ""))
+            else:
+                ort_variants = ["full", "part1", "part2", "composed"]
+                if bool(var_acc_cpu.get()):
+                    planned.append(("ORT CPU", "cpu", "cpu", "same_backend_full", ort_variants, "onnx"))
+                if bool(var_acc_cuda.get()):
+                    planned.append(("ORT CUDA", "cuda", "cuda", "same_backend_full", ort_variants, "onnx"))
+                if bool(var_acc_trt.get()):
+                    planned.append(("TensorRT", "tensorrt", "tensorrt", "same_backend_full", ort_variants, "onnx"))
 
-            hailo_targets: list[str] = []
-            if bool(var_acc_h8.get()):
-                hailo_targets.append(_get_hailo_hw("hailo8"))
-            if bool(var_acc_h10.get()):
-                hailo_targets.append(_get_hailo_hw("hailo10"))
+                hailo_targets: list[str] = []
+                if bool(var_acc_h8.get()):
+                    hailo_targets.append(_get_hailo_hw("hailo8"))
+                if bool(var_acc_h10.get()):
+                    hailo_targets.append(_get_hailo_hw("hailo10"))
 
-            hailo_variants = _variants_from_ui()
-            for hw in hailo_targets:
-                s1 = hw
-                s2 = hw
-                req = _hef_req_for(s1, s2, hailo_variants)
-                req_txt = f"hef: {', '.join(req)}" if req else "hef: none"
-                planned.append((f"Hailo ({hw})", s1, s2, list(hailo_variants), req_txt))
-
-            matrix_variants = ["part1", "part2", "composed"]
-            if bool(var_matrix_trt_to_hailo.get()):
-                for hw in hailo_targets:
-                    s1 = "tensorrt"
-                    s2 = hw
-                    req = _hef_req_for(s1, s2, matrix_variants)
-                    req_txt = f"hef: {', '.join(req)}" if req else "hef: none"
-                    planned.append((f"TensorRT→{hw}", s1, s2, list(matrix_variants), req_txt))
-
-            if bool(var_matrix_hailo_to_trt.get()):
+                hailo_variants = _effective_hailo_variants_for_validation()
                 for hw in hailo_targets:
                     s1 = hw
-                    s2 = "tensorrt"
-                    req = _hef_req_for(s1, s2, matrix_variants)
+                    s2 = hw
+                    req = _hef_req_for(s1, s2, hailo_variants)
                     req_txt = f"hef: {', '.join(req)}" if req else "hef: none"
-                    planned.append((f"{hw}→TensorRT", s1, s2, list(matrix_variants), req_txt))
+                    planned.append((f"Hailo ({hw})", s1, s2, "same_backend_full", list(hailo_variants), req_txt))
 
-            # Info lines
-            union_variants: set[str] = set()
-            hef_needed: set[str] = set()
-            for _name, s1, s2, vv, _reqtxt in planned:
-                for v in vv:
-                    union_variants.add(str(v).strip().lower())
-                for h in _hef_req_for(s1, s2, vv):
-                    hef_needed.add(h)
+                matrix_variants = ["full", "part1", "part2", "composed"]
+                if bool(var_matrix_trt_to_hailo.get()):
+                    for hw in hailo_targets:
+                        s1 = "tensorrt"
+                        s2 = hw
+                        req = _hef_req_for(s1, s2, matrix_variants)
+                        req_txt = f"hef: {', '.join(req)}" if req else "hef: none"
+                        planned.append((f"TensorRT→{hw}", s1, s2, "cpu_full", list(matrix_variants), req_txt))
 
-            order_cmp = ["full", "composed", "part1", "part2"]
-            cmp_list = [v for v in order_cmp if v in union_variants]
-            if not cmp_list:
-                var_accy_compare_info.set("Will compare (against CPU full): none (no accelerators selected)")
-            else:
-                var_accy_compare_info.set(f"Will compare (against CPU full): {', '.join(cmp_list)}")
+                if bool(var_matrix_hailo_to_trt.get()):
+                    for hw in hailo_targets:
+                        s1 = hw
+                        s2 = "tensorrt"
+                        req = _hef_req_for(s1, s2, matrix_variants)
+                        req_txt = f"hef: {', '.join(req)}" if req else "hef: none"
+                        planned.append((f"{hw}→TensorRT", s1, s2, "cpu_full", list(matrix_variants), req_txt))
 
-            order_hef = ["full", "part1", "part2"]
-            hef_list = [h for h in order_hef if h in hef_needed]
-            if hef_list:
-                var_accy_hef_info.set(f"Hailo HEFs needed (auto): {', '.join(hef_list)}")
-            else:
-                var_accy_hef_info.set("Hailo HEFs needed (auto): none")
+                union_variants: set[str] = set()
+                hef_needed: set[str] = set()
+                for _name, s1, s2, _ref, vv, _reqtxt in planned:
+                    for v in vv:
+                        union_variants.add(str(v).strip().lower())
+                    for h in _hef_req_for(s1, s2, vv):
+                        hef_needed.add(h)
 
-            # Table
+                order_cmp = ["full", "composed", "part1", "part2"]
+                cmp_list = [v for v in order_cmp if v in union_variants]
+                ref_mode_ui = (var_validation_reference_mode.get() or "auto").strip().lower()
+                if not cmp_list:
+                    var_accy_compare_info.set("Will compare: none (no accelerators selected)")
+                elif ref_mode_ui in ("auto", "same_backend_full"):
+                    var_accy_compare_info.set(
+                        f"Will compare: homogeneous runs vs same_backend_full; mixed runs fallback to cpu_full ({', '.join(cmp_list)})"
+                    )
+                elif ref_mode_ui == "cpu_full":
+                    var_accy_compare_info.set(f"Will compare (against CPU full): {', '.join(cmp_list)}")
+                else:
+                    var_accy_compare_info.set(
+                        f"Semantic GT mode: dataset validation uses annotations when available; split-fidelity stays model-based ({', '.join(cmp_list)})"
+                    )
+
+                order_hef = ["full", "part1", "part2"]
+                hef_list = [h for h in order_hef if h in hef_needed]
+                if hef_list:
+                    var_accy_hef_info.set(f"Hailo HEFs needed (auto): {', '.join(hef_list)}")
+                else:
+                    var_accy_hef_info.set("Hailo HEFs needed (auto): none")
+                var_accy_plan_source_info.set("Preview source: current GUI selection (pre-generation)")
+
             for item in tv_plan.get_children():
                 tv_plan.delete(item)
-            for name, s1, s2, vv, reqtxt in planned:
-                tv_plan.insert("", "end", values=(name, s1, s2, ", ".join(vv), reqtxt))
+            for name, s1, s2, ref_mode, vv, reqtxt in planned:
+                tv_plan.insert("", "end", values=(name, s1, s2, ref_mode, ", ".join(vv), reqtxt))
         finally:
             _in_accy["flag"] = False
 
@@ -971,6 +2089,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
         var_matrix_preset,
         var_matrix_trt_to_hailo,
         var_matrix_hailo_to_trt,
+        var_validation_reference_mode,
     ):
         try:
             _v.trace_add("write", _update_accuracy_ui)
@@ -986,6 +2105,15 @@ def build_panel(parent, app=None) -> ttk.Frame:
         except Exception:
             pass
 
+    try:
+        _suite_var = getattr(app, "var_remote_benchmark_set", None) if app is not None else None
+        if _suite_var is not None:
+            _suite_var.trace_add("write", _update_accuracy_ui)
+    except Exception:
+        pass
+    if app is not None:
+        app._benchmark_refresh_accuracy_ui = _update_accuracy_ui
+
     _update_accuracy_ui()
     for _maybe_var in (var_acc_h8, var_acc_h10, getattr(app, "var_strict_boundary", None) if app is not None else None):
         try:
@@ -993,7 +2121,19 @@ def build_panel(parent, app=None) -> ttk.Frame:
                 _maybe_var.trace_add("write", _refresh_hailo_compile_outlook)
         except Exception:
             pass
-    _refresh_hailo_compile_outlook()
+
+    def _schedule_hailo_compile_outlook_refresh(delay_ms: int = 250):
+        if app is None or not hasattr(app, "after"):
+            _refresh_hailo_compile_outlook()
+            return
+        try:
+            app.after(delay_ms, _refresh_hailo_compile_outlook)
+            logger.info("Benchmark Hailo compile outlook refresh scheduled after %dms", int(delay_ms))
+        except Exception:
+            logger.debug("Failed to schedule Hailo compile outlook refresh; falling back to immediate refresh", exc_info=True)
+            _refresh_hailo_compile_outlook()
+
+    _schedule_hailo_compile_outlook_refresh()
 
 # ----------------------------- Runner (ORT) ------------------------------
 
@@ -1065,28 +2205,123 @@ def build_panel(parent, app=None) -> ttk.Frame:
             root = getattr(app, "default_output_dir", None)
             if not root:
                 return []
+            t0 = time.perf_counter()
             try:
                 wd = ensure_workdir(Path(root))
-                hits = sorted(wd.benchmark_sets.rglob("benchmark_set.json"))
-                return [str(p) for p in hits]
+                suite_root = wd.benchmark_sets
+                hits: list[str] = []
+                if not suite_root.exists():
+                    return []
+                for dirpath, dirnames, filenames in os.walk(suite_root):
+                    dirnames[:] = [
+                        d for d in dirnames
+                        if d not in {"__pycache__", ".git", ".hg", ".svn"} and not str(d).startswith('.')
+                    ]
+                    if "benchmark_set.json" in filenames:
+                        hits.append(str(Path(dirpath) / "benchmark_set.json"))
+                        # benchmark_set.json marks the suite root; do not descend into large case trees.
+                        dirnames[:] = []
+                hits = sorted(dict.fromkeys(hits))
+                logger.info("Discovered %d benchmark suites in %.3fs under %s", len(hits), time.perf_counter() - t0, suite_root)
+                return hits
             except Exception:
                 logger.exception("Failed to discover benchmark suites")
                 return []
 
+        try:
+            _selected_suite = str(getattr(app, "var_remote_benchmark_set", None).get() or "").strip()
+        except Exception:
+            _selected_suite = ""
+        _initial_suite_values = [_selected_suite] if _selected_suite else []
+
         cb_suite = ttk.Combobox(
             remote_group,
             textvariable=getattr(app, "var_remote_benchmark_set", None),
-            values=_list_suites(),
+            values=_initial_suite_values,
             width=50,
         )
         cb_suite.grid(row=0, column=1, sticky="ew", padx=(0, 6), pady=(8, 4))
 
-        def _refresh_suite_values():
-            cb_suite["values"] = _list_suites()
+        suite_scan_status_var = tk.StringVar(value=("Suite discovery pending…" if getattr(app, "default_output_dir", None) else "Set Working Dir to enable suite discovery."))
+        lbl_suite_scan = ttk.Label(remote_group, textvariable=suite_scan_status_var)
+        lbl_suite_scan.grid(row=4, column=1, columnspan=3, sticky="w", padx=(0, 6), pady=(0, 4))
 
-        # Re-scan right before the dropdown opens.
+        _suite_scan = {"thread": None, "request_id": 0, "values": list(_initial_suite_values), "scanned": False}
+
+        def _apply_suite_values(values: list[str], *, elapsed_s: float | None = None):
+            merged: list[str] = []
+            current = ""
+            try:
+                current = str(getattr(app, "var_remote_benchmark_set", None).get() or "").strip()
+            except Exception:
+                current = ""
+            if current:
+                merged.append(current)
+            for item in values:
+                s = str(item).strip()
+                if s and s not in merged:
+                    merged.append(s)
+            cb_suite["values"] = merged
+            _suite_scan["values"] = list(merged)
+            _suite_scan["scanned"] = True
+            if elapsed_s is None:
+                suite_scan_status_var.set(f"Suite list ready ({len(merged)}).")
+            else:
+                suite_scan_status_var.set(f"Suite list ready ({len(merged)}) in {elapsed_s:.2f}s.")
+
+        def _finish_suite_scan(request_id: int, values: list[str], elapsed_s: float):
+            if int(_suite_scan.get("request_id", 0)) != int(request_id):
+                return
+            _suite_scan["thread"] = None
+            _apply_suite_values(values, elapsed_s=elapsed_s)
+
+        def _start_suite_scan(*, force: bool = False):
+            root = getattr(app, "default_output_dir", None)
+            if not root:
+                suite_scan_status_var.set("Set Working Dir to enable suite discovery.")
+                return
+            thread = _suite_scan.get("thread")
+            if isinstance(thread, threading.Thread) and thread.is_alive():
+                if force:
+                    suite_scan_status_var.set("Suite discovery already running…")
+                return
+            cached = list(_suite_scan.get("values") or [])
+            scanned = bool(_suite_scan.get("scanned"))
+            if cached and scanned and not force:
+                _apply_suite_values(cached)
+                return
+            _suite_scan["request_id"] = int(_suite_scan.get("request_id", 0)) + 1
+            request_id = int(_suite_scan["request_id"])
+            suite_scan_status_var.set("Scanning BenchmarkSets in background…")
+
+            def _worker():
+                t0 = time.perf_counter()
+                values = _list_suites()
+                elapsed_s = time.perf_counter() - t0
+                try:
+                    app.after(0, lambda: _finish_suite_scan(request_id, values, elapsed_s))
+                except Exception:
+                    logger.debug("Failed to post suite scan result back to Tk thread", exc_info=True)
+
+            thread = threading.Thread(target=_worker, name="osp-suite-scan", daemon=True)
+            _suite_scan["thread"] = thread
+            thread.start()
+            logger.info("Benchmark suite discovery started in background")
+
+        def _refresh_suite_values():
+            _start_suite_scan(force=True)
+
+        # Re-scan right before the dropdown opens, but keep startup non-blocking.
         try:
             cb_suite.configure(postcommand=_refresh_suite_values)
+        except Exception:
+            pass
+        try:
+            cb_suite.bind("<Button-1>", lambda _event: _start_suite_scan(force=False), add="+")
+        except Exception:
+            pass
+        try:
+            app.after(300, _start_suite_scan)
         except Exception:
             pass
 
@@ -1113,8 +2348,10 @@ def build_panel(parent, app=None) -> ttk.Frame:
 
         attach_tooltip(
             cb_suite,
-            "Choose an existing suite from the Working Dir (BenchmarkSets) or paste a path to any benchmark_set.json.",
+            "Choose an existing suite from the Working Dir (BenchmarkSets) or paste a path to any benchmark_set.json.\n"
+            "Discovery now runs in the background and no longer blocks GUI startup.",
         )
+        attach_tooltip(lbl_suite_scan, "Background status for benchmark suite discovery inside the Working Dir.")
 
         # Host
         ttk.Label(remote_group, text="Remote host:").grid(row=1, column=0, sticky="w", padx=(8, 6), pady=4)
@@ -1384,7 +2621,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
         )
 
         btn_run = ttk.Button(remote_group, text="Run remote benchmark", command=getattr(app, "_remote_run_benchmark", None))
-        btn_run.grid(row=3, column=0, columnspan=4, sticky="w", padx=(8, 8), pady=(4, 10))
+        btn_run.grid(row=5, column=0, columnspan=4, sticky="w", padx=(8, 8), pady=(4, 10))
         attach_tooltip(
             btn_run,
             "Bundle → scp upload → ssh run benchmark_suite.py → download results.\n"

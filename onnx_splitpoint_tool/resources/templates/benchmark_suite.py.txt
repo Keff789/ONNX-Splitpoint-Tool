@@ -190,15 +190,53 @@ def _write_results_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
         "eps_pass",
         "full_mean_ms",
         "full_std_ms",
+        "full_host_tail_mean_ms",
+        "full_e2e_mean_ms",
+        "full_endpoint_mode",
         "part1_mean_ms",
         "part1_std_ms",
         "part2_mean_ms",
         "part2_std_ms",
+        "part2_prefix_mean_ms",
+        "part2_host_tail_mean_ms",
+        "part2_endpoint_mode",
         "composed_mean_ms",
         "composed_std_ms",
+        "composed_phase_wall_mean_ms",
+        "composed_phase_stage1_mean_ms",
+        "composed_phase_stage2_prefix_mean_ms",
+        "composed_phase_stage2_host_tail_mean_ms",
+        "composed_phase_stage2_total_mean_ms",
+        "throughput_fps_makespan",
+        "throughput_cycle_est_ms",
+        "raw_head_drift_pass",
+        "raw_head_drift_max_abs",
+        "raw_head_drift_num_compared_tensors",
+        "semantic_validation_gate_applied",
         "sum_parts_ms",
         "overhead_ms",
         "speedup_full_over_composed",
+        "backend_drift_status",
+        "backend_drift_mode",
+        "backend_drift_variant",
+        "backend_drift_provider",
+        "backend_drift_single_max_abs",
+        "backend_drift_single_match_ratio",
+        "backend_drift_dataset_global_match_ratio",
+        "backend_drift_dataset_global_mean_iou",
+        "backend_drift_dataset_count_delta_abs",
+        "backend_drift_dataset_top1_agreement",
+        "backend_drift_dataset_top5_agreement",
+        "backend_drift_dataset_mean_cosine_similarity",
+        "mini_coco_ap50_primary",
+        "mini_coco_ap50_full",
+        "mini_coco_ap50_delta_primary_minus_full",
+        "mini_classification_eval_primary_top1",
+        "mini_classification_eval_primary_top5",
+        "mini_classification_eval_full_top1",
+        "mini_classification_eval_full_top5",
+        "mini_classification_eval_delta_primary_minus_full_top1",
+        "mini_classification_eval_delta_primary_minus_full_top5",
     ]
     seen: set[str] = set()
     for row in rows:
@@ -526,6 +564,38 @@ def _write_summary_md(path: Path, rows: List[Dict[str, Any]], tag: str, objectiv
     cv_comp_v = [v for v in cv_comp if math.isfinite(v)]
     cv_comp_med = sorted(cv_comp_v)[len(cv_comp_v) // 2] if cv_comp_v else float("nan")
 
+    def _sf_or_none(value: Any) -> Optional[float]:
+        try:
+            out = float(value)
+        except Exception:
+            return None
+        return out if math.isfinite(out) else None
+
+    def _median(values: List[Any]) -> float:
+        vv = sorted(v for v in (_sf_or_none(x) for x in values) if v is not None)
+        if not vv:
+            return float("nan")
+        mid = len(vv) // 2
+        if len(vv) % 2:
+            return float(vv[mid])
+        return float((vv[mid - 1] + vv[mid]) / 2.0)
+
+    drift_rows = [r for r in rows if str(r.get("backend_drift_status") or "").strip().lower() == "ok"]
+    drift_rows_sorted = sorted(
+        drift_rows,
+        key=lambda r: (
+            _sf_or_none(r.get("backend_drift_dataset_global_match_ratio")) if _sf_or_none(r.get("backend_drift_dataset_global_match_ratio")) is not None else float("inf"),
+            -(_sf_or_none(r.get("backend_drift_dataset_count_delta_abs")) or 0.0),
+            _sf_or_none(r.get("backend_drift_single_match_ratio")) if _sf_or_none(r.get("backend_drift_single_match_ratio")) is not None else float("inf"),
+        ),
+    )
+
+    mini_rows = [r for r in rows if _sf_or_none(r.get("mini_coco_ap50_primary")) is not None]
+    mini_rows_sorted = sorted(
+        mini_rows,
+        key=lambda r: _sf_or_none(r.get("mini_coco_ap50_delta_primary_minus_full")) if _sf_or_none(r.get("mini_coco_ap50_delta_primary_minus_full")) is not None else float("inf"),
+    )
+
     # best splits by objective
     def keyfn(r: Dict[str, Any]) -> float:
         v = _objective_value(r, objective)
@@ -545,6 +615,39 @@ def _write_summary_md(path: Path, rows: List[Dict[str, Any]], tag: str, objectiv
     lines.append(f"- Top-{k} overlap = {overlap}/{k} = {_fmt(overlap_ratio,2)}\n")
     lines.append("## Measurement noise\n")
     lines.append(f"- Median CV(composed) = {_fmt(cv_comp_med,2)} %\n")
+    lines.append("## Backend drift vs CPU full\n")
+    if drift_rows:
+        lines.append(f"- Cases with backend-drift report: {len(drift_rows)}/{len(rows)}\n")
+        drift_modes = sorted({str(r.get('backend_drift_mode') or '').strip() for r in drift_rows if str(r.get('backend_drift_mode') or '').strip()})
+        if drift_modes:
+            lines.append(f"- Modes observed: {', '.join(drift_modes)}\n")
+        lines.append(f"- Median single-sample max_abs = {_fmt(_median([r.get('backend_drift_single_max_abs') for r in drift_rows]),4)}\n")
+        lines.append(f"- Median single-sample match_ratio = {_fmt(_median([r.get('backend_drift_single_match_ratio') for r in drift_rows]),3)}\n")
+        lines.append(f"- Median dataset global_match_ratio = {_fmt(_median([r.get('backend_drift_dataset_global_match_ratio') for r in drift_rows]),3)}\n")
+        lines.append(f"- Median dataset global_mean_iou = {_fmt(_median([r.get('backend_drift_dataset_global_mean_iou') for r in drift_rows]),3)}\n")
+        lines.append(f"- Median dataset count_delta_abs = {_fmt(_median([r.get('backend_drift_dataset_count_delta_abs') for r in drift_rows]),2)}\n")
+        lines.append("| boundary | provider | variant | mode | single max_abs | single match_ratio | dataset match_ratio | dataset mean_iou | dataset count_delta_abs |\n")
+        lines.append("|---:|:---:|:---:|:---:|---:|---:|---:|---:|---:|\n")
+        for r in drift_rows_sorted[: min(5, len(drift_rows_sorted))]:
+            lines.append(
+                f"| {r.get('boundary','-')} | {r.get('backend_drift_provider', r.get('provider','-'))} | {r.get('backend_drift_variant','-')} | {r.get('backend_drift_mode','-')} | {_fmt(r.get('backend_drift_single_max_abs'),4)} | {_fmt(r.get('backend_drift_single_match_ratio'),3)} | {_fmt(r.get('backend_drift_dataset_global_match_ratio'),3)} | {_fmt(r.get('backend_drift_dataset_global_mean_iou'),3)} | {_fmt(r.get('backend_drift_dataset_count_delta_abs'),2)} |\n"
+            )
+    else:
+        lines.append("- Not available in this run set.\n")
+    lines.append("## Mini-COCO AP50 (optional)\n")
+    if mini_rows:
+        lines.append(f"- Cases with Mini-COCO AP50: {len(mini_rows)}/{len(rows)}\n")
+        lines.append(f"- Median primary AP50 = {_fmt(_median([r.get('mini_coco_ap50_primary') for r in mini_rows]),3)}\n")
+        lines.append(f"- Median full AP50 = {_fmt(_median([r.get('mini_coco_ap50_full') for r in mini_rows]),3)}\n")
+        lines.append(f"- Median Δ(primary-full) = {_fmt(_median([r.get('mini_coco_ap50_delta_primary_minus_full') for r in mini_rows]),3)}\n")
+        lines.append("| boundary | primary variant | primary AP50 | full AP50 | Δ primary-full |\n")
+        lines.append("|---:|:---:|---:|---:|---:|\n")
+        for r in mini_rows_sorted[: min(5, len(mini_rows_sorted))]:
+            lines.append(
+                f"| {r.get('boundary','-')} | {r.get('mini_coco_ap50_primary_variant','-')} | {_fmt(r.get('mini_coco_ap50_primary'),3)} | {_fmt(r.get('mini_coco_ap50_full'),3)} | {_fmt(r.get('mini_coco_ap50_delta_primary_minus_full'),3)} |\n"
+            )
+    else:
+        lines.append("- Disabled or unavailable in this run set.\n")
     lines.append("## Best splits by objective\n")
     lines.append("| boundary | cut (MiB) | #T | t_full (ms) | t_comp (ms) | sum_parts (ms) | overhead (ms) | pass |\n")
     lines.append("|---:|---:|---:|---:|---:|---:|---:|:---:|\n")
@@ -818,6 +921,177 @@ def _write_status_matrix(root: Path, planned_runs: List[Dict[str, Any]]) -> None
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+
+def _safe_float(v: Any) -> Optional[float]:
+    try:
+        if v is None:
+            return None
+        x = float(v)
+        if math.isnan(x) or math.isinf(x):
+            return None
+        return x
+    except Exception:
+        return None
+
+
+def _write_v42_pipeline_summary(root: Path, rows_by_tag: Dict[str, List[Dict[str, Any]]]) -> None:
+    """Write a thesis-oriented summary for single-system FPS vs hetero streaming FPS."""
+    flat: List[Dict[str, Any]] = []
+    full_candidates: List[Dict[str, Any]] = []
+    streaming_candidates: List[Dict[str, Any]] = []
+    for tag, rows in (rows_by_tag or {}).items():
+        for r in rows or []:
+            item = {
+                "tag": tag,
+                "run_id": r.get("run_id"),
+                "provider": r.get("provider"),
+                "stage1_provider": r.get("stage1_provider"),
+                "stage2_provider": r.get("stage2_provider"),
+                "case_dir": r.get("case_dir"),
+                "boundary": r.get("boundary"),
+                "cut_mib": r.get("cut_mib"),
+                "n_cut_tensors": r.get("n_cut_tensors"),
+                "full_mean_ms": r.get("full_mean_ms"),
+                "full_e2e_mean_ms": r.get("full_e2e_mean_ms"),
+                "composed_mean_ms": r.get("composed_mean_ms"),
+                "throughput_fps_makespan": r.get("throughput_fps_makespan"),
+                "throughput_cycle_est_ms": r.get("throughput_cycle_est_ms"),
+                "mini_coco_ap50_primary": r.get("mini_coco_ap50_primary"),
+                "mini_coco_ap50_full": r.get("mini_coco_ap50_full"),
+                "semantic_validation_passed": r.get("semantic_validation_passed"),
+                "final_pass_all": r.get("final_pass_all"),
+            }
+            tag_l = str(tag or "").lower()
+            st1_l = str(r.get("stage1_provider") or "").lower()
+            st2_l = str(r.get("stage2_provider") or "").lower()
+            is_hetero_tag = ("hailo" in st1_l and ("trt" in st2_l or "tensorrt" in st2_l)) or (("trt" in st1_l or "tensorrt" in st1_l) and "hailo" in st2_l) or "_to_" in tag_l
+            # Preferred full FPS: fair E2E if present, otherwise legacy full mean.
+            # Do not let mixed-run helper rows become the single-system baseline.
+            full_ms = _safe_float(r.get("full_e2e_mean_ms")) or _safe_float(r.get("full_mean_ms"))
+            if full_ms and full_ms > 0 and not is_hetero_tag:
+                cand = dict(item)
+                cand["baseline_ms_used"] = full_ms
+                cand["baseline_fps"] = 1000.0 / full_ms
+                full_candidates.append(cand)
+            stream_fps = _safe_float(r.get("throughput_fps_makespan"))
+            if stream_fps and stream_fps > 0:
+                cand = dict(item)
+                cand["streaming_fps"] = stream_fps
+                streaming_candidates.append(cand)
+            flat.append(item)
+
+    best_full = max(full_candidates, key=lambda x: float(x.get("baseline_fps") or 0.0), default=None)
+    best_stream = max(streaming_candidates, key=lambda x: float(x.get("streaming_fps") or 0.0), default=None)
+    gain_vs_best_full = None
+    if best_full and best_stream and _safe_float(best_full.get("baseline_fps")):
+        gain_vs_best_full = (float(best_stream["streaming_fps"]) / float(best_full["baseline_fps"]) - 1.0) * 100.0
+
+    payload = {
+        "schema_version": 1,
+        "description": "v42 thesis summary: compare single-system full FPS against heterogenous streaming/pipelined split FPS.",
+        "best_full_baseline": best_full,
+        "best_heterogeneous_streaming": best_stream,
+        "gain_vs_best_full_percent": gain_vs_best_full,
+        "num_rows": len(flat),
+        "num_full_candidates": len(full_candidates),
+        "num_streaming_candidates": len(streaming_candidates),
+    }
+    _write_json(root / "v42_pipeline_summary.json", payload)
+
+    csv_path = root / "v42_pipeline_summary.csv"
+    keys = [
+        "tag", "run_id", "provider", "stage1_provider", "stage2_provider", "case_dir", "boundary",
+        "full_mean_ms", "full_e2e_mean_ms", "composed_mean_ms", "throughput_fps_makespan",
+        "throughput_cycle_est_ms", "mini_coco_ap50_primary", "mini_coco_ap50_full",
+        "semantic_validation_passed", "final_pass_all",
+    ]
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=keys)
+        w.writeheader()
+        for row in flat:
+            w.writerow({k: row.get(k) for k in keys})
+
+    md_lines = [
+        "# v42 Pipeline Summary",
+        "",
+        "This summary separates single-frame latency from heterogeneous streaming throughput.",
+        "",
+    ]
+    if best_full:
+        md_lines.append(f"Best full baseline: `{best_full.get('tag')}` / `{best_full.get('case_dir')}` = {best_full.get('baseline_fps'):.3f} FPS ({best_full.get('baseline_ms_used'):.3f} ms used).")
+    else:
+        md_lines.append("Best full baseline: not available.")
+    if best_stream:
+        md_lines.append(f"Best heterogeneous streaming: `{best_stream.get('tag')}` / `{best_stream.get('case_dir')}` = {best_stream.get('streaming_fps'):.3f} FPS.")
+    else:
+        md_lines.append("Best heterogeneous streaming: not available.")
+    if gain_vs_best_full is not None:
+        md_lines.append(f"Gain vs best full baseline: **{gain_vs_best_full:.2f}%**.")
+    md_lines.append("")
+    md_lines.append("| tag | case | full ms | full e2e ms | composed ms | streaming FPS | AP50 primary | semantic pass |")
+    md_lines.append("|---|---:|---:|---:|---:|---:|---:|---|")
+    def _fmt(v: Any) -> str:
+        x = _safe_float(v)
+        return "-" if x is None else f"{x:.3f}"
+    for row in sorted(flat, key=lambda x: float(_safe_float(x.get("throughput_fps_makespan")) or -1.0), reverse=True)[:25]:
+        md_lines.append(
+            f"| {row.get('tag')} | {row.get('case_dir')} | {_fmt(row.get('full_mean_ms'))} | {_fmt(row.get('full_e2e_mean_ms'))} | {_fmt(row.get('composed_mean_ms'))} | {_fmt(row.get('throughput_fps_makespan'))} | {_fmt(row.get('mini_coco_ap50_primary'))} | {row.get('semantic_validation_passed')} |"
+        )
+    (root / "v42_pipeline_summary.md").write_text("\n".join(md_lines) + "\n", encoding="utf-8")
+
+    # v47: explicitly mark the heterogeneous Hailo<->TensorRT streaming claim.
+    hetero_streaming = []
+    for cand in streaming_candidates:
+        tag = str(cand.get("tag") or "").lower()
+        st1 = str(cand.get("stage1_provider") or "").lower()
+        st2 = str(cand.get("stage2_provider") or "").lower()
+        if ("hailo" in st1 and ("trt" in st2 or "tensorrt" in st2)) or (("trt" in st1 or "tensorrt" in st1) and "hailo" in st2) or "hailo8_to_trt" in tag or "trt_to_hailo" in tag:
+            hetero_streaming.append(cand)
+    best_hetero = max(hetero_streaming, key=lambda x: float(x.get("streaming_fps") or 0.0), default=None)
+    gain_hetero_vs_best_full = None
+    if best_full and best_hetero and _safe_float(best_full.get("baseline_fps")):
+        gain_hetero_vs_best_full = (float(best_hetero["streaming_fps"]) / float(best_full["baseline_fps"]) - 1.0) * 100.0
+    v47_payload = dict(payload)
+    v47_payload.update({
+        "schema_version": 2,
+        "description": "v47 thesis summary: single-system full baselines vs heterogeneous Hailo<->TensorRT streaming throughput.",
+        "best_heterogeneous_streaming": best_hetero,
+        "gain_vs_best_full_percent": gain_hetero_vs_best_full,
+        "num_heterogeneous_streaming_candidates": len(hetero_streaming),
+    })
+    _write_json(root / "v47_pipeline_summary.json", v47_payload)
+    v47_csv_path = root / "v47_pipeline_summary.csv"
+    with v47_csv_path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=keys)
+        w.writeheader()
+        for row in flat:
+            w.writerow({k: row.get(k) for k in keys})
+    v47_lines = [
+        "# v47 Pipeline Summary",
+        "",
+        "This summary highlights heterogeneous Hailo<->TensorRT streaming throughput separately from single-frame latency.",
+        "",
+    ]
+    if best_full:
+        v47_lines.append(f"Best full baseline: `{best_full.get('tag')}` / `{best_full.get('case_dir')}` = {best_full.get('baseline_fps'):.3f} FPS ({best_full.get('baseline_ms_used'):.3f} ms used).")
+    else:
+        v47_lines.append("Best full baseline: not available.")
+    if best_hetero:
+        v47_lines.append(f"Best heterogeneous streaming: `{best_hetero.get('tag')}` / `{best_hetero.get('case_dir')}` = {best_hetero.get('streaming_fps'):.3f} FPS.")
+    else:
+        v47_lines.append("Best heterogeneous streaming: not available.")
+    if gain_hetero_vs_best_full is not None:
+        v47_lines.append(f"Gain vs best full baseline: **{gain_hetero_vs_best_full:.2f}%**.")
+    v47_lines.append("")
+    v47_lines.append("| tag | case | full e2e ms | composed ms | streaming FPS | AP50 primary | semantic pass |")
+    v47_lines.append("|---|---:|---:|---:|---:|---:|---|")
+    for row in sorted(flat, key=lambda x: float(_safe_float(x.get("throughput_fps_makespan")) or -1.0), reverse=True)[:30]:
+        v47_lines.append(
+            f"| {row.get('tag')} | {row.get('case_dir')} | {_fmt(row.get('full_e2e_mean_ms'))} | {_fmt(row.get('composed_mean_ms'))} | {_fmt(row.get('throughput_fps_makespan'))} | {_fmt(row.get('mini_coco_ap50_primary'))} | {row.get('semantic_validation_passed')} |"
+        )
+    (root / "v47_pipeline_summary.md").write_text("\n".join(v47_lines) + "\n", encoding="utf-8")
+
+
 def _collect_case_result(case_dir: Path, out_dir_name: str, run_id: str, provider: str, image_scale: str, stage1: Optional[str] = None, stage2: Optional[str] = None, variants: Optional[List[str]] = None, case_meta: Optional[Dict[str, Any]] = None, *, runner_rc: int = 0) -> Optional[Dict[str, Any]]:
     """Load and normalize an existing per-case validation report.
 
@@ -939,6 +1213,60 @@ def _collect_case_result(case_dir: Path, out_dir_name: str, run_id: str, provide
                 if std is not None:
                     r.setdefault(f"{_name}_std_ms", std)
 
+
+    # v42 flattened timing diagnostics.
+    if isinstance(tms, dict):
+        full_blk = tms.get("full") if isinstance(tms.get("full"), dict) else {}
+        part2_blk = tms.get("part2") if isinstance(tms.get("part2"), dict) else {}
+        comp_blk = tms.get("composed") if isinstance(tms.get("composed"), dict) else {}
+        if isinstance(full_blk, dict):
+            for src, dst in (
+                ("host_tail_mean_ms", "full_host_tail_mean_ms"),
+                ("host_tail_std_ms", "full_host_tail_std_ms"),
+                ("e2e_mean_ms", "full_e2e_mean_ms"),
+                ("e2e_std_ms", "full_e2e_std_ms"),
+                ("endpoint_mode", "full_endpoint_mode"),
+            ):
+                if src in full_blk:
+                    r.setdefault(dst, full_blk.get(src))
+        if isinstance(part2_blk, dict):
+            for src, dst in (
+                ("accelerator_prefix_mean_ms", "part2_prefix_mean_ms"),
+                ("accelerator_prefix_std_ms", "part2_prefix_std_ms"),
+                ("host_tail_mean_ms", "part2_host_tail_mean_ms"),
+                ("host_tail_std_ms", "part2_host_tail_std_ms"),
+                ("endpoint_mode", "part2_endpoint_mode"),
+            ):
+                if src in part2_blk:
+                    r.setdefault(dst, part2_blk.get(src))
+        if isinstance(comp_blk, dict):
+            pp = comp_blk.get("phase_profile")
+            if isinstance(pp, dict):
+                for section, prefix in (
+                    ("wall", "composed_phase_wall"),
+                    ("stage1", "composed_phase_stage1"),
+                    ("stage2_input_mapping", "composed_phase_stage2_input_mapping"),
+                    ("stage2_prefix", "composed_phase_stage2_prefix"),
+                    ("stage2_host_tail", "composed_phase_stage2_host_tail"),
+                    ("stage2_total", "composed_phase_stage2_total"),
+                ):
+                    blk = pp.get(section)
+                    if isinstance(blk, dict):
+                        if blk.get("mean_ms") is not None:
+                            r.setdefault(f"{prefix}_mean_ms", blk.get("mean_ms"))
+                        if blk.get("std_ms") is not None:
+                            r.setdefault(f"{prefix}_std_ms", blk.get("std_ms"))
+                r.setdefault("composed_phase_stage2_uses_hailo_prefix", pp.get("stage2_uses_hailo_prefix"))
+                r.setdefault("composed_phase_stage2_uses_host_tail", pp.get("stage2_uses_host_tail"))
+
+    rh = r.get("raw_head_tensor_compare") or (r.get("timing_breakdown") or {}).get("raw_head_drift") if isinstance(r.get("timing_breakdown"), dict) else r.get("raw_head_tensor_compare")
+    if isinstance(rh, dict):
+        r.setdefault("raw_head_drift_status", rh.get("status"))
+        r.setdefault("raw_head_drift_pass", rh.get("pass"))
+        r.setdefault("raw_head_drift_max_abs", rh.get("max_abs"))
+        r.setdefault("raw_head_drift_mean_abs_mean", rh.get("mean_abs_mean"))
+        r.setdefault("raw_head_drift_num_compared_tensors", rh.get("num_compared_tensors"))
+
     throughput = r.get("throughput")
     if isinstance(throughput, dict):
         for key in (
@@ -959,6 +1287,116 @@ def _collect_case_result(case_dir: Path, out_dir_name: str, run_id: str, provide
         ):
             if key in throughput:
                 r.setdefault(f"throughput_{key}", throughput.get(key))
+
+    backend_drift = r.get("backend_drift")
+    if isinstance(backend_drift, dict):
+        r.setdefault("backend_drift_enabled", bool(backend_drift.get("enabled")))
+        r.setdefault("backend_drift_status", backend_drift.get("status"))
+        r.setdefault("backend_drift_mode", backend_drift.get("mode"))
+        r.setdefault("backend_drift_variant", backend_drift.get("variant"))
+        r.setdefault("backend_drift_provider", backend_drift.get("provider"))
+        r.setdefault("backend_drift_reference_source", backend_drift.get("reference_source"))
+        single = backend_drift.get("single_sample") if isinstance(backend_drift.get("single_sample"), dict) else {}
+        elem = single.get("elementwise") if isinstance(single.get("elementwise"), dict) else {}
+        proxy = single.get("proxy") if isinstance(single.get("proxy"), dict) else {}
+        if isinstance(elem, dict):
+            r.setdefault("backend_drift_single_max_abs", elem.get("max_abs"))
+            r.setdefault("backend_drift_single_mean_abs", elem.get("mean_abs"))
+        if isinstance(proxy, dict):
+            r.setdefault("backend_drift_single_match_ratio", proxy.get("match_ratio"))
+            r.setdefault("backend_drift_single_mean_iou", proxy.get("mean_iou_matched"))
+            r.setdefault("backend_drift_single_count_delta_abs", proxy.get("count_delta_abs"))
+            r.setdefault("backend_drift_single_pass", proxy.get("pass"))
+        cls_proxy = single.get("classification_proxy") if isinstance(single.get("classification_proxy"), dict) else {}
+        if isinstance(cls_proxy, dict):
+            r.setdefault("backend_drift_single_top1_match", cls_proxy.get("top1_match"))
+            r.setdefault("backend_drift_single_top5_agreement", cls_proxy.get("top5_agreement"))
+            r.setdefault("backend_drift_single_cosine_similarity", cls_proxy.get("cosine_similarity"))
+            r.setdefault("backend_drift_single_mean_abs_cls", cls_proxy.get("mean_abs"))
+        dataset = backend_drift.get("dataset") if isinstance(backend_drift.get("dataset"), dict) else {}
+        metrics = dataset.get("metrics") if isinstance(dataset.get("metrics"), dict) else {}
+        if isinstance(dataset, dict):
+            r.setdefault("backend_drift_dataset_pass", dataset.get("pass"))
+            r.setdefault("backend_drift_dataset_requested_images", dataset.get("requested_images"))
+        if isinstance(metrics, dict):
+            r.setdefault("backend_drift_dataset_n_images", metrics.get("n_images"))
+            r.setdefault("backend_drift_dataset_image_pass_ratio", metrics.get("image_pass_ratio"))
+            r.setdefault("backend_drift_dataset_global_match_ratio", metrics.get("global_match_ratio"))
+            r.setdefault("backend_drift_dataset_global_mean_iou", metrics.get("global_mean_iou_matched"))
+            r.setdefault("backend_drift_dataset_count_delta_abs", metrics.get("count_delta_abs"))
+            r.setdefault("backend_drift_dataset_top1_agreement", metrics.get("top1_agreement"))
+            r.setdefault("backend_drift_dataset_top5_agreement", metrics.get("top5_agreement"))
+            r.setdefault("backend_drift_dataset_mean_cosine_similarity", metrics.get("mean_cosine_similarity"))
+            r.setdefault("backend_drift_dataset_top1_accuracy", metrics.get("top1_accuracy"))
+            r.setdefault("backend_drift_dataset_top5_accuracy", metrics.get("top5_accuracy"))
+
+    mini_coco = r.get("mini_coco_ap50")
+    if isinstance(mini_coco, dict):
+        r.setdefault("mini_coco_ap50_enabled", bool(mini_coco.get("enabled")))
+        r.setdefault("mini_coco_ap50_status", mini_coco.get("status"))
+        r.setdefault("mini_coco_ap50_reference_source", mini_coco.get("reference_source"))
+        variants_blk = mini_coco.get("variants") if isinstance(mini_coco.get("variants"), dict) else {}
+        for vv, payload in variants_blk.items():
+            if not isinstance(payload, dict):
+                continue
+            key = str(vv).strip().lower()
+            if key:
+                r.setdefault(f"mini_coco_ap50_{key}", payload.get("ap50"))
+        primary_variant = str(r.get("primary_variant") or "").strip().lower()
+        if primary_variant and f"mini_coco_ap50_{primary_variant}" in r:
+            r.setdefault("mini_coco_ap50_primary_variant", primary_variant)
+            r.setdefault("mini_coco_ap50_primary", r.get(f"mini_coco_ap50_{primary_variant}"))
+        if r.get("mini_coco_ap50_primary") is not None and r.get("mini_coco_ap50_full") is not None:
+            try:
+                r.setdefault("mini_coco_ap50_delta_primary_minus_full", float(r.get("mini_coco_ap50_primary")) - float(r.get("mini_coco_ap50_full")))
+            except Exception:
+                pass
+
+    mini_cls = r.get("mini_classification_eval")
+    if isinstance(mini_cls, dict):
+        r.setdefault("mini_classification_eval_enabled", bool(mini_cls.get("enabled")))
+        r.setdefault("mini_classification_eval_status", mini_cls.get("status"))
+        variants_blk = mini_cls.get("variants") if isinstance(mini_cls.get("variants"), dict) else {}
+        for vv, payload in variants_blk.items():
+            if not isinstance(payload, dict):
+                continue
+            key = str(vv).strip().lower()
+            if not key:
+                continue
+            r.setdefault(f"mini_classification_eval_{key}_top1", payload.get("top1_accuracy"))
+            r.setdefault(f"mini_classification_eval_{key}_top5", payload.get("top5_accuracy"))
+            r.setdefault(f"mini_classification_eval_{key}_images", payload.get("images"))
+        primary_variant = str(r.get("primary_variant") or "").strip().lower()
+        if primary_variant:
+            if f"mini_classification_eval_{primary_variant}_top1" in r:
+                r.setdefault("mini_classification_eval_primary_variant", primary_variant)
+                r.setdefault("mini_classification_eval_primary_top1", r.get(f"mini_classification_eval_{primary_variant}_top1"))
+                r.setdefault("mini_classification_eval_primary_top5", r.get(f"mini_classification_eval_{primary_variant}_top5"))
+        if r.get("mini_classification_eval_primary_top1") is not None and r.get("mini_classification_eval_full_top1") is not None:
+            try:
+                r.setdefault("mini_classification_eval_delta_primary_minus_full_top1", float(r.get("mini_classification_eval_primary_top1")) - float(r.get("mini_classification_eval_full_top1")))
+            except Exception:
+                pass
+        if r.get("mini_classification_eval_primary_top5") is not None and r.get("mini_classification_eval_full_top5") is not None:
+            try:
+                r.setdefault("mini_classification_eval_delta_primary_minus_full_top5", float(r.get("mini_classification_eval_primary_top5")) - float(r.get("mini_classification_eval_full_top5")))
+            except Exception:
+                pass
+
+    validation_dataset = r.get("validation_dataset")
+    if isinstance(validation_dataset, dict):
+        r.setdefault("validation_dataset_task", validation_dataset.get("task"))
+        variants_blk = validation_dataset.get("variants") if isinstance(validation_dataset.get("variants"), dict) else {}
+        primary_variant = str(r.get("primary_variant") or "").strip().lower()
+        primary_payload = variants_blk.get(primary_variant) if primary_variant else None
+        if isinstance(primary_payload, dict):
+            metrics_blk = primary_payload.get("metrics") if isinstance(primary_payload.get("metrics"), dict) else {}
+            r.setdefault("validation_dataset_primary_pass", primary_payload.get("pass"))
+            r.setdefault("validation_dataset_primary_image_pass_ratio", metrics_blk.get("image_pass_ratio"))
+            r.setdefault("validation_dataset_primary_top1_agreement", metrics_blk.get("top1_agreement"))
+            r.setdefault("validation_dataset_primary_top5_agreement", metrics_blk.get("top5_agreement"))
+            r.setdefault("validation_dataset_primary_top1_accuracy", metrics_blk.get("top1_accuracy"))
+            r.setdefault("validation_dataset_primary_top5_accuracy", metrics_blk.get("top5_accuracy"))
 
     try:
         p1 = float(r.get("part1_mean_ms", float("nan")))
@@ -1014,15 +1452,43 @@ def _collect_case_result(case_dir: Path, out_dir_name: str, run_id: str, provide
 
     r.setdefault("provider", provider)
     r.setdefault("image_scale", image_scale)
+    if "benchmark_task_used" in r:
+        r.setdefault("benchmark_task", r.get("benchmark_task_used"))
+    elif "benchmark_task_requested" in r:
+        r.setdefault("benchmark_task", r.get("benchmark_task_requested"))
     return r
 
 
-def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: str, image_scale: str, warmup: int, runs: int, timeout_s: Optional[int], stage1: Optional[str] = None, stage2: Optional[str] = None, variants: Optional[List[str]] = None, case_meta: Optional[Dict[str, Any]] = None, *, resume: bool = False, verbose_runs: bool = False, progress_every: int = 25, trt_cache_root: Optional[str] = None, throughput_frames: int = 24, throughput_warmup_frames: int = 6, throughput_queue_depth: int = 2, validation_images: Optional[str] = None, validation_max_images: int = 0) -> Optional[Dict[str, Any]]:
+def _path_looks_like_semantic_validation_source(path: Path) -> bool:
+    image_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
+    list_exts = {'.txt', '.json'}
+    try:
+        if path.is_file():
+            return path.suffix.lower() in image_exts | list_exts
+        if path.is_dir():
+            for cand in path.rglob('*'):
+                if cand.is_file() and cand.suffix.lower() in image_exts:
+                    return True
+            for cand in path.iterdir():
+                if cand.is_file() and cand.suffix.lower() in list_exts:
+                    return True
+    except Exception:
+        return False
+    return False
+
+
+
+def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: str, image_scale: str, warmup: int, runs: int, timeout_s: Optional[int], stage1: Optional[str] = None, stage2: Optional[str] = None, variants: Optional[List[str]] = None, case_meta: Optional[Dict[str, Any]] = None, *, resume: bool = False, verbose_runs: bool = False, progress_every: int = 25, trt_cache_root: Optional[str] = None, throughput_frames: int = 24, throughput_warmup_frames: int = 6, throughput_queue_depth: int = 2, phase_runs: int = 5, validation_images: Optional[str] = None, validation_max_images: int = 0, validation_reference_mode: str = "auto", mini_coco_ap50: bool = False, benchmark_task: str = "auto", mini_classification_eval: bool = False) -> Optional[Dict[str, Any]]:
     # Each case contains run_split_onnxruntime.py
     runner = case_dir / "run_split_onnxruntime.py"
     if not runner.exists():
         print(f"[warn] missing runner: {runner}")
         return None
+    try:
+        _runner_probe = runner.read_text(encoding="utf-8", errors="ignore")[:50000]
+        runner_supports_phase_runs = "--phase-runs" in _runner_probe
+    except Exception:
+        runner_supports_phase_runs = False
 
     out_tag = _slug(run_id)
     out_dir_name = f"results_{out_tag}"
@@ -1065,6 +1531,10 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
         "--throughput-queue-depth",
         str(max(1, int(throughput_queue_depth))),
     ]
+    if runner_supports_phase_runs:
+        cmd += ["--phase-runs", str(max(0, int(phase_runs)))]
+    elif int(phase_runs or 0) > 0:
+        print(f"[warn] runner does not support --phase-runs yet: {runner.name}; v42 phase diagnostics will be skipped for this case")
     if variants:
         cmd += ["--variants", ",".join([str(v) for v in variants])]
     if verbose_runs:
@@ -1073,16 +1543,27 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
         cmd += ["--stage1-provider", str(stage1)]
     if stage2:
         cmd += ["--stage2-provider", str(stage2)]
+    task_norm = str(benchmark_task or "auto").strip().lower() or "auto"
     val_img: Optional[Path] = None
+    default_val = (case_dir.parent / "resources" / "validation" / "coco_50_data").resolve()
     if validation_images:
         val_img = Path(str(validation_images))
         if not val_img.is_absolute():
             # benchmark_plan.json lives at suite root; resolve relative semantic
             # validation paths against the suite root, not the case directory.
             val_img = (case_dir.parent / val_img).resolve()
+        if not _path_looks_like_semantic_validation_source(val_img):
+            if task_norm == "classification":
+                print(f"[warn] validation_images={val_img} does not look like a labeled classification validation source; disabling dataset validation")
+                val_img = None
+                validation_max_images = 0
+            else:
+                print(f"[warn] validation_images={val_img} does not look like a semantic validation source; falling back to prepared COCO-50")
+                val_img = default_val if default_val.exists() else None
+                if val_img is not None and int(validation_max_images or 0) <= 0:
+                    validation_max_images = 50
     else:
-        default_val = (case_dir.parent / "resources" / "validation" / "coco_50_data").resolve()
-        if default_val.exists():
+        if task_norm != "classification" and default_val.exists():
             val_img = default_val
             if int(validation_max_images or 0) <= 0:
                 validation_max_images = 50
@@ -1090,6 +1571,14 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
         cmd += ["--validation-images", str(val_img)]
     if int(validation_max_images or 0) > 0:
         cmd += ["--validation-max-images", str(int(validation_max_images))]
+    if str(validation_reference_mode or "").strip():
+        cmd += ["--validation-reference-mode", str(validation_reference_mode)]
+    if str(benchmark_task or "").strip():
+        cmd += ["--benchmark-task", str(benchmark_task)]
+    if bool(mini_coco_ap50):
+        cmd += ["--mini-coco-ap50"]
+    if bool(mini_classification_eval):
+        cmd += ["--mini-classification-eval"]
 
     def _uses_tensorrt_token(token: Optional[str]) -> bool:
         return str(token or "").strip().lower() in {"tensorrt", "trt"}
@@ -1152,10 +1641,15 @@ def main() -> int:
         choices=["auto", "norm", "raw", "imagenet", "clip"],
         help="Input image scaling mode for the runner. In plan-mode, runs can override this via run.image_scale.",
     )
-    parser.add_argument("--validation-images", default="", help="Optional semantic-validation image set for detection models (directory / image / text / JSON list). In plan-mode, runs can override this via run.validation_images.")
-    parser.add_argument("--validation-max-images", type=int, default=0, help="Max images from --validation-images to use per case (0 disables dataset semantic validation).")
+    parser.add_argument("--validation-images", default="", help="Optional semantic-validation dataset source (detection image list / classification labeled dataset). In plan-mode, runs can override this via run.validation_images.")
+    parser.add_argument("--validation-max-images", type=int, default=0, help="Max samples from --validation-images to use per case (0 disables dataset semantic validation for classification; detection falls back to prepared COCO-50 when appropriate).")
+    parser.add_argument("--validation-reference-mode", default="auto", choices=["auto", "same_backend_full", "cpu_full", "annotations"], help="Reference policy for semantic validation. In plan-mode, runs can override this via run.validation_reference_mode.")
+    parser.add_argument("--benchmark-task", default="auto", choices=["auto", "detection", "classification"], help="Task-aware validation/reporting mode. In plan-mode, runs can override this via run.benchmark_task.")
+    parser.add_argument("--mini-coco-ap50", action="store_true", help="Optional report-only Mini-COCO AP50 on the semantic validation set for detection tasks. In plan-mode, runs can override this via run.mini_coco_ap50.")
+    parser.add_argument("--mini-classification-eval", action="store_true", help="Optional report-only Top-1/Top-5 classification summary on the semantic validation set. In plan-mode, runs can override this via run.mini_classification_eval.")
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--runs", type=int, default=10)
+    parser.add_argument("--phase-runs", type=int, default=5, help="Forward v42 diagnostic phase timing runs to per-case runners (0 disables).")
     parser.add_argument("--throughput-frames", type=int, default=24, help="Measured streaming/interleaving frames for heterogeneous stage1→stage2 pipelines (0 disables).")
     parser.add_argument("--throughput-warmup-frames", type=int, default=6, help="Warmup frames before measured streaming/interleaving throughput.")
     parser.add_argument("--throughput-queue-depth", type=int, default=2, help="Queue depth for the streaming/interleaving throughput probe.")
@@ -1236,6 +1730,7 @@ def main() -> int:
     overall_rc = 0
     any_rows = False
     failed_runs: List[Dict[str, Any]] = []
+    rows_by_tag: Dict[str, List[Dict[str, Any]]] = {}
     for run in runs:
         rtype = str(run.get("type") or run.get("kind") or "onnxruntime").strip().lower()
         run_id = str(run.get("id") or run.get("name") or rtype).strip() or rtype
@@ -1272,8 +1767,21 @@ def main() -> int:
                 if image_scale not in ("auto", "norm", "raw", "imagenet", "clip"):
                     print(f"[warn] invalid image_scale={image_scale!r} in plan for run {run_id!r}; falling back to 'auto'")
                     image_scale = "auto"
-                validation_images = str(run.get("validation_images") or getattr(args, "validation_images", "") or "").strip()
-                validation_max_images = int(run.get("validation_max_images") or getattr(args, "validation_max_images", 0) or 0)
+                cli_validation_images = str(getattr(args, "validation_images", "") or "").strip()
+                if cli_validation_images:
+                    validation_images = cli_validation_images
+                    validation_max_images = int(getattr(args, "validation_max_images", 0) or 0)
+                else:
+                    validation_images = str(run.get("validation_images") or "").strip()
+                    validation_max_images = int(run.get("validation_max_images") or getattr(args, "validation_max_images", 0) or 0)
+                validation_reference_mode = str(run.get("validation_reference_mode") or getattr(args, "validation_reference_mode", "auto") or "auto").strip().lower()
+                if validation_reference_mode not in ("auto", "same_backend_full", "cpu_full", "annotations"):
+                    validation_reference_mode = "auto"
+                benchmark_task = str(run.get("benchmark_task") or getattr(args, "benchmark_task", "auto") or "auto").strip().lower()
+                if benchmark_task not in ("auto", "detection", "classification"):
+                    benchmark_task = "auto"
+                mini_coco_ap50 = bool(run.get("mini_coco_ap50") if "mini_coco_ap50" in run else getattr(args, "mini_coco_ap50", False))
+                mini_classification_eval = bool(run.get("mini_classification_eval") if "mini_classification_eval" in run else getattr(args, "mini_classification_eval", False))
 
                 r = _run_case(
                     case_dir,
@@ -1287,6 +1795,7 @@ def main() -> int:
                     image_scale=image_scale,
                     warmup=args.warmup,
                     runs=args.runs,
+                    phase_runs=args.phase_runs,
                     timeout_s=args.timeout,
                     case_meta=c,
                     resume=getattr(args, "resume", False),
@@ -1298,6 +1807,10 @@ def main() -> int:
                     throughput_queue_depth=args.throughput_queue_depth,
                     validation_images=validation_images,
                     validation_max_images=validation_max_images,
+                    validation_reference_mode=validation_reference_mode,
+                    mini_coco_ap50=mini_coco_ap50,
+                    benchmark_task=benchmark_task,
+                    mini_classification_eval=mini_classification_eval,
                 )
                 if r is not None:
                     rows.append(r)
@@ -1309,6 +1822,7 @@ def main() -> int:
                 # Still write placeholder artifacts so UIs/parsers can show the run as "empty".
                 results_json = root / f"benchmark_results_{tag}.json"
                 _write_json(results_json, rows)
+                rows_by_tag[str(tag)] = list(rows)
                 try:
                     (root / f"benchmark_results_{tag}.error.txt").write_text(
                         f"No results collected for run {run_id} (provider={provider}).\n",
@@ -1322,6 +1836,7 @@ def main() -> int:
 
             results_json = root / f"benchmark_results_{tag}.json"
             _write_json(results_json, rows)
+            rows_by_tag[str(tag)] = list(rows)
             print(f"Wrote {results_json.name}")
 
             if not args.no_csv:
@@ -1401,8 +1916,21 @@ def main() -> int:
                 if image_scale not in ("auto", "norm", "raw", "imagenet", "clip"):
                     print(f"[warn] invalid image_scale={image_scale!r} in plan for run {run_id!r}; falling back to 'auto'")
                     image_scale = "auto"
-                validation_images = str(run.get("validation_images") or getattr(args, "validation_images", "") or "").strip()
-                validation_max_images = int(run.get("validation_max_images") or getattr(args, "validation_max_images", 0) or 0)
+                cli_validation_images = str(getattr(args, "validation_images", "") or "").strip()
+                if cli_validation_images:
+                    validation_images = cli_validation_images
+                    validation_max_images = int(getattr(args, "validation_max_images", 0) or 0)
+                else:
+                    validation_images = str(run.get("validation_images") or "").strip()
+                    validation_max_images = int(run.get("validation_max_images") or getattr(args, "validation_max_images", 0) or 0)
+                validation_reference_mode = str(run.get("validation_reference_mode") or getattr(args, "validation_reference_mode", "auto") or "auto").strip().lower()
+                if validation_reference_mode not in ("auto", "same_backend_full", "cpu_full", "annotations"):
+                    validation_reference_mode = "auto"
+                benchmark_task = str(run.get("benchmark_task") or getattr(args, "benchmark_task", "auto") or "auto").strip().lower()
+                if benchmark_task not in ("auto", "detection", "classification"):
+                    benchmark_task = "auto"
+                mini_coco_ap50 = bool(run.get("mini_coco_ap50") if "mini_coco_ap50" in run else getattr(args, "mini_coco_ap50", False))
+                mini_classification_eval = bool(run.get("mini_classification_eval") if "mini_classification_eval" in run else getattr(args, "mini_classification_eval", False))
 
                 r = _run_case(
                     case_dir,
@@ -1416,6 +1944,7 @@ def main() -> int:
                     image_scale=image_scale,
                     warmup=args.warmup,
                     runs=args.runs,
+                    phase_runs=args.phase_runs,
                     timeout_s=args.timeout,
                     case_meta=c,
                     resume=getattr(args, "resume", False),
@@ -1427,6 +1956,10 @@ def main() -> int:
                     throughput_queue_depth=args.throughput_queue_depth,
                     validation_images=validation_images,
                     validation_max_images=validation_max_images,
+                    validation_reference_mode=validation_reference_mode,
+                    mini_coco_ap50=mini_coco_ap50,
+                    benchmark_task=benchmark_task,
+                    mini_classification_eval=mini_classification_eval,
                 )
                 if r is not None:
                     rows.append(r)
@@ -1438,6 +1971,7 @@ def main() -> int:
                 # Still write placeholder artifacts so UIs/parsers can show the run as "empty".
                 results_json = root / f"benchmark_results_{tag}.json"
                 _write_json(results_json, rows)
+                rows_by_tag[str(tag)] = list(rows)
                 try:
                     (root / f"benchmark_results_{tag}.error.txt").write_text(
                         f"No results collected for run {run_id} (stage1={stage1_tok}, stage2={stage2_tok}).\n",
@@ -1451,6 +1985,7 @@ def main() -> int:
 
             results_json = root / f"benchmark_results_{tag}.json"
             _write_json(results_json, rows)
+            rows_by_tag[str(tag)] = list(rows)
             print(f"Wrote {results_json.name}")
 
             if not args.no_csv:
@@ -1517,8 +2052,21 @@ def main() -> int:
                 if image_scale not in ("auto", "norm", "raw", "imagenet", "clip"):
                     print(f"[warn] invalid image_scale={image_scale!r} in plan for run {run_id!r}; falling back to 'auto'")
                     image_scale = "auto"
-                validation_images = str(run.get("validation_images") or getattr(args, "validation_images", "") or "").strip()
-                validation_max_images = int(run.get("validation_max_images") or getattr(args, "validation_max_images", 0) or 0)
+                cli_validation_images = str(getattr(args, "validation_images", "") or "").strip()
+                if cli_validation_images:
+                    validation_images = cli_validation_images
+                    validation_max_images = int(getattr(args, "validation_max_images", 0) or 0)
+                else:
+                    validation_images = str(run.get("validation_images") or "").strip()
+                    validation_max_images = int(run.get("validation_max_images") or getattr(args, "validation_max_images", 0) or 0)
+                validation_reference_mode = str(run.get("validation_reference_mode") or getattr(args, "validation_reference_mode", "auto") or "auto").strip().lower()
+                if validation_reference_mode not in ("auto", "same_backend_full", "cpu_full", "annotations"):
+                    validation_reference_mode = "auto"
+                benchmark_task = str(run.get("benchmark_task") or getattr(args, "benchmark_task", "auto") or "auto").strip().lower()
+                if benchmark_task not in ("auto", "detection", "classification"):
+                    benchmark_task = "auto"
+                mini_coco_ap50 = bool(run.get("mini_coco_ap50") if "mini_coco_ap50" in run else getattr(args, "mini_coco_ap50", False))
+                mini_classification_eval = bool(run.get("mini_classification_eval") if "mini_classification_eval" in run else getattr(args, "mini_classification_eval", False))
 
                 r = _run_case(
                     case_dir,
@@ -1532,6 +2080,7 @@ def main() -> int:
                     image_scale=image_scale,
                     warmup=args.warmup,
                     runs=args.runs,
+                    phase_runs=args.phase_runs,
                     timeout_s=args.timeout,
                     case_meta=c,
                     resume=getattr(args, "resume", False),
@@ -1543,6 +2092,10 @@ def main() -> int:
                     throughput_queue_depth=args.throughput_queue_depth,
                     validation_images=validation_images,
                     validation_max_images=validation_max_images,
+                    validation_reference_mode=validation_reference_mode,
+                    mini_coco_ap50=mini_coco_ap50,
+                    benchmark_task=benchmark_task,
+                    mini_classification_eval=mini_classification_eval,
                 )
                 if r is not None:
                     rows.append(r)
@@ -1554,6 +2107,7 @@ def main() -> int:
                 # Still write placeholder artifacts so UIs/parsers can show the run as "empty".
                 results_json = root / f"benchmark_results_{tag}.json"
                 _write_json(results_json, rows)
+                rows_by_tag[str(tag)] = list(rows)
                 try:
                     (root / f"benchmark_results_{tag}.error.txt").write_text(
                         f"No results collected for run {run_id} (provider={provider_tag}).\n",
@@ -1567,6 +2121,7 @@ def main() -> int:
 
             results_json = root / f"benchmark_results_{tag}.json"
             _write_json(results_json, rows)
+            rows_by_tag[str(tag)] = list(rows)
             print(f"Wrote {results_json.name}")
 
             if not args.no_csv:
@@ -1604,6 +2159,14 @@ def main() -> int:
         else:
             print(f"[warn] Unknown run type '{rtype}' for run {run_id}; skipping")
             continue
+
+    if rows_by_tag:
+        try:
+            _write_v42_pipeline_summary(root, rows_by_tag)
+            print("Wrote v42_pipeline_summary.json/csv/md")
+            print("Wrote v47_pipeline_summary.json/csv/md")
+        except Exception as e:
+            print(f"[warn] Failed to write v42_pipeline_summary: {e}")
 
     # Always write a small status file so UIs can show partial success.
     try:

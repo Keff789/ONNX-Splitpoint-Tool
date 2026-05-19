@@ -6,9 +6,9 @@ also drop multiple `hailo_sdk.*.log` files into the *current working
 directory*, which can quickly clutter the repository.
 
 This panel therefore supports browsing multiple log files from:
-  - ~/.onnx_splitpoint_tool/logs (new default)
-  - ~/.onnx_splitpoint_tool (legacy)
-  - ./ (legacy / working directory)
+  - <tool-root>/logs (canonical)
+  - ~/.onnx_splitpoint_tool (state / legacy metadata)
+  - ./ (legacy / working-directory mirror, opt-in)
   - the currently active GUI log path exported via
     ONNX_SPLITPOINT_ACTIVE_LOG_PATH
 """
@@ -25,7 +25,7 @@ from tkinter import messagebox, scrolledtext, ttk
 from typing import Dict, List, Optional
 
 from ...log_runtime import active_log_description, discover_live_logging_paths as _discover_live_runtime_log_paths, resolve_active_log_path
-from ...paths import splitpoint_home, splitpoint_logs_dir
+from ...paths import splitpoint_gui_logs_dir, splitpoint_home, splitpoint_logs_dir
 
 
 def _open_path(path: Path) -> None:
@@ -83,6 +83,7 @@ def _discover_logs() -> List[Path]:
 
     preferred += _discover_live_runtime_log_paths()
     preferred += [
+        splitpoint_gui_logs_dir() / "gui.log",
         splitpoint_logs_dir() / "gui.log",
         splitpoint_home() / "gui.log",
         Path.cwd() / "gui.log",
@@ -120,7 +121,7 @@ def _label_for(path: Path) -> str:
 
     try:
         rel = path.resolve().relative_to(splitpoint_home().resolve())
-        return f"~/.onnx_splitpoint_tool/{rel.as_posix()}"
+        return f"state/{rel.as_posix()}"
     except Exception:
         pass
 

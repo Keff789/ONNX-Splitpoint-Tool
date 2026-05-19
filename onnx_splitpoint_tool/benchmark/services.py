@@ -28,6 +28,7 @@ from .analysis import (
 )
 from .hailo_policy import (
     HailoFailureRecord,
+    analyze_cut_tensors,
     build_candidate_policy_index,
     build_case_hailo_variant_availability,
     case_has_usable_hailo_variant,
@@ -47,6 +48,7 @@ from .interleaving_analysis import (
     export_publication_comparison as export_publication_comparison_bundle,
 )
 from .generation_state import init_state as init_generation_state, update_state as update_generation_state
+from .decision_summary import export_decision_summary
 from .results_bundle import create_results_bundle_from_suite
 from .schema import migrate_benchmark_set_payload, read_benchmark_set, stamp_benchmark_set_payload, write_json_atomic as write_benchmark_json_atomic
 from .hailo_scoring import heuristic_for_boundary, rerank_candidates_for_hailo
@@ -54,59 +56,161 @@ from .part2_sanity import hailo_part2_concat_sanity_from_model, format_hailo_par
 from .remote_run import RemoteBenchmarkArgs, run_remote_benchmark
 from ..benchmark_case_utils import archive_benchmark_case, build_benchmark_case_rejection
 from ..remote.ssh_transport import HostConfig as SSHHostConfig, SSHTransport
-from .suite_refresh import refresh_suite_harness
+from .suite_refresh import (
+    refresh_suite_harness,
+    normalize_benchmark_task,
+    normalize_mini_classification_eval,
+    normalize_mini_coco_ap50,
+    normalize_semantic_validation_request,
+    normalize_validation_reference_mode,
+)
+from .classification_validation_presets import (
+    default_available_classification_validation_preset,
+    provision_classification_validation_source_to_suite,
+)
+from .validation_assets import (
+    default_detection_validation_source,
+    provision_detection_validation_source_to_suite,
+)
 
 
 
 logger = logging.getLogger(__name__)
 
 
-def _embedded_semantic_validation_dataset_source() -> Optional[Path]:
-    """Return the embedded semantic validation dataset resource if present.
+def _physical_hailo_hw_arch_for_build(value: Any) -> Optional[str]:
+    """Normalize UI/run labels to a physical Hailo DFC architecture.
 
-    The preferred form is an extracted directory inside the package resources. A
-    zip archive is also accepted as fallback and will be unpacked on demand.
+    Mixed run ids such as ``hailo8_to_trt`` and ``trt_to_hailo8`` are
+    benchmark-pipeline labels, not DFC hw_arch values.  DFC must only be
+    called with chip names such as ``hailo8``.
     """
-
-    pkg_root = Path(__file__).resolve().parent.parent
-    dir_src = pkg_root / 'resources' / 'validation' / 'coco_50_data'
-    if dir_src.is_dir():
-        return dir_src
-    zip_src = pkg_root / 'resources' / 'validation' / 'coco_50_data.zip'
-    if zip_src.is_file():
-        return zip_src
+    text = str(value or '').strip().lower().replace(' ', '').replace('-', '_')
+    if not text:
+        return None
+    if text in {'hailo8', 'hailo8r', 'hailo8l'}:
+        return text
+    if 'hailo8r' in text:
+        return 'hailo8r'
+    if 'hailo8l' in text:
+        return 'hailo8l'
+    if 'hailo8' in text:
+        return 'hailo8'
+    if text in {'hailo10', 'hailo10h'}:
+        return text
+    if 'hailo10h' in text:
+        return 'hailo10h'
+    if 'hailo10' in text:
+        return 'hailo10'
     return None
 
 
-def _provision_embedded_semantic_validation_dataset(suite_dir: Path) -> Optional[str]:
-    """Copy/extract the built-in COCO-50 validation dataset once into a suite.
+def _physical_hailo_targets_for_build(values: Sequence[Any]) -> List[str]:
+    out: List[str] = []
+    for raw in list(values or []):
+        hw = _physical_hailo_hw_arch_for_build(raw)
+        if hw and hw not in out:
+            out.append(hw)
+    return out
 
-    Returns a suite-root relative path suitable for benchmark_plan.json or None
-    if the resource is not available.
+
+def _run_stage_kind(run: Mapping[str, Any], key: str) -> str:
+    st = run.get(key) if isinstance(run, Mapping) else None
+    if isinstance(st, Mapping):
+        return str(st.get('type') or st.get('provider') or st.get('id') or '').strip().lower()
+    return str(st or '').strip().lower()
+
+
+def _benchmark_plan_has_hailo_to_trt(runs: Sequence[Mapping[str, Any]]) -> bool:
+    for run in list(runs or []):
+        if not isinstance(run, Mapping):
+            continue
+        rid = str(run.get('id') or run.get('name') or '').strip().lower()
+        st1 = _run_stage_kind(run, 'stage1')
+        st2 = _run_stage_kind(run, 'stage2')
+        if ('hailo' in st1 and ('trt' in st2 or 'tensorrt' in st2)) or 'hailo8_to_trt' in rid or 'hailo_to_trt' in rid:
+            return True
+    return False
+
+
+def _benchmark_plan_task_set(bench_plan_runs: Sequence[Mapping[str, Any]]) -> Set[str]:
+    out: Set[str] = set()
+    for run in bench_plan_runs or []:
+        try:
+            out.add(normalize_benchmark_task((run or {}).get('benchmark_task')))
+        except Exception:
+            pass
+    return out or {'auto'}
+
+
+def _model_task_sanity_warnings(model_path: str | Path, bench_plan_runs: Sequence[Mapping[str, Any]]) -> List[str]:
+    """Cheap ONNX-task sanity hints for benchmark-set generation.
+
+    These are warnings only. They are intentionally conservative and are mainly
+    meant to catch cases where a model named like a classifier actually contains
+    sequence/decoder ops or has a non-ImageNet-like input signature.
+    """
+    tasks = _benchmark_plan_task_set(bench_plan_runs)
+    if 'classification' not in tasks:
+        return []
+    warnings: List[str] = []
+    try:
+        import onnx  # type: ignore
+        m = onnx.load(str(model_path))
+        nodes = list(getattr(m.graph, 'node', []) or [])
+        op_types = {str(getattr(n, 'op_type', '') or '') for n in nodes}
+        recurrent = sorted(op for op in op_types if op in {'LSTM', 'GRU', 'RNN', 'Scan'})
+        names_blob = ' '.join(str(getattr(n, 'name', '') or '') + ' ' + ' '.join(str(x) for x in list(getattr(n, 'output', []) or [])[:2]) for n in nodes[:3000]).lower()
+        if recurrent:
+            warnings.append(
+                'Classification task selected, but ONNX graph contains recurrent/sequence op(s) ' +
+                ', '.join(recurrent) +
+                '. This often indicates the model is not a plain ImageNet classifier; Hailo full/part2 parser preflight may fail.'
+            )
+        if '/decoder' in names_blob or 'decoder' in names_blob:
+            warnings.append(
+                'Classification task selected, but graph names contain "decoder". Verify that this ONNX is really a pure classification network and not an OCR/sequence model.'
+            )
+        try:
+            dims = []
+            for inp in list(getattr(m.graph, 'input', []) or [])[:1]:
+                for d in inp.type.tensor_type.shape.dim:
+                    val = int(d.dim_value) if getattr(d, 'dim_value', 0) else None
+                    dims.append(val)
+            fixed_hw = [int(x) for x in dims if isinstance(x, int) and int(x) > 1]
+            # Common ImageNet classifier shapes expose 224/256/299-ish dimensions.
+            if fixed_hw and not any(192 <= int(x) <= 384 for x in fixed_hw):
+                warnings.append(
+                    f'Classification task selected, but first input fixed dimensions look non-ImageNet-like: {dims}. ' +
+                    'Check preprocessing/image_scale and whether the selected ONNX is the intended classifier.'
+                )
+        except Exception:
+            pass
+    except Exception as exc:
+        warnings.append(f'Could not inspect ONNX model for classification sanity: {type(exc).__name__}: {exc}')
+    return warnings
+
+
+def _embedded_semantic_validation_dataset_source() -> Optional[Path]:
+    """Return a prepared/default detection validation source if available.
+
+    Clean releases do not ship the image-heavy COCO-50 directory inside the
+    package. Users can prepare it on demand via the GUI/CLI; development builds
+    may still expose a legacy embedded source.
     """
 
-    src = _embedded_semantic_validation_dataset_source()
-    if src is None:
-        return None
-    dest_rel = Path('resources') / 'validation' / 'coco_50_data'
-    dest = suite_dir / dest_rel
-    if dest.is_dir():
-        return dest_rel.as_posix()
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if src.is_dir():
-        shutil.copytree(src, dest, dirs_exist_ok=True)
-    elif src.is_file() and src.suffix.lower() == '.zip':
-        import zipfile
-        with zipfile.ZipFile(src, 'r') as zf:
-            zf.extractall(dest.parent)
-        # zip may contain coco_50_data/ root; if not, keep best-effort location
-        if not dest.exists() and (dest.parent / src.stem).exists():
-            maybe = dest.parent / src.stem
-            if maybe.is_dir():
-                if dest.exists():
-                    shutil.rmtree(dest)
-                maybe.rename(dest)
-    return dest_rel.as_posix() if dest.exists() else None
+    return default_detection_validation_source()
+
+
+def _provision_embedded_semantic_validation_dataset(suite_dir: Path) -> Optional[str]:
+    """Provision the default detection validation set into a suite.
+
+    Historically this copied an prepared COCO-50 directory. In clean releases it
+    copies the user-prepared COCO-50 dataset from
+    ``~/.onnx_splitpoint_tool/validation_datasets``.
+    """
+
+    return provision_detection_validation_source_to_suite(Path(suite_dir))
 
 
 def _safe_int(value: Any) -> Optional[int]:
@@ -136,6 +240,32 @@ def normalize_full_hef_policy(value: Any) -> str:
     if s == 'end' or s.startswith('build at end'):
         return 'end'
     return 'end'
+
+
+def normalize_hailo_full_model_preflight_policy(value: Any) -> str:
+    """Normalize full-model Hailo parser preflight policy values.
+
+    ``enabled`` keeps the current plan-aware parser preflight. ``skip`` disables
+    the suite-level parser preflight so the generator still attempts the actual
+    full-model HEF build later.
+    """
+
+    if isinstance(value, bool):
+        return 'enabled' if value else 'skip'
+    s = str(value or '').strip().lower()
+    if not s:
+        return 'enabled'
+    if s in {'enabled', 'enable', 'on', 'true', 'yes', 'check'}:
+        return 'enabled'
+    if s in {'skip', 'disabled', 'disable', 'off', 'false', 'no'}:
+        return 'skip'
+    if s.startswith('enabled'):
+        return 'enabled'
+    if s.startswith('disabled'):
+        return 'skip'
+    if 'always try' in s or 'without preflight' in s:
+        return 'skip'
+    return 'enabled'
 
 
 def _extract_hailo_unsupported_issue_info(text: Any) -> Dict[str, Any]:
@@ -455,6 +585,7 @@ class BenchmarkAnalysisService:
     def export_single(self, loaded: LoadedBenchmarkAnalysis, output_dir: Path) -> Dict[str, Path]:
         out = export_benchmark_analysis(loaded.report, output_dir)
         out.update(export_interleaving_analysis(loaded.interleaving, output_dir))
+        out.update(export_decision_summary(loaded.report, loaded.interleaving, output_dir))
         return out
 
     def export_comparison(self, loaded: LoadedBenchmarkComparison, output_dir: Path) -> Dict[str, Path]:
@@ -543,6 +674,10 @@ class BenchmarkRunPlan:
     image_scale: str
     validation_images: Optional[str] = None
     validation_max_images: int = 0
+    validation_reference_mode: str = "auto"
+    mini_coco_ap50: bool = False
+    benchmark_task: str = "auto"
+    mini_classification_eval: bool = False
 
 
 STREAMING_PRESET_PROFILES: Dict[str, Dict[str, int]] = {
@@ -565,12 +700,12 @@ def _risk_band(score: float) -> str:
 
 def _recommendation(single_prob: float, risk: float) -> str:
     if single_prob >= 0.80 and risk <= 1.9:
-        return 'Very likely 1-context'
+        return 'Low context risk / measure normally'
     if single_prob >= 0.65:
-        return 'Likely 1-context'
+        return 'Likely 1-context / measure'
     if single_prob >= 0.45:
-        return 'Borderline / measure'
-    return 'Compile-risky / likely multi-context'
+        return 'Borderline; measure, do not discard'
+    return 'Likely multi-context; keep if measured FPS/quality are good'
 
 
 class BenchmarkGenerationService:
@@ -647,6 +782,13 @@ class BenchmarkGenerationService:
         try:
             if os.path.abspath(str(full_model_dst)) != full_model_src:
                 shutil.copy2(full_model_src, full_model_dst)
+                for suffix in ('.export.json', '.categories.json'):
+                    side_src = Path(full_model_src).with_suffix(suffix)
+                    if side_src.is_file():
+                        try:
+                            shutil.copy2(side_src, full_model_dst.with_suffix(suffix))
+                        except Exception:
+                            logger.debug('Failed to copy model sidecar %s', side_src, exc_info=True)
         except Exception as exc:
             msg = f"full model copy failed: {type(exc).__name__}: {exc}"
             runtime.errors.append(msg)
@@ -704,7 +846,42 @@ class BenchmarkGenerationService:
             'mapping_failed': bool(detected.get('mapping_failed')),
             'watchdog_expired': bool(detected.get('watchdog_expired')),
         }
+        # v45: advisory build-cost flags for expensive Hailo builds.
+        try:
+            elapsed = float(out.get('elapsed_s') or 0.0)
+        except Exception:
+            elapsed = 0.0
+        ctx_mode = str(out.get('context_mode') or '').strip()
+        expensive_reasons: List[str] = []
+        if elapsed >= 1800.0:
+            expensive_reasons.append('elapsed_s>=1800')
+        if ctx_mode in {'multi_context_used', 'single_context_failed_to_multi'}:
+            expensive_reasons.append(ctx_mode)
+        if expensive_reasons:
+            out['expensive_build'] = True
+            out['expensive_build_reason'] = ';'.join(expensive_reasons)
         return {k: v for k, v in out.items() if v not in (None, '') or isinstance(v, bool)}
+
+    def hailo_build_cost_note(self, summary: Mapping[str, Any], *, stage: str = '') -> str:
+        if not isinstance(summary, Mapping):
+            return ''
+        notes: List[str] = []
+        try:
+            elapsed = float(summary.get('elapsed_s') or 0.0)
+        except Exception:
+            elapsed = 0.0
+        if elapsed >= 1800.0:
+            notes.append(f'elapsed={elapsed:.1f}s')
+        ctx = str(summary.get('context_mode') or '').strip()
+        if ctx in {'multi_context_used', 'single_context_failed_to_multi'}:
+            notes.append(f'context={ctx}')
+        cc = _safe_int(summary.get('context_count'))
+        if cc is not None and cc > 1:
+            notes.append(f'contexts={cc}')
+        if not notes:
+            return ''
+        label = str(stage or 'Hailo build').strip()
+        return f'{label} cost note: ' + ', '.join(notes) + '; cached/reused HEFs are recommended for repeated evaluation runs.'
 
     def case_hailo_compile_from_hefs(self, hefs_payload: Any) -> Dict[str, Any]:
         out: Dict[str, Any] = {}
@@ -831,6 +1008,10 @@ class BenchmarkGenerationService:
         tool_gui_version: Optional[str] = None,
         tool_core_version: Optional[str] = None,
         benchmark_objective: str = 'latency',
+        evaluation_profile: Optional[Mapping[str, Any]] = None,
+        full_model_preflight_policy: str = 'enabled',
+        hailo_full_end_node_names: Optional[Sequence[str]] = None,
+        hailo_full_endpoint_mode: str = '',
     ) -> BenchmarkGenerationFinalizeResult:
         out_dir = Path(out_dir)
         bench_path = out_dir / 'benchmark_set.json'
@@ -862,25 +1043,69 @@ class BenchmarkGenerationService:
                 case['hailo_case_variant_availability'] = avail_map
             cases_out.append(case)
 
-        # If the user did not explicitly configure a dataset-based semantic validation
-        # set, provision the embedded COCO-50 resource once at suite level and wire it
-        # into all runs. This keeps the dataset portable and avoids copying it into each
-        # case subdirectory.
+        # Provision semantic validation sources once at suite level so remote runs stay
+        # self-contained. Detection without an explicit dataset uses the prepared COCO-50.
+        # Classification must never silently receive COCO; it either uses an explicit
+        # labeled dataset/preset or the first locally imported ImageNet-mini preset.
         embedded_validation_rel = None
         try:
-            has_explicit_validation = any(str((run or {}).get('validation_images') or '').strip() for run in bench_plan_runs)
-            if not has_explicit_validation:
+            classification_cache: Dict[str, Optional[str]] = {}
+            default_cls_preset = default_available_classification_validation_preset(base_dir=out_dir)
+
+            def _provision_classification_request(req: str) -> Optional[str]:
+                req = str(req or '').strip()
+                if not req:
+                    return None
+                if req not in classification_cache:
+                    classification_cache[req] = provision_classification_validation_source_to_suite(
+                        out_dir,
+                        req,
+                        base_dir=out_dir,
+                    )
+                return classification_cache.get(req)
+
+            # Provision COCO only for non-classification runs that do not already have a dataset.
+            needs_detection_default = any(
+                normalize_benchmark_task((run or {}).get('benchmark_task')) != 'classification'
+                and not str((run or {}).get('validation_images') or '').strip()
+                for run in bench_plan_runs
+            )
+            if needs_detection_default:
                 embedded_validation_rel = _provision_embedded_semantic_validation_dataset(out_dir)
-                if embedded_validation_rel:
-                    for run in bench_plan_runs:
-                        run['validation_images'] = str(embedded_validation_rel)
+
+            for run in bench_plan_runs:
+                task = normalize_benchmark_task((run or {}).get('benchmark_task'))
+                req = str((run or {}).get('validation_images') or '').strip()
+                if task == 'classification':
+                    effective_req = req or str(default_cls_preset or '')
+                    rel = _provision_classification_request(effective_req) if effective_req else None
+                    if rel:
+                        run['validation_images'] = str(rel)
                         try:
                             current_max = int(run.get('validation_max_images') or 0)
                         except Exception:
                             current_max = 0
-                        run['validation_max_images'] = max(current_max, 50)
+                        if current_max <= 0:
+                            run['validation_max_images'] = 500 if effective_req == 'imagenet_val_mini_500' else 200
+                    else:
+                        # Keep classification validation disabled rather than mixing in COCO labels.
+                        run['validation_images'] = ''
+                        run['validation_max_images'] = 0
+                    continue
+
+                # Detection / auto: explicit datasets remain untouched; missing datasets use COCO-50.
+                if not req and embedded_validation_rel:
+                    run['validation_images'] = str(embedded_validation_rel)
+                    try:
+                        current_max = int(run.get('validation_max_images') or 0)
+                    except Exception:
+                        current_max = 0
+                    run['validation_max_images'] = max(current_max, 50)
+                elif req and task == 'classification':
+                    # Defensive no-op; kept for readability if normalization expands later.
+                    pass
         except Exception:
-            logger.debug('Failed to provision embedded semantic validation dataset', exc_info=True)
+            logger.debug('Failed to provision semantic validation dataset', exc_info=True)
 
         bench = {
             'schema': 'onnx-splitpoint/benchmark-set',
@@ -910,6 +1135,8 @@ class BenchmarkGenerationService:
             'generation_log': Path(bench_log_path).name,
             'objective': str(benchmark_objective or 'latency'),
         }
+        if isinstance(evaluation_profile, Mapping) and evaluation_profile:
+            bench['evaluation_profile'] = dict(evaluation_profile)
 
         hailo_summary = analysis_payload.get('hailo_check') if isinstance(analysis_payload.get('hailo_check'), dict) else None
         hailo_results = analysis_payload.get('hailo_check_results') if isinstance(analysis_payload.get('hailo_check_results'), dict) else None
@@ -927,6 +1154,8 @@ class BenchmarkGenerationService:
             'matrix': [],
             'objective': str(benchmark_objective or 'latency'),
         }
+        if isinstance(evaluation_profile, Mapping) and evaluation_profile:
+            bench_plan['evaluation_profile'] = dict(evaluation_profile)
         bench['plan'] = bench_plan
         write_benchmark_json_atomic(plan_path, bench_plan)
 
@@ -945,8 +1174,21 @@ class BenchmarkGenerationService:
                     'fixup': bool(hef_fixup),
                     'force': bool(hef_force),
                     'keep_artifacts': bool(hef_keep),
+                    'full_model_preflight_policy': normalize_hailo_full_model_preflight_policy(full_model_preflight_policy),
                 },
             }
+            full_end_nodes_cfg = [str(x).strip() for x in (hailo_full_end_node_names or []) if str(x).strip()]
+            if full_end_nodes_cfg:
+                bench['hailo']['config']['full_endpoint_mode'] = str(hailo_full_endpoint_mode or 'custom')
+                bench['hailo']['config']['full_end_node_names'] = list(full_end_nodes_cfg)
+            suite_contract = None
+            if isinstance(suite_hailo_hefs, Mapping):
+                for _hw_meta in suite_hailo_hefs.values():
+                    if isinstance(_hw_meta, Mapping) and isinstance(_hw_meta.get('full_output_contract'), Mapping):
+                        suite_contract = dict(_hw_meta.get('full_output_contract') or {})
+                        break
+            if suite_contract:
+                bench['hailo']['config']['full_output_contract'] = dict(suite_contract)
             if suite_hailo_hefs:
                 bench['hailo']['hefs'] = dict(suite_hailo_hefs)
             if isinstance(hailo_full_model_preflight, Mapping):
@@ -986,7 +1228,7 @@ class BenchmarkGenerationService:
             '  3) run a single ORT provider: python benchmark_suite.py --provider cpu\n'
             '     (or: --provider cuda / --provider tensorrt)\n'
             '  4) to also generate human-readable outputs: add --image default --preset auto\n'
-            '  5) dataset semantic validation for detection models: by default the embedded COCO-50 set is wired in once at suite level (resources/validation/coco_50_data).\n'
+            '  5) dataset semantic validation for detection models: by default the prepared COCO-50 set is wired in once at suite level (resources/validation/coco_50_data).\n'
             '     You can override validation_images + validation_max_images in benchmark_plan.json if needed.\n\n'
             'Outputs:\n'
             '  - benchmark_results_<tag>.csv / .json\n'
@@ -1168,9 +1410,13 @@ class BenchmarkGenerationService:
         hailo8_hw: str,
         hailo10_hw: str,
         image_scale: str,
-        validation_images: Optional[str],
-        validation_max_images: int,
-        hailo_preset: str,
+        validation_images: Optional[str] = None,
+        validation_max_images: int = 0,
+        validation_reference_mode: str = "auto",
+        mini_coco_ap50: bool = False,
+        benchmark_task: str = "auto",
+        mini_classification_eval: bool = False,
+        hailo_preset: str = "End-to-end compare",
         hailo_custom_full: bool,
         hailo_custom_composed: bool,
         hailo_custom_part1: bool,
@@ -1183,13 +1429,15 @@ class BenchmarkGenerationService:
         if plan_image_scale not in {'auto', 'norm', 'raw', 'imagenet', 'clip'}:
             plan_image_scale = 'auto'
 
-        plan_validation_images = str(validation_images or '').strip() or None
-        try:
-            plan_validation_max_images = max(0, int(validation_max_images or 0))
-        except Exception:
-            plan_validation_max_images = 0
-        if plan_validation_images is None and plan_validation_max_images <= 0:
-            plan_validation_max_images = 50
+        plan_benchmark_task = normalize_benchmark_task(benchmark_task)
+        plan_validation_images, plan_validation_max_images, _use_embedded_validation = normalize_semantic_validation_request(
+            validation_images,
+            validation_max_images,
+            benchmark_task=plan_benchmark_task,
+        )
+        plan_validation_reference_mode = normalize_validation_reference_mode(validation_reference_mode)
+        plan_mini_coco_ap50 = normalize_mini_coco_ap50(mini_coco_ap50)
+        plan_mini_classification_eval = normalize_mini_classification_eval(mini_classification_eval)
 
         p = str(hailo_preset or '').strip().lower()
         if p.startswith('end'):
@@ -1219,18 +1467,27 @@ class BenchmarkGenerationService:
             if not hailo_variants:
                 hailo_variants = ['composed']
 
-        matrix_variants: List[str] = ['part1', 'part2', 'composed']
+        matrix_variants: List[str] = ['full', 'part1', 'part2', 'composed']
+
+        def _ensure_same_backend_full_reference(variants: List[str]) -> List[str]:
+            vv = [str(v).strip().lower() for v in list(variants or []) if str(v).strip()]
+            if plan_validation_reference_mode not in {'auto', 'same_backend_full'}:
+                return vv
+            if 'full' not in vv:
+                return ['full'] + vv
+            return vv
+
         bench_plan_runs: List[Dict[str, Any]] = []
         if bool(acc_cpu):
-            bench_plan_runs.append({'id': 'ort_cpu', 'type': 'onnxruntime', 'provider': 'cpu', 'image_scale': plan_image_scale, 'validation_images': plan_validation_images, 'validation_max_images': plan_validation_max_images, 'stage1': {'type': 'onnxruntime', 'provider': 'cpu'}, 'stage2': {'type': 'onnxruntime', 'provider': 'cpu'}})
+            bench_plan_runs.append({'id': 'ort_cpu', 'type': 'onnxruntime', 'provider': 'cpu', 'image_scale': plan_image_scale, 'validation_images': plan_validation_images, 'validation_max_images': plan_validation_max_images, 'validation_reference_mode': plan_validation_reference_mode, 'mini_coco_ap50': plan_mini_coco_ap50, 'benchmark_task': plan_benchmark_task, 'mini_classification_eval': plan_mini_classification_eval, 'stage1': {'type': 'onnxruntime', 'provider': 'cpu'}, 'stage2': {'type': 'onnxruntime', 'provider': 'cpu'}})
         if bool(acc_cuda):
-            bench_plan_runs.append({'id': 'ort_cuda', 'type': 'onnxruntime', 'provider': 'cuda', 'image_scale': plan_image_scale, 'validation_images': plan_validation_images, 'validation_max_images': plan_validation_max_images, 'stage1': {'type': 'onnxruntime', 'provider': 'cuda'}, 'stage2': {'type': 'onnxruntime', 'provider': 'cuda'}})
+            bench_plan_runs.append({'id': 'ort_cuda', 'type': 'onnxruntime', 'provider': 'cuda', 'image_scale': plan_image_scale, 'validation_images': plan_validation_images, 'validation_max_images': plan_validation_max_images, 'validation_reference_mode': plan_validation_reference_mode, 'mini_coco_ap50': plan_mini_coco_ap50, 'benchmark_task': plan_benchmark_task, 'mini_classification_eval': plan_mini_classification_eval, 'stage1': {'type': 'onnxruntime', 'provider': 'cuda'}, 'stage2': {'type': 'onnxruntime', 'provider': 'cuda'}})
         if bool(acc_trt):
-            bench_plan_runs.append({'id': 'ort_tensorrt', 'type': 'onnxruntime', 'provider': 'tensorrt', 'image_scale': plan_image_scale, 'validation_images': plan_validation_images, 'validation_max_images': plan_validation_max_images, 'stage1': {'type': 'onnxruntime', 'provider': 'tensorrt'}, 'stage2': {'type': 'onnxruntime', 'provider': 'tensorrt'}})
+            bench_plan_runs.append({'id': 'ort_tensorrt', 'type': 'onnxruntime', 'provider': 'tensorrt', 'image_scale': plan_image_scale, 'validation_images': plan_validation_images, 'validation_max_images': plan_validation_max_images, 'validation_reference_mode': plan_validation_reference_mode, 'mini_coco_ap50': plan_mini_coco_ap50, 'benchmark_task': plan_benchmark_task, 'mini_classification_eval': plan_mini_classification_eval, 'stage1': {'type': 'onnxruntime', 'provider': 'tensorrt'}, 'stage2': {'type': 'onnxruntime', 'provider': 'tensorrt'}})
         if bool(acc_h8) and str(hailo8_hw).strip():
-            bench_plan_runs.append({'id': str(hailo8_hw).strip(), 'type': 'hailo', 'hw_arch': str(hailo8_hw).strip(), 'variants': list(hailo_variants), 'image_scale': plan_image_scale, 'validation_images': plan_validation_images, 'validation_max_images': plan_validation_max_images, 'stage1': {'type': 'hailo', 'hw_arch': str(hailo8_hw).strip()}, 'stage2': {'type': 'hailo', 'hw_arch': str(hailo8_hw).strip()}})
+            bench_plan_runs.append({'id': str(hailo8_hw).strip(), 'type': 'hailo', 'hw_arch': str(hailo8_hw).strip(), 'variants': list(_ensure_same_backend_full_reference(hailo_variants)), 'image_scale': plan_image_scale, 'validation_images': plan_validation_images, 'validation_max_images': plan_validation_max_images, 'validation_reference_mode': plan_validation_reference_mode, 'mini_coco_ap50': plan_mini_coco_ap50, 'benchmark_task': plan_benchmark_task, 'mini_classification_eval': plan_mini_classification_eval, 'stage1': {'type': 'hailo', 'hw_arch': str(hailo8_hw).strip()}, 'stage2': {'type': 'hailo', 'hw_arch': str(hailo8_hw).strip()}})
         if bool(acc_h10) and str(hailo10_hw).strip():
-            bench_plan_runs.append({'id': str(hailo10_hw).strip(), 'type': 'hailo', 'hw_arch': str(hailo10_hw).strip(), 'variants': list(hailo_variants), 'image_scale': plan_image_scale, 'validation_images': plan_validation_images, 'validation_max_images': plan_validation_max_images, 'stage1': {'type': 'hailo', 'hw_arch': str(hailo10_hw).strip()}, 'stage2': {'type': 'hailo', 'hw_arch': str(hailo10_hw).strip()}})
+            bench_plan_runs.append({'id': str(hailo10_hw).strip(), 'type': 'hailo', 'hw_arch': str(hailo10_hw).strip(), 'variants': list(_ensure_same_backend_full_reference(hailo_variants)), 'image_scale': plan_image_scale, 'validation_images': plan_validation_images, 'validation_max_images': plan_validation_max_images, 'validation_reference_mode': plan_validation_reference_mode, 'mini_coco_ap50': plan_mini_coco_ap50, 'benchmark_task': plan_benchmark_task, 'mini_classification_eval': plan_mini_classification_eval, 'stage1': {'type': 'hailo', 'hw_arch': str(hailo10_hw).strip()}, 'stage2': {'type': 'hailo', 'hw_arch': str(hailo10_hw).strip()}})
 
         if bool(acc_trt) and (bool(matrix_trt_to_hailo) or bool(matrix_hailo_to_trt)):
             hailo_targets_for_matrix: List[str] = []
@@ -1240,9 +1497,9 @@ class BenchmarkGenerationService:
                 hailo_targets_for_matrix.append(str(hailo10_hw).strip())
             for hw in hailo_targets_for_matrix:
                 if bool(matrix_trt_to_hailo):
-                    bench_plan_runs.append({'id': f'trt_to_{hw}', 'type': 'matrix', 'provider': 'tensorrt', 'variants': list(matrix_variants), 'image_scale': plan_image_scale, 'validation_images': plan_validation_images, 'validation_max_images': plan_validation_max_images, 'stage1': {'type': 'onnxruntime', 'provider': 'tensorrt'}, 'stage2': {'type': 'hailo', 'hw_arch': hw}})
+                    bench_plan_runs.append({'id': f'trt_to_{hw}', 'type': 'matrix', 'provider': 'tensorrt', 'variants': list(matrix_variants), 'image_scale': plan_image_scale, 'validation_images': plan_validation_images, 'validation_max_images': plan_validation_max_images, 'validation_reference_mode': plan_validation_reference_mode, 'mini_coco_ap50': plan_mini_coco_ap50, 'benchmark_task': plan_benchmark_task, 'mini_classification_eval': plan_mini_classification_eval, 'stage1': {'type': 'onnxruntime', 'provider': 'tensorrt'}, 'stage2': {'type': 'hailo', 'hw_arch': hw}})
                 if bool(matrix_hailo_to_trt):
-                    bench_plan_runs.append({'id': f'{hw}_to_trt', 'type': 'matrix', 'provider': 'tensorrt', 'variants': list(matrix_variants), 'image_scale': plan_image_scale, 'validation_images': plan_validation_images, 'validation_max_images': plan_validation_max_images, 'stage1': {'type': 'hailo', 'hw_arch': hw}, 'stage2': {'type': 'onnxruntime', 'provider': 'tensorrt'}})
+                    bench_plan_runs.append({'id': f'{hw}_to_trt', 'type': 'matrix', 'provider': 'tensorrt', 'variants': list(matrix_variants), 'image_scale': plan_image_scale, 'validation_images': plan_validation_images, 'validation_max_images': plan_validation_max_images, 'validation_reference_mode': plan_validation_reference_mode, 'mini_coco_ap50': plan_mini_coco_ap50, 'benchmark_task': plan_benchmark_task, 'mini_classification_eval': plan_mini_classification_eval, 'stage1': {'type': 'hailo', 'hw_arch': hw}, 'stage2': {'type': 'onnxruntime', 'provider': 'tensorrt'}})
 
         hailo_targets_set: Set[str] = set()
         for run in bench_plan_runs:
@@ -1294,6 +1551,10 @@ class BenchmarkGenerationService:
             image_scale=plan_image_scale,
             validation_images=plan_validation_images,
             validation_max_images=plan_validation_max_images,
+            validation_reference_mode=plan_validation_reference_mode,
+            mini_coco_ap50=bool(plan_mini_coco_ap50),
+            benchmark_task=str(plan_benchmark_task),
+            mini_classification_eval=bool(plan_mini_classification_eval),
         )
 
     def _compact_issue_detail(self, text: Any, *, limit: int = 240) -> str:
@@ -1456,6 +1717,7 @@ class BenchmarkGenerationService:
         hailo_outlook_summary: Optional[HailoCompileOutlookSummary] = None,
         top_hailo_boundaries: Optional[Sequence[int]] = None,
         hailo_full_model_preflight: Optional[Mapping[str, Any]] = None,
+        full_model_preflight_policy: str = 'enabled',
     ) -> Dict[str, Any]:
         out_dir = str(out_dir)
         harness_path = str(harness_path)
@@ -1508,6 +1770,7 @@ class BenchmarkGenerationService:
             'hailo_outlook': hailo_outlook,
             'top_hailo_boundaries': list(top_boundaries),
             'hailo_full_model_preflight': (dict(hailo_full_model_preflight) if isinstance(hailo_full_model_preflight, Mapping) else None),
+            'full_model_preflight_policy': normalize_hailo_full_model_preflight_policy(full_model_preflight_policy),
             'auto_skip_groups': list(benign_groups),
             'rejection_groups': list(rejected_groups),
             'warning_groups': list(warning_groups),
@@ -1529,6 +1792,7 @@ class BenchmarkGenerationService:
         hailo_selected = bool(summary.get('hailo_selected'))
         hailo_outlook = summary.get('hailo_outlook') if isinstance(summary.get('hailo_outlook'), Mapping) else None
         top_hailo_boundaries = [int(x) for x in (summary.get('top_hailo_boundaries') or []) if _safe_int(x) is not None]
+        accepted_hailo_feasible_boundaries = [int(x) for x in (summary.get('accepted_hailo_feasible_boundaries') or []) if _safe_int(x) is not None]
         hailo_full_model_preflight = summary.get('hailo_full_model_preflight') if isinstance(summary.get('hailo_full_model_preflight'), Mapping) else None
         issue_groups = list(summary.get('issue_groups') or [])
         out_dir = str(summary.get('out_dir') or '')
@@ -1564,6 +1828,8 @@ class BenchmarkGenerationService:
             lines.append(f'Rejected: {rejected_count}')
             if extra_warning_count > 0:
                 lines.append(f'Other warnings: {extra_warning_count}')
+            if hailo_selected and accepted_hailo_feasible_boundaries:
+                lines.append('Accepted Hailo-feasible cases: ' + ', '.join(f'b{int(b)}' for b in accepted_hailo_feasible_boundaries[:6]))
             if hailo_selected and hailo_outlook is not None:
                 top_boundary = hailo_outlook.get('top_boundary')
                 lines.append(
@@ -1575,7 +1841,9 @@ class BenchmarkGenerationService:
                     f"likely single-context={hailo_outlook.get('likely_single_context_count', 0)}/"
                     f"{hailo_outlook.get('candidate_count', 0)}"
                 )
-            if hailo_full_model_preflight and bool(hailo_full_model_preflight.get('checked')):
+            if hailo_full_model_preflight and bool(hailo_full_model_preflight.get('skipped')):
+                lines.append('Hailo parser preflight: skipped (full-model HEF build will be attempted directly)')
+            elif hailo_full_model_preflight and bool(hailo_full_model_preflight.get('checked')):
                 if bool(hailo_full_model_preflight.get('aborted')):
                     status_txt = 'blocked generation'
                 elif bool(hailo_full_model_preflight.get('plan_adjusted')):
@@ -1605,6 +1873,12 @@ class BenchmarkGenerationService:
         lines.append(f'Accepted cases: {accepted_count}/{requested_cases}')
         lines.append(f'Preferred shortlist: {preferred_shortlist_count}')
         lines.append(f'Candidate search pool: {candidate_search_pool_count}')
+        eval_profile = summary.get('evaluation_profile') if isinstance(summary.get('evaluation_profile'), dict) else {}
+        if eval_profile:
+            prof_id = str(eval_profile.get('profile_id') or eval_profile.get('requested') or '').strip()
+            matched = str(eval_profile.get('matched_model_id') or '').strip()
+            if prof_id:
+                lines.append(f"Evaluation profile: {prof_id}" + (f" -> {matched}" if matched else ''))
         if shortfall > 0:
             lines.append(f'Shortfall: {shortfall}')
         lines.append(f'Auto-skipped candidates: {benign_count}')
@@ -1633,9 +1907,15 @@ class BenchmarkGenerationService:
                 f"{hailo_outlook.get('candidate_count', 0)}"
             )
             if top_hailo_boundaries:
-                lines.append('  - top Hailo candidates: ' + ', '.join(f'b{int(b)}' for b in top_hailo_boundaries[:6]))
+                lines.append('  - top Hailo candidates before endpoint/full-baseline policy: ' + ', '.join(f'b{int(b)}' for b in top_hailo_boundaries[:6]))
+            if accepted_hailo_feasible_boundaries:
+                lines.append('  - accepted Hailo-feasible cases after policy: ' + ', '.join(f'b{int(b)}' for b in accepted_hailo_feasible_boundaries[:8]))
 
-        if hailo_full_model_preflight and bool(hailo_full_model_preflight.get('checked')):
+        if hailo_full_model_preflight and bool(hailo_full_model_preflight.get('skipped')):
+            lines.append('')
+            lines.append('Hailo parser preflight:')
+            lines.append('  - status: skipped (full-model HEF build will be attempted directly)')
+        elif hailo_full_model_preflight and bool(hailo_full_model_preflight.get('checked')):
             lines.append('')
             lines.append('Hailo parser preflight:')
             if bool(hailo_full_model_preflight.get('aborted')):
@@ -1816,6 +2096,9 @@ class BenchmarkGenerationExecutionConfig:
     hef_wsl_distro: Optional[str] = None
     hef_wsl_venv: str = ""
     hef_timeout_s: int = 0
+    hailo_full_end_node_names: Sequence[str] = field(default_factory=list)
+    hailo_full_endpoint_mode: str = ''
+    hailo_full_output_contract: Optional[Mapping[str, Any]] = None
     hailo_build_hef_fn: Any = None
     hailo_build_unavailable: Optional[str] = None
     hailo_part2_precheck_fn: Any = None
@@ -1826,6 +2109,7 @@ class BenchmarkGenerationExecutionConfig:
     hailo_part2_concat_sanity_enable: bool = True
     hailo_salvage_enable: bool = True
     hailo_salvage_neighbor_radius: int = 48
+    evaluation_profile_meta: Optional[Mapping[str, Any]] = None
     should_cancel: Optional[Callable[[], bool]] = None
 
 
@@ -1977,16 +2261,148 @@ class BenchmarkGenerationExecutionService:
         detail = str(getattr(failure_rec, 'detail', '') or '').lower() if failure_rec is not None else ''
         return ('agent infeasible' in detail and ('format_conversion' in detail or 'validator failed on node' in detail))
 
+    def _prune_unused_graph_inputs_for_hailo_prefix(self, model: Any) -> Tuple[Any, List[str]]:
+        """Drop graph.input entries that no node actually consumes.
+
+        Part2 accelerator-prefix models can be a backward slice of a larger
+        Part2 ONNX.  The generic splitter preserves all original Part2 inputs for
+        Part1-like submodels, but after truncating before YOLO DFL/decode only a
+        subset may be needed.  ONNX Runtime tolerates these dangling inputs;
+        Hailo DFC does not and reports: "Couldn't find inputs from ONNX proto".
+        """
+        try:
+            import onnx  # type: ignore
+            copied = onnx.ModelProto()
+            copied.CopyFrom(model)
+            g = copied.graph
+            init_names = {str(getattr(t, 'name', '') or '') for t in getattr(g, 'initializer', [])}
+            try:
+                init_names.update(str(getattr(t, 'name', '') or '') for t in getattr(g, 'sparse_initializer', []))
+            except Exception:
+                pass
+            consumed: Set[str] = set()
+            for node in getattr(g, 'node', []) or []:
+                for name in getattr(node, 'input', []) or []:
+                    if name:
+                        consumed.add(str(name))
+            graph_outputs = {str(getattr(o, 'name', '') or '') for o in getattr(g, 'output', []) or []}
+            keep = []
+            removed: List[str] = []
+            for vi in list(getattr(g, 'input', []) or []):
+                name = str(getattr(vi, 'name', '') or '')
+                if (not name) or name in init_names or name in consumed or name in graph_outputs:
+                    keep.append(vi)
+                else:
+                    removed.append(name)
+            if removed:
+                del g.input[:]
+                g.input.extend(keep)
+            return copied, removed
+        except Exception:
+            logger.debug("Could not prune unused graph inputs for Hailo prefix", exc_info=True)
+            return model, []
+
     def _part2_output_sets_from_suggested_end_nodes(self, nodes: Sequence[Any], parser_info: Optional[Mapping[str, Any]]) -> List[List[str]]:
         suggested_nodes = [str(x).strip() for x in list((parser_info or {}).get('suggested_end_nodes') or []) if str(x).strip()]
         if not suggested_nodes:
             return []
+        return self._part2_output_sets_from_end_node_names(nodes, suggested_nodes)
+
+    def _is_yolo26_cfg(self, cfg: Any) -> bool:
+        """Best-effort YOLO26 family detection for Hailo endpoint policy.
+
+        YOLO26 exports use an end-to-end / one-to-one head.  Hailo parser
+        suggested end nodes such as ``/model.23/Transpose_output_0`` can pass the
+        cheap parser precheck, but the real allocator still fails later at
+        ``/model.23/Concat_*`` layout/format-conversion nodes.  Keep this helper
+        deliberately conservative and based on file/model names and optional
+        metadata so it does not affect unrelated detectors.
+        """
+        raw_values: List[str] = []
+        for attr in ('base', 'model_name', 'model_id', 'full_model_src', 'full_model_dst'):
+            try:
+                value = getattr(cfg, attr, '')
+            except Exception:
+                value = ''
+            if value not in (None, ''):
+                raw_values.append(str(value))
+        for attr in ('export_metadata', 'model_metadata', 'metadata'):
+            try:
+                meta = getattr(cfg, attr, None)
+            except Exception:
+                meta = None
+            if isinstance(meta, Mapping):
+                for key in ('family', 'model_ref', 'model_name', 'name', 'source_model'):
+                    val = meta.get(key)
+                    if val not in (None, ''):
+                        raw_values.append(str(val))
+        joined = ' '.join(raw_values).lower().replace('\\', '/').replace('-', '').replace('_', '')
+        return 'yolo26' in joined
+
+    def _raw_detection_head_end_node_names_for_cfg(self, cfg: Any) -> List[str]:
+        """Return YOLO raw detection-head Conv node names for a full-model/raw-head deployment.
+
+        Prepared YOLO11 baselines already carry these nodes.  When they are not
+        present we try the same lightweight inference helper used by model
+        preparation.  Non-YOLO models simply return an empty list.
+        """
+        contract = (
+            dict(getattr(cfg, 'hailo_full_output_contract', None) or {})
+            if isinstance(getattr(cfg, 'hailo_full_output_contract', None), Mapping)
+            else {}
+        )
+        explicit: List[str] = []
+        for raw in list(getattr(cfg, 'hailo_full_end_node_names', None) or contract.get('end_node_names') or []):
+            name = str(raw or '').strip()
+            if name and name not in explicit:
+                explicit.append(name)
+        if explicit:
+            return explicit
+
+        cache: Dict[str, List[str]] = getattr(self, '_raw_detection_head_end_node_cache', {}) or {}
+        for raw_path in (getattr(cfg, 'full_model_dst', None), getattr(cfg, 'full_model_src', None)):
+            model_path = str(raw_path or '').strip()
+            if not model_path:
+                continue
+            if model_path in cache:
+                return list(cache.get(model_path) or [])
+            try:
+                p = Path(model_path).expanduser()
+                if not p.is_file():
+                    continue
+                from .model_preparation import infer_yolo_raw_detection_head_end_nodes
+                nodes = [str(x).strip() for x in list(infer_yolo_raw_detection_head_end_nodes(p, '') or []) if str(x).strip()]
+                cache[model_path] = list(nodes)
+                try:
+                    setattr(self, '_raw_detection_head_end_node_cache', cache)
+                except Exception:
+                    pass
+                if nodes:
+                    return nodes
+            except Exception:
+                logger.debug("Could not infer raw detection-head nodes for %s", model_path, exc_info=True)
+                cache[model_path] = []
+                try:
+                    setattr(self, '_raw_detection_head_end_node_cache', cache)
+                except Exception:
+                    pass
+        return []
+
+    def _part2_output_sets_from_end_node_names(self, nodes: Sequence[Any], end_node_names: Sequence[str]) -> List[List[str]]:
+        """Map ONNX node names (or tensor names) to candidate part2 output tensor sets."""
+        wanted = [str(x).strip() for x in list(end_node_names or []) if str(x).strip()]
+        if not wanted:
+            return []
         node_outputs: Dict[str, List[str]] = {}
+        known_tensors: Set[str] = set()
         for node in list(nodes or []):
             name = str(getattr(node, 'name', '') or '').strip()
             outs = [str(x).strip() for x in list(getattr(node, 'output', []) or []) if str(x).strip()]
+            for out_name in outs:
+                known_tensors.add(out_name)
             if name and outs:
                 node_outputs[name] = outs
+
         sets: List[List[str]] = []
         seen_keys: Set[Tuple[str, ...]] = set()
 
@@ -2007,12 +2423,40 @@ class BenchmarkGenerationExecutionService:
             sets.append(seq)
 
         merged: List[str] = []
-        for node_name in suggested_nodes:
-            merged.extend(node_outputs.get(node_name, []))
+        for node_or_tensor_name in wanted:
+            if node_or_tensor_name in node_outputs:
+                merged.extend(node_outputs.get(node_or_tensor_name, []))
+            elif node_or_tensor_name in known_tensors:
+                merged.append(node_or_tensor_name)
         _add(merged)
-        for node_name in suggested_nodes:
-            _add(node_outputs.get(node_name, []))
+
+        # Keep the single-node variants for parser suggested end nodes.  For YOLO
+        # raw-head fallback the merged six-output set is the normal path, but
+        # singletons are harmless as last-resort probes and can expose useful logs.
+        for node_or_tensor_name in wanted:
+            if node_or_tensor_name in node_outputs:
+                _add(node_outputs.get(node_or_tensor_name, []))
+            elif node_or_tensor_name in known_tensors:
+                _add([node_or_tensor_name])
         return sets
+
+    def _part2_output_sets_from_raw_detection_heads(self, cfg: Any) -> Tuple[List[List[str]], List[str]]:
+        raw_end_nodes = self._raw_detection_head_end_node_names_for_cfg(cfg)
+        if not raw_end_nodes:
+            return [], []
+        all_sets = self._part2_output_sets_from_end_node_names(getattr(cfg, 'nodes', None) or [], raw_end_nodes)
+        if not all_sets:
+            return [], raw_end_nodes
+
+        # Raw YOLO head mode needs the complete cv2/cv3 head output set.  A
+        # singleton raw-head branch would force the host tail to recompute the
+        # remaining branches from the original Part2 inputs, which is technically
+        # runnable but not a clean Hailo-prefix + host-tail deployment.
+        expected = len([str(x).strip() for x in list(raw_end_nodes or []) if str(x).strip()])
+        complete_sets = [list(s) for s in all_sets if len(list(s or [])) >= max(1, expected)]
+        if complete_sets:
+            return [complete_sets[0]], raw_end_nodes
+        return [], raw_end_nodes
 
     def probe_hailo_part2_support(self, cfg: BenchmarkGenerationExecutionConfig, boundary: int, *, log_cb: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
         from .. import api as asc
@@ -2085,12 +2529,260 @@ class BenchmarkGenerationExecutionService:
         if not parser_incompatible and not concat_incompatible:
             out.update({'compatible': True})
             return out
+
+        def _try_part2_output_fallback(
+            candidate_output_sets: Sequence[Sequence[str]],
+            *,
+            strategy: str,
+            log_label: str,
+            extra_payload: Optional[Mapping[str, Any]] = None,
+        ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], List[str]]:
+            first_concat_failure: Optional[Dict[str, Any]] = None
+            first_concat_outputs: List[str] = []
+            for output_names in list(candidate_output_sets or []):
+                outputs_seq = [str(x).strip() for x in list(output_names or []) if str(x).strip()]
+                if not outputs_seq:
+                    continue
+                try:
+                    p1_alt, p2_alt, manifest_alt, activation_alt, parser_alt, concat_alt = _run_split(outputs_seq)
+                except Exception as exc:
+                    if callable(log_cb):
+                        try:
+                            log_cb(f"b{b}: {log_label} fallback {outputs_seq} failed ({type(exc).__name__}: {exc})")
+                        except Exception:
+                            pass
+                    continue
+                if isinstance(activation_alt, dict) and activation_alt.get('inspect_ok') and activation_alt.get('compatible') is False:
+                    continue
+                parser_alt_incompatible = isinstance(parser_alt, dict) and parser_alt.get('inspect_ok') and parser_alt.get('compatible') is False
+                if parser_alt_incompatible:
+                    continue
+                concat_alt_incompatible = isinstance(concat_alt, dict) and concat_alt.get('inspect_ok') and concat_alt.get('compatible') is False
+                if concat_alt_incompatible:
+                    if first_concat_failure is None:
+                        first_concat_failure = dict(concat_alt or {})
+                        first_concat_outputs = list(outputs_seq)
+                    continue
+                # The accelerator-safe Part2 model is only the prefix up to the
+                # suggested/raw-head outputs.  Keep the normal Part2 ONNX as the
+                # semantic CPU tail and materialize an explicit host-tail model, so
+                # the runtime can execute: stage2_prefix_on_Hailo -> DFL/decode tail
+                # on the Jetson host.  This avoids falsely treating raw-head tensors
+                # as decoded model outputs.
+                try:
+                    p2_prefix_for_hailo, p2_host_tail, tail_manifest = asc.split_model_on_cut_tensors(
+                        p2,
+                        cut_tensors=list(outputs_seq),
+                        strict_boundary=True,
+                    )
+                    p2_prefix_for_hailo, pruned_prefix_inputs = self._prune_unused_graph_inputs_for_hailo_prefix(p2_prefix_for_hailo)
+                    if pruned_prefix_inputs and callable(log_cb):
+                        try:
+                            log_cb(
+                                f"b{b}: pruned unused Hailo Part2-prefix graph inputs "
+                                f"{list(pruned_prefix_inputs)} before HEF build"
+                            )
+                        except Exception:
+                            pass
+                except Exception as exc:
+                    if callable(log_cb):
+                        try:
+                            log_cb(f"b{b}: {log_label} host-tail split {outputs_seq} failed ({type(exc).__name__}: {exc})")
+                        except Exception:
+                            pass
+                    continue
+
+                payload = {
+                    'compatible': True,
+                    'strategy': str(strategy),
+                    'effective_part2_outputs': list(outputs_seq),
+                    'p1_model': p1,
+                    'p2_model': p2,
+                    'split_manifest': split_manifest,
+                    'activation_precheck': activation_alt,
+                    'parser_precheck': parser_alt,
+                    'concat_sanity_precheck': concat_alt,
+                    'p2_hailo_accel_model': p2_prefix_for_hailo,
+                    'p2_hailo_accel_manifest': manifest_alt,
+                    'p2_hailo_accel_pruned_inputs': list(pruned_prefix_inputs),
+                    'p2_host_tail_model': p2_host_tail,
+                    'p2_host_tail_manifest': tail_manifest,
+                    'part2_host_tail_required': True,
+                }
+                if extra_payload:
+                    payload.update(dict(extra_payload))
+                return payload, first_concat_failure, first_concat_outputs
+            return None, first_concat_failure, first_concat_outputs
+
+        # YOLO11/YOLO10 part2 usually fails because the right subgraph still
+        # contains the DFL/decode tail.  If the suite has a raw-head full-Hailo
+        # contract (or if we can infer YOLO raw-head nodes), try the same endpoint
+        # discipline for Part2: Hailo executes up to raw cv2/cv3 heads and the
+        # decode/NMS tail remains a host-side responsibility.
+        raw_candidate_output_sets, raw_end_nodes = self._part2_output_sets_from_raw_detection_heads(cfg)
+        raw_payload_extra: Dict[str, Any] = {}
+        if raw_candidate_output_sets:
+            raw_family = 'yolo26_one2one_raw_head' if any('one2one_cv' in str(x) for x in raw_end_nodes) else 'raw_detection_head'
+            raw_desc = (
+                'YOLO26 one2one raw detection-head tensors; final transpose/concat/decode/postprocess remains outside the Part2 HEF.'
+                if raw_family == 'yolo26_one2one_raw_head'
+                else 'YOLO raw cv2/cv3 detection-head tensors; DFL/decode/NMS remains outside the Part2 HEF.'
+            )
+            raw_payload_extra = {
+                'used_raw_detection_head_end_nodes': True,
+                'raw_detection_head_end_node_names': list(raw_end_nodes),
+                'part2_output_contract': {
+                    'mode': raw_family,
+                    'requires_external_postprocess': True,
+                    'host_tail_required': True,
+                    'description': raw_desc,
+                    'end_node_names': list(raw_end_nodes),
+                },
+            }
+            payload, raw_concat_failure, raw_concat_outputs = _try_part2_output_fallback(
+                raw_candidate_output_sets,
+                strategy='raw_detection_head_part2',
+                log_label='raw detection-head',
+                extra_payload=raw_payload_extra,
+            )
+            if payload is not None:
+                contract = dict(payload.get('part2_output_contract') or {})
+                contract['output_names'] = list(payload.get('effective_part2_outputs') or [])
+                payload['part2_output_contract'] = contract
+                out.update(payload)
+                if callable(log_cb):
+                    try:
+                        log_cb(
+                            f"b{b}: Hailo Part2 kept via raw detection-head outputs "
+                            f"{list(payload.get('effective_part2_outputs') or [])}; decode/DFL tail stays on host"
+                        )
+                    except Exception:
+                        pass
+                return out
+        else:
+            raw_concat_failure = None
+            raw_concat_outputs = []
+
+        # If a YOLO/raw-head contract is active, do not fall back to the Hailo
+        # parser's generic suggested end nodes for Part2.  In practice Hailo DFC
+        # often suggests /model.23/Concat for YOLO11 tails.  That removes the DFL
+        # Reshape blocker, but it still leaves a multi-scale detection-head Concat
+        # in the accelerator prefix.  The real compiler then fails with messages
+        # like "Unsupported dimensions at concat layer ... translated from
+        # /model.23/Concat".  For YOLO deployments the only semantically clean
+        # Part2 fallback is the same contract as Full-Hailo: accelerator terminates
+        # at the complete raw cv2/cv3 head tensors, and DFL/decode/NMS stays on the
+        # host.  Boundaries that cannot expose those raw-head outputs from Part2
+        # are therefore rejected and the generator can backfill earlier candidates.
+        if raw_end_nodes:
+            detail = (
+                'YOLO raw-head Hailo Part2 policy active; parser-suggested end-node fallback disabled. '
+                'This boundary could not produce the complete raw detection-head output set for Part2, '
+                'and using parser-suggested /model.23/Concat/Transpose-style outputs can trigger Hailo concat/layout failures. '
+                'Choose/backfill a boundary whose Part2 can terminate at the raw cv2/cv3 or YOLO26 one2one head tensors.'
+            )
+            if raw_candidate_output_sets:
+                detail += ' [raw-head fallback attempted but did not pass prechecks]'
+            if raw_concat_failure is not None:
+                try:
+                    detail += ' [' + format_hailo_part2_concat_sanity_error(raw_concat_failure) + ']'
+                except Exception:
+                    pass
+
+            # YOLO11 requires a complete raw-head Part2 to make a meaningful
+            # Hailo/Hailo case, so we reject and backfill.  YOLO26 is also a
+            # prime heterogeneous Hailo->TensorRT target: when the raw one2one
+            # Part2 prefix is unavailable, keep the case for Hailo Part1 ->
+            # TensorRT/ORT Part2 instead of discarding a potentially useful split.
+            if self._is_yolo26_cfg(cfg):
+                stage1_detail = (
+                    'YOLO26 one2one Part2 raw-head policy did not find a safe Hailo Part2 prefix for this boundary; '
+                    'keeping the split as Hailo-Part1 -> TensorRT/ORT-Part2 and skipping Hailo Part2 HEF generation. '
+                    + detail
+                )
+                out.update({
+                    'compatible': True,
+                    'strategy': 'yolo26_hailo_part1_only_stage1',
+                    'used_suggested_end_nodes': False,
+                    'effective_part2_outputs': [],
+                    'skip_hailo_part2_build': True,
+                    'hailo_part2_policy': 'skip_yolo26_raw_head_part2_unavailable',
+                    'raw_detection_head_end_node_names': list(raw_end_nodes),
+                    'suggested_end_nodes': list((parser_info or {}).get('suggested_end_nodes') or []),
+                    'part2_output_contract': {
+                        'mode': 'decoded_or_end2end_host_or_trt',
+                        'requires_external_postprocess': False,
+                        'host_tail_required': False,
+                        'hailo_part2_unsupported': True,
+                        'raw_head_policy_enforced': True,
+                        'end_node_names': list(raw_end_nodes),
+                        'description': 'YOLO26 Part2 remains on TensorRT/ORT host/backend; Hailo is used only for Part1 in heterogeneous runs when a safe one2one raw-head Part2 prefix is unavailable.',
+                    },
+                    'policy_detail': stage1_detail,
+                })
+                if callable(log_cb):
+                    try:
+                        log_cb(f"b{b}: {stage1_detail}")
+                    except Exception:
+                        pass
+                return out
+
+            out.update({
+                'compatible': False,
+                'reason': 'yolo_raw_head_policy',
+                'detail': detail,
+                'raw_detection_head_end_node_names': list(raw_end_nodes),
+                'suggested_end_nodes': list((parser_info or {}).get('suggested_end_nodes') or []),
+                'raw_head_policy_enforced': True,
+            })
+            return out
+
         if not parser_incompatible and concat_incompatible:
             out.update({
                 'compatible': False,
                 'reason': 'concat_sanity',
                 'detail': format_hailo_part2_concat_sanity_error(concat_sanity_info or {}),
             })
+            return out
+
+        # YOLO26 is different from YOLO11: the exported model is normally
+        # end-to-end / one-to-one and DFL-free.  The parser often suggests a
+        # late Transpose endpoint for Part2, but the real build still fails later
+        # in Concat/format-conversion allocation.  For the heterogeneous thesis
+        # use case, Hailo only needs to supply stage1; TensorRT/ORT can own the
+        # full decoded/end-to-end Part2.  Therefore keep the split as usable, but
+        # deliberately skip Hailo-Part2 compilation unless an explicit safe
+        # raw-head/end-node policy succeeded above.
+        if self._is_yolo26_cfg(cfg):
+            suggested_nodes = [str(x).strip() for x in list((parser_info or {}).get('suggested_end_nodes') or []) if str(x).strip()]
+            detail = (
+                'YOLO26 end-to-end head policy: Hailo Part2 is treated as unsupported for this boundary. '
+                'The parser-suggested Transpose/Concat-style endpoint can pass cheap prechecks but has repeatedly '
+                'failed during Hailo allocation/layout mapping. The case remains usable for Hailo-Part1 -> TensorRT/ORT-Part2; '
+                'Hailo Part2 HEF generation will be skipped.'
+            )
+            out.update({
+                'compatible': True,
+                'strategy': 'yolo26_hailo_part1_only_stage1',
+                'used_suggested_end_nodes': False,
+                'effective_part2_outputs': [],
+                'skip_hailo_part2_build': True,
+                'hailo_part2_policy': 'skip_yolo26_end2end_head',
+                'suggested_end_nodes': suggested_nodes,
+                'part2_output_contract': {
+                    'mode': 'decoded_or_end2end_host_or_trt',
+                    'requires_external_postprocess': False,
+                    'host_tail_required': False,
+                    'hailo_part2_unsupported': True,
+                    'description': 'YOLO26 Part2 remains on TensorRT/ORT host/backend; Hailo is used only for Part1 in heterogeneous runs.',
+                },
+                'policy_detail': detail,
+            })
+            if callable(log_cb):
+                try:
+                    log_cb(f"b{b}: {detail}")
+                except Exception:
+                    pass
             return out
 
         if not bool(getattr(cfg, 'hailo_part2_enable_suggested_endnode_fallback', True)):
@@ -2102,53 +2794,37 @@ class BenchmarkGenerationExecutionService:
             suggested_nodes = list((parser_info or {}).get('suggested_end_nodes') or [])
             if suggested_nodes:
                 detail = f"{detail} [suggested end-node fallback disabled]"
+            if raw_candidate_output_sets:
+                detail = f"{detail} [raw-head fallback attempted but did not pass prechecks]"
             out.update({
                 'compatible': False,
                 'reason': 'parser',
                 'detail': detail,
                 'suggested_end_nodes': suggested_nodes,
+                'raw_detection_head_end_node_names': list(raw_end_nodes),
                 'fallback_disabled': True,
             })
             return out
 
         candidate_output_sets = self._part2_output_sets_from_suggested_end_nodes(cfg.nodes, parser_info)
-        first_concat_sanity_failure: Optional[Dict[str, Any]] = None
-        first_concat_sanity_outputs: List[str] = []
-        for output_names in candidate_output_sets:
-            try:
-                p1_alt, p2_alt, manifest_alt, activation_alt, parser_alt, concat_alt = _run_split(output_names)
-            except Exception as exc:
-                if callable(log_cb):
-                    try:
-                        log_cb(f"b{b}: suggested end-node fallback {list(output_names)} failed ({type(exc).__name__}: {exc})")
-                    except Exception:
-                        pass
-                continue
-            if isinstance(activation_alt, dict) and activation_alt.get('inspect_ok') and activation_alt.get('compatible') is False:
-                continue
-            parser_alt_incompatible = isinstance(parser_alt, dict) and parser_alt.get('inspect_ok') and parser_alt.get('compatible') is False
-            if parser_alt_incompatible:
-                continue
-            concat_alt_incompatible = isinstance(concat_alt, dict) and concat_alt.get('inspect_ok') and concat_alt.get('compatible') is False
-            if concat_alt_incompatible:
-                if first_concat_sanity_failure is None:
-                    first_concat_sanity_failure = dict(concat_alt or {})
-                    first_concat_sanity_outputs = list(output_names)
-                continue
-            out.update({
-                'compatible': True,
-                'strategy': 'hailo_parser_suggested_end_nodes',
-                'used_suggested_end_nodes': True,
-                'suggested_end_nodes': list((parser_info or {}).get('suggested_end_nodes') or []),
-                'effective_part2_outputs': list(output_names),
-                'p1_model': p1_alt,
-                'p2_model': p2_alt,
-                'split_manifest': manifest_alt,
-                'activation_precheck': activation_alt,
-                'parser_precheck': parser_alt,
-                'concat_sanity_precheck': concat_alt,
-            })
+        suggested_payload_extra = {
+            'used_suggested_end_nodes': True,
+            'suggested_end_nodes': list((parser_info or {}).get('suggested_end_nodes') or []),
+        }
+        payload, first_concat_sanity_failure, first_concat_sanity_outputs = _try_part2_output_fallback(
+            candidate_output_sets,
+            strategy='hailo_parser_suggested_end_nodes',
+            log_label='suggested end-node',
+            extra_payload=suggested_payload_extra,
+        )
+        if payload is not None:
+            out.update(payload)
             return out
+
+        # Prefer the concat-sanity detail from the fallback that got furthest.
+        if first_concat_sanity_failure is None and raw_concat_failure is not None:
+            first_concat_sanity_failure = raw_concat_failure
+            first_concat_sanity_outputs = list(raw_concat_outputs or [])
 
         if first_concat_sanity_failure is not None:
             if first_concat_sanity_outputs:
@@ -2160,6 +2836,7 @@ class BenchmarkGenerationExecutionService:
                 'concat_sanity_precheck': first_concat_sanity_failure,
                 'effective_part2_outputs': list(first_concat_sanity_outputs),
                 'suggested_end_nodes': list((parser_info or {}).get('suggested_end_nodes') or []),
+                'raw_detection_head_end_node_names': list(raw_end_nodes),
             })
             return out
 
@@ -2168,13 +2845,69 @@ class BenchmarkGenerationExecutionService:
             if cfg.hailo_part2_parser_precheck_error_fn is not None
             else 'Unsupported Hailo Part2 parser-blocking head'
         )
+        if raw_candidate_output_sets:
+            detail = f"{detail} [raw-head fallback attempted but did not pass prechecks]"
         out.update({
             'compatible': False,
             'reason': 'parser',
             'detail': detail,
             'suggested_end_nodes': list((parser_info or {}).get('suggested_end_nodes') or []),
+            'raw_detection_head_end_node_names': list(raw_end_nodes),
         })
         return out
+
+    def _yolo26_part1_static_skip_reason(self, cfg: BenchmarkGenerationExecutionConfig, cut_tensors: Sequence[Any]) -> str:
+        """Cheap log-derived guard for YOLO26 Part1 Hailo build attempts.
+
+        Older YOLO26L/YOLO26M generation logs show that boundaries crossing the
+        late detection head around ``/model.23/Reshape*`` almost always fail Hailo
+        Part1 mapping after minutes of calibration/allocation, typically with
+        ``format_conversion* -> Agent infeasible`` or feature-splitter layout
+        errors.  Good heterogeneous YOLO26 splits either cut much earlier or cut
+        at clean one2one/raw-head Conv tensors without the Reshape/Transpose tail.
+
+        Keep this as a conservative pre-build skip: it only applies to YOLO26 and
+        only when a Hailo Part1 HEF is requested.
+        """
+        try:
+            if not bool(cfg.hef_part1) or not cfg.hef_targets or not self._is_yolo26_cfg(cfg):
+                return ""
+            names = [str(x or "").strip() for x in list(cut_tensors or []) if str(x or "").strip()]
+            if not names:
+                return ""
+            low = [x.lower().replace('\\', '/') for x in names]
+            model23_reshape = sum(1 for x in low if x.startswith('/model.23/reshape'))
+            model23_late_layout = sum(1 for x in low if x.startswith('/model.23/') and any(tok in x for tok in ('/reshape', '/transpose', '/concat', '/slice')))
+            model22_layout = sum(1 for x in low if x.startswith('/model.22/') and any(tok in x for tok in ('/slice', '/split', '/concat', '/reshape')))
+            model19_layout = sum(1 for x in low if x.startswith('/model.19/') and any(tok in x for tok in ('/slice', '/split', '/concat', '/reshape')))
+            one2one = sum(1 for x in low if 'one2one_' in x)
+            crosses_model22_23 = any(x.startswith('/model.22/') for x in low) and any(x.startswith('/model.23/') for x in low)
+            crosses_mid_and_head = any(x.startswith('/model.19/') or x.startswith('/model.20/') or x.startswith('/model.21/') for x in low) and any(x.startswith('/model.23/') for x in low)
+
+            if model23_reshape >= 2:
+                return (
+                    'YOLO26 static Hailo Part1 guard: boundary crosses /model.23/Reshape* detection-head tail; '
+                    'old YOLO26L/M logs show this neighborhood repeatedly fails with Hailo format_conversion/agent-infeasible mapping. '
+                    'Backfill to a cleaner one2one/raw-head Conv cut or an earlier Hailo-Part1 -> TRT split.'
+                )
+            if crosses_model22_23 and (model23_late_layout or model22_layout) and len(low) >= 4:
+                return (
+                    'YOLO26 static Hailo Part1 guard: boundary mixes /model.22 and /model.23 late-head layout tensors; '
+                    'this matches prior YOLO26L Hailo mapping failures.'
+                )
+            if crosses_mid_and_head and model23_late_layout and len(low) >= 4:
+                return (
+                    'YOLO26 static Hailo Part1 guard: boundary mixes mid-neck tensors with /model.23 layout tensors; '
+                    'this matches prior YOLO26 Hailo format-conversion failures.'
+                )
+            if one2one and (model23_late_layout + model22_layout + model19_layout) >= 3 and len(low) >= 5:
+                return (
+                    'YOLO26 static Hailo Part1 guard: boundary combines one2one head tensors with late layout tensors; '
+                    'prefer a clean one2one Conv cut without Reshape/Slice/Concat crossings.'
+                )
+        except Exception:
+            logger.debug('YOLO26 static Part1 skip guard failed', exc_info=True)
+        return ""
 
     def execute_case_build_loop(self, cfg: BenchmarkGenerationExecutionConfig, cb: BenchmarkGenerationExecutionCallbacks) -> List[int]:
         from .. import api as asc
@@ -2305,6 +3038,30 @@ class BenchmarkGenerationExecutionService:
                 continue
 
             log(f"b{b}: cut tensors: {len(cut_tensors)}")
+
+            static_part1_skip = self._yolo26_part1_static_skip_reason(cfg, cut_tensors)
+            if static_part1_skip:
+                log(f"b{b}: skip (YOLO26 static Hailo Part1 guard) - {static_part1_skip}")
+                discarded_cases.append(
+                    build_benchmark_case_rejection(
+                        boundary=int(b),
+                        folder=f"b{int(b):0{cfg.pad}d}",
+                        reason="hailo_yolo26_static_part1_guard",
+                        stage="part1",
+                        hw_arch=target_label,
+                        detail=static_part1_skip,
+                    )
+                )
+                discarded_boundaries.add(int(b))
+                completed_boundaries.add(int(b))
+                _persist(status='running', current_boundary=int(b))
+                try:
+                    shutil.rmtree(case_dir, ignore_errors=True)
+                except Exception:
+                    pass
+                qput(("prog", made, f"b{b} (skip: YOLO26 static Part1 guard)"))
+                continue
+
             p1_path = os.path.join(case_dir, f"{cfg.base}_part1_b{b}.onnx")
             p2_path = os.path.join(case_dir, f"{cfg.base}_part2_b{b}.onnx")
             manifest_path = os.path.join(case_dir, "split_manifest.json")
@@ -2315,6 +3072,17 @@ class BenchmarkGenerationExecutionService:
             hailo_part2_concat_sanity_precheck = None
             part2_output_strategy = 'original'
             effective_part2_outputs: List[str] = []
+            part2_output_contract: Dict[str, Any] = {}
+            p2_hailo_accel_model = None
+            p2_hailo_accel_manifest = None
+            p2_hailo_accel_pruned_inputs: List[str] = []
+            p2_host_tail_model = None
+            p2_host_tail_manifest = None
+            p2_hailo_accel_path: Optional[str] = None
+            p2_host_tail_path: Optional[str] = None
+            part2_host_tail_required = False
+            skip_hailo_part2_build = False
+            hailo_part2_policy_detail = ''
             try:
                 if bool(cfg.hef_part2) and (cfg.hailo_part2_precheck_fn is not None or cfg.hailo_part2_parser_precheck_fn is not None):
                     probe = self.probe_hailo_part2_support(cfg, b, log_cb=log)
@@ -2362,10 +3130,24 @@ class BenchmarkGenerationExecutionService:
                     hailo_part2_concat_sanity_precheck = probe.get('concat_sanity_precheck') if isinstance(probe.get('concat_sanity_precheck'), dict) else None
                     part2_output_strategy = str(probe.get('strategy') or 'original')
                     effective_part2_outputs = [str(x).strip() for x in list(probe.get('effective_part2_outputs') or []) if str(x).strip()]
+                    part2_output_contract = (dict(probe.get('part2_output_contract') or {}) if isinstance(probe.get('part2_output_contract'), Mapping) else {})
+                    p2_hailo_accel_model = probe.get('p2_hailo_accel_model')
+                    p2_hailo_accel_manifest = probe.get('p2_hailo_accel_manifest') if isinstance(probe.get('p2_hailo_accel_manifest'), dict) else None
+                    p2_hailo_accel_pruned_inputs = [str(x).strip() for x in list(probe.get('p2_hailo_accel_pruned_inputs') or []) if str(x).strip()]
+                    p2_host_tail_model = probe.get('p2_host_tail_model')
+                    p2_host_tail_manifest = probe.get('p2_host_tail_manifest') if isinstance(probe.get('p2_host_tail_manifest'), dict) else None
+                    part2_host_tail_required = bool(probe.get('part2_host_tail_required'))
+                    skip_hailo_part2_build = bool(probe.get('skip_hailo_part2_build'))
+                    hailo_part2_policy_detail = str(probe.get('policy_detail') or '')
                     if part2_output_strategy != 'original':
                         log(
-                            f"b{b}: using alternative Hailo Part2 end-node strategy "
+                            f"b{b}: using alternative Hailo Part2 strategy "
                             f"({part2_output_strategy}, outputs={effective_part2_outputs})"
+                        )
+                    if skip_hailo_part2_build:
+                        log(
+                            f"b{b}: Hailo Part2 build disabled by policy "
+                            f"({part2_output_strategy}); case remains available for Hailo-Part1 -> TRT/ORT-Part2"
                         )
                 else:
                     p1, p2, split_manifest = asc.split_model_on_cut_tensors(
@@ -2375,6 +3157,12 @@ class BenchmarkGenerationExecutionService:
                     )
                 asc.save_model(p1, p1_path)
                 asc.save_model(p2, p2_path)
+                if p2_hailo_accel_model is not None:
+                    p2_hailo_accel_path = os.path.join(case_dir, f"{cfg.base}_part2_hailo_prefix_b{b}.onnx")
+                    asc.save_model(p2_hailo_accel_model, p2_hailo_accel_path)
+                if p2_host_tail_model is not None:
+                    p2_host_tail_path = os.path.join(case_dir, f"{cfg.base}_part2_host_tail_b{b}.onnx")
+                    asc.save_model(p2_host_tail_model, p2_host_tail_path)
             except Exception as exc:
                 errors.append(f"b{b}: split failed: {type(exc).__name__}: {exc}")
                 log(f"b{b}: split failed: {type(exc).__name__}: {exc}")
@@ -2383,6 +3171,10 @@ class BenchmarkGenerationExecutionService:
 
             log(f"b{b}: wrote {os.path.basename(p1_path)}")
             log(f"b{b}: wrote {os.path.basename(p2_path)}")
+            if p2_hailo_accel_path:
+                log(f"b{b}: wrote {os.path.basename(p2_hailo_accel_path)} (Hailo Part2 accelerator prefix)")
+            if p2_host_tail_path:
+                log(f"b{b}: wrote {os.path.basename(p2_host_tail_path)} (host-side Part2 tail)")
 
             pred: Dict[str, Any] = {}
             try:
@@ -2435,11 +3227,49 @@ class BenchmarkGenerationExecutionService:
             if isinstance(hailo_part2_concat_sanity_precheck, dict):
                 manifest_out.setdefault('hailo', {})
                 manifest_out['hailo']['part2_concat_sanity_precheck'] = hailo_part2_concat_sanity_precheck
-            if part2_output_strategy != 'original' or effective_part2_outputs:
+            if part2_output_strategy != 'original' or effective_part2_outputs or part2_output_contract:
                 manifest_out.setdefault('hailo', {})
                 manifest_out['hailo']['part2_output_strategy'] = str(part2_output_strategy)
                 if effective_part2_outputs:
                     manifest_out['hailo']['part2_effective_outputs'] = list(effective_part2_outputs)
+                if part2_output_contract:
+                    _contract = dict(part2_output_contract)
+                    if effective_part2_outputs and not _contract.get('output_names'):
+                        _contract['output_names'] = list(effective_part2_outputs)
+                    if part2_host_tail_required:
+                        _contract['host_tail_required'] = True
+                    manifest_out['hailo']['part2_output_contract'] = _contract
+            if skip_hailo_part2_build:
+                manifest_out.setdefault('hailo', {})
+                manifest_out['hailo']['part2_build_skipped_by_policy'] = True
+                manifest_out['hailo']['part2_policy'] = str(part2_output_strategy or 'policy_skip')
+                if hailo_part2_policy_detail:
+                    manifest_out['hailo']['part2_policy_detail'] = hailo_part2_policy_detail
+            if p2_hailo_accel_path or p2_host_tail_path or part2_host_tail_required:
+                manifest_out.setdefault('hailo', {})
+                if p2_hailo_accel_path:
+                    manifest_out['hailo']['part2_accel_model'] = os.path.basename(p2_hailo_accel_path).replace('\\', '/')
+                    manifest_out['hailo']['part2_accelerator_model'] = os.path.basename(p2_hailo_accel_path).replace('\\', '/')
+                    if p2_hailo_accel_pruned_inputs:
+                        manifest_out['hailo']['part2_accel_pruned_unused_inputs'] = list(p2_hailo_accel_pruned_inputs)
+                if p2_host_tail_path:
+                    manifest_out['hailo']['part2_host_tail_model'] = os.path.basename(p2_host_tail_path).replace('\\', '/')
+                manifest_out['hailo']['part2_host_tail_required'] = bool(part2_host_tail_required or p2_host_tail_path)
+                if effective_part2_outputs:
+                    manifest_out['hailo']['part2_accelerator_outputs'] = list(effective_part2_outputs)
+                if isinstance(p2_hailo_accel_manifest, dict):
+                    manifest_out['hailo']['part2_accel_manifest'] = dict(p2_hailo_accel_manifest)
+                if isinstance(p2_host_tail_manifest, dict):
+                    manifest_out['hailo']['part2_host_tail_manifest'] = dict(p2_host_tail_manifest)
+            full_end_nodes_case = [str(x).strip() for x in list(cfg.hailo_full_end_node_names or []) if str(x).strip()]
+            full_contract_case = dict(cfg.hailo_full_output_contract or {}) if isinstance(cfg.hailo_full_output_contract, Mapping) else {}
+            if full_end_nodes_case or full_contract_case or str(cfg.hailo_full_endpoint_mode or '').strip():
+                manifest_out.setdefault('hailo', {})
+                manifest_out['hailo']['full_endpoint_mode'] = str(cfg.hailo_full_endpoint_mode or ('custom_end_nodes' if full_end_nodes_case else 'full'))
+                if full_end_nodes_case:
+                    manifest_out['hailo']['full_end_node_names'] = list(full_end_nodes_case)
+                if full_contract_case:
+                    manifest_out['hailo']['full_output_contract'] = dict(full_contract_case)
 
             try:
                 manifest_out.setdefault('schema', 'onnx-splitpoint/split-manifest')
@@ -2449,6 +3279,10 @@ class BenchmarkGenerationExecutionService:
                     'part1': {'path': str(manifest_out.get('part1_model') or manifest_out.get('part1') or '').replace('\\', '/')},
                     'part2': {'path': str(manifest_out.get('part2_model') or manifest_out.get('part2') or '').replace('\\', '/')},
                 }
+                if p2_hailo_accel_path:
+                    manifest_out['models']['part2_hailo_accel'] = {'path': os.path.basename(p2_hailo_accel_path).replace('\\', '/')}
+                if p2_host_tail_path:
+                    manifest_out['models']['part2_host_tail'] = {'path': os.path.basename(p2_host_tail_path).replace('\\', '/')}
                 cut_full = manifest_out.get('cut_tensors_full') or manifest_out.get('cut_tensors') or []
                 cut_p1 = manifest_out.get('part1_cut_names') or []
                 cut_p2 = manifest_out.get('part2_cut_names') or []
@@ -2533,9 +3367,14 @@ class BenchmarkGenerationExecutionService:
             case_rejection = None
             case_first_rejection = None
             case_variant_availability: Dict[str, Dict[str, Any]] = {}
+            case_suite_full_available = any(
+                bool(((runtime.suite_hailo_hefs.get(str(hw).strip()) or {}).get('full')))
+                for hw in list(cfg.hef_targets or [])
+                if str(hw).strip()
+            )
             if cfg.hef_targets and (cfg.hef_part1 or cfg.hef_part2):
                 log(
-                    f"b{b}: Hailo HEF generation requested (backend={cfg.hef_backend}, targets={cfg.hef_targets}, full=False, part1={cfg.hef_part1}, part2={cfg.hef_part2})"
+                    f"b{b}: Hailo HEF generation requested (backend={cfg.hef_backend}, targets={cfg.hef_targets}, full={bool(case_suite_full_available)}, part1={cfg.hef_part1}, part2={cfg.hef_part2})"
                 )
                 if cfg.hailo_build_hef_fn is None:
                     manifest_out['hailo_error'] = str(cfg.hailo_build_unavailable or 'Hailo HEF build unavailable')
@@ -2556,14 +3395,21 @@ class BenchmarkGenerationExecutionService:
                         'force': bool(cfg.hef_force),
                         'keep_artifacts': bool(cfg.hef_keep),
                         'timeout_s': int(cfg.hef_timeout_s),
-                        'build': {'full': False, 'part1': bool(cfg.hef_part1), 'part2': bool(cfg.hef_part2)},
+                        'build': {'full': bool(case_suite_full_available), 'part1': bool(cfg.hef_part1), 'part2': bool(cfg.hef_part2)},
                     }
                     debug_env_key = 'ONNX_SPLITPOINT_HAILO_DEBUG_FILES'
                     old_debug_env = os.environ.get(debug_env_key)
                     if old_debug_env in (None, ''):
                         os.environ[debug_env_key] = '1'
                     try:
-                        for hw_arch in cfg.hef_targets:
+                        raw_hef_targets = [str(x).strip() for x in list(cfg.hef_targets or []) if str(x).strip()]
+                        physical_hef_targets = _physical_hailo_targets_for_build(raw_hef_targets)
+                        if raw_hef_targets and physical_hef_targets != raw_hef_targets:
+                            log(
+                                f"b{b}: normalizing Hailo build targets {raw_hef_targets} -> physical DFC archs {physical_hef_targets}; "
+                                "mixed Hailo<->TRT runs reuse these Hailo artifacts instead of calling DFC with pipeline ids."
+                            )
+                        for hw_arch in physical_hef_targets:
                             _raise_if_cancelled(f"before Hailo HEF build b{b}")
                             hw_arch = str(hw_arch).strip()
                             if not hw_arch:
@@ -2584,8 +3430,27 @@ class BenchmarkGenerationExecutionService:
                             if full_rel:
                                 abs_full = os.path.join(str(cfg.out_dir), str(full_rel))
                                 tgt_out['full'] = os.path.relpath(abs_full, case_dir).replace('\\', '/')
-                            if isinstance(suite_tgt, dict) and suite_tgt.get('full_error'):
-                                tgt_out['full_error'] = suite_tgt.get('full_error')
+                            if isinstance(suite_tgt, dict):
+                                for _full_meta_key in (
+                                    'full_endpoint_mode',
+                                    'full_end_node_names',
+                                    'full_output_contract',
+                                    'full_true_full_model',
+                                    'full_prepared_baseline',
+                                    'full_cached_from_preparation',
+                                ):
+                                    if _full_meta_key in suite_tgt:
+                                        tgt_out[_full_meta_key] = suite_tgt.get(_full_meta_key)
+                                if suite_tgt.get('full_endpoint_mode') or suite_tgt.get('full_end_node_names') or suite_tgt.get('full_output_contract'):
+                                    manifest_out.setdefault('hailo', {})
+                                    if suite_tgt.get('full_endpoint_mode'):
+                                        manifest_out['hailo']['full_endpoint_mode'] = suite_tgt.get('full_endpoint_mode')
+                                    if suite_tgt.get('full_end_node_names'):
+                                        manifest_out['hailo']['full_end_node_names'] = list(suite_tgt.get('full_end_node_names') or [])
+                                    if isinstance(suite_tgt.get('full_output_contract'), Mapping):
+                                        manifest_out['hailo']['full_output_contract'] = dict(suite_tgt.get('full_output_contract') or {})
+                                if suite_tgt.get('full_error'):
+                                    tgt_out['full_error'] = suite_tgt.get('full_error')
 
                             if cfg.hef_part1:
                                 out_p1 = os.path.join(case_dir, 'hailo', hw_arch, 'part1')
@@ -2674,6 +3539,10 @@ class BenchmarkGenerationExecutionService:
                                             r1 = r1_retry
 
                                 tgt_out['part1_build'] = self.generation_service.compact_hailo_build_summary(r1)
+                                _cost_note_p1 = self.generation_service.hailo_build_cost_note(tgt_out.get('part1_build') or {}, stage=f'HEF(part1,{hw_arch})')
+                                if _cost_note_p1:
+                                    tgt_out['part1_cost_note'] = _cost_note_p1
+                                    log(f"b{b}: {_cost_note_p1}")
                                 if r1.ok:
                                     rel = os.path.relpath(r1.hef_path or os.path.join(out_p1, 'compiled.hef'), case_dir)
                                     tgt_out['part1'] = rel.replace('\\', '/')
@@ -2706,50 +3575,109 @@ class BenchmarkGenerationExecutionService:
                             if cfg.hef_part2:
                                 out_p2 = os.path.join(case_dir, 'hailo', hw_arch, 'part2')
                                 os.makedirs(out_p2, exist_ok=True)
-                                r2 = cfg.hailo_build_hef_fn(
-                                    p2_path,
-                                    backend=cfg.hef_backend,
-                                    hw_arch=hw_arch,
-                                    net_name=f"{cfg.base}_part2_b{b}",
-                                    outdir=out_p2,
-                                    fixup=cfg.hef_fixup,
-                                    opt_level=int(cfg.hef_opt_level),
-                                    calib_dir=cfg.hef_calib_dir,
-                                    calib_count=int(cfg.hef_calib_count),
-                                    calib_batch_size=int(cfg.hef_calib_bs),
-                                    activation_part1_onnx=p1_path,
-                                    activation_gen_batch=int(cfg.hef_calib_bs),
-                                    force=cfg.hef_force,
-                                    keep_artifacts=cfg.hef_keep,
-                                    wsl_distro=cfg.hef_wsl_distro,
-                                    wsl_venv_activate=cfg.hef_wsl_venv,
-                                    wsl_timeout_s=int(cfg.hef_timeout_s),
-                                    on_log=_on_hef_log,
-                                )
+                                if part2_output_strategy != 'original' or effective_part2_outputs or part2_output_contract:
+                                    tgt_out['part2_output_strategy'] = str(part2_output_strategy)
+                                    if effective_part2_outputs:
+                                        tgt_out['part2_effective_outputs'] = list(effective_part2_outputs)
+                                    if part2_output_contract:
+                                        _p2_contract = dict(part2_output_contract)
+                                        if effective_part2_outputs and not _p2_contract.get('output_names'):
+                                            _p2_contract['output_names'] = list(effective_part2_outputs)
+                                        if part2_host_tail_required:
+                                            _p2_contract['host_tail_required'] = True
+                                        tgt_out['part2_output_contract'] = _p2_contract
+                                p2_build_path = p2_hailo_accel_path or p2_path
+                                if p2_hailo_accel_path:
+                                    tgt_out['part2_accel_model'] = os.path.relpath(p2_hailo_accel_path, case_dir).replace('\\', '/')
+                                    tgt_out['part2_accelerator_model'] = os.path.relpath(p2_hailo_accel_path, case_dir).replace('\\', '/')
+                                    if p2_hailo_accel_pruned_inputs:
+                                        tgt_out['part2_accel_pruned_unused_inputs'] = list(p2_hailo_accel_pruned_inputs)
+                                    tgt_out['part2_host_tail_required'] = bool(part2_host_tail_required or p2_host_tail_path)
+                                    if p2_host_tail_path:
+                                        tgt_out['part2_host_tail_model'] = os.path.relpath(p2_host_tail_path, case_dir).replace('\\', '/')
+                                    log(f"b{b}: building HEF(part2,{hw_arch}) from accelerator prefix {os.path.basename(p2_build_path)}")
+                                if skip_hailo_part2_build:
+                                    class _SkippedHailoPart2Build:
+                                        ok = False
+                                        skipped = True
+                                        timed_out = False
+                                        hef_path = None
+                                        elapsed_s = 0.0
+                                        context_count = None
+                                        detected = {}
+                                        process = {}
+                                        result_json_path = None
+                                        fixed_onnx_path = None
+                                        parsed_har_path = None
+                                        quant_har_path = None
+                                        calib_info = None
+                                        error = 'Hailo Part2 skipped by YOLO26 end-to-end head policy; use TensorRT/ORT for Part2.'
+                                    r2 = _SkippedHailoPart2Build()
+                                    tgt_out['part2_skipped_by_policy'] = True
+                                    tgt_out['part2_policy'] = str(part2_output_strategy or 'policy_skip')
+                                    if hailo_part2_policy_detail:
+                                        tgt_out['part2_policy_detail'] = hailo_part2_policy_detail
+                                    log(f"b{b}: HEF(part2,{hw_arch}) SKIPPED by policy ({part2_output_strategy}); Hailo-Part1 remains usable")
+                                else:
+                                    r2 = cfg.hailo_build_hef_fn(
+                                        p2_build_path,
+                                        backend=cfg.hef_backend,
+                                        hw_arch=hw_arch,
+                                        net_name=(f"{cfg.base}_part2_hailo_prefix_b{b}" if p2_hailo_accel_path else f"{cfg.base}_part2_b{b}"),
+                                        outdir=out_p2,
+                                        fixup=cfg.hef_fixup,
+                                        opt_level=int(cfg.hef_opt_level),
+                                        calib_dir=cfg.hef_calib_dir,
+                                        calib_count=int(cfg.hef_calib_count),
+                                        calib_batch_size=int(cfg.hef_calib_bs),
+                                        activation_part1_onnx=p1_path,
+                                        activation_gen_batch=int(cfg.hef_calib_bs),
+                                        force=cfg.hef_force,
+                                        keep_artifacts=cfg.hef_keep,
+                                        wsl_distro=cfg.hef_wsl_distro,
+                                        wsl_venv_activate=cfg.hef_wsl_venv,
+                                        wsl_timeout_s=int(cfg.hef_timeout_s),
+                                        on_log=_on_hef_log,
+                                    )
                                 tgt_out['part2_build'] = self.generation_service.compact_hailo_build_summary(r2)
+                                _cost_note_p2 = self.generation_service.hailo_build_cost_note(tgt_out.get('part2_build') or {}, stage=f'HEF(part2,{hw_arch})')
+                                if _cost_note_p2:
+                                    tgt_out['part2_cost_note'] = _cost_note_p2
+                                    log(f"b{b}: {_cost_note_p2}")
                                 if r2.ok:
                                     rel = os.path.relpath(r2.hef_path or os.path.join(out_p2, 'compiled.hef'), case_dir)
                                     tgt_out['part2'] = rel.replace('\\', '/')
-                                    log(f"b{b}: HEF(part2,{hw_arch}) OK")
+                                    if str(part2_output_strategy or '').strip() == 'raw_detection_head_part2':
+                                        log(f"b{b}: HEF(part2,{hw_arch}) OK (raw detection-head; DFL/decode tail on host)")
+                                    else:
+                                        log(f"b{b}: HEF(part2,{hw_arch}) OK")
                                 else:
-                                    tgt_out['part2_error'] = r2.error
-                                    err_line = f"b{b}: HEF(part2,{hw_arch}) {_hef_failure_label(r2)}: {r2.error}"
-                                    errors.append(err_line)
-                                    log(err_line)
-                                    failure_rec = classify_hailo_build_failure(r2, boundary=int(b), stage='part2', hw_arch=hw_arch)
-                                    if failure_rec.clusterable:
-                                        hailo_failure_records.append(failure_rec)
-                                    if case_first_rejection is None:
-                                        case_first_rejection = build_benchmark_case_rejection(
-                                            boundary=int(b),
-                                            folder=folder,
-                                            reason='hailo_hef_build_failed',
-                                            stage='part2',
-                                            hw_arch=hw_arch,
-                                            detail=r2.error,
-                                            hef_result=r2,
-                                        )
-                                self._maybe_publish_diag(cb, f"benchmark b{b} part2 @ {hw_arch}", r2, log)
+                                    if skip_hailo_part2_build and bool(getattr(r2, 'skipped', False)):
+                                        # Policy skips are not failures: the case can still be used for
+                                        # Hailo-Part1 -> TensorRT/ORT-Part2 pipelines.  Do not create a
+                                        # rejection entry or the case will look semantically failed.
+                                        tgt_out['part2_error'] = None
+                                        tgt_out['part2_skipped_by_policy'] = True
+                                    else:
+                                        tgt_out['part2_error'] = r2.error
+                                        err_line = f"b{b}: HEF(part2,{hw_arch}) {_hef_failure_label(r2)}: {r2.error}"
+                                        errors.append(err_line)
+                                        log(err_line)
+                                        failure_rec = classify_hailo_build_failure(r2, boundary=int(b), stage='part2', hw_arch=hw_arch)
+                                        if failure_rec.clusterable:
+                                            hailo_failure_records.append(failure_rec)
+                                        if case_first_rejection is None:
+                                            case_first_rejection = build_benchmark_case_rejection(
+                                                boundary=int(b),
+                                                folder=folder,
+                                                reason='hailo_hef_build_failed',
+                                                stage='part2',
+                                                hw_arch=hw_arch,
+                                                detail=r2.error,
+                                                hef_result=r2,
+                                            )
+                                if not skip_hailo_part2_build:
+                                    self._maybe_publish_diag(cb, f"benchmark b{b} part2 @ {hw_arch}", r2, log)
 
                             _raise_if_cancelled(f"after Hailo HEF build b{b}")
 
@@ -2831,10 +3759,12 @@ class BenchmarkGenerationExecutionService:
                 case_entry['hailo_case_variant_availability'] = dict(case_variant_availability)
             if hailo_parse_entry is not None:
                 case_entry['hailo_parse_check'] = hailo_parse_entry
-            if part2_output_strategy != 'original' or effective_part2_outputs:
+            if part2_output_strategy != 'original' or effective_part2_outputs or part2_output_contract:
                 case_entry['hailo_part2_output_strategy'] = str(part2_output_strategy)
                 if effective_part2_outputs:
                     case_entry['hailo_part2_effective_outputs'] = list(effective_part2_outputs)
+                if part2_output_contract:
+                    case_entry['hailo_part2_output_contract'] = dict(part2_output_contract)
             case_entry.update(hailo_parse_fields)
             cases.append(case_entry)
             accepted_boundaries.add(int(b))
@@ -2883,6 +3813,11 @@ class BenchmarkGenerationOrchestrationConfig:
     hef_wsl_venv: str
     hef_timeout_s: int
     full_hef_policy: str
+    full_model_preflight_policy: str = 'enabled'
+    hailo_full_end_node_names: Sequence[str] = field(default_factory=list)
+    hailo_full_endpoint_mode: str = ''
+    hailo_full_output_contract: Optional[Mapping[str, Any]] = None
+    prepared_full_hailo_baseline: Optional[Mapping[str, Any]] = None
     hailo_build_hef_fn: Any = None
     hailo_parse_check_fn: Any = None
     hailo_build_unavailable: Optional[str] = None
@@ -2899,6 +3834,7 @@ class BenchmarkGenerationOrchestrationConfig:
     copy_schema_tree: Any = None
     tool_gui_version: str = "?"
     tool_core_version: str = "?"
+    evaluation_profile_meta: Optional[Mapping[str, Any]] = None
     benchmark_objective: str = "latency"
     should_cancel: Optional[Callable[[], bool]] = None
 
@@ -2936,6 +3872,50 @@ class BenchmarkGenerationOrchestrationService:
             return
         detail = f" ({stage})" if str(stage or "").strip() else ""
         raise BenchmarkGenerationCancelled(f"Benchmark-set generation cancelled by user{detail}")
+
+    def _force_yolo26_suite_full_baseline_if_needed(
+        self,
+        cfg: BenchmarkGenerationOrchestrationConfig,
+        *,
+        log: Callable[[str], None],
+    ) -> BenchmarkGenerationOrchestrationConfig:
+        """Ensure YOLO26 benchmark sets carry an explicit Hailo Full baseline.
+
+        Some user-facing benchmark presets focus on split/matrix runs and can
+        arrive here with ``hef_full=False`` even though Hailo is selected. For
+        YOLO26 this leaves the generated suite without the single-system Hailo
+        baseline needed to compare Hailo->TensorRT throughput against Hailo-only.
+        Unless the user explicitly selected the full-HEF policy ``skip``, enable
+        the suite-level Full HEF build and let the normal decoded-full ->
+        one2one/raw-head fallback decide whether the artifact is feasible.
+        """
+        try:
+            full_policy = normalize_full_hef_policy(cfg.full_hef_policy)
+        except Exception:
+            full_policy = str(cfg.full_hef_policy or 'end').strip().lower() or 'end'
+        try:
+            is_yolo26 = bool(self._is_yolo26_orchestration_cfg(cfg))
+        except Exception:
+            is_yolo26 = False
+        effective_targets = self._effective_hailo_targets(cfg)
+        if (
+            is_yolo26
+            and bool(effective_targets)
+            and not bool(cfg.hef_full)
+        ):
+            log(
+                'suite: YOLO26 policy: enabling Hailo Full baseline even though the selected run variants did not request a Full HEF; '
+                'decoded full will be tried first and one2one raw-head endpoints will be used as fallback if needed.'
+            )
+            return replace(
+                cfg,
+                hailo_selected=True,
+                hef_targets=list(effective_targets),
+                hef_full=True,
+                execution_cfg=replace(cfg.execution_cfg, hef_targets=list(effective_targets)),
+            )
+        return cfg
+
 
     def _prefilter_shortlist_for_hailo_part2(self, cfg: BenchmarkGenerationOrchestrationConfig, *, discarded_cases: List[Dict[str, Any]], discarded_boundaries: Set[int], log: Callable[[str], None]) -> Tuple[List[int], List[int], Set[int]]:
         ranked_candidates = list(cfg.ranked_candidates)
@@ -2979,12 +3959,19 @@ class BenchmarkGenerationOrchestrationService:
                 )
                 if probe.get('effective_part2_outputs'):
                     rec['effective_part2_outputs'] = list(probe.get('effective_part2_outputs') or [])
+                if isinstance(probe.get('part2_output_contract'), Mapping):
+                    rec['part2_output_contract'] = dict(probe.get('part2_output_contract') or {})
                 discarded_cases.append(rec)
                 discarded_boundaries.add(int(b))
                 shortlist_prefiltered_boundaries.add(int(b))
                 log(f"b{b}: preferred shortlist auto-skip ({detail})")
             else:
-                if str(probe.get('strategy') or 'original') != 'original':
+                if bool(probe.get('skip_hailo_part2_build')):
+                    log(
+                        f"b{b}: preferred shortlist kept for Hailo-Part1 -> TRT/ORT; "
+                        f"Hailo Part2 skipped by policy ({probe.get('hailo_part2_policy') or probe.get('strategy')})"
+                    )
+                elif str(probe.get('strategy') or 'original') != 'original':
                     log(
                         f"b{b}: preferred shortlist kept via alternative Hailo Part2 end nodes "
                         f"{list(probe.get('effective_part2_outputs') or [])}"
@@ -3003,6 +3990,11 @@ class BenchmarkGenerationOrchestrationService:
         return ranked_candidates, candidate_search_pool, shortlist_prefiltered_boundaries
 
     def _probe_any_hailo_part2_compatible(self, cfg: BenchmarkGenerationOrchestrationConfig, candidate_search_pool: Sequence[int], *, log: Callable[[str], None]) -> bool:
+        try:
+            self._last_true_hailo_part2_candidate = None
+            self._last_true_hailo_part2_strategy = None
+        except Exception:
+            pass
         if not (cfg.hef_targets and cfg.hef_part2):
             return True
         checked = 0
@@ -3016,9 +4008,21 @@ class BenchmarkGenerationOrchestrationService:
                 log(f"b{b}: global Hailo Part2 probe skipped ({type(exc).__name__}: {exc})", level=logging.WARNING)
                 continue
             if probe.get('compatible'):
+                if bool(probe.get('skip_hailo_part2_build')):
+                    if checked <= 5:
+                        log(
+                            f"Hailo Part2 global probe: b{b} is usable only as Hailo-Part1 -> host/TRT Part2 "
+                            f"({probe.get('hailo_part2_policy') or probe.get('strategy')}); continuing search for a true Hailo-Part2 candidate"
+                        )
+                    continue
+                try:
+                    self._last_true_hailo_part2_candidate = int(b)
+                    self._last_true_hailo_part2_strategy = str(probe.get('strategy') or 'original')
+                except Exception:
+                    pass
                 if str(probe.get('strategy') or 'original') != 'original':
                     log(
-                        f"Hailo Part2 global probe: found compatible candidate b{b} via suggested end-node strategy "
+                        f"Hailo Part2 global probe: found compatible candidate b{b} via {probe.get('strategy')} "
                         f"({list(probe.get('effective_part2_outputs') or [])})"
                     )
                 else:
@@ -3040,27 +4044,35 @@ class BenchmarkGenerationOrchestrationService:
             if not vv:
                 continue
             vset = set(vv)
-            st1 = run.get('stage1') if isinstance(run.get('stage1'), Mapping) else {}
-            st2 = run.get('stage2') if isinstance(run.get('stage2'), Mapping) else {}
-            st1_h = str(st1.get('type') or '').strip().lower() == 'hailo'
-            st2_h = str(st2.get('type') or '').strip().lower() == 'hailo'
+            st1_raw = run.get('stage1')
+            st2_raw = run.get('stage2')
+            st1 = st1_raw if isinstance(st1_raw, Mapping) else {}
+            st2 = st2_raw if isinstance(st2_raw, Mapping) else {}
             st1_hw = str(st1.get('hw_arch') or st1.get('arch') or st1.get('id') or '').strip()
             st2_hw = str(st2.get('hw_arch') or st2.get('arch') or st2.get('id') or '').strip()
+            if not st1_hw and not isinstance(st1_raw, Mapping):
+                st1_hw = self._normalize_hailo_hw_arch_for_build(st1_raw) or ''
+            if not st2_hw and not isinstance(st2_raw, Mapping):
+                st2_hw = self._normalize_hailo_hw_arch_for_build(st2_raw) or ''
+            st1_h = (str(st1.get('type') or '').strip().lower() == 'hailo') or bool(self._normalize_hailo_hw_arch_for_build(st1_hw))
+            st2_h = (str(st2.get('type') or '').strip().lower() == 'hailo') or bool(self._normalize_hailo_hw_arch_for_build(st2_hw))
             is_hailo_run = str(run.get('type') or '').strip().lower() == 'hailo'
             run_hw = str(run.get('hw_arch') or run.get('id') or '').strip()
             if 'full' in vset and (is_hailo_run or st1_h or st2_h):
                 need_full = True
-                hw = run_hw or st1_hw or st2_hw
+                hw = self._normalize_hailo_hw_arch_for_build(run_hw or st1_hw or st2_hw)
                 if hw:
                     hailo_targets_set.add(hw)
             if st1_h and ('part1' in vset or 'composed' in vset):
                 need_part1 = True
-                if st1_hw:
-                    hailo_targets_set.add(st1_hw)
+                hw = self._normalize_hailo_hw_arch_for_build(st1_hw)
+                if hw:
+                    hailo_targets_set.add(hw)
             if st2_h and ('part2' in vset or 'composed' in vset):
                 need_part2 = True
-                if st2_hw:
-                    hailo_targets_set.add(st2_hw)
+                hw = self._normalize_hailo_hw_arch_for_build(st2_hw)
+                if hw:
+                    hailo_targets_set.add(hw)
         hef_targets = sorted(str(x).strip() for x in hailo_targets_set if str(x).strip())
         return {
             'hef_targets': list(hef_targets),
@@ -3089,6 +4101,380 @@ class BenchmarkGenerationOrchestrationService:
             ),
         )
 
+    def _normalize_hailo_hw_arch_for_build(self, value: Any) -> Optional[str]:
+        """Return the physical Hailo DFC hw_arch for a run/profile token.
+
+        Benchmark run ids such as ``hailo8_to_trt`` and ``trt_to_hailo8`` are
+        *pipeline labels*, not Hailo DFC architectures.  DFC only accepts real
+        chips such as ``hailo8``, ``hailo8r`` or ``hailo8l``.  Keep mixed run
+        labels in ``bench_plan_runs`` for runtime/reporting, but normalize all
+        HEF build targets to the physical Hailo architecture so generated suites
+        do not waste time on invalid ``hw_arch`` values.
+        """
+        text = str(value or '').strip().lower()
+        if not text:
+            return None
+        # Preserve explicit concrete chip variants.
+        if text in {'hailo8', 'hailo8r', 'hailo8l'}:
+            return text
+        # Mixed run labels / stage labels usually contain the concrete chip name.
+        if 'hailo8r' in text:
+            return 'hailo8r'
+        if 'hailo8l' in text:
+            return 'hailo8l'
+        if 'hailo8' in text:
+            return 'hailo8'
+        # Future-proof lightly for Hailo-10 tokens without treating arbitrary
+        # pipeline ids as DFC archs.
+        if text in {'hailo10', 'hailo10h'}:
+            return text
+        if 'hailo10h' in text:
+            return 'hailo10h'
+        if 'hailo10' in text:
+            return 'hailo10'
+        return None
+
+    def _physical_hailo_targets_from_values(self, values: Sequence[Any]) -> List[str]:
+        targets: List[str] = []
+        for raw in list(values or []):
+            hw = self._normalize_hailo_hw_arch_for_build(raw)
+            if hw and hw not in targets:
+                targets.append(hw)
+        return targets
+
+    def _effective_hailo_targets(self, cfg: BenchmarkGenerationOrchestrationConfig) -> List[str]:
+        """Return physical Hailo build targets from orchestration, execution config, and plan runs."""
+        targets: List[str] = []
+
+        def _add(value: Any) -> None:
+            hw = self._normalize_hailo_hw_arch_for_build(value)
+            if hw and hw not in targets:
+                targets.append(hw)
+
+        for raw in list(getattr(cfg, 'hef_targets', None) or []):
+            _add(raw)
+        try:
+            for raw in list(getattr(cfg.execution_cfg, 'hef_targets', None) or []):
+                _add(raw)
+        except Exception:
+            pass
+        for run in list(getattr(cfg, 'bench_plan_runs', None) or []):
+            if not isinstance(run, Mapping):
+                continue
+            if str(run.get('type') or '').strip().lower() == 'hailo':
+                _add(run.get('hw_arch') or run.get('arch') or run.get('id') or 'hailo8')
+            for key in ('stage1', 'stage2'):
+                st_raw = run.get(key)
+                if isinstance(st_raw, Mapping):
+                    st = st_raw
+                    if str(st.get('type') or '').strip().lower() == 'hailo':
+                        _add(st.get('hw_arch') or st.get('arch') or st.get('id') or 'hailo8')
+                else:
+                    # Some evaluation profiles carry plain strings such as
+                    # stage1: hailo8 / stage2: tensorrt.  Treat those as Hailo
+                    # only when they actually contain a Hailo chip token.
+                    _add(st_raw)
+        return targets
+
+    def _copy_run_common_fields(self, source_run: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+        """Copy validation/runtime fields from an existing benchmark run."""
+        src = source_run if isinstance(source_run, Mapping) else {}
+        out: Dict[str, Any] = {}
+        for key in (
+            'image_scale', 'validation_images', 'validation_max_images',
+            'validation_reference_mode', 'mini_coco_ap50', 'benchmark_task',
+            'mini_classification_eval',
+        ):
+            if key in src:
+                out[key] = src.get(key)
+        out.setdefault('image_scale', 'auto')
+        out.setdefault('validation_reference_mode', 'auto')
+        out.setdefault('benchmark_task', 'auto')
+        return out
+
+    def _is_yolo26_orchestration_cfg(self, cfg: BenchmarkGenerationOrchestrationConfig) -> bool:
+        """Best-effort YOLO26 detection at orchestration level.
+
+        Some GUI paths expose the model name/path on the orchestration config
+        while the nested execution config is less descriptive.  Inspect both so
+        the early Full-Hailo baseline hook cannot silently miss YOLO26.
+        """
+        raw_values: List[str] = []
+        for attr in ('base', 'full_model_src', 'full_model_dst'):
+            try:
+                value = getattr(cfg, attr, '')
+            except Exception:
+                value = ''
+            if value not in (None, ''):
+                raw_values.append(str(value))
+        try:
+            exec_cfg = getattr(cfg, 'execution_cfg', None)
+        except Exception:
+            exec_cfg = None
+        if exec_cfg is not None:
+            for attr in ('base', 'full_model_src', 'full_model_dst'):
+                try:
+                    value = getattr(exec_cfg, attr, '')
+                except Exception:
+                    value = ''
+                if value not in (None, ''):
+                    raw_values.append(str(value))
+            try:
+                if bool(self.execution_service._is_yolo26_cfg(exec_cfg)):
+                    return True
+            except Exception:
+                pass
+        for payload in (getattr(cfg, 'analysis_payload', None), getattr(cfg, 'analysis_params_payload', None)):
+            if isinstance(payload, Mapping):
+                stack: List[Any] = [payload]
+                seen = 0
+                while stack and seen < 80:
+                    seen += 1
+                    item = stack.pop()
+                    if isinstance(item, Mapping):
+                        for key, val in item.items():
+                            key_l = str(key).lower()
+                            if any(tok in key_l for tok in ('model', 'onnx', 'path', 'family', 'name', 'id')) and val not in (None, ''):
+                                raw_values.append(str(val))
+                            if isinstance(val, (Mapping, list, tuple)):
+                                stack.append(val)
+                    elif isinstance(item, (list, tuple)):
+                        stack.extend(list(item)[:20])
+        joined = ' '.join(raw_values).lower().replace('\\', '/').replace('-', '').replace('_', '')
+        return 'yolo26' in joined
+
+    def _ensure_yolo26_full_hailo_baseline_plan(self, cfg: BenchmarkGenerationOrchestrationConfig, *, log: Callable[[str], None]) -> BenchmarkGenerationOrchestrationConfig:
+        """Ensure YOLO26 suites always attempt a Hailo Full baseline.
+
+        YOLO26 can be useful as Hailo-Part1 -> TensorRT even when Hailo Part2 is
+        not available, but the evaluation still needs a Hailo-only full baseline.
+        If the selected run matrix did not request a pure Hailo full variant, add
+        a full-only Hailo run and set ``hef_full=True``.  The suite full builder
+        still tries decoded full first and then one2one raw-head fallback.
+        """
+        try:
+            is_yolo26 = bool(self._is_yolo26_orchestration_cfg(cfg))
+        except Exception:
+            is_yolo26 = False
+        if not is_yolo26:
+            return cfg
+        original_full_policy = normalize_full_hef_policy(cfg.full_hef_policy)
+        targets = self._effective_hailo_targets(cfg)
+        if not targets:
+            return cfg
+
+        runs: List[Dict[str, Any]] = [dict(r) for r in list(cfg.bench_plan_runs or []) if isinstance(r, Mapping)]
+        common_source = runs[0] if runs else {}
+        changed = False
+        touched: List[str] = []
+        for hw in targets:
+            found = False
+            for run in runs:
+                run_type = str(run.get('type') or '').strip().lower()
+                run_hw = str(run.get('hw_arch') or run.get('id') or '').strip()
+                if run_type == 'hailo' and run_hw == hw:
+                    found = True
+                    variants = [str(x).strip().lower() for x in list(run.get('variants') or []) if str(x).strip()]
+                    if 'full' not in variants:
+                        run['variants'] = ['full'] + variants
+                        changed = True
+                        touched.append(hw)
+                    break
+            if not found:
+                base_run = self._copy_run_common_fields(common_source)
+                base_run.update({
+                    'id': hw,
+                    'type': 'hailo',
+                    'hw_arch': hw,
+                    'variants': ['full'],
+                    'stage1': {'type': 'hailo', 'hw_arch': hw},
+                    'stage2': {'type': 'hailo', 'hw_arch': hw},
+                    'yolo26_forced_full_baseline': True,
+                })
+                runs.append(base_run)
+                changed = True
+                touched.append(hw)
+
+        needs_policy_override = (original_full_policy != 'start')
+        if not changed and bool(cfg.hef_full) and bool(cfg.hailo_selected) and not needs_policy_override:
+            return cfg
+        requirements = self._recompute_hailo_plan_requirements(runs)
+        physical_requirements = _physical_hailo_targets_for_build(list(requirements.get('hef_targets') or targets))
+        if physical_requirements:
+            requirements['hef_targets'] = list(physical_requirements)
+        if original_full_policy == 'skip':
+            log(
+                'suite: YOLO26 policy: overriding full_hef_policy=skip because a Hailo Full baseline is mandatory for YOLO26 Hailo/Jetson comparison.'
+            )
+        log(
+            'suite: YOLO26 policy: ensuring Hailo Full baseline is part of the suite plan '
+            f"(targets={touched or targets}); decoded full will be tried first, then one2one raw-head fallback."
+        )
+        return replace(
+            cfg,
+            bench_plan_runs=list(runs),
+            hef_targets=list(requirements.get('hef_targets') or targets),
+            hailo_selected=True,
+            hef_full=True,
+            full_hef_policy='start',
+            hef_part1=bool(requirements.get('hef_part1') or cfg.hef_part1),
+            hef_part2=bool(requirements.get('hef_part2') or cfg.hef_part2),
+            execution_cfg=replace(
+                cfg.execution_cfg,
+                bench_plan_runs=list(runs),
+                hef_targets=list(requirements.get('hef_targets') or targets),
+                hef_part1=bool(requirements.get('hef_part1') or cfg.hef_part1),
+                hef_part2=bool(requirements.get('hef_part2') or cfg.hef_part2),
+            ),
+        )
+
+    def _yolo26_should_build_full_first(self, cfg: BenchmarkGenerationOrchestrationConfig) -> bool:
+        """Return True when YOLO26 Hailo full must be attempted before split builds.
+
+        This deliberately does not depend on the user-selected full-build order.
+        YOLO26 evaluation needs a single-system Hailo baseline, and previous GUI
+        paths could arrive with split-only Hailo variants while still having
+        Hailo targets and a build function.
+        """
+        try:
+            is_yolo26 = bool(self._is_yolo26_orchestration_cfg(cfg))
+        except Exception:
+            is_yolo26 = False
+        if not is_yolo26:
+            return False
+        return bool(self._effective_hailo_targets(cfg) and cfg.hailo_build_hef_fn is not None)
+
+    def _build_suite_full_hefs_first_if_needed(
+        self,
+        cfg: BenchmarkGenerationOrchestrationConfig,
+        *,
+        log: Callable[[str], None],
+        queue_put: Callable[[tuple], None],
+        errors: List[str],
+        suite_hailo_hefs: Dict[str, Dict[str, Any]],
+    ) -> bool:
+        """Build suite Full HEFs before any split candidate work when required.
+
+        Returns True if the full-build stage was invoked.  The underlying builder
+        records either an OK artifact or a structured full_error in
+        suite_hailo_hefs; candidate split generation continues afterwards.
+        """
+        full_policy = normalize_full_hef_policy(cfg.full_hef_policy)
+        force_yolo26_first = self._yolo26_should_build_full_first(cfg)
+        should_build = bool((full_policy == 'start' or force_yolo26_first) and cfg.hef_targets and cfg.hailo_build_hef_fn is not None)
+        if not should_build:
+            return False
+        if force_yolo26_first:
+            log(
+                'suite: YOLO26 policy: FULL-FIRST baseline stage active; building Hailo Full before shortlist prefilter, '
+                'Part2 probes, or split HEFs. Decoded full is tried first; one2one/raw-head endpoints are used as fallback.'
+            )
+        else:
+            log('suite: full-HEF policy=start; building suite Hailo Full baseline before split cases.')
+        self._build_suite_full_hefs(
+            cfg,
+            log=log,
+            queue_put=queue_put,
+            errors=errors,
+            suite_hailo_hefs=suite_hailo_hefs,
+            publish_hailo_diagnostics=cfg.execution_callbacks.publish_hailo_diagnostics,
+        )
+        try:
+            cfg.execution_callbacks.persist_state(status='running', current_boundary=None)
+        except Exception:
+            logger.debug('persist after suite full HEF (full-first) failed', exc_info=True)
+        return True
+
+    @staticmethod
+    def _promote_boundary(seq: Sequence[int], boundary: Optional[int]) -> List[int]:
+        if boundary is None:
+            return list(seq or [])
+        try:
+            b = int(boundary)
+        except Exception:
+            return list(seq or [])
+        out = [int(x) for x in list(seq or []) if _safe_int(x) is not None and int(x) != b]
+        return [b] + out
+
+    def _promote_yolo26_true_hailo_part2_candidate(self, cfg: BenchmarkGenerationOrchestrationConfig, ranked_candidates: Sequence[int], candidate_search_pool: Sequence[int], *, log: Callable[[str], None]) -> Tuple[List[int], List[int]]:
+        """Prefer a verified YOLO26 one2one Part2-prefix case before stage1-only cases."""
+        try:
+            if not bool(self.execution_service._is_yolo26_cfg(cfg.execution_cfg)):
+                return list(ranked_candidates), list(candidate_search_pool)
+        except Exception:
+            return list(ranked_candidates), list(candidate_search_pool)
+        b = getattr(self, '_last_true_hailo_part2_candidate', None)
+        if b is None:
+            return list(ranked_candidates), list(candidate_search_pool)
+        try:
+            b_int = int(b)
+        except Exception:
+            return list(ranked_candidates), list(candidate_search_pool)
+        old_pool = [int(x) for x in list(candidate_search_pool or []) if _safe_int(x) is not None]
+        if b_int not in old_pool or (old_pool and old_pool[0] == b_int):
+            return list(ranked_candidates), list(candidate_search_pool)
+        log(
+            f"suite: YOLO26 policy: promoting b{b_int} because the global probe verified a true one2one Hailo-Part2 prefix; "
+            "this prioritizes at least one complete Hailo/Hailo candidate before Part1-only candidates in small benchmark sets."
+        )
+        return self._promote_boundary(ranked_candidates, b_int), self._promote_boundary(candidate_search_pool, b_int)
+
+    def _insert_boundaries_after_prefix(self, seq: Sequence[int], boundaries: Sequence[int], *, prefix_keep: int = 1) -> List[int]:
+        base = [int(x) for x in list(seq or []) if _safe_int(x) is not None]
+        if not base:
+            return base
+        prefix = base[:max(0, min(int(prefix_keep), len(base)))]
+        rest = [x for x in base if x not in set(prefix)]
+        ins: List[int] = []
+        rest_set = set(rest)
+        for raw in list(boundaries or []):
+            try:
+                b = int(raw)
+            except Exception:
+                continue
+            if b in rest_set and b not in ins and b not in prefix:
+                ins.append(b)
+        tail = [x for x in rest if x not in set(ins)]
+        return prefix + ins + tail
+
+    def _promote_yolo26_hetero_throughput_candidates(self, cfg: BenchmarkGenerationOrchestrationConfig, ranked_candidates: Sequence[int], candidate_search_pool: Sequence[int], *, log: Callable[[str], None]) -> Tuple[List[int], List[int]]:
+        """Reserve YOLO26 early Hailo->TRT candidates for throughput evaluation.
+
+        The v46 full-first policy correctly protects the Full-Hailo baseline and
+        at least one complete Hailo/Hailo candidate, but for larger YOLO26 runs
+        the thesis question is usually heterogeneous throughput.  Older YOLO26M/L
+        runs showed that early Part1-only cuts, especially b041 when available,
+        are more informative for Hailo->TensorRT streaming than late one2one-tail
+        cuts.  Keep the verified Hailo/Hailo candidate first, then reserve a few
+        early candidates without forcing Hailo Part2.
+        """
+        try:
+            is_yolo26 = bool(self._is_yolo26_orchestration_cfg(cfg))
+        except Exception:
+            is_yolo26 = False
+        if not is_yolo26 or not _benchmark_plan_has_hailo_to_trt(cfg.bench_plan_runs):
+            return list(ranked_candidates), list(candidate_search_pool)
+        try:
+            if int(cfg.target_cases) < 3:
+                return list(ranked_candidates), list(candidate_search_pool)
+        except Exception:
+            pass
+        # Historical stable early candidates from YOLO26M/L logs, followed by
+        # nearby early candidates that are likely to keep Hailo Stage1 cheap.
+        preferred = [41, 43, 38, 69, 72, 63, 66, 105, 113, 140, 151, 176, 216, 218, 248, 268]
+        pool_set = {int(x) for x in list(candidate_search_pool or []) if _safe_int(x) is not None}
+        kept = [b for b in preferred if b in pool_set]
+        if not kept:
+            return list(ranked_candidates), list(candidate_search_pool)
+        log(
+            'suite: YOLO26 throughput-first reserve: promoting early Hailo->TensorRT candidates after the verified Hailo/Hailo candidate: '
+            + ', '.join(f'b{b}' for b in kept[:8])
+        )
+        return (
+            self._insert_boundaries_after_prefix(ranked_candidates, kept, prefix_keep=1),
+            self._insert_boundaries_after_prefix(candidate_search_pool, kept, prefix_keep=1),
+        )
+
     def _adjust_benchmark_plan_from_full_model_preflight(self, cfg: BenchmarkGenerationOrchestrationConfig, preflight: Mapping[str, Any], *, log: Callable[[str], None]) -> Tuple[BenchmarkGenerationOrchestrationConfig, bool]:
         if not isinstance(preflight, Mapping) or not bool(preflight.get('checked')):
             return cfg, False
@@ -3113,6 +4499,33 @@ class BenchmarkGenerationOrchestrationService:
 
         if not blocked_by_hw:
             return cfg, False
+
+        # YOLO26 decoded/full exports often fail the full parser preflight at the
+        # end-to-end TopK/GatherElements/ReduceMax output tail.  That should not
+        # drop Hailo full/part2 variants before the raw one2one-head fallback has
+        # a chance to run.  The old YOLO26L logs show this premature adjustment
+        # removed full and stage2-Hailo runs even though safer head endpoints were
+        # available.
+        try:
+            is_yolo26 = bool(self._is_yolo26_orchestration_cfg(cfg))
+        except Exception:
+            is_yolo26 = False
+        if is_yolo26:
+            scopes = {str(x.get('unsupported_scope') or '').strip().lower() for x in list(preflight.get('results') or []) if isinstance(x, Mapping) and not bool(x.get('ok'))}
+            raw_nodes = self._infer_suite_raw_head_end_nodes(cfg)
+            if raw_nodes and scopes and scopes.issubset({'output', 'unknown'}):
+                msg = (
+                    'YOLO26 Hailo preflight policy: decoded full parser failed near the output tail, '
+                    'but one2one raw-head endpoints are available; keeping Hailo full/part2 plan variants so '
+                    'the raw-head fallback or Hailo-Part1 -> TensorRT policy can handle them.'
+                )
+                log(msg)
+                if isinstance(preflight, dict):
+                    preflight['plan_adjusted'] = False
+                    preflight['raw_head_fallback_prevents_plan_adjustment'] = True
+                    preflight['raw_head_fallback_end_node_names'] = list(raw_nodes)
+                    preflight['policy_note'] = msg
+                return cfg, False
 
         plan_runs_out: List[Dict[str, Any]] = []
         adjusted_runs: List[str] = []
@@ -3240,17 +4653,186 @@ class BenchmarkGenerationOrchestrationService:
         return self._replace_plan_runs(cfg, plan_runs_out)
 
 
+    def _prepared_full_baseline_targets(self, cfg: BenchmarkGenerationOrchestrationConfig, baseline: Mapping[str, Any]) -> List[str]:
+        raw_hw = str(baseline.get('hw_arch') or '').strip()
+        targets = [str(x).strip() for x in list(cfg.hef_targets or []) if str(x).strip()]
+        if raw_hw:
+            if targets and raw_hw not in set(targets):
+                return []
+            return [raw_hw]
+        return targets[:1] if targets else []
+
+    def _copy_optional_prepared_artifact(self, src_value: Any, dst: Path) -> Optional[str]:
+        src = Path(str(src_value or '')).expanduser() if str(src_value or '').strip() else None
+        if src is None:
+            return None
+        try:
+            if src.is_file():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                if str(src.resolve()) != str(dst.resolve()):
+                    shutil.copy2(src, dst)
+                return dst.name
+        except Exception:
+            logger.debug('Failed to copy prepared artifact %s to %s', src, dst, exc_info=True)
+        return None
+
+    def _materialize_prepared_full_hailo_baseline(
+        self,
+        cfg: BenchmarkGenerationOrchestrationConfig,
+        *,
+        log: Callable[[str], None],
+        suite_hailo_hefs: Dict[str, Dict[str, Any]],
+    ) -> bool:
+        """Copy a prepared full-Hailo HEF into the suite and expose it as full.
+
+        Preparation screening may have already compiled a YOLO full deployment with
+        raw detection-head endpoints. Reusing that HEF avoids repeatedly trying the
+        unsupported decoded YOLO tail during benchmark-set generation.
+        """
+        baseline = cfg.prepared_full_hailo_baseline if isinstance(cfg.prepared_full_hailo_baseline, Mapping) else {}
+        if not bool(baseline.get('ok')):
+            return False
+        hef_src = Path(str(baseline.get('hef_path') or '')).expanduser()
+        if not hef_src.is_file():
+            log(f"suite: prepared full-Hailo baseline ignored; HEF missing: {hef_src}", level=logging.WARNING)
+            return False
+        targets = self._prepared_full_baseline_targets(cfg, baseline)
+        if not targets:
+            log(
+                "suite: prepared full-Hailo baseline ignored; prepared hw_arch "
+                f"{baseline.get('hw_arch') or '<unknown>'} does not match requested targets {list(cfg.hef_targets or [])}",
+                level=logging.WARNING,
+            )
+            return False
+
+        used_any = False
+        endpoint_mode = str(baseline.get('endpoint_mode') or ('custom_end_nodes' if baseline.get('end_node_names') else 'full')).strip() or 'full'
+        end_nodes = [str(x).strip() for x in list(baseline.get('end_node_names') or []) if str(x).strip()]
+        output_contract = baseline.get('output_contract') if isinstance(baseline.get('output_contract'), Mapping) else {}
+        output_contract = dict(output_contract or {})
+        if end_nodes and not output_contract.get('end_node_names'):
+            output_contract['end_node_names'] = list(end_nodes)
+
+        for hw_arch in targets:
+            self._raise_if_cancelled(cfg, 'copy prepared full Hailo baseline')
+            out_full = Path(cfg.out_dir) / 'hailo' / hw_arch / 'full'
+            out_full.mkdir(parents=True, exist_ok=True)
+            hef_dst = out_full / 'compiled.hef'
+            try:
+                if str(hef_src.resolve()) != str(hef_dst.resolve()):
+                    shutil.copy2(hef_src, hef_dst)
+            except Exception as exc:
+                log(f"suite: prepared full-Hailo baseline copy failed ({hw_arch}): {type(exc).__name__}: {exc}", level=logging.WARNING)
+                continue
+
+            copied_result = self._copy_optional_prepared_artifact(baseline.get('result_json_path'), out_full / 'hailo_hef_build_result.json')
+            copied_parsed = self._copy_optional_prepared_artifact(baseline.get('parsed_har_path'), out_full / 'parsed.har')
+            copied_quant = self._copy_optional_prepared_artifact(baseline.get('quant_har_path'), out_full / 'quantized.har')
+            copied_fixed = self._copy_optional_prepared_artifact(baseline.get('fixed_onnx_path'), out_full / f"{cfg.base}_hailo_fixed.onnx")
+
+            result_json = baseline.get('result_json') if isinstance(baseline.get('result_json'), Mapping) else {}
+            context_count = _safe_int(result_json.get('context_count'))
+            detected = result_json.get('detected') if isinstance(result_json.get('detected'), Mapping) else {}
+            process = result_json.get('process') if isinstance(result_json.get('process'), Mapping) else {}
+            full_build = {
+                'ok': True,
+                'skipped': False,
+                'error': None,
+                'elapsed_s': baseline.get('elapsed_s') or result_json.get('elapsed_s'),
+                'context_count': context_count,
+                'context_mode': ('multi_context_used' if (context_count and context_count > 1) else ('single_context_used' if context_count == 1 else 'ok_unknown_context')),
+                'partition_iterations': _safe_int(process.get('partition_iterations')),
+                'partition_time_s': process.get('partition_time_s'),
+                'allocation_time_s': process.get('allocation_time_s'),
+                'compilation_time_s': process.get('compilation_time_s'),
+                'single_context_failed': bool(detected.get('single_context_failed')),
+                'multi_context_used': bool(detected.get('multi_context_used')),
+                'calib_source': ((baseline.get('calib_info') or {}).get('source') if isinstance(baseline.get('calib_info'), Mapping) else None),
+                'source': 'prepared_model_screening',
+            }
+            full_build = {k: v for k, v in full_build.items() if v not in (None, '') or isinstance(v, bool)}
+
+            tgt_suite = suite_hailo_hefs.setdefault(str(hw_arch), {})
+            tgt_suite['full'] = os.path.relpath(hef_dst, str(cfg.out_dir)).replace('\\', '/')
+            tgt_suite['full_build'] = full_build
+            tgt_suite['full_prepared_baseline'] = True
+            tgt_suite['full_endpoint_mode'] = endpoint_mode
+            tgt_suite['full_end_node_names'] = list(end_nodes)
+            tgt_suite['full_true_full_model'] = bool(baseline.get('true_full_model', not bool(end_nodes)))
+            tgt_suite['full_output_contract'] = dict(output_contract)
+            if copied_result:
+                tgt_suite['full_result_json'] = os.path.relpath(out_full / copied_result, str(cfg.out_dir)).replace('\\', '/')
+            if copied_parsed:
+                tgt_suite['full_parsed_har'] = os.path.relpath(out_full / copied_parsed, str(cfg.out_dir)).replace('\\', '/')
+            if copied_quant:
+                tgt_suite['full_quant_har'] = os.path.relpath(out_full / copied_quant, str(cfg.out_dir)).replace('\\', '/')
+            if copied_fixed:
+                tgt_suite['full_fixed_onnx'] = os.path.relpath(out_full / copied_fixed, str(cfg.out_dir)).replace('\\', '/')
+            tgt_suite['full_preparation'] = {
+                'variant_id': baseline.get('variant_id'),
+                'variant_label': baseline.get('variant_label'),
+                'screening_dir': baseline.get('screening_dir'),
+                'source_hef': str(hef_src),
+            }
+            used_any = True
+            log(
+                f"suite: using prepared HEF(full,{hw_arch}) baseline "
+                f"mode={endpoint_mode} contract={output_contract.get('mode') or 'decoded_full_model'}"
+            )
+        return used_any
+
+
+    def _infer_suite_raw_head_end_nodes(self, cfg: BenchmarkGenerationOrchestrationConfig) -> List[str]:
+        """Infer YOLO raw detection-head Conv endpoints from the selected full ONNX."""
+        try:
+            from .model_preparation import infer_yolo_raw_detection_head_end_nodes
+        except Exception:
+            logger.debug("Could not import YOLO raw-head endpoint inference helper", exc_info=True)
+            return []
+
+        candidates: List[str] = []
+        for raw in (cfg.full_model_dst, cfg.full_model_src):
+            p = str(raw or '').strip()
+            if p and p not in candidates:
+                candidates.append(p)
+        for model_path in candidates:
+            try:
+                p = Path(model_path).expanduser()
+                if p.is_file():
+                    nodes = infer_yolo_raw_detection_head_end_nodes(p, '')
+                    if nodes:
+                        return [str(x).strip() for x in list(nodes) if str(x).strip()]
+            except Exception:
+                logger.debug("Failed to infer YOLO raw-head endpoints for %s", model_path, exc_info=True)
+        return []
+
+
     def _build_suite_full_hefs(self, cfg: BenchmarkGenerationOrchestrationConfig, *, log: Callable[[str], None], queue_put: Callable[[tuple], None], errors: List[str], suite_hailo_hefs: Dict[str, Dict[str, Any]], publish_hailo_diagnostics: Callable[[str, Any, Any], None]) -> None:
         if cfg.hailo_build_hef_fn is None or not cfg.hef_targets or not cfg.hef_full:
             return
+        raw_suite_targets = [str(x).strip() for x in list(cfg.hef_targets or []) if str(x).strip()]
+        physical_suite_targets = _physical_hailo_targets_for_build(raw_suite_targets)
         log(
-            f"suite: Hailo HEF generation requested (backend={cfg.hef_backend}, targets={cfg.hef_targets}, full={cfg.hef_full}, part1={cfg.hef_part1}, part2={cfg.hef_part2})"
+            f"suite: Hailo HEF generation requested (backend={cfg.hef_backend}, targets={raw_suite_targets}, physical_targets={physical_suite_targets}, full={cfg.hef_full}, part1={cfg.hef_part1}, part2={cfg.hef_part2})"
         )
-        for hw_arch in cfg.hef_targets:
+        if raw_suite_targets and physical_suite_targets != raw_suite_targets:
+            log(
+                f"suite: normalizing Hailo build targets {raw_suite_targets} -> physical DFC archs {physical_suite_targets}; "
+                "mixed Hailo<->TRT run ids are benchmark labels, not DFC hw_arch values."
+            )
+        for hw_arch in physical_suite_targets:
             self._raise_if_cancelled(cfg, "suite full HEF build")
             hw_arch = str(hw_arch).strip()
             if not hw_arch:
                 continue
+            existing_meta = suite_hailo_hefs.get(hw_arch) if isinstance(suite_hailo_hefs, dict) else None
+            if isinstance(existing_meta, Mapping) and existing_meta.get('full') and not existing_meta.get('full_error'):
+                if bool(existing_meta.get('full_prepared_baseline')):
+                    log(f"suite: HEF(full,{hw_arch}) already provided by prepared baseline; skipping decoded full build")
+                else:
+                    log(f"suite: HEF(full,{hw_arch}) already available; skipping duplicate full build")
+                continue
+
             def _on_suite_hef_log(stream: str, line: str, _hw: str = hw_arch) -> None:
                 msg = f"(suite {_hw}) {line}"
                 log(msg)
@@ -3258,36 +4840,138 @@ class BenchmarkGenerationOrchestrationService:
                     queue_put(("hef", stream, msg))
                 except Exception:
                     pass
-            log(f"suite: build HEF(full,{hw_arch})")
+
+            full_end_nodes = [str(x).strip() for x in (cfg.hailo_full_end_node_names or []) if str(x).strip()]
+            endpoint_mode = str(cfg.hailo_full_endpoint_mode or ('custom_end_nodes' if full_end_nodes else 'full')).strip() or 'full'
+            cfg_full_contract = getattr(cfg, 'hailo_full_output_contract', None)
+            output_contract: Dict[str, Any] = (
+                dict(cfg_full_contract or {})
+                if isinstance(cfg_full_contract, Mapping)
+                else {}
+            )
             out_full = os.path.join(str(cfg.out_dir), "hailo", hw_arch, "full")
             os.makedirs(out_full, exist_ok=True)
-            r_full = cfg.hailo_build_hef_fn(
-                cfg.full_model_src,
-                backend=cfg.hef_backend,
-                hw_arch=hw_arch,
-                net_name=f"{cfg.base}_full",
-                outdir=out_full,
-                fixup=cfg.hef_fixup,
-                opt_level=int(cfg.hef_opt_level),
-                calib_dir=cfg.hef_calib_dir,
-                calib_count=int(cfg.hef_calib_count),
-                calib_batch_size=int(cfg.hef_calib_bs),
-                force=cfg.hef_force,
-                keep_artifacts=cfg.hef_keep,
-                wsl_distro=cfg.hef_wsl_distro,
-                wsl_venv_activate=cfg.hef_wsl_venv,
-                wsl_timeout_s=int(cfg.hef_timeout_s),
-                on_log=_on_suite_hef_log,
-            )
+
+            def _build_with_end_nodes(nodes: Sequence[str], mode: str, *, force: Optional[bool] = None) -> Any:
+                if nodes:
+                    log(
+                        f"suite: build HEF(full,{hw_arch}) with endpoint override "
+                        f"mode={mode} end_nodes={list(nodes)}"
+                    )
+                else:
+                    log(f"suite: build HEF(full,{hw_arch})")
+                return cfg.hailo_build_hef_fn(
+                    cfg.full_model_src,
+                    backend=cfg.hef_backend,
+                    hw_arch=hw_arch,
+                    net_name=f"{cfg.base}_full",
+                    outdir=out_full,
+                    fixup=cfg.hef_fixup,
+                    opt_level=int(cfg.hef_opt_level),
+                    calib_dir=cfg.hef_calib_dir,
+                    calib_count=int(cfg.hef_calib_count),
+                    calib_batch_size=int(cfg.hef_calib_bs),
+                    force=bool(cfg.hef_force if force is None else force),
+                    keep_artifacts=cfg.hef_keep,
+                    wsl_distro=cfg.hef_wsl_distro,
+                    wsl_venv_activate=cfg.hef_wsl_venv,
+                    wsl_timeout_s=int(cfg.hef_timeout_s),
+                    on_log=_on_suite_hef_log,
+                    end_node_names=(list(nodes) if nodes else None),
+                )
+
+            yolo26_raw_head_full_first = False
+            if not full_end_nodes:
+                try:
+                    _is_yolo26_for_full = bool(self._is_yolo26_orchestration_cfg(cfg))
+                except Exception:
+                    _is_yolo26_for_full = False
+                if _is_yolo26_for_full:
+                    raw_nodes_first = self._infer_suite_raw_head_end_nodes(cfg)
+                    if raw_nodes_first and any('one2one_cv' in str(x) for x in raw_nodes_first):
+                        endpoint_mode = 'raw_detection_head'
+                        full_end_nodes = list(raw_nodes_first)
+                        yolo26_raw_head_full_first = True
+                        output_contract = {
+                            'mode': 'yolo26_one2one_raw_head',
+                            'requires_external_postprocess': True,
+                            'description': 'YOLO26 one2one raw detection-head tensors; final transpose/concat/decode/postprocess remains outside the HEF.',
+                            'end_node_names': list(full_end_nodes),
+                        }
+                        log(
+                            'suite: YOLO26 policy: building one2one raw-head Hailo Full baseline first; '
+                            'decoded output tail stays on host to avoid known Gather/TopK/Transpose/Concat tail failures.'
+                        )
+
+            r_full = _build_with_end_nodes(full_end_nodes, endpoint_mode)
+
+            # YOLO11/YOLO10 decoded full graphs often fail at the DFL/decode tail.
+            # For the final benchmark workflow, do the raw-head retry here as well,
+            # so the manual model-preparation screen is no longer a required step.
+            # YOLO26 is handled above by trying the one2one raw-head full baseline
+            # first; that avoids spending the first generation stage on the known
+            # decoded end-to-end tail failure.
+            if (not bool(getattr(r_full, 'ok', False))) and (not full_end_nodes) and not yolo26_raw_head_full_first:
+                raw_nodes = self._infer_suite_raw_head_end_nodes(cfg)
+                if raw_nodes:
+                    endpoint_mode = 'raw_detection_head'
+                    full_end_nodes = list(raw_nodes)
+                    raw_family = 'yolo26_one2one_raw_head' if any('one2one_cv' in str(x) for x in full_end_nodes) else 'raw_detection_head'
+                    output_contract = {
+                        'mode': raw_family,
+                        'requires_external_postprocess': True,
+                        'description': (
+                            'YOLO26 one2one raw detection-head tensors; final transpose/concat/decode/postprocess remains outside the HEF.'
+                            if raw_family == 'yolo26_one2one_raw_head'
+                            else 'YOLO raw cv2/cv3 detection-head tensors; decode/NMS remains outside the HEF.'
+                        ),
+                        'end_node_names': list(full_end_nodes),
+                    }
+                    log(
+                        f"suite: decoded full HEF failed on {hw_arch}; retrying with YOLO raw detection-head endpoints "
+                        f"{full_end_nodes}"
+                    )
+                    r_raw = _build_with_end_nodes(full_end_nodes, endpoint_mode, force=True)
+                    if bool(getattr(r_raw, 'ok', False)):
+                        r_full = r_raw
+                        log(f"suite: HEF(full,{hw_arch}) raw detection-head fallback OK")
+                    else:
+                        log(f"suite: HEF(full,{hw_arch}) raw detection-head fallback FAILED: {getattr(r_raw, 'error', None)}")
+            elif yolo26_raw_head_full_first and bool(getattr(r_full, 'ok', False)):
+                log(f"suite: HEF(full,{hw_arch}) YOLO26 one2one raw-head baseline OK")
+
             tgt_suite = suite_hailo_hefs.setdefault(hw_arch, {})
-            tgt_suite["full_build"] = self.generation_service.compact_hailo_build_summary(r_full)
-            if r_full.ok:
-                rel = os.path.relpath(r_full.hef_path or os.path.join(out_full, "compiled.hef"), str(cfg.out_dir))
-                tgt_suite["full"] = rel.replace('\\', '/')
+            if full_end_nodes:
+                tgt_suite['full_endpoint_mode'] = endpoint_mode
+                tgt_suite['full_end_node_names'] = list(full_end_nodes)
+                tgt_suite['full_true_full_model'] = False if endpoint_mode == 'raw_detection_head' else True
+                default_contract_mode = (
+                    'yolo26_one2one_raw_head'
+                    if endpoint_mode == 'raw_detection_head' and any('one2one_cv' in str(x) for x in full_end_nodes)
+                    else ('raw_detection_head' if endpoint_mode == 'raw_detection_head' else 'custom_end_nodes')
+                )
+                tgt_suite['full_output_contract'] = dict(output_contract or {
+                    'mode': default_contract_mode,
+                    'requires_external_postprocess': bool(endpoint_mode == 'raw_detection_head'),
+                    'description': (
+                        'YOLO26 one2one raw detection-head tensors; final transpose/concat/decode/postprocess remains outside the HEF.'
+                        if default_contract_mode == 'yolo26_one2one_raw_head'
+                        else (
+                            'YOLO raw cv2/cv3 detection-head tensors; decode/NMS remains outside the HEF.'
+                            if endpoint_mode == 'raw_detection_head'
+                            else 'Custom full-model Hailo endpoint set.'
+                        )
+                    ),
+                    'end_node_names': list(full_end_nodes),
+                })
+            tgt_suite['full_build'] = self.generation_service.compact_hailo_build_summary(r_full)
+            if getattr(r_full, 'ok', False):
+                rel = os.path.relpath(getattr(r_full, 'hef_path', None) or os.path.join(out_full, 'compiled.hef'), str(cfg.out_dir))
+                tgt_suite['full'] = rel.replace('\\', '/')
                 log(f"suite: HEF(full,{hw_arch}) OK")
             else:
-                tgt_suite["full_error"] = r_full.error
-                err_line = f"suite: HEF(full,{hw_arch}) {'SKIPPED' if bool(getattr(r_full, 'skipped', False)) else 'FAILED'}: {r_full.error}"
+                tgt_suite['full_error'] = getattr(r_full, 'error', None)
+                err_line = f"suite: HEF(full,{hw_arch}) {'SKIPPED' if bool(getattr(r_full, 'skipped', False)) else 'FAILED'}: {getattr(r_full, 'error', None)}"
                 errors.append(err_line)
                 log(err_line)
             try:
@@ -3323,15 +5007,30 @@ class BenchmarkGenerationOrchestrationService:
         if timeout_s <= 0:
             timeout_s = 180
 
-        log(
-            f"suite: Hailo full-model parser preflight requested (backend={backend}, targets={cfg.hef_targets})"
-        )
+        full_end_nodes = [str(x).strip() for x in (cfg.hailo_full_end_node_names or []) if str(x).strip()]
+        raw_preflight_targets = [str(x).strip() for x in list(cfg.hef_targets or []) if str(x).strip()]
+        physical_preflight_targets = _physical_hailo_targets_for_build(raw_preflight_targets)
+        if full_end_nodes:
+            log(
+                f"suite: Hailo full-model parser preflight requested (backend={backend}, targets={raw_preflight_targets}, "
+                f"physical_targets={physical_preflight_targets}, endpoint_override={cfg.hailo_full_endpoint_mode or 'custom'}, end_nodes={full_end_nodes})"
+            )
+        else:
+            log(
+                f"suite: Hailo full-model parser preflight requested (backend={backend}, targets={raw_preflight_targets}, "
+                f"physical_targets={physical_preflight_targets})"
+            )
+        if raw_preflight_targets and physical_preflight_targets != raw_preflight_targets:
+            log(
+                f"suite: normalizing Hailo parser-preflight targets {raw_preflight_targets} -> physical DFC archs {physical_preflight_targets}; "
+                "mixed Hailo<->TRT run ids are benchmark labels, not DFC hw_arch values."
+            )
 
         results: List[Dict[str, Any]] = []
         failed_entries: List[Dict[str, Any]] = []
         unsupported_failures: List[Dict[str, Any]] = []
 
-        for raw_hw_arch in cfg.hef_targets:
+        for raw_hw_arch in physical_preflight_targets:
             self._raise_if_cancelled(cfg, f"full-model Hailo parser preflight {raw_hw_arch}")
             hw_arch = str(raw_hw_arch or '').strip()
             if not hw_arch:
@@ -3352,6 +5051,7 @@ class BenchmarkGenerationOrchestrationService:
                     wsl_distro=cfg.hef_wsl_distro,
                     wsl_venv_activate=str(cfg.hef_wsl_venv or 'auto'),
                     wsl_timeout_s=int(timeout_s),
+                    end_node_names=full_end_nodes or None,
                 )
                 ok = bool(getattr(res, 'ok', False))
                 elapsed_s = float(getattr(res, 'elapsed_s', 0.0) or 0.0)
@@ -3374,6 +5074,8 @@ class BenchmarkGenerationOrchestrationService:
                 'elapsed_s': elapsed_s,
                 'error': error_text,
                 'fixed_onnx_path': (str(fixed_onnx_path) if fixed_onnx_path not in (None, '') else None),
+                'endpoint_mode': (str(cfg.hailo_full_endpoint_mode or 'full') if full_end_nodes else 'full'),
+                'end_node_names': list(full_end_nodes),
                 'unsupported_explicit': bool(unsupported_info.get('explicit')),
                 'unsupported_activation': bool(unsupported_info.get('activation')),
                 'unsupported_ops': list(unsupported_info.get('ops') or []),
@@ -3420,6 +5122,8 @@ class BenchmarkGenerationOrchestrationService:
             'all_failed_explicit': bool(all_failed_explicit),
             'backend': backend,
             'model_path': model_path,
+            'endpoint_mode': (str(cfg.hailo_full_endpoint_mode or 'full') if full_end_nodes else 'full'),
+            'end_node_names': list(full_end_nodes),
             'result_count': int(len(results)),
             'ok_count': int(sum(1 for entry in results if bool(entry.get('ok')))),
             'failed_count': int(len(failed_entries)),
@@ -3441,38 +5145,179 @@ class BenchmarkGenerationOrchestrationService:
         log(f"min_gap: {cfg.execution_cfg.gap}")
         log(f"preferred shortlist size: {len(cfg.ranked_candidates)}")
         log(f"ranked candidates considered: {len(cfg.candidate_search_pool)}")
+        try:
+            for msg in _model_task_sanity_warnings(cfg.full_model_src, cfg.bench_plan_runs):
+                warn = f"suite: classification model sanity warning: {msg}"
+                log(warn, level=logging.WARNING)
+                if warn not in errors:
+                    errors.append(warn)
+        except Exception:
+            logger.debug('classification model sanity check failed', exc_info=True)
 
         ranked_candidates = list(cfg.ranked_candidates)
         candidate_search_pool = list(cfg.candidate_search_pool)
         shortlist_prefiltered_boundaries: Set[int] = set()
         cancellation_reason: Optional[str] = None
         hailo_full_model_preflight: Optional[Dict[str, Any]] = None
+        prepared_full_baseline_used = False
+        early_suite_full_hef_attempted = False
 
         try:
-            self._raise_if_cancelled(cfg, "before full-model Hailo parser preflight")
-            hailo_full_model_preflight = self._run_hailo_full_model_parse_preflight(
+            cfg = self._ensure_yolo26_full_hailo_baseline_plan(cfg, log=log)
+            # Normalize top-level Hailo target state for GUI paths that only
+            # populated the nested execution config.
+            _eff_targets = self._effective_hailo_targets(cfg)
+            _raw_targets_for_log = [str(x).strip() for x in list(cfg.hef_targets or []) if str(x).strip()]
+            if _eff_targets and (list(cfg.hef_targets or []) != list(_eff_targets) or not cfg.hailo_selected):
+                if _raw_targets_for_log and list(_raw_targets_for_log) != list(_eff_targets):
+                    log(
+                        f"suite: v47 Hailo target normalization: HEF build targets {list(_raw_targets_for_log)} "
+                        f"-> physical DFC targets {list(_eff_targets)}; mixed run labels stay in the benchmark plan."
+                    )
+                cfg = replace(
+                    cfg,
+                    hef_targets=list(_eff_targets),
+                    hailo_selected=True,
+                    execution_cfg=replace(cfg.execution_cfg, hef_targets=list(_eff_targets)),
+                )
+            prepared_full_baseline_used = self._materialize_prepared_full_hailo_baseline(
                 cfg,
                 log=log,
-                errors=errors,
+                suite_hailo_hefs=suite_hailo_hefs,
             )
+            if prepared_full_baseline_used:
+                cfg = replace(cfg, hef_full=True)
+                baseline = cfg.prepared_full_hailo_baseline if isinstance(cfg.prepared_full_hailo_baseline, Mapping) else {}
+                hailo_full_model_preflight = {
+                    'checked': False,
+                    'skipped': True,
+                    'policy': 'prepared_full_hailo_baseline',
+                    'aborted': False,
+                    'all_failed_explicit': False,
+                    'backend': str(cfg.hef_backend or 'auto'),
+                    'model_path': str(cfg.full_model_dst or cfg.full_model_src or ''),
+                    'endpoint_mode': str(baseline.get('endpoint_mode') or cfg.hailo_full_endpoint_mode or 'full'),
+                    'end_node_names': list(baseline.get('end_node_names') or cfg.hailo_full_end_node_names or []),
+                    'output_contract': dict(baseline.get('output_contract') or {}) if isinstance(baseline.get('output_contract'), Mapping) else {},
+                    'prepared_baseline': True,
+                    'result_count': 0,
+                    'ok_count': 0,
+                    'failed_count': 0,
+                    'unsupported_failure_count': 0,
+                    'results': [],
+                }
+            cfg = self._force_yolo26_suite_full_baseline_if_needed(cfg, log=log)
 
+            # v46: YOLO26 Full-Hailo baseline must be attempted before any split
+            # prefilter, global Part2 probe, or expensive case HEF builds.  The
+            # previous v45 wiring could still enter the case loop first when the
+            # UI/run profile carried a full-HEF policy of "skip"/"end" or did
+            # not request a pure Hailo run.  For YOLO26 thesis comparisons the
+            # Hailo-only baseline is a required reference system, so make the
+            # first build stage explicit here.
+            try:
+                _is_yolo26_forced_full = bool(self._is_yolo26_orchestration_cfg(cfg))
+            except Exception:
+                _is_yolo26_forced_full = False
+            if (
+                _is_yolo26_forced_full
+                and bool(cfg.hailo_selected)
+                and bool(cfg.hef_targets)
+                and bool(cfg.hef_full)
+                and cfg.hailo_build_hef_fn is not None
+                and not prepared_full_baseline_used
+            ):
+                cfg = replace(cfg, hef_full=True)
+                self._raise_if_cancelled(cfg, "before mandatory YOLO26 suite full HEF build")
+                log(
+                    'suite: YOLO26 policy: FORCE early Hailo Full baseline build as the first build stage '
+                    'before shortlist prefilter, Part2 probes, or split HEFs.'
+                )
+                self._build_suite_full_hefs(
+                    cfg,
+                    log=log,
+                    queue_put=queue_put,
+                    errors=errors,
+                    suite_hailo_hefs=suite_hailo_hefs,
+                    publish_hailo_diagnostics=cfg.execution_callbacks.publish_hailo_diagnostics,
+                )
+                early_suite_full_hef_attempted = True
+                try:
+                    cfg.execution_callbacks.persist_state(status='running', current_boundary=None)
+                except Exception:
+                    logger.debug('persist after mandatory YOLO26 suite full HEF failed', exc_info=True)
+
+            preflight_policy = normalize_hailo_full_model_preflight_policy(cfg.full_model_preflight_policy)
             abort_before_candidate_loop = False
-            if isinstance(hailo_full_model_preflight, dict) and bool(hailo_full_model_preflight.get('all_failed_explicit')):
-                cfg, adjusted = self._adjust_benchmark_plan_from_full_model_preflight(cfg, hailo_full_model_preflight, log=log)
-                if adjusted:
-                    log('suite: plan-aware Hailo preflight adjustment applied; generation will continue with the remaining runnable plan.')
-                elif bool(cfg.bench_plan_runs):
-                    log(
-                        'suite: full-model Hailo parser preflight failed on all requested targets, '
-                        'but the unsupported nodes were not clearly input/output-bound; continuing candidate loop '
-                        'because later splits may still isolate a Hailo-compatible subgraph.'
-                    )
-                if not bool(cfg.bench_plan_runs):
-                    abort_before_candidate_loop = True
-                    log('suite: aborting benchmark generation before the candidate loop because no runnable benchmark plan remains after Hailo preflight adjustment.')
-                hailo_full_model_preflight['aborted'] = bool(abort_before_candidate_loop)
+            if prepared_full_baseline_used:
+                log('suite: Hailo full-model parser preflight skipped; prepared full-Hailo baseline already supplies the suite full HEF.')
+            elif early_suite_full_hef_attempted:
+                hailo_full_model_preflight = {
+                    'checked': False,
+                    'skipped': True,
+                    'policy': 'forced_early_full_hef_build',
+                    'aborted': False,
+                    'all_failed_explicit': False,
+                    'backend': str(cfg.hef_backend or 'auto'),
+                    'model_path': str(cfg.full_model_dst or cfg.full_model_src or ''),
+                    'result_count': 0,
+                    'ok_count': 0,
+                    'failed_count': 0,
+                    'unsupported_failure_count': 0,
+                    'results': [],
+                }
+                log('suite: Hailo full-model parser preflight skipped; YOLO26 Full-Hailo build was already attempted as the first suite step.')
+            elif bool(cfg.hef_targets or []) and bool(cfg.hailo_selected) and preflight_policy == 'skip':
+                hailo_full_model_preflight = {
+                    'checked': False,
+                    'skipped': True,
+                    'policy': 'skip',
+                    'aborted': False,
+                    'all_failed_explicit': False,
+                    'backend': str(cfg.hef_backend or 'auto'),
+                    'model_path': str(cfg.full_model_dst or cfg.full_model_src or ''),
+                    'result_count': 0,
+                    'ok_count': 0,
+                    'failed_count': 0,
+                    'unsupported_failure_count': 0,
+                    'results': [],
+                }
+                log('suite: Hailo full-model parser preflight disabled; full-model Hailo HEF builds will be attempted directly.')
+            else:
+                self._raise_if_cancelled(cfg, "before full-model Hailo parser preflight")
+                hailo_full_model_preflight = self._run_hailo_full_model_parse_preflight(
+                    cfg,
+                    log=log,
+                    errors=errors,
+                )
+
+                if isinstance(hailo_full_model_preflight, dict) and bool(hailo_full_model_preflight.get('all_failed_explicit')):
+                    cfg, adjusted = self._adjust_benchmark_plan_from_full_model_preflight(cfg, hailo_full_model_preflight, log=log)
+                    if adjusted:
+                        log('suite: plan-aware Hailo preflight adjustment applied; generation will continue with the remaining runnable plan.')
+                    elif bool(cfg.bench_plan_runs):
+                        log(
+                            'suite: full-model Hailo parser preflight failed on all requested targets, '
+                            'but the unsupported nodes were not clearly input/output-bound; continuing candidate loop '
+                            'because later splits may still isolate a Hailo-compatible subgraph.'
+                        )
+                    if not bool(cfg.bench_plan_runs):
+                        abort_before_candidate_loop = True
+                        log('suite: aborting benchmark generation before the candidate loop because no runnable benchmark plan remains after Hailo preflight adjustment.')
+                    hailo_full_model_preflight['aborted'] = bool(abort_before_candidate_loop)
 
             if not abort_before_candidate_loop:
+                self._raise_if_cancelled(cfg, "before suite full HEF build")
+                suite_full_built_first = False
+                if not early_suite_full_hef_attempted:
+                    suite_full_built_first = self._build_suite_full_hefs_first_if_needed(
+                        cfg,
+                    log=log,
+                    queue_put=queue_put,
+                    errors=errors,
+                    suite_hailo_hefs=suite_hailo_hefs,
+                )
+
                 self._raise_if_cancelled(cfg, "before shortlist prefilter")
                 ranked_candidates, candidate_search_pool, shortlist_prefiltered_boundaries = self._prefilter_shortlist_for_hailo_part2(
                     cfg,
@@ -3495,28 +5340,24 @@ class BenchmarkGenerationOrchestrationService:
                             cfg.execution_callbacks.persist_state(status='running', current_boundary=None)
                         except Exception:
                             logger.debug('persist after Hailo Part2 plan downgrade failed', exc_info=True)
+                    else:
+                        ranked_candidates, candidate_search_pool = self._promote_yolo26_true_hailo_part2_candidate(
+                            cfg, ranked_candidates, candidate_search_pool, log=log
+                        )
+                        ranked_candidates, candidate_search_pool = self._promote_yolo26_hetero_throughput_candidates(
+                            cfg, ranked_candidates, candidate_search_pool, log=log
+                        )
 
-                self._raise_if_cancelled(cfg, "before suite full HEF build")
-                if normalize_full_hef_policy(cfg.full_hef_policy) == 'start':
-                    self._build_suite_full_hefs(
-                        cfg,
-                        log=log,
-                        queue_put=queue_put,
-                        errors=errors,
-                        suite_hailo_hefs=suite_hailo_hefs,
-                        publish_hailo_diagnostics=cfg.execution_callbacks.publish_hailo_diagnostics,
-                    )
-                    try:
-                        cfg.execution_callbacks.persist_state(status='running', current_boundary=None)
-                    except Exception:
-                        logger.debug('persist after suite full HEF (start) failed', exc_info=True)
+                # Suite Full HEFs are now built before shortlist prefilter/probing.
+                # Keep this section intentionally empty; final/end builds below still
+                # act as a duplicate-safe backstop via _build_suite_full_hefs.
 
                 self._raise_if_cancelled(cfg, "before case build loop")
                 exec_cfg = replace(cfg.execution_cfg, ranked_candidates=list(ranked_candidates), candidate_search_pool=list(candidate_search_pool))
                 self.execution_service.execute_case_build_loop(exec_cfg, cfg.execution_callbacks)
 
                 self._raise_if_cancelled(cfg, "before final suite full HEF build")
-                if normalize_full_hef_policy(cfg.full_hef_policy) == 'end':
+                if normalize_full_hef_policy(cfg.full_hef_policy) == 'end' and not early_suite_full_hef_attempted:
                     self._build_suite_full_hefs(
                         cfg,
                         log=log,
@@ -3572,6 +5413,10 @@ class BenchmarkGenerationOrchestrationService:
             tool_gui_version=cfg.tool_gui_version,
             tool_core_version=cfg.tool_core_version,
             benchmark_objective=str(cfg.benchmark_objective or 'latency'),
+            evaluation_profile=cfg.evaluation_profile_meta,
+            full_model_preflight_policy=str(cfg.full_model_preflight_policy or 'enabled'),
+            hailo_full_end_node_names=list(cfg.hailo_full_end_node_names or []),
+            hailo_full_endpoint_mode=str(cfg.hailo_full_endpoint_mode or ''),
         )
         try:
             cfg.execution_callbacks.persist_state(
@@ -3597,6 +5442,20 @@ class BenchmarkGenerationOrchestrationService:
 
         errs = [str(e) for e in errors if str(e).strip()]
         final_status = 'cancelled' if cancellation_reason else ('ok' if (not errs and not rejected_discarded and shortfall == 0) else 'warn')
+        accepted_hailo_boundaries: List[int] = []
+        try:
+            for rec in cases:
+                if not isinstance(rec, Mapping):
+                    continue
+                bval = _safe_int(rec.get('boundary'))
+                if bval is None:
+                    continue
+                av = rec.get('hailo_case_variant_availability')
+                if isinstance(av, Mapping) and av:
+                    accepted_hailo_boundaries.append(int(bval))
+        except Exception:
+            accepted_hailo_boundaries = []
+
         summary_data = self.generation_service.build_completion_summary_data(
             out_dir=str(cfg.out_dir),
             harness_path=str(finalize_result.harness_path),
@@ -3615,14 +5474,32 @@ class BenchmarkGenerationOrchestrationService:
             errors=errors,
             hailo_selected=bool(cfg.hailo_selected),
             hailo_outlook_summary=cfg.hailo_outlook_summary,
-            top_hailo_boundaries=list(candidate_search_pool[:5]),
+            top_hailo_boundaries=list(accepted_hailo_boundaries or candidate_search_pool[:5]),
             hailo_full_model_preflight=hailo_full_model_preflight,
+            full_model_preflight_policy=str(cfg.full_model_preflight_policy or 'enabled'),
         )
+        if accepted_hailo_boundaries:
+            summary_data['accepted_hailo_boundaries'] = list(accepted_hailo_boundaries)
         summary_data['final_status'] = final_status
+        try:
+            summary_data['accepted_boundaries'] = [
+                int(rec.get('boundary')) for rec in list(cases or [])
+                if isinstance(rec, Mapping) and _safe_int(rec.get('boundary')) is not None
+            ]
+            summary_data['accepted_hailo_feasible_boundaries'] = [
+                int(rec.get('boundary')) for rec in list(cases or [])
+                if isinstance(rec, Mapping)
+                and _safe_int(rec.get('boundary')) is not None
+                and isinstance((rec.get('hailo') or {}).get('case_variant_availability'), Mapping)
+            ]
+        except Exception:
+            logger.debug('Could not add accepted boundary summary', exc_info=True)
         if cancellation_reason:
             summary_data['cancellation_reason'] = str(cancellation_reason)
         if runtime.plan_adjustments:
             summary_data['plan_adjustments'] = list(runtime.plan_adjustments)
+        if cfg.evaluation_profile_meta:
+            summary_data['evaluation_profile'] = dict(cfg.evaluation_profile_meta)
         summary_data['raw_text'] = self.generation_service.format_completion_summary_text(summary_data, verbose=True)
         final_msg = self.generation_service.format_completion_summary_text(summary_data, verbose=False)
         return BenchmarkGenerationOrchestrationResult(
@@ -3676,8 +5553,30 @@ class RemoteBenchmarkService:
     def test_connection(self, host: SSHHostConfig, *, timeout_s: int = 10) -> tuple[bool, str]:
         return SSHTransport(host).test_connection(timeout_s=timeout_s)
 
-    def refresh_suite_harness(self, suite_dir: Path, *, benchmark_set_json: Optional[Path] = None, log=None) -> dict[str, Any]:
-        return refresh_suite_harness(Path(suite_dir), benchmark_set_json=(Path(benchmark_set_json) if benchmark_set_json else None), log=log)
+    def refresh_suite_harness(
+        self,
+        suite_dir: Path,
+        *,
+        benchmark_set_json: Optional[Path] = None,
+        validation_images: Optional[str] = None,
+        validation_max_images: Optional[int] = None,
+        validation_reference_mode: Optional[str] = None,
+        mini_coco_ap50: Optional[bool] = None,
+        benchmark_task: Optional[str] = None,
+        mini_classification_eval: Optional[bool] = None,
+        log=None,
+    ) -> dict[str, Any]:
+        return refresh_suite_harness(
+            Path(suite_dir),
+            benchmark_set_json=(Path(benchmark_set_json) if benchmark_set_json else None),
+            validation_images=validation_images,
+            validation_max_images=validation_max_images,
+            validation_reference_mode=validation_reference_mode,
+            mini_coco_ap50=mini_coco_ap50,
+            benchmark_task=benchmark_task,
+            mini_classification_eval=mini_classification_eval,
+            log=log,
+        )
 
     def rebuild_cached_suite_bundle(self, suite_dir: Path) -> tuple[Path, List[str]]:
         suite_dir = Path(suite_dir)
@@ -3730,15 +5629,21 @@ class RemoteBenchmarkController:
     def _emit_matrix(self, out: Mapping[str, Any], callbacks: RemoteBenchmarkCallbacks) -> None:
         try:
             local_dir = Path(str(out.get("local_run_dir") or ""))
-            matrix_md = local_dir / "results" / "benchmark_suite_status_matrix.md"
-            if not matrix_md.exists():
-                return
-            callbacks.log("")
-            callbacks.log("--- Status matrix ---")
-            for line in matrix_md.read_text(encoding="utf-8").splitlines():
-                callbacks.log(line)
+            results_dir = local_dir / "results"
+            matrix_md = results_dir / "benchmark_suite_status_matrix.md"
+            if matrix_md.exists():
+                callbacks.log("")
+                callbacks.log("--- Status matrix ---")
+                for line in matrix_md.read_text(encoding="utf-8").splitlines():
+                    callbacks.log(line)
+            v42_md = results_dir / "v42_pipeline_summary.md"
+            if v42_md.exists():
+                callbacks.log("")
+                callbacks.log("--- v42 pipeline summary ---")
+                for line in v42_md.read_text(encoding="utf-8").splitlines():
+                    callbacks.log(line)
         except Exception as exc:
-            callbacks.log(f"[warn] Could not read status matrix: {exc}")
+            callbacks.log(f"[warn] Could not read matrix/pipeline summary: {exc}")
 
     def run(self, *, host: SSHHostConfig, benchmark_set_json: Path, local_working_dir: Path, run_id: str, args: RemoteBenchmarkArgs, cancel_event=None, callbacks: RemoteBenchmarkCallbacks) -> Dict[str, Any]:
         try:

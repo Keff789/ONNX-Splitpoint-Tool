@@ -14,9 +14,6 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from typing import Any, Dict, Optional
 
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-from matplotlib.figure import Figure
-
 from ...benchmark.analysis import (
     BenchmarkAnalysisReport,
     BenchmarkComparisonReport,
@@ -36,6 +33,13 @@ from ...benchmark.analysis import (
     load_benchmark_analysis,
     load_benchmark_analysis_comparison,
     provider_summary_rows,
+)
+from ...benchmark.decision_summary import (
+    build_decision_summary_figures,
+    build_decision_summary_markdown,
+    decision_candidate_rows,
+    decision_provider_rows,
+    export_decision_summary,
 )
 from ...benchmark.interleaving_analysis import (
     build_metric_audit_fps_figure,
@@ -66,6 +70,7 @@ from ...benchmark.interleaving_analysis import (
     export_publication_comparison,
 )
 from ...benchmark.services import BenchmarkAnalysisService, LoadedBenchmarkAnalysis, LoadedBenchmarkComparison
+from ...benchmark.evaluation_profiles import compare_evaluation_profiles, format_profile_comparison_text, list_available_evaluation_profiles
 from ...objective_scoring import set_throughput_calibration_enabled
 from ...workdir import ensure_workdir
 from ..widgets.tooltip import attach_tooltip
@@ -129,6 +134,8 @@ def _analysis_cache_base(app: Any | None) -> Path:
 
 
 def _placeholder_figure(title: str, message: str) -> Figure:
+    from matplotlib.figure import Figure
+
     fig = Figure(figsize=(7.0, 3.8), dpi=100)
     ax = fig.add_subplot(111)
     ax.axis("off")
@@ -262,6 +269,64 @@ def build_panel(parent, app=None) -> ttk.Frame:
     body = ttk.Notebook(frame)
     body.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
 
+    decision_tab = ttk.Frame(body)
+    decision_tab.columnconfigure(0, weight=1)
+    decision_tab.rowconfigure(0, weight=2)
+    decision_tab.rowconfigure(1, weight=3)
+    txt_decision = scrolledtext.ScrolledText(decision_tab, wrap="word", height=12)
+    txt_decision.grid(row=0, column=0, sticky="nsew")
+    txt_decision.configure(state="disabled")
+
+    decision_tables = ttk.Notebook(decision_tab)
+    decision_tables.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+
+    decision_provider_tab = ttk.Frame(decision_tables)
+    decision_provider_tab.columnconfigure(0, weight=1)
+    decision_provider_tab.rowconfigure(0, weight=1)
+    decision_provider_cols = (
+        "kind", "setup", "boundary", "streaming_fps", "latency_ms",
+        "gain_vs_best_full_pct", "ap50", "backend_match_vs_cpu", "recommendation",
+    )
+    tree_decision_provider = ttk.Treeview(decision_provider_tab, columns=decision_provider_cols, show="headings", height=7)
+    decision_provider_headings = {
+        "kind": "Rolle", "setup": "Setup", "boundary": "b", "streaming_fps": "FPS",
+        "latency_ms": "Latenz [ms]", "gain_vs_best_full_pct": "Gain [%]",
+        "ap50": "Qualität", "backend_match_vs_cpu": "Drift", "recommendation": "Empfehlung",
+    }
+    for col in decision_provider_cols:
+        tree_decision_provider.heading(col, text=decision_provider_headings[col])
+        tree_decision_provider.column(col, width=170 if col == "recommendation" else (122 if col == "setup" else 84), stretch=(col in {"setup", "recommendation"}), anchor="center")
+    vsb_decision_provider = ttk.Scrollbar(decision_provider_tab, orient="vertical", command=tree_decision_provider.yview)
+    tree_decision_provider.configure(yscrollcommand=vsb_decision_provider.set)
+    tree_decision_provider.grid(row=0, column=0, sticky="nsew")
+    vsb_decision_provider.grid(row=0, column=1, sticky="ns")
+    decision_tables.add(decision_provider_tab, text="Setups")
+
+    decision_candidate_tab = ttk.Frame(decision_tables)
+    decision_candidate_tab.columnconfigure(0, weight=1)
+    decision_candidate_tab.rowconfigure(0, weight=1)
+    decision_candidate_cols = (
+        "rank", "pipeline", "boundary", "streaming_fps", "latency_ms",
+        "gain_vs_best_full_pct", "ap50", "backend_match_vs_cpu", "stage_balance", "recommendation",
+    )
+    tree_decision_candidate = ttk.Treeview(decision_candidate_tab, columns=decision_candidate_cols, show="headings", height=7)
+    decision_candidate_headings = {
+        "rank": "Rang", "pipeline": "Pipeline", "boundary": "b", "streaming_fps": "FPS",
+        "latency_ms": "Latenz [ms]", "gain_vs_best_full_pct": "Gain [%]",
+        "ap50": "Qualität", "backend_match_vs_cpu": "Drift", "stage_balance": "Balance",
+        "recommendation": "Empfehlung",
+    }
+    for col in decision_candidate_cols:
+        tree_decision_candidate.heading(col, text=decision_candidate_headings[col])
+        tree_decision_candidate.column(col, width=170 if col == "recommendation" else (122 if col == "pipeline" else 78), stretch=(col in {"pipeline", "recommendation"}), anchor="center")
+    vsb_decision_candidate = ttk.Scrollbar(decision_candidate_tab, orient="vertical", command=tree_decision_candidate.yview)
+    tree_decision_candidate.configure(yscrollcommand=vsb_decision_candidate.set)
+    tree_decision_candidate.grid(row=0, column=0, sticky="nsew")
+    vsb_decision_candidate.grid(row=0, column=1, sticky="ns")
+    decision_tables.add(decision_candidate_tab, text="Top Streaming")
+
+    body.add(decision_tab, text="Entscheidung")
+
     summary_tab = ttk.Frame(body)
     summary_tab.columnconfigure(0, weight=1)
     summary_tab.rowconfigure(0, weight=1)
@@ -269,6 +334,68 @@ def build_panel(parent, app=None) -> ttk.Frame:
     txt_summary.grid(row=0, column=0, sticky="nsew")
     txt_summary.configure(state="disabled")
     body.add(summary_tab, text="Zusammenfassung")
+
+    profile_compare_tab = ttk.Frame(body)
+    profile_compare_tab.columnconfigure(0, weight=1)
+    profile_compare_tab.rowconfigure(2, weight=1)
+    cmp_toolbar = ttk.Frame(profile_compare_tab)
+    cmp_toolbar.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 4))
+    cmp_left_var = tk.StringVar(value="")
+    cmp_right_var = tk.StringVar(value="")
+    cmp_third_var = tk.StringVar(value="")
+    _profile_values = [""] + list_available_evaluation_profiles()
+    ttk.Label(cmp_toolbar, text="Profile A:").pack(side=tk.LEFT)
+    cb_profile_cmp_left = ttk.Combobox(cmp_toolbar, textvariable=cmp_left_var, values=_profile_values, width=22)
+    cb_profile_cmp_left.pack(side=tk.LEFT, padx=(4, 8))
+    ttk.Label(cmp_toolbar, text="Profile B:").pack(side=tk.LEFT)
+    cb_profile_cmp_right = ttk.Combobox(cmp_toolbar, textvariable=cmp_right_var, values=_profile_values, width=22)
+    cb_profile_cmp_right.pack(side=tk.LEFT, padx=(4, 8))
+    ttk.Label(cmp_toolbar, text="Profile C:").pack(side=tk.LEFT)
+    cb_profile_cmp_third = ttk.Combobox(cmp_toolbar, textvariable=cmp_third_var, values=_profile_values, width=22)
+    cb_profile_cmp_third.pack(side=tk.LEFT, padx=(4, 8))
+    btn_profile_cmp_left = ttk.Button(cmp_toolbar, text="A YAML…")
+    btn_profile_cmp_left.pack(side=tk.LEFT, padx=(0, 4))
+    btn_profile_cmp_right = ttk.Button(cmp_toolbar, text="B YAML…")
+    btn_profile_cmp_right.pack(side=tk.LEFT, padx=(0, 4))
+    btn_profile_cmp_third = ttk.Button(cmp_toolbar, text="C YAML…")
+    btn_profile_cmp_third.pack(side=tk.LEFT, padx=(0, 4))
+    btn_profile_cmp_refresh = ttk.Button(cmp_toolbar, text="Compare")
+    btn_profile_cmp_refresh.pack(side=tk.LEFT, padx=(8, 0))
+    txt_profile_compare = scrolledtext.ScrolledText(profile_compare_tab, wrap="word", height=10)
+    txt_profile_compare.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
+    txt_profile_compare.configure(state="disabled")
+
+    profile_tables = ttk.Notebook(profile_compare_tab)
+    profile_tables.grid(row=2, column=0, sticky='nsew', padx=6, pady=(0, 6))
+
+    profile_model_tab = ttk.Frame(profile_tables)
+    profile_model_tab.columnconfigure(0, weight=1)
+    profile_model_tab.rowconfigure(0, weight=1)
+    profile_model_cols = ('model_id', 'task', 'family', 'profile_1', 'profile_2', 'profile_3')
+    tree_profile_models = ttk.Treeview(profile_model_tab, columns=profile_model_cols, show='headings', height=8)
+    for col in profile_model_cols:
+        tree_profile_models.heading(col, text=col)
+        tree_profile_models.column(col, width=(180 if col == 'model_id' else 120), stretch=(col in {'model_id', 'family'}), anchor='center')
+    vsb_profile_models = ttk.Scrollbar(profile_model_tab, orient='vertical', command=tree_profile_models.yview)
+    tree_profile_models.configure(yscrollcommand=vsb_profile_models.set)
+    tree_profile_models.grid(row=0, column=0, sticky='nsew')
+    vsb_profile_models.grid(row=0, column=1, sticky='ns')
+    profile_tables.add(profile_model_tab, text='Models')
+
+    profile_run_tab = ttk.Frame(profile_tables)
+    profile_run_tab.columnconfigure(0, weight=1)
+    profile_run_tab.rowconfigure(0, weight=1)
+    profile_run_cols = ('run_id', 'type', 'full', 'stage1', 'stage2', 'profile_1', 'profile_2', 'profile_3')
+    tree_profile_runs = ttk.Treeview(profile_run_tab, columns=profile_run_cols, show='headings', height=8)
+    for col in profile_run_cols:
+        tree_profile_runs.heading(col, text=col)
+        tree_profile_runs.column(col, width=(150 if col == 'run_id' else 110), stretch=(col in {'run_id'}), anchor='center')
+    vsb_profile_runs = ttk.Scrollbar(profile_run_tab, orient='vertical', command=tree_profile_runs.yview)
+    tree_profile_runs.configure(yscrollcommand=vsb_profile_runs.set)
+    tree_profile_runs.grid(row=0, column=0, sticky='nsew')
+    vsb_profile_runs.grid(row=0, column=1, sticky='ns')
+    profile_tables.add(profile_run_tab, text='Runs')
+    body.add(profile_compare_tab, text="Profile")
 
     research_tab = ttk.Frame(body)
     research_tab.columnconfigure(0, weight=1)
@@ -918,6 +1045,9 @@ def build_panel(parent, app=None) -> ttk.Frame:
     body.add(plots_tab, text="Grafiken")
     plot_hosts: Dict[str, ttk.Frame] = {}
     plot_labels = {
+        "decision_fps_latency": "A: Decision FPS/Latenz",
+        "decision_ap50": "A: Decision Qualität",
+        "decision_backend_match": "A: Decision Drift",
         "best_vs_full": "A: Best split vs full",
         "predictor_quality": "A: Prognosegüte",
         "candidate_stability": "A: Kandidaten-Stabilität",
@@ -998,9 +1128,112 @@ def build_panel(parent, app=None) -> ttk.Frame:
         txt_summary.insert("1.0", text)
         txt_summary.configure(state="disabled")
 
+    def _set_decision_text(text: str) -> None:
+        txt_decision.configure(state="normal")
+        txt_decision.delete("1.0", tk.END)
+        txt_decision.insert("1.0", text)
+        txt_decision.configure(state="disabled")
+
+    def _set_profile_compare_text(text: str) -> None:
+        txt_profile_compare.configure(state="normal")
+        txt_profile_compare.delete("1.0", tk.END)
+        txt_profile_compare.insert("1.0", text)
+        txt_profile_compare.configure(state="disabled")
+
+    def _browse_profile_cmp(var: tk.StringVar) -> None:
+        p_sel = filedialog.askopenfilename(title='Select evaluation profile YAML', filetypes=[('YAML', '*.yaml *.yml'), ('All', '*')])
+        if p_sel:
+            var.set(str(p_sel))
+            _refresh_profile_compare_text()
+
+    def _split_profile_specs(raw_value: str) -> list[str]:
+        out: list[str] = []
+        for chunk in str(raw_value or '').replace(';', ',').replace('\n', ',').split(','):
+            tok = str(chunk or '').strip()
+            if tok and tok not in out:
+                out.append(tok)
+        return out
+
     def _clear_tree(tree: ttk.Treeview) -> None:
-        for item in tree.get_children(""):
+        for item in tree.get_children(''):
             tree.delete(item)
+
+    def _set_profile_compare_headers(profile_ids: list[str]) -> None:
+        labels = list(profile_ids[:3]) + ['—', '—', '—']
+        labels = labels[:3]
+        for idx, label in enumerate(labels, start=1):
+            tree_profile_models.heading(f'profile_{idx}', text=label)
+            tree_profile_runs.heading(f'profile_{idx}', text=label)
+
+    def _render_profile_compare_tables(comparison) -> None:
+        _clear_tree(tree_profile_models)
+        _clear_tree(tree_profile_runs)
+        profile_ids = [str(item.get('profile_id') or '').strip() for item in list(comparison.profiles or []) if str(item.get('profile_id') or '').strip()]
+        _set_profile_compare_headers(profile_ids)
+        for row in list(comparison.model_rows or []):
+            vals = [str(row.get('model_id') or ''), str(row.get('task') or ''), str(row.get('family') or '')]
+            for pid in profile_ids[:3]:
+                vals.append(str(row.get(pid) or '—'))
+            while len(vals) < 6:
+                vals.append('—')
+            tree_profile_models.insert('', 'end', values=vals[:6])
+        for row in list(comparison.run_rows or []):
+            vals = [
+                str(row.get('run_id') or ''),
+                str(row.get('type') or ''),
+                str(row.get('full') or ''),
+                str(row.get('stage1') or ''),
+                str(row.get('stage2') or ''),
+            ]
+            for pid in profile_ids[:3]:
+                vals.append('yes' if row.get(pid) else '—')
+            while len(vals) < 8:
+                vals.append('—')
+            tree_profile_runs.insert('', 'end', values=vals[:8])
+
+    def _refresh_profile_compare_text(*_args) -> None:
+        specs: list[str] = []
+        for raw in (cmp_left_var.get(), cmp_right_var.get(), cmp_third_var.get()):
+            for tok in _split_profile_specs(raw):
+                if tok not in specs:
+                    specs.append(tok)
+        if not specs:
+            _set_profile_compare_text(
+                'Select one or more evaluation profiles (built-in id or YAML path).\n'
+                'You can also enter comma-separated profile ids/paths to compare multiple profiles at once.\n'
+            )
+            _clear_tree(tree_profile_models)
+            _clear_tree(tree_profile_runs)
+            _set_profile_compare_headers([])
+            return
+        try:
+            comparison = compare_evaluation_profiles(specs, include_reserve=True)
+        except Exception as exc:
+            _set_profile_compare_text(f'Profile comparison failed: {type(exc).__name__}: {exc}\n')
+            _clear_tree(tree_profile_models)
+            _clear_tree(tree_profile_runs)
+            _set_profile_compare_headers([])
+            return
+        if not comparison.profiles:
+            _set_profile_compare_text('No valid profiles could be resolved for the requested comparison.\n')
+            _clear_tree(tree_profile_models)
+            _clear_tree(tree_profile_runs)
+            _set_profile_compare_headers([])
+            return
+        _set_profile_compare_text(format_profile_comparison_text(comparison))
+        _render_profile_compare_tables(comparison)
+
+    btn_profile_cmp_left.configure(command=lambda: _browse_profile_cmp(cmp_left_var))
+    btn_profile_cmp_right.configure(command=lambda: _browse_profile_cmp(cmp_right_var))
+    btn_profile_cmp_third.configure(command=lambda: _browse_profile_cmp(cmp_third_var))
+    btn_profile_cmp_refresh.configure(command=_refresh_profile_compare_text)
+    try:
+        cmp_left_var.trace_add('write', _refresh_profile_compare_text)
+        cmp_right_var.trace_add('write', _refresh_profile_compare_text)
+        cmp_third_var.trace_add('write', _refresh_profile_compare_text)
+    except Exception:
+        pass
+    _refresh_profile_compare_text()
 
     def _fmt_cell(key: str, value: Any) -> str:
         if value is None:
@@ -1108,6 +1341,13 @@ def build_panel(parent, app=None) -> ttk.Frame:
             "rank_error_uncal_abs",
             "rank_error_cal_abs",
             "rank_error_new_abs",
+            "ap50",
+            "quality",
+            "ap50_delta_vs_full",
+            "quality_delta_vs_full",
+            "backend_match_vs_cpu",
+            "backend_iou_vs_cpu",
+            "gain_vs_own_full_pct",
         }
         if key in numeric_keys:
             try:
@@ -1258,6 +1498,35 @@ def build_panel(parent, app=None) -> ttk.Frame:
                 fig.savefig(out_path, bbox_inches='tight')
                 paths[f'{stem}_{ext}'] = out_path
         return paths
+
+    def _populate_decision_tables(report: BenchmarkAnalysisReport, inter_analysis) -> None:
+        _clear_tree(tree_decision_provider)
+        _clear_tree(tree_decision_candidate)
+        overview = decision_overview(report, inter_analysis)
+        quality_label = str(overview.get("quality_label") or "Qualität")
+        backend_label = str(overview.get("backend_metric_label") or "Drift")
+        tree_decision_provider.heading("ap50", text=quality_label)
+        tree_decision_provider.heading("backend_match_vs_cpu", text=backend_label)
+        tree_decision_candidate.heading("ap50", text=quality_label)
+        tree_decision_candidate.heading("backend_match_vs_cpu", text=backend_label)
+        for row in decision_provider_rows(report, inter_analysis):
+            display = dict(row)
+            if display.get("kind") == "full":
+                display["kind"] = "Full"
+            elif display.get("kind") == "sequential_split":
+                display["kind"] = "Seq. Split"
+            elif display.get("kind") == "streaming_split":
+                display["kind"] = "Streaming"
+            if display.get("boundary") is not None:
+                display["boundary"] = f"b{int(display.get('boundary')):03d}"
+            vals = tuple(_fmt_cell(col, display.get(col)) for col in decision_provider_cols)
+            tree_decision_provider.insert("", "end", values=vals)
+        for row in decision_candidate_rows(report, inter_analysis, limit=12):
+            display = dict(row)
+            if display.get("boundary") is not None:
+                display["boundary"] = f"b{int(display.get('boundary')):03d}"
+            vals = tuple(_fmt_cell(col, display.get(col)) for col in decision_candidate_cols)
+            tree_decision_candidate.insert("", "end", values=vals)
 
     def _populate_provider_tree(report: BenchmarkAnalysisReport) -> None:
         _clear_tree(tree_provider)
@@ -1444,6 +1713,8 @@ def build_panel(parent, app=None) -> ttk.Frame:
             tree_metric_cmp.insert('', 'end', values=vals, tags=((tag,) if tag else ()))
 
     def _render_plot(host: ttk.Frame, key: str, figure: Figure) -> None:
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+
         old_canvas = state["canvases"].get(key)
         if old_canvas is not None:
             try:
@@ -1467,7 +1738,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
         state["canvases"][key] = canvas
         state["toolbars"][key] = toolbar
 
-    def _clear_comparison_views(message: str = "Noch kein Vergleich geladen.") -> None:
+    def _clear_comparison_views(message: str = "Noch kein Vergleich geladen.", *, render_placeholders: bool = True) -> None:
         state["comparison"] = None
         state["interleaving_comparison"] = None
         metric_cmp_summary_var.set("Noch kein Metric-Audit-Vergleich geladen.")
@@ -1481,7 +1752,11 @@ def build_panel(parent, app=None) -> ttk.Frame:
         research_cmp_detail_var.set('Kein A↔B-Research-Vergleich geladen.')
         metric_cmp_summary_var.set(message)
         metric_cmp_detail_var.set('Kein A↔B-Metric-Audit geladen.')
-        placeholders = {
+        # Do not render dozens of Matplotlib canvases during GUI startup.
+        # Also do not clear A/single-run plots when only comparison B is empty;
+        # a previous version overwrote freshly rendered Decision/Metric plots with
+        # placeholders after single-source analysis.
+        comparison_placeholders = {
             "comparison_provider_latency": "Provider-Latenzvergleich",
             "comparison_predictor_delta": "Prognosegüte-Vergleich",
             "comparison_candidate_rank_shift": "Kandidaten-Verschiebung",
@@ -1489,16 +1764,14 @@ def build_panel(parent, app=None) -> ttk.Frame:
             "comparison_hailo_latency_delta": "Hailo-Latenzvergleich",
             "comparison_interleaving_fps_delta": "Interleaving FPS-Vergleich",
             "comparison_metric_audit_rank_error": "Metric Audit-Vergleich",
-            "interleaving_residual_overhead": "Cut vs residual overhead",
-            "metric_audit_rank": "Metric audit: rank",
-            "metric_audit_fps": "Metric audit: throughput",
         }
         try:
             calibration_badge.set(text=('CAL' if _use_throughput_calibration() else 'RAW'), level=('ok' if _use_throughput_calibration() else 'idle'))
         except Exception:
             pass
-        for key, title in placeholders.items():
-            _render_plot(plot_hosts[key], key, _placeholder_figure(title, message))
+        if render_placeholders:
+            for key, title in comparison_placeholders.items():
+                _render_plot(plot_hosts[key], key, _placeholder_figure(title, message))
 
     def _render_report(report: BenchmarkAnalysisReport, summary_text: Optional[str] = None, status_text: Optional[str] = None, inter_analysis=None) -> None:
         state["report"] = report
@@ -1514,6 +1787,8 @@ def build_panel(parent, app=None) -> ttk.Frame:
         if summary_text is None and inter_analysis.summary_markdown:
             combined_summary = combined_summary.rstrip() + "\n\n" + inter_analysis.summary_markdown
         _set_summary_text(combined_summary)
+        _set_decision_text(build_decision_summary_markdown(report, inter_analysis))
+        _populate_decision_tables(report, inter_analysis)
         _populate_research_cards(report, inter_analysis)
         _populate_research_trees(report, inter_analysis)
         _populate_metric_audit_tree(report, inter_analysis)
@@ -1527,12 +1802,15 @@ def build_panel(parent, app=None) -> ttk.Frame:
         for key, figure in build_benchmark_analysis_figures(report).items():
             if key in plot_hosts:
                 _render_plot(plot_hosts[key], key, figure)
+        for key, figure in build_decision_summary_figures(report, inter_analysis).items():
+            if key in plot_hosts:
+                _render_plot(plot_hosts[key], key, figure)
         _render_plot(plot_hosts["interleaving_gain"], "interleaving_gain", build_interleaving_gain_figure(inter_analysis))
         _render_plot(plot_hosts["interleaving_tradeoff"], "interleaving_tradeoff", build_interleaving_tradeoff_figure(inter_analysis))
         _render_plot(plot_hosts["interleaving_residual_overhead"], "interleaving_residual_overhead", build_interleaving_residual_overhead_figure(inter_analysis))
         _render_plot(plot_hosts["metric_audit_rank"], "metric_audit_rank", build_metric_audit_rank_figure(report, inter_analysis, use_calibration=_use_throughput_calibration()))
         _render_plot(plot_hosts["metric_audit_fps"], "metric_audit_fps", build_metric_audit_fps_figure(report, inter_analysis, use_calibration=_use_throughput_calibration()))
-        body.select(research_tab)
+        body.select(decision_tab)
 
     def _render_comparison(comparison: BenchmarkComparisonReport, inter_cmp=None) -> None:
         state["comparison"] = comparison
@@ -1680,6 +1958,6 @@ def build_panel(parent, app=None) -> ttk.Frame:
     btn_analyze.configure(command=_run_analysis)
     btn_export.configure(command=_export_report)
     btn_pub.configure(command=_export_publication_report)
-    _clear_comparison_views()
+    _clear_comparison_views(render_placeholders=False)
 
     return frame

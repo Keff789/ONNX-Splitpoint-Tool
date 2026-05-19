@@ -49,6 +49,32 @@ def _np_dtype_from_onnx(elem_type: int) -> np.dtype:
     return mapping[int(elem_type)]
 
 
+
+
+def _cast_for_ort_input(arr: np.ndarray, type_str: str) -> np.ndarray:
+    t = str(type_str or "").strip().lower()
+    mapping = {
+        "tensor(float)": np.float32,
+        "tensor(float16)": np.float16,
+        "tensor(double)": np.float64,
+        "tensor(int64)": np.int64,
+        "tensor(int32)": np.int32,
+        "tensor(int16)": np.int16,
+        "tensor(int8)": np.int8,
+        "tensor(uint64)": np.uint64,
+        "tensor(uint32)": np.uint32,
+        "tensor(uint16)": np.uint16,
+        "tensor(uint8)": np.uint8,
+        "tensor(bool)": np.bool_,
+    }
+    tgt = mapping.get(t)
+    src = np.asarray(arr)
+    if tgt is None or src.dtype == np.dtype(tgt):
+        return src
+    try:
+        return src.astype(tgt, copy=False)
+    except Exception:
+        return src
 def make_random_inputs(
     model: onnx.ModelProto,
     *,
@@ -160,7 +186,9 @@ def validate_split_onnxruntime(
 
     # Prepare part2 feeds
     sess_p2 = _sess(part2_path)
-    p2_in_names = [i.name for i in sess_p2.get_inputs()]
+    p2_inputs_meta = list(sess_p2.get_inputs())
+    p2_in_names = [i.name for i in p2_inputs_meta]
+    p2_in_types = {i.name: str(getattr(i, "type", "") or "") for i in p2_inputs_meta}
     feeds_p2: Dict[str, np.ndarray] = {}
 
     p1_cut_names = list(manifest.get("part1_cut_names", []))
@@ -171,13 +199,13 @@ def validate_split_onnxruntime(
     for p1n, p2n in zip(p1_cut_names, p2_cut_names):
         if p1n not in p1_out:
             raise RuntimeError(f"Validation error: part1 did not produce expected cut output '{p1n}'")
-        feeds_p2[p2n] = p1_out[p1n]
+        feeds_p2[p2n] = _cast_for_ort_input(p1_out[p1n], p2_in_types.get(p2n, ""))
 
     for name in p2_in_names:
         if name in feeds_p2:
             continue
         if name in feeds_full:
-            feeds_p2[name] = feeds_full[name]
+            feeds_p2[name] = _cast_for_ort_input(feeds_full[name], p2_in_types.get(name, ""))
         else:
             raise RuntimeError(
                 f"Validation error: cannot satisfy part2 input '{name}'. "

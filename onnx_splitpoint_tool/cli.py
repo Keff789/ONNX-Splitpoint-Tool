@@ -16,6 +16,13 @@ from .units import (
 
 
 from .benchmark.services import BenchmarkAnalysisService, BenchmarkBundleService, BenchmarkSchemaService, RemoteBenchmarkService
+from .benchmark.evaluation_profiles import (
+    compare_evaluation_profiles,
+    find_profile_model_paths,
+    list_available_evaluation_profiles,
+    load_evaluation_profile,
+    resolve_evaluation_profile,
+)
 from .benchmark.remote_run import RemoteBenchmarkArgs
 from .remote.ssh_transport import HostConfig as SSHHostConfig
 
@@ -358,7 +365,7 @@ def _legacy_main(argv: Optional[List[str]] = None) -> int:
     return 0
 
 
-SERVICE_COMMANDS = {"benchmark-analyze", "benchmark-compare", "benchmark-bundle", "benchmark-schema", "benchmark-remote"}
+SERVICE_COMMANDS = {"benchmark-analyze", "benchmark-compare", "benchmark-bundle", "benchmark-schema", "benchmark-remote", "benchmark-profile", "prepare-validation-sets", "validation-assets"}
 
 
 def _service_main(argv: Optional[List[str]] = None) -> int:
@@ -410,8 +417,71 @@ def _service_main(argv: Optional[List[str]] = None) -> int:
     p_rem.add_argument("--throughput-queue-depth", type=int, default=2)
     p_rem.add_argument("--add-args", default="", help="Extra args appended to benchmark_suite.py")
 
+    p_prof = sub.add_parser("benchmark-profile", help="List or resolve benchmark evaluation profiles.")
+    p_prof.add_argument("profile", nargs="?", default="", help="Profile id or YAML path")
+    p_prof.add_argument("--list", action="store_true", help="List built-in profiles")
+    p_prof.add_argument("--model", default="", help="Optional model path used to resolve model-specific defaults")
+    p_prof.add_argument("--validate", action="store_true", help="Hard-validate the selected profile against the schema")
+    p_prof.add_argument("--compare", nargs="+", default=[], help="Compare two or more profile ids / YAML paths")
+    p_prof.add_argument("--models-root", default="", help="Resolve profile models against a root folder containing exported ONNX files")
+    p_prof.add_argument("--include-reserve", action="store_true", help="Include reserve models when listing/resolving profile model coverage")
+
+    p_val = sub.add_parser("prepare-validation-sets", help="Prepare/download validation datasets outside the clean tool ZIP.")
+    p_val.add_argument("--coco50", action="store_true", help="Prepare the COCO-50 detection validation subset")
+    p_val.add_argument("--imagenette200", action="store_true", help="Prepare the downloadable Imagenette mini-200 classification preset")
+    p_val.add_argument("--imagenette500", action="store_true", help="Prepare the downloadable Imagenette mini-500 classification preset")
+    p_val.add_argument("--all", action="store_true", help="Prepare all built-in downloadable validation sets")
+    p_val.add_argument("--overwrite", action="store_true", help="Overwrite existing files")
+    p_val.add_argument("--status", action="store_true", help="Print validation dataset status without downloading")
+
+    p_val2 = sub.add_parser("validation-assets", help="Prepare or inspect local validation datasets used by benchmark suites.")
+    p_val2.add_argument("action", nargs="?", default="status", choices=["status", "prepare"], help="status or prepare")
+    p_val2.add_argument("--overwrite", action="store_true", help="Re-download/recreate existing assets")
+    p_val2.add_argument("--no-coco50", action="store_true", help="Skip COCO-50 detection validation set")
+    p_val2.add_argument("--no-classification", action="store_true", help="Skip downloadable classification mini preset")
+    p_val2.add_argument("--imagenette500", action="store_true", help="Also prepare the downloadable Imagenette mini-500 preset")
+    p_val2.add_argument("--no-test-images", action="store_true", help="Skip runner test image preparation")
+
     ns = ap.parse_args(argv)
     cmd = str(ns.cmd)
+    if cmd == "prepare-validation-sets":
+        import json
+        from .benchmark.validation_assets import prepare_all_validation_assets, validation_assets_status
+        if bool(getattr(ns, "status", False)) and not bool(getattr(ns, "all", False)) and not bool(getattr(ns, "coco50", False)):
+            print(json.dumps(validation_assets_status().as_dict(), indent=2), flush=True)
+            return 0
+        def _log(msg: str) -> None:
+            print(msg, flush=True)
+        all_requested = bool(getattr(ns, "all", False))
+        any_explicit = bool(getattr(ns, "coco50", False)) or bool(getattr(ns, "imagenette200", False)) or bool(getattr(ns, "imagenette500", False))
+        result = prepare_all_validation_assets(
+            include_coco50=all_requested or bool(getattr(ns, "coco50", False)) or not any_explicit,
+            include_imagenette200=all_requested or bool(getattr(ns, "imagenette200", False)) or not any_explicit,
+            include_imagenette500=all_requested or bool(getattr(ns, "imagenette500", False)),
+            include_test_images=all_requested or not any_explicit,
+            overwrite=bool(getattr(ns, "overwrite", False)),
+            log=_log,
+        )
+        print(json.dumps(result, indent=2), flush=True)
+        return 0
+    if cmd == "validation-assets":
+        import json
+        from .benchmark.validation_assets import prepare_all_validation_assets, validation_assets_status
+        if str(getattr(ns, "action", "status") or "status") == "prepare":
+            def _log(msg: str) -> None:
+                print(msg, flush=True)
+            result = prepare_all_validation_assets(
+                include_coco50=not bool(getattr(ns, "no_coco50", False)),
+                include_imagenette200=not bool(getattr(ns, "no_classification", False)),
+                include_imagenette500=bool(getattr(ns, "imagenette500", False)) and not bool(getattr(ns, "no_classification", False)),
+                include_test_images=not bool(getattr(ns, "no_test_images", False)),
+                overwrite=bool(getattr(ns, "overwrite", False)),
+                log=_log,
+            )
+            print(json.dumps(result, indent=2), flush=True)
+            return 0
+        print(json.dumps(validation_assets_status().as_dict(), indent=2), flush=True)
+        return 0
     if cmd == "benchmark-analyze":
         cache_base = Path(ns.cache_base).expanduser() if ns.cache_base else Path.cwd() / ".benchmark_analysis_cache"
         service = BenchmarkAnalysisService(cache_base=cache_base)
@@ -489,6 +559,61 @@ def _service_main(argv: Optional[List[str]] = None) -> int:
         print(json.dumps(out, indent=2), flush=True)
         status = str(out.get('status') or ('ok' if out.get('ok') else 'failed')).strip().lower()
         return 0 if status in {'ok', 'partial'} else 1
+    if cmd == "benchmark-profile":
+        import json
+        if bool(getattr(ns, "list", False)) or (
+            not str(getattr(ns, "profile", "") or "").strip() and not list(getattr(ns, "compare", []) or [])
+        ):
+            for name in list_available_evaluation_profiles():
+                print(name)
+            return 0
+        compare_specs = [str(x or "").strip() for x in list(getattr(ns, "compare", []) or []) if str(x or "").strip()]
+        if compare_specs:
+            comp = compare_evaluation_profiles(compare_specs, include_reserve=bool(getattr(ns, "include_reserve", False)))
+            print(json.dumps({
+                "profiles": comp.profiles,
+                "model_rows": comp.model_rows,
+                "run_rows": comp.run_rows,
+                "summary_markdown": comp.summary_markdown,
+            }, indent=2), flush=True)
+            return 0 if comp.profiles else 1
+        prof_spec = str(getattr(ns, "profile", "") or "").strip()
+        if bool(getattr(ns, "validate", False)):
+            loaded = load_evaluation_profile(prof_spec, validate=True)
+            if loaded is None or isinstance(loaded, tuple):
+                print(f"[error] profile not found: {prof_spec}")
+                return 1
+            payload = {
+                "profile_id": loaded.profile_id,
+                "profile_path": loaded.profile_path,
+                "source": loaded.source,
+                "name": loaded.raw_profile.get("name"),
+            }
+            print(json.dumps(payload, indent=2), flush=True)
+            return 0
+        if str(getattr(ns, "models_root", "") or "").strip():
+            loaded = load_evaluation_profile(prof_spec, validate=True)
+            if loaded is None or isinstance(loaded, tuple):
+                print(f"[error] profile not found: {prof_spec}")
+                return 1
+            rows = find_profile_model_paths(
+                loaded.raw_profile,
+                str(getattr(ns, "models_root", "") or ""),
+                include_reserve=bool(getattr(ns, "include_reserve", False)),
+            )
+            print(json.dumps({
+                "profile_id": loaded.profile_id,
+                "profile_path": loaded.profile_path,
+                "models_root": str(getattr(ns, "models_root", "") or ""),
+                "rows": rows,
+            }, indent=2), flush=True)
+            return 0
+        resolved = resolve_evaluation_profile(prof_spec, model_path=(str(ns.model) if str(ns.model or "").strip() else None))
+        if resolved is None:
+            print(f"[error] profile not found: {prof_spec}")
+            return 1
+        print(json.dumps(resolved.to_metadata(), indent=2), flush=True)
+        return 0
     if cmd == "benchmark-schema":
         service = BenchmarkSchemaService()
         payload = service.load(Path(ns.path))

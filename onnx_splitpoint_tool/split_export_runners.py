@@ -146,7 +146,7 @@ def write_runner_skeleton_onnxruntime(out_dir: str, *, manifest_filename: str = 
     except Exception:
         pass
 
-    # Drop bundled test images for convenience (so you can run the runner immediately).
+    # Drop prepared test images for convenience (so you can run the runner immediately).
     #
     # We keep them out of the folder root to avoid clutter and to support different tasks:
     #   - resources/test_images/test_image_coco.png     (detection / YOLO)
@@ -160,6 +160,13 @@ def write_runner_skeleton_onnxruntime(out_dir: str, *, manifest_filename: str = 
         out_dir_p = Path(out_dir)
         pkg_dir = Path(__file__).resolve().parent
         src_dir = pkg_dir / "resources" / "test_images"
+        try:
+            from .benchmark.validation_assets import find_test_images_source
+            prepared_src = find_test_images_source()
+            if prepared_src is not None:
+                src_dir = Path(prepared_src)
+        except Exception:
+            pass
         coco_src = src_dir / "test_image_coco.png"
         imagenet_src = src_dir / "test_image_imagenet.png"
 

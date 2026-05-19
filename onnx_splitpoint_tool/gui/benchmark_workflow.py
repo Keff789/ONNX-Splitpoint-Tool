@@ -13,7 +13,7 @@ import os
 import queue
 import threading
 import traceback
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -25,6 +25,8 @@ from .. import __version__ as TOOL_VERSION
 from ..benchmark_case_utils import build_benchmark_case_rejection
 from ..benchmark.generation_state import find_latest_resumable_set, read_json as read_generation_json
 from ..benchmark.hailo_scoring import rerank_candidates_for_hailo
+from ..benchmark.evaluation_profiles import load_export_metadata_for_model, resolve_evaluation_profile
+from ..benchmark.model_preparation import find_latest_preparation_full_hailo_baseline, load_preparation_full_hailo_baseline, load_preparation_full_hailo_end_nodes, normalize_model_preparation_mode, preparation_result_is_selected_model
 from ..benchmark.resume_integrity import reconcile_generation_state
 from ..benchmark.schema import stamp_benchmark_set_payload, write_json_atomic as write_benchmark_json_atomic
 from ..benchmark.services import (
@@ -35,6 +37,7 @@ from ..benchmark.services import (
     BenchmarkGenerationOrchestrationService,
     BenchmarkGenerationService,
     normalize_full_hef_policy,
+    normalize_hailo_full_model_preflight_policy,
 )
 from .controller import write_benchmark_suite_script
 from .widgets.benchmark_completion_dialog import show_benchmark_completion_dialog
@@ -105,6 +108,34 @@ def resolve_hailo_benchmark_helpers(*, need_build: bool, need_part2: bool, impor
     return resolved
 
 
+
+
+def _prepared_full_hailo_endpoint_override(model_path: str | Path) -> tuple[List[str], str]:
+    """Read prepared full-Hailo endpoint override from model sidecar metadata."""
+    try:
+        info = load_preparation_full_hailo_end_nodes(model_path)
+        nodes = [str(x).strip() for x in list(info.get('end_node_names') or []) if str(x).strip()]
+        strategy = str(info.get('strategy') or '').strip()
+        return nodes, strategy
+    except Exception:
+        logger.debug('Failed to resolve prepared full-Hailo endpoint override for %s', model_path, exc_info=True)
+        return [], ''
+
+
+def _prepared_full_hailo_baseline(model_path: str | Path) -> Dict[str, Any]:
+    """Read a prepared full-Hailo HEF artifact from sidecar or latest screening summary."""
+    try:
+        sidecar = dict(load_preparation_full_hailo_baseline(model_path) or {})
+        if bool(sidecar.get('ok')):
+            return sidecar
+        latest = dict(find_latest_preparation_full_hailo_baseline(model_path) or {})
+        if bool(latest.get('ok')):
+            return latest
+        return sidecar if sidecar else latest
+    except Exception:
+        logger.debug('Failed to resolve prepared full-Hailo baseline for %s', model_path, exc_info=True)
+        return {'selected': False, 'ok': False, 'reason': 'metadata_error'}
+
 def _safe_int(s: str) -> Optional[int]:
     s = (s or "").strip()
     if not s:
@@ -124,7 +155,10 @@ class BenchmarkWorkflowController:
         *,
         resume_dir: Optional[str] = None,
         offer_latest_resume: bool = True,
-    ) -> None:
+        output_parent_override: Optional[str] = None,
+        completion_callback=None,
+        show_result_dialogs: bool = True,
+    ) -> Optional[str]:
         """Generate or resume a benchmark suite folder for the current model + top-k picks.
 
         The suite contains one subfolder per split candidate with:
@@ -170,9 +204,14 @@ class BenchmarkWorkflowController:
         resume_report = None
 
         if resume_dir is None:
-            out_parent = filedialog.askdirectory(title="Select parent folder for benchmark set", initialdir=initial_out)
-            if not out_parent:
-                return
+            if output_parent_override is not None:
+                out_parent = str(Path(output_parent_override))
+                if not out_parent:
+                    return None
+            else:
+                out_parent = filedialog.askdirectory(title="Select parent folder for benchmark set", initialdir=initial_out)
+                if not out_parent:
+                    return None
             out_dir = os.path.join(out_parent, f"{base}_benchmark_{ts}")
         else:
             out_dir = str(Path(resume_dir))
@@ -187,6 +226,31 @@ class BenchmarkWorkflowController:
         a = app.analysis
         strict_boundary = bool(app.var_strict_boundary.get())
         generation_service = getattr(app, "_benchmark_generation_service", BenchmarkGenerationService())
+        evaluation_profile_request = str(getattr(app, 'var_bench_evaluation_profile', tk.StringVar(value='')).get() or '').strip()
+        evaluation_profile_resolution = None
+        if evaluation_profile_request:
+            try:
+                evaluation_profile_resolution = resolve_evaluation_profile(evaluation_profile_request, model_path=model_path)
+            except Exception:
+                logger.exception('Failed to resolve benchmark evaluation profile %s', evaluation_profile_request)
+                evaluation_profile_resolution = None
+
+        try:
+            prep_mode = normalize_model_preparation_mode(getattr(app, 'var_bench_model_preparation_mode', tk.StringVar(value='Use current ONNX')).get())
+            export_meta = load_export_metadata_for_model(model_path)
+            task_type = str(export_meta.get('task_type') or '').strip().lower()
+            source = str(export_meta.get('source') or '').strip().lower()
+            if prep_mode == 'screen_yolo_full_hailo' and source == 'ultralytics' and task_type == 'detection' and not preparation_result_is_selected_model(model_path):
+                proceed = messagebox.askyesno(
+                    'Model preparation recommended',
+                    'This YOLO ONNX has not been screened for a full-Hailo-capable export variant yet.\n\n'
+                    'For the manual workflow, use “Prepare current model…” first and then rerun Analyse on the selected prepared ONNX.\n\n'
+                    'Do you want to continue anyway with the current ONNX?'
+                )
+                if not proceed:
+                    return None
+        except Exception:
+            logger.debug('Failed to evaluate manual model-preparation guardrail', exc_info=True)
 
         # Read pruning params from the current GUI state (same source as Analyse).
         _params_for_split = app._read_params()
@@ -251,11 +315,30 @@ class BenchmarkWorkflowController:
             )
             return
 
+        profile_overrides = dict(evaluation_profile_resolution.overrides or {}) if (evaluation_profile_resolution is not None and evaluation_profile_resolution.matched) else {}
+        try:
+            profile_shortlist = int(profile_overrides.get('preferred_shortlist') or 0)
+        except Exception:
+            profile_shortlist = 0
+        if profile_shortlist > 0:
+            ranked_candidates = list(ranked_candidates[:max(1, profile_shortlist)])
+        pool_limit = profile_overrides.get('candidate_search_pool')
+        try:
+            pool_limit = int(pool_limit) if pool_limit is not None else 0
+        except Exception:
+            pool_limit = 0
+        if int(pool_limit or 0) > 0:
+            candidate_search_pool = list(candidate_search_pool[:max(1, int(pool_limit))])
+        try:
+            profile_requested_cases = int(profile_overrides.get('requested_cases') or 0)
+        except Exception:
+            profile_requested_cases = 0
+
         # How many cases to generate?
         # Prefer the Benchmark tab entry (var_bench_topk). Fall back to a dialog only
         # if it's missing/invalid. ``k`` is the target number of accepted cases;
         # backfilling can continue deeper into the ranked search pool if needed.
-        default_k = min(20, len(ranked_candidates) if ranked_candidates else len(candidate_search_pool))
+        default_k = min(profile_requested_cases or 20, len(candidate_search_pool))
         k = None
         try:
             k = _safe_int((getattr(app, "var_bench_topk", tk.StringVar(value=str(default_k))).get() or "").strip())
@@ -272,6 +355,8 @@ class BenchmarkWorkflowController:
         if k is None:
             return
         k = int(k)
+        if profile_requested_cases > 0:
+            k = min(max(1, int(profile_requested_cases)), len(candidate_search_pool))
         if k < 1 or k > len(candidate_search_pool):
             messagebox.showerror(
                 "Benchmark set",
@@ -391,6 +476,10 @@ class BenchmarkWorkflowController:
             plan_validation_max_images = int((getattr(app, "var_bench_validation_max_images", tk.StringVar(value="0")).get() or "0").strip())
         except Exception:
             plan_validation_max_images = 0
+        plan_validation_reference_mode = (getattr(app, "var_bench_validation_reference_mode", tk.StringVar(value="auto")).get() or "auto").strip().lower()
+        plan_benchmark_task = (getattr(app, "var_bench_task", tk.StringVar(value="auto")).get() or "auto").strip().lower()
+        plan_mini_coco_ap50 = bool(getattr(app, "var_bench_mini_coco_ap50", tk.BooleanVar(value=False)).get())
+        plan_mini_classification_eval = bool(getattr(app, "var_bench_mini_classification_eval", tk.BooleanVar(value=False)).get())
 
         # Normalize the full-model HEF build order once on the GUI thread so the
         # worker and services only see backend tokens (start/end/skip).
@@ -401,6 +490,46 @@ class BenchmarkWorkflowController:
                 tk.StringVar(value="Build at end (recommended)"),
             ).get()
         )
+        full_model_preflight_policy = normalize_hailo_full_model_preflight_policy(
+            getattr(
+                app,
+                "var_hailo_full_model_preflight",
+                tk.StringVar(value="Enabled (plan-aware)"),
+            ).get()
+        )
+        plan_hailo_preset = str(getattr(app, "var_hailo_bench_preset", tk.StringVar(value="End-to-end compare")).get() or "")
+        plan_hailo_custom_full = bool(getattr(app, "var_hailo_bench_custom_full", tk.BooleanVar(value=True)).get())
+        plan_hailo_custom_composed = bool(getattr(app, "var_hailo_bench_custom_composed", tk.BooleanVar(value=True)).get())
+        plan_hailo_custom_part1 = bool(getattr(app, "var_hailo_bench_custom_part1", tk.BooleanVar(value=False)).get())
+        plan_hailo_custom_part2 = bool(getattr(app, "var_hailo_bench_custom_part2", tk.BooleanVar(value=False)).get())
+        plan_matrix_trt_to_hailo = bool(getattr(app, "var_matrix_trt_to_hailo", tk.BooleanVar(value=False)).get())
+        plan_matrix_hailo_to_trt = bool(getattr(app, "var_matrix_hailo_to_trt", tk.BooleanVar(value=False)).get())
+
+        if profile_overrides:
+            acc_cpu = bool(profile_overrides.get('acc_cpu', acc_cpu))
+            acc_cuda = bool(profile_overrides.get('acc_cuda', acc_cuda))
+            acc_trt = bool(profile_overrides.get('acc_trt', acc_trt))
+            acc_h8 = bool(profile_overrides.get('acc_h8', acc_h8))
+            acc_h10 = bool(profile_overrides.get('acc_h10', acc_h10))
+            plan_image_scale = str(profile_overrides.get('image_scale', plan_image_scale) or plan_image_scale)
+            plan_validation_images = str(profile_overrides.get('validation_images', plan_validation_images) or '')
+            try:
+                plan_validation_max_images = int(profile_overrides.get('validation_max_images', plan_validation_max_images) or 0)
+            except Exception:
+                pass
+            plan_validation_reference_mode = str(profile_overrides.get('validation_reference_mode', plan_validation_reference_mode) or plan_validation_reference_mode)
+            plan_benchmark_task = str(profile_overrides.get('benchmark_task', plan_benchmark_task) or plan_benchmark_task)
+            plan_mini_coco_ap50 = bool(profile_overrides.get('mini_coco_ap50', plan_mini_coco_ap50))
+            plan_mini_classification_eval = bool(profile_overrides.get('mini_classification_eval', plan_mini_classification_eval))
+            plan_hailo_preset = str(profile_overrides.get('hailo_preset', plan_hailo_preset) or plan_hailo_preset)
+            plan_hailo_custom_full = bool(profile_overrides.get('hailo_custom_full', plan_hailo_custom_full))
+            plan_hailo_custom_composed = bool(profile_overrides.get('hailo_custom_composed', plan_hailo_custom_composed))
+            plan_hailo_custom_part1 = bool(profile_overrides.get('hailo_custom_part1', plan_hailo_custom_part1))
+            plan_hailo_custom_part2 = bool(profile_overrides.get('hailo_custom_part2', plan_hailo_custom_part2))
+            plan_matrix_trt_to_hailo = bool(profile_overrides.get('matrix_trt_to_hailo', plan_matrix_trt_to_hailo))
+            plan_matrix_hailo_to_trt = bool(profile_overrides.get('matrix_hailo_to_trt', plan_matrix_hailo_to_trt))
+            if 'full_model_preflight_policy' in profile_overrides:
+                full_model_preflight_policy = normalize_hailo_full_model_preflight_policy(profile_overrides.get('full_model_preflight_policy'))
 
         run_plan = generation_service.build_run_plan(
             acc_cpu=bool(acc_cpu),
@@ -413,13 +542,17 @@ class BenchmarkWorkflowController:
             image_scale=str(plan_image_scale or "auto"),
             validation_images=str(plan_validation_images or ""),
             validation_max_images=int(max(0, int(plan_validation_max_images or 0))),
-            hailo_preset=str(getattr(app, "var_hailo_bench_preset", tk.StringVar(value="End-to-end compare")).get() or ""),
-            hailo_custom_full=bool(getattr(app, "var_hailo_bench_custom_full", tk.BooleanVar(value=True)).get()),
-            hailo_custom_composed=bool(getattr(app, "var_hailo_bench_custom_composed", tk.BooleanVar(value=True)).get()),
-            hailo_custom_part1=bool(getattr(app, "var_hailo_bench_custom_part1", tk.BooleanVar(value=False)).get()),
-            hailo_custom_part2=bool(getattr(app, "var_hailo_bench_custom_part2", tk.BooleanVar(value=False)).get()),
-            matrix_trt_to_hailo=bool(getattr(app, "var_matrix_trt_to_hailo", tk.BooleanVar(value=False)).get()),
-            matrix_hailo_to_trt=bool(getattr(app, "var_matrix_hailo_to_trt", tk.BooleanVar(value=False)).get()),
+            validation_reference_mode=str(plan_validation_reference_mode or "auto"),
+            mini_coco_ap50=bool(plan_mini_coco_ap50),
+            benchmark_task=str(plan_benchmark_task or "auto"),
+            mini_classification_eval=bool(plan_mini_classification_eval),
+            hailo_preset=str(plan_hailo_preset or ""),
+            hailo_custom_full=bool(plan_hailo_custom_full),
+            hailo_custom_composed=bool(plan_hailo_custom_composed),
+            hailo_custom_part1=bool(plan_hailo_custom_part1),
+            hailo_custom_part2=bool(plan_hailo_custom_part2),
+            matrix_trt_to_hailo=bool(plan_matrix_trt_to_hailo),
+            matrix_hailo_to_trt=bool(plan_matrix_hailo_to_trt),
             full_hef_policy=str(full_hef_policy or "end"),
         )
         bench_plan_runs: List[Dict[str, Any]] = list(run_plan.bench_plan_runs)
@@ -523,6 +656,11 @@ class BenchmarkWorkflowController:
         # ``AttributeError: '_tkinter.tkapp' object has no attribute 'candidates'``.
         # Keep the worker on plain Python data only.
         benchmark_gap = int(_safe_int(app.var_min_gap.get()) or 0)
+        if profile_overrides:
+            try:
+                benchmark_gap = int(profile_overrides.get('min_gap', benchmark_gap) or 0)
+            except Exception:
+                pass
         llm_style_enabled = bool(app.var_llm_enable.get())
         value_bytes_map_snapshot = a.get("value_bytes") if isinstance(a, dict) else None
         analysis_topk_snapshot = int(getattr(params, 'topk', len(app.current_picks)))
@@ -702,6 +840,7 @@ class BenchmarkWorkflowController:
                     full_model_dst=str(full_model_dst),
                     tool_gui_version=__version__,
                     tool_core_version=resolve_tool_core_version(),
+                    evaluation_profile_meta=(evaluation_profile_resolution.to_metadata() if evaluation_profile_resolution is not None else None),
                     hailo_compile_rank_meta=dict(hailo_compile_rank_meta or {}),
                     hef_targets=list(hef_targets),
                     hef_part1=bool(hef_part1),
@@ -773,6 +912,39 @@ class BenchmarkWorkflowController:
                 if resume_generation and resume_report is not None and (resume_report.changed or resume_report.warnings):
                     resume_lines = [line for line in (resume_report.summary() or '').splitlines() if line.strip()]
 
+                prepared_full_hailo_baseline = _prepared_full_hailo_baseline(model_path)
+                hailo_full_end_node_names, hailo_full_endpoint_mode = _prepared_full_hailo_endpoint_override(model_path)
+                if not hailo_full_end_node_names and bool(prepared_full_hailo_baseline.get('ok')):
+                    hailo_full_end_node_names = [str(x).strip() for x in list(prepared_full_hailo_baseline.get('end_node_names') or []) if str(x).strip()]
+                    hailo_full_endpoint_mode = str(prepared_full_hailo_baseline.get('endpoint_mode') or hailo_full_endpoint_mode or '')
+                if hailo_full_end_node_names:
+                    log(
+                        "suite: using prepared full-Hailo endpoint override "
+                        f"mode={hailo_full_endpoint_mode or 'custom'} end_nodes={hailo_full_end_node_names}"
+                    )
+                if bool(prepared_full_hailo_baseline.get('selected')):
+                    if bool(prepared_full_hailo_baseline.get('ok')):
+                        log(
+                            "suite: prepared full-Hailo HEF baseline available "
+                            f"mode={prepared_full_hailo_baseline.get('endpoint_mode') or 'full'} "
+                            f"hef={prepared_full_hailo_baseline.get('hef_path')}"
+                        )
+                    else:
+                        log(
+                            "suite: prepared full-Hailo metadata found but no usable HEF baseline is available "
+                            f"({prepared_full_hailo_baseline.get('reason') or 'unknown'})"
+                        )
+                execution_cfg = replace(
+                    execution_cfg,
+                    hailo_full_end_node_names=list(hailo_full_end_node_names or []),
+                    hailo_full_endpoint_mode=str(hailo_full_endpoint_mode or ''),
+                    hailo_full_output_contract=(
+                        dict(prepared_full_hailo_baseline.get('output_contract') or {})
+                        if isinstance(prepared_full_hailo_baseline.get('output_contract'), dict)
+                        else None
+                    ),
+                )
+
                 orchestration_cfg = BenchmarkGenerationOrchestrationConfig(
                     runtime=runtime,
                     execution_cfg=execution_cfg,
@@ -807,6 +979,15 @@ class BenchmarkWorkflowController:
                     hef_wsl_venv=str(hef_wsl_venv),
                     hef_timeout_s=int(hef_timeout_s),
                     full_hef_policy=str(full_hef_policy),
+                    full_model_preflight_policy=str(full_model_preflight_policy or 'enabled'),
+                    hailo_full_end_node_names=list(hailo_full_end_node_names or []),
+                    hailo_full_endpoint_mode=str(hailo_full_endpoint_mode or ''),
+                    hailo_full_output_contract=(
+                        dict(prepared_full_hailo_baseline.get('output_contract') or {})
+                        if isinstance(prepared_full_hailo_baseline.get('output_contract'), dict)
+                        else None
+                    ),
+                    prepared_full_hailo_baseline=dict(prepared_full_hailo_baseline or {}),
                     hailo_build_hef_fn=hailo_build_hef_fn,
                     hailo_parse_check_fn=hailo_parse_check_fn,
                     hailo_build_unavailable=hailo_build_unavailable,
@@ -823,6 +1004,7 @@ class BenchmarkWorkflowController:
                     copy_schema_tree=lambda: copy_resource_tree("resources", "schemas", dest=Path(out_dir) / "schemas"),
                     tool_gui_version=__version__,
                     tool_core_version=resolve_tool_core_version(),
+                    evaluation_profile_meta=(evaluation_profile_resolution.to_metadata() if evaluation_profile_resolution is not None else None),
                     benchmark_objective=str(benchmark_objective),
                     should_cancel=lambda: bool(cancel_event.is_set()),
                 )
@@ -867,9 +1049,14 @@ class BenchmarkWorkflowController:
         app._benchmark_generation_thread = gen_thread
         try:
             gen_thread.start()
-        except Exception:
+        except Exception as exc:
             app._set_background_job_active("generate", False)
             app._jobs_finish(job_id, status="error", message="Failed to start benchmark-set generation thread", output_dir=str(out_dir), log_path=str(bench_log_path))
+            if callable(completion_callback):
+                try:
+                    completion_callback('err', str(out_dir), str(bench_log_path), f'{type(exc).__name__}: {exc}', {})
+                except Exception:
+                    logger.debug('Benchmark generation completion callback failed during startup', exc_info=True)
             raise
 
         def poll() -> None:
@@ -967,25 +1154,52 @@ class BenchmarkWorkflowController:
                 log_path=str(bench_log_path),
             )
 
-            if final_status in {'ok', 'warn', 'cancelled'} and final_summary:
-                dialog_title = {
-                    'ok': 'Benchmark set created',
-                    'warn': 'Benchmark set created (with warnings)',
-                    'cancelled': 'Benchmark set cancelled',
-                }.get(final_status, 'Benchmark set')
-                show_benchmark_completion_dialog(
-                    app,
-                    title=dialog_title,
-                    summary_data=final_summary,
-                    fallback_text=final_msg,
-                )
-            elif final_status == 'ok':
-                messagebox.showinfo("Benchmark set created", final_msg)
-            elif final_status == 'warn':
-                messagebox.showwarning("Benchmark set created (with warnings)", final_msg)
-            elif final_status == 'cancelled':
-                messagebox.showwarning("Benchmark set cancelled", final_msg)
-            else:
-                messagebox.showerror("Benchmark set failed", final_msg)
+            if final_status in {'ok', 'warn'}:
+                try:
+                    bench_json_path = Path(out_dir) / 'benchmark_set.json'
+                    if bench_json_path.exists() and hasattr(app, 'var_remote_benchmark_set'):
+                        app.var_remote_benchmark_set.set(str(bench_json_path))
+                        try:
+                            if hasattr(app, '_persist_settings'):
+                                app._persist_settings()
+                        except Exception:
+                            pass
+                        try:
+                            refresh_preview = getattr(app, '_benchmark_refresh_accuracy_ui', None)
+                            if callable(refresh_preview):
+                                refresh_preview()
+                        except Exception:
+                            logger.debug('Failed to refresh validate-tab accuracy preview after benchmark generation', exc_info=True)
+                except Exception:
+                    logger.debug('Failed to auto-select generated benchmark_set.json after generation', exc_info=True)
+
+            if callable(completion_callback):
+                try:
+                    completion_callback(final_status, str(out_dir), str(bench_log_path), final_msg, final_summary)
+                except Exception:
+                    logger.debug('Benchmark generation completion callback failed', exc_info=True)
+
+            if show_result_dialogs:
+                if final_status in {'ok', 'warn', 'cancelled'} and final_summary:
+                    dialog_title = {
+                        'ok': 'Benchmark set created',
+                        'warn': 'Benchmark set created (with warnings)',
+                        'cancelled': 'Benchmark set cancelled',
+                    }.get(final_status, 'Benchmark set')
+                    show_benchmark_completion_dialog(
+                        app,
+                        title=dialog_title,
+                        summary_data=final_summary,
+                        fallback_text=final_msg,
+                    )
+                elif final_status == 'ok':
+                    messagebox.showinfo("Benchmark set created", final_msg)
+                elif final_status == 'warn':
+                    messagebox.showwarning("Benchmark set created (with warnings)", final_msg)
+                elif final_status == 'cancelled':
+                    messagebox.showwarning("Benchmark set cancelled", final_msg)
+                else:
+                    messagebox.showerror("Benchmark set failed", final_msg)
 
         poll()
+        return job_id

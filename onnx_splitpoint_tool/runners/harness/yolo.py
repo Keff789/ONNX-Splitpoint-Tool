@@ -120,6 +120,34 @@ def _sigmoid(x: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-x))
 
 
+def _probability_or_sigmoid(x: np.ndarray) -> np.ndarray:
+    """Return probabilities for tensors that may be logits or already activated.
+
+    Hailo raw-head exports can expose class heads after sigmoid/quantization while
+    ONNXRuntime typically exposes logits.  Applying sigmoid twice to an already
+    activated background score lifts many near-zero values to roughly 0.5 and
+    makes the validation proxy unusable.  The heuristic is intentionally simple:
+    when nearly all finite values are inside [0, 1], keep them as probabilities;
+    otherwise apply sigmoid.
+    """
+
+    a = np.asarray(x, dtype=np.float32)
+    if a.size == 0:
+        return a
+    try:
+        finite = np.isfinite(a)
+        if bool(np.any(finite)):
+            vals = a[finite]
+            frac_unit = float(np.mean((vals >= -1e-4) & (vals <= 1.0 + 1e-4)))
+            q01 = float(np.nanpercentile(vals, 1.0))
+            q99 = float(np.nanpercentile(vals, 99.0))
+            if frac_unit >= 0.995 and q01 >= -0.02 and q99 <= 1.02:
+                return np.clip(a, 0.0, 1.0)
+    except Exception:
+        pass
+    return _sigmoid(a)
+
+
 def _xywh_to_xyxy(xywh: np.ndarray) -> np.ndarray:
     """Convert [...,4] xywh (center) to xyxy."""
 
@@ -189,6 +217,90 @@ def _decode_bn6(output: np.ndarray) -> _Detections:
     scores = det[:, 4].astype(np.float32, copy=False)
     cls = det[:, 5].astype(np.int64, copy=False)
     return _Detections(boxes_xyxy=boxes, scores=scores, class_ids=cls)
+
+
+def _looks_like_yolo_decoded(output: np.ndarray) -> bool:
+    a = np.asarray(output)
+    if a.ndim == 3 and a.shape[0] == 1:
+        d1, d2 = int(a.shape[1]), int(a.shape[2])
+        return (6 <= d1 <= 1024 and d2 >= 64) or (6 <= d2 <= 1024 and d1 >= 64)
+    if a.ndim == 2:
+        d0, d1 = int(a.shape[0]), int(a.shape[1])
+        return (6 <= d0 <= 1024 and d1 >= 64) or (6 <= d1 <= 1024 and d0 >= 64)
+    return False
+
+
+def _decode_ultralytics_decoded(output: np.ndarray, conf_thresh: float, input_hw: Tuple[int, int]) -> _Detections:
+    """Decode Ultralytics YOLOv8/YOLO11-style decoded output.
+
+    Common ONNX layout is ``[1, 84, 8400]`` (xywh + 80 class scores). Some
+    runtimes return ``[1, 8400, 84]`` or the batchless equivalents.
+    """
+
+    out = np.asarray(output, dtype=np.float32)
+    if out.ndim == 3 and out.shape[0] == 1:
+        out = out[0]
+    if out.ndim != 2:
+        raise ValueError(f"decoded YOLO output expected rank 2/3, got {out.shape}")
+
+    # Convert to [anchors, channels].
+    if out.shape[0] <= 1024 and out.shape[1] > out.shape[0]:
+        arr = out.T
+    else:
+        arr = out
+    if arr.ndim != 2 or arr.shape[1] < 6:
+        raise ValueError(f"decoded YOLO output expected [N,C>=6], got {arr.shape}")
+
+    xywh = arr[:, 0:4].astype(np.float32, copy=False)
+    tail = arr[:, 4:].astype(np.float32, copy=False)
+    if tail.size == 0:
+        return _Detections(boxes_xyxy=np.zeros((0, 4), np.float32), scores=np.zeros((0,), np.float32), class_ids=np.zeros((0,), np.int64))
+
+    # YOLOv8/YOLO11 has no objectness channel (4 + nc). YOLOv5-like decoded
+    # output has objectness (5 + nc).  Treat 84 as 4+80 and 85 as 5+80.
+    use_obj = False
+    if arr.shape[1] == 85:
+        use_obj = True
+    elif arr.shape[1] > 85 and (arr.shape[1] - 5) in (80, 81, 90, 91):
+        use_obj = True
+
+    def _maybe_sigmoid_scores(x: np.ndarray) -> np.ndarray:
+        if x.size == 0:
+            return x.astype(np.float32, copy=False)
+        finite = x[np.isfinite(x)]
+        if finite.size and float(np.nanmin(finite)) >= -1e-4 and float(np.nanmax(finite)) <= 1.0 + 1e-4:
+            return np.clip(x, 0.0, 1.0).astype(np.float32, copy=False)
+        return _sigmoid(x).astype(np.float32, copy=False)
+
+    if use_obj and tail.shape[1] >= 2:
+        obj = _maybe_sigmoid_scores(tail[:, 0])
+        cls_scores = _maybe_sigmoid_scores(tail[:, 1:])
+        score_base = obj
+    else:
+        cls_scores = _maybe_sigmoid_scores(tail)
+        score_base = np.ones((arr.shape[0],), dtype=np.float32)
+
+    cls_id = np.argmax(cls_scores, axis=1)
+    cls_conf = cls_scores[np.arange(cls_scores.shape[0]), cls_id]
+    score = (score_base * cls_conf).astype(np.float32, copy=False)
+
+    ih, iw = int(input_hw[0]), int(input_hw[1])
+    # If coords are normalized, scale to model input pixels.
+    if xywh.size and float(np.nanmax(np.abs(xywh))) <= 2.0:
+        xywh = xywh.copy()
+        xywh[:, [0, 2]] *= float(iw)
+        xywh[:, [1, 3]] *= float(ih)
+
+    boxes = _xywh_to_xyxy(xywh).astype(np.float32, copy=False)
+    boxes[:, 0] = np.clip(boxes[:, 0], 0.0, float(iw))
+    boxes[:, 2] = np.clip(boxes[:, 2], 0.0, float(iw))
+    boxes[:, 1] = np.clip(boxes[:, 1], 0.0, float(ih))
+    boxes[:, 3] = np.clip(boxes[:, 3], 0.0, float(ih))
+
+    keep = score >= float(conf_thresh)
+    if not np.any(keep):
+        return _Detections(boxes_xyxy=np.zeros((0, 4), np.float32), scores=np.zeros((0,), np.float32), class_ids=np.zeros((0,), np.int64))
+    return _Detections(boxes_xyxy=boxes[keep], scores=score[keep], class_ids=cls_id[keep].astype(np.int64))
 
 
 def _decode_concat_yolo(output: np.ndarray, conf_thresh: float) -> _Detections:
@@ -289,15 +401,27 @@ def _infer_ch_sp_any(x: np.ndarray) -> Tuple[Optional[int], Optional[int]]:
     a = np.asarray(x)
     if a.ndim == 4 and len(shp) == 4:
         d1, d2, d3 = shp[1], shp[2], shp[3]
+        # [B,C,H,W]
         if d1 <= 512 and d2 > 1 and d3 > 1:
             return d1, d2 * d3
+        # [B,H,W,C]
         if d3 <= 512 and d1 > 1 and d2 > 1:
             return d3, d1 * d2
         if d1 <= d3:
             return d1, d2 * d3
         return d3, d1 * d2
     if a.ndim == 3 and len(shp) == 3:
-        d1, d2 = shp[1], shp[2]
+        d0, d1, d2 = shp
+        # Hailo raw YOLO heads often arrive as batchless HWC tensors, e.g.
+        # (80,80,64), (80,80,80), (40,40,64), ... .  Detect these before
+        # the older flat [B,C,HW]/[B,HW,C] heuristic; otherwise the 80x80x64
+        # reg head is misread as [B=80,C=80,HW=64] and the DFL reshape fails.
+        if d0 > 1 and d1 > 1 and d2 <= 512:
+            return d2, d0 * d1
+        # Batchless CHW fallback.
+        if d0 <= 512 and d1 > 1 and d2 > 1:
+            return d0, d1 * d2
+        # Batched flat: [B,C,HW] or [B,HW,C].
         if d1 <= 512 and d2 > d1:
             return d1, d2
         if d2 <= 512 and d1 > d2:
@@ -776,6 +900,22 @@ def _decode_ultralytics_regcls(outputs: Sequence[np.ndarray], input_hw: Tuple[in
                 return np.transpose(a, (0, 3, 1, 2)).astype(np.float32, copy=False), max(1, W_img // w2)
             return a.astype(np.float32, copy=False), max(1, W_img // int(a.shape[-1]))
         if a.ndim == 3:
+            d0, d1, d2 = a.shape
+
+            # Batchless HWC from Hailo raw detection heads, e.g. (80,80,64).
+            ok_hwc = d0 > 1 and d1 > 1 and d2 <= 512 and (H_img % d0 == 0) and (W_img % d1 == 0)
+            if expected_hw is not None:
+                ok_hwc = ok_hwc and (int(d0), int(d1)) == expected_hw
+            if ok_hwc:
+                return np.transpose(a, (2, 0, 1))[None, ...].astype(np.float32, copy=False), max(1, W_img // int(d1))
+
+            # Batchless CHW fallback.
+            ok_chw = d0 <= 512 and d1 > 1 and d2 > 1 and (H_img % d1 == 0) and (W_img % d2 == 0)
+            if expected_hw is not None:
+                ok_chw = ok_chw and (int(d1), int(d2)) == expected_hw
+            if ok_chw:
+                return a[None, ...].astype(np.float32, copy=False), max(1, W_img // int(d2))
+
             b, d1, d2 = a.shape
             def _sqrt_int(n: int) -> Optional[int]:
                 r = int(round(n ** 0.5))
@@ -801,11 +941,12 @@ def _decode_ultralytics_regcls(outputs: Sequence[np.ndarray], input_hw: Tuple[in
         raise ValueError(f"Unsupported tensor rank: {a.ndim}")
 
     pairs = _get_ultralytics_regcls_pairs(output_names, outputs)
-    if len(pairs) >= 2:
+    if len(pairs) >= 1:
         H_img, W_img = input_hw
         all_boxes: List[np.ndarray] = []
         all_scores: List[np.ndarray] = []
         all_cls: List[np.ndarray] = []
+        valid_pair_seen = False
         for _lvl, reg_i, cls_i in pairs:
             try:
                 reg_nchw, stride = _to_nchw_any(np.asarray(outputs[reg_i]), H_img, W_img)
@@ -818,6 +959,7 @@ def _decode_ultralytics_regcls(outputs: Sequence[np.ndarray], input_hw: Tuple[in
             reg_ch = int(reg_nchw.shape[1])
             if reg_ch % 4 != 0:
                 continue
+            valid_pair_seen = True
             reg_max = reg_ch // 4
             if reg_max > 1:
                 x = reg_nchw.reshape(1, 4, reg_max, h, w)
@@ -831,7 +973,7 @@ def _decode_ultralytics_regcls(outputs: Sequence[np.ndarray], input_hw: Tuple[in
             cy = (gy.astype(np.float32) + 0.5) * float(stride)
             l, t, r, btm = dist[0, 0], dist[0, 1], dist[0, 2], dist[0, 3]
             boxes = np.stack([np.clip(cx - l, 0.0, float(W_img)), np.clip(cy - t, 0.0, float(H_img)), np.clip(cx + r, 0.0, float(W_img)), np.clip(cy + btm, 0.0, float(H_img))], axis=-1).reshape(-1, 4)
-            cls_prob = _sigmoid(cls_nchw[0])
+            cls_prob = _probability_or_sigmoid(cls_nchw[0])
             best_cls = np.argmax(cls_prob, axis=0).reshape(-1)
             best_score = np.max(cls_prob, axis=0).reshape(-1)
             keep = best_score >= float(conf_thresh)
@@ -842,32 +984,75 @@ def _decode_ultralytics_regcls(outputs: Sequence[np.ndarray], input_hw: Tuple[in
             all_cls.append(best_cls[keep].astype(np.int64))
         if all_boxes:
             return _Detections(boxes_xyxy=np.concatenate(all_boxes, axis=0), scores=np.concatenate(all_scores, axis=0), class_ids=np.concatenate(all_cls, axis=0))
+        if valid_pair_seen:
+            return _Detections(
+                boxes_xyxy=np.zeros((0, 4), np.float32),
+                scores=np.zeros((0,), np.float32),
+                class_ids=np.zeros((0,), np.int64),
+            )
 
     a0 = np.asarray(outputs[0]).astype(np.float32, copy=False)
     a1 = np.asarray(outputs[1]).astype(np.float32, copy=False)
 
-    # Heuristic: reg has last/second dim multiple of 4 and relatively small vs cls.
-    reg, cls = (a0, a1) if a0.shape[-1] != a1.shape[-1] else (a0, a1)
+    def _to_axc_any(t: np.ndarray, H_img: int, W_img: int, *, expected_a: Optional[int] = None) -> Tuple[np.ndarray, int]:
+        a = np.asarray(t).astype(np.float32, copy=False)
+        if a.ndim == 4:
+            nchw, stride = _to_nchw_any(a, H_img, W_img)
+            if nchw.shape[0] != 1:
+                raise ValueError(f"tensor expected batch-1, got {nchw.shape}")
+            h, w = int(nchw.shape[2]), int(nchw.shape[3])
+            out = np.transpose(nchw.reshape(1, int(nchw.shape[1]), h * w), (0, 2, 1))
+            if expected_a is not None and int(out.shape[1]) != int(expected_a):
+                raise ValueError(f"tensor anchor count mismatch: expected {expected_a}, got {out.shape[1]}")
+            return out, int(stride)
+        if a.ndim == 3:
+            if a.shape[1] < a.shape[2]:
+                out = np.transpose(a, (0, 2, 1))
+            else:
+                out = a
+            if expected_a is not None and int(out.shape[1]) != int(expected_a):
+                alt = np.transpose(out, (0, 2, 1))
+                if int(alt.shape[1]) == int(expected_a):
+                    out = alt
+                else:
+                    raise ValueError(f"tensor anchor count mismatch: expected {expected_a}, got {out.shape[1]}")
+            return out.astype(np.float32, copy=False), 1
+        raise ValueError(f"Unsupported tensor rank: {a.ndim}")
 
-    # Make reg shape [1, A, 4, reg_max]
-    if reg.ndim != 3:
-        raise ValueError(f"reg tensor expected rank-3, got {reg.shape}")
-    if reg.shape[1] < reg.shape[2]:
-        # likely [1, 4*reg_max, A]
-        reg = reg.transpose(0, 2, 1)
-    # now [1, A, 4*reg_max]
-    if reg.shape[-1] % 4 != 0:
-        raise ValueError(f"reg last dim must be divisible by 4, got {reg.shape}")
-    reg_max = reg.shape[-1] // 4
-    reg = reg.reshape(1, reg.shape[1], 4, reg_max)
+    # Heuristic: reg has channel dimension divisible by 4 and is typically the smaller tensor.
+    def _score_reg_candidate(a: np.ndarray) -> int:
+        shp = tuple(int(x) for x in np.asarray(a).shape)
+        cand = []
+        if len(shp) >= 4:
+            cand.extend([shp[1], shp[-1]])
+        elif len(shp) == 3:
+            cand.extend([shp[1], shp[2]])
+        score = -1
+        for ch in cand:
+            if ch % 4 == 0:
+                reg_max = ch // 4
+                local = 0
+                if 4 <= reg_max <= 64:
+                    local += 2
+                if reg_max in (8, 16, 24, 32):
+                    local += 1
+                score = max(score, local)
+        return score
+
+    reg, cls = (a0, a1)
+    if _score_reg_candidate(a1) > _score_reg_candidate(a0):
+        reg, cls = (a1, a0)
+
+    reg_axc, stride_guess = _to_axc_any(reg, input_hw[0], input_hw[1])
+    cls_axc, _ = _to_axc_any(cls, input_hw[0], input_hw[1], expected_a=int(reg_axc.shape[1]))
+
+    if reg_axc.shape[-1] % 4 != 0:
+        raise ValueError(f"reg last dim must be divisible by 4, got {reg_axc.shape}")
+    reg_max = reg_axc.shape[-1] // 4
+    reg = reg_axc.reshape(1, reg_axc.shape[1], 4, reg_max)
+    cls = cls_axc
 
     # Make cls shape [1, A, C]
-    if cls.ndim != 3:
-        raise ValueError(f"cls tensor expected rank-3, got {cls.shape}")
-    if cls.shape[1] < cls.shape[2]:
-        # likely [1, C, A]
-        cls = cls.transpose(0, 2, 1)
-    # now [1, A, C]
     num_classes = cls.shape[-1]
 
     # Figure out feature map shapes from A and input size. Common: 80x80 + 40x40 + 20x20 = 8400.
@@ -891,7 +1076,9 @@ def _decode_ultralytics_regcls(outputs: Sequence[np.ndarray], input_hw: Tuple[in
         A_expected2 = sum(gh * gw for gh, gw, _ in grid_sizes)
         if reg.shape[1] != A_expected2:
             # Best effort: treat A as a single flat grid
-            grid_sizes = [(int(math.sqrt(reg.shape[1])), int(math.sqrt(reg.shape[1])), int(round(ih / math.sqrt(reg.shape[1]))))]
+            side = int(math.sqrt(reg.shape[1]))
+            stride_guess = int(max(1, round(float(ih) / max(side, 1)))) if stride_guess <= 1 else int(stride_guess)
+            grid_sizes = [(side, side, stride_guess)]
 
     # Build anchor points
     anchor_points: List[np.ndarray] = []
@@ -916,7 +1103,7 @@ def _decode_ultralytics_regcls(outputs: Sequence[np.ndarray], input_hw: Tuple[in
     xy2 = points[None, :, :] + rb
     boxes = np.concatenate([xy1, xy2], axis=-1)[0]  # [A,4]
 
-    cls_prob = _sigmoid(cls[0])
+    cls_prob = _probability_or_sigmoid(cls[0])
     cls_id = np.argmax(cls_prob, axis=1)
     cls_conf = cls_prob[np.arange(cls_prob.shape[0]), cls_id]
     keep = cls_conf >= conf_thresh
@@ -940,6 +1127,8 @@ def _detect_yolo_format(outputs: Sequence[np.ndarray], output_names: Optional[Se
         out = np.asarray(outputs[0])
         if out.shape[-1] == 6:
             return "bn6_detections"
+        if _looks_like_yolo_decoded(out):
+            return "ultralytics_decoded"
         if out.ndim in (2, 3) and out.shape[-1] >= 6:
             return "concat"
         return "unknown"
@@ -1064,6 +1253,8 @@ class YoloHarness:
             det = _decode_bn6(out_list[0])
         elif fmt == "concat":
             det = _decode_concat_yolo(out_list[0], conf_thresh=self.conf_thresh)
+        elif fmt == "ultralytics_decoded":
+            det = _decode_ultralytics_decoded(out_list[0], conf_thresh=self.conf_thresh, input_hw=input_hw)
         elif fmt == "ultralytics_regcls":
             det = _decode_ultralytics_regcls(out_list, input_hw=input_hw, conf_thresh=self.conf_thresh, output_names=output_names)
         elif fmt == "multiscale_head":

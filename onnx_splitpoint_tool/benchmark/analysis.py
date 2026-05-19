@@ -867,6 +867,32 @@ def _extract_hailo_context_summaries(bench_cases: List[Dict[str, Any]], provider
 
 
 
+def _hailo_context_is_multi(mode: Any, count: Any) -> bool:
+    m = _slug(mode)
+    c = _as_int(count)
+    if "failed_to_multi" in m or m == "multi_context_used" or m.startswith("multi"):
+        return True
+    return c is not None and c > 1
+
+
+def _hailo_context_short(mode: Any, count: Any) -> str:
+    m = _slug(mode)
+    c = _as_int(count)
+    if not m and c is None:
+        return "-"
+    if m == "single_context_failed_to_multi":
+        base = "single→multi"
+    elif m == "multi_context_used":
+        base = "multi"
+    elif m == "single_context_used":
+        base = "single"
+    elif m:
+        base = m.replace("_context", "").replace("_", " ")
+    else:
+        base = "context"
+    return f"{base}({c})" if c is not None else base
+
+
 def _hailo_target_stats(report: BenchmarkAnalysisReport, hw_arch: str) -> Dict[str, Any]:
     rows = [row for row in report.hailo_context_summaries if _slug(row.hw_arch) == _slug(hw_arch)]
     total = len(rows)
@@ -874,10 +900,15 @@ def _hailo_target_stats(report: BenchmarkAnalysisReport, hw_arch: str) -> Dict[s
     both_single = sum(1 for row in rows if row.both_parts_single_context)
     fallback = sum(1 for row in rows if row.part2_context_mode == "single_context_failed_to_multi")
     multi = sum(1 for row in rows if row.part2_context_mode == "multi_context_used")
+    measured = [row for row in rows if row.direct_hailo_composed_ms is not None]
+    measured_multi = sum(1 for row in measured if _hailo_context_is_multi(row.part2_context_mode, row.part2_context_count))
+    best_measured = None
+    if measured:
+        best_measured = min(measured, key=lambda row: float(row.direct_hailo_composed_ms or float("inf")))
     best_single = None
-    candidates = [row for row in rows if row.part2_single_context and row.direct_hailo_composed_ms is not None]
-    if candidates:
-        best_single = min(candidates, key=lambda row: float(row.direct_hailo_composed_ms or float("inf")))
+    single_candidates = [row for row in measured if row.part2_single_context]
+    if single_candidates:
+        best_single = min(single_candidates, key=lambda row: float(row.direct_hailo_composed_ms or float("inf")))
     return {
         "rows": rows,
         "total": total,
@@ -885,6 +916,9 @@ def _hailo_target_stats(report: BenchmarkAnalysisReport, hw_arch: str) -> Dict[s
         "both_single": both_single,
         "fallback_multi": fallback,
         "multi": multi,
+        "measured": len(measured),
+        "measured_multi": measured_multi,
+        "best_measured": best_measured,
         "best_single": best_single,
     }
 
@@ -909,6 +943,12 @@ def build_summary_markdown(report: BenchmarkAnalysisReport) -> str:
         gui_v = str(tool_meta.get("gui") or "-").strip()
         core_v = str(tool_meta.get("core") or "-").strip()
         lines.append(f"- Artefakt-Schema: **v{schema_v or '-'}** · Tool: GUI **{gui_v}**, Core **{core_v}**.\n")
+    eval_profile = report.summary.get("_evaluation_profile") if isinstance(report.summary.get("_evaluation_profile"), dict) else {}
+    if eval_profile:
+        prof_id = str(eval_profile.get('profile_id') or eval_profile.get('requested') or '').strip()
+        matched = str(eval_profile.get('matched_model_id') or '').strip()
+        if prof_id:
+            lines.append(f"- Evaluation profile: **{prof_id}**" + (f" → **{matched}**" if matched else '') + ".\n")
     lines.append(f"- Quelle: `{report.source.source_path}`\n")
     lines.append(f"- Ergebnisse: `{report.source.results_root}`\n")
     if report.source.extracted and report.source.extraction_root is not None:
@@ -968,15 +1008,26 @@ def build_summary_markdown(report: BenchmarkAnalysisReport) -> str:
             lines.append(
                 f"- **{hw_arch}**: part2 läuft bei **{stats['part2_single']} / {stats['total']}** Splits in **einem Kontext**, "
                 f"bei **{stats['both_single']} / {stats['total']}** sogar **part1 und part2** jeweils in einem Kontext. "
-                f"Fallback **single→multi**: **{stats['fallback_multi']}**, direkt **multi-context**: **{stats['multi']}**.\n"
+                f"Fallback **single→multi**: **{stats['fallback_multi']}**, direkt **multi-context**: **{stats['multi']}**. "
+                f"Gemessen: **{stats['measured']}**, davon Multi-Context: **{stats['measured_multi']}**.\n"
             )
-            best_single = stats.get("best_single")
-            if isinstance(best_single, HailoContextSummary):
+            best_measured = stats.get("best_measured")
+            if isinstance(best_measured, HailoContextSummary):
+                ctx = _hailo_context_short(best_measured.part2_context_mode, best_measured.part2_context_count)
                 lines.append(
-                    f"  - Schnellster direkte Hailo-Ein-Kontext-Split: **b{best_single.boundary}** "
+                    f"  - Schnellster direkt gemessener Hailo-Split: **b{best_measured.boundary}** "
+                    f"mit **{_fmt(best_measured.direct_hailo_composed_ms)} ms** "
+                    f"(ctx={ctx}, cut={_fmt(best_measured.cut_mib,2)} MiB, score={_fmt(best_measured.score_pred,2)}).\n"
+                )
+            best_single = stats.get("best_single")
+            if isinstance(best_single, HailoContextSummary) and best_single is not best_measured:
+                lines.append(
+                    f"  - Schnellster Hailo-Ein-Kontext-Split: **b{best_single.boundary}** "
                     f"mit **{_fmt(best_single.direct_hailo_composed_ms)} ms** "
                     f"(cut={_fmt(best_single.cut_mib,2)} MiB, score={_fmt(best_single.score_pred,2)}).\n"
                 )
+            if int(stats.get("measured_multi") or 0) > 0:
+                lines.append("  - Multi-Context wird nicht verworfen; gemessene Kandidaten bleiben gültig und werden nur als Risiko-/Stabilitätslabel markiert.\n")
     else:
         lines.append("\n## Hailo Context Fit\n")
         lines.append("- Keine Hailo-Kontext-Metadaten im Benchmark-Set / CSV gefunden. Für diese Ansicht muss das Benchmark-Set mit dem gepatchten Tool neu erzeugt werden.\n")
@@ -1021,6 +1072,8 @@ def load_benchmark_analysis(source: str | Path, cache_base: Path) -> BenchmarkAn
     summary.setdefault("objective", (bench.get("plan") or {}).get("objective") if isinstance(bench.get("plan"), dict) else bench.get("objective"))
     if isinstance(bench.get("tool"), dict):
         summary["_tool_meta"] = dict(bench.get("tool") or {})
+    if isinstance(bench.get("evaluation_profile"), dict):
+        summary["_evaluation_profile"] = dict(bench.get("evaluation_profile") or {})
     cases = list(bench.get("cases") or [])
     summary.setdefault("case_count", len(cases))
 
@@ -1171,12 +1224,12 @@ def _hailo_recommendation(single_prob: Optional[float], risk: Optional[float]) -
     if single_prob is None or risk is None:
         return "insufficient data"
     if float(single_prob) >= 0.80 and float(risk) <= 1.9:
-        return "Very likely 1-context"
+        return "Low context risk / measure normally"
     if float(single_prob) >= 0.65:
-        return "Likely 1-context"
+        return "Likely 1-context / measure"
     if float(single_prob) >= 0.45:
-        return "Borderline / measure"
-    return "Compile-risky / likely multi-context"
+        return "Borderline; measure, do not discard"
+    return "Likely multi-context; keep if measured FPS/quality are good"
 
 
 
@@ -1347,6 +1400,12 @@ def hailo_context_rows(report: BenchmarkAnalysisReport, hw_arch: Optional[str] =
                 "cut_mib": row.cut_mib,
                 "direct_hailo_provider": row.direct_hailo_provider,
                 "direct_hailo_composed_ms": row.direct_hailo_composed_ms,
+                "part1_context_label": _hailo_context_short(row.part1_context_mode, row.part1_context_count),
+                "part1_multi_context": _hailo_context_is_multi(row.part1_context_mode, row.part1_context_count),
+                "part2_context_label": _hailo_context_short(row.part2_context_mode, row.part2_context_count),
+                "part2_multi_context": _hailo_context_is_multi(row.part2_context_mode, row.part2_context_count),
+                "any_multi_context": bool(_hailo_context_is_multi(row.part1_context_mode, row.part1_context_count) or _hailo_context_is_multi(row.part2_context_mode, row.part2_context_count)),
+                "context_policy": "valid_measure_with_multi_context_warning" if (_hailo_context_is_multi(row.part1_context_mode, row.part1_context_count) or _hailo_context_is_multi(row.part2_context_mode, row.part2_context_count)) else "valid_measure",
             }
         )
     return rows

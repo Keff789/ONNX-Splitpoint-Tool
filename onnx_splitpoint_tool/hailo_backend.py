@@ -234,13 +234,15 @@ def _write_wsl_debug_log(
                 out_s = _wsl_to_win(out_s)
             base = Path(out_s).expanduser().resolve()
         else:
-            base = Path.home() / ".onnx_splitpoint_tool" / "wsl_debug"
+            from .paths import splitpoint_wsl_debug_dir
+            base = splitpoint_wsl_debug_dir()
 
-        # If the chosen base is not usable, fall back to ~/.onnx_splitpoint_tool/wsl_debug
+        # If the chosen base is not usable, fall back to the project-local wsl_debug dir
         try:
             base.mkdir(parents=True, exist_ok=True)
         except Exception:
-            base = Path.home() / ".onnx_splitpoint_tool" / "wsl_debug"
+            from .paths import splitpoint_wsl_debug_dir
+            base = splitpoint_wsl_debug_dir()
             base.mkdir(parents=True, exist_ok=True)
 
         p = base / filename
@@ -1631,6 +1633,8 @@ def hailo_parse_check_via_wsl(
     add_conv_defaults: bool = True,
     save_har: bool = True,
     disable_rt_metadata_extraction: bool = True,
+    start_node_names: Optional[Sequence[str]] = None,
+    end_node_names: Optional[Sequence[str]] = None,
     # WSL bridge settings
     wsl_distro: Optional[str] = None,
     wsl_venv_activate: str = "auto",
@@ -1741,6 +1745,10 @@ def hailo_parse_check_via_wsl(
 
     if outdir_wsl is not None:
         cmd_parts[-1] += f" --outdir {_bash_quote(outdir_wsl)}"
+    if start_node_names:
+        cmd_parts[-1] += f" --start-node-names-json {_bash_quote(json.dumps(list(start_node_names)))}"
+    if end_node_names:
+        cmd_parts[-1] += f" --end-node-names-json {_bash_quote(json.dumps(list(end_node_names)))}"
 
     # net_input_shapes is optional; for now we only support the default inference
     # on the WSL side. (Passing large dicts through CLI quoting is possible but
@@ -1854,6 +1862,8 @@ def hailo_parse_check_via_venv(
     add_conv_defaults: bool = True,
     save_har: bool = True,
     disable_rt_metadata_extraction: bool = True,
+    start_node_names: Optional[Sequence[str]] = None,
+    end_node_names: Optional[Sequence[str]] = None,
     venv_activate: str = "auto",
     timeout_s: int = 180,
 ) -> "HailoParseResult":
@@ -1959,6 +1969,10 @@ def hailo_parse_check_via_venv(
     ]
     if outdir_path is not None:
         cmd += ["--outdir", str(outdir_path)]
+    if start_node_names:
+        cmd += ["--start-node-names-json", json.dumps(list(start_node_names))]
+    if end_node_names:
+        cmd += ["--end-node-names-json", json.dumps(list(end_node_names))]
 
     # NOTE: net_input_shapes is ignored for now (same as WSL helper path).
     if net_input_shapes is not None:
@@ -2092,6 +2106,8 @@ def hailo_parse_check_auto(
     add_conv_defaults: bool = True,
     save_har: bool = True,
     disable_rt_metadata_extraction: bool = True,
+    start_node_names: Optional[Sequence[str]] = None,
+    end_node_names: Optional[Sequence[str]] = None,
     # WSL bridge settings
     wsl_distro: Optional[str] = None,
     wsl_venv_activate: str = "auto",
@@ -2114,6 +2130,8 @@ def hailo_parse_check_auto(
             add_conv_defaults=add_conv_defaults,
             save_har=save_har,
             disable_rt_metadata_extraction=disable_rt_metadata_extraction,
+            start_node_names=start_node_names,
+            end_node_names=end_node_names,
         )
 
     def _run_venv() -> HailoParseResult:
@@ -2127,6 +2145,8 @@ def hailo_parse_check_auto(
             add_conv_defaults=add_conv_defaults,
             save_har=save_har,
             disable_rt_metadata_extraction=disable_rt_metadata_extraction,
+            start_node_names=start_node_names,
+            end_node_names=end_node_names,
             venv_activate=wsl_venv_activate,
             timeout_s=wsl_timeout_s,
         )
@@ -2142,6 +2162,8 @@ def hailo_parse_check_auto(
             add_conv_defaults=add_conv_defaults,
             save_har=save_har,
             disable_rt_metadata_extraction=disable_rt_metadata_extraction,
+            start_node_names=start_node_names,
+            end_node_names=end_node_names,
             wsl_distro=wsl_distro,
             wsl_venv_activate=wsl_venv_activate,
             wsl_timeout_s=wsl_timeout_s,
@@ -2193,6 +2215,54 @@ def _set_or_patch_ints_attr(node: onnx.NodeProto, name: str, values: List[int]) 
     node.attribute.append(helper.make_attribute(name, list(values)))
 
 
+def _prune_unused_graph_inputs_for_hailo(model: onnx.ModelProto) -> Tuple[onnx.ModelProto, Dict[str, Any]]:
+    """Remove dangling ONNX graph inputs that are not consumed by the graph.
+
+    Hailo DFC is stricter than ONNX Runtime for split subgraphs.  It can reject
+    a model with an error like ``Couldn't find inputs from ONNX proto. Number of
+    expected inputs: N, Inputs found: M`` when graph.input still lists boundary
+    tensors that are no longer used after a Part2-prefix / host-tail cut.
+
+    The operation is intentionally narrow: initializer inputs are kept, and an
+    input that is also a graph output is kept for valid pass-through graphs.
+    """
+
+    patched = onnx.ModelProto()
+    patched.CopyFrom(model)
+    g = patched.graph
+
+    init_names = {str(getattr(t, "name", "") or "") for t in getattr(g, "initializer", [])}
+    try:
+        init_names.update(str(getattr(t, "name", "") or "") for t in getattr(g, "sparse_initializer", []))
+    except Exception:
+        pass
+
+    used_by_nodes = set()
+    for node in getattr(g, "node", []):
+        for name in getattr(node, "input", []):
+            if name:
+                used_by_nodes.add(str(name))
+    graph_outputs = {str(getattr(o, "name", "") or "") for o in getattr(g, "output", [])}
+
+    keep_inputs = []
+    removed: List[str] = []
+    for vi in list(getattr(g, "input", [])):
+        name = str(getattr(vi, "name", "") or "")
+        if (not name) or name in init_names or name in used_by_nodes or name in graph_outputs:
+            keep_inputs.append(vi)
+        else:
+            removed.append(name)
+
+    if removed:
+        del g.input[:]
+        g.input.extend(keep_inputs)
+
+    return patched, {
+        "unused_graph_inputs_pruned": int(len(removed)),
+        "unused_graph_input_names": list(removed),
+    }
+
+
 def fix_onnx_for_hailo(
     model: onnx.ModelProto,
     *,
@@ -2200,9 +2270,13 @@ def fix_onnx_for_hailo(
 ) -> Tuple[onnx.ModelProto, Dict[str, Any]]:
     """Apply a small set of pragmatic ONNX fixups that help the Hailo parser.
 
-    This is intentionally conservative: it only fills in some missing Conv/
-    ConvTranspose attributes (most commonly `kernel_shape`) and optionally adds
-    a few default attributes when they are absent.
+    This is intentionally conservative: it fills in some missing Conv/
+    ConvTranspose attributes, optionally adds a few default attributes, and
+    prunes dangling graph inputs that can appear in generated split-prefix
+    ONNXs.  The latter is important for YOLO Part2 accelerator-prefix models:
+    after cutting before the DFL/decode tail, some original boundary tensors may
+    no longer feed any node, while Hailo still treats them as required parser
+    inputs.
 
     Returns (patched_model, report).
     """
@@ -2213,8 +2287,20 @@ def fix_onnx_for_hailo(
     report: Dict[str, Any] = {
         "kernel_shape_patched": 0,
         "conv_defaults_added": 0,
+        "unused_graph_inputs_pruned": 0,
+        "unused_graph_input_names": [],
         "notes": [],
     }
+
+    patched, prune_report = _prune_unused_graph_inputs_for_hailo(patched)
+    report["unused_graph_inputs_pruned"] = int(prune_report.get("unused_graph_inputs_pruned") or 0)
+    report["unused_graph_input_names"] = list(prune_report.get("unused_graph_input_names") or [])
+    if report["unused_graph_inputs_pruned"]:
+        report["notes"].append(
+            "Pruned unused graph.input entries before Hailo parsing: "
+            + ", ".join(report["unused_graph_input_names"][:12])
+            + (" ..." if len(report["unused_graph_input_names"]) > 12 else "")
+        )
 
     g = patched.graph
     # Initializers are needed to infer some attributes (kernel from weight shape)
@@ -2301,6 +2387,39 @@ def infer_net_input_shapes_from_model(model: onnx.ModelProto) -> Optional[Union[
     return shapes
 
 
+
+def _normalize_optional_node_name_list(value: Any) -> Optional[List[str]]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        raw = str(value).strip()
+        if not raw:
+            return None
+        parts = [part.strip() for part in raw.split(',') if part.strip()]
+        return parts or None
+    out: List[str] = []
+    try:
+        for item in list(value):
+            s = str(item or '').strip()
+            if s and s not in out:
+                out.append(s)
+    except Exception:
+        s = str(value or '').strip()
+        if s:
+            out.append(s)
+    return out or None
+
+
+def _apply_translate_node_overrides(kwargs: Dict[str, Any], *, start_node_names: Any = None, end_node_names: Any = None) -> Dict[str, Any]:
+    start_nodes = _normalize_optional_node_name_list(start_node_names)
+    end_nodes = _normalize_optional_node_name_list(end_node_names)
+    if start_nodes:
+        kwargs['start_node_names'] = start_nodes
+    if end_nodes:
+        kwargs['end_node_names'] = end_nodes
+    return kwargs
+
+
 # ------------------------------- Parse check -------------------------------
 
 
@@ -2328,6 +2447,8 @@ def hailo_parse_check(
     add_conv_defaults: bool = True,
     save_har: bool = True,
     disable_rt_metadata_extraction: bool = True,
+    start_node_names: Optional[Sequence[str]] = None,
+    end_node_names: Optional[Sequence[str]] = None,
 ) -> HailoParseResult:
     """Run a *parse/translate-only* feasibility check via the Hailo SDK.
 
@@ -2389,13 +2510,14 @@ def hailo_parse_check(
 
     try:
         runner = ClientRunner(hw_arch=str(hw_arch_eff))
-        runner.translate_onnx_model(
-            model=str(model_for_parse),
-            net_name=str(net_name),
-            net_input_shapes=net_input_shapes,
+        translate_kwargs = _apply_translate_node_overrides({
+            'model': str(model_for_parse),
+            'net_name': str(net_name),
+            'net_input_shapes': net_input_shapes,
             # Keep this on by default: avoids parsing issues with missing RT metadata
-            disable_rt_metadata_extraction=bool(disable_rt_metadata_extraction),
-        )
+            'disable_rt_metadata_extraction': bool(disable_rt_metadata_extraction),
+        }, start_node_names=start_node_names, end_node_names=end_node_names)
+        runner.translate_onnx_model(**translate_kwargs)
 
         har_path = None
         if save_har and out_dir is not None:
@@ -2996,6 +3118,132 @@ def _dominant_parser_blocked_prefix(names: List[str]) -> Optional[str]:
     return best_prefix
 
 
+def _suggest_yolo_one2one_raw_head_end_nodes(nodes: List[Any]) -> List[str]:
+    """Return YOLO26 one2one raw-head Conv endpoints when the full set exists.
+
+    Hailo DFC reports YOLO26-like heads as a YOLOv6-equivalent NMS structure and
+    recommends the six ``one2one_cv2/cv3`` Conv nodes as accelerator endpoints.
+    The generic parser-blocker precheck should prefer those raw endpoints over a
+    late Transpose/Concat suggestion, because the latter still leaves layout-heavy
+    post-processing inside the Hailo prefix.
+    """
+    groups: Dict[str, Dict[int, Dict[int, Tuple[int, str, int]]]] = {}
+    rx = re.compile(
+        r"^(?P<prefix>(?:.*?/)?model(?:/model)?\.\d+)/one2one_cv(?P<branch>[23])\.(?P<scale>[0-2])/(?P<body>.+)/Conv$"
+    )
+    for idx, node in enumerate(nodes or []):
+        name = str(getattr(node, "name", "") or "").strip()
+        if not name:
+            continue
+        m = rx.match(name)
+        if not m:
+            continue
+        try:
+            branch = int(m.group("branch"))
+            scale = int(m.group("scale"))
+        except Exception:
+            continue
+        body = str(m.group("body") or "")
+        suffix = [int(x) for x in re.findall(rf"one2one_cv{branch}\.{scale}\.(\d+)(?:/|$)", body)]
+        score = max(suffix) if suffix else -1
+        prefix = str(m.group("prefix") or "").strip()
+        existing = groups.setdefault(prefix, {}).setdefault(scale, {}).get(branch)
+        if existing is None or score > existing[0] or (score == existing[0] and idx > existing[2]):
+            groups[prefix].setdefault(scale, {})[branch] = (int(score), name, int(idx))
+
+    best_prefix = None
+    best_count = 0
+    for prefix, by_scale in groups.items():
+        count = sum(1 for scale in (0, 1, 2) for branch in (2, 3) if branch in by_scale.get(scale, {}))
+        if count > best_count or (count == best_count and best_prefix is not None and prefix > best_prefix):
+            best_prefix = prefix
+            best_count = count
+    if not best_prefix or best_count < 6:
+        return []
+
+    by_scale = groups[best_prefix]
+    items: List[Tuple[int, str]] = []
+    for scale in (0, 1, 2):
+        for branch in (2, 3):
+            item = by_scale.get(scale, {}).get(branch)
+            if item is None:
+                return []
+            items.append((int(item[2]), item[1]))
+    return [name for _, name in sorted(items, key=lambda x: x[0])]
+
+
+def _suggest_yolo_decode_tail_end_nodes(nodes: List[Any], first_blocked_idx: Optional[int], blocked_names: List[str]) -> List[str]:
+    """Suggest safe Hailo parser end nodes before a YOLO DFL/decode tail.
+
+    Hailo DFC commonly reports YOLO11/YOLO10 Part2 failures around
+    ``/model.*/dfl/Reshape`` and suggests ending the accelerator subgraph at
+    tensors such as ``/model.23/Sigmoid`` and ``/model.23/Concat``.  This
+    helper reproduces that suggestion statically so benchmark generation can
+    materialize a Hailo-prefix + host-tail deployment instead of spending a
+    full compile attempt on the unsupported decoded tail.
+    """
+    if first_blocked_idx is None:
+        return []
+    blocked_blob = " ".join(str(x or "") for x in blocked_names).lower()
+    if "dfl" not in blocked_blob and "decode" not in blocked_blob:
+        return []
+
+    head_prefix = ""
+    for raw in blocked_names:
+        s = str(raw or "").strip()
+        low = s.lower()
+        marker = "/dfl/"
+        pos = low.find(marker)
+        if pos >= 0:
+            head_prefix = s[:pos].rstrip("/")
+            break
+    if not head_prefix:
+        # Fallback to the parent of the first blocked node; this is less exact
+        # but still keeps us near the detection head.
+        head_prefix = _path_parent_prefix(blocked_names[0]) if blocked_names else ""
+    if not head_prefix:
+        return []
+
+    preferred: Dict[str, str] = {}
+    fallback: List[str] = []
+    for idx, node in enumerate(nodes or []):
+        if idx >= int(first_blocked_idx):
+            break
+        name = str(getattr(node, "name", "") or "").strip()
+        op_type = str(getattr(node, "op_type", "") or "").strip()
+        if not name or not name.startswith(head_prefix.rstrip("/") + "/"):
+            continue
+        low_name = name.lower()
+        if "/dfl/" in low_name:
+            continue
+        if op_type in {"Sigmoid", "Concat"}:
+            preferred[op_type] = name
+        elif op_type in {"Conv", "Transpose", "Reshape"}:
+            fallback.append(name)
+
+    out: List[str] = []
+    # Preserve the order usually expected by Hailo's own suggestion: class/object
+    # activation branch plus box-distribution branch.
+    for op_type in ("Sigmoid", "Concat"):
+        name = preferred.get(op_type)
+        if name and name not in out:
+            out.append(name)
+    if out:
+        return out
+
+    # Last-resort: take a small tail-near set, newest first, then restore graph order.
+    tail = []
+    seen: set[str] = set()
+    for name in reversed(fallback):
+        if name in seen:
+            continue
+        seen.add(name)
+        tail.append(name)
+        if len(tail) >= 6:
+            break
+    return list(reversed(tail))
+
+
 def hailo_part2_parser_blocker_precheck_from_model(
     part2_model: onnx.ModelProto,
     *,
@@ -3027,7 +3275,12 @@ def hailo_part2_parser_blocker_precheck_from_model(
             name = str(getattr(node, 'name', '') or '')
             op_type = str(getattr(node, 'op_type', '') or '')
             rec = {'name': name, 'op_type': op_type, 'index': int(idx)}
-            if op_type in _HAILO_PART2_HARD_PARSER_BLOCKER_OPS:
+            name_l = name.lower()
+            yolo_dfl_shuffle = bool(
+                op_type in {'Reshape', 'Transpose'}
+                and ('/dfl/' in name_l or name_l.endswith('/dfl') or 'dfl/' in name_l)
+            )
+            if op_type in _HAILO_PART2_HARD_PARSER_BLOCKER_OPS or yolo_dfl_shuffle:
                 hard_blockers.append(rec)
             elif op_type in _HAILO_PART2_SOFT_PARSER_BLOCKER_OPS:
                 soft_blockers.append(rec)
@@ -3038,7 +3291,19 @@ def hailo_part2_parser_blocker_precheck_from_model(
         dominant_prefix = _dominant_parser_blocked_prefix(blocked_names)
         first_blocked_idx = min((int(rec.get('index', 0)) for rec in hard_blockers), default=None)
         suggested_end_nodes: List[str] = []
-        if dominant_prefix and first_blocked_idx is not None:
+
+        # YOLO26/end-to-end exports often have Hailo-friendly one2one raw heads
+        # before the final Transpose/Concat/NMS-style tail.  Prefer those six
+        # Conv endpoints over a late Transpose suggestion; otherwise the actual
+        # compiler can still fail during allocation on concat/format-conversion
+        # layers even though the static parser-blocker scan looked acceptable.
+        one2one_head_suggestion = _suggest_yolo_one2one_raw_head_end_nodes(nodes)
+        yolo_tail_suggestion = _suggest_yolo_decode_tail_end_nodes(nodes, first_blocked_idx, blocked_names)
+        if one2one_head_suggestion:
+            suggested_end_nodes = list(one2one_head_suggestion)
+        elif yolo_tail_suggestion:
+            suggested_end_nodes = list(yolo_tail_suggestion)
+        elif dominant_prefix and first_blocked_idx is not None:
             prefix_eff = dominant_prefix.rstrip('/') + '/'
             candidates = [
                 name for idx, name in transpose_candidates
@@ -3343,6 +3608,8 @@ def hailo_build_hef(
     force: bool = False,
     keep_artifacts: bool = False,
     extra_model_script: Optional[str] = None,
+    start_node_names: Optional[Sequence[str]] = None,
+    end_node_names: Optional[Sequence[str]] = None,
 ) -> HailoHefBuildResult:
     """Translate + optimize + compile an ONNX to a HEF.
 
@@ -3441,12 +3708,13 @@ def hailo_build_hef(
 
     try:
         runner = ClientRunner(hw_arch=str(hw_arch_eff))
-        runner.translate_onnx_model(
-            model=str(model_for_parse),
-            net_name=str(net_name),
-            net_input_shapes=net_input_shapes,
-            disable_rt_metadata_extraction=bool(disable_rt_metadata_extraction),
-        )
+        translate_kwargs = _apply_translate_node_overrides({
+            'model': str(model_for_parse),
+            'net_name': str(net_name),
+            'net_input_shapes': net_input_shapes,
+            'disable_rt_metadata_extraction': bool(disable_rt_metadata_extraction),
+        }, start_node_names=start_node_names, end_node_names=end_node_names)
+        runner.translate_onnx_model(**translate_kwargs)
 
         parsed_har = out_dir / "parsed.har"
         if keep_artifacts:
@@ -3702,6 +3970,8 @@ def hailo_build_hef_via_wsl(
     force: bool = False,
     keep_artifacts: bool = False,
     extra_model_script: Optional[str] = None,
+    start_node_names: Optional[Sequence[str]] = None,
+    end_node_names: Optional[Sequence[str]] = None,
     # WSL bridge settings
     wsl_distro: Optional[str] = None,
     wsl_venv_activate: str = "auto",
@@ -3829,6 +4099,10 @@ def hailo_build_hef_via_wsl(
     )
     if outdir_wsl is not None:
         cmd += f" --outdir {_bash_quote(outdir_wsl)}"
+    if start_node_names:
+        cmd += f" --start-node-names-json {_bash_quote(json.dumps(list(start_node_names)))}"
+    if end_node_names:
+        cmd += f" --end-node-names-json {_bash_quote(json.dumps(list(end_node_names)))}"
     if calib_wsl is not None:
         cmd += f" --calib-dir {_bash_quote(calib_wsl)}"
     if activation_part1_onnx_wsl is not None:
@@ -4023,6 +4297,8 @@ def hailo_build_hef_via_venv(
     force: bool = False,
     keep_artifacts: bool = False,
     extra_model_script: Optional[str] = None,
+    start_node_names: Optional[Sequence[str]] = None,
+    end_node_names: Optional[Sequence[str]] = None,
     venv_activate: str = "auto",
     timeout_s: int = 3600,
     on_log: Optional[Callable[[str, str], None]] = None,
@@ -4116,6 +4392,10 @@ def hailo_build_hef_via_venv(
     ]
     if outdir_path is not None:
         cmd += ["--outdir", str(outdir_path)]
+    if start_node_names:
+        cmd += ["--start-node-names-json", json.dumps(list(start_node_names))]
+    if end_node_names:
+        cmd += ["--end-node-names-json", json.dumps(list(end_node_names))]
     if calib_dir is not None:
         cmd += ["--calib-dir", str(Path(str(calib_dir)).expanduser().resolve())]
     if activation_part1_onnx_p is not None:
@@ -4331,6 +4611,8 @@ def hailo_build_hef_auto(
     force: bool = False,
     keep_artifacts: bool = False,
     extra_model_script: Optional[str] = None,
+    start_node_names: Optional[Sequence[str]] = None,
+    end_node_names: Optional[Sequence[str]] = None,
     # WSL bridge
     wsl_distro: Optional[str] = None,
     wsl_venv_activate: str = "auto",
@@ -4360,6 +4642,8 @@ def hailo_build_hef_auto(
             force=bool(force),
             keep_artifacts=bool(keep_artifacts),
             extra_model_script=extra_model_script,
+            start_node_names=start_node_names,
+            end_node_names=end_node_names,
         )
 
     def _run_venv() -> HailoHefBuildResult:
@@ -4380,6 +4664,8 @@ def hailo_build_hef_auto(
             force=bool(force),
             keep_artifacts=bool(keep_artifacts),
             extra_model_script=extra_model_script,
+            start_node_names=start_node_names,
+            end_node_names=end_node_names,
             venv_activate=wsl_venv_activate,
             timeout_s=int(wsl_timeout_s),
             on_log=on_log,
@@ -4407,6 +4693,8 @@ def hailo_build_hef_auto(
             force=bool(force),
             keep_artifacts=bool(keep_artifacts),
             extra_model_script=extra_model_script,
+            start_node_names=start_node_names,
+            end_node_names=end_node_names,
             wsl_distro=wsl_distro,
             wsl_venv_activate=wsl_venv_activate,
             wsl_timeout_s=int(wsl_timeout_s),

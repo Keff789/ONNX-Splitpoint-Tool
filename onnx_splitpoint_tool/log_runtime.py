@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from .paths import ensure_dir, splitpoint_home, splitpoint_logs_dir
+from .paths import ensure_dir, splitpoint_gui_logs_dir, splitpoint_home, splitpoint_logs_dir
 
 ACTIVE_LOG_ENV = "ONNX_SPLITPOINT_ACTIVE_LOG_PATH"
 CWD_LOG_ENV = "ONNX_SPLITPOINT_CWD_LOG_PATH"
@@ -62,8 +62,10 @@ def discover_live_logging_paths(*, logger_obj: Optional[logging.Logger] = None) 
 
 def active_log_alias_candidates(*, include_cwd: bool = True) -> List[Path]:
     candidates = [
-        splitpoint_logs_dir() / CURRENT_LOG_ALIAS,
+        splitpoint_gui_logs_dir() / CURRENT_LOG_ALIAS,
+        splitpoint_gui_logs_dir() / ACTIVE_LOG_PATH_TXT,
         splitpoint_logs_dir() / ACTIVE_LOG_PATH_TXT,
+        splitpoint_home() / "logs" / ACTIVE_LOG_PATH_TXT,
         splitpoint_home() / ACTIVE_LOG_PATH_TXT,
     ]
     if include_cwd:
@@ -95,6 +97,7 @@ def resolve_active_log_path() -> Optional[Path]:
             continue
 
     defaults = [
+        splitpoint_gui_logs_dir() / "gui.log",
         splitpoint_logs_dir() / "gui.log",
         splitpoint_home() / "gui.log",
         Path.cwd() / "gui.log",
@@ -161,7 +164,7 @@ def publish_active_log_metadata(log_path: Path, *, publish_cwd_alias: bool = Fal
 
     os.environ[ACTIVE_LOG_ENV] = str(log_path)
 
-    meta_dirs = [ensure_dir(splitpoint_logs_dir()), ensure_dir(splitpoint_home())]
+    meta_dirs = [ensure_dir(splitpoint_gui_logs_dir()), ensure_dir(splitpoint_logs_dir()), ensure_dir(splitpoint_home() / "logs"), ensure_dir(splitpoint_home())]
     for meta_dir in meta_dirs:
         try:
             (meta_dir / ACTIVE_LOG_PATH_TXT).write_text(str(log_path), encoding="utf-8")

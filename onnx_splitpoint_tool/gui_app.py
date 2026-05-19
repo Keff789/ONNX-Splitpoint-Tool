@@ -241,11 +241,11 @@ def _setup_gui_logging() -> Optional[str]:
     try:
         # Keep logs out of the current working directory to avoid littering the
         # repo/project folder with per-run log files.
-        from .paths import ensure_dir, splitpoint_logs_dir
+        from .paths import ensure_dir, splitpoint_gui_logs_dir, splitpoint_logs_dir
         from .log_retention import LogRetentionPolicy, apply_log_retention, policy_from_env
         from pathlib import Path
 
-        log_dir = ensure_dir(splitpoint_logs_dir())
+        log_dir = ensure_dir(splitpoint_gui_logs_dir())
         log_path = log_dir / "gui.log"
         try:
             log_path.touch(exist_ok=True)
@@ -289,8 +289,7 @@ def _setup_gui_logging() -> Optional[str]:
                 patterns=pol.patterns,
                 keep_names=tuple(set(pol.keep_names) | {"gui.log"}),
             )
-            home = Path.home() / ".onnx_splitpoint_tool"
-            apply_log_retention([log_dir, home / "wsl_debug"], policy=pol, recursive=True)
+            apply_log_retention([splitpoint_logs_dir()], policy=pol, recursive=True)
         except Exception:
             pass
 
@@ -329,10 +328,9 @@ def _setup_gui_logging() -> Optional[str]:
 
         os.environ["ONNX_SPLITPOINT_ACTIVE_LOG_PATH"] = str(log_path)
 
-        # Keep a familiar ./gui.log mirror by default. The persistent log under
-        # ~/.onnx_splitpoint_tool/logs/gui.log remains the canonical location,
-        # but many existing workflows still inspect the working-directory log.
-        write_cwd_raw = (os.environ.get("SPLITPOINT_WRITE_CWD_LOG", "1") or "1").strip().lower()
+        # Keep the project-local log directory as the canonical location.
+        # A working-directory mirror is opt-in only for legacy workflows.
+        write_cwd_raw = (os.environ.get("SPLITPOINT_WRITE_CWD_LOG", "0") or "0").strip().lower()
         write_cwd = write_cwd_raw not in {"0", "false", "no", "off"}
         if write_cwd:
             try:
@@ -6975,7 +6973,10 @@ class SplitPointAnalyserGUI(tk.Tk):
         *,
         resume_dir: Optional[str] = None,
         offer_latest_resume: bool = True,
-    ) -> None:
+        output_parent_override: Optional[str] = None,
+        completion_callback=None,
+        show_result_dialogs: bool = True,
+    ) -> Optional[str]:
         """Thin compatibility wrapper around the extracted benchmark workflow controller.
 
         The heavy benchmark-suite generation orchestration now lives in
@@ -7048,6 +7049,9 @@ class SplitPointAnalyserGUI(tk.Tk):
         return self._get_benchmark_workflow_controller().generate_benchmark_set(
             resume_dir=resume_dir,
             offer_latest_resume=offer_latest_resume,
+            output_parent_override=output_parent_override,
+            completion_callback=completion_callback,
+            show_result_dialogs=show_result_dialogs,
         )
 
     def _export_overview(self, fmt: str):

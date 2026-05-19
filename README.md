@@ -1,144 +1,118 @@
-# ONNX Split-Point Tool (GUI + CLI)
+## v47 note
 
-Single-split boundary analysis for ONNX graphs. The tool enumerates all topological boundaries and ranks them by
-communication volume, compute balance, and (optionally) a simple link/latency model.
+v47 keeps the v46 YOLO26 Full-Hailo baseline behavior, but fixes the next runtime/evaluation issues: mixed Hailo↔TensorRT run labels are no longer passed to DFC as hw_arch values; lean result bundles synthesize/include v42/v47 pipeline summaries and status matrices; and YOLO26 benchmark generation reserves early Hailo→TensorRT candidates for throughput-first 5-split runs while still keeping a verified Hailo/Hailo candidate when available.
 
-## Repo layout (refactored)
+## v47 note
 
-- `onnx_splitpoint_tool/` – Python package (core code)
-  - `api.py` – public API / compatibility re-exports
-  - `cli.py` – CLI implementation
-  - `gui_app.py` – Tkinter GUI
-  - `onnx_utils.py` – parsing + graph utilities
-  - `metrics.py` – cost/FLOPs/memory estimation + ranking
-  - `pruning.py` – skip-/block-aware pruning
-  - `split_export.py` – split export + runner skeleton + context diagrams
-- `analyse_and_split.py` – thin wrapper entrypoint (kept for backwards compatibility)
-- `analyse_and_split_gui.py` – thin wrapper entrypoint (kept for backwards compatibility)
-- `download_model_zoo_examples.py` – helper to download ONNX model zoo examples
-- `model_zoo_manifest.json` – curated model list for the downloader
+v47 normalizes mixed Hailo/TensorRT benchmark labels before HEF generation. Pipeline labels such as `hailo8_to_trt` and `trt_to_hailo8` stay in the benchmark plan, but Hailo DFC builds now use the physical chip target (`hailo8`, `hailo8r`, `hailo8l`) and reuse those artifacts for mixed runs. Lean result bundles also keep the v42 pipeline/status summaries.
 
-## Install
+## v46 note
 
-```bash
-pip install onnx numpy matplotlib pillow
-# optional (validation/runner):
-pip install onnxruntime
-```
+v46 forces the YOLO26 Hailo Full baseline attempt before prefiltering, global probing, or split-case builds. When Hailo is selected for YOLO26, the generator now treats Hailo Full as a required suite-level reference baseline for Hailo-only vs. TensorRT-only vs. Hailo→TensorRT comparison. The decoded Full graph is tried first and the one2one raw-head fallback is used if the end-to-end output tail blocks Hailo. If Full-Hailo fails, the failure is recorded as a structured suite-level result and split generation continues.
 
-## Optional: Hailo DFC integration (Linux or Windows via WSL2)
+## v44 note
 
-The GUI can optionally run a **Hailo feasibility check (parse-only)** during ranking.
-This is useful to automatically prune split candidates where a partition cannot be translated by the Hailo toolchain.
+v44 hardens the YOLO26 path using the older YOLO26L generation logs. It keeps Hailo Full available for one2one raw-head fallback when decoded Full fails at the end-to-end `TopK/GatherElements/ReduceMax/Squeeze` tail, avoids treating `/model.23/Transpose*` parser hints as true Hailo-Part2 compatibility, keeps useful YOLO26 splits as `Hailo Part1 -> TensorRT/ORT Part2` when Hailo-Part2 is not safe, and adds a conservative static guard against known-bad late-head Part1 boundaries that repeatedly failed with `format_conversion* Agent infeasible`.
 
-### Linux (native)
 
-- Install the Hailo Dataflow Compiler (DFC) Python wheel into the same Python environment as this tool.
-- In the GUI enable **Hailo check** and set **Backend = local** (or keep **auto**).
+## v43 note
 
-### Windows + WSL2 (recommended)
+v43 adds a YOLO26-specific Hailo policy: it detects `one2one_cv2/cv3` detection-head endpoints, avoids late `/model.23/Transpose` Part2 fallbacks that trigger Hailo Concat/format-conversion allocation failures, and keeps YOLO26 Hailo-Part1 → TensorRT/ORT-Part2 cases clean when Hailo-Part2 is not truly available.
 
-The Hailo DFC wheel is Linux-only. Recommended setup:
+## v42 note
 
-1. Install WSL2 + an Ubuntu distro.
-2. Create a WSL virtualenv (default expected path: `~/hailo_dfc_venv`) and install the Hailo DFC wheel there.
-   A helper script is included:
-   `./scripts/setup_hailo_dfc_wsl.sh /path/to/hailo_dataflow_compiler-*.whl`
-3. Run the GUI on Windows, enable **Hailo check**, set **Backend = wsl** (or **auto**), and point it to:
-   - **WSL venv**: `~/hailo_dfc_venv/bin/activate`
-   - **WSL distro**: optional (leave empty to use the default WSL distro)
+v42 keeps the v41l YOLO/Hailo raw-head split generation policy, but improves runtime
+validation and reporting for thesis evaluation. New per-case reports now expose fair
+Hailo raw-head full E2E timing when a host-tail decoder is available, composed-stage
+phase timings, stricter semantic-validation gating, raw-head tensor drift diagnostics,
+and a suite-level `v42_pipeline_summary.*` focused on heterogeneous streaming FPS.
 
-Notes:
+## v41l note
 
-- The tool calls `wsl.exe` and runs a helper script inside WSL; you do **not** need to activate the venv manually.
-- If your model files are on `C:`/`D:`, WSL can access them via `/mnt/c/...` and `/mnt/d/...`.
-- A small helper for interactive shells is included:
-  `source ./scripts/activate_hailo_dfc_venv.sh`
 
-Practical tips:
+v41l tightens the YOLO/Hailo Part2 fallback policy. When a raw detection-head
+contract is active, Part2 no longer accepts Hailo parser-suggested `/model.23/Concat`
+endpoints as a substitute for the raw cv2/cv3 head tensors. Those suggested endpoints
+avoid the DFL parser error but can still fail during Hailo translation with concat layout
+errors. The generator now rejects those late boundaries and backfills candidates whose
+Part2 can terminate at the complete raw-head output set.
 
-- The GUI provides a **Test backend** button in the Hailo section to verify that the selected backend (local or WSL) can import the Hailo SDK.
-- Hailo parse-only results are cached across runs (by sub-model hash) to avoid re-running DFC translation during ranking.
-  You can clear the cache from the GUI (**Clear cache**) or delete `~/.onnx_splitpoint_tool/hailo_parse_cache.json`.
 
-## Run
+Fixes Hailo Part2 accelerator-prefix builds that failed with `Couldn't find inputs from ONNX proto` by pruning dangling ONNX graph inputs before Hailo parsing/building.
 
-### GUI
+# ONNX Split-Point Tool
+
+## v41j note
+
+This build adds a stale-suite guard for YOLO/Hailo benchmarksets. If a remote run uses an old suite that lacks `part2_hailo_prefix` / `part2_host_tail` artifacts, the tool now warns that the suite must be regenerated instead of silently skipping Hailo Part2 host-tail runs. It also strengthens Hailo YOLO raw-head decoding by avoiding a second sigmoid on class heads that are already probabilities and by preventing valid six-head outputs from falling through to the old reshape-prone fallback decoder.
+
+
+GUI and CLI tooling for analysing ONNX graphs, exporting split models, generating benchmark suites, and comparing full vs split deployments across CPU/CUDA/TensorRT/Hailo configurations.
+
+This is a clean distribution build. It intentionally does **not** ship image-heavy validation datasets. Prepare them once after installation with the GUI button **Prepare validation sets…** or the CLI command shown below.
+
+## Quick start
 
 ```bash
-python analyse_and_split_gui.py
+./start_gui.sh
 ```
 
-### CLI
+The startup script creates/uses `.venv`, installs missing runtime helpers, and launches the GUI.
+
+## Validation datasets
+
+Detection validation uses a lightweight COCO-50 subset. Classification smoke validation can use a downloadable Imagenette-mini preset mapped to ImageNet class IDs. The clean ZIP contains only compact manifests, not images. Prepare the defaults once:
 
 ```bash
-python analyse_and_split.py path/to/model.onnx --topk 10
+python -m onnx_splitpoint_tool.cli validation-assets prepare
 ```
 
-## Highlights
+or in the GUI:
 
-- Export split-context diagrams (full + cut-flow) with configurable context hops (0..3).
-- Suggest split boundaries based on activation-communication + compute balance.
-- Skip-/Block-aware candidate pruning (heuristic: avoids splitting inside long skip/residual blocks).
-- Link-model plugin for latency/energy with optional constraints (bandwidth/latency/energy).
-- Pareto export + clean **System / Workload** separation (`system_config.json` + `workload_profile.json`).
-- **Peak activation memory (approx, from value spans):**
-  - per boundary: live-set bytes (same basis as Comm(b))
-  - per partition: `peak_left[b]=max_{i<=b} live(i)`, `peak_right[b]=max_{i>=b} live(i)`
-  - optional constraints: max act mem left/right (fits SRAM/VRAM)
-- Split directly from the GUI (export part1/part2 ONNX).
-- Strict boundary option (rejects splits where part2 needs additional *intermediate* activations beyond the cut tensors; original graph inputs are allowed).
-- Optional onnxruntime validation (`full(x) ~= part2(part1(x))`).
-- Runner skeleton generator (`run_split_onnxruntime.py`)
-  - generic ORT benchmark runner for: full / part1 / part2 / composed
-  - supports input feeds via NPZ (`--inputs-npz`) and saving generated inputs (`--save-inputs-npz`)
-  - supports dumping standalone split interfaces as NPZ (`--dump-interface {right,left,min,either}`) with metadata
-  - supports CPU/CUDA/TensorRT (engine cache + fast-build preset) and writes `validation_report.json`
+```text
+Benchmark tab → Prepare validation sets…
+```
 
-**Example (dump interface for Part 2 / “right” side):**
+For final ImageNet-style classification evaluation, local ImageNet-mini presets can still be imported from an ImageNet validation folder:
+
+```text
+Benchmark tab → Classification preset → Import…
+```
+
+See `docs/VALIDATION_DATASETS.md` for details.
+
+## YOLO model preparation
+
+For Ultralytics YOLO detectors, normal benchmark-set generation now consumes prepared Hailo raw-head baselines automatically and can also retry the suite full-Hailo build with raw detection-head endpoints when the decoded YOLO tail fails. For Hailo Part2, the generator can now build a parser-safe accelerator prefix and keep the DFL/decode tail as a host-side ONNX Runtime tail on the Jetson. The **Prepare current model…** action remains useful as an advanced diagnostic/screening step, but it is no longer required for the normal benchmark workflow. See `docs/MODEL_PREPARATION.md`, `docs/RELEASE_v41h.md`, and `docs/RELEASE_v41i.md`.
+
+## Final evaluation workflow
+
+The tool supports versioned evaluation profiles, including the final thesis profile and a smoke/regression profile. Profiles can be selected in the Benchmark tab or inspected with:
+
 ```bash
-./run_split_onnxruntime.sh --provider tensorrt --dump-interface right --dump-interface-out results/interface
-# outputs: results/interface_right.npz (and metadata in __meta__)
+python -m onnx_splitpoint_tool.cli benchmark-profile --list
+python -m onnx_splitpoint_tool.cli benchmark-profile final --model /path/to/model.onnx
 ```
 
-**Example (LLM-style shapes via overrides):**
-```bash
-./run_split_onnxruntime.sh --provider cuda --shape-override "input_ids=1x128 attention_mask=1x128"
-```
+## Clean release contents
 
-**Example (reproducible inputs to NPZ):**
-```bash
-./run_split_onnxruntime.sh --provider cpu --seed 0 --save-inputs-npz results/inputs_full.npz
-./run_split_onnxruntime.sh --provider cpu --inputs-npz results/inputs_full.npz
-```
+Included:
 
-- **Benchmark set generator (GUI button: “Benchmark set…”)**
-  - exports one subfolder per selected split (models + runner)
-  - writes `benchmark_suite.py` to run all cases and aggregate results/plots
-  - also exports *paper assets* into the benchmark folder root:
-    - `split_candidates.tex`
-    - plots (`analysis_*.pdf` / `analysis_*.svg`)
-    - `system_config.json`, `workload_profile.json`
-    - `pareto_export.csv`, `candidate_pruning.json`
+- source code and GUI
+- benchmark runner templates
+- Hailo helper scripts
+- evaluation profiles and schemas
+- compact validation manifests
+- documentation
 
-## Notes
+Not included:
 
-- If Graphviz `dot` is installed, `.dot` files are rendered to SVG/PDF automatically. Otherwise a matplotlib fallback diagram is created.
-- Windows: do not run `.bat` files with Python. Double click, or run from PowerShell directly.
+- `__pycache__`, `.pytest_cache`, compiled Python files
+- historical patch/changelog files
+- image-heavy validation datasets
+- generated benchmark/results folders
 
-### External-data ONNX models (`*.onnx` + `*.onnx.data`)
 
-Large models exported with ONNX external data are supported.
+### v41i note
 
-When exporting splits/benchmark sets, the tool tries to make the output folder usable by:
-
-- creating a **hardlink** to the referenced `*.data` file (fast, no extra disk use; requires same filesystem),
-- or falling back to **symlink**/**copy**,
-- and if none of the above is possible, it rewrites the ONNX external-data `location` to an **absolute path** (works locally, not portable).
-
-### GUI logs
-
-The GUI writes logs to both:
-
-- `~/.onnx_splitpoint_tool/gui.log`
-- `./gui.log` (current working directory)
+The benchmark runner now decodes Ultralytics YOLO decoded outputs (`[1, 84, 8400]`) and Hailo raw-head outputs (`80x80x64`, `80x80x80`, `40x40x64`, `40x40x80`, `20x20x64`, `20x20x80`) through the same proxy-detection path. This makes the Hailo raw-head full baseline usable for CPU-vs-Hailo backend-drift and semantic dataset checks. Validation aggregation now gates only end-to-end variants (`composed` or `full`); `part1` and `part2` remain diagnostic timing stages unless they are the primary requested variant.

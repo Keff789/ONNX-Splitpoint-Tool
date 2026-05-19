@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "onnx-splitpoint-tool"
-version = "0.10.136.post21"
+version = "0.10.208"
 description = "Single-split boundary analysis for ONNX graphs (GUI + CLI)"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -13,6 +13,8 @@ dependencies = [
   "numpy",
   "matplotlib",
   "pillow",
+  "PyYAML",
+  "jsonschema",
 ]
 
 [project.optional-dependencies]
@@ -34,7 +36,6 @@ onnx_splitpoint_tool = [
   "resources/**/*.json",
   "resources/**/*.md",
   "resources/**/*.txt",
-  "resources/test_images/*.png",
   "runners/assets/*",
   "runners/harness/*.json",
   "runners/harness/*.txt",

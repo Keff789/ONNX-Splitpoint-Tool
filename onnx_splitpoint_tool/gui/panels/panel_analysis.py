@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import logging
+import threading
+import time
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk
@@ -848,13 +850,13 @@ def _build_candidate_inspector(parent: ttk.Frame, app: Any) -> None:
             single_prob = max(0.0, min(1.0, float(heur.single_context_probability)))
             peak_txt = ("–" if heur.peak_act_right_mib is None else f"{float(heur.peak_act_right_mib):.2f} MiB")
             if risk <= 1.7 and single_prob >= 0.80:
-                recommendation = "Very likely 1-context"
+                recommendation = "Low context risk / measure normally"
             elif single_prob >= 0.65:
-                recommendation = "Likely 1-context"
+                recommendation = "Likely 1-context / measure"
             elif single_prob >= 0.45:
-                recommendation = "Borderline / measure"
+                recommendation = "Borderline; measure, do not discard"
             else:
-                recommendation = "Compile-risky / likely multi-context"
+                recommendation = "Likely multi-context; keep if measured FPS/quality are good"
         except Exception:
             pass
 
@@ -924,13 +926,53 @@ def _wire_panel_logic(frame: ttk.Frame, app: Any) -> None:
     preset_cb = frame.preset_cb
     build_ui(frame, app)
 
+    def _schedule_external_data_refresh(path: str) -> None:
+        """Update the external-data badge without blocking GUI startup.
+
+        Loading even with ``load_external_data=False`` still parses the full ONNX
+        protobuf. On Jetson / network-mounted workdirs this can take minutes for
+        larger models. The badge is useful, but it must not sit on the critical
+        startup path.
+        """
+        if not path:
+            frame.external_var.set("External data: unknown")
+            return
+
+        token = int(getattr(frame, "_external_check_token", 0) or 0) + 1
+        setattr(frame, "_external_check_token", token)
+        frame.external_var.set("External data: checking…")
+
+        def _worker(expected_token: int, model_path: str) -> None:
+            t0 = time.perf_counter()
+            logger.info("External-data check scheduled asynchronously for %s", os.path.basename(model_path))
+            label = _external_data_label(model_path)
+            logger.info("External-data check finished for %s in %.3fs", os.path.basename(model_path), time.perf_counter() - t0)
+
+            def _apply() -> None:
+                try:
+                    if int(getattr(frame, "_external_check_token", 0) or 0) != expected_token:
+                        return
+                    frame.external_var.set(label)
+                except Exception:
+                    logger.debug("Could not update external-data badge", exc_info=True)
+
+            try:
+                if app is not None and hasattr(app, "after"):
+                    app.after(0, _apply)
+                else:
+                    _apply()
+            except Exception:
+                logger.debug("Could not schedule external-data badge update", exc_info=True)
+
+        threading.Thread(target=_worker, args=(token, path), daemon=True).start()
+
     def _refresh_model_bar(_model_info: Any = None) -> None:
         path = str(getattr(app, "model_path", None) or getattr(getattr(app, "gui_state", None), "current_model_path", "") or "")
         frame.model_name_var.set(os.path.basename(path) if path else "(no model loaded)")
         mtype = str(getattr(getattr(app, "gui_state", None), "model_type", "onnx") or "onnx").upper()
         frame.model_type_var.set(mtype)
 
-        frame.external_var.set(_external_data_label(path))
+        _schedule_external_data_refresh(path)
 
     def _refresh_modified_marker() -> None:
         preset_name = frame.preset_var.get()

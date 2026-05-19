@@ -1,36 +1,44 @@
 #!/bin/bash
+set -e
 
-# Name des venv-Ordners und der Requirements-Datei
 VENV_DIR=".venv"
 REQUIREMENTS="requirements.txt"
+PYTHON_EXE=""
 
-# 1. Prüfen, ob das venv existiert
-if [ -d "$VENV_DIR" ]; then
-    echo "Aktiviere Virtual Environment in $VENV_DIR..."
-    source "$VENV_DIR/bin/activate"
-else
+ensure_venv() {
+    if [ -d "$VENV_DIR" ]; then
+        echo "Aktiviere Virtual Environment in $VENV_DIR..."
+        # shellcheck disable=SC1091
+        source "$VENV_DIR/bin/activate"
+        PYTHON_EXE="$PWD/$VENV_DIR/bin/python"
+        return
+    fi
+
     echo "Virtual Environment '$VENV_DIR' nicht gefunden. Wird erstellt..."
-    # Verwende python3 (oder python, falls python3 nicht aliasiert ist)
     python3 -m venv "$VENV_DIR"
-    
     echo "Aktiviere neues Virtual Environment..."
+    # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
-    
+    PYTHON_EXE="$PWD/$VENV_DIR/bin/python"
     echo "Aktualisiere pip..."
-    pip install --upgrade pip
-    
-    # Prüfen, ob die requirements.txt existiert, bevor installiert wird
+    "$PYTHON_EXE" -m pip install --upgrade pip
     if [ -f "$REQUIREMENTS" ]; then
         echo "Installiere Abhängigkeiten aus $REQUIREMENTS..."
-        pip install -r "$REQUIREMENTS"
+        "$PYTHON_EXE" -m pip install -r "$REQUIREMENTS"
     else
         echo "Warnung: $REQUIREMENTS wurde nicht gefunden. Überspringe Paketinstallation."
     fi
-fi
+}
 
-# 2. Python-Skript ausführen
+ensure_startup_dependencies() {
+    echo "Prüfe/ergänze minimale GUI-Abhängigkeiten ..."
+    "$PYTHON_EXE" -m onnx_splitpoint_tool.dependency_bootstrap --groups gui_core
+}
+
+ensure_venv
+ensure_startup_dependencies
+
 echo "Starte Analyse-GUI..."
-python analyse_and_split_gui.py
+"$PYTHON_EXE" analyse_and_split_gui.py
 
-# 3. venv nach Beenden wieder deaktivieren (optional)
 deactivate
