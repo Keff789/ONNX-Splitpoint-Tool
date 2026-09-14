@@ -1,0 +1,449 @@
+{
+  "schema": "onnx-splitpoint/yolov7-native-three-stage-canary",
+  "schema_version": 1,
+  "status": "PASS_THREE_STAGE_TARGET_MET",
+  "scope": "current_v2782_b066_three_stage_zero_copy_fast_numpy",
+  "host": {
+    "platform": "Linux-5.15.148-tegra-aarch64-with-glibc2.35",
+    "python": "3.10.12 (main, Jan  8 2026, 06:52:19) [GCC 11.4.0]",
+    "numpy": "2.2.3",
+    "cpu_count": 8,
+    "process_affinity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ]
+  },
+  "output_dir": "/home/nx/v2792_yolov7_b066_concurrent_normal_runner_20260831_211407/evidence/work/concurrent_three_stage/three_stage_result/yolov7_three_stage_v1_20260831_211412",
+  "quality_oracle_outside_performance_timing": true,
+  "performance_hotloop_contains_crypto_hashing": false,
+  "reference_metadata_checks": [
+    {
+      "role": "current_result",
+      "path": "/home/nx/v2792_yolov7_b066_concurrent_normal_runner_20260831_211407/source/ONNX-Splitpoint-Tool_v2.79.2/onnx_splitpoint_tool/resources/native_concurrent_three_stage_yolov7/reference/current_completed_task_result.json",
+      "expected_sha256": "04e5737b8f300c035c1b5e67682b18e81b38b9f288856b6ff1bee2ac584c074c",
+      "actual_sha256": "04e5737b8f300c035c1b5e67682b18e81b38b9f288856b6ff1bee2ac584c074c",
+      "passed": true
+    },
+    {
+      "role": "quality_binding",
+      "path": "/home/nx/v2792_yolov7_b066_concurrent_normal_runner_20260831_211407/source/ONNX-Splitpoint-Tool_v2.79.2/onnx_splitpoint_tool/resources/native_concurrent_three_stage_yolov7/reference/native_split_quality_binding.json",
+      "expected_sha256": "a5af2b4c0b8544208c7c7f7ad944bdce91844897c77564169efcb2c741d6ae62",
+      "actual_sha256": "a5af2b4c0b8544208c7c7f7ad944bdce91844897c77564169efcb2c741d6ae62",
+      "passed": true
+    },
+    {
+      "role": "boundary_manifest",
+      "path": "/home/nx/v2792_yolov7_b066_concurrent_normal_runner_20260831_211407/source/ONNX-Splitpoint-Tool_v2.79.2/onnx_splitpoint_tool/resources/native_concurrent_three_stage_yolov7/reference/native_fifo_boundary_manifest.json",
+      "expected_sha256": "bd9f16056e40eb24de3c97229b30d31a2d621052a422eb6b7265e9f0778997a7",
+      "actual_sha256": "bd9f16056e40eb24de3c97229b30d31a2d621052a422eb6b7265e9f0778997a7",
+      "passed": true
+    },
+    {
+      "role": "output_manifest",
+      "path": "/home/nx/v2792_yolov7_b066_concurrent_normal_runner_20260831_211407/source/ONNX-Splitpoint-Tool_v2.79.2/onnx_splitpoint_tool/resources/native_concurrent_three_stage_yolov7/reference/native_fifo_output_manifest.json",
+      "expected_sha256": "64b51e8a2723d0b5a6147ee98ab724bae7a11f768c1f7909e862565231fd6f8b",
+      "actual_sha256": "64b51e8a2723d0b5a6147ee98ab724bae7a11f768c1f7909e862565231fd6f8b",
+      "passed": true
+    }
+  ],
+  "source_checks": [
+    {
+      "path": "/home/nx/v2792_yolov7_b066_concurrent_normal_runner_20260831_211407/source/ONNX-Splitpoint-Tool_v2.79.2/onnx_splitpoint_tool/native_detection_postprocess.py",
+      "expected_sha256": "e1d454faa35fa1a8d1299ce88a9ca1729edab3d6d9f5b4aec7f9a4bccd7e07a6",
+      "actual_sha256": "e1d454faa35fa1a8d1299ce88a9ca1729edab3d6d9f5b4aec7f9a4bccd7e07a6",
+      "passed": true
+    },
+    {
+      "path": "/home/nx/v2792_yolov7_b066_concurrent_normal_runner_20260831_211407/source/ONNX-Splitpoint-Tool_v2.79.2/onnx_splitpoint_tool/runners/harness/yolo.py",
+      "expected_sha256": "31657e2717a8cb6cfda53e7de8e06b7b2286ecb430070811546fdec65327a17a",
+      "actual_sha256": "31657e2717a8cb6cfda53e7de8e06b7b2286ecb430070811546fdec65327a17a",
+      "passed": true
+    },
+    {
+      "path": "/home/nx/v2792_yolov7_b066_concurrent_normal_runner_20260831_211407/source/ONNX-Splitpoint-Tool_v2.79.2/onnx_splitpoint_tool/runners/harness/base.py",
+      "expected_sha256": "938b3713f32e412dd1f57fcc07a397fa1f3b26ed30afbc945d22f1bb082db06c",
+      "actual_sha256": "938b3713f32e412dd1f57fcc07a397fa1f3b26ed30afbc945d22f1bb082db06c",
+      "passed": true
+    }
+  ],
+  "source_ok": true,
+  "artifact_recovery": {
+    "hef": [
+      {
+        "path": "/home/nx/v2792_yolov7_b066_concurrent_normal_runner_20260831_211407/source/ONNX-Splitpoint-Tool_v2.79.2/onnx_splitpoint_tool/resources/native_concurrent_three_stage_yolov7/staged_inputs/part1.hef",
+        "exists": false
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-78dcf9bd33084c0c/native_split_quality/orin_nx_hailo8_01/yolov7_paper/b066/hailo8_to_trt/7d5d3e2943f6d344f9f5eb90e81c392b736d77457ff8480e40ffbd5e6fb157a0/part1.hef",
+        "exists": true,
+        "sha256": "e733652e523cbc6b51d696fd9ef62913f809e07b1d9137ca1e1e5413591cd70f",
+        "size_bytes": 4447123,
+        "sha256_match": true,
+        "size_match": true,
+        "selected": true
+      }
+    ],
+    "engine": [
+      {
+        "path": "/home/nx/v2792_yolov7_b066_concurrent_normal_runner_20260831_211407/source/ONNX-Splitpoint-Tool_v2.79.2/onnx_splitpoint_tool/resources/native_concurrent_three_stage_yolov7/staged_inputs/part2_uint8_dequant_fp16.engine",
+        "exists": false
+      },
+      {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-78dcf9bd33084c0c/native_split_quality/orin_nx_hailo8_01/yolov7_paper/b066/hailo8_to_trt/7d5d3e2943f6d344f9f5eb90e81c392b736d77457ff8480e40ffbd5e6fb157a0/engine_cache/b066/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine",
+        "exists": true,
+        "sha256": "ddf2e26a2e784f87d2b20c4e19dd6576bcb4da33f0b86afb32ef0a9dfda65088",
+        "size_bytes": 74695868,
+        "sha256_match": true,
+        "size_match": true,
+        "selected": true
+      }
+    ]
+  },
+  "native_library": {
+    "path": "/home/nx/v2792_yolov7_b066_concurrent_normal_runner_20260831_211407/evidence/work/concurrent_three_stage/three_stage_result/yolov7_three_stage_v1_20260831_211412/cpp_build/build/libonnx_splitpoint_three_stage_canary.so",
+    "sha256": "c1060ecdf87fa55f19bbf4ec664307a24b9ea2d0ef9335a7633c3ab8f5387220",
+    "source_sha256": "6d07e28a61c00c098782d6a37f897425f33a3bb361e84ab113ffda2cd2b14fdb"
+  },
+  "corpus": {
+    "schema": "onnx-splitpoint/yolov7-product-smoke-corpus",
+    "schema_version": 1,
+    "selection_scope": "exact_prevalidated_sentinel_only",
+    "selection_uses_model_predictions": false,
+    "requested_count": 1,
+    "selected_count": 1,
+    "items": [
+      {
+        "index": 0,
+        "image_id": 632,
+        "relative_path": "000000000632.jpg",
+        "width": 640,
+        "height": 483,
+        "aspect_ratio": 1.3250517598343685,
+        "annotation_count": 18,
+        "noncrowd_annotation_count": 17,
+        "category_count": 4,
+        "selection_bin": "product_smoke_sentinel",
+        "selection_reason": "exact_prevalidated_b066_sentinel",
+        "staged_file": "images/00_000000000632.jpg",
+        "staged_sha256": "a4cd7f45ac1ce27eaafb254b23af7c0b18a064be08870ceaaf03b2147f2ce550",
+        "sha256": "a4cd7f45ac1ce27eaafb254b23af7c0b18a064be08870ceaaf03b2147f2ce550",
+        "size_bytes": 155667
+      }
+    ]
+  },
+  "runtime_artifacts": {
+    "hef": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-78dcf9bd33084c0c/native_split_quality/orin_nx_hailo8_01/yolov7_paper/b066/hailo8_to_trt/7d5d3e2943f6d344f9f5eb90e81c392b736d77457ff8480e40ffbd5e6fb157a0/part1.hef",
+    "hef_sha256": "e733652e523cbc6b51d696fd9ef62913f809e07b1d9137ca1e1e5413591cd70f",
+    "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-78dcf9bd33084c0c/native_split_quality/orin_nx_hailo8_01/yolov7_paper/b066/hailo8_to_trt/7d5d3e2943f6d344f9f5eb90e81c392b736d77457ff8480e40ffbd5e6fb157a0/engine_cache/b066/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine",
+    "engine_sha256": "ddf2e26a2e784f87d2b20c4e19dd6576bcb4da33f0b86afb32ef0a9dfda65088",
+    "source_mutated": false
+  },
+  "measurement_contract": {
+    "repetitions": 3,
+    "frames_per_repetition": 1000,
+    "warmup_frames_fully_drained": 100,
+    "p1_queue_depth": 3,
+    "post_queue_depth": 4,
+    "images_cycled": 1,
+    "P1": "image_read_letterbox_hailo8_part1",
+    "P2": "boundary_handoff_tensorrt_part2_raw_heads_d2h",
+    "raw_endpoint_semantics": "observed_inside_the_coupled_three_stage_pipeline_with_queue_backpressure_reported_separately",
+    "raw_stage_theoretical_semantics": "1000_over_max_mean_P1_stage_mean_P2_stage",
+    "postprocessing": "exact_sparse_numpy_decode_classaware_nms_inverse_letterbox_canonical_records",
+    "postprocess_location": "orin_nx_host_cpu_numpy_inprocess_callback",
+    "completed_endpoint": "completed_detection",
+    "quality_oracle": "separate_1_image_postflight_outside_timing"
+  },
+  "repetitions": [
+    {
+      "repetition": 1,
+      "return_code": 0,
+      "error": "",
+      "elapsed_s": 11.681105852127075,
+      "runtime_report_path": "/home/nx/v2792_yolov7_b066_concurrent_normal_runner_20260831_211407/evidence/work/concurrent_three_stage/three_stage_result/yolov7_three_stage_v1_20260831_211412/repetitions/rep_01/native_three_stage_runtime.json",
+      "runtime_ok": true,
+      "metrics": {
+        "raw_fps": 96.894185867,
+        "completed_fps": 96.875895091,
+        "completed_raw_ratio": 0.999811229,
+        "p1_stage_mean_ms": 10.303835694,
+        "p2_stage_mean_ms": 8.743092151,
+        "post_mean_ms": 2.006985526,
+        "post_median_ms": 2.0079115,
+        "post_p95_ms": 2.08304045,
+        "post_max_ms": 2.63075,
+        "theoretical_raw_fps": 97.051237005,
+        "theoretical_three_stage_fps": 97.051237005,
+        "callback_failures": 0
+      },
+      "measurement_result_parity": {
+        "exact_images": 1,
+        "requested_images": 1,
+        "all_exact": true,
+        "rows": [
+          {
+            "image_index": 0,
+            "image_id": 632,
+            "seen_count": 1000,
+            "exact": true,
+            "actual_detection_count": 9,
+            "expected_detection_count": 9
+          }
+        ]
+      },
+      "callback_errors": [],
+      "measured_seen_counts": {
+        "0": 1000
+      },
+      "first_candidate_counts": {
+        "0": [
+          {
+            "stride": 8,
+            "total_candidates": 19200,
+            "objectness_survivors": 18,
+            "score_survivors": 18
+          },
+          {
+            "stride": 16,
+            "total_candidates": 4800,
+            "objectness_survivors": 22,
+            "score_survivors": 22
+          },
+          {
+            "stride": 32,
+            "total_candidates": 1200,
+            "objectness_survivors": 16,
+            "score_survivors": 16
+          }
+        ]
+      }
+    },
+    {
+      "repetition": 2,
+      "return_code": 0,
+      "error": "",
+      "elapsed_s": 11.538879632949829,
+      "runtime_report_path": "/home/nx/v2792_yolov7_b066_concurrent_normal_runner_20260831_211407/evidence/work/concurrent_three_stage/three_stage_result/yolov7_three_stage_v1_20260831_211412/repetitions/rep_02/native_three_stage_runtime.json",
+      "runtime_ok": true,
+      "metrics": {
+        "raw_fps": 97.082371773,
+        "completed_fps": 97.064288177,
+        "completed_raw_ratio": 0.999813729,
+        "p1_stage_mean_ms": 10.2843633,
+        "p2_stage_mean_ms": 8.752635246,
+        "post_mean_ms": 1.963735012,
+        "post_median_ms": 1.971639,
+        "post_p95_ms": 2.0770452,
+        "post_max_ms": 2.315186,
+        "theoretical_raw_fps": 97.234993633,
+        "theoretical_three_stage_fps": 97.234993633,
+        "callback_failures": 0
+      },
+      "measurement_result_parity": {
+        "exact_images": 1,
+        "requested_images": 1,
+        "all_exact": true,
+        "rows": [
+          {
+            "image_index": 0,
+            "image_id": 632,
+            "seen_count": 1000,
+            "exact": true,
+            "actual_detection_count": 9,
+            "expected_detection_count": 9
+          }
+        ]
+      },
+      "callback_errors": [],
+      "measured_seen_counts": {
+        "0": 1000
+      },
+      "first_candidate_counts": {
+        "0": [
+          {
+            "stride": 8,
+            "total_candidates": 19200,
+            "objectness_survivors": 18,
+            "score_survivors": 18
+          },
+          {
+            "stride": 16,
+            "total_candidates": 4800,
+            "objectness_survivors": 22,
+            "score_survivors": 22
+          },
+          {
+            "stride": 32,
+            "total_candidates": 1200,
+            "objectness_survivors": 16,
+            "score_survivors": 16
+          }
+        ]
+      }
+    },
+    {
+      "repetition": 3,
+      "return_code": 0,
+      "error": "",
+      "elapsed_s": 11.538936614990234,
+      "runtime_report_path": "/home/nx/v2792_yolov7_b066_concurrent_normal_runner_20260831_211407/evidence/work/concurrent_three_stage/three_stage_result/yolov7_three_stage_v1_20260831_211412/repetitions/rep_03/native_three_stage_runtime.json",
+      "runtime_ok": true,
+      "metrics": {
+        "raw_fps": 97.077267591,
+        "completed_fps": 97.058748157,
+        "completed_raw_ratio": 0.99980923,
+        "p1_stage_mean_ms": 10.285856918,
+        "p2_stage_mean_ms": 8.770282261,
+        "post_mean_ms": 2.047793332,
+        "post_median_ms": 2.046649,
+        "post_p95_ms": 2.12260465,
+        "post_max_ms": 2.404533,
+        "theoretical_raw_fps": 97.220874058,
+        "theoretical_three_stage_fps": 97.220874058,
+        "callback_failures": 0
+      },
+      "measurement_result_parity": {
+        "exact_images": 1,
+        "requested_images": 1,
+        "all_exact": true,
+        "rows": [
+          {
+            "image_index": 0,
+            "image_id": 632,
+            "seen_count": 1000,
+            "exact": true,
+            "actual_detection_count": 9,
+            "expected_detection_count": 9
+          }
+        ]
+      },
+      "callback_errors": [],
+      "measured_seen_counts": {
+        "0": 1000
+      },
+      "first_candidate_counts": {
+        "0": [
+          {
+            "stride": 8,
+            "total_candidates": 19200,
+            "objectness_survivors": 18,
+            "score_survivors": 18
+          },
+          {
+            "stride": 16,
+            "total_candidates": 4800,
+            "objectness_survivors": 22,
+            "score_survivors": 22
+          },
+          {
+            "stride": 32,
+            "total_candidates": 1200,
+            "objectness_survivors": 16,
+            "score_survivors": 16
+          }
+        ]
+      }
+    }
+  ],
+  "postflight_quality_oracle": {
+    "performance_interpretation": "forbidden_verification_only",
+    "return_code": 0,
+    "error": "",
+    "callback_errors": [],
+    "requested_images": 1,
+    "verified_images": 1,
+    "exact_images": 1,
+    "all_exact": true,
+    "rows": [
+      {
+        "sequence": 0,
+        "image_index": 0,
+        "image_id": 632,
+        "raw_head_sha256_exact": true,
+        "raw_head_actual_sha256_by_grid": {
+          "80": "38582a5e2a5958a5dff166e8c2877bb947923789a4abaa3cfe5b5a2e725b7d6c",
+          "40": "4ee180feb247d0be56d7b9d14d741a901035aab732543d69b34bb9280e5d41eb",
+          "20": "8512a8767a8e935922903497000d72ab2b06c05c59a4bd2be6f2dde549ff952a"
+        },
+        "raw_head_expected_sha256_by_grid": {
+          "80": "38582a5e2a5958a5dff166e8c2877bb947923789a4abaa3cfe5b5a2e725b7d6c",
+          "40": "4ee180feb247d0be56d7b9d14d741a901035aab732543d69b34bb9280e5d41eb",
+          "20": "8512a8767a8e935922903497000d72ab2b06c05c59a4bd2be6f2dde549ff952a"
+        },
+        "oracle_fast_exact": true,
+        "current_oracle_equals_prior_oracle": true,
+        "detection_count": 9,
+        "exact": true
+      }
+    ]
+  },
+  "aggregate": {
+    "repetitions_requested": 3,
+    "repetitions_valid": 3,
+    "raw_fps": {
+      "count": 3,
+      "mean": 97.01794174366667,
+      "median": 97.077267591,
+      "p05": 96.9124940394,
+      "p95": 97.08186135480001,
+      "min": 96.894185867,
+      "max": 97.082371773
+    },
+    "completed_detection_fps": {
+      "count": 3,
+      "mean": 96.99964380833335,
+      "median": 97.058748157,
+      "p05": 96.89418039760001,
+      "p95": 97.063734175,
+      "min": 96.875895091,
+      "max": 97.064288177
+    },
+    "completed_raw_ratio": {
+      "count": 3,
+      "mean": 0.999811396,
+      "median": 0.999811229,
+      "p05": 0.9998094299,
+      "p95": 0.999813479,
+      "min": 0.99980923,
+      "max": 0.999813729
+    },
+    "post_p95_ms_across_repetitions": {
+      "count": 3,
+      "mean": 2.0942301000000003,
+      "median": 2.08304045,
+      "p05": 2.077644725,
+      "p95": 2.11864823,
+      "min": 2.0770452,
+      "max": 2.12260465
+    },
+    "post_max_ms_across_repetitions": {
+      "count": 3,
+      "mean": 2.4501563333333336,
+      "median": 2.404533,
+      "p05": 2.3241207000000004,
+      "p95": 2.6081282999999997,
+      "min": 2.315186,
+      "max": 2.63075
+    },
+    "raw_fps_median": 97.077267591,
+    "completed_fps_median": 97.058748157,
+    "completed_raw_ratio_median": 0.999811229,
+    "post_p95_guard_ms": 2.12260465,
+    "post_max_guard_ms": 2.63075
+  },
+  "decision": {
+    "raw_fps_min": 90.0,
+    "completed_detection_fps_min": 90.0,
+    "completed_raw_ratio_min": 0.9,
+    "post_p95_guard_ms": 10.0,
+    "post_max_guard_ms": 20.0,
+    "target_met": true,
+    "next_step": "integrate_contract_bound_three_stage_native_runner_once_in_v2_79"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "schema": "onnx-splitpoint/hailo-dfc-workspace-preflight",
+  "schema_version": 1,
+  "status": "failed",
+  "enabled": true,
+  "workspace": {
+    "requested_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260913_123411/models/yolo26m/benchmark_set/legacy_suite/b040/hailo/hailo8/part1",
+    "probe_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260913_123411/models/yolo26m/benchmark_set/legacy_suite/b040/hailo/hailo8/part1",
+    "writable": true,
+    "read_only_mount": false,
+    "permission_bits_allow": true,
+    "os_access_allow": true,
+    "free_bytes": 29324099584,
+    "free_inodes": 55176558,
+    "reason": "ok"
+  },
+  "calculation": {
+    "calibration_count": 500,
+    "input_shapes": [
+      [
+        1,
+        3,
+        640,
+        640
+      ]
+    ],
+    "float32_calibration_bytes": 2457600000,
+    "workspace_multiplier": 24.0,
+    "reserve_bytes": 2147483648,
+    "floor_bytes": 4294967296,
+    "required_free_bytes": 61129883648,
+    "required_free_inodes": 50000
+  },
+  "problems": [
+    "free_bytes=29324099584<required=61129883648"
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "scope": "Byte-identical original Sept13 normalized observations and build-stage reports; not synthetic runtimes.",
+  "original_run": "completsetdev_20260913_123411",
+  "files": [
+    {
+      "path": "yolo26m/normalized_results.json",
+      "sha256": "bbe5507c7fd80bd0014cb50f6f710d9ab12077f609e58c7a632f6dc5abdeac12",
+      "bytes": 3194931,
+      "source": "v2.82_Fixplan/fixtures/generic/yolo26m/normalized_results.json"
+    },
+    {
+      "path": "yolo26m/stage_result.json",
+      "sha256": "25818bd59221e634225b34bc8ba97ea59a04a6764ecd5b4c6c4069f2d003bdf5",
+      "bytes": 491609,
+      "source": "v2.82_Fixplan/fixtures/generic/yolo26m/stage_result.json"
+    },
+    {
+      "path": "yolo26s/normalized_results.json",
+      "sha256": "e92eed48db0fe9b66fac363a84e74893e917913bf0f5972ef0bc45b150163145",
+      "bytes": 3194869,
+      "source": "v2.82_Fixplan/fixtures/generic/yolo26s/normalized_results.json"
+    },
+    {
+      "path": "yolo26s/stage_result.json",
+      "sha256": "e5d267fa48fc1034171a6543829ea6c1112111e967b03d8a83da0cf28a64be7d",
+      "bytes": 491603,
+      "source": "v2.82_Fixplan/fixtures/generic/yolo26s/stage_result.json"
+    }
+  ]
+}

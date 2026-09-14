@@ -1,0 +1,33 @@
+{
+  "cancelled": false,
+  "case_id": "b398",
+  "cpu_threads": 4,
+  "created_at": "2026-09-10T13:50:01+02:00",
+  "duration_s": 1.634978,
+  "error": "RuntimeError: management_cpu_reference_context_invalid:model_binding",
+  "errors": [
+    "RuntimeError: management_cpu_reference_context_invalid:model_binding",
+    "quality_reference_not_emitted"
+  ],
+  "exception_message": "management_cpu_reference_context_invalid:model_binding",
+  "exception_type": "RuntimeError",
+  "execution_location": "central_management",
+  "failure_stage": "reference_process",
+  "include_in_latency_fps_energy": false,
+  "include_in_pareto": false,
+  "include_in_ranking": false,
+  "model_id": "yolo26m",
+  "provider": "onnxruntime_cpu",
+  "reference_immutable": true,
+  "reference_storage": "immutable_source_contract",
+  "return_code": 1,
+  "schema": "onnx-splitpoint/management-cpu-reference-job",
+  "schema_version": 1,
+  "semantic_reference_only": true,
+  "source_contract_sha256": "sha256:a74538ca3058f6c892b15cdf9ef5be34866ec0e470ea869cf82c4bf8468f1542",
+  "status": "failed",
+  "stdout_excerpt": "  File \"/home/kmika/Models/EvaluationRuns/completsetdev_20260910_133033/quality_management/references/yolo26m/workspaces/management_cpu_reference_vpqn1bfb/suite/benchmark_suite.py\", line 11944, in <module>\n    raise SystemExit(main())\n                     ^^^^^^\n  File \"/home/kmika/Models/EvaluationRuns/completsetdev_20260910_133033/quality_management/references/yolo26m/workspaces/management_cpu_reference_vpqn1bfb/suite/benchmark_suite.py\", line 11275, in main\n    r = _run_case(\n        ^^^^^^^^^^\n  File \"/home/kmika/Models/EvaluationRuns/completsetdev_20260910_133033/quality_management/references/yolo26m/workspaces/management_cpu_reference_vpqn1bfb/suite/benchmark_suite.py\", line 9068, in _run_case\n    management_reference_only = _management_cpu_reference_context(\n                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/kmika/Models/EvaluationRuns/completsetdev_20260910_133033/quality_management/references/yolo26m/workspaces/management_cpu_reference_vpqn1bfb/suite/benchmark_suite.py\", line 9063, in _management_cpu_reference_context\n    raise RuntimeError(\"management_cpu_reference_context_invalid:\" + \",\".join(errors))\nRuntimeError: management_cpu_reference_context_invalid:model_binding",
+  "stdout_excerpt_is_tail": true,
+  "stdout_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_133033/quality_management/references/yolo26m/management_cpu_reference_stdout.txt",
+  "timed_out": false
+}

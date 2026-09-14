@@ -1,0 +1,18 @@
+{
+  "schema": "onnx-splitpoint/historical-lifecycle-invariants",
+  "schema_version": 2,
+  "source_run": "resnet_yolo26s_yolov7_v27549_phase2_ranking_audit_b500_20260820_070324",
+  "provenance_note": "Compact factual observations from the completed v2.75.49 ranking-audit reports; this fixture intentionally contains no synthesized hardware measurement rows.",
+  "observed": {
+    "planned": 264,
+    "measurement_payload_present": 208,
+    "payload_missing": 56,
+    "valid_measurement": 206,
+    "invalid_measurement_count": 2,
+    "audit_coverage": {
+      "resnet50": {"observed": 19, "planned": 20},
+      "yolo26s": {"observed": 8, "planned": 20},
+      "yolov7_paper": {"observed": 19, "planned": 20}
+    }
+  }
+}

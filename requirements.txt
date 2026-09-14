@@ -2,8 +2,11 @@ onnx
 numpy
 matplotlib
 pillow
-
 PyYAML
 jsonschema
-# optional:
-# onnxruntime
+
+# Optional extras are declared in pyproject.toml:
+#   pip install .[runtime]   # onnxruntime
+#   pip install .[coco]      # pycocotools, official COCOeval
+#   pip install .[datasets]  # Kaggle CLI for authenticated ImageNet provisioning
+#   pip install .[final-datasets]  # pycocotools + Kaggle CLI

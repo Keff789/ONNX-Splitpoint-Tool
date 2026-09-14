@@ -1,0 +1,51 @@
+{
+  "source_archive": "complete_set_20260907_161614_debug_pack.zip",
+  "source_role": "original historical planned dispatcher identities and native result accounting",
+  "synthetic": false,
+  "projection_fields": [
+    "backend",
+    "model",
+    "case",
+    "setup_id",
+    "comparison_backend",
+    "precision",
+    "ok",
+    "runtime_success",
+    "status",
+    "failure_reason",
+    "status_detail",
+    "error",
+    "fps_makespan",
+    "fps_median",
+    "fps_ci95_low",
+    "fps_ci95_high",
+    "repetition_count_requested",
+    "repetition_count_attempted",
+    "repetition_count_valid",
+    "fps_repetition_samples",
+    "repetition_status",
+    "repetition_aggregation",
+    "completed_work_units",
+    "source_root",
+    "analysis_summary",
+    "report",
+    "source_reports",
+    "source_roots",
+    "task_quality_pass",
+    "task_quality_status",
+    "claim_ok"
+  ],
+  "excluded_payloads": [
+    "model/engine files",
+    "datasets",
+    "raw tensors",
+    "nested repetition/endpoint attestations not used by identity accounting"
+  ],
+  "original_files": {
+    "reports/native_producer_stage.json": "a06f564466fa31bae64bdd41aaee3b3c9a3e8bb589df551f0c57ea94d6c1ea54",
+    "reports/native_producer_summary.json": "4bdd9251b10b312d5a0ffad0b7ffd637bcb96b43bfb358cb6c79fb0ac8e268fc"
+  },
+  "preserves_original_numeric_fields": true,
+  "scope": "identity replay only; no new hardware execution or quality success",
+  "identity_projection_sha256": "81164d3b45c9d7e38aa53d79e1a5adffabf8f06adfce2968787b4d396d8f442e"
+}

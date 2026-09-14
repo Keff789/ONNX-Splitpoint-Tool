@@ -28,6 +28,8 @@ _LAYOUT_FAIL_TOKENS: Tuple[str, ...] = (
     "concat",
     "defuse",
     "feature_splitter",
+    "successor name is missing",
+    "output shape is ambiguous",
     "agent infeasible",
     "no successful assignments",
     "mapping failed",
@@ -267,7 +269,7 @@ def _normalize_failure_family(*, detail: str, stage: str, failure_kind: str) -> 
         return "concat_shape_mismatch"
     if "format_conversion" in low and "agent infeasible" in low:
         return "format_conversion_agent_infeasible"
-    if "feature_splitter" in low and "agent infeasible" in low:
+    if "feature_splitter" in low and ("agent infeasible" in low or "successor name is missing" in low or "output shape is ambiguous" in low):
         return "feature_splitter_agent_infeasible"
     if "agent infeasible" in low and "concat" in low and stage_low == "part2":
         return "concat_shape_mismatch"
@@ -403,25 +405,67 @@ def build_case_hailo_variant_availability(
     case_hefs: Mapping[str, Any],
 ) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
-    all_arches = set()
-    all_arches.update(str(k) for k in (suite_hailo_hefs or {}).keys())
-    all_arches.update(str(k) for k in (case_hefs or {}).keys())
-    for hw_arch in sorted(a for a in all_arches if a):
-        suite_meta = suite_hailo_hefs.get(hw_arch) if isinstance(suite_hailo_hefs, Mapping) else None
-        case_meta = case_hefs.get(hw_arch) if isinstance(case_hefs, Mapping) else None
-        suite_meta = dict(suite_meta) if isinstance(suite_meta, Mapping) else {}
-        case_meta = dict(case_meta) if isinstance(case_meta, Mapping) else {}
-        full_ok = bool(suite_meta.get("full")) and not bool(suite_meta.get("full_error"))
-        part1_ok = bool(case_meta.get("part1")) and not bool(case_meta.get("part1_error"))
-        part2_ok = bool(case_meta.get("part2")) and not bool(case_meta.get("part2_error"))
+    raw_suite = suite_hailo_hefs if isinstance(suite_hailo_hefs, Mapping) else {}
+    raw_case = case_hefs if isinstance(case_hefs, Mapping) else {}
+    all_arches = {
+        hw
+        for raw_hw in list(raw_suite.keys()) + list(raw_case.keys())
+        for hw in [_normalize_physical_hailo_hw(raw_hw)]
+        if hw
+    }
+    for hw_arch in sorted(all_arches):
+        suite_entries = [
+            dict(meta)
+            for raw_hw, meta in raw_suite.items()
+            if _normalize_physical_hailo_hw(raw_hw) == hw_arch
+            and isinstance(meta, Mapping)
+        ]
+        case_entries = [
+            dict(meta)
+            for raw_hw, meta in raw_case.items()
+            if _normalize_physical_hailo_hw(raw_hw) == hw_arch
+            and isinstance(meta, Mapping)
+        ]
+        full_ok = any(
+            bool(meta.get("full")) and not bool(meta.get("full_error"))
+            for meta in suite_entries
+        )
+        part1_ok = any(
+            bool(meta.get("part1")) and not bool(meta.get("part1_error"))
+            for meta in case_entries
+        )
+        part2_ok = any(
+            bool(meta.get("part2")) and not bool(meta.get("part2_error"))
+            for meta in case_entries
+        )
+        full_errors = [
+            str(meta.get("full_error") or "").strip()
+            for meta in suite_entries
+            if str(meta.get("full_error") or "").strip()
+        ]
+        part1_errors = [
+            str(meta.get("part1_error") or "").strip()
+            for meta in case_entries
+            if str(meta.get("part1_error") or "").strip()
+        ]
+        part2_errors = [
+            str(meta.get("part2_error") or "").strip()
+            for meta in case_entries
+            if str(meta.get("part2_error") or "").strip()
+        ]
         out[str(hw_arch)] = {
             "full": bool(full_ok),
             "part1": bool(part1_ok),
             "part2": bool(part2_ok),
             "composed": bool(part1_ok and part2_ok),
-            "part1_failed": bool(case_meta.get("part1_error")),
-            "part2_failed": bool(case_meta.get("part2_error")),
-            "full_failed": bool(suite_meta.get("full_error")),
+            "part1_failed": bool(part1_errors and not part1_ok),
+            "part2_failed": bool(part2_errors and not part2_ok),
+            "full_failed": bool(full_errors and not full_ok),
+            # Keep the vendor/build reason next to the boolean availability.
+            # This is diagnostic metadata, not a second eligibility gate.
+            "part1_error": "" if part1_ok else (part1_errors[0] if part1_errors else ""),
+            "part2_error": "" if part2_ok else (part2_errors[0] if part2_errors else ""),
+            "full_error": "" if full_ok else (full_errors[0] if full_errors else ""),
         }
     return out
 
@@ -445,21 +489,58 @@ def _normalize_physical_hailo_hw(value: Any) -> Optional[str]:
     text = str(value or "").strip().lower()
     if not text:
         return None
-    if text in {"hailo8", "hailo8r", "hailo8l", "hailo10", "hailo10h", "hailo10p"}:
+    if text in {"hailo8", "hailo8r", "hailo8l", "hailo10p"}:
         return text
+    if text in {"hailo10", "hailo10h"}:
+        return "hailo10h"
     if "hailo8r" in text:
         return "hailo8r"
     if "hailo8l" in text:
         return "hailo8l"
     if "hailo8" in text:
         return "hailo8"
-    if "hailo10h" in text:
-        return "hailo10h"
     if "hailo10p" in text:
         return "hailo10p"
+    if "hailo10h" in text:
+        return "hailo10h"
     if "hailo10" in text:
-        return "hailo10"
+        return "hailo10h"
     return None
+
+
+def _canonical_case_hailo_availability(
+    case_variant_availability: Mapping[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    """Merge policy evidence by physical Hailo architecture.
+
+    ``hailo10`` is a historical family label for the physical DFC target
+    ``hailo10h``.  Treating both as separate keys can manufacture a missing
+    backend or duplicate a terminal state, so every policy consumer shares
+    this canonical projection.
+    """
+    raw = (
+        case_variant_availability
+        if isinstance(case_variant_availability, Mapping)
+        else {}
+    )
+    availability: Dict[str, Dict[str, Any]] = {}
+    for raw_hw, raw_meta in raw.items():
+        hw = _normalize_physical_hailo_hw(raw_hw)
+        if not hw:
+            continue
+        meta = raw_meta if isinstance(raw_meta, Mapping) else {}
+        merged = availability.setdefault(hw, {})
+        for kind in ("full", "part1", "part2", "composed"):
+            merged[kind] = bool(merged.get(kind) or meta.get(kind))
+            error = str(meta.get(f"{kind}_error") or "").strip()
+            if error and not str(merged.get(f"{kind}_error") or "").strip():
+                merged[f"{kind}_error"] = error
+            merged[f"{kind}_failed"] = bool(
+                merged.get(f"{kind}_failed")
+                or meta.get(f"{kind}_failed")
+                or error
+            )
+    return availability
 
 
 def _hailo_stage_hw(run: Mapping[str, Any], stage_key: str) -> Optional[str]:
@@ -507,7 +588,9 @@ def case_has_usable_hailo_variant(
     bench_plan_runs: Sequence[Mapping[str, Any]],
     case_variant_availability: Mapping[str, Any],
 ) -> bool:
-    availability = case_variant_availability if isinstance(case_variant_availability, Mapping) else {}
+    availability = _canonical_case_hailo_availability(
+        case_variant_availability
+    )
     for run in bench_plan_runs or []:
         if not isinstance(run, Mapping):
             continue
@@ -518,3 +601,100 @@ def case_has_usable_hailo_variant(
             if all(bool((availability.get(str(hw)) or {}).get(kind)) for hw, kind in req):
                 return True
     return False
+
+
+def case_satisfies_all_hailo_requirements(
+    bench_plan_runs: Sequence[Mapping[str, Any]],
+    case_variant_availability: Mapping[str, Any],
+) -> bool:
+    """Return whether every requested Hailo artefact is available for a case.
+
+    Interactive benchmark generation historically kept a case when *any*
+    Hailo variant survived, which is useful for exploratory work.  A resolved
+    evaluation matrix is different: accepting a boundary whose requested
+    Part1 failed leaves a permanent row hole even when a suite-level Full HEF
+    exists.  The evaluation adapter opts into this stricter predicate so the
+    generator rejects that boundary and continues through the candidate pool.
+    """
+    return not missing_case_hailo_requirements(
+        bench_plan_runs,
+        case_variant_availability,
+    )
+
+
+def missing_case_hailo_requirements(
+    bench_plan_runs: Sequence[Mapping[str, Any]],
+    case_variant_availability: Mapping[str, Any],
+) -> List[Tuple[str, str]]:
+    """Return every requested Hailo artefact absent from one generated case.
+
+    Availability is keyed by physical DFC architecture.  Normalize those keys
+    as well as the plan requirements so equivalent labels cannot create either
+    a false rejection or a false success.  The returned list is deterministic
+    and is suitable for a structured generator-rejection record.
+    """
+
+    availability = _canonical_case_hailo_availability(
+        case_variant_availability
+    )
+
+    requirements: set[Tuple[str, str]] = set()
+    for run in bench_plan_runs or []:
+        if not isinstance(run, Mapping):
+            continue
+        for variant in _normalize_run_variants(run):
+            requirements.update(run_variant_hailo_requirements(run, variant))
+    return sorted(
+        (hw, kind)
+        for hw, kind in requirements
+        if not bool((availability.get(str(hw)) or {}).get(kind))
+    )
+
+
+def case_hailo_backend_terminal_states(
+    bench_plan_runs: Sequence[Mapping[str, Any]],
+    case_variant_availability: Mapping[str, Any],
+) -> List[Dict[str, Any]]:
+    """Return one explicit terminal build state per required Hailo artefact.
+
+    A formal audit retains a case when one physical backend succeeds and
+    another does not.  The retained case must still say exactly which backend
+    artefact is ready, failed, or absent; otherwise partial retention merely
+    moves the ambiguity downstream.  Only requirements actually present in the
+    resolved run plan are emitted.
+    """
+    availability = _canonical_case_hailo_availability(
+        case_variant_availability
+    )
+
+    requirements: set[Tuple[str, str]] = set()
+    for run in bench_plan_runs or []:
+        if not isinstance(run, Mapping):
+            continue
+        for variant in _normalize_run_variants(run):
+            requirements.update(run_variant_hailo_requirements(run, variant))
+
+    states: List[Dict[str, Any]] = []
+    for hw, variant in sorted(requirements):
+        meta = availability.get(str(hw)) or {}
+        available = bool(meta.get(variant))
+        error = str(meta.get(f"{variant}_error") or "").strip()
+        failed = bool(meta.get(f"{variant}_failed") or error)
+        if available:
+            status = "ready"
+            reason = "artifact_available"
+        elif failed:
+            status = "terminal_failed"
+            reason = error or "build_failed"
+        else:
+            status = "terminal_missing"
+            reason = "required_artifact_missing_after_build"
+        states.append({
+            "hw_arch": str(hw),
+            "variant": str(variant),
+            "status": status,
+            "terminal": True,
+            "available": available,
+            "reason": reason,
+        })
+    return states

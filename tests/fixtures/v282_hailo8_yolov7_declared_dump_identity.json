@@ -1,0 +1,1014 @@
+{
+  "source": "completsetdev_20260913_123411_debug_pack(1).zip",
+  "purpose": "Copied original metadata only; no recreated tensor bytes or modified historical attestation. Same declared source content is provable from manifest per-tensor SHA256; raw bytes and actual ARM-vs-desktop replay are not available.",
+  "cases": [
+    {
+      "case": "b009",
+      "original_report": "native_producers/hailo8/yolov7_paper/benchmark_set/native_pipeline/b009/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_results.json",
+      "original_report_sha256": "4aa6d8e1cc6fb40677b5197aa778fe29345473b777b6bff222592c258945b443",
+      "original_manifest": "native_producers/hailo8/yolov7_paper/benchmark_set/native_pipeline/b009/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_outputs/native_fifo_output_manifest.json",
+      "original_manifest_sha256": "5cd36609c5697b8ef5c60234a540e2f2671a3e6139d00a5b7c1d170c0d0052be",
+      "dump_manifest": {
+        "schema": "onnx-splitpoint/native-output-dump",
+        "schema_version": 4,
+        "dump_inference_scope": "last_measured_completion_source_outputs",
+        "input_image": "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+        "outputs": [
+          {
+            "index": 0,
+            "name": "output",
+            "dtype": "float32",
+            "shape": [
+              1,
+              3,
+              80,
+              80,
+              85
+            ],
+            "file": "output_000.bin",
+            "sha256": "6e0de15d110c74353a0513c8a009dede98116e716f7a67cfc8250ecac3255db2",
+            "size_bytes": 6528000
+          },
+          {
+            "index": 1,
+            "name": "clone_1",
+            "dtype": "float32",
+            "shape": [
+              1,
+              3,
+              40,
+              40,
+              85
+            ],
+            "file": "output_001.bin",
+            "sha256": "b37a3d655a04f666455b75c6338ac3ee6cb1fce05f6db5edbdcf1f294c433939",
+            "size_bytes": 1632000
+          },
+          {
+            "index": 2,
+            "name": "clone_2",
+            "dtype": "float32",
+            "shape": [
+              1,
+              3,
+              20,
+              20,
+              85
+            ],
+            "file": "output_002.bin",
+            "sha256": "4dda870eda00985c192f50db4579f3046c6aae1572ac77a78d41cbd015c491dc",
+            "size_bytes": 408000
+          }
+        ],
+        "authoritative_output_contract_resolution": {
+          "artifact_path": "",
+          "backend": "cuda_ort",
+          "contract_status": "recorded",
+          "endpoint_mode": "raw_head",
+          "full_end_node_names": [],
+          "host_tail_required": true,
+          "model_id": "yolov7_paper",
+          "postprocessing_required": true,
+          "requires_external_postprocess": true,
+          "schema": "onnx-splitpoint/output-contract",
+          "schema_version": 1,
+          "source_onnx_detection_endpoint": {
+            "multiscale_raw_head": true,
+            "output_shapes": [
+              [
+                1,
+                3,
+                80,
+                80,
+                85
+              ],
+              [
+                1,
+                3,
+                40,
+                40,
+                85
+              ],
+              [
+                1,
+                3,
+                20,
+                20,
+                85
+              ]
+            ],
+            "sidecar_status": "unavailable",
+            "stage": "raw_head"
+          },
+          "source_onnx_multiscale_raw_head": true,
+          "task": "detection",
+          "variant": "full",
+          "warning": "Do not compare raw-head accelerator output as if it were decoded/NMS ONNX output.",
+          "stage": "raw_head",
+          "contract_family": "raw_head",
+          "declaration_source": "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/output_contracts.json",
+          "source_contracts_sha256": "df0d6bc8b48200f2b3429753b9f7746f8a209a04fe4253db591b56239e69a4ba",
+          "source_contract_sha256": "0d327f82dd3e44bfbd4174de319734008b5e90cc77ef12ba79afc92c50baa43a",
+          "authoritative_output_contract": true,
+          "contract_resolution_status": "attested",
+          "contract_resolution_reason": "exact_suite_output_contract"
+        },
+        "task": "detection",
+        "output_format": "raw_detection_tensors",
+        "contract_family": "raw_head",
+        "stage": "raw_head",
+        "contract_source": "explicit_producer_export_contract",
+        "endpoint_contract_complete": true,
+        "endpoint_contract_hash": "051f0d9e489355d312ad656532acf3ed8a2719774d8ef9843278818f5bd15adc",
+        "tensor_signature": {
+          "tensor_count": 3,
+          "tensors": [
+            {
+              "index": 0,
+              "name": "output",
+              "rank": 5,
+              "shape": [
+                1,
+                3,
+                80,
+                80,
+                85
+              ],
+              "dtype": "float32"
+            },
+            {
+              "index": 1,
+              "name": "clone_1",
+              "rank": 5,
+              "shape": [
+                1,
+                3,
+                40,
+                40,
+                85
+              ],
+              "dtype": "float32"
+            },
+            {
+              "index": 2,
+              "name": "clone_2",
+              "rank": 5,
+              "shape": [
+                1,
+                3,
+                20,
+                20,
+                85
+              ],
+              "dtype": "float32"
+            }
+          ]
+        },
+        "raw_fallback_requested": false,
+        "output_endpoint_attestation": {
+          "attested": true,
+          "status": "passed",
+          "stage": "raw_head",
+          "endpoint": "raw_head",
+          "reason": "raw_detection_tensor_structure_verified",
+          "endpoint_contract_hash": "051f0d9e489355d312ad656532acf3ed8a2719774d8ef9843278818f5bd15adc",
+          "tensor_signature": {
+            "tensor_count": 3,
+            "tensors": [
+              {
+                "index": 0,
+                "name": "output",
+                "rank": 5,
+                "shape": [
+                  1,
+                  3,
+                  80,
+                  80,
+                  85
+                ],
+                "dtype": "float32"
+              },
+              {
+                "index": 1,
+                "name": "clone_1",
+                "rank": 5,
+                "shape": [
+                  1,
+                  3,
+                  40,
+                  40,
+                  85
+                ],
+                "dtype": "float32"
+              },
+              {
+                "index": 2,
+                "name": "clone_2",
+                "rank": 5,
+                "shape": [
+                  1,
+                  3,
+                  20,
+                  20,
+                  85
+                ],
+                "dtype": "float32"
+              }
+            ]
+          },
+          "declared_stage": "raw_head"
+        },
+        "payload_artifacts": [
+          {
+            "role": "outputs[0]",
+            "path": "output_000.bin",
+            "sha256": "6e0de15d110c74353a0513c8a009dede98116e716f7a67cfc8250ecac3255db2",
+            "size_bytes": 6528000
+          },
+          {
+            "role": "outputs[1]",
+            "path": "output_001.bin",
+            "sha256": "b37a3d655a04f666455b75c6338ac3ee6cb1fce05f6db5edbdcf1f294c433939",
+            "size_bytes": 1632000
+          },
+          {
+            "role": "outputs[2]",
+            "path": "output_002.bin",
+            "sha256": "4dda870eda00985c192f50db4579f3046c6aae1572ac77a78d41cbd015c491dc",
+            "size_bytes": 408000
+          }
+        ],
+        "payload_artifacts_sha256": "7ee27daabcb53616958076be429f060dc5bb40a0a43d0df14ef7a8047b75d20d"
+      },
+      "attested_source_content_sha256": "9799c35112ea8b71a57c1f5759dc22964282018acc8253424c5cfdcea15d77c3",
+      "source_hashes_by_repetition": [
+        "9799c35112ea8b71a57c1f5759dc22964282018acc8253424c5cfdcea15d77c3",
+        "9799c35112ea8b71a57c1f5759dc22964282018acc8253424c5cfdcea15d77c3",
+        "9799c35112ea8b71a57c1f5759dc22964282018acc8253424c5cfdcea15d77c3"
+      ],
+      "top_attestation_equals_last_repetition": true,
+      "output_paths_by_repetition": [
+        "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/native_pipeline/b009/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_outputs/native_fifo_output_manifest.json",
+        "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/native_pipeline/b009/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_outputs/native_fifo_output_manifest.json",
+        "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/native_pipeline/b009/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_outputs/native_fifo_output_manifest.json"
+      ],
+      "raw_tensor_files_in_debugpack": false
+    },
+    {
+      "case": "b011",
+      "original_report": "native_producers/hailo8/yolov7_paper/benchmark_set/native_pipeline/b011/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_results.json",
+      "original_report_sha256": "d71b2444dbffdea07c9840b582ac1e1de1b49ba019fb524adbe47fa275473831",
+      "original_manifest": "native_producers/hailo8/yolov7_paper/benchmark_set/native_pipeline/b011/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_outputs/native_fifo_output_manifest.json",
+      "original_manifest_sha256": "14b3ab832f7a856682a704657f4c060759cfdb4935aeb6789e875693bea0bf3c",
+      "dump_manifest": {
+        "schema": "onnx-splitpoint/native-output-dump",
+        "schema_version": 4,
+        "dump_inference_scope": "last_measured_completion_source_outputs",
+        "input_image": "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+        "outputs": [
+          {
+            "index": 0,
+            "name": "output",
+            "dtype": "float32",
+            "shape": [
+              1,
+              3,
+              80,
+              80,
+              85
+            ],
+            "file": "output_000.bin",
+            "sha256": "127e9bd09ed92d7877ca63a512aa70138ed084739c2e517128b3e8767fe55653",
+            "size_bytes": 6528000
+          },
+          {
+            "index": 1,
+            "name": "clone_1",
+            "dtype": "float32",
+            "shape": [
+              1,
+              3,
+              40,
+              40,
+              85
+            ],
+            "file": "output_001.bin",
+            "sha256": "316ce585942bd1c9233ea43759501e5f8ec61b4a7086a39e861be8e1a82f1fe9",
+            "size_bytes": 1632000
+          },
+          {
+            "index": 2,
+            "name": "clone_2",
+            "dtype": "float32",
+            "shape": [
+              1,
+              3,
+              20,
+              20,
+              85
+            ],
+            "file": "output_002.bin",
+            "sha256": "76685038a5278003ae2494c0fcd8da48b39fad4cdb20d8c902f1cbdc9251fc3f",
+            "size_bytes": 408000
+          }
+        ],
+        "authoritative_output_contract_resolution": {
+          "artifact_path": "",
+          "backend": "cuda_ort",
+          "contract_status": "recorded",
+          "endpoint_mode": "raw_head",
+          "full_end_node_names": [],
+          "host_tail_required": true,
+          "model_id": "yolov7_paper",
+          "postprocessing_required": true,
+          "requires_external_postprocess": true,
+          "schema": "onnx-splitpoint/output-contract",
+          "schema_version": 1,
+          "source_onnx_detection_endpoint": {
+            "multiscale_raw_head": true,
+            "output_shapes": [
+              [
+                1,
+                3,
+                80,
+                80,
+                85
+              ],
+              [
+                1,
+                3,
+                40,
+                40,
+                85
+              ],
+              [
+                1,
+                3,
+                20,
+                20,
+                85
+              ]
+            ],
+            "sidecar_status": "unavailable",
+            "stage": "raw_head"
+          },
+          "source_onnx_multiscale_raw_head": true,
+          "task": "detection",
+          "variant": "full",
+          "warning": "Do not compare raw-head accelerator output as if it were decoded/NMS ONNX output.",
+          "stage": "raw_head",
+          "contract_family": "raw_head",
+          "declaration_source": "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/output_contracts.json",
+          "source_contracts_sha256": "df0d6bc8b48200f2b3429753b9f7746f8a209a04fe4253db591b56239e69a4ba",
+          "source_contract_sha256": "0d327f82dd3e44bfbd4174de319734008b5e90cc77ef12ba79afc92c50baa43a",
+          "authoritative_output_contract": true,
+          "contract_resolution_status": "attested",
+          "contract_resolution_reason": "exact_suite_output_contract"
+        },
+        "task": "detection",
+        "output_format": "raw_detection_tensors",
+        "contract_family": "raw_head",
+        "stage": "raw_head",
+        "contract_source": "explicit_producer_export_contract",
+        "endpoint_contract_complete": true,
+        "endpoint_contract_hash": "051f0d9e489355d312ad656532acf3ed8a2719774d8ef9843278818f5bd15adc",
+        "tensor_signature": {
+          "tensor_count": 3,
+          "tensors": [
+            {
+              "index": 0,
+              "name": "output",
+              "rank": 5,
+              "shape": [
+                1,
+                3,
+                80,
+                80,
+                85
+              ],
+              "dtype": "float32"
+            },
+            {
+              "index": 1,
+              "name": "clone_1",
+              "rank": 5,
+              "shape": [
+                1,
+                3,
+                40,
+                40,
+                85
+              ],
+              "dtype": "float32"
+            },
+            {
+              "index": 2,
+              "name": "clone_2",
+              "rank": 5,
+              "shape": [
+                1,
+                3,
+                20,
+                20,
+                85
+              ],
+              "dtype": "float32"
+            }
+          ]
+        },
+        "raw_fallback_requested": false,
+        "output_endpoint_attestation": {
+          "attested": true,
+          "status": "passed",
+          "stage": "raw_head",
+          "endpoint": "raw_head",
+          "reason": "raw_detection_tensor_structure_verified",
+          "endpoint_contract_hash": "051f0d9e489355d312ad656532acf3ed8a2719774d8ef9843278818f5bd15adc",
+          "tensor_signature": {
+            "tensor_count": 3,
+            "tensors": [
+              {
+                "index": 0,
+                "name": "output",
+                "rank": 5,
+                "shape": [
+                  1,
+                  3,
+                  80,
+                  80,
+                  85
+                ],
+                "dtype": "float32"
+              },
+              {
+                "index": 1,
+                "name": "clone_1",
+                "rank": 5,
+                "shape": [
+                  1,
+                  3,
+                  40,
+                  40,
+                  85
+                ],
+                "dtype": "float32"
+              },
+              {
+                "index": 2,
+                "name": "clone_2",
+                "rank": 5,
+                "shape": [
+                  1,
+                  3,
+                  20,
+                  20,
+                  85
+                ],
+                "dtype": "float32"
+              }
+            ]
+          },
+          "declared_stage": "raw_head"
+        },
+        "payload_artifacts": [
+          {
+            "role": "outputs[0]",
+            "path": "output_000.bin",
+            "sha256": "127e9bd09ed92d7877ca63a512aa70138ed084739c2e517128b3e8767fe55653",
+            "size_bytes": 6528000
+          },
+          {
+            "role": "outputs[1]",
+            "path": "output_001.bin",
+            "sha256": "316ce585942bd1c9233ea43759501e5f8ec61b4a7086a39e861be8e1a82f1fe9",
+            "size_bytes": 1632000
+          },
+          {
+            "role": "outputs[2]",
+            "path": "output_002.bin",
+            "sha256": "76685038a5278003ae2494c0fcd8da48b39fad4cdb20d8c902f1cbdc9251fc3f",
+            "size_bytes": 408000
+          }
+        ],
+        "payload_artifacts_sha256": "915202661cefe65b7b547dd34347e963551530b35b63a023d7add6c5b9feeb09"
+      },
+      "attested_source_content_sha256": "962d9bc431721248d99e0080c3fc33707e80553965fd428b8040320479ac85a6",
+      "source_hashes_by_repetition": [
+        "962d9bc431721248d99e0080c3fc33707e80553965fd428b8040320479ac85a6",
+        "962d9bc431721248d99e0080c3fc33707e80553965fd428b8040320479ac85a6",
+        "962d9bc431721248d99e0080c3fc33707e80553965fd428b8040320479ac85a6"
+      ],
+      "top_attestation_equals_last_repetition": true,
+      "output_paths_by_repetition": [
+        "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/native_pipeline/b011/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_outputs/native_fifo_output_manifest.json",
+        "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/native_pipeline/b011/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_outputs/native_fifo_output_manifest.json",
+        "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/native_pipeline/b011/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_outputs/native_fifo_output_manifest.json"
+      ],
+      "raw_tensor_files_in_debugpack": false
+    },
+    {
+      "case": "b044",
+      "original_report": "native_producers/hailo8/yolov7_paper/benchmark_set/native_pipeline/b044/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_results.json",
+      "original_report_sha256": "959a0ca18adfbbe1467df90072f22eff2768ead0a36c445681b850d468183a9d",
+      "original_manifest": "native_producers/hailo8/yolov7_paper/benchmark_set/native_pipeline/b044/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_outputs/native_fifo_output_manifest.json",
+      "original_manifest_sha256": "9ffd455d1a6f60e895c90470c69be56b76fc0e39825902ba738deaf2b8c80f5c",
+      "dump_manifest": {
+        "schema": "onnx-splitpoint/native-output-dump",
+        "schema_version": 4,
+        "dump_inference_scope": "last_measured_completion_source_outputs",
+        "input_image": "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+        "outputs": [
+          {
+            "index": 0,
+            "name": "output",
+            "dtype": "float32",
+            "shape": [
+              1,
+              3,
+              80,
+              80,
+              85
+            ],
+            "file": "output_000.bin",
+            "sha256": "6e939f704634783521fe4d24a251081a62f4227e60ae88af09ef017002e67a3e",
+            "size_bytes": 6528000
+          },
+          {
+            "index": 1,
+            "name": "clone_1",
+            "dtype": "float32",
+            "shape": [
+              1,
+              3,
+              40,
+              40,
+              85
+            ],
+            "file": "output_001.bin",
+            "sha256": "992b65d51d379d52690c4ae39370b2113bdcbafb957e778f210e8a721027cb36",
+            "size_bytes": 1632000
+          },
+          {
+            "index": 2,
+            "name": "clone_2",
+            "dtype": "float32",
+            "shape": [
+              1,
+              3,
+              20,
+              20,
+              85
+            ],
+            "file": "output_002.bin",
+            "sha256": "1cd45451dd209da3b9cf0c2d5ef90c4ab36b0972d13af7469d886089d3d51a5c",
+            "size_bytes": 408000
+          }
+        ],
+        "authoritative_output_contract_resolution": {
+          "artifact_path": "",
+          "backend": "cuda_ort",
+          "contract_status": "recorded",
+          "endpoint_mode": "raw_head",
+          "full_end_node_names": [],
+          "host_tail_required": true,
+          "model_id": "yolov7_paper",
+          "postprocessing_required": true,
+          "requires_external_postprocess": true,
+          "schema": "onnx-splitpoint/output-contract",
+          "schema_version": 1,
+          "source_onnx_detection_endpoint": {
+            "multiscale_raw_head": true,
+            "output_shapes": [
+              [
+                1,
+                3,
+                80,
+                80,
+                85
+              ],
+              [
+                1,
+                3,
+                40,
+                40,
+                85
+              ],
+              [
+                1,
+                3,
+                20,
+                20,
+                85
+              ]
+            ],
+            "sidecar_status": "unavailable",
+            "stage": "raw_head"
+          },
+          "source_onnx_multiscale_raw_head": true,
+          "task": "detection",
+          "variant": "full",
+          "warning": "Do not compare raw-head accelerator output as if it were decoded/NMS ONNX output.",
+          "stage": "raw_head",
+          "contract_family": "raw_head",
+          "declaration_source": "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/output_contracts.json",
+          "source_contracts_sha256": "df0d6bc8b48200f2b3429753b9f7746f8a209a04fe4253db591b56239e69a4ba",
+          "source_contract_sha256": "0d327f82dd3e44bfbd4174de319734008b5e90cc77ef12ba79afc92c50baa43a",
+          "authoritative_output_contract": true,
+          "contract_resolution_status": "attested",
+          "contract_resolution_reason": "exact_suite_output_contract"
+        },
+        "task": "detection",
+        "output_format": "raw_detection_tensors",
+        "contract_family": "raw_head",
+        "stage": "raw_head",
+        "contract_source": "explicit_producer_export_contract",
+        "endpoint_contract_complete": true,
+        "endpoint_contract_hash": "051f0d9e489355d312ad656532acf3ed8a2719774d8ef9843278818f5bd15adc",
+        "tensor_signature": {
+          "tensor_count": 3,
+          "tensors": [
+            {
+              "index": 0,
+              "name": "output",
+              "rank": 5,
+              "shape": [
+                1,
+                3,
+                80,
+                80,
+                85
+              ],
+              "dtype": "float32"
+            },
+            {
+              "index": 1,
+              "name": "clone_1",
+              "rank": 5,
+              "shape": [
+                1,
+                3,
+                40,
+                40,
+                85
+              ],
+              "dtype": "float32"
+            },
+            {
+              "index": 2,
+              "name": "clone_2",
+              "rank": 5,
+              "shape": [
+                1,
+                3,
+                20,
+                20,
+                85
+              ],
+              "dtype": "float32"
+            }
+          ]
+        },
+        "raw_fallback_requested": false,
+        "output_endpoint_attestation": {
+          "attested": true,
+          "status": "passed",
+          "stage": "raw_head",
+          "endpoint": "raw_head",
+          "reason": "raw_detection_tensor_structure_verified",
+          "endpoint_contract_hash": "051f0d9e489355d312ad656532acf3ed8a2719774d8ef9843278818f5bd15adc",
+          "tensor_signature": {
+            "tensor_count": 3,
+            "tensors": [
+              {
+                "index": 0,
+                "name": "output",
+                "rank": 5,
+                "shape": [
+                  1,
+                  3,
+                  80,
+                  80,
+                  85
+                ],
+                "dtype": "float32"
+              },
+              {
+                "index": 1,
+                "name": "clone_1",
+                "rank": 5,
+                "shape": [
+                  1,
+                  3,
+                  40,
+                  40,
+                  85
+                ],
+                "dtype": "float32"
+              },
+              {
+                "index": 2,
+                "name": "clone_2",
+                "rank": 5,
+                "shape": [
+                  1,
+                  3,
+                  20,
+                  20,
+                  85
+                ],
+                "dtype": "float32"
+              }
+            ]
+          },
+          "declared_stage": "raw_head"
+        },
+        "payload_artifacts": [
+          {
+            "role": "outputs[0]",
+            "path": "output_000.bin",
+            "sha256": "6e939f704634783521fe4d24a251081a62f4227e60ae88af09ef017002e67a3e",
+            "size_bytes": 6528000
+          },
+          {
+            "role": "outputs[1]",
+            "path": "output_001.bin",
+            "sha256": "992b65d51d379d52690c4ae39370b2113bdcbafb957e778f210e8a721027cb36",
+            "size_bytes": 1632000
+          },
+          {
+            "role": "outputs[2]",
+            "path": "output_002.bin",
+            "sha256": "1cd45451dd209da3b9cf0c2d5ef90c4ab36b0972d13af7469d886089d3d51a5c",
+            "size_bytes": 408000
+          }
+        ],
+        "payload_artifacts_sha256": "bcb8339334d653637e00fd529e60bde7f0008ef8f9c5b5cc91d8ef9f79a84cb6"
+      },
+      "attested_source_content_sha256": "8b32bf67f5284466ffbca8fc681c139e57f4450b82d54d0d7ce2f7e00c58eae5",
+      "source_hashes_by_repetition": [
+        "8b32bf67f5284466ffbca8fc681c139e57f4450b82d54d0d7ce2f7e00c58eae5",
+        "8b32bf67f5284466ffbca8fc681c139e57f4450b82d54d0d7ce2f7e00c58eae5",
+        "8b32bf67f5284466ffbca8fc681c139e57f4450b82d54d0d7ce2f7e00c58eae5"
+      ],
+      "top_attestation_equals_last_repetition": true,
+      "output_paths_by_repetition": [
+        "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/native_pipeline/b044/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_outputs/native_fifo_output_manifest.json",
+        "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/native_pipeline/b044/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_outputs/native_fifo_output_manifest.json",
+        "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/native_pipeline/b044/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_outputs/native_fifo_output_manifest.json"
+      ],
+      "raw_tensor_files_in_debugpack": false
+    },
+    {
+      "case": "b063",
+      "original_report": "native_producers/hailo8/yolov7_paper/benchmark_set/native_pipeline/b063/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_results.json",
+      "original_report_sha256": "3834e30dd4b87bb8399205998c40d9e2611058e208ee9211249ce860d6ed306a",
+      "original_manifest": "native_producers/hailo8/yolov7_paper/benchmark_set/native_pipeline/b063/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_outputs/native_fifo_output_manifest.json",
+      "original_manifest_sha256": "909623deed39001c71daa7cb5f4fa11f4fbad220452729380569c16731b2b26b",
+      "dump_manifest": {
+        "schema": "onnx-splitpoint/native-output-dump",
+        "schema_version": 4,
+        "dump_inference_scope": "last_measured_completion_source_outputs",
+        "input_image": "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+        "outputs": [
+          {
+            "index": 0,
+            "name": "output",
+            "dtype": "float32",
+            "shape": [
+              1,
+              3,
+              80,
+              80,
+              85
+            ],
+            "file": "output_000.bin",
+            "sha256": "70c269d0c874affba971cb44eeef25d64532dc0aa1fe1c26ecfeee3a8eac73b2",
+            "size_bytes": 6528000
+          },
+          {
+            "index": 1,
+            "name": "clone_1",
+            "dtype": "float32",
+            "shape": [
+              1,
+              3,
+              40,
+              40,
+              85
+            ],
+            "file": "output_001.bin",
+            "sha256": "1b138f9b8346018fa3e4984ef9887bd99717fab9ee9ec5add84e08d7350bb5d2",
+            "size_bytes": 1632000
+          },
+          {
+            "index": 2,
+            "name": "clone_2",
+            "dtype": "float32",
+            "shape": [
+              1,
+              3,
+              20,
+              20,
+              85
+            ],
+            "file": "output_002.bin",
+            "sha256": "d573f8373a9100a503eb5c83b2bee7111dd1b15a827c0fed1729fa955982faa5",
+            "size_bytes": 408000
+          }
+        ],
+        "authoritative_output_contract_resolution": {
+          "artifact_path": "",
+          "backend": "cuda_ort",
+          "contract_status": "recorded",
+          "endpoint_mode": "raw_head",
+          "full_end_node_names": [],
+          "host_tail_required": true,
+          "model_id": "yolov7_paper",
+          "postprocessing_required": true,
+          "requires_external_postprocess": true,
+          "schema": "onnx-splitpoint/output-contract",
+          "schema_version": 1,
+          "source_onnx_detection_endpoint": {
+            "multiscale_raw_head": true,
+            "output_shapes": [
+              [
+                1,
+                3,
+                80,
+                80,
+                85
+              ],
+              [
+                1,
+                3,
+                40,
+                40,
+                85
+              ],
+              [
+                1,
+                3,
+                20,
+                20,
+                85
+              ]
+            ],
+            "sidecar_status": "unavailable",
+            "stage": "raw_head"
+          },
+          "source_onnx_multiscale_raw_head": true,
+          "task": "detection",
+          "variant": "full",
+          "warning": "Do not compare raw-head accelerator output as if it were decoded/NMS ONNX output.",
+          "stage": "raw_head",
+          "contract_family": "raw_head",
+          "declaration_source": "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/output_contracts.json",
+          "source_contracts_sha256": "df0d6bc8b48200f2b3429753b9f7746f8a209a04fe4253db591b56239e69a4ba",
+          "source_contract_sha256": "0d327f82dd3e44bfbd4174de319734008b5e90cc77ef12ba79afc92c50baa43a",
+          "authoritative_output_contract": true,
+          "contract_resolution_status": "attested",
+          "contract_resolution_reason": "exact_suite_output_contract"
+        },
+        "task": "detection",
+        "output_format": "raw_detection_tensors",
+        "contract_family": "raw_head",
+        "stage": "raw_head",
+        "contract_source": "explicit_producer_export_contract",
+        "endpoint_contract_complete": true,
+        "endpoint_contract_hash": "051f0d9e489355d312ad656532acf3ed8a2719774d8ef9843278818f5bd15adc",
+        "tensor_signature": {
+          "tensor_count": 3,
+          "tensors": [
+            {
+              "index": 0,
+              "name": "output",
+              "rank": 5,
+              "shape": [
+                1,
+                3,
+                80,
+                80,
+                85
+              ],
+              "dtype": "float32"
+            },
+            {
+              "index": 1,
+              "name": "clone_1",
+              "rank": 5,
+              "shape": [
+                1,
+                3,
+                40,
+                40,
+                85
+              ],
+              "dtype": "float32"
+            },
+            {
+              "index": 2,
+              "name": "clone_2",
+              "rank": 5,
+              "shape": [
+                1,
+                3,
+                20,
+                20,
+                85
+              ],
+              "dtype": "float32"
+            }
+          ]
+        },
+        "raw_fallback_requested": false,
+        "output_endpoint_attestation": {
+          "attested": true,
+          "status": "passed",
+          "stage": "raw_head",
+          "endpoint": "raw_head",
+          "reason": "raw_detection_tensor_structure_verified",
+          "endpoint_contract_hash": "051f0d9e489355d312ad656532acf3ed8a2719774d8ef9843278818f5bd15adc",
+          "tensor_signature": {
+            "tensor_count": 3,
+            "tensors": [
+              {
+                "index": 0,
+                "name": "output",
+                "rank": 5,
+                "shape": [
+                  1,
+                  3,
+                  80,
+                  80,
+                  85
+                ],
+                "dtype": "float32"
+              },
+              {
+                "index": 1,
+                "name": "clone_1",
+                "rank": 5,
+                "shape": [
+                  1,
+                  3,
+                  40,
+                  40,
+                  85
+                ],
+                "dtype": "float32"
+              },
+              {
+                "index": 2,
+                "name": "clone_2",
+                "rank": 5,
+                "shape": [
+                  1,
+                  3,
+                  20,
+                  20,
+                  85
+                ],
+                "dtype": "float32"
+              }
+            ]
+          },
+          "declared_stage": "raw_head"
+        },
+        "payload_artifacts": [
+          {
+            "role": "outputs[0]",
+            "path": "output_000.bin",
+            "sha256": "70c269d0c874affba971cb44eeef25d64532dc0aa1fe1c26ecfeee3a8eac73b2",
+            "size_bytes": 6528000
+          },
+          {
+            "role": "outputs[1]",
+            "path": "output_001.bin",
+            "sha256": "1b138f9b8346018fa3e4984ef9887bd99717fab9ee9ec5add84e08d7350bb5d2",
+            "size_bytes": 1632000
+          },
+          {
+            "role": "outputs[2]",
+            "path": "output_002.bin",
+            "sha256": "d573f8373a9100a503eb5c83b2bee7111dd1b15a827c0fed1729fa955982faa5",
+            "size_bytes": 408000
+          }
+        ],
+        "payload_artifacts_sha256": "6a6da9745803f88e93d08a4ae725c41ebb28437b4be07d261d3241bb2be9be1f"
+      },
+      "attested_source_content_sha256": "5a6cff5989e4015e56f909c8b089931dcb74f300256271c8ec51c7111f3b0e0a",
+      "source_hashes_by_repetition": [
+        "5a6cff5989e4015e56f909c8b089931dcb74f300256271c8ec51c7111f3b0e0a",
+        "5a6cff5989e4015e56f909c8b089931dcb74f300256271c8ec51c7111f3b0e0a",
+        "5a6cff5989e4015e56f909c8b089931dcb74f300256271c8ec51c7111f3b0e0a"
+      ],
+      "top_attestation_equals_last_repetition": true,
+      "output_paths_by_repetition": [
+        "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/native_pipeline/b063/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_outputs/native_fifo_output_manifest.json",
+        "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/native_pipeline/b063/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_outputs/native_fifo_output_manifest.json",
+        "/home/nx/native_fifo_evalsets/completsetdev_20260913_123411/yolov7_paper/benchmark_set/native_pipeline/b063/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_outputs/native_fifo_output_manifest.json"
+      ],
+      "raw_tensor_files_in_debugpack": false
+    }
+  ]
+}

@@ -1,0 +1,426 @@
+name: thesis_final_campaign_v1
+purpose: >-
+  Optional strict ranking-generalization template for the final dissertation campaign. It blocks final-mode
+  execution until dataset manifests, locked preprocessing/decoder/NMS
+  contracts, model-level hold-out attestations, fitted development models, and
+  the full-system energy policy are present. Replace the TODO model paths,
+  hashes, attestations, and campaign-input paths before use.
+
+campaign:
+  id: thesis_final_campaign_v1
+  claim_scope: ranking_generalization
+  mode: final
+  enforcement: strict
+  frozen_before_final_campaign: true
+  dataset_manifests:
+    classification:
+      calibration: campaign_inputs/imagenet_train_calibration_manifest.json
+      validation: campaign_inputs/imagenet_val_manifest.json
+    detection:
+      calibration: campaign_inputs/coco2017_train_calibration_manifest.json
+      validation: campaign_inputs/coco2017_val_manifest.json
+  pipeline_contract_manifest: campaign_inputs/pipeline_contract_manifest.json
+  holdout_registry: campaign_inputs/holdout_registry.json
+  ranking_model_bundle: campaign_inputs/ranking_model_bundle.json
+  energy_calibration_manifest: campaign_inputs/urecs_fs_input_calibration_manifest.json
+  require_fitted_stage_time: true
+  require_native_handover_model: true
+  require_campaign_freeze: true
+  require_protocol_freeze: true
+  protocol_freeze:
+    artifact: campaign_inputs/protocol_freeze_v1.json
+    version: "1.0"
+    amendment: initial
+    # release_identity is resolved from the installed Tool at sealing time.
+    # Add an explicit override only as a reviewed protocol amendment.
+    evaluation_identity:
+      evaluation_id: thesis_final_campaign_v1
+    manifests:
+      candidate: campaign_inputs/candidate_universe_protocol_manifest.json
+      dag: campaign_inputs/dag_analysis_protocol_manifest.json
+      prediction: campaign_inputs/prediction_protocol_manifest.json
+      policy: campaign_inputs/quality_ranking_policy_manifest.json
+      energy: campaign_inputs/energy_protocol_manifest.json
+  require_prediction_freeze_approval: true
+  prediction_freeze_enabled: true
+  require_cryptographic_prediction_signature: false
+
+selection_policy:
+  max_accepted_cases_per_model: 5
+  preferred_shortlist: 10
+  min_gap: 0
+  candidate_search_pool: auto
+  report_blocked_configs: true
+  report_plan_adjustments: true
+  keep_partial_hailo_cases: true
+  full_model_hailo_preflight_policy: skip
+  selection_strategy: candidate_universe
+
+model_suite:
+  primary:
+    - id: yolov7_paper
+      task: detection
+      family: yolo7
+      family_id: yolo7
+      generalization_scope: development
+      source: yolov7
+      path: TODO_REPLACE_WITH_EXACT_YOLOV7_PAPER_ONNX
+      model_sha256: TODO_REPLACE_WITH_SHA256
+      input_shape: [1, 3, 640, 640]
+      semantic_dataset: coco2017_val
+      evaluation_role: development
+      validation_tier: final
+      candidate_universe_complete: false
+      candidate_universe:
+        mode: declared_shortlist
+        seed: 20260710
+      note: Development detector used to fit and inspect the ranking contract.
+    - id: resnet50
+      task: classification
+      family: resnet
+      family_id: resnet
+      generalization_scope: development
+      source: torchvision
+      path: TODO_REPLACE_WITH_EXACT_RESNET50_ONNX
+      model_sha256: TODO_REPLACE_WITH_SHA256
+      input_shape: [1, 3, 224, 224]
+      semantic_dataset: imagenet_val
+      evaluation_role: development
+      validation_tier: final
+      candidate_universe_complete: false
+      candidate_universe:
+        mode: declared_shortlist
+        seed: 20260710
+      note: Development classifier used to fit and inspect the ranking contract.
+    - id: yolo26s
+      task: detection
+      family: yolo26
+      family_id: yolo26
+      generalization_scope: development
+      source: ultralytics
+      path: TODO_REPLACE_WITH_EXACT_YOLO26S_ONNX
+      model_sha256: TODO_REPLACE_WITH_SHA256
+      input_shape: [1, 3, 640, 640]
+      semantic_dataset: coco2017_val
+      evaluation_role: development
+      validation_tier: final
+      candidate_universe_complete: false
+      candidate_universe:
+        mode: declared_shortlist
+        seed: 20260710
+      note: Development detector used to fit and inspect the ranking contract.
+    - id: regnet_x_1_6gf
+      task: classification
+      family: regnet
+      family_id: regnet
+      generalization_scope: model_family_holdout
+      source: torchvision
+      path: TODO_REPLACE_WITH_EXACT_REGNET_X_1_6GF_ONNX
+      model_sha256: TODO_REPLACE_WITH_SHA256
+      input_shape: [1, 3, 224, 224]
+      semantic_dataset: imagenet_val
+      evaluation_role: confirmatory_holdout
+      holdout_group: classification_holdout
+      validation_tier: final
+      candidate_universe_complete: true
+      candidate_universe:
+        mode: deterministic_audit
+        audit_size: 20
+        minimum_valid_candidates: 10
+        seed: 20260710
+      unseen_attestation:
+        unseen: false
+        attested_by: TODO
+        attested_at: TODO
+        note: Attest that this family-level hold-out was not used to tune the DAG predictor, ranking model, or shortlist policy before the final freeze.
+    - id: yolo26m
+      task: detection
+      family: yolo26
+      family_id: yolo26
+      generalization_scope: within_family_transfer
+      source: ultralytics
+      path: TODO_REPLACE_WITH_EXACT_YOLO26M_ONNX
+      model_sha256: TODO_REPLACE_WITH_SHA256
+      input_shape: [1, 3, 640, 640]
+      semantic_dataset: coco2017_val
+      evaluation_role: confirmatory_holdout
+      holdout_group: detection_within_family_holdout
+      validation_tier: final
+      candidate_universe_complete: true
+      candidate_universe:
+        mode: deterministic_audit
+        audit_size: 20
+        minimum_valid_candidates: 10
+        seed: 20260710
+        note: Claims are restricted to this predeclared score-independent audit universe.
+      unseen_attestation:
+        unseen: false
+        attested_by: TODO
+        attested_at: TODO
+        note: Attest that YOLO26m measurements were not used to tune the DAG predictor, ranking model, or shortlist policy before the final freeze.
+  reserve:
+    - id: yolo26xl
+      enabled: false
+      task: detection
+      family: yolo26
+      family_id: yolo26
+      generalization_scope: stress_test
+      source: ultralytics
+      path: TODO_REPLACE_WITH_EXACT_YOLO26XL_ONNX
+      model_sha256: TODO_REPLACE_WITH_SHA256
+      input_shape: [1, 3, 640, 640]
+      semantic_dataset: coco2017_val
+      evaluation_role: development
+      validation_tier: final
+      candidate_universe_complete: false
+      candidate_universe:
+        mode: declared_shortlist
+        seed: 20260710
+      note: Optional reserve/stress model. enabled=false excludes it from active execution, hold-out registry, and Final readiness.
+
+run_profiles:
+  - id: ort_cpu
+    type: same_backend_reference
+    full: cpu
+    stage1: cpu
+    stage2: cpu
+    required: true
+  - id: ort_tensorrt
+    type: same_backend_reference
+    full: tensorrt
+    stage1: tensorrt
+    stage2: tensorrt
+    required: true
+  - id: hailo8
+    type: same_backend_reference
+    full: hailo8
+    stage1: hailo8
+    stage2: hailo8
+    required: false
+    treat_preflight_block_as_result: true
+  - id: hailo8_to_trt
+    type: mixed_backend
+    full_reference: cpu_full
+    stage1: hailo8
+    stage2: tensorrt
+    runner: generic
+    required: false
+    treat_preflight_block_as_result: true
+  - id: hailo10
+    type: same_backend_reference
+    full: hailo10
+    stage1: hailo10
+    stage2: hailo10
+    required: false
+    treat_preflight_block_as_result: true
+  - id: hailo10_to_tensorrt
+    type: mixed_backend
+    full_reference: cpu_full
+    stage1: hailo10
+    stage2: tensorrt
+    runner: generic
+    required: false
+    treat_preflight_block_as_result: true
+  - id: deepx_m1_full
+    type: same_backend_reference
+    full: deepx_m1
+    stage1: deepx_m1
+    stage2: deepx_m1
+    required: false
+  - id: deepx_m1_to_tensorrt
+    type: mixed_backend
+    full_reference: cpu_full
+    stage1: deepx_m1
+    stage2: tensorrt
+    runner: generic
+    required: false
+
+quality_gate:
+  schema: onnx-splitpoint/task-quality-policy
+  schema_version: 3
+  name: thesis_task_quality_final_v2
+  profile_id: thesis_task_quality_final_v2
+  frozen_before_final_campaign: true
+  dataset_tier: final
+  canonical_reference: canonical_full_onnx
+  classification:
+    primary_metric: top1_accuracy
+    non_inferiority_margin: 0.01
+    guardrails:
+      top5_accuracy_margin: 0.01
+  detection:
+    primary_metric: coco_ap_50_95
+    non_inferiority_margin: 0.01
+    guardrails:
+      ap50_margin: 0.01
+      ap75_margin: 0.01
+  statistics:
+    method: paired_bootstrap
+    confidence_level: 0.95
+    bootstrap_repetitions: 5000
+    seed: 20260710
+    decision: lower_one_sided_bound
+    execution_location: central_management
+    workers: 4
+  native_contract:
+    detection_self_reference_min_match_ratio: 0.80
+    detection_self_reference:
+      policy_id: class_aware_iou50_postnms_v2
+      min_reference_match_ratio: 0.80
+      min_mean_matched_iou: 0.85
+      iou_threshold: 0.50
+      confidence_threshold: 0.25
+      denominator: reference_detections
+      class_aware: true
+    numerical_similarity_required_for_claim: true
+    self_reference_counts_as_task_accuracy: false
+  screening_eligible_for_ranking: false
+  legacy_point_estimate_eligible_for_ranking: false
+
+ranking_validation:
+  enabled: true
+  holdout_unit: model_direction_runner
+  candidate_universe: model_declared
+  require_frozen_predictions: true
+  require_complete_candidate_universe: true
+  audit_size: 20
+  minimum_valid_audit_candidates: 10
+  k_values: [1, 3, 5]
+  elite_q_values: [1, 3]
+  primary_k: 5
+  minimum_candidates_for_correlation: 3
+  near_optimal_relative_epsilon: 0.01
+  bootstrap_repetitions: 5000
+  bootstrap_seed: 20260710
+  targets: [pipeline_cycle_ms]
+  methods:
+    - cut_bytes_only
+    - weighted_score
+    - cycle_time_no_handover
+    - cycle_time_with_handover
+    - onnx_real_boundary_hardware_aware
+  weighted_score:
+    w_comm: 1.0
+    w_imb: 3.0
+    w_tensors: 0.2
+    log_comm: true
+  cycle_time_no_handover:
+    backend_throughput_gops: {}
+    stage_time_models: {}
+  cycle_time_with_handover:
+    backend_throughput_gops: {}
+    stage_time_models: {}
+    handover_models:
+      generic: {}
+      native_fifo: {}
+
+energy:
+  requested: true
+  enabled: true
+  generic_enabled: false
+  requested_native_energy: true
+  final_all_split_energy: true
+  measurement_path: native_only
+  repeats: 5
+  strict: true
+  window_method_ab:
+    enabled: true
+    primary_method: command_marker_window
+    shadow_method: chapter4_legacy_window
+    same_raw_capture: true
+    mode: shadow
+    auto_switch: false
+    smoke_repeats: 3
+    include_raw_parquet: true
+    strict: true
+    requires_picoscope: false
+
+native_producers:
+  enabled: true
+  backends: [hailo8, hailo10h, deepx]
+  consumer: tensorrt
+  case_policy: preferred_then_backfill
+  strict_supported_only: true
+  full_baselines:
+    enabled: true
+    required: true
+    same_runtime_contract: true
+    backends: [tensorrt, hailo8, hailo10h, deepx]
+    backends_by_producer:
+      hailo8: [tensorrt, hailo8]
+      hailo10h: [tensorrt, hailo10h]
+      deepx: [tensorrt, deepx]
+  validation:
+    enabled: true
+    mode: final
+  energy:
+    enabled: true
+    mode: measure
+    window_method_validation_probe:
+      enabled: true
+      repeats: 3
+      minimum_decision_repeats: 3
+      include_raw_parquet: true
+      strict: true
+      screening_only: true
+      eligible_for_energy_results_import: false
+      eligible_for_scientific_claim: false
+
+measurement_campaign:
+  native_full_baselines:
+    required: true
+    same_runtime_contract: true
+    backends: [tensorrt, hailo8, hailo10h, deepx]
+  system_power:
+    scope: FS
+    source: urecs_input_channel
+    window: command
+    raw_primary: true
+    repeats: 5
+    confidence_level: 0.95
+    randomize_run_order: true
+    randomization_seed: 20260710
+    idle_normalization:
+      enabled: true
+      method: paired_fs_rail_on_off
+      report_raw_and_normalized: true
+      subtract_narrow_rail_measurement: false
+
+official_coco_evaluation:
+  enabled: true
+  required_for_final: true
+  annotations: campaign_inputs/instances_val2017.json
+  remote_annotations: /datasets/coco2017/annotations/instances_val2017.json
+  iou_type: bbox
+  archive_predictions: true
+  archive_eval_tensors: true
+  max_detections: [1, 10, 100]
+  require_pycocotools: true
+  note: Official pycocotools verification is archived in addition to the paired-bootstrap quality gate.
+
+validation:
+  split_fidelity_reference_mode: auto
+  classification_metrics: [top1, top5]
+  detection_metrics: [coco_ap_50_95, ap50, ap75]
+  backend_drift_reference: cpu_full
+  report_blocked_and_infeasible: true
+
+reporting:
+  include_decision_summary: true
+  include_backend_drift_block: true
+  include_task_specific_quality_block: true
+  aggregate_by_model: true
+  aggregate_by_run_profile: true
+  canonical_scientific_report: true
+  cleanup_legacy_reports: true
+  generate_thesis_tex: true
+  generate_thesis_figures: true
+  include_campaign_readiness: true
+
+implementation_note: >-
+  This is the optional strict ranking_generalization template, not the normal
+  evaluated-matrix Final profile and not an immediately runnable profile. Replace
+  the TODO model paths, hashes, hold-out attestations, and campaign_inputs
+  paths, generate the manifests, fit parameters exclusively on development
+  rows, run campaign preflight, and create the prospective freeze before
+  interpreting hold-out measurements.

@@ -1,0 +1,671 @@
+{
+  "artifacts": [
+    "models/yolo11l/benchmark_set/build_backend_artifacts_request.json",
+    "models/yolo11l/benchmark_set/backend_artifact_decisions.json",
+    "models/yolo11l/benchmark_set/artifact_reuse_manifest.json",
+    "models/yolo11l/benchmark_set/legacy_suite/output_contracts.json",
+    "models/yolo11l/full_baselines/output_contracts.json",
+    "models/yolo11l/benchmark_set/required_run_scope.json",
+    "models/yolo11l/benchmark_set/required_run_scope_materialization_audit.json",
+    "models/yolo11l/benchmark_set/authoritative_scope_projection.json",
+    "models/yolo11l/benchmark_set/hailo_artifact_service_plan.json",
+    "models/yolo11l/benchmark_set/hailo_artifact_status.json",
+    "models/yolo11l/benchmark_set/hailo_expected_unsupported.json",
+    "models/yolo11l/benchmark_set/legacy_suite/hailo_artifacts_manifest.json",
+    "models/yolo11l/benchmark_set/hailo_service_binding.md",
+    "models/yolo11l/benchmark_set/hailo_build_attempts.json",
+    "models/yolo11l/benchmark_set/hailo_build_reuse_plan.json",
+    "models/yolo11l/benchmark_set/hailo_build_queue.json",
+    "models/yolo11l/benchmark_set/hailo_service_dispatch.json",
+    "models/yolo11l/benchmark_set/hailo_build_service_dispatch.json",
+    "models/yolo11l/benchmark_set/hailo_build_service_status.json",
+    "models/yolo11l/benchmark_set/deepx/deepx_environment_status.json",
+    "models/yolo11l/benchmark_set/deepx/full/deepx_cache_receipt.json",
+    "models/yolo11l/benchmark_set/legacy_suite/deepx/deepx_m1/full/model.dxnn",
+    "models/yolo11l/benchmark_set/deepx/deepx_artifact_status.json",
+    "models/yolo11l/benchmark_set/deepx/deepx_build_queue.json",
+    "models/yolo11l/benchmark_set/deepx/deepx_output_contracts.json",
+    "models/yolo11l/stages/build_backend_artifacts/stage_result.json"
+  ],
+  "child_job_ids": [],
+  "complete": true,
+  "details": {
+    "authoritative_scope_injected_run_count": 0,
+    "backend_build_states": {
+      "artifacts": "ok",
+      "deepx": "ok",
+      "hailo": "ok"
+    },
+    "backend_build_status": "ok",
+    "baseline_decisions": 5,
+    "blocked_backend_count": 0,
+    "case_build_requests": 10,
+    "copied_artifacts": 0,
+    "deepx_classification_admission": {
+      "allowed": true,
+      "claim_eligible": true,
+      "classification_preprocessing": "imagenet_mean_std",
+      "counts_as_benchmark": true,
+      "diagnostic_only": false,
+      "legacy_diagnostic": false,
+      "reason": "",
+      "required_setting": "",
+      "scientific_claim_exclusion_reason": ""
+    },
+    "deepx_deepx_build_status": "ready_reused",
+    "deepx_deepx_cache_outcome": "HIT",
+    "deepx_deepx_cache_reason": "artifact_identity_verified",
+    "deepx_deepx_classification_preprocessing": "not_applicable",
+    "deepx_deepx_compiler_ready": true,
+    "deepx_deepx_full_cache_contract_mode": "legacy_implicit",
+    "deepx_deepx_full_cache_contract_sha256": "",
+    "deepx_deepx_queue_count": 0,
+    "deepx_deepx_ready_artifact_count": 1,
+    "deepx_deepx_runtime_ready": true,
+    "deepx_deepx_selected": true,
+    "deferred_hailo_builds": {
+      "jobs": [
+        {
+          "attempt_observations": [
+            {
+              "backend": "hailo10",
+              "boundary": "b062",
+              "cache_hit": true,
+              "compiler_context": {},
+              "compiler_dispatch_count": 0,
+              "compute_by_family": {
+                "hailo10h": {
+                  "device": "gpu"
+                },
+                "hailo8": {
+                  "device": "gpu"
+                }
+              },
+              "end_node_names": null,
+              "hef_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b062/hailo/hailo10/part1/compiled.hef",
+              "identity_source": "build_evidence_context",
+              "model_build_status": "reused",
+              "model_id": "yolo11l",
+              "net_name": "yolo11l_part1_b62",
+              "next_required_action": "runtime_binding_and_quality",
+              "preflight_decision": "HIT",
+              "preflight_reason": "exact_cache_hit",
+              "receipt_path": null,
+              "result_json_path": null,
+              "source_onnx": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b062/yolo11l_part1_b62.onnx",
+              "stage": "part1"
+            }
+          ],
+          "backend": "hailo10",
+          "boundary": "b062",
+          "cache_hit": true,
+          "compiler_context": {},
+          "compiler_dispatch_count": 0,
+          "compute_by_family": {
+            "hailo10h": {
+              "device": "gpu"
+            },
+            "hailo8": {
+              "device": "gpu"
+            }
+          },
+          "end_node_names": null,
+          "error": "",
+          "hef_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b062/hailo/hailo10/part1/compiled.hef",
+          "identity_source": "build_evidence_context",
+          "model_build_status": "reused",
+          "model_id": "yolo11l",
+          "net_name": "yolo11l_part1_b62",
+          "next_required_action": "runtime_binding_and_quality",
+          "preflight_decision": "HIT",
+          "preflight_reason": "exact_cache_hit",
+          "receipt_path": null,
+          "request": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b062/hailo/hailo10/part1/deferred_hailo_build.json",
+          "result_json_path": null,
+          "source_onnx": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b062/yolo11l_part1_b62.onnx",
+          "stage": "part1",
+          "status": "completed"
+        },
+        {
+          "attempt_observations": [
+            {
+              "backend": "hailo8",
+              "boundary": "b062",
+              "cache_hit": true,
+              "compiler_context": {},
+              "compiler_dispatch_count": 0,
+              "compute_by_family": {
+                "hailo10h": {
+                  "device": "gpu"
+                },
+                "hailo8": {
+                  "device": "gpu"
+                }
+              },
+              "end_node_names": null,
+              "hef_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b062/hailo/hailo8/part1/compiled.hef",
+              "identity_source": "build_evidence_context",
+              "model_build_status": "reused",
+              "model_id": "yolo11l",
+              "net_name": "yolo11l_part1_b62",
+              "next_required_action": "runtime_binding_and_quality",
+              "preflight_decision": "HIT",
+              "preflight_reason": "exact_cache_hit",
+              "receipt_path": null,
+              "result_json_path": null,
+              "source_onnx": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b062/yolo11l_part1_b62.onnx",
+              "stage": "part1"
+            }
+          ],
+          "backend": "hailo8",
+          "boundary": "b062",
+          "cache_hit": true,
+          "compiler_context": {},
+          "compiler_dispatch_count": 0,
+          "compute_by_family": {
+            "hailo10h": {
+              "device": "gpu"
+            },
+            "hailo8": {
+              "device": "gpu"
+            }
+          },
+          "end_node_names": null,
+          "error": "",
+          "hef_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b062/hailo/hailo8/part1/compiled.hef",
+          "identity_source": "build_evidence_context",
+          "model_build_status": "reused",
+          "model_id": "yolo11l",
+          "net_name": "yolo11l_part1_b62",
+          "next_required_action": "runtime_binding_and_quality",
+          "preflight_decision": "HIT",
+          "preflight_reason": "exact_cache_hit",
+          "receipt_path": null,
+          "request": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b062/hailo/hailo8/part1/deferred_hailo_build.json",
+          "result_json_path": null,
+          "source_onnx": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b062/yolo11l_part1_b62.onnx",
+          "stage": "part1",
+          "status": "completed"
+        },
+        {
+          "attempt_observations": [
+            {
+              "backend": "hailo10",
+              "boundary": "b064",
+              "cache_hit": false,
+              "compiler_context": {
+                "available_components": [
+                  "ptxas",
+                  "libdevice.10.bc"
+                ],
+                "compiler_component_view": true,
+                "component_source": "selected_venv_triton",
+                "compute_capability": "6.1",
+                "conflicts": [],
+                "device": "gpu",
+                "family": "hailo10h",
+                "full_cuda_toolkit": false,
+                "gpu_index": "0",
+                "gpu_selector": "0",
+                "gpu_uuid": "GPU-b823007b-546c-4cda-533d-fc24c61f01e6",
+                "ignored_legacy": [],
+                "inherited_cuda_mask_source": "unset",
+                "legacy_inputs": [],
+                "libdevice_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/lib/libdevice.10.bc",
+                "nvidia_smi": "/usr/bin/nvidia-smi",
+                "ptxas_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas",
+                "ptxas_trace_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/hailo/hailo10/part1/onnx_hailo_cuda_view_0ce6iy5r_ptxas_invocations.jsonl",
+                "ptxas_version": "ptxas: NVIDIA (R) Ptx optimizing assembler\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Fri_Feb_21_20:21:21_PST_2025\nCuda compilation tools, release 12.8, V12.8.93\nBuild cuda_12.8.r12.8/compiler.35583870_0",
+                "schema_version": 1,
+                "source": "compute_by_family.hailo10h",
+                "target_arch": "sm_61",
+                "target_probe": {
+                  "binary": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas",
+                  "kind": "preflight_target",
+                  "output_size": 2088,
+                  "returncode": 0,
+                  "source_ptx": ".version 4.0\n.target sm_50\n.address_size 64\n.visible .entry splitpoint_target_probe() { ret; }\n",
+                  "stderr": "",
+                  "stdout": "",
+                  "target_arch": "sm_61"
+                },
+                "thread_settings": {
+                  "TF_FORCE_GPU_ALLOW_GROWTH": "true",
+                  "TF_NUM_INTEROP_THREADS": "2",
+                  "TF_NUM_INTRAOP_THREADS": "2"
+                },
+                "unprovided_compiler_components": [
+                  "nvcc",
+                  "nvlink",
+                  "fatbinary",
+                  "cicc",
+                  "cudafe++"
+                ],
+                "venv_python": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/bin/python",
+                "venv_root": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10",
+                "view_root": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/hailo/hailo10/part1/onnx_hailo_cuda_view_0ce6iy5r"
+              },
+              "compiler_dispatch_count": 1,
+              "compute_by_family": {
+                "hailo10h": {
+                  "device": "gpu"
+                },
+                "hailo8": {
+                  "device": "gpu"
+                }
+              },
+              "end_node_names": null,
+              "hef_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/hailo/hailo10/part1/compiled.hef",
+              "identity_source": "build_evidence_context",
+              "model_build_status": "completed",
+              "model_id": "yolo11l",
+              "net_name": "yolo11l_part1_b64",
+              "next_required_action": "runtime_binding_and_quality",
+              "preflight_decision": "MISS",
+              "preflight_reason": "not_found_or_receipt_invalid",
+              "receipt_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/hailo/hailo10/part1/.hailo-generations/67d51ccbd4e243f79c99fbbd7e59e8bf/hailo_hef_build_receipt.json",
+              "result_json_path": null,
+              "source_onnx": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/yolo11l_part1_b64.onnx",
+              "stage": "part1"
+            }
+          ],
+          "backend": "hailo10",
+          "boundary": "b064",
+          "cache_hit": false,
+          "compiler_context": {
+            "available_components": [
+              "ptxas",
+              "libdevice.10.bc"
+            ],
+            "compiler_component_view": true,
+            "component_source": "selected_venv_triton",
+            "compute_capability": "6.1",
+            "conflicts": [],
+            "device": "gpu",
+            "family": "hailo10h",
+            "full_cuda_toolkit": false,
+            "gpu_index": "0",
+            "gpu_selector": "0",
+            "gpu_uuid": "GPU-b823007b-546c-4cda-533d-fc24c61f01e6",
+            "ignored_legacy": [],
+            "inherited_cuda_mask_source": "unset",
+            "legacy_inputs": [],
+            "libdevice_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/lib/libdevice.10.bc",
+            "nvidia_smi": "/usr/bin/nvidia-smi",
+            "ptxas_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas",
+            "ptxas_trace_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/hailo/hailo10/part1/onnx_hailo_cuda_view_0ce6iy5r_ptxas_invocations.jsonl",
+            "ptxas_version": "ptxas: NVIDIA (R) Ptx optimizing assembler\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Fri_Feb_21_20:21:21_PST_2025\nCuda compilation tools, release 12.8, V12.8.93\nBuild cuda_12.8.r12.8/compiler.35583870_0",
+            "schema_version": 1,
+            "source": "compute_by_family.hailo10h",
+            "target_arch": "sm_61",
+            "target_probe": {
+              "binary": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas",
+              "kind": "preflight_target",
+              "output_size": 2088,
+              "returncode": 0,
+              "source_ptx": ".version 4.0\n.target sm_50\n.address_size 64\n.visible .entry splitpoint_target_probe() { ret; }\n",
+              "stderr": "",
+              "stdout": "",
+              "target_arch": "sm_61"
+            },
+            "thread_settings": {
+              "TF_FORCE_GPU_ALLOW_GROWTH": "true",
+              "TF_NUM_INTEROP_THREADS": "2",
+              "TF_NUM_INTRAOP_THREADS": "2"
+            },
+            "unprovided_compiler_components": [
+              "nvcc",
+              "nvlink",
+              "fatbinary",
+              "cicc",
+              "cudafe++"
+            ],
+            "venv_python": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/bin/python",
+            "venv_root": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10",
+            "view_root": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/hailo/hailo10/part1/onnx_hailo_cuda_view_0ce6iy5r"
+          },
+          "compiler_dispatch_count": 1,
+          "compute_by_family": {
+            "hailo10h": {
+              "device": "gpu"
+            },
+            "hailo8": {
+              "device": "gpu"
+            }
+          },
+          "end_node_names": null,
+          "error": "",
+          "hef_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/hailo/hailo10/part1/compiled.hef",
+          "identity_source": "build_evidence_context",
+          "model_build_status": "completed",
+          "model_id": "yolo11l",
+          "net_name": "yolo11l_part1_b64",
+          "next_required_action": "runtime_binding_and_quality",
+          "preflight_decision": "MISS",
+          "preflight_reason": "not_found_or_receipt_invalid",
+          "receipt_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/hailo/hailo10/part1/.hailo-generations/67d51ccbd4e243f79c99fbbd7e59e8bf/hailo_hef_build_receipt.json",
+          "request": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/hailo/hailo10/part1/deferred_hailo_build.json",
+          "result_json_path": null,
+          "source_onnx": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/yolo11l_part1_b64.onnx",
+          "stage": "part1",
+          "status": "completed"
+        },
+        {
+          "attempt_observations": [
+            {
+              "backend": "hailo8",
+              "boundary": "b064",
+              "cache_hit": null,
+              "compiler_context": {},
+              "compiler_dispatch_count": null,
+              "compute_by_family": {
+                "hailo10h": {
+                  "device": "gpu"
+                },
+                "hailo8": {
+                  "device": "gpu"
+                }
+              },
+              "end_node_names": null,
+              "hef_path": null,
+              "identity_source": "build_evidence_context",
+              "model_build_status": "failed",
+              "model_id": "yolo11l",
+              "net_name": "yolo11l_part1_b64",
+              "next_required_action": "inspect_original_failure",
+              "preflight_decision": "MISS",
+              "preflight_reason": "not_found_or_receipt_invalid",
+              "receipt_path": null,
+              "result_json_path": null,
+              "source_onnx": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/yolo11l_part1_b64.onnx",
+              "stage": "part1"
+            }
+          ],
+          "backend": "hailo8",
+          "boundary": "b064",
+          "cache_hit": null,
+          "compiler_context": {},
+          "compiler_dispatch_count": null,
+          "compute_by_family": {
+            "hailo10h": {
+              "device": "gpu"
+            },
+            "hailo8": {
+              "device": "gpu"
+            }
+          },
+          "end_node_names": null,
+          "error": "Venv HEF build failed to launch: CompilerContextError: hailo_compiler_components_missing: No complete local ptxas/libdevice pair in selected DFC venv",
+          "hef_path": null,
+          "identity_source": "build_evidence_context",
+          "model_build_status": "failed",
+          "model_id": "yolo11l",
+          "net_name": "yolo11l_part1_b64",
+          "next_required_action": "inspect_original_failure",
+          "preflight_decision": "MISS",
+          "preflight_reason": "not_found_or_receipt_invalid",
+          "receipt_path": null,
+          "request": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/hailo/hailo8/part1/deferred_hailo_build.json",
+          "result_json_path": null,
+          "source_onnx": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/yolo11l_part1_b64.onnx",
+          "stage": "part1",
+          "status": "failed"
+        },
+        {
+          "attempt_observations": [
+            {
+              "backend": "hailo10",
+              "boundary": "full",
+              "cache_hit": true,
+              "compiler_context": {},
+              "compiler_dispatch_count": 0,
+              "compute_by_family": {
+                "hailo10h": {
+                  "device": "gpu"
+                },
+                "hailo8": {
+                  "device": "gpu"
+                }
+              },
+              "end_node_names": [
+                "/model.23/cv2.0/cv2.0.2/Conv",
+                "/model.23/cv3.0/cv3.0.2/Conv",
+                "/model.23/cv2.1/cv2.1.2/Conv",
+                "/model.23/cv3.1/cv3.1.2/Conv",
+                "/model.23/cv2.2/cv2.2.2/Conv",
+                "/model.23/cv3.2/cv3.2.2/Conv"
+              ],
+              "hef_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/hailo/hailo10/full/compiled.hef",
+              "identity_source": "build_evidence_context",
+              "model_build_status": "reused",
+              "model_id": "yolo11l",
+              "net_name": "yolo11l_full",
+              "next_required_action": "runtime_binding_and_quality",
+              "preflight_decision": "HIT",
+              "preflight_reason": "exact_cache_hit",
+              "receipt_path": null,
+              "result_json_path": null,
+              "source_onnx": "/home/kmika/Models/yolo11l.onnx",
+              "stage": "full"
+            }
+          ],
+          "backend": "hailo10",
+          "boundary": "full",
+          "cache_hit": true,
+          "compiler_context": {},
+          "compiler_dispatch_count": 0,
+          "compute_by_family": {
+            "hailo10h": {
+              "device": "gpu"
+            },
+            "hailo8": {
+              "device": "gpu"
+            }
+          },
+          "end_node_names": [
+            "/model.23/cv2.0/cv2.0.2/Conv",
+            "/model.23/cv3.0/cv3.0.2/Conv",
+            "/model.23/cv2.1/cv2.1.2/Conv",
+            "/model.23/cv3.1/cv3.1.2/Conv",
+            "/model.23/cv2.2/cv2.2.2/Conv",
+            "/model.23/cv3.2/cv3.2.2/Conv"
+          ],
+          "error": "",
+          "hef_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/hailo/hailo10/full/compiled.hef",
+          "identity_source": "build_evidence_context",
+          "model_build_status": "reused",
+          "model_id": "yolo11l",
+          "net_name": "yolo11l_full",
+          "next_required_action": "runtime_binding_and_quality",
+          "preflight_decision": "HIT",
+          "preflight_reason": "exact_cache_hit",
+          "receipt_path": null,
+          "request": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/hailo/hailo10/full/deferred_hailo_build.json",
+          "result_json_path": null,
+          "source_onnx": "/home/kmika/Models/yolo11l.onnx",
+          "stage": "full",
+          "status": "completed"
+        },
+        {
+          "attempt_observations": [
+            {
+              "backend": "hailo8",
+              "boundary": "full",
+              "cache_hit": true,
+              "compiler_context": {},
+              "compiler_dispatch_count": 0,
+              "compute_by_family": {
+                "hailo10h": {
+                  "device": "gpu"
+                },
+                "hailo8": {
+                  "device": "gpu"
+                }
+              },
+              "end_node_names": [
+                "/model.23/cv2.0/cv2.0.2/Conv",
+                "/model.23/cv3.0/cv3.0.2/Conv",
+                "/model.23/cv2.1/cv2.1.2/Conv",
+                "/model.23/cv3.1/cv3.1.2/Conv",
+                "/model.23/cv2.2/cv2.2.2/Conv",
+                "/model.23/cv3.2/cv3.2.2/Conv"
+              ],
+              "hef_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/hailo/hailo8/full/compiled.hef",
+              "identity_source": "build_evidence_context",
+              "model_build_status": "reused",
+              "model_id": "yolo11l",
+              "net_name": "yolo11l_full",
+              "next_required_action": "runtime_binding_and_quality",
+              "preflight_decision": "HIT",
+              "preflight_reason": "exact_cache_hit",
+              "receipt_path": null,
+              "result_json_path": null,
+              "source_onnx": "/home/kmika/Models/yolo11l.onnx",
+              "stage": "full"
+            }
+          ],
+          "backend": "hailo8",
+          "boundary": "full",
+          "cache_hit": true,
+          "compiler_context": {},
+          "compiler_dispatch_count": 0,
+          "compute_by_family": {
+            "hailo10h": {
+              "device": "gpu"
+            },
+            "hailo8": {
+              "device": "gpu"
+            }
+          },
+          "end_node_names": [
+            "/model.23/cv2.0/cv2.0.2/Conv",
+            "/model.23/cv3.0/cv3.0.2/Conv",
+            "/model.23/cv2.1/cv2.1.2/Conv",
+            "/model.23/cv3.1/cv3.1.2/Conv",
+            "/model.23/cv2.2/cv2.2.2/Conv",
+            "/model.23/cv3.2/cv3.2.2/Conv"
+          ],
+          "error": "",
+          "hef_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/hailo/hailo8/full/compiled.hef",
+          "identity_source": "build_evidence_context",
+          "model_build_status": "reused",
+          "model_id": "yolo11l",
+          "net_name": "yolo11l_full",
+          "next_required_action": "runtime_binding_and_quality",
+          "preflight_decision": "HIT",
+          "preflight_reason": "exact_cache_hit",
+          "receipt_path": null,
+          "request": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/hailo/hailo8/full/deferred_hailo_build.json",
+          "result_json_path": null,
+          "source_onnx": "/home/kmika/Models/yolo11l.onnx",
+          "stage": "full",
+          "status": "completed"
+        },
+        {
+          "request": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/deferred_deepx_part1_build.json",
+          "status": "completed"
+        }
+      ],
+      "status": "partial"
+    },
+    "duration_s": 851.522826,
+    "effective_build_summary": {
+      "artifact_store_enabled": true,
+      "build_policy": "vorhandene passende Artefakte wiederverwenden, fehlende bauen",
+      "deepx_classification_preprocessing": "imagenet_mean_std",
+      "deepx_classification_source": "Evaluationsprofil",
+      "deepx_force_build": false,
+      "deepx_force_text": "AUS",
+      "hailo_cache_enabled": true,
+      "hailo_cache_integrity": "relaxed",
+      "hailo_compute_by_family": {
+        "hailo10h": {
+          "conflicts": [],
+          "device": "gpu",
+          "family": "hailo10h",
+          "gpu_selector": "0",
+          "ignored_legacy": [],
+          "inherited_cuda_mask_source": "unset",
+          "legacy_inputs": [],
+          "setting_source": "tool_config",
+          "source": "compute_by_family.hailo10h",
+          "status": "selected"
+        },
+        "hailo8": {
+          "conflicts": [],
+          "device": "gpu",
+          "family": "hailo8",
+          "gpu_selector": "0",
+          "ignored_legacy": [],
+          "inherited_cuda_mask_source": "unset",
+          "legacy_inputs": [],
+          "setting_source": "tool_config",
+          "source": "compute_by_family.hailo8",
+          "status": "selected"
+        }
+      },
+      "hailo_compute_text": "Hailo8 Compute für neue Builds: GPU (Quelle: compute_by_family.hailo8; tool_config)\nHailo10H Compute für neue Builds: GPU (Quelle: compute_by_family.hailo10h; tool_config)",
+      "hailo_force_build": false,
+      "hailo_force_text": "AUS",
+      "native_force_fields": [],
+      "native_force_text": "AUS",
+      "values_source": "Tool Config / final / /home/kmika/.onnx_splitpoint_tool/run_modes.yaml"
+    },
+    "hailo_actionable_build_queue_count": 0,
+    "hailo_build_mode": "reuse_and_build_missing",
+    "hailo_build_queue_count": 0,
+    "hailo_build_service_status": "attempted_failed",
+    "hailo_case_hefs_pending": 0,
+    "hailo_case_hefs_ready": 2,
+    "hailo_deferred_build_queue_count": 0,
+    "hailo_detected_hefs": 5,
+    "hailo_dispatch_status": "not_required",
+    "hailo_expected_unsupported": 4,
+    "hailo_full_not_requested": 0,
+    "hailo_full_pending": 0,
+    "hailo_full_ready": 2,
+    "hailo_remote_host_configured": false,
+    "hailo_service_status": "ready_from_reuse",
+    "model_local_scope_may_shrink_global_scope": false,
+    "preparation_completion_scope": {
+      "artifact_stage": "build_backend_artifacts",
+      "next_required_stage": "run_benchmarks",
+      "note": "Stage completion confirms artifact decisions/publication; runtime bridges and quality still require the normal following stages.",
+      "quality_first_runtime_binding_status": "not_established_by_this_stage"
+    },
+    "ready_backend_count": 3,
+    "recorded_hailo_full_contracts": 2,
+    "required_run_scope_case_source": "final_benchmark_set_accepted_cases",
+    "required_run_scope_extra_in_materialized_count": 0,
+    "required_run_scope_identity_count": 12,
+    "required_run_scope_materialized_identity_count": 12,
+    "required_run_scope_missing_from_materialized_count": 0,
+    "required_run_scope_rewritten": false,
+    "required_run_scope_sealed_after_case_acceptance": true,
+    "required_run_scope_sealed_before_compiler_dispatch": false,
+    "required_run_scope_sealed_before_runtime_dispatch": true,
+    "required_run_scope_sha256": "1071d73945aa5593c90ff1ec97c11eb46c565e9db9e248c66aff83223faf994e",
+    "resume_decision": {},
+    "resume_key_hash": "8db0c7171cb175ccda3f72eadaabe3bb44da24c329932c13da4e6ff9674cc6a3"
+  },
+  "error_class": "",
+  "error_detail": "",
+  "execution_mode": "workflow_contract",
+  "finished_at": "2026-09-10T21:56:58+02:00",
+  "input_hash": "8db0c7171cb175ccda3f72eadaabe3bb44da24c329932c13da4e6ff9674cc6a3",
+  "job_id": "stage:yolo11l:build_backend_artifacts",
+  "job_type": "BackendArtifactBuildJob",
+  "model_id": "yolo11l",
+  "notes": [
+    "Backend build/reuse decisions recorded; reusable full-baseline artifacts copied when present. Hailo HEF reuse/build service plan recorded; existing HEFs were detected and missing heavy builds are structured. Hailo build queue: 0 item(s); dispatch status: not_required. DeepX full DXNN artifact ready."
+  ],
+  "output_hash": "b6626e09e52cfe704a8159512d39ed1da1f1bc318dc383b3cf1f252a29991a8a",
+  "parent_job_id": "model:yolo11l",
+  "schema_version": 1,
+  "skip_reason": "",
+  "stage": "build_backend_artifacts",
+  "stage_result_path": "models/yolo11l/stages/build_backend_artifacts/stage_result.json",
+  "started_at": "2026-09-10T21:42:47+02:00",
+  "state": "completed",
+  "status": "ok"
+}

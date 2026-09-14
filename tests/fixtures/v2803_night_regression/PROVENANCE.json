@@ -1,0 +1,408 @@
+{
+  "archives": {
+    "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip": {
+      "sha256": "2aad14fae7ccbffacaaa283d96cdeaa8eefc4cf07770da43164fedf10938c004",
+      "size_bytes": 184179
+    },
+    "completsetdev_20260910_210826_debug_pack.zip": {
+      "sha256": "116aa3f21305bd2c3ac5fea52c38f34c2b9942851e087ed136d6fa3c7239cbfd",
+      "size_bytes": 27111054
+    }
+  },
+  "derived_members": [
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "reports/native_producer_stage.json",
+      "derivation": "Exact key subtree: schema/schema_version/tool_version/workflow_version/run_id/expected_native_rows/blocked_native_rows/backend_results/tensorrt_quality_first. No row or historical identity modification.",
+      "path": "derived/native_stage.json",
+      "sha256": "2af59027ba250e3f90c56aa09037412d5199da1dc131c5f8234a06539548b19c",
+      "size_bytes": 475926,
+      "source_member_sha256": "c7b3eba448f12ade57b20c3c494a0dbdca594088179fe8db4a0f477a370039b7"
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "reports/native_energy_measurements/native_producer_energy_results.json",
+      "derivation": "Exact top-level and row/run allowlisted scalars; 21 observed rows and actual repeat counts. Numerical energy aggregate values are preserved separately as byte-exact scientific/native_energy_ab_aggregates.json. No recalculation.",
+      "path": "derived/native_energy_observations.json",
+      "sha256": "7fa605d6b09615476263e0f65f9ba09f0ef1c427f1906d4cfb90b27d2b26606d",
+      "size_bytes": 26193,
+      "source_member_sha256": "2bacc9570c7dc918658788149462e911289166aa818c6ee58d298266ffe2932b"
+    }
+  ],
+  "historical_run_id": "completsetdev_20260910_210826",
+  "historical_tool_version": "2.80.1",
+  "original_members": [
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/h8_yolo11_b064_job.json",
+      "path": "evidence/h8_yolo11_b064_job.json",
+      "sha256": "e4a7b05df24a6fe12d4a5c6f94b4d06713d3d1c3cc69118e9920b22674b92726",
+      "size_bytes": 2110
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/independent_build_status_gap.json",
+      "path": "evidence/independent_build_status_gap.json",
+      "sha256": "34ab8594445d4523cda70e8e02876da7ecd223197d944b624a9341f5789d3631",
+      "size_bytes": 488
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/independent_large_index_replay.json",
+      "path": "evidence/independent_large_index_replay.json",
+      "sha256": "6e36409e9e839ffe2db5f7da762468ca14a41954b1757ca148f13be1f3cfef54",
+      "size_bytes": 883
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/independent_night_cpu_binding_replay.json",
+      "path": "evidence/independent_night_cpu_binding_replay.json",
+      "sha256": "c46af51dd019246c305b7c19a50c7616c2f0cddf9c72403d0ccfcbdfe9d1f2df",
+      "size_bytes": 11623
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/independent_night_matrix_replay.json",
+      "path": "evidence/independent_night_matrix_replay.json",
+      "sha256": "325eea960d7d764273b6a15f73c8efb69a8d2cf2c64b5537ede63c6af93a2259",
+      "size_bytes": 271728
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/independent_split_blocked_replay.json",
+      "path": "evidence/independent_split_blocked_replay.json",
+      "sha256": "02bfd6b15a7711eddc5e2e932a81645a32c6c810679d3d32230d4066d38ae36e",
+      "size_bytes": 339466
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/night_debug_export_limits.json",
+      "path": "evidence/night_debug_export_limits.json",
+      "sha256": "d4165135f2046ec273c3da275a44d0836de44bacf784d1c5160f6aede35cfdd9",
+      "size_bytes": 61642
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/night_hailo_gpu_build_summary.json",
+      "path": "evidence/night_hailo_gpu_build_summary.json",
+      "sha256": "a72cdcbe9a51093f04ccd07607e01db0939145aabdf5cbe477bf69985256f0b6",
+      "size_bytes": 2919
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/night_mini_classification_by_case.csv",
+      "path": "evidence/night_mini_classification_by_case.csv",
+      "sha256": "0cca1eb910f4f9c838197137e1d071b7f597d8d15c92bfe287af4db5ac892717",
+      "size_bytes": 9272
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/night_overview.json",
+      "path": "evidence/night_overview.json",
+      "sha256": "6c3852d423d8fa2e76c055b2918dc4b294db0f642e4e7b9095a0667dde2c5e52",
+      "size_bytes": 7034
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/night_power_mode_differences.json",
+      "path": "evidence/night_power_mode_differences.json",
+      "sha256": "0b2b26e31168e8b519cf3518e5495958c88017353bfd648be83fd0e055b44dd0",
+      "size_bytes": 14113
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_benchmark_sets/INDEX.json",
+      "path": "evidence/original_benchmark_sets/INDEX.json",
+      "sha256": "d791c1d2c759b8b23f124d0b9d06896c178d4b5b1602e79c8374c554fa69b961",
+      "size_bytes": 3043
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_benchmark_sets/mobilenet_v3_large.benchmark_plan.json",
+      "path": "evidence/original_benchmark_sets/mobilenet_v3_large.benchmark_plan.json",
+      "sha256": "db9e1a82196d53660b633cf2054047732b9050f00d836cf3701d59f2bd35def2",
+      "size_bytes": 75071
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_benchmark_sets/mobilenet_v3_large.json",
+      "path": "evidence/original_benchmark_sets/mobilenet_v3_large.json",
+      "sha256": "0b92024d8eb018ee89278a03354841f40a3e3128f9b4d78bdac60c9366cce101",
+      "size_bytes": 125465
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_benchmark_sets/regnet_x_1_6gf.benchmark_plan.json",
+      "path": "evidence/original_benchmark_sets/regnet_x_1_6gf.benchmark_plan.json",
+      "sha256": "e37a0960874e4c6b5137e93f6bdcc690e4c15b949f44daf95c17c826698c6e9d",
+      "size_bytes": 75009
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_benchmark_sets/regnet_x_1_6gf.json",
+      "path": "evidence/original_benchmark_sets/regnet_x_1_6gf.json",
+      "sha256": "eec7dc678218fef6c4981bd7c37c0749742c53c403b2332d40e68be7b7eb15a7",
+      "size_bytes": 125300
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_benchmark_sets/resnet50.benchmark_plan.json",
+      "path": "evidence/original_benchmark_sets/resnet50.benchmark_plan.json",
+      "sha256": "3c29b039b18b2728c0ad4a60e582b1bf2837c42cc6f69bfc573d8a8ba0b599e2",
+      "size_bytes": 68565
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_benchmark_sets/resnet50.json",
+      "path": "evidence/original_benchmark_sets/resnet50.json",
+      "sha256": "9477fe2fd551f08f4d4e43fca09f3dea9e1ee495d6c5a44084ffef233f1d92ef",
+      "size_bytes": 124870
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_benchmark_sets/yolo11l.benchmark_plan.json",
+      "path": "evidence/original_benchmark_sets/yolo11l.benchmark_plan.json",
+      "sha256": "11577e042ae2ca92a46f80bd317271e0af5c1759c516c0310cb9c604809e3157",
+      "size_bytes": 71723
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_benchmark_sets/yolo11l.json",
+      "path": "evidence/original_benchmark_sets/yolo11l.json",
+      "sha256": "49aef9f01dbbca8edc8967db9675bc40b8d9c09bc178337be6bade4894a9a2b9",
+      "size_bytes": 152338
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_benchmark_sets/yolo26m.benchmark_plan.json",
+      "path": "evidence/original_benchmark_sets/yolo26m.benchmark_plan.json",
+      "sha256": "0f6d49c6ee180c8ed5de389de36cd84d2ddb2e479c6d0adf0515dee9fb860464",
+      "size_bytes": 71717
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_benchmark_sets/yolo26m.json",
+      "path": "evidence/original_benchmark_sets/yolo26m.json",
+      "sha256": "4926225cadeef91807b86997ef39ccc54a6de3c2c122b30b5a504bbbedbc2d63",
+      "size_bytes": 147611
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_benchmark_sets/yolo26s.benchmark_plan.json",
+      "path": "evidence/original_benchmark_sets/yolo26s.benchmark_plan.json",
+      "sha256": "3ddbe93b527a046fe2e6a37c4ea89871f0f4997286a342f7905471e7ae0fe442",
+      "size_bytes": 67945
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_benchmark_sets/yolo26s.json",
+      "path": "evidence/original_benchmark_sets/yolo26s.json",
+      "sha256": "dca2957fe9908760159ff66ea8ddcc96bb39cdc4b716c7129ed735657ea944fa",
+      "size_bytes": 147514
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_benchmark_sets/yolov7_paper.benchmark_plan.json",
+      "path": "evidence/original_benchmark_sets/yolov7_paper.benchmark_plan.json",
+      "sha256": "21371889d070e36c887459b04576a4341dc60d1c1706c6d44bbc92e7d2180901",
+      "size_bytes": 68010
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_benchmark_sets/yolov7_paper.json",
+      "path": "evidence/original_benchmark_sets/yolov7_paper.json",
+      "sha256": "cceecb30695cda27c08fdcfde8220ff128f6c55f8481cd2f8585ed30e5477573",
+      "size_bytes": 126606
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_prerequisites/native_deepx_producer_e2e_eval__prerequisites.json",
+      "path": "evidence/original_prerequisites/native_deepx_producer_e2e_eval__prerequisites.json",
+      "sha256": "88ba86cf84ac176e23e2e5fa050453d082206ce6021541e2c5488a595dd1b44d",
+      "size_bytes": 23156
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_prerequisites/native_hailo10h_producer_e2e_eval__prerequisites.json",
+      "path": "evidence/original_prerequisites/native_hailo10h_producer_e2e_eval__prerequisites.json",
+      "sha256": "10254a868ecf92fb9f1521dbc5b60b34cff04232bc51377b493cda0e9d6090b5",
+      "size_bytes": 23039
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_prerequisites/native_hailo8_producer_e2e_eval__prerequisites.json",
+      "path": "evidence/original_prerequisites/native_hailo8_producer_e2e_eval__prerequisites.json",
+      "sha256": "4ba2e1bd52c4f14b4780bf147163ec5da93eefeb459fb968b059845fe10cac62",
+      "size_bytes": 23175
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/original_yolo11l_build_stage.json",
+      "path": "evidence/original_yolo11l_build_stage.json",
+      "sha256": "07242ab0c95543403cadc5824c112220c9e87ad1d4992291c994ba31c3217617",
+      "size_bytes": 31069
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/source_manifest_verify_after.json",
+      "path": "evidence/source_manifest_verify_after.json",
+      "sha256": "fed83dd566505d69e77979b729f4e35c06e0b09ee79e280b0d99fb30079485a1",
+      "size_bytes": 441
+    },
+    {
+      "archive": "IMPLEMENTATIONSPLAN_v2.80.3_Quellen_und_Pruefmatrix.zip",
+      "archive_member": "v2803_plan_quellen_20260911/evidence/source_manifest_verify_before.json",
+      "path": "evidence/source_manifest_verify_before.json",
+      "sha256": "fed83dd566505d69e77979b729f4e35c06e0b09ee79e280b0d99fb30079485a1",
+      "size_bytes": 441
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "quality_management/references/mobilenet_v3_large/management_cpu_reference_status.json",
+      "path": "original/quality_management/references/mobilenet_v3_large/management_cpu_reference_status.json",
+      "sha256": "ed3de759c9d03b0d9e6e63fe7a1606ec07f1952bcda4aa1740aaafddeea4eab4",
+      "size_bytes": 2616
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "quality_management/references/mobilenet_v3_large/management_cpu_reference_stdout.txt",
+      "path": "original/quality_management/references/mobilenet_v3_large/management_cpu_reference_stdout.txt",
+      "sha256": "183294674d2757d1d6fa953fb8976143e72b936ca91cc2e3785484b964ec010c",
+      "size_bytes": 1514
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "quality_management/references/regnet_x_1_6gf/management_cpu_reference_status.json",
+      "path": "original/quality_management/references/regnet_x_1_6gf/management_cpu_reference_status.json",
+      "sha256": "72f1134c1965449269d83730f3f7442086e5fdc68bc40e5e19b98f543916ce91",
+      "size_bytes": 2591
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "quality_management/references/regnet_x_1_6gf/management_cpu_reference_stdout.txt",
+      "path": "original/quality_management/references/regnet_x_1_6gf/management_cpu_reference_stdout.txt",
+      "sha256": "0eded692cf37fff2968cc517e96b6bb88c176695446da1fea8aba3434353cc33",
+      "size_bytes": 1498
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "quality_management/references/resnet50/management_cpu_reference_status.json",
+      "path": "original/quality_management/references/resnet50/management_cpu_reference_status.json",
+      "sha256": "55fcee310bbadf98920f8fbdf028c3ccfb02b6e68c531657d436a01ec25bc1e8",
+      "size_bytes": 2556
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "quality_management/references/resnet50/management_cpu_reference_stdout.txt",
+      "path": "original/quality_management/references/resnet50/management_cpu_reference_stdout.txt",
+      "sha256": "54b690f45c1470568e52cecae4a8f9c58a0e40abccb0150a2d0ac81ccc474f0b",
+      "size_bytes": 1474
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "quality_management/references/yolo11l/management_cpu_reference_status.json",
+      "path": "original/quality_management/references/yolo11l/management_cpu_reference_status.json",
+      "sha256": "b597e9abb2986b0a732aafeae9feaedd0353469e12f2b85643a83e5479ceff42",
+      "size_bytes": 2550
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "quality_management/references/yolo11l/management_cpu_reference_stdout.txt",
+      "path": "original/quality_management/references/yolo11l/management_cpu_reference_stdout.txt",
+      "sha256": "5f865a928beaaea0d3a0c083eff0119970957a3d38f122e3eac5f0a36800d9ba",
+      "size_bytes": 1470
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "quality_management/references/yolo26m/management_cpu_reference_status.json",
+      "path": "original/quality_management/references/yolo26m/management_cpu_reference_status.json",
+      "sha256": "750029e8711ff3a53c7f2350e6b56f4804539932f718cc3a0a1a218e3c3e7233",
+      "size_bytes": 2550
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "quality_management/references/yolo26m/management_cpu_reference_stdout.txt",
+      "path": "original/quality_management/references/yolo26m/management_cpu_reference_stdout.txt",
+      "sha256": "99bc79e7a99987623a3c7a2b4343b061bd5494a63f8de1d864280181e6d8d177",
+      "size_bytes": 1470
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "quality_management/references/yolo26s/management_cpu_reference_status.json",
+      "path": "original/quality_management/references/yolo26s/management_cpu_reference_status.json",
+      "sha256": "dc0deccfda7fe80345e50aee90dc82d61d395c6cadd1b2d8626ee7447bb42273",
+      "size_bytes": 2550
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "quality_management/references/yolo26s/management_cpu_reference_stdout.txt",
+      "path": "original/quality_management/references/yolo26s/management_cpu_reference_stdout.txt",
+      "sha256": "9794973d45bb194bbe6617fcd08ca8fa625731349d286d774362e6b767a774e2",
+      "size_bytes": 1470
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "quality_management/references/yolov7_paper/management_cpu_reference_status.json",
+      "path": "original/quality_management/references/yolov7_paper/management_cpu_reference_status.json",
+      "sha256": "9427010812c2bbd160128dce4c2dbb58c43b4ab481c1cd7c8935b431b5f743fc",
+      "size_bytes": 2580
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "quality_management/references/yolov7_paper/management_cpu_reference_stdout.txt",
+      "path": "original/quality_management/references/yolov7_paper/management_cpu_reference_stdout.txt",
+      "sha256": "a031a4ae56284a57ac3d82b5768478fab1c4e2c9b849ae0ec339314f89c5e944",
+      "size_bytes": 1490
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "reports/native_expected_matrix.json",
+      "path": "original/reports/native_expected_matrix.json",
+      "sha256": "0882f9c39abacd8bd0d6ee86a224f4c54fe5925142a359b5673901790a5bc0b5",
+      "size_bytes": 109664
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "native_producers/hailo8/analysis_tables/native_full_baseline_eval.json",
+      "path": "original/native_producers/hailo8/analysis_tables/native_full_baseline_eval.json",
+      "sha256": "9451fa1bc71e179c58fb5770caec9a2048fada501037a3223bde6ecdb09bbb4a",
+      "size_bytes": 877783
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "native_producers/hailo10h/analysis_tables/native_full_baseline_eval.json",
+      "path": "original/native_producers/hailo10h/analysis_tables/native_full_baseline_eval.json",
+      "sha256": "693b7f8b0844a3457fc381dca25a4f32b70a8921653d6c0b7cdeab957ccdec96",
+      "size_bytes": 880918
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "native_producers/deepx/analysis_tables/native_full_baseline_eval.json",
+      "path": "original/native_producers/deepx/analysis_tables/native_full_baseline_eval.json",
+      "sha256": "8c556419e14168655351493e19f1c1349203009d2476951fc006e63fb03d9e32",
+      "size_bytes": 1154180
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "reports/scientific/native_energy_ab_aggregates.json",
+      "path": "original/reports/scientific/native_energy_ab_aggregates.json",
+      "sha256": "6f45cc426222c779c31acd8eeeec504bd4ceb11a07a332622dd866ced25c4454",
+      "size_bytes": 390935
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "profile.yaml",
+      "path": "original/profile.yaml",
+      "sha256": "f9296c35cb3520d9485371504a2f03184bb96284615086e4b6e1e8b2c3da96fe",
+      "size_bytes": 31160
+    },
+    {
+      "archive": "completsetdev_20260910_210826_debug_pack.zip",
+      "archive_member": "effective_execution_plan.json",
+      "path": "original/effective_execution_plan.json",
+      "sha256": "aafc862b78de3383d695c73fec355b9eeac000258989020046ee589557c65ef5",
+      "size_bytes": 14501
+    }
+  ],
+  "schema": "v2803-night-fixture-provenance"
+}

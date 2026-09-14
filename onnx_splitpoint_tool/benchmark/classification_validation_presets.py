@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+_SUBSET_MATERIALIZE_LOCK = threading.Lock()
 
 PRESET_SPECS: Dict[str, Dict[str, Any]] = {
     "imagenet_val_mini_200": {
@@ -217,15 +220,533 @@ def _dataset_root_for_source(source: Path) -> Tuple[Path, Path]:
     return src.parent, Path(src.name)
 
 
+def _read_json_mapping(path: Optional[Path]) -> Optional[Dict[str, Any]]:
+    if path is None or not Path(path).is_file():
+        return None
+    try:
+        obj = json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return dict(obj) if isinstance(obj, dict) else None
+
+
+def _manifest_ref_path(value: Any, *, manifest_path: Path) -> Optional[Path]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    p = Path(os.path.expanduser(raw))
+    if not p.is_absolute():
+        p = manifest_path.parent / p
+    try:
+        return p.resolve()
+    except Exception:
+        return p
+
+
+def _classification_manifest_path(
+    resolved: Path,
+    *,
+    explicit_manifest: Any = None,
+    base_dir: Optional[Path] = None,
+) -> Optional[Path]:
+    raw = str(explicit_manifest or "").strip()
+    if raw:
+        p = Path(os.path.expanduser(raw))
+        if not p.is_absolute() and base_dir is not None:
+            p = Path(base_dir) / p
+        try:
+            p = p.resolve()
+        except Exception:
+            pass
+        if p.is_file():
+            return p
+    if resolved.is_file() and resolved.suffix.lower() in {".json", ".jsonl"}:
+        return resolved
+    if resolved.is_dir() and (resolved / "manifest.json").is_file():
+        return (resolved / "manifest.json").resolve()
+    return None
+
+
+def _synset_label_map(path: Optional[Path]) -> Dict[str, Tuple[int, str]]:
+    out: Dict[str, Tuple[int, str]] = {}
+    if path is None or not path.is_file():
+        return out
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:
+        return out
+    for idx, line in enumerate(lines):
+        text = str(line or "").strip()
+        if not text:
+            continue
+        token = text.split(None, 1)[0]
+        if token.startswith("n") and token[1:].isdigit():
+            label = text.split(None, 1)[1].strip() if len(text.split(None, 1)) > 1 else token
+            out[token] = (int(idx), label)
+    return out
+
+
+def _classification_rows_from_manifest(
+    manifest_path: Path,
+    *,
+    fallback_root: Path,
+) -> List[Dict[str, Any]]:
+    payload = _read_json_mapping(manifest_path)
+    if not payload:
+        return []
+
+    rows: List[Dict[str, Any]] = []
+    labels_meta = payload.get("labels") if isinstance(payload.get("labels"), dict) else {}
+    labels_path = _manifest_ref_path((labels_meta or {}).get("path"), manifest_path=manifest_path)
+    wnid_map = _synset_label_map(labels_path)
+
+    items = payload.get("items")
+    if isinstance(items, list):
+        root_raw = str(payload.get("root") or "").strip()
+        root = _manifest_ref_path(root_raw, manifest_path=manifest_path) if root_raw else fallback_root
+        root = root if root is not None else fallback_root
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            rel = str(item.get("relative_path") or item.get("image") or item.get("path") or "").strip()
+            if not rel:
+                continue
+            src = Path(rel)
+            if not src.is_absolute():
+                src = root / src
+            try:
+                src = src.resolve()
+            except Exception:
+                pass
+            # The content-addressed manifest was verified before workflow
+            # execution.  Do not stat all 50,000 ImageNet files merely to pick a
+            # 16-item Smoke subset; selected files are validated when linked.
+            if src.suffix.lower() not in _IMAGE_EXTS:
+                continue
+            class_name = str(item.get("class_name") or src.parent.name or "").strip()
+            label_id = item.get("label_id")
+            label_name = str(item.get("label_name") or "").strip() or None
+            if label_id is None and class_name in wnid_map:
+                label_id, mapped = wnid_map[class_name]
+                label_name = label_name or mapped
+            rows.append({
+                "src": src,
+                "sample_id": str(item.get("sample_id") or rel),
+                "class_name": class_name,
+                "label_id": (int(label_id) if label_id is not None else None),
+                "label_name": label_name or class_name or None,
+                "sha256": str(item.get("sha256") or ""),
+                "size_bytes": int(item.get("size_bytes") or 0),
+            })
+        return rows
+
+    samples = payload.get("samples") or payload.get("images")
+    if isinstance(samples, list):
+        for item in samples:
+            if isinstance(item, str):
+                item = {"image": item}
+            if not isinstance(item, dict):
+                continue
+            rel = str(item.get("image") or item.get("path") or item.get("file") or "").strip()
+            if not rel:
+                continue
+            src = Path(rel)
+            if not src.is_absolute():
+                src = manifest_path.parent / src
+            try:
+                src = src.resolve()
+            except Exception:
+                pass
+            if not src.is_file() or src.suffix.lower() not in _IMAGE_EXTS:
+                continue
+            class_name = str(item.get("class_name") or item.get("wnid") or src.parent.name or "").strip()
+            label_id = item.get("label_id", item.get("class_id"))
+            label_name = str(item.get("label_name") or item.get("label") or "").strip() or None
+            if label_id is None and class_name in wnid_map:
+                label_id, mapped = wnid_map[class_name]
+                label_name = label_name or mapped
+            rows.append({
+                "src": src,
+                "sample_id": str(item.get("sample_id") or item.get("source_image") or rel),
+                "class_name": class_name,
+                "label_id": (int(label_id) if label_id is not None else None),
+                "label_name": label_name or class_name or None,
+                "sha256": str(item.get("sha256") or ""),
+                "size_bytes": int(item.get("size_bytes") or 0),
+            })
+    return rows
+
+
+def _classification_rows_from_directory(source_root: Path) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    if not source_root.is_dir():
+        return rows
+    direct = [p for p in sorted(source_root.iterdir()) if p.is_file() and p.suffix.lower() in _IMAGE_EXTS]
+    if direct:
+        for src in direct:
+            rows.append({"src": src.resolve(), "sample_id": src.name, "class_name": "", "label_id": None, "label_name": None})
+        return rows
+    for class_dir in sorted((p for p in source_root.iterdir() if p.is_dir()), key=lambda p: p.name):
+        for src in sorted(class_dir.rglob("*")):
+            if src.is_file() and src.suffix.lower() in _IMAGE_EXTS:
+                rows.append({
+                    "src": src.resolve(),
+                    "sample_id": src.relative_to(source_root).as_posix(),
+                    "class_name": class_dir.name,
+                    "label_id": None,
+                    "label_name": class_dir.name,
+                })
+    return rows
+
+
+def _stable_row_key(row: Dict[str, Any], seed: int) -> str:
+    identity = str(row.get("sample_id") or row.get("src") or "")
+    return hashlib.sha256(f"{int(seed)}|{identity}".encode("utf-8")).hexdigest()
+
+
+def _select_classification_rows(rows: Sequence[Dict[str, Any]], max_images: int, seed: int) -> List[Dict[str, Any]]:
+    seq = [dict(row) for row in rows]
+    if max_images <= 0 or max_images >= len(seq):
+        return seq
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for row in seq:
+        key = str(row.get("class_name") or row.get("label_id") or "")
+        groups.setdefault(key, []).append(row)
+    if len(groups) > 1:
+        for values in groups.values():
+            values.sort(key=lambda row: _stable_row_key(row, seed))
+        class_names = sorted(groups, key=lambda name: hashlib.sha256(f"{seed}|class|{name}".encode("utf-8")).hexdigest())
+        out: List[Dict[str, Any]] = []
+        cursor = {name: 0 for name in class_names}
+        while len(out) < max_images:
+            progressed = False
+            for name in class_names:
+                idx = cursor[name]
+                if idx >= len(groups[name]):
+                    continue
+                out.append(groups[name][idx])
+                cursor[name] += 1
+                progressed = True
+                if len(out) >= max_images:
+                    break
+            if not progressed:
+                break
+        return out[:max_images]
+    return sorted(seq, key=lambda row: _stable_row_key(row, seed))[:max_images]
+
+
+def _hardlink_or_copy_file(src: Path, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists() or dst.is_symlink():
+        dst.unlink()
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def _materialized_subset_is_current(
+    dest_root: Path,
+    *,
+    resolved: Path,
+    manifest_path: Optional[Path],
+    selected: Sequence[Dict[str, Any]],
+    max_images: int,
+    selection_seed: int,
+) -> bool:
+    manifest = _read_json_mapping(dest_root / "manifest.json")
+    if not manifest:
+        return False
+    selection = manifest.get("selection") if isinstance(manifest.get("selection"), dict) else {}
+    expected_ids = [str(row.get("sample_id") or row.get("src") or "") for row in selected]
+    samples = manifest.get("samples") if isinstance(manifest.get("samples"), list) else []
+    actual_ids = [str(row.get("sample_id") or "") for row in samples if isinstance(row, dict)]
+    if str(manifest.get("source") or "") != str(resolved):
+        return False
+    if str(manifest.get("source_manifest") or "") != str(manifest_path or ""):
+        return False
+    if int(selection.get("seed") or -1) != int(selection_seed):
+        return False
+    if int(selection.get("requested_images") or -1) != int(max_images):
+        return False
+    if actual_ids != expected_ids:
+        return False
+    for sample in samples:
+        if not isinstance(sample, dict):
+            return False
+        rel = str(sample.get("image") or "").strip()
+        if not rel or not (dest_root / rel).is_file():
+            return False
+    return True
+
+
+def _existing_suite_subset_root(
+    suite_dir: Path,
+    resolved: Path,
+    *,
+    max_images: int,
+    selection_seed: int,
+) -> Optional[str]:
+    """Return an already materialised suite subset without nesting it again.
+
+    Suite refresh is intentionally repeatable and can run once per remote setup.
+    On the second refresh ``validation_images`` already points at the subset made
+    by the first refresh.  Treating that subset as a new source used to append
+    ``_n<k>_s<seed>`` on every pass and eventually left plan rows pointing at a
+    path that no longer existed.  The subset manifest is the provenance record;
+    the directory is the executable, labelled dataset source consumed by the
+    runner.
+    """
+
+    source = Path(resolved)
+    root = source.parent if source.is_file() and source.name == "manifest.json" else source
+    try:
+        suite = Path(suite_dir).resolve()
+        root = root.resolve()
+        rel = root.relative_to(suite)
+    except (OSError, ValueError):
+        return None
+    expected_parent = Path("resources") / "validation" / "classification"
+    if rel.parent != expected_parent or not root.is_dir():
+        return None
+    manifest = _read_json_mapping(root / "manifest.json")
+    if not manifest or str(manifest.get("source_type") or "") != "materialized_run_mode_subset":
+        return None
+    selection = manifest.get("selection") if isinstance(manifest.get("selection"), dict) else {}
+    samples = manifest.get("samples") if isinstance(manifest.get("samples"), list) else []
+    if (
+        int(selection.get("seed") or -1) != int(selection_seed)
+        or int(selection.get("requested_images") or -1) != int(max_images)
+        or int(selection.get("selected_images") or len(samples)) != len(samples)
+        or not samples
+    ):
+        return None
+    for sample in samples:
+        if not isinstance(sample, dict):
+            return None
+        image = str(sample.get("image") or "").strip()
+        if not image or not (root / image).is_file():
+            return None
+        # A materialised classification source is useful only when the label is
+        # explicit in the manifest or represented by its class directory.
+        if sample.get("label_id") is None and not str(sample.get("class_name") or "").strip():
+            return None
+    return rel.as_posix()
+
+
+def _materialize_classification_subset(
+    *,
+    suite_dir: Path,
+    resolved: Path,
+    requested: Any,
+    max_images: int,
+    selection_seed: int,
+    explicit_manifest: Any = None,
+    base_dir: Optional[Path] = None,
+) -> Optional[str]:
+    existing_subset = _existing_suite_subset_root(
+        suite_dir,
+        resolved,
+        max_images=int(max_images),
+        selection_seed=int(selection_seed),
+    )
+    if existing_subset:
+        return existing_subset
+
+    projection = project_classification_validation_subset(
+        resolved=resolved,
+        requested=requested,
+        max_images=int(max_images),
+        selection_seed=int(selection_seed),
+        explicit_manifest=explicit_manifest,
+        base_dir=base_dir,
+    )
+    if projection is None:
+        return None
+    manifest_path = projection["source_manifest"]
+    selected = projection["selected"]
+    payload = projection["manifest"]
+    dest_root_rel = projection["destination_relative"]
+    dest_root = Path(suite_dir).resolve() / dest_root_rel
+
+    # Several setup-local remote workers can refresh the same suite at once.
+    # Re-materialising the subset in each worker both races destructively and
+    # changes mtimes, which defeats the shared bundle cache.  Keep the operation
+    # process-atomic and reuse an already complete deterministic subset.
+    with _SUBSET_MATERIALIZE_LOCK:
+        if _materialized_subset_is_current(
+            dest_root,
+            resolved=resolved,
+            manifest_path=manifest_path,
+            selected=selected,
+            max_images=int(max_images),
+            selection_seed=int(selection_seed),
+        ):
+            return dest_root_rel.as_posix()
+
+        tmp_root = dest_root.with_name(
+            f".{dest_root.name}.tmp-{os.getpid()}-{threading.get_ident()}"
+        )
+        if tmp_root.exists():
+            shutil.rmtree(tmp_root)
+        (tmp_root / "images").mkdir(parents=True, exist_ok=True)
+
+        try:
+            for row, sample in zip(selected, payload["samples"]):
+                src = Path(row["src"])
+                dst = tmp_root / str(sample["image"])
+                _hardlink_or_copy_file(src, dst)
+            out_manifest = tmp_root / "manifest.json"
+            out_manifest.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            dest_root.parent.mkdir(parents=True, exist_ok=True)
+            if dest_root.exists():
+                shutil.rmtree(dest_root)
+            os.replace(tmp_root, dest_root)
+        finally:
+            if tmp_root.exists():
+                shutil.rmtree(tmp_root, ignore_errors=True)
+    return dest_root_rel.as_posix()
+
+
+def project_classification_validation_subset(
+    *,
+    resolved: Path,
+    requested: Any,
+    max_images: int,
+    selection_seed: int,
+    explicit_manifest: Any = None,
+    base_dir: Optional[Path] = None,
+) -> Optional[Dict[str, Any]]:
+    """Project the exact suite-local classification subset without writing it.
+
+    The Evaluation Workflow first selects a deterministic run-mode cohort and
+    then materialises the returned manifest and image paths into a portable
+    suite.  Keeping the selection and manifest construction in this pure helper
+    lets read-only provenance gates prove the future runtime cohort without
+    copying images, changing datasets, or maintaining a second implementation
+    of the selection algorithm.
+    """
+
+    resolved = Path(resolved).resolve()
+    manifest_path = _classification_manifest_path(
+        resolved,
+        explicit_manifest=explicit_manifest,
+        base_dir=base_dir,
+    )
+    source_root, _rel_inside = _dataset_root_for_source(resolved)
+    rows = (
+        _classification_rows_from_manifest(
+            manifest_path, fallback_root=source_root,
+        )
+        if manifest_path else []
+    )
+    if not rows:
+        rows = _classification_rows_from_directory(source_root)
+    selected = _select_classification_rows(
+        rows, int(max_images), int(selection_seed),
+    )
+    if not selected:
+        return None
+
+    preset = normalize_classification_validation_preset(requested)
+    base_name = preset or _safe_manifest_name(source_root.name)
+    suffix = f"_n{len(selected)}_s{int(selection_seed)}"
+    dest_name = _safe_manifest_name(base_name + suffix)
+    destination_relative = (
+        Path("resources") / "validation" / "classification" / dest_name
+    )
+
+    samples: List[Dict[str, Any]] = []
+    used_images: set[str] = set()
+    for idx, row in enumerate(selected):
+        src = Path(row["src"])
+        class_name = (
+            str(row.get("class_name") or "unlabeled").strip()
+            or "unlabeled"
+        )
+        safe_class = _safe_manifest_name(class_name)
+        file_name = src.name
+        relative_image = (
+            Path("images") / safe_class / file_name
+        ).as_posix()
+        if relative_image in used_images:
+            relative_image = (
+                Path("images") / safe_class / f"{idx:06d}_{file_name}"
+            ).as_posix()
+        used_images.add(relative_image)
+        sample: Dict[str, Any] = {
+            "image": relative_image,
+            "source_image": str(src),
+            "sample_id": str(row.get("sample_id") or src.name),
+            "class_name": class_name,
+        }
+        if row.get("label_id") is not None:
+            sample["label_id"] = int(row["label_id"])
+        if row.get("label_name"):
+            sample["label_name"] = str(row["label_name"])
+        if row.get("sha256"):
+            sample["source_sha256"] = str(row["sha256"])
+        if row.get("size_bytes"):
+            sample["source_size_bytes"] = int(row["size_bytes"])
+        samples.append(sample)
+
+    payload = {
+        "schema": "onnx-splitpoint/classification-validation-manifest",
+        "schema_version": 2,
+        "dataset": dest_name,
+        "source_type": "materialized_run_mode_subset",
+        "source": str(resolved),
+        "source_manifest": str(manifest_path or ""),
+        "selection": {
+            "type": "deterministic_class_stratified",
+            "seed": int(selection_seed),
+            "requested_images": int(max_images),
+            "selected_images": len(samples),
+            "source_population": len(rows),
+        },
+        "samples": samples,
+    }
+    return {
+        "manifest": payload,
+        "selected": selected,
+        "source_manifest": manifest_path,
+        "source_root": source_root,
+        "destination_relative": destination_relative,
+    }
+
+
 def provision_classification_validation_source_to_suite(
     suite_dir: Path,
     requested: Any,
     *,
     base_dir: Optional[Path] = None,
+    max_images: int = 0,
+    manifest_path: Any = None,
+    selection_seed: int = 20260710,
 ) -> Optional[str]:
+    """Provision a self-contained classification validation source.
+
+    Positive ``max_images`` values materialise only the effective run-mode
+    subset.  This is the important distinction between a registered source
+    dataset and the suite-local transport payload: a 16-image Smoke run must
+    never copy/package all 50,000 ImageNet validation files.
+    """
     resolved = resolve_classification_validation_source(requested, base_dir=base_dir)
     if resolved is None:
         return None
+    if int(max_images or 0) > 0:
+        subset = _materialize_classification_subset(
+            suite_dir=Path(suite_dir),
+            resolved=resolved,
+            requested=requested,
+            max_images=int(max_images),
+            selection_seed=int(selection_seed),
+            explicit_manifest=manifest_path,
+            base_dir=base_dir,
+        )
+        if subset:
+            return subset
+
     source_root, rel_inside = _dataset_root_for_source(resolved)
     preset = normalize_classification_validation_preset(requested)
     dest_name = preset or _safe_manifest_name(source_root.name)
@@ -236,15 +757,15 @@ def provision_classification_validation_source_to_suite(
             if dest_root.exists():
                 shutil.rmtree(dest_root)
             shutil.copytree(source_root, dest_root)
-        if rel_inside == Path(""):
-            return dest_root_rel.as_posix()
-        return (dest_root_rel / rel_inside).as_posix()
+        # Always hand the executable dataset root to the benchmark runner.  It
+        # discovers ``manifest.json`` inside that directory and therefore keeps
+        # labels and paths relative to one stable root.  Returning the manifest
+        # itself made other consumers treat a JSON file as an image directory.
+        return dest_root_rel.as_posix()
     dest_root.mkdir(parents=True, exist_ok=True)
     dst_file = dest_root / source_root.name
     shutil.copy2(source_root, dst_file)
-    if rel_inside == Path(""):
-        return (dest_root_rel / source_root.name).as_posix()
-    return (dest_root_rel / rel_inside).as_posix()
+    return dest_root_rel.as_posix()
 
 
 def _load_imagenet_labels() -> List[str]:

@@ -9,6 +9,7 @@ campaigns.
 """
 
 import json
+import copy
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,10 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import yaml
 from jsonschema import Draft202012Validator
+
+from ..run_modes import apply_run_mode
+from ..config_values import validate_profile_config_booleans
+from ..workflow.start_snapshot import build_profile_start_snapshot
 
 _PROFILE_ALIASES = {
     'final': 'final_splitpoint_evaluation_v1',
@@ -31,6 +36,32 @@ _PROFILE_ALIASES = {
     'smoke_regression_v1': 'smoke_regression_v1',
     'smoke_regression_evaluation_v1': 'smoke_regression_v1',
     'regression': 'smoke_regression_v1',
+    'native_smoke': 'native_resnet_yolo26s_hailo8_smoke_v1',
+    'native-hailo8-smoke': 'native_resnet_yolo26s_hailo8_smoke_v1',
+    'resnet_yolo_native_smoke': 'native_resnet_yolo26s_hailo8_smoke_v1',
+    'resnet_yolo26s_native': 'native_resnet_yolo26s_hailo8_smoke_v1',
+    'resnet_yolo26s_hailo8_native': 'native_resnet_yolo26s_hailo8_smoke_v1',
+    'thesis_native_smoke': 'native_resnet_yolo26s_hailo8_smoke_v1',
+    'native_resnet_yolo26s_hailo8_smoke_v1': 'native_resnet_yolo26s_hailo8_smoke_v1',
+    'cache_verify': 'cache_verify_resnet50_b052_hailo8',
+    'cache_verify_hailo8': 'cache_verify_resnet50_b052_hailo8',
+    'cache_verify_resnet50_b052_hailo8': 'cache_verify_resnet50_b052_hailo8',
+    'hailo10h_native_bringup': 'native_resnet_yolo26s_hailo10h_bringup_v1',
+    'native_hailo10h_bringup': 'native_resnet_yolo26s_hailo10h_bringup_v1',
+    'resnet_yolo26s_hailo10h_native': 'native_resnet_yolo26s_hailo10h_bringup_v1',
+    'native_resnet_yolo26s_hailo10h_bringup_v1': 'native_resnet_yolo26s_hailo10h_bringup_v1',
+
+    'deepx_native_bringup': 'native_resnet_yolo26s_deepx_bringup_v1',
+    'native_deepx_bringup': 'native_resnet_yolo26s_deepx_bringup_v1',
+    'resnet_yolo26s_deepx_native': 'native_resnet_yolo26s_deepx_bringup_v1',
+    'native_resnet_yolo26s_deepx_bringup_v1': 'native_resnet_yolo26s_deepx_bringup_v1',
+    'scientific': 'thesis_scientific_reporting_v1',
+    'scientific_reporting': 'thesis_scientific_reporting_v1',
+    'thesis_scientific': 'thesis_scientific_reporting_v1',
+    'thesis_scientific_reporting_v1': 'thesis_scientific_reporting_v1',
+    'final_campaign': 'thesis_final_campaign_v1',
+    'thesis_final_campaign': 'thesis_final_campaign_v1',
+    'thesis_final_campaign_v1': 'thesis_final_campaign_v1',
 }
 
 
@@ -40,6 +71,8 @@ class LoadedEvaluationProfile:
     profile_path: str
     source: str
     raw_profile: Dict[str, Any]
+    source_profile: Optional[Dict[str, Any]] = None
+    start_snapshot: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -123,19 +156,60 @@ def normalize_evaluation_profile_request(value: Any) -> str:
     return _PROFILE_ALIASES.get(tok, tok)
 
 
-def list_available_evaluation_profiles(base_dir: Optional[Path] = None) -> List[str]:
-    root = Path(base_dir or evaluation_profile_default_root())
-    names: List[str] = []
-    if root.is_dir():
-        for p in sorted(root.glob('*.yml')) + sorted(root.glob('*.yaml')):
-            names.append(normalize_evaluation_profile_request(p.stem))
-    out: List[str] = []
+def _evaluation_profile_search_roots(base_dir: Optional[Path] = None) -> List[Path]:
+    """Return profile lookup roots in priority order.
+
+    Built-in profiles live in resources/evaluation_profiles, while user/project
+    profiles are commonly stored in ./profiles next to start_gui.sh.  Earlier
+    versions only listed the built-ins, which made the GUI combobox look stale
+    and caused saved project profiles such as BiggerSet.yaml to disappear after
+    restart.
+    """
+    roots: List[Path] = []
+    if base_dir is not None:
+        roots.append(Path(base_dir).expanduser())
+    cwd_profiles = Path.cwd() / 'profiles'
+    package_project_profiles = Path(__file__).resolve().parents[2] / 'profiles'
+    roots.append(cwd_profiles)
+    roots.append(package_project_profiles)
+    roots.append(evaluation_profile_default_root())
+    out: List[Path] = []
     seen = set()
-    for name in names:
-        if name and name not in seen:
-            out.append(name)
-            seen.add(name)
+    for root in roots:
+        try:
+            rr = root.expanduser().resolve()
+        except Exception:
+            rr = root.expanduser()
+        key = str(rr)
+        if key not in seen:
+            out.append(rr)
+            seen.add(key)
     return out
+
+
+def list_available_evaluation_profiles(base_dir: Optional[Path] = None) -> List[str]:
+    values: List[str] = []
+    seen = set()
+    builtin_root = evaluation_profile_default_root().resolve()
+    for root in _evaluation_profile_search_roots(base_dir):
+        if not root.is_dir():
+            continue
+        for p in sorted(root.glob('*.yml')) + sorted(root.glob('*.yaml')):
+            try:
+                rp = p.resolve()
+            except Exception:
+                rp = p
+            if root.resolve() == builtin_root:
+                display = normalize_evaluation_profile_request(p.stem)
+            else:
+                # Use absolute paths for project/user profiles to avoid
+                # ambiguity with built-in aliases and to make resolution exact.
+                display = str(rp)
+            key = display
+            if display and key not in seen:
+                values.append(display)
+                seen.add(key)
+    return values
 
 
 def resolve_evaluation_profile_source(request: Any, *, base_dir: Optional[Path] = None) -> Optional[Path]:
@@ -145,16 +219,21 @@ def resolve_evaluation_profile_source(request: Any, *, base_dir: Optional[Path] 
     cand = Path(raw).expanduser()
     if cand.is_file():
         return cand.resolve()
-    root = Path(base_dir or evaluation_profile_default_root())
     tok = normalize_evaluation_profile_request(raw)
-    for ext in ('.yaml', '.yml'):
-        p = root / f'{tok}{ext}'
-        if p.is_file():
-            return p.resolve()
-    if root.is_dir():
-        for p in sorted(root.glob('*.yaml')) + sorted(root.glob('*.yml')):
-            if normalize_evaluation_profile_request(p.stem) == tok:
+    # Direct filename lookup in all known roots, preserving spaces/case when
+    # possible and falling back to normalized aliases.
+    for root in _evaluation_profile_search_roots(base_dir):
+        for ext in ('.yaml', '.yml'):
+            p = root / f'{raw}{ext}'
+            if p.is_file():
                 return p.resolve()
+            p = root / f'{tok}{ext}'
+            if p.is_file():
+                return p.resolve()
+        if root.is_dir():
+            for p in sorted(root.glob('*.yaml')) + sorted(root.glob('*.yml')):
+                if p.stem == raw or normalize_evaluation_profile_request(p.stem) == tok:
+                    return p.resolve()
     return None
 
 
@@ -185,11 +264,37 @@ def validate_evaluation_profile_payload(
     """
     source_label = str(source_path or source)
     data = dict(payload or {}) if isinstance(payload, Mapping) else {}
+    validate_profile_config_booleans(data)
     errors = sorted(_profile_validator().iter_errors(data), key=lambda e: list(e.path))
     if errors:
         head = '; '.join(_format_schema_error(e) for e in errors[:6])
         more = f' (+{len(errors) - 6} more)' if len(errors) > 6 else ''
         raise ValueError(f'Invalid evaluation profile {source_label}: {head}{more}')
+
+    # JSON Schema can validate both integer fields independently, but it
+    # cannot express this simple cross-field contract without duplicating the
+    # complete selection-policy schema.  A ranking audit cannot require more
+    # valid candidates than it requests.  Keep large audits legal (their
+    # resource feasibility is hardware/run dependent), but reject this
+    # intrinsically impossible contract at profile load/save time.
+    selection = (
+        data.get('selection_policy')
+        if isinstance(data.get('selection_policy'), Mapping)
+        else {}
+    )
+    if (
+        selection.get('audit_size') is not None
+        and selection.get('minimum_valid_audit_candidates') is not None
+    ):
+        audit_size = int(selection['audit_size'])
+        minimum_valid = int(selection['minimum_valid_audit_candidates'])
+        if minimum_valid > audit_size:
+            raise ValueError(
+                f'Invalid evaluation profile {source_label}: '
+                'selection_policy.minimum_valid_audit_candidates '
+                f'({minimum_valid}) must be <= selection_policy.audit_size '
+                f'({audit_size})'
+            )
     return data
 
 
@@ -211,6 +316,14 @@ def load_evaluation_profile(
     if src is None:
         return None
     raw = _load_yaml(src)
+    validate_profile_config_booleans(raw)
+    source_profile = copy.deepcopy(raw)
+    # v60n: profiles created by the simplified editor follow the central Tool
+    # Config run-mode registry.  Resolve the selected mode before schema
+    # validation and snapshot the exact effective settings into the loaded
+    # payload.  Legacy profiles without execution_preset remain unchanged.
+    if isinstance(raw.get("execution_preset"), Mapping):
+        raw, _run_mode_audit = apply_run_mode(raw)
     if validate:
         raw = validate_evaluation_profile_payload(raw, source=str(src), strict_external=strict_external)
     root = Path(base_dir or evaluation_profile_default_root()).resolve()
@@ -220,7 +333,26 @@ def load_evaluation_profile(
     except Exception:
         source = 'file'
     profile_id = str(raw.get('name') or src.stem).strip() or src.stem
-    loaded = LoadedEvaluationProfile(profile_id=profile_id, profile_path=str(src), source=source, raw_profile=raw)
+    start_snapshot = (
+        build_profile_start_snapshot(
+            profile_request=str(request or ""),
+            source_profile=source_profile,
+            resolved_profile=raw,
+            profile_id=profile_id,
+            profile_path=str(src),
+            profile_source=source,
+        )
+        if validate
+        else {}
+    )
+    loaded = LoadedEvaluationProfile(
+        profile_id=profile_id,
+        profile_path=str(src),
+        source=source,
+        raw_profile=raw,
+        source_profile=source_profile,
+        start_snapshot=start_snapshot,
+    )
     if strict_external is not None:
         return dict(loaded.raw_profile), SimpleNamespace(warnings=[])
     return loaded
@@ -228,6 +360,9 @@ def load_evaluation_profile(
 
 def save_evaluation_profile_yaml(path: str | Path, payload: Mapping[str, Any], *, validate: bool = True) -> Path:
     data = dict(payload or {}) if isinstance(payload, Mapping) else {}
+    validate_profile_config_booleans(data)
+    if isinstance(data.get("execution_preset"), Mapping):
+        data, _run_mode_audit = apply_run_mode(data)
     if validate:
         data = validate_evaluation_profile_payload(data, source=str(path))
     dst = Path(path).expanduser().resolve()
@@ -289,6 +424,9 @@ def _derive_run_flags(run_profiles: Sequence[Mapping[str, Any]]) -> Dict[str, An
     acc_h10 = False
     matrix_trt_to_hailo = False
     matrix_hailo_to_trt = False
+    matrix_deepx_to_trt = False
+    matrix_trt_to_deepx = False
+    acc_deepx = False
     needs_hailo_same_backend = False
     run_ids: List[str] = []
     for raw in list(run_profiles or []):
@@ -311,12 +449,19 @@ def _derive_run_flags(run_profiles: Sequence[Mapping[str, Any]]) -> Dict[str, An
             acc_h8 = True
         if any(tok.startswith('hailo10') for tok in hailo_tokens if tok):
             acc_h10 = True
+        deepx_tokens = {full, st1, st2, _norm_token(rid)}
+        if any(tok in {'deepx', 'deepx_m1', 'dx_m1', 'dxm1'} or tok.startswith('deepx') for tok in deepx_tokens if tok):
+            acc_deepx = True
         if typ == 'same_backend_reference' and any(tok.startswith('hailo') for tok in hailo_tokens if tok):
             needs_hailo_same_backend = True
         if st1 in {'tensorrt', 'trt'} and any(tok.startswith('hailo') for tok in (st2, full, _norm_token(rid)) if tok):
             matrix_trt_to_hailo = True
         if any(tok.startswith('hailo') for tok in (st1, full, _norm_token(rid)) if tok) and st2 in {'tensorrt', 'trt'}:
             matrix_hailo_to_trt = True
+        if st1 in {'deepx_m1', 'dx_m1', 'dxm1', 'deepx'} and st2 in {'tensorrt', 'trt'}:
+            matrix_deepx_to_trt = True
+        if st1 in {'tensorrt', 'trt'} and st2 in {'deepx_m1', 'dx_m1', 'dxm1', 'deepx'}:
+            matrix_trt_to_deepx = True
     hailo_preset = 'End-to-end compare' if needs_hailo_same_backend else 'Custom'
     return {
         'acc_cpu': bool(acc_cpu),
@@ -324,8 +469,11 @@ def _derive_run_flags(run_profiles: Sequence[Mapping[str, Any]]) -> Dict[str, An
         'acc_trt': bool(acc_trt),
         'acc_h8': bool(acc_h8),
         'acc_h10': bool(acc_h10),
+        'acc_deepx': bool(acc_deepx),
         'matrix_trt_to_hailo': bool(matrix_trt_to_hailo),
         'matrix_hailo_to_trt': bool(matrix_hailo_to_trt),
+        'matrix_deepx_to_trt': bool(matrix_deepx_to_trt),
+        'matrix_trt_to_deepx': bool(matrix_trt_to_deepx),
         'hailo_preset': hailo_preset,
         'hailo_custom_full': bool(needs_hailo_same_backend),
         'hailo_custom_composed': True,
@@ -355,6 +503,8 @@ def profile_model_entries(profile: Mapping[str, Any], *, include_reserve: bool =
         for item in list(suite.get(tier) or []):
             if isinstance(item, Mapping):
                 row = dict(item)
+                if item.get('enabled') is False:
+                    continue
             else:
                 row = {'id': str(item)}
             row.setdefault('id', str(row.get('id') or '').strip())
@@ -496,6 +646,19 @@ def resolve_evaluation_profile(
         pool_val = selection_policy.get('candidate_search_pool')
         if isinstance(pool_val, int):
             overrides['candidate_search_pool'] = int(pool_val)
+    if 'require_single_part2_input' in selection_policy:
+        overrides['require_single_part2_input'] = bool(
+            selection_policy.get('require_single_part2_input')
+        )
+    # v59s: pass the broad-evaluation candidate strategy through to the
+    # BenchmarkSet handoff.  Without this, the workflow can select stratified
+    # windows but the legacy suite generator may re-rank everything back into
+    # one local optimum.
+    for _strategy_key in ('selection_strategy', 'coverage_strategy'):
+        strategy_val = str(selection_policy.get(_strategy_key) or '').strip()
+        if strategy_val:
+            overrides['selection_strategy'] = strategy_val
+            break
     preflight_policy = str(selection_policy.get('full_model_hailo_preflight_policy') or '').strip()
     if preflight_policy:
         overrides['full_model_preflight_policy'] = preflight_policy
@@ -541,6 +704,8 @@ def profile_brief_text(resolved: Optional[EvaluationProfileResolution]) -> str:
         detail.append(f"cases={req}")
     if pref:
         detail.append(f"shortlist={pref}")
+    if bool(resolved.overrides.get("require_single_part2_input", False)):
+        detail.append("Part-2 inputs=1")
     tail = f" ({', '.join(detail)})" if detail else ''
     return f"Profile {resolved.profile_id} → {resolved.matched_model_id} [{resolved.matched_task}] · runs: {runs}{tail}"
 

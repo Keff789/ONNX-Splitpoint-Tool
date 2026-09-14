@@ -1,0 +1,59 @@
+{
+  "schema": "onnx-splitpoint/native-boundary-dump",
+  "schema_version": 2,
+  "seq": -1,
+  "image": "/home/nx/native_fifo_evalsets/paper_comparison_yolov7_b066_hailo8_native_full_energy_b500_20260827_110251/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+  "dump_inference_scope": "separate_bound_inference_after_measurement",
+  "file": "boundary.bin",
+  "dtype": "uint8",
+  "shape": [
+    1,
+    512,
+    80,
+    80
+  ],
+  "nbytes": 3276800,
+  "trt_input_name": "mul_20",
+  "trt_input_dtype": "uint8",
+  "trt_input_bytes": 3276800,
+  "boundary_shape_source": "tensorrt_input_binding",
+  "input_dump": "prepared_input.bin",
+  "input_name": "yolov7_paper_part1_b66/input_layer1",
+  "input_shape": [
+    640,
+    640,
+    3
+  ],
+  "preprocess": {
+    "task": "detection",
+    "mode": "letterbox",
+    "pad_value": 114,
+    "rgb": true
+  },
+  "input_image": "/home/nx/native_fifo_evalsets/paper_comparison_yolov7_b066_hailo8_native_full_energy_b500_20260827_110251/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+  "provenance": {
+    "image": "/home/nx/native_fifo_evalsets/paper_comparison_yolov7_b066_hailo8_native_full_energy_b500_20260827_110251/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+    "image_source": "exact_file",
+    "seq": -1,
+    "precision": "uint8_dequant_fp16"
+  },
+  "file_sha256": "feb8090973962b71c684d1312a2fbd6982e9dfe5ae6f84a66c82c52abea61029",
+  "file_size_bytes": 3276800,
+  "input_dump_sha256": "df599577640019eafdfad855df15b2059fd26f2f05c034b2726d318873708d9b",
+  "input_dump_size_bytes": 1228800,
+  "payload_artifacts": [
+    {
+      "role": "file",
+      "path": "boundary.bin",
+      "sha256": "feb8090973962b71c684d1312a2fbd6982e9dfe5ae6f84a66c82c52abea61029",
+      "size_bytes": 3276800
+    },
+    {
+      "role": "input_dump",
+      "path": "prepared_input.bin",
+      "sha256": "df599577640019eafdfad855df15b2059fd26f2f05c034b2726d318873708d9b",
+      "size_bytes": 1228800
+    }
+  ],
+  "payload_artifacts_sha256": "44e0e72ac3b92c640f3d994da58c3ae7fa7e57c3788cadacc4b385b583f45fe4"
+}

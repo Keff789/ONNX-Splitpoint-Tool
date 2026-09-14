@@ -1,0 +1,12 @@
+{
+  "run_id": "biggerset_20260910_094202",
+  "status": "collected",
+  "files_collected": 12,
+  "expected_files": 12,
+  "missing": [],
+  "scope": "existing_status_and_stdout_only",
+  "tests_started": 0,
+  "compiler_started": false,
+  "tool_imported": false,
+  "source_modified": false
+}

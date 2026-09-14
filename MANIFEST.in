@@ -1,0 +1,10 @@
+recursive-include onnx_splitpoint_tool/resources *
+recursive-include onnx_splitpoint_tool/runners/assets *
+recursive-include onnx_splitpoint_tool/runners/harness *.json *.txt
+include onnx_splitpoint_tool/wsl_inline_check
+include onnx_splitpoint_tool/wsl_inline_build_hef
+global-exclude __pycache__ *.py[cod] *.orig *.whl
+prune .pytest_cache
+
+recursive-include onnx_splitpoint_tool/resources *.yaml *.yml
+include scripts/provision_deepx_env.sh

@@ -223,22 +223,51 @@ def build_benchmark_artifact_manifest(base_dir: Path, *, extra_paths: Optional[I
         "analysis_tables": [],
         "schemas": [],
         "models": [],
+        "model_sidecars": [],
         "cases": [],
+        "hailo": [],
+        "deepx": [],
+        "native_trt": [],
+        "native_pipeline": [],
     }
     root_patterns = [
         'benchmark_set.json',
         'benchmark_plan.json',
         'benchmark_suite.py',
+        'scientific_reporter_v60.py',
         'README_BENCHMARK.txt',
         'benchmark_generation.log',
         'generation_state.json',
     ]
     for pat in root_patterns:
         files['root'].extend(_relative_paths(base_dir, base_dir.glob(pat)))
-    for sub in ('analysis_plots', 'analysis_tables', 'schemas', 'models'):
+    for sub in ('analysis_plots', 'analysis_tables', 'schemas', 'hailo', 'deepx', 'native_trt', 'native_pipeline'):
         subdir = base_dir / sub
         if subdir.exists():
+            # Keep the manifest descriptive; the actual remote bundler still has
+            # its own allowlist/exclusions.  Including accelerator artefact dirs
+            # here prevents downstream tooling from assuming the suite has no
+            # HEFs/engines just because they are outside b*/.
             files[sub] = _relative_paths(base_dir, [p for p in subdir.rglob('*') if p.is_file()])
+    models_dir = base_dir / 'models'
+    if models_dir.exists():
+        model_members = [
+            p for p in models_dir.rglob('*')
+            if p.is_file() and not p.is_symlink()
+        ]
+        # ``files.models`` is an executable-model identity projection, not a
+        # listing of every file stored beside the model.  Classification suites
+        # legitimately carry ``.categories.json`` and ``.export.json`` next to
+        # the ONNX file; mixing those sidecars into this field makes the exact
+        # one-model DeepX/source verifier reject an otherwise valid suite.
+        files['models'] = _relative_paths(
+            base_dir,
+            [p for p in model_members if p.suffix.lower() == '.onnx'],
+        )
+        files['model_sidecars'] = _relative_paths(
+            base_dir,
+            [p for p in model_members if p.suffix.lower() != '.onnx'],
+        )
     case_dirs = [p for p in base_dir.glob('b*') if p.is_dir()]
     files['cases'] = sorted(p.name for p in case_dirs)
     if extra_paths:
@@ -257,7 +286,12 @@ def build_benchmark_artifact_manifest(base_dir: Path, *, extra_paths: Optional[I
             'analysis_tables': len(files['analysis_tables']),
             'schemas': len(files['schemas']),
             'models': len(files['models']),
+            'model_sidecars': len(files['model_sidecars']),
             'cases': len(files['cases']),
+            'hailo': len(files.get('hailo', [])),
+            'deepx': len(files.get('deepx', [])),
+            'native_trt': len(files.get('native_trt', [])),
+            'native_pipeline': len(files.get('native_pipeline', [])),
         },
     }
 

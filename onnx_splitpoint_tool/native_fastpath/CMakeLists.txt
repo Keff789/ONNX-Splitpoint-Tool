@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.16)
+project(onnx_splitpoint_native_fifo LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+add_executable(hailo_trt_fifo_fastpath hailo_trt_fifo_fastpath.cpp)
+target_include_directories(hailo_trt_fifo_fastpath PRIVATE /usr/local/cuda/include /usr/include/aarch64-linux-gnu)
+target_link_directories(hailo_trt_fifo_fastpath PRIVATE /usr/local/cuda/lib64 /usr/lib/aarch64-linux-gnu)
+target_link_libraries(hailo_trt_fifo_fastpath PRIVATE hailort nvinfer nvinfer_plugin cudart pthread)

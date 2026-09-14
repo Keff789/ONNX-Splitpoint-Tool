@@ -1,0 +1,10 @@
+{
+  "version": "2.81",
+  "build_id": "v2.81-hailo-cold-preflight-shared-input-layout-terminal-status",
+  "baseline": "2.80.4",
+  "night": "completsetdev_20260912_213922",
+  "smoke": "v2804_night_smoke_r1_x12jzgo2",
+  "software_verification": "bundle/VERIFICATION_V281.json",
+  "hardware_execution": "NOT_RUN",
+  "quality_policy": "preserve_fixed_recipe_negative_results"
+}

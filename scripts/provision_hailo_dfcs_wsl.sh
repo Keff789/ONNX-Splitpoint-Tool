@@ -40,11 +40,16 @@ if [[ "${has_python}" -eq 0 ]]; then
   cand=""
   if [[ -n "${DFC_PYTHON:-}" ]]; then
     cand="${DFC_PYTHON}"
-  elif [[ -x "${REPO_ROOT}/.venv/bin/python" ]]; then
-    # Common when using uv: uv venv --python 3.10
-    cand="${REPO_ROOT}/.venv/bin/python"
   elif command -v python3.10 >/dev/null 2>&1; then
+    # Hailo DFC wheels are commonly cp310. Prefer this over the GUI .venv.
     cand="$(command -v python3.10)"
+  elif command -v python3.11 >/dev/null 2>&1; then
+    cand="$(command -v python3.11)"
+  elif [[ -x "${REPO_ROOT}/.venv/bin/python" ]]; then
+    # Last resort. The package will still validate wheel tags and rebuild venvs.
+    cand="${REPO_ROOT}/.venv/bin/python"
+  elif command -v python3.12 >/dev/null 2>&1; then
+    cand="$(command -v python3.12)"
   fi
 
   if [[ -n "${cand}" ]]; then

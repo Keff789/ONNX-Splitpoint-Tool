@@ -8,6 +8,7 @@ text content of a bundled template.
 from __future__ import annotations
 
 import atexit
+import importlib
 import shutil
 from contextlib import ExitStack, contextmanager
 from importlib import resources as importlib_resources
@@ -21,10 +22,21 @@ atexit.register(_RESOURCE_STACK.close)
 
 
 def _resource_ref(*parts: str):
-    ref = importlib_resources.files(_PACKAGE)
-    for part in parts:
-        ref = ref.joinpath(part)
-    return ref
+    files_api = getattr(importlib_resources, "files", None)
+    if files_api is not None:
+        ref = files_api(_PACKAGE)
+        for part in parts:
+            ref = ref.joinpath(part)
+        return ref
+    # Python 3.8 has no importlib.resources.files/as_file Traversable API.
+    # Normal wheel and source installs expose package resources as real files,
+    # so resolve them through the imported package without requiring a new
+    # dependency on the remote accelerator image.
+    package = importlib.import_module(_PACKAGE)
+    package_file = Path(str(getattr(package, "__file__", ""))).resolve()
+    if not package_file.is_file():
+        raise FileNotFoundError(f"package filesystem root unavailable for {_PACKAGE}")
+    return package_file.parent.joinpath(*parts)
 
 
 @contextmanager
@@ -36,15 +48,24 @@ def resource_path(*parts: str) -> Iterator[Path]:
     directly on disk.
     """
 
-    with importlib_resources.as_file(_resource_ref(*parts)) as p:
-        yield Path(p)
+    ref = _resource_ref(*parts)
+    as_file = getattr(importlib_resources, "as_file", None)
+    if isinstance(ref, Path) or as_file is None:
+        yield Path(ref)
+    else:
+        with as_file(ref) as p:
+            yield Path(p)
 
 
 
 def persistent_resource_path(*parts: str) -> Path:
     """Return a filesystem path that stays valid for the current process."""
 
-    return Path(_RESOURCE_STACK.enter_context(importlib_resources.as_file(_resource_ref(*parts))))
+    ref = _resource_ref(*parts)
+    as_file = getattr(importlib_resources, "as_file", None)
+    if isinstance(ref, Path) or as_file is None:
+        return Path(ref)
+    return Path(_RESOURCE_STACK.enter_context(as_file(ref)))
 
 
 

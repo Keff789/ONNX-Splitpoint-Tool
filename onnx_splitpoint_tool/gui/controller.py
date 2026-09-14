@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from ..resources_utils import copy_resource_tree, read_text
+from ..resources_utils import copy_resource_file, copy_resource_tree, read_text
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +62,27 @@ def write_benchmark_suite_script(dst_dir: str | Path, *, bench_json_name: str = 
             pass
         log.info("Wrote benchmark suite script: %s", script_path)
 
+    # v60: vendor the canonical scientific reporter next to benchmark_suite.py.
+    # This is refreshed independently from benchmark_suite.py so existing
+    # generated suites can receive reporting fixes without changing the main
+    # runner template.
+    reporter_path = dst_dir / "scientific_reporter_v60.py"
+    reporter = load_template_text("scientific_reporter_v60.py.txt")
+    reporter_changed = True
+    if reporter_path.exists():
+        try:
+            if reporter_path.read_text(encoding="utf-8") == reporter:
+                reporter_changed = False
+        except Exception:
+            pass
+    if reporter_changed:
+        reporter_path.write_text(reporter, encoding="utf-8")
+        try:
+            os.chmod(reporter_path, 0o755)
+        except Exception:
+            pass
+        log.info("Wrote scientific reporter companion: %s", reporter_path)
+
     # Phase-1: vendor the lightweight runner library into the suite root.
     # This must run even when benchmark_suite.py itself did not change,
     # because benchmark bundles for existing suites rely on the vendored
@@ -69,8 +90,24 @@ def write_benchmark_suite_script(dst_dir: str | Path, *, bench_json_name: str = 
     try:
         _copy_runner_lib(dst_dir)
     except Exception as e:
-        # Do not hard-fail suite generation if vendoring fails.
         log.warning("Could not copy runner lib into suite: %s: %s", type(e).__name__, e)
+    required_quality_first_runtime = (
+        dst_dir / "splitpoint_runners" / "native_split_quality_runtime.py",
+        dst_dir / "splitpoint_runners" / "native_split_quality.py",
+        dst_dir / "splitpoint_runners" / "native_command_contract.py",
+        dst_dir / "splitpoint_runners" / "native_trt_from_benchmarkset.py",
+        dst_dir / "splitpoint_runners" / "native_detection_postprocess.py",
+        dst_dir / "splitpoint_runners" / "native_full_input.py",
+        dst_dir / "splitpoint_runners" / "preprocessing_contract.py",
+    )
+    missing_quality_first_runtime = [
+        str(path) for path in required_quality_first_runtime if not path.is_file()
+    ]
+    if missing_quality_first_runtime:
+        raise RuntimeError(
+            "Generated BenchmarkSet lacks mandatory Quality-FIRST split runtime: "
+            + ", ".join(missing_quality_first_runtime)
+        )
 
     return str(script_path)
 
@@ -78,6 +115,43 @@ def write_benchmark_suite_script(dst_dir: str | Path, *, bench_json_name: str = 
 def _copy_runner_lib(suite_dir: Path) -> None:
     dst = suite_dir / "splitpoint_runners"
     copy_resource_tree("runners", dest=dst)
+    # The generated case runner executes from a self-contained suite archive.
+    # It cannot rely on the full ``onnx_splitpoint_tool`` package being installed
+    # on an accelerator host, but central-quality endpoint attestation must use
+    # exactly the same implementation as Native reporting.  Vendor the canonical
+    # module byte-for-byte instead of maintaining a second implementation.
+    copy_resource_file(
+        "native_output_endpoint.py",
+        dest=dst / "native_output_endpoint.py",
+    )
+    # Quality-FIRST split execution is performed inside the self-contained
+    # remote suite.  Vendor the canonical contract modules and the exact TRT
+    # builder so the remote producer cannot fall back to an older installed
+    # tool checkout.
+    copy_resource_file(
+        "native_command_contract.py",
+        dest=dst / "native_command_contract.py",
+    )
+    copy_resource_file(
+        "native_split_quality.py",
+        dest=dst / "native_split_quality.py",
+    )
+    copy_resource_file(
+        "native_detection_postprocess.py",
+        dest=dst / "native_detection_postprocess.py",
+    )
+    copy_resource_file(
+        "preprocessing_contract.py",
+        dest=dst / "preprocessing_contract.py",
+    )
+    copy_resource_file(
+        "runners", "native_split_quality_runtime.py",
+        dest=dst / "native_split_quality_runtime.py",
+    )
+    copy_resource_file(
+        "resources", "remote_scripts", "native_trt_from_benchmarkset.py",
+        dest=dst / "native_trt_from_benchmarkset.py",
+    )
 
 
 def _ignore_pycache(_dir: str, names: list[str]) -> set[str]:

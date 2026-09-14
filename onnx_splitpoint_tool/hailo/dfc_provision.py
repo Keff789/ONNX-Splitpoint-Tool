@@ -19,10 +19,12 @@ Notes
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
 import shutil
+import time
 import zipfile
 from email.parser import Parser
 from pathlib import Path
@@ -96,27 +98,34 @@ def _graphviz_dev_headers_present() -> bool:
 def _pick_venv_python(min_version: Tuple[int, int] = (3, 10)) -> str:
     """Pick a python executable suitable for creating the managed DFC venvs.
 
-    Hailo DFC wheels (3.33 / 5.2) pull in dependencies (e.g. jax) that require
-    Python >= 3.10. On many WSL distros, /usr/bin/python3 may still be 3.8.
+    Hailo DFC wheels (3.33 / 5.2) are Python-tagged. Prefer Python 3.10/3.11
+    over the GUI/repo interpreter: the GUI may run on Python 3.12/3.13 while
+    the bundled Hailo wheels are often cp310/cp311. The exact wheel tag is
+    checked again before installing and incompatible existing venvs are rebuilt.
     """
 
-    # 1) If the current interpreter is already new enough, prefer it.
-    if (sys.version_info.major, sys.version_info.minor) >= min_version:
-        return sys.executable
-
-    # 2) Otherwise look for common commands.
-    candidates = [
+    preferred = [
         "python3.10",
+        "python3.11",
+        "python3.12",
         "python3",
         "python",
     ]
-    for cand in candidates:
+    seen = set()
+    for cand in preferred:
         path = shutil.which(cand)
-        if not path:
+        if not path or path in seen:
             continue
+        seen.add(path)
         ver = _py_version(path)
         if ver and ver >= min_version:
             return path
+
+    # Last resort: current interpreter. Do not prefer it blindly because it may
+    # be too new for local Hailo wheels, but it is still valid when no dedicated
+    # python3.10/3.11 exists and wheel tags match.
+    if (sys.version_info.major, sys.version_info.minor) >= min_version:
+        return sys.executable
 
     raise RuntimeError(
         "Python >= 3.10 is required to provision the Hailo DFC venvs (DFC deps like jax have no wheels for Python 3.8).\n\n"
@@ -142,6 +151,143 @@ def _choose_dfc_wheel(wheels: List[Path]) -> Optional[Path]:
         if "dataflow" in p.name and "compiler" in p.name:
             return p
     return wheels[-1]
+
+
+def _wheel_python_versions(wheel_path: Path) -> List[Tuple[int, int]]:
+    """Return exact CPython versions encoded in a wheel filename.
+
+    Hailo DFC wheels are commonly tagged for one concrete ABI, e.g.
+    ``...-cp310-cp310-linux_x86_64.whl``. If the GUI runs under Python 3.12,
+    the managed DFC venv must still be created with Python 3.10 for that wheel.
+    An empty list means no exact CPython tag was inferred.
+    """
+    name = wheel_path.name
+    if not name.endswith(".whl"):
+        return []
+    stem = name[:-4]
+    parts = stem.rsplit("-", 3)
+    if len(parts) != 4:
+        return []
+    python_tag = parts[1]
+    out: List[Tuple[int, int]] = []
+    seen = set()
+    for tag in python_tag.split("."):
+        tag = tag.strip().lower()
+        if not tag.startswith("cp"):
+            continue
+        digits = tag[2:]
+        if not digits.isdigit() or len(digits) < 2:
+            continue
+        try:
+            ver = (int(digits[0]), int(digits[1:]))
+        except Exception:
+            continue
+        if ver not in seen:
+            seen.add(ver)
+            out.append(ver)
+    return out
+
+
+def _format_pyver(ver: Optional[Tuple[int, int]]) -> str:
+    return f"{ver[0]}.{ver[1]}" if ver else "not runnable"
+
+
+def _format_pyver_list(versions: List[Tuple[int, int]]) -> str:
+    return ", ".join(_format_pyver(v) for v in versions) if versions else "any compatible Python"
+
+
+def _find_python_matching(versions: List[Tuple[int, int]], fallback_python: str) -> Optional[str]:
+    """Find a runnable Python whose major/minor matches one of *versions*."""
+    if not versions:
+        return fallback_python
+    candidates: List[str] = []
+    env_py = (os.environ.get("DFC_PYTHON") or "").strip()
+    if env_py:
+        candidates.append(env_py)
+    candidates.extend([fallback_python, sys.executable])
+    for major, minor in versions:
+        candidates.extend([f"python{major}.{minor}", f"/usr/bin/python{major}.{minor}", f"/usr/local/bin/python{major}.{minor}"])
+    candidates.extend(["python3.12", "python3.11", "python3.10", "python3", "python"])
+    checked = set()
+    for cand in candidates:
+        if not cand:
+            continue
+        path = cand
+        if os.sep not in path:
+            found = shutil.which(path)
+            if not found:
+                continue
+            path = found
+        if path in checked:
+            continue
+        checked.add(path)
+        if _py_version(path) in versions:
+            return path
+    return None
+
+
+def _select_python_for_wheel(wheel_path: Path, requested_python: str, *, strict_python: bool = False) -> str:
+    required = _wheel_python_versions(wheel_path)
+    if not required:
+        return requested_python
+    requested_ver = _py_version(requested_python)
+    if requested_ver in required:
+        return requested_python
+    if strict_python:
+        raise RuntimeError(
+            f"Wheel {wheel_path.name} requires Python {_format_pyver_list(required)}, but selected Python is {_format_pyver(requested_ver)}."
+        )
+    found = _find_python_matching(required, requested_python)
+    if found:
+        return found
+    raise RuntimeError(
+        f"Wheel {wheel_path.name} requires Python {_format_pyver_list(required)}, but no matching Python executable was found. "
+        f"Selected/default Python was {_format_pyver(requested_ver)}. Install python{required[0][0]}.{required[0][1]} "
+        f"or set DFC_PYTHON=/path/to/python{required[0][0]}.{required[0][1]}."
+    )
+
+
+def _provision_status_path(venv_dir: Path) -> Path:
+    return venv_dir / "splitpoint_dfc_provision_status.json"
+
+
+def _write_provision_status(
+    venv_dir: Path,
+    *,
+    profile_id: str,
+    ok: bool,
+    status: str,
+    message: str,
+    wheel: Optional[Path] = None,
+    python_exe: str = "",
+    expected_python: Optional[Tuple[int, int]] = None,
+) -> None:
+    """Persist the last installer result inside the managed venv.
+
+    This lets the Hardware tab explain why a venv exists but hailo_sdk_client is
+    missing, instead of showing only ModuleNotFoundError.
+    """
+    try:
+        venv_dir.mkdir(parents=True, exist_ok=True)
+        py_ver = _py_version(str(python_exe)) if python_exe else None
+        payload = {
+            "profile_id": profile_id,
+            "ok": bool(ok),
+            "status": status,
+            "message": str(message or ""),
+            "wheel": str(wheel) if wheel is not None else "",
+            "wheel_name": wheel.name if wheel is not None else "",
+            "python_exe": str(python_exe or ""),
+            "python_version": _format_pyver(py_ver) if py_ver else "",
+            "expected_python": _format_pyver(expected_python) if expected_python else "",
+            "graphviz_headers_present": _graphviz_dev_headers_present(),
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        }
+        _provision_status_path(venv_dir).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
 
 
 def _extract_exact_pins_from_wheel(wheel_path: Path) -> List[str]:
@@ -362,6 +508,7 @@ def provision_profile(
     force_reinstall: bool = False,
     upgrade_onnx: bool = False,
     offline: bool = False,
+    strict_python: bool = False,
 ) -> Tuple[bool, str]:
     """Provision a single profile. Returns (ok, message)."""
 
@@ -380,6 +527,21 @@ def provision_profile(
     if wheel is None:
         return False, f"No .whl found in {wheel_dir} (expected a Hailo DFC wheel)."
 
+    required_python_versions = _wheel_python_versions(wheel)
+    expected_python = required_python_versions[0] if required_python_versions else None
+
+    try:
+        selected_python = _select_python_for_wheel(wheel, venv_python, strict_python=strict_python)
+        if selected_python != venv_python:
+            print(
+                f"[INFO] Wheel {wheel.name} requires Python {_format_pyver_list(required_python_versions)}; "
+                f"using {selected_python} instead of {venv_python} for this managed DFC venv.",
+                flush=True,
+            )
+        venv_python = selected_python
+    except Exception as e:
+        return False, f"Python/wheel compatibility failed for {profile.profile_id}: {type(e).__name__}: {e}"
+
     venv_activate = profile.wsl_venv_activate
     # Convert a tilde path to an absolute path on Linux.
     # (This script runs inside Linux/WSL, so ~ expansion is valid.)
@@ -396,23 +558,33 @@ def provision_profile(
 
         py = _venv_python(venv_dir)
         if not py.exists():
-            return False, f"Venv python not found at {py}"
+            msg = f"Venv python not found at {py}"
+            _write_provision_status(venv_dir, profile_id=profile.profile_id, ok=False, status="venv_python_missing", message=msg, wheel=wheel, python_exe=venv_python, expected_python=expected_python)
+            return False, msg
 
-        # Ensure the venv uses a sufficiently new python.
+        # Ensure the venv uses a sufficiently new and wheel-compatible python.
         ver = _py_version(str(py))
+        required_versions = required_python_versions
+        recreate_reason = ""
         if ver is not None and ver < (3, 10):
-            # Common when the first run was made with the default python3=3.8.
-            # Recreate the venv automatically to keep UX smooth.
+            recreate_reason = f"Python {ver[0]}.{ver[1]} is too old (<3.10)"
+        elif required_versions and ver is not None and ver not in required_versions:
+            recreate_reason = f"Python {ver[0]}.{ver[1]} does not match wheel tag ({_format_pyver_list(required_versions)})"
+        if recreate_reason:
             try:
-                print(f"[WARN] Existing venv for {profile.profile_id} uses Python {ver[0]}.{ver[1]} (<3.10). Recreating…", flush=True)
+                print(f"[WARN] Existing venv for {profile.profile_id} has incompatible {recreate_reason}. Recreating…", flush=True)
                 shutil.rmtree(venv_dir)
             except Exception as e:
-                return False, f"Venv python is too old ({ver[0]}.{ver[1]}). Could not remove {venv_dir}: {type(e).__name__}: {e}"
+                msg = f"Existing venv is incompatible ({recreate_reason}). Could not remove {venv_dir}: {type(e).__name__}: {e}"
+                _write_provision_status(venv_dir, profile_id=profile.profile_id, ok=False, status="venv_recreate_failed", message=msg, wheel=wheel, python_exe=venv_python, expected_python=expected_python)
+                return False, msg
 
             _run([venv_python, "-m", "venv", str(venv_dir)])
             py = _venv_python(venv_dir)
             if not py.exists():
-                return False, f"Venv python not found at {py} after recreate"
+                msg = f"Venv python not found at {py} after recreate"
+                _write_provision_status(venv_dir, profile_id=profile.profile_id, ok=False, status="venv_python_missing", message=msg, wheel=wheel, python_exe=venv_python, expected_python=expected_python)
+                return False, msg
 
         # Upgrade pip tooling.
         #
@@ -435,12 +607,16 @@ def provision_profile(
             except Exception as e:
                 return False, f"Failed to restore pkg_resources via setuptools<82: {type(e).__name__}: {e}"
 
-        # Preflight: ensure Graphviz development headers are available.
-        # Some DFC dependencies (pygraphviz) may need them at install time.
+        # Preflight: Graphviz development headers may be required by pygraphviz,
+        # but not by every DFC wheel/install path. Do not abort before the real
+        # Hailo DFC wheel install; if headers are truly required, pip will fail
+        # with a concrete pygraphviz build error.
         if not _graphviz_dev_headers_present():
-            return False, (
-                "Missing Graphviz development headers (graphviz/cgraph.h). "
-                "On Ubuntu/Debian install: sudo apt update && sudo apt install -y graphviz libgraphviz-dev pkg-config build-essential"
+            print(
+                "[WARN] Missing Graphviz development headers (graphviz/cgraph.h). "
+                "Continuing with DFC wheel installation. If pip later fails while building pygraphviz, install: "
+                "sudo apt update && sudo apt install -y graphviz libgraphviz-dev pkg-config build-essential",
+                flush=True,
             )
 
         # Install wheel (offline, from directory)
@@ -449,7 +625,7 @@ def provision_profile(
             pip_cmd += ["--force-reinstall"]
 
         # Prefer local wheels, but allow pip index downloads unless --offline is set.
-        pip_cmd += ["--find-links", str(wheel_dir)]
+        pip_cmd += ["--prefer-binary", "--find-links", str(wheel_dir)]
         if offline:
             pip_cmd += ["--no-index"]
         pip_cmd += [str(wheel)]
@@ -458,9 +634,22 @@ def provision_profile(
         cmd_s = " ".join(map(str, getattr(e, "cmd", []) or []))
         if not cmd_s:
             cmd_s = "<unknown command>"
-        return False, f"Command failed (rc={getattr(e, 'returncode', '?')}): {cmd_s}\nSee provisioning logs for details."
+        msg = f"Command failed (rc={getattr(e, 'returncode', '?')}): {cmd_s}\nSee provisioning logs for details."
+        if (not _graphviz_dev_headers_present()) and ("pip install" in cmd_s or "-m pip" in cmd_s or " pip " in cmd_s):
+            msg += (
+                "\n\nGraphviz development headers are missing. If the log mentions pygraphviz, install system packages first:\n"
+                "  sudo apt update && sudo apt install -y graphviz libgraphviz-dev pkg-config build-essential"
+            )
+        if expected_python is not None:
+            cur = _py_version(venv_python)
+            if cur != expected_python:
+                msg += f"\n\nSelected Python is {_format_pyver(cur)}; wheel appears to require cp{expected_python[0]}{expected_python[1]}. Install/pass a matching Python."
+        _write_provision_status(venv_dir, profile_id=profile.profile_id, ok=False, status="command_failed", message=msg, wheel=wheel, python_exe=venv_python, expected_python=expected_python)
+        return False, msg
     except Exception as e:
-        return False, f"Provisioning failed: {type(e).__name__}: {e}"
+        msg = f"Provisioning failed: {type(e).__name__}: {e}"
+        _write_provision_status(venv_dir, profile_id=profile.profile_id, ok=False, status="exception", message=msg, wheel=wheel, python_exe=venv_python, expected_python=expected_python)
+        return False, msg
 
     # Write a constraints file based on exact pins inside the DFC wheel.
     # Additionally, we pin a few fragile runtime deps (onnx/protobuf/ml-dtypes)
@@ -574,9 +763,18 @@ def provision_profile(
             env=_clean_env(),
         ).strip()
     except subprocess.CalledProcessError as e:
-        return False, f"pip check failed for {profile.profile_id}:\n{e.output}"
-    if chk:
-        return False, f"pip check reported dependency issues for {profile.profile_id}:\n{chk}"
+        msg = f"pip check failed for {profile.profile_id}:\n{e.output}"
+        _write_provision_status(venv_dir, profile_id=profile.profile_id, ok=False, status="pip_check_failed", message=msg, wheel=wheel, python_exe=venv_python, expected_python=expected_python)
+        return False, msg
+    # Newer pip prints a success message on stdout ("No broken requirements found.")
+    # while still returning rc=0.  Treat that as success; older tool versions
+    # interpreted any stdout as an issue and left the venv in a false NOT READY
+    # state even though pip check was clean.
+    chk_norm = str(chk or "").strip().lower()
+    if chk and not ("no broken requirements found" in chk_norm and "requires" not in chk_norm and "incompatible" not in chk_norm):
+        msg = f"pip check reported dependency issues for {profile.profile_id}:\n{chk}"
+        _write_provision_status(venv_dir, profile_id=profile.profile_id, ok=False, status="pip_check_issues", message=msg, wheel=wheel, python_exe=venv_python, expected_python=expected_python)
+        return False, msg
 
     # Sanity import
     # Sanity import:
@@ -596,17 +794,19 @@ def provision_profile(
             input="y\n",
         ).strip()
     except Exception as e:
-        return False, f"Installed wheel but import failed: {type(e).__name__}: {e}"
+        msg = f"Installed wheel but import failed: {type(e).__name__}: {e}"
+        _write_provision_status(venv_dir, profile_id=profile.profile_id, ok=False, status="import_failed", message=msg, wheel=wheel, python_exe=venv_python, expected_python=expected_python)
+        return False, msg
 
-    return (
-        True,
-        f"OK: {profile.profile_id} (hailo_sdk_client / onnx / protobuf: {out})\n  venv: {venv_dir}\n  wheel: {wheel.name}",
-    )
-
+    msg = f"OK: {profile.profile_id} (hailo_sdk_client / onnx / protobuf: {out})\n  venv: {venv_dir}\n  wheel: {wheel.name}"
+    _write_provision_status(venv_dir, profile_id=profile.profile_id, ok=True, status="ready", message=msg, wheel=wheel, python_exe=venv_python, expected_python=expected_python)
+    return True, msg
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", action="store_true", help="List known profiles and exit")
+    ap.add_argument("--status", action="store_true", help="Show wheel/managed-venv readiness for all DFC profiles and exit")
+    ap.add_argument("--probe-import", action="store_true", help="With --status, also import hailo_sdk_client inside each managed venv")
     ap.add_argument("--all", action="store_true", help="Provision all profiles")
     ap.add_argument("--profile", action="append", default=None, help="Provision only this profile_id (repeatable)")
     ap.add_argument("--force-reinstall", action="store_true", help="Force reinstall the wheel into the venv")
@@ -626,7 +826,12 @@ def main() -> int:
         "--python",
         dest="python_exe",
         default=None,
-        help="Python executable (>=3.10) to use for venv creation. Useful with pyenv/uv on older WSL distros.",
+        help="Python executable (>=3.10) to use for venv creation. If the DFC wheel is tagged for another Python, the installer auto-selects a matching interpreter unless --strict-python is set.",
+    )
+    ap.add_argument(
+        "--strict-python",
+        action="store_true",
+        help="Fail instead of auto-selecting a Python matching the Hailo wheel tag.",
     )
 
     args = ap.parse_args()
@@ -657,6 +862,13 @@ def main() -> int:
             )
         return 0
 
+    if args.status:
+        from .dfc_env_status import format_status_text, inspect_profiles
+
+        statuses = inspect_profiles(probe_import=bool(getattr(args, "probe_import", False)))
+        print(format_status_text(probe_import=bool(getattr(args, "probe_import", False))))
+        return 0 if all(bool(s.get("ready")) for s in statuses) else 3
+
     wanted: List[str] = []
     if args.profile:
         wanted = [str(x).strip().lower() for x in args.profile if str(x).strip()]
@@ -680,6 +892,7 @@ def main() -> int:
             force_reinstall=bool(args.force_reinstall),
             upgrade_onnx=(bool(getattr(args, "upgrade_onnx", False)) and (not bool(getattr(args, "no_onnx_upgrade", False)))),
             offline=bool(args.offline),
+            strict_python=bool(getattr(args, "strict_python", False)),
         )
         print(msg)
         ok_all = ok_all and ok

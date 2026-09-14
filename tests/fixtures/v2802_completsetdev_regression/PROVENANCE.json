@@ -1,0 +1,299 @@
+{
+  "schema": "v2802-completsetdev-selective-fixtures/v1",
+  "source_archive_name": "completsetdev_20260910_133033_debug_pack(1).zip",
+  "source_archive_sha256": "b50fba19bad577f54f0f9b19b4609d6317b32841eb46275eab9297d236baae73",
+  "scope": "Historical v2.80.1 evidence; no new hardware execution.",
+  "original_members": [
+    {
+      "path": "quality_management/references/mobilenet_v3_large/management_cpu_reference_status.json",
+      "zip_member": "quality_management/references/mobilenet_v3_large/management_cpu_reference_status.json",
+      "size_bytes": 2616,
+      "sha256": "3a83a47cee0e6d72d5e037c7ffc122b916588189b0de14fab3830e99f4b10074",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "quality_management/references/mobilenet_v3_large/management_cpu_reference_stdout.txt",
+      "zip_member": "quality_management/references/mobilenet_v3_large/management_cpu_reference_stdout.txt",
+      "size_bytes": 1514,
+      "sha256": "1fd4929625b041a72a9c45bc571f4e467b2aefc05809c30ba08f90d669426a8c",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "quality_management/references/regnet_x_1_6gf/management_cpu_reference_status.json",
+      "zip_member": "quality_management/references/regnet_x_1_6gf/management_cpu_reference_status.json",
+      "size_bytes": 2592,
+      "sha256": "3e584b462547a77eca5f63bb4d47a27425a29cfdd63232f653071f01bcb8a63f",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "quality_management/references/regnet_x_1_6gf/management_cpu_reference_stdout.txt",
+      "zip_member": "quality_management/references/regnet_x_1_6gf/management_cpu_reference_stdout.txt",
+      "size_bytes": 1498,
+      "sha256": "1e58b91b732ef8fa42d78a29021f085f7d36f9073de3a39111a41f1c0728a5b3",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "quality_management/references/resnet50/management_cpu_reference_status.json",
+      "zip_member": "quality_management/references/resnet50/management_cpu_reference_status.json",
+      "size_bytes": 2556,
+      "sha256": "949928f045c9da053fba4888cfe0b9ff4555a637291a797fbf426e12b1452537",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "quality_management/references/resnet50/management_cpu_reference_stdout.txt",
+      "zip_member": "quality_management/references/resnet50/management_cpu_reference_stdout.txt",
+      "size_bytes": 1474,
+      "sha256": "6efd6a9387418a9febe61e614e4bce70c021093f403473648c04d8b36ad66231",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "quality_management/references/yolo11l/management_cpu_reference_status.json",
+      "zip_member": "quality_management/references/yolo11l/management_cpu_reference_status.json",
+      "size_bytes": 2550,
+      "sha256": "bfe656d298f636e758555ad3d9a4f5f973c98b71a2213f7ee10e0fa9f5654b38",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "quality_management/references/yolo11l/management_cpu_reference_stdout.txt",
+      "zip_member": "quality_management/references/yolo11l/management_cpu_reference_stdout.txt",
+      "size_bytes": 1470,
+      "sha256": "34bd210a615e036eb7004011c3f85bffcc0bec136e036e6caabf0997a88a4d99",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "quality_management/references/yolo26m/management_cpu_reference_status.json",
+      "zip_member": "quality_management/references/yolo26m/management_cpu_reference_status.json",
+      "size_bytes": 2550,
+      "sha256": "c2675b445c106355d6f814a003eeaa84ff787c2ba59e395035dc0cdeb10802a5",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "quality_management/references/yolo26m/management_cpu_reference_stdout.txt",
+      "zip_member": "quality_management/references/yolo26m/management_cpu_reference_stdout.txt",
+      "size_bytes": 1470,
+      "sha256": "1eddb29e3a736c803a59bd40a4d4cdcc65ccc6109f99f58398163df9fe093747",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "quality_management/references/yolo26s/management_cpu_reference_status.json",
+      "zip_member": "quality_management/references/yolo26s/management_cpu_reference_status.json",
+      "size_bytes": 2550,
+      "sha256": "c5e73005577715e3d1ce3ffb55ba27aa1d7c3c0b0d88dbd577efc6644bac974c",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "quality_management/references/yolo26s/management_cpu_reference_stdout.txt",
+      "zip_member": "quality_management/references/yolo26s/management_cpu_reference_stdout.txt",
+      "size_bytes": 1470,
+      "sha256": "3282e0642cd6eaaf3f6df430e1d8bae585606c980d9f8505285bc1071126ff8b",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "quality_management/references/yolov7_paper/management_cpu_reference_status.json",
+      "zip_member": "quality_management/references/yolov7_paper/management_cpu_reference_status.json",
+      "size_bytes": 2580,
+      "sha256": "e849fea1258cb6b1362b166934aeb20473c2fb96234f29badb12af9cf2aa1b4e",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "quality_management/references/yolov7_paper/management_cpu_reference_stdout.txt",
+      "zip_member": "quality_management/references/yolov7_paper/management_cpu_reference_stdout.txt",
+      "size_bytes": 1490,
+      "sha256": "512e6fe05a3612a641d1d71792af10e0d90cd797c493bd275ba656b73e4c35f9",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "native_producers/hailo8/mobilenet_v3_large/benchmark_set/benchmark_set.json",
+      "zip_member": "native_producers/hailo8/mobilenet_v3_large/benchmark_set/benchmark_set.json",
+      "size_bytes": 120947,
+      "sha256": "6332f8b1a1088d71227c66ba7d4b022b9eacedd78b4087bbb77efbab681ad259",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "models/mobilenet_v3_large/benchmark_set/legacy_suite/benchmark_plan.json",
+      "zip_member": "models/mobilenet_v3_large/benchmark_set/legacy_suite/benchmark_plan.json",
+      "size_bytes": 75535,
+      "sha256": "653986382ef62ce3e101f6627ae37f5b9d7ad984cb167e8d0301d266fe88b0d3",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "native_producers/hailo8/regnet_x_1_6gf/benchmark_set/benchmark_set.json",
+      "zip_member": "native_producers/hailo8/regnet_x_1_6gf/benchmark_set/benchmark_set.json",
+      "size_bytes": 120814,
+      "sha256": "6405586a5c9f61e36c7db6bf15c474c84762ec49b6687dd5d12f274b0be1010b",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "models/regnet_x_1_6gf/benchmark_set/legacy_suite/benchmark_plan.json",
+      "zip_member": "models/regnet_x_1_6gf/benchmark_set/legacy_suite/benchmark_plan.json",
+      "size_bytes": 75473,
+      "sha256": "1913807bde22edf91b7dd40956705f9e9d7e04905cc4163681aa22a7aeba840f",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "native_producers/hailo8/resnet50/benchmark_set/benchmark_set.json",
+      "zip_member": "native_producers/hailo8/resnet50/benchmark_set/benchmark_set.json",
+      "size_bytes": 120476,
+      "sha256": "b15ec5991e30377eb0053efd14c324b3c1c1d9f46f731fef4ac9d527d39a1176",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "models/resnet50/benchmark_set/legacy_suite/benchmark_plan.json",
+      "zip_member": "models/resnet50/benchmark_set/legacy_suite/benchmark_plan.json",
+      "size_bytes": 69029,
+      "sha256": "2266a9787bf5b7df2a9b1fdb208950be5a07496bcd6fa2c98ac3cabed29b6e3d",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "native_producers/hailo8/yolo11l/benchmark_set/benchmark_set.json",
+      "zip_member": "native_producers/hailo8/yolo11l/benchmark_set/benchmark_set.json",
+      "size_bytes": 125714,
+      "sha256": "17323ed16acb5e24d611108a9c537b97316a6f4abe3656101776f4ea567301ef",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "models/yolo11l/benchmark_set/legacy_suite/benchmark_plan.json",
+      "zip_member": "models/yolo11l/benchmark_set/legacy_suite/benchmark_plan.json",
+      "size_bytes": 72187,
+      "sha256": "0f869476bd761059e9f41afb3dee0a91b616cb049662bcfde92b8009458b0459",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "native_producers/hailo8/yolo26m/benchmark_set/benchmark_set.json",
+      "zip_member": "native_producers/hailo8/yolo26m/benchmark_set/benchmark_set.json",
+      "size_bytes": 143233,
+      "sha256": "b58cebc4960c125565776c9edeefd7c4dbd416a3387673c86498b818bbcd7cbc",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "models/yolo26m/benchmark_set/legacy_suite/benchmark_plan.json",
+      "zip_member": "models/yolo26m/benchmark_set/legacy_suite/benchmark_plan.json",
+      "size_bytes": 72181,
+      "sha256": "1429dfe494da3703c85fb5c85e0eddcfa9082a64f188856d9bf580d708fb12bb",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "native_producers/hailo8/yolo26s/benchmark_set/benchmark_set.json",
+      "zip_member": "native_producers/hailo8/yolo26s/benchmark_set/benchmark_set.json",
+      "size_bytes": 143129,
+      "sha256": "c512a66feea1a5f9274dda7ffec9d73b659052665c1d5aacf79903df7074c05d",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "models/yolo26s/benchmark_set/legacy_suite/benchmark_plan.json",
+      "zip_member": "models/yolo26s/benchmark_set/legacy_suite/benchmark_plan.json",
+      "size_bytes": 68409,
+      "sha256": "255088f4d23153d4faa9afac2b6a4344dc4ef1f9d1ca292a7e6a6300f43a8411",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "native_producers/hailo8/yolov7_paper/benchmark_set/benchmark_set.json",
+      "zip_member": "native_producers/hailo8/yolov7_paper/benchmark_set/benchmark_set.json",
+      "size_bytes": 122180,
+      "sha256": "268674470e885218cbad5e4ffe1aaaae2cbea8de7f8f8b324ecb109fbfb24791",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "models/yolov7_paper/benchmark_set/legacy_suite/benchmark_plan.json",
+      "zip_member": "models/yolov7_paper/benchmark_set/legacy_suite/benchmark_plan.json",
+      "size_bytes": 68474,
+      "sha256": "c297d021843092301cabdba70a410f6188572564a57da3af44401898ad92aa4b",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "reports/native_expected_matrix.json",
+      "zip_member": "reports/native_expected_matrix.json",
+      "size_bytes": 72712,
+      "sha256": "7809945a12fd50fa8b7a4aa9c48a0746bd614fdd3a12bef8039a711026cc5489",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "reports/result_dashboard.json",
+      "zip_member": "reports/result_dashboard.json",
+      "size_bytes": 606643,
+      "sha256": "5b5c203e8442fd2d399c22e99b7e5a71dce2a19a58d3283c5b6db25ff35f63de",
+      "copy_mode": "original_bytes"
+    },
+    {
+      "path": "reports/artifact_index_closure.json",
+      "zip_member": "reports/artifact_index_closure.json",
+      "size_bytes": 646,
+      "sha256": "a04f5c487314c8dce61c921399fbcb5601600a759acf0091a0973e87f5e662f8",
+      "copy_mode": "original_bytes"
+    }
+  ],
+  "derived_members": [
+    {
+      "path": "derived/original_index_records.json",
+      "zip_member": "artifact_index.json",
+      "source_member_sha256": "e7606fe1131cf020e7f44debf13052641b31655f27145fb2fae8cb26d9f3a164",
+      "selection": "/artifacts rows whose path is one of 14 original CPU diagnostics",
+      "copy_mode": "derived_json_subset",
+      "size_bytes": 5497,
+      "sha256": "3245221510821a1937031321f8ac613a70a9f85a8b1ee4f0554aab35fae0f083"
+    },
+    {
+      "path": "derived/central_quality_summary.json",
+      "zip_member": "quality_management/central_quality_summary.json",
+      "source_member_sha256": "919429320f1023d1dba695e8ac48479a274b17782b7235240a0dd54cd3a9f299",
+      "selection": "All root scalar fields and /results rows restricted to: eval_run_id,case_id,model_id,setup_id,source_setup_id,source_run_id,variant,status,schema,schema_version,execution_role,producer_binding_eligible,decision,technical_status,scientific_status,failure_stage,error,management_cpu_reference,source_request_sha256",
+      "copy_mode": "derived_json_subset",
+      "size_bytes": 164552,
+      "sha256": "92afa9d7f7814bb72227538d9167e6cb202962bc6e45bd0241a34108303fbcbe"
+    },
+    {
+      "path": "derived/native_producer_stage.json",
+      "zip_member": "reports/native_producer_stage.json",
+      "source_member_sha256": "bb3d3c693aad29ecedd3d6d6cbec8c8fb57b0e0520999fbf819b9af6a5101196",
+      "selection": "All root scalar fields; complete expected_native_rows, tensorrt_quality_first, blocked_native_rows, backends; backend_results excluding steps",
+      "copy_mode": "derived_json_subset",
+      "size_bytes": 68656,
+      "sha256": "1378466e179102baecb1f2cca834413e31c6998d11771ee02381d660cf213454"
+    },
+    {
+      "path": "derived/native_producer_summary.json",
+      "zip_member": "reports/native_producer_summary.json",
+      "source_member_sha256": "6f7cc30b91fab8032338876d44e769a293812ad6716c8404a1ab5cfaeb6db108",
+      "selection": "/schema, /schema_version; /rows restricted to: backend,model,case,precision,setup_id,comparison_backend,planned_native_identity,status,runtime_success,ok,failure_reason,failure_stage,status_detail,error,repetition_count_requested,repetition_count_attempted,repetition_count_valid,repetition_status,frames,completed_frames,requested_frames,repetition_records",
+      "copy_mode": "derived_json_subset",
+      "size_bytes": 325492,
+      "sha256": "f29d71ad17f706d7407b8d0b8f6c9ed0732f822f7937e35d17f0e0d4aae23b44"
+    },
+    {
+      "path": "derived/native_full_baseline_hailo8.json",
+      "zip_member": "native_producers/hailo8/analysis_tables/native_full_baseline_eval.json",
+      "source_member_sha256": "add4a7719de0ee8600a8146e65d04e2717ca0d9e143897a94b938435c3d4f8ae",
+      "selection": "/schema; /rows restricted to: backend,model,case,precision,setup_id,comparison_backend,planned_native_identity,status,runtime_success,ok,failure_reason,failure_stage,status_detail,error,repetition_count_requested,repetition_count_attempted,repetition_count_valid,repetition_status,frames,completed_frames,requested_frames,repetition_records; original complete repetition_records retained (not repetition_evidence duplicates)",
+      "copy_mode": "derived_json_subset",
+      "size_bytes": 106289,
+      "sha256": "d9875e1adacb48db2a070c873475960bf6787e1cc5914c290cc9016b4ca2e476"
+    },
+    {
+      "path": "derived/native_full_baseline_hailo10h.json",
+      "zip_member": "native_producers/hailo10h/analysis_tables/native_full_baseline_eval.json",
+      "source_member_sha256": "e17750e83b44814ec3ce963a4beb89f1d57d1f81d05f1876d8e43d18812c7747",
+      "selection": "/schema; /rows restricted to: backend,model,case,precision,setup_id,comparison_backend,planned_native_identity,status,runtime_success,ok,failure_reason,failure_stage,status_detail,error,repetition_count_requested,repetition_count_attempted,repetition_count_valid,repetition_status,frames,completed_frames,requested_frames,repetition_records; original complete repetition_records retained (not repetition_evidence duplicates)",
+      "copy_mode": "derived_json_subset",
+      "size_bytes": 105947,
+      "sha256": "e83efd88b05cd661156a4ecba743279daddcc8bdd0e462d59d886d095d8934f8"
+    },
+    {
+      "path": "derived/native_full_baseline_deepx.json",
+      "zip_member": "native_producers/deepx/analysis_tables/native_full_baseline_eval.json",
+      "source_member_sha256": "6dbaa70122230e9261f1e80bcf0758f025b9eca9476cd7bfb682cc55ba7f5f23",
+      "selection": "/schema; /rows restricted to: backend,model,case,precision,setup_id,comparison_backend,planned_native_identity,status,runtime_success,ok,failure_reason,failure_stage,status_detail,error,repetition_count_requested,repetition_count_attempted,repetition_count_valid,repetition_status,frames,completed_frames,requested_frames,repetition_records; original complete repetition_records retained (not repetition_evidence duplicates)",
+      "copy_mode": "derived_json_subset",
+      "size_bytes": 77152,
+      "sha256": "a6bebbd2e81cbcaec2abd43e8035e9c470a3138cc6dabfe10355cd8e06ecb64f"
+    },
+    {
+      "path": "derived/artifact_reuse_log_lines.json",
+      "zip_member": "evaluation_workflow.log",
+      "source_member_sha256": "34a439ecf5ba1ce045bda2c866ddf59a4878e9e8e2c8a719d80bdabe21491446",
+      "selection": "Original line text with 1-based line numbers; tokens: [build-result],[trt-cache] HIT,[deepx-cache],building Part1 DXNN,Part1 DXNN ready,part1 DXNN ready,KNOWN_INFEASIBLE (exact negative evidence reused),[deepx][part1][dxcom] b044:",
+      "copy_mode": "derived_json_subset",
+      "size_bytes": 49552,
+      "sha256": "cbeaf608bc4d315aecd21588c4c826ab7fe9f8bf5c4aa10719ccdef94ab6c5a1"
+    }
+  ]
+}

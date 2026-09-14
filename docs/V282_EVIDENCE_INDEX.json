@@ -1,0 +1,45 @@
+{
+  "version": "2.82",
+  "build_id": "v2.82-selected-energy-generic-roles-workspace-product-evidence",
+  "source_basis": "verified_v2.81_source_1933_members",
+  "original_replay": {
+    "native": {
+      "expected": 126,
+      "successful": 115,
+      "excluded": 6,
+      "blocked": 5,
+      "full_successful": 42
+    },
+    "quality": {
+      "completed": 150,
+      "pass": 81,
+      "fail": 46,
+      "inconclusive": 23,
+      "primary": 129,
+      "companion": 21
+    },
+    "generic": {
+      "excluded": 6,
+      "remaining_missing": 3,
+      "preserved_rows": 140
+    },
+    "energy": {
+      "full_checkpoint_imports_verified": 115,
+      "original_imported": 113,
+      "derived_imported": 115,
+      "new_measurements": 0
+    },
+    "full_quality": {
+      "repaired_bindings": 2,
+      "original_decisions": "fail_preserved"
+    }
+  },
+  "software_gate_report": "outer_bundle/VERIFICATION_V282.json",
+  "hardware_execution": "NOT_RUN",
+  "required_target_gates": [
+    "H8 three genuine misses with workspace",
+    "fresh-process warm cache hit after build",
+    "YOLOv7 four real boundaries with new decoder contract",
+    "H10 actual A-F endpoints; capture is not endpoint release"
+  ]
+}

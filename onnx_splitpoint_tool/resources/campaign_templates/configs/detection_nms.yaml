@@ -1,0 +1,17 @@
+locked: true
+contract_id: detection_nms_v2
+task: detection
+implementation: vendored_yolo_harness_with_local_fallback_v1
+score_threshold: 0.25
+confidence_threshold: 0.25
+iou_threshold: 0.45
+max_detections: 300
+class_aware: true
+class_agnostic: false
+multi_label: false
+canonical_record_endpoint: decoded_xyxy_score_class_detections
+canonical_coordinate_space: original_image_xyxy_pixels
+official_coco_max_detections: [1, 10, 100]
+note: >-
+  These are the fail-closed completed-endpoint values enforced by the runtime
+  quality contract for both yolo26s and yolov7_paper.

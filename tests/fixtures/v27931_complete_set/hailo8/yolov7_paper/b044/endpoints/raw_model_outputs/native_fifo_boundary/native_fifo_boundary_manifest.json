@@ -1,0 +1,59 @@
+{
+  "schema": "onnx-splitpoint/native-boundary-dump",
+  "schema_version": 2,
+  "dtype": "uint8",
+  "nbytes": 1638400,
+  "seq": 1099,
+  "trt_input_name": "cat_1",
+  "trt_input_dtype": "uint8",
+  "trt_input_bytes": 1638400,
+  "shape": [
+    1,
+    256,
+    80,
+    80
+  ],
+  "boundary_shape_source": "tensorrt_input_binding",
+  "dump_inference_scope": "separate_bound_inference_after_measurement",
+  "image": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+  "file": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolov7_paper/benchmark_set/native_pipeline/b044/hailo_to_trt/uint8_dequant_fp16/endpoints/raw_model_outputs/native_fifo_boundary/boundary_uint8.bin",
+  "input_dump": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolov7_paper/benchmark_set/native_pipeline/b044/hailo_to_trt/uint8_dequant_fp16/endpoints/raw_model_outputs/native_fifo_boundary/input_rgb_uint8.bin",
+  "input_shape_hwc": [
+    640,
+    640,
+    3
+  ],
+  "preprocess": {
+    "task": "detection",
+    "mode": "letterbox_rgb_uint8",
+    "pad_value": 114,
+    "rgb": true,
+    "ort_model_scale": "norm"
+  },
+  "input_image": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+  "provenance": {
+    "image": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+    "image_source": "exact_file",
+    "seq": 1099,
+    "precision": "uint8_dequant_fp16"
+  },
+  "file_sha256": "88e3b795ad78f482410f8194748a36bfab46791856d56ccb6906fc88ef52736e",
+  "file_size_bytes": 1638400,
+  "input_dump_sha256": "df599577640019eafdfad855df15b2059fd26f2f05c034b2726d318873708d9b",
+  "input_dump_size_bytes": 1228800,
+  "payload_artifacts": [
+    {
+      "role": "file",
+      "path": "boundary_uint8.bin",
+      "sha256": "88e3b795ad78f482410f8194748a36bfab46791856d56ccb6906fc88ef52736e",
+      "size_bytes": 1638400
+    },
+    {
+      "role": "input_dump",
+      "path": "input_rgb_uint8.bin",
+      "sha256": "df599577640019eafdfad855df15b2059fd26f2f05c034b2726d318873708d9b",
+      "size_bytes": 1228800
+    }
+  ],
+  "payload_artifacts_sha256": "f035400ed92dc231983960d376b840ce2d1e72a7243a7450c1bd94b86bc7eea5"
+}

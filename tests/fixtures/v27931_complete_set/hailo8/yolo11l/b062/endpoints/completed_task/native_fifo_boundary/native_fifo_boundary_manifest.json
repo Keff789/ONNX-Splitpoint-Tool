@@ -1,0 +1,59 @@
+{
+  "schema": "onnx-splitpoint/native-boundary-dump",
+  "schema_version": 2,
+  "seq": -1,
+  "image": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+  "dump_inference_scope": "separate_bound_inference_after_measurement",
+  "file": "boundary.bin",
+  "dtype": "uint8",
+  "shape": [
+    1,
+    256,
+    80,
+    80
+  ],
+  "nbytes": 1638400,
+  "trt_input_name": "/model.3/conv/Conv_output_0",
+  "trt_input_dtype": "uint8",
+  "trt_input_bytes": 1638400,
+  "boundary_shape_source": "tensorrt_input_binding",
+  "input_dump": "prepared_input.bin",
+  "input_name": "yolo11l_part1_b62/input_layer1",
+  "input_shape": [
+    640,
+    640,
+    3
+  ],
+  "preprocess": {
+    "task": "detection",
+    "mode": "letterbox",
+    "pad_value": 114,
+    "rgb": true
+  },
+  "input_image": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+  "provenance": {
+    "image": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+    "image_source": "exact_file",
+    "seq": -1,
+    "precision": "uint8_dequant_fp16"
+  },
+  "file_sha256": "37e607609a3bdecc66c507b29b8c7efbd3f680459c8eab97d6cedb10f765837d",
+  "file_size_bytes": 1638400,
+  "input_dump_sha256": "df599577640019eafdfad855df15b2059fd26f2f05c034b2726d318873708d9b",
+  "input_dump_size_bytes": 1228800,
+  "payload_artifacts": [
+    {
+      "role": "file",
+      "path": "boundary.bin",
+      "sha256": "37e607609a3bdecc66c507b29b8c7efbd3f680459c8eab97d6cedb10f765837d",
+      "size_bytes": 1638400
+    },
+    {
+      "role": "input_dump",
+      "path": "prepared_input.bin",
+      "sha256": "df599577640019eafdfad855df15b2059fd26f2f05c034b2726d318873708d9b",
+      "size_bytes": 1228800
+    }
+  ],
+  "payload_artifacts_sha256": "36a9d563c45ed2c342d5dba927a80eca7a151e3057f6040a771f31429ded6dec"
+}

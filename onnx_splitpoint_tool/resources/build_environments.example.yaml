@@ -1,0 +1,25 @@
+build_environments:
+  - id: hailo8_dfc_wsl
+    kind: hailo8_dfc
+    host: local
+    shell: wsl
+    workdir: /homes/kmika/hailo_builds
+    venv_activate: "source ~/.onnx_splitpoint_tool/hailo/venv_hailo8/bin/activate"
+    cache_dir: /homes/kmika/Models/BackendArtifacts/hailo
+
+  - id: hailo10_dfc_wsl
+    kind: hailo10_dfc
+    host: local
+    shell: wsl
+    workdir: /homes/kmika/hailo_builds
+    venv_activate: "source ~/.onnx_splitpoint_tool/hailo/venv_hailo10/bin/activate"
+    cache_dir: /homes/kmika/Models/BackendArtifacts/hailo
+
+  - id: deepx_dxcom_x86
+    kind: deepx_dxcom
+    host: local
+    shell: bash
+    dx_all_suite_root: ~/dx-all-suite
+    venv_activate: "source ~/dx-all-suite/dx-compiler/venv-dx-compiler-local/bin/activate"
+    runtime_venv_activate: "source ~/venvs/deepx-runtime/bin/activate"
+    cache_dir: ~/Models/BackendArtifacts/deepx

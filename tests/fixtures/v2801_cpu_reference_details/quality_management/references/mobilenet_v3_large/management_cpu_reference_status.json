@@ -1,0 +1,24 @@
+{
+  "case_id": "b135",
+  "cpu_threads": 4,
+  "created_at": "2026-09-10T09:51:24+02:00",
+  "duration_s": 2.376346,
+  "errors": [
+    "quality_reference_not_emitted"
+  ],
+  "execution_location": "central_management",
+  "include_in_latency_fps_energy": false,
+  "include_in_pareto": false,
+  "include_in_ranking": false,
+  "model_id": "mobilenet_v3_large",
+  "provider": "onnxruntime_cpu",
+  "reference_immutable": true,
+  "reference_storage": "immutable_source_contract",
+  "return_code": 1,
+  "schema": "onnx-splitpoint/management-cpu-reference-job",
+  "schema_version": 1,
+  "semantic_reference_only": true,
+  "source_contract_sha256": "sha256:2b712ed262e7e6d41238580a42ad8f8e09d37fcad6884e4fbfe2687529be4ef8",
+  "status": "failed",
+  "stdout_path": "/home/kmika/Models/EvaluationRuns/biggerset_20260910_094202/quality_management/references/mobilenet_v3_large/management_cpu_reference_stdout.txt"
+}

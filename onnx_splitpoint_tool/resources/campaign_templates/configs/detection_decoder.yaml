@@ -1,0 +1,50 @@
+locked: true
+contract_id: thesis_detection_decoder_matrix_v2
+task: detection
+contract_scope: evaluated_matrix
+adapter_id: vendored_yolo_harness_with_local_fallback_v1
+canonical_record_endpoint: decoded_xyxy_score_class_detections
+canonical_coordinate_space: original_image_xyxy_pixels
+class_count: 80
+confidence_threshold: 0.25
+models:
+  yolo26s:
+    source_endpoint_stage: decoded_nms
+    source_output_format: bn6_detections
+    source_output_names: [output0]
+    source_endpoint_semantics: bn6_detections
+    source_endpoint_is_raw: false
+    source_endpoint_has_integrated_nms: true
+    source_tensor_contract:
+      - name: output0
+        shape: [1, 300, 6]
+        record_format: xyxy_score_class
+    decoder_id: bn6_identity_to_canonical_records_v1
+  yolov7_paper:
+    source_endpoint_stage: raw_head
+    source_output_format: multiscale_head
+    source_output_names: [output, clone_1, clone_2]
+    source_endpoint_semantics: raw_multiscale_head
+    source_endpoint_is_raw: true
+    source_endpoint_has_integrated_nms: false
+    source_tensor_contract:
+      - name: output
+        shape: [1, 3, 80, 80, 85]
+      - name: clone_1
+        shape: [1, 3, 40, 40, 85]
+      - name: clone_2
+        shape: [1, 3, 20, 20, 85]
+    decoder_id: yolov7_paper_standard_anchor_classaware_nms_v2
+    model_sha256: 7a13e66f91047cce0e251c05f64159646847e842af31d60441c63dcdfad7825d
+    anchor_table_id: yolov7_paper_standard_anchors_640_v1
+    anchors_by_stride:
+      - stride: 8
+        anchors_wh: [[12, 16], [19, 36], [40, 28]]
+      - stride: 16
+        anchors_wh: [[36, 75], [76, 55], [72, 146]]
+      - stride: 32
+        anchors_wh: [[142, 110], [192, 243], [459, 401]]
+    activation_strategy: contract_bound_runtime_attested
+note: >-
+  One task-level artifact contains both exact model contracts so the existing
+  energy planner still resolves exactly one decoder artifact for detection.

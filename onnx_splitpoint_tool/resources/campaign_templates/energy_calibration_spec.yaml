@@ -1,0 +1,50 @@
+# Replace every TODO with values from the independently verified u.RECS
+# full-system input-channel calibration before generating the manifest.
+channel_id: urecs_fs_input
+scope: FS
+measurement_point: u.RECS board input before rail conversion
+sample_rate_hz: 2000
+locked: false
+
+sensor_chain:
+  shunt_ohm: TODO
+  amplifier: TODO
+  adc: TODO
+  adc_channel: TODO
+  firmware_version: TODO
+
+calibration:
+  model: affine
+  coefficients:
+    offset_raw: TODO
+    gain_si_per_raw: TODO
+  fitted_at: TODO
+  fitted_by: TODO
+  calibration_point_count: TODO
+
+verification:
+  independent: true
+  pass: false
+  sample_count: TODO
+  verified_at: TODO
+  verified_by: TODO
+  mean_absolute_relative_error_percent: TODO
+  maximum_absolute_relative_error_percent: TODO
+
+uncertainty:
+  confidence_level: 0.95
+  combined_relative_percent: TODO
+  expanded_relative_percent: TODO
+  components:
+    calibration_residual_percent: TODO
+    reference_instrument_percent: TODO
+    voltage_measurement_percent: TODO
+    timing_and_window_percent: TODO
+
+artifacts:
+  - id: calibration_points
+    kind: calibration_data
+    path: data/fs_input_calibration_points.csv
+  - id: independent_verification
+    kind: verification_data
+    path: data/fs_input_verification_points.csv

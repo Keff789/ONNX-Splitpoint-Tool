@@ -13,3 +13,5 @@ __all__ = [
     "ResolvedDfcRuntime",
     "get_dfc_manager",
 ]
+
+# Hailo DFC provisioning/status helpers are available via onnx_splitpoint_tool.hailo.dfc_env_status.

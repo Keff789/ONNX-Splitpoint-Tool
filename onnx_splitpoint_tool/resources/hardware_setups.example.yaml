@@ -1,0 +1,204 @@
+schema: onnx-splitpoint/hardware-setups
+schema_version: 2
+energy_defaults:
+  enabled: false
+  collector_binary: urecs-data-collector
+  power_calculations_binary: power_calculations
+  mode: fast_firmware
+  data_port: 3000
+  channel: 0
+  sample_rate: 2000
+  physical_scope: FS
+  window_label: command
+  environment: Jetson
+  pre_duration_s: 5
+  post_duration_s: 5
+  duration_margin_s: 1.0
+  power_estimated_duration_margin_s: 2.0
+  run_count: 3
+  keep_raw_parquet: true
+  postprocess_with_power_calculations: true
+  include_raw_parquet_in_debug_pack: false
+hardware_setups:
+- id: orin_nx_hailo8_01
+  label: Orin NX + Hailo-8
+  accelerator: hailo8
+  host:
+    address: ''
+    user: nx
+    port: 22
+    base_dir: ~/splitpoint_runs
+  runtime:
+    kind: hailort
+    provider: hailo8
+    venv: ~/venvs/splitpoint-hailo8/bin/activate
+    activate: source ~/venvs/splitpoint-hailo8/bin/activate
+    preflight:
+    - hailortcli scan
+    - python -c 'import hailo_platform; print("hailo OK")'
+  build:
+    kind: hailo_dfc
+    arch: hailo8
+    mode: reuse_and_build_missing
+    environment_id: hailo8_dfc_managed
+  energy:
+    enabled: false
+    urecs_address: ""
+    idle_baseline_w: null
+    accelerator_idle_w: null
+    full_system_current_scale_factor: null
+    full_system_current_scale_calibrated_at: ""
+    full_system_current_scale_calibration_evidence: ""
+    full_system_current_scale_calibration_sha256: ""
+    calibration_manifest: ""
+    calibration_sha256: ""
+  power_control:
+    enabled: true
+    udp_port: 3000
+    udp_terminator: lf
+    jetson_command: jetson
+    m2_command: m.2
+    full_system_calibration_load_settle_s: 5.0
+    full_system_calibration_minimum_delta_w: 2.0
+    full_system_calibration_max_point_spread_pct: 2.0
+    full_system_calibration_max_idle_drift_w: 0.5
+    full_system_calibration_min_factor: 0.90
+    full_system_calibration_max_factor: 1.10
+    full_system_calibration_reference_current_tolerance_pct: 10.0
+  tags:
+  - remote
+  - npu
+  - hailo
+  - hailo8
+- id: orin_nx_hailo10_01
+  label: Orin NX + Hailo-10
+  accelerator: hailo10
+  host:
+    address: ''
+    user: nx
+    port: 22
+    base_dir: ~/splitpoint_runs
+  runtime:
+    kind: hailort
+    provider: hailo10h
+    venv: ~/venvs/splitpoint-hailo10/bin/activate
+    activate: source ~/venvs/splitpoint-hailo10/bin/activate
+    preflight:
+    - hailortcli scan
+    - python -c 'import hailo_platform; print("hailo OK")'
+  build:
+    kind: hailo_dfc
+    arch: hailo10h
+    mode: reuse_and_build_missing
+    environment_id: hailo10_dfc_managed
+  energy:
+    enabled: false
+    urecs_address: ""
+    idle_baseline_w: null
+    accelerator_idle_w: null
+    full_system_current_scale_factor: null
+    full_system_current_scale_calibrated_at: ""
+    full_system_current_scale_calibration_evidence: ""
+    full_system_current_scale_calibration_sha256: ""
+    calibration_manifest: ""
+    calibration_sha256: ""
+  power_control:
+    enabled: true
+    udp_port: 3000
+    udp_terminator: lf
+    jetson_command: jetson
+    m2_command: m.2
+    full_system_calibration_load_settle_s: 5.0
+    full_system_calibration_minimum_delta_w: 2.0
+    full_system_calibration_max_point_spread_pct: 2.0
+    full_system_calibration_max_idle_drift_w: 0.5
+    full_system_calibration_min_factor: 0.90
+    full_system_calibration_max_factor: 1.10
+    full_system_calibration_reference_current_tolerance_pct: 10.0
+  tags:
+  - remote
+  - npu
+  - hailo
+  - hailo10
+- id: orin_nx_deepx_m1_01
+  label: Orin NX + DeepX DX-M1
+  accelerator: deepx_m1
+  host:
+    address: ''
+    user: nx
+    port: 22
+    base_dir: ~/splitpoint_runs
+  runtime:
+    kind: dxrt
+    provider: deepx_m1
+    venv: ~/venvs/deepx-runtime/bin/activate
+    activate: source ~/venvs/deepx-runtime/bin/activate
+    preflight:
+    - ls -l /dev/dxrt*
+    - dxrt-cli -s
+    - python -c 'from dx_engine import InferenceEngine; print("dx_engine OK")'
+  build:
+    kind: deepx_dxcom
+    mode: reuse_and_build_missing
+    environment_id: deepx_dxcom_x86
+  energy:
+    enabled: false
+    urecs_address: ""
+    idle_baseline_w: null
+    accelerator_idle_w: null
+    full_system_current_scale_factor: null
+    full_system_current_scale_calibrated_at: ""
+    full_system_current_scale_calibration_evidence: ""
+    full_system_current_scale_calibration_sha256: ""
+    calibration_manifest: ""
+    calibration_sha256: ""
+  power_control:
+    enabled: true
+    udp_port: 3000
+    udp_terminator: lf
+    jetson_command: jetson
+    m2_command: m.2
+    full_system_calibration_load_settle_s: 5.0
+    full_system_calibration_minimum_delta_w: 2.0
+    full_system_calibration_max_point_spread_pct: 2.0
+    full_system_calibration_max_idle_drift_w: 0.5
+    full_system_calibration_min_factor: 0.90
+    full_system_calibration_max_factor: 1.10
+    full_system_calibration_reference_current_tolerance_pct: 10.0
+  tags:
+  - remote
+  - npu
+  - deepx
+  - dx_m1
+hardware_groups:
+  all_accelerators:
+  - orin_nx_hailo8_01
+  - orin_nx_hailo10_01
+  - orin_nx_deepx_m1_01
+  hailo:
+  - orin_nx_hailo8_01
+  - orin_nx_hailo10_01
+  deepx:
+  - orin_nx_deepx_m1_01
+build_environments:
+- id: hailo8_dfc_managed
+  kind: hailo8_dfc
+  host: local
+  shell: bash
+  venv_activate: source ~/.onnx_splitpoint_tool/hailo/venv_hailo8/bin/activate
+  cache_dir: ~/Models/BackendArtifacts/hailo
+- id: hailo10_dfc_managed
+  kind: hailo10_dfc
+  host: local
+  shell: bash
+  venv_activate: source ~/.onnx_splitpoint_tool/hailo/venv_hailo10/bin/activate
+  cache_dir: ~/Models/BackendArtifacts/hailo
+- id: deepx_dxcom_x86
+  kind: deepx_dxcom
+  host: local
+  shell: bash
+  dx_all_suite_root: ~/dx-all-suite
+  venv_activate: source ~/dx-all-suite/dx-compiler/venv-dx-compiler-local/bin/activate
+  compiler_venv: ~/dx-all-suite/dx-compiler/venv-dx-compiler-local
+  runtime_venv: ~/venvs/deepx-runtime
+  cache_dir: ~/Models/BackendArtifacts/deepx

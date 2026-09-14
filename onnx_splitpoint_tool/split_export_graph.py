@@ -575,6 +575,83 @@ def cut_tensors_for_boundary(order: List[int], nodes: List[onnx.NodeProto], b: i
     return cut
 
 
+def part2_external_inputs_for_cut_tensors(
+    full_model: onnx.ModelProto,
+    cut_tensors: List[str],
+    *,
+    part2_output_names: Optional[List[str]] = None,
+) -> List[str]:
+    """Return the exact external inputs needed by the exported Part-2 graph.
+
+    This uses the same backward slice and external-input calculation as
+    :func:`split_model_on_cut_tensors`, but does not materialize or shape-infer
+    a submodel.  In particular, it includes original model inputs that are
+    still consumed on the right side; counting crossing tensors alone is not
+    sufficient for the selection constraint.
+    """
+
+    cut = [str(name) for name in list(cut_tensors or []) if str(name)]
+    if not cut:
+        return []
+    graph = full_model.graph
+    nodes_full = list(graph.node)
+    initializer_names = {item.name for item in graph.initializer}
+    original_inputs = [
+        item.name for item in graph.input if item.name not in initializer_names
+    ]
+    outputs = (
+        [str(name) for name in list(part2_output_names or []) if str(name)]
+        if part2_output_names is not None
+        else [item.name for item in graph.output]
+    )
+    required = _collect_required_node_indices(
+        nodes_full,
+        output_names=outputs,
+        stop_names=set(cut) | set(original_inputs),
+        initializer_names=initializer_names,
+    )
+    required_nodes = [nodes_full[index] for index in sorted(required)]
+    return _compute_external_inputs(required_nodes, initializer_names)
+
+
+def part2_external_inputs_for_boundary(
+    full_model: onnx.ModelProto,
+    order: List[int],
+    nodes: List[onnx.NodeProto],
+    boundary: int,
+    *,
+    part2_output_names: Optional[List[str]] = None,
+) -> List[str]:
+    """Return exact exported Part-2 inputs for a topological boundary."""
+
+    return part2_external_inputs_for_cut_tensors(
+        full_model,
+        cut_tensors_for_boundary(order, nodes, int(boundary)),
+        part2_output_names=part2_output_names,
+    )
+
+
+def part2_input_count_for_boundary(
+    full_model: onnx.ModelProto,
+    order: List[int],
+    nodes: List[onnx.NodeProto],
+    boundary: int,
+    *,
+    part2_output_names: Optional[List[str]] = None,
+) -> int:
+    """Return the exact number of external inputs of an exported Part-2."""
+
+    return len(
+        part2_external_inputs_for_boundary(
+            full_model,
+            order,
+            nodes,
+            boundary,
+            part2_output_names=part2_output_names,
+        )
+    )
+
+
 # --------------------------- Export: graph visualisation ---------------------------
 
 
@@ -1689,4 +1766,3 @@ def ensure_external_data_files(
 
 
 # ---------------------------- Optional: splitting validation & runners ----------------------------
-

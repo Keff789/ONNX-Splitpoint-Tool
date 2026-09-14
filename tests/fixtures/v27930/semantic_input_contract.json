@@ -1,0 +1,78 @@
+{
+  "input": {
+    "classification_preprocessing": "not_applicable",
+    "color_space": "RGB",
+    "contract_source": "task_bound_dxcom_image_loader_preprocessing",
+    "dtype": "uint8",
+    "embedded_numeric_path": "dxcom_div255_detection_default",
+    "layout": "HWC",
+    "letterbox_pad_value": 114,
+    "letterbox_pad_value_effective": 114,
+    "letterbox_pad_value_requested": 114,
+    "name": "images",
+    "normalization": "embedded_dxcom_preprocessing",
+    "preprocess_mode": "letterbox",
+    "preprocess_mode_effective": "letterbox",
+    "preprocess_mode_requested": "auto",
+    "shape": [
+      640,
+      640,
+      3
+    ],
+    "task": "detection"
+  },
+  "outputs": [
+    {
+      "contract_source": "runtime_report_or_model_output",
+      "dtype": "float32",
+      "name": "model_outputs",
+      "shape": null
+    }
+  ],
+  "source_onnx_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+  "model_id": "yolo11l",
+  "preprocessing_contract": {
+    "contract_sha256": "59d7c7aa7ff879883cb6bf94aa7fe0e1972ef39407eb4cf2a22ab066f6fd61f9",
+    "numeric_preprocessing": {
+      "build_onnx_adapter": {
+        "kind": "identity"
+      },
+      "dxcom_loader": {
+        "color_space": "RGB",
+        "letterbox_pad_value": 114,
+        "operations_contract": "letterbox_div255_bgr2rgb_transpose_expanddim",
+        "output_dtype": "float32",
+        "output_layout": "NCHW",
+        "scale_divisor": 255.0
+      },
+      "mode": "task_default_letterbox_scale_only",
+      "schema": "onnx-splitpoint/deepx-detection-preprocessing",
+      "schema_version": 1
+    },
+    "runtime_input": {
+      "classification_preprocessing": "not_applicable",
+      "color_space": "RGB",
+      "contract_source": "task_bound_dxcom_image_loader_preprocessing",
+      "dtype": "uint8",
+      "embedded_numeric_path": "dxcom_div255_detection_default",
+      "layout": "HWC",
+      "letterbox_pad_value": 114,
+      "letterbox_pad_value_effective": 114,
+      "letterbox_pad_value_requested": 114,
+      "name": "images",
+      "normalization": "embedded_dxcom_preprocessing",
+      "preprocess_mode": "letterbox",
+      "preprocess_mode_effective": "letterbox",
+      "preprocess_mode_requested": "auto",
+      "shape": [
+        640,
+        640,
+        3
+      ],
+      "task": "detection"
+    },
+    "schema": "onnx-splitpoint/deepx-full-preprocessing-contract",
+    "schema_version": 1,
+    "task": "detection"
+  }
+}

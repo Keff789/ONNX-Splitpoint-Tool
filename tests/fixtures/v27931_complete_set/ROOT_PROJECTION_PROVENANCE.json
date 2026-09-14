@@ -1,0 +1,80 @@
+{
+  "schema": "onnx-splitpoint/historical-root-projection-provenance",
+  "schema_version": 1,
+  "synthetic": false,
+  "source_archive": {
+    "path": "complete_set_20260907_161614_debug_pack.zip",
+    "sha256": "df0b40b33b29f47355f6b705c6b7957da9a114ed4b3bdc88c3b386edd0933a7d",
+    "size_bytes": 44293643
+  },
+  "original_files": {
+    "reports/native_producer_stage.json": {
+      "sha256": "a06f564466fa31bae64bdd41aaee3b3c9a3e8bb589df551f0c57ea94d6c1ea54",
+      "size_bytes": 6513568
+    },
+    "reports/native_producer_summary.json": {
+      "sha256": "4bdd9251b10b312d5a0ffad0b7ffd637bcb96b43bfb358cb6c79fb0ac8e268fc",
+      "size_bytes": 13290048
+    },
+    "reports/native_energy_measurements/native_producer_energy_results.json": {
+      "sha256": "10f964b0260acc0e9905d5f68089063854e4870bd81febc53fd1205af8aae279",
+      "size_bytes": 19908217
+    },
+    "profile_source.yaml": {
+      "sha256": "bf11a9c8b0abe293e66279f91631b2f2fe89b56ba27b80b3d842787d83ec6300",
+      "size_bytes": 22577
+    },
+    "profile.yaml": {
+      "sha256": "1ce089e6aef2816bbed8af394f400940a530e97c29ebbd60088fbc83f2e65169",
+      "size_bytes": 30352
+    }
+  },
+  "fixtures": {
+    "original_identity_projection.json": {
+      "sha256": "81164d3b45c9d7e38aa53d79e1a5adffabf8f06adfce2968787b4d396d8f442e",
+      "size_bytes": 152181,
+      "source_files": [
+        "reports/native_producer_stage.json",
+        "reports/native_producer_summary.json"
+      ],
+      "representation": "field_projection_of_original"
+    },
+    "original_energy_projection.json": {
+      "sha256": "fc013ea71092a77e571e9240143c34e2860fc585d1a09dd09a13896c89311254",
+      "size_bytes": 2733704,
+      "source_files": [
+        "reports/native_energy_measurements/native_producer_energy_results.json"
+      ],
+      "representation": "field_projection_of_original"
+    },
+    "original_source_profile.yaml": {
+      "sha256": "bf11a9c8b0abe293e66279f91631b2f2fe89b56ba27b80b3d842787d83ec6300",
+      "size_bytes": 22577,
+      "source_files": [
+        "profile_source.yaml"
+      ],
+      "representation": "byte_exact_original"
+    },
+    "original_resolved_profile.yaml": {
+      "sha256": "1ce089e6aef2816bbed8af394f400940a530e97c29ebbd60088fbc83f2e65169",
+      "size_bytes": 30352,
+      "source_files": [
+        "profile.yaml"
+      ],
+      "representation": "byte_exact_original"
+    }
+  },
+  "projection_notes": {
+    "identity": "Selected original rows, planned expected_native_rows and backend_results; retained numeric and identity values are unchanged. No new hardware results.",
+    "energy": "Selected original rows and embedded plan_payload; retained values, all 55 energy aggregates and all 165 repetition records are unchanged. Each excluded_rows identity is additionally copied into a nested row mapping from the same original backend/case/model/precision/setup_id/comparison_backend fields, when present; no field is inferred in this fixture.",
+    "profiles": "Byte-exact original profile_source.yaml and resolved profile.yaml, including original paths."
+  },
+  "excluded_payloads": [
+    "model and engine binaries",
+    "datasets",
+    "raw tensor payloads",
+    "raw Parquets",
+    "long transport logs"
+  ],
+  "verification_scope": "Shipped projection file hashes and recorded original-source hashes; omitted payloads are not verified by the offline replay, and this does not establish any new hardware or scientific claim."
+}

@@ -1,0 +1,775 @@
+{
+  "fixture_kind": "synthetic_regression_not_hardware_evidence",
+  "plan": [
+    [
+      4,
+      3,
+      2,
+      7,
+      3,
+      7,
+      3,
+      4
+    ],
+    [
+      1,
+      6,
+      3,
+      0,
+      7,
+      2,
+      6,
+      1
+    ],
+    [
+      3,
+      2,
+      4,
+      0,
+      0,
+      6,
+      7,
+      3
+    ],
+    [
+      2,
+      5,
+      0,
+      1,
+      4,
+      3,
+      0,
+      2
+    ],
+    [
+      5,
+      1,
+      1,
+      0,
+      3,
+      6,
+      2,
+      4
+    ],
+    [
+      2,
+      2,
+      7,
+      6,
+      2,
+      1,
+      0,
+      0
+    ],
+    [
+      3,
+      2,
+      6,
+      1,
+      2,
+      5,
+      0,
+      0
+    ],
+    [
+      4,
+      3,
+      2,
+      3,
+      7,
+      6,
+      1,
+      4
+    ],
+    [
+      5,
+      2,
+      1,
+      0,
+      1,
+      0,
+      5,
+      1
+    ],
+    [
+      3,
+      2,
+      2,
+      7,
+      7,
+      1,
+      7,
+      5
+    ],
+    [
+      6,
+      5,
+      0,
+      4,
+      1,
+      3,
+      5,
+      5
+    ],
+    [
+      3,
+      1,
+      0,
+      0,
+      4,
+      7,
+      0,
+      5
+    ],
+    [
+      5,
+      2,
+      2,
+      1,
+      4,
+      7,
+      5,
+      1
+    ],
+    [
+      4,
+      5,
+      5,
+      1,
+      3,
+      4,
+      0,
+      7
+    ],
+    [
+      1,
+      2,
+      7,
+      1,
+      6,
+      4,
+      5,
+      2
+    ],
+    [
+      6,
+      3,
+      0,
+      2,
+      4,
+      7,
+      4,
+      2
+    ],
+    [
+      2,
+      2,
+      2,
+      4,
+      6,
+      1,
+      6,
+      3
+    ],
+    [
+      1,
+      2,
+      5,
+      5,
+      7,
+      0,
+      2,
+      2
+    ],
+    [
+      6,
+      5,
+      5,
+      0,
+      7,
+      5,
+      1,
+      1
+    ],
+    [
+      1,
+      6,
+      6,
+      3,
+      2,
+      3,
+      4,
+      3
+    ],
+    [
+      2,
+      7,
+      5,
+      2,
+      1,
+      6,
+      6,
+      2
+    ],
+    [
+      3,
+      2,
+      7,
+      7,
+      4,
+      3,
+      3,
+      3
+    ],
+    [
+      3,
+      3,
+      1,
+      5,
+      1,
+      4,
+      3,
+      6
+    ],
+    [
+      7,
+      4,
+      0,
+      3,
+      2,
+      2,
+      4,
+      3
+    ],
+    [
+      3,
+      4,
+      3,
+      4,
+      0,
+      7,
+      2,
+      7
+    ],
+    [
+      2,
+      2,
+      0,
+      1,
+      0,
+      6,
+      5,
+      0
+    ],
+    [
+      7,
+      4,
+      2,
+      5,
+      0,
+      6,
+      0,
+      6
+    ],
+    [
+      2,
+      5,
+      2,
+      1,
+      4,
+      2,
+      4,
+      0
+    ],
+    [
+      5,
+      7,
+      3,
+      2,
+      3,
+      5,
+      1,
+      0
+    ],
+    [
+      7,
+      1,
+      2,
+      7,
+      0,
+      3,
+      5,
+      0
+    ],
+    [
+      4,
+      2,
+      3,
+      1,
+      0,
+      2,
+      7,
+      4
+    ],
+    [
+      6,
+      2,
+      7,
+      5,
+      4,
+      4,
+      7,
+      3
+    ],
+    [
+      0,
+      5,
+      3,
+      5,
+      1,
+      1,
+      0,
+      5
+    ],
+    [
+      6,
+      2,
+      2,
+      5,
+      4,
+      4,
+      2,
+      0
+    ],
+    [
+      3,
+      5,
+      4,
+      6,
+      3,
+      5,
+      0,
+      3
+    ],
+    [
+      2,
+      2,
+      3,
+      0,
+      6,
+      6,
+      6,
+      6
+    ],
+    [
+      1,
+      5,
+      5,
+      2,
+      0,
+      4,
+      5,
+      1
+    ]
+  ],
+  "request": {
+    "algorithm_version": "management_paired_quality_v2:classification-accuracy-v2",
+    "annotations": [
+      {
+        "image_id": 0,
+        "label_id": 0
+      },
+      {
+        "image_id": 1,
+        "label_id": 1
+      },
+      {
+        "image_id": 2,
+        "label_id": 2
+      },
+      {
+        "image_id": 3,
+        "label_id": 3
+      },
+      {
+        "image_id": 4,
+        "label_id": 4
+      },
+      {
+        "image_id": 5,
+        "label_id": 5
+      },
+      {
+        "image_id": 6,
+        "label_id": 6
+      },
+      {
+        "image_id": 7,
+        "label_id": 7
+      }
+    ],
+    "candidate_prediction_field": "candidate",
+    "candidate_records": [
+      {
+        "candidate": {
+          "top1_hit": true,
+          "top5_hit": true
+        },
+        "image_id": 0
+      },
+      {
+        "candidate": {
+          "top1_hit": true,
+          "top5_hit": true
+        },
+        "image_id": 1
+      },
+      {
+        "candidate": {
+          "top1_hit": true,
+          "top5_hit": true
+        },
+        "image_id": 2
+      },
+      {
+        "candidate": {
+          "top1_hit": true,
+          "top5_hit": true
+        },
+        "image_id": 3
+      },
+      {
+        "candidate": {
+          "top1_hit": true,
+          "top5_hit": true
+        },
+        "image_id": 4
+      },
+      {
+        "candidate": {
+          "top1_hit": false,
+          "top5_hit": true
+        },
+        "image_id": 5
+      },
+      {
+        "candidate": {
+          "top1_hit": true,
+          "top5_hit": true
+        },
+        "image_id": 6
+      },
+      {
+        "candidate": {
+          "top1_hit": false,
+          "top5_hit": true
+        },
+        "image_id": 7
+      }
+    ],
+    "confidence_level": 0.95,
+    "evaluator_factory": "onnx_splitpoint_tool.quality_metrics:classification_quality_evaluator",
+    "metric_gate_config": {
+      "guardrails": {
+        "top5_accuracy_margin": 0.01
+      },
+      "primary_metric": "top1_accuracy"
+    },
+    "non_inferiority_margin": 0.01,
+    "reference_prediction_field": "reference",
+    "reference_records": [
+      {
+        "image_id": 0,
+        "reference": {
+          "top1_hit": true,
+          "top5_hit": true
+        }
+      },
+      {
+        "image_id": 1,
+        "reference": {
+          "top1_hit": true,
+          "top5_hit": true
+        }
+      },
+      {
+        "image_id": 2,
+        "reference": {
+          "top1_hit": true,
+          "top5_hit": true
+        }
+      },
+      {
+        "image_id": 3,
+        "reference": {
+          "top1_hit": true,
+          "top5_hit": true
+        }
+      },
+      {
+        "image_id": 4,
+        "reference": {
+          "top1_hit": true,
+          "top5_hit": true
+        }
+      },
+      {
+        "image_id": 5,
+        "reference": {
+          "top1_hit": true,
+          "top5_hit": true
+        }
+      },
+      {
+        "image_id": 6,
+        "reference": {
+          "top1_hit": false,
+          "top5_hit": true
+        }
+      },
+      {
+        "image_id": 7,
+        "reference": {
+          "top1_hit": false,
+          "top5_hit": true
+        }
+      }
+    ],
+    "repetitions": 37,
+    "seed": 731
+  },
+  "result": {
+    "algorithm_version": "management_paired_quality_v2:classification-accuracy-v2",
+    "annotations_sha256": "56443ba24eb4dfdfbdffea19a40a2b9b6c6e352ed0c5d4b7f3fd0211e0926cfc",
+    "bootstrap_sharding": "contiguous_deterministic_resample_plan",
+    "bootstrap_workers_effective": 2,
+    "bootstrap_workers_requested": 2,
+    "cache_hit": false,
+    "candidate_execution_completion_contract_sha256": "",
+    "candidate_predictions_sha256": "f836c5dd0083ed19dff411e9443872be5d36b9ffff0146bf67828b0516b7719d",
+    "configured_guardrails": [
+      "top5_accuracy"
+    ],
+    "cpu_reference_include_in_latency_fps_energy": false,
+    "cpu_reference_include_in_pareto": false,
+    "cpu_reference_include_in_ranking": false,
+    "cpu_reference_semantic_only": true,
+    "decision": "inconclusive",
+    "evaluation_fingerprint": "fbe008c3edbd9b81729abcc19648a30fc8b9a55357ee354496f2b5b776c4e835",
+    "execution_device": "management_cpu",
+    "execution_location": "management_node",
+    "gpu_used": false,
+    "guardrail_contract_complete": true,
+    "guardrails": {
+      "top5_accuracy": {
+        "bootstrap_elapsed_s": 0.0,
+        "bootstrap_engine": "management_process_pool:onnx_splitpoint_tool.quality_metrics:classification_quality_evaluator",
+        "bootstrap_repetitions": 37,
+        "bootstrap_repetitions_requested": 37,
+        "bootstrap_skipped_reason": "",
+        "candidate": 1.0,
+        "candidate_hits": 8,
+        "ci_high": 0.0,
+        "ci_low": 0.0,
+        "decision": "pass",
+        "delta": 0.0,
+        "margin": 0.01,
+        "metric": "top5_accuracy",
+        "n": 8,
+        "point_estimate_comparison_basis": "integer_hit_counts",
+        "reference": 1.0,
+        "reference_hits": 8,
+        "sample_count": 8,
+        "status": "pass"
+      }
+    },
+    "n": 8,
+    "primary": {
+      "bootstrap_elapsed_s": 0.0,
+      "bootstrap_engine": "management_process_pool:onnx_splitpoint_tool.quality_metrics:classification_quality_evaluator",
+      "bootstrap_repetitions": 37,
+      "bootstrap_repetitions_requested": 37,
+      "bootstrap_skipped_reason": "",
+      "candidate": 0.75,
+      "candidate_hits": 6,
+      "ci_high": 0.25,
+      "ci_low": -0.2749999999999998,
+      "decision": "inconclusive",
+      "delta": 0.0,
+      "margin": 0.01,
+      "metric": "top1_accuracy",
+      "n": 8,
+      "point_estimate_comparison_basis": "integer_hit_counts",
+      "reference": 0.75,
+      "reference_hits": 6,
+      "sample_count": 8,
+      "status": "inconclusive"
+    },
+    "quality_result_contract_version": 2,
+    "reference_identity": null,
+    "reference_predictions_sha256": "709fa6b346c2ba50b2ce2b178e25ed21a8337c350c77d4bf2f4161fe7b34b1d0",
+    "request_id": "",
+    "schema": "onnx-splitpoint/management-paired-quality-result",
+    "schema_version": 1,
+    "seed_schema": {
+      "image_count": 8,
+      "repetitions": 37,
+      "schema": "numpy-pcg64-index-plan-v1",
+      "seed": 731
+    },
+    "status": "completed",
+    "status_name": "evaluate_paired_quality_uncertainty",
+    "worker_model": "process_pool"
+  },
+  "shards": [
+    {
+      "bootstrap": {
+        "guardrails.top5_accuracy": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "primary": [
+          0.0,
+          0.25,
+          0.125,
+          -0.125,
+          0.0,
+          0.125,
+          0.0,
+          0.125,
+          -0.25,
+          -0.125,
+          -0.25,
+          -0.125,
+          -0.25,
+          -0.25,
+          0.0,
+          0.125,
+          0.25,
+          -0.25,
+          -0.25
+        ]
+      },
+      "component_points": {
+        "guardrails.top5_accuracy": {
+          "candidate": 1.0,
+          "candidate_hits": 8,
+          "delta": 0.0,
+          "margin": 0.01,
+          "metric": "top5_accuracy",
+          "reference": 1.0,
+          "reference_hits": 8,
+          "sample_count": 8
+        },
+        "primary": {
+          "candidate": 0.75,
+          "candidate_hits": 6,
+          "delta": 0.0,
+          "margin": 0.01,
+          "metric": "top1_accuracy",
+          "reference": 0.75,
+          "reference_hits": 6,
+          "sample_count": 8
+        }
+      },
+      "configured_guardrails": [
+        "top5_accuracy"
+      ],
+      "repetition_offset": 0,
+      "repetitions": 19,
+      "shard_index": 0,
+      "skipped_reason": ""
+    },
+    {
+      "bootstrap": {
+        "guardrails.top5_accuracy": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "primary": [
+          0.25,
+          0.125,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.125,
+          -0.125,
+          -0.25,
+          -0.125,
+          0.0,
+          0.0,
+          -0.375,
+          0.0,
+          -0.125,
+          0.5,
+          -0.375
+        ]
+      },
+      "component_points": {
+        "guardrails.top5_accuracy": {
+          "candidate": 1.0,
+          "candidate_hits": 8,
+          "delta": 0.0,
+          "margin": 0.01,
+          "metric": "top5_accuracy",
+          "reference": 1.0,
+          "reference_hits": 8,
+          "sample_count": 8
+        },
+        "primary": {
+          "candidate": 0.75,
+          "candidate_hits": 6,
+          "delta": 0.0,
+          "margin": 0.01,
+          "metric": "top1_accuracy",
+          "reference": 0.75,
+          "reference_hits": 6,
+          "sample_count": 8
+        }
+      },
+      "configured_guardrails": [
+        "top5_accuracy"
+      ],
+      "repetition_offset": 19,
+      "repetitions": 18,
+      "shard_index": 1,
+      "skipped_reason": ""
+    }
+  ],
+  "source_version": "2.79.30"
+}

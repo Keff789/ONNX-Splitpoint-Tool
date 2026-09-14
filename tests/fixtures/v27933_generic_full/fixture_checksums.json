@@ -1,0 +1,14 @@
+{
+  "q3_mobilenet_projection.json": "668e3cd257931e54552b4e5f9e78a13c92e08b3fdc5ea005e8f0afe9902ff841",
+  "benchmark_results_hailo10_auto.csv": "54e8f97d96a99ee90177ee362b7a66aa57004f1d6f01f170b0959b8a7771f9b0",
+  "remote_benchmark_dispatch_orin_nx_hailo10_01.json": "7a80dbace7f6d9ffb4af99070d36ec7ca3af937dcb3b9762c84f3e5afe3944a0",
+  "remote_benchmark_dispatch_orin_nx_hailo8_01.json": "11518945469bc0d006856f47bf0df65af62e94dbb306b11a0fa31666bb6b00f5",
+  "remote_benchmark_dispatch_orin_nx_deepx_m1_01.json": "56de243b55b3020213f3ddc52093fdb0055b0b4439452d9c405c6cf03fa695e3",
+  "benchmark_results_deepx_m1_full_auto.json": "44fe466498bd930f94d078fc3ce98d4824a59ec46a1a86f5a3ad35e1a2cc37eb",
+  "benchmark_results_hailo8_auto.csv": "b34caf04611ed175bb9f1c614ec27b94cf0ccb6afc98413b3b2fd73b845f4254",
+  "remote_diagnostics/orin_nx_deepx_m1_01/result_copy_manifest.json": "ef2aac9514a88c3e05a45943880029b643ea61731e0cb7e2533adf7947cb6f7a",
+  "remote_diagnostics/orin_nx_hailo8_01/result_copy_manifest.json": "41f65f0519e9d34593e57d0ef0a290a1f325a49d6e72d3a2a0825f975695e530",
+  "remote_diagnostics/orin_nx_hailo10_01/result_copy_manifest.json": "5b8c3503a9074bf2ebffb114c0e906f26e0925d515542d4211d5297e6afbfbd2",
+  "yolo11l/benchmark_results_hailo8_auto.json": "3487c265cef1d25bb0a66dc97bc81f89b35e2e2717bf119bac89c2f16188738e",
+  "yolo11l/benchmark_results_hailo8_auto.csv": "1d39c9b19ebdc96bc6f850e0db3058dca3d73399b21138f47e117d709a8f618d"
+}

@@ -1,0 +1,105 @@
+{
+  "schema": "hailo-gpu-smoke-collection-r1",
+  "revision": "R1_FIX1",
+  "status": "failed",
+  "diagnostic_only": true,
+  "model_compiler_invoked": false,
+  "model_acceptance": "NOT_EVALUATED_BY_DIAGNOSTIC",
+  "tool_configuration_modified": false,
+  "package_installations": false,
+  "sequential": true,
+  "families": [
+    {
+      "family": "hailo8",
+      "venv": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8",
+      "status": "failed",
+      "process": {
+        "returncode": 2,
+        "elapsed_s": 6.842,
+        "timed_out": false,
+        "reason": "normal",
+        "cleanup_complete": true,
+        "remaining_group_pids": [],
+        "unexpected_live_processes_after_worker_exit": false
+      },
+      "worker_status": "setup_failed",
+      "error": "RuntimeError: tensorflow_no_visible_gpu",
+      "failure_phase": "tensorflow_gpu_setup",
+      "failed_checks": [],
+      "library_diagnostics_process": {
+        "returncode": 0,
+        "elapsed_s": 0.37,
+        "timed_out": false,
+        "reason": "normal",
+        "cleanup_complete": true,
+        "remaining_group_pids": [],
+        "unexpected_live_processes_after_worker_exit": false
+      },
+      "library_diagnostics_status": "collected",
+      "unresolved_library_sonames": [
+        "libcudart.so.12",
+        "libcublasLt.so.12",
+        "libcublas.so.12",
+        "libcufft.so.11",
+        "libcusolver.so.11",
+        "libcudnn.so.9",
+        "libnvrtc.so.12",
+        "libnvJitLink.so.12",
+        "libcupti.so.12"
+      ]
+    },
+    {
+      "family": "hailo10h",
+      "venv": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10",
+      "status": "failed",
+      "process": {
+        "returncode": 2,
+        "elapsed_s": 9.571,
+        "timed_out": false,
+        "reason": "normal",
+        "cleanup_complete": true,
+        "remaining_group_pids": [],
+        "unexpected_live_processes_after_worker_exit": false
+      },
+      "worker_status": "compute_failed",
+      "error": "",
+      "failure_phase": "finished",
+      "failed_checks": [
+        {
+          "name": "xla_math_gpu",
+          "error": "UnimplementedError: /usr/local/cuda/bin/ptxas ptxas too old. Falling back to the driver to compile. [Op:__inference_kernel_33]"
+        },
+        {
+          "name": "xla_conv2d_gpu",
+          "error": "UnimplementedError: /usr/local/cuda/bin/ptxas ptxas too old. Falling back to the driver to compile. [Op:__inference_kernel_41]"
+        }
+      ],
+      "library_diagnostics_process": {
+        "returncode": 0,
+        "elapsed_s": 0.372,
+        "timed_out": false,
+        "reason": "normal",
+        "cleanup_complete": true,
+        "remaining_group_pids": [],
+        "unexpected_live_processes_after_worker_exit": false
+      },
+      "library_diagnostics_status": "collected",
+      "unresolved_library_sonames": [
+        "libcudart.so.12",
+        "libcublasLt.so.12",
+        "libcublas.so.12",
+        "libcufft.so.11",
+        "libcusolver.so.11",
+        "libcudnn.so.9",
+        "libnvrtc.so.12",
+        "libnvJitLink.so.12",
+        "libcupti.so.12"
+      ]
+    }
+  ],
+  "expected_families": [
+    "hailo8",
+    "hailo10h"
+  ],
+  "scope": "SDK import and synthetic TensorFlow GPU/XLA computations; NOT a HEF build"
+}

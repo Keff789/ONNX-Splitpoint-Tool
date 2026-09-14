@@ -112,12 +112,10 @@ LEAN_CASE_LEVEL_PATTERNS_DIRS: List[str] = [
 LEAN_EXCLUDE_GLOBS: List[str] = [
     "**/*.pdf",
     "**/*.svg",
-    "**/*.png",
+    # PNG overlays are intentionally kept for visual verification; large PDFs/SVGs remain excluded.
     "**/paper_figures_*",
-    "**/detections_*.json",
-    "**/detections_*.png",
-    "**/classification_*.json",
-    "**/classification_*.png",
+    # Keep lightweight visual verification artifacts in lean bundles.
+    # They are needed for quick human sanity checks of one validation image per case/run.
 ]
 
 
@@ -157,6 +155,17 @@ def collect_results_from_suite(suite_dir: Path, dst_results_dir: Path, *, mode: 
         for p in suite_dir.glob(pat):
             if _copy_if_file(p, dst_results_dir / p.name):
                 copied_files += 1
+
+    # v58y: keep lightweight full-backend semantic artifacts such as
+    # results/deepx_m1_full/detections.json and classification_topk.json.
+    # These are needed to audit DeepX full detection AP50 / visual sanity without
+    # shipping heavy model artifacts.
+    for p in sorted((suite_dir / "results").glob("*/*.json")) if (suite_dir / "results").is_dir() else []:
+        rel = p.relative_to(suite_dir)
+        if mode == "lean" and p.name not in {"detections.json", "classification_topk.json", "deepx_prepared_feed_benchmark.json"}:
+            continue
+        if _copy_if_file(p, dst_results_dir / rel):
+            copied_files += 1
 
     for case_dir in sorted([p for p in suite_dir.iterdir() if p.is_dir() and p.name.startswith('b')]):
         cid = case_dir.name
@@ -308,18 +317,38 @@ def _write_compact_pipeline_summary_if_missing(results_dir: Path) -> None:
         }
         ms = _full_ms(row)
         tag_l = tag.lower()
-        hetero = ("hailo" in st1 and ("trt" in st2 or "tensorrt" in st2)) or (("trt" in st1 or "tensorrt" in st1) and "hailo" in st2) or "to_hailo" in tag_l or "hailo8_to_trt" in tag_l
+        hetero = (
+            (bool(st1 and st2 and st1 != st2))
+            or any(tok in tag_l for tok in (
+                "deepx_m1_to_tensorrt", "tensorrt_to_deepx",
+                "hailo8_to_trt", "trt_to_hailo", "hailo10_to_tensorrt", "tensorrt_to_hailo"
+            ))
+            or ("_to_" in tag_l and not tag_l.startswith("ort_"))
+        )
         single_system_full = bool(ms and ms > 0 and not hetero and "_to_" not in tag_l)
         if single_system_full:
             fc = dict(item)
             fc["baseline_ms_used"] = ms
             fc["baseline_fps"] = 1000.0 / ms
             full_candidates.append(fc)
-        fps = _sf(row.get("throughput_fps_makespan")) or _sf(row.get("throughput_fps_cycle_est"))
+        fps = (
+            _sf(row.get("throughput_fps_makespan"))
+            or _sf(row.get("throughput_fps_cycle_est"))
+            or _sf(row.get("pipeline_fps_selected"))
+            or _sf(row.get("heterogeneous_pipeline_fps"))
+        )
         if hetero and fps and fps > 0:
             hc = dict(item)
             hc["streaming_fps"] = fps
-            hc["streaming_metric_used"] = "makespan" if _sf(row.get("throughput_fps_makespan")) else "cycle_est"
+            if _sf(row.get("throughput_fps_makespan")):
+                metric = "makespan"
+            elif _sf(row.get("throughput_fps_cycle_est")):
+                metric = "cycle_est"
+            elif _sf(row.get("heterogeneous_pipeline_fps")):
+                metric = "heterogeneous_pipeline_fps"
+            else:
+                metric = "pipeline_fps_selected"
+            hc["streaming_metric_used"] = metric
             hetero_candidates.append(hc)
         flat.append(item)
 
@@ -330,7 +359,7 @@ def _write_compact_pipeline_summary_if_missing(results_dir: Path) -> None:
         gain = (float(best_hetero["streaming_fps"]) / float(best_full["baseline_fps"]) - 1.0) * 100.0
     payload = {
         "schema_version": 2,
-        "description": "v47 compact pipeline summary synthesized from benchmark_results_*.json for self-contained result bundles.",
+        "description": "v47 compact pipeline summary synthesized from benchmark_results_*.json for self-contained result bundles; includes true heterogeneous DeepX/Hailo/TensorRT mixed pipelines.",
         "best_full_baseline": best_full,
         "best_heterogeneous_streaming": best_hetero,
         "gain_vs_best_full_percent": gain,

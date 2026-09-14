@@ -1,0 +1,170 @@
+name: native_resnet_yolo26s_hailo8_smoke_v1
+purpose: "GUI-ready smoke EvaluationRun for the current thesis native-producer path: ResNet50 and YOLO26s on Hailo8->TensorRT with Full-ONNX self-reference validation."
+models_root_hint: /home/kmika/Models
+selection_policy:
+  max_accepted_cases_per_model: 1
+  preferred_shortlist: 160
+  min_gap: 1
+  candidate_search_pool: 320
+  report_blocked_configs: true
+  report_plan_adjustments: true
+  keep_partial_hailo_cases: true
+  full_model_hailo_preflight_policy: skip
+  selection_strategy: stratified_windows
+  forced_cases:
+    resnet50: [b052]
+    yolo26s: [b038]
+model_suite:
+  primary:
+  - id: resnet50
+    task: classification
+    family: resnet
+    source: torchvision
+    input_shape: [1, 3, 224, 224]
+    semantic_dataset: imagenet_val
+    development_subset: imagenet_val_mini_200
+    note: Native classification smoke/claim anchor, preferred split b052.
+  - id: yolo26s
+    task: detection
+    family: yolo26
+    source: ultralytics
+    input_shape: [1, 3, 640, 640]
+    semantic_dataset: coco2017_val
+    development_subset: coco_50
+    note: Native detection smoke/claim anchor, preferred split b038.
+run_profiles:
+- id: ort_cpu
+  type: same_backend_reference
+  full: cpu
+  stage1: cpu
+  stage2: cpu
+  required: true
+- id: ort_tensorrt
+  type: same_backend_reference
+  full: tensorrt
+  stage1: tensorrt
+  stage2: tensorrt
+  required: false
+- id: hailo8_to_trt
+  type: mixed_backend
+  full_reference: cpu_full
+  stage1: hailo8
+  stage2: tensorrt
+  required: false
+  treat_preflight_block_as_result: true
+validation:
+  split_fidelity_reference_mode: auto
+  classification_metrics: [top1, top5, logit_cosine_similarity]
+  detection_metrics: [semantic_proxy_match_ratio, semantic_proxy_mean_iou]
+  backend_drift_reference: cpu_full
+  report_blocked_and_infeasible: true
+  mode: summary_only
+  require_explicit: false
+  require_task_metrics: false
+reporting:
+  include_decision_summary: true
+  include_backend_drift_block: true
+  include_task_specific_quality_block: true
+  aggregate_by_model: true
+  aggregate_by_run_profile: true
+workflow:
+  execution_mode: generate_and_run
+  skip_runtime_benchmarks: true
+  no_model_hash: true
+  include_reserve: false
+  parallel_remote_setups: true
+  max_parallel_setups: 2
+  max_parallel_uploads: 1
+  powercalc_workers: 1
+benchmark_execution:
+  provider: auto
+  warmup: 1
+  runs: 3
+  timeout_s: 900
+  backend: auto
+remote_execution:
+  enabled: true
+  host_id: hailo8_nx
+  hosts:
+  - id: hailo8_nx
+    label: Hailo8 NX
+    host: 192.168.0.104
+    user: nx
+    port: 22
+  reuse_bundle: true
+  resume: true
+  timeout_s: 1800
+  warmup: 5
+  iters: 50
+  validation_max_images: 50
+hailo_build:
+  mode: reuse_and_build_missing
+  hw_arch: hailo8
+  targets: [hailo8]
+  timeout_s: 1800
+  build_full: false
+  build_part1: true
+  build_part2: false
+  preset: quick
+  optimization_level: 0
+  calib_count: 16
+  calib_batch_size: 8
+  force_build: false
+  keep_artifacts: true
+native_producers:
+  enabled: true
+  refresh_suites: false
+  backends: [hailo8]
+  case_policy: case_map_only
+  frames: 50
+  warmup: 5
+  queue_depth: 3
+  inflight: 8
+  remote_root: /home/nx/native_fifo_evalsets
+  remote_tool_dir: /home/nx/ONNX-Splitpoint-Tool
+  build_missing_engines: true
+  copy_benchmarksets: true
+  strict_supported_only: true
+  timeout_s: 2400
+  dump_outputs: true
+  validation:
+    enabled: true
+    mode: full_onnx_self_reference
+    topk: 5
+    timeout_s: 900
+  energy:
+    enabled: true
+    mode: plan
+    duration_s: 0
+  remotes:
+    hailo8:
+      ssh: nx@192.168.0.104
+  variants:
+  - id: resnet50_b052_float32_layout_fp16
+    case_map:
+      resnet50: [b052]
+    precision: float32_layout_fp16
+    hailo_format: float32
+    boundary_layout: memory_nhwc_to_nchw
+    native_boundary_debug: true
+    force_rebuild_engines: false
+  - id: yolo26s_b038_uint8_dequant_fp16
+    case_map:
+      yolo26s: [b038]
+    precision: uint8_dequant_fp16
+    hailo_format: uint8
+    letterbox_pad_value: 114
+    boundary_layout: memory_nhwc_to_nchw
+    dequant_scale: 0.02591018144770709
+    dequant_zero_point: 11.186060891313037
+    native_boundary_debug: true
+    force_rebuild_engines: false
+model_preparation:
+  mode: current
+  note: GUI-ready smoke profile. Uses known native case contracts; edit native_producers.frames/energy before long thesis runs.
+energy:
+  enabled: false
+  scope: row_variant
+  repeat_override: 0
+  phases: [latency, streaming]
+  target_policy: canonical_only

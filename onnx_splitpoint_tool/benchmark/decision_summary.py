@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 
 from matplotlib.figure import Figure
 
+from onnx_splitpoint_tool.validation.accuracy_gates import apply_accuracy_gate_to_row, apply_accuracy_gates_to_payload
 from .analysis import BenchmarkAnalysisReport
 from .interleaving_analysis import (
     InterleavingAnalysisReport,
@@ -78,6 +79,20 @@ def _fmt(x: Optional[float], nd: int = 2) -> str:
     if not math.isfinite(xf):
         return "-"
     return f"{xf:.{nd}f}"
+
+
+def _apply_ranking_gate(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Attach strict task/accuracy gates used for thesis ranking.
+
+    The source report still exposes all rows for diagnostics, but downstream
+    ranking should consider only rows with eligible_for_ranking=True.
+    """
+    try:
+        apply_accuracy_gate_to_row(row)
+    except Exception as exc:  # keep report generation robust
+        row.setdefault("eligible_for_ranking", False)
+        row.setdefault("ranking_exclusion_reason", f"accuracy_gate_error:{type(exc).__name__}")
+    return row
 
 
 
@@ -572,10 +587,16 @@ def decision_provider_rows(report: BenchmarkAnalysisReport, inter: InterleavingA
             "recommendation": _row_recommendation(row_type="streaming_split", gain_pct=global_gain, quality_delta=_quality_delta(src_row), backend_match=_backend_match_generic(src_row), status=_status_text(src_row), hailo_multi_context=bool(ctx.get("hailo_multi_context"))),
         })
 
+    for _r in rows:
+        apply_accuracy_gate_to_row(_r)
+
     def _sort_key(row: Dict[str, Any]) -> tuple:
         kind_order = {"streaming_split": 0, "full": 1, "sequential_split": 2}
+        # Eligible rows come before non-eligible rows inside each kind.
+        eligible = 0 if row.get("eligible_for_ranking") is True else 1
         fps = _as_float(row.get("streaming_fps")) or -1.0
-        return (kind_order.get(str(row.get("kind")), 9), -fps, str(row.get("setup")))
+        return (kind_order.get(str(row.get("kind")), 9), eligible, -fps, str(row.get("setup")))
+    rows = [_apply_ranking_gate(r) for r in rows]
     return sorted(rows, key=_sort_key)
 
 
@@ -618,6 +639,14 @@ def decision_candidate_rows(report: BenchmarkAnalysisReport, inter: Interleaving
             "status": _status_text(src_row),
             "recommendation": _row_recommendation(row_type="streaming_split", gain_pct=gain, quality_delta=_quality_delta(src_row), backend_match=_backend_match_generic(src_row), status=_status_text(src_row), hailo_multi_context=bool(ctx.get("hailo_multi_context"))),
         })
+    for _r in rows:
+        apply_accuracy_gate_to_row(_r)
+    # Accuracy gate is a hard ranking gate: non-eligible rows are kept out of the
+    # Top Streaming-Kandidaten table so high FPS alone cannot rank an invalid row.
+    eligible_rows = [r for r in rows if r.get("eligible_for_ranking") is True]
+    rows = eligible_rows
+    rows = [_apply_ranking_gate(r) for r in rows]
+    rows = [r for r in rows if r.get("eligible_for_ranking") is True]
     rows.sort(key=lambda r: (int(r.get("rank") or 9999), -float(_as_float(r.get("streaming_fps")) or -1.0)))
     if limit is not None:
         rows = rows[: max(0, int(limit))]
@@ -730,8 +759,8 @@ def build_decision_summary_markdown(report: BenchmarkAnalysisReport, inter: Inte
         )
 
     lines.append("## Kerndaten\n\n")
-    lines.append(f"| Rolle | Setup | b | FPS | Latenz ms | {quality_label} | {backend_label} | Hailo ctx | Empfehlung |\n")
-    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---|\n")
+    lines.append(f"| Rolle | Setup | b | FPS | Latenz ms | {quality_label} | {backend_label} | eligible | Hailo ctx | Empfehlung |\n")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---|\n")
     for row in rows[:8]:
         role = {"full": "Full", "sequential_split": "Seq. Split", "streaming_split": "Streaming"}.get(
             str(row.get("kind")), str(row.get("kind"))
@@ -739,12 +768,12 @@ def build_decision_summary_markdown(report: BenchmarkAnalysisReport, inter: Inte
         boundary = _fmt_boundary(row.get("boundary"))
         lines.append(
             f"| {role} | {row.get('setup', '-')} | {boundary} | {_fmt(row.get('streaming_fps'), 1)} | {_fmt(row.get('latency_ms'), 2)} | "
-            f"{_fmt(row.get('quality'), 3)} | {_fmt(row.get('backend_match_vs_cpu'), 3)} | {row.get('hailo_context_label') or '-'} | "
-            f"{row.get('recommendation', '-')} |\n"
+            f"{_fmt(row.get('quality'), 3)} | {_fmt(row.get('backend_match_vs_cpu'), 3)} | {row.get('eligible_for_ranking', False)} | "
+            f"{row.get('hailo_context_label') or '-'} | {row.get('recommendation', '-')} |\n"
         )
 
     if cand_rows:
-        lines.append("\n## Top Streaming-Kandidaten\n\n")
+        lines.append("\n## Top Streaming-Kandidaten (nur eligible_for_ranking=True)\n\n")
         lines.append(f"| Rang | Pipeline | b | FPS | Latenz ms | Gain vs best full | {quality_label} | {backend_label} | Hailo ctx |\n")
         lines.append("|---:|---|---:|---:|---:|---:|---:|---:|---:|\n")
         for row in cand_rows:
@@ -754,8 +783,13 @@ def build_decision_summary_markdown(report: BenchmarkAnalysisReport, inter: Inte
                 f"{_fmt(row.get('backend_match_vs_cpu'), 3)} | {row.get('hailo_context_label') or '-'} |\n"
             )
 
+    if not cand_rows:
+        lines.append("\n## Top Streaming-Kandidaten\n\n")
+        lines.append("Keine Streaming-Kandidaten bestehen das deklarierte Task-/Accuracy-Gate. Schnelle, aber nicht task-valide oder nur contract-konsistente Rows werden nicht gerankt.\n")
+
     lines.append("\n## Einordnung\n")
     lines.append("- `Full` bleibt die Referenz für niedrigste Einzelbild-Latenz.\n")
+    lines.append("- Ranking nutzt ausschließlich Rows mit `eligible_for_ranking=True`; Native Self-Reference zählt als Contract-Gate, nicht als Datensatz-Accuracy-Gate.\n")
     lines.append("- `Streaming` bewertet steady-state FPS mit paralleler Stage-Ausführung; höhere End-to-End-Latenz ist hier normal.\n")
     if task == "classification":
         lines.append(

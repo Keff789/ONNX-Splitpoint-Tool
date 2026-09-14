@@ -1,0 +1,17 @@
+contracts:
+  - id: classification_preprocessing
+    kind: preprocessing
+    task: classification
+    path: configs/classification_preprocessing.yaml
+  - id: detection_preprocessing
+    kind: preprocessing
+    task: detection
+    path: configs/detection_preprocessing.yaml
+  - id: detection_decoder
+    kind: decoder
+    task: detection
+    path: configs/detection_decoder.yaml
+  - id: detection_nms
+    kind: nms
+    task: detection
+    path: configs/detection_nms.yaml

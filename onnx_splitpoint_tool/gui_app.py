@@ -46,7 +46,7 @@ import traceback
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .workdir import ensure_workdir
 from .benchmark_case_utils import archive_benchmark_case, build_benchmark_case_rejection
@@ -56,11 +56,13 @@ from .benchmark.hailo_scoring import rerank_candidates_for_hailo
 from .benchmark.services import BenchmarkGenerationExecutionConfig, BenchmarkGenerationExecutionCallbacks, BenchmarkGenerationExecutionService, BenchmarkGenerationOrchestrationConfig, BenchmarkGenerationOrchestrationService, BenchmarkGenerationService, normalize_full_hef_policy
 from .benchmark.schema import stamp_benchmark_set_payload, write_json_atomic as write_benchmark_json_atomic
 from .hailo.backend_mode import backend_display_values, normalize_hailo_backend
+from .preprocessing_contract import normalize_image_task
 from .log_runtime import publish_active_log_metadata
+from .paths import ensure_dir, splitpoint_provisioning_logs_dir
+from .hailo_timeout_policy import parse_hailo_timeout_seconds
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
-
 # Matplotlib backend must be selected BEFORE importing pyplot/backends
 import matplotlib
 
@@ -78,7 +80,11 @@ from .gui.panels import panel_candidates as cand_panel
 from .gui.analysis_params import iter_specs
 from .gui.benchmark_workflow import BenchmarkWorkflowController
 from .gui.hailo_diagnostics import collect_hailo_diagnostics, format_hailo_diagnostics_short_lines
+from .gui.widgets.text_progress_dialog import TextProgressDialog
+from .gui.widgets.diagnostic_dialog import show_diagnostic_dialog
 from .gui.hailo_parse_budget import resolve_hailo_max_checks
+from .gui.widgets.text_progress_dialog import TextProgressDialog
+from .gui.widgets.message_dialog import show_detail_message, install_messagebox_replacement
 from .gui.state import AppUiState, AnalysisResult, GuiState, SelectedCandidate
 from .core_params import Params, gui_state_to_params_dict
 from .memory_utils import estimate_ram_bytes, kv_cache_bytes_per_layer, kv_for_boundary, layer_split_index_for_boundary, precompute_initializer_spans, weights_for_all_boundaries
@@ -95,12 +101,66 @@ from .objective_scoring import (
     predicted_stream_fps as calc_predicted_stream_fps,
 )
 
-from . import __version__ as TOOL_VERSION
+from . import __release__ as TOOL_VERSION
 
 __version__ = TOOL_VERSION
 
 # Module logger (used by worker threads as well).
 logger = logging.getLogger(__name__)
+
+
+def _declared_hailo_image_task(
+    model_path: str | Path,
+    model: Any,
+    analysis: Optional[Mapping[str, Any]] = None,
+) -> str:
+    """Return the image task declared by model metadata, never by dimensions."""
+
+    candidates: List[tuple[str, Any]] = []
+
+    def _collect_mapping(source: str, payload: Any) -> None:
+        if not isinstance(payload, Mapping):
+            return
+        for key in ("benchmark_task", "task_type", "task"):
+            if key in payload:
+                candidates.append((f"{source}.{key}", payload.get(key)))
+        for key in ("export_metadata", "model_metadata"):
+            nested = payload.get(key)
+            if isinstance(nested, Mapping):
+                _collect_mapping(f"{source}.{key}", nested)
+
+    _collect_mapping("analysis", analysis)
+    try:
+        for prop in list(getattr(model, "metadata_props", []) or []):
+            key = str(getattr(prop, "key", "") or "").strip().lower()
+            if key in {"benchmark_task", "task_type", "task"}:
+                candidates.append((f"onnx.metadata_props.{key}", getattr(prop, "value", "")))
+    except Exception:
+        pass
+
+    sidecar = Path(model_path).expanduser().with_suffix(".export.json")
+    if sidecar.is_file():
+        try:
+            _collect_mapping("export_sidecar", json.loads(sidecar.read_text(encoding="utf-8")))
+        except Exception as exc:
+            raise ValueError(f"Cannot read declared Hailo task from {sidecar}: {exc}") from exc
+
+    resolved: Dict[str, List[str]] = {}
+    for source, raw in candidates:
+        value = str(raw or "").strip()
+        if value.lower() in {"", "auto", "unknown", "none"}:
+            continue
+        try:
+            normalized = normalize_image_task(value)
+        except ValueError as exc:
+            raise ValueError(f"Invalid image task in {source}: {value!r}") from exc
+        resolved.setdefault(normalized, []).append(source)
+    if len(resolved) > 1:
+        detail = ", ".join(
+            f"{task} from {sources}" for task, sources in sorted(resolved.items())
+        )
+        raise ValueError(f"Conflicting declared Hailo image tasks: {detail}")
+    return next(iter(resolved), "")
 
 
 # ---------------------------- Semantic clustering helpers ----------------------------
@@ -280,16 +340,23 @@ def _setup_gui_logging() -> Optional[str]:
         # ------------------------------------------------------------------
         # Log retention (age + count based).
         # ------------------------------------------------------------------
+        # v58ab: Do NOT perform recursive log retention during logging setup by
+        # default.  This function runs before the first GUI window is shown; on a
+        # result-heavy working directory the old retention scan could make startup
+        # look frozen even though all backend probes were disabled.  The Logs tab
+        # still offers a manual cleanup action.  To restore old behaviour set:
+        #   ONNX_SPLITPOINT_SETUP_LOG_RETENTION=1
         try:
-            pol = policy_from_env()
-            pol = LogRetentionPolicy(
-                enabled=pol.enabled,
-                max_age_days=pol.max_age_days,
-                max_files=pol.max_files,
-                patterns=pol.patterns,
-                keep_names=tuple(set(pol.keep_names) | {"gui.log"}),
-            )
-            apply_log_retention([splitpoint_logs_dir()], policy=pol, recursive=True)
+            if str(os.environ.get("ONNX_SPLITPOINT_SETUP_LOG_RETENTION", "0")).strip().lower() in {"1", "true", "yes", "on"}:
+                pol = policy_from_env()
+                pol = LogRetentionPolicy(
+                    enabled=pol.enabled,
+                    max_age_days=pol.max_age_days,
+                    max_files=pol.max_files,
+                    patterns=pol.patterns,
+                    keep_names=tuple(set(pol.keep_names) | {"gui.log"}),
+                )
+                apply_log_retention([splitpoint_logs_dir()], policy=pol, recursive=True)
         except Exception:
             pass
 
@@ -481,6 +548,10 @@ def pareto_front(points: List[Tuple[float, float]]) -> List[int]:
 class SplitPointAnalyserGUI(tk.Tk):
     def __init__(self):
         super().__init__()
+        try:
+            install_messagebox_replacement(self)
+        except Exception:
+            pass
 
         self.title(f"ONNX Split-Point Analyser v{__version__} (core v{getattr(asc, '__version__', '?')})")
         self.geometry("1250x860")
@@ -1815,12 +1886,18 @@ class SplitPointAnalyserGUI(tk.Tk):
                             pass
 
                     # On errors we still allow provisioning attempts.
-                    btn_prov = getattr(self, "_hailo_btn_provision", None)
-                    if btn_prov is not None and not bool(getattr(self, "_hailo_provision_running", False)):
-                        try:
-                            btn_prov.configure(state="normal")
-                        except Exception:
-                            pass
+                    if not bool(getattr(self, "_hailo_provision_running", False)):
+                        for _b in list(getattr(self, "_hailo_provision_buttons", []) or []):
+                            try:
+                                _b.configure(state="normal")
+                            except Exception:
+                                pass
+                        btn_prov = getattr(self, "_hailo_btn_provision", None)
+                        if btn_prov is not None:
+                            try:
+                                btn_prov.configure(state="normal")
+                            except Exception:
+                                pass
 
                 try:
                     self.after(0, _apply_err)
@@ -1902,14 +1979,20 @@ class SplitPointAnalyserGUI(tk.Tk):
                     except Exception:
                         pass
 
-                # Enable the Provision button only when something is not OK.
-                btn_prov = getattr(self, "_hailo_btn_provision", None)
-                if btn_prov is not None and not bool(getattr(self, "_hailo_provision_running", False)):
-                    try:
-                        all_ok = bool(res_h8 is not None and res_h8.ok) and bool(res_h10 is not None and res_h10.ok)
-                        btn_prov.configure(state=("disabled" if all_ok else "normal"))
-                    except Exception:
-                        pass
+                # Keep Install/Repair buttons available even when probes are green.
+                # Users may intentionally repair/reinstall a single managed DFC venv.
+                if not bool(getattr(self, "_hailo_provision_running", False)):
+                    for _b in list(getattr(self, "_hailo_provision_buttons", []) or []):
+                        try:
+                            _b.configure(state="normal")
+                        except Exception:
+                            pass
+                    btn_prov = getattr(self, "_hailo_btn_provision", None)
+                    if btn_prov is not None:
+                        try:
+                            btn_prov.configure(state="normal")
+                        except Exception:
+                            pass
 
             try:
                 self.after(0, _apply)
@@ -2005,12 +2088,12 @@ class SplitPointAnalyserGUI(tk.Tk):
             raw = str(os.environ.get(key) or "").strip()
             if not raw:
                 continue
-            try:
-                val = int(raw)
-            except Exception:
-                continue
-            if val > 0:
-                return max(300, int(val))
+            return parse_hailo_timeout_seconds(
+                raw,
+                default=10800,
+                minimum_enabled_s=300,
+                label=f"Hailo hard timeout environment variable {key}",
+            )
         return 10800
 
     def _hailo_publish_gui_diagnostics(
@@ -2107,246 +2190,532 @@ class SplitPointAnalyserGUI(tk.Tk):
             pass
         messagebox.showinfo("Hailo cache", "Cleared Hailo parse-check cache.")
 
-    def _hailo_provision_dfcs(self) -> None:
-        """Provision/repair managed Hailo DFC environments (Hailo-8/Hailo-10).
-
-        Runs the provisioning helper in the appropriate backend:
-        - Windows: via WSL
-        - Linux: directly
-
-        Output is streamed into gui.log (Logs tab).
-        """
-
-        if getattr(self, "_hailo_provision_running", False):
-            messagebox.showinfo("Hailo DFC provisioning", "Provisioning is already running. See Logs tab.")
-            return
-
-        self._hailo_provision_running = True
-
-        btn = getattr(self, "_hailo_btn_provision", None)
+    def _hailo_open_dfc_wheel_folder(self, profile_id: Optional[str] = None) -> None:
+        """Open the packaged resources/hailo folder that contains DFC wheel slots."""
         try:
-            if btn is not None:
-                btn.configure(state="disabled")
+            from .hailo.dfc_env_status import hailo_resources_root
+            base = hailo_resources_root()
+            target = str(base / str(profile_id).strip()) if profile_id else str(base)
+        except Exception:
+            base = Path(__file__).resolve().parent / "resources" / "hailo"
+            target = str(base / str(profile_id).strip()) if profile_id else str(base)
+        opener = getattr(self, "_open_path", None)
+        if callable(opener):
+            opener(target)
+            return
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(target)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", target])
+            else:
+                subprocess.Popen(["xdg-open", target])
+        except Exception as exc:
+            messagebox.showinfo("Hailo DFC wheels", f"Wheel folder:\n\n{target}\n\nCould not open automatically: {exc}")
+
+    def _open_provisioning_logs_folder(self) -> None:
+        """Open the central project-local provisioning log folder."""
+        try:
+            target = str(ensure_dir(splitpoint_provisioning_logs_dir()))
+            opener = getattr(self, "_open_path", None)
+            if callable(opener):
+                opener(target)
+                return
+            if sys.platform.startswith("win"):
+                os.startfile(target)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", target])
+            else:
+                subprocess.Popen(["xdg-open", target])
+        except Exception as exc:
+            self._show_detail_message(title="Provisioning logs", heading="Could not open provisioning log folder", message=str(exc), details=traceback.format_exc(), level="error")
+
+    def _show_diagnostic_message(self, title: str, headline: str, summary: str = "", details: str = "", *, severity: str = "info") -> None:
+        """Show a readable scrollable diagnostic dialog instead of a giant messagebox."""
+        try:
+            show_diagnostic_dialog(self.root, title=title, headline=headline, summary=summary, details=details, severity=severity)
+        except Exception:
+            body = "\n\n".join(x for x in (summary, details) if x)
+            if str(severity).lower() in {"error", "failed"}:
+                messagebox.showerror(title, f"{headline}\n\n{body}")
+            elif str(severity).lower() in {"warn", "warning"}:
+                messagebox.showwarning(title, f"{headline}\n\n{body}")
+            else:
+                messagebox.showinfo(title, f"{headline}\n\n{body}")
+
+    def _show_detail_message(self, *, title: str, heading: str, message: str = "", details: str = "", level: str = "info", log_path: Optional[str] = None) -> None:
+        try:
+            show_detail_message(self, title=title, heading=heading, message=message, details=details, level=level, log_path=log_path)
+        except Exception:
+            body = f"{heading}\n\n{message}\n\n{details}"
+            if str(level).lower() in {"error", "failed"}:
+                messagebox.showerror(title, body)
+            elif str(level).lower() in {"warn", "warning"}:
+                messagebox.showwarning(title, body)
+            else:
+                messagebox.showinfo(title, body)
+
+    def _show_build_environment_status(self) -> None:
+        try:
+            from .backend_build_environments import status_all, format_status
+            payload = status_all(probe_import=True)
+            self._update_deepx_env_badge(payload)
+            self._show_detail_message(
+                title="Build environments",
+                heading="Build environment status",
+                message="Central Hailo DFC and DeepX DX-COM environment checks.",
+                details=format_status(payload),
+                level="ok" if payload.get("ok") else "warn",
+                log_path=str(payload.get("config_path") or ""),
+            )
+        except Exception as exc:
+            self._show_detail_message(title="Build environments", heading="Could not inspect build environments", message=str(exc), details=traceback.format_exc(), level="error")
+
+    def _open_build_environment_config(self) -> None:
+        try:
+            from .backend_build_environments import ensure_config, CONFIG_PATH
+            self._open_path(str(ensure_config(CONFIG_PATH)))
+        except Exception as exc:
+            self._show_detail_message(title="Build environments", heading="Could not open config", message=str(exc), details=traceback.format_exc(), level="error")
+
+    def _update_deepx_env_badge(self, payload: Optional[Mapping[str, Any]] = None) -> None:
+        try:
+            if payload is None:
+                from .backend_build_environments import status_all
+                payload = status_all(probe_import=True)
+            deepx = None
+            if isinstance(payload, Mapping) and "environments" in payload:
+                envs = [e for e in (payload.get("environments") or []) if isinstance(e, Mapping)]
+                deepx = next((e for e in envs if "deepx" in str(e.get("kind") or "").lower()), None)
+            elif isinstance(payload, Mapping) and str(payload.get("backend") or "").lower() == "deepx_m1":
+                deepx = payload
+            badge = getattr(self, "deepx_badge_env", None)
+            if badge is None:
+                return
+            if deepx and deepx.get("ready"):
+                badge.set(text="DeepX ✓ (venv)", level="ok")
+            elif deepx and deepx.get("runtime_ready") and not deepx.get("compiler_ready"):
+                badge.set(text="DeepX runtime ✓ / compiler ⚠", level="warn")
+            elif deepx and deepx.get("compiler_ready") and not deepx.get("runtime_ready"):
+                badge.set(text="DeepX compiler ✓ / runtime ⚠", level="warn")
+            elif deepx:
+                badge.set(text="DeepX ⚠", level="warn")
+            else:
+                badge.set(text="DeepX —", level="idle")
+        except Exception as exc:
+            try:
+                import logging
+                logging.getLogger(__name__).debug("DeepX badge update failed: %s", exc)
+            except Exception:
+                pass
+
+    def _deepx_show_status(self) -> None:
+        self._show_build_environment_status()
+
+    def _hailo_show_dfc_env_status(self) -> None:
+        """Show wheel/managed DFC venv status for Hailo-8/Hailo-10."""
+        try:
+            from .hailo.dfc_env_status import format_status_text, inspect_profiles
+            statuses = inspect_profiles(probe_import=True)
+            text = format_status_text(probe_import=True)
+            all_ready = all(bool(s.get("ready")) for s in statuses)
+            heading = "Hailo DFC environments are ready" if all_ready else "Hailo DFC environments need attention"
+            level = "ok" if all_ready else "warn"
+        except Exception as exc:
+            text = f"Could not inspect Hailo DFC environments:\n\n{type(exc).__name__}: {exc}"
+            heading = "Hailo DFC status check failed"
+            level = "error"
+        self._show_detail_message(
+            title="Hailo DFC environments",
+            heading=heading,
+            message="Managed compiler venvs are used for ONNX → Hailo HEF builds. Remote HailoRT runtime is separate.",
+            details=text,
+            level=level,
+        )
+
+    def _deepx_show_env_status(self) -> None:
+        try:
+            from .deepx.env_status import inspect_deepx_environment, format_deepx_status_text
+            root = getattr(self, "var_deepx_root", None)
+            root_val = root.get() if root is not None else "auto"
+            status = inspect_deepx_environment(root=root_val, probe_import=True)
+            self._update_deepx_env_badge(status)
+            text = format_deepx_status_text(status=status, probe_import=True)
+            full_ready = bool(status.get("ready"))
+            runtime_ready = bool(status.get("runtime_ready"))
+            compiler_ready = bool(status.get("compiler_ready"))
+            if full_ready:
+                headline = "DeepX DX-M1 build/runtime environment ready"
+                severity = "ok"
+            elif runtime_ready and not compiler_ready:
+                headline = "DeepX runtime ready, DX-COM compiler missing"
+                severity = "warning"
+            elif compiler_ready and not runtime_ready:
+                headline = "DeepX compiler ready, runtime missing"
+                severity = "warning"
+            else:
+                headline = "DeepX DX-M1 environment not ready yet"
+                severity = "warning"
+        except Exception as exc:
+            text = f"Could not inspect DeepX environment:\n\n{type(exc).__name__}: {exc}\n\n{traceback.format_exc()}"
+            headline = "DeepX status check failed"
+            severity = "error"
+        self._show_diagnostic_message(
+            "DeepX DX-M1 environment",
+            headline,
+            summary="DeepX uses DX-COM for ONNX → DXNN builds and DX-RT/dx_engine for runtime on the NX. Driver/firmware installation is not automatic.",
+            details=text,
+            severity=severity,
+        )
+
+    def _deepx_open_root(self) -> None:
+        try:
+            from .deepx.env_status import inspect_deepx_environment
+            root = getattr(self, "var_deepx_root", None)
+            root_val = root.get() if root is not None else "auto"
+            st = inspect_deepx_environment(root=root_val, probe_import=False)
+            target = str(st.get("dx_all_suite_root") or "")
+        except Exception:
+            target = ""
+        if not target:
+            target = str(Path.home() / "dx-all-suite")
+        opener = getattr(self, "_open_path", None)
+        if callable(opener):
+            opener(target)
+            return
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(target)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", target])
+            else:
+                subprocess.Popen(["xdg-open", target])
+        except Exception as exc:
+            self._show_diagnostic_message("DeepX DX-M1", "Could not open dx-all-suite folder", details=f"Folder: {target}\n\n{type(exc).__name__}: {exc}", severity="warning")
+
+    def _deepx_provision_runtime(self, *, run_compiler_install: bool = False) -> None:
+        if getattr(self, "_deepx_provision_running", False):
+            self._show_diagnostic_message("DeepX provisioning", "DeepX provisioning is already running", severity="info")
+            return
+        self._deepx_provision_running = True
+        btn = getattr(self, "_deepx_btn_provision", None)
+        btn_comp = getattr(self, "_deepx_btn_provision_compiler", None)
+        try:
+            for _b in (btn, btn_comp):
+                if _b is not None:
+                    _b.configure(state="disabled")
+        except Exception:
+            pass
+        progress = TextProgressDialog(
+            self.root,
+            title="DeepX DX-M1 provisioning",
+            initial_status="Preparing DeepX environment / checking out dx-all-suite…",
+            initial_lines=[
+                "This checks out/repairs dx-all-suite when needed and prepares compiler/runtime Python environments.",
+                ("DX-COM compiler install/recovery enabled: direct wheel install is tried first; upstream install.sh is only a fallback." if run_compiler_install else "Safe default: no DX-RT drivers/firmware and no sudo-based compiler installer are run automatically."),
+                ("If the direct download cannot reach sdk.deepx.ai, use Open provision logs and run the shown command manually." if run_compiler_install else ""),
+                "Logs are streamed immediately to logs/provisioning/deepx_provision_last.log.",
+                "",
+            ],
+            progress_mode="indeterminate",
+            geometry="900x580",
+        )
+        try:
+            progress.progressbar.start(12)
         except Exception:
             pass
 
+        def _worker() -> None:
+            try:
+                from .deepx.env_status import provision_deepx_runtime_venv, inspect_deepx_environment, format_deepx_status_text
+                root = getattr(self, "var_deepx_root", None)
+                root_val = root.get() if root is not None else "auto"
+                def _line_cb(line: str) -> None:
+                    try:
+                        self.after(0, lambda _line=str(line): (progress.append(_line), progress.set_status(_line[:120])))
+                    except Exception:
+                        pass
+
+                res = provision_deepx_runtime_venv(root=root_val, line_callback=_line_cb, run_compiler_install=bool(run_compiler_install))
+                log_path = str(res.get("log_path") or "")
+                if log_path:
+                    try:
+                        self.after(0, lambda _p=log_path: progress.append("[log] " + _p))
+                    except Exception:
+                        pass
+                status = inspect_deepx_environment(root=root_val, probe_import=True)
+                try:
+                    self.after(0, lambda _st=dict(status): self._update_deepx_env_badge(_st))
+                except Exception:
+                    pass
+                text = format_deepx_status_text(status=status, probe_import=True)
+                full_ready = bool(status.get("ready"))
+                runtime_ready = bool(status.get("runtime_ready"))
+                compiler_ready = bool(status.get("compiler_ready"))
+                if full_ready:
+                    headline = "DeepX build/runtime environment ready"
+                    severity = "ok"
+                elif runtime_ready and not compiler_ready:
+                    headline = "DeepX runtime ready, DX-COM compiler missing"
+                    severity = "warning"
+                elif compiler_ready and not runtime_ready:
+                    headline = "DeepX compiler ready, runtime missing"
+                    severity = "warning"
+                else:
+                    headline = "DeepX provisioning needs attention"
+                    severity = "error" if int(res.get("exit_code") or 0) not in (0, 2) else "warning"
+                details = json.dumps(res, indent=2, ensure_ascii=False) + "\n\n" + text + (("\n\nProvisioning log: " + log_path) if log_path else "")
+            except Exception as exc:
+                ok = False
+                headline = "DeepX provisioning failed"
+                severity = "error"
+                details = f"{type(exc).__name__}: {exc}\n\n{traceback.format_exc()}"
+
+            def _finish() -> None:
+                self._deepx_provision_running = False
+                try:
+                    progress.progressbar.stop()
+                except Exception:
+                    pass
+                try:
+                    progress.finish(status_text=headline)
+                except Exception:
+                    pass
+                try:
+                    for _b in (btn, btn_comp):
+                        if _b is not None:
+                            _b.configure(state="normal")
+                except Exception:
+                    pass
+                self._show_diagnostic_message("DeepX DX-M1 provisioning", headline, summary="DeepX env provisioning finished.", details=details, severity=severity)
+            try:
+                self.after(0, _finish)
+            except Exception:
+                _finish()
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _hailo_provision_dfcs(self, profile_ids: Optional[Sequence[str]] = None, *, force_reinstall: bool = True, offline: bool = False) -> None:
+        """Provision/repair managed Hailo DFC environments (Hailo-8/Hailo-10)."""
+        if getattr(self, "_hailo_provision_running", False):
+            self._show_detail_message(title="Hailo DFC provisioning", heading="Provisioning is already running", message="Use the open provisioning window or the Logs tab to follow progress.", level="info")
+            return
+        selected_profiles = [str(x).strip().lower() for x in (profile_ids or []) if str(x).strip()]
+        if not selected_profiles:
+            selected_profiles = []
+        self._hailo_provision_running = True
+        progress = TextProgressDialog(
+            self,
+            title="Hailo DFC provisioning",
+            initial_status="Starting Hailo DFC install/repair…",
+            initial_lines=[
+                "Install/Repair uses wheels from onnx_splitpoint_tool/resources/hailo/hailo8 and hailo10.",
+                "If pygraphviz fails, install: sudo apt update && sudo apt install -y graphviz libgraphviz-dev pkg-config build-essential",
+            ],
+            progress_mode="indeterminate",
+            geometry="900x620",
+        )
+        try:
+            progress.progressbar.start(10)
+        except Exception:
+            pass
+        def _prov_ui(line: str) -> None:
+            try:
+                self.after(0, lambda: progress.append(line) if getattr(progress, "alive", False) else None)
+            except Exception:
+                pass
+        hailo_buttons = list(getattr(self, "_hailo_provision_buttons", []) or [])
+        btn = getattr(self, "_hailo_btn_provision", None)
+        if btn is not None and btn not in hailo_buttons:
+            hailo_buttons.append(btn)
+        for _b in hailo_buttons:
+            try:
+                _b.configure(state="disabled")
+            except Exception:
+                pass
         backend = normalize_hailo_backend(self.var_hailo_backend.get())
         wsl_distro = (self.var_hailo_wsl_distro.get() or "").strip()
         wsl_venv = (self.var_hailo_wsl_venv.get() or "auto").strip() or "auto"
-
-        # Best-effort normalization (fix common typo "Ubuntu_22.04" -> "Ubuntu-22.04").
         try:
             from .hailo_backend import normalize_wsl_distro_name
-
             norm = normalize_wsl_distro_name(wsl_distro)
             if norm != wsl_distro:
                 wsl_distro = norm
-                try:
-                    self.var_hailo_wsl_distro.set(norm)
-                except Exception:
-                    pass
+                self.var_hailo_wsl_distro.set(norm)
         except Exception:
             pass
-
-        # Resolve repo root (contains scripts/).
         repo_root = Path(__file__).resolve().parents[1]
+        provision_log_path = ensure_dir(splitpoint_provisioning_logs_dir()) / "hailo_dfc_provision_last.log"
 
         def _worker() -> None:
             ok = False
-            summary = ""
             prov_rc: Optional[int] = None
             prov_err: Optional[str] = None
             res_h8 = None
             res_h10 = None
             missing_wheels: List[str] = []
+            prov_lines: List[str] = []
             try:
-                # Quick preflight: are the DFC wheels present in resources/?
                 try:
                     base = repo_root / "onnx_splitpoint_tool" / "resources" / "hailo"
-                    for sub in ("hailo8", "hailo10"):
+                    for sub in (selected_profiles or ["hailo8", "hailo10"]):
                         d = base / sub
                         if not d.exists() or not list(d.glob("*.whl")):
                             missing_wheels.append(sub)
                 except Exception:
                     pass
-
                 if sys.platform == "win32":
                     from .hailo_backend import hailo_wsl_available, windows_path_to_wsl, _wsl_exe
-
                     if not hailo_wsl_available():
                         raise RuntimeError("WSL backend not available (wsl.exe not found).")
-
                     repo_wsl = windows_path_to_wsl(str(repo_root))
-                    bash = (
-                        "set -e; "
-                        f"cd {shlex.quote(repo_wsl)}; "
-                        "./scripts/provision_hailo_dfcs_wsl.sh --all --force-reinstall"
-                    )
-
+                    bash = "set -e; " + f"cd {shlex.quote(repo_wsl)}; " + "./scripts/provision_hailo_dfcs_wsl.sh " + ("--all" if not selected_profiles else " ".join("--profile " + shlex.quote(p) for p in selected_profiles)) + (" --force-reinstall" if force_reinstall else "") + (" --offline" if offline else "")
                     cmd: List[str] = [_wsl_exe()]
                     if wsl_distro:
                         cmd += ["-d", wsl_distro]
                     cmd += ["--", "bash", "-lc", bash]
                 else:
-                    # Linux: call the same helper script directly.
                     script = repo_root / "scripts" / "provision_hailo_dfcs_wsl.sh"
                     if not script.exists():
                         raise RuntimeError(f"Provision script missing: {script}")
-                    cmd = ["bash", str(script), "--all", "--force-reinstall"]
-
-                logger.info("[hailo][provision] starting provisioning (backend=%s)", backend)
+                    cmd = ["bash", str(script)]
+                    if selected_profiles:
+                        for _pid in selected_profiles:
+                            cmd += ["--profile", _pid]
+                    else:
+                        cmd += ["--all"]
+                    if force_reinstall:
+                        cmd += ["--force-reinstall"]
+                    if offline:
+                        cmd += ["--offline"]
+                try:
+                    provision_log_path.parent.mkdir(parents=True, exist_ok=True)
+                    provision_log_path.write_text("", encoding="utf-8")
+                except Exception:
+                    pass
+                logger.info("[hailo][provision] starting provisioning (backend=%s, profiles=%s)", backend, ",".join(selected_profiles) if selected_profiles else "all")
                 logger.info("[hailo][provision] cmd=%s", cmd)
+                _prov_ui(f"[start] backend={backend} profiles={','.join(selected_profiles) if selected_profiles else 'all'}")
+                _prov_ui("[log] " + str(provision_log_path))
+                _prov_ui("[cmd] " + " ".join(shlex.quote(str(x)) for x in cmd))
                 if missing_wheels:
                     logger.warning("[hailo][provision] missing DFC wheels for: %s", ", ".join(missing_wheels))
-
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                )
+                    _prov_ui("[warn] missing DFC wheels: " + ", ".join(missing_wheels))
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
                 assert proc.stdout is not None
-                for line in proc.stdout:
-                    line = line.rstrip("\n")
-                    if not line:
-                        continue
-                    logger.info("[hailo][provision] %s", line)
-                rc = proc.wait()
-
-                prov_rc = int(rc)
-                ok = (rc == 0)
+                with provision_log_path.open("a", encoding="utf-8", errors="replace") as _lf:
+                    for line in proc.stdout:
+                        line = line.rstrip("\n")
+                        if not line:
+                            continue
+                        prov_lines.append(line)
+                        try:
+                            _lf.write(line + "\n")
+                            _lf.flush()
+                        except Exception:
+                            pass
+                        logger.info("[hailo][provision] %s", line)
+                        _prov_ui(line)
+                        low = line.lower()
+                        if "graphviz/cgraph.h" in low or "failed building wheel for pygraphviz" in low or "missing graphviz" in low or "pygraphviz" in low:
+                            try:
+                                self.after(0, lambda: progress.set_status("Graphviz/pygraphviz dependency detected — install libgraphviz-dev/pkg-config/build-essential, then repair again."))
+                            except Exception:
+                                pass
+                    rc = proc.wait()
+                    prov_rc = int(rc)
+                    ok = (rc == 0)
+                    done_line = f"[done] installer exit_code={prov_rc}"
+                    try:
+                        _lf.write(done_line + "\n")
+                        _lf.flush()
+                    except Exception:
+                        pass
+                _prov_ui(f"[done] installer exit_code={prov_rc}")
             except Exception as e:
                 ok = False
                 prov_err = f"{type(e).__name__}: {e}"
-                summary = f"Provisioning failed: {prov_err}"
                 logger.exception("[hailo][provision] failed")
-
-            # Build a compact post-provision status summary (Hailo-8 / Hailo-10)
-            # so users immediately know what is usable.
-            # Post-provision sanity probe (best effort).
-            res_h8 = None
-            res_h10 = None
+                try:
+                    provision_log_path.parent.mkdir(parents=True, exist_ok=True)
+                    provision_log_path.write_text("\n".join(prov_lines + [str(prov_err)]) + "\n", encoding="utf-8")
+                except Exception:
+                    pass
+                _prov_ui(f"[error] {prov_err}")
             try:
                 from .hailo_backend import hailo_probe_auto
-
-                res_h8 = hailo_probe_auto(
-                    backend=backend,
-                    hw_arch="hailo8",
-                    wsl_distro=wsl_distro,
-                    wsl_venv_activate=wsl_venv,
-                    timeout_s=90,
-                )
-                res_h10 = hailo_probe_auto(
-                    backend=backend,
-                    hw_arch="hailo10h",
-                    wsl_distro=wsl_distro,
-                    wsl_venv_activate=wsl_venv,
-                    timeout_s=90,
-                )
+                res_h8 = hailo_probe_auto(backend=backend, hw_arch="hailo8", wsl_distro=wsl_distro, wsl_venv_activate=wsl_venv, timeout_s=90)
+                res_h10 = hailo_probe_auto(backend=backend, hw_arch="hailo10h", wsl_distro=wsl_distro, wsl_venv_activate=wsl_venv, timeout_s=90)
             except Exception:
                 logger.exception("[hailo][provision] post-provision probe failed")
-
-            # Format summary dialog.
+            lines: List[str] = []
             try:
-                lines: List[str] = []
-                if prov_err:
-                    lines.append(f"Provisioning: FAILED ({prov_err})")
-                elif prov_rc is None:
-                    lines.append("Provisioning: FAILED (unknown error)")
-                else:
-                    lines.append(f"Provisioning: {'OK' if prov_rc == 0 else 'FAILED'} (exit code {prov_rc})")
-
-                def _fmt_res(label: str, r) -> None:
-                    if r is None:
-                        lines.append(f"{label}: (no result)")
-                        return
-                    if bool(getattr(r, "ok", False)):
-                        lines.append(f"{label}: OK ({getattr(r, 'backend', '')})")
-                    else:
-                        reason = str(getattr(r, "reason", "") or "").strip()
-                        backend_name = str(getattr(r, "backend", "") or "")
-                        if reason:
-                            lines.append(f"{label}: FAIL ({backend_name}) - {reason}")
-                        else:
-                            lines.append(f"{label}: FAIL ({backend_name})")
-
-                _fmt_res("Hailo-8", res_h8)
-                _fmt_res("Hailo-10", res_h10)
-
-                # Extra hints for common hard blockers.
-                hints: List[str] = []
-                for r, name in ((res_h8, "Hailo-8"), (res_h10, "Hailo-10")):
-                    if r is None or bool(getattr(r, "ok", False)):
-                        continue
-                    reason = str(getattr(r, "reason", "") or "")
-                    if "glibc" in reason.lower() or "GLIBC_" in reason:
-                        hints.append(
-                            f"{name}: Your Linux/WSL distro is too old for this DFC wheel (needs glibc >= 2.34). "
-                            "Use Ubuntu 22.04/24.04 for DFC provisioning and set the GUI 'WSL distro' field accordingly."
-                        )
-                    if "pkg_resources" in reason:
-                        hints.append(
-                            f"{name}: 'pkg_resources' is missing. Fix by pinning setuptools<82 (Provision DFC does this automatically)."
-                        )
-                    if "hailo_sdk_client" in reason and ("not importable" in reason or "not installed" in reason):
-                        hints.append(
-                            f"{name}: DFC not installed in the managed venv. Make sure the DFC wheel is present in onnx_splitpoint_tool/resources/hailo/<profile>/ and re-run 'Provision DFC'."
-                        )
-
-                if hints:
-                    lines.append("")
-                    lines.append("Hints:")
-                    for h in hints:
-                        lines.append(f"- {h}")
-
-                if missing_wheels:
-                    lines.append("")
-                    lines.append("Missing wheels:")
-                    for sub in missing_wheels:
-                        lines.append(
-                            f"- {sub}: place the matching hailo_dataflow_compiler-*.whl into onnx_splitpoint_tool/resources/hailo/{sub}/"
-                        )
-
-                summary = "\n".join(lines)
+                requested = set(selected_profiles or ["hailo8", "hailo10"])
+                ok_h8 = bool(res_h8 is not None and getattr(res_h8, "ok", False))
+                ok_h10 = bool(res_h10 is not None and getattr(res_h10, "ok", False))
+                all_ok = (("hailo8" not in requested) or ok_h8) and (("hailo10" not in requested) or ok_h10)
             except Exception:
-                # Fall back to a basic summary if formatting fails.
-                if not summary:
-                    summary = "Provisioning completed." if ok else "Provisioning failed. Check Logs tab."
-
+                all_ok = False
+            if all_ok and prov_rc not in (0, None):
+                lines.append(f"Provisioning: usable after repair (installer exit code {prov_rc})")
+                lines.append("Both managed DFC environments probe OK. The installer returned non-zero, but the final state is usable.")
+            elif prov_err:
+                lines.append(f"Provisioning: FAILED ({prov_err})")
+            elif prov_rc is None:
+                lines.append("Provisioning: FAILED (unknown error)")
+            else:
+                lines.append(f"Provisioning: {'OK' if prov_rc == 0 else 'FAILED'} (exit code {prov_rc})")
+            def _fmt_res(label: str, r) -> None:
+                if r is None:
+                    lines.append(f"{label}: (no result)"); return
+                if bool(getattr(r, "ok", False)):
+                    lines.append(f"{label}: OK ({getattr(r, 'backend', '')})")
+                else:
+                    reason = str(getattr(r, "reason", "") or "").strip()
+                    lines.append(f"{label}: FAIL ({getattr(r, 'backend', '')})" + (f" - {reason}" if reason else ""))
+            _fmt_res("Hailo-8", res_h8); _fmt_res("Hailo-10", res_h10)
+            hints: List[str] = []
+            joined_prov = "\n".join(prov_lines).lower()
+            if "graphviz" in joined_prov or "cgraph.h" in joined_prov or "pygraphviz" in joined_prov:
+                hints.append("Graphviz headers: sudo apt update && sudo apt install -y graphviz libgraphviz-dev pkg-config build-essential")
+            if "requires python" in joined_prov or ("wheel" in joined_prov and "python" in joined_prov and "requires" in joined_prov):
+                hints.append("Python/DFC wheel mismatch: install python3.10 or set DFC_PYTHON=/path/to/python3.10 before repair.")
+            if prov_lines:
+                tail = [x for x in prov_lines[-12:] if x.strip()]
+                lines.append(""); lines.append("Installer tail:")
+                for line in tail[-8:]: lines.append("- " + line[:240])
+            lines.append(""); lines.append(f"Provisioning log: {provision_log_path}")
+            if hints:
+                lines.append(""); lines.append("Hints:")
+                for h in hints: lines.append("- " + h)
+            if missing_wheels:
+                lines.append(""); lines.append("Missing wheels:")
+                for sub in missing_wheels: lines.append(f"- {sub}: place hailo_dataflow_compiler-*.whl into onnx_splitpoint_tool/resources/hailo/{sub}/")
+            summary = "\n".join(lines)
             def _finish() -> None:
                 self._hailo_provision_running = False
+                for _b in hailo_buttons:
+                    try:
+                        _b.configure(state="normal")
+                    except Exception:
+                        pass
                 try:
-                    if btn is not None:
-                        btn.configure(state="normal")
-                except Exception:
-                    pass
-
-                # Decide dialog icon based on overall state.
-                try:
-                    all_ok = bool(res_h8 is not None and getattr(res_h8, "ok", False)) and bool(res_h10 is not None and getattr(res_h10, "ok", False))
-                except Exception:
-                    all_ok = False
-
-                if ok and all_ok:
-                    messagebox.showinfo("Hailo DFC provisioning", summary)
+                    progress.finish(status_text="Hailo DFC environments are usable" if all_ok else "Hailo DFC provisioning finished")
+                    progress.append(""); progress.append("=== Summary ===")
+                    for line in summary.splitlines(): progress.append(line)
+                except Exception: pass
+                if all_ok:
+                    level = "ok" if ok else "warn"
+                    heading = "Hailo DFC environments are usable"
+                    message = "Requested managed DFC environment probes succeeded."
                 elif ok:
-                    messagebox.showwarning("Hailo DFC provisioning", summary)
+                    level = "warn"; heading = "Hailo DFC provisioning finished with warnings"; message = "The installer returned success, but at least one environment did not probe cleanly."
                 else:
-                    messagebox.showerror("Hailo DFC provisioning", summary)
-
-                # Refresh badges after provisioning attempt.
-                try:
-                    self._hailo_refresh_status()
-                except Exception:
-                    pass
-
-            try:
-                self.after(0, _finish)
-            except Exception:
-                _finish()
-
+                    level = "error"; heading = "Hailo DFC provisioning failed"; message = "The installer returned a non-zero exit code and at least one environment is not usable."
+                self._show_detail_message(title="Hailo DFC provisioning", heading=heading, message=message, details=summary, level=level, log_path=str(provision_log_path))
+                try: self._hailo_refresh_status()
+                except Exception: pass
+            try: self.after(0, _finish)
+            except Exception: _finish()
         threading.Thread(target=_worker, daemon=True).start()
 
     # ----------------------------- Event handlers -----------------------------
@@ -6045,6 +6414,30 @@ class SplitPointAnalyserGUI(tk.Tk):
         hef_wsl_venv = (getattr(self, "var_hailo_wsl_venv", tk.StringVar(value="auto")).get() or "auto").strip() or "auto"
         hef_fixup = bool(getattr(self, "var_hailo_fixup", tk.BooleanVar(value=True)).get())
 
+        hailo_image_task = ""
+        if hef_targets and (hef_full or hef_part1 or hef_part2):
+            try:
+                hailo_image_task = _declared_hailo_image_task(
+                    model_path, model, self.analysis if isinstance(self.analysis, Mapping) else None
+                )
+            except ValueError as exc:
+                messagebox.showerror("Hailo task conflict", str(exc))
+                return
+            if not hailo_image_task:
+                answer = simpledialog.askstring(
+                    "Hailo image task",
+                    "Hailo preprocessing cannot infer task semantics from model names or "
+                    "input dimensions. Enter 'detection' or 'classification' for this build.",
+                    parent=self,
+                )
+                if answer is None:
+                    return
+                try:
+                    hailo_image_task = normalize_image_task(answer)
+                except ValueError as exc:
+                    messagebox.showerror("Invalid Hailo image task", str(exc))
+                    return
+
         # ---- progress dialog + background worker ----
         dlg = tk.Toplevel(self)
         dlg.title("Split and Export")
@@ -6358,6 +6751,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                     q.put(("stage", "Building Hailo HEFs…"))
                     try:
                         from .hailo_backend import hailo_build_hef_auto
+                        from .hailo_build_context import make_build_evidence_context
                     except Exception as e:
                         msg.append(f"Hailo HEF build unavailable: {e}")
                     else:
@@ -6379,6 +6773,7 @@ class SplitPointAnalyserGUI(tk.Tk):
                             "force": bool(hef_force),
                             "keep_artifacts": bool(hef_keep),
                             "timeout_s": int(hef_timeout_s),
+                            "task": hailo_image_task,
                             "build": {"full": bool(hef_full), "part1": bool(hef_part1), "part2": bool(hef_part2)},
                         }
 
@@ -6415,6 +6810,10 @@ class SplitPointAnalyserGUI(tk.Tk):
                                     wsl_venv_activate=hef_wsl_venv,
                                     wsl_timeout_s=int(hef_timeout_s),
                                     on_log=_hef_on_log,
+                                    task=hailo_image_task,
+                                    build_evidence_context=make_build_evidence_context(
+                                        full_model_src, stage="full", model_id=base,
+                                    ),
                                 )
                                 if r_full.ok:
                                     rel = os.path.relpath(r_full.hef_path or os.path.join(out_full, "compiled.hef"), out_dir)
@@ -6450,6 +6849,11 @@ class SplitPointAnalyserGUI(tk.Tk):
                                     wsl_venv_activate=hef_wsl_venv,
                                     wsl_timeout_s=int(hef_timeout_s),
                                     on_log=_hef_on_log,
+                                    task=hailo_image_task,
+                                    build_evidence_context=make_build_evidence_context(
+                                        full_model_src, stage="part1",
+                                        split_manifest=manifest_out, model_id=base,
+                                    ),
                                 )
                                 if r1.ok:
                                     rel = os.path.relpath(r1.hef_path or os.path.join(out_p1, "compiled.hef"), out_dir)
@@ -6487,6 +6891,11 @@ class SplitPointAnalyserGUI(tk.Tk):
                                     wsl_venv_activate=hef_wsl_venv,
                                     wsl_timeout_s=int(hef_timeout_s),
                                     on_log=_hef_on_log,
+                                    task=hailo_image_task,
+                                    build_evidence_context=make_build_evidence_context(
+                                        full_model_src, stage="part2",
+                                        split_manifest=manifest_out, model_id=base,
+                                    ),
                                 )
                                 if r2.ok:
                                     rel = os.path.relpath(r2.hef_path or os.path.join(out_p2, "compiled.hef"), out_dir)

@@ -29,6 +29,10 @@ class DependencySpec:
 DEPENDENCY_GROUPS: dict[str, tuple[DependencySpec, ...]] = {
     'gui_core': (
         DependencySpec('onnx', 'onnx'),
+        # Needed by ActivationProxyCache generation for Stage2 accelerator
+        # calibration.  This is CPU ORT by default; CUDA/TensorRT ORT can still
+        # be installed manually if selected in Tool Config.
+        DependencySpec('onnxruntime', 'onnxruntime'),
         DependencySpec('numpy', 'numpy'),
         DependencySpec('matplotlib', 'matplotlib'),
         DependencySpec('pillow', 'PIL'),
@@ -44,6 +48,17 @@ DEPENDENCY_GROUPS: dict[str, tuple[DependencySpec, ...]] = {
         DependencySpec('onnxscript', 'onnxscript'),
         DependencySpec('onnxslim', 'onnxslim'),
         DependencySpec('numpy', 'numpy'),
+    ),
+    # CPU-only YOLOv7 decoder A/B probe.  Official COCO is mandatory; there
+    # is deliberately no internal proxy fallback for this evidence path.
+    'yolov7_probe': (
+        DependencySpec('onnxruntime', 'onnxruntime'),
+        DependencySpec('numpy', 'numpy'),
+        DependencySpec('pillow', 'PIL'),
+        DependencySpec('pycocotools>=2.0.7', 'pycocotools'),
+    ),
+    'official_coco': (
+        DependencySpec('pycocotools>=2.0.7', 'pycocotools'),
     ),
 }
 
@@ -137,18 +152,37 @@ def current_env_python_candidates(*, cwd: str | Path | None = None) -> List[str]
 
 
 def missing_specs_for_python(python_exe: str | Path, specs: Sequence[DependencySpec]) -> List[DependencySpec]:
+    """Return missing specs using one interpreter startup.
+
+    Earlier versions spawned one Python process per module.  That made GUI
+    startup look frozen on systems where imports such as onnxruntime or
+    matplotlib are slow.  Use one small probe process and report all missing
+    modules at once.
+    """
     exe = normalize_python_executable(python_exe)
     if not exe:
         return list(specs)
-    missing: List[DependencySpec] = []
-    for spec in specs:
-        try:
-            proc = subprocess.run([exe, '-c', f'import {spec.module}'], text=True, capture_output=True)
-        except Exception:
-            return list(specs)
-        if proc.returncode != 0:
-            missing.append(spec)
-    return missing
+    if not specs:
+        return []
+    payload = {spec.module: spec.package for spec in specs}
+    code = (
+        "import importlib.util, json, sys\n"
+        "mods=json.loads(sys.argv[1])\n"
+        "missing=[m for m in mods if importlib.util.find_spec(m) is None]\n"
+        "print(json.dumps(missing))\n"
+        "raise SystemExit(1 if missing else 0)\n"
+    )
+    try:
+        proc = subprocess.run([exe, '-c', code, __import__('json').dumps(payload)], text=True, capture_output=True, timeout=20)
+    except Exception:
+        return list(specs)
+    try:
+        import json as _json
+        missing_modules = set(_json.loads((proc.stdout or '[]').strip().splitlines()[-1]))
+    except Exception:
+        # Fall back conservatively if the probe itself failed in an unexpected way.
+        return list(specs) if proc.returncode != 0 else []
+    return [spec for spec in specs if spec.module in missing_modules]
 
 
 def ensure_dependency_groups_for_python(

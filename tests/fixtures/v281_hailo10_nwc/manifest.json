@@ -1,0 +1,201 @@
+{
+  "schema": "v281-hailo10-layout-regression-inputs",
+  "source_archive": "v2804_night_smoke_r1_x12jzgo2.zip",
+  "source_archive_sha256": "30ee88431ac0ec7e0697f1df17b911e57fee2461968917dd5f517ec649d1f2ac",
+  "scope": "Six exact physical B output buffers from hardware smoke; no image/model or synthetic replacement",
+  "samples": [
+    {
+      "key": "yolo26m_image_00",
+      "model": "yolo26m",
+      "case": "b398",
+      "image_id": "image_00",
+      "source_member": "v2804_night_smoke_r1_x12jzgo2/hailo10_splits/hailo10/yolo26m/remote_orin_nx_hailo10_01_j2nfq_c5/results/image_00/raw_tensors.npz",
+      "source_member_sha256": "1f623abf932d468ad39e3587cb77dc1534eadacab5793d2c433708c98e267e40",
+      "physical_name": "yolo26m_part1_b398/concat25",
+      "canonical_name": "/model.23/Concat_3_output_0",
+      "physical_shape": [
+        1,
+        8400,
+        84
+      ],
+      "canonical_shape": [
+        1,
+        84,
+        8400
+      ],
+      "dtype": "uint8",
+      "physical_bytes_sha256": "58b19e4f180f3d8c53d526ff660d2817c18b1294ac8cad21e74be6278171bb2e",
+      "observed_engine_feed_bytes_sha256": "58b19e4f180f3d8c53d526ff660d2817c18b1294ac8cad21e74be6278171bb2e",
+      "quantization": {
+        "scale": 3.4920754432678223,
+        "zero_point": 39.0
+      },
+      "hef_sha256": "301d51768bbbf4dcdcf2a232479f0aecf3884168c5333d510e6c5afe019fab2c",
+      "existing_engine_sha256": "9a86d45b644d1974731d956859d1af66c97b61244a28cbd150e571a97921e623",
+      "existing_bridge_sha256": "95e1e467d2daa6d67327d2df759e8f08e555595ef6b62731770250985e5c3bd8",
+      "observed_scores_min": 0.0,
+      "observed_scores_max": 0.0
+    },
+    {
+      "key": "yolo26m_image_01",
+      "model": "yolo26m",
+      "case": "b398",
+      "image_id": "image_01",
+      "source_member": "v2804_night_smoke_r1_x12jzgo2/hailo10_splits/hailo10/yolo26m/remote_orin_nx_hailo10_01_j2nfq_c5/results/image_01/raw_tensors.npz",
+      "source_member_sha256": "30340164e0eeb884a80c8f788439cae2114e78323bd6268bfcfbbf5d37706f41",
+      "physical_name": "yolo26m_part1_b398/concat25",
+      "canonical_name": "/model.23/Concat_3_output_0",
+      "physical_shape": [
+        1,
+        8400,
+        84
+      ],
+      "canonical_shape": [
+        1,
+        84,
+        8400
+      ],
+      "dtype": "uint8",
+      "physical_bytes_sha256": "baa19e54383b3305a4ad698dfcdc4458a93e9f774a9e04dc5ea78d6c3fc34322",
+      "observed_engine_feed_bytes_sha256": "baa19e54383b3305a4ad698dfcdc4458a93e9f774a9e04dc5ea78d6c3fc34322",
+      "quantization": {
+        "scale": 3.4920754432678223,
+        "zero_point": 39.0
+      },
+      "hef_sha256": "301d51768bbbf4dcdcf2a232479f0aecf3884168c5333d510e6c5afe019fab2c",
+      "existing_engine_sha256": "9a86d45b644d1974731d956859d1af66c97b61244a28cbd150e571a97921e623",
+      "existing_bridge_sha256": "95e1e467d2daa6d67327d2df759e8f08e555595ef6b62731770250985e5c3bd8",
+      "observed_scores_min": 0.0,
+      "observed_scores_max": 0.0
+    },
+    {
+      "key": "yolo26m_image_02",
+      "model": "yolo26m",
+      "case": "b398",
+      "image_id": "image_02",
+      "source_member": "v2804_night_smoke_r1_x12jzgo2/hailo10_splits/hailo10/yolo26m/remote_orin_nx_hailo10_01_j2nfq_c5/results/image_02/raw_tensors.npz",
+      "source_member_sha256": "0c6b379c21bed08034981321f3d971869a08986722facbc054bebc0d1eb1b58d",
+      "physical_name": "yolo26m_part1_b398/concat25",
+      "canonical_name": "/model.23/Concat_3_output_0",
+      "physical_shape": [
+        1,
+        8400,
+        84
+      ],
+      "canonical_shape": [
+        1,
+        84,
+        8400
+      ],
+      "dtype": "uint8",
+      "physical_bytes_sha256": "fc82276cedb0fce8daa5a7e40b259fe95da79498a5e4b88db9979dc26f462794",
+      "observed_engine_feed_bytes_sha256": "fc82276cedb0fce8daa5a7e40b259fe95da79498a5e4b88db9979dc26f462794",
+      "quantization": {
+        "scale": 3.4920754432678223,
+        "zero_point": 39.0
+      },
+      "hef_sha256": "301d51768bbbf4dcdcf2a232479f0aecf3884168c5333d510e6c5afe019fab2c",
+      "existing_engine_sha256": "9a86d45b644d1974731d956859d1af66c97b61244a28cbd150e571a97921e623",
+      "existing_bridge_sha256": "95e1e467d2daa6d67327d2df759e8f08e555595ef6b62731770250985e5c3bd8",
+      "observed_scores_min": 0.0,
+      "observed_scores_max": 0.0
+    },
+    {
+      "key": "yolo26s_image_00",
+      "model": "yolo26s",
+      "case": "b364",
+      "image_id": "image_00",
+      "source_member": "v2804_night_smoke_r1_x12jzgo2/hailo10_splits/hailo10/yolo26s/remote_orin_nx_hailo10_01_ualkaz0h/results/image_00/raw_tensors.npz",
+      "source_member_sha256": "ad14802861880be1d0a9df3bc7f4765341f9046991f586db5acb1edb45c10a0a",
+      "physical_name": "yolo26s_part1_b364/concat23",
+      "canonical_name": "/model.23/Concat_3_output_0",
+      "physical_shape": [
+        1,
+        8400,
+        84
+      ],
+      "canonical_shape": [
+        1,
+        84,
+        8400
+      ],
+      "dtype": "uint8",
+      "physical_bytes_sha256": "f5d74b64810c373d11166e69acfe0aba92a0e7105f84dedb98d5ebe8d2f61d14",
+      "observed_engine_feed_bytes_sha256": "f5d74b64810c373d11166e69acfe0aba92a0e7105f84dedb98d5ebe8d2f61d14",
+      "quantization": {
+        "scale": 3.1612741947174072,
+        "zero_point": 35.0
+      },
+      "hef_sha256": "24adc12d0e4b9e37cbaf2b54a811e142c58f918bb52ec5a0d30045175f57b685",
+      "existing_engine_sha256": "9727babe0ae6dd08fc0f7c5bdf263f8f95e85c652948d10ceb6872ca77a6b3f7",
+      "existing_bridge_sha256": "bbbed09d2f7d6e11b36720aca94401b2e75a41186a63009af2a18a3b3b67c971",
+      "observed_scores_min": 0.0,
+      "observed_scores_max": 0.0
+    },
+    {
+      "key": "yolo26s_image_01",
+      "model": "yolo26s",
+      "case": "b364",
+      "image_id": "image_01",
+      "source_member": "v2804_night_smoke_r1_x12jzgo2/hailo10_splits/hailo10/yolo26s/remote_orin_nx_hailo10_01_ualkaz0h/results/image_01/raw_tensors.npz",
+      "source_member_sha256": "798242dbf4b059f3f94a988d870d0ff0e460d23c4728193b54ecf487fc4f8af7",
+      "physical_name": "yolo26s_part1_b364/concat23",
+      "canonical_name": "/model.23/Concat_3_output_0",
+      "physical_shape": [
+        1,
+        8400,
+        84
+      ],
+      "canonical_shape": [
+        1,
+        84,
+        8400
+      ],
+      "dtype": "uint8",
+      "physical_bytes_sha256": "e1687f639c3aa7f5554f251bf3cc094b0cc3e2f608899ab7f1d6cbfa1f4afb53",
+      "observed_engine_feed_bytes_sha256": "e1687f639c3aa7f5554f251bf3cc094b0cc3e2f608899ab7f1d6cbfa1f4afb53",
+      "quantization": {
+        "scale": 3.1612741947174072,
+        "zero_point": 35.0
+      },
+      "hef_sha256": "24adc12d0e4b9e37cbaf2b54a811e142c58f918bb52ec5a0d30045175f57b685",
+      "existing_engine_sha256": "9727babe0ae6dd08fc0f7c5bdf263f8f95e85c652948d10ceb6872ca77a6b3f7",
+      "existing_bridge_sha256": "bbbed09d2f7d6e11b36720aca94401b2e75a41186a63009af2a18a3b3b67c971",
+      "observed_scores_min": 0.0,
+      "observed_scores_max": 0.0
+    },
+    {
+      "key": "yolo26s_image_02",
+      "model": "yolo26s",
+      "case": "b364",
+      "image_id": "image_02",
+      "source_member": "v2804_night_smoke_r1_x12jzgo2/hailo10_splits/hailo10/yolo26s/remote_orin_nx_hailo10_01_ualkaz0h/results/image_02/raw_tensors.npz",
+      "source_member_sha256": "571fe24569002dec9f0c5b8b4fec53e0dd854c3cc5f69028d18361c19117f27c",
+      "physical_name": "yolo26s_part1_b364/concat23",
+      "canonical_name": "/model.23/Concat_3_output_0",
+      "physical_shape": [
+        1,
+        8400,
+        84
+      ],
+      "canonical_shape": [
+        1,
+        84,
+        8400
+      ],
+      "dtype": "uint8",
+      "physical_bytes_sha256": "7939b87d1568fad4e69607083efa3d7b3dfc14583d7c35d1d264add58a9e24b9",
+      "observed_engine_feed_bytes_sha256": "7939b87d1568fad4e69607083efa3d7b3dfc14583d7c35d1d264add58a9e24b9",
+      "quantization": {
+        "scale": 3.1612741947174072,
+        "zero_point": 35.0
+      },
+      "hef_sha256": "24adc12d0e4b9e37cbaf2b54a811e142c58f918bb52ec5a0d30045175f57b685",
+      "existing_engine_sha256": "9727babe0ae6dd08fc0f7c5bdf263f8f95e85c652948d10ceb6872ca77a6b3f7",
+      "existing_bridge_sha256": "bbbed09d2f7d6e11b36720aca94401b2e75a41186a63009af2a18a3b3b67c971",
+      "observed_scores_min": 0.0,
+      "observed_scores_max": 0.0
+    }
+  ],
+  "fixture_sha256": "ad481c175140e7b9dda1494e9761939c8149131e4b1fb6167f417a47aa7d83e3"
+}

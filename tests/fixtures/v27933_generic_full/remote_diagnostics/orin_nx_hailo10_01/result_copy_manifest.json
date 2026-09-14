@@ -1,0 +1,490 @@
+{
+  "canonical_file_count": 4,
+  "canonical_files": [
+    {
+      "error_sidecar": "",
+      "format": "json",
+      "nonempty": true,
+      "parseable": true,
+      "path": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/benchmark_results_hailo10_auto.json",
+      "row_count": 1,
+      "run_id": "hailo10_auto",
+      "semantic_status": "measured_rows"
+    },
+    {
+      "error_sidecar": "",
+      "format": "json",
+      "nonempty": true,
+      "parseable": true,
+      "path": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/benchmark_results_hailo10_to_tensorrt_auto.json",
+      "row_count": 1,
+      "run_id": "hailo10_to_tensorrt_auto",
+      "semantic_status": "measured_rows"
+    },
+    {
+      "error_sidecar": "",
+      "format": "csv",
+      "nonempty": true,
+      "parseable": true,
+      "path": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/benchmark_results_hailo10_auto.csv",
+      "row_count": 1,
+      "run_id": "hailo10_auto",
+      "semantic_status": "measured_rows"
+    },
+    {
+      "error_sidecar": "",
+      "format": "csv",
+      "nonempty": true,
+      "parseable": true,
+      "path": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/benchmark_results_hailo10_to_tensorrt_auto.csv",
+      "row_count": 1,
+      "run_id": "hailo10_to_tensorrt_auto",
+      "semantic_status": "measured_rows"
+    }
+  ],
+  "canonical_max_bytes": null,
+  "canonical_nonempty_file_count": 4,
+  "canonical_nonempty_row_count": 4,
+  "canonical_parseable_file_count": 4,
+  "canonical_result_count": 4,
+  "canonical_run_ids_with_rows": [
+    "hailo10_auto",
+    "hailo10_to_tensorrt_auto"
+  ],
+  "canonical_run_ids_without_rows": [],
+  "copied": [
+    {
+      "canonical": true,
+      "canonical_nonempty": true,
+      "canonical_parseable": true,
+      "canonical_row_count": 1,
+      "canonical_run_id": "hailo10_auto",
+      "canonical_semantic_status": "measured_rows",
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/benchmark_results_hailo10_auto.json",
+      "kind": "benchmark_result",
+      "size_bytes": 19247077,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/benchmark_results_hailo10_auto.json"
+    },
+    {
+      "canonical": true,
+      "canonical_nonempty": true,
+      "canonical_parseable": true,
+      "canonical_row_count": 1,
+      "canonical_run_id": "hailo10_to_tensorrt_auto",
+      "canonical_semantic_status": "measured_rows",
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/benchmark_results_hailo10_to_tensorrt_auto.json",
+      "kind": "benchmark_result",
+      "size_bytes": 9697795,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/benchmark_results_hailo10_to_tensorrt_auto.json"
+    },
+    {
+      "canonical": true,
+      "canonical_nonempty": true,
+      "canonical_parseable": true,
+      "canonical_row_count": 1,
+      "canonical_run_id": "hailo10_auto",
+      "canonical_semantic_status": "measured_rows",
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/benchmark_results_hailo10_auto.csv",
+      "kind": "benchmark_result",
+      "size_bytes": 10262443,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/benchmark_results_hailo10_auto.csv"
+    },
+    {
+      "canonical": true,
+      "canonical_nonempty": true,
+      "canonical_parseable": true,
+      "canonical_row_count": 1,
+      "canonical_run_id": "hailo10_to_tensorrt_auto",
+      "canonical_semantic_status": "measured_rows",
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/benchmark_results_hailo10_to_tensorrt_auto.csv",
+      "kind": "benchmark_result",
+      "size_bytes": 6668303,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/benchmark_results_hailo10_to_tensorrt_auto.csv"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/logs/runner.log",
+      "kind": "remote_log",
+      "size_bytes": 25781,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/logs/runner.log"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/logs/runner.log",
+      "kind": "remote_log",
+      "size_bytes": 25781,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/logs/runner.log"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/logs/stderr.txt",
+      "kind": "remote_log",
+      "size_bytes": 0,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/logs/stderr.txt"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/logs/stderr.txt",
+      "kind": "remote_log",
+      "size_bytes": 0,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/logs/stderr.txt"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/logs/stdout.txt",
+      "kind": "remote_log",
+      "size_bytes": 15891,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/logs/stdout.txt"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/logs/stdout.txt",
+      "kind": "remote_log",
+      "size_bytes": 15891,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/logs/stdout.txt"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/benchmark_plan.json",
+      "kind": "remote_diagnostic",
+      "size_bytes": 75338,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/benchmark_plan.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/benchmark_plan.json",
+      "kind": "remote_diagnostic",
+      "size_bytes": 75338,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/benchmark_plan.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/benchmark_set.json",
+      "kind": "remote_diagnostic",
+      "size_bytes": 154374,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/benchmark_set.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/benchmark_set.json",
+      "kind": "remote_diagnostic",
+      "size_bytes": 154374,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/benchmark_set.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/preflight.json",
+      "kind": "remote_diagnostic",
+      "size_bytes": 3513,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/preflight.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/preflight.json",
+      "kind": "remote_diagnostic",
+      "size_bytes": 3513,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/preflight.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/quality_inputs/orin_nx_hailo10_01/results/b135/results_hailo10/task_quality_inputs/full_request.json",
+      "kind": "central_quality_input",
+      "size_bytes": 316360,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/b135/results_hailo10/task_quality_inputs/full_request.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/quality_inputs/orin_nx_hailo10_01/results/b135/results_hailo10_to_tensorrt/task_quality_inputs/composed_request.json",
+      "kind": "central_quality_input",
+      "size_bytes": 414468,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/b135/results_hailo10_to_tensorrt/task_quality_inputs/composed_request.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/quality_inputs/orin_nx_hailo10_01/results/results_native_full_tensorrt/task_quality_inputs/full_request.json",
+      "kind": "central_quality_input",
+      "size_bytes": 330724,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/results_native_full_tensorrt/task_quality_inputs/full_request.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/quality_inputs/orin_nx_hailo10_01/results/b135/results_hailo10/task_quality_inputs/full_candidate.json",
+      "kind": "central_quality_input",
+      "size_bytes": 701523,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/b135/results_hailo10/task_quality_inputs/full_candidate.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/quality_inputs/orin_nx_hailo10_01/results/b135/results_hailo10_to_tensorrt/task_quality_inputs/composed_candidate.json",
+      "kind": "central_quality_input",
+      "size_bytes": 799605,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/b135/results_hailo10_to_tensorrt/task_quality_inputs/composed_candidate.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/quality_inputs/orin_nx_hailo10_01/results/results_native_full_tensorrt/task_quality_inputs/full_candidate.json",
+      "kind": "central_quality_input",
+      "size_bytes": 714726,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/results_native_full_tensorrt/task_quality_inputs/full_candidate.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/benchmark_plan.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 75338,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./benchmark_plan.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/lean_bundle/benchmark_plan.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 75338,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./benchmark_plan.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/benchmark_set.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 154374,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./benchmark_set.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/lean_bundle/benchmark_set.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 154374,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./benchmark_set.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/benchmark_suite_status_matrix.csv",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 86,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./benchmark_suite_status_matrix.csv"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/lean_bundle/benchmark_suite_status_matrix.csv",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 86,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./benchmark_suite_status_matrix.csv"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/benchmark_suite_status_matrix.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 204,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./benchmark_suite_status_matrix.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/lean_bundle/benchmark_suite_status_matrix.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 204,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./benchmark_suite_status_matrix.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/benchmark_suite_status_matrix.md",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 165,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./benchmark_suite_status_matrix.md"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/lean_bundle/benchmark_suite_status_matrix.md",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 165,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./benchmark_suite_status_matrix.md"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/logs/stderr.txt",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 0,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./logs/stderr.txt"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/lean_bundle/logs/stderr.txt",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 0,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./logs/stderr.txt"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/logs/stdout.txt",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 15891,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./logs/stdout.txt"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/lean_bundle/logs/stdout.txt",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 15891,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./logs/stdout.txt"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/preflight.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 3513,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./preflight.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/lean_bundle/preflight.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 3513,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./preflight.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/results_bundle_manifest.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 444,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./results_bundle_manifest.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/lean_bundle/results_bundle_manifest.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 444,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./results_bundle_manifest.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/v42_pipeline_summary.csv",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 443,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./v42_pipeline_summary.csv"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/lean_bundle/v42_pipeline_summary.csv",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 443,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./v42_pipeline_summary.csv"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/v42_pipeline_summary.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 1582,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./v42_pipeline_summary.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/lean_bundle/v42_pipeline_summary.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 1582,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./v42_pipeline_summary.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/v42_pipeline_summary.md",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 478,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./v42_pipeline_summary.md"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/lean_bundle/v42_pipeline_summary.md",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 478,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./v42_pipeline_summary.md"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/v47_pipeline_summary.csv",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 443,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./v47_pipeline_summary.csv"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/lean_bundle/v47_pipeline_summary.csv",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 443,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./v47_pipeline_summary.csv"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/v47_pipeline_summary.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 1582,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./v47_pipeline_summary.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/lean_bundle/v47_pipeline_summary.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 1582,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./v47_pipeline_summary.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/v47_pipeline_summary.md",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 478,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./v47_pipeline_summary.md"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/lean_bundle/v47_pipeline_summary.md",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 478,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results_bundle_lean.tar.gz!./v47_pipeline_summary.md"
+    }
+  ],
+  "created_at": "2026-09-08T22:19:35+02:00",
+  "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results",
+  "diagnostic_max_bytes": 2097152,
+  "errors": [],
+  "fallback_extraction_count": 0,
+  "fallback_extractions": [],
+  "remote_local_run_dir": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01",
+  "schema": "onnx-splitpoint/remote-result-copy-manifest",
+  "schema_version": 2,
+  "skipped": [
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/case_reports/results/b135/results_hailo10/validation_report.json",
+      "kind": "case_validation_report",
+      "limit_bytes": 2097152,
+      "reason": "too_large",
+      "size_bytes": 17630243,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/b135/results_hailo10/validation_report.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/case_reports/results/b135/results_hailo10/validation_report.json",
+      "kind": "case_validation_report",
+      "limit_bytes": 2097152,
+      "reason": "too_large",
+      "size_bytes": 17630243,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/b135/results_hailo10/validation_report.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/case_reports/results/b135/results_hailo10_to_tensorrt/validation_report.json",
+      "kind": "case_validation_report",
+      "limit_bytes": 2097152,
+      "reason": "too_large",
+      "size_bytes": 8683325,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/b135/results_hailo10_to_tensorrt/validation_report.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_hailo10_01/case_reports/results/b135/results_hailo10_to_tensorrt/validation_report.json",
+      "kind": "case_validation_report",
+      "limit_bytes": 2097152,
+      "reason": "too_large",
+      "size_bytes": 8683325,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_hailo10_01/results/b135/results_hailo10_to_tensorrt/validation_report.json"
+    }
+  ],
+  "status": "ok",
+  "target_id": "orin_nx_hailo10_01"
+}

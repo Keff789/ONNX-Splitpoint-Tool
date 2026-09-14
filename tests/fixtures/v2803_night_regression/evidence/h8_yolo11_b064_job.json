@@ -1,0 +1,61 @@
+{
+  "attempt_observations": [
+    {
+      "backend": "hailo8",
+      "boundary": "b064",
+      "cache_hit": null,
+      "compiler_context": {},
+      "compiler_dispatch_count": null,
+      "compute_by_family": {
+        "hailo10h": {
+          "device": "gpu"
+        },
+        "hailo8": {
+          "device": "gpu"
+        }
+      },
+      "end_node_names": null,
+      "hef_path": null,
+      "identity_source": "build_evidence_context",
+      "model_build_status": "failed",
+      "model_id": "yolo11l",
+      "net_name": "yolo11l_part1_b64",
+      "next_required_action": "inspect_original_failure",
+      "preflight_decision": "MISS",
+      "preflight_reason": "not_found_or_receipt_invalid",
+      "receipt_path": null,
+      "result_json_path": null,
+      "source_onnx": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/yolo11l_part1_b64.onnx",
+      "stage": "part1"
+    }
+  ],
+  "backend": "hailo8",
+  "boundary": "b064",
+  "cache_hit": null,
+  "compiler_context": {},
+  "compiler_dispatch_count": null,
+  "compute_by_family": {
+    "hailo10h": {
+      "device": "gpu"
+    },
+    "hailo8": {
+      "device": "gpu"
+    }
+  },
+  "end_node_names": null,
+  "error": "Venv HEF build failed to launch: CompilerContextError: hailo_compiler_components_missing: No complete local ptxas/libdevice pair in selected DFC venv",
+  "hef_path": null,
+  "identity_source": "build_evidence_context",
+  "model_build_status": "failed",
+  "model_id": "yolo11l",
+  "net_name": "yolo11l_part1_b64",
+  "next_required_action": "inspect_original_failure",
+  "preflight_decision": "MISS",
+  "preflight_reason": "not_found_or_receipt_invalid",
+  "receipt_path": null,
+  "request": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/hailo/hailo8/part1/deferred_hailo_build.json",
+  "result_json_path": null,
+  "source_onnx": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/yolo11l_part1_b64.onnx",
+  "stage": "part1",
+  "status": "failed"
+}

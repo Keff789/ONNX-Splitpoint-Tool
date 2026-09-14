@@ -1,0 +1,62 @@
+{
+  "scope": "offline_full_FIX2_archive_and_original_Q1_Q3_provenance",
+  "baseline_delivery": "ONNX-Splitpoint-Tool_v2.79.32_FIX2_COMPLETE_DELIVERY_BUNDLE",
+  "baseline_source_archive": "ONNX-Splitpoint-Tool_v2.79.32_SOURCE.zip",
+  "baseline_source_sha256": "aa901238a25889d742c24e4b77301bb94c600f13b0bccf67d961e8fe760c9043",
+  "baseline_version": "2.79.32",
+  "baseline_build_id": "v2.79.32-native-full-failure-closure",
+  "source_archive_crc_valid": true,
+  "source_manifest_payloads_verified": 1532,
+  "Q1_installed_modules": [
+    {
+      "path": "onnx_splitpoint_tool/gui/panels/panel_evaluation_workflow.py",
+      "size": 26327,
+      "sha256": "383041c184b2fb7702d047462fc95aab18ce7eed87b9d139ba07511c7ecfbaa0",
+      "byte_identical_to_FIX2": true
+    },
+    {
+      "path": "onnx_splitpoint_tool/gui/profile_editor.py",
+      "size": 259139,
+      "sha256": "77ad21f35d78acf5f72d4b86284ad016149e2dfc0d76fb45a3a05a6dda10488f",
+      "byte_identical_to_FIX2": true
+    },
+    {
+      "path": "onnx_splitpoint_tool/gui/run_mode_editor.py",
+      "size": 39729,
+      "sha256": "2f7917752f100887722346e730feaf1450cfe03f92c6ad3bc3e9ae93bdf71c4a",
+      "byte_identical_to_FIX2": true
+    },
+    {
+      "path": "onnx_splitpoint_tool/release_identity.py",
+      "size": 743,
+      "sha256": "a107e18fbbb4b977724429ad69225c08a44a89cd2d7318ec1c224c38bcbb08c4",
+      "byte_identical_to_FIX2": true
+    },
+    {
+      "path": "onnx_splitpoint_tool/resources/run_modes/default_run_modes.yaml",
+      "size": 19129,
+      "sha256": "039c925e4cd11ddf82f30cf10d3bda61d70fe4b8228e291271256b598603a1be",
+      "byte_identical_to_FIX2": true
+    },
+    {
+      "path": "onnx_splitpoint_tool/run_modes.py",
+      "size": 92909,
+      "sha256": "404fc2ff198100e93e6cc4cc75ae362eec1cc30352f47152dc5a98bab1b4c5d9",
+      "byte_identical_to_FIX2": true
+    }
+  ],
+  "Q3_module_count": 171,
+  "Q3_matching_FIX2_module_count": 170,
+  "Q3_FIX2_differences": [
+    {
+      "path": "resources/templates/benchmark_suite.py.txt",
+      "Q3": "sha256:e03c67354a8a8e7a43ea90c080d1354a0df95da486579ffc392354aff184fecd",
+      "FIX2": "sha256:66e87ec810abe33e7291919c3229cd2b70efe17c46a13a00392248ba9ecc5dbc"
+    }
+  ],
+  "Q3_difference_explanation": "The accepted FIX2 changed only this critical production module to bind status-matrix rows to the actual run/preset and current execution rows. Q3 predates that correction.",
+  "history_profile_count": 16,
+  "initial_force_writer": "unknown_no_older_registry_before_after_pair",
+  "hardware_run": false,
+  "original_evidence_modified": false
+}

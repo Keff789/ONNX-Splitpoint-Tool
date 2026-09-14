@@ -1,0 +1,548 @@
+{
+  "lines": [
+    {
+      "line": 222,
+      "text": "[2026-09-10 13:33:39] [benchmarkset:yolo26m] b398: HEF(part1,hailo8) KNOWN_INFEASIBLE (exact negative evidence reused): Exact build evidence prevents repeated compiler attempt: COMPILE_INFEASIBLE (exact_deterministic_outcome)"
+    },
+    {
+      "line": 278,
+      "text": "[2026-09-10 13:34:01] [benchmarkset:yolo26s] b364: HEF(part1,hailo8) KNOWN_INFEASIBLE (exact negative evidence reused): Exact build evidence prevents repeated compiler attempt: COMPILE_INFEASIBLE (exact_deterministic_outcome)"
+    },
+    {
+      "line": 387,
+      "text": "[2026-09-10 13:35:27] [deepx-cache] HIT role=full model=mobilenet_v3_large identity=deepx_m1_full_imagenet_mean_std_v2_1612f48a650ebc82ad3ea163a2979961 reason=compatible artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_imagenet_mean_std_v2_1612f48a650ebc82ad3ea163a2979961/model.dxnn"
+    },
+    {
+      "line": 390,
+      "text": "[2026-09-10 13:36:02] [deepx-cache] HIT role=full model=resnet50 identity=deepx_m1_full_imagenet_mean_std_v2_1f7b8f80b35c44f679078ac15eaa7a11 reason=compatible artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_imagenet_mean_std_v2_1f7b8f80b35c44f679078ac15eaa7a11/model.dxnn"
+    },
+    {
+      "line": 393,
+      "text": "[2026-09-10 13:36:06] [deepx-cache] HIT role=full model=yolo11l identity=deepx_m1_full_f0fcdf56a4ac24d8_958dacf708b58fc3 reason=artifact_identity_verified artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_f0fcdf56a4ac24d8_958dacf708b58fc3/model.dxnn"
+    },
+    {
+      "line": 397,
+      "text": "[2026-09-10 13:36:12] [deepx-cache] HIT role=full model=yolo26m identity=deepx_m1_full_d1c6a922dd92f896_958dacf708b58fc3 reason=artifact_identity_verified artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_d1c6a922dd92f896_958dacf708b58fc3/model.dxnn"
+    },
+    {
+      "line": 401,
+      "text": "[2026-09-10 13:36:16] [deepx-cache] HIT role=full model=yolo26s identity=deepx_m1_full_4b8ff9dce56ca705_958dacf708b58fc3 reason=artifact_identity_verified artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_4b8ff9dce56ca705_958dacf708b58fc3/model.dxnn"
+    },
+    {
+      "line": 404,
+      "text": "[2026-09-10 13:36:49] [deepx-cache] HIT role=full model=regnet_x_1_6gf identity=deepx_m1_full_imagenet_mean_std_v2_279f768339bbc3ea5b5c6d7c44c07978 reason=compatible artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_imagenet_mean_std_v2_279f768339bbc3ea5b5c6d7c44c07978/model.dxnn"
+    },
+    {
+      "line": 407,
+      "text": "[2026-09-10 13:36:55] [deepx-cache] HIT role=full model=yolov7_paper identity=deepx_m1_full_7a13e66f91047cce_958dacf708b58fc3 reason=artifact_identity_verified artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_7a13e66f91047cce_958dacf708b58fc3/model.dxnn"
+    },
+    {
+      "line": 19364,
+      "text": "[2026-09-10 13:38:29] [build-result] model=mobilenet_v3_large boundary=b135 backend=hailo10 stage=part1 preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 19366,
+      "text": "[2026-09-10 13:38:30] [build-result] model=mobilenet_v3_large boundary=b135 backend=hailo8 stage=part1 preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 19368,
+      "text": "[2026-09-10 13:38:31] [build-result] model=mobilenet_v3_large boundary=full backend=hailo10 stage=full preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 19370,
+      "text": "[2026-09-10 13:38:31] [build-result] model=mobilenet_v3_large boundary=full backend=hailo8 stage=full preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 19374,
+      "text": "[2026-09-10 13:38:32] [deepx-cache] HIT role=part1 model=benchmark_set case=b135 identity=deepx_m1_part1_b135_v2_85a6a082eed5e6112809114f2c732ce2 reason=compatible artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_part1_b135_v2_85a6a082eed5e6112809114f2c732ce2/model.dxnn"
+    },
+    {
+      "line": 19375,
+      "text": "[2026-09-10 13:38:32] [deepx] b135: Part1 DXNN ready (/home/kmika/Models/EvaluationRuns/completsetdev_20260910_133033/models/mobilenet_v3_large/benchmark_set/legacy_suite/b135/deepx/deepx_m1/part1/model.dxnn, 6.5 MiB)"
+    },
+    {
+      "line": 19378,
+      "text": "[2026-09-10 13:39:06] [deepx-cache] HIT role=full model=mobilenet_v3_large identity=deepx_m1_full_imagenet_mean_std_v2_1612f48a650ebc82ad3ea163a2979961 reason=compatible artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_imagenet_mean_std_v2_1612f48a650ebc82ad3ea163a2979961/model.dxnn"
+    },
+    {
+      "line": 20392,
+      "text": "[2026-09-10 13:39:53] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=2f5e79b1e4280251e7b6eefe1d6161c4831e2fc27858e1e9fe2fac697f44489e engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/mobilenet_v3_large-a3603057150e0f6d/full/2f5e79b1e4280251e7b6eefe1d6161c4831e2fc27858e1e9fe2fac697f44489e/fp16/full_fp16.engine"
+    },
+    {
+      "line": 20415,
+      "text": "[2026-09-10 13:39:58] [orin_nx_hailo10_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=2f5e79b1e4280251e7b6eefe1d6161c4831e2fc27858e1e9fe2fac697f44489e engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/mobilenet_v3_large-a3603057150e0f6d/full/2f5e79b1e4280251e7b6eefe1d6161c4831e2fc27858e1e9fe2fac697f44489e/fp16/full_fp16.engine"
+    },
+    {
+      "line": 20429,
+      "text": "[2026-09-10 13:39:59] [orin_nx_hailo8_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=2f5e79b1e4280251e7b6eefe1d6161c4831e2fc27858e1e9fe2fac697f44489e engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/mobilenet_v3_large-a3603057150e0f6d/full/2f5e79b1e4280251e7b6eefe1d6161c4831e2fc27858e1e9fe2fac697f44489e/fp16/full_fp16.engine"
+    },
+    {
+      "line": 20466,
+      "text": "[2026-09-10 13:40:01] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part1 model=mobilenet_v3_large_part1_b135 reason=receipt_verified identity=f7e9070291e34eda03e89df185a92a0a843724a2b12e8c212d9d7b0e8463ef48 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/mobilenet_v3_large-a3603057150e0f6d/splits/b135/part1/f7e9070291e34eda03e89df185a92a0a843724a2b12e8c212d9d7b0e8463ef48/fp16/part1_fp16.engine"
+    },
+    {
+      "line": 20469,
+      "text": "[2026-09-10 13:40:01] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part2 model=mobilenet_v3_large_part2_b135 reason=receipt_verified identity=789cf35875ab925fcab4f8f1d5b8f10959a2e66039cd1b868f11fd326019b7bd engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/mobilenet_v3_large-a3603057150e0f6d/splits/b135/part2/789cf35875ab925fcab4f8f1d5b8f10959a2e66039cd1b868f11fd326019b7bd/fp16/part2_fp16.engine"
+    },
+    {
+      "line": 20472,
+      "text": "[2026-09-10 13:40:01] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=full model=mobilenet_v3_large reason=receipt_verified identity=2f5e79b1e4280251e7b6eefe1d6161c4831e2fc27858e1e9fe2fac697f44489e engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/mobilenet_v3_large-a3603057150e0f6d/full/2f5e79b1e4280251e7b6eefe1d6161c4831e2fc27858e1e9fe2fac697f44489e/fp16/full_fp16.engine"
+    },
+    {
+      "line": 20693,
+      "text": "[2026-09-10 13:40:23] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_float32_layout_bridge reason=receipt_verified identity=789cf35875ab925fcab4f8f1d5b8f10959a2e66039cd1b868f11fd326019b7bd engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/mobilenet_v3_large-a3603057150e0f6d/native_split_quality/orin_nx_deepx_m1_01/mobilenet_v3_large/b135/deepx_to_trt/8cf251850aec043e4c2c2afa27d691b3ffe4c718885cc1bac171b47021083475/engine_cache/b135/part2/float32_layout_fp16/part2_float32_layout_fp16.engine"
+    },
+    {
+      "line": 20712,
+      "text": "[2026-09-10 13:40:23] [orin_nx_hailo10_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_uint8_dequant_bridge reason=receipt_verified identity=a995acfeb77c3cf9619758f2ede1f1f5cd4392c0394628d1f2ba00e3f81df510 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/mobilenet_v3_large-a3603057150e0f6d/native_split_quality/orin_nx_hailo10_01/mobilenet_v3_large/b135/hailo10h_to_trt/1b6b8e87deaf63a4b451758b67537d114f3dc89331131bfa3ea48089d922bb2f/engine_cache/b135/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine"
+    },
+    {
+      "line": 20750,
+      "text": "[2026-09-10 13:40:23] [orin_nx_hailo8_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_float32_layout_bridge reason=receipt_verified identity=933a7c7bbad26b66631947d7d76990e8819792963caa0831121d530ad6d86962 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/mobilenet_v3_large-a3603057150e0f6d/native_split_quality/orin_nx_hailo8_01/mobilenet_v3_large/b135/hailo8_to_trt/b813762261fa887afa21bda61809e83f7bc783292b36cd0e35d7a1e7699dda89/engine_cache/b135/part2/float32_layout_fp16/part2_float32_layout_fp16.engine"
+    },
+    {
+      "line": 20928,
+      "text": "[2026-09-10 13:40:56] [build-result] model=resnet50 boundary=b119 backend=hailo10 stage=part1 preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 20930,
+      "text": "[2026-09-10 13:40:58] [build-result] model=resnet50 boundary=b119 backend=hailo8 stage=part1 preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 20932,
+      "text": "[2026-09-10 13:41:00] [build-result] model=resnet50 boundary=full backend=hailo10 stage=full preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 20934,
+      "text": "[2026-09-10 13:41:03] [build-result] model=resnet50 boundary=full backend=hailo8 stage=full preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 20938,
+      "text": "[2026-09-10 13:41:05] [deepx-cache] HIT role=part1 model=benchmark_set case=b119 identity=deepx_m1_part1_b119_v2_8a16c107c39887cdc6b1b76031a5263d reason=compatible artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_part1_b119_v2_8a16c107c39887cdc6b1b76031a5263d/model.dxnn"
+    },
+    {
+      "line": 20939,
+      "text": "[2026-09-10 13:41:05] [deepx] b119: Part1 DXNN ready (/home/kmika/Models/EvaluationRuns/completsetdev_20260910_133033/models/resnet50/benchmark_set/legacy_suite/b119/deepx/deepx_m1/part1/model.dxnn, 45.4 MiB)"
+    },
+    {
+      "line": 20942,
+      "text": "[2026-09-10 13:41:41] [deepx-cache] HIT role=full model=resnet50 identity=deepx_m1_full_imagenet_mean_std_v2_1f7b8f80b35c44f679078ac15eaa7a11 reason=compatible artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_imagenet_mean_std_v2_1f7b8f80b35c44f679078ac15eaa7a11/model.dxnn"
+    },
+    {
+      "line": 21967,
+      "text": "[2026-09-10 13:43:07] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=cebd9d5879ddd304a18f51e559ab74fba5cbd1f610b9359321bc5228acbe4f50 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/full/cebd9d5879ddd304a18f51e559ab74fba5cbd1f610b9359321bc5228acbe4f50/fp16/full_fp16.engine"
+    },
+    {
+      "line": 22011,
+      "text": "[2026-09-10 13:43:16] [orin_nx_hailo8_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=cebd9d5879ddd304a18f51e559ab74fba5cbd1f610b9359321bc5228acbe4f50 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/full/cebd9d5879ddd304a18f51e559ab74fba5cbd1f610b9359321bc5228acbe4f50/fp16/full_fp16.engine"
+    },
+    {
+      "line": 22024,
+      "text": "[2026-09-10 13:43:16] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part1 model=resnet50_part1_b119 reason=receipt_verified identity=c59fedb85824a69f3c0d521527b5d473bd3e9b376f5237d64b94ec519b59aa39 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/splits/b119/part1/c59fedb85824a69f3c0d521527b5d473bd3e9b376f5237d64b94ec519b59aa39/fp16/part1_fp16.engine"
+    },
+    {
+      "line": 22027,
+      "text": "[2026-09-10 13:43:16] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part2 model=resnet50_part2_b119 reason=receipt_verified identity=d77f5bfe15307c6a4a5330eb9a43bef218a64f29f529bdede915ff7783815def engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/splits/b119/part2/d77f5bfe15307c6a4a5330eb9a43bef218a64f29f529bdede915ff7783815def/fp16/part2_fp16.engine"
+    },
+    {
+      "line": 22030,
+      "text": "[2026-09-10 13:43:16] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=full model=resnet50 reason=receipt_verified identity=cebd9d5879ddd304a18f51e559ab74fba5cbd1f610b9359321bc5228acbe4f50 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/full/cebd9d5879ddd304a18f51e559ab74fba5cbd1f610b9359321bc5228acbe4f50/fp16/full_fp16.engine"
+    },
+    {
+      "line": 22075,
+      "text": "[2026-09-10 13:43:24] [orin_nx_hailo10_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=cebd9d5879ddd304a18f51e559ab74fba5cbd1f610b9359321bc5228acbe4f50 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/full/cebd9d5879ddd304a18f51e559ab74fba5cbd1f610b9359321bc5228acbe4f50/fp16/full_fp16.engine"
+    },
+    {
+      "line": 22219,
+      "text": "[2026-09-10 13:43:41] [orin_nx_hailo8_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_float32_layout_bridge reason=receipt_verified identity=cdf2a6ce78dab9417bdc8e8e9ef59633beb4b4ae2644df4025886bf38e044d79 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine"
+    },
+    {
+      "line": 22248,
+      "text": "[2026-09-10 13:43:43] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_float32_layout_bridge reason=receipt_verified identity=d77f5bfe15307c6a4a5330eb9a43bef218a64f29f529bdede915ff7783815def engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_deepx_m1_01/resnet50/b119/deepx_to_trt/c382ab0afb9ae50d0f530645a9e5ec74bb51c062d85e74a5abd1a92649b3c2f7/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine"
+    },
+    {
+      "line": 22409,
+      "text": "[2026-09-10 13:43:53] [orin_nx_hailo10_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_uint8_dequant_bridge reason=receipt_verified identity=b3a1d3e6bc85d733b1f3078b08f81a1147dea8911cdf1b09257d3c53d3d1f1a9 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo10_01/resnet50/b119/hailo10h_to_trt/bdde62e403db490f37c558e9bc6dae153b0b69d966c42fb5e34d3f8e65798242/engine_cache/b119/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine"
+    },
+    {
+      "line": 22504,
+      "text": "[2026-09-10 13:44:24] [build-result] model=yolo11l boundary=b062 backend=hailo10 stage=part1 preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 22506,
+      "text": "[2026-09-10 13:44:25] [build-result] model=yolo11l boundary=b062 backend=hailo8 stage=part1 preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 22508,
+      "text": "[2026-09-10 13:44:28] [build-result] model=yolo11l boundary=full backend=hailo10 stage=full preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 22510,
+      "text": "[2026-09-10 13:44:30] [build-result] model=yolo11l boundary=full backend=hailo8 stage=full preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 22514,
+      "text": "[2026-09-10 13:44:31] [deepx-cache] HIT role=part1 model=benchmark_set case=b062 identity=deepx_m1_part1_b062_v2_287945a0b11ed8d97f34f60a573b5998 reason=compatible artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_part1_b062_v2_287945a0b11ed8d97f34f60a573b5998/model.dxnn"
+    },
+    {
+      "line": 22515,
+      "text": "[2026-09-10 13:44:31] [deepx] b062: Part1 DXNN ready (/home/kmika/Models/EvaluationRuns/completsetdev_20260910_133033/models/yolo11l/benchmark_set/legacy_suite/b062/deepx/deepx_m1/part1/model.dxnn, 2.7 MiB)"
+    },
+    {
+      "line": 22518,
+      "text": "[2026-09-10 13:44:35] [deepx-cache] HIT role=full model=yolo11l identity=deepx_m1_full_f0fcdf56a4ac24d8_958dacf708b58fc3 reason=artifact_identity_verified artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_f0fcdf56a4ac24d8_958dacf708b58fc3/model.dxnn"
+    },
+    {
+      "line": 23625,
+      "text": "[2026-09-10 13:45:44] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/full/f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147/fp16/full_fp16.engine"
+    },
+    {
+      "line": 23645,
+      "text": "[2026-09-10 13:45:51] [orin_nx_hailo10_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/full/f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147/fp16/full_fp16.engine"
+    },
+    {
+      "line": 23663,
+      "text": "[2026-09-10 13:45:55] [orin_nx_hailo8_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/full/f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147/fp16/full_fp16.engine"
+    },
+    {
+      "line": 23702,
+      "text": "[2026-09-10 13:46:12] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part1 model=yolo11l_part1_b62 reason=receipt_verified identity=af7e7d94396d71f37495666ed1af85cf2eeff38aa3f102e733a72ae0e787f84a engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/splits/b062/part1/af7e7d94396d71f37495666ed1af85cf2eeff38aa3f102e733a72ae0e787f84a/fp16/part1_fp16.engine"
+    },
+    {
+      "line": 23705,
+      "text": "[2026-09-10 13:46:12] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part2 model=yolo11l_part2_b62 reason=receipt_verified identity=8ae1d799e9c1bfca498f5250bbea975202dd1f798d3497f84f3fc130f589f7ff engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/splits/b062/part2/8ae1d799e9c1bfca498f5250bbea975202dd1f798d3497f84f3fc130f589f7ff/fp16/part2_fp16.engine"
+    },
+    {
+      "line": 23708,
+      "text": "[2026-09-10 13:46:12] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=full model=yolo11l reason=receipt_verified identity=f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/full/f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147/fp16/full_fp16.engine"
+    },
+    {
+      "line": 23829,
+      "text": "[2026-09-10 13:47:58] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_float32_layout_bridge reason=receipt_verified identity=8ae1d799e9c1bfca498f5250bbea975202dd1f798d3497f84f3fc130f589f7ff engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/native_split_quality/orin_nx_deepx_m1_01/yolo11l/b062/deepx_to_trt/8dd0d5bec61ef2b9c10a8c2f7712397beec2bf2977e855da63a78810fa57389f/engine_cache/b062/part2/float32_layout_fp16/part2_float32_layout_fp16.engine"
+    },
+    {
+      "line": 23914,
+      "text": "[2026-09-10 13:48:10] [orin_nx_hailo8_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_uint8_dequant_bridge reason=receipt_verified identity=20f7ac3192ff906316fb2e0f077fba4becf0b23959b96b280b48b00e65257616 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/native_split_quality/orin_nx_hailo8_01/yolo11l/b062/hailo8_to_trt/9b98a27117321f2713c13b47c702267ed69a9e1701beab0a2aec41b9d04e39e0/engine_cache/b062/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine"
+    },
+    {
+      "line": 24000,
+      "text": "[2026-09-10 13:48:30] [orin_nx_hailo10_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_uint8_dequant_bridge reason=receipt_verified identity=20f7ac3192ff906316fb2e0f077fba4becf0b23959b96b280b48b00e65257616 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/native_split_quality/orin_nx_hailo10_01/yolo11l/b062/hailo10h_to_trt/b861a2b8bce3daa398dab687c02b2028abc753d9978145bb8130c07c268d0021/engine_cache/b062/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine"
+    },
+    {
+      "line": 24179,
+      "text": "[2026-09-10 13:49:39] [build-result] model=yolo26m boundary=b398 backend=hailo10 stage=part1 preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 24182,
+      "text": "[2026-09-10 13:49:44] [build-result] model=yolo26m boundary=full backend=hailo10 stage=full preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 24184,
+      "text": "[2026-09-10 13:49:46] [build-result] model=yolo26m boundary=full backend=hailo8 stage=full preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 24188,
+      "text": "[2026-09-10 13:49:47] [deepx-cache] HIT role=part1 model=benchmark_set case=b398 identity=deepx_m1_part1_b398_v2_5ef4ae8c9d51e9c0b19cb8fa8ccaa2bc reason=compatible artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_part1_b398_v2_5ef4ae8c9d51e9c0b19cb8fa8ccaa2bc/model.dxnn"
+    },
+    {
+      "line": 24189,
+      "text": "[2026-09-10 13:49:47] [deepx] b398: Part1 DXNN ready (/home/kmika/Models/EvaluationRuns/completsetdev_20260910_133033/models/yolo26m/benchmark_set/legacy_suite/b398/deepx/deepx_m1/part1/model.dxnn, 41.5 MiB)"
+    },
+    {
+      "line": 24192,
+      "text": "[2026-09-10 13:49:50] [deepx-cache] HIT role=full model=yolo26m identity=deepx_m1_full_d1c6a922dd92f896_958dacf708b58fc3 reason=artifact_identity_verified artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_d1c6a922dd92f896_958dacf708b58fc3/model.dxnn"
+    },
+    {
+      "line": 25297,
+      "text": "[2026-09-10 13:51:09] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=d1c6a922dd92f896c69e2f6767ea3ca23fac0e53e5ac69681965eb8a74cda897 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/full/d1c6a922dd92f896c69e2f6767ea3ca23fac0e53e5ac69681965eb8a74cda897/fp16/full_fp16.engine"
+    },
+    {
+      "line": 25317,
+      "text": "[2026-09-10 13:51:15] [orin_nx_hailo8_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=d1c6a922dd92f896c69e2f6767ea3ca23fac0e53e5ac69681965eb8a74cda897 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/full/d1c6a922dd92f896c69e2f6767ea3ca23fac0e53e5ac69681965eb8a74cda897/fp16/full_fp16.engine"
+    },
+    {
+      "line": 25335,
+      "text": "[2026-09-10 13:51:21] [orin_nx_hailo10_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=d1c6a922dd92f896c69e2f6767ea3ca23fac0e53e5ac69681965eb8a74cda897 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/full/d1c6a922dd92f896c69e2f6767ea3ca23fac0e53e5ac69681965eb8a74cda897/fp16/full_fp16.engine"
+    },
+    {
+      "line": 25374,
+      "text": "[2026-09-10 13:51:31] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part1 model=yolo26m_part1_b398 reason=receipt_verified identity=f6f19501e609e08669f4bffdd75227ea31eabc6af7cf0851c286b3688defb2cb engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/splits/b398/part1/f6f19501e609e08669f4bffdd75227ea31eabc6af7cf0851c286b3688defb2cb/fp16/part1_fp16.engine"
+    },
+    {
+      "line": 25377,
+      "text": "[2026-09-10 13:51:31] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part2 model=yolo26m_part2_b398 reason=receipt_verified identity=179287d1cefdc2b41dfe9de028fca8afb79e1702cf6b6c10521c1b3cfdf051a5 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/splits/b398/part2/179287d1cefdc2b41dfe9de028fca8afb79e1702cf6b6c10521c1b3cfdf051a5/fp16/part2_fp16.engine"
+    },
+    {
+      "line": 25380,
+      "text": "[2026-09-10 13:51:31] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=full model=yolo26m reason=receipt_verified identity=d1c6a922dd92f896c69e2f6767ea3ca23fac0e53e5ac69681965eb8a74cda897 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/full/d1c6a922dd92f896c69e2f6767ea3ca23fac0e53e5ac69681965eb8a74cda897/fp16/full_fp16.engine"
+    },
+    {
+      "line": 25501,
+      "text": "[2026-09-10 13:52:45] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_float32_layout_bridge reason=receipt_verified identity=179287d1cefdc2b41dfe9de028fca8afb79e1702cf6b6c10521c1b3cfdf051a5 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_deepx_m1_01/yolo26m/b398/deepx_to_trt/4d07529f30ef60a5ceb5445e159f449cca400ee561235fa43d282ea7ee509cda/engine_cache/b398/part2/float32_layout_fp16/part2_float32_layout_fp16.engine"
+    },
+    {
+      "line": 25579,
+      "text": "[2026-09-10 13:52:57] [orin_nx_hailo8_01] [workflow][remote] [trt-cache] HIT role=part2 model=yolo26m_part2_b398 reason=receipt_verified identity=179287d1cefdc2b41dfe9de028fca8afb79e1702cf6b6c10521c1b3cfdf051a5 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/splits/b398/part2/179287d1cefdc2b41dfe9de028fca8afb79e1702cf6b6c10521c1b3cfdf051a5/fp16/part2_fp16.engine"
+    },
+    {
+      "line": 25744,
+      "text": "[2026-09-10 13:53:31] [orin_nx_hailo10_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_uint8_dequant_bridge reason=receipt_verified identity=95e1e467d2daa6d67327d2df759e8f08e555595ef6b62731770250985e5c3bd8 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b398/hailo10h_to_trt/b3aa10a5df8555c03bb5f68bfcc3c1e36b2c0b4b6d73292f93e36b89a1492541/engine_cache/b398/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine"
+    },
+    {
+      "line": 25820,
+      "text": "[2026-09-10 13:54:35] [build-result] model=yolo26s boundary=b364 backend=hailo10 stage=part1 preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 25823,
+      "text": "[2026-09-10 13:54:38] [build-result] model=yolo26s boundary=full backend=hailo10 stage=full preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 25825,
+      "text": "[2026-09-10 13:54:40] [build-result] model=yolo26s boundary=full backend=hailo8 stage=full preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 25829,
+      "text": "[2026-09-10 13:54:41] [deepx-cache] HIT role=part1 model=benchmark_set case=b364 identity=deepx_m1_part1_b364_v2_c8670c3bfd27c40ae2a9b1219f5815db reason=compatible artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_part1_b364_v2_c8670c3bfd27c40ae2a9b1219f5815db/model.dxnn"
+    },
+    {
+      "line": 25830,
+      "text": "[2026-09-10 13:54:41] [deepx] b364: Part1 DXNN ready (/home/kmika/Models/EvaluationRuns/completsetdev_20260910_133033/models/yolo26s/benchmark_set/legacy_suite/b364/deepx/deepx_m1/part1/model.dxnn, 20.4 MiB)"
+    },
+    {
+      "line": 25833,
+      "text": "[2026-09-10 13:54:43] [deepx-cache] HIT role=full model=yolo26s identity=deepx_m1_full_4b8ff9dce56ca705_958dacf708b58fc3 reason=artifact_identity_verified artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_4b8ff9dce56ca705_958dacf708b58fc3/model.dxnn"
+    },
+    {
+      "line": 26930,
+      "text": "[2026-09-10 13:55:40] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/full/4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a/fp16/full_fp16.engine"
+    },
+    {
+      "line": 26950,
+      "text": "[2026-09-10 13:55:44] [orin_nx_hailo8_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/full/4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a/fp16/full_fp16.engine"
+    },
+    {
+      "line": 26968,
+      "text": "[2026-09-10 13:55:48] [orin_nx_hailo10_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/full/4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a/fp16/full_fp16.engine"
+    },
+    {
+      "line": 27007,
+      "text": "[2026-09-10 13:55:57] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part1 model=yolo26s_part1_b364 reason=receipt_verified identity=128fcbf8a29e958844ee7857c0e35f98fd9a0ad74b5a5e3e6cf1810a88db1e29 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/splits/b364/part1/128fcbf8a29e958844ee7857c0e35f98fd9a0ad74b5a5e3e6cf1810a88db1e29/fp16/part1_fp16.engine"
+    },
+    {
+      "line": 27010,
+      "text": "[2026-09-10 13:55:57] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part2 model=yolo26s_part2_b364 reason=receipt_verified identity=a12d9f9d8e6c9bf9dd3ed444abecf2cfc3222a21f5d0144e69b1e4d25b0cad53 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/splits/b364/part2/a12d9f9d8e6c9bf9dd3ed444abecf2cfc3222a21f5d0144e69b1e4d25b0cad53/fp16/part2_fp16.engine"
+    },
+    {
+      "line": 27013,
+      "text": "[2026-09-10 13:55:58] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=full model=yolo26s reason=receipt_verified identity=4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/full/4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a/fp16/full_fp16.engine"
+    },
+    {
+      "line": 27134,
+      "text": "[2026-09-10 13:57:00] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_float32_layout_bridge reason=receipt_verified identity=a12d9f9d8e6c9bf9dd3ed444abecf2cfc3222a21f5d0144e69b1e4d25b0cad53 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/native_split_quality/orin_nx_deepx_m1_01/yolo26s/b364/deepx_to_trt/dcc0c9db433bdf57001ed9688cc57e450bfb40d3e0a5f83795ba5958a3fb3508/engine_cache/b364/part2/float32_layout_fp16/part2_float32_layout_fp16.engine"
+    },
+    {
+      "line": 27212,
+      "text": "[2026-09-10 13:57:13] [orin_nx_hailo8_01] [workflow][remote] [trt-cache] HIT role=part2 model=yolo26s_part2_b364 reason=receipt_verified identity=a12d9f9d8e6c9bf9dd3ed444abecf2cfc3222a21f5d0144e69b1e4d25b0cad53 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/splits/b364/part2/a12d9f9d8e6c9bf9dd3ed444abecf2cfc3222a21f5d0144e69b1e4d25b0cad53/fp16/part2_fp16.engine"
+    },
+    {
+      "line": 27377,
+      "text": "[2026-09-10 13:57:48] [orin_nx_hailo10_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_uint8_dequant_bridge reason=receipt_verified identity=bbbed09d2f7d6e11b36720aca94401b2e75a41186a63009af2a18a3b3b67c971 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/native_split_quality/orin_nx_hailo10_01/yolo26s/b364/hailo10h_to_trt/7dd6f0b079186331531ae4f4f3f8bbb921cc79bc44513d3751dc10d5a63a7cf3/engine_cache/b364/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine"
+    },
+    {
+      "line": 27453,
+      "text": "[2026-09-10 13:58:48] [build-result] model=regnet_x_1_6gf boundary=b132 backend=hailo10 stage=part1 preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 27455,
+      "text": "[2026-09-10 13:58:49] [build-result] model=regnet_x_1_6gf boundary=b132 backend=hailo8 stage=part1 preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 27457,
+      "text": "[2026-09-10 13:58:51] [build-result] model=regnet_x_1_6gf boundary=full backend=hailo10 stage=full preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 27459,
+      "text": "[2026-09-10 13:58:52] [build-result] model=regnet_x_1_6gf boundary=full backend=hailo8 stage=full preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 27463,
+      "text": "[2026-09-10 13:58:53] [deepx-cache] HIT role=part1 model=benchmark_set case=b132 identity=deepx_m1_part1_b132_v2_0247bc0de3289d87e0bf8a6841f9a03b reason=compatible artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_part1_b132_v2_0247bc0de3289d87e0bf8a6841f9a03b/model.dxnn"
+    },
+    {
+      "line": 27464,
+      "text": "[2026-09-10 13:58:53] [deepx] b132: Part1 DXNN ready (/home/kmika/Models/EvaluationRuns/completsetdev_20260910_133033/models/regnet_x_1_6gf/benchmark_set/legacy_suite/b132/deepx/deepx_m1/part1/model.dxnn, 76.2 MiB)"
+    },
+    {
+      "line": 27467,
+      "text": "[2026-09-10 13:59:28] [deepx-cache] HIT role=full model=regnet_x_1_6gf identity=deepx_m1_full_imagenet_mean_std_v2_279f768339bbc3ea5b5c6d7c44c07978 reason=compatible artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_imagenet_mean_std_v2_279f768339bbc3ea5b5c6d7c44c07978/model.dxnn"
+    },
+    {
+      "line": 28485,
+      "text": "[2026-09-10 14:00:27] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/regnet_x_1_6gf-aa35339d03c9ebf4/full/fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3/fp16/full_fp16.engine"
+    },
+    {
+      "line": 28504,
+      "text": "[2026-09-10 14:00:32] [orin_nx_hailo10_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/regnet_x_1_6gf-aa35339d03c9ebf4/full/fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3/fp16/full_fp16.engine"
+    },
+    {
+      "line": 28546,
+      "text": "[2026-09-10 14:00:36] [orin_nx_hailo8_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/regnet_x_1_6gf-aa35339d03c9ebf4/full/fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3/fp16/full_fp16.engine"
+    },
+    {
+      "line": 28559,
+      "text": "[2026-09-10 14:00:36] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part1 model=regnet_x_1_6gf_part1_b132 reason=receipt_verified identity=0ad1b5bca67360f83178c9d69192d999c9eb9d32cde80598ccf31e10a45a2a72 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/regnet_x_1_6gf-aa35339d03c9ebf4/splits/b132/part1/0ad1b5bca67360f83178c9d69192d999c9eb9d32cde80598ccf31e10a45a2a72/fp16/part1_fp16.engine"
+    },
+    {
+      "line": 28562,
+      "text": "[2026-09-10 14:00:36] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part2 model=regnet_x_1_6gf_part2_b132 reason=receipt_verified identity=0c4ca31eb6af4403562b1f04df7103743b173677f8ea33b013a43d198fd0210d engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/regnet_x_1_6gf-aa35339d03c9ebf4/splits/b132/part2/0c4ca31eb6af4403562b1f04df7103743b173677f8ea33b013a43d198fd0210d/fp16/part2_fp16.engine"
+    },
+    {
+      "line": 28565,
+      "text": "[2026-09-10 14:00:36] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=full model=regnet_x_1_6gf reason=receipt_verified identity=fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/regnet_x_1_6gf-aa35339d03c9ebf4/full/fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3/fp16/full_fp16.engine"
+    },
+    {
+      "line": 28772,
+      "text": "[2026-09-10 14:00:57] [orin_nx_hailo8_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_float32_layout_bridge reason=receipt_verified identity=08a531f4269f1aa653680b2e72b870bf46f311696c043fc5c13de2ffe4f72bf8 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/regnet_x_1_6gf-aa35339d03c9ebf4/native_split_quality/orin_nx_hailo8_01/regnet_x_1_6gf/b132/hailo8_to_trt/3747d726a27c16b8d6816e141a3d674282aff995f4be017c52b24f11b2621cd1/engine_cache/b132/part2/float32_layout_fp16/part2_float32_layout_fp16.engine"
+    },
+    {
+      "line": 28808,
+      "text": "[2026-09-10 14:00:59] [orin_nx_hailo10_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_uint8_dequant_bridge reason=receipt_verified identity=8378cdbd3cf267e8a32567b459b19e4bd70c89e202930d7e5d402e11eb255ead engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/regnet_x_1_6gf-aa35339d03c9ebf4/native_split_quality/orin_nx_hailo10_01/regnet_x_1_6gf/b132/hailo10h_to_trt/1269eafd2d0f894a93a5c7a0dc05679a3d112e816766b99a7c5b3e28e723ad0d/engine_cache/b132/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine"
+    },
+    {
+      "line": 28884,
+      "text": "[2026-09-10 14:01:05] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_float32_layout_bridge reason=receipt_verified identity=0c4ca31eb6af4403562b1f04df7103743b173677f8ea33b013a43d198fd0210d engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/regnet_x_1_6gf-aa35339d03c9ebf4/native_split_quality/orin_nx_deepx_m1_01/regnet_x_1_6gf/b132/deepx_to_trt/4294086d79b8f9b0d8df8832ecc59230cdc6c7c80ab188b279f5a422ef77c3be/engine_cache/b132/part2/float32_layout_fp16/part2_float32_layout_fp16.engine"
+    },
+    {
+      "line": 29021,
+      "text": "[2026-09-10 14:01:36] [build-result] model=yolov7_paper boundary=b044 backend=hailo10 stage=part1 preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 29023,
+      "text": "[2026-09-10 14:01:36] [build-result] model=yolov7_paper boundary=b044 backend=hailo8 stage=part1 preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 29025,
+      "text": "[2026-09-10 14:01:39] [build-result] model=yolov7_paper boundary=full backend=hailo10 stage=full preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 29027,
+      "text": "[2026-09-10 14:01:43] [build-result] model=yolov7_paper boundary=full backend=hailo8 stage=full preflight=HIT cache_hit=True compiler_dispatch_count=0 status=completed"
+    },
+    {
+      "line": 29031,
+      "text": "[2026-09-10 14:01:44] [deepx-cache] MISS role=part1 model=benchmark_set case=b044 identity=deepx_m1_part1_b044_v2_959a270255ff663c139c9dfe2849aac2 reason=model_missing"
+    },
+    {
+      "line": 29032,
+      "text": "[2026-09-10 14:01:47] [deepx] b044: building Part1 DXNN via dxcom"
+    },
+    {
+      "line": 29034,
+      "text": "[2026-09-10 14:02:18] [deepx][part1][dxcom] b044: Optimizing NPU models:   0%|          | 0/1 [00:00<?, ?model/s]\u001b[A"
+    },
+    {
+      "line": 29035,
+      "text": "[2026-09-10 14:02:18] [deepx][part1][dxcom] b044: \u001b[A[INFO] - Added nodes: Div(x=255.0)"
+    },
+    {
+      "line": 29036,
+      "text": "[2026-09-10 14:02:18] [deepx][part1][dxcom] b044: Compiling Model :  40%|████      | 0.4/1.0 [00:05<00:10, 17.35s/model ]"
+    },
+    {
+      "line": 29037,
+      "text": "[2026-09-10 14:02:18] [deepx][part1][dxcom] b044: Optimizing NPU models:   0%|          | 0/1 [00:00<?, ?model/s]\u001b[A"
+    },
+    {
+      "line": 29038,
+      "text": "[2026-09-10 14:02:18] [deepx][part1][dxcom] b044: \u001b[A[INFO] - Skipped nodes (cannot be inserted in NPU graph): resize, convertColor, transpose, expandDim"
+    },
+    {
+      "line": 29039,
+      "text": "[2026-09-10 14:02:18] [deepx][part1][dxcom] b044: Compiling Model :  40%|████      | 0.4/1.0 [00:05<00:10, 17.35s/model ]"
+    },
+    {
+      "line": 29040,
+      "text": "[2026-09-10 14:02:18] [deepx][part1][dxcom] b044: Optimizing NPU models:   0%|          | 0/1 [00:00<?, ?model/s]\u001b[A"
+    },
+    {
+      "line": 29041,
+      "text": "[2026-09-10 14:02:18] [deepx][part1][dxcom] b044: Data Format Conversion for NPU:  50%|█████     | 2/4 [00:00<00:00, 50.28step/s]\u001b[A\u001b[A"
+    },
+    {
+      "line": 29042,
+      "text": "[2026-09-10 14:02:18] [deepx][part1][dxcom] b044: Deciding Input Formats for NPU:  75%|███████▌  | 3/4 [00:00<00:00, 63.53step/s]\u001b[A\u001b[A"
+    },
+    {
+      "line": 29043,
+      "text": "[2026-09-10 14:02:18] [deepx][part1][dxcom] b044: Compiling Model :  73%|███████▎  | 0.7/1.0 [00:06<00:02,  8.15s/model ]"
+    },
+    {
+      "line": 29044,
+      "text": "[2026-09-10 14:02:18] [deepx][part1][dxcom] b044: Compiling Model :  81%|████████▏ | 0.8/1.0 [00:11<00:03, 18.41s/model ]"
+    },
+    {
+      "line": 29045,
+      "text": "[2026-09-10 14:02:18] [deepx][part1][dxcom] b044: Compiling Model :  84%|████████▎ | 0.8/1.0 [00:13<00:03, 21.39s/model ]"
+    },
+    {
+      "line": 29046,
+      "text": "[2026-09-10 14:02:18] [deepx][part1][dxcom] b044: Compiling Model :  85%|████████▌ | 0.8/1.0 [00:23<00:09, 61.80s/model ]"
+    },
+    {
+      "line": 29047,
+      "text": "[2026-09-10 14:02:18] [deepx][part1][dxcom] b044: Compiling Model :  87%|████████▋ | 0.9/1.0 [00:24<00:06, 55.32s/model ]"
+    },
+    {
+      "line": 29048,
+      "text": "[2026-09-10 14:02:18] [deepx][part1][dxcom] b044: Compiling Model :  89%|████████▊ | 0.9/1.0 [00:24<00:05, 51.79s/model ]"
+    },
+    {
+      "line": 29049,
+      "text": "[2026-09-10 14:02:18] [deepx][part1][dxcom] b044: Compiling Model : 100%|█████████▉| 1.0/1.0 [00:24<00:00, 24.84s/model ]"
+    },
+    {
+      "line": 29050,
+      "text": "[2026-09-10 14:02:18] [deepx] b044: Part1 DXNN ready (/home/kmika/Models/EvaluationRuns/completsetdev_20260910_133033/models/yolov7_paper/benchmark_set/legacy_suite/b044/deepx/deepx_m1/part1/model.dxnn, 2.2 MiB)"
+    },
+    {
+      "line": 29053,
+      "text": "[2026-09-10 14:02:23] [deepx-cache] HIT role=full model=yolov7_paper identity=deepx_m1_full_7a13e66f91047cce_958dacf708b58fc3 reason=artifact_identity_verified artifact=/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_7a13e66f91047cce_958dacf708b58fc3/model.dxnn"
+    },
+    {
+      "line": 30155,
+      "text": "[2026-09-10 14:03:47] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=7a13e66f91047cce0e251c05f64159646847e842af31d60441c63dcdfad7825d engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/full/7a13e66f91047cce0e251c05f64159646847e842af31d60441c63dcdfad7825d/fp16/full_fp16.engine"
+    },
+    {
+      "line": 30176,
+      "text": "[2026-09-10 14:03:54] [orin_nx_hailo10_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=7a13e66f91047cce0e251c05f64159646847e842af31d60441c63dcdfad7825d engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/full/7a13e66f91047cce0e251c05f64159646847e842af31d60441c63dcdfad7825d/fp16/full_fp16.engine"
+    },
+    {
+      "line": 30193,
+      "text": "[2026-09-10 14:04:01] [orin_nx_hailo8_01] [workflow][remote] [trt-cache] HIT role=full model=source reason=receipt_verified identity=7a13e66f91047cce0e251c05f64159646847e842af31d60441c63dcdfad7825d engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/full/7a13e66f91047cce0e251c05f64159646847e842af31d60441c63dcdfad7825d/fp16/full_fp16.engine"
+    },
+    {
+      "line": 30231,
+      "text": "[2026-09-10 14:04:42] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part1 model=yolov7_paper_part1_b44 reason=receipt_verified identity=96faa6b16e0acd9a1fd32e4ce96ea27627582513d552e13bfcff7958e2c58711 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/splits/b044/part1/96faa6b16e0acd9a1fd32e4ce96ea27627582513d552e13bfcff7958e2c58711/fp16/part1_fp16.engine"
+    },
+    {
+      "line": 30234,
+      "text": "[2026-09-10 14:04:42] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part2 model=yolov7_paper_part2_b44 reason=receipt_verified identity=bc2608913bb25062d5591d054bb16eae39987656c24d7d7bd63b7580f0162b1d engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/splits/b044/part2/bc2608913bb25062d5591d054bb16eae39987656c24d7d7bd63b7580f0162b1d/fp16/part2_fp16.engine"
+    },
+    {
+      "line": 30237,
+      "text": "[2026-09-10 14:04:42] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=full model=yolov7_paper reason=receipt_verified identity=7a13e66f91047cce0e251c05f64159646847e842af31d60441c63dcdfad7825d engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/full/7a13e66f91047cce0e251c05f64159646847e842af31d60441c63dcdfad7825d/fp16/full_fp16.engine"
+    },
+    {
+      "line": 30404,
+      "text": "[2026-09-10 14:06:51] [orin_nx_hailo8_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_uint8_dequant_bridge reason=receipt_verified identity=fead045941b8af7160bb6f9e47a47e1bea7443469b259fe221daa9f013a00763 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/native_split_quality/orin_nx_hailo8_01/yolov7_paper/b044/hailo8_to_trt/20d383bc3a1f4ab0730fb81062ab6e2fdeb9e0eb46ea3180c8f1f75aeb0e8ed7/engine_cache/b044/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine"
+    },
+    {
+      "line": 30487,
+      "text": "[2026-09-10 14:07:32] [orin_nx_hailo10_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_uint8_dequant_bridge reason=receipt_verified identity=fead045941b8af7160bb6f9e47a47e1bea7443469b259fe221daa9f013a00763 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/native_split_quality/orin_nx_hailo10_01/yolov7_paper/b044/hailo10h_to_trt/305a5cec047e7bf88a06f8c4ff16e9aff9eae519895255ea6bbd26c459d37a2e/engine_cache/b044/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine"
+    },
+    {
+      "line": 30627,
+      "text": "[2026-09-10 14:14:22] [orin_nx_deepx_m1_01] [workflow][remote] [trt-cache] HIT role=part2 model=source_part2_float32_layout_bridge reason=receipt_verified identity=bc2608913bb25062d5591d054bb16eae39987656c24d7d7bd63b7580f0162b1d engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/native_split_quality/orin_nx_deepx_m1_01/yolov7_paper/b044/deepx_to_trt/087902fafc0a024baca291e26543104ffa2214ac51ffc332403c07ffb35a1350/engine_cache/b044/part2/float32_layout_fp16/part2_float32_layout_fp16.engine"
+    }
+  ]
+}

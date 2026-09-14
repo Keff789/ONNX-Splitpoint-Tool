@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "checks": {
+    "schema_ok": true,
+    "manifest_shape_ok": true,
+    "manifest_paths_ok": true,
+    "package_version_ok": true,
+    "workflow_version_ok": true,
+    "file_count_ok": true,
+    "files_ok": true,
+    "sha256sums_ok": true,
+    "unexpected_extras_ok": true,
+    "symlinks_ok": true
+  },
+  "file_count": 1745,
+  "invalid_paths": [],
+  "unexpected_extra_count": 0,
+  "unexpected_extras": [],
+  "symlinks": []
+}

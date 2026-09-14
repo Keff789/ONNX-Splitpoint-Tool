@@ -11,12 +11,35 @@ minimal GUI dependency group used by startup. Heavy export/screening packages ar
 from __future__ import annotations
 
 import sys
+import os
+import time
 from pathlib import Path
+
+_STARTUP_PY_T0 = time.perf_counter()
+
+def _startup_trace_file_note(msg: str) -> None:
+    try:
+        trace_file = os.environ.get('ONNX_SPLITPOINT_STARTUP_TRACE_FILE')
+        if trace_file:
+            with open(trace_file, 'a', encoding='utf-8') as fh:
+                fh.write(f"[startup-python +{time.perf_counter() - _STARTUP_PY_T0:.3f}s] {msg}\n")
+    except Exception:
+        pass
+
+def _startup_note(msg: str) -> None:
+    if (os.environ.get("ONNX_SPLITPOINT_STARTUP_TRACE", "0") or "0").lower() in {"1", "true", "yes", "on"}:
+        try:
+            print(f"[startup-python +{time.perf_counter() - _STARTUP_PY_T0:.3f}s] {msg}", flush=True); _startup_trace_file_note(msg)
+        except Exception:
+            pass
 
 
 def _load_main():
     try:
+        _startup_note("importing onnx_splitpoint_tool.gui_app")
+        _t = time.perf_counter()
         from onnx_splitpoint_tool.gui_app import main as _main
+        _startup_note(f"imported gui_app in {time.perf_counter() - _t:.3f}s")
         return _main
     except ModuleNotFoundError:
         from onnx_splitpoint_tool.dependency_bootstrap import ensure_dependency_groups_for_python, current_env_python_candidates
@@ -37,4 +60,5 @@ main = _load_main()
 
 
 if __name__ == '__main__':
+    _startup_note("calling GUI main()")
     main()

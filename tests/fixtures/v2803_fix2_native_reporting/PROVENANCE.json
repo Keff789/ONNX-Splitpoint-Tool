@@ -1,0 +1,110 @@
+{
+  "source_archive": "completsetdev_20260911_115557_debug_pack.zip",
+  "source_archive_sha256": "755071a29ce360179584584afabfe0817722cdd47f2fd89a7613222bfb832f63",
+  "original_members": [
+    {
+      "path": "original/native_producers/hailo8/mobilenet_v3_large/benchmark_set/native_pipeline/b135/hailo_to_trt/float32_layout_fp16/native_fifo_results.json",
+      "archive_member": "native_producers/hailo8/mobilenet_v3_large/benchmark_set/native_pipeline/b135/hailo_to_trt/float32_layout_fp16/native_fifo_results.json",
+      "sha256": "464a3c7ae9848794f49b47d3fc1eea0e49a0e3b4def2d8fc37797a771067eec0",
+      "size_bytes": 173535
+    },
+    {
+      "path": "original/native_producers/hailo8/mobilenet_v3_large/benchmark_set/native_pipeline/b135/hailo_to_trt/float32_layout_fp16/native_fifo_outputs/native_fifo_outputs_manifest.json",
+      "archive_member": "native_producers/hailo8/mobilenet_v3_large/benchmark_set/native_pipeline/b135/hailo_to_trt/float32_layout_fp16/native_fifo_outputs/native_fifo_outputs_manifest.json",
+      "sha256": "36538cb23f5822f054892800848d7ebeb71d1384ee872b78a65c750cfd6a1e3c",
+      "size_bytes": 3769
+    },
+    {
+      "path": "original/native_producers/hailo8/mobilenet_v3_large/benchmark_set/native_pipeline/b135/hailo_to_trt/float32_layout_fp16/native_fifo_boundary/native_fifo_boundary_manifest.json",
+      "archive_member": "native_producers/hailo8/mobilenet_v3_large/benchmark_set/native_pipeline/b135/hailo_to_trt/float32_layout_fp16/native_fifo_boundary/native_fifo_boundary_manifest.json",
+      "sha256": "66c8bdd74ee7f08f45c03ea9898ec998346574fab2b8bf67a192ed7fc98d60f6",
+      "size_bytes": 2511
+    },
+    {
+      "path": "original/native_producers/hailo8/regnet_x_1_6gf/benchmark_set/native_pipeline/b132/hailo_to_trt/float32_layout_fp16/native_fifo_results.json",
+      "archive_member": "native_producers/hailo8/regnet_x_1_6gf/benchmark_set/native_pipeline/b132/hailo_to_trt/float32_layout_fp16/native_fifo_results.json",
+      "sha256": "afa2af7e048261d96476da298b5c1c5f7f2c9123555c30f55b42b7f969463cd2",
+      "size_bytes": 171429
+    },
+    {
+      "path": "original/native_producers/hailo8/regnet_x_1_6gf/benchmark_set/native_pipeline/b132/hailo_to_trt/float32_layout_fp16/native_fifo_outputs/native_fifo_outputs_manifest.json",
+      "archive_member": "native_producers/hailo8/regnet_x_1_6gf/benchmark_set/native_pipeline/b132/hailo_to_trt/float32_layout_fp16/native_fifo_outputs/native_fifo_outputs_manifest.json",
+      "sha256": "78dbde3506f84249ae19724df7f6c6f7d5a85cdae2d3378bbabd058f5e1e5f3f",
+      "size_bytes": 3753
+    },
+    {
+      "path": "original/native_producers/hailo8/regnet_x_1_6gf/benchmark_set/native_pipeline/b132/hailo_to_trt/float32_layout_fp16/native_fifo_boundary/native_fifo_boundary_manifest.json",
+      "archive_member": "native_producers/hailo8/regnet_x_1_6gf/benchmark_set/native_pipeline/b132/hailo_to_trt/float32_layout_fp16/native_fifo_boundary/native_fifo_boundary_manifest.json",
+      "sha256": "a49b35756e804f8fff6c9de16701f40b127a5680d89c23e2c993942bb1c86cb8",
+      "size_bytes": 2489
+    },
+    {
+      "path": "original/native_producers/hailo8/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/native_fifo_results.json",
+      "archive_member": "native_producers/hailo8/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/native_fifo_results.json",
+      "sha256": "08de552405f991aaade69e93560c79f48006876d6d0f20a3fb7e47e4835eb9ab",
+      "size_bytes": 168488
+    },
+    {
+      "path": "original/native_producers/hailo8/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/native_fifo_outputs/native_fifo_outputs_manifest.json",
+      "archive_member": "native_producers/hailo8/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/native_fifo_outputs/native_fifo_outputs_manifest.json",
+      "sha256": "13cf2ce402f4880be2043bf8ab685f9826a6271681cb77a67a700de2b7437d04",
+      "size_bytes": 3729
+    },
+    {
+      "path": "original/native_producers/hailo8/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/native_fifo_boundary/native_fifo_boundary_manifest.json",
+      "archive_member": "native_producers/hailo8/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/native_fifo_boundary/native_fifo_boundary_manifest.json",
+      "sha256": "10928d00c6dfadfc506087a5e1b534473457bfaa243bf67d8f096ec5583edc6b",
+      "size_bytes": 2460
+    }
+  ],
+  "derived_members": [
+    {
+      "path": "repetition_projection.json",
+      "sha256": "01c88f0a97f282deeaf2473798d2fee1d8ae1d66a931382f77d3c346d9cca4db",
+      "size_bytes": 123086,
+      "source_archive_member": "reports/native_producer_summary.json",
+      "source_member_sha256": "ce75ee5a472ce206c909dfca63bfdaae3b9428b445fce8a7aae81ad70fd55b94",
+      "row_fields": [
+        "backend",
+        "producer_backend",
+        "model",
+        "model_id",
+        "case",
+        "case_id",
+        "precision",
+        "setup_id",
+        "comparison_backend",
+        "execution_mode",
+        "ok",
+        "result_ok",
+        "status",
+        "runtime_success",
+        "prerequisite_status",
+        "repetition_count_requested",
+        "repetition_count_attempted",
+        "repetition_count_valid",
+        "repetition_status",
+        "repetition_records"
+      ],
+      "repetition_fields": [
+        "runtime_success",
+        "ok",
+        "result_ok",
+        "status",
+        "timed_out",
+        "prerequisite_status",
+        "returncode",
+        "rc",
+        "completed_work_units",
+        "completed_frames",
+        "frames_completed",
+        "requested_frames",
+        "frames",
+        "repetition_index",
+        "repetition_id",
+        "runtime_instance_id"
+      ],
+      "scope": "Field-only projection; all 63 rows and all repetition observations retained. No inferred values or quality evidence."
+    }
+  ]
+}

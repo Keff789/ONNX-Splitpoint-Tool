@@ -1,0 +1,846 @@
+integrity_policy:
+  mode: relaxed
+  effective_mode: relaxed
+  strict_required_for_final: true
+  cache_unchanged_files: true
+  dataset_sample_size: 24
+campaign:
+  id: Complete_Set
+  claim_scope: evaluated_matrix
+  mode: development
+  enforcement: warn
+  frozen_before_final_campaign: false
+  dataset_registry: /home/kmika/.onnx_splitpoint_tool/final_datasets/dataset_registry.json
+  auto_bind_dataset_registry: true
+  dataset_manifests:
+    classification:
+      calibration: /home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_train_calibration_manifest.json
+      validation: /home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json
+    detection:
+      calibration: /home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_train_calibration_manifest.json
+      validation: /home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json
+  pipeline_contract_manifest: ''
+  holdout_registry: campaign_inputs/holdout_registry.json
+  ranking_model_bundle: ''
+  energy_calibration_manifest: ''
+  campaign_freeze_artifact: ''
+  require_protocol_freeze: false
+  require_fitted_stage_time: false
+  require_native_handover_model: false
+  require_campaign_freeze: false
+  require_prediction_freeze_approval: false
+  require_cryptographic_prediction_signature: false
+  prediction_freeze_public_key: ''
+  prediction_freeze_enabled: true
+validation:
+  split_fidelity_reference_mode: auto
+  classification_metrics:
+  - top1
+  - top5
+  - logit_cosine_similarity
+  detection_metrics:
+  - coco_ap_50_95
+  - ap50
+  - ap75
+  - semantic_proxy_match_ratio
+  backend_drift_reference: cpu_full
+  report_blocked_and_infeasible: true
+  mode: summary_only
+  require_explicit: false
+  require_task_metrics: false
+validation_execution:
+  mode: screening
+  cadence: once_per_artifact
+  cache_task_quality: true
+  repeat_task_quality_for_timing_repeats: false
+  max_items:
+    classification: 500
+    detection: 500
+quality_gate:
+  schema: onnx-splitpoint/task-quality-policy
+  schema_version: 3
+  name: task_quality_development_500
+  profile_id: task_quality_development_500
+  frozen_before_final_campaign: false
+  dataset_tier: screening
+  canonical_reference: canonical_full_onnx
+  enforcement:
+    technical_quality_error: hard_fail
+    metric_threshold_miss: enforced_quality_decision
+    native_energy_after_technical_error: collect_raw_quality_unqualified
+    claim_eligibility: complete_valid_evidence_only
+  diagnostic_only: false
+  claim_eligible: null
+  classification:
+    primary_metric: top1_accuracy
+    non_inferiority_margin: 0.01
+    guardrails:
+      top5_accuracy_margin: 0.01
+  detection:
+    primary_metric: coco_ap_50_95
+    non_inferiority_margin: 0.01
+    guardrails:
+      ap50_margin: 0.01
+      ap75_margin: 0.01
+  statistics:
+    method: paired_bootstrap
+    confidence_level: 0.95
+    bootstrap_repetitions: 500
+    seed: 20260710
+    decision: lower_one_sided_bound
+    execution_location: central_management
+    workers: 4
+  native_contract:
+    detection_self_reference_min_match_ratio: 0.8
+    detection_self_reference:
+      policy_id: class_aware_iou50_postnms_v2
+      min_reference_match_ratio: 0.8
+      min_mean_matched_iou: 0.85
+      iou_threshold: 0.5
+      confidence_threshold: 0.25
+      denominator: reference_detections
+      class_aware: true
+    numerical_similarity_required_for_claim: true
+    self_reference_counts_as_task_accuracy: false
+  screening_eligible_for_ranking: false
+  legacy_point_estimate_eligible_for_ranking: false
+ranking_validation:
+  enabled: true
+  holdout_unit: model_direction_runner
+  candidate_universe: deterministic_audit
+  audit_size: 30
+  minimum_valid_audit_candidates: 10
+  audit_seed: 20260710
+  require_frozen_predictions: false
+  require_complete_candidate_universe: false
+  k_values:
+  - 1
+  - 3
+  - 5
+  elite_q_values:
+  - 1
+  - 3
+  primary_k: 5
+  minimum_candidates_for_correlation: 3
+  near_optimal_relative_epsilon: 0.01
+  bootstrap_repetitions: 500
+  bootstrap_seed: 20260710
+  targets:
+  - pipeline_cycle_ms
+  methods:
+  - cut_bytes_only
+  - weighted_score
+  - cycle_time_no_handover
+  - cycle_time_with_handover
+  weighted_score:
+    w_comm: 1.0
+    w_imb: 3.0
+    w_tensors: 0.2
+    log_comm: true
+  cycle_time_no_handover:
+    backend_throughput_gops: {}
+    stage_time_models: {}
+  cycle_time_with_handover:
+    backend_throughput_gops: {}
+    stage_time_models: {}
+    handover_models:
+      generic: {}
+      native_fifo: {}
+official_coco_evaluation:
+  enabled: false
+  required_for_final: false
+  annotations: /home/kmika/.onnx_splitpoint_tool/final_datasets/coco2017/annotations/instances_val2017.json
+  remote_annotations: ''
+  iou_type: bbox
+  archive_predictions: true
+  archive_eval_tensors: false
+  max_detections:
+  - 1
+  - 10
+  - 100
+  require_pycocotools: false
+reporting:
+  include_decision_summary: true
+  include_backend_drift_block: true
+  include_task_specific_quality_block: true
+  aggregate_by_model: true
+  aggregate_by_run_profile: true
+  canonical_scientific_report: true
+  cleanup_legacy_reports: true
+  generate_thesis_tex: true
+  generate_thesis_figures: true
+  include_campaign_readiness: true
+workflow:
+  execution_mode: generate_and_run
+  skip_runtime_benchmarks: false
+  no_model_hash: false
+  include_reserve: false
+  parallel_remote_setups: true
+  max_parallel_setups: 3
+  max_parallel_uploads: 1
+  powercalc_workers: 1
+  artifact_cache_preflight:
+    enabled: true
+    default_expectation: unspecified
+    block_on_unexpected_cold_builds: false
+benchmark_execution:
+  provider: auto
+  warmup: 3
+  runs: 5
+  timeout_s: 0
+  backend: auto
+model_preparation:
+  mode: current
+  note: Resolved from run mode standard.
+hailo_build:
+  mode: reuse_and_build_missing
+  hw_arch: hailo8
+  targets:
+  - hailo8
+  timeout_s: 3600
+  full_baseline_cold_build_policy: build_missing
+  cold_build_timeout_s: 3600
+  deferred_full_baseline_required: true
+  preserve_attempt_provenance: true
+  immutable_attempt_receipts: true
+  terminal_attempt_selection: last_attempt_even_on_failure
+  hard_timeout_disable_tokens:
+  - 0
+  - 'off'
+  - none
+  - unlimited
+  - disabled
+  build_full: true
+  build_part1: true
+  build_part2: true
+  preset: balanced
+  optimization_level: 1
+  calib_dir: ''
+  calib_count: 500
+  calib_batch_size: 8
+  calibration_storage: memmap
+  calibration_memory_cap_mb: 256
+  cache_enabled: true
+  cache_root: ~/.cache/onnx_splitpoint/hailo_hef
+  cache_integrity: relaxed
+  force_build: false
+  keep_artifacts: false
+  source: run_mode_registry
+deepx_build:
+  mode: reuse_and_build_missing
+  target: deepx_m1
+  calib_dir: ''
+  calib_count: 500
+  calibration_method: ema
+  opt_level: 0
+  force_build: false
+  classification_preprocessing: current_scale_only
+artifact_store:
+  enabled: true
+  root: ~/.onnx_splitpoint_tool/artifact_store
+  verify_on_reuse: metadata
+  pin_for_campaign: false
+  register_hailo: true
+  register_deepx: true
+  register_tensorrt: false
+build_scheduler:
+  enabled: true
+  max_workers: 3
+  cpu_tokens: 0
+  ram_mb: 0
+  ram_reserve_mb: 2048
+  family_limits:
+    hailo8: 1
+    hailo10: 1
+    deepx: 1
+  weights:
+    hailo8:
+      cpu_tokens: 4
+      ram_mb: 6144
+    hailo10:
+      cpu_tokens: 4
+      ram_mb: 6144
+    deepx:
+      cpu_tokens: 2
+      ram_mb: 4096
+  prefetch_deepx_full: true
+  pipeline_next_model: false
+hardware_smoke:
+  mode: summary_only
+  require_remote_for_hailo: false
+  note: Resolved from run mode standard.
+remote_cache:
+  upload_once_per_model_setup: true
+  reuse_tensorrt_engines: true
+  stable_cache_root: ~/.cache/onnx_splitpoint
+  suite_cache_root: ~/.cache/onnx_splitpoint/suites
+  engine_cache_root: ~/.cache/onnx_splitpoint/tensorrt
+  copy_strategy: auto
+native_producers:
+  enabled: true
+  backends:
+  - hailo8
+  - hailo10h
+  - deepx
+  case_policy: all_accepted
+  precision: uint8_cast_fp16
+  frames: 1000
+  warmup: 100
+  queue_depth: 3
+  inflight: 8
+  hailo_format: uint8
+  remote_root: /home/nx/native_fifo_evalsets
+  remote_tool_dir: /home/nx/ONNX-Splitpoint-Tool
+  build_missing_engines: true
+  copy_benchmarksets: true
+  strict_supported_only: true
+  full_baselines:
+    enabled: true
+    backends:
+    - deepx
+    - hailo10h
+    - hailo8
+    - tensorrt
+    source: selected_full_run_profiles
+    auto_enabled: true
+    backends_by_producer:
+      hailo8:
+      - hailo8
+      - tensorrt
+      hailo10h:
+      - hailo10h
+      - tensorrt
+      deepx:
+      - deepx
+      - tensorrt
+    active_producers:
+    - hailo8
+    - hailo10h
+    - deepx
+  validation:
+    enabled: true
+    mode: dump_and_visual
+    topk: 5
+  dump_outputs: true
+  energy:
+    enabled: true
+    mode: measure
+    duration_s: 1
+    include_split_rows: true
+    include_full_baselines: true
+    window_method_validation_probe:
+      enabled: true
+      repeats: 3
+      minimum_decision_repeats: 3
+      include_raw_parquet: true
+      strict: true
+      screening_only: true
+      eligible_for_energy_results_import: false
+      eligible_for_scientific_claim: false
+  remotes:
+    hailo8:
+      ssh: nx@192.168.0.104
+    hailo10h:
+      ssh: nx@192.168.0.145
+      env: export PYTHONNOUSERSITE=1; source ~/venvs/hailo10/bin/activate
+    deepx:
+      ssh: nx@192.168.0.102
+      env: source ~/venvs/deepx-runtime/bin/activate
+  split_backends:
+  - hailo8
+  - hailo10h
+  - deepx
+  split_selection_source: evaluation_profile.run_profiles
+energy:
+  enabled: false
+  generic_enabled: false
+  measurement_path: native_only
+  requested_native_energy: true
+  final_all_split_energy: true
+  final_energy_skip_cpu_ort: true
+  scope: row_variant
+  repeat_override: 0
+  phases:
+  - latency
+  - streaming
+  target_policy: all
+  skip_backends:
+  - ort_cpu
+  include_run_ids: []
+  exclude_run_ids: []
+  heartbeat_s: 60
+  max_targets_per_run_id: 0
+  max_work_units_per_window: 0
+  max_window_duration_s: 0
+  timeout_s_per_window: 0
+  sizing_probe_max_work_units: 256
+  include_raw_parquet_in_debug_pack: false
+  strict: true
+name: Complete_Set
+purpose: Complete Benchmark Set
+implementation_note: Generated by the simplified Evaluation Profile editor. Detailed
+  build, validation, reporting, hold-out and reproducibility settings are resolved
+  from Tool Config run mode 'standard'.
+selection_policy:
+  max_accepted_cases_per_model: 1
+  preferred_shortlist: 5
+  min_gap: 3
+  candidate_search_pool: 10
+  require_single_part2_input: false
+  selection_strategy: stratified_windows
+  score_independent_audit_enabled: false
+  audit_candidate_universe: deterministic_audit
+  audit_size: 20
+  minimum_valid_audit_candidates: 1
+  audit_seed: 20260710
+  report_blocked_configs: true
+  report_plan_adjustments: true
+  keep_partial_hailo_cases: true
+  full_model_hailo_preflight_policy: enabled
+model_suite:
+  primary:
+  - id: resnet50
+    task: classification
+    family: resnet
+    source: torchvision
+    semantic_dataset: imagenet_val
+    development_subset: imagenet_val_mini_200
+    note: smoke anchor for classification
+    input_shape:
+    - 1
+    - 3
+    - 224
+    - 224
+    onnx: /home/kmika/Models/resnet50.onnx
+    family_id: resnet
+    evaluation_role: development
+    generalization_scope: development
+    validation_tier: screening
+    candidate_universe:
+      mode: declared_shortlist
+  - id: mobilenet_v3_large
+    task: classification
+    family: mobilenet
+    source: torchvision
+    semantic_dataset: imagenet_val
+    development_subset: imagenet_val_mini_200
+    input_shape:
+    - 1
+    - 3
+    - 224
+    - 224
+    onnx: /home/kmika/Models/mobilenet_v3_large.onnx
+    family_id: mobilenet
+    evaluation_role: development
+    generalization_scope: development
+    validation_tier: screening
+    candidate_universe:
+      mode: declared_shortlist
+  - id: regnet_x_1_6gf
+    task: classification
+    family: regnet
+    source: torchvision
+    semantic_dataset: imagenet_val
+    development_subset: imagenet_val_mini_200
+    input_shape:
+    - 1
+    - 3
+    - 224
+    - 224
+    onnx: /home/kmika/Models/regnet_x_1_6gf.onnx
+    family_id: regnet
+    evaluation_role: development
+    generalization_scope: development
+    validation_tier: screening
+    candidate_universe:
+      mode: declared_shortlist
+  - id: yolo11l
+    task: detection
+    family: yolo11
+    source: ultralytics
+    semantic_dataset: coco2017_val
+    development_subset: coco_50
+    input_shape:
+    - 1
+    - 3
+    - 640
+    - 640
+    onnx: /home/kmika/Models/yolo11l.onnx
+    family_id: yolo11
+    evaluation_role: development
+    generalization_scope: development
+    validation_tier: screening
+    candidate_universe:
+      mode: declared_shortlist
+  - id: yolo26m
+    task: detection
+    family: yolo26
+    source: ultralytics
+    semantic_dataset: coco2017_val
+    development_subset: coco_50
+    input_shape:
+    - 1
+    - 3
+    - 640
+    - 640
+    onnx: /home/kmika/Models/yolo26m.onnx
+    family_id: yolo26
+    evaluation_role: development
+    generalization_scope: development
+    validation_tier: screening
+    candidate_universe:
+      mode: declared_shortlist
+  - id: yolo26s
+    task: detection
+    family: yolo26
+    source: ultralytics
+    semantic_dataset: coco2017_val
+    development_subset: coco_50
+    input_shape:
+    - 1
+    - 3
+    - 640
+    - 640
+    onnx: /home/kmika/Models/yolo26s.onnx
+    family_id: yolo26
+    evaluation_role: development
+    generalization_scope: development
+    validation_tier: screening
+    candidate_universe:
+      mode: declared_shortlist
+  - id: yolov7_paper
+    task: detection
+    family: yolov7
+    family_id: yolov7
+    input_shape:
+    - 1
+    - 3
+    - 640
+    - 640
+    onnx: /home/kmika/Models/yolov7_paper.onnx
+    source: ultralytics
+    semantic_dataset: coco2017_val
+    development_subset: coco_50
+    evaluation_role: development
+    generalization_scope: development
+    validation_tier: screening
+    candidate_universe:
+      mode: declared_shortlist
+  reserve:
+  - mobilenet_v3_large
+  - efficientnet_b0
+run_profiles:
+- id: ort_tensorrt
+  type: same_backend_reference
+  full: tensorrt
+  stage1: tensorrt
+  stage2: tensorrt
+  required: true
+- id: hailo8
+  type: same_backend_reference
+  full: hailo8
+  stage1: hailo8
+  stage2: hailo8
+  required: false
+  treat_preflight_block_as_result: true
+- id: hailo8_to_trt
+  type: mixed_backend
+  full_reference: cpu_full
+  stage1: hailo8
+  stage2: tensorrt
+  required: false
+  treat_preflight_block_as_result: true
+- id: hailo10
+  type: same_backend_reference
+  full: hailo10
+  stage1: hailo10
+  stage2: hailo10
+  required: false
+  treat_preflight_block_as_result: true
+- id: hailo10_to_tensorrt
+  type: mixed_backend
+  full_reference: cpu_full
+  stage1: hailo10
+  stage2: tensorrt
+  required: false
+  treat_preflight_block_as_result: true
+- id: deepx_m1_full
+  type: same_backend_reference
+  full: deepx_m1
+  stage1: deepx_m1
+  stage2: deepx_m1
+  required: false
+- id: deepx_m1_to_tensorrt
+  type: mixed_backend
+  full_reference: cpu_full
+  stage1: deepx_m1
+  stage2: tensorrt
+  required: false
+hardware:
+  selected_setups:
+  - orin_nx_hailo8_01
+  - orin_nx_hailo10_01
+  - orin_nx_deepx_m1_01
+  selected_groups: []
+  setups_file: ''
+execution_preset:
+  id: standard
+  label: Standard (balanced)
+  follow_tool_config: true
+  config_path: /home/kmika/.onnx_splitpoint_tool/run_modes.yaml
+  config_sha256: 15919a1020541b0f2e268bc2fe7514df6bb1e32fb73937963b26ef347299ec60
+  snapshot_sha256: b3ce4ee4436b6cf7fff45ee23dd7e179a2ff4abe61cef68f9010f34fabf4c999
+  resolved_at: '2026-09-07T16:15:33+02:00'
+  overrides:
+    native_enabled: true
+    energy_enabled: true
+  snapshot:
+    label: Standard (balanced)
+    description: Balanced development run with useful accuracy screening and moderate
+      build effort.
+    recommended_for: Normal development results, candidate comparison and pre-final
+      hardware campaigns.
+    defaults:
+      native_enabled: true
+      energy_enabled: false
+    reproducibility:
+      level: relaxed
+      verify_model_content: false
+      verify_dataset_content: false
+      verify_remote_scripts: capabilities
+      cache_unchanged_files: true
+      dataset_sample_size: 24
+    campaign:
+      claim_scope: evaluated_matrix
+      mode: development
+      enforcement: warn
+      frozen_before_final_campaign: false
+      auto_bind_dataset_registry: true
+      require_protocol_freeze: false
+      require_fitted_stage_time: false
+      require_native_handover_model: false
+      require_campaign_freeze: false
+      require_prediction_freeze_approval: false
+      require_cryptographic_prediction_signature: false
+    data:
+      use_final_dataset_registry: true
+      calibration_items:
+        classification: 500
+        detection: 500
+      validation_items:
+        classification: 500
+        detection: 500
+    build:
+      model_preparation: current
+      hailo:
+        mode: reuse_and_build_missing
+        preset: balanced
+        optimization_level: 1
+        calibration_items: 500
+        calibration_batch_size: 8
+        calibration_storage: memmap
+        calibration_memory_cap_mb: 256
+        cache_enabled: true
+        cache_root: ~/.cache/onnx_splitpoint/hailo_hef
+        cache_integrity: relaxed
+        timeout_s: 3600
+        full_baseline_cold_build_policy: build_missing
+        deferred_full_baseline_required: true
+        cold_build_timeout_s: 3600
+        preserve_attempt_provenance: true
+        build_full: true
+        build_part1: true
+        build_part2: true
+        force_build: false
+        keep_artifacts: false
+      deepx:
+        mode: reuse_and_build_missing
+        optimization_level: 0
+        calibration_items: 500
+        calibration_method: ema
+        force_build: false
+      artifact_store:
+        enabled: true
+        root: ~/.onnx_splitpoint_tool/artifact_store
+        verify_on_reuse: metadata
+        pin_for_campaign: false
+        register_hailo: true
+        register_deepx: true
+        register_tensorrt: false
+      scheduler:
+        enabled: true
+        max_workers: 3
+        cpu_tokens: 0
+        ram_mb: 0
+        family_limits:
+          hailo8: 1
+          hailo10: 1
+          deepx: 1
+        weights:
+          hailo8:
+            cpu_tokens: 4
+            ram_mb: 6144
+          hailo10:
+            cpu_tokens: 4
+            ram_mb: 6144
+          deepx:
+            cpu_tokens: 2
+            ram_mb: 4096
+        prefetch_deepx_full: true
+        pipeline_next_model: false
+      hardware_smoke: summary_only
+    runtime:
+      execution_mode: generate_and_run
+      skip_runtime_benchmarks: false
+      benchmark:
+        provider: auto
+        warmup: 3
+        runs: 5
+        timeout_s: 0
+      parallel:
+        remote_setups: true
+        max_setups: 3
+        max_uploads: 1
+        powercalc_workers: 1
+      remote_cache:
+        upload_once_per_model_setup: true
+        reuse_tensorrt_engines: true
+        stable_cache_root: ~/.cache/onnx_splitpoint
+        suite_cache_root: ~/.cache/onnx_splitpoint/suites
+        engine_cache_root: ~/.cache/onnx_splitpoint/tensorrt
+        copy_strategy: auto
+      native:
+        backends:
+        - hailo8
+        - hailo10h
+        - deepx
+        case_policy: all_accepted
+        precision: uint8_cast_fp16
+        frames: 1000
+        warmup: 100
+        repetitions: 3
+        queue_depth: 3
+        inflight: 8
+        full_baselines: true
+        validation: true
+        dump_outputs: true
+        build_missing_engines: true
+        copy_benchmarksets: true
+        strict_supported_only: true
+        contract_selection: metadata_first
+        preserve_row_failures: true
+        require_contract_family_match: true
+    quality:
+      profile_id: task_quality_development_500
+      dataset_tier: screening
+      canonical_reference: canonical_full_onnx
+      classification_margin_pp: 1.0
+      classification_top5_margin_pp: 1.0
+      detection_margin_ap: 1.0
+      detection_ap50_margin: 1.0
+      detection_ap75_margin: 1.0
+      confidence_level: 0.95
+      bootstrap_repetitions: 500
+      bootstrap_seed: 20260710
+      execution_location: central_management
+      workers: 4
+      cache_task_quality: true
+      cadence: once_per_artifact
+      official_coco_enabled: false
+      official_coco_required: false
+      archive_coco_eval_tensors: false
+    holdout:
+      candidate_universe: deterministic_audit
+      audit_size: 30
+      minimum_valid_candidates: 10
+      seed: 20260710
+      prediction_freeze_enabled: true
+      require_complete_candidate_universe: false
+      require_frozen_predictions: false
+      require_unseen_attestation: false
+    ranking:
+      enabled: true
+      methods:
+      - cut_bytes_only
+      - weighted_score
+      - cycle_time_no_handover
+      - cycle_time_with_handover
+      k_values:
+      - 1
+      - 3
+      - 5
+      elite_q_values:
+      - 1
+      - 3
+      primary_k: 5
+      minimum_candidates_for_correlation: 3
+      near_optimal_relative_epsilon: 0.01
+      bootstrap_repetitions: 500
+      bootstrap_seed: 20260710
+    reporting:
+      include_decision_summary: true
+      include_backend_drift_block: true
+      include_task_specific_quality_block: true
+      canonical_scientific_report: true
+      cleanup_legacy_reports: true
+      generate_thesis_tex: true
+      generate_thesis_figures: true
+      include_campaign_readiness: true
+    energy:
+      scope: row_variant
+      physical_scope: FS
+      window_label: command
+      repeats: 3
+      phases:
+      - streaming
+      target_policy: best_valid_only
+      skip_backends:
+      - ort_cpu
+      heartbeat_s: 60
+      max_targets_per_run_id: 1
+      max_work_units_per_window: 0
+      max_window_duration_s: 0
+      timeout_s_per_window: 0
+      sizing_probe_max_work_units: 256
+      include_raw_parquet_in_debug_pack: false
+      strict: false
+      native_mode: plan
+      native_duration_s: 0
+  effective:
+    calibration_items:
+      classification: 500
+      detection: 500
+    validation_items:
+      classification: 500
+      detection: 500
+    bootstrap_repetitions: 500
+    integrity_level: relaxed
+    campaign_claim_scope: evaluated_matrix
+    generic_energy_enabled: false
+    energy_measurement_path: native_only
+    native_full_baselines_enabled: true
+    native_full_backends:
+    - hailo8
+    - hailo10h
+    - deepx
+    - tensorrt
+    native_full_backends_by_producer:
+      hailo8:
+      - hailo8
+      - tensorrt
+      hailo10h:
+      - hailo10h
+      - tensorrt
+      deepx:
+      - deepx
+      - tensorrt
+    native_split_backends:
+    - hailo8
+    - hailo10h
+    - deepx
+    native_split_enabled: true
+    native_performance_repetitions: 1
+    upload_once_per_model_setup: true
+    reuse_tensorrt_engines: true
+    reuse_hailo_artifacts: true
+    dataset_verification: sampled

@@ -1,0 +1,23 @@
+{
+  "schema": "onnx-splitpoint/prospective-detection-claim-exclusions",
+  "schema_version": 1,
+  "entries": [
+    {
+      "schema": "onnx-splitpoint/prospective-detection-claim-exclusions",
+      "schema_version": 1,
+      "setup_id": "orin_nx_hailo10_01",
+      "backend": "hailo10h_to_trt",
+      "comparison_backend": "hailo10h",
+      "model_id": "yolo26s",
+      "reason": "hailo10_yolo26_compiled_raw_head_numeric_threshold_crossing",
+      "diagnostic_sha256": "09a87c17e6d05160d5367a1c36b8b6f72a20687c96e55dfb1ebaeb8d81ab9bac",
+      "diagnostic_fixture_sha256": "25e129533e08956a2d4c20a38b52849d7d3f56b036b737a18f68600c667267d2",
+      "diagnostic_classification": "compiled_raw_head_numeric_threshold_crossing",
+      "confidence_threshold": 0.25,
+      "prospective": true,
+      "scientific_claim_eligible": false,
+      "entry_sha256": "cdad1b33ca8c895ee3f9be3b425d9bcd4b8ef355b163a747eb5d9360897ed142"
+    }
+  ],
+  "contract_sha256": "e59bf68ed08b9773b0b9f01b44e4818f7759e0918295c8eaf251ef7b4e7330f0"
+}

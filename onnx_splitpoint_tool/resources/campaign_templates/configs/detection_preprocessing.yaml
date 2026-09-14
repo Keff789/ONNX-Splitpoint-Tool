@@ -1,0 +1,29 @@
+locked: true
+contract_id: detection_preprocessing_v2
+task: detection
+identity:
+  schema: onnx-splitpoint/image-preprocessing-contract
+  schema_version: 2
+  contract_scope: prepared_rgb_uint8_semantics
+  task: detection
+  preprocess_mode: letterbox
+  spatial_transform: centered_letterbox
+  target_hw: [640, 640]
+  color_space: RGB
+  input_domain: uint8_0_255
+  resize_interpolation: bilinear
+  resize_rounding: python_round_ties_to_even
+  placement: floor_top_left_remainder_bottom_right
+  pad_value: 114
+  letterbox_pad_value: 114
+  image_scale: norm
+  letterbox: true
+identity_sha256: 411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e
+runtime_numeric_input:
+  policy: backend_attested_per_execution
+  schema: onnx-splitpoint/runtime-numeric-input-identity
+  schema_version: 1
+  semantic_preprocessing_sha256: 411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e
+note: >-
+  This is a fixed 640x640 centered letterbox, not stride-dependent auto
+  padding. Layout, dtype and numeric normalization are attested per backend.

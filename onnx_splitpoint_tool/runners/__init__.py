@@ -19,8 +19,6 @@ from ._types import (
     SampleCfg,
     StagePlan,
 )
-from .graph_runner import GraphRunner
-
 __all__ = [
     "BackendCaps",
     "BackendRunOut",
@@ -31,3 +29,20 @@ __all__ = [
     "StagePlan",
     "GraphRunner",
 ]
+
+
+def __getattr__(name: str):
+    """Load the orchestrator only when it is actually requested.
+
+    Generated benchmark suites vendor this package as top-level
+    ``splitpoint_runners``.  Eagerly importing :mod:`graph_runner` also imported
+    every optional accelerator backend, including modules whose relative
+    imports are valid only inside the installed ``onnx_splitpoint_tool``
+    package.  The lightweight quality/contract modules do not need any of
+    those backends, so keep their self-contained import path genuinely lazy.
+    """
+    if name == "GraphRunner":
+        from .graph_runner import GraphRunner
+
+        return GraphRunner
+    raise AttributeError(name)

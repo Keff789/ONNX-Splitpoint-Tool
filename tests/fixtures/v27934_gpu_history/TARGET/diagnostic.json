@@ -1,0 +1,779 @@
+{
+  "scope": "metadata and synthetic assembler targets, no GPU execution",
+  "status": "collected",
+  "model_build": "NOT_RUN",
+  "tool_configuration_modified": false,
+  "package_installations": false,
+  "system_toolkit_selection_modified": false,
+  "timestamp_utc": "2026-09-09T13:41:45.814270+00:00",
+  "environment": {
+    "PATH": "/home/kmika/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
+  },
+  "packages_by_family": {
+    "hailo8": {
+      "venv": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8",
+      "exists": true,
+      "packages": [
+        {
+          "name": "hailo-dataflow-compiler",
+          "version": "3.33.1",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8/lib/python3.12/site-packages/hailo_dataflow_compiler-3.33.1.dist-info/METADATA",
+          "requires_python": "",
+          "requires_dist": [
+            "absl-py",
+            "annotated-types==0.4.0",
+            "argcomplete",
+            "contextlib2",
+            "future",
+            "jsonref",
+            "jsonschema",
+            "matplotlib==3.5.2",
+            "networkx==2.8.8",
+            "jax==0.5.3",
+            "jaxlib==0.5.3",
+            "packaging",
+            "pandas",
+            "Pillow",
+            "prompt-toolkit",
+            "pwlf",
+            "py",
+            "pydantic==2.0.2",
+            "pydantic-core==2.1.2",
+            "pygraphviz",
+            "PyYAML",
+            "scipy==1.12.0",
+            "tabulate",
+            "verboselogs",
+            "testresources",
+            "h5py",
+            "disjoint-set",
+            "importlib-metadata",
+            "grpcio",
+            "six",
+            "typing-extensions==4.12.2",
+            "wheel",
+            "onnx-tf",
+            "pyparsing==2.4.7",
+            "tqdm",
+            "py-cpuinfo",
+            "msgpack",
+            "prettytable==3.5.0",
+            "tensorflow-probability==0.20.1",
+            "tensorflow==2.18.0",
+            "keras==3.5.0",
+            "numpy==1.26.4",
+            "flatbuffers==24.3.25",
+            "protobuf==3.20.3",
+            "onnx==1.16.0",
+            "onnxsim==0.4.36",
+            "onnxruntime==1.18.0",
+            "safetensors",
+            "tflite==2.10.0",
+            "tensorboard==2.18.0",
+            "gast<=0.4.0,>=0.3.2",
+            "xxhash==3.5.0",
+            "setuptools",
+            "ipython",
+            "jedi",
+            "jupyter",
+            "parso"
+          ]
+        },
+        {
+          "name": "keras",
+          "version": "3.5.0",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8/lib/python3.12/site-packages/keras-3.5.0.dist-info/METADATA",
+          "requires_python": ">=3.9",
+          "requires_dist": [
+            "absl-py",
+            "numpy",
+            "rich",
+            "namex",
+            "h5py",
+            "optree",
+            "ml-dtypes",
+            "packaging"
+          ]
+        },
+        {
+          "name": "numpy",
+          "version": "1.26.4",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8/lib/python3.12/site-packages/numpy-1.26.4.dist-info/METADATA",
+          "requires_python": ">=3.9",
+          "requires_dist": []
+        },
+        {
+          "name": "tensorflow",
+          "version": "2.18.0",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8/lib/python3.12/site-packages/tensorflow-2.18.0.dist-info/METADATA",
+          "requires_python": ">=3.9",
+          "requires_dist": [
+            "absl-py >=1.0.0",
+            "astunparse >=1.6.0",
+            "flatbuffers >=24.3.25",
+            "gast !=0.5.0,!=0.5.1,!=0.5.2,>=0.2.1",
+            "google-pasta >=0.1.1",
+            "libclang >=13.0.0",
+            "opt-einsum >=2.3.2",
+            "packaging",
+            "protobuf !=4.21.0,!=4.21.1,!=4.21.2,!=4.21.3,!=4.21.4,!=4.21.5,<6.0.0dev,>=3.20.3",
+            "requests <3,>=2.21.0",
+            "setuptools",
+            "six >=1.12.0",
+            "termcolor >=1.1.0",
+            "typing-extensions >=3.6.6",
+            "wrapt >=1.11.0",
+            "grpcio <2.0,>=1.24.3",
+            "tensorboard <2.19,>=2.18",
+            "keras >=3.5.0",
+            "numpy <2.1.0,>=1.26.0",
+            "h5py >=3.11.0",
+            "ml-dtypes <0.5.0,>=0.4.0",
+            "tensorflow-intel ==2.18.0 ; platform_system == \"Windows\"",
+            "tensorflow-io-gcs-filesystem >=0.23.1 ; python_version < \"3.12\"",
+            "nvidia-cublas-cu12 ==12.5.3.2 ; extra == 'and-cuda'",
+            "nvidia-cuda-cupti-cu12 ==12.5.82 ; extra == 'and-cuda'",
+            "nvidia-cuda-nvcc-cu12 ==12.5.82 ; extra == 'and-cuda'",
+            "nvidia-cuda-nvrtc-cu12 ==12.5.82 ; extra == 'and-cuda'",
+            "nvidia-cuda-runtime-cu12 ==12.5.82 ; extra == 'and-cuda'",
+            "nvidia-cudnn-cu12 ==9.3.0.75 ; extra == 'and-cuda'",
+            "nvidia-cufft-cu12 ==11.2.3.61 ; extra == 'and-cuda'",
+            "nvidia-curand-cu12 ==10.3.6.82 ; extra == 'and-cuda'",
+            "nvidia-cusolver-cu12 ==11.6.3.83 ; extra == 'and-cuda'",
+            "nvidia-cusparse-cu12 ==12.5.1.3 ; extra == 'and-cuda'",
+            "nvidia-nccl-cu12 ==2.21.5 ; extra == 'and-cuda'",
+            "nvidia-nvjitlink-cu12 ==12.5.82 ; extra == 'and-cuda'"
+          ]
+        },
+        {
+          "name": "tensorflow-probability",
+          "version": "0.20.1",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8/lib/python3.12/site-packages/tensorflow_probability-0.20.1.dist-info/METADATA",
+          "requires_python": ">=3.8",
+          "requires_dist": [
+            "absl-py",
+            "six (>=1.10.0)",
+            "numpy (>=1.13.3)",
+            "decorator",
+            "cloudpickle (>=1.3)",
+            "gast (>=0.3.2)",
+            "dm-tree",
+            "jax ; extra == 'jax'",
+            "jaxlib ; extra == 'jax'",
+            "tensorflow-datasets (>=2.2.0) ; extra == 'tfds'"
+          ]
+        }
+      ],
+      "errors": [],
+      "pyvenv_cfg": "home = /usr/bin\ninclude-system-site-packages = false\nversion = 3.12.3\nexecutable = /usr/bin/python3.12\ncommand = /home/kmika/ONNX-Splitpoint-Tool_v51_hailo_full_runtime_dashboard/.venv/bin/python -m venv /home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8\n"
+    },
+    "hailo10h": {
+      "venv": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10",
+      "exists": true,
+      "packages": [
+        {
+          "name": "hailo-dataflow-compiler",
+          "version": "5.3.0",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/hailo_dataflow_compiler-5.3.0.dist-info/METADATA",
+          "requires_python": "",
+          "requires_dist": [
+            "absl-py",
+            "annotated-types==0.4.0",
+            "argcomplete",
+            "contextlib2",
+            "future",
+            "jsonref",
+            "jsonschema",
+            "matplotlib==3.5.2",
+            "matplotlib-inline==0.1.6",
+            "networkx==2.8.8",
+            "packaging",
+            "pandas",
+            "Pillow",
+            "prompt-toolkit",
+            "pwlf",
+            "py",
+            "pydantic==2.0.2",
+            "pydantic-core==2.1.2",
+            "pygraphviz",
+            "PyYAML",
+            "scipy==1.12.0",
+            "tabulate",
+            "verboselogs",
+            "testresources",
+            "h5py",
+            "disjoint-set",
+            "importlib-metadata",
+            "grpcio",
+            "six",
+            "typing-extensions==4.12.2",
+            "wheel",
+            "onnx-tf",
+            "pyparsing==2.4.7",
+            "tqdm",
+            "py-cpuinfo",
+            "msgpack",
+            "prettytable==3.5.0",
+            "tensorflow-probability==0.20.1",
+            "tensorflow==2.19.1",
+            "keras==3.5.0",
+            "numpy==1.26.4",
+            "onnxscript~=0.5.0",
+            "einops",
+            "flatbuffers==24.3.25",
+            "protobuf==3.20.3",
+            "onnx==1.17.0",
+            "onnxsim==0.4.36",
+            "onnxruntime==1.18.0",
+            "safetensors",
+            "tflite==2.18.0",
+            "tensorboard~=2.19.0",
+            "tensordict==0.9.0",
+            "torch==2.9.1",
+            "torchvision==0.24.1",
+            "gast<=0.4.0,>=0.3.2",
+            "xxhash==3.5.0",
+            "setuptools",
+            "ipython",
+            "jedi",
+            "jupyter",
+            "parso"
+          ]
+        },
+        {
+          "name": "keras",
+          "version": "3.5.0",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/keras-3.5.0.dist-info/METADATA",
+          "requires_python": ">=3.9",
+          "requires_dist": [
+            "absl-py",
+            "numpy",
+            "rich",
+            "namex",
+            "h5py",
+            "optree",
+            "ml-dtypes",
+            "packaging"
+          ]
+        },
+        {
+          "name": "numpy",
+          "version": "1.26.4",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/numpy-1.26.4.dist-info/METADATA",
+          "requires_python": ">=3.9",
+          "requires_dist": []
+        },
+        {
+          "name": "nvidia-cublas-cu12",
+          "version": "12.8.4.1",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia_cublas_cu12-12.8.4.1.dist-info/METADATA",
+          "requires_python": ">=3",
+          "requires_dist": []
+        },
+        {
+          "name": "nvidia-cuda-cupti-cu12",
+          "version": "12.8.90",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia_cuda_cupti_cu12-12.8.90.dist-info/METADATA",
+          "requires_python": ">=3",
+          "requires_dist": []
+        },
+        {
+          "name": "nvidia-cuda-nvrtc-cu12",
+          "version": "12.8.93",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia_cuda_nvrtc_cu12-12.8.93.dist-info/METADATA",
+          "requires_python": ">=3",
+          "requires_dist": []
+        },
+        {
+          "name": "nvidia-cuda-runtime-cu12",
+          "version": "12.8.90",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia_cuda_runtime_cu12-12.8.90.dist-info/METADATA",
+          "requires_python": ">=3",
+          "requires_dist": []
+        },
+        {
+          "name": "nvidia-cudnn-cu12",
+          "version": "9.10.2.21",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia_cudnn_cu12-9.10.2.21.dist-info/METADATA",
+          "requires_python": ">=3",
+          "requires_dist": [
+            "nvidia-cublas-cu12"
+          ]
+        },
+        {
+          "name": "nvidia-cufft-cu12",
+          "version": "11.3.3.83",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia_cufft_cu12-11.3.3.83.dist-info/METADATA",
+          "requires_python": ">=3",
+          "requires_dist": [
+            "nvidia-nvjitlink-cu12"
+          ]
+        },
+        {
+          "name": "nvidia-cufile-cu12",
+          "version": "1.13.1.3",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia_cufile_cu12-1.13.1.3.dist-info/METADATA",
+          "requires_python": ">=3",
+          "requires_dist": []
+        },
+        {
+          "name": "nvidia-curand-cu12",
+          "version": "10.3.9.90",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia_curand_cu12-10.3.9.90.dist-info/METADATA",
+          "requires_python": ">=3",
+          "requires_dist": []
+        },
+        {
+          "name": "nvidia-cusolver-cu12",
+          "version": "11.7.3.90",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia_cusolver_cu12-11.7.3.90.dist-info/METADATA",
+          "requires_python": ">=3",
+          "requires_dist": [
+            "nvidia-cublas-cu12",
+            "nvidia-nvjitlink-cu12",
+            "nvidia-cusparse-cu12"
+          ]
+        },
+        {
+          "name": "nvidia-cusparse-cu12",
+          "version": "12.5.8.93",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia_cusparse_cu12-12.5.8.93.dist-info/METADATA",
+          "requires_python": ">=3",
+          "requires_dist": [
+            "nvidia-nvjitlink-cu12"
+          ]
+        },
+        {
+          "name": "nvidia-cusparselt-cu12",
+          "version": "0.7.1",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia_cusparselt_cu12-0.7.1.dist-info/METADATA",
+          "requires_python": "",
+          "requires_dist": []
+        },
+        {
+          "name": "nvidia-nccl-cu12",
+          "version": "2.27.5",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia_nccl_cu12-2.27.5.dist-info/METADATA",
+          "requires_python": ">=3",
+          "requires_dist": []
+        },
+        {
+          "name": "nvidia-nvjitlink-cu12",
+          "version": "12.8.93",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia_nvjitlink_cu12-12.8.93.dist-info/METADATA",
+          "requires_python": ">=3",
+          "requires_dist": []
+        },
+        {
+          "name": "nvidia-nvshmem-cu12",
+          "version": "3.3.20",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia_nvshmem_cu12-3.3.20.dist-info/METADATA",
+          "requires_python": ">=3",
+          "requires_dist": []
+        },
+        {
+          "name": "nvidia-nvtx-cu12",
+          "version": "12.8.90",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia_nvtx_cu12-12.8.90.dist-info/METADATA",
+          "requires_python": ">=3",
+          "requires_dist": []
+        },
+        {
+          "name": "tensorflow",
+          "version": "2.19.1",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/tensorflow-2.19.1.dist-info/METADATA",
+          "requires_python": ">=3.9",
+          "requires_dist": [
+            "absl-py >=1.0.0",
+            "astunparse >=1.6.0",
+            "flatbuffers >=24.3.25",
+            "gast !=0.5.0,!=0.5.1,!=0.5.2,>=0.2.1",
+            "google-pasta >=0.1.1",
+            "libclang >=13.0.0",
+            "opt-einsum >=2.3.2",
+            "packaging",
+            "protobuf !=4.21.0,!=4.21.1,!=4.21.2,!=4.21.3,!=4.21.4,!=4.21.5,<6.0.0dev,>=3.20.3",
+            "requests <3,>=2.21.0",
+            "setuptools",
+            "six >=1.12.0",
+            "termcolor >=1.1.0",
+            "typing-extensions >=3.6.6",
+            "wrapt >=1.11.0",
+            "grpcio <2.0,>=1.24.3",
+            "tensorboard ~=2.19.0",
+            "keras >=3.5.0",
+            "numpy <2.2.0,>=1.26.0",
+            "h5py >=3.11.0",
+            "ml-dtypes <1.0.0,>=0.5.1",
+            "tensorflow-intel ==2.19.1 ; platform_system == \"Windows\"",
+            "tensorflow-io-gcs-filesystem >=0.23.1 ; python_version < \"3.12\"",
+            "nvidia-cublas-cu12 ==12.5.3.2 ; extra == 'and-cuda'",
+            "nvidia-cuda-cupti-cu12 ==12.5.82 ; extra == 'and-cuda'",
+            "nvidia-cuda-nvcc-cu12 ==12.5.82 ; extra == 'and-cuda'",
+            "nvidia-cuda-nvrtc-cu12 ==12.5.82 ; extra == 'and-cuda'",
+            "nvidia-cuda-runtime-cu12 ==12.5.82 ; extra == 'and-cuda'",
+            "nvidia-cudnn-cu12 ==9.3.0.75 ; extra == 'and-cuda'",
+            "nvidia-cufft-cu12 ==11.2.3.61 ; extra == 'and-cuda'",
+            "nvidia-curand-cu12 ==10.3.6.82 ; extra == 'and-cuda'",
+            "nvidia-cusolver-cu12 ==11.6.3.83 ; extra == 'and-cuda'",
+            "nvidia-cusparse-cu12 ==12.5.1.3 ; extra == 'and-cuda'",
+            "nvidia-nccl-cu12 ==2.23.4 ; extra == 'and-cuda'",
+            "nvidia-nvjitlink-cu12 ==12.5.82 ; extra == 'and-cuda'"
+          ]
+        },
+        {
+          "name": "tensorflow-probability",
+          "version": "0.20.1",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/tensorflow_probability-0.20.1.dist-info/METADATA",
+          "requires_python": ">=3.8",
+          "requires_dist": [
+            "absl-py",
+            "six (>=1.10.0)",
+            "numpy (>=1.13.3)",
+            "decorator",
+            "cloudpickle (>=1.3)",
+            "gast (>=0.3.2)",
+            "dm-tree",
+            "jax ; extra == 'jax'",
+            "jaxlib ; extra == 'jax'",
+            "tensorflow-datasets (>=2.2.0) ; extra == 'tfds'"
+          ]
+        },
+        {
+          "name": "torch",
+          "version": "2.9.1",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/torch-2.9.1.dist-info/METADATA",
+          "requires_python": ">=3.10",
+          "requires_dist": [
+            "filelock",
+            "typing-extensions>=4.10.0",
+            "setuptools; python_version >= \"3.12\"",
+            "sympy>=1.13.3",
+            "networkx>=2.5.1",
+            "jinja2",
+            "fsspec>=0.8.5",
+            "nvidia-cuda-nvrtc-cu12==12.8.93; platform_system == \"Linux\" and platform_machine == \"x86_64\"",
+            "nvidia-cuda-runtime-cu12==12.8.90; platform_system == \"Linux\" and platform_machine == \"x86_64\"",
+            "nvidia-cuda-cupti-cu12==12.8.90; platform_system == \"Linux\" and platform_machine == \"x86_64\"",
+            "nvidia-cudnn-cu12==9.10.2.21; platform_system == \"Linux\" and platform_machine == \"x86_64\"",
+            "nvidia-cublas-cu12==12.8.4.1; platform_system == \"Linux\" and platform_machine == \"x86_64\"",
+            "nvidia-cufft-cu12==11.3.3.83; platform_system == \"Linux\" and platform_machine == \"x86_64\"",
+            "nvidia-curand-cu12==10.3.9.90; platform_system == \"Linux\" and platform_machine == \"x86_64\"",
+            "nvidia-cusolver-cu12==11.7.3.90; platform_system == \"Linux\" and platform_machine == \"x86_64\"",
+            "nvidia-cusparse-cu12==12.5.8.93; platform_system == \"Linux\" and platform_machine == \"x86_64\"",
+            "nvidia-cusparselt-cu12==0.7.1; platform_system == \"Linux\" and platform_machine == \"x86_64\"",
+            "nvidia-nccl-cu12==2.27.5; platform_system == \"Linux\" and platform_machine == \"x86_64\"",
+            "nvidia-nvshmem-cu12==3.3.20; platform_system == \"Linux\" and platform_machine == \"x86_64\"",
+            "nvidia-nvtx-cu12==12.8.90; platform_system == \"Linux\" and platform_machine == \"x86_64\"",
+            "nvidia-nvjitlink-cu12==12.8.93; platform_system == \"Linux\" and platform_machine == \"x86_64\"",
+            "nvidia-cufile-cu12==1.13.1.3; platform_system == \"Linux\" and platform_machine == \"x86_64\"",
+            "triton==3.5.1; platform_system == \"Linux\" and platform_machine == \"x86_64\"",
+            "optree>=0.13.0; extra == \"optree\"",
+            "opt-einsum>=3.3; extra == \"opt-einsum\"",
+            "pyyaml; extra == \"pyyaml\""
+          ]
+        },
+        {
+          "name": "torchvision",
+          "version": "0.24.1",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/torchvision-0.24.1.dist-info/METADATA",
+          "requires_python": ">=3.10",
+          "requires_dist": [
+            "numpy",
+            "torch (==2.9.1)",
+            "pillow (!=8.3.*,>=5.3.0)",
+            "gdown (>=4.7.3) ; extra == 'gdown'",
+            "scipy ; extra == 'scipy'"
+          ]
+        },
+        {
+          "name": "triton",
+          "version": "3.5.1",
+          "metadata_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton-3.5.1.dist-info/METADATA",
+          "requires_python": ">=3.10,<3.15",
+          "requires_dist": [
+            "importlib-metadata; python_version < \"3.10\"",
+            "cmake<4.0,>=3.20; extra == \"build\"",
+            "lit; extra == \"build\"",
+            "autopep8; extra == \"tests\"",
+            "isort; extra == \"tests\"",
+            "numpy; extra == \"tests\"",
+            "pytest; extra == \"tests\"",
+            "pytest-forked; extra == \"tests\"",
+            "pytest-xdist; extra == \"tests\"",
+            "scipy>=1.7.1; extra == \"tests\"",
+            "llnl-hatchet; extra == \"tests\"",
+            "matplotlib; extra == \"tutorials\"",
+            "pandas; extra == \"tutorials\"",
+            "tabulate; extra == \"tutorials\""
+          ]
+        }
+      ],
+      "errors": [],
+      "pyvenv_cfg": "home = /usr/bin\ninclude-system-site-packages = false\nversion = 3.12.3\nexecutable = /usr/bin/python3.12\ncommand = /home/kmika/ONNX-Splitpoint-Tool_v51_hailo_full_runtime_dashboard/.venv/bin/python -m venv /home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10\n"
+    }
+  },
+  "assemblers": [
+    {
+      "file": {
+        "path": "/usr/local/cuda/bin/ptxas",
+        "resolved_path": "/usr/local/cuda-13.0/bin/ptxas",
+        "size_bytes": 37741528,
+        "mtime_ns": 1752722444000000000,
+        "executable": true
+      },
+      "aliases": [
+        "/usr/local/cuda/bin/ptxas",
+        "/usr/local/cuda-13/bin/ptxas",
+        "/usr/local/cuda-13.0/bin/ptxas"
+      ],
+      "tests": {
+        "sm_61": {
+          "command": [
+            "/usr/local/cuda-13.0/bin/ptxas",
+            "-arch=sm_61",
+            "/home/kmika/Downloads/hailo_toolchain_diagnostic_20260909T134145Z_nwr3oigk/.synthetic-ptx-2280wvt2/sm_61.ptx",
+            "-o",
+            "/home/kmika/Downloads/hailo_toolchain_diagnostic_20260909T134145Z_nwr3oigk/.synthetic-ptx-2280wvt2/sm_61.cubin"
+          ],
+          "returncode": 255,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": "ptxas fatal   : Value 'sm_61' is not defined for option 'gpu-name'\n",
+          "output_truncated": false,
+          "source_ptx": ".version 7.0\n.target sm_61\n.address_size 64\n.visible .entry diagnostic_noop() { ret; }\n",
+          "output_created_nonempty": false,
+          "passed": false,
+          "meaning": "assembler target acceptance only; no GPU execution; no XLA end-to-end claim"
+        },
+        "sm_75": {
+          "command": [
+            "/usr/local/cuda-13.0/bin/ptxas",
+            "-arch=sm_75",
+            "/home/kmika/Downloads/hailo_toolchain_diagnostic_20260909T134145Z_nwr3oigk/.synthetic-ptx-2280wvt2/sm_75.ptx",
+            "-o",
+            "/home/kmika/Downloads/hailo_toolchain_diagnostic_20260909T134145Z_nwr3oigk/.synthetic-ptx-2280wvt2/sm_75.cubin"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": "",
+          "output_truncated": false,
+          "source_ptx": ".version 7.0\n.target sm_75\n.address_size 64\n.visible .entry diagnostic_noop() { ret; }\n",
+          "output_created_nonempty": true,
+          "passed": true,
+          "meaning": "assembler target acceptance only; no GPU execution; no XLA end-to-end claim"
+        }
+      },
+      "version": {
+        "command": [
+          "/usr/local/cuda-13.0/bin/ptxas",
+          "--version"
+        ],
+        "returncode": 0,
+        "timed_out": false,
+        "stdout": "ptxas: NVIDIA (R) Ptx optimizing assembler\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Wed_Jul_16_07:24:57_PM_PDT_2025\nCuda compilation tools, release 13.0, V13.0.48\nBuild cuda_13.0.r13.0/compiler.36260728_0\n",
+        "stderr": "",
+        "output_truncated": false
+      },
+      "help": {
+        "command": [
+          "/usr/local/cuda-13.0/bin/ptxas",
+          "--help"
+        ],
+        "returncode": 0,
+        "timed_out": false,
+        "stdout": "\nUsage  : ptxas [options] <ptx file>,...\n\nOptions\n=======\n\n--Ofast-compile <0|min|mid|max>                     (-Ofc)                      \n        Specify fast-compile level for device code, which controls the tradeoff between\n        compilation speed and runtime performance by disabling certain optimizations\n        at varying levels. \n        Levels: \n                'max': Focus only on the fastest compilation speed, disabling many\n        optimizations.\n                'mid': Balance compile time and runtime, disabling expensive optimizations.\n                'min': More minimal impact on both compile time and runtime, minimizing\n        some expensive optimizations.\n                '0': Disables fast-compile. \n        The option is disabled by default.\n        Default value:  '0'.\n\n--allow-expensive-optimizations <true|false>        (-allow-expensive-optimizations)\n        Enable (disable) to allow compiler to perform expensive optimizations   \n        using maximum available resources (memory and compile-time).\n        If unspecified default behavior is to enable this feature for optimization\n        level >= O2.\n\n--compile-as-tools-patch                            (-astoolspatch)             \n        Compile patch code for CUDA tools. For codes compiled with this mode, compiler\n        sets maxrregcount to the minimum registers required by ABI.\n\n--compile-only                                      (-c)                        \n        Generate relocatable object.\n\n--compiler-annotations                              (-annotate)                 \n        Annotate compiler-internal information in binary output.\n\n--def-load-cache                                    (-dlcm)                     \n        Default cache modifier on global/generic load.\n\n--def-store-cache                                   (-dscm)                     \n        Default cache modifier on global/generic store.\n\n--device-debug                                      (-g)                        \n        Generate debug information for device code.\n\n--device-function-maxrregcount <archmax/archmin/N>  (-func-maxrregcount)        \n        When compiling with -c (--compile-only) option, specify the maximum number\n        of registers that device functions can use. This option is ignored for whole-program\n        compilation and does not affect registers used by entry functions. For device\n        functions, this option overrides the value specified by -maxrregcount option.\n        If neither device-function-maxrregcount nor maxrregcount is specified, then\n        no maximum is assumed.\n        Note: Under certain situations, static device functions can safely inherit\n        a higher register count from the caller entry function. In such cases, PTXAS\n        may apply the higher count for compiling the static function.\n        Value less than the minimum registers required by ABI will be bumped up by\n        the compiler to ABI minimum limit.\n        \n\n--device-stack-protector <true|false>               (-device-stack-protector)   \n        Enable stack canaries in device code. Stack canaries make it more difficult\n        to exploit certain types of memory safety bugs involving stack-local variables.\n        The compiler uses heuristics to assess the risk of such a bug in each function.\n        Only those functions which are deemed high-risk make use of a stack canary.\n        Default value:  false.\n\n--disable-optimizer-constants                       (-disable-optimizer-consts) \n        Disable use of optimizer constant bank.\n\n--disable-warnings                                  (-w)                        \n        Inhibit all warning messages.\n\n--dont-merge-basicblocks                            (-no-bb-merge)              \n        Normally, ptxas attempts to merge consecutive basic blocks as part of its\n        optization process. However, for debuggable code this is very confusing.\n        This option prevents basic block merging, at a slight perfomance cost.\n\n--entry <entry function>,...                        (-e)                        \n        Entry function name.\n\n--extensible-whole-program                          (-ewp)                      \n        Do extensible whole program mode.\n\n--fmad <true|false>                                 (-fmad)                     \n        Enables (disables) the contraction of floating-point multiplies and     \n        adds/subtracts into floating-point multiply-add operations (FMAD, FFMA, \n        or DFMA).\n        Default value:  true.\n\n--force-load-cache                                  (-flcm)                     \n        Force specified cache modifier on global/generic load.\n\n--force-store-cache                                 (-fscm)                     \n        Force specified cache modifier on global/generic store.\n\n--g-tensor-memory-access-check                      (-g-tmem-access-check)      \n        Enable tensor memory access checks for tcgen05 operations. This is enabled\n        by default with -g.\n\n--generate-line-info                                (-lineinfo)                 \n        Generate line-number information for device code.\n\n--gpu-name <gpu name>                               (-arch)                     \n        Specify name of NVIDIA GPU to generate code for. This option also takes virtual\n        compute architectures, in which case code generation is suppressed. This\n        can be used for parsing only. PTX for .target sm_XY can be compiled to all\n        GPU targets sm_MN, sm_MNa, SM_MNf where MN >= XY. PTX for .target sm_XYf\n        can be compiled to GPU targets sm_XZ, sm_XZf, sm_XZa where Z >= Y and sm_XY\n        and sm_XZ belong in same family. PTX with .target sm_XYa can only be compiled\n        to GPU target sm_XYa.\n        Allowed values for this option:  'compute_100','compute_100a','compute_100f',\n        'compute_103','compute_103a','compute_103f','compute_110','compute_110a',\n        'compute_110f','compute_120','compute_120a','compute_120f','compute_121',\n        'compute_121a','compute_121f','compute_75','compute_80','compute_86','compute_87',\n        'compute_88','compute_89','compute_90','compute_90a','lto_100','lto_100a',\n        'lto_100f','lto_103','lto_103a','lto_103f','lto_110','lto_110a','lto_110f',\n        'lto_120','lto_120a','lto_120f','lto_121','lto_121a','lto_121f','lto_75',\n        'lto_80','lto_86','lto_87','lto_88','lto_89','lto_90','lto_90a','sm_100',\n        'sm_100a','sm_100f','sm_103','sm_103a','sm_103f','sm_110','sm_110a','sm_110f',\n        'sm_120','sm_120a','sm_120f','sm_121','sm_121a','sm_121f','sm_75','sm_80',\n        'sm_86','sm_87','sm_88','sm_89','sm_90','sm_90a'.\n        Default value:  'sm_75'.\n\n--help                                              (-h)                        \n        Print this help information on this tool.\n\n--input-as-string <ptx string>,...                  (-ias)                      \n        This option allows ptx modules to be passed directly as strings instead of\n        via files. It can be used for simple runtime support, or when it is somehow\n        not desired to pass the ptx string via the file system.\n\n--legacy-bar-warp-wide-behavior                     (-legacy-bar-warp-wide-behavior)\n        This option will cause PTXAS to retain legacy behavior of PTX bar instructionswhere\n        if any thread in the warp executes bar instruction it is considered as if\n        entire warp has executed it.This option is ignored for programs with .target\n        sm_70 or higher.This is a deprecated option and it will be removed in future\n        release and is not recommended.\n\n--list-version                                      (-version-ls)               \n        Print supported PTX ISA versions.\n\n--machine <bits>                                    (-m)                        \n        Specify 64-bit host architecture.\n                \n        Allowed values for this option:  64.\n        Default value:  64.\n\n--make-errors-visible-at-exit                       (-make-errors-visible-at-exit)\n        Generate required instructions at exit point to make memory faults and errors\n        visible at exit.\n\n--maxntid <Comma separated list of numbers>,...     (-maxntid)                  \n        Specify maxntid configuration. Note this option is ignored if -maxrregcount\n        option is used. For entry functions already using PTX directive .maxntid,\n        this option will be ignored.\n\n--maxrregcount <archmax/archmin/N>                  (-maxrregcount)             \n        Specify the maximum amount of registers that GPU functions can use. Until\n        a function- specific limit, a higher value will generally increase the performance\n        of individual GPU threads that execute this function. However, because thread\n        registers are allocated from a global register pool on each GPU, a higher\n        value of this option will also reduce the maximum thread block size, thereby\n        reducing the amount of thread parallelism. Hence, a good maxrregcount value\n        is the result of a trade-off.\n        If this option is not specified, then no maximum is assumed.\n        Value less than the minimum registers required by ABI will be bumped up by\n        the compiler to ABI minimum limit.\n        User program may not be able to make use of all registers as some registers\n        are reserved by compiler.\n\n--minnctapersm <N>                                  (-minnctapersm)             \n        Specify the minimum number of CTAs to be mapped to a single multiprocessor.\n        Thisoption is ignored if -maxrregcount option is used. For entry functions\n        already usingPTX directive .minnctapersm, this option will be ignored.\n\n--opt-level <N>                                     (-O)                        \n        Specify optimization level.\n        Default value:  3.\n\n--optimize-float-atomics                            (-opt-fp-atomics)           \n        This option enables optimizations on floating point atomics that may affect\n        FP precision.\n\n--options-file <file>,...                           (-optf)                     \n        Include command line options from specified file.\n\n--output-file <file>                                (-o)                        \n        Specify name of output file.\n        Default value:  'elf.o'.\n\n--override-directive-values                         (-override-directive-values)\n        Specify that values provided with the PTX directives are overriden by the\n        corresponding option values. Effective only for -minnctapersm, -maxntid and\n        -maxrregcount options.\n\n--position-independent-code <true|false>            (-pic)                      \n        Generate position independent code. This mode is enabled by default for whole\n        program compilation.\n        For other compilation modes, this is disabled by default.\n        Default value:  false.\n\n--preserve-relocs                                   (-preserve-relocs)          \n        This option will make PTXAS to generate relocatable references for variables\n        and preserve relocations generated for them in linked executable.\n\n--register-usage-level <0..10>                      (-regUsageLevel)            \n        Controls the aggressiveness of optimizations that affect register usage.\n        ([0..10], default = 5) Higher values aggressively optimize the source program,\n        trading off additional register usage for potential improvements in the generated\n        code. Lower values inhibit optimizations that aggressively increase register\n        usage. This option can work in conjunction with -maxrregcount and CUDA launch\n        bounds. This is a BETA feature for advanced users and there is no guarantee\n        that the implementation stays consistent between ptxas releases.\n        Default value:  5.\n\n--return-at-end                                     (-ret-end)                  \n        Normally, ptxas optimizes return instructions at the end of the program.\n        However, for debuggable code this causes problems setting breakpoint at the\n        end. This option prevents ptxas from optimizing this last return instruction.\n\n--sanitize <string>                                 (-sanitize)                 \n        Generate instrumented code with specified sanitizer tool.\n        Allowed values for this option:  'memcheck','threadsteer'.\n\n--sp-bounds-check                                   (-sp-bounds-check)          \n        Generate stack-pointer bounds-checking code sequence. This option is turned\n        on automatically when device-debug (-g) or opt-level(-O) 0 is specified.\n\n--split-compile <N>                                 (-split-compile)            \n        Specify the maximum amount of concurrent threads to be utilized when running\n        compiler optimizations. If <N> is 1, this option is ignored. If <N> is 0,\n        the number of threads will be the number of CPUs on the machine. This option\n        will have minimal (if any) impact on performance of the compiled binary.\n\n--suppress-async-bulk-multicast-advisory-warning    (-suppress-async-bulk-multicast-advisory-warning)\n        Suppress advisory warning for .multicast::cluster.\n\n--suppress-debug-info                               (-suppress-debug-info)      \n        Do not generate debug information sections in final output object file.\n        Note: This option is ignored if used without --device-debug or --generate-line-info\n        option.\n\n--suppress-double-demote-warning                    (-suppress-double-demote-warning)\n        Suppress the warning that is otherwise emitted when a double precision instruction\n        is encountered in PTX that is targeted for an SM version that does not have\n        double precision support.\n\n--suppress-sparse-mma-advisory-info                 (-suppress-sparse-mma-advisory-info)\n        Suppress advisory info for mma.sp.\n\n--suppress-stack-size-warning                       (-suppress-stack-size-warning)\n        Suppress the warning that otherwise is printed when stack size cannot be\n        determined.\n\n--verbose                                           (-v)                        \n        Enable verbose mode which prints code generation statistics.\n\n--version                                           (-V)                        \n        Print version information on this tool.\n\n--warn-on-double-precision-use                      (-warn-double-usage)        \n        Warning if double(s) are used in an instruction.\n\n--warn-on-local-memory-usage                        (-warn-lmem-usage)          \n        Warning if local memory is used.\n\n--warn-on-spills                                    (-warn-spills)              \n        Warning if registers are spilled to local memory.\n\n--warning-as-error                                  (-Werror)                   \n        Make all warnings into errors.\n\n\n",
+        "stderr": "",
+        "output_truncated": false
+      },
+      "architectures_observed_in_help": [
+        "compute_100",
+        "compute_100a",
+        "compute_100f",
+        "compute_103",
+        "compute_103a",
+        "compute_103f",
+        "compute_110",
+        "compute_110a",
+        "compute_110f",
+        "compute_120",
+        "compute_120a",
+        "compute_120f",
+        "compute_121",
+        "compute_121a",
+        "compute_121f",
+        "compute_75",
+        "compute_80",
+        "compute_86",
+        "compute_87",
+        "compute_88",
+        "compute_89",
+        "compute_90",
+        "compute_90a",
+        "sm_100",
+        "sm_100a",
+        "sm_100f",
+        "sm_103",
+        "sm_103a",
+        "sm_103f",
+        "sm_110",
+        "sm_110a",
+        "sm_110f",
+        "sm_120",
+        "sm_120a",
+        "sm_120f",
+        "sm_121",
+        "sm_121a",
+        "sm_121f",
+        "sm_70",
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_87",
+        "sm_88",
+        "sm_89",
+        "sm_90",
+        "sm_90a"
+      ],
+      "temporary_binary_outputs_removed": true
+    },
+    {
+      "file": {
+        "path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas",
+        "resolved_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas",
+        "size_bytes": 31912192,
+        "mtime_ns": 1779451130931780914,
+        "executable": true
+      },
+      "aliases": [
+        "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas"
+      ],
+      "tests": {
+        "sm_61": {
+          "command": [
+            "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas",
+            "-arch=sm_61",
+            "/home/kmika/Downloads/hailo_toolchain_diagnostic_20260909T134145Z_nwr3oigk/.synthetic-ptx-b2fdwf9y/sm_61.ptx",
+            "-o",
+            "/home/kmika/Downloads/hailo_toolchain_diagnostic_20260909T134145Z_nwr3oigk/.synthetic-ptx-b2fdwf9y/sm_61.cubin"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": "",
+          "output_truncated": false,
+          "source_ptx": ".version 7.0\n.target sm_61\n.address_size 64\n.visible .entry diagnostic_noop() { ret; }\n",
+          "output_created_nonempty": true,
+          "passed": true,
+          "meaning": "assembler target acceptance only; no GPU execution; no XLA end-to-end claim"
+        },
+        "sm_75": {
+          "command": [
+            "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas",
+            "-arch=sm_75",
+            "/home/kmika/Downloads/hailo_toolchain_diagnostic_20260909T134145Z_nwr3oigk/.synthetic-ptx-b2fdwf9y/sm_75.ptx",
+            "-o",
+            "/home/kmika/Downloads/hailo_toolchain_diagnostic_20260909T134145Z_nwr3oigk/.synthetic-ptx-b2fdwf9y/sm_75.cubin"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": "",
+          "output_truncated": false,
+          "source_ptx": ".version 7.0\n.target sm_75\n.address_size 64\n.visible .entry diagnostic_noop() { ret; }\n",
+          "output_created_nonempty": true,
+          "passed": true,
+          "meaning": "assembler target acceptance only; no GPU execution; no XLA end-to-end claim"
+        }
+      },
+      "version": {
+        "command": [
+          "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas",
+          "--version"
+        ],
+        "returncode": 0,
+        "timed_out": false,
+        "stdout": "ptxas: NVIDIA (R) Ptx optimizing assembler\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Fri_Feb_21_20:21:21_PST_2025\nCuda compilation tools, release 12.8, V12.8.93\nBuild cuda_12.8.r12.8/compiler.35583870_0\n",
+        "stderr": "",
+        "output_truncated": false
+      },
+      "help": {
+        "command": [
+          "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas",
+          "--help"
+        ],
+        "returncode": 0,
+        "timed_out": false,
+        "stdout": "\nUsage  : ptxas [options] <ptx file>,...\n\nOptions\n=======\n\n--allow-expensive-optimizations <true|false>        (-allow-expensive-optimizations)\n        Enable (disable) to allow compiler to perform expensive optimizations   \n        using maximum available resources (memory and compile-time).\n        If unspecified default behavior is to enable this feature for optimization\n        level >= O2.\n\n--compile-as-tools-patch                            (-astoolspatch)             \n        Compile patch code for CUDA tools. For codes compiled with this mode, compiler\n        sets maxrregcount to the minimum registers required by ABI.\n\n--compile-only                                      (-c)                        \n        Generate relocatable object.\n\n--compiler-annotations                              (-annotate)                 \n        Annotate compiler-internal information in binary output.\n\n--def-load-cache                                    (-dlcm)                     \n        Default cache modifier on global/generic load.\n\n--def-store-cache                                   (-dscm)                     \n        Default cache modifier on global/generic store.\n\n--device-debug                                      (-g)                        \n        Generate debug information for device code.\n\n--device-function-maxrregcount <archmax/archmin/N>  (-func-maxrregcount)        \n        When compiling with -c (--compile-only) option, specify the maximum number\n        of registers that device functions can use. This option is ignored for whole-program\n        compilation and does not affect registers used by entry functions. For device\n        functions, this option overrides the value specified by -maxrregcount option.\n        If neither device-function-maxrregcount nor maxrregcount is specified, then\n        no maximum is assumed.\n        Note: Under certain situations, static device functions can safely inherit\n        a higher register count from the caller entry function. In such cases, PTXAS\n        may apply the higher count for compiling the static function.\n        Value less than the minimum registers required by ABI will be bumped up by\n        the compiler to ABI minimum limit.\n        \n\n--device-stack-protector <true|false>               (-device-stack-protector)   \n        Enable stack canaries in device code. Stack canaries make it more difficult\n        to exploit certain types of memory safety bugs involving stack-local variables.\n        The compiler uses heuristics to assess the risk of such a bug in each function.\n        Only those functions which are deemed high-risk make use of a stack canary.\n        Default value:  false.\n\n--disable-optimizer-constants                       (-disable-optimizer-consts) \n        Disable use of optimizer constant bank.\n\n--disable-warnings                                  (-w)                        \n        Inhibit all warning messages.\n\n--dont-merge-basicblocks                            (-no-bb-merge)              \n        Normally, ptxas attempts to merge consecutive basic blocks as part of its\n        optization process. However, for debuggable code this is very confusing.\n        This option prevents basic block merging, at a slight perfomance cost.\n\n--entry <entry function>,...                        (-e)                        \n        Entry function name.\n\n--extensible-whole-program                          (-ewp)                      \n        Do extensible whole program mode.\n\n--fmad <true|false>                                 (-fmad)                     \n        Enables (disables) the contraction of floating-point multiplies and     \n        adds/subtracts into floating-point multiply-add operations (FMAD, FFMA, \n        or DFMA).\n        Default value:  true.\n\n--force-load-cache                                  (-flcm)                     \n        Force specified cache modifier on global/generic load.\n\n--force-store-cache                                 (-fscm)                     \n        Force specified cache modifier on global/generic store.\n\n--g-tensor-memory-access-check                      (-g-tmem-access-check)      \n        Enable tensor memory access checks for tcgen05 operations.\n\n--generate-line-info                                (-lineinfo)                 \n        Generate line-number information for device code.\n\n--gpu-name <gpu name>                               (-arch)                     \n        Specify name of NVIDIA GPU to generate code for. This option also takes virtual\n        compute architectures, in which case code generation is suppressed. This\n        can be used for parsing only.\n        Allowed values for this option:  'compute_100','compute_100a','compute_101',\n        'compute_101a','compute_120','compute_120a','compute_50','compute_52','compute_53',\n        'compute_60','compute_61','compute_62','compute_70','compute_72','compute_75',\n        'compute_80','compute_86','compute_87','compute_89','compute_90','compute_90a',\n        'lto_100','lto_100a','lto_101','lto_101a','lto_120','lto_120a','lto_50',\n        'lto_52','lto_53','lto_60','lto_61','lto_62','lto_70','lto_72','lto_75',\n        'lto_80','lto_86','lto_87','lto_89','lto_90','lto_90a','sm_100','sm_100a',\n        'sm_101','sm_101a','sm_120','sm_120a','sm_50','sm_52','sm_53','sm_60','sm_61',\n        'sm_62','sm_70','sm_72','sm_75','sm_80','sm_86','sm_87','sm_89','sm_90',\n        'sm_90a'.\n        Default value:  'sm_52'.\n\n--help                                              (-h)                        \n        Print this help information on this tool.\n\n--input-as-string <ptx string>,...                  (-ias)                      \n        This option allows ptx modules to be passed directly as strings instead of\n        via files. It can be used for simple runtime support, or when it is somehow\n        not desired to pass the ptx string via the file system.\n\n--legacy-bar-warp-wide-behavior                     (-legacy-bar-warp-wide-behavior)\n        This option will cause PTXAS to retain legacy behavior of PTX bar instructionswhere\n        if any thread in the warp executes bar instruction it is considered as if\n        entire warp has executed it.This option is ignored for programs with .target\n        sm_70 or higher.This is a deprecated option and it will be removed in future\n        release and is not recommended.\n\n--machine <bits>                                    (-m)                        \n        Specify 64-bit host architecture.\n                \n        Allowed values for this option:  64.\n        Default value:  64.\n\n--make-errors-visible-at-exit                       (-make-errors-visible-at-exit)\n        Generate required instructions at exit point to make memory faults and errors\n        visible at exit.\n\n--maxntid <Comma separated list of numbers>,...     (-maxntid)                  \n        Specify maxntid configuration. Note this option is ignored if -maxrregcount\n        option is used. For entry functions already using PTX directive .maxntid,\n        this option will be ignored.\n\n--maxrregcount <archmax/archmin/N>                  (-maxrregcount)             \n        Specify the maximum amount of registers that GPU functions can use. Until\n        a function- specific limit, a higher value will generally increase the performance\n        of individual GPU threads that execute this function. However, because thread\n        registers are allocated from a global register pool on each GPU, a higher\n        value of this option will also reduce the maximum thread block size, thereby\n        reducing the amount of thread parallelism. Hence, a good maxrregcount value\n        is the result of a trade-off.\n        If this option is not specified, then no maximum is assumed.\n        Value less than the minimum registers required by ABI will be bumped up by\n        the compiler to ABI minimum limit.\n        User program may not be able to make use of all registers as some registers\n        are reserved by compiler.\n\n--minnctapersm <N>                                  (-minnctapersm)             \n        Specify the minimum number of CTAs to be mapped to a single multiprocessor.\n        Thisoption is ignored if -maxrregcount option is used. For entry functions\n        already usingPTX directive .minnctapersm, this option will be ignored.\n\n--opt-level <N>                                     (-O)                        \n        Specify optimization level.\n        Default value:  3.\n\n--optimize-float-atomics                            (-opt-fp-atomics)           \n        This option enables optimizations on floating point atomics that may affect\n        FP precision.\n\n--options-file <file>,...                           (-optf)                     \n        Include command line options from specified file.\n\n--output-file <file>                                (-o)                        \n        Specify name of output file.\n        Default value:  'elf.o'.\n\n--override-directive-values                         (-override-directive-values)\n        Specify that values provided with the PTX directives are overriden by the\n        corresponding option values. Effective only for -minnctapersm, -maxntid and\n        -maxrregcount options.\n\n--position-independent-code <true|false>            (-pic)                      \n        Generate position independent code. This mode is enabled by default for whole\n        program compilation.\n        For other compilation modes, this is disabled by default.\n        Default value:  false.\n\n--preserve-relocs                                   (-preserve-relocs)          \n        This option will make PTXAS to generate relocatable references for variables\n        and preserve relocations generated for them in linked executable.\n\n--register-usage-level <0..10>                      (-regUsageLevel)            \n        Controls the aggressiveness of optimizations that affect register usage.\n        ([0..10], default = 5) Higher values aggressively optimize the source program,\n        trading off additional register usage for potential improvements in the generated\n        code. Lower values inhibit optimizations that aggressively increase register\n        usage. This option can work in conjunction with -maxrregcount and CUDA launch\n        bounds. This is a BETA feature for advanced users and there is no guarantee\n        that the implementation stays consistent between ptxas releases.\n        Default value:  5.\n\n--return-at-end                                     (-ret-end)                  \n        Normally, ptxas optimizes return instructions at the end of the program.\n        However, for debuggable code this causes problems setting breakpoint at the\n        end. This option prevents ptxas from optimizing this last return instruction.\n\n--sp-bounds-check                                   (-sp-bounds-check)          \n        Generate stack-pointer bounds-checking code sequence. This option is turned\n        on automatically when device-debug (-g) or opt-level(-O) 0 is specified.\n\n--split-compile <N>                                 (-split-compile)            \n        Specify the maximum amount of concurrent threads to be utilized when running\n        compiler optimizations. If <N> is 1, this option is ignored. If <N> is 0,\n        the number of threads will be the number of CPUs on the machine. This option\n        will have minimal (if any) impact on performance of the compiled binary.\n\n--suppress-async-bulk-multicast-advisory-warning    (-suppress-async-bulk-multicast-advisory-warning)\n        Suppress advisory warning for .multicast::cluster.\n\n--suppress-debug-info                               (-suppress-debug-info)      \n        Do not generate debug information sections in final output object file.\n        Note: This option is ignored if used without --device-debug or --generate-line-info\n        option.\n\n--suppress-double-demote-warning                    (-suppress-double-demote-warning)\n        Suppress the warning that is otherwise emitted when a double precision instruction\n        is encountered in PTX that is targeted for an SM version that does not have\n        double precision support.\n\n--suppress-stack-size-warning                       (-suppress-stack-size-warning)\n        Suppress the warning that otherwise is printed when stack size cannot be\n        determined.\n\n--verbose                                           (-v)                        \n        Enable verbose mode which prints code generation statistics.\n\n--version                                           (-V)                        \n        Print version information on this tool.\n\n--warn-on-double-precision-use                      (-warn-double-usage)        \n        Warning if double(s) are used in an instruction.\n\n--warn-on-local-memory-usage                        (-warn-lmem-usage)          \n        Warning if local memory is used.\n\n--warn-on-spills                                    (-warn-spills)              \n        Warning if registers are spilled to local memory.\n\n--warning-as-error                                  (-Werror)                   \n        Make all warnings into errors.\n\n\n",
+        "stderr": "",
+        "output_truncated": false
+      },
+      "architectures_observed_in_help": [
+        "compute_100",
+        "compute_100a",
+        "compute_101",
+        "compute_101a",
+        "compute_120",
+        "compute_120a",
+        "compute_50",
+        "compute_52",
+        "compute_53",
+        "compute_60",
+        "compute_61",
+        "compute_62",
+        "compute_70",
+        "compute_72",
+        "compute_75",
+        "compute_80",
+        "compute_86",
+        "compute_87",
+        "compute_89",
+        "compute_90",
+        "compute_90a",
+        "sm_100",
+        "sm_100a",
+        "sm_101",
+        "sm_101a",
+        "sm_120",
+        "sm_120a",
+        "sm_50",
+        "sm_52",
+        "sm_53",
+        "sm_60",
+        "sm_61",
+        "sm_62",
+        "sm_70",
+        "sm_72",
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_87",
+        "sm_89",
+        "sm_90",
+        "sm_90a"
+      ],
+      "temporary_binary_outputs_removed": true
+    }
+  ],
+  "inspected_candidate_paths": [
+    "/usr/local/cuda/bin/ptxas",
+    "/usr/local/cuda/bin/ptxas",
+    "/usr/local/cuda-13/bin/ptxas",
+    "/usr/local/cuda-13.0/bin/ptxas",
+    "/usr/bin/ptxas",
+    "/usr/lib/cuda/bin/ptxas",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8/bin/ptxas",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8/lib/python3.12/site-packages/nvidia/cuda_nvcc/bin/ptxas",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas-blackwell",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8/lib/python3.12/site-packages/triton/third_party/cuda/bin/ptxas",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/bin/ptxas",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/cuda_nvcc/bin/ptxas",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas-blackwell",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/third_party/cuda/bin/ptxas"
+  ],
+  "candidate_limit": 12,
+  "candidate_inventory_truncated": false
+}

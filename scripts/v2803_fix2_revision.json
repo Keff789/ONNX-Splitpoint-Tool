@@ -1,0 +1,16 @@
+{
+  "version": "2.80.3",
+  "revision": "FIX2",
+  "scope": [
+    "reference_prepare_frozen_hardware_subset",
+    "hailo8_classification_manifest_role",
+    "deepx_letterbox_nominal_gain",
+    "tensorrt_preflight_native_recipe",
+    "native_runtime_repetition_display"
+  ],
+  "force_rebuild_policy": "unchanged_off",
+  "acceptance_scope": "focused_software_regressions_and_isolated_update",
+  "full_acceptance_rerun": "NOT_RUN",
+  "hardware_acceptance": "NOT_RUN",
+  "quality_acceptance": "NOT_EVALUATED"
+}

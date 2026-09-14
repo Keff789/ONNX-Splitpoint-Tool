@@ -1,0 +1,68 @@
+{
+  "compiler_dispatch_count": 1,
+  "cache_hit": false,
+  "cache_bundle_backup": "sealed",
+  "gpu_execution_status": "gpu_execution_unproven",
+  "compiler_context": {
+    "available_components": [
+      "ptxas",
+      "libdevice.10.bc"
+    ],
+    "compiler_component_view": true,
+    "component_source": "selected_venv_triton",
+    "compute_capability": "6.1",
+    "conflicts": [],
+    "device": "gpu",
+    "family": "hailo10h",
+    "full_cuda_toolkit": false,
+    "gpu_index": "0",
+    "gpu_selector": "0",
+    "gpu_uuid": "GPU-b823007b-546c-4cda-533d-fc24c61f01e6",
+    "ignored_legacy": [],
+    "inherited_cuda_mask_source": "unset",
+    "legacy_inputs": [],
+    "libdevice_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/lib/libdevice.10.bc",
+    "nvidia_smi": "/usr/bin/nvidia-smi",
+    "ptxas_path": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas",
+    "ptxas_trace_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/hailo/hailo10/part1/onnx_hailo_cuda_view_0ce6iy5r_ptxas_invocations.jsonl",
+    "ptxas_version": "ptxas: NVIDIA (R) Ptx optimizing assembler\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Fri_Feb_21_20:21:21_PST_2025\nCuda compilation tools, release 12.8, V12.8.93\nBuild cuda_12.8.r12.8/compiler.35583870_0",
+    "schema_version": 1,
+    "source": "compute_by_family.hailo10h",
+    "target_arch": "sm_61",
+    "target_probe": {
+      "binary": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas",
+      "kind": "preflight_target",
+      "output_size": 2088,
+      "returncode": 0,
+      "source_ptx": ".version 4.0\n.target sm_50\n.address_size 64\n.visible .entry splitpoint_target_probe() { ret; }\n",
+      "stderr": "",
+      "stdout": "",
+      "target_arch": "sm_61"
+    },
+    "thread_settings": {
+      "TF_FORCE_GPU_ALLOW_GROWTH": "true",
+      "TF_NUM_INTEROP_THREADS": "2",
+      "TF_NUM_INTRAOP_THREADS": "2"
+    },
+    "unprovided_compiler_components": [
+      "nvcc",
+      "nvlink",
+      "fatbinary",
+      "cicc",
+      "cudafe++"
+    ],
+    "venv_python": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/bin/python",
+    "venv_root": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10",
+    "view_root": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo11l/benchmark_set/legacy_suite/b064/hailo/hailo10/part1/onnx_hailo_cuda_view_0ce6iy5r"
+  },
+  "ok": true,
+  "elapsed_s": 779.573812007904,
+  "phase_elapsed_s": {
+    "sdk_initialization": 0.02323286900355015,
+    "translate": 1.1018535460025305,
+    "calibration_materialization": 5.096282441998483,
+    "optimize": 602.9776525699999,
+    "compile": 146.72238627700426,
+    "publication": 0.08600135299639078
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "schema": "onnx-splitpoint/native-boundary-dump",
+  "schema_version": 2,
+  "seq": -1,
+  "image": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+  "dump_inference_scope": "separate_bound_inference_after_measurement",
+  "file": "boundary.bin",
+  "dtype": "uint8",
+  "shape": [
+    1,
+    256,
+    80,
+    80
+  ],
+  "nbytes": 1638400,
+  "trt_input_name": "cat_1",
+  "trt_input_dtype": "uint8",
+  "trt_input_bytes": 1638400,
+  "boundary_shape_source": "tensorrt_input_binding",
+  "input_dump": "prepared_input.bin",
+  "input_name": "yolov7_paper_part1_b44/input_layer1",
+  "input_shape": [
+    640,
+    640,
+    3
+  ],
+  "preprocess": {
+    "task": "detection",
+    "mode": "letterbox",
+    "pad_value": 114,
+    "rgb": true
+  },
+  "input_image": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+  "provenance": {
+    "image": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+    "image_source": "exact_file",
+    "seq": -1,
+    "precision": "uint8_dequant_fp16"
+  },
+  "file_sha256": "88e3b795ad78f482410f8194748a36bfab46791856d56ccb6906fc88ef52736e",
+  "file_size_bytes": 1638400,
+  "input_dump_sha256": "df599577640019eafdfad855df15b2059fd26f2f05c034b2726d318873708d9b",
+  "input_dump_size_bytes": 1228800,
+  "payload_artifacts": [
+    {
+      "role": "file",
+      "path": "boundary.bin",
+      "sha256": "88e3b795ad78f482410f8194748a36bfab46791856d56ccb6906fc88ef52736e",
+      "size_bytes": 1638400
+    },
+    {
+      "role": "input_dump",
+      "path": "prepared_input.bin",
+      "sha256": "df599577640019eafdfad855df15b2059fd26f2f05c034b2726d318873708d9b",
+      "size_bytes": 1228800
+    }
+  ],
+  "payload_artifacts_sha256": "2d452daa2ff0bfa6645b750b86a8ac7c5652468b59d56b0bb1023fd02727135f"
+}

@@ -208,9 +208,16 @@ class SystemSpec:
             'latency_left_ms': t_left_ms,
             'latency_link_ms': t_link_ms,
             'latency_right_ms': t_right_ms,
+            # Legacy compatibility: energy_total_mJ is a model/link estimate,
+            # not measured u.RECS energy. Prefer link_model_total_energy_mJ in
+            # reports and keep the old key only for older callers.
             'energy_total_mJ': e_total_mJ,
+            'link_model_total_energy_mJ': e_total_mJ,
             'energy_left_mJ': e_left_mJ,
+            'link_model_left_energy_mJ': e_left_mJ,
             'energy_link_mJ': e_link_mJ,
+            'link_energy_mJ': e_link_mJ,
             'energy_right_mJ': e_right_mJ,
+            'link_model_right_energy_mJ': e_right_mJ,
         }
 

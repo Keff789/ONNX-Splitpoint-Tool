@@ -1,0 +1,76 @@
+{
+  "source_archive": "completsetdev_20260910_210826_debug_pack.zip",
+  "role": "Exact original generated metadata archived below native_producers/hailo8; matches the prior seven-model binding replay source selection. No model payloads.",
+  "members": [
+    {
+      "saved_as": "mobilenet_v3_large.json",
+      "original_archive_member": "native_producers/hailo8/mobilenet_v3_large/benchmark_set/benchmark_set.json",
+      "copied_original_bytes": true
+    },
+    {
+      "saved_as": "mobilenet_v3_large.benchmark_plan.json",
+      "original_archive_member": "native_producers/hailo8/mobilenet_v3_large/benchmark_set/benchmark_plan.json",
+      "copied_original_bytes": true
+    },
+    {
+      "saved_as": "regnet_x_1_6gf.json",
+      "original_archive_member": "native_producers/hailo8/regnet_x_1_6gf/benchmark_set/benchmark_set.json",
+      "copied_original_bytes": true
+    },
+    {
+      "saved_as": "regnet_x_1_6gf.benchmark_plan.json",
+      "original_archive_member": "native_producers/hailo8/regnet_x_1_6gf/benchmark_set/benchmark_plan.json",
+      "copied_original_bytes": true
+    },
+    {
+      "saved_as": "resnet50.json",
+      "original_archive_member": "native_producers/hailo8/resnet50/benchmark_set/benchmark_set.json",
+      "copied_original_bytes": true
+    },
+    {
+      "saved_as": "resnet50.benchmark_plan.json",
+      "original_archive_member": "native_producers/hailo8/resnet50/benchmark_set/benchmark_plan.json",
+      "copied_original_bytes": true
+    },
+    {
+      "saved_as": "yolo11l.json",
+      "original_archive_member": "native_producers/hailo8/yolo11l/benchmark_set/benchmark_set.json",
+      "copied_original_bytes": true
+    },
+    {
+      "saved_as": "yolo11l.benchmark_plan.json",
+      "original_archive_member": "native_producers/hailo8/yolo11l/benchmark_set/benchmark_plan.json",
+      "copied_original_bytes": true
+    },
+    {
+      "saved_as": "yolo26m.json",
+      "original_archive_member": "native_producers/hailo8/yolo26m/benchmark_set/benchmark_set.json",
+      "copied_original_bytes": true
+    },
+    {
+      "saved_as": "yolo26m.benchmark_plan.json",
+      "original_archive_member": "native_producers/hailo8/yolo26m/benchmark_set/benchmark_plan.json",
+      "copied_original_bytes": true
+    },
+    {
+      "saved_as": "yolo26s.json",
+      "original_archive_member": "native_producers/hailo8/yolo26s/benchmark_set/benchmark_set.json",
+      "copied_original_bytes": true
+    },
+    {
+      "saved_as": "yolo26s.benchmark_plan.json",
+      "original_archive_member": "native_producers/hailo8/yolo26s/benchmark_set/benchmark_plan.json",
+      "copied_original_bytes": true
+    },
+    {
+      "saved_as": "yolov7_paper.json",
+      "original_archive_member": "native_producers/hailo8/yolov7_paper/benchmark_set/benchmark_set.json",
+      "copied_original_bytes": true
+    },
+    {
+      "saved_as": "yolov7_paper.benchmark_plan.json",
+      "original_archive_member": "native_producers/hailo8/yolov7_paper/benchmark_set/benchmark_plan.json",
+      "copied_original_bytes": true
+    }
+  ]
+}

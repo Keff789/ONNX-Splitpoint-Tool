@@ -44,24 +44,6 @@ def _scale(value: float, unit_map: dict, unit: str) -> float:
 
 
 def _legacy_main(argv: Optional[List[str]] = None) -> int:
-    from .metrics import (
-        boundary_costs,
-        boundary_tensor_counts,
-        compute_boundary_flops_prefix,
-        compute_scores_for_candidates,
-        compute_tensor_bytes_per_value,
-        per_node_flops,
-    )
-    from .onnx_utils import (
-        backfill_quant_shapes,
-        build_producers_consumers,
-        topo_sort,
-        value_info_map,
-        apply_dim_param_overrides,
-        make_llm_symbolic_dim_overrides,
-        llm_preset_to_lengths,
-    )
-
     ap = argparse.ArgumentParser(description="Analyse ONNX models and suggest split points.")
     ap.add_argument("onnx_model", help="Path to ONNX model")
 
@@ -110,6 +92,23 @@ def _legacy_main(argv: Optional[List[str]] = None) -> int:
 
     args = ap.parse_args(argv)
 
+    from .metrics import (
+        boundary_costs,
+        boundary_tensor_counts,
+        compute_boundary_flops_prefix,
+        compute_scores_for_candidates,
+        compute_tensor_bytes_per_value,
+        per_node_flops,
+    )
+    from .onnx_utils import (
+        backfill_quant_shapes,
+        build_producers_consumers,
+        topo_sort,
+        value_info_map,
+        apply_dim_param_overrides,
+        make_llm_symbolic_dim_overrides,
+        llm_preset_to_lengths,
+    )
     import onnx
     from onnx import shape_inference
 
@@ -366,6 +365,7 @@ def _legacy_main(argv: Optional[List[str]] = None) -> int:
 
 
 SERVICE_COMMANDS = {"benchmark-analyze", "benchmark-compare", "benchmark-bundle", "benchmark-schema", "benchmark-remote", "benchmark-profile", "prepare-validation-sets", "validation-assets"}
+WORKFLOW_COMMANDS = {"evaluation-workflow", "run-evaluation"}
 
 
 def _service_main(argv: Optional[List[str]] = None) -> int:
@@ -403,6 +403,7 @@ def _service_main(argv: Optional[List[str]] = None) -> int:
     p_rem.add_argument("--ssh-extra-args", default="", help="Extra args passed to ssh/scp")
     p_rem.add_argument("--working-dir", required=True, help="Local working directory for downloaded results")
     p_rem.add_argument("--run-id", default="cli", help="Local run id suffix")
+    p_rem.add_argument("--results-group-id", default="", help="Optional results group id used by GUI matrix/energy runs")
     p_rem.add_argument("--provider", default="auto", choices=["auto", "cpu", "cuda", "tensorrt", "openvino"], help="Provider override")
     p_rem.add_argument("--remote-venv", default="", help="Remote venv activate snippet/path")
     p_rem.add_argument("--repeats", type=int, default=1)
@@ -415,6 +416,19 @@ def _service_main(argv: Optional[List[str]] = None) -> int:
     p_rem.add_argument("--throughput-frames", type=int, default=24)
     p_rem.add_argument("--throughput-warmup-frames", type=int, default=6)
     p_rem.add_argument("--throughput-queue-depth", type=int, default=2)
+    p_rem.add_argument("--energy", action="store_true", help="Measure this remote benchmark with local u.RECS fast-firmware collector")
+    p_rem.add_argument("--energy-setup-id", default="", help="Hardware setup id whose u.RECS energy config should be used")
+    p_rem.add_argument(
+        "--hardware-setups-file",
+        default="",
+        help=(
+            "Exact hardware_setups.yaml used for claim-bearing energy; "
+            "empty uses the central registry"
+        ),
+    )
+    p_rem.add_argument("--energy-runs", type=int, default=0, help="Energy repetitions; 0 uses Tool Config default")
+    p_rem.add_argument("--keep-remote-run-dir", action="store_true", help="Do not remove the remote run directory after successful result download")
+    p_rem.add_argument("--cleanup-remote-on-partial", action="store_true", help="Also remove the remote run directory after partial runs when results were downloaded")
     p_rem.add_argument("--add-args", default="", help="Extra args appended to benchmark_suite.py")
 
     p_prof = sub.add_parser("benchmark-profile", help="List or resolve benchmark evaluation profiles.")
@@ -428,6 +442,7 @@ def _service_main(argv: Optional[List[str]] = None) -> int:
 
     p_val = sub.add_parser("prepare-validation-sets", help="Prepare/download validation datasets outside the clean tool ZIP.")
     p_val.add_argument("--coco50", action="store_true", help="Prepare the COCO-50 detection validation subset")
+    p_val.add_argument("--coco200", action="store_true", help="Prepare the COCO-200 detection validation/calibration subset")
     p_val.add_argument("--imagenette200", action="store_true", help="Prepare the downloadable Imagenette mini-200 classification preset")
     p_val.add_argument("--imagenette500", action="store_true", help="Prepare the downloadable Imagenette mini-500 classification preset")
     p_val.add_argument("--all", action="store_true", help="Prepare all built-in downloadable validation sets")
@@ -438,6 +453,7 @@ def _service_main(argv: Optional[List[str]] = None) -> int:
     p_val2.add_argument("action", nargs="?", default="status", choices=["status", "prepare"], help="status or prepare")
     p_val2.add_argument("--overwrite", action="store_true", help="Re-download/recreate existing assets")
     p_val2.add_argument("--no-coco50", action="store_true", help="Skip COCO-50 detection validation set")
+    p_val2.add_argument("--no-coco200", action="store_true", help="Skip COCO-200 detection validation/calibration set")
     p_val2.add_argument("--no-classification", action="store_true", help="Skip downloadable classification mini preset")
     p_val2.add_argument("--imagenette500", action="store_true", help="Also prepare the downloadable Imagenette mini-500 preset")
     p_val2.add_argument("--no-test-images", action="store_true", help="Skip runner test image preparation")
@@ -447,15 +463,16 @@ def _service_main(argv: Optional[List[str]] = None) -> int:
     if cmd == "prepare-validation-sets":
         import json
         from .benchmark.validation_assets import prepare_all_validation_assets, validation_assets_status
-        if bool(getattr(ns, "status", False)) and not bool(getattr(ns, "all", False)) and not bool(getattr(ns, "coco50", False)):
+        if bool(getattr(ns, "status", False)) and not bool(getattr(ns, "all", False)) and not bool(getattr(ns, "coco50", False)) and not bool(getattr(ns, "coco200", False)):
             print(json.dumps(validation_assets_status().as_dict(), indent=2), flush=True)
             return 0
         def _log(msg: str) -> None:
             print(msg, flush=True)
         all_requested = bool(getattr(ns, "all", False))
-        any_explicit = bool(getattr(ns, "coco50", False)) or bool(getattr(ns, "imagenette200", False)) or bool(getattr(ns, "imagenette500", False))
+        any_explicit = bool(getattr(ns, "coco50", False)) or bool(getattr(ns, "coco200", False)) or bool(getattr(ns, "imagenette200", False)) or bool(getattr(ns, "imagenette500", False))
         result = prepare_all_validation_assets(
             include_coco50=all_requested or bool(getattr(ns, "coco50", False)) or not any_explicit,
+            include_coco200=all_requested or bool(getattr(ns, "coco200", False)) or not any_explicit,
             include_imagenette200=all_requested or bool(getattr(ns, "imagenette200", False)) or not any_explicit,
             include_imagenette500=all_requested or bool(getattr(ns, "imagenette500", False)),
             include_test_images=all_requested or not any_explicit,
@@ -472,6 +489,7 @@ def _service_main(argv: Optional[List[str]] = None) -> int:
                 print(msg, flush=True)
             result = prepare_all_validation_assets(
                 include_coco50=not bool(getattr(ns, "no_coco50", False)),
+                include_coco200=not bool(getattr(ns, "no_coco200", False)),
                 include_imagenette200=not bool(getattr(ns, "no_classification", False)),
                 include_imagenette500=bool(getattr(ns, "imagenette500", False)) and not bool(getattr(ns, "no_classification", False)),
                 include_test_images=not bool(getattr(ns, "no_test_images", False)),
@@ -535,10 +553,22 @@ def _service_main(argv: Optional[List[str]] = None) -> int:
             timeout_s=(None if int(ns.timeout_s) <= 0 else int(ns.timeout_s)),
             transfer_mode=str(ns.transfer_mode),
             reuse_bundle=not bool(ns.no_reuse_bundle),
-            resume=not bool(ns.no_resume),
+            # Energy measurement already performs a duration probe followed by
+            # the measured run.  Suite-level resume would skip/reuse work in the
+            # measured pass, so disable it automatically unless explicitly run
+            # without --energy.
+            resume=(False if bool(getattr(ns, "energy", False)) else not bool(ns.no_resume)),
             throughput_frames=int(ns.throughput_frames),
             throughput_warmup_frames=int(ns.throughput_warmup_frames),
             throughput_queue_depth=max(1, int(ns.throughput_queue_depth)),
+            energy_enabled=bool(getattr(ns, "energy", False)),
+            energy_setup_id=str(getattr(ns, "energy_setup_id", "") or ""),
+            energy_registry_path=str(
+                getattr(ns, "hardware_setups_file", "") or ""
+            ),
+            energy_run_count=int(getattr(ns, "energy_runs", 0) or 0),
+            cleanup_remote_after_download=not bool(getattr(ns, "keep_remote_run_dir", False)),
+            cleanup_remote_on_partial=bool(getattr(ns, "cleanup_remote_on_partial", False)),
         )
         service = RemoteBenchmarkService()
         def _log(msg: str) -> None:
@@ -554,6 +584,7 @@ def _service_main(argv: Optional[List[str]] = None) -> int:
             log=_log,
             progress=_progress,
             cancel_event=None,
+            results_group_id=(str(getattr(ns, "results_group_id", "") or "") or None),
         )
         import json
         print(json.dumps(out, indent=2), flush=True)
@@ -642,6 +673,22 @@ def _service_main(argv: Optional[List[str]] = None) -> int:
 
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv in (["--version"], ["-V"]):
+        from . import __build_id__, __development_lineage__, __release__, __version__
+        print(
+            f"ONNX Split-Point Tool {__release__} "
+            f"(package {__version__}, lineage {__development_lineage__}, build {__build_id__})"
+        )
+        return 0
+    if argv and argv[0] in {"campaign", "campaign-tools"}:
+        from .campaign import main as _campaign_main
+        return _campaign_main(argv[1:])
+    if argv and argv[0] in {"fit-ranking-models", "ranking-model-fit"}:
+        from .ranking_model_fitting import main as _fit_main
+        return _fit_main(argv[1:])
+    if argv and argv[0] in WORKFLOW_COMMANDS:
+        from .workflow.run_evaluation import main as _workflow_main
+        return _workflow_main(argv[1:])
     if argv and argv[0] in SERVICE_COMMANDS:
         return _service_main(argv)
     return _legacy_main(argv)

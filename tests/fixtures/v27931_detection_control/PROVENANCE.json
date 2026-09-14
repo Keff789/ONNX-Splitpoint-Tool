@@ -1,0 +1,16 @@
+{
+  "source_zip": "complete_set_20260907_161614_debug_pack.zip",
+  "fixtures": [
+    {
+      "source": "/workspace/scratch/1c590cf43034/analysis/v27931_complete/models/yolo26s/benchmark_set/legacy_suite/deepx/deepx_m1/full/output_contract.json",
+      "fixture": "original_full_output_contract.json",
+      "sha256": "9584f04faa069a79621db4c5aba5970d9da7f6ee14c4a02a578212fa06a2beee"
+    },
+    {
+      "source": "/workspace/scratch/1c590cf43034/analysis/v27931_complete/models/yolo26s/benchmark_set/legacy_suite/output_contracts.json",
+      "fixture": "original_output_contracts.json",
+      "sha256": "8c18a24955d43ff7843d141b82f6224d82c228a1a64e4316c2c8978b7ece1f4f"
+    }
+  ],
+  "synthetic_test_payloads": "Image bytes and engine tensors are generated in tests; original contract bytes are preserved here. Hardware is NOT_RUN."
+}

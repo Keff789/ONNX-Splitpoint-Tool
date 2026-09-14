@@ -1,0 +1,118 @@
+{
+  "schema": "onnx-splitpoint/native-output-dump",
+  "schema_version": 4,
+  "dump_inference_scope": "last_measured_completion_source_outputs",
+  "input_image": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+  "outputs": [
+    {
+      "index": 0,
+      "name": "output0",
+      "dtype": "float32",
+      "shape": [
+        1,
+        84,
+        8400
+      ],
+      "file": "output_000.bin",
+      "sha256": "b01e53b2ef177c650cfe927e864a89fdb5925da8eff97f01df47febfea4e57d3",
+      "size_bytes": 2822400
+    }
+  ],
+  "authoritative_output_contract_resolution": {
+    "artifact_path": "",
+    "backend": "cuda_ort",
+    "contract_family": "decoded_pre_nms",
+    "contract_status": "recorded",
+    "endpoint_mode": "decoded_pre_nms",
+    "full_end_node_names": [],
+    "host_tail_required": true,
+    "model_id": "yolo11l",
+    "output_format": "ultralytics_decoded",
+    "postprocessing_required": true,
+    "requires_external_postprocess": true,
+    "schema": "onnx-splitpoint/output-contract",
+    "schema_version": 1,
+    "source_endpoint_semantics": "decoded_pre_nms",
+    "source_onnx_detection_endpoint": {
+      "multiscale_raw_head": false,
+      "output_shapes": [
+        [
+          1,
+          84,
+          8400
+        ]
+      ],
+      "sidecar_status": "onnx_sha256_mismatch",
+      "stage": "decoded_pre_nms"
+    },
+    "source_onnx_multiscale_raw_head": false,
+    "stage": "decoded_pre_nms",
+    "task": "detection",
+    "variant": "full",
+    "warning": "Do not compare a pre-NMS detection endpoint as if it were decoded/NMS output.",
+    "declaration_source": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolo11l/benchmark_set/output_contracts.json",
+    "source_contracts_sha256": "12d708952f1ed60a6a50605b0357e6ada5c7a04fbfef682b9dc675e134edba80",
+    "source_contract_sha256": "f60aee02264feb3413164e0a689991a7e8c4a290e87cc10729bbdba178f910c0",
+    "authoritative_output_contract": true,
+    "contract_resolution_status": "attested",
+    "contract_resolution_reason": "exact_suite_output_contract"
+  },
+  "task": "detection",
+  "output_format": "ultralytics_decoded",
+  "contract_family": "decoded_pre_nms",
+  "stage": "decoded_pre_nms",
+  "contract_source": "explicit_producer_export_contract",
+  "endpoint_contract_complete": true,
+  "endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+  "tensor_signature": {
+    "tensor_count": 1,
+    "tensors": [
+      {
+        "index": 0,
+        "name": "output0",
+        "rank": 3,
+        "shape": [
+          1,
+          84,
+          8400
+        ],
+        "dtype": "float32"
+      }
+    ]
+  },
+  "raw_fallback_requested": false,
+  "output_endpoint_attestation": {
+    "attested": true,
+    "status": "passed",
+    "stage": "decoded_pre_nms",
+    "endpoint": "decoded_pre_nms",
+    "reason": "raw_detection_tensor_structure_verified",
+    "endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+    "tensor_signature": {
+      "tensor_count": 1,
+      "tensors": [
+        {
+          "index": 0,
+          "name": "output0",
+          "rank": 3,
+          "shape": [
+            1,
+            84,
+            8400
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    "declared_stage": "decoded_pre_nms"
+  },
+  "payload_artifacts": [
+    {
+      "role": "outputs[0]",
+      "path": "output_000.bin",
+      "sha256": "b01e53b2ef177c650cfe927e864a89fdb5925da8eff97f01df47febfea4e57d3",
+      "size_bytes": 2822400
+    }
+  ],
+  "payload_artifacts_sha256": "c15c70e5f352f14167fd22f57a1ac98c5ad462e8b829b49ba2f95d3921e76569"
+}

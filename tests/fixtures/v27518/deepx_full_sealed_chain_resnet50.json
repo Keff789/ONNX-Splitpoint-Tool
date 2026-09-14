@@ -1,0 +1,35 @@
+{
+  "schema": "onnx-splitpoint/test-derived-deepx-full-sealed-chain",
+  "schema_version": 1,
+  "derived_from": "smoke_20260807/native_producers/deepx/resnet50",
+  "archived_evidence": {
+    "model": "resnet50",
+    "task": "classification",
+    "setup_id": "orin_nx_deepx_m1_01",
+    "comparison_backend": "deepx",
+    "prepared_feed_contract_version": "deepx-sealed-runtime-input-v3",
+    "performance_benchmark_source": "dx_engine_prepared_feed",
+    "performance_input_contract_mode": "explicit",
+    "semantic_input_candidate": "shared_pre_timing_sealed_manifest",
+    "archived_output_input_contract_mode": "diagnostic_autodetect",
+    "prepared_input_name": "input",
+    "prepared_input_shape": [224, 224, 3],
+    "prepared_input_dtype": "uint8",
+    "prepared_input_layout": "HWC",
+    "prepared_input_sha256": "0bb145365e13b00450b4669f4d45c40745b6cecb933fe4b3f36b72e05ce30201",
+    "runtime_numeric_input_sha256": "2dbfe98b1b2fabdc22c56318e1ec36018aee025250565c3519a91e87e8527cff",
+    "fps_makespan": 341.4309545609637
+  },
+  "reduced_fixture": {
+    "input_shape": [2, 2, 3],
+    "input_dtype": "uint8",
+    "input_layout": "HWC",
+    "input_normalization": "embedded_dxcom_preprocessing",
+    "input_preprocess_mode": "resize",
+    "rgb_pixels": [
+      [[0, 32, 64], [96, 128, 160]],
+      [[192, 224, 255], [17, 34, 51]]
+    ],
+    "classification_logits": [[0.25, -0.5, 1.5, 0.75]]
+  }
+}

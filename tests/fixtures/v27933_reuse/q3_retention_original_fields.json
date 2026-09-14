@@ -1,0 +1,1017 @@
+{
+  "source_archive": "v27932_live_biggerset_20260908_210306_20260909T080643Z_po6b9flj.zip",
+  "kind": "original JSON payloads extracted unchanged from log lines; no simulated measurements",
+  "records": [
+    {
+      "source": "run/models/mobilenet_v3_large/benchmark_results/remote_benchmark_stdout_orin_nx_deepx_m1_01.txt",
+      "line": 14,
+      "retention": {
+        "active_working_set_bytes": 966774183,
+        "admission_ok": true,
+        "current_key": "mobilenet_v3_large-a3603057150e0f6d",
+        "current_namespace_bytes": 287097123,
+        "current_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/mobilenet_v3_large-a3603057150e0f6d",
+        "effective_admission_max_bytes": 22441610663,
+        "eligible_remaining": 0,
+        "eligible_remaining_bytes": 0,
+        "eviction_history_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/.eviction_history.jsonl",
+        "legacy_inventory": {
+          "deleted": false,
+          "entries": [
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "resnet50-412056c1521d34b4",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolo26s-f5342b1cdbe0343f",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolov7_paper-4d2076a96adfba08",
+              "unsafe_symlink": false
+            }
+          ],
+          "exists": true,
+          "inventory_mode": "shallow_existing_stable_namespace",
+          "symlink": false
+        },
+        "legacy_receipt_migration": {
+          "candidate_failures": [],
+          "existing_receipts": 10,
+          "gpu_deserialization_failures": 0,
+          "inventoried_receipts": 10,
+          "migrated_receipts": 0,
+          "owner_key_changes": [],
+          "partial_target_leaves": 0,
+          "rejected_receipts": 0,
+          "requested": true,
+          "source_key": "mobilenet_v3_large-f3bf72b2bb5e894a",
+          "source_keys": [
+            "mobilenet_v3_large-a3603057150e0f6d"
+          ],
+          "status": "compatible_receipts_already_present",
+          "target_key": "mobilenet_v3_large-a3603057150e0f6d",
+          "target_preexisting": true,
+          "trigger": "partial_namespace_missing_artifact_scan"
+        },
+        "managed_bytes": 4551525157,
+        "managed_count": 7,
+        "managed_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516",
+        "max_bytes": 21474836480,
+        "max_namespaces": 6,
+        "planned_current_growth_bytes": 679677060,
+        "prior_eviction": null,
+        "projected_managed_bytes": 5231202217,
+        "protected": [
+          {
+            "bytes": 551181056,
+            "name": "regnet_x_1_6gf-aa35339d03c9ebf4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 377859677,
+            "name": "resnet50-c8fb9c2b93adbd87",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 1048718401,
+            "name": "yolo11l-b479a219175b061f",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 646536268,
+            "name": "yolo26m-8f895feae71fe4d4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 311855853,
+            "name": "yolo26s-9c1e24fdb8a6a251",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 1328276779,
+            "name": "yolov7_paper-c098bef45c108b08",
+            "reason": "active_workflow_may_reference_namespace"
+          }
+        ],
+        "reason": "retention_deferred_active_workflow",
+        "removed": [],
+        "retained_cache_budget_bytes": 21474836480,
+        "retained_noncurrent_bytes": 4264428034,
+        "retention_deferred": true,
+        "retention_limits_exceeded": true,
+        "schema": "onnx-splitpoint/remote-trt-cache-retention",
+        "schema_version": 1,
+        "selected_plan_reserve_applied": true
+      }
+    },
+    {
+      "source": "run/models/mobilenet_v3_large/benchmark_results/remote_benchmark_stdout_orin_nx_hailo10_01.txt",
+      "line": 16,
+      "retention": {
+        "active_working_set_bytes": 887637858,
+        "admission_ok": true,
+        "current_key": "mobilenet_v3_large-a3603057150e0f6d",
+        "current_namespace_bytes": 207960798,
+        "current_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/mobilenet_v3_large-a3603057150e0f6d",
+        "effective_admission_max_bytes": 22362474338,
+        "eligible_remaining": 0,
+        "eligible_remaining_bytes": 0,
+        "eviction_history_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/.eviction_history.jsonl",
+        "legacy_inventory": {
+          "deleted": false,
+          "entries": [
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "resnet50-412056c1521d34b4",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolo26s-f5342b1cdbe0343f",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolov7_paper-4d2076a96adfba08",
+              "unsafe_symlink": false
+            }
+          ],
+          "exists": true,
+          "inventory_mode": "shallow_existing_stable_namespace",
+          "symlink": false
+        },
+        "legacy_receipt_migration": {
+          "candidate_failures": [],
+          "existing_receipts": 5,
+          "gpu_deserialization_failures": 0,
+          "inventoried_receipts": 5,
+          "migrated_receipts": 0,
+          "owner_key_changes": [],
+          "partial_target_leaves": 0,
+          "rejected_receipts": 0,
+          "requested": true,
+          "source_key": "mobilenet_v3_large-f3bf72b2bb5e894a",
+          "source_keys": [
+            "mobilenet_v3_large-a3603057150e0f6d"
+          ],
+          "status": "compatible_receipts_already_present",
+          "target_key": "mobilenet_v3_large-a3603057150e0f6d",
+          "target_preexisting": true,
+          "trigger": "partial_namespace_missing_artifact_scan"
+        },
+        "managed_bytes": 4648979666,
+        "managed_count": 7,
+        "managed_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516",
+        "max_bytes": 21474836480,
+        "max_namespaces": 6,
+        "planned_current_growth_bytes": 679677060,
+        "prior_eviction": null,
+        "projected_managed_bytes": 5328656726,
+        "protected": [
+          {
+            "bytes": 290534269,
+            "name": "regnet_x_1_6gf-aa35339d03c9ebf4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 233677358,
+            "name": "resnet50-c8fb9c2b93adbd87",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 1422206394,
+            "name": "yolo11l-b479a219175b061f",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 766945309,
+            "name": "yolo26m-8f895feae71fe4d4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 372767839,
+            "name": "yolo26s-9c1e24fdb8a6a251",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 1354887699,
+            "name": "yolov7_paper-c098bef45c108b08",
+            "reason": "active_workflow_may_reference_namespace"
+          }
+        ],
+        "reason": "retention_deferred_active_workflow",
+        "removed": [],
+        "retained_cache_budget_bytes": 21474836480,
+        "retained_noncurrent_bytes": 4441018868,
+        "retention_deferred": true,
+        "retention_limits_exceeded": true,
+        "schema": "onnx-splitpoint/remote-trt-cache-retention",
+        "schema_version": 1,
+        "selected_plan_reserve_applied": true
+      }
+    },
+    {
+      "source": "run/models/mobilenet_v3_large/benchmark_results/remote_benchmark_stdout_orin_nx_hailo8_01.txt",
+      "line": 13,
+      "retention": {
+        "active_working_set_bytes": 924358215,
+        "admission_ok": true,
+        "current_key": "mobilenet_v3_large-a3603057150e0f6d",
+        "current_namespace_bytes": 244681155,
+        "current_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/mobilenet_v3_large-a3603057150e0f6d",
+        "effective_admission_max_bytes": 22399194695,
+        "eligible_remaining": 0,
+        "eligible_remaining_bytes": 0,
+        "eviction_history_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/.eviction_history.jsonl",
+        "legacy_inventory": {
+          "deleted": false,
+          "entries": [
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "resnet50-412056c1521d34b4",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolo26s-f5342b1cdbe0343f",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolov7_paper-4d2076a96adfba08",
+              "unsafe_symlink": false
+            }
+          ],
+          "exists": true,
+          "inventory_mode": "shallow_existing_stable_namespace",
+          "symlink": false
+        },
+        "legacy_receipt_migration": {
+          "candidate_failures": [],
+          "existing_receipts": 7,
+          "gpu_deserialization_failures": 0,
+          "inventoried_receipts": 7,
+          "migrated_receipts": 0,
+          "owner_key_changes": [],
+          "partial_target_leaves": 0,
+          "rejected_receipts": 0,
+          "requested": true,
+          "source_key": "mobilenet_v3_large-f3bf72b2bb5e894a",
+          "source_keys": [
+            "mobilenet_v3_large-a3603057150e0f6d"
+          ],
+          "status": "compatible_receipts_already_present",
+          "target_key": "mobilenet_v3_large-a3603057150e0f6d",
+          "target_preexisting": true,
+          "trigger": "partial_namespace_missing_artifact_scan"
+        },
+        "managed_bytes": 4860812548,
+        "managed_count": 7,
+        "managed_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516",
+        "max_bytes": 21474836480,
+        "max_namespaces": 6,
+        "planned_current_growth_bytes": 679677060,
+        "prior_eviction": null,
+        "projected_managed_bytes": 5540489608,
+        "protected": [
+          {
+            "bytes": 295134393,
+            "name": "regnet_x_1_6gf-aa35339d03c9ebf4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 247095139,
+            "name": "resnet50-c8fb9c2b93adbd87",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 1600721549,
+            "name": "yolo11l-b479a219175b061f",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 749685281,
+            "name": "yolo26m-8f895feae71fe4d4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 363357667,
+            "name": "yolo26s-9c1e24fdb8a6a251",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 1360137364,
+            "name": "yolov7_paper-c098bef45c108b08",
+            "reason": "active_workflow_may_reference_namespace"
+          }
+        ],
+        "reason": "retention_deferred_active_workflow",
+        "removed": [],
+        "retained_cache_budget_bytes": 21474836480,
+        "retained_noncurrent_bytes": 4616131393,
+        "retention_deferred": true,
+        "retention_limits_exceeded": true,
+        "schema": "onnx-splitpoint/remote-trt-cache-retention",
+        "schema_version": 1,
+        "selected_plan_reserve_applied": true
+      }
+    },
+    {
+      "source": "run/models/resnet50/benchmark_results/remote_benchmark_stdout_orin_nx_deepx_m1_01.txt",
+      "line": 16,
+      "retention": {
+        "active_working_set_bytes": 3963913247,
+        "admission_ok": true,
+        "current_key": "resnet50-c8fb9c2b93adbd87",
+        "current_namespace_bytes": 377859677,
+        "current_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87",
+        "effective_admission_max_bytes": 25438749727,
+        "eligible_remaining": 0,
+        "eligible_remaining_bytes": 0,
+        "eviction_history_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/.eviction_history.jsonl",
+        "legacy_inventory": {
+          "deleted": false,
+          "entries": [
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "resnet50-412056c1521d34b4",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolo26s-f5342b1cdbe0343f",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolov7_paper-4d2076a96adfba08",
+              "unsafe_symlink": false
+            }
+          ],
+          "exists": true,
+          "inventory_mode": "shallow_existing_stable_namespace",
+          "symlink": false
+        },
+        "legacy_receipt_migration": {
+          "candidate_failures": [],
+          "existing_receipts": 4,
+          "gpu_deserialization_failures": 0,
+          "inventoried_receipts": 4,
+          "migrated_receipts": 0,
+          "owner_key_changes": [],
+          "partial_target_leaves": 0,
+          "rejected_receipts": 0,
+          "requested": true,
+          "source_key": "resnet50-d0726d2bbe9cb619",
+          "source_keys": [
+            "resnet50-c8fb9c2b93adbd87"
+          ],
+          "status": "compatible_receipts_already_present",
+          "target_key": "resnet50-c8fb9c2b93adbd87",
+          "target_preexisting": true,
+          "trigger": "partial_namespace_missing_artifact_scan"
+        },
+        "managed_bytes": 4551525157,
+        "managed_count": 7,
+        "managed_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516",
+        "max_bytes": 21474836480,
+        "max_namespaces": 6,
+        "planned_current_growth_bytes": 3586053570,
+        "prior_eviction": {
+          "builder_abi_match": true,
+          "bytes": 1175525358,
+          "evicted_at_unix": 1788640369.12587,
+          "last_used_at_unix": 1788620323.5892653,
+          "model_identity_match": false,
+          "namespace_key": "resnet50-c8fb9c2b93adbd87",
+          "reason": "retained_cache_limit_lru",
+          "schema": "onnx-splitpoint/trt-cache-eviction-event",
+          "schema_version": 1
+        },
+        "projected_managed_bytes": 8137578727,
+        "protected": [
+          {
+            "bytes": 287097123,
+            "name": "mobilenet_v3_large-a3603057150e0f6d",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 551181056,
+            "name": "regnet_x_1_6gf-aa35339d03c9ebf4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 1048718401,
+            "name": "yolo11l-b479a219175b061f",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 646536268,
+            "name": "yolo26m-8f895feae71fe4d4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 311855853,
+            "name": "yolo26s-9c1e24fdb8a6a251",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 1328276779,
+            "name": "yolov7_paper-c098bef45c108b08",
+            "reason": "active_workflow_may_reference_namespace"
+          }
+        ],
+        "reason": "retention_deferred_active_workflow",
+        "removed": [],
+        "retained_cache_budget_bytes": 21474836480,
+        "retained_noncurrent_bytes": 4173665480,
+        "retention_deferred": true,
+        "retention_limits_exceeded": true,
+        "schema": "onnx-splitpoint/remote-trt-cache-retention",
+        "schema_version": 1,
+        "selected_plan_reserve_applied": true
+      }
+    },
+    {
+      "source": "run/models/resnet50/benchmark_results/remote_benchmark_stdout_orin_nx_hailo10_01.txt",
+      "line": 13,
+      "retention": {
+        "active_working_set_bytes": 3819730928,
+        "admission_ok": true,
+        "current_key": "resnet50-c8fb9c2b93adbd87",
+        "current_namespace_bytes": 233677358,
+        "current_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87",
+        "effective_admission_max_bytes": 25294567408,
+        "eligible_remaining": 0,
+        "eligible_remaining_bytes": 0,
+        "eviction_history_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/.eviction_history.jsonl",
+        "legacy_inventory": {
+          "deleted": false,
+          "entries": [
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "resnet50-412056c1521d34b4",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolo26s-f5342b1cdbe0343f",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolov7_paper-4d2076a96adfba08",
+              "unsafe_symlink": false
+            }
+          ],
+          "exists": true,
+          "inventory_mode": "shallow_existing_stable_namespace",
+          "symlink": false
+        },
+        "legacy_receipt_migration": {
+          "candidate_failures": [],
+          "existing_receipts": 3,
+          "gpu_deserialization_failures": 0,
+          "inventoried_receipts": 3,
+          "migrated_receipts": 0,
+          "owner_key_changes": [],
+          "partial_target_leaves": 0,
+          "rejected_receipts": 0,
+          "requested": true,
+          "source_key": "resnet50-d0726d2bbe9cb619",
+          "source_keys": [
+            "resnet50-c8fb9c2b93adbd87"
+          ],
+          "status": "compatible_receipts_already_present",
+          "target_key": "resnet50-c8fb9c2b93adbd87",
+          "target_preexisting": true,
+          "trigger": "partial_namespace_missing_artifact_scan"
+        },
+        "managed_bytes": 4678554817,
+        "managed_count": 7,
+        "managed_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516",
+        "max_bytes": 21474836480,
+        "max_namespaces": 6,
+        "planned_current_growth_bytes": 3586053570,
+        "prior_eviction": {
+          "builder_abi_match": true,
+          "bytes": 680492829,
+          "evicted_at_unix": 1788640368.7869265,
+          "last_used_at_unix": 1788620323.7643697,
+          "model_identity_match": false,
+          "namespace_key": "resnet50-c8fb9c2b93adbd87",
+          "reason": "retained_cache_limit_lru",
+          "schema": "onnx-splitpoint/trt-cache-eviction-event",
+          "schema_version": 1
+        },
+        "projected_managed_bytes": 8264608387,
+        "protected": [
+          {
+            "bytes": 237535949,
+            "name": "mobilenet_v3_large-a3603057150e0f6d",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 290534269,
+            "name": "regnet_x_1_6gf-aa35339d03c9ebf4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 1422206394,
+            "name": "yolo11l-b479a219175b061f",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 766945309,
+            "name": "yolo26m-8f895feae71fe4d4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 372767839,
+            "name": "yolo26s-9c1e24fdb8a6a251",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 1354887699,
+            "name": "yolov7_paper-c098bef45c108b08",
+            "reason": "active_workflow_may_reference_namespace"
+          }
+        ],
+        "reason": "retention_deferred_active_workflow",
+        "removed": [],
+        "retained_cache_budget_bytes": 21474836480,
+        "retained_noncurrent_bytes": 4444877459,
+        "retention_deferred": true,
+        "retention_limits_exceeded": true,
+        "schema": "onnx-splitpoint/remote-trt-cache-retention",
+        "schema_version": 1,
+        "selected_plan_reserve_applied": true
+      }
+    },
+    {
+      "source": "run/models/resnet50/benchmark_results/remote_benchmark_stdout_orin_nx_hailo8_01.txt",
+      "line": 14,
+      "retention": {
+        "active_working_set_bytes": 3833148709,
+        "admission_ok": true,
+        "current_key": "resnet50-c8fb9c2b93adbd87",
+        "current_namespace_bytes": 247095139,
+        "current_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87",
+        "effective_admission_max_bytes": 25307985189,
+        "eligible_remaining": 0,
+        "eligible_remaining_bytes": 0,
+        "eviction_history_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/.eviction_history.jsonl",
+        "legacy_inventory": {
+          "deleted": false,
+          "entries": [
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "resnet50-412056c1521d34b4",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolo26s-f5342b1cdbe0343f",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolov7_paper-4d2076a96adfba08",
+              "unsafe_symlink": false
+            }
+          ],
+          "exists": true,
+          "inventory_mode": "shallow_existing_stable_namespace",
+          "symlink": false
+        },
+        "legacy_receipt_migration": {
+          "candidate_failures": [],
+          "existing_receipts": 3,
+          "gpu_deserialization_failures": 0,
+          "inventoried_receipts": 3,
+          "migrated_receipts": 0,
+          "owner_key_changes": [],
+          "partial_target_leaves": 0,
+          "rejected_receipts": 0,
+          "requested": true,
+          "source_key": "resnet50-d0726d2bbe9cb619",
+          "source_keys": [
+            "resnet50-c8fb9c2b93adbd87"
+          ],
+          "status": "compatible_receipts_already_present",
+          "target_key": "resnet50-c8fb9c2b93adbd87",
+          "target_preexisting": true,
+          "trigger": "partial_namespace_missing_artifact_scan"
+        },
+        "managed_bytes": 4890258218,
+        "managed_count": 7,
+        "managed_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516",
+        "max_bytes": 21474836480,
+        "max_namespaces": 6,
+        "planned_current_growth_bytes": 3586053570,
+        "prior_eviction": {
+          "builder_abi_match": true,
+          "bytes": 689192641,
+          "evicted_at_unix": 1788640370.7493708,
+          "last_used_at_unix": 1788620324.9291322,
+          "model_identity_match": false,
+          "namespace_key": "resnet50-c8fb9c2b93adbd87",
+          "reason": "retained_cache_limit_lru",
+          "schema": "onnx-splitpoint/trt-cache-eviction-event",
+          "schema_version": 1
+        },
+        "projected_managed_bytes": 8476311788,
+        "protected": [
+          {
+            "bytes": 274126825,
+            "name": "mobilenet_v3_large-a3603057150e0f6d",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 295134393,
+            "name": "regnet_x_1_6gf-aa35339d03c9ebf4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 1600721549,
+            "name": "yolo11l-b479a219175b061f",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 749685281,
+            "name": "yolo26m-8f895feae71fe4d4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 363357667,
+            "name": "yolo26s-9c1e24fdb8a6a251",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 1360137364,
+            "name": "yolov7_paper-c098bef45c108b08",
+            "reason": "active_workflow_may_reference_namespace"
+          }
+        ],
+        "reason": "retention_deferred_active_workflow",
+        "removed": [],
+        "retained_cache_budget_bytes": 21474836480,
+        "retained_noncurrent_bytes": 4643163079,
+        "retention_deferred": true,
+        "retention_limits_exceeded": true,
+        "schema": "onnx-splitpoint/remote-trt-cache-retention",
+        "schema_version": 1,
+        "selected_plan_reserve_applied": true
+      }
+    },
+    {
+      "source": "run/models/yolo11l/benchmark_results/remote_benchmark_stdout_orin_nx_deepx_m1_01.txt",
+      "line": 11,
+      "retention": {
+        "active_working_set_bytes": 3531126338,
+        "admission_ok": true,
+        "current_key": "yolo11l-b479a219175b061f",
+        "current_namespace_bytes": 1048718402,
+        "current_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f",
+        "effective_admission_max_bytes": 25005962818,
+        "eligible_remaining": 0,
+        "eligible_remaining_bytes": 0,
+        "eviction_history_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/.eviction_history.jsonl",
+        "legacy_inventory": {
+          "deleted": false,
+          "entries": [
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "resnet50-412056c1521d34b4",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolo26s-f5342b1cdbe0343f",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolov7_paper-4d2076a96adfba08",
+              "unsafe_symlink": false
+            }
+          ],
+          "exists": true,
+          "inventory_mode": "shallow_existing_stable_namespace",
+          "symlink": false
+        },
+        "legacy_receipt_migration": {
+          "candidate_failures": [],
+          "existing_receipts": 10,
+          "gpu_deserialization_failures": 0,
+          "inventoried_receipts": 10,
+          "migrated_receipts": 0,
+          "owner_key_changes": [],
+          "partial_target_leaves": 0,
+          "rejected_receipts": 0,
+          "requested": true,
+          "source_key": "yolo11l-819a62e2605ff96b",
+          "source_keys": [
+            "yolo11l-b479a219175b061f"
+          ],
+          "status": "compatible_receipts_already_present",
+          "target_key": "yolo11l-b479a219175b061f",
+          "target_preexisting": true,
+          "trigger": "partial_namespace_missing_artifact_scan"
+        },
+        "managed_bytes": 4551525158,
+        "managed_count": 7,
+        "managed_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516",
+        "max_bytes": 21474836480,
+        "max_namespaces": 6,
+        "planned_current_growth_bytes": 2482407936,
+        "prior_eviction": null,
+        "projected_managed_bytes": 7033933094,
+        "protected": [
+          {
+            "bytes": 287097123,
+            "name": "mobilenet_v3_large-a3603057150e0f6d",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 551181056,
+            "name": "regnet_x_1_6gf-aa35339d03c9ebf4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 377859677,
+            "name": "resnet50-c8fb9c2b93adbd87",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 646536268,
+            "name": "yolo26m-8f895feae71fe4d4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 311855853,
+            "name": "yolo26s-9c1e24fdb8a6a251",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 1328276779,
+            "name": "yolov7_paper-c098bef45c108b08",
+            "reason": "active_workflow_may_reference_namespace"
+          }
+        ],
+        "reason": "retention_deferred_active_workflow",
+        "removed": [],
+        "retained_cache_budget_bytes": 21474836480,
+        "retained_noncurrent_bytes": 3502806756,
+        "retention_deferred": true,
+        "retention_limits_exceeded": true,
+        "schema": "onnx-splitpoint/remote-trt-cache-retention",
+        "schema_version": 1,
+        "selected_plan_reserve_applied": true
+      }
+    },
+    {
+      "source": "run/models/yolo11l/benchmark_results/remote_benchmark_stdout_orin_nx_hailo10_01.txt",
+      "line": 14,
+      "retention": {
+        "active_working_set_bytes": 3904614331,
+        "admission_ok": true,
+        "current_key": "yolo11l-b479a219175b061f",
+        "current_namespace_bytes": 1422206395,
+        "current_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f",
+        "effective_admission_max_bytes": 25379450811,
+        "eligible_remaining": 0,
+        "eligible_remaining_bytes": 0,
+        "eviction_history_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/.eviction_history.jsonl",
+        "legacy_inventory": {
+          "deleted": false,
+          "entries": [
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "resnet50-412056c1521d34b4",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolo26s-f5342b1cdbe0343f",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolov7_paper-4d2076a96adfba08",
+              "unsafe_symlink": false
+            }
+          ],
+          "exists": true,
+          "inventory_mode": "shallow_existing_stable_namespace",
+          "symlink": false
+        },
+        "legacy_receipt_migration": {
+          "candidate_failures": [],
+          "existing_receipts": 6,
+          "gpu_deserialization_failures": 0,
+          "inventoried_receipts": 6,
+          "migrated_receipts": 0,
+          "owner_key_changes": [],
+          "partial_target_leaves": 0,
+          "rejected_receipts": 0,
+          "requested": true,
+          "source_key": "yolo11l-819a62e2605ff96b",
+          "source_keys": [
+            "yolo11l-b479a219175b061f"
+          ],
+          "status": "compatible_receipts_already_present",
+          "target_key": "yolo11l-b479a219175b061f",
+          "target_preexisting": true,
+          "trigger": "partial_namespace_missing_artifact_scan"
+        },
+        "managed_bytes": 4717991805,
+        "managed_count": 7,
+        "managed_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516",
+        "max_bytes": 21474836480,
+        "max_namespaces": 6,
+        "planned_current_growth_bytes": 2482407936,
+        "prior_eviction": null,
+        "projected_managed_bytes": 7200399741,
+        "protected": [
+          {
+            "bytes": 237535949,
+            "name": "mobilenet_v3_large-a3603057150e0f6d",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 290534269,
+            "name": "regnet_x_1_6gf-aa35339d03c9ebf4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 273114345,
+            "name": "resnet50-c8fb9c2b93adbd87",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 766945309,
+            "name": "yolo26m-8f895feae71fe4d4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 372767839,
+            "name": "yolo26s-9c1e24fdb8a6a251",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 1354887699,
+            "name": "yolov7_paper-c098bef45c108b08",
+            "reason": "active_workflow_may_reference_namespace"
+          }
+        ],
+        "reason": "retention_deferred_active_workflow",
+        "removed": [],
+        "retained_cache_budget_bytes": 21474836480,
+        "retained_noncurrent_bytes": 3295785410,
+        "retention_deferred": true,
+        "retention_limits_exceeded": true,
+        "schema": "onnx-splitpoint/remote-trt-cache-retention",
+        "schema_version": 1,
+        "selected_plan_reserve_applied": true
+      }
+    },
+    {
+      "source": "run/models/yolo11l/benchmark_results/remote_benchmark_stdout_orin_nx_hailo8_01.txt",
+      "line": 12,
+      "retention": {
+        "active_working_set_bytes": 4083129485,
+        "admission_ok": true,
+        "current_key": "yolo11l-b479a219175b061f",
+        "current_namespace_bytes": 1600721549,
+        "current_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f",
+        "effective_admission_max_bytes": 25557965965,
+        "eligible_remaining": 0,
+        "eligible_remaining_bytes": 0,
+        "eviction_history_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/.eviction_history.jsonl",
+        "legacy_inventory": {
+          "deleted": false,
+          "entries": [
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "resnet50-412056c1521d34b4",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolo26s-f5342b1cdbe0343f",
+              "unsafe_symlink": false
+            },
+            {
+              "bytes": 0,
+              "files": 0,
+              "name": "yolov7_paper-4d2076a96adfba08",
+              "unsafe_symlink": false
+            }
+          ],
+          "exists": true,
+          "inventory_mode": "shallow_existing_stable_namespace",
+          "symlink": false
+        },
+        "legacy_receipt_migration": {
+          "candidate_failures": [],
+          "existing_receipts": 8,
+          "gpu_deserialization_failures": 0,
+          "inventoried_receipts": 8,
+          "migrated_receipts": 0,
+          "owner_key_changes": [],
+          "partial_target_leaves": 0,
+          "rejected_receipts": 0,
+          "requested": true,
+          "source_key": "yolo11l-819a62e2605ff96b",
+          "source_keys": [
+            "yolo11l-b479a219175b061f"
+          ],
+          "status": "compatible_receipts_already_present",
+          "target_key": "yolo11l-b479a219175b061f",
+          "target_preexisting": true,
+          "trigger": "partial_namespace_missing_artifact_scan"
+        },
+        "managed_bytes": 4936389413,
+        "managed_count": 7,
+        "managed_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516",
+        "max_bytes": 21474836480,
+        "max_namespaces": 6,
+        "planned_current_growth_bytes": 2482407936,
+        "prior_eviction": null,
+        "projected_managed_bytes": 7418797349,
+        "protected": [
+          {
+            "bytes": 274126825,
+            "name": "mobilenet_v3_large-a3603057150e0f6d",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 295134393,
+            "name": "regnet_x_1_6gf-aa35339d03c9ebf4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 293226334,
+            "name": "resnet50-c8fb9c2b93adbd87",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 749685281,
+            "name": "yolo26m-8f895feae71fe4d4",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 363357667,
+            "name": "yolo26s-9c1e24fdb8a6a251",
+            "reason": "active_workflow_may_reference_namespace"
+          },
+          {
+            "bytes": 1360137364,
+            "name": "yolov7_paper-c098bef45c108b08",
+            "reason": "active_workflow_may_reference_namespace"
+          }
+        ],
+        "reason": "retention_deferred_active_workflow",
+        "removed": [],
+        "retained_cache_budget_bytes": 21474836480,
+        "retained_noncurrent_bytes": 3335667864,
+        "retention_deferred": true,
+        "retention_limits_exceeded": true,
+        "schema": "onnx-splitpoint/remote-trt-cache-retention",
+        "schema_version": 1,
+        "selected_plan_reserve_applied": true
+      }
+    }
+  ]
+}

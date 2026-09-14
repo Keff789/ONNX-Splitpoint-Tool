@@ -1,0 +1,129 @@
+{
+  "schema": "hailo10-xla-toolchain-probe-r2",
+  "status": "diagnostic_pass",
+  "diagnostic_only": true,
+  "model_build": "NOT_RUN",
+  "package_installations": false,
+  "tool_implementation_modified": false,
+  "system_toolkit_selection_modified": false,
+  "model_acceptance": "NOT_EVALUATED_BY_DIAGNOSTIC",
+  "scope": "single Hailo10H DFC venv; synthetic GPU/XLA only",
+  "ptxas_version_text": "ptxas: NVIDIA (R) Ptx optimizing assembler\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Fri_Feb_21_20:21:21_PST_2025\nCuda compilation tools, release 12.8, V12.8.93\nBuild cuda_12.8.r12.8/compiler.35583870_0\n",
+  "compute_process": {
+    "returncode": 0,
+    "elapsed_s": 9.041,
+    "timed_out": false,
+    "reason": "normal",
+    "cleanup_complete": true,
+    "remaining_group_pids": [],
+    "unexpected_live_processes_after_worker_exit": false
+  },
+  "compute_checks": [
+    {
+      "name": "dfc_sdk_import",
+      "status": "pass",
+      "detail": {
+        "module_file": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/hailo_sdk_client/__init__.py",
+        "version": "5.3.0",
+        "runner_instantiated": false
+      },
+      "elapsed_s": 7.3427
+    },
+    {
+      "name": "matmul_gpu",
+      "status": "pass",
+      "detail": {
+        "device": "/job:localhost/replica:0/task:0/device:GPU:0",
+        "shape": [
+          64,
+          64
+        ],
+        "dtype": "float32",
+        "finite": true,
+        "max_abs_error": 6.556510925292969e-07,
+        "rtol": 0.0003,
+        "atol": 0.0003,
+        "cpu_fallback_accepted": false
+      },
+      "elapsed_s": 0.0018
+    },
+    {
+      "name": "conv2d_gpu",
+      "status": "pass",
+      "detail": {
+        "device": "/job:localhost/replica:0/task:0/device:GPU:0",
+        "shape": [
+          1,
+          14,
+          14,
+          4
+        ],
+        "dtype": "float32",
+        "finite": true,
+        "max_abs_error": 2.384185791015625e-07,
+        "rtol": 0.0003,
+        "atol": 0.0003,
+        "cpu_fallback_accepted": false
+      },
+      "elapsed_s": 0.0348
+    },
+    {
+      "name": "xla_math_gpu",
+      "status": "pass",
+      "detail": {
+        "device": "/job:localhost/replica:0/task:0/device:GPU:0",
+        "shape": [
+          64,
+          64
+        ],
+        "dtype": "float32",
+        "finite": true,
+        "max_abs_error": 2.384185791015625e-07,
+        "rtol": 0.0003,
+        "atol": 0.0003,
+        "cpu_fallback_accepted": false,
+        "jit_compile_required": true
+      },
+      "elapsed_s": 0.164
+    },
+    {
+      "name": "xla_conv2d_gpu",
+      "status": "pass",
+      "detail": {
+        "device": "/job:localhost/replica:0/task:0/device:GPU:0",
+        "shape": [
+          1,
+          14,
+          14,
+          4
+        ],
+        "dtype": "float32",
+        "finite": true,
+        "max_abs_error": 4.76837158203125e-07,
+        "rtol": 0.0003,
+        "atol": 0.0003,
+        "cpu_fallback_accepted": false,
+        "jit_compile_required": true
+      },
+      "elapsed_s": 0.1563
+    }
+  ],
+  "compute_error": null,
+  "ptxas_provenance": {
+    "trace_parse_errors": [],
+    "compute_assembly_count": 3,
+    "successful_pascal_compute_assemblies": 2,
+    "observed_ptx_targets": [
+      "sm_30",
+      "sm_61"
+    ],
+    "observed_ptx_versions": [
+      "4.2",
+      "8.5"
+    ],
+    "verified": true
+  },
+  "compiler_files_metadata_unchanged": true,
+  "temporary_cleanup_complete": true,
+  "temporary_cleanup_errors": []
+}

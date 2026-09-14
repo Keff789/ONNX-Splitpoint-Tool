@@ -1,0 +1,472 @@
+{
+  "canonical_file_count": 4,
+  "canonical_files": [
+    {
+      "error_sidecar": "",
+      "format": "json",
+      "nonempty": true,
+      "parseable": true,
+      "path": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/benchmark_results_deepx_m1_full_auto.json",
+      "row_count": 1,
+      "run_id": "deepx_m1_full_auto",
+      "semantic_status": "measured_rows"
+    },
+    {
+      "error_sidecar": "",
+      "format": "json",
+      "nonempty": true,
+      "parseable": true,
+      "path": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/benchmark_results_ort_tensorrt_auto.json",
+      "row_count": 1,
+      "run_id": "ort_tensorrt_auto",
+      "semantic_status": "measured_rows"
+    },
+    {
+      "error_sidecar": "",
+      "format": "csv",
+      "nonempty": true,
+      "parseable": true,
+      "path": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/benchmark_results_deepx_m1_full_auto.csv",
+      "row_count": 1,
+      "run_id": "deepx_m1_full_auto",
+      "semantic_status": "measured_rows"
+    },
+    {
+      "error_sidecar": "",
+      "format": "csv",
+      "nonempty": true,
+      "parseable": true,
+      "path": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/benchmark_results_ort_tensorrt_auto.csv",
+      "row_count": 1,
+      "run_id": "ort_tensorrt_auto",
+      "semantic_status": "measured_rows"
+    }
+  ],
+  "canonical_max_bytes": null,
+  "canonical_nonempty_file_count": 4,
+  "canonical_nonempty_row_count": 4,
+  "canonical_parseable_file_count": 4,
+  "canonical_result_count": 4,
+  "canonical_run_ids_with_rows": [
+    "deepx_m1_full_auto",
+    "ort_tensorrt_auto"
+  ],
+  "canonical_run_ids_without_rows": [],
+  "copied": [
+    {
+      "canonical": true,
+      "canonical_nonempty": true,
+      "canonical_parseable": true,
+      "canonical_row_count": 1,
+      "canonical_run_id": "deepx_m1_full_auto",
+      "canonical_semantic_status": "measured_rows",
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/benchmark_results_deepx_m1_full_auto.json",
+      "kind": "benchmark_result",
+      "size_bytes": 816,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/benchmark_results_deepx_m1_full_auto.json"
+    },
+    {
+      "canonical": true,
+      "canonical_nonempty": true,
+      "canonical_parseable": true,
+      "canonical_row_count": 1,
+      "canonical_run_id": "ort_tensorrt_auto",
+      "canonical_semantic_status": "measured_rows",
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/benchmark_results_ort_tensorrt_auto.json",
+      "kind": "benchmark_result",
+      "size_bytes": 37917279,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/benchmark_results_ort_tensorrt_auto.json"
+    },
+    {
+      "canonical": true,
+      "canonical_nonempty": true,
+      "canonical_parseable": true,
+      "canonical_row_count": 1,
+      "canonical_run_id": "deepx_m1_full_auto",
+      "canonical_semantic_status": "measured_rows",
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/benchmark_results_deepx_m1_full_auto.csv",
+      "kind": "benchmark_result",
+      "size_bytes": 618,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/benchmark_results_deepx_m1_full_auto.csv"
+    },
+    {
+      "canonical": true,
+      "canonical_nonempty": true,
+      "canonical_parseable": true,
+      "canonical_row_count": 1,
+      "canonical_run_id": "ort_tensorrt_auto",
+      "canonical_semantic_status": "measured_rows",
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/benchmark_results_ort_tensorrt_auto.csv",
+      "kind": "benchmark_result",
+      "size_bytes": 20176481,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/benchmark_results_ort_tensorrt_auto.csv"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/logs/runner.log",
+      "kind": "remote_log",
+      "size_bytes": 79942,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/logs/runner.log"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/logs/runner.log",
+      "kind": "remote_log",
+      "size_bytes": 79942,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/logs/runner.log"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/logs/stderr.txt",
+      "kind": "remote_log",
+      "size_bytes": 1524,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/logs/stderr.txt"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/logs/stderr.txt",
+      "kind": "remote_log",
+      "size_bytes": 1524,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/logs/stderr.txt"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/logs/stdout.txt",
+      "kind": "remote_log",
+      "size_bytes": 11357,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/logs/stdout.txt"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/logs/stdout.txt",
+      "kind": "remote_log",
+      "size_bytes": 11357,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/logs/stdout.txt"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/benchmark_plan.json",
+      "kind": "remote_diagnostic",
+      "size_bytes": 75338,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/benchmark_plan.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/benchmark_plan.json",
+      "kind": "remote_diagnostic",
+      "size_bytes": 75338,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/benchmark_plan.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/benchmark_set.json",
+      "kind": "remote_diagnostic",
+      "size_bytes": 154374,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/benchmark_set.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/benchmark_set.json",
+      "kind": "remote_diagnostic",
+      "size_bytes": 154374,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/benchmark_set.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/preflight.json",
+      "kind": "remote_diagnostic",
+      "size_bytes": 3383,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/preflight.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/preflight.json",
+      "kind": "remote_diagnostic",
+      "size_bytes": 3383,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/preflight.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/quality_inputs/orin_nx_deepx_m1_01/results/b135/results_ort_tensorrt/task_quality_inputs/composed_request.json",
+      "kind": "central_quality_input",
+      "size_bytes": 327572,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/b135/results_ort_tensorrt/task_quality_inputs/composed_request.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/quality_inputs/orin_nx_deepx_m1_01/results/b135/results_ort_tensorrt/task_quality_inputs/full_request.json",
+      "kind": "central_quality_input",
+      "size_bytes": 316283,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/b135/results_ort_tensorrt/task_quality_inputs/full_request.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/quality_inputs/orin_nx_deepx_m1_01/results/results_native_full_tensorrt/task_quality_inputs/full_request.json",
+      "kind": "central_quality_input",
+      "size_bytes": 330728,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/results_native_full_tensorrt/task_quality_inputs/full_request.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/quality_inputs/orin_nx_deepx_m1_01/results/b135/results_ort_tensorrt/task_quality_inputs/composed_candidate.json",
+      "kind": "central_quality_input",
+      "size_bytes": 711570,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/b135/results_ort_tensorrt/task_quality_inputs/composed_candidate.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/quality_inputs/orin_nx_deepx_m1_01/results/b135/results_ort_tensorrt/task_quality_inputs/full_candidate.json",
+      "kind": "central_quality_input",
+      "size_bytes": 700288,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/b135/results_ort_tensorrt/task_quality_inputs/full_candidate.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/quality_inputs/orin_nx_deepx_m1_01/results/results_native_full_tensorrt/task_quality_inputs/full_candidate.json",
+      "kind": "central_quality_input",
+      "size_bytes": 714733,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/results_native_full_tensorrt/task_quality_inputs/full_candidate.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/benchmark_plan.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 75338,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./benchmark_plan.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/lean_bundle/benchmark_plan.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 75338,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./benchmark_plan.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/benchmark_set.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 154374,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./benchmark_set.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/lean_bundle/benchmark_set.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 154374,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./benchmark_set.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/benchmark_suite_status_matrix.csv",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 81,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./benchmark_suite_status_matrix.csv"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/lean_bundle/benchmark_suite_status_matrix.csv",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 81,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./benchmark_suite_status_matrix.csv"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/benchmark_suite_status_matrix.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 201,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./benchmark_suite_status_matrix.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/lean_bundle/benchmark_suite_status_matrix.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 201,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./benchmark_suite_status_matrix.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/benchmark_suite_status_matrix.md",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 164,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./benchmark_suite_status_matrix.md"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/lean_bundle/benchmark_suite_status_matrix.md",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 164,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./benchmark_suite_status_matrix.md"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/logs/stderr.txt",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 1524,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./logs/stderr.txt"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/lean_bundle/logs/stderr.txt",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 1524,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./logs/stderr.txt"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/logs/stdout.txt",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 11357,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./logs/stdout.txt"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/lean_bundle/logs/stdout.txt",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 11357,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./logs/stdout.txt"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/preflight.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 3383,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./preflight.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/lean_bundle/preflight.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 3383,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./preflight.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/results_bundle_manifest.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 445,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./results_bundle_manifest.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/lean_bundle/results_bundle_manifest.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 445,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./results_bundle_manifest.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/v42_pipeline_summary.csv",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 385,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./v42_pipeline_summary.csv"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/lean_bundle/v42_pipeline_summary.csv",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 385,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./v42_pipeline_summary.csv"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/v42_pipeline_summary.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 995,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./v42_pipeline_summary.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/lean_bundle/v42_pipeline_summary.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 995,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./v42_pipeline_summary.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/v42_pipeline_summary.md",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 360,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./v42_pipeline_summary.md"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/lean_bundle/v42_pipeline_summary.md",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 360,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./v42_pipeline_summary.md"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/v47_pipeline_summary.csv",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 385,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./v47_pipeline_summary.csv"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/lean_bundle/v47_pipeline_summary.csv",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 385,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./v47_pipeline_summary.csv"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/v47_pipeline_summary.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 995,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./v47_pipeline_summary.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/lean_bundle/v47_pipeline_summary.json",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 995,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./v47_pipeline_summary.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/lean_bundle/v47_pipeline_summary.md",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 360,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./v47_pipeline_summary.md"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/lean_bundle/v47_pipeline_summary.md",
+      "kind": "lean_bundle_diagnostic",
+      "size_bytes": 360,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results_bundle_lean.tar.gz!./v47_pipeline_summary.md"
+    }
+  ],
+  "created_at": "2026-09-08T22:17:27+02:00",
+  "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results",
+  "diagnostic_max_bytes": 2097152,
+  "errors": [],
+  "fallback_extraction_count": 0,
+  "fallback_extractions": [],
+  "remote_local_run_dir": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01",
+  "schema": "onnx-splitpoint/remote-result-copy-manifest",
+  "schema_version": 2,
+  "skipped": [
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/case_reports/results/b135/results_ort_tensorrt/validation_report.json",
+      "kind": "case_validation_report",
+      "limit_bytes": 2097152,
+      "reason": "too_large",
+      "size_bytes": 35176374,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/b135/results_ort_tensorrt/validation_report.json"
+    },
+    {
+      "canonical": false,
+      "destination": "/home/kmika/Models/EvaluationRuns/biggerset_20260908_210306/models/mobilenet_v3_large/benchmark_results/remote_diagnostics/orin_nx_deepx_m1_01/case_reports/results/b135/results_ort_tensorrt/validation_report.json",
+      "kind": "case_validation_report",
+      "limit_bytes": 2097152,
+      "reason": "too_large",
+      "size_bytes": 35176374,
+      "source": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/results/b135/results_ort_tensorrt/validation_report.json"
+    }
+  ],
+  "status": "ok",
+  "target_id": "orin_nx_deepx_m1_01"
+}

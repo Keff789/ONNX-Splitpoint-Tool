@@ -1,0 +1,27 @@
+{
+  "source": "original Complete-Set hardware debug pack, preserved unchanged",
+  "hardware_v31": "NOT_RUN",
+  "files": [
+    {
+      "model_id": "mobilenet_v3_large",
+      "fixture_file": "mobilenet_v3_large_original_trt_full_request.json",
+      "original_relative_path": "models/mobilenet_v3_large/benchmark_results/quality_inputs/orin_nx_deepx_m1_01/results/results_native_full_tensorrt/task_quality_inputs/full_request.json",
+      "sha256": "4f6e05bbaaa08a7e89ac6eb4ef6e9c9ad36ea4a44a30e3cf2257635ffc2b83c5",
+      "size_bytes": 51732
+    },
+    {
+      "model_id": "resnet50",
+      "fixture_file": "resnet50_original_trt_full_request.json",
+      "original_relative_path": "models/resnet50/benchmark_results/quality_inputs/orin_nx_deepx_m1_01/results/results_native_full_tensorrt/task_quality_inputs/full_request.json",
+      "sha256": "40e18ede15a923e1b5b54d6f25effb091956949e2bc4b578a973ae35d846d4c1",
+      "size_bytes": 51586
+    },
+    {
+      "model_id": "regnet_x_1_6gf",
+      "fixture_file": "regnet_x_1_6gf_original_trt_full_request.json",
+      "original_relative_path": "models/regnet_x_1_6gf/benchmark_results/quality_inputs/orin_nx_deepx_m1_01/results/results_native_full_tensorrt/task_quality_inputs/full_request.json",
+      "sha256": "136806433f59e66e8ab088f91994d2ca49a8ca42813f975e53af15680179bd35",
+      "size_bytes": 51672
+    }
+  ]
+}

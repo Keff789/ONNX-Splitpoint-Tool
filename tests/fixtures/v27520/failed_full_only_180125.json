@@ -1,0 +1,24 @@
+{
+  "schema": "onnx-splitpoint/v27520-failed-full-only-offline-fixture",
+  "schema_version": 1,
+  "immutable": true,
+  "run_id": "resnet_yolo26s_yolo7_20260807_180125",
+  "source_tool_version": "2.75.19",
+  "models": [
+    "resnet50",
+    "yolo26s",
+    "yolov7_paper"
+  ],
+  "expected_native_split_rows": 0,
+  "expected_native_full_rows": 18,
+  "workflow_log": {
+    "sha256": "5db8a3fcc1aab1ae7700c92d917ded813098edf1149df8d6f9d12ea053ebd1a7",
+    "remote_import_error_count": 3,
+    "remote_runner_import_failed_row_count": 18
+  },
+  "terminal_rtf": {
+    "sha256": "29898a5ae49124624270e780ca41b3e08f4c5f5c48c98ab0ed10621c24a3eee5",
+    "stored_run_plan_sha256": "sha256:22933d004c000ed412bcf589744c99fe40882efcabd344b2732e331759b99035",
+    "normalized_run_plan_sha256": "sha256:77f14e68d17d0a864743a33883e28a38491d51626bed3573dbf21b4c1b3d5043"
+  }
+}

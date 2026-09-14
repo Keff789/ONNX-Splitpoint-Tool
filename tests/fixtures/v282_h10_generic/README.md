@@ -1,0 +1,1 @@
+Unveränderte Originaldateien aus completsetdev_20260913_123411: Generic-Resultat und tatsächlich zugehöriges Remote-Log. Enthalten keine Rohbuffer, HEFs, Engines oder Float-Fortsetzungen. Die Tests belegen nur Quellen-/Receipt-Auflösung, keinen Hardware-Endpunkt-PASS.

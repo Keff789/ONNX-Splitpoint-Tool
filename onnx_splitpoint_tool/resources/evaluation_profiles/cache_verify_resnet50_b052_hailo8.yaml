@@ -1,0 +1,149 @@
+name: cache_verify_resnet50_b052_hailo8
+purpose: "Compiler-free hardware canary: verify the existing v2.75.x Smoke Hailo-8/TensorRT caches, then run exactly one Native split row."
+models_root_hint: /home/kmika/Models
+execution_preset:
+  id: smoke
+  follow_tool_config: true
+  overrides:
+    native_enabled: true
+    energy_enabled: false
+execution_guard:
+  mode: cache_verify_only
+  expected_plan:
+    run_mode: smoke
+    calibration_items:
+      classification: 8
+      detection: 8
+    models: [resnet50]
+    logical_run_profiles: [hailo8_to_trt]
+    forced_case_map:
+      resnet50: [b052]
+    native_backends: [hailo8]
+    native_case_map:
+      resnet50: [b052]
+    native_rows:
+    - model_id: resnet50
+      case_id: b052
+      backend: hailo8
+      setup_id: orin_nx_hailo8_01
+      variant_id: v27510_resnet50_b052_hailo8_smoke_cache_verify
+    native_full_backends: []
+    hardware_setup_ids: [orin_nx_hailo8_01]
+    generic_runtime_enabled: false
+    native_enabled: true
+    native_energy_enabled: false
+    native_frames: 10
+    native_warmup: 2
+    native_repetitions: 1
+    hailo_targets: [hailo8]
+    hailo_build_full: false
+    hailo_build_part1: true
+    hailo_build_part2: false
+    hailo_preset: smoke
+    hailo_optimization_level: 0
+    hailo_calib_count: 8
+    hailo_calib_batch_size: 8
+    hailo_calibration_storage: memory
+    hailo_calibration_memory_cap_mb: 256
+    hailo_cache_integrity: relaxed
+selection_policy:
+  max_accepted_cases_per_model: 1
+  preferred_shortlist: 160
+  min_gap: 1
+  candidate_search_pool: 320
+  selection_strategy: stratified_windows
+  report_blocked_configs: true
+  report_plan_adjustments: true
+  keep_partial_hailo_cases: true
+  full_model_hailo_preflight_policy: skip
+  forced_cases:
+    resnet50: [b052]
+model_suite:
+  primary:
+  - id: resnet50
+    task: classification
+    family: resnet
+    source: torchvision
+    input_shape: [1, 3, 224, 224]
+    semantic_dataset: imagenet_val
+    development_subset: imagenet_val_mini_200
+    note: Existing v2.75.x Smoke-cache canary at split b052.
+run_profiles:
+- id: hailo8_to_trt
+  type: mixed_backend
+  full_reference: cpu_full
+  stage1: hailo8
+  stage2: tensorrt
+  required: true
+  treat_preflight_block_as_result: true
+validation:
+  split_fidelity_reference_mode: auto
+  classification_metrics: [top1, top5, logit_cosine_similarity]
+  backend_drift_reference: cpu_full
+  report_blocked_and_infeasible: true
+  mode: summary_only
+  require_explicit: false
+  require_task_metrics: false
+reporting:
+  include_decision_summary: true
+  include_backend_drift_block: true
+  include_task_specific_quality_block: true
+  aggregate_by_model: true
+  aggregate_by_run_profile: true
+workflow:
+  execution_mode: generate_and_run
+  skip_runtime_benchmarks: true
+  no_model_hash: false
+  include_reserve: false
+hailo_build:
+  mode: reuse_only
+  hw_arch: hailo8
+  targets: [hailo8]
+  build_full: false
+  build_part1: true
+  build_part2: false
+  force_build: false
+native_producers:
+  enabled: true
+  refresh_suites: false
+  backends: [hailo8]
+  case_policy: case_map_only
+  frames: 10
+  warmup: 2
+  repetitions: 1
+  queue_depth: 2
+  inflight: 4
+  build_missing_engines: false
+  copy_benchmarksets: true
+  strict_supported_only: true
+  dump_outputs: true
+  full_baselines:
+    enabled: false
+    backends: []
+  validation:
+    enabled: false
+    mode: full_onnx_self_reference
+    topk: 5
+  energy:
+    enabled: false
+    mode: plan
+    duration_s: 0
+  variants:
+  - id: v27510_resnet50_b052_hailo8_smoke_cache_verify
+    case_map:
+      resnet50: [b052]
+    precision: float32_layout_fp16
+    hailo_format: float32
+    boundary_layout: memory_nhwc_to_nchw
+    native_boundary_debug: true
+    force_rebuild_engines: false
+hardware:
+  selected_setups: [orin_nx_hailo8_01]
+  selected_groups: []
+energy:
+  enabled: false
+  requested_native_energy: false
+  scope: row_variant
+  repeat_override: 0
+  phases: [latency, streaming]
+  target_policy: canonical_only

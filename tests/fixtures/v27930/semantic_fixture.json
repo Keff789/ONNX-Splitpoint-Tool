@@ -1,0 +1,203 @@
+{
+  "schema": "v27930-semantic-recorded-fixture-v1",
+  "source": "recorded v27929 DeepX output probe and native D frozen postprocess evidence; no runtime identity reused",
+  "files": {
+    "semantic_probe_outputs.npz": "2868e981a0021b79e79a9c6e8a38993e8580b9cee0c21ec6abaa1ea1f71f105f",
+    "semantic_probe_input.jpg": "261ba1b81c768f47b8452cd8fc7866a354a69c336a927032486d129b8684eb44",
+    "semantic_recorded_output_contracts.json": "d5eff8720b9a4c2237bb717682cd6f75f2f31c022f11de06eae6d1fd05363246"
+  },
+  "frozen_host_postprocess_contract": {
+    "schema": "onnx-splitpoint/frozen-native-detection-postprocess",
+    "schema_version": 1,
+    "task": "detection",
+    "source_contract_family": "decoded_pre_nms",
+    "output_contract_family": "decoded_nms",
+    "model_id": "yolo11l",
+    "model_family": "yolo11",
+    "decoder_id": "ultralytics_decoded_classaware_nms_v1",
+    "decoder_format": "ultralytics_decoded",
+    "multiscale_activation_mode": null,
+    "nms_implementation": "numpy_class_aware_nms_xyxy_v1",
+    "class_aware": true,
+    "confidence_threshold": 0.25,
+    "iou_threshold": 0.45,
+    "max_detections": 300,
+    "input_hw": [
+      640,
+      640
+    ],
+    "original_wh": [
+      500,
+      335
+    ],
+    "raw_output_tensor_signature": {
+      "tensor_count": 1,
+      "tensors": [
+        {
+          "index": 0,
+          "name": "model_outputs",
+          "rank": 3,
+          "shape": [
+            1,
+            84,
+            8400
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    "implementation_artifacts": {
+      "native_detection_postprocess": {
+        "relative_path": "onnx_splitpoint_tool/native_detection_postprocess.py",
+        "sha256": "4e65d8b63316d1241e868063d4cf223ca403dab38d292c223fc9ab27fc1e0f0c"
+      },
+      "yolo_harness": {
+        "relative_path": "onnx_splitpoint_tool/runners/harness/yolo.py",
+        "sha256": "31657e2717a8cb6cfda53e7de8e06b7b2286ecb430070811546fdec65327a17a"
+      },
+      "harness_base": {
+        "relative_path": "onnx_splitpoint_tool/runners/harness/base.py",
+        "sha256": "938b3713f32e412dd1f57fcc07a397fa1f3b26ed30afbc945d22f1bb082db06c"
+      }
+    },
+    "execution_policy": "one_serial_host_tail_per_successful_accelerator_output",
+    "performance_scope": "prepared_input_to_post_nms_detections",
+    "energy_scope": "same_frozen_prepared_input_to_post_nms_hotloop",
+    "host_postprocess_frozen": true,
+    "postprocess_included": true,
+    "decoded_pre_nms_score_policy": {
+      "policy_id": "float32_probability_edges_abs_2pow_minus23_v1",
+      "dtype": "float32",
+      "absolute_tolerance": 1.1920928955078125e-07,
+      "action": "normalize_probability_edges_on_processing_copy"
+    },
+    "invariant_identity": {
+      "schema": "onnx-splitpoint/frozen-native-detection-postprocess",
+      "schema_version": 1,
+      "task": "detection",
+      "source_contract_family": "decoded_pre_nms",
+      "output_contract_family": "decoded_nms",
+      "model_id": "yolo11l",
+      "model_family": "yolo11",
+      "decoder_id": "ultralytics_decoded_classaware_nms_v1",
+      "decoder_format": "ultralytics_decoded",
+      "nms_implementation": "numpy_class_aware_nms_xyxy_v1",
+      "class_aware": true,
+      "confidence_threshold": 0.25,
+      "iou_threshold": 0.45,
+      "max_detections": 300,
+      "input_hw": [
+        640,
+        640
+      ],
+      "raw_output_tensor_signature": {
+        "tensor_count": 1,
+        "tensors": [
+          {
+            "index": 0,
+            "name": "model_outputs",
+            "rank": 3,
+            "shape": [
+              1,
+              84,
+              8400
+            ],
+            "dtype": "float32"
+          }
+        ]
+      },
+      "implementation_artifacts": {
+        "native_detection_postprocess": {
+          "relative_path": "onnx_splitpoint_tool/native_detection_postprocess.py",
+          "sha256": "4e65d8b63316d1241e868063d4cf223ca403dab38d292c223fc9ab27fc1e0f0c"
+        },
+        "yolo_harness": {
+          "relative_path": "onnx_splitpoint_tool/runners/harness/yolo.py",
+          "sha256": "31657e2717a8cb6cfda53e7de8e06b7b2286ecb430070811546fdec65327a17a"
+        },
+        "harness_base": {
+          "relative_path": "onnx_splitpoint_tool/runners/harness/base.py",
+          "sha256": "938b3713f32e412dd1f57fcc07a397fa1f3b26ed30afbc945d22f1bb082db06c"
+        }
+      },
+      "execution_policy": "one_serial_host_tail_per_successful_accelerator_output",
+      "performance_scope": "prepared_input_to_post_nms_detections",
+      "energy_scope": "same_frozen_prepared_input_to_post_nms_hotloop",
+      "host_postprocess_frozen": true,
+      "postprocess_included": true,
+      "decoded_pre_nms_score_policy": {
+        "policy_id": "float32_probability_edges_abs_2pow_minus23_v1",
+        "dtype": "float32",
+        "absolute_tolerance": 1.1920928955078125e-07,
+        "action": "normalize_probability_edges_on_processing_copy"
+      }
+    },
+    "invariant_contract_sha256": "6d381834efe5219d41ee3794eaa5d0d9781fdd4fc3982ffd9caa78777cdd7a29",
+    "contract_sha256": "3b32a7f14ac37d46605eccb8ad86b608a0f536ca189cc6b198a0993016343b2f"
+  },
+  "frozen_host_postprocess_result": {
+    "task": "detection",
+    "contract_family": "decoded_nms",
+    "decoder_format": "ultralytics_decoded",
+    "coordinate_space": "original_image_xyxy_pixels",
+    "record_schema": "xyxy_score_class_id_v1",
+    "canonical_sort_policy": "score_desc_class_id_asc_xyxy_lexicographic_v1",
+    "detection_count": 2,
+    "detections_sha256": "d4bdac791cdc978674b32a5921edee345d73d97d485b49bb6ccc56df91c2fbc9",
+    "detections": [
+      {
+        "class_id": 0,
+        "score": 0.9233853816986084,
+        "x1": 234.4482421875,
+        "y1": 89.697265625,
+        "x2": 393.51806640625,
+        "y2": 269.56787109375
+      },
+      {
+        "class_id": 2,
+        "score": 0.32885265350341797,
+        "x1": 43.505859375,
+        "y1": 0.3173828125,
+        "x2": 490.185546875,
+        "y2": 332.0556640625
+      }
+    ],
+    "completed_result_artifact": {
+      "schema": "onnx-splitpoint/frozen-completed-detection-result-artifact",
+      "schema_version": 1,
+      "record_schema": "xyxy_score_class_id_v1",
+      "coordinate_space": "original_image_xyxy_pixels",
+      "sort_policy": "score_desc_class_id_asc_xyxy_lexicographic_v1",
+      "detections": [
+        {
+          "class_id": 0,
+          "score": 0.9233853816986084,
+          "x1": 234.4482421875,
+          "y1": 89.697265625,
+          "x2": 393.51806640625,
+          "y2": 269.56787109375
+        },
+        {
+          "class_id": 2,
+          "score": 0.32885265350341797,
+          "x1": 43.505859375,
+          "y1": 0.3173828125,
+          "x2": 490.185546875,
+          "y2": 332.0556640625
+        }
+      ]
+    },
+    "completed_result_artifact_sha256": "dba1ede2655d4255e75718e3bbe594dd63162821b7c96a4366b9bc6aa2b54ad8",
+    "postprocess_contract_sha256": "3b32a7f14ac37d46605eccb8ad86b608a0f536ca189cc6b198a0993016343b2f",
+    "decoded_pre_nms_score_normalization": {
+      "policy_id": "float32_probability_edges_abs_2pow_minus23_v1",
+      "absolute_tolerance": 1.1920928955078125e-07,
+      "scores_below_zero": 21,
+      "scores_above_one": 0,
+      "corrected_score_count": 21,
+      "maximum_absolute_correction": 5.960464477539063e-08,
+      "source_modified": false,
+      "processing_copy_created": true
+    }
+  }
+}

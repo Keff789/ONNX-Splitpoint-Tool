@@ -324,6 +324,101 @@ def predicted_stream_fps(*, bottleneck_ms: Any, handover_ms: Any) -> Optional[fl
     return 1000.0 / float(c)
 
 
+
+
+# ---------------------------------------------------------------------------
+# Hardware-aware accelerator fit
+# ---------------------------------------------------------------------------
+
+
+def _hardware_fit_profile(stage1: str, stage2: str) -> dict[str, float]:
+    """Return interpretable target ranges for the *left/stage-1* side.
+
+    The old generic ranking implicitly preferred a 50/50 compute split.  That
+    is not a good default for Hailo-8 -> TensorRT: the Hailo side should remain
+    a compact, single-context feature-extractor while the heavier tail stays on
+    the Orin/TensorRT side.  Larger accelerators keep wider/nearer-balanced
+    ranges.
+    """
+    s1 = slug_backend(stage1)
+    s2 = slug_backend(stage2)
+    if s1.startswith("hailo") and not s2.startswith("hailo"):
+        if "10" in s1:
+            return {"low": 0.25, "ideal": 0.42, "high": 0.58, "hard_high": 0.72, "cut_free_mib": 10.0, "cut_soft_mib": 20.0, "over_w": 2.2, "under_w": 0.6}
+        # Hailo-8 default: compact left side, but do not over-penalize the
+        # classic YOLOv7 512x80x80 single-tensor cut (~6.55 MiB FP16).
+        return {"low": 0.18, "ideal": 0.34, "high": 0.46, "hard_high": 0.62, "cut_free_mib": 8.0, "cut_soft_mib": 16.0, "over_w": 4.0, "under_w": 0.75}
+    if s1.startswith("deepx"):
+        return {"low": 0.28, "ideal": 0.48, "high": 0.66, "hard_high": 0.82, "cut_free_mib": 12.0, "cut_soft_mib": 24.0, "over_w": 1.7, "under_w": 0.55}
+    return {"low": 0.32, "ideal": 0.50, "high": 0.68, "hard_high": 0.86, "cut_free_mib": 6.0, "cut_soft_mib": 18.0, "over_w": 1.8, "under_w": 0.7}
+
+
+def accelerator_fit_metrics(row: dict[str, Any], *, stage1: str, stage2: str) -> dict[str, Any]:
+    """Hardware-aware split-fit score used by the Hailo/accelerator objective.
+
+    Lower score is better.  It intentionally avoids a hard 50/50 target for
+    Hailo-8.  Instead it rewards a compact, single-tensor stage-1 subgraph with
+    moderate left-side compute, acceptable handover size, and low compile risk.
+    """
+    prof = _hardware_fit_profile(stage1, stage2)
+    fl_l = as_float(row.get("flops_left_abs"))
+    fl_r = as_float(row.get("flops_right_abs"))
+    total = None
+    if fl_l is not None and fl_r is not None and (fl_l + fl_r) > 0.0:
+        total = fl_l + fl_r
+    elif as_float(row.get("total_flops")) is not None and fl_l is not None:
+        total = as_float(row.get("total_flops"))
+        if total and total > 0.0:
+            fl_r = max(0.0, float(total) - float(fl_l))
+    left_ratio = (float(fl_l) / float(total)) if total and total > 0.0 and fl_l is not None else None
+
+    cut = float(as_float(row.get("cut_mb_val")) or as_float(row.get("cut_mib")) or 0.0)
+    n_cut = float(feature_count(row.get("n_cut_tensors")) or feature_count(row.get("crossing_tensors")) or 0.0)
+    unknown = float(feature_count(row.get("unknown_count")) or feature_count(row.get("unknown_crossing_tensors")) or 0.0)
+    compile_risk = float(as_float(row.get("hailo_compile_risk_score")) or 0.0)
+    single_prob = as_float(row.get("hailo_single_context_probability"))
+    strict_ok = row.get("hailo_strict_ok") if row.get("hailo_strict_ok") is not None else row.get("strict_ok")
+    parse_ok = row.get("hailo_parse_ok")
+
+    compute_penalty = 0.35
+    if left_ratio is not None:
+        low, ideal, high, hard_high = prof["low"], prof["ideal"], prof["high"], prof["hard_high"]
+        compute_penalty = abs(float(left_ratio) - ideal) * 0.35
+        compute_penalty += max(0.0, low - float(left_ratio)) * prof["under_w"]
+        compute_penalty += max(0.0, float(left_ratio) - high) * prof["over_w"]
+        compute_penalty += max(0.0, float(left_ratio) - hard_high) * (prof["over_w"] * 2.0)
+
+    cut_penalty = max(0.0, cut - prof["cut_free_mib"]) * 0.06 + max(0.0, cut - prof["cut_soft_mib"]) * 0.18
+    tensor_penalty = 0.0
+    if n_cut <= 1.0:
+        tensor_penalty -= 0.18
+    else:
+        tensor_penalty += 0.12 * (n_cut - 1.0) + 0.05 * max(0.0, n_cut - 3.0)
+    tensor_penalty += 0.08 * unknown
+    context_penalty = 0.0 if single_prob is None else 0.30 * max(0.0, 1.0 - float(single_prob))
+    strict_penalty = 0.55 if strict_ok is False else 0.0
+    parse_penalty = 0.60 if parse_ok is False else 0.0
+    # Compile risk is included, but dampened: it should not automatically push
+    # the search to very late, tiny-interface detection-head splits.
+    risk_penalty = 0.18 * max(0.0, compile_risk)
+    score = compute_penalty + cut_penalty + tensor_penalty + context_penalty + strict_penalty + parse_penalty + risk_penalty
+    if not math.isfinite(score):
+        score = float("inf")
+    return {
+        "accelerator_fit_score": float(score),
+        "accelerator_stage1_compute_ratio": left_ratio,
+        "accelerator_fit_compute_penalty": compute_penalty,
+        "accelerator_fit_cut_penalty": cut_penalty,
+        "accelerator_fit_tensor_penalty": tensor_penalty,
+        "accelerator_fit_context_penalty": context_penalty,
+        "accelerator_fit_profile": {
+            "stage1": slug_backend(stage1),
+            "stage2": slug_backend(stage2),
+            **prof,
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Objective utilities
 # ---------------------------------------------------------------------------
@@ -420,7 +515,9 @@ def candidate_objective_metrics(row: dict[str, Any], *, stage1: str, stage2: str
     pred_fps_cal = predicted_stream_fps(bottleneck_ms=bottleneck_ms, handover_ms=handover_cal)
     cycle = cycle_cal if bool(use_calibration) else cycle_uncal
     pred_fps = pred_fps_cal if bool(use_calibration) else pred_fps_uncal
+    fit = accelerator_fit_metrics(row, stage1=stage1, stage2=stage2)
     return {
+        **fit,
         "hailo_feasibility_risk": feas,
         "hailo_interface_penalty": iface,
         "predicted_handover_ms_raw": handover_raw,
@@ -459,10 +556,16 @@ def candidate_objective_summary(row: dict[str, Any], *, objective: str, stage1: 
         detail += (f" · cal {THROUGHPUT_CALIBRATION_PROFILE_NAME}" if bool(use_calibration) else " · uncal")
         return {"title": title, "headline": headline, "detail": detail}
     if label == "Hailo feasibility":
+        fit = metrics.get("accelerator_fit_score")
+        ratio = metrics.get("accelerator_stage1_compute_ratio")
         feas = metrics.get("hailo_feasibility_risk")
         iface = metrics.get("hailo_interface_penalty")
         single = row.get("hailo_single_context_probability")
-        detail = f"risk {float(feas):.2f}" if feas is not None else "risk –"
+        detail = f"fit {float(fit):.2f}" if fit is not None else "fit –"
+        if ratio is not None:
+            detail += f" · H-side {100.0 * float(ratio):.0f}%"
+        if feas is not None:
+            detail += f" · risk {float(feas):.2f}"
         if iface is not None:
             detail += f" · iface {float(iface):.2f}"
         if single is not None:
@@ -490,9 +593,18 @@ def objective_sort_key(row: dict[str, Any], *, objective: str, stage1: str, stag
     if objective.startswith("through"):
         fps = metrics.get("predicted_stream_fps")
         return (0 if fps is not None else 1, -(float(fps) if fps is not None else 0.0), float(row.get("cut_mb_val", 0.0)), int(row.get("boundary", 10**9)))
-    if objective.startswith("hailo"):
-        feas = metrics.get("hailo_feasibility_risk")
-        return (0 if feas is not None else 1, float(feas) if feas is not None else float("inf"), float(row.get("cut_mb_val", 0.0)), int(row.get("boundary", 10**9)))
+    if objective.startswith("hailo") or objective.startswith("accelerator"):
+        fit = metrics.get("accelerator_fit_score")
+        ratio = metrics.get("accelerator_stage1_compute_ratio")
+        # Prefer hardware-fit first, then single-tensor cuts and reasonable handover.
+        n_cut = feature_count(row.get("n_cut_tensors")) or feature_count(row.get("crossing_tensors")) or 999
+        return (
+            0 if fit is not None else 1,
+            float(fit) if fit is not None else float("inf"),
+            int(n_cut),
+            float(row.get("cut_mb_val", 0.0) or 0.0),
+            int(row.get("boundary", 10**9)),
+        )
     if objective.startswith("lat"):
         lat = metrics.get("objective_latency_ms")
         return (0 if lat is not None else 1, float(lat) if lat is not None else float("inf"), float(row.get("cut_mb_val", 0.0)), int(row.get("boundary", 10**9)))

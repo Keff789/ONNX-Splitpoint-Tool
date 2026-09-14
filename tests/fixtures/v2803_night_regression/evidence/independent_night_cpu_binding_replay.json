@@ -1,0 +1,126 @@
+{
+  "status": "PASS",
+  "models": 7,
+  "scope": "Original 7 nightly generated BenchmarkSet/Plan identities; real management recipe helper and unmodified suite role guard. No ORT inference or CPU reference publication in this test. Legacy old resolution applied as test input, not full baseline run.",
+  "rows": [
+    {
+      "model": "mobilenet_v3_large",
+      "benchmark_set_path": "native_producers/hailo8/mobilenet_v3_large/benchmark_set/benchmark_set.json",
+      "identity_fields": {
+        "model_id": null,
+        "model_name": "mobilenet_v3_large",
+        "model": "models/mobilenet_v3_large.onnx"
+      },
+      "old_effective_id": "models/mobilenet_v3_large.onnx",
+      "new_effective_id": "mobilenet_v3_large",
+      "v2802_guard": true,
+      "negative_guards": {
+        "old_path_as_identity": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"mobilenet_v3_large\", \"actual_suite_model_id\": \"models/mobilenet_v3_large.onnx\", \"benchmark_set_identity\": {\"model\": \"models/mobilenet_v3_large.onnx\", \"model_id\": null, \"model_name\": \"mobilenet_v3_large\"}, \"expected_model_id\": \"mobilenet_v3_large\"}",
+        "wrong_suite_id": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"mobilenet_v3_large\", \"actual_suite_model_id\": \"WRONG\", \"benchmark_set_identity\": {\"model\": \"models/mobilenet_v3_large.onnx\", \"model_id\": null, \"model_name\": \"mobilenet_v3_large\"}, \"expected_model_id\": \"mobilenet_v3_large\"}",
+        "wrong_cli_id": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"WRONG\", \"actual_suite_model_id\": \"mobilenet_v3_large\", \"benchmark_set_identity\": {\"model\": \"models/mobilenet_v3_large.onnx\", \"model_id\": null, \"model_name\": \"mobilenet_v3_large\"}, \"expected_model_id\": \"mobilenet_v3_large\"}"
+      }
+    },
+    {
+      "model": "regnet_x_1_6gf",
+      "benchmark_set_path": "native_producers/hailo8/regnet_x_1_6gf/benchmark_set/benchmark_set.json",
+      "identity_fields": {
+        "model_id": null,
+        "model_name": "regnet_x_1_6gf",
+        "model": "models/regnet_x_1_6gf.onnx"
+      },
+      "old_effective_id": "models/regnet_x_1_6gf.onnx",
+      "new_effective_id": "regnet_x_1_6gf",
+      "v2802_guard": true,
+      "negative_guards": {
+        "old_path_as_identity": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"regnet_x_1_6gf\", \"actual_suite_model_id\": \"models/regnet_x_1_6gf.onnx\", \"benchmark_set_identity\": {\"model\": \"models/regnet_x_1_6gf.onnx\", \"model_id\": null, \"model_name\": \"regnet_x_1_6gf\"}, \"expected_model_id\": \"regnet_x_1_6gf\"}",
+        "wrong_suite_id": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"regnet_x_1_6gf\", \"actual_suite_model_id\": \"WRONG\", \"benchmark_set_identity\": {\"model\": \"models/regnet_x_1_6gf.onnx\", \"model_id\": null, \"model_name\": \"regnet_x_1_6gf\"}, \"expected_model_id\": \"regnet_x_1_6gf\"}",
+        "wrong_cli_id": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"WRONG\", \"actual_suite_model_id\": \"regnet_x_1_6gf\", \"benchmark_set_identity\": {\"model\": \"models/regnet_x_1_6gf.onnx\", \"model_id\": null, \"model_name\": \"regnet_x_1_6gf\"}, \"expected_model_id\": \"regnet_x_1_6gf\"}"
+      }
+    },
+    {
+      "model": "resnet50",
+      "benchmark_set_path": "native_producers/hailo8/resnet50/benchmark_set/benchmark_set.json",
+      "identity_fields": {
+        "model_id": null,
+        "model_name": "resnet50",
+        "model": "models/resnet50.onnx"
+      },
+      "old_effective_id": "models/resnet50.onnx",
+      "new_effective_id": "resnet50",
+      "v2802_guard": true,
+      "negative_guards": {
+        "old_path_as_identity": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"resnet50\", \"actual_suite_model_id\": \"models/resnet50.onnx\", \"benchmark_set_identity\": {\"model\": \"models/resnet50.onnx\", \"model_id\": null, \"model_name\": \"resnet50\"}, \"expected_model_id\": \"resnet50\"}",
+        "wrong_suite_id": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"resnet50\", \"actual_suite_model_id\": \"WRONG\", \"benchmark_set_identity\": {\"model\": \"models/resnet50.onnx\", \"model_id\": null, \"model_name\": \"resnet50\"}, \"expected_model_id\": \"resnet50\"}",
+        "wrong_cli_id": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"WRONG\", \"actual_suite_model_id\": \"resnet50\", \"benchmark_set_identity\": {\"model\": \"models/resnet50.onnx\", \"model_id\": null, \"model_name\": \"resnet50\"}, \"expected_model_id\": \"resnet50\"}"
+      }
+    },
+    {
+      "model": "yolo11l",
+      "benchmark_set_path": "native_producers/hailo8/yolo11l/benchmark_set/benchmark_set.json",
+      "identity_fields": {
+        "model_id": null,
+        "model_name": "yolo11l",
+        "model": "models/yolo11l.onnx"
+      },
+      "old_effective_id": "models/yolo11l.onnx",
+      "new_effective_id": "yolo11l",
+      "v2802_guard": true,
+      "negative_guards": {
+        "old_path_as_identity": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"yolo11l\", \"actual_suite_model_id\": \"models/yolo11l.onnx\", \"benchmark_set_identity\": {\"model\": \"models/yolo11l.onnx\", \"model_id\": null, \"model_name\": \"yolo11l\"}, \"expected_model_id\": \"yolo11l\"}",
+        "wrong_suite_id": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"yolo11l\", \"actual_suite_model_id\": \"WRONG\", \"benchmark_set_identity\": {\"model\": \"models/yolo11l.onnx\", \"model_id\": null, \"model_name\": \"yolo11l\"}, \"expected_model_id\": \"yolo11l\"}",
+        "wrong_cli_id": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"WRONG\", \"actual_suite_model_id\": \"yolo11l\", \"benchmark_set_identity\": {\"model\": \"models/yolo11l.onnx\", \"model_id\": null, \"model_name\": \"yolo11l\"}, \"expected_model_id\": \"yolo11l\"}"
+      }
+    },
+    {
+      "model": "yolo26m",
+      "benchmark_set_path": "native_producers/hailo8/yolo26m/benchmark_set/benchmark_set.json",
+      "identity_fields": {
+        "model_id": null,
+        "model_name": "yolo26m",
+        "model": "models/yolo26m.onnx"
+      },
+      "old_effective_id": "models/yolo26m.onnx",
+      "new_effective_id": "yolo26m",
+      "v2802_guard": true,
+      "negative_guards": {
+        "old_path_as_identity": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"yolo26m\", \"actual_suite_model_id\": \"models/yolo26m.onnx\", \"benchmark_set_identity\": {\"model\": \"models/yolo26m.onnx\", \"model_id\": null, \"model_name\": \"yolo26m\"}, \"expected_model_id\": \"yolo26m\"}",
+        "wrong_suite_id": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"yolo26m\", \"actual_suite_model_id\": \"WRONG\", \"benchmark_set_identity\": {\"model\": \"models/yolo26m.onnx\", \"model_id\": null, \"model_name\": \"yolo26m\"}, \"expected_model_id\": \"yolo26m\"}",
+        "wrong_cli_id": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"WRONG\", \"actual_suite_model_id\": \"yolo26m\", \"benchmark_set_identity\": {\"model\": \"models/yolo26m.onnx\", \"model_id\": null, \"model_name\": \"yolo26m\"}, \"expected_model_id\": \"yolo26m\"}"
+      }
+    },
+    {
+      "model": "yolo26s",
+      "benchmark_set_path": "native_producers/hailo8/yolo26s/benchmark_set/benchmark_set.json",
+      "identity_fields": {
+        "model_id": null,
+        "model_name": "yolo26s",
+        "model": "models/yolo26s.onnx"
+      },
+      "old_effective_id": "models/yolo26s.onnx",
+      "new_effective_id": "yolo26s",
+      "v2802_guard": true,
+      "negative_guards": {
+        "old_path_as_identity": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"yolo26s\", \"actual_suite_model_id\": \"models/yolo26s.onnx\", \"benchmark_set_identity\": {\"model\": \"models/yolo26s.onnx\", \"model_id\": null, \"model_name\": \"yolo26s\"}, \"expected_model_id\": \"yolo26s\"}",
+        "wrong_suite_id": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"yolo26s\", \"actual_suite_model_id\": \"WRONG\", \"benchmark_set_identity\": {\"model\": \"models/yolo26s.onnx\", \"model_id\": null, \"model_name\": \"yolo26s\"}, \"expected_model_id\": \"yolo26s\"}",
+        "wrong_cli_id": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"WRONG\", \"actual_suite_model_id\": \"yolo26s\", \"benchmark_set_identity\": {\"model\": \"models/yolo26s.onnx\", \"model_id\": null, \"model_name\": \"yolo26s\"}, \"expected_model_id\": \"yolo26s\"}"
+      }
+    },
+    {
+      "model": "yolov7_paper",
+      "benchmark_set_path": "native_producers/hailo8/yolov7_paper/benchmark_set/benchmark_set.json",
+      "identity_fields": {
+        "model_id": null,
+        "model_name": "yolov7_paper",
+        "model": "models/yolov7_paper.onnx"
+      },
+      "old_effective_id": "models/yolov7_paper.onnx",
+      "new_effective_id": "yolov7_paper",
+      "v2802_guard": true,
+      "negative_guards": {
+        "old_path_as_identity": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"yolov7_paper\", \"actual_suite_model_id\": \"models/yolov7_paper.onnx\", \"benchmark_set_identity\": {\"model\": \"models/yolov7_paper.onnx\", \"model_id\": null, \"model_name\": \"yolov7_paper\"}, \"expected_model_id\": \"yolov7_paper\"}",
+        "wrong_suite_id": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"yolov7_paper\", \"actual_suite_model_id\": \"WRONG\", \"benchmark_set_identity\": {\"model\": \"models/yolov7_paper.onnx\", \"model_id\": null, \"model_name\": \"yolov7_paper\"}, \"expected_model_id\": \"yolov7_paper\"}",
+        "wrong_cli_id": "management_cpu_reference_context_invalid:model_binding; model_binding={\"actual_plan_model_id\": \"\", \"actual_quality_evidence_model_id\": \"WRONG\", \"actual_suite_model_id\": \"yolov7_paper\", \"benchmark_set_identity\": {\"model\": \"models/yolov7_paper.onnx\", \"model_id\": null, \"model_name\": \"yolov7_paper\"}, \"expected_model_id\": \"yolov7_paper\"}"
+      }
+    }
+  ]
+}

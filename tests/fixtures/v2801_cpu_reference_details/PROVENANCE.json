@@ -1,0 +1,10 @@
+{
+  "original_run_id": "biggerset_20260910_094202",
+  "q1_archive": "v280_cpu_reference_details_udvlqivi.zip",
+  "q1_archive_sha256": "e9ae660948452b71e0fba773421bd68b7b820a05032c08078bfefc27cfb9f4c7",
+  "q2_archive": "BiggerSet_v280_Diagnose_2026-09-10.zip",
+  "q2_index_member": "evidence/missing_reference_diagnostics.json",
+  "original_diagnostic_files": 12,
+  "original_diagnostic_bytes": 11890,
+  "scope": "Unmodified original failure diagnostics; no new execution or quality claim."
+}

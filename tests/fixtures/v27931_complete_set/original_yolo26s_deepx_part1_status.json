@@ -1,0 +1,181 @@
+{
+  "schema": "onnx-splitpoint/manual-deepx-part1-artifacts-status",
+  "schema_version": 1,
+  "selected": true,
+  "backend": "deepx_m1",
+  "variant": "part1",
+  "model_id": "benchmark_set",
+  "cases": [
+    {
+      "case_id": "b364",
+      "manifest": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/models/yolo26s/benchmark_set/legacy_suite/b364/split_manifest.json",
+      "part1_onnx": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/models/yolo26s/benchmark_set/legacy_suite/b364/yolo26s_part1_b364.onnx",
+      "input_name": "images",
+      "input_shape": [
+        1,
+        3,
+        640,
+        640
+      ],
+      "output_names": [
+        "/model.23/Concat_3_output_0"
+      ],
+      "calibration_dir": "/home/kmika/.onnx_splitpoint_tool/final_datasets/coco2017/prepared/train_calibration_n500_s20260710/images",
+      "calibration_num": 500,
+      "config_path": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/models/yolo26s/benchmark_set/legacy_suite/b364/deepx/deepx_m1/part1/config_deepx.json",
+      "cache_key": "deepx_m1_part1_b364_v2_cc799ec9fee3b4776e7ee9ba28d85814",
+      "cache_root": "/home/kmika/Models/BackendArtifacts/deepx",
+      "cache_contract": {
+        "schema": "onnx-splitpoint/deepx-part1-cache-contract",
+        "schema_version": 2,
+        "task": "detection",
+        "calibration_manifest_identity": "sha256:2c9ac62b281ebdf35d97711b2b2cd9d822e8d0d1cf08b1433a8fb98f8edac10a",
+        "calibration_count": 500,
+        "calibration_method": "ema",
+        "calibration_dir": "/home/kmika/.onnx_splitpoint_tool/final_datasets/coco2017/prepared/train_calibration_n500_s20260710/images",
+        "preprocessing_contract": "dxcom_image_loader_v2:letterbox114-rgb-hwc",
+        "compiler_identity": "cp311",
+        "input_name": "images",
+        "input_shape": [
+          1,
+          3,
+          640,
+          640
+        ],
+        "case_id": "b364"
+      },
+      "cache_compatible": false,
+      "cache_compatibility_reason": "model_missing",
+      "calibration_task": "detection",
+      "calibration_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_train_calibration_manifest.json",
+      "calibration_manifest_identity": "sha256:2c9ac62b281ebdf35d97711b2b2cd9d822e8d0d1cf08b1433a8fb98f8edac10a",
+      "classification_preprocessing": "not_applicable",
+      "source_onnx_sha256": "128fcbf8a29e958844ee7857c0e35f98fd9a0ad74b5a5e3e6cf1810a88db1e29",
+      "build_onnx_sha256": "128fcbf8a29e958844ee7857c0e35f98fd9a0ad74b5a5e3e6cf1810a88db1e29",
+      "build_onnx": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/models/yolo26s/benchmark_set/legacy_suite/b364/yolo26s_part1_b364.onnx",
+      "build_onnx_adapter_receipt": "",
+      "cache_lookup": {
+        "schema": "onnx-splitpoint/deepx-cache-lookup",
+        "schema_version": 1,
+        "outcome": "MISS",
+        "role": "part1",
+        "model_id": "benchmark_set",
+        "case_id": "b364",
+        "identity": "deepx_m1_part1_b364_v2_cc799ec9fee3b4776e7ee9ba28d85814",
+        "reason": "model_missing",
+        "artifact": ""
+      },
+      "status": "failed",
+      "ok": false,
+      "error": "RuntimeError: compiler_not_ready: deepx_compiler_cuda_architecture_unsupported: GPU=NVIDIA GeForce GTX 1080 Ti (sm_61); Torch=2.12.0+cu130; supported=['sm_75', 'sm_80', 'sm_86', 'sm_90', 'sm_100', 'sm_120']; compiler_python=/home/kmika/dx-all-suite/dx-compiler/venv-dx-compiler-local/bin/python"
+    }
+  ],
+  "status": "failed",
+  "classification_preprocessing": "not_applicable",
+  "artifact_policy": "normal",
+  "environment_status": {
+    "backend": "deepx_m1",
+    "status": "partial",
+    "ok": true,
+    "ready": false,
+    "compiler_ready": false,
+    "runtime_ready": true,
+    "dx_all_suite_root": "/home/kmika/dx-all-suite",
+    "dx_all_suite_root_status": "directory",
+    "compiler_venv": "/home/kmika/dx-all-suite/dx-compiler/venv-dx-compiler-local",
+    "compiler_python": "/home/kmika/dx-all-suite/dx-compiler/venv-dx-compiler-local/bin/python",
+    "compiler_python_tag": "cp311",
+    "probe_blocked_by_artifact_policy": false,
+    "compiler_cli": "/home/kmika/dx-all-suite/dx-compiler/venv-dx-compiler-local/bin/dxcom",
+    "compiler_venv_tools": {
+      "dxcom": "/home/kmika/dx-all-suite/dx-compiler/venv-dx-compiler-local/bin/dxcom",
+      "dx_com": null
+    },
+    "available_dx_com_wheels": [
+      {
+        "path": "/home/kmika/dx-all-suite/dx-compiler/download/dx_com-2.3.0-cp311-cp311-manylinux_2_31_x86_64.whl",
+        "name": "dx_com-2.3.0-cp311-cp311-manylinux_2_31_x86_64.whl",
+        "python_tags": "cp311"
+      },
+      {
+        "path": "/home/kmika/dx-all-suite/workspace/release/dx_com/download/dx_com-2.3.0-cp311-cp311-manylinux_2_31_x86_64.whl",
+        "name": "dx_com-2.3.0-cp311-cp311-manylinux_2_31_x86_64.whl",
+        "python_tags": "cp311"
+      },
+      {
+        "path": "/home/kmika/dx-all-suite/workspace/release/dx_com/dx_com-2.3.0-cp311-cp311-manylinux_2_31_x86_64/dx_com-2.3.0-cp311-cp311-manylinux_2_31_x86_64.whl",
+        "name": "dx_com-2.3.0-cp311-cp311-manylinux_2_31_x86_64.whl",
+        "python_tags": "cp311"
+      }
+    ],
+    "runtime_venv": "/home/kmika/venvs/deepx-runtime",
+    "runtime_python": "/home/kmika/venvs/deepx-runtime/bin/python",
+    "runtime_venv_tools": {
+      "dxrt-cli": null,
+      "parse_model": null,
+      "run_model": null
+    },
+    "cache_dir": "/home/kmika/Models/BackendArtifacts/deepx",
+    "tools": {
+      "dxrt-cli": "/usr/local/bin/dxrt-cli",
+      "parse_model": "/usr/local/bin/parse_model",
+      "run_model": "/usr/local/bin/run_model",
+      "dxcom": null,
+      "dx_com": null
+    },
+    "device_paths": [],
+    "compiler_imports": [
+      {
+        "module": "dx_com",
+        "ok": true,
+        "returncode": 0,
+        "output_tail": "{\"distribution\": \"dx-com\", \"module\": \"dx_com\", \"module_file\": \"/home/kmika/dx-all-suite/dx-compiler/venv-dx-compiler-local/lib/python3.11/site-packages/dx_com/__init__.py\", \"module_file_sha256\": \"\", \"package_version\": \"2.3.0-rc.5\", \"status\": \"OK\"}\n",
+        "distribution": "dx-com",
+        "package_version": "2.3.0-rc.5",
+        "module_file": "/home/kmika/dx-all-suite/dx-compiler/venv-dx-compiler-local/lib/python3.11/site-packages/dx_com/__init__.py",
+        "module_file_sha256": ""
+      }
+    ],
+    "compiler_cuda_preflight": {
+      "compiler_python": "/home/kmika/dx-all-suite/dx-compiler/venv-dx-compiler-local/bin/python",
+      "compiled_architectures": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "cuda_available": true,
+      "cuda_visible_devices": null,
+      "device_capability": [
+        6,
+        1
+      ],
+      "device_index": 0,
+      "device_name": "NVIDIA GeForce GTX 1080 Ti",
+      "torch_cuda_version": "13.0",
+      "torch_module_file": "/home/kmika/dx-all-suite/dx-compiler/venv-dx-compiler-local/lib/python3.11/site-packages/torch/__init__.py",
+      "torch_version": "2.12.0+cu130",
+      "status": "incompatible",
+      "reason": "deepx_compiler_cuda_architecture_unsupported"
+    },
+    "runtime_imports": [
+      {
+        "module": "dx_engine",
+        "ok": true,
+        "returncode": 0,
+        "output_tail": "{\"distribution\": \"dx-engine\", \"module\": \"dx_engine\", \"module_file\": \"/home/kmika/venvs/deepx-runtime/lib/python3.12/site-packages/dx_engine/__init__.py\", \"module_file_sha256\": \"b68444aee0d3504122030b8b935bb1e6445e6782f2fde12facf95c0c603bd1dc\", \"package_version\": \"3.3.2\", \"status\": \"OK\"}\n",
+        "distribution": "dx-engine",
+        "package_version": "3.3.2",
+        "module_file": "/home/kmika/venvs/deepx-runtime/lib/python3.12/site-packages/dx_engine/__init__.py",
+        "module_file_sha256": "b68444aee0d3504122030b8b935bb1e6445e6782f2fde12facf95c0c603bd1dc"
+      }
+    ],
+    "hints": [
+      "deepx_compiler_cuda_architecture_unsupported: GPU=NVIDIA GeForce GTX 1080 Ti (sm_61); Torch=2.12.0+cu130; supported=['sm_75', 'sm_80', 'sm_86', 'sm_90', 'sm_100', 'sm_120']; compiler_python=/home/kmika/dx-all-suite/dx-compiler/venv-dx-compiler-local/bin/python"
+    ]
+  },
+  "ok_count": 0,
+  "failed_count": 1
+}

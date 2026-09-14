@@ -1,0 +1,24 @@
+{
+  "case_id": "b119",
+  "cpu_threads": 4,
+  "created_at": "2026-09-10T09:55:01+02:00",
+  "duration_s": 1.877761,
+  "errors": [
+    "quality_reference_not_emitted"
+  ],
+  "execution_location": "central_management",
+  "include_in_latency_fps_energy": false,
+  "include_in_pareto": false,
+  "include_in_ranking": false,
+  "model_id": "resnet50",
+  "provider": "onnxruntime_cpu",
+  "reference_immutable": true,
+  "reference_storage": "immutable_source_contract",
+  "return_code": 1,
+  "schema": "onnx-splitpoint/management-cpu-reference-job",
+  "schema_version": 1,
+  "semantic_reference_only": true,
+  "source_contract_sha256": "sha256:5a11c29e0da5eeb5d4bc4c0ba54aad6afceaefa4f99700ad46fb8b4970b01299",
+  "status": "failed",
+  "stdout_path": "/home/kmika/Models/EvaluationRuns/biggerset_20260910_094202/quality_management/references/resnet50/management_cpu_reference_stdout.txt"
+}

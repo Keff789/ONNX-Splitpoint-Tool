@@ -34,3 +34,8 @@ results/
 *.dot.pdf
 *.dot.svg
 *.dot.png
+
+# Local/runtime state
+.venv-report/
+.install_logs/
+logs/

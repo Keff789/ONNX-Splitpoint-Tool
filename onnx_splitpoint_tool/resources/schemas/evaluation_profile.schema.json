@@ -1,0 +1,3054 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openai.local/onnx-splitpoint-tool/evaluation-profile.schema.json",
+  "title": "Evaluation Profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "selection_policy",
+    "model_suite",
+    "run_profiles",
+    "validation",
+    "reporting"
+  ],
+  "not": {
+    "required": [
+      "v2797_yolo11_recovery",
+      "v2798_yolo11_recovery"
+    ]
+  },
+  "allOf": [
+    {
+      "not": {
+        "required": [
+          "v2797_yolo11_recovery",
+          "v27910_yolo11_recovery"
+        ]
+      }
+    },
+    {
+      "not": {
+        "required": [
+          "v2798_yolo11_recovery",
+          "v27910_yolo11_recovery"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "purpose": {
+      "type": "string"
+    },
+    "implementation_note": {
+      "type": "string"
+    },
+    "models_root_hint": {
+      "type": "string"
+    },
+    "v2797_yolo11_recovery": {
+      "$ref": "#/$defs/v2797Yolo11RecoveryPolicy"
+    },
+    "v2798_yolo11_recovery": {
+      "$ref": "#/$defs/v2798Yolo11RecoveryPolicy"
+    },
+    "v27910_yolo11_recovery": {
+      "$ref": "#/$defs/v27910Yolo11RecoveryPolicy"
+    },
+    "selection_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_accepted_cases_per_model": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "preferred_shortlist": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "min_gap": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "candidate_search_pool": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "enum": [
+                "auto"
+              ]
+            }
+          ]
+        },
+        "require_single_part2_input": {
+          "type": "boolean",
+          "default": false,
+          "description": "Selection-only constraint: retain candidates whose generated Part-2 ONNX has exactly one external graph input. Generic execution remains multi-input/multi-output capable."
+        },
+        "report_blocked_configs": {
+          "type": "boolean"
+        },
+        "report_plan_adjustments": {
+          "type": "boolean"
+        },
+        "keep_partial_hailo_cases": {
+          "type": "boolean"
+        },
+        "full_model_hailo_preflight_policy": {
+          "type": "string",
+          "enum": [
+            "enabled",
+            "skip"
+          ]
+        },
+        "selection_strategy": {
+          "type": "string",
+          "enum": [
+            "predicted_topk",
+            "stratified_windows",
+            "stratified",
+            "windowed",
+            "coverage_windows",
+            "candidate_universe",
+            "all_feasible",
+            "deterministic_audit",
+            "score_independent_audit"
+          ]
+        },
+        "coverage_strategy": {
+          "type": "string",
+          "enum": [
+            "predicted_topk",
+            "stratified_windows",
+            "stratified",
+            "windowed",
+            "coverage_windows",
+            "candidate_universe",
+            "all_feasible",
+            "deterministic_audit",
+            "score_independent_audit"
+          ]
+        },
+        "score_independent_audit_enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Compatibility flag for selection_strategy=score_independent_audit. The audit is selected without predictor scores or benchmark measurements."
+        },
+        "audit_candidate_universe": {
+          "type": "string",
+          "enum": [
+            "deterministic_audit",
+            "audit_universe",
+            "all_feasible"
+          ],
+          "default": "deterministic_audit",
+          "description": "Global candidate-universe mode used by score-independent audits."
+        },
+        "audit_size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Global number of deterministic score-independent audit candidates per model."
+        },
+        "minimum_valid_audit_candidates": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Global minimum number of valid audit candidates required for ranking evidence."
+        },
+        "audit_seed": {
+          "type": "integer",
+          "description": "Global deterministic seed for score-independent candidate-audit selection."
+        },
+        "forced_cases": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "description": "Optional exact case ids per model for small native smoke runs, e.g. {resnet50:[b052], yolo26s:[b038]}."
+        },
+        "fixed_cases": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "description": "Optional exact case ids per model for small native smoke runs, e.g. {resnet50:[b052], yolo26s:[b038]}."
+        }
+      }
+    },
+    "model_suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary"
+      ],
+      "properties": {
+        "primary": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/modelEntry"
+          }
+        },
+        "reserve": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/modelEntry"
+          }
+        }
+      }
+    },
+    "run_profiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/runProfile"
+      }
+    },
+    "quality_canary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "execution_scope",
+        "full_run_ids",
+        "setup_local_tensorrt_companions"
+      ],
+      "properties": {
+        "schema": {
+          "const": "onnx-splitpoint/full-only-quality-canary"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "enabled": {
+          "const": true
+        },
+        "execution_scope": {
+          "const": "full_only"
+        },
+        "full_run_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/qualityCanaryFullRun"
+          }
+        },
+        "setup_local_tensorrt_companions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/qualityCanaryTensorRTCompanion"
+          }
+        }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "split_fidelity_reference_mode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "classification_metrics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "detection_metrics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "backend_drift_reference": {
+          "type": "string"
+        },
+        "report_blocked_and_infeasible": {
+          "type": "boolean"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "summary_only",
+            "summary",
+            "strict",
+            "disabled"
+          ]
+        },
+        "max_abs_error_threshold": {
+          "type": "number",
+          "minimum": 0
+        },
+        "mean_abs_error_threshold": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cosine_similarity_threshold": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "cosine_threshold": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "require_explicit": {
+          "type": "boolean"
+        },
+        "require_task_metrics": {
+          "type": "boolean"
+        }
+      }
+    },
+    "reporting": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "include_decision_summary": {
+          "type": "boolean"
+        },
+        "include_backend_drift_block": {
+          "type": "boolean"
+        },
+        "include_task_specific_quality_block": {
+          "type": "boolean"
+        },
+        "aggregate_by_model": {
+          "type": "boolean"
+        },
+        "aggregate_by_run_profile": {
+          "type": "boolean"
+        },
+        "canonical_scientific_report": {
+          "type": "boolean"
+        },
+        "cleanup_legacy_reports": {
+          "type": "boolean"
+        },
+        "generate_thesis_tex": {
+          "type": "boolean"
+        },
+        "generate_thesis_figures": {
+          "type": "boolean"
+        },
+        "include_campaign_readiness": {
+          "type": "boolean"
+        }
+      }
+    },
+    "model_preparation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "current",
+            "screen_yolo_full_hailo"
+          ]
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "remote_execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "user": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "remote_base_dir": {
+          "type": "string"
+        },
+        "ssh_extra_args": {
+          "type": "string"
+        },
+        "hosts_file": {
+          "type": "string"
+        },
+        "host_json": {
+          "type": "string"
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/remoteHost"
+          }
+        },
+        "remote_hosts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/remoteHost"
+          }
+        },
+        "provider": {
+          "type": "string"
+        },
+        "remote_venv": {
+          "type": "string"
+        },
+        "transfer_mode": {
+          "type": "string",
+          "enum": [
+            "bundle",
+            "direct"
+          ]
+        },
+        "reuse_bundle": {
+          "type": "boolean"
+        },
+        "resume": {
+          "type": "boolean"
+        },
+        "repeats": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "warmup": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "iters": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeout_s": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "add_args": {
+          "type": "string"
+        },
+        "throughput_frames": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "throughput_warmup_frames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "throughput_queue_depth": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "validation_images": {
+          "type": "string"
+        },
+        "validation_max_images": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "validation_reference_mode": {
+          "type": "string"
+        },
+        "mini_coco_ap50": {
+          "type": "boolean"
+        },
+        "benchmark_task": {
+          "type": "string"
+        },
+        "mini_classification_eval": {
+          "type": "boolean"
+        }
+      }
+    },
+    "hailo_build": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "compute_by_family": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "hailo8": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "device"
+              ],
+              "properties": {
+                "device": {
+                  "type": "string",
+                  "enum": [
+                    "cpu",
+                    "gpu"
+                  ]
+                },
+                "gpu_selector": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "dependency_manifest": {
+                  "type": "string",
+                  "description": "Optional Hailo8 dependency overlay. Omit to inherit explicit environment selection; empty string explicitly disables overlay."
+                }
+              }
+            },
+            "hailo10": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "device"
+              ],
+              "properties": {
+                "device": {
+                  "type": "string",
+                  "enum": [
+                    "cpu",
+                    "gpu"
+                  ]
+                },
+                "gpu_selector": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "hailo10h": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "device"
+              ],
+              "properties": {
+                "device": {
+                  "type": "string",
+                  "enum": [
+                    "cpu",
+                    "gpu"
+                  ]
+                },
+                "gpu_selector": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "reuse_only",
+            "cache_verify_only",
+            "reuse_and_build_missing",
+            "reuse_build_missing",
+            "request",
+            "local",
+            "venv",
+            "wsl"
+          ]
+        },
+        "hw_arch": {
+          "type": "string"
+        },
+        "backend": {
+          "type": "string"
+        },
+        "timeout_s": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "enum": ["0", "off", "none", "unlimited", "disabled"]
+            }
+          ]
+        },
+        "force_build": {
+          "type": "boolean"
+        },
+        "keep_artifacts": {
+          "type": "boolean"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "build_full": {
+          "type": "boolean"
+        },
+        "build_part1": {
+          "type": "boolean"
+        },
+        "build_part2": {
+          "type": "boolean"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "optimization_level": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "calib_dir": {
+          "type": "string"
+        },
+        "calib_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "calib_batch_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source": {
+          "type": "string"
+        },
+        "calibration_storage": {
+          "type": "string",
+          "enum": [
+            "memory",
+            "memmap",
+            "auto"
+          ]
+        },
+        "calibration_memory_cap_mb": {
+          "type": "integer",
+          "minimum": 32
+        },
+        "cache_enabled": {
+          "type": "boolean"
+        },
+        "cache_root": {
+          "type": "string"
+        },
+        "cache_integrity": {
+          "type": "string",
+          "enum": [
+            "relaxed",
+            "strict"
+          ]
+        },
+        "full_baseline_cold_build_policy": {
+          "type": "string",
+          "enum": [
+            "cache_or_defer",
+            "build_missing"
+          ]
+        },
+        "cold_build_timeout_s": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "enum": ["0", "off", "none", "unlimited", "disabled"]
+            }
+          ]
+        },
+        "deferred_full_baseline_required": {
+          "type": "boolean"
+        },
+        "preserve_attempt_provenance": {
+          "type": "boolean"
+        },
+        "immutable_attempt_receipts": {
+          "type": "boolean"
+        },
+        "terminal_attempt_selection": {
+          "type": "string",
+          "enum": ["last_attempt_even_on_failure"]
+        },
+        "hard_timeout_disable_tokens": {
+          "type": "array",
+          "minItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "oneOf": [
+              {
+                "type": "integer",
+                "const": 0
+              },
+              {
+                "type": "string",
+                "enum": ["off", "none", "unlimited", "disabled"]
+              }
+            ]
+          }
+        },
+        "feasibility_control": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "hailo8_first_common_anchor"
+              ]
+            },
+            "primary_target": {
+              "type": "string",
+              "enum": [
+                "hailo8",
+                "hailo8l",
+                "hailo8r"
+              ]
+            },
+            "gated_target": {
+              "type": "string",
+              "enum": [
+                "hailo10",
+                "hailo10h"
+              ]
+            },
+            "required_variant": {
+              "type": "string",
+              "enum": [
+                "part1"
+              ]
+            },
+            "max_hailo8_cold_attempts": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_total_cold_builds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_cold_builds_per_boundary": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "wall_time_budget_s": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "parser_timeout_s": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "allow_recipe_retries": {
+              "type": "boolean",
+              "const": false
+            },
+            "stop_workflow_on_exhaustion": {
+              "type": "boolean"
+            },
+            "evidence_index_path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "evidence_artifact_root": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "dependentRequired": {
+            "evidence_index_path": [
+              "evidence_artifact_root"
+            ],
+            "evidence_artifact_root": [
+              "evidence_index_path"
+            ]
+          }
+        }
+      }
+    },
+    "hardware_smoke": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "summary_only",
+            "plan",
+            "strict",
+            "disabled"
+          ]
+        },
+        "require_remote_for_hailo": {
+          "type": "boolean"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "artifact_cache_preflight": {
+      "$ref": "#/$defs/artifactCachePreflightPolicy"
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "execution_mode": {
+          "type": "string",
+          "enum": [
+            "contracts_only",
+            "generate_benchmarksets",
+            "generate_and_run",
+            "legacy_benchmarkset"
+          ]
+        },
+        "skip_runtime_benchmarks": {
+          "type": "boolean"
+        },
+        "cache_verify_only": {
+          "type": "boolean"
+        },
+        "skip_benchmarks": {
+          "type": "boolean"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "no_model_hash": {
+          "type": "boolean"
+        },
+        "include_reserve": {
+          "type": "boolean"
+        },
+        "only_model": {
+          "type": "string"
+        },
+        "max_models": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stop_after": {
+          "type": "string"
+        },
+        "result_sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parallel_remote_setups": {
+          "type": "boolean"
+        },
+        "max_parallel_setups": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_parallel_uploads": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "powercalc_workers": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "artifact_cache_preflight": {
+          "$ref": "#/$defs/artifactCachePreflightPolicy"
+        }
+      }
+    },
+    "evaluation_workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "execution_mode": {
+          "type": "string",
+          "enum": [
+            "contracts_only",
+            "generate_benchmarksets",
+            "generate_and_run",
+            "legacy_benchmarkset"
+          ]
+        },
+        "skip_runtime_benchmarks": {
+          "type": "boolean"
+        },
+        "skip_benchmarks": {
+          "type": "boolean"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "no_model_hash": {
+          "type": "boolean"
+        },
+        "include_reserve": {
+          "type": "boolean"
+        },
+        "only_model": {
+          "type": "string"
+        },
+        "max_models": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stop_after": {
+          "type": "string"
+        },
+        "result_sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "benchmark_execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "local",
+            "remote"
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "warmup": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "runs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "iters": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeout_s": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "preset": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "extra_args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "benchmark_generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "legacy",
+            "legacy_benchmarkset",
+            "benchmark_tab",
+            "existing",
+            "direct",
+            "formal_direct",
+            "workflow_direct"
+          ]
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "build_environments": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Optional accelerator build/runtime environment definitions."
+    },
+    "deepx_build": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "DeepX DX-COM build settings for ONNX -> DXNN artifacts.",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "disabled",
+            "reuse_only",
+            "cache_verify_only",
+            "reuse_and_build_missing",
+            "reuse_build_missing",
+            "build_missing",
+            "local"
+          ]
+        },
+        "target": {
+          "type": "string"
+        },
+        "dx_all_suite_root": {
+          "type": "string"
+        },
+        "compiler_overlay": {
+          "type": "string",
+          "description": "Compiler-local optional Torch overlay; never applied to GUI or remote runtime."
+        },
+        "compiler_venv": {
+          "type": "string"
+        },
+        "cache_dir": {
+          "type": "string"
+        },
+        "classification_preprocessing": {
+          "type": "string",
+          "enum": [
+            "current_scale_only",
+            "imagenet_mean_std"
+          ],
+          "description": "Regular DeepX classification uses imagenet_mean_std. current_scale_only is restricted to explicit Legacy/A-B diagnostics."
+        },
+        "calib_dir": {
+          "type": "string"
+        },
+        "calib_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "calibration_method": {
+          "type": "string"
+        },
+        "opt_level": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_s": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "force_build": {
+          "type": "boolean"
+        }
+      }
+    },
+    "deepx_runtime": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "DeepX DX-RT runtime settings for remote NX execution.",
+      "properties": {
+        "runtime_venv": {
+          "type": "string"
+        },
+        "dx_all_suite_root": {
+          "type": "string"
+        },
+        "verify_dx_engine": {
+          "type": "boolean"
+        },
+        "verify_dxrt_cli": {
+          "type": "boolean"
+        },
+        "benchmark_loops": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "hardware": {
+      "type": "object",
+      "description": "Selected runtime hardware setups/groups for multi-accelerator evaluation runs.",
+      "properties": {
+        "selected_setups": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "selected_groups": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "setups_file": {
+          "type": "string"
+        },
+        "config_file": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "hardware_setups": {
+      "type": "array",
+      "description": "Alias for hardware_targets.",
+      "items": {
+        "$ref": "#/$defs/hardwareTarget"
+      }
+    },
+    "hardware_groups": {
+      "type": "object",
+      "description": "Inline hardware setup groups by group id.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "hardware_targets": {
+      "type": "array",
+      "description": "Per-accelerator deployment/runtime targets. Each entry can point to a different Orin NX host.",
+      "items": {
+        "$ref": "#/$defs/hardwareTarget"
+      }
+    },
+    "energy": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "requested": {
+          "type": "boolean",
+          "description": "Authoritative v2.63 request flag. Legacy profiles without this field continue to use energy.enabled or native_producers.energy.enabled."
+        },
+        "lifecycle_status": {
+          "type": "string",
+          "enum": [
+            "requested",
+            "configured",
+            "scheduled",
+            "running",
+            "completed",
+            "skipped",
+            "failed"
+          ]
+        },
+        "protocol_manifest": {
+          "type": "string"
+        },
+        "window_method_ab": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "primary_method": {
+              "type": "string",
+              "enum": ["command_marker_window"],
+              "description": "Frozen scientific primary for v2.67 and later."
+            },
+            "shadow_method": {
+              "type": "string",
+              "enum": ["chapter4_legacy_window"],
+              "description": "Non-blocking same-trace sensitivity result using the Chapter-4 window method."
+            },
+            "baseline_method": {
+              "type": "string",
+              "enum": ["chapter4_baseline"],
+              "deprecated": true,
+              "description": "Read-compatible v2.63-v2.66 input alias; new profiles use primary_method/shadow_method."
+            },
+            "candidate_method": {
+              "type": "string",
+              "enum": ["candidate_v263"],
+              "deprecated": true,
+              "description": "Read-compatible v2.63-v2.66 input alias; new profiles use primary_method/shadow_method."
+            },
+            "same_raw_capture": {"type": "boolean", "const": true},
+            "mode": {"type": "string", "enum": ["shadow"]},
+            "auto_switch": {"type": "boolean", "const": false},
+            "smoke_repeats": {"type": "integer", "minimum": 1, "default": 3},
+            "include_raw_parquet": {"type": "boolean"},
+            "strict": {"type": "boolean"},
+            "requires_picoscope": {"type": "boolean", "const": false}
+          }
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "row_variant",
+            "dispatch"
+          ]
+        },
+        "repeat_override": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "repeats": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "phases": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "latency",
+              "streaming"
+            ]
+          }
+        },
+        "strict": {
+          "type": "boolean"
+        },
+        "include_raw_parquet_in_debug_pack": {
+          "type": "boolean"
+        },
+        "target_policy": {
+          "type": "string",
+          "enum": [
+            "all",
+            "canonical_only",
+            "deepx_only",
+            "manual",
+            "best_valid_only",
+            "best_plus_predicted"
+          ]
+        },
+        "policy": {
+          "type": "string"
+        },
+        "skip_backends": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "skip_run_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "include_run_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exclude_run_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "heartbeat_s": {
+          "type": "integer",
+          "minimum": 10
+        },
+        "max_targets_per_run_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_targets": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_work_units_per_window": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_window_duration_s": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_s_per_window": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sizing_probe_max_work_units": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "min_active_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "final_all_split_energy": {
+          "type": "boolean",
+          "description": "GUI thesis/final preset: require row-level energy for all thesis-relevant complete split rows. Forces row_variant scope, target_policy=all, max_targets_per_run_id=0 and strict energy. CPU ORT can be excluded via final_energy_skip_cpu_ort."
+        },
+        "final_energy_skip_cpu_ort": {
+          "type": "boolean",
+          "description": "When final_all_split_energy is enabled, skip CPU ORT row-level u.RECS energy and exclude CPU ORT split diagnostics from energy completeness gating. Default true in the GUI because CPU ORT windows are slow and not accelerator-relevant."
+        },
+        "skip_cpu_ort_in_final_energy": {
+          "type": "boolean",
+          "description": "Alias for final_energy_skip_cpu_ort."
+        },
+        "include_cpu_ort_in_final_energy": {
+          "type": "boolean",
+          "description": "Advanced opt-in: measure CPU ORT even in final all-split energy mode."
+        },
+        "all_split_energy": {
+          "type": "boolean",
+          "description": "Alias for final_all_split_energy."
+        },
+        "require_complete_split_energy": {
+          "type": "boolean",
+          "description": "Alias for final_all_split_energy."
+        },
+        "generic_enabled": {
+          "type": "boolean"
+        },
+        "measurement_path": {
+          "type": "string"
+        },
+        "requested_native_energy": {
+          "type": "boolean"
+        },
+        "disabled_reason": {
+          "type": "string"
+        }
+      }
+    },
+    "parallel_remote": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "parallel_remote_setups": {
+          "type": "boolean"
+        },
+        "max_parallel_setups": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_parallel_uploads": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "powercalc_workers": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "native_producers": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Optional native producer fastpath configuration. Native producer is a strict supported-only execution mode for optimized accelerator->TensorRT pipelines and native full baselines.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "backends": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "case_policy": {
+          "type": "string",
+          "enum": [
+            "all_accepted",
+            "case_map_only",
+            "preferred_then_backfill"
+          ]
+        },
+        "case_map": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "precision": {
+          "type": "string"
+        },
+        "frames": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "warmup": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "repetitions": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Independent Native performance repetitions aggregated as median and confidence interval; never best-of."
+        },
+        "queue_depth": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "inflight": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "hailo_format": {
+          "type": "string"
+        },
+        "remote_root": {
+          "type": "string"
+        },
+        "remote_tool_dir": {
+          "type": "string"
+        },
+        "build_missing_engines": {
+          "type": "boolean"
+        },
+        "copy_benchmarksets": {
+          "type": "boolean"
+        },
+        "strict_supported_only": {
+          "type": "boolean"
+        },
+        "full_baselines": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          }
+        },
+        "energy": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "plan",
+                "measure"
+              ]
+            },
+            "frames": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "warmup": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "duration_s": {
+              "type": "number",
+              "minimum": 0
+            },
+            "duration_source": {
+              "type": "string"
+            },
+            "timeout": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "duration": {
+              "type": "number",
+              "minimum": 0
+            },
+            "window_method_validation_probe": {
+              "type": "object",
+              "additionalProperties": true,
+              "description": "Separate screening-only marker-v2 versus historical-window probe; it never relaxes Native Energy pairing or enters scientific energy results.",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "repeats": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "include_raw_parquet": {
+                  "type": "boolean"
+                },
+                "strict": {
+                  "type": "boolean"
+                },
+                "max_acquisition_retries": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "description": "Fresh outer collector retries per logical probe repeat; the inner exact-run collector always uses zero retries."
+                },
+                "acquisition_retry_backoff_s": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 60
+                },
+                "screening_only": {
+                  "type": "boolean"
+                },
+                "eligible_for_energy_results_import": {
+                  "type": "boolean"
+                },
+                "eligible_for_scientific_claim": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        },
+        "remotes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "ssh": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "dump_outputs": {
+          "type": "boolean"
+        },
+        "validation": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "mode": {
+              "type": "string"
+            },
+            "topk": {
+              "type": "integer"
+            },
+            "timeout_s": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    "quality_gate": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "statistics": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "execution_location": {
+              "type": "string",
+              "enum": [
+                "local",
+                "central_management"
+              ]
+            },
+            "workers": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 64
+            }
+          }
+        }
+      }
+    },
+    "ranking_validation": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "measurement_campaign": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "campaign": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "campaign_id": {
+          "type": "string"
+        },
+        "claim_scope": {
+          "type": "string",
+          "enum": [
+            "evaluated_matrix",
+            "ranking_generalization"
+          ]
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "development",
+            "screening",
+            "final"
+          ]
+        },
+        "enforcement": {
+          "type": "string",
+          "enum": [
+            "warn",
+            "strict"
+          ]
+        },
+        "frozen_before_final_campaign": {
+          "type": "boolean"
+        },
+        "dataset_manifests": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "pipeline_contract_manifest": {
+          "type": "string"
+        },
+        "holdout_registry": {
+          "type": "string"
+        },
+        "ranking_model_bundle": {
+          "type": "string"
+        },
+        "ranking_model_bundle_sha256": {
+          "type": "string"
+        },
+        "energy_calibration_manifest": {
+          "type": "string"
+        },
+        "require_fitted_stage_time": {
+          "type": "boolean"
+        },
+        "require_native_handover_model": {
+          "type": "boolean"
+        },
+        "campaign_freeze_artifact": {
+          "type": "string"
+        },
+        "require_campaign_freeze": {
+          "type": "boolean"
+        },
+        "require_protocol_freeze": {
+          "type": "boolean"
+        },
+        "protocol_freeze": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["artifact", "version", "amendment", "manifests"],
+          "properties": {
+            "artifact": {"type": "string", "minLength": 1},
+            "path": {"type": "string", "minLength": 1},
+            "version": {"type": "string", "minLength": 1},
+            "amendment": {
+              "oneOf": [
+                {"type": "string", "minLength": 1},
+                {"type": "integer", "minimum": 0}
+              ]
+            },
+            "amendment_reason": {"type": "string"},
+            "supersedes_sha256": {"type": "string"},
+            "release_id": {"type": "string"},
+            "evaluation_id": {"type": "string"},
+            "release_identity": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "release_id": {"type": "string"},
+                "tool_version": {"type": "string"}
+              }
+            },
+            "evaluation_identity": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "evaluation_id": {"type": "string"}
+              }
+            },
+            "candidate_manifest": {"$ref": "#/$defs/protocolManifestReference"},
+            "dag_manifest": {"$ref": "#/$defs/protocolManifestReference"},
+            "prediction_manifest": {"$ref": "#/$defs/protocolManifestReference"},
+            "policy_manifest": {"$ref": "#/$defs/protocolManifestReference"},
+            "energy_manifest": {"$ref": "#/$defs/protocolManifestReference"},
+            "manifests": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["candidate", "dag", "prediction", "policy", "energy"],
+              "properties": {
+                "candidate": {"$ref": "#/$defs/protocolManifestReference"},
+                "dag": {"$ref": "#/$defs/protocolManifestReference"},
+                "prediction": {"$ref": "#/$defs/protocolManifestReference"},
+                "policy": {"$ref": "#/$defs/protocolManifestReference"},
+                "energy": {"$ref": "#/$defs/protocolManifestReference"}
+              }
+            }
+          }
+        },
+        "note": {
+          "type": "string"
+        },
+        "require_prediction_freeze_approval": {
+          "type": "boolean"
+        },
+        "prediction_freeze_enabled": {
+          "type": "boolean"
+        },
+        "require_cryptographic_prediction_signature": {
+          "type": "boolean"
+        },
+        "prediction_freeze_public_key": {
+          "type": "string"
+        },
+        "ranking_model_bundle_resolved_sha256": {
+          "type": "string"
+        },
+        "ranking_model_bundle_loaded": {
+          "type": "boolean"
+        },
+        "dataset_registry": {
+          "type": "string"
+        },
+        "auto_bind_dataset_registry": {
+          "type": "boolean"
+        },
+        "dataset_registry_sha256": {
+          "type": "string"
+        },
+        "dataset_registry_binding_sha256": {
+          "type": "string"
+        }
+      }
+    },
+    "official_coco_evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "required_for_final": {
+          "type": "boolean"
+        },
+        "annotations": {
+          "type": "string"
+        },
+        "remote_annotations": {
+          "type": "string"
+        },
+        "iou_type": {
+          "type": "string",
+          "enum": [
+            "bbox"
+          ]
+        },
+        "archive_predictions": {
+          "type": "boolean"
+        },
+        "archive_eval_tensors": {
+          "type": "boolean"
+        },
+        "max_detections": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "require_pycocotools": {
+          "type": "boolean"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "integrity_policy": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "fast",
+            "relaxed",
+            "strict",
+            "off"
+          ],
+          "default": "auto"
+        },
+        "effective_mode": {
+          "type": "string",
+          "enum": [
+            "fast",
+            "relaxed",
+            "strict",
+            "off"
+          ]
+        },
+        "strict_required_for_final": {
+          "type": "boolean"
+        },
+        "cache_unchanged_files": {
+          "type": "boolean"
+        },
+        "final_claim_eligible": {
+          "type": "boolean"
+        },
+        "dataset_sample_size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dataset_sample_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "validation_execution": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "screening",
+            "final"
+          ],
+          "default": "auto"
+        },
+        "cadence": {
+          "type": "string",
+          "enum": [
+            "once_per_artifact",
+            "once_per_row",
+            "per_timing_repeat"
+          ],
+          "default": "once_per_artifact"
+        },
+        "cache_task_quality": {
+          "type": "boolean",
+          "default": true
+        },
+        "repeat_task_quality_for_timing_repeats": {
+          "type": "boolean",
+          "default": false
+        },
+        "max_items": {
+          "type": "object",
+          "properties": {
+            "classification": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 500
+            },
+            "detection": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 200
+            }
+          }
+        }
+      }
+    },
+    "execution_preset": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "smoke",
+            "standard",
+            "final"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "follow_tool_config": {
+          "type": "boolean"
+        },
+        "config_path": {
+          "type": "string"
+        },
+        "config_sha256": {
+          "type": "string"
+        },
+        "snapshot_sha256": {
+          "type": "string"
+        },
+        "resolved_at": {
+          "type": "string"
+        },
+        "overrides": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "native_enabled": {
+              "type": "boolean"
+            },
+            "energy_enabled": {
+              "type": "boolean"
+            }
+          }
+        },
+        "snapshot": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "effective": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "execution_guard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "expected_plan"
+      ],
+      "properties": {
+        "mode": {
+          "const": "cache_verify_only"
+        },
+        "expected_plan": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "run_mode",
+            "calibration_items",
+            "models",
+            "logical_run_profiles",
+            "forced_case_map",
+            "native_backends",
+            "native_case_map",
+            "native_rows",
+            "native_full_backends",
+            "hardware_setup_ids",
+            "generic_runtime_enabled",
+            "native_enabled",
+            "native_energy_enabled",
+            "native_frames",
+            "native_warmup",
+            "native_repetitions",
+            "hailo_targets",
+            "hailo_build_full",
+            "hailo_build_part1",
+            "hailo_build_part2",
+            "hailo_preset",
+            "hailo_optimization_level",
+            "hailo_calib_count",
+            "hailo_calib_batch_size",
+            "hailo_calibration_storage",
+            "hailo_calibration_memory_cap_mb",
+            "hailo_cache_integrity"
+          ],
+          "properties": {
+            "run_mode": {
+              "type": "string",
+              "enum": ["smoke", "standard", "final"]
+            },
+            "calibration_items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["classification", "detection"],
+              "properties": {
+                "classification": {"type": "integer", "minimum": 1},
+                "detection": {"type": "integer", "minimum": 1}
+              }
+            },
+            "models": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {"type": "string", "minLength": 1}
+            },
+            "logical_run_profiles": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {"type": "string", "minLength": 1}
+            },
+            "forced_case_map": {"$ref": "#/$defs/cacheVerifyCaseMap"},
+            "native_backends": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {"type": "string", "minLength": 1}
+            },
+            "native_case_map": {"$ref": "#/$defs/cacheVerifyCaseMap"},
+            "native_rows": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["model_id", "case_id", "backend", "setup_id", "variant_id"],
+                "properties": {
+                  "model_id": {"type": "string", "minLength": 1},
+                  "case_id": {"type": "string", "pattern": "^b[0-9]+$"},
+                  "backend": {"type": "string", "minLength": 1},
+                  "setup_id": {"type": "string", "minLength": 1},
+                  "variant_id": {"type": "string", "minLength": 1}
+                }
+              }
+            },
+            "native_full_backends": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"type": "string", "minLength": 1}
+            },
+            "hardware_setup_ids": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {"type": "string", "minLength": 1}
+            },
+            "generic_runtime_enabled": {"const": false},
+            "native_enabled": {"const": true},
+            "native_energy_enabled": {"const": false},
+            "native_frames": {"type": "integer", "minimum": 1},
+            "native_warmup": {"type": "integer", "minimum": 0},
+            "native_repetitions": {"type": "integer", "minimum": 1},
+            "hailo_targets": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {"type": "string", "minLength": 1}
+            },
+            "hailo_build_full": {"type": "boolean"},
+            "hailo_build_part1": {"type": "boolean"},
+            "hailo_build_part2": {"type": "boolean"},
+            "hailo_preset": {"type": "string", "minLength": 1},
+            "hailo_optimization_level": {"type": "integer", "minimum": 0},
+            "hailo_calib_count": {"type": "integer", "minimum": 1},
+            "hailo_calib_batch_size": {"type": "integer", "minimum": 1},
+            "hailo_calibration_storage": {
+              "type": "string",
+              "enum": ["memory", "memmap"]
+            },
+            "hailo_calibration_memory_cap_mb": {
+              "type": "integer",
+              "minimum": 32
+            },
+            "hailo_cache_integrity": {"type": "string", "minLength": 1}
+          }
+        },
+        "policy_sha256": {"type": "string"},
+        "compiler_dispatch": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "hailo_dfc": {"const": false},
+            "deepx_dx_com": {"const": false},
+            "tensorrt_build": {"const": false}
+          }
+        }
+      }
+    },
+    "remote_cache": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "upload_once_per_model_setup": {
+          "type": "boolean"
+        },
+        "reuse_tensorrt_engines": {
+          "type": "boolean"
+        },
+        "reuse_quality_references": {
+          "type": "boolean"
+        },
+        "stable_cache_root": {
+          "type": "string"
+        },
+        "suite_cache_root": {
+          "type": "string"
+        },
+        "engine_cache_root": {
+          "type": "string"
+        },
+        "copy_strategy": {
+          "type": "string",
+          "enum": [
+            "reflink",
+            "extract",
+            "auto"
+          ]
+        }
+      }
+    },
+    "artifact_store": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Resolved unified compiler-artifact library policy from the selected run mode."
+    },
+    "build_scheduler": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Resolved resource-aware local compiler scheduler policy from the selected run mode."
+    }
+  },
+  "$defs": {
+    "artifactCacheExpectation": {
+      "type": "string",
+      "enum": [
+        "warm",
+        "cold",
+        "unspecified"
+      ]
+    },
+    "artifactCacheRoleSelector": {
+      "type": "string",
+      "enum": [
+        "*",
+        "h8",
+        "hailo8",
+        "hailo_8",
+        "hailo8_hef",
+        "h10",
+        "hailo10",
+        "hailo10h",
+        "hailo_10",
+        "hailo10_hef",
+        "deepx",
+        "deepx_m1",
+        "dxnn",
+        "trt_full",
+        "tensorrt_full",
+        "full_trt",
+        "trt_p2",
+        "trt_part2",
+        "tensorrt_p2",
+        "tensorrt_part2"
+      ]
+    },
+    "artifactCacheDeclaration": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?:\\*|[A-Za-z0-9_.-]+)(?::(?:\\*|h8|hailo8|hailo_8|hailo8_hef|h10|hailo10|hailo10h|hailo_10|hailo10_hef|deepx|deepx_m1|dxnn|trt_full|tensorrt_full|full_trt|trt_p2|trt_part2|tensorrt_p2|tensorrt_part2)(?::(?:\\*|[A-Za-z0-9_.-]+))?)?$"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "model_id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^\\S+$"
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^\\S+$"
+            },
+            "role": {
+              "$ref": "#/$defs/artifactCacheRoleSelector"
+            },
+            "item_id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^\\S+$"
+            },
+            "case_id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^\\S+$"
+            }
+          },
+          "anyOf": [
+            {"required": ["model_id"]},
+            {"required": ["model"]},
+            {"required": ["role"]},
+            {"required": ["item_id"]},
+            {"required": ["case_id"]}
+          ],
+          "allOf": [
+            {
+              "not": {
+                "required": ["model_id", "model"]
+              }
+            },
+            {
+              "not": {
+                "required": ["item_id", "case_id"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "artifactCachePreflightPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Read-only cache readiness policy. Diagnostic by default; blocking requires an explicit strict policy.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "strict": {
+          "type": "boolean",
+          "default": false,
+          "description": "Concise alias for block_on_unexpected_cold_builds."
+        },
+        "block_on_unexpected_cold_builds": {
+          "type": "boolean",
+          "default": false
+        },
+        "require_warm_cache": {
+          "type": "boolean",
+          "default": false,
+          "description": "Strict convenience policy; also selects warm as the default expectation when no expectation is specified."
+        },
+        "default_expectation": {
+          "$ref": "#/$defs/artifactCacheExpectation",
+          "default": "unspecified"
+        },
+        "expectation": {
+          "$ref": "#/$defs/artifactCacheExpectation",
+          "description": "Compatibility alias for default_expectation."
+        },
+        "expected_warm": {
+          "type": "array",
+          "default": [],
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/artifactCacheDeclaration"
+          }
+        },
+        "expected_cold": {
+          "type": "array",
+          "default": [],
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/artifactCacheDeclaration"
+          }
+        }
+      },
+      "not": {
+        "required": [
+          "default_expectation",
+          "expectation"
+        ]
+      }
+    },
+    "yolo11RecoveryPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "schema_version",
+        "source_release",
+        "import_mode",
+        "imported_terminal_paths",
+        "diagnostic_only_imports",
+        "fresh_terminal_paths",
+        "recovery_manifest",
+        "forbid_generic_full_success",
+        "require_native_full_backends"
+      ],
+      "properties": {
+        "schema": {
+          "const": "onnx-splitpoint/yolo11-r8b-recovery-policy"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "source_release": {
+          "const": "2.79.6"
+        },
+        "import_mode": {
+          "const": "read_only_hash_bound"
+        },
+        "imported_terminal_paths": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "const": "hailo8_b067_composed"
+          }
+        },
+        "diagnostic_only_imports": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "const": "hailo10h_full_generic"
+          }
+        },
+        "fresh_terminal_paths": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "hailo8_full",
+              "hailo10h_full",
+              "deepx_full",
+              "hailo10h_b067_composed",
+              "deepx_b067_composed"
+            ]
+          },
+          "allOf": [
+            {"contains": {"const": "hailo8_full"}},
+            {"contains": {"const": "hailo10h_full"}},
+            {"contains": {"const": "deepx_full"}},
+            {"contains": {"const": "hailo10h_b067_composed"}},
+            {"contains": {"const": "deepx_b067_composed"}}
+          ]
+        },
+        "recovery_manifest": {
+          "enum": [
+            "v2797_recovery_manifest.json",
+            "v2798_recovery_manifest.json",
+            "v27910_recovery_manifest.json"
+          ]
+        },
+        "forbid_generic_full_success": {
+          "const": true
+        },
+        "require_native_full_backends": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "native_full_hailo8",
+              "native_full_hailo10h",
+              "native_full_deepx"
+            ]
+          },
+          "allOf": [
+            {"contains": {"const": "native_full_hailo8"}},
+            {"contains": {"const": "native_full_hailo10h"}},
+            {"contains": {"const": "native_full_deepx"}}
+          ]
+        }
+      }
+    },
+    "v2797Yolo11RecoveryPolicy": {
+      "allOf": [
+        {"$ref": "#/$defs/yolo11RecoveryPolicy"},
+        {
+          "properties": {
+            "recovery_manifest": {
+              "const": "v2797_recovery_manifest.json"
+            }
+          }
+        }
+      ]
+    },
+    "v2798Yolo11RecoveryPolicy": {
+      "allOf": [
+        {"$ref": "#/$defs/yolo11RecoveryPolicy"},
+        {
+          "properties": {
+            "recovery_manifest": {
+              "const": "v2798_recovery_manifest.json"
+            }
+          }
+        }
+      ]
+    },
+    "v27910Yolo11RecoveryPolicy": {
+      "allOf": [
+        {"$ref": "#/$defs/yolo11RecoveryPolicy"},
+        {
+          "properties": {
+            "recovery_manifest": {
+              "const": "v27910_recovery_manifest.json"
+            }
+          }
+        }
+      ]
+    },
+    "qualityCanaryFullRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "run_id", "setup_id", "backend"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "quality_id": {"type": "string", "minLength": 1},
+        "run_id": {"type": "string", "minLength": 1},
+        "source_run_id": {"type": "string", "minLength": 1},
+        "setup_id": {"type": "string", "minLength": 1},
+        "hardware_setup_id": {"type": "string", "minLength": 1},
+        "backend": {
+          "type": "string",
+          "minLength": 1,
+          "not": {"const": "tensorrt"}
+        },
+        "variant": {"const": "full"},
+        "variants": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {"const": "full"}
+        },
+        "execution_role": {"const": "full_quality_only"},
+        "performance_claims_emitted": {"const": false}
+      }
+    },
+    "qualityCanaryTensorRTCompanion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "run_id", "setup_id", "backend"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "quality_id": {"type": "string", "minLength": 1},
+        "run_id": {"const": "ort_tensorrt"},
+        "source_run_id": {"const": "native_full_tensorrt"},
+        "setup_id": {"type": "string", "minLength": 1},
+        "hardware_setup_id": {"type": "string", "minLength": 1},
+        "backend": {"const": "tensorrt"},
+        "variant": {"const": "full"},
+        "variants": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {"const": "full"}
+        },
+        "execution_role": {"const": "full_quality_only"},
+        "performance_claims_emitted": {"const": false}
+      }
+    },
+    "cacheVerifyCaseMap": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "pattern": "^b[0-9]+$"
+        }
+      }
+    },
+    "protocolManifestReference": {
+      "oneOf": [
+        {"type": "string", "minLength": 1},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path"],
+          "properties": {
+            "path": {"type": "string", "minLength": 1},
+            "sha256": {"type": "string"}
+          }
+        }
+      ]
+    },
+    "modelShape": {
+      "type": "array",
+      "minItems": 4,
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "modelEntryObject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "task": {
+          "type": "string",
+          "enum": [
+            "classification",
+            "detection",
+            "auto"
+          ]
+        },
+        "family": {
+          "type": "string"
+        },
+        "family_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generalization_scope": {
+          "type": "string",
+          "enum": [
+            "development",
+            "model_family_holdout",
+            "within_family_transfer",
+            "stress_test"
+          ]
+        },
+        "source": {
+          "type": "string"
+        },
+        "weights": {
+          "type": "string"
+        },
+        "model_ref": {
+          "type": "string"
+        },
+        "input_shape": {
+          "$ref": "#/$defs/modelShape"
+        },
+        "semantic_dataset": {
+          "type": "string"
+        },
+        "development_subset": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "onnx": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "model_path": {
+          "type": "string"
+        },
+        "evaluation_role": {
+          "type": "string",
+          "enum": [
+            "development",
+            "holdout",
+            "confirmatory_holdout"
+          ]
+        },
+        "validation_tier": {
+          "type": "string",
+          "enum": [
+            "screening",
+            "final"
+          ]
+        },
+        "candidate_universe_complete": {
+          "type": "boolean"
+        },
+        "holdout_group": {
+          "type": "string"
+        },
+        "unseen_attestation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "unseen": {
+              "type": "boolean"
+            },
+            "attested_by": {
+              "type": "string"
+            },
+            "attested_at": {
+              "type": "string"
+            },
+            "note": {
+              "type": "string"
+            }
+          }
+        },
+        "candidate_universe": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "all_feasible",
+                "deterministic_audit",
+                "audit_universe",
+                "declared_shortlist"
+              ]
+            },
+            "audit_size": {
+              "type": "integer",
+              "minimum": 1,
+              "deprecated": true,
+              "description": "Legacy per-model override retained for profile compatibility. New profiles store this value globally as selection_policy.audit_size."
+            },
+            "minimum_valid_candidates": {
+              "type": "integer",
+              "minimum": 1,
+              "deprecated": true,
+              "description": "Legacy per-model override retained for profile compatibility. New profiles store this value globally as selection_policy.minimum_valid_audit_candidates."
+            },
+            "seed": {
+              "type": "integer",
+              "deprecated": true,
+              "description": "Legacy per-model override retained for profile compatibility. New profiles store this value globally as selection_policy.audit_seed."
+            },
+            "note": {
+              "type": "string"
+            }
+          }
+        },
+        "model_sha256": {
+          "type": "string",
+          "pattern": "^(sha256:)?[0-9a-fA-F]{64}$|^TODO_REPLACE_WITH_SHA256$"
+        }
+      }
+    },
+    "modelEntry": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "$ref": "#/$defs/modelEntryObject"
+        }
+      ]
+    },
+    "runProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"required": ["variants"]},
+          "then": {
+            "properties": {
+              "id": {"const": "ort_tensorrt"},
+              "type": {"const": "same_backend_reference"}
+            }
+          }
+        }
+      ],
+      "required": [
+        "id",
+        "type"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "same_backend_reference",
+            "mixed_backend"
+          ]
+        },
+        "full": {
+          "type": "string"
+        },
+        "full_reference": {
+          "type": "string"
+        },
+        "variants": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["full", "part1", "part2", "composed"]
+          }
+        },
+        "stage1": {
+          "type": "string"
+        },
+        "stage2": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "treat_preflight_block_as_result": {
+          "type": "boolean"
+        },
+        "note": {
+          "type": "string"
+        },
+        "hardware_setup_id": {
+          "type": "string"
+        },
+        "hardware_setup": {
+          "type": "string"
+        },
+        "target_setup": {
+          "type": "string"
+        },
+        "activation_calibration_source": {
+          "type": "string",
+          "description": "Optional Stage-2 activation calibration evidence/source used by accelerator split runs, e.g. activation_proxy_cache."
+        },
+        "activation_proxy_backend": {
+          "type": "string",
+          "description": "Optional requested activation proxy backend for this run, e.g. ort_cpu, cuda_ort, remote_deepx_tensorrt."
+        },
+        "experimental": {
+          "type": "boolean"
+        },
+        "stage2_calibration_source": {
+          "type": "string"
+        },
+        "calibration_source": {
+          "type": "string"
+        },
+        "runner": {
+          "type": "string"
+        },
+        "native_full_baseline": {
+          "type": "boolean"
+        },
+        "same_runtime_contract": {
+          "type": "boolean"
+        }
+      }
+    },
+    "remoteHost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string",
+          "minLength": 1
+        },
+        "user": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "remote_base_dir": {
+          "type": "string"
+        },
+        "ssh_extra_args": {
+          "type": "string"
+        }
+      }
+    },
+    "buildEnvironment": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "kind"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "hailo8_dfc",
+            "hailo10_dfc",
+            "hailo_dfc",
+            "deepx_dxcom",
+            "deepx_dxrt",
+            "deepx_m1"
+          ]
+        },
+        "host": {
+          "type": "string"
+        },
+        "shell": {
+          "type": "string"
+        },
+        "workdir": {
+          "type": "string"
+        },
+        "venv_activate": {
+          "type": "string"
+        },
+        "cache_dir": {
+          "type": "string"
+        },
+        "dx_all_suite_root": {
+          "type": "string"
+        },
+        "wheel_dir": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "compiler_overlay": {
+          "type": "string",
+          "description": "Compiler-local optional Torch overlay; never applied to GUI or remote runtime."
+        },
+        "compiler_venv": {
+          "type": "string"
+        },
+        "runtime_venv": {
+          "type": "string"
+        },
+        "runtime_venv_activate": {
+          "type": "string"
+        },
+        "calib_dir": {
+          "type": "string"
+        }
+      }
+    },
+    "hardwareSetup": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "accelerator"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string"
+        },
+        "accelerator": {
+          "type": "string",
+          "enum": [
+            "hailo8",
+            "hailo10",
+            "deepx_m1",
+            "cpu_ort",
+            "cuda_ort",
+            "tensorrt"
+          ]
+        },
+        "backend": {
+          "type": "string"
+        },
+        "build_environment_id": {
+          "type": "string"
+        },
+        "host": {
+          "type": "object"
+        },
+        "runtime": {
+          "type": "object"
+        },
+        "build": {
+          "type": "object"
+        },
+        "remote_execution": {
+          "type": "object"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "hardwareTarget": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "accelerator"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string"
+        },
+        "accelerator": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "backend": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "build_environment_id": {
+          "type": "string"
+        },
+        "build_env": {
+          "type": "string"
+        },
+        "build_environment": {
+          "type": "object"
+        },
+        "remote": {
+          "$ref": "#/$defs/hardwareRemote"
+        },
+        "runtime": {
+          "$ref": "#/$defs/hardwareRemote"
+        },
+        "remote_execution": {
+          "$ref": "#/$defs/hardwareRemote"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "hardwareRemote": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "user": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "remote_base_dir": {
+          "type": "string"
+        },
+        "remote_venv": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "warmup": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "iters": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeout_s": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "transfer_mode": {
+          "type": "string"
+        },
+        "reuse_bundle": {
+          "type": "boolean"
+        },
+        "resume": {
+          "type": "boolean"
+        },
+        "ssh_extra_args": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

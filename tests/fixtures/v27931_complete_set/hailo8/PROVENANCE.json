@@ -1,0 +1,34 @@
+[
+  {
+    "model": "yolo11l",
+    "case": "b062",
+    "original_result_sha256": "528fc202714a96f98ff34d96ccdac86a778d315f4e22aede881b41aa4f6f4cf3",
+    "removed_result_fields": [
+      "completed_task_repetition_records",
+      "endpoint_results",
+      "raw_model_outputs_repetition_records",
+      "repetition_records",
+      "result_rows"
+    ],
+    "manifest_bytes": "exact_original",
+    "tensor_payloads": "not_in_original_debug_pack",
+    "scope": "manifest_and_attestation_replay_only_not_full_execution_or_energy_qualification",
+    "source_archive": "complete_set_20260907_161614_debug_pack.zip"
+  },
+  {
+    "model": "yolov7_paper",
+    "case": "b044",
+    "original_result_sha256": "98646a3580b1b22a9ea928d4271d6d4ee408ab8b4cd099e731f6283c20eb7c85",
+    "removed_result_fields": [
+      "completed_task_repetition_records",
+      "endpoint_results",
+      "raw_model_outputs_repetition_records",
+      "repetition_records",
+      "result_rows"
+    ],
+    "manifest_bytes": "exact_original",
+    "tensor_payloads": "not_in_original_debug_pack",
+    "scope": "manifest_and_attestation_replay_only_not_full_execution_or_energy_qualification",
+    "source_archive": "complete_set_20260907_161614_debug_pack.zip"
+  }
+]

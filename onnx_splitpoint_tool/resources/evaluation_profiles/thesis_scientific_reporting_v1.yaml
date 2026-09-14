@@ -1,0 +1,189 @@
+name: thesis_scientific_reporting_v1
+purpose: >-
+  Safe starting profile for the v60 task-quality and cost/ranking reporting
+  workflow. It is intentionally configured as screening/development evidence;
+  a final campaign must freeze dataset manifests, promote the tier to final and
+  assign genuinely untouched models to the holdout role before measurements are
+  inspected.
+selection_policy:
+  max_accepted_cases_per_model: 5
+  preferred_shortlist: 10
+  min_gap: 2
+  candidate_search_pool: auto
+  report_blocked_configs: true
+  report_plan_adjustments: true
+  keep_partial_hailo_cases: true
+  full_model_hailo_preflight_policy: skip
+  selection_strategy: stratified_windows
+model_suite:
+  primary:
+    - id: resnet50
+      task: classification
+      family: resnet
+      source: torchvision
+      input_shape: [1, 3, 224, 224]
+      semantic_dataset: imagenet_val
+      development_subset: imagenette_mini
+      evaluation_role: development
+      validation_tier: screening
+      candidate_universe_complete: false
+      note: Development example. Do not relabel as holdout after inspecting its measurements.
+    - id: yolo26s
+      task: detection
+      family: yolo26
+      source: ultralytics
+      input_shape: [1, 3, 640, 640]
+      semantic_dataset: coco2017_val
+      development_subset: coco_50
+      evaluation_role: development
+      validation_tier: screening
+      candidate_universe_complete: false
+      note: Development example. Final detector claims require locked COCO validation and decoder settings.
+  reserve:
+    - mobilenet_v3_large
+    - regnet_x_1_6gf
+    - yolo26m
+    - yolo11l
+run_profiles:
+  - id: ort_cpu
+    type: same_backend_reference
+    full: cpu
+    stage1: cpu
+    stage2: cpu
+    required: true
+  - id: ort_tensorrt
+    type: same_backend_reference
+    full: tensorrt
+    stage1: tensorrt
+    stage2: tensorrt
+    required: true
+  - id: hailo8
+    type: same_backend_reference
+    full: hailo8
+    stage1: hailo8
+    stage2: hailo8
+    required: false
+    treat_preflight_block_as_result: true
+  - id: hailo8_to_trt
+    type: mixed_backend
+    full_reference: cpu_full
+    stage1: hailo8
+    stage2: tensorrt
+    required: false
+    treat_preflight_block_as_result: true
+quality_gate:
+  schema: onnx-splitpoint/task-quality-policy
+  schema_version: 3
+  name: thesis_task_quality_v2
+  profile_id: thesis_task_quality_v2
+  frozen_before_final_campaign: false
+  dataset_tier: screening
+  canonical_reference: canonical_full_onnx
+  classification:
+    primary_metric: top1_accuracy
+    non_inferiority_margin: 0.01
+    guardrails:
+      top5_accuracy_margin: 0.01
+  detection:
+    primary_metric: coco_ap_50_95
+    non_inferiority_margin: 0.01
+    guardrails:
+      ap50_margin: 0.01
+  statistics:
+    method: paired_bootstrap
+    confidence_level: 0.95
+    bootstrap_repetitions: 2000
+    seed: 20260710
+    decision: lower_one_sided_bound
+  native_contract:
+    detection_self_reference_min_match_ratio: 0.80
+    detection_self_reference:
+      policy_id: class_aware_iou50_postnms_v2
+      min_reference_match_ratio: 0.80
+      min_mean_matched_iou: 0.85
+      iou_threshold: 0.50
+      confidence_threshold: 0.25
+      denominator: reference_detections
+      class_aware: true
+    numerical_similarity_required_for_claim: true
+    self_reference_counts_as_task_accuracy: false
+  screening_eligible_for_ranking: false
+  legacy_point_estimate_eligible_for_ranking: false
+ranking_validation:
+  enabled: true
+  holdout_unit: model_direction_runner
+  candidate_universe: all_feasible
+  require_frozen_predictions: true
+  require_complete_candidate_universe: true
+  candidate_universe_complete: false
+  k_values: [1, 3, 5]
+  elite_q_values: [1, 3]
+  primary_k: 5
+  minimum_candidates_for_correlation: 3
+  near_optimal_relative_epsilon: 0.01
+  targets: [pipeline_cycle_ms]
+  methods:
+    - cut_bytes_only
+    - weighted_score
+    - cycle_time_no_handover
+    - cycle_time_with_handover
+  weighted_score:
+    # Historical tool score from Chapter 7: normalised communication volume,
+    # compute imbalance and number of crossing tensors. Lower is better.
+    w_comm: 1.0
+    w_imb: 3.0
+    w_tensors: 0.2
+    log_comm: true
+  cycle_time_no_handover:
+    # Optional per-backend achieved throughput values. Candidate-specific
+    # prospective stage-time fields take precedence when available.
+    backend_throughput_gops: {}
+  cycle_time_with_handover:
+    backend_throughput_gops: {}
+    handover_models:
+      generic:
+        default:
+          mode: objective_scoring_directional
+          use_calibration: true
+      native_fifo:
+        default:
+          # Native FIFO must not inherit the Generic Runner handover model.
+          # Before a final native hold-out, freeze prospective native handover
+          # fields or replace this with a fitted constant/bandwidth/affine model.
+          mode: candidate_field
+          fields:
+            - predicted_handover_ms_native_fifo
+            - native_fifo_predicted_handover_ms
+            - predicted_native_handoff_ms
+  prediction_artifact_required_fields:
+    - model_hash
+    - profile_hash
+    - tool_commit
+    - prediction_created_at
+  measurement_artifact_required_fields:
+    - case_id
+    - pipeline_cycle_selected_ms
+    - task_quality_gate
+    - row_eligibility
+validation:
+  split_fidelity_reference_mode: auto
+  classification_metrics: [top1, top5]
+  detection_metrics: [coco_ap_50_95, ap50, ap75]
+  backend_drift_reference: cpu_full
+  report_blocked_and_infeasible: true
+reporting:
+  include_decision_summary: true
+  include_backend_drift_block: true
+  include_task_specific_quality_block: true
+  aggregate_by_model: true
+  aggregate_by_run_profile: true
+  canonical_scientific_report: true
+  cleanup_legacy_reports: true
+  generate_thesis_tex: true
+  generate_thesis_figures: true
+implementation_note: >-
+  This profile is a non-final template. Before the final campaign, use immutable
+  validation manifests and hashes, set frozen_before_final_campaign=true,
+  promote validation_tier/dataset_tier to final, mark only genuinely unseen
+  models as holdout and set candidate_universe_complete=true only after the
+  score-independent audit universe has been measured.

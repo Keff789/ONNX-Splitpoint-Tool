@@ -66,11 +66,10 @@ def build_panel(parent, app=None) -> ttk.Frame:
     var_split_folder = getattr(app, "var_split_folder", tk.BooleanVar(value=True)) if app is not None else tk.BooleanVar(value=True)
     ttk.Checkbutton(split_output_group, text="Export as folder", variable=var_split_folder).pack(side=tk.LEFT, padx=8, pady=8)
 
-    # Optional: build Hailo HEFs after export.
-    # (Settings are shared with benchmark-set generation.)
-    hef_group = ttk.LabelFrame(frame, text="Hailo HEF generation")
-    hef_group.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 8))
-
+    # Backend accelerator artefact builds moved out of this export tab.
+    # Keep the legacy Tk variables initialized because existing generation code
+    # and persisted settings still read them.  Benchmark/Evaluation Profile
+    # selections now decide which HEF/DXNN artefacts are planned.
     def _bool_on_app(name: str, default: bool) -> tk.BooleanVar:
         if app is None:
             return tk.BooleanVar(value=default)
@@ -96,17 +95,6 @@ def build_panel(parent, app=None) -> ttk.Frame:
     var_hef_h8_arch = _str_on_app("var_hailo_hef_hailo8_hw_arch", "hailo8")
     var_hef_h10_en = _bool_on_app("var_hailo_hef_hailo10_enable", False)
     var_hef_h10_arch = _str_on_app("var_hailo_hef_hailo10_hw_arch", "hailo10h")
-
-    # Backwards-compat: older configs used the generic "hailo10" string which
-    # newer DFC versions reject. Normalize it to the common default (hailo10h)
-    # so users do not accidentally select an invalid arch.
-    try:
-        if (var_hef_h10_arch.get() or "").strip() == "hailo10":
-            var_hef_h10_arch.set("hailo10h")
-    except Exception:
-        pass
-
-    # Compile knobs (used by HEF generation)
     var_opt_level = _str_on_app("var_hailo_hef_opt_level", "1")
     var_calib_count = _str_on_app("var_hailo_hef_calib_count", "64")
     var_calib_bs = _str_on_app("var_hailo_hef_calib_batch_size", "8")
@@ -114,117 +102,32 @@ def build_panel(parent, app=None) -> ttk.Frame:
     var_force = _bool_on_app("var_hailo_hef_force", False)
     var_keep = _bool_on_app("var_hailo_hef_keep_artifacts", False)
     var_preset = _str_on_app("var_hailo_hef_preset", "Standard")
-
-    # Row 0: targets + parts
-    row0 = ttk.Frame(hef_group)
-    row0.pack(fill=tk.X, padx=8, pady=(8, 4))
-
-    ttk.Label(row0, text="Targets:").pack(side=tk.LEFT)
-    ttk.Checkbutton(row0, text="Hailo-8", variable=var_hef_h8_en).pack(side=tk.LEFT, padx=(6, 0))
-    ttk.Combobox(row0, textvariable=var_hef_h8_arch, values=["hailo8", "hailo8l", "hailo8r"], width=9, state="readonly").pack(
-        side=tk.LEFT, padx=(4, 12)
-    )
-    ttk.Checkbutton(row0, text="Hailo-10", variable=var_hef_h10_en).pack(side=tk.LEFT)
-    ttk.Combobox(row0, textvariable=var_hef_h10_arch, values=["hailo10h", "hailo10p"], width=9, state="readonly").pack(
-        side=tk.LEFT, padx=(4, 12)
-    )
-
-    # Row 0b: compute mode (GPU/CPU) used by the managed DFC.
-    # This is populated by the Hailo probe on startup and updated when the
-    # backend settings change.
-    var_compute = _str_on_app("var_hailo_compute_status", "")
-    row0b = ttk.Frame(hef_group)
-    row0b.pack(fill=tk.X, padx=8, pady=(0, 4))
-    ttk.Label(row0b, textvariable=var_compute, foreground="#444").pack(side=tk.LEFT)
-
-    diag_tools = ttk.Frame(row0b)
-    diag_tools.pack(side=tk.RIGHT)
-    btn_last_diag = ttk.Button(diag_tools, text="Last diagnostics…", command=getattr(app, "_hailo_gui_show_last_diagnostics", None))
-    btn_last_diag.pack(side=tk.LEFT)
-    attach_tooltip(
-        btn_last_diag,
-        "Show the most recent Hailo HEF build diagnostics collected in this GUI session.\n"
-        "This includes the structured process summary (partition time, contexts, SNR, warnings, system snapshot on failures).",
-    )
-    btn_open_diag = ttk.Button(diag_tools, text="Open result JSON…", command=getattr(app, "_hailo_gui_open_result_json", None))
-    btn_open_diag.pack(side=tk.LEFT, padx=(8, 0))
-    attach_tooltip(
-        btn_open_diag,
-        "Open a hailo_hef_build_result.json from disk and render the extracted diagnostics in a scrollable popup.",
-    )
-
-    ttk.Label(row0, text="Build:").pack(side=tk.LEFT, padx=(8, 4))
-    ttk.Checkbutton(row0, text="full", variable=var_hef_full).pack(side=tk.LEFT)
-    ttk.Checkbutton(row0, text="part1", variable=var_hef_part1).pack(side=tk.LEFT, padx=(6, 0))
-    ttk.Checkbutton(row0, text="part2", variable=var_hef_part2).pack(side=tk.LEFT, padx=(6, 0))
-
-    # Row 1: compile knobs
-    row1 = ttk.Frame(hef_group)
-    row1.pack(fill=tk.X, padx=8, pady=(0, 4))
-
-    ttk.Label(row1, text="Preset:").pack(side=tk.LEFT)
-    preset_cb = ttk.Combobox(
-        row1,
-        textvariable=var_preset,
-        values=["Quick", "Standard", "Accurate"],
-        width=10,
-        state="readonly",
-    )
-    preset_cb.pack(side=tk.LEFT, padx=(4, 10))
-
-    def _apply_preset(*_):
-        p = (var_preset.get() or "Standard").strip().lower()
-        # Defaults are tuned for usability. Users can still override fields afterwards.
-        if p == "quick":
-            var_opt_level.set("0")
-            var_calib_count.set("16")
-            var_calib_bs.set("8")
-            var_force.set(False)
-            var_keep.set(False)
-        elif p == "accurate":
-            var_opt_level.set("2")
-            var_calib_count.set("256")
-            var_calib_bs.set("8")
-            var_force.set(False)
-            var_keep.set(True)
-        else:  # Standard
-            var_opt_level.set("1")
-            var_calib_count.set("64")
-            var_calib_bs.set("8")
-            var_force.set(False)
-            var_keep.set(False)
-
     try:
-        var_preset.trace_add("write", _apply_preset)
+        if (var_hef_h10_arch.get() or "").strip() == "hailo10":
+            var_hef_h10_arch.set("hailo10h")
     except Exception:
         pass
-    _apply_preset()
 
-    ttk.Label(row1, text="Opt level:").pack(side=tk.LEFT)
-    ttk.Entry(row1, textvariable=var_opt_level, width=5).pack(side=tk.LEFT, padx=(4, 10))
-    ttk.Label(row1, text="Calib count:").pack(side=tk.LEFT)
-    ttk.Entry(row1, textvariable=var_calib_count, width=7).pack(side=tk.LEFT, padx=(4, 10))
-    ttk.Label(row1, text="Calib batch:").pack(side=tk.LEFT)
-    ttk.Entry(row1, textvariable=var_calib_bs, width=7).pack(side=tk.LEFT, padx=(4, 10))
-    ttk.Checkbutton(row1, text="Force rebuild", variable=var_force).pack(side=tk.LEFT, padx=(8, 0))
-    ttk.Checkbutton(row1, text="Keep HARs", variable=var_keep).pack(side=tk.LEFT, padx=(8, 0))
-
-    # Row 2: calib dir
-    row2 = ttk.Frame(hef_group)
-    row2.pack(fill=tk.X, padx=8, pady=(0, 8))
-    ttk.Label(row2, text="Calib dir:").pack(side=tk.LEFT)
-    ent_cal = ttk.Entry(row2, textvariable=var_calib_dir, width=48)
-    ent_cal.pack(side=tk.LEFT, padx=(4, 8))
-
-    def _browse_calib() -> None:
-        initial = (var_calib_dir.get() or "").strip()
-        if initial and not os.path.isdir(initial):
-            initial = ""
-        p = filedialog.askdirectory(title="Select calibration directory", initialdir=initial or None)
-        if p:
-            var_calib_dir.set(p)
-
-    ttk.Button(row2, text="Browse…", command=_browse_calib).pack(side=tk.LEFT)
+    artifact_group = ttk.LabelFrame(frame, text="Backend artifact builds")
+    artifact_group.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 8))
+    artifact_group.columnconfigure(0, weight=1)
+    artifact_note = ttk.Label(
+        artifact_group,
+        text=(
+            "HEF/DXNN builds are no longer configured here. Select Hailo-8, Hailo-10, "
+            "DeepX DX-M1 and mixed pipelines in the Benchmark tab or in the Evaluation Profile editor. "
+            "Compiler environments and calibration defaults live in Hardware."
+        ),
+        wraplength=1100,
+        justify="left",
+        foreground="#555",
+    )
+    artifact_note.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
+    attach_tooltip(
+        artifact_note,
+        "Advanced Export only writes one selected split and optional context/report files. "
+        "Evaluation runs and benchmark sets decide backend artefacts from their target matrix."
+    )
 
     graphviz_status = tk.StringVar(value="")
     lbl_graphviz = ttk.Label(frame, textvariable=graphviz_status, foreground="#b36b00")
@@ -298,21 +201,8 @@ def build_panel(parent, app=None) -> ttk.Frame:
             lines += ["  - run_split_onnxruntime.py", "  - run_split_onnxruntime.bat", "  - run_split_onnxruntime.sh"]
             est += 48 * 1024
 
-        # Hailo HEFs (optional)
-        if bool(var_hef_full.get() or var_hef_part1.get() or var_hef_part2.get()):
-            targets = []
-            if bool(var_hef_h8_en.get()):
-                targets.append((var_hef_h8_arch.get() or "hailo8").strip() or "hailo8")
-            if bool(var_hef_h10_en.get()):
-                targets.append((var_hef_h10_arch.get() or "hailo10h").strip() or "hailo10h")
-            for hw in targets:
-                if bool(var_hef_full.get()):
-                    lines += [f"  - hailo/{hw}/full/compiled.hef"]
-                if bool(var_hef_part1.get()):
-                    lines += [f"  - hailo/{hw}/part1/compiled.hef"]
-                if bool(var_hef_part2.get()):
-                    lines += [f"  - hailo/{hw}/part2/compiled.hef"]
-            est += 512 * 1024  # placeholder
+        # Backend accelerator artefacts are intentionally not previewed here.
+        # They are created by Benchmark/Evaluation workflows from target profiles.
 
         if vars_map["context"].get():
             if bool(var_ctx_full.get()):

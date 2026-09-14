@@ -1,0 +1,31 @@
+{
+  "schema": "onnx-splitpoint/v2803-diagnostic-followup-scope",
+  "schema_version": 1,
+  "role": "predeclared_followup_not_executed",
+  "source_run": "completsetdev_20260910_210826",
+  "source_tool_version": "2.80.1",
+  "numerical_product_patch": "none_proven",
+  "new_hardware_jobs": 0,
+  "device_configuration_writes": 0,
+  "mobilenet": {
+    "predeclared_cases": ["full", "b056", "b135"],
+    "image_contract": "same_predeclared_development_images_for_all_cases",
+    "intermediate_comparison": "each_part1_against_its_own_float_part1",
+    "end_output_comparison": "paired_predictions_by_image_id",
+    "archive_metrics_role": "generic_diagnostic_not_central_quality_acceptance",
+    "worse_cases_retained": true
+  },
+  "yolo26": {
+    "retained_negative_cases": {"yolo26m": "b398", "yolo26s": "b364"},
+    "primary_diagnostics": ["score_column_not_probability_like", "coordinates_not_ordered_xyxy"],
+    "part2_input": "same_captured_handover_tensor_for_tensorrt_and_float",
+    "bound_quantinfo_layout_dequantization_required": true,
+    "heuristic_decoder_score_or_nms_changes": false,
+    "new_compile_on_suspicion": false
+  },
+  "har_emulation_without_bound_artifact": "not_available",
+  "hailo8_gpu": "missing_compiler_components_remain_explicit_blocker",
+  "hailo10_gpu": "preference_does_not_prove_observed_execution",
+  "historical_energy": {"duration_s": 1, "repetitions": 3, "scope": "FS", "window": "command", "role": "screening"},
+  "setup_comparison": "retain_original_requested_observed_before_after_tpc_emc_fields_no_inferred_core_count"
+}

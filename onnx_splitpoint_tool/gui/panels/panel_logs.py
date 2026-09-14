@@ -382,7 +382,17 @@ def build_panel(parent, app=None) -> ttk.Frame:
     ttk.Button(ret, text="Clean now", command=_clean_logs).pack(side=tk.LEFT, padx=(8, 0))
 
     _refresh_list(select_first=True)
-    _refresh_content()
+    # v58x: do not read/render large log files during GUI startup.
+    # On long-running development sessions gui.log can be several MB; inserting
+    # the tail into a Tk Text widget before the first paint can delay the window
+    # by tens of seconds.  Keep discovery cheap and load content only when the
+    # user explicitly presses Refresh/Open active, or when opt-in auto-refresh is
+    # enabled.
+    _render_text(
+        "Log panel ready.\n\n"
+        "Log content is loaded lazily to keep GUI startup fast.\n"
+        "Click Refresh, Select active, or enable ONNX_SPLITPOINT_LOGS_AUTOREFRESH=1 for live tailing.\n"
+    )
 
     _auto_refresh_job = {"id": None, "last_label": None, "last_mtime_ns": None, "ticks": 0}
 
@@ -427,5 +437,15 @@ def build_panel(parent, app=None) -> ttk.Frame:
             _auto_refresh_job["id"] = None
 
     frame.bind("<Destroy>", _cancel_auto_refresh, add=True)
-    _schedule_auto_refresh()
+    try:
+        auto_logs = str(os.environ.get("ONNX_SPLITPOINT_LOGS_AUTOREFRESH", "0")).strip().lower() in {"1", "true", "yes", "on"}
+    except Exception:
+        auto_logs = False
+    if auto_logs:
+        _schedule_auto_refresh()
+    else:
+        try:
+            logging.getLogger(__name__).info("Logs panel auto-refresh disabled at startup; content is loaded lazily")
+        except Exception:
+            pass
     return frame

@@ -1,0 +1,79 @@
+{
+  "schema": "v2804/ap0-source-index/v1",
+  "sources": [
+    {
+      "filename": "runtime_evidence(1).zip",
+      "library_file_id": "libfile_b433f4a1745481919cbc271749d8945a",
+      "file_id": "file_00000000c9288210b8ba08f22d2d3900",
+      "size_bytes": 26395,
+      "path": "/Diss/runtime_evidence(1).zip",
+      "availability": "resolved_but_download_blocked_http502",
+      "original_sha256": null
+    },
+    {
+      "filename": "hailo8_mobilenet_gpu_20260912T083456Z_a_10a8wv.zip",
+      "library_file_id": "libfile_1a9e248e44108191845b1738211cdbd5",
+      "file_id": "file_00000000472881f4bc871c249c139e23",
+      "size_bytes": 134888,
+      "path": "/Diss/hailo8_mobilenet_gpu_20260912T083456Z_a_10a8wv.zip",
+      "availability": "resolved_but_download_blocked_http502",
+      "original_sha256": null
+    },
+    {
+      "filename": "hailo8_gpu_test_20260912T062240Z_hx7b7hcq.zip",
+      "library_file_id": "libfile_6a7d2403386481918d5106898f89323f",
+      "file_id": "file_0000000021c881f496d428330c513b1f",
+      "size_bytes": 134608,
+      "path": "/Diss/hailo8_gpu_test_20260912T062240Z_hx7b7hcq.zip",
+      "availability": "resolved_but_download_blocked_http502",
+      "original_sha256": null
+    },
+    {
+      "filename": "quality_snapshot.zip",
+      "library_file_id": "libfile_4ccbfd5cb0108191a31b223e4dc21f06",
+      "file_id": "file_000000005f0082108fafc917052f67a8",
+      "size_bytes": 7840085,
+      "path": "/Diss/quality_snapshot.zip",
+      "availability": "resolved_but_download_blocked_http502",
+      "original_sha256": null
+    },
+    {
+      "filename": "run_manifest(3).json",
+      "library_file_id": "libfile_9cc65e4166a48191bbad5adeea89c4dc",
+      "file_id": "file_00000000b12c8210a62f204032e263cd",
+      "size_bytes": 2755796,
+      "path": "/Diss/run_manifest(3).json",
+      "availability": "selected_primary_text_read",
+      "original_sha256": null
+    },
+    {
+      "filename": "v2.80.4_Implementationsplan_und_Hailo8_Runtime_Nachweise_2026-09-12.zip",
+      "library_file_id": "libfile_2f394d5ec5888191be3d62a7d6c24ae3",
+      "file_id": "file_000000001dd882108d79c948070c3900",
+      "size_bytes": 7952209,
+      "path": "/Diss/v2.80.4_Implementationsplan_und_Hailo8_Runtime_Nachweise_2026-09-12.zip",
+      "availability": "resolved_but_download_blocked_http502",
+      "original_sha256": null
+    },
+    {
+      "filename": "Eingefügter Text(20260912-121049).txt",
+      "library_file_id": "libfile_f9ad6b6d1b6c8191a80a81a456fad5f5",
+      "file_id": "file_00000000baa882438590b7f12b731aa9",
+      "size_bytes": 12949,
+      "path": "/Diss/Eingefügter Text(20260912-121049).txt",
+      "availability": "complete_terminal_text_read",
+      "original_sha256": null
+    }
+  ],
+  "download_attempts": {
+    "documented_search_download_helper": "HTTP 502",
+    "prepare_materialize": "authorized_transfers_prepared",
+    "official_materialize_helper": "HTTP 502",
+    "independent_endpoint_check": "HTTP 502: [Errno 111] Connection refused"
+  },
+  "scope_limitations": [
+    "No original ZIP bytes materialized. Cannot claim Q1 11-file fixture or Q5 actual123-request export validated.",
+    "Parsed text copies are derived records; original file hashes and exact bytes are not inferred."
+  ]
+}
+

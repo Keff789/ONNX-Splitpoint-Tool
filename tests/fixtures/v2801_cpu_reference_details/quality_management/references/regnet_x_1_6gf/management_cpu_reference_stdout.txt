@@ -1,0 +1,15 @@
+[case-filter] selected 1/1 case(s): ['b132']
+[case-filter] target filter: case=b132 variant=*
+[plan] selected run ids: management_cpu_reference
+
+[management_cpu_reference] [1/1] Running b132 (provider=cpu)
+Traceback (most recent call last):
+  File "/home/kmika/Models/EvaluationRuns/biggerset_20260910_094202/quality_management/references/regnet_x_1_6gf/workspaces/management_cpu_reference_0pney21x/suite/benchmark_suite.py", line 11825, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/home/kmika/Models/EvaluationRuns/biggerset_20260910_094202/quality_management/references/regnet_x_1_6gf/workspaces/management_cpu_reference_0pney21x/suite/benchmark_suite.py", line 11160, in main
+    r = _run_case(
+        ^^^^^^^^^^
+  File "/home/kmika/Models/EvaluationRuns/biggerset_20260910_094202/quality_management/references/regnet_x_1_6gf/workspaces/management_cpu_reference_0pney21x/suite/benchmark_suite.py", line 9201, in _run_case
+    raise RuntimeError(
+RuntimeError: generic Full central-quality dispatch identity is incomplete: quality-evidence-eval-id,quality-evidence-setup-id

@@ -58,6 +58,15 @@ def splitpoint_wsl_debug_dir() -> Path:
     return splitpoint_logs_dir() / "wsl_debug"
 
 
+def splitpoint_provisioning_logs_dir() -> Path:
+    """Canonical directory for installer/provisioning logs.
+
+    Keep Hailo/DeepX provisioning logs next to GUI/runtime logs so a single
+    logs folder or debug pack contains all relevant diagnostics.
+    """
+    return splitpoint_logs_dir() / "provisioning"
+
+
 def ensure_dir(p: Path) -> Path:
     p.mkdir(parents=True, exist_ok=True)
     return p

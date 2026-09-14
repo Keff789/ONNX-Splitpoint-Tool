@@ -1,0 +1,364 @@
+{
+  "scope": "offline_original_registry_resolver_and_real_tk_editor",
+  "hardware_run": false,
+  "product_files_modified": false,
+  "checks": [
+    {
+      "name": "actual_raw_yaml_booleans_not_strings",
+      "status": "PASS",
+      "detail": {
+        "smoke": {
+          "hailo": {
+            "value": false,
+            "type": "bool"
+          },
+          "deepx": {
+            "value": false,
+            "type": "bool"
+          }
+        },
+        "standard": {
+          "hailo": {
+            "value": false,
+            "type": "bool"
+          },
+          "deepx": {
+            "value": false,
+            "type": "bool"
+          }
+        },
+        "final": {
+          "hailo": {
+            "value": true,
+            "type": "bool"
+          },
+          "deepx": {
+            "value": true,
+            "type": "bool"
+          }
+        }
+      }
+    },
+    {
+      "name": "packaged_and_python_defaults_force_off",
+      "status": "PASS",
+      "detail": {
+        "python_defaults": {
+          "hailo": false,
+          "deepx": false
+        },
+        "packaged_yaml": {
+          "hailo": false,
+          "deepx": false
+        }
+      }
+    },
+    {
+      "name": "entire_registry_hash_matches_all_16_historical_runs",
+      "status": "PASS",
+      "detail": {
+        "history_matches": 16,
+        "earliest": "2026-09-03T21:42:02+02:00",
+        "raw_yaml_sha256": "35398e67852d32cccf4e4b27859ac3a8d8f9fd1dfb4f294c90946b7ff24cbd86",
+        "v30_validated_registry_hash": "15919a1020541b0f2e268bc2fe7514df6bb1e32fb73937963b26ef347299ec60",
+        "v32_validated_registry_hash": "a99fefe81a2cd9734ed8ef2bcfaa3799a019e3f3c0d1bc1fb1720eb2e7db31bc",
+        "old_to_new_delta": [
+          {
+            "path": "modes.final.build.deepx.classification_preprocessing",
+            "old": "<absent>",
+            "new": "imagenet_mean_std"
+          },
+          {
+            "path": "modes.smoke.build.deepx.classification_preprocessing",
+            "old": "<absent>",
+            "new": "imagenet_mean_std"
+          },
+          {
+            "path": "modes.standard.build.deepx.classification_preprocessing",
+            "old": "<absent>",
+            "new": "imagenet_mean_std"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mode_selection_exposes_existing_final_values",
+      "status": "PASS",
+      "detail": {
+        "smoke": {
+          "hailo_force": false,
+          "deepx_force": false,
+          "classification": "current_scale_only",
+          "mode": "smoke",
+          "hailo_integrity": "relaxed"
+        },
+        "standard": {
+          "hailo_force": false,
+          "deepx_force": false,
+          "classification": "current_scale_only",
+          "mode": "standard",
+          "hailo_integrity": "relaxed"
+        },
+        "final": {
+          "hailo_force": true,
+          "deepx_force": true,
+          "classification": "current_scale_only",
+          "mode": "final",
+          "hailo_integrity": "relaxed"
+        }
+      }
+    },
+    {
+      "name": "profile_only_force_off_is_not_authoritative",
+      "status": "PASS",
+      "detail": {
+        "hailo_force": true,
+        "deepx_force": true,
+        "classification": "current_scale_only",
+        "mode": "final",
+        "hailo_integrity": "relaxed"
+      }
+    },
+    {
+      "name": "central_force_off_works_without_changing_relaxed",
+      "status": "PASS",
+      "detail": {
+        "hailo_force": false,
+        "deepx_force": false,
+        "classification": "current_scale_only",
+        "mode": "final",
+        "hailo_integrity": "relaxed"
+      }
+    },
+    {
+      "name": "separate_explicit_profile_meanstd_selection",
+      "status": "PASS",
+      "detail": {
+        "hailo_force": false,
+        "deepx_force": false,
+        "classification": "imagenet_mean_std",
+        "mode": "final",
+        "hailo_integrity": "relaxed"
+      }
+    },
+    {
+      "name": "schema13_loader_preserves_existing_registry_no_write",
+      "status": "PASS",
+      "detail": {
+        "schema": 13,
+        "force_retained": true,
+        "bytes_mtime_unchanged": true
+      }
+    },
+    {
+      "name": "installed_editor_actual_registry_roundtrip_preserves_true",
+      "status": "PASS",
+      "detail": {
+        "before": {
+          "hailo": true,
+          "deepx": true
+        },
+        "saved": {
+          "hailo": true,
+          "deepx": true
+        }
+      }
+    },
+    {
+      "name": "installed_editor_packaged_defaults_stay_false",
+      "status": "PASS",
+      "detail": {
+        "before": {
+          "hailo": false,
+          "deepx": false
+        },
+        "saved": {
+          "hailo": false,
+          "deepx": false
+        }
+      }
+    },
+    {
+      "name": "installed_editor_explicitly_switch_off_persists_false",
+      "status": "PASS",
+      "detail": {
+        "before": {
+          "hailo": true,
+          "deepx": true
+        },
+        "saved": {
+          "hailo": false,
+          "deepx": false
+        }
+      }
+    },
+    {
+      "name": "synthetic_string_false_bug_reproduced_not_historical_cause",
+      "status": "PASS",
+      "detail": {
+        "before": {
+          "hailo": true,
+          "deepx": true
+        },
+        "saved": {
+          "hailo": true,
+          "deepx": true
+        },
+        "synthetic_only": true,
+        "actual_registry_contains_string_false": false
+      }
+    },
+    {
+      "name": "installed_stale_panel_bug_reproduced_no_historical_event_proof",
+      "status": "PASS",
+      "detail": {
+        "external_current": {
+          "hailo": false,
+          "deepx": false
+        },
+        "after_stale_panel_save": {
+          "hailo": true,
+          "deepx": true
+        },
+        "synthetic_only": true
+      }
+    },
+    {
+      "name": "synthetic_old_final_can_preserve_true_and_stale_description",
+      "status": "PASS",
+      "detail": {
+        "label": "Final Quality (Standard+)",
+        "description": "Maximum-effort frozen campaign with 5,000 validation items per task by default, strict provenance and thesis reporting.",
+        "force": {
+          "hailo": true,
+          "deepx": true
+        },
+        "synthetic_input_not_recovered_history": true
+      }
+    }
+  ],
+  "history_matches": [
+    {
+      "path": "/home/kmika/Models/EvaluationRuns/complete_set_20260908_030632/profile.yaml",
+      "resolved_at": "2026-09-08T03:05:53+02:00",
+      "mode": "final",
+      "hash_matches": true
+    },
+    {
+      "path": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/profile.yaml",
+      "resolved_at": "2026-09-07T16:15:42+02:00",
+      "mode": "standard",
+      "hash_matches": true
+    },
+    {
+      "path": "/home/kmika/Models/EvaluationRuns/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/profile.yaml",
+      "resolved_at": "2026-09-07T15:13:47+02:00",
+      "mode": "standard",
+      "hash_matches": true
+    },
+    {
+      "path": "/home/kmika/Models/EvaluationRuns/v27926_acceptance_d_yolo11l_b003_deepx_gpu_20260907_101443/profile.yaml",
+      "resolved_at": "2026-09-07T10:14:11+02:00",
+      "mode": "standard",
+      "hash_matches": true
+    },
+    {
+      "path": "/home/kmika/Models/EvaluationRuns/v27925_acceptance_d_yolo11l_b003_deepx_gpu_20260907_063645/profile.yaml",
+      "resolved_at": "2026-09-07T06:36:17+02:00",
+      "mode": "standard",
+      "hash_matches": true
+    },
+    {
+      "path": "/home/kmika/Models/EvaluationRuns/v27925_acceptance_d_yolo11l_b003_deepx_gpu_20260906_150634/profile.yaml",
+      "resolved_at": "2026-09-06T15:06:05+02:00",
+      "mode": "standard",
+      "hash_matches": true
+    },
+    {
+      "path": "/home/kmika/Models/EvaluationRuns/v27924_rebuild_acceptance_b_yolo11l_b003_20260906_110804/profile.yaml",
+      "resolved_at": "2026-09-06T11:07:32+02:00",
+      "mode": "standard",
+      "hash_matches": true
+    },
+    {
+      "path": "/home/kmika/Models/EvaluationRuns/v27924_rebuild_acceptance_a_mobilenet_b027_20260906_101452/profile.yaml",
+      "resolved_at": "2026-09-06T10:14:24+02:00",
+      "mode": "standard",
+      "hash_matches": true
+    },
+    {
+      "path": "/home/kmika/Models/EvaluationRuns/v27924_acceptance_b_yolo11l_b003_20260906_094101/profile.yaml",
+      "resolved_at": "2026-09-06T09:40:33+02:00",
+      "mode": "standard",
+      "hash_matches": true
+    },
+    {
+      "path": "/home/kmika/Models/EvaluationRuns/v27924_acceptance_a_mobilenet_b027_20260906_083141/profile.yaml",
+      "resolved_at": "2026-09-06T08:31:11+02:00",
+      "mode": "standard",
+      "hash_matches": true
+    },
+    {
+      "path": "/home/kmika/Models/EvaluationRuns/complete_set_20260905_164805/profile.yaml",
+      "resolved_at": "2026-09-05T16:47:35+02:00",
+      "mode": "standard",
+      "hash_matches": true
+    },
+    {
+      "path": "/home/kmika/Models/EvaluationRuns/complete_set_20260904_223711/profile.yaml",
+      "resolved_at": "2026-09-04T22:36:42+02:00",
+      "mode": "standard",
+      "hash_matches": true
+    },
+    {
+      "path": "/home/kmika/Models/EvaluationRuns/complete_set_20260904_192347/profile.yaml",
+      "resolved_at": "2026-09-04T19:23:22+02:00",
+      "mode": "standard",
+      "hash_matches": true
+    },
+    {
+      "path": "/home/kmika/Models/EvaluationRuns/complete_set_20260904_182211/profile.yaml",
+      "resolved_at": "2026-09-04T18:21:44+02:00",
+      "mode": "standard",
+      "hash_matches": true
+    },
+    {
+      "path": "/home/kmika/Models/EvaluationRuns/complete_set_20260904_160656/profile.yaml",
+      "resolved_at": "2026-09-04T16:06:26+02:00",
+      "mode": "standard",
+      "hash_matches": true
+    },
+    {
+      "path": "/home/kmika/Models/EvaluationRuns/complete_set_20260903_214231/profile.yaml",
+      "resolved_at": "2026-09-03T21:42:02+02:00",
+      "mode": "standard",
+      "hash_matches": true
+    }
+  ],
+  "configuration_hashes": {
+    "raw_yaml_sha256": "35398e67852d32cccf4e4b27859ac3a8d8f9fd1dfb4f294c90946b7ff24cbd86",
+    "v30_validated_registry_hash": "15919a1020541b0f2e268bc2fe7514df6bb1e32fb73937963b26ef347299ec60",
+    "v32_validated_registry_hash": "a99fefe81a2cd9734ed8ef2bcfaa3799a019e3f3c0d1bc1fb1720eb2e7db31bc",
+    "old_to_new_delta": [
+      {
+        "path": "modes.final.build.deepx.classification_preprocessing",
+        "old": "<absent>",
+        "new": "imagenet_mean_std"
+      },
+      {
+        "path": "modes.smoke.build.deepx.classification_preprocessing",
+        "old": "<absent>",
+        "new": "imagenet_mean_std"
+      },
+      {
+        "path": "modes.standard.build.deepx.classification_preprocessing",
+        "old": "<absent>",
+        "new": "imagenet_mean_std"
+      }
+    ]
+  },
+  "original_files_unchanged": true,
+  "passed": 14,
+  "failed": 0,
+  "conclusion": "Evidence of pre-existing final-mode force values, no proof of initial writer; installed editor weaknesses reproduced separately."
+}

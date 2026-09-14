@@ -1,0 +1,209 @@
+name: three_accelerator_evaluation_v1
+purpose: 'Example profile for one Evaluation Workflow that targets three Orin NX systems:
+  Hailo-8, Hailo-10 and DeepX DX-M1.'
+selection_policy:
+  max_accepted_cases_per_model: 5
+  preferred_shortlist: 10
+  min_gap: 2
+  candidate_search_pool: 40
+  report_blocked_configs: true
+  report_plan_adjustments: true
+  keep_partial_hailo_cases: true
+  full_model_hailo_preflight_policy: enabled
+  selection_strategy: stratified_windows
+model_suite:
+  primary:
+  - id: resnet50
+    task: classification
+    family: resnet
+    source: torchvision
+    onnx: /homes/kmika/Models/resnet50.onnx
+    input_shape:
+    - 1
+    - 3
+    - 224
+    - 224
+    semantic_dataset: imagenet_val
+    development_subset: imagenet_val_mini_200
+  - id: yolo26s
+    task: detection
+    family: yolo26
+    source: ultralytics
+    onnx: /homes/kmika/Models/yolo26s.onnx
+    input_shape:
+    - 1
+    - 3
+    - 640
+    - 640
+    semantic_dataset: coco2017_val
+    development_subset: coco_50
+run_profiles:
+- id: ort_cpu
+  type: same_backend_reference
+  full: cpu
+  stage1: cpu
+  stage2: cpu
+  required: true
+- id: ort_cuda
+  type: same_backend_reference
+  full: cuda
+  stage1: cuda
+  stage2: cuda
+  required: true
+- id: ort_tensorrt
+  type: same_backend_reference
+  full: tensorrt
+  stage1: tensorrt
+  stage2: tensorrt
+  required: true
+- id: hailo8
+  type: same_backend_reference
+  full: hailo8
+  stage1: hailo8
+  stage2: hailo8
+  hardware_setup_id: orin_nx_hailo8_01
+  required: false
+  treat_preflight_block_as_result: true
+- id: hailo8_to_trt
+  type: mixed_backend
+  full_reference: cpu_full
+  stage1: hailo8
+  stage2: tensorrt
+  hardware_setup_id: orin_nx_hailo8_01
+  required: false
+- id: hailo10
+  type: same_backend_reference
+  full: hailo10
+  stage1: hailo10
+  stage2: hailo10
+  hardware_setup_id: orin_nx_hailo10_01
+  required: false
+- id: hailo10_to_tensorrt
+  type: mixed_backend
+  full_reference: cpu_full
+  stage1: hailo10
+  stage2: tensorrt
+  hardware_setup_id: orin_nx_hailo10_01
+  required: false
+- id: deepx_m1_full
+  type: same_backend_reference
+  full: deepx_m1
+  stage1: deepx_m1
+  stage2: deepx_m1
+  hardware_setup_id: orin_nx_deepx_m1_01
+  required: false
+- id: deepx_m1_to_tensorrt
+  type: mixed_backend
+  full_reference: cpu_full
+  stage1: deepx_m1
+  stage2: tensorrt
+  hardware_setup_id: orin_nx_deepx_m1_01
+  required: false
+hardware:
+  selected_groups: all_accelerators
+  setups_file: ''
+hardware_setups:
+- id: orin_nx_hailo8_01
+  label: Orin NX + Hailo-8
+  accelerator: hailo8
+  host:
+    address: ''
+    user: nx
+    port: 22
+    base_dir: ~/splitpoint_runs
+  runtime:
+    kind: hailort
+    provider: hailo8
+    activate: source ~/hailo_py/bin/activate
+    warmup: 10
+    iters: 50
+  build:
+    kind: hailo_dfc
+    arch: hailo8
+    mode: reuse_and_build_missing
+    environment_id: hailo8_dfc_managed
+- id: orin_nx_hailo10_01
+  label: Orin NX + Hailo-10
+  accelerator: hailo10
+  host:
+    address: ''
+    user: nx
+    port: 22
+    base_dir: ~/splitpoint_runs
+  runtime:
+    kind: hailort
+    provider: hailo10h
+    activate: source ~/hailo_py/bin/activate
+    warmup: 10
+    iters: 50
+  build:
+    kind: hailo_dfc
+    arch: hailo10h
+    mode: reuse_and_build_missing
+    environment_id: hailo10_dfc_managed
+- id: orin_nx_deepx_m1_01
+  label: Orin NX + DeepX DX-M1
+  accelerator: deepx_m1
+  host:
+    address: ''
+    user: nx
+    port: 22
+    base_dir: ~/splitpoint_runs
+  runtime:
+    kind: dxrt
+    provider: deepx_m1
+    activate: source ~/venvs/deepx-runtime/bin/activate
+    warmup: 10
+    iters: 50
+  build:
+    kind: deepx_dxcom
+    mode: reuse_and_build_missing
+    environment_id: deepx_dxcom_x86
+build_environments:
+- id: hailo8_dfc_managed
+  kind: hailo8_dfc
+  host: local
+  shell: bash
+  venv_activate: source ~/.onnx_splitpoint_tool/hailo/venv_hailo8/bin/activate
+  cache_dir: ~/Models/BackendArtifacts/hailo
+- id: hailo10_dfc_managed
+  kind: hailo10_dfc
+  host: local
+  shell: bash
+  venv_activate: source ~/.onnx_splitpoint_tool/hailo/venv_hailo10/bin/activate
+  cache_dir: ~/Models/BackendArtifacts/hailo
+- id: deepx_dxcom_x86
+  kind: deepx_dxcom
+  host: local
+  shell: bash
+  dx_all_suite_root: ~/dx-all-suite
+  compiler_venv: ~/dx-all-suite/dx-compiler/venv-dx-compiler-local
+  venv_activate: source ~/dx-all-suite/dx-compiler/venv-dx-compiler-local/bin/activate
+  cache_dir: ~/Models/BackendArtifacts/deepx
+deepx_build:
+  mode: reuse_and_build_missing
+  target: deepx_m1
+  calib_dir: /homes/kmika/hailomz/data/coco
+  calib_count: 500
+  calibration_method: ema
+  opt_level: 0
+  cache_dir: ~/Models/BackendArtifacts/deepx
+validation:
+  mode: summary_only
+  split_fidelity_reference_mode: auto
+  classification_metrics:
+  - top1
+  - top5
+  - logit_cosine_similarity
+  detection_metrics:
+  - semantic_proxy_match_ratio
+  - semantic_proxy_mean_iou
+  - mini_coco_ap50
+  backend_drift_reference: cpu_full
+  report_blocked_and_infeasible: true
+reporting:
+  include_decision_summary: true
+  include_backend_drift_block: true
+  include_task_specific_quality_block: true
+  aggregate_by_model: true
+  aggregate_by_run_profile: true

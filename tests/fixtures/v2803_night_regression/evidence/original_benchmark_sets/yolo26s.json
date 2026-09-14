@@ -1,0 +1,3552 @@
+{
+  "analysis_params": {
+    "min_gap": 1,
+    "objective": "workflow_legacy_adapter",
+    "require_single_part2_input": true,
+    "topk": 17
+  },
+  "analysis_version": 2,
+  "artifact_manifest": {
+    "analysis_version": 2,
+    "counts": {
+      "analysis_plots": 0,
+      "analysis_tables": 0,
+      "cases": 2,
+      "deepx": 0,
+      "hailo": 20,
+      "model_sidecars": 0,
+      "models": 1,
+      "native_pipeline": 0,
+      "native_trt": 0,
+      "root": 3,
+      "schemas": 0
+    },
+    "files": {
+      "analysis_plots": [],
+      "analysis_tables": [],
+      "cases": [
+        "b021",
+        "b364"
+      ],
+      "deepx": [],
+      "hailo": [
+        "hailo/hailo10/full/.hailo-generations/63052721b91f4b048747af4e7f43e0f1/cache_meta.json",
+        "hailo/hailo10/full/.hailo-generations/63052721b91f4b048747af4e7f43e0f1/compiled.hef",
+        "hailo/hailo10/full/.hailo-generations/63052721b91f4b048747af4e7f43e0f1/hailo_hef_build_receipt.json",
+        "hailo/hailo10/full/.hailo-publish.lock",
+        "hailo/hailo10/full/deferred_hailo_build.json",
+        "hailo/hailo10/full/hailo_attempt_receipts/attempt_20260910T191200Z_53e1e63966ba41e9834dc9d2c3010835.json",
+        "hailo/hailo10/full/hailo_attempt_receipts/attempt_20260910T191200Z_53e1e63966ba41e9834dc9d2c3010835.started.json",
+        "hailo/hailo10/full/hailo_attempt_receipts/terminal_attempt.json",
+        "hailo/hailo10/full/hailo_cache_hit.json",
+        "hailo/hailo10/full/yolo26s_hailo_fixed.onnx",
+        "hailo/hailo8/full/.hailo-generations/e05c8f394b1d4aeb812411995e15a5d2/cache_meta.json",
+        "hailo/hailo8/full/.hailo-generations/e05c8f394b1d4aeb812411995e15a5d2/compiled.hef",
+        "hailo/hailo8/full/.hailo-generations/e05c8f394b1d4aeb812411995e15a5d2/hailo_hef_build_receipt.json",
+        "hailo/hailo8/full/.hailo-publish.lock",
+        "hailo/hailo8/full/deferred_hailo_build.json",
+        "hailo/hailo8/full/hailo_attempt_receipts/attempt_20260910T191202Z_17f9d4a7996047a58661f423a507d6bd.json",
+        "hailo/hailo8/full/hailo_attempt_receipts/attempt_20260910T191202Z_17f9d4a7996047a58661f423a507d6bd.started.json",
+        "hailo/hailo8/full/hailo_attempt_receipts/terminal_attempt.json",
+        "hailo/hailo8/full/hailo_cache_hit.json",
+        "hailo/hailo8/full/yolo26s_hailo_fixed.onnx"
+      ],
+      "model_sidecars": [],
+      "models": [
+        "models/yolo26s.onnx"
+      ],
+      "native_pipeline": [],
+      "native_trt": [],
+      "root": [
+        "benchmark_plan.json",
+        "benchmark_generation.log",
+        "generation_state.json"
+      ],
+      "schemas": []
+    },
+    "generated_at": "2026-09-10T21:12:14",
+    "schema": "onnx-splitpoint/benchmark-set",
+    "schema_version": 2,
+    "suite_dir": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo26s/benchmark_set/legacy_suite"
+  },
+  "benchmark_task": "detection",
+  "bundle_options": {
+    "results_bundle_modes": [
+      "full",
+      "lean"
+    ]
+  },
+  "cases": [
+    {
+      "boundary": 21,
+      "case_dir": "b021",
+      "folder": "b021",
+      "hailo_backend_terminal_states": [
+        {
+          "available": true,
+          "hw_arch": "hailo10h",
+          "reason": "artifact_available",
+          "status": "ready",
+          "terminal": true,
+          "variant": "full"
+        },
+        {
+          "available": true,
+          "hw_arch": "hailo10h",
+          "reason": "artifact_available",
+          "status": "ready",
+          "terminal": true,
+          "variant": "part1"
+        },
+        {
+          "available": true,
+          "hw_arch": "hailo8",
+          "reason": "artifact_available",
+          "status": "ready",
+          "terminal": true,
+          "variant": "full"
+        },
+        {
+          "available": true,
+          "hw_arch": "hailo8",
+          "reason": "artifact_available",
+          "status": "ready",
+          "terminal": true,
+          "variant": "part1"
+        }
+      ],
+      "hailo_case_variant_availability": {
+        "hailo10h": {
+          "composed": false,
+          "full": true,
+          "full_error": "",
+          "full_failed": false,
+          "part1": true,
+          "part1_error": "",
+          "part1_failed": false,
+          "part2": false,
+          "part2_error": "",
+          "part2_failed": false
+        },
+        "hailo8": {
+          "composed": false,
+          "full": true,
+          "full_error": "",
+          "full_failed": false,
+          "part1": true,
+          "part1_error": "",
+          "part1_failed": false,
+          "part2": false,
+          "part2_error": "",
+          "part2_failed": false
+        }
+      },
+      "hailo_compile": {
+        "hailo10": {
+          "part1": {
+            "build_receipt_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo26s/benchmark_set/legacy_suite/b021/hailo/hailo10/part1/hailo_hef_build_receipt.json",
+            "cache_hit": true,
+            "calib_source": "validated_existing_artifact",
+            "compiler_onnx_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo26s/benchmark_set/legacy_suite/b021/yolo26s_part1_b21.onnx",
+            "context_mode": "skipped",
+            "elapsed_s": 0.026976823806762695,
+            "hef_path": "hailo/hailo10/part1/compiled.hef",
+            "mapping_failed": false,
+            "multi_context_used": false,
+            "ok": true,
+            "single_context_failed": false,
+            "single_context_used": false,
+            "skipped": true,
+            "source_onnx_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo26s/benchmark_set/legacy_suite/b021/yolo26s_part1_b21.onnx",
+            "timed_out": false,
+            "watchdog_expired": false
+          }
+        },
+        "hailo8": {
+          "part1": {
+            "build_receipt_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo26s/benchmark_set/legacy_suite/b021/hailo/hailo8/part1/hailo_hef_build_receipt.json",
+            "cache_hit": true,
+            "calib_source": "validated_existing_artifact",
+            "compiler_onnx_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo26s/benchmark_set/legacy_suite/b021/yolo26s_part1_b21.onnx",
+            "context_mode": "skipped",
+            "elapsed_s": 0.15172910690307617,
+            "hef_path": "hailo/hailo8/part1/compiled.hef",
+            "mapping_failed": false,
+            "multi_context_used": false,
+            "ok": true,
+            "single_context_failed": false,
+            "single_context_used": false,
+            "skipped": true,
+            "source_onnx_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo26s/benchmark_set/legacy_suite/b021/yolo26s_part1_b21.onnx",
+            "timed_out": false,
+            "watchdog_expired": false
+          }
+        }
+      },
+      "manifest": "split_manifest.json",
+      "predicted": {
+        "cut_bytes": 3276800.0,
+        "cut_mib": 3.125,
+        "flops_left": 2194227200.0,
+        "hailo_compile_risk_score": 1.733300505349616,
+        "hailo_cut_mib": 3.125,
+        "hailo_flops_left_ratio": 0.20756654588282406,
+        "hailo_flops_right_ratio": 0.7924334541171759,
+        "hailo_hardware_fit_score": 0.35834579990394244,
+        "hailo_n_cut_tensors": null,
+        "hailo_peak_act_left_mib": 25.0,
+        "hailo_peak_act_right_mib": 14.84375,
+        "hailo_single_context_probability": 0.7461235237046686,
+        "hailo_stage1_fit_score": 0.046351708941011587,
+        "hailo_strict_ok": null
+      }
+    },
+    {
+      "boundary": 364,
+      "case_dir": "b364",
+      "folder": "b364",
+      "hailo_backend_terminal_states": [
+        {
+          "available": true,
+          "hw_arch": "hailo10h",
+          "reason": "artifact_available",
+          "status": "ready",
+          "terminal": true,
+          "variant": "full"
+        },
+        {
+          "available": true,
+          "hw_arch": "hailo10h",
+          "reason": "artifact_available",
+          "status": "ready",
+          "terminal": true,
+          "variant": "part1"
+        },
+        {
+          "available": true,
+          "hw_arch": "hailo8",
+          "reason": "artifact_available",
+          "status": "ready",
+          "terminal": true,
+          "variant": "full"
+        },
+        {
+          "available": false,
+          "hw_arch": "hailo8",
+          "reason": "Exact build evidence prevents repeated compiler attempt: COMPILE_INFEASIBLE (exact_deterministic_outcome)",
+          "status": "terminal_failed",
+          "terminal": true,
+          "variant": "part1"
+        }
+      ],
+      "hailo_case_variant_availability": {
+        "hailo10h": {
+          "composed": false,
+          "full": true,
+          "full_error": "",
+          "full_failed": false,
+          "part1": true,
+          "part1_error": "",
+          "part1_failed": false,
+          "part2": false,
+          "part2_error": "",
+          "part2_failed": false
+        },
+        "hailo8": {
+          "composed": false,
+          "full": true,
+          "full_error": "",
+          "full_failed": false,
+          "part1": false,
+          "part1_error": "Exact build evidence prevents repeated compiler attempt: COMPILE_INFEASIBLE (exact_deterministic_outcome)",
+          "part1_failed": true,
+          "part2": false,
+          "part2_error": "",
+          "part2_failed": false
+        }
+      },
+      "hailo_compile": {
+        "hailo10": {
+          "part1": {
+            "build_receipt_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo26s/benchmark_set/legacy_suite/b364/hailo/hailo10/part1/hailo_hef_build_receipt.json",
+            "cache_hit": true,
+            "calib_source": "validated_existing_artifact",
+            "compiler_onnx_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo26s/benchmark_set/legacy_suite/b364/yolo26s_part1_b364.onnx",
+            "context_mode": "skipped",
+            "elapsed_s": 0.8865933418273926,
+            "hef_path": "hailo/hailo10/part1/compiled.hef",
+            "mapping_failed": false,
+            "multi_context_used": false,
+            "ok": true,
+            "single_context_failed": false,
+            "single_context_used": false,
+            "skipped": true,
+            "source_onnx_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo26s/benchmark_set/legacy_suite/b364/yolo26s_part1_b364.onnx",
+            "timed_out": false,
+            "watchdog_expired": false
+          }
+        },
+        "hailo8": {
+          "part1": {
+            "build_evidence": {
+              "cache_key_v3": "8f837445f334da40a5aadb357c7266ea5f4836b16a264e799c1e48478b712e01",
+              "cache_payload_v3": {
+                "activation_part1_sha256": "",
+                "calibration_batch_size": 8,
+                "calibration_count": 500,
+                "calibration_identity": "manifest:2c9ac62b281ebdf35d97711b2b2cd9d822e8d0d1cf08b1433a8fb98f8edac10a",
+                "calibration_memory_cap_bytes": 268435456,
+                "calibration_storage": "memmap",
+                "disable_rt_metadata_extraction": true,
+                "end_nodes": [],
+                "extra_model_script": "",
+                "hailo_sdk_version": "hailo-dataflow-compiler:3.33.1",
+                "hw_arch": "hailo8",
+                "integrity": "relaxed",
+                "model_sha256": "128fcbf8a29e958844ee7857c0e35f98fd9a0ad74b5a5e3e6cf1810a88db1e29",
+                "net_input_shapes": [
+                  1,
+                  3,
+                  640,
+                  640
+                ],
+                "net_name": "yolo26s_part1_b364",
+                "optimization_level": 1,
+                "prepared_calibration_identity_sha256": "aba8c42bc003a4aea8b09c917e37aba6be2c3f1ea229f026cd14bf5c588f0ba7",
+                "preprocessing_contract": {
+                  "color_space": "RGB",
+                  "contract_scope": "prepared_rgb_uint8_semantics",
+                  "image_scale": "norm",
+                  "input_domain": "uint8_0_255",
+                  "letterbox": true,
+                  "letterbox_pad_value": 114,
+                  "pad_value": 114,
+                  "placement": "floor_top_left_remainder_bottom_right",
+                  "preprocess_mode": "letterbox",
+                  "resize_interpolation": "bilinear",
+                  "resize_rounding": "python_round_ties_to_even",
+                  "schema": "onnx-splitpoint/image-preprocessing-contract",
+                  "schema_version": 2,
+                  "spatial_transform": "centered_letterbox",
+                  "target_hw": [
+                    640,
+                    640
+                  ],
+                  "task": "detection"
+                },
+                "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+                "requested_calibration_count": 500,
+                "schema": "onnx-splitpoint/hailo-hef-cache-key-v3",
+                "start_nodes": []
+              },
+              "compiler_dispatch_allowed": false,
+              "context": {
+                "boundary": 364,
+                "full_source_onnx_path": "/home/kmika/Models/yolo26s.onnx",
+                "full_source_onnx_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+                "model_id": "yolo26s",
+                "split_manifest": {
+                  "boundary": 364,
+                  "boundary_index": 364,
+                  "created_at": "2026-09-10T21:12:06",
+                  "cut": {
+                    "count": 1,
+                    "names_full": [
+                      "/model.23/Concat_3_output_0"
+                    ],
+                    "names_part1": [
+                      "/model.23/Concat_3_output_0"
+                    ],
+                    "names_part2": [
+                      "/model.23/Concat_3_output_0"
+                    ]
+                  },
+                  "cut_tensors": [
+                    "/model.23/Concat_3_output_0"
+                  ],
+                  "cut_tensors_full": [
+                    "/model.23/Concat_3_output_0"
+                  ],
+                  "full_model": "../models/yolo26s.onnx",
+                  "full_model_source": "/home/kmika/Models/yolo26s.onnx",
+                  "hailo": {
+                    "config": {
+                      "backend": "auto",
+                      "build": {
+                        "full": true,
+                        "part1": true,
+                        "part2": false
+                      },
+                      "calib_batch_size": 8,
+                      "calib_count": 500,
+                      "calib_dir": "/home/kmika/.onnx_splitpoint_tool/final_datasets/coco2017/prepared/train_calibration_n500_s20260710/images",
+                      "fixup": true,
+                      "force": false,
+                      "keep_artifacts": false,
+                      "opt_level": 1,
+                      "timeout_s": 3600,
+                      "wsl_distro": null,
+                      "wsl_venv": "auto"
+                    },
+                    "hefs": {}
+                  },
+                  "io": {
+                    "part1_external_inputs": [
+                      "images"
+                    ],
+                    "part1_inputs": [],
+                    "part1_outputs": [],
+                    "part2_external_inputs": [
+                      "/model.23/Concat_3_output_0"
+                    ],
+                    "part2_inputs": [],
+                    "part2_outputs": [
+                      "output0"
+                    ]
+                  },
+                  "models": {
+                    "full": {
+                      "path": "../models/yolo26s.onnx",
+                      "source": "/home/kmika/Models/yolo26s.onnx"
+                    },
+                    "part1": {
+                      "path": "yolo26s_part1_b364.onnx"
+                    },
+                    "part2": {
+                      "path": "yolo26s_part2_b364.onnx"
+                    }
+                  },
+                  "orig_inputs": [
+                    "images"
+                  ],
+                  "orig_outputs": [
+                    "output0"
+                  ],
+                  "part1": "yolo26s_part1_b364.onnx",
+                  "part1_cut_names": [
+                    "/model.23/Concat_3_output_0"
+                  ],
+                  "part1_external_inputs": [
+                    "images"
+                  ],
+                  "part2": "yolo26s_part2_b364.onnx",
+                  "part2_cut_names": [
+                    "/model.23/Concat_3_output_0"
+                  ],
+                  "part2_external_inputs": [
+                    "/model.23/Concat_3_output_0"
+                  ],
+                  "part2_output_strategy": "original",
+                  "part2_outputs_effective": [
+                    "output0"
+                  ],
+                  "part2_outputs_original": [
+                    "output0"
+                  ],
+                  "pipeline": {
+                    "links": [
+                      {
+                        "from": "/model.23/Concat_3_output_0",
+                        "to": "/model.23/Concat_3_output_0"
+                      }
+                    ],
+                    "stage1": "part1",
+                    "stage2": "part2"
+                  },
+                  "predicted": {
+                    "cut_bytes": 2822400.0,
+                    "cut_mib": 2.691650390625,
+                    "flops_left": 10571198400.0,
+                    "hailo_compile_risk_score": 2.7578260075750904,
+                    "hailo_cut_mib": 2.691650390625,
+                    "hailo_flops_left_ratio": 0.9999999716210045,
+                    "hailo_flops_right_ratio": 2.8378995468129835e-08,
+                    "hailo_hardware_fit_score": 5.927408330882922,
+                    "hailo_n_cut_tensors": null,
+                    "hailo_peak_act_left_mib": 25.0,
+                    "hailo_peak_act_right_mib": 2.877044677734375,
+                    "hailo_single_context_probability": 0.4318443157676403,
+                    "hailo_stage1_fit_score": 5.430999649519405,
+                    "hailo_strict_ok": null
+                  },
+                  "runner": "run_split_onnxruntime.py",
+                  "schema": "onnx-splitpoint/split-manifest",
+                  "schema_version": 1,
+                  "strict_boundary": false,
+                  "tool": {
+                    "core": "2.80.1",
+                    "gui": "workflow-legacy-adapter"
+                  }
+                },
+                "stage": "part1"
+              },
+              "evidence_origin": {
+                "coordinates": {
+                  "boundary": 364,
+                  "hw_arch": "hailo8",
+                  "model": "yolo26s",
+                  "stage": "part1"
+                },
+                "immutable_attempt_sha256": "30bf22175282d0e97b0a69d1a032c9deb54d98e2e57853dec549267dc2954265",
+                "kind": "external_review_of_v2_terminal_and_v3_request",
+                "request": "models/yolo26s/benchmark_set/legacy_suite/_rejected_cases/b364/hailo/hailo8/part1/hailo_cache_miss.json",
+                "request_sha256": "6c0341d25265af5135821d2e348e040dbf575f2b0fbaef98788d2280e236d644",
+                "result": "models/yolo26s/benchmark_set/legacy_suite/_rejected_cases/b364/hailo/hailo8/part1/hailo_hef_build_result.json",
+                "result_sha256": "f4e64a521d3cfa585f455a5c3b1fca6304018e1151470493cfb59d2639816bf1",
+                "split_manifest": "models/yolo26s/benchmark_set/legacy_suite/_rejected_cases/b364/split_manifest.json",
+                "split_manifest_sha256": "5cedbe0fb7cbfe3d005de78c9e9bf734a6333dd8a94160c6228a54d4a47cb142",
+                "terminal": "models/yolo26s/benchmark_set/legacy_suite/_rejected_cases/b364/hailo/hailo8/part1/hailo_attempt_receipts/terminal_attempt.json",
+                "terminal_sha256": "e0309d17aa44a4c34da0bb91ee43a9bba21c405a26763b145e1e772a67789af4"
+              },
+              "key": {
+                "backend": "hailo_dfc",
+                "backend_cache_contract_sha256": "8f837445f334da40a5aadb357c7266ea5f4836b16a264e799c1e48478b712e01",
+                "boundary_endpoint_contract_sha256": "6e7c7e557593769cf1ae4000b42c87445d3f95f0449b9ba0155749e623a76a2a",
+                "builder_source_onnx_sha256": "128fcbf8a29e958844ee7857c0e35f98fd9a0ad74b5a5e3e6cf1810a88db1e29",
+                "calibration": {
+                  "batch_size": 8,
+                  "effective_count": 500,
+                  "identity": "manifest:2c9ac62b281ebdf35d97711b2b2cd9d822e8d0d1cf08b1433a8fb98f8edac10a",
+                  "memory_cap_bytes": 268435456,
+                  "prepared_identity_sha256": "aba8c42bc003a4aea8b09c917e37aba6be2c3f1ea229f026cd14bf5c588f0ba7",
+                  "requested_count": 500,
+                  "storage": "memmap"
+                },
+                "calibration_contract_sha256": "304b284eeb158d9068444ec400ec000ce6821610034888b2aa0c6e7aa9eb6985",
+                "compiler_onnx_sha256": "128fcbf8a29e958844ee7857c0e35f98fd9a0ad74b5a5e3e6cf1810a88db1e29",
+                "compiler_version": "hailo-dataflow-compiler:3.33.1",
+                "full_source_onnx_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+                "hw_arch": "hailo8",
+                "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+                "recipe": {
+                  "activation_part1_sha256": "",
+                  "disable_rt_metadata_extraction": true,
+                  "end_nodes": [],
+                  "integrity": "relaxed",
+                  "model_script_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "net_input_shapes": [
+                    1,
+                    3,
+                    640,
+                    640
+                  ],
+                  "net_name": "yolo26s_part1_b364",
+                  "optimization_level": 1,
+                  "start_nodes": []
+                },
+                "recipe_contract_sha256": "0a44dd741c4b10c56e3ee08e459d9b350448f70b898d2d4aaf65b84dbf1afa8d",
+                "schema": "onnx-splitpoint/exact-build-key/v1",
+                "schema_version": 1
+              },
+              "key_sha256": "763b69552b7d4a9e3e0b0ee8f310845a9ad4fa11dbf217bf73817b4ba1b0a383",
+              "negative_evidence_hit": true,
+              "reason": "exact_deterministic_outcome",
+              "record": {
+                "artifact": null,
+                "deterministic": true,
+                "evidence_origin": {
+                  "coordinates": {
+                    "boundary": 364,
+                    "hw_arch": "hailo8",
+                    "model": "yolo26s",
+                    "stage": "part1"
+                  },
+                  "immutable_attempt_sha256": "30bf22175282d0e97b0a69d1a032c9deb54d98e2e57853dec549267dc2954265",
+                  "kind": "external_review_of_v2_terminal_and_v3_request",
+                  "request": "models/yolo26s/benchmark_set/legacy_suite/_rejected_cases/b364/hailo/hailo8/part1/hailo_cache_miss.json",
+                  "request_sha256": "6c0341d25265af5135821d2e348e040dbf575f2b0fbaef98788d2280e236d644",
+                  "result": "models/yolo26s/benchmark_set/legacy_suite/_rejected_cases/b364/hailo/hailo8/part1/hailo_hef_build_result.json",
+                  "result_sha256": "f4e64a521d3cfa585f455a5c3b1fca6304018e1151470493cfb59d2639816bf1",
+                  "split_manifest": "models/yolo26s/benchmark_set/legacy_suite/_rejected_cases/b364/split_manifest.json",
+                  "split_manifest_sha256": "5cedbe0fb7cbfe3d005de78c9e9bf734a6333dd8a94160c6228a54d4a47cb142",
+                  "terminal": "models/yolo26s/benchmark_set/legacy_suite/_rejected_cases/b364/hailo/hailo8/part1/hailo_attempt_receipts/terminal_attempt.json",
+                  "terminal_sha256": "e0309d17aa44a4c34da0bb91ee43a9bba21c405a26763b145e1e772a67789af4"
+                },
+                "key": {
+                  "backend": "hailo_dfc",
+                  "backend_cache_contract_sha256": "8f837445f334da40a5aadb357c7266ea5f4836b16a264e799c1e48478b712e01",
+                  "boundary_endpoint_contract_sha256": "6e7c7e557593769cf1ae4000b42c87445d3f95f0449b9ba0155749e623a76a2a",
+                  "builder_source_onnx_sha256": "128fcbf8a29e958844ee7857c0e35f98fd9a0ad74b5a5e3e6cf1810a88db1e29",
+                  "calibration": {
+                    "batch_size": 8,
+                    "effective_count": 500,
+                    "identity": "manifest:2c9ac62b281ebdf35d97711b2b2cd9d822e8d0d1cf08b1433a8fb98f8edac10a",
+                    "memory_cap_bytes": 268435456,
+                    "prepared_identity_sha256": "aba8c42bc003a4aea8b09c917e37aba6be2c3f1ea229f026cd14bf5c588f0ba7",
+                    "requested_count": 500,
+                    "storage": "memmap"
+                  },
+                  "calibration_contract_sha256": "304b284eeb158d9068444ec400ec000ce6821610034888b2aa0c6e7aa9eb6985",
+                  "compiler_onnx_sha256": "128fcbf8a29e958844ee7857c0e35f98fd9a0ad74b5a5e3e6cf1810a88db1e29",
+                  "compiler_version": "hailo-dataflow-compiler:3.33.1",
+                  "full_source_onnx_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+                  "hw_arch": "hailo8",
+                  "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+                  "recipe": {
+                    "activation_part1_sha256": "",
+                    "disable_rt_metadata_extraction": true,
+                    "end_nodes": [],
+                    "integrity": "relaxed",
+                    "model_script_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                    "net_input_shapes": [
+                      1,
+                      3,
+                      640,
+                      640
+                    ],
+                    "net_name": "yolo26s_part1_b364",
+                    "optimization_level": 1,
+                    "start_nodes": []
+                  },
+                  "recipe_contract_sha256": "0a44dd741c4b10c56e3ee08e459d9b350448f70b898d2d4aaf65b84dbf1afa8d",
+                  "schema": "onnx-splitpoint/exact-build-key/v1",
+                  "schema_version": 1
+                },
+                "key_sha256": "763b69552b7d4a9e3e0b0ee8f310845a9ad4fa11dbf217bf73817b4ba1b0a383",
+                "reason_code": "external_completed_mapping_failure_exact_request",
+                "record_sha256": "29c5c9d905d9489bb2e5cf47bd12020aa55dfad5983692817db78d0773b13532",
+                "reusable": true,
+                "schema": "onnx-splitpoint/build-evidence-record/v1",
+                "schema_version": 1,
+                "state": "COMPILE_INFEASIBLE"
+              },
+              "reusable": true,
+              "state": "COMPILE_INFEASIBLE",
+              "status": "HIT"
+            },
+            "build_receipt_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo26s/benchmark_set/legacy_suite/b364/hailo/hailo8/part1/hailo_hef_build_receipt.json",
+            "cache_hit": false,
+            "cache_key": "8f837445f334da40a5aadb357c7266ea5f4836b16a264e799c1e48478b712e01",
+            "compiler_onnx_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo26s/benchmark_set/legacy_suite/b364/hailo/hailo8/part1/yolo26s_part1_b364_hailo_fixed.onnx",
+            "context_mode": "known_infeasible",
+            "elapsed_s": 1.0660274028778076,
+            "error": "Exact build evidence prevents repeated compiler attempt: COMPILE_INFEASIBLE (exact_deterministic_outcome)",
+            "failure_kind": "known_negative_build_evidence",
+            "mapping_failed": false,
+            "multi_context_used": false,
+            "negative_evidence_hit": true,
+            "ok": false,
+            "single_context_failed": false,
+            "single_context_used": false,
+            "skipped": true,
+            "source_onnx_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo26s/benchmark_set/legacy_suite/b364/yolo26s_part1_b364.onnx",
+            "timed_out": false,
+            "unsupported_reason": "COMPILE_INFEASIBLE",
+            "watchdog_expired": false
+          }
+        }
+      },
+      "manifest": "split_manifest.json",
+      "predicted": {
+        "cut_bytes": 2822400.0,
+        "cut_mib": 2.691650390625,
+        "flops_left": 10571198400.0,
+        "hailo_compile_risk_score": 2.7578260075750904,
+        "hailo_cut_mib": 2.691650390625,
+        "hailo_flops_left_ratio": 0.9999999716210045,
+        "hailo_flops_right_ratio": 2.8378995468129835e-08,
+        "hailo_hardware_fit_score": 5.927408330882922,
+        "hailo_n_cut_tensors": null,
+        "hailo_peak_act_left_mib": 25.0,
+        "hailo_peak_act_right_mib": 2.877044677734375,
+        "hailo_single_context_probability": 0.4318443157676403,
+        "hailo_stage1_fit_score": 5.430999649519405,
+        "hailo_strict_ok": null
+      }
+    }
+  ],
+  "created_at": "2026-09-10T21:12:14",
+  "discarded_cases": [],
+  "errors": [],
+  "evaluation_profile": {
+    "profile_id": "completsetdev",
+    "source": "evaluation_workflow"
+  },
+  "generation_log": "benchmark_generation.log",
+  "hailo": {
+    "build": {
+      "full": true,
+      "part1": true,
+      "part2": false
+    },
+    "config": {
+      "backend": "auto",
+      "calib_batch_size": 8,
+      "calib_count": 500,
+      "calib_dir": "/home/kmika/.onnx_splitpoint_tool/final_datasets/coco2017/prepared/train_calibration_n500_s20260710/images",
+      "fixup": true,
+      "force": false,
+      "full_model_preflight_policy": "skip",
+      "full_output_contract": {
+        "description": "YOLO26 one2one raw detection-head tensors; final transpose/concat/decode/postprocess remains outside the HEF.",
+        "end_node_names": [
+          "/model.23/one2one_cv2.0/one2one_cv2.0.2/Conv",
+          "/model.23/one2one_cv3.0/one2one_cv3.0.2/Conv",
+          "/model.23/one2one_cv2.1/one2one_cv2.1.2/Conv",
+          "/model.23/one2one_cv3.1/one2one_cv3.1.2/Conv",
+          "/model.23/one2one_cv2.2/one2one_cv2.2.2/Conv",
+          "/model.23/one2one_cv3.2/one2one_cv3.2.2/Conv"
+        ],
+        "mode": "yolo26_one2one_raw_head",
+        "requires_external_postprocess": true
+      },
+      "keep_artifacts": false,
+      "opt_level": 1,
+      "wsl_distro": null,
+      "wsl_venv": "auto"
+    },
+    "context_summary": {
+      "hailo10": {
+        "both_parts_single_context": 0,
+        "cases": 2,
+        "multi_context": 0,
+        "part2_single_context": 0,
+        "single_to_multi_fallback": 0
+      },
+      "hailo8": {
+        "both_parts_single_context": 0,
+        "cases": 2,
+        "multi_context": 0,
+        "part2_single_context": 0,
+        "single_to_multi_fallback": 0
+      }
+    },
+    "full_model_preflight": {
+      "aborted": false,
+      "all_failed_explicit": false,
+      "backend": "auto",
+      "checked": false,
+      "failed_count": 0,
+      "model_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/yolo26s/benchmark_set/legacy_suite/models/yolo26s.onnx",
+      "ok_count": 0,
+      "policy": "forced_early_full_hef_build",
+      "result_count": 0,
+      "results": [],
+      "skipped": true,
+      "unsupported_failure_count": 0
+    },
+    "hefs": {
+      "hailo10h": {
+        "full": "hailo/hailo10/full/compiled.hef",
+        "full_build": {
+          "artifact_hash": "b002563960a9131192f6d0b119e64d457d5d8bba18d8ab49b989175f8eae41be",
+          "build_receipt_file_sha256": "1ea9dee27a14470729a9b48d886b037cb7e854292e74bcfba0a188fd5c920fda",
+          "build_receipt_identity_sha256": "a80adf9982bb0f35d4460ecf7f04b13d307e0f1b3003bcfc5f2cded86adff55b",
+          "build_receipt_path": "hailo/hailo10/full/.hailo-generations/63052721b91f4b048747af4e7f43e0f1/hailo_hef_build_receipt.json",
+          "cache_hit": true,
+          "calib_source": "validated_existing_artifact",
+          "compiler_onnx_filename": "yolo26s_hailo_fixed.onnx",
+          "compiler_onnx_path": "hailo/hailo10/full/yolo26s_hailo_fixed.onnx",
+          "compiler_onnx_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+          "context_mode": "skipped",
+          "elapsed_s": 0.8681020736694336,
+          "hailo_build_receipt_cache_key": "89cf3da9363626952f8144e56f46e0deaf1ec4fb3cab245e92ed1aefe8cd8626",
+          "hailo_build_receipt_cache_payload_sha256": "89cf3da9363626952f8144e56f46e0deaf1ec4fb3cab245e92ed1aefe8cd8626",
+          "hailo_build_receipt_calibration_count": 500,
+          "hailo_build_receipt_calibration_identity": "manifest:2c9ac62b281ebdf35d97711b2b2cd9d822e8d0d1cf08b1433a8fb98f8edac10a",
+          "hailo_build_receipt_calibration_memory_cap_bytes": 268435456,
+          "hailo_build_receipt_calibration_storage": "memmap",
+          "hailo_build_receipt_end_nodes": [
+            "/model.23/one2one_cv2.0/one2one_cv2.0.2/Conv",
+            "/model.23/one2one_cv3.0/one2one_cv3.0.2/Conv",
+            "/model.23/one2one_cv2.1/one2one_cv2.1.2/Conv",
+            "/model.23/one2one_cv3.1/one2one_cv3.1.2/Conv",
+            "/model.23/one2one_cv2.2/one2one_cv2.2.2/Conv",
+            "/model.23/one2one_cv3.2/one2one_cv3.2.2/Conv"
+          ],
+          "hailo_build_receipt_file_sha256": "1ea9dee27a14470729a9b48d886b037cb7e854292e74bcfba0a188fd5c920fda",
+          "hailo_build_receipt_hw_arch": "hailo10h",
+          "hailo_build_receipt_identity_sha256": "a80adf9982bb0f35d4460ecf7f04b13d307e0f1b3003bcfc5f2cded86adff55b",
+          "hailo_build_receipt_path": "hailo/hailo10/full/.hailo-generations/63052721b91f4b048747af4e7f43e0f1/hailo_hef_build_receipt.json",
+          "hailo_build_receipt_prepared_calibration_identity_sha256": "aba8c42bc003a4aea8b09c917e37aba6be2c3f1ea229f026cd14bf5c588f0ba7",
+          "hailo_build_receipt_requested_calibration_count": 500,
+          "hailo_build_receipt_schema": "onnx-splitpoint/hailo-hef-build-receipt/v2",
+          "hailo_build_receipt_sdk_version": "hailo-dataflow-compiler:5.3.0",
+          "hailo_build_receipt_size_bytes": 3853,
+          "mapping_failed": false,
+          "multi_context_used": false,
+          "ok": true,
+          "preprocessing_contract": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "norm",
+            "input_domain": "uint8_0_255",
+            "letterbox": true,
+            "letterbox_pad_value": 114,
+            "pad_value": 114,
+            "placement": "floor_top_left_remainder_bottom_right",
+            "preprocess_mode": "letterbox",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "centered_letterbox",
+            "target_hw": [
+              640,
+              640
+            ],
+            "task": "detection"
+          },
+          "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+          "receipt_validated": true,
+          "single_context_failed": false,
+          "single_context_used": false,
+          "skipped": true,
+          "source_onnx_path": "/home/kmika/Models/yolo26s.onnx",
+          "source_onnx_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+          "status": "receipt_attested",
+          "timed_out": false,
+          "watchdog_expired": false
+        },
+        "full_build_receipt": {
+          "build_receipt_file_sha256": "1ea9dee27a14470729a9b48d886b037cb7e854292e74bcfba0a188fd5c920fda",
+          "build_receipt_identity_sha256": "a80adf9982bb0f35d4460ecf7f04b13d307e0f1b3003bcfc5f2cded86adff55b",
+          "build_receipt_path": "hailo/hailo10/full/.hailo-generations/63052721b91f4b048747af4e7f43e0f1/hailo_hef_build_receipt.json",
+          "compiler_onnx_filename": "yolo26s_hailo_fixed.onnx",
+          "compiler_onnx_path": "hailo/hailo10/full/yolo26s_hailo_fixed.onnx",
+          "compiler_onnx_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+          "hailo_build_receipt_cache_key": "89cf3da9363626952f8144e56f46e0deaf1ec4fb3cab245e92ed1aefe8cd8626",
+          "hailo_build_receipt_cache_payload_sha256": "89cf3da9363626952f8144e56f46e0deaf1ec4fb3cab245e92ed1aefe8cd8626",
+          "hailo_build_receipt_calibration_count": 500,
+          "hailo_build_receipt_calibration_identity": "manifest:2c9ac62b281ebdf35d97711b2b2cd9d822e8d0d1cf08b1433a8fb98f8edac10a",
+          "hailo_build_receipt_calibration_memory_cap_bytes": 268435456,
+          "hailo_build_receipt_calibration_storage": "memmap",
+          "hailo_build_receipt_end_nodes": [
+            "/model.23/one2one_cv2.0/one2one_cv2.0.2/Conv",
+            "/model.23/one2one_cv3.0/one2one_cv3.0.2/Conv",
+            "/model.23/one2one_cv2.1/one2one_cv2.1.2/Conv",
+            "/model.23/one2one_cv3.1/one2one_cv3.1.2/Conv",
+            "/model.23/one2one_cv2.2/one2one_cv2.2.2/Conv",
+            "/model.23/one2one_cv3.2/one2one_cv3.2.2/Conv"
+          ],
+          "hailo_build_receipt_file_sha256": "1ea9dee27a14470729a9b48d886b037cb7e854292e74bcfba0a188fd5c920fda",
+          "hailo_build_receipt_hw_arch": "hailo10h",
+          "hailo_build_receipt_identity_sha256": "a80adf9982bb0f35d4460ecf7f04b13d307e0f1b3003bcfc5f2cded86adff55b",
+          "hailo_build_receipt_path": "hailo/hailo10/full/.hailo-generations/63052721b91f4b048747af4e7f43e0f1/hailo_hef_build_receipt.json",
+          "hailo_build_receipt_prepared_calibration_identity_sha256": "aba8c42bc003a4aea8b09c917e37aba6be2c3f1ea229f026cd14bf5c588f0ba7",
+          "hailo_build_receipt_requested_calibration_count": 500,
+          "hailo_build_receipt_schema": "onnx-splitpoint/hailo-hef-build-receipt/v2",
+          "hailo_build_receipt_sdk_version": "hailo-dataflow-compiler:5.3.0",
+          "hailo_build_receipt_size_bytes": 3853,
+          "preprocessing_contract": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "norm",
+            "input_domain": "uint8_0_255",
+            "letterbox": true,
+            "letterbox_pad_value": 114,
+            "pad_value": 114,
+            "placement": "floor_top_left_remainder_bottom_right",
+            "preprocess_mode": "letterbox",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "centered_letterbox",
+            "target_hw": [
+              640,
+              640
+            ],
+            "task": "detection"
+          },
+          "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+          "source_onnx_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a"
+        },
+        "full_end_node_names": [
+          "/model.23/one2one_cv2.0/one2one_cv2.0.2/Conv",
+          "/model.23/one2one_cv3.0/one2one_cv3.0.2/Conv",
+          "/model.23/one2one_cv2.1/one2one_cv2.1.2/Conv",
+          "/model.23/one2one_cv3.1/one2one_cv3.1.2/Conv",
+          "/model.23/one2one_cv2.2/one2one_cv2.2.2/Conv",
+          "/model.23/one2one_cv3.2/one2one_cv3.2.2/Conv"
+        ],
+        "full_endpoint_mode": "raw_detection_head",
+        "full_output_contract": {
+          "artifact_binding_sha256": "265ccf0a77ee9e2f263f1612eb2aa527442324a11e7bbe72d535fc95c8abc1f9",
+          "artifact_binding_source": "benchmark_set_declared_full_artifact+receipt_attested_full_artifact",
+          "artifact_binding_status": "verified",
+          "artifact_path": "hailo/hailo10/full/.hailo-generations/63052721b91f4b048747af4e7f43e0f1/compiled.hef",
+          "artifact_sha256": "b002563960a9131192f6d0b119e64d457d5d8bba18d8ab49b989175f8eae41be",
+          "artifact_size_bytes": 10350592,
+          "backend": "hailo10",
+          "build_receipt_file_sha256": "1ea9dee27a14470729a9b48d886b037cb7e854292e74bcfba0a188fd5c920fda",
+          "build_receipt_identity_sha256": "a80adf9982bb0f35d4460ecf7f04b13d307e0f1b3003bcfc5f2cded86adff55b",
+          "build_receipt_path": "hailo/hailo10/full/.hailo-generations/63052721b91f4b048747af4e7f43e0f1/hailo_hef_build_receipt.json",
+          "compiled_artifact_raw_head": true,
+          "compiler_onnx_filename": "yolo26s_hailo_fixed.onnx",
+          "compiler_onnx_path": "hailo/hailo10/full/yolo26s_hailo_fixed.onnx",
+          "compiler_onnx_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+          "contract_family": "raw_head",
+          "contract_reconciliation_metadata_alias": "hailo10h",
+          "contract_reconciliation_source": "verified_benchmark_set_full_raw_head_contract",
+          "contract_reconciliation_status": "verified_suite_artifact_raw_head",
+          "contract_status": "recorded",
+          "endpoint_mode": "raw_detection_head",
+          "full_end_node_names": [
+            "/model.23/one2one_cv2.0/one2one_cv2.0.2/Conv",
+            "/model.23/one2one_cv3.0/one2one_cv3.0.2/Conv",
+            "/model.23/one2one_cv2.1/one2one_cv2.1.2/Conv",
+            "/model.23/one2one_cv3.1/one2one_cv3.1.2/Conv",
+            "/model.23/one2one_cv2.2/one2one_cv2.2.2/Conv",
+            "/model.23/one2one_cv3.2/one2one_cv3.2.2/Conv"
+          ],
+          "hailo_build_receipt_cache_key": "89cf3da9363626952f8144e56f46e0deaf1ec4fb3cab245e92ed1aefe8cd8626",
+          "hailo_build_receipt_cache_payload_sha256": "89cf3da9363626952f8144e56f46e0deaf1ec4fb3cab245e92ed1aefe8cd8626",
+          "hailo_build_receipt_calibration_count": 500,
+          "hailo_build_receipt_calibration_identity": "manifest:2c9ac62b281ebdf35d97711b2b2cd9d822e8d0d1cf08b1433a8fb98f8edac10a",
+          "hailo_build_receipt_calibration_memory_cap_bytes": 268435456,
+          "hailo_build_receipt_calibration_storage": "memmap",
+          "hailo_build_receipt_end_nodes": [
+            "/model.23/one2one_cv2.0/one2one_cv2.0.2/Conv",
+            "/model.23/one2one_cv3.0/one2one_cv3.0.2/Conv",
+            "/model.23/one2one_cv2.1/one2one_cv2.1.2/Conv",
+            "/model.23/one2one_cv3.1/one2one_cv3.1.2/Conv",
+            "/model.23/one2one_cv2.2/one2one_cv2.2.2/Conv",
+            "/model.23/one2one_cv3.2/one2one_cv3.2.2/Conv"
+          ],
+          "hailo_build_receipt_file_sha256": "1ea9dee27a14470729a9b48d886b037cb7e854292e74bcfba0a188fd5c920fda",
+          "hailo_build_receipt_hw_arch": "hailo10h",
+          "hailo_build_receipt_identity_sha256": "a80adf9982bb0f35d4460ecf7f04b13d307e0f1b3003bcfc5f2cded86adff55b",
+          "hailo_build_receipt_path": "hailo/hailo10/full/.hailo-generations/63052721b91f4b048747af4e7f43e0f1/hailo_hef_build_receipt.json",
+          "hailo_build_receipt_prepared_calibration_identity_sha256": "aba8c42bc003a4aea8b09c917e37aba6be2c3f1ea229f026cd14bf5c588f0ba7",
+          "hailo_build_receipt_requested_calibration_count": 500,
+          "hailo_build_receipt_schema": "onnx-splitpoint/hailo-hef-build-receipt/v2",
+          "hailo_build_receipt_sdk_version": "hailo-dataflow-compiler:5.3.0",
+          "hailo_build_receipt_size_bytes": 3853,
+          "host_tail_required": true,
+          "model_id": "yolo26s",
+          "output_format": "raw_detection_tensors",
+          "postprocessing_required": true,
+          "preprocessing_contract": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "norm",
+            "input_domain": "uint8_0_255",
+            "letterbox": true,
+            "letterbox_pad_value": 114,
+            "pad_value": 114,
+            "placement": "floor_top_left_remainder_bottom_right",
+            "preprocess_mode": "letterbox",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "centered_letterbox",
+            "target_hw": [
+              640,
+              640
+            ],
+            "task": "detection"
+          },
+          "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+          "raw_endpoint_origin": "compiler_end_nodes",
+          "recorded_artifact_path": "hailo/hailo10/full/.hailo-generations/63052721b91f4b048747af4e7f43e0f1/compiled.hef",
+          "recorded_artifact_sha256": "b002563960a9131192f6d0b119e64d457d5d8bba18d8ab49b989175f8eae41be",
+          "recorded_artifact_size_bytes": 10350592,
+          "request_status": "requested",
+          "requested": true,
+          "requires_external_postprocess": true,
+          "schema": "onnx-splitpoint/output-contract",
+          "schema_version": 1,
+          "source_onnx_detection_endpoint": {
+            "multiscale_raw_head": false,
+            "output_shapes": [
+              [
+                1,
+                300,
+                6
+              ]
+            ],
+            "sidecar_status": "unavailable",
+            "stage": "decoded_nms"
+          },
+          "source_onnx_multiscale_raw_head": false,
+          "source_onnx_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+          "stage": "raw_head",
+          "task": "detection",
+          "variant": "full",
+          "warning": "Accelerator output is a byte-bound raw detection head; frozen host decode/NMS is required."
+        },
+        "full_prepared_baseline": false,
+        "full_receipt_attested": true,
+        "full_required": true,
+        "full_true_full_model": false
+      },
+      "hailo8": {
+        "full": "hailo/hailo8/full/compiled.hef",
+        "full_build": {
+          "artifact_hash": "e9220c3c88801c548cec372e4b39f565ab4fd83ffe540e7f8e219ff09b6393d8",
+          "build_receipt_file_sha256": "b808a68548bbbb3457ae17c56bf434684799e0a645cf24d0e3aad205d46d5b4e",
+          "build_receipt_identity_sha256": "add8a659b58c144ef8c96ab3ddaa41cb1014bb1401a8885f7454b4da66ab93fb",
+          "build_receipt_path": "hailo/hailo8/full/.hailo-generations/e05c8f394b1d4aeb812411995e15a5d2/hailo_hef_build_receipt.json",
+          "cache_hit": true,
+          "calib_source": "validated_existing_artifact",
+          "compiler_onnx_filename": "yolo26s_hailo_fixed.onnx",
+          "compiler_onnx_path": "hailo/hailo8/full/yolo26s_hailo_fixed.onnx",
+          "compiler_onnx_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+          "context_mode": "skipped",
+          "elapsed_s": 0.7844123840332031,
+          "hailo_build_receipt_cache_key": "4362e4c26a4011c366f2dcd40da474c7b4c79e6c76bf0ae6818914320b4304d6",
+          "hailo_build_receipt_cache_payload_sha256": "4362e4c26a4011c366f2dcd40da474c7b4c79e6c76bf0ae6818914320b4304d6",
+          "hailo_build_receipt_calibration_count": 500,
+          "hailo_build_receipt_calibration_identity": "manifest:2c9ac62b281ebdf35d97711b2b2cd9d822e8d0d1cf08b1433a8fb98f8edac10a",
+          "hailo_build_receipt_calibration_memory_cap_bytes": 268435456,
+          "hailo_build_receipt_calibration_storage": "memmap",
+          "hailo_build_receipt_end_nodes": [
+            "/model.23/one2one_cv2.0/one2one_cv2.0.2/Conv",
+            "/model.23/one2one_cv3.0/one2one_cv3.0.2/Conv",
+            "/model.23/one2one_cv2.1/one2one_cv2.1.2/Conv",
+            "/model.23/one2one_cv3.1/one2one_cv3.1.2/Conv",
+            "/model.23/one2one_cv2.2/one2one_cv2.2.2/Conv",
+            "/model.23/one2one_cv3.2/one2one_cv3.2.2/Conv"
+          ],
+          "hailo_build_receipt_file_sha256": "b808a68548bbbb3457ae17c56bf434684799e0a645cf24d0e3aad205d46d5b4e",
+          "hailo_build_receipt_hw_arch": "hailo8",
+          "hailo_build_receipt_identity_sha256": "add8a659b58c144ef8c96ab3ddaa41cb1014bb1401a8885f7454b4da66ab93fb",
+          "hailo_build_receipt_path": "hailo/hailo8/full/.hailo-generations/e05c8f394b1d4aeb812411995e15a5d2/hailo_hef_build_receipt.json",
+          "hailo_build_receipt_prepared_calibration_identity_sha256": "aba8c42bc003a4aea8b09c917e37aba6be2c3f1ea229f026cd14bf5c588f0ba7",
+          "hailo_build_receipt_requested_calibration_count": 500,
+          "hailo_build_receipt_schema": "onnx-splitpoint/hailo-hef-build-receipt/v2",
+          "hailo_build_receipt_sdk_version": "hailo-dataflow-compiler:3.33.1",
+          "hailo_build_receipt_size_bytes": 3851,
+          "mapping_failed": false,
+          "multi_context_used": false,
+          "ok": true,
+          "preprocessing_contract": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "norm",
+            "input_domain": "uint8_0_255",
+            "letterbox": true,
+            "letterbox_pad_value": 114,
+            "pad_value": 114,
+            "placement": "floor_top_left_remainder_bottom_right",
+            "preprocess_mode": "letterbox",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "centered_letterbox",
+            "target_hw": [
+              640,
+              640
+            ],
+            "task": "detection"
+          },
+          "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+          "receipt_validated": true,
+          "single_context_failed": false,
+          "single_context_used": false,
+          "skipped": true,
+          "source_onnx_path": "/home/kmika/Models/yolo26s.onnx",
+          "source_onnx_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+          "status": "receipt_attested",
+          "timed_out": false,
+          "watchdog_expired": false
+        },
+        "full_build_receipt": {
+          "build_receipt_file_sha256": "b808a68548bbbb3457ae17c56bf434684799e0a645cf24d0e3aad205d46d5b4e",
+          "build_receipt_identity_sha256": "add8a659b58c144ef8c96ab3ddaa41cb1014bb1401a8885f7454b4da66ab93fb",
+          "build_receipt_path": "hailo/hailo8/full/.hailo-generations/e05c8f394b1d4aeb812411995e15a5d2/hailo_hef_build_receipt.json",
+          "compiler_onnx_filename": "yolo26s_hailo_fixed.onnx",
+          "compiler_onnx_path": "hailo/hailo8/full/yolo26s_hailo_fixed.onnx",
+          "compiler_onnx_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+          "hailo_build_receipt_cache_key": "4362e4c26a4011c366f2dcd40da474c7b4c79e6c76bf0ae6818914320b4304d6",
+          "hailo_build_receipt_cache_payload_sha256": "4362e4c26a4011c366f2dcd40da474c7b4c79e6c76bf0ae6818914320b4304d6",
+          "hailo_build_receipt_calibration_count": 500,
+          "hailo_build_receipt_calibration_identity": "manifest:2c9ac62b281ebdf35d97711b2b2cd9d822e8d0d1cf08b1433a8fb98f8edac10a",
+          "hailo_build_receipt_calibration_memory_cap_bytes": 268435456,
+          "hailo_build_receipt_calibration_storage": "memmap",
+          "hailo_build_receipt_end_nodes": [
+            "/model.23/one2one_cv2.0/one2one_cv2.0.2/Conv",
+            "/model.23/one2one_cv3.0/one2one_cv3.0.2/Conv",
+            "/model.23/one2one_cv2.1/one2one_cv2.1.2/Conv",
+            "/model.23/one2one_cv3.1/one2one_cv3.1.2/Conv",
+            "/model.23/one2one_cv2.2/one2one_cv2.2.2/Conv",
+            "/model.23/one2one_cv3.2/one2one_cv3.2.2/Conv"
+          ],
+          "hailo_build_receipt_file_sha256": "b808a68548bbbb3457ae17c56bf434684799e0a645cf24d0e3aad205d46d5b4e",
+          "hailo_build_receipt_hw_arch": "hailo8",
+          "hailo_build_receipt_identity_sha256": "add8a659b58c144ef8c96ab3ddaa41cb1014bb1401a8885f7454b4da66ab93fb",
+          "hailo_build_receipt_path": "hailo/hailo8/full/.hailo-generations/e05c8f394b1d4aeb812411995e15a5d2/hailo_hef_build_receipt.json",
+          "hailo_build_receipt_prepared_calibration_identity_sha256": "aba8c42bc003a4aea8b09c917e37aba6be2c3f1ea229f026cd14bf5c588f0ba7",
+          "hailo_build_receipt_requested_calibration_count": 500,
+          "hailo_build_receipt_schema": "onnx-splitpoint/hailo-hef-build-receipt/v2",
+          "hailo_build_receipt_sdk_version": "hailo-dataflow-compiler:3.33.1",
+          "hailo_build_receipt_size_bytes": 3851,
+          "preprocessing_contract": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "norm",
+            "input_domain": "uint8_0_255",
+            "letterbox": true,
+            "letterbox_pad_value": 114,
+            "pad_value": 114,
+            "placement": "floor_top_left_remainder_bottom_right",
+            "preprocess_mode": "letterbox",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "centered_letterbox",
+            "target_hw": [
+              640,
+              640
+            ],
+            "task": "detection"
+          },
+          "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+          "source_onnx_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a"
+        },
+        "full_end_node_names": [
+          "/model.23/one2one_cv2.0/one2one_cv2.0.2/Conv",
+          "/model.23/one2one_cv3.0/one2one_cv3.0.2/Conv",
+          "/model.23/one2one_cv2.1/one2one_cv2.1.2/Conv",
+          "/model.23/one2one_cv3.1/one2one_cv3.1.2/Conv",
+          "/model.23/one2one_cv2.2/one2one_cv2.2.2/Conv",
+          "/model.23/one2one_cv3.2/one2one_cv3.2.2/Conv"
+        ],
+        "full_endpoint_mode": "raw_detection_head",
+        "full_output_contract": {
+          "artifact_binding_sha256": "a31ce043186f6436444b8bfea11898a0ef92c9f89c26b9c94795f7f5badd7da8",
+          "artifact_binding_source": "benchmark_set_declared_full_artifact+receipt_attested_full_artifact",
+          "artifact_binding_status": "verified",
+          "artifact_path": "hailo/hailo8/full/.hailo-generations/e05c8f394b1d4aeb812411995e15a5d2/compiled.hef",
+          "artifact_sha256": "e9220c3c88801c548cec372e4b39f565ab4fd83ffe540e7f8e219ff09b6393d8",
+          "artifact_size_bytes": 18489671,
+          "backend": "hailo8",
+          "build_receipt_file_sha256": "b808a68548bbbb3457ae17c56bf434684799e0a645cf24d0e3aad205d46d5b4e",
+          "build_receipt_identity_sha256": "add8a659b58c144ef8c96ab3ddaa41cb1014bb1401a8885f7454b4da66ab93fb",
+          "build_receipt_path": "hailo/hailo8/full/.hailo-generations/e05c8f394b1d4aeb812411995e15a5d2/hailo_hef_build_receipt.json",
+          "compiled_artifact_raw_head": true,
+          "compiler_onnx_filename": "yolo26s_hailo_fixed.onnx",
+          "compiler_onnx_path": "hailo/hailo8/full/yolo26s_hailo_fixed.onnx",
+          "compiler_onnx_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+          "contract_family": "raw_head",
+          "contract_reconciliation_metadata_alias": "hailo8",
+          "contract_reconciliation_source": "verified_benchmark_set_full_raw_head_contract",
+          "contract_reconciliation_status": "verified_suite_artifact_raw_head",
+          "contract_status": "recorded",
+          "endpoint_mode": "raw_detection_head",
+          "full_end_node_names": [
+            "/model.23/one2one_cv2.0/one2one_cv2.0.2/Conv",
+            "/model.23/one2one_cv3.0/one2one_cv3.0.2/Conv",
+            "/model.23/one2one_cv2.1/one2one_cv2.1.2/Conv",
+            "/model.23/one2one_cv3.1/one2one_cv3.1.2/Conv",
+            "/model.23/one2one_cv2.2/one2one_cv2.2.2/Conv",
+            "/model.23/one2one_cv3.2/one2one_cv3.2.2/Conv"
+          ],
+          "hailo_build_receipt_cache_key": "4362e4c26a4011c366f2dcd40da474c7b4c79e6c76bf0ae6818914320b4304d6",
+          "hailo_build_receipt_cache_payload_sha256": "4362e4c26a4011c366f2dcd40da474c7b4c79e6c76bf0ae6818914320b4304d6",
+          "hailo_build_receipt_calibration_count": 500,
+          "hailo_build_receipt_calibration_identity": "manifest:2c9ac62b281ebdf35d97711b2b2cd9d822e8d0d1cf08b1433a8fb98f8edac10a",
+          "hailo_build_receipt_calibration_memory_cap_bytes": 268435456,
+          "hailo_build_receipt_calibration_storage": "memmap",
+          "hailo_build_receipt_end_nodes": [
+            "/model.23/one2one_cv2.0/one2one_cv2.0.2/Conv",
+            "/model.23/one2one_cv3.0/one2one_cv3.0.2/Conv",
+            "/model.23/one2one_cv2.1/one2one_cv2.1.2/Conv",
+            "/model.23/one2one_cv3.1/one2one_cv3.1.2/Conv",
+            "/model.23/one2one_cv2.2/one2one_cv2.2.2/Conv",
+            "/model.23/one2one_cv3.2/one2one_cv3.2.2/Conv"
+          ],
+          "hailo_build_receipt_file_sha256": "b808a68548bbbb3457ae17c56bf434684799e0a645cf24d0e3aad205d46d5b4e",
+          "hailo_build_receipt_hw_arch": "hailo8",
+          "hailo_build_receipt_identity_sha256": "add8a659b58c144ef8c96ab3ddaa41cb1014bb1401a8885f7454b4da66ab93fb",
+          "hailo_build_receipt_path": "hailo/hailo8/full/.hailo-generations/e05c8f394b1d4aeb812411995e15a5d2/hailo_hef_build_receipt.json",
+          "hailo_build_receipt_prepared_calibration_identity_sha256": "aba8c42bc003a4aea8b09c917e37aba6be2c3f1ea229f026cd14bf5c588f0ba7",
+          "hailo_build_receipt_requested_calibration_count": 500,
+          "hailo_build_receipt_schema": "onnx-splitpoint/hailo-hef-build-receipt/v2",
+          "hailo_build_receipt_sdk_version": "hailo-dataflow-compiler:3.33.1",
+          "hailo_build_receipt_size_bytes": 3851,
+          "host_tail_required": true,
+          "model_id": "yolo26s",
+          "output_format": "raw_detection_tensors",
+          "postprocessing_required": true,
+          "preprocessing_contract": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "norm",
+            "input_domain": "uint8_0_255",
+            "letterbox": true,
+            "letterbox_pad_value": 114,
+            "pad_value": 114,
+            "placement": "floor_top_left_remainder_bottom_right",
+            "preprocess_mode": "letterbox",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "centered_letterbox",
+            "target_hw": [
+              640,
+              640
+            ],
+            "task": "detection"
+          },
+          "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+          "raw_endpoint_origin": "compiler_end_nodes",
+          "recorded_artifact_path": "hailo/hailo8/full/.hailo-generations/e05c8f394b1d4aeb812411995e15a5d2/compiled.hef",
+          "recorded_artifact_sha256": "e9220c3c88801c548cec372e4b39f565ab4fd83ffe540e7f8e219ff09b6393d8",
+          "recorded_artifact_size_bytes": 18489671,
+          "request_status": "requested",
+          "requested": true,
+          "requires_external_postprocess": true,
+          "schema": "onnx-splitpoint/output-contract",
+          "schema_version": 1,
+          "source_onnx_detection_endpoint": {
+            "multiscale_raw_head": false,
+            "output_shapes": [
+              [
+                1,
+                300,
+                6
+              ]
+            ],
+            "sidecar_status": "unavailable",
+            "stage": "decoded_nms"
+          },
+          "source_onnx_multiscale_raw_head": false,
+          "source_onnx_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+          "stage": "raw_head",
+          "task": "detection",
+          "variant": "full",
+          "warning": "Accelerator output is a byte-bound raw detection head; frozen host decode/NMS is required."
+        },
+        "full_prepared_baseline": false,
+        "full_receipt_attested": true,
+        "full_required": true,
+        "full_true_full_model": false
+      }
+    },
+    "targets": [
+      "hailo10",
+      "hailo8"
+    ]
+  },
+  "management_cpu_reference_invariant": {
+    "execution_location": "central_management",
+    "performance_dispatch_allowed": false,
+    "recipe_count": 1,
+    "run_plan_sha256": "sha256:041bda0d21663f35feaa1efd857689422ba5a8eae0531534e3e64be053adfe71",
+    "status": "verified"
+  },
+  "model": "models/yolo26s.onnx",
+  "model_name": "yolo26s",
+  "model_source": "/home/kmika/Models/yolo26s.onnx",
+  "model_task": "detection",
+  "native_split_quality_selection": {
+    "applicable": true,
+    "schema": "onnx-splitpoint/native-split-quality-selection",
+    "schema_version": 1,
+    "split_backends": [
+      "hailo8",
+      "hailo10h",
+      "deepx"
+    ],
+    "split_selection_source": "evaluation_profile.run_profiles"
+  },
+  "objective": "workflow_legacy_adapter",
+  "plan": {
+    "benchmark_task": "detection",
+    "created_at": "2026-09-10T21:12:14",
+    "evaluation_profile": {
+      "profile_id": "completsetdev",
+      "source": "evaluation_workflow"
+    },
+    "management_cpu_reference_invariant": {
+      "execution_location": "central_management",
+      "performance_dispatch_allowed": false,
+      "recipe_count": 1,
+      "run_plan_sha256": "sha256:041bda0d21663f35feaa1efd857689422ba5a8eae0531534e3e64be053adfe71",
+      "status": "verified"
+    },
+    "matrix": [],
+    "model_task": "detection",
+    "native_split_quality_selection": {
+      "applicable": true,
+      "schema": "onnx-splitpoint/native-split-quality-selection",
+      "schema_version": 1,
+      "split_backends": [
+        "hailo8",
+        "hailo10h",
+        "deepx"
+      ],
+      "split_selection_source": "evaluation_profile.run_profiles"
+    },
+    "objective": "workflow_legacy_adapter",
+    "planned_runs": [
+      {
+        "automatic_reference": false,
+        "backend": "ort_cpu",
+        "benchmark_task": "detection",
+        "canonical_cpu_reference": true,
+        "energy_eligible": false,
+        "execution_location": "central_management",
+        "id": "ort_cpu",
+        "image_scale": "auto",
+        "mini_classification_eval": false,
+        "mini_coco_ap50": true,
+        "pareto_eligible": false,
+        "performance_eligible": false,
+        "provider": "cpu",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "ranking_eligible": false,
+        "semantic_reference_only": true,
+        "stage1": {
+          "provider": "cpu",
+          "type": "onnxruntime"
+        },
+        "stage2": {
+          "provider": "cpu",
+          "type": "onnxruntime"
+        },
+        "task": "detection",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "onnxruntime",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variant": "full",
+        "variants": [
+          "full"
+        ]
+      },
+      {
+        "benchmark_task": "detection",
+        "id": "ort_tensorrt",
+        "image_scale": "auto",
+        "mini_classification_eval": false,
+        "mini_coco_ap50": true,
+        "provider": "tensorrt",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "stage2": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "task": "detection",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "onnxruntime",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest"
+      },
+      {
+        "benchmark_task": "detection",
+        "hw_arch": "hailo8",
+        "id": "hailo8",
+        "image_scale": "auto",
+        "mini_classification_eval": false,
+        "mini_coco_ap50": true,
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "same_backend_split_diagnostics_enabled": false,
+        "stage1": {
+          "hw_arch": "hailo8",
+          "type": "hailo"
+        },
+        "stage2": {
+          "hw_arch": "hailo8",
+          "type": "hailo"
+        },
+        "task": "detection",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "hailo",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full"
+        ]
+      },
+      {
+        "benchmark_task": "detection",
+        "hw_arch": "hailo10",
+        "id": "hailo10",
+        "image_scale": "auto",
+        "mini_classification_eval": false,
+        "mini_coco_ap50": true,
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "same_backend_split_diagnostics_enabled": false,
+        "stage1": {
+          "hw_arch": "hailo10",
+          "type": "hailo"
+        },
+        "stage2": {
+          "hw_arch": "hailo10",
+          "type": "hailo"
+        },
+        "task": "detection",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "hailo",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full"
+        ]
+      },
+      {
+        "backend": "deepx_m1",
+        "benchmark_task": "detection",
+        "contract_path": "deepx/deepx_m1/full/output_contract.json",
+        "dxnn_path": "deepx/deepx_m1/full/model.dxnn",
+        "id": "deepx_m1_full",
+        "image_scale": "auto",
+        "mini_classification_eval": false,
+        "mini_coco_ap50": true,
+        "provider": "deepx_m1",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "backend": "deepx_m1",
+          "type": "deepx"
+        },
+        "stage2": {
+          "backend": "deepx_m1",
+          "type": "deepx"
+        },
+        "task": "detection",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "deepx",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full"
+        ]
+      },
+      {
+        "benchmark_task": "detection",
+        "id": "deepx_m1_to_tensorrt",
+        "image_scale": "auto",
+        "mini_classification_eval": false,
+        "mini_coco_ap50": true,
+        "provider": "tensorrt",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "backend": "deepx_m1",
+          "type": "deepx"
+        },
+        "stage2": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "task": "detection",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "matrix",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "part1",
+          "part2",
+          "composed"
+        ]
+      },
+      {
+        "benchmark_task": "detection",
+        "id": "hailo8_to_trt",
+        "image_scale": "auto",
+        "mini_classification_eval": false,
+        "mini_coco_ap50": true,
+        "provider": "tensorrt",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "hw_arch": "hailo8",
+          "type": "hailo"
+        },
+        "stage2": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "task": "detection",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "matrix",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full",
+          "part1",
+          "part2",
+          "composed"
+        ]
+      },
+      {
+        "benchmark_task": "detection",
+        "id": "hailo10_to_tensorrt",
+        "image_scale": "auto",
+        "mini_classification_eval": false,
+        "mini_coco_ap50": true,
+        "provider": "tensorrt",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "hw_arch": "hailo10",
+          "type": "hailo"
+        },
+        "stage2": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "task": "detection",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "matrix",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full",
+          "part1",
+          "part2",
+          "composed"
+        ]
+      }
+    ],
+    "quality_gate": {
+      "canonical_reference": "canonical_full_onnx",
+      "claim_eligible": null,
+      "classification": {
+        "guardrails": {
+          "top5_accuracy_margin": 0.01
+        },
+        "non_inferiority_margin": 0.01,
+        "primary_metric": "top1_accuracy"
+      },
+      "dataset_tier": "final",
+      "detection": {
+        "guardrails": {
+          "ap50_margin": 0.01,
+          "ap75_margin": 0.01
+        },
+        "non_inferiority_margin": 0.01,
+        "primary_metric": "coco_ap_50_95"
+      },
+      "diagnostic_only": false,
+      "enforcement": {
+        "claim_eligibility": "complete_valid_evidence_only",
+        "metric_threshold_miss": "enforced_quality_decision",
+        "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+        "technical_quality_error": "hard_fail"
+      },
+      "frozen_before_final_campaign": false,
+      "legacy_point_estimate_eligible_for_ranking": false,
+      "name": "task_quality_final_5000",
+      "native_contract": {
+        "detection_self_reference": {
+          "class_aware": true,
+          "confidence_threshold": 0.25,
+          "denominator": "reference_detections",
+          "iou_threshold": 0.5,
+          "min_mean_matched_iou": 0.85,
+          "min_reference_match_ratio": 0.8,
+          "policy_id": "class_aware_iou50_postnms_v2"
+        },
+        "detection_self_reference_min_match_ratio": 0.8,
+        "numerical_similarity_required_for_claim": true,
+        "self_reference_counts_as_task_accuracy": false
+      },
+      "profile_id": "task_quality_final_5000",
+      "schema": "onnx-splitpoint/task-quality-policy",
+      "schema_version": 3,
+      "screening_eligible_for_ranking": false,
+      "statistics": {
+        "bootstrap_repetitions": 5000,
+        "confidence_level": 0.95,
+        "decision": "lower_one_sided_bound",
+        "execution_location": "central_management",
+        "method": "paired_bootstrap",
+        "seed": 20260710,
+        "workers": 4
+      }
+    },
+    "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+    "runs": [
+      {
+        "automatic_reference": false,
+        "backend": "ort_cpu",
+        "benchmark_task": "detection",
+        "canonical_cpu_reference": true,
+        "energy_eligible": false,
+        "execution_location": "central_management",
+        "id": "ort_cpu",
+        "image_scale": "auto",
+        "mini_classification_eval": false,
+        "mini_coco_ap50": true,
+        "pareto_eligible": false,
+        "performance_eligible": false,
+        "provider": "cpu",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "ranking_eligible": false,
+        "semantic_reference_only": true,
+        "stage1": {
+          "provider": "cpu",
+          "type": "onnxruntime"
+        },
+        "stage2": {
+          "provider": "cpu",
+          "type": "onnxruntime"
+        },
+        "task": "detection",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "onnxruntime",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variant": "full",
+        "variants": [
+          "full"
+        ]
+      },
+      {
+        "benchmark_task": "detection",
+        "id": "ort_tensorrt",
+        "image_scale": "auto",
+        "mini_classification_eval": false,
+        "mini_coco_ap50": true,
+        "provider": "tensorrt",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "stage2": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "task": "detection",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "onnxruntime",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest"
+      },
+      {
+        "benchmark_task": "detection",
+        "hw_arch": "hailo8",
+        "id": "hailo8",
+        "image_scale": "auto",
+        "mini_classification_eval": false,
+        "mini_coco_ap50": true,
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "same_backend_split_diagnostics_enabled": false,
+        "stage1": {
+          "hw_arch": "hailo8",
+          "type": "hailo"
+        },
+        "stage2": {
+          "hw_arch": "hailo8",
+          "type": "hailo"
+        },
+        "task": "detection",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "hailo",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full"
+        ]
+      },
+      {
+        "benchmark_task": "detection",
+        "hw_arch": "hailo10",
+        "id": "hailo10",
+        "image_scale": "auto",
+        "mini_classification_eval": false,
+        "mini_coco_ap50": true,
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "same_backend_split_diagnostics_enabled": false,
+        "stage1": {
+          "hw_arch": "hailo10",
+          "type": "hailo"
+        },
+        "stage2": {
+          "hw_arch": "hailo10",
+          "type": "hailo"
+        },
+        "task": "detection",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "hailo",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full"
+        ]
+      },
+      {
+        "backend": "deepx_m1",
+        "benchmark_task": "detection",
+        "contract_path": "deepx/deepx_m1/full/output_contract.json",
+        "dxnn_path": "deepx/deepx_m1/full/model.dxnn",
+        "id": "deepx_m1_full",
+        "image_scale": "auto",
+        "mini_classification_eval": false,
+        "mini_coco_ap50": true,
+        "provider": "deepx_m1",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "backend": "deepx_m1",
+          "type": "deepx"
+        },
+        "stage2": {
+          "backend": "deepx_m1",
+          "type": "deepx"
+        },
+        "task": "detection",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "deepx",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full"
+        ]
+      },
+      {
+        "benchmark_task": "detection",
+        "id": "deepx_m1_to_tensorrt",
+        "image_scale": "auto",
+        "mini_classification_eval": false,
+        "mini_coco_ap50": true,
+        "provider": "tensorrt",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "backend": "deepx_m1",
+          "type": "deepx"
+        },
+        "stage2": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "task": "detection",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "matrix",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "part1",
+          "part2",
+          "composed"
+        ]
+      },
+      {
+        "benchmark_task": "detection",
+        "id": "hailo8_to_trt",
+        "image_scale": "auto",
+        "mini_classification_eval": false,
+        "mini_coco_ap50": true,
+        "provider": "tensorrt",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "hw_arch": "hailo8",
+          "type": "hailo"
+        },
+        "stage2": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "task": "detection",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "matrix",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full",
+          "part1",
+          "part2",
+          "composed"
+        ]
+      },
+      {
+        "benchmark_task": "detection",
+        "id": "hailo10_to_tensorrt",
+        "image_scale": "auto",
+        "mini_classification_eval": false,
+        "mini_coco_ap50": true,
+        "provider": "tensorrt",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "hw_arch": "hailo10",
+          "type": "hailo"
+        },
+        "stage2": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "task": "detection",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "matrix",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full",
+          "part1",
+          "part2",
+          "composed"
+        ]
+      }
+    ],
+    "schema": "onnx-splitpoint/benchmark-plan",
+    "schema_version": 1,
+    "stage_schema_normalized_by": "v60i-final-evidence-pipeline-fixes",
+    "task": "detection"
+  },
+  "planned_runs": [
+    {
+      "automatic_reference": false,
+      "backend": "ort_cpu",
+      "benchmark_task": "detection",
+      "canonical_cpu_reference": true,
+      "energy_eligible": false,
+      "execution_location": "central_management",
+      "id": "ort_cpu",
+      "image_scale": "auto",
+      "mini_classification_eval": false,
+      "mini_coco_ap50": true,
+      "pareto_eligible": false,
+      "performance_eligible": false,
+      "provider": "cpu",
+      "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+      "ranking_eligible": false,
+      "semantic_reference_only": true,
+      "stage1": {
+        "provider": "cpu",
+        "type": "onnxruntime"
+      },
+      "stage2": {
+        "provider": "cpu",
+        "type": "onnxruntime"
+      },
+      "task": "detection",
+      "task_quality_gate": {
+        "canonical_reference": "canonical_full_onnx",
+        "claim_eligible": null,
+        "classification": {
+          "guardrails": {
+            "top5_accuracy_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "top1_accuracy"
+        },
+        "dataset_tier": "final",
+        "detection": {
+          "guardrails": {
+            "ap50_margin": 0.01,
+            "ap75_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "coco_ap_50_95"
+        },
+        "diagnostic_only": false,
+        "enforcement": {
+          "claim_eligibility": "complete_valid_evidence_only",
+          "metric_threshold_miss": "enforced_quality_decision",
+          "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+          "technical_quality_error": "hard_fail"
+        },
+        "frozen_before_final_campaign": false,
+        "legacy_point_estimate_eligible_for_ranking": false,
+        "name": "task_quality_final_5000",
+        "native_contract": {
+          "detection_self_reference": {
+            "class_aware": true,
+            "confidence_threshold": 0.25,
+            "denominator": "reference_detections",
+            "iou_threshold": 0.5,
+            "min_mean_matched_iou": 0.85,
+            "min_reference_match_ratio": 0.8,
+            "policy_id": "class_aware_iou50_postnms_v2"
+          },
+          "detection_self_reference_min_match_ratio": 0.8,
+          "numerical_similarity_required_for_claim": true,
+          "self_reference_counts_as_task_accuracy": false
+        },
+        "profile_id": "task_quality_final_5000",
+        "schema": "onnx-splitpoint/task-quality-policy",
+        "schema_version": 3,
+        "screening_eligible_for_ranking": false,
+        "statistics": {
+          "bootstrap_repetitions": 5000,
+          "confidence_level": 0.95,
+          "decision": "lower_one_sided_bound",
+          "execution_location": "central_management",
+          "method": "paired_bootstrap",
+          "seed": 20260710,
+          "workers": 4
+        }
+      },
+      "type": "onnxruntime",
+      "validation_budget_authoritative": true,
+      "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+      "validation_items_requested": 5000,
+      "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+      "validation_max_images": 5000,
+      "validation_reference_mode": "auto",
+      "validation_source_kind": "content_addressed_manifest",
+      "variant": "full",
+      "variants": [
+        "full"
+      ]
+    },
+    {
+      "benchmark_task": "detection",
+      "id": "ort_tensorrt",
+      "image_scale": "auto",
+      "mini_classification_eval": false,
+      "mini_coco_ap50": true,
+      "provider": "tensorrt",
+      "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+      "stage1": {
+        "provider": "tensorrt",
+        "type": "onnxruntime"
+      },
+      "stage2": {
+        "provider": "tensorrt",
+        "type": "onnxruntime"
+      },
+      "task": "detection",
+      "task_quality_gate": {
+        "canonical_reference": "canonical_full_onnx",
+        "claim_eligible": null,
+        "classification": {
+          "guardrails": {
+            "top5_accuracy_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "top1_accuracy"
+        },
+        "dataset_tier": "final",
+        "detection": {
+          "guardrails": {
+            "ap50_margin": 0.01,
+            "ap75_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "coco_ap_50_95"
+        },
+        "diagnostic_only": false,
+        "enforcement": {
+          "claim_eligibility": "complete_valid_evidence_only",
+          "metric_threshold_miss": "enforced_quality_decision",
+          "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+          "technical_quality_error": "hard_fail"
+        },
+        "frozen_before_final_campaign": false,
+        "legacy_point_estimate_eligible_for_ranking": false,
+        "name": "task_quality_final_5000",
+        "native_contract": {
+          "detection_self_reference": {
+            "class_aware": true,
+            "confidence_threshold": 0.25,
+            "denominator": "reference_detections",
+            "iou_threshold": 0.5,
+            "min_mean_matched_iou": 0.85,
+            "min_reference_match_ratio": 0.8,
+            "policy_id": "class_aware_iou50_postnms_v2"
+          },
+          "detection_self_reference_min_match_ratio": 0.8,
+          "numerical_similarity_required_for_claim": true,
+          "self_reference_counts_as_task_accuracy": false
+        },
+        "profile_id": "task_quality_final_5000",
+        "schema": "onnx-splitpoint/task-quality-policy",
+        "schema_version": 3,
+        "screening_eligible_for_ranking": false,
+        "statistics": {
+          "bootstrap_repetitions": 5000,
+          "confidence_level": 0.95,
+          "decision": "lower_one_sided_bound",
+          "execution_location": "central_management",
+          "method": "paired_bootstrap",
+          "seed": 20260710,
+          "workers": 4
+        }
+      },
+      "type": "onnxruntime",
+      "validation_budget_authoritative": true,
+      "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+      "validation_items_requested": 5000,
+      "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+      "validation_max_images": 5000,
+      "validation_reference_mode": "auto",
+      "validation_source_kind": "content_addressed_manifest"
+    },
+    {
+      "benchmark_task": "detection",
+      "hw_arch": "hailo8",
+      "id": "hailo8",
+      "image_scale": "auto",
+      "mini_classification_eval": false,
+      "mini_coco_ap50": true,
+      "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+      "same_backend_split_diagnostics_enabled": false,
+      "stage1": {
+        "hw_arch": "hailo8",
+        "type": "hailo"
+      },
+      "stage2": {
+        "hw_arch": "hailo8",
+        "type": "hailo"
+      },
+      "task": "detection",
+      "task_quality_gate": {
+        "canonical_reference": "canonical_full_onnx",
+        "claim_eligible": null,
+        "classification": {
+          "guardrails": {
+            "top5_accuracy_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "top1_accuracy"
+        },
+        "dataset_tier": "final",
+        "detection": {
+          "guardrails": {
+            "ap50_margin": 0.01,
+            "ap75_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "coco_ap_50_95"
+        },
+        "diagnostic_only": false,
+        "enforcement": {
+          "claim_eligibility": "complete_valid_evidence_only",
+          "metric_threshold_miss": "enforced_quality_decision",
+          "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+          "technical_quality_error": "hard_fail"
+        },
+        "frozen_before_final_campaign": false,
+        "legacy_point_estimate_eligible_for_ranking": false,
+        "name": "task_quality_final_5000",
+        "native_contract": {
+          "detection_self_reference": {
+            "class_aware": true,
+            "confidence_threshold": 0.25,
+            "denominator": "reference_detections",
+            "iou_threshold": 0.5,
+            "min_mean_matched_iou": 0.85,
+            "min_reference_match_ratio": 0.8,
+            "policy_id": "class_aware_iou50_postnms_v2"
+          },
+          "detection_self_reference_min_match_ratio": 0.8,
+          "numerical_similarity_required_for_claim": true,
+          "self_reference_counts_as_task_accuracy": false
+        },
+        "profile_id": "task_quality_final_5000",
+        "schema": "onnx-splitpoint/task-quality-policy",
+        "schema_version": 3,
+        "screening_eligible_for_ranking": false,
+        "statistics": {
+          "bootstrap_repetitions": 5000,
+          "confidence_level": 0.95,
+          "decision": "lower_one_sided_bound",
+          "execution_location": "central_management",
+          "method": "paired_bootstrap",
+          "seed": 20260710,
+          "workers": 4
+        }
+      },
+      "type": "hailo",
+      "validation_budget_authoritative": true,
+      "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+      "validation_items_requested": 5000,
+      "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+      "validation_max_images": 5000,
+      "validation_reference_mode": "auto",
+      "validation_source_kind": "content_addressed_manifest",
+      "variants": [
+        "full"
+      ]
+    },
+    {
+      "benchmark_task": "detection",
+      "hw_arch": "hailo10",
+      "id": "hailo10",
+      "image_scale": "auto",
+      "mini_classification_eval": false,
+      "mini_coco_ap50": true,
+      "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+      "same_backend_split_diagnostics_enabled": false,
+      "stage1": {
+        "hw_arch": "hailo10",
+        "type": "hailo"
+      },
+      "stage2": {
+        "hw_arch": "hailo10",
+        "type": "hailo"
+      },
+      "task": "detection",
+      "task_quality_gate": {
+        "canonical_reference": "canonical_full_onnx",
+        "claim_eligible": null,
+        "classification": {
+          "guardrails": {
+            "top5_accuracy_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "top1_accuracy"
+        },
+        "dataset_tier": "final",
+        "detection": {
+          "guardrails": {
+            "ap50_margin": 0.01,
+            "ap75_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "coco_ap_50_95"
+        },
+        "diagnostic_only": false,
+        "enforcement": {
+          "claim_eligibility": "complete_valid_evidence_only",
+          "metric_threshold_miss": "enforced_quality_decision",
+          "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+          "technical_quality_error": "hard_fail"
+        },
+        "frozen_before_final_campaign": false,
+        "legacy_point_estimate_eligible_for_ranking": false,
+        "name": "task_quality_final_5000",
+        "native_contract": {
+          "detection_self_reference": {
+            "class_aware": true,
+            "confidence_threshold": 0.25,
+            "denominator": "reference_detections",
+            "iou_threshold": 0.5,
+            "min_mean_matched_iou": 0.85,
+            "min_reference_match_ratio": 0.8,
+            "policy_id": "class_aware_iou50_postnms_v2"
+          },
+          "detection_self_reference_min_match_ratio": 0.8,
+          "numerical_similarity_required_for_claim": true,
+          "self_reference_counts_as_task_accuracy": false
+        },
+        "profile_id": "task_quality_final_5000",
+        "schema": "onnx-splitpoint/task-quality-policy",
+        "schema_version": 3,
+        "screening_eligible_for_ranking": false,
+        "statistics": {
+          "bootstrap_repetitions": 5000,
+          "confidence_level": 0.95,
+          "decision": "lower_one_sided_bound",
+          "execution_location": "central_management",
+          "method": "paired_bootstrap",
+          "seed": 20260710,
+          "workers": 4
+        }
+      },
+      "type": "hailo",
+      "validation_budget_authoritative": true,
+      "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+      "validation_items_requested": 5000,
+      "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+      "validation_max_images": 5000,
+      "validation_reference_mode": "auto",
+      "validation_source_kind": "content_addressed_manifest",
+      "variants": [
+        "full"
+      ]
+    },
+    {
+      "backend": "deepx_m1",
+      "benchmark_task": "detection",
+      "contract_path": "deepx/deepx_m1/full/output_contract.json",
+      "dxnn_path": "deepx/deepx_m1/full/model.dxnn",
+      "id": "deepx_m1_full",
+      "image_scale": "auto",
+      "mini_classification_eval": false,
+      "mini_coco_ap50": true,
+      "provider": "deepx_m1",
+      "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+      "stage1": {
+        "backend": "deepx_m1",
+        "type": "deepx"
+      },
+      "stage2": {
+        "backend": "deepx_m1",
+        "type": "deepx"
+      },
+      "task": "detection",
+      "task_quality_gate": {
+        "canonical_reference": "canonical_full_onnx",
+        "claim_eligible": null,
+        "classification": {
+          "guardrails": {
+            "top5_accuracy_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "top1_accuracy"
+        },
+        "dataset_tier": "final",
+        "detection": {
+          "guardrails": {
+            "ap50_margin": 0.01,
+            "ap75_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "coco_ap_50_95"
+        },
+        "diagnostic_only": false,
+        "enforcement": {
+          "claim_eligibility": "complete_valid_evidence_only",
+          "metric_threshold_miss": "enforced_quality_decision",
+          "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+          "technical_quality_error": "hard_fail"
+        },
+        "frozen_before_final_campaign": false,
+        "legacy_point_estimate_eligible_for_ranking": false,
+        "name": "task_quality_final_5000",
+        "native_contract": {
+          "detection_self_reference": {
+            "class_aware": true,
+            "confidence_threshold": 0.25,
+            "denominator": "reference_detections",
+            "iou_threshold": 0.5,
+            "min_mean_matched_iou": 0.85,
+            "min_reference_match_ratio": 0.8,
+            "policy_id": "class_aware_iou50_postnms_v2"
+          },
+          "detection_self_reference_min_match_ratio": 0.8,
+          "numerical_similarity_required_for_claim": true,
+          "self_reference_counts_as_task_accuracy": false
+        },
+        "profile_id": "task_quality_final_5000",
+        "schema": "onnx-splitpoint/task-quality-policy",
+        "schema_version": 3,
+        "screening_eligible_for_ranking": false,
+        "statistics": {
+          "bootstrap_repetitions": 5000,
+          "confidence_level": 0.95,
+          "decision": "lower_one_sided_bound",
+          "execution_location": "central_management",
+          "method": "paired_bootstrap",
+          "seed": 20260710,
+          "workers": 4
+        }
+      },
+      "type": "deepx",
+      "validation_budget_authoritative": true,
+      "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+      "validation_items_requested": 5000,
+      "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+      "validation_max_images": 5000,
+      "validation_reference_mode": "auto",
+      "validation_source_kind": "content_addressed_manifest",
+      "variants": [
+        "full"
+      ]
+    },
+    {
+      "benchmark_task": "detection",
+      "id": "deepx_m1_to_tensorrt",
+      "image_scale": "auto",
+      "mini_classification_eval": false,
+      "mini_coco_ap50": true,
+      "provider": "tensorrt",
+      "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+      "stage1": {
+        "backend": "deepx_m1",
+        "type": "deepx"
+      },
+      "stage2": {
+        "provider": "tensorrt",
+        "type": "onnxruntime"
+      },
+      "task": "detection",
+      "task_quality_gate": {
+        "canonical_reference": "canonical_full_onnx",
+        "claim_eligible": null,
+        "classification": {
+          "guardrails": {
+            "top5_accuracy_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "top1_accuracy"
+        },
+        "dataset_tier": "final",
+        "detection": {
+          "guardrails": {
+            "ap50_margin": 0.01,
+            "ap75_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "coco_ap_50_95"
+        },
+        "diagnostic_only": false,
+        "enforcement": {
+          "claim_eligibility": "complete_valid_evidence_only",
+          "metric_threshold_miss": "enforced_quality_decision",
+          "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+          "technical_quality_error": "hard_fail"
+        },
+        "frozen_before_final_campaign": false,
+        "legacy_point_estimate_eligible_for_ranking": false,
+        "name": "task_quality_final_5000",
+        "native_contract": {
+          "detection_self_reference": {
+            "class_aware": true,
+            "confidence_threshold": 0.25,
+            "denominator": "reference_detections",
+            "iou_threshold": 0.5,
+            "min_mean_matched_iou": 0.85,
+            "min_reference_match_ratio": 0.8,
+            "policy_id": "class_aware_iou50_postnms_v2"
+          },
+          "detection_self_reference_min_match_ratio": 0.8,
+          "numerical_similarity_required_for_claim": true,
+          "self_reference_counts_as_task_accuracy": false
+        },
+        "profile_id": "task_quality_final_5000",
+        "schema": "onnx-splitpoint/task-quality-policy",
+        "schema_version": 3,
+        "screening_eligible_for_ranking": false,
+        "statistics": {
+          "bootstrap_repetitions": 5000,
+          "confidence_level": 0.95,
+          "decision": "lower_one_sided_bound",
+          "execution_location": "central_management",
+          "method": "paired_bootstrap",
+          "seed": 20260710,
+          "workers": 4
+        }
+      },
+      "type": "matrix",
+      "validation_budget_authoritative": true,
+      "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+      "validation_items_requested": 5000,
+      "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+      "validation_max_images": 5000,
+      "validation_reference_mode": "auto",
+      "validation_source_kind": "content_addressed_manifest",
+      "variants": [
+        "part1",
+        "part2",
+        "composed"
+      ]
+    },
+    {
+      "benchmark_task": "detection",
+      "id": "hailo8_to_trt",
+      "image_scale": "auto",
+      "mini_classification_eval": false,
+      "mini_coco_ap50": true,
+      "provider": "tensorrt",
+      "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+      "stage1": {
+        "hw_arch": "hailo8",
+        "type": "hailo"
+      },
+      "stage2": {
+        "provider": "tensorrt",
+        "type": "onnxruntime"
+      },
+      "task": "detection",
+      "task_quality_gate": {
+        "canonical_reference": "canonical_full_onnx",
+        "claim_eligible": null,
+        "classification": {
+          "guardrails": {
+            "top5_accuracy_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "top1_accuracy"
+        },
+        "dataset_tier": "final",
+        "detection": {
+          "guardrails": {
+            "ap50_margin": 0.01,
+            "ap75_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "coco_ap_50_95"
+        },
+        "diagnostic_only": false,
+        "enforcement": {
+          "claim_eligibility": "complete_valid_evidence_only",
+          "metric_threshold_miss": "enforced_quality_decision",
+          "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+          "technical_quality_error": "hard_fail"
+        },
+        "frozen_before_final_campaign": false,
+        "legacy_point_estimate_eligible_for_ranking": false,
+        "name": "task_quality_final_5000",
+        "native_contract": {
+          "detection_self_reference": {
+            "class_aware": true,
+            "confidence_threshold": 0.25,
+            "denominator": "reference_detections",
+            "iou_threshold": 0.5,
+            "min_mean_matched_iou": 0.85,
+            "min_reference_match_ratio": 0.8,
+            "policy_id": "class_aware_iou50_postnms_v2"
+          },
+          "detection_self_reference_min_match_ratio": 0.8,
+          "numerical_similarity_required_for_claim": true,
+          "self_reference_counts_as_task_accuracy": false
+        },
+        "profile_id": "task_quality_final_5000",
+        "schema": "onnx-splitpoint/task-quality-policy",
+        "schema_version": 3,
+        "screening_eligible_for_ranking": false,
+        "statistics": {
+          "bootstrap_repetitions": 5000,
+          "confidence_level": 0.95,
+          "decision": "lower_one_sided_bound",
+          "execution_location": "central_management",
+          "method": "paired_bootstrap",
+          "seed": 20260710,
+          "workers": 4
+        }
+      },
+      "type": "matrix",
+      "validation_budget_authoritative": true,
+      "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+      "validation_items_requested": 5000,
+      "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+      "validation_max_images": 5000,
+      "validation_reference_mode": "auto",
+      "validation_source_kind": "content_addressed_manifest",
+      "variants": [
+        "full",
+        "part1",
+        "part2",
+        "composed"
+      ]
+    },
+    {
+      "benchmark_task": "detection",
+      "id": "hailo10_to_tensorrt",
+      "image_scale": "auto",
+      "mini_classification_eval": false,
+      "mini_coco_ap50": true,
+      "provider": "tensorrt",
+      "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+      "stage1": {
+        "hw_arch": "hailo10",
+        "type": "hailo"
+      },
+      "stage2": {
+        "provider": "tensorrt",
+        "type": "onnxruntime"
+      },
+      "task": "detection",
+      "task_quality_gate": {
+        "canonical_reference": "canonical_full_onnx",
+        "claim_eligible": null,
+        "classification": {
+          "guardrails": {
+            "top5_accuracy_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "top1_accuracy"
+        },
+        "dataset_tier": "final",
+        "detection": {
+          "guardrails": {
+            "ap50_margin": 0.01,
+            "ap75_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "coco_ap_50_95"
+        },
+        "diagnostic_only": false,
+        "enforcement": {
+          "claim_eligibility": "complete_valid_evidence_only",
+          "metric_threshold_miss": "enforced_quality_decision",
+          "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+          "technical_quality_error": "hard_fail"
+        },
+        "frozen_before_final_campaign": false,
+        "legacy_point_estimate_eligible_for_ranking": false,
+        "name": "task_quality_final_5000",
+        "native_contract": {
+          "detection_self_reference": {
+            "class_aware": true,
+            "confidence_threshold": 0.25,
+            "denominator": "reference_detections",
+            "iou_threshold": 0.5,
+            "min_mean_matched_iou": 0.85,
+            "min_reference_match_ratio": 0.8,
+            "policy_id": "class_aware_iou50_postnms_v2"
+          },
+          "detection_self_reference_min_match_ratio": 0.8,
+          "numerical_similarity_required_for_claim": true,
+          "self_reference_counts_as_task_accuracy": false
+        },
+        "profile_id": "task_quality_final_5000",
+        "schema": "onnx-splitpoint/task-quality-policy",
+        "schema_version": 3,
+        "screening_eligible_for_ranking": false,
+        "statistics": {
+          "bootstrap_repetitions": 5000,
+          "confidence_level": 0.95,
+          "decision": "lower_one_sided_bound",
+          "execution_location": "central_management",
+          "method": "paired_bootstrap",
+          "seed": 20260710,
+          "workers": 4
+        }
+      },
+      "type": "matrix",
+      "validation_budget_authoritative": true,
+      "validation_images": "resources/validation/detection/val2017_n5000_s20260710",
+      "validation_items_requested": 5000,
+      "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+      "validation_max_images": 5000,
+      "validation_reference_mode": "auto",
+      "validation_source_kind": "content_addressed_manifest",
+      "variants": [
+        "full",
+        "part1",
+        "part2",
+        "composed"
+      ]
+    }
+  ],
+  "quality_gate": {
+    "canonical_reference": "canonical_full_onnx",
+    "claim_eligible": null,
+    "classification": {
+      "guardrails": {
+        "top5_accuracy_margin": 0.01
+      },
+      "non_inferiority_margin": 0.01,
+      "primary_metric": "top1_accuracy"
+    },
+    "dataset_tier": "final",
+    "detection": {
+      "guardrails": {
+        "ap50_margin": 0.01,
+        "ap75_margin": 0.01
+      },
+      "non_inferiority_margin": 0.01,
+      "primary_metric": "coco_ap_50_95"
+    },
+    "diagnostic_only": false,
+    "enforcement": {
+      "claim_eligibility": "complete_valid_evidence_only",
+      "metric_threshold_miss": "enforced_quality_decision",
+      "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+      "technical_quality_error": "hard_fail"
+    },
+    "frozen_before_final_campaign": false,
+    "legacy_point_estimate_eligible_for_ranking": false,
+    "name": "task_quality_final_5000",
+    "native_contract": {
+      "detection_self_reference": {
+        "class_aware": true,
+        "confidence_threshold": 0.25,
+        "denominator": "reference_detections",
+        "iou_threshold": 0.5,
+        "min_mean_matched_iou": 0.85,
+        "min_reference_match_ratio": 0.8,
+        "policy_id": "class_aware_iou50_postnms_v2"
+      },
+      "detection_self_reference_min_match_ratio": 0.8,
+      "numerical_similarity_required_for_claim": true,
+      "self_reference_counts_as_task_accuracy": false
+    },
+    "profile_id": "task_quality_final_5000",
+    "schema": "onnx-splitpoint/task-quality-policy",
+    "schema_version": 3,
+    "screening_eligible_for_ranking": false,
+    "statistics": {
+      "bootstrap_repetitions": 5000,
+      "confidence_level": 0.95,
+      "decision": "lower_one_sided_bound",
+      "execution_location": "central_management",
+      "method": "paired_bootstrap",
+      "seed": 20260710,
+      "workers": 4
+    }
+  },
+  "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+  "schema": "onnx-splitpoint/benchmark-set",
+  "schema_version": 2,
+  "stage_schema_normalized_by": "v60i-final-evidence-pipeline-fixes",
+  "summary": {
+    "auto_filtered_candidates": 0,
+    "candidate_search_pool": 17,
+    "candidate_search_stop": null,
+    "candidate_search_stopped": false,
+    "discarded_cases": 0,
+    "generated_cases": 2,
+    "preferred_shortlist_after_prefilter": 2,
+    "preferred_shortlist_cases": 2,
+    "preferred_shortlist_filtered_candidates": 0,
+    "requested_cases": 2,
+    "search_pool_exhausted": false,
+    "shortfall": 0
+  },
+  "system_spec": null,
+  "task": "detection",
+  "tool": {
+    "core": "2.80.1",
+    "gui": "workflow-legacy-adapter"
+  }
+}

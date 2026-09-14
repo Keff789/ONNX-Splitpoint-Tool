@@ -1,0 +1,1149 @@
+{
+  "producer_impl": "hailo8_python_vstreams_fifo",
+  "completed_frames": 3000,
+  "completed_work_units": 3000,
+  "postprocess_included": true,
+  "postprocess_completed_frames": 3000,
+  "postprocess_completion_verified": true,
+  "completion_execution_contract": {
+    "schema": "onnx-splitpoint/detection-completion-execution-contract",
+    "schema_version": 2,
+    "task": "detection",
+    "model_id": "yolo11l",
+    "model_family": "yolo11",
+    "completion_mode": "decoded_pre_nms_frozen_nms",
+    "execution_policy": "async_drain_then_completion_tail_then_count_and_timestamp_v1",
+    "performance_energy_contract_identity": "same_completion_execution_contract_sha256",
+    "source_endpoint": {
+      "task": "detection",
+      "stage": "decoded_pre_nms",
+      "contract_family": "decoded_pre_nms",
+      "endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+      "output_endpoint_id": "detection:decoded_pre_nms:74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+      "tensor_signature": {
+        "tensor_count": 1,
+        "tensors": [
+          {
+            "index": 0,
+            "name": "output0",
+            "rank": 3,
+            "shape": [
+              1,
+              84,
+              8400
+            ],
+            "dtype": "float32"
+          }
+        ]
+      },
+      "output_endpoint_attestation_sha256": "bd2066cd1e9b52d1a352b0c9b2c91f9be384d15767de7c91b2710bf1a2ca2093"
+    },
+    "processor_contract": {
+      "schema": "onnx-splitpoint/frozen-native-detection-postprocess",
+      "schema_version": 1,
+      "task": "detection",
+      "source_contract_family": "decoded_pre_nms",
+      "output_contract_family": "decoded_nms",
+      "model_id": "yolo11l",
+      "model_family": "yolo11",
+      "decoder_id": "ultralytics_decoded_classaware_nms_v1",
+      "decoder_format": "ultralytics_decoded",
+      "multiscale_activation_mode": null,
+      "nms_implementation": "numpy_class_aware_nms_xyxy_v1",
+      "class_aware": true,
+      "confidence_threshold": 0.25,
+      "iou_threshold": 0.45,
+      "max_detections": 300,
+      "input_hw": [
+        640,
+        640
+      ],
+      "original_wh": [
+        640,
+        483
+      ],
+      "raw_output_tensor_signature": {
+        "tensor_count": 1,
+        "tensors": [
+          {
+            "index": 0,
+            "name": "output0",
+            "rank": 3,
+            "shape": [
+              1,
+              84,
+              8400
+            ],
+            "dtype": "float32"
+          }
+        ]
+      },
+      "implementation_artifacts": {
+        "native_detection_postprocess": {
+          "relative_path": "onnx_splitpoint_tool/native_detection_postprocess.py",
+          "sha256": "00f0ad986c8021b864ddff3f7697dfc50e93fda8e9adf4e243fcd2f6b2164eed"
+        },
+        "yolo_harness": {
+          "relative_path": "onnx_splitpoint_tool/runners/harness/yolo.py",
+          "sha256": "31657e2717a8cb6cfda53e7de8e06b7b2286ecb430070811546fdec65327a17a"
+        },
+        "harness_base": {
+          "relative_path": "onnx_splitpoint_tool/runners/harness/base.py",
+          "sha256": "938b3713f32e412dd1f57fcc07a397fa1f3b26ed30afbc945d22f1bb082db06c"
+        }
+      },
+      "execution_policy": "one_serial_host_tail_per_successful_accelerator_output",
+      "performance_scope": "prepared_input_to_post_nms_detections",
+      "energy_scope": "same_frozen_prepared_input_to_post_nms_hotloop",
+      "host_postprocess_frozen": true,
+      "postprocess_included": true,
+      "invariant_identity": {
+        "schema": "onnx-splitpoint/frozen-native-detection-postprocess",
+        "schema_version": 1,
+        "task": "detection",
+        "source_contract_family": "decoded_pre_nms",
+        "output_contract_family": "decoded_nms",
+        "model_id": "yolo11l",
+        "model_family": "yolo11",
+        "decoder_id": "ultralytics_decoded_classaware_nms_v1",
+        "decoder_format": "ultralytics_decoded",
+        "nms_implementation": "numpy_class_aware_nms_xyxy_v1",
+        "class_aware": true,
+        "confidence_threshold": 0.25,
+        "iou_threshold": 0.45,
+        "max_detections": 300,
+        "input_hw": [
+          640,
+          640
+        ],
+        "raw_output_tensor_signature": {
+          "tensor_count": 1,
+          "tensors": [
+            {
+              "index": 0,
+              "name": "output0",
+              "rank": 3,
+              "shape": [
+                1,
+                84,
+                8400
+              ],
+              "dtype": "float32"
+            }
+          ]
+        },
+        "implementation_artifacts": {
+          "native_detection_postprocess": {
+            "relative_path": "onnx_splitpoint_tool/native_detection_postprocess.py",
+            "sha256": "00f0ad986c8021b864ddff3f7697dfc50e93fda8e9adf4e243fcd2f6b2164eed"
+          },
+          "yolo_harness": {
+            "relative_path": "onnx_splitpoint_tool/runners/harness/yolo.py",
+            "sha256": "31657e2717a8cb6cfda53e7de8e06b7b2286ecb430070811546fdec65327a17a"
+          },
+          "harness_base": {
+            "relative_path": "onnx_splitpoint_tool/runners/harness/base.py",
+            "sha256": "938b3713f32e412dd1f57fcc07a397fa1f3b26ed30afbc945d22f1bb082db06c"
+          }
+        },
+        "execution_policy": "one_serial_host_tail_per_successful_accelerator_output",
+        "performance_scope": "prepared_input_to_post_nms_detections",
+        "energy_scope": "same_frozen_prepared_input_to_post_nms_hotloop",
+        "host_postprocess_frozen": true,
+        "postprocess_included": true
+      },
+      "invariant_contract_sha256": "dfa9a53e5521a39db02061457d8d54c5a1ab9a13908be36e9b8504e68ee3089a",
+      "contract_sha256": "ebe805093de3ca6397966ac9c187ed8e0e45697337b6b09b7bee159f9ee0dbbe"
+    },
+    "yolov7_head_mapping": {},
+    "completed_endpoint_contract": {
+      "schema": "onnx-splitpoint/frozen-native-detection-completed-endpoint",
+      "schema_version": 1,
+      "task": "detection",
+      "source_stage": "decoded_pre_nms",
+      "completed_stage": "decoded_nms",
+      "contract_source": "frozen_host_decode_nms_inside_measured_interval:v1",
+      "source_endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+      "raw_output_tensor_signature": {
+        "tensor_count": 1,
+        "tensors": [
+          {
+            "index": 0,
+            "name": "output0",
+            "rank": 3,
+            "shape": [
+              1,
+              84,
+              8400
+            ],
+            "dtype": "float32"
+          }
+        ]
+      },
+      "frozen_postprocess_contract_sha256": "ebe805093de3ca6397966ac9c187ed8e0e45697337b6b09b7bee159f9ee0dbbe",
+      "frozen_postprocess_invariant_contract_sha256": "dfa9a53e5521a39db02061457d8d54c5a1ab9a13908be36e9b8504e68ee3089a",
+      "decoder_id": "ultralytics_decoded_classaware_nms_v1",
+      "decoder_format": "ultralytics_decoded",
+      "nms_implementation": "numpy_class_aware_nms_xyxy_v1",
+      "class_aware": true,
+      "confidence_threshold": 0.25,
+      "iou_threshold": 0.45,
+      "max_detections": 300,
+      "input_hw": [
+        640,
+        640
+      ],
+      "original_wh": [
+        640,
+        483
+      ],
+      "performance_scope": "prepared_input_to_post_nms_detections",
+      "energy_scope": "same_frozen_prepared_input_to_post_nms_hotloop",
+      "endpoint_contract_complete": true,
+      "endpoint_contract_hash": "3f905d925a0bf48d779a177955ff9add209f272e3e7c21a5a83ad8096a338c88",
+      "output_endpoint_id": "detection:decoded_nms:3f905d925a0bf48d779a177955ff9add209f272e3e7c21a5a83ad8096a338c88"
+    },
+    "comparison_endpoint_contract": {
+      "schema": "onnx-splitpoint/completed-task-comparison-endpoint",
+      "schema_version": 2,
+      "task": "detection",
+      "stage": "decoded_nms",
+      "contract_family": "decoded_nms",
+      "model_id": "yolo11l",
+      "model_family": "yolo11",
+      "output_record_format": "xyxy_score_class",
+      "coordinate_space": "original_image_xyxy_pixels",
+      "score_semantics": "probability_0_1",
+      "class_id_semantics": "integer_model_label_index",
+      "class_aware": true,
+      "score_threshold": 0.25,
+      "iou_threshold": 0.45,
+      "max_detections": 300,
+      "input_hw": [
+        640,
+        640
+      ],
+      "canonical_completion_policy_id": "decoded_nms_xyxy_original_classaware_postfilter_v2",
+      "nms_semantics_id": "class_aware_nms_xyxy_v1",
+      "endpoint_contract_complete": true,
+      "endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+      "output_endpoint_id": "detection:decoded_nms:comparison:2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a"
+    },
+    "hash_layers": {
+      "implementation": {
+        "schema": "onnx-splitpoint/detection-completion-hash-layer",
+        "schema_version": 1,
+        "kind": "implementation",
+        "identity": {
+          "processor_contract_sha256": "ebe805093de3ca6397966ac9c187ed8e0e45697337b6b09b7bee159f9ee0dbbe",
+          "implementation_artifacts": {
+            "native_detection_postprocess": {
+              "relative_path": "onnx_splitpoint_tool/native_detection_postprocess.py",
+              "sha256": "00f0ad986c8021b864ddff3f7697dfc50e93fda8e9adf4e243fcd2f6b2164eed"
+            },
+            "yolo_harness": {
+              "relative_path": "onnx_splitpoint_tool/runners/harness/yolo.py",
+              "sha256": "31657e2717a8cb6cfda53e7de8e06b7b2286ecb430070811546fdec65327a17a"
+            },
+            "harness_base": {
+              "relative_path": "onnx_splitpoint_tool/runners/harness/base.py",
+              "sha256": "938b3713f32e412dd1f57fcc07a397fa1f3b26ed30afbc945d22f1bb082db06c"
+            }
+          }
+        },
+        "sha256": "c148bde246e1c8bef3fc9ac2684ed2dd7345749b176e5ba00ca6e0e08f4af465"
+      },
+      "schema": {
+        "schema": "onnx-splitpoint/detection-completion-hash-layer",
+        "schema_version": 1,
+        "kind": "schema",
+        "identity": {
+          "task": "detection",
+          "completion_mode": "decoded_pre_nms_frozen_nms",
+          "source_stage": "decoded_pre_nms",
+          "source_tensor_signature": {
+            "tensor_count": 1,
+            "tensors": [
+              {
+                "index": 0,
+                "name": "output0",
+                "rank": 3,
+                "shape": [
+                  1,
+                  84,
+                  8400
+                ],
+                "dtype": "float32"
+              }
+            ]
+          },
+          "processor_contract_schema": "onnx-splitpoint/frozen-native-detection-postprocess",
+          "processor_contract_schema_version": 1,
+          "processor_contract_sha256": "ebe805093de3ca6397966ac9c187ed8e0e45697337b6b09b7bee159f9ee0dbbe",
+          "yolov7_head_mapping_sha256": "",
+          "completed_record_schema": "xyxy_score_class_id_v1",
+          "completed_coordinate_space": "original_image_xyxy_pixels",
+          "canonical_sort_policy": "score_desc_class_id_asc_xyxy_lexicographic_v1"
+        },
+        "sha256": "d58172ea93cbf1552a60ef8423aa42255694ed9b8eb89986e9ff988bcaa3de5d"
+      },
+      "relation": {
+        "schema": "onnx-splitpoint/detection-completion-hash-layer",
+        "schema_version": 1,
+        "kind": "relation",
+        "identity": {
+          "relation": "physical_source_to_completed_task_to_comparison",
+          "source_endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+          "source_output_endpoint_id": "detection:decoded_pre_nms:74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+          "completed_endpoint_contract_hash": "3f905d925a0bf48d779a177955ff9add209f272e3e7c21a5a83ad8096a338c88",
+          "completed_output_endpoint_id": "detection:decoded_nms:3f905d925a0bf48d779a177955ff9add209f272e3e7c21a5a83ad8096a338c88",
+          "comparison_endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+          "comparison_output_endpoint_id": "detection:decoded_nms:comparison:2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a"
+        },
+        "sha256": "7939e3a947552ca9a0174315fa878c44e032f41a914b40c1030097d2fba20f84"
+      }
+    },
+    "implementation_sha256": "c148bde246e1c8bef3fc9ac2684ed2dd7345749b176e5ba00ca6e0e08f4af465",
+    "schema_sha256": "d58172ea93cbf1552a60ef8423aa42255694ed9b8eb89986e9ff988bcaa3de5d",
+    "relation_sha256": "7939e3a947552ca9a0174315fa878c44e032f41a914b40c1030097d2fba20f84",
+    "artifact_hash_policy": "sha256_over_canonical_same_invocation_result_artifact_v1",
+    "content_hash_policy": "canonical_materialized_detection_records_without_ui_labels_v1",
+    "invocation_hash_policy": "execution_contract_observation_source_result_ordinal_v1",
+    "observation_relation_policy": [
+      "same_hotloop_sentinel",
+      "independent_replay"
+    ],
+    "contract_sha256": "7d407eb3d182771954dd887df57956770a68b161d5188e65c2b8c8ed69e5a094"
+  },
+  "completion_execution_attestation": {
+    "schema": "onnx-splitpoint/native-three-stage-quality-oracle",
+    "schema_version": 1,
+    "attested": true,
+    "status": "passed",
+    "observation_relation": "postflight_oracle_sentinel",
+    "exact_result_claim_bound": true,
+    "completed_work_units": 3000,
+    "completion_count": 3000,
+    "postprocess_completed_frames": 3000,
+    "execution_contract_sha256": "7d407eb3d182771954dd887df57956770a68b161d5188e65c2b8c8ed69e5a094",
+    "completed_endpoint_contract": {
+      "schema": "onnx-splitpoint/frozen-native-detection-completed-endpoint",
+      "schema_version": 1,
+      "task": "detection",
+      "source_stage": "decoded_pre_nms",
+      "completed_stage": "decoded_nms",
+      "contract_source": "frozen_host_decode_nms_inside_measured_interval:v1",
+      "source_endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+      "raw_output_tensor_signature": {
+        "tensor_count": 1,
+        "tensors": [
+          {
+            "index": 0,
+            "name": "output0",
+            "rank": 3,
+            "shape": [
+              1,
+              84,
+              8400
+            ],
+            "dtype": "float32"
+          }
+        ]
+      },
+      "frozen_postprocess_contract_sha256": "ebe805093de3ca6397966ac9c187ed8e0e45697337b6b09b7bee159f9ee0dbbe",
+      "frozen_postprocess_invariant_contract_sha256": "dfa9a53e5521a39db02061457d8d54c5a1ab9a13908be36e9b8504e68ee3089a",
+      "decoder_id": "ultralytics_decoded_classaware_nms_v1",
+      "decoder_format": "ultralytics_decoded",
+      "nms_implementation": "numpy_class_aware_nms_xyxy_v1",
+      "class_aware": true,
+      "confidence_threshold": 0.25,
+      "iou_threshold": 0.45,
+      "max_detections": 300,
+      "input_hw": [
+        640,
+        640
+      ],
+      "original_wh": [
+        640,
+        483
+      ],
+      "performance_scope": "prepared_input_to_post_nms_detections",
+      "energy_scope": "same_frozen_prepared_input_to_post_nms_hotloop",
+      "endpoint_contract_complete": true,
+      "endpoint_contract_hash": "3f905d925a0bf48d779a177955ff9add209f272e3e7c21a5a83ad8096a338c88",
+      "output_endpoint_id": "detection:decoded_nms:3f905d925a0bf48d779a177955ff9add209f272e3e7c21a5a83ad8096a338c88"
+    },
+    "comparison_endpoint_contract": {
+      "schema": "onnx-splitpoint/completed-task-comparison-endpoint",
+      "schema_version": 2,
+      "task": "detection",
+      "stage": "decoded_nms",
+      "contract_family": "decoded_nms",
+      "model_id": "yolo11l",
+      "model_family": "yolo11",
+      "output_record_format": "xyxy_score_class",
+      "coordinate_space": "original_image_xyxy_pixels",
+      "score_semantics": "probability_0_1",
+      "class_id_semantics": "integer_model_label_index",
+      "class_aware": true,
+      "score_threshold": 0.25,
+      "iou_threshold": 0.45,
+      "max_detections": 300,
+      "input_hw": [
+        640,
+        640
+      ],
+      "canonical_completion_policy_id": "decoded_nms_xyxy_original_classaware_postfilter_v2",
+      "nms_semantics_id": "class_aware_nms_xyxy_v1",
+      "endpoint_contract_complete": true,
+      "endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+      "output_endpoint_id": "detection:decoded_nms:comparison:2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a"
+    },
+    "artifact": {
+      "schema": "onnx-splitpoint/detection-completion-result-artifact",
+      "schema_version": 1,
+      "encoding": "canonical_json_utf8_sort_keys_compact_no_nan_v1",
+      "task": "detection",
+      "contract_family": "decoded_nms",
+      "observation_relation": "same_hotloop_sentinel",
+      "invocation_index": 1,
+      "completion_mode": "decoded_pre_nms_frozen_nms",
+      "execution_contract_sha256": "7d407eb3d182771954dd887df57956770a68b161d5188e65c2b8c8ed69e5a094",
+      "source_endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+      "completed_endpoint_contract_hash": "3f905d925a0bf48d779a177955ff9add209f272e3e7c21a5a83ad8096a338c88",
+      "comparison_endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+      "implementation_sha256": "c148bde246e1c8bef3fc9ac2684ed2dd7345749b176e5ba00ca6e0e08f4af465",
+      "schema_sha256": "d58172ea93cbf1552a60ef8423aa42255694ed9b8eb89986e9ff988bcaa3de5d",
+      "relation_sha256": "7939e3a947552ca9a0174315fa878c44e032f41a914b40c1030097d2fba20f84",
+      "source_content_sha256": "28ecc2851b28a1bef72f9e24c29a55e9f066dd5f618fb3f6948bcba323f1af12",
+      "content_sha256": "10520034bd2fc879b6102f8435a3370178a338fd08b9e73b913c25cf9afe0ad2",
+      "record_schema": "xyxy_score_class_id_v1",
+      "coordinate_space": "original_image_xyxy_pixels",
+      "sort_policy": "score_desc_class_id_asc_xyxy_lexicographic_v1",
+      "detection_count": 7,
+      "detections": [
+        {
+          "class_id": 59,
+          "score": 0.93603515625,
+          "x1": 1.0,
+          "y1": 274.125,
+          "x2": 400.5,
+          "y2": 477.875
+        },
+        {
+          "class_id": 58,
+          "score": 0.89111328125,
+          "x1": 341.625,
+          "y1": 214.75,
+          "x2": 430.375,
+          "y2": 350.75
+        },
+        {
+          "class_id": 56,
+          "score": 0.8740234375,
+          "x1": 247.125,
+          "y1": 232.0,
+          "x2": 347.875,
+          "y2": 318.0
+        },
+        {
+          "class_id": 58,
+          "score": 0.7578125,
+          "x1": 183.6875,
+          "y1": 131.0,
+          "x2": 242.3125,
+          "y2": 229.0
+        },
+        {
+          "class_id": 39,
+          "score": 0.56396484375,
+          "x1": 97.1875,
+          "y1": 192.0,
+          "x2": 114.4375,
+          "y2": 233.0
+        },
+        {
+          "class_id": 73,
+          "score": 0.35400390625,
+          "x1": 427.875,
+          "y1": 236.25,
+          "x2": 553.125,
+          "y2": 288.75
+        },
+        {
+          "class_id": 75,
+          "score": 0.29736328125,
+          "x1": 205.4375,
+          "y1": 205.375,
+          "x2": 232.0625,
+          "y2": 228.625
+        }
+      ]
+    },
+    "last_result": {
+      "task": "detection",
+      "contract_family": "decoded_nms",
+      "postprocess_adapter_id": "ultralytics_decoded_pre_nms",
+      "coordinate_space": "original_image_xyxy_pixels",
+      "detection_count": 7,
+      "detections": [
+        {
+          "class_id": 59,
+          "score": 0.93603515625,
+          "x1": 1.0,
+          "y1": 274.125,
+          "x2": 400.5,
+          "y2": 477.875
+        },
+        {
+          "class_id": 58,
+          "score": 0.89111328125,
+          "x1": 341.625,
+          "y1": 214.75,
+          "x2": 430.375,
+          "y2": 350.75
+        },
+        {
+          "class_id": 56,
+          "score": 0.8740234375,
+          "x1": 247.125,
+          "y1": 232.0,
+          "x2": 347.875,
+          "y2": 318.0
+        },
+        {
+          "class_id": 58,
+          "score": 0.7578125,
+          "x1": 183.6875,
+          "y1": 131.0,
+          "x2": 242.3125,
+          "y2": 229.0
+        },
+        {
+          "class_id": 39,
+          "score": 0.56396484375,
+          "x1": 97.1875,
+          "y1": 192.0,
+          "x2": 114.4375,
+          "y2": 233.0
+        },
+        {
+          "class_id": 73,
+          "score": 0.35400390625,
+          "x1": 427.875,
+          "y1": 236.25,
+          "x2": 553.125,
+          "y2": 288.75
+        },
+        {
+          "class_id": 75,
+          "score": 0.29736328125,
+          "x1": 205.4375,
+          "y1": 205.375,
+          "x2": 232.0625,
+          "y2": 228.625
+        }
+      ],
+      "completed_count": 3000,
+      "evidence_mode": "task_only_no_crypto_in_timed_hotloop",
+      "artifact": {
+        "schema": "onnx-splitpoint/detection-completion-result-artifact",
+        "schema_version": 1,
+        "encoding": "canonical_json_utf8_sort_keys_compact_no_nan_v1",
+        "task": "detection",
+        "contract_family": "decoded_nms",
+        "observation_relation": "same_hotloop_sentinel",
+        "invocation_index": 1,
+        "completion_mode": "decoded_pre_nms_frozen_nms",
+        "execution_contract_sha256": "7d407eb3d182771954dd887df57956770a68b161d5188e65c2b8c8ed69e5a094",
+        "source_endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+        "completed_endpoint_contract_hash": "3f905d925a0bf48d779a177955ff9add209f272e3e7c21a5a83ad8096a338c88",
+        "comparison_endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+        "implementation_sha256": "c148bde246e1c8bef3fc9ac2684ed2dd7345749b176e5ba00ca6e0e08f4af465",
+        "schema_sha256": "d58172ea93cbf1552a60ef8423aa42255694ed9b8eb89986e9ff988bcaa3de5d",
+        "relation_sha256": "7939e3a947552ca9a0174315fa878c44e032f41a914b40c1030097d2fba20f84",
+        "source_content_sha256": "28ecc2851b28a1bef72f9e24c29a55e9f066dd5f618fb3f6948bcba323f1af12",
+        "content_sha256": "10520034bd2fc879b6102f8435a3370178a338fd08b9e73b913c25cf9afe0ad2",
+        "record_schema": "xyxy_score_class_id_v1",
+        "coordinate_space": "original_image_xyxy_pixels",
+        "sort_policy": "score_desc_class_id_asc_xyxy_lexicographic_v1",
+        "detection_count": 7,
+        "detections": [
+          {
+            "class_id": 59,
+            "score": 0.93603515625,
+            "x1": 1.0,
+            "y1": 274.125,
+            "x2": 400.5,
+            "y2": 477.875
+          },
+          {
+            "class_id": 58,
+            "score": 0.89111328125,
+            "x1": 341.625,
+            "y1": 214.75,
+            "x2": 430.375,
+            "y2": 350.75
+          },
+          {
+            "class_id": 56,
+            "score": 0.8740234375,
+            "x1": 247.125,
+            "y1": 232.0,
+            "x2": 347.875,
+            "y2": 318.0
+          },
+          {
+            "class_id": 58,
+            "score": 0.7578125,
+            "x1": 183.6875,
+            "y1": 131.0,
+            "x2": 242.3125,
+            "y2": 229.0
+          },
+          {
+            "class_id": 39,
+            "score": 0.56396484375,
+            "x1": 97.1875,
+            "y1": 192.0,
+            "x2": 114.4375,
+            "y2": 233.0
+          },
+          {
+            "class_id": 73,
+            "score": 0.35400390625,
+            "x1": 427.875,
+            "y1": 236.25,
+            "x2": 553.125,
+            "y2": 288.75
+          },
+          {
+            "class_id": 75,
+            "score": 0.29736328125,
+            "x1": 205.4375,
+            "y1": 205.375,
+            "x2": 232.0625,
+            "y2": 228.625
+          }
+        ]
+      },
+      "artifact_sha256": "48198e327c40567e7699ea1174a218c4c116768795ee3248ba9b4a49894050d2"
+    },
+    "fast_detection_count": 7,
+    "oracle_detection_count": 7,
+    "fast_content_sha256": "895a9b0799d0e9abb43e36f719cd75ebd796b51ca7880507154e668017f899d9",
+    "oracle_content_sha256": "895a9b0799d0e9abb43e36f719cd75ebd796b51ca7880507154e668017f899d9",
+    "quality_oracle_location": "outside_performance_timing",
+    "timed_hotloop_evidence_mode": "task_work_only_no_per_frame_crypto",
+    "artifact_sha256": "48198e327c40567e7699ea1174a218c4c116768795ee3248ba9b4a49894050d2",
+    "schema_sha256": "d58172ea93cbf1552a60ef8423aa42255694ed9b8eb89986e9ff988bcaa3de5d",
+    "content_sha256": "10520034bd2fc879b6102f8435a3370178a338fd08b9e73b913c25cf9afe0ad2",
+    "invocation_sha256": "0b7f944ef9fe3d91c59c223386192e8c3fe7fa43c10e7707a6ff51f172b51704",
+    "relation_sha256": "7939e3a947552ca9a0174315fa878c44e032f41a914b40c1030097d2fba20f84",
+    "attestation_sha256": "268faf2679af0644a3d49a957699e9b058be33591e05a36a001464d2b7c00e31"
+  },
+  "completion_execution_contract_sha256": "7d407eb3d182771954dd887df57956770a68b161d5188e65c2b8c8ed69e5a094",
+  "completion_observation_relation": "postflight_oracle_sentinel",
+  "completion_exact_result_claim_bound": true,
+  "completed_task_stage": "decoded_nms",
+  "completed_task_contract_family": "decoded_nms",
+  "completed_task_completion_mode": "native_three_stage_fast_oracle_outside_timing",
+  "completed_task_endpoint_attested": true,
+  "completed_task_endpoint_attestation": {
+    "schema": "onnx-splitpoint/native-three-stage-quality-oracle",
+    "schema_version": 1,
+    "attested": true,
+    "status": "passed",
+    "observation_relation": "postflight_oracle_sentinel",
+    "exact_result_claim_bound": true,
+    "completed_work_units": 3000,
+    "completion_count": 3000,
+    "postprocess_completed_frames": 3000,
+    "execution_contract_sha256": "7d407eb3d182771954dd887df57956770a68b161d5188e65c2b8c8ed69e5a094",
+    "completed_endpoint_contract": {
+      "schema": "onnx-splitpoint/frozen-native-detection-completed-endpoint",
+      "schema_version": 1,
+      "task": "detection",
+      "source_stage": "decoded_pre_nms",
+      "completed_stage": "decoded_nms",
+      "contract_source": "frozen_host_decode_nms_inside_measured_interval:v1",
+      "source_endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+      "raw_output_tensor_signature": {
+        "tensor_count": 1,
+        "tensors": [
+          {
+            "index": 0,
+            "name": "output0",
+            "rank": 3,
+            "shape": [
+              1,
+              84,
+              8400
+            ],
+            "dtype": "float32"
+          }
+        ]
+      },
+      "frozen_postprocess_contract_sha256": "ebe805093de3ca6397966ac9c187ed8e0e45697337b6b09b7bee159f9ee0dbbe",
+      "frozen_postprocess_invariant_contract_sha256": "dfa9a53e5521a39db02061457d8d54c5a1ab9a13908be36e9b8504e68ee3089a",
+      "decoder_id": "ultralytics_decoded_classaware_nms_v1",
+      "decoder_format": "ultralytics_decoded",
+      "nms_implementation": "numpy_class_aware_nms_xyxy_v1",
+      "class_aware": true,
+      "confidence_threshold": 0.25,
+      "iou_threshold": 0.45,
+      "max_detections": 300,
+      "input_hw": [
+        640,
+        640
+      ],
+      "original_wh": [
+        640,
+        483
+      ],
+      "performance_scope": "prepared_input_to_post_nms_detections",
+      "energy_scope": "same_frozen_prepared_input_to_post_nms_hotloop",
+      "endpoint_contract_complete": true,
+      "endpoint_contract_hash": "3f905d925a0bf48d779a177955ff9add209f272e3e7c21a5a83ad8096a338c88",
+      "output_endpoint_id": "detection:decoded_nms:3f905d925a0bf48d779a177955ff9add209f272e3e7c21a5a83ad8096a338c88"
+    },
+    "comparison_endpoint_contract": {
+      "schema": "onnx-splitpoint/completed-task-comparison-endpoint",
+      "schema_version": 2,
+      "task": "detection",
+      "stage": "decoded_nms",
+      "contract_family": "decoded_nms",
+      "model_id": "yolo11l",
+      "model_family": "yolo11",
+      "output_record_format": "xyxy_score_class",
+      "coordinate_space": "original_image_xyxy_pixels",
+      "score_semantics": "probability_0_1",
+      "class_id_semantics": "integer_model_label_index",
+      "class_aware": true,
+      "score_threshold": 0.25,
+      "iou_threshold": 0.45,
+      "max_detections": 300,
+      "input_hw": [
+        640,
+        640
+      ],
+      "canonical_completion_policy_id": "decoded_nms_xyxy_original_classaware_postfilter_v2",
+      "nms_semantics_id": "class_aware_nms_xyxy_v1",
+      "endpoint_contract_complete": true,
+      "endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+      "output_endpoint_id": "detection:decoded_nms:comparison:2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a"
+    },
+    "artifact": {
+      "schema": "onnx-splitpoint/detection-completion-result-artifact",
+      "schema_version": 1,
+      "encoding": "canonical_json_utf8_sort_keys_compact_no_nan_v1",
+      "task": "detection",
+      "contract_family": "decoded_nms",
+      "observation_relation": "same_hotloop_sentinel",
+      "invocation_index": 1,
+      "completion_mode": "decoded_pre_nms_frozen_nms",
+      "execution_contract_sha256": "7d407eb3d182771954dd887df57956770a68b161d5188e65c2b8c8ed69e5a094",
+      "source_endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+      "completed_endpoint_contract_hash": "3f905d925a0bf48d779a177955ff9add209f272e3e7c21a5a83ad8096a338c88",
+      "comparison_endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+      "implementation_sha256": "c148bde246e1c8bef3fc9ac2684ed2dd7345749b176e5ba00ca6e0e08f4af465",
+      "schema_sha256": "d58172ea93cbf1552a60ef8423aa42255694ed9b8eb89986e9ff988bcaa3de5d",
+      "relation_sha256": "7939e3a947552ca9a0174315fa878c44e032f41a914b40c1030097d2fba20f84",
+      "source_content_sha256": "28ecc2851b28a1bef72f9e24c29a55e9f066dd5f618fb3f6948bcba323f1af12",
+      "content_sha256": "10520034bd2fc879b6102f8435a3370178a338fd08b9e73b913c25cf9afe0ad2",
+      "record_schema": "xyxy_score_class_id_v1",
+      "coordinate_space": "original_image_xyxy_pixels",
+      "sort_policy": "score_desc_class_id_asc_xyxy_lexicographic_v1",
+      "detection_count": 7,
+      "detections": [
+        {
+          "class_id": 59,
+          "score": 0.93603515625,
+          "x1": 1.0,
+          "y1": 274.125,
+          "x2": 400.5,
+          "y2": 477.875
+        },
+        {
+          "class_id": 58,
+          "score": 0.89111328125,
+          "x1": 341.625,
+          "y1": 214.75,
+          "x2": 430.375,
+          "y2": 350.75
+        },
+        {
+          "class_id": 56,
+          "score": 0.8740234375,
+          "x1": 247.125,
+          "y1": 232.0,
+          "x2": 347.875,
+          "y2": 318.0
+        },
+        {
+          "class_id": 58,
+          "score": 0.7578125,
+          "x1": 183.6875,
+          "y1": 131.0,
+          "x2": 242.3125,
+          "y2": 229.0
+        },
+        {
+          "class_id": 39,
+          "score": 0.56396484375,
+          "x1": 97.1875,
+          "y1": 192.0,
+          "x2": 114.4375,
+          "y2": 233.0
+        },
+        {
+          "class_id": 73,
+          "score": 0.35400390625,
+          "x1": 427.875,
+          "y1": 236.25,
+          "x2": 553.125,
+          "y2": 288.75
+        },
+        {
+          "class_id": 75,
+          "score": 0.29736328125,
+          "x1": 205.4375,
+          "y1": 205.375,
+          "x2": 232.0625,
+          "y2": 228.625
+        }
+      ]
+    },
+    "last_result": {
+      "task": "detection",
+      "contract_family": "decoded_nms",
+      "postprocess_adapter_id": "ultralytics_decoded_pre_nms",
+      "coordinate_space": "original_image_xyxy_pixels",
+      "detection_count": 7,
+      "detections": [
+        {
+          "class_id": 59,
+          "score": 0.93603515625,
+          "x1": 1.0,
+          "y1": 274.125,
+          "x2": 400.5,
+          "y2": 477.875
+        },
+        {
+          "class_id": 58,
+          "score": 0.89111328125,
+          "x1": 341.625,
+          "y1": 214.75,
+          "x2": 430.375,
+          "y2": 350.75
+        },
+        {
+          "class_id": 56,
+          "score": 0.8740234375,
+          "x1": 247.125,
+          "y1": 232.0,
+          "x2": 347.875,
+          "y2": 318.0
+        },
+        {
+          "class_id": 58,
+          "score": 0.7578125,
+          "x1": 183.6875,
+          "y1": 131.0,
+          "x2": 242.3125,
+          "y2": 229.0
+        },
+        {
+          "class_id": 39,
+          "score": 0.56396484375,
+          "x1": 97.1875,
+          "y1": 192.0,
+          "x2": 114.4375,
+          "y2": 233.0
+        },
+        {
+          "class_id": 73,
+          "score": 0.35400390625,
+          "x1": 427.875,
+          "y1": 236.25,
+          "x2": 553.125,
+          "y2": 288.75
+        },
+        {
+          "class_id": 75,
+          "score": 0.29736328125,
+          "x1": 205.4375,
+          "y1": 205.375,
+          "x2": 232.0625,
+          "y2": 228.625
+        }
+      ],
+      "completed_count": 3000,
+      "evidence_mode": "task_only_no_crypto_in_timed_hotloop",
+      "artifact": {
+        "schema": "onnx-splitpoint/detection-completion-result-artifact",
+        "schema_version": 1,
+        "encoding": "canonical_json_utf8_sort_keys_compact_no_nan_v1",
+        "task": "detection",
+        "contract_family": "decoded_nms",
+        "observation_relation": "same_hotloop_sentinel",
+        "invocation_index": 1,
+        "completion_mode": "decoded_pre_nms_frozen_nms",
+        "execution_contract_sha256": "7d407eb3d182771954dd887df57956770a68b161d5188e65c2b8c8ed69e5a094",
+        "source_endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+        "completed_endpoint_contract_hash": "3f905d925a0bf48d779a177955ff9add209f272e3e7c21a5a83ad8096a338c88",
+        "comparison_endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+        "implementation_sha256": "c148bde246e1c8bef3fc9ac2684ed2dd7345749b176e5ba00ca6e0e08f4af465",
+        "schema_sha256": "d58172ea93cbf1552a60ef8423aa42255694ed9b8eb89986e9ff988bcaa3de5d",
+        "relation_sha256": "7939e3a947552ca9a0174315fa878c44e032f41a914b40c1030097d2fba20f84",
+        "source_content_sha256": "28ecc2851b28a1bef72f9e24c29a55e9f066dd5f618fb3f6948bcba323f1af12",
+        "content_sha256": "10520034bd2fc879b6102f8435a3370178a338fd08b9e73b913c25cf9afe0ad2",
+        "record_schema": "xyxy_score_class_id_v1",
+        "coordinate_space": "original_image_xyxy_pixels",
+        "sort_policy": "score_desc_class_id_asc_xyxy_lexicographic_v1",
+        "detection_count": 7,
+        "detections": [
+          {
+            "class_id": 59,
+            "score": 0.93603515625,
+            "x1": 1.0,
+            "y1": 274.125,
+            "x2": 400.5,
+            "y2": 477.875
+          },
+          {
+            "class_id": 58,
+            "score": 0.89111328125,
+            "x1": 341.625,
+            "y1": 214.75,
+            "x2": 430.375,
+            "y2": 350.75
+          },
+          {
+            "class_id": 56,
+            "score": 0.8740234375,
+            "x1": 247.125,
+            "y1": 232.0,
+            "x2": 347.875,
+            "y2": 318.0
+          },
+          {
+            "class_id": 58,
+            "score": 0.7578125,
+            "x1": 183.6875,
+            "y1": 131.0,
+            "x2": 242.3125,
+            "y2": 229.0
+          },
+          {
+            "class_id": 39,
+            "score": 0.56396484375,
+            "x1": 97.1875,
+            "y1": 192.0,
+            "x2": 114.4375,
+            "y2": 233.0
+          },
+          {
+            "class_id": 73,
+            "score": 0.35400390625,
+            "x1": 427.875,
+            "y1": 236.25,
+            "x2": 553.125,
+            "y2": 288.75
+          },
+          {
+            "class_id": 75,
+            "score": 0.29736328125,
+            "x1": 205.4375,
+            "y1": 205.375,
+            "x2": 232.0625,
+            "y2": 228.625
+          }
+        ]
+      },
+      "artifact_sha256": "48198e327c40567e7699ea1174a218c4c116768795ee3248ba9b4a49894050d2"
+    },
+    "fast_detection_count": 7,
+    "oracle_detection_count": 7,
+    "fast_content_sha256": "895a9b0799d0e9abb43e36f719cd75ebd796b51ca7880507154e668017f899d9",
+    "oracle_content_sha256": "895a9b0799d0e9abb43e36f719cd75ebd796b51ca7880507154e668017f899d9",
+    "quality_oracle_location": "outside_performance_timing",
+    "timed_hotloop_evidence_mode": "task_work_only_no_per_frame_crypto",
+    "artifact_sha256": "48198e327c40567e7699ea1174a218c4c116768795ee3248ba9b4a49894050d2",
+    "schema_sha256": "d58172ea93cbf1552a60ef8423aa42255694ed9b8eb89986e9ff988bcaa3de5d",
+    "content_sha256": "10520034bd2fc879b6102f8435a3370178a338fd08b9e73b913c25cf9afe0ad2",
+    "invocation_sha256": "0b7f944ef9fe3d91c59c223386192e8c3fe7fa43c10e7707a6ff51f172b51704",
+    "relation_sha256": "7939e3a947552ca9a0174315fa878c44e032f41a914b40c1030097d2fba20f84",
+    "attestation_sha256": "268faf2679af0644a3d49a957699e9b058be33591e05a36a001464d2b7c00e31"
+  },
+  "completed_task_endpoint_attestation_status": "passed",
+  "completed_task_endpoint_contract": {
+    "schema": "onnx-splitpoint/frozen-native-detection-completed-endpoint",
+    "schema_version": 1,
+    "task": "detection",
+    "source_stage": "decoded_pre_nms",
+    "completed_stage": "decoded_nms",
+    "contract_source": "frozen_host_decode_nms_inside_measured_interval:v1",
+    "source_endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+    "raw_output_tensor_signature": {
+      "tensor_count": 1,
+      "tensors": [
+        {
+          "index": 0,
+          "name": "output0",
+          "rank": 3,
+          "shape": [
+            1,
+            84,
+            8400
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    "frozen_postprocess_contract_sha256": "ebe805093de3ca6397966ac9c187ed8e0e45697337b6b09b7bee159f9ee0dbbe",
+    "frozen_postprocess_invariant_contract_sha256": "dfa9a53e5521a39db02061457d8d54c5a1ab9a13908be36e9b8504e68ee3089a",
+    "decoder_id": "ultralytics_decoded_classaware_nms_v1",
+    "decoder_format": "ultralytics_decoded",
+    "nms_implementation": "numpy_class_aware_nms_xyxy_v1",
+    "class_aware": true,
+    "confidence_threshold": 0.25,
+    "iou_threshold": 0.45,
+    "max_detections": 300,
+    "input_hw": [
+      640,
+      640
+    ],
+    "original_wh": [
+      640,
+      483
+    ],
+    "performance_scope": "prepared_input_to_post_nms_detections",
+    "energy_scope": "same_frozen_prepared_input_to_post_nms_hotloop",
+    "endpoint_contract_complete": true,
+    "endpoint_contract_hash": "3f905d925a0bf48d779a177955ff9add209f272e3e7c21a5a83ad8096a338c88",
+    "output_endpoint_id": "detection:decoded_nms:3f905d925a0bf48d779a177955ff9add209f272e3e7c21a5a83ad8096a338c88"
+  },
+  "completed_task_endpoint_contract_hash": "3f905d925a0bf48d779a177955ff9add209f272e3e7c21a5a83ad8096a338c88",
+  "completed_task_output_endpoint_id": "detection:decoded_nms:3f905d925a0bf48d779a177955ff9add209f272e3e7c21a5a83ad8096a338c88",
+  "completed_task_comparison_endpoint_contract": {
+    "schema": "onnx-splitpoint/completed-task-comparison-endpoint",
+    "schema_version": 2,
+    "task": "detection",
+    "stage": "decoded_nms",
+    "contract_family": "decoded_nms",
+    "model_id": "yolo11l",
+    "model_family": "yolo11",
+    "output_record_format": "xyxy_score_class",
+    "coordinate_space": "original_image_xyxy_pixels",
+    "score_semantics": "probability_0_1",
+    "class_id_semantics": "integer_model_label_index",
+    "class_aware": true,
+    "score_threshold": 0.25,
+    "iou_threshold": 0.45,
+    "max_detections": 300,
+    "input_hw": [
+      640,
+      640
+    ],
+    "canonical_completion_policy_id": "decoded_nms_xyxy_original_classaware_postfilter_v2",
+    "nms_semantics_id": "class_aware_nms_xyxy_v1",
+    "endpoint_contract_complete": true,
+    "endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+    "output_endpoint_id": "detection:decoded_nms:comparison:2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a"
+  },
+  "completed_task_comparison_endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+  "completed_task_comparison_output_endpoint_id": "detection:decoded_nms:comparison:2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+  "completion_artifact_sha256": "48198e327c40567e7699ea1174a218c4c116768795ee3248ba9b4a49894050d2",
+  "completion_schema_sha256": "d58172ea93cbf1552a60ef8423aa42255694ed9b8eb89986e9ff988bcaa3de5d",
+  "completion_content_sha256": "10520034bd2fc879b6102f8435a3370178a338fd08b9e73b913c25cf9afe0ad2",
+  "completion_invocation_sha256": "0b7f944ef9fe3d91c59c223386192e8c3fe7fa43c10e7707a6ff51f172b51704",
+  "completion_relation_sha256": "7939e3a947552ca9a0174315fa878c44e032f41a914b40c1030097d2fba20f84",
+  "completion_runtime_mode": "fast_oracle_outside_timing",
+  "task": "detection",
+  "completed_task_result_artifact_saved": true,
+  "completed_task_result_artifact": {
+    "schema": "onnx-splitpoint/detection-completion-result-artifact",
+    "schema_version": 1,
+    "encoding": "canonical_json_utf8_sort_keys_compact_no_nan_v1",
+    "task": "detection",
+    "contract_family": "decoded_nms",
+    "observation_relation": "same_hotloop_sentinel",
+    "invocation_index": 1,
+    "completion_mode": "decoded_pre_nms_frozen_nms",
+    "execution_contract_sha256": "7d407eb3d182771954dd887df57956770a68b161d5188e65c2b8c8ed69e5a094",
+    "source_endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+    "completed_endpoint_contract_hash": "3f905d925a0bf48d779a177955ff9add209f272e3e7c21a5a83ad8096a338c88",
+    "comparison_endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+    "implementation_sha256": "c148bde246e1c8bef3fc9ac2684ed2dd7345749b176e5ba00ca6e0e08f4af465",
+    "schema_sha256": "d58172ea93cbf1552a60ef8423aa42255694ed9b8eb89986e9ff988bcaa3de5d",
+    "relation_sha256": "7939e3a947552ca9a0174315fa878c44e032f41a914b40c1030097d2fba20f84",
+    "source_content_sha256": "28ecc2851b28a1bef72f9e24c29a55e9f066dd5f618fb3f6948bcba323f1af12",
+    "content_sha256": "10520034bd2fc879b6102f8435a3370178a338fd08b9e73b913c25cf9afe0ad2",
+    "record_schema": "xyxy_score_class_id_v1",
+    "coordinate_space": "original_image_xyxy_pixels",
+    "sort_policy": "score_desc_class_id_asc_xyxy_lexicographic_v1",
+    "detection_count": 7,
+    "detections": [
+      {
+        "class_id": 59,
+        "score": 0.93603515625,
+        "x1": 1.0,
+        "y1": 274.125,
+        "x2": 400.5,
+        "y2": 477.875
+      },
+      {
+        "class_id": 58,
+        "score": 0.89111328125,
+        "x1": 341.625,
+        "y1": 214.75,
+        "x2": 430.375,
+        "y2": 350.75
+      },
+      {
+        "class_id": 56,
+        "score": 0.8740234375,
+        "x1": 247.125,
+        "y1": 232.0,
+        "x2": 347.875,
+        "y2": 318.0
+      },
+      {
+        "class_id": 58,
+        "score": 0.7578125,
+        "x1": 183.6875,
+        "y1": 131.0,
+        "x2": 242.3125,
+        "y2": 229.0
+      },
+      {
+        "class_id": 39,
+        "score": 0.56396484375,
+        "x1": 97.1875,
+        "y1": 192.0,
+        "x2": 114.4375,
+        "y2": 233.0
+      },
+      {
+        "class_id": 73,
+        "score": 0.35400390625,
+        "x1": 427.875,
+        "y1": 236.25,
+        "x2": 553.125,
+        "y2": 288.75
+      },
+      {
+        "class_id": 75,
+        "score": 0.29736328125,
+        "x1": 205.4375,
+        "y1": 205.375,
+        "x2": 232.0625,
+        "y2": 228.625
+      }
+    ]
+  },
+  "completed_task_result_artifact_sha256": "48198e327c40567e7699ea1174a218c4c116768795ee3248ba9b4a49894050d2",
+  "completed_task_result_artifact_path": "/home/nx/native_fifo_evalsets/v27924_rebuild_acceptance_b_yolo11l_b003_20260906_110804/yolo11l/benchmark_set/native_pipeline/b003/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/native_fifo_results.completed_task_result_artifact.json",
+  "completed_task_result_artifact_file_sha256": "48198e327c40567e7699ea1174a218c4c116768795ee3248ba9b4a49894050d2"
+}

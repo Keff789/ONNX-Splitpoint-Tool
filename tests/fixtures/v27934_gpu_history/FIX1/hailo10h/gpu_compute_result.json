@@ -1,0 +1,192 @@
+{
+  "schema": "hailo-gpu-compute-smoke-r1",
+  "revision": "R1_FIX1",
+  "family": "hailo10h",
+  "status": "compute_failed",
+  "diagnostic_only": true,
+  "model_compiler_invoked": false,
+  "model_acceptance": "NOT_EVALUATED",
+  "pid": 2040177,
+  "python": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/bin/python",
+  "sys_prefix": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10",
+  "environment": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "PATH": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/bin:/home/kmika/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+    "ONNX_SPLITPOINT_HAILO_ALLOW_GPU": "1",
+    "CUDA_CACHE_PATH": "/home/kmika/Downloads/hailo_gpu_compute_r1_fix1_20260909T131909Z_v1gkoh5m/hailo10h/cuda_cache",
+    "TMPDIR": "/home/kmika/Downloads/hailo_gpu_compute_r1_fix1_20260909T131909Z_v1gkoh5m/hailo10h/tmp",
+    "TF_FORCE_GPU_ALLOW_GROWTH": "true",
+    "TF_NUM_INTEROP_THREADS": "2",
+    "TF_NUM_INTRAOP_THREADS": "2",
+    "TF_CPP_VMODULE": "dso_loader=1"
+  },
+  "checks": [
+    {
+      "name": "dfc_sdk_import",
+      "status": "pass",
+      "detail": {
+        "module_file": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/hailo_sdk_client/__init__.py",
+        "version": "5.3.0",
+        "runner_instantiated": false
+      },
+      "elapsed_s": 7.4228
+    },
+    {
+      "name": "matmul_gpu",
+      "status": "pass",
+      "detail": {
+        "device": "/job:localhost/replica:0/task:0/device:GPU:0",
+        "shape": [
+          64,
+          64
+        ],
+        "dtype": "float32",
+        "finite": true,
+        "max_abs_error": 6.556510925292969e-07,
+        "rtol": 0.0003,
+        "atol": 0.0003,
+        "cpu_fallback_accepted": false
+      },
+      "elapsed_s": 0.0033
+    },
+    {
+      "name": "conv2d_gpu",
+      "status": "pass",
+      "detail": {
+        "device": "/job:localhost/replica:0/task:0/device:GPU:0",
+        "shape": [
+          1,
+          14,
+          14,
+          4
+        ],
+        "dtype": "float32",
+        "finite": true,
+        "max_abs_error": 2.384185791015625e-07,
+        "rtol": 0.0003,
+        "atol": 0.0003,
+        "cpu_fallback_accepted": false
+      },
+      "elapsed_s": 0.0799
+    },
+    {
+      "name": "xla_math_gpu",
+      "status": "failed",
+      "error": "UnimplementedError: /usr/local/cuda/bin/ptxas ptxas too old. Falling back to the driver to compile. [Op:__inference_kernel_33]",
+      "traceback": "Traceback (most recent call last):\n  File \"/home/kmika/Downloads/Hailo_GPU_Rechensmoke_R1_FIX1/worker.py\", line 50, in phase\n    detail=fn();row={'name':name,'status':'pass','detail':detail}\n           ^^^^\n  File \"/home/kmika/Downloads/Hailo_GPU_Rechensmoke_R1_FIX1/worker.py\", line 145, in xla_math\n    with tf.device('/GPU:0'):y=kernel(at,bt)\n                               ^^^^^^^^^^^^^\n  File \"/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/tensorflow/python/util/traceback_utils.py\", line 153, in error_handler\n    raise e.with_traceback(filtered_tb) from None\n  File \"/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/tensorflow/python/eager/execute.py\", line 59, in quick_execute\n    except TypeError as e:\ntensorflow.python.framework.errors_impl.UnimplementedError: /usr/local/cuda/bin/ptxas ptxas too old. Falling back to the driver to compile. [Op:__inference_kernel_33]\n",
+      "elapsed_s": 0.4136
+    },
+    {
+      "name": "xla_conv2d_gpu",
+      "status": "failed",
+      "error": "UnimplementedError: /usr/local/cuda/bin/ptxas ptxas too old. Falling back to the driver to compile. [Op:__inference_kernel_41]",
+      "traceback": "Traceback (most recent call last):\n  File \"/home/kmika/Downloads/Hailo_GPU_Rechensmoke_R1_FIX1/worker.py\", line 50, in phase\n    detail=fn();row={'name':name,'status':'pass','detail':detail}\n           ^^^^\n  File \"/home/kmika/Downloads/Hailo_GPU_Rechensmoke_R1_FIX1/worker.py\", line 152, in xla_conv\n    with tf.device('/GPU:0'):y=kernel(xt,kt)\n                               ^^^^^^^^^^^^^\n  File \"/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/tensorflow/python/util/traceback_utils.py\", line 153, in error_handler\n    raise e.with_traceback(filtered_tb) from None\n  File \"/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/tensorflow/python/eager/execute.py\", line 59, in quick_execute\n    except TypeError as e:\ntensorflow.python.framework.errors_impl.UnimplementedError: /usr/local/cuda/bin/ptxas ptxas too old. Falling back to the driver to compile. [Op:__inference_kernel_41]\n",
+      "elapsed_s": 0.1428
+    }
+  ],
+  "phase": "finished",
+  "packages": {
+    "hailo-dataflow-compiler": "5.3.0",
+    "tensorflow": "2.19.1",
+    "keras": "3.5.0",
+    "nvidia-cufile-cu12": "1.13.1.3",
+    "nvidia-cusolver-cu12": "11.7.3.90",
+    "nvidia-cudnn-cu12": "9.10.2.21",
+    "nvidia-cuda-cupti-cu12": "12.8.90",
+    "nvidia-cusparse-cu12": "12.5.8.93",
+    "nvidia-cuda-nvrtc-cu12": "12.8.93",
+    "nvidia-cusparselt-cu12": "0.7.1",
+    "nvidia-cufft-cu12": "11.3.3.83",
+    "nvidia-nccl-cu12": "2.27.5",
+    "nvidia-nvjitlink-cu12": "12.8.93",
+    "tensorflow-probability": "0.20.1",
+    "numpy": "1.26.4",
+    "nvidia-nvtx-cu12": "12.8.90",
+    "nvidia-cuda-runtime-cu12": "12.8.90",
+    "nvidia-cublas-cu12": "12.8.4.1",
+    "nvidia-curand-cu12": "10.3.9.90",
+    "nvidia-nvshmem-cu12": "3.3.20"
+  },
+  "tensorflow_imported_by_sdk": true,
+  "context_initialized_after_sdk": true,
+  "environment_after_sdk": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "PATH": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/bin:/home/kmika/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+    "ONNX_SPLITPOINT_HAILO_ALLOW_GPU": "1",
+    "CUDA_CACHE_PATH": "/home/kmika/Downloads/hailo_gpu_compute_r1_fix1_20260909T131909Z_v1gkoh5m/hailo10h/cuda_cache",
+    "TMPDIR": "/home/kmika/Downloads/hailo_gpu_compute_r1_fix1_20260909T131909Z_v1gkoh5m/hailo10h/tmp",
+    "TF_FORCE_GPU_ALLOW_GROWTH": "true",
+    "TF_NUM_INTEROP_THREADS": "2",
+    "TF_NUM_INTRAOP_THREADS": "2",
+    "TF_CPP_VMODULE": "dso_loader=1"
+  },
+  "tensorflow": {
+    "version": "2.19.1",
+    "module_file": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/tensorflow/__init__.py",
+    "build_info": {
+      "cpu_compiler": "/usr/lib/llvm-18/bin/clang",
+      "cuda_compute_capabilities": [
+        "sm_60",
+        "sm_70",
+        "sm_80",
+        "sm_89",
+        "compute_90"
+      ],
+      "cuda_version": "12.5.1",
+      "cudnn_version": "9",
+      "is_cuda_build": true,
+      "is_rocm_build": false,
+      "is_tensorrt_build": false
+    }
+  },
+  "threading_policy": {
+    "method": "environment_before_sdk_import",
+    "requested_inter_op": "2",
+    "requested_intra_op": "2",
+    "late_thread_setters_called": false,
+    "api_inter_op": 0,
+    "api_intra_op": 0
+  },
+  "gpus": [
+    {
+      "name": "/physical_device:GPU:0",
+      "compute_capability": [
+        6,
+        1
+      ],
+      "device_name": "NVIDIA GeForce GTX 1080 Ti"
+    }
+  ],
+  "visible_gpus": [
+    "/physical_device:GPU:0"
+  ],
+  "memory_growth_policy": {
+    "method": "TF_FORCE_GPU_ALLOW_GROWTH_before_sdk_import",
+    "environment_request": "true",
+    "late_memory_growth_setter_called": false,
+    "note": "API value may not reflect the environment override; not an allocator-size proof"
+  },
+  "memory_growth": null,
+  "soft_device_placement": false,
+  "loaded_cuda_libraries": [
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/cublas/lib/libcublas.so.12",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/cublas/lib/libcublasLt.so.12",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib/libnvrtc-builtins.so.12.8",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib/libnvrtc.so.12",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/cuda_runtime/lib/libcudart.so.12",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/cudnn/lib/libcudnn.so.9",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/cudnn/lib/libcudnn_engines_precompiled.so.9",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/cudnn/lib/libcudnn_engines_runtime_compiled.so.9",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/cudnn/lib/libcudnn_graph.so.9",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/cudnn/lib/libcudnn_heuristic.so.9",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/cudnn/lib/libcudnn_ops.so.9",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/cufft/lib/libcufft.so.11",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/curand/lib/libcurand.so.10",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/cusolver/lib/libcusolver.so.11",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/cusparse/lib/libcusparse.so.12",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/cusparselt/lib/libcusparseLt.so.0",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/nvidia/nvjitlink/lib/libnvJitLink.so.12",
+    "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/lib/python3.12/site-packages/torchvision.libs/libcudart.e8e8b82a.so.12",
+    "/usr/lib/x86_64-linux-gnu/libcuda.so.580.173.02"
+  ]
+}

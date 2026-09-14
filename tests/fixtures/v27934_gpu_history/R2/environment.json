@@ -1,0 +1,37 @@
+{
+  "child_only_overrides": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "ONNX_SPLITPOINT_HAILO_ALLOW_GPU": "1",
+    "VIRTUAL_ENV": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10",
+    "PATH": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/bin:/home/kmika/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONUNBUFFERED": "1",
+    "TMPDIR": "/home/kmika/Downloads/hailo10_xla_toolchain_r2_20260909T142235Z_9bmz7l5n/compute/tmp",
+    "CUDA_CACHE_PATH": "/home/kmika/Downloads/hailo10_xla_toolchain_r2_20260909T142235Z_9bmz7l5n/compute/cuda_cache",
+    "XDG_CACHE_HOME": "/home/kmika/Downloads/hailo10_xla_toolchain_r2_20260909T142235Z_9bmz7l5n/compute/xdg_cache",
+    "TF_FORCE_GPU_ALLOW_GROWTH": "true",
+    "TF_CPP_MIN_LOG_LEVEL": "0",
+    "TF_NUM_INTEROP_THREADS": "2",
+    "TF_NUM_INTRAOP_THREADS": "2",
+    "TF_CPP_VMODULE": "dso_loader=1"
+  },
+  "removed_python_environment_keys": [],
+  "parent_cuda_visible_devices": null,
+  "parent_environment_modified": false,
+  "diagnostic_toolchain_selection": {
+    "XLA_FLAGS": "--xla_gpu_cuda_data_dir=/home/kmika/Downloads/hailo10_xla_toolchain_r2_20260909T142235Z_9bmz7l5n/_temporary/cuda",
+    "CUDA_HOME": "/home/kmika/Downloads/hailo10_xla_toolchain_r2_20260909T142235Z_9bmz7l5n/_temporary/cuda",
+    "CUDA_PATH": "/home/kmika/Downloads/hailo10_xla_toolchain_r2_20260909T142235Z_9bmz7l5n/_temporary/cuda",
+    "PATH": "/home/kmika/Downloads/hailo10_xla_toolchain_r2_20260909T142235Z_9bmz7l5n/_temporary/cuda/bin:/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo10/bin:/home/kmika/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+    "HAILO_R2_TRACE_PHASE": "compute"
+  },
+  "parent_toolchain_environment": {
+    "XLA_FLAGS": null,
+    "CUDA_HOME": null,
+    "CUDA_PATH": null,
+    "PATH": "/home/kmika/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
+  },
+  "installed_venv_modified": false,
+  "system_toolkit_selection_modified": false,
+  "LD_LIBRARY_PATH_unchanged": true
+}

@@ -1,0 +1,87 @@
+{
+  "schema": "onnx-splitpoint/yolov7-three-stage-canary-static-validation",
+  "schema_version": 1,
+  "status": "PASS",
+  "environment": {
+    "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+    "platform": "Linux-6.18.35-x86_64-with-glibc2.41"
+  },
+  "checks": [
+    {
+      "name": "python_py_compile",
+      "status": "PASS",
+      "scope": [
+        "fast_decode_runtime.py",
+        "stage_corpus.py",
+        "stage_local_runtime_artifacts.py",
+        "three_stage_canary.py"
+      ]
+    },
+    {
+      "name": "bash_syntax",
+      "status": "PASS",
+      "scope": [
+        "run_from_smartmirror2.sh"
+      ]
+    },
+    {
+      "name": "json_parse",
+      "status": "PASS",
+      "scope": "all packaged JSON files before checksum generation"
+    },
+    {
+      "name": "frozen_reference_sha256",
+      "status": "PASS",
+      "count": 4,
+      "roles": [
+        "current_result",
+        "quality_binding",
+        "boundary_manifest",
+        "output_manifest"
+      ]
+    },
+    {
+      "name": "cpp_mock_header_syntax",
+      "status": "PASS",
+      "compiler": "g++ -std=c++17 -fsyntax-only",
+      "note": "Catches C++ syntax/type-structure errors; real HailoRT/TensorRT compilation remains the hardware-host canary step."
+    },
+    {
+      "name": "ctypes_foreign_thread_callback_abi",
+      "status": "PASS",
+      "note": "A local mock C++ shared library invoked the Python postprocess callback from a std::thread via the packaged ABI."
+    },
+    {
+      "name": "fast_decoder_current_v2782_oracle_parity_real_payloads",
+      "status": "PASS",
+      "payload_count": 2,
+      "image_ids": [
+        632,
+        435081
+      ],
+      "note": "Tested against the two raw-head payloads preserved in the prior result bundle. Full 32-image parity is rerun by the hardware postflight."
+    },
+    {
+      "name": "fast_decoder_clipped_sigmoid_tie_semantics",
+      "status": "PASS",
+      "cases": [
+        "all candidates rejected",
+        "class logits above +80 producing an oracle clipping tie"
+      ]
+    },
+    {
+      "name": "corpus_native_directory_order_contract",
+      "status": "PASS",
+      "note": "Staged image files are prefixed by deterministic corpus index, and runtime startup requires corpus IDs in exactly the prior 32-row reference order."
+    },
+    {
+      "name": "hardware_execution",
+      "status": "NOT_RUN",
+      "reason": "Requires the Orin NX + Hailo-8 host and the exact current managed-cache HEF/engine."
+    }
+  ],
+  "limitations": [
+    "No Hailo-8 or TensorRT inference was executed in the packaging environment.",
+    "Actual three-stage throughput, queue backpressure and stage timings are intentionally determined only by the user-run hardware canary."
+  ]
+}

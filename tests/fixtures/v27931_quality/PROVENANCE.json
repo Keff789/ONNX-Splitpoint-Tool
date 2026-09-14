@@ -1,0 +1,21 @@
+{
+  "schema": "v27931-quality-fixture-provenance-v1",
+  "source_archive": "complete_set_20260907_161614_debug_pack.zip",
+  "source_archive_sha256": "df0b40b33b29f47355f6b705c6b7957da9a114ed4b3bdc88c3b386edd0933a7d",
+  "source_member": "quality_management/central_quality_summary.json",
+  "source_member_sha256": "7407f51a391dfd6f1581ea8259b722bfeb0465cdbc424d0d92fb7512dae1b51a",
+  "result_indices": {
+    "mobilenet_full_point_fail": 3,
+    "regnet_identical": 12,
+    "yolo11_computed": 33,
+    "yolo26s_guardrail_fail": 53
+  },
+  "transformation": "Exact selected result mappings, JSON reserialized; no result values edited. Original archive/member remain read-only.",
+  "omitted_payloads": "Predictions, models, datasets; legacy projection only. Synthetic bootstrap fixture is separately labeled and has all inputs.",
+  "original_complete_set_deepx_full_request": {
+    "source_member": "models/yolo11l/benchmark_results/quality_inputs/orin_nx_deepx_m1_01/results/deepx_m1_full/task_quality_inputs/full_request.json",
+    "sha256": "b4b8aea0ffc92aa0980f83500130083f61e5b1f9322b55e266738a3f160c88c5",
+    "transformation": "none, exact original bytes",
+    "validation_scope": "Candidate execution contract only; B500 candidate/reference payloads intentionally omitted, no B500 execution claimed"
+  }
+}

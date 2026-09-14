@@ -1,0 +1,92 @@
+{
+  "schema": "hailo-gpu-compute-smoke-r1",
+  "revision": "R1_FIX1",
+  "family": "hailo8",
+  "status": "setup_failed",
+  "diagnostic_only": true,
+  "model_compiler_invoked": false,
+  "model_acceptance": "NOT_EVALUATED",
+  "pid": 2040125,
+  "python": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8/bin/python",
+  "sys_prefix": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8",
+  "environment": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "PATH": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8/bin:/home/kmika/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+    "ONNX_SPLITPOINT_HAILO_ALLOW_GPU": "1",
+    "CUDA_CACHE_PATH": "/home/kmika/Downloads/hailo_gpu_compute_r1_fix1_20260909T131909Z_v1gkoh5m/hailo8/cuda_cache",
+    "TMPDIR": "/home/kmika/Downloads/hailo_gpu_compute_r1_fix1_20260909T131909Z_v1gkoh5m/hailo8/tmp",
+    "TF_FORCE_GPU_ALLOW_GROWTH": "true",
+    "TF_NUM_INTEROP_THREADS": "2",
+    "TF_NUM_INTRAOP_THREADS": "2",
+    "TF_CPP_VMODULE": "dso_loader=1"
+  },
+  "checks": [
+    {
+      "name": "dfc_sdk_import",
+      "status": "pass",
+      "detail": {
+        "module_file": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8/lib/python3.12/site-packages/hailo_sdk_client/__init__.py",
+        "version": "3.33.1",
+        "runner_instantiated": false
+      },
+      "elapsed_s": 5.815
+    }
+  ],
+  "phase": "finished",
+  "packages": {
+    "keras": "3.5.0",
+    "tensorflow": "2.18.0",
+    "hailo-dataflow-compiler": "3.33.1",
+    "tensorflow-probability": "0.20.1",
+    "numpy": "1.26.4"
+  },
+  "tensorflow_imported_by_sdk": true,
+  "context_initialized_after_sdk": false,
+  "environment_after_sdk": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "PATH": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8/bin:/home/kmika/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+    "ONNX_SPLITPOINT_HAILO_ALLOW_GPU": "1",
+    "CUDA_CACHE_PATH": "/home/kmika/Downloads/hailo_gpu_compute_r1_fix1_20260909T131909Z_v1gkoh5m/hailo8/cuda_cache",
+    "TMPDIR": "/home/kmika/Downloads/hailo_gpu_compute_r1_fix1_20260909T131909Z_v1gkoh5m/hailo8/tmp",
+    "TF_FORCE_GPU_ALLOW_GROWTH": "true",
+    "TF_NUM_INTEROP_THREADS": "2",
+    "TF_NUM_INTRAOP_THREADS": "2",
+    "TF_CPP_VMODULE": "dso_loader=1"
+  },
+  "tensorflow": {
+    "version": "2.18.0",
+    "module_file": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8/lib/python3.12/site-packages/tensorflow/__init__.py",
+    "build_info": {
+      "cpu_compiler": "/usr/lib/llvm-18/bin/clang",
+      "cuda_compute_capabilities": [
+        "sm_60",
+        "sm_70",
+        "sm_80",
+        "sm_89",
+        "compute_90"
+      ],
+      "cuda_version": "12.5.1",
+      "cudnn_version": "9",
+      "is_cuda_build": true,
+      "is_rocm_build": false,
+      "is_tensorrt_build": false
+    }
+  },
+  "threading_policy": {
+    "method": "environment_before_sdk_import",
+    "requested_inter_op": "2",
+    "requested_intra_op": "2",
+    "late_thread_setters_called": false,
+    "api_inter_op": 0,
+    "api_intra_op": 0
+  },
+  "gpus": [],
+  "failure_phase": "tensorflow_gpu_setup",
+  "error": "RuntimeError: tensorflow_no_visible_gpu",
+  "traceback": "Traceback (most recent call last):\n  File \"/home/kmika/Downloads/Hailo_GPU_Rechensmoke_R1_FIX1/worker.py\", line 107, in execute\n    if not physical:raise RuntimeError('tensorflow_no_visible_gpu')\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nRuntimeError: tensorflow_no_visible_gpu\n",
+  "loaded_cuda_libraries": [
+    "/usr/lib/x86_64-linux-gnu/libcuda.so.580.173.02",
+    "/usr/local/cuda-13.0/targets/x86_64-linux/lib/libcusparse.so.12.6.2.49",
+    "/usr/local/cuda-13.0/targets/x86_64-linux/lib/libnvJitLink.so.13.0.39"
+  ]
+}

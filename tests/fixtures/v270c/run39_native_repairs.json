@@ -1,0 +1,184 @@
+{
+  "deepx_alias_join": {
+    "binding_source_run_id": "deepx_m1_to_tensorrt",
+    "central_source_run_id": "deepx_to_trt",
+    "command_backend": "deepx_to_trt",
+    "repetitions_completed": 3,
+    "resnet50_fps_makespan": 215.4232128049604,
+    "setup_id": "orin_nx_deepx_m1_01",
+    "yolo26s_fps_makespan": 65.60366881096185
+  },
+  "deepx_yolov7_prepared_feed": {
+    "frozen_host_postprocess_contract": {
+      "class_aware": true,
+      "confidence_threshold": 0.25,
+      "contract_sha256": "675d8b010f1665af6ccba376ff8ffe4fd6b483aaaa43369319863b7a1b0a0753",
+      "decoder_format": "multiscale_head",
+      "decoder_id": "yolov7_multiscale_anchor_classaware_nms_v1",
+      "energy_scope": "same_frozen_prepared_input_to_post_nms_hotloop",
+      "execution_policy": "one_serial_host_tail_per_successful_accelerator_output",
+      "host_postprocess_frozen": true,
+      "implementation_artifacts": {
+        "harness_base": {
+          "relative_path": "splitpoint_runners/harness/base.py",
+          "sha256": "938b3713f32e412dd1f57fcc07a397fa1f3b26ed30afbc945d22f1bb082db06c"
+        },
+        "native_detection_postprocess": {
+          "relative_path": "splitpoint_runners/native_detection_postprocess.py",
+          "sha256": "b093bce5da80b3c42e3354358b7c0695300769993b1f4b1b72a8547f5eeb314e"
+        },
+        "yolo_harness": {
+          "relative_path": "splitpoint_runners/harness/yolo.py",
+          "sha256": "4e1e81c1a931945ea53acdd1aee47e952b5828176cb0b98cfcefe2cb972f22aa"
+        }
+      },
+      "input_hw": [640, 640],
+      "invariant_contract_sha256": "c8fe01890328efcb6024a2476fcdece82441f79794d99316e1568751acb6c76c",
+      "invariant_identity": {
+        "class_aware": true,
+        "confidence_threshold": 0.25,
+        "decoder_format": "multiscale_head",
+        "decoder_id": "yolov7_multiscale_anchor_classaware_nms_v1",
+        "energy_scope": "same_frozen_prepared_input_to_post_nms_hotloop",
+        "execution_policy": "one_serial_host_tail_per_successful_accelerator_output",
+        "host_postprocess_frozen": true,
+        "implementation_artifacts": {
+          "harness_base": {
+            "relative_path": "splitpoint_runners/harness/base.py",
+            "sha256": "938b3713f32e412dd1f57fcc07a397fa1f3b26ed30afbc945d22f1bb082db06c"
+          },
+          "native_detection_postprocess": {
+            "relative_path": "splitpoint_runners/native_detection_postprocess.py",
+            "sha256": "b093bce5da80b3c42e3354358b7c0695300769993b1f4b1b72a8547f5eeb314e"
+          },
+          "yolo_harness": {
+            "relative_path": "splitpoint_runners/harness/yolo.py",
+            "sha256": "4e1e81c1a931945ea53acdd1aee47e952b5828176cb0b98cfcefe2cb972f22aa"
+          }
+        },
+        "input_hw": [640, 640],
+        "iou_threshold": 0.45,
+        "max_detections": 300,
+        "model_family": "yolov7",
+        "model_id": "yolov7_paper",
+        "nms_implementation": "numpy_class_aware_nms_xyxy_v1",
+        "output_contract_family": "decoded_nms",
+        "performance_scope": "prepared_input_to_post_nms_detections",
+        "postprocess_included": true,
+        "raw_output_tensor_signature": {
+          "tensor_count": 3,
+          "tensors": [
+            {
+              "dtype": "float32",
+              "index": 0,
+              "name": "model_outputs",
+              "rank": 5,
+              "shape": [1, 3, 80, 80, 85]
+            },
+            {
+              "dtype": "float32",
+              "index": 1,
+              "name": "output_1",
+              "rank": 5,
+              "shape": [1, 3, 40, 40, 85]
+            },
+            {
+              "dtype": "float32",
+              "index": 2,
+              "name": "output_2",
+              "rank": 5,
+              "shape": [1, 3, 20, 20, 85]
+            }
+          ]
+        },
+        "schema": "onnx-splitpoint/frozen-native-detection-postprocess",
+        "schema_version": 1,
+        "source_contract_family": "raw_head",
+        "task": "detection"
+      },
+      "iou_threshold": 0.45,
+      "max_detections": 300,
+      "model_family": "yolov7",
+      "model_id": "yolov7_paper",
+      "nms_implementation": "numpy_class_aware_nms_xyxy_v1",
+      "original_wh": [640, 483],
+      "output_contract_family": "decoded_nms",
+      "performance_scope": "prepared_input_to_post_nms_detections",
+      "postprocess_included": true,
+      "raw_output_tensor_signature": {
+        "tensor_count": 3,
+        "tensors": [
+          {
+            "dtype": "float32",
+            "index": 0,
+            "name": "model_outputs",
+            "rank": 5,
+            "shape": [1, 3, 80, 80, 85]
+          },
+          {
+            "dtype": "float32",
+            "index": 1,
+            "name": "output_1",
+            "rank": 5,
+            "shape": [1, 3, 40, 40, 85]
+          },
+          {
+            "dtype": "float32",
+            "index": 2,
+            "name": "output_2",
+            "rank": 5,
+            "shape": [1, 3, 20, 20, 85]
+          }
+        ]
+      },
+      "schema": "onnx-splitpoint/frozen-native-detection-postprocess",
+      "schema_version": 1,
+      "source_contract_family": "raw_head",
+      "task": "detection"
+    },
+    "nested": {
+      "benchmark_kind": "prepared_feed_dx_engine",
+      "completed_frames": 1000,
+      "completed_work_units": 1000,
+      "completed_work_units_source": "dx_engine_prepared_feed_frozen_postprocess_timed_loop",
+      "completed_work_units_status": "exact_runtime_counter",
+      "fps_makespan": 7.507413545968622,
+      "host_postprocess_frozen": true,
+      "makespan_s": 133.20166710903868,
+      "postprocess_completed_frames": 1000,
+      "postprocess_included": true,
+      "status": "ok"
+    },
+    "top_level": {
+      "completed_frames": 1000,
+      "completed_work_units": 1000,
+      "fps_makespan": 7.507413545968622,
+      "measured_makespan_s": 133.20166710903868,
+      "performance_benchmark_source": "dx_engine_prepared_feed",
+      "prepared_feed_contract_version": "deepx-sealed-runtime-input-v3",
+      "run_id": "deepx_m1_full",
+      "runtime_ok": true,
+      "variant": "full"
+    }
+  },
+  "hailo10_boundaries": [
+    {
+      "canonical_part2_shape": [1, 512, 28, 28],
+      "case_id": "b052",
+      "expected_270c_layout": "memory_nhwc_to_nchw",
+      "model_id": "resnet50",
+      "observed_270b_layout": "as_input",
+      "runtime_shape": [28, 28, 512]
+    },
+    {
+      "canonical_part2_shape": [1, 256, 80, 80],
+      "case_id": "b038",
+      "expected_270c_layout": "memory_nhwc_to_nchw",
+      "model_id": "yolo26s",
+      "observed_270b_layout": "as_input",
+      "runtime_shape": [80, 80, 256]
+    }
+  ],
+  "schema": "onnx-splitpoint/test-fixture-run39-native-repairs",
+  "schema_version": 1
+}

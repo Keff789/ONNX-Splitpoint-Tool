@@ -1,0 +1,606 @@
+{
+  "ok": true,
+  "status": "completed",
+  "state": "completed",
+  "energy_tier": "screening",
+  "energy_evidence_tier": "screening",
+  "screening_only": true,
+  "screening_energy": true,
+  "planned_row_count": 21,
+  "collector_started_repeat_count": 63,
+  "workload_started_repeat_count": 63,
+  "measurement_wrapper_started_count": 21,
+  "started_measurement_count": 21,
+  "claim_eligible": false,
+  "energy_claim_eligible": false,
+  "rows": [
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_deepx",
+        "model": "mobilenet_v3_large",
+        "case": "full",
+        "setup_id": "orin_nx_deepx_m1_01",
+        "comparison_backend": "deepx",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "38583321de2c418086022ffe2f1a194b1dd745302098608606dfefde1cf21535",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_deepx__mobilenet_v3_large__full__orin_nx_deepx_m1_01__e8fd09b16e7d/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_5c710189605a4cf7b5336c4b2edf5946/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_deepx",
+        "model": "regnet_x_1_6gf",
+        "case": "full",
+        "setup_id": "orin_nx_deepx_m1_01",
+        "comparison_backend": "deepx",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "82c11a7aed037ca08f15c39136a91c4b82f6cff476514761662d376a7fbc1b7f",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_deepx__regnet_x_1_6gf__full__orin_nx_deepx_m1_01__d6fe798e5dc1/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_a0556e8bec0c4338934a40714f4c60f2/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_deepx",
+        "model": "resnet50",
+        "case": "full",
+        "setup_id": "orin_nx_deepx_m1_01",
+        "comparison_backend": "deepx",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "c00cd10367b6332a335f380ad3b854ac60a3e5f5d2a2d1b63efe324507863656",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_deepx__resnet50__full__orin_nx_deepx_m1_01__e446dda87665/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_286f197b537542f794ed4369bb09e930/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_deepx",
+        "model": "yolo11l",
+        "case": "full",
+        "setup_id": "orin_nx_deepx_m1_01",
+        "comparison_backend": "deepx",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "949be91501be44574394772056a9db924502eca6ea7dac26010d05d08e9ef896",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_deepx__yolo11l__full__orin_nx_deepx_m1_01__3ff3d5da3415/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_1557191ef5fd4db09fce191294ba4c76/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_deepx",
+        "model": "yolo26m",
+        "case": "full",
+        "setup_id": "orin_nx_deepx_m1_01",
+        "comparison_backend": "deepx",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "7392b1934daa4ca50b82e6033af3562b8adffeeedf7a1f48621c14f659bdb60d",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_deepx__yolo26m__full__orin_nx_deepx_m1_01__8502fb4fd153/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_72c9e988877d4ca5a35900b00069fdcc/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_deepx",
+        "model": "yolo26s",
+        "case": "full",
+        "setup_id": "orin_nx_deepx_m1_01",
+        "comparison_backend": "deepx",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "6f299eeb238decc4a939ba800f9ed0e2fc522a0d461f393c908ce1ce0d1e5e68",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_deepx__yolo26s__full__orin_nx_deepx_m1_01__5ea69548c92b/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_4e9ab3d2176644c2a291eefe5ed28e42/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_deepx",
+        "model": "yolov7_paper",
+        "case": "full",
+        "setup_id": "orin_nx_deepx_m1_01",
+        "comparison_backend": "deepx",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "d61c8ee919cbf2698e2b7b00e63446f60bcfecc197407b4c93d8a5cd79c8f279",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_deepx__yolov7_paper__full__orin_nx_deepx_m1_01__bc56e09b4967/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_2932604a2d184a3aaf77abd7f1c19099/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_hailo10h",
+        "model": "mobilenet_v3_large",
+        "case": "full",
+        "setup_id": "orin_nx_hailo10_01",
+        "comparison_backend": "hailo10h",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "0d141f85d5ef2b1cc4b467dbdfbed900c573a0eb7040da5776833fbdb5ed6c34",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_hailo10h__mobilenet_v3_large__full__orin_nx_hailo10_01__baacc45f2c9a/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_faf769a5e5e14a449b058f43f016ead4/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_hailo10h",
+        "model": "regnet_x_1_6gf",
+        "case": "full",
+        "setup_id": "orin_nx_hailo10_01",
+        "comparison_backend": "hailo10h",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "c5bd017abad0b17e0af6be155c85532105ed53a47e692bd3a1205a6589e14a1f",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_hailo10h__regnet_x_1_6gf__full__orin_nx_hailo10_01__078ad6d5b562/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_6c9d242747824c6bb52ae8a481d29549/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_hailo10h",
+        "model": "resnet50",
+        "case": "full",
+        "setup_id": "orin_nx_hailo10_01",
+        "comparison_backend": "hailo10h",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "3f076c108d48e5f699506858dc0527216269ef38e9ce921d8f32daeba952e0e6",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_hailo10h__resnet50__full__orin_nx_hailo10_01__079b86b09dd4/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_a6a6c93c2c7845c7b1f0a0d694bd5f27/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_hailo10h",
+        "model": "yolo11l",
+        "case": "full",
+        "setup_id": "orin_nx_hailo10_01",
+        "comparison_backend": "hailo10h",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "882805d079eb6dfc197e294b89e069c15ac162a9efd4ee63d1823cc8028d5279",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_hailo10h__yolo11l__full__orin_nx_hailo10_01__20d9a0ebaca8/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_570dbd6d650344508ca56819054ad4d5/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_hailo10h",
+        "model": "yolo26m",
+        "case": "full",
+        "setup_id": "orin_nx_hailo10_01",
+        "comparison_backend": "hailo10h",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "09a107bafa9f3005a38dc7f40ddb7b9c4efffb2444cdbb7437cc1d43c9f7348c",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_hailo10h__yolo26m__full__orin_nx_hailo10_01__00e79c89ea75/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_288ae22ac688467d830b2a957081ace2/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_hailo10h",
+        "model": "yolo26s",
+        "case": "full",
+        "setup_id": "orin_nx_hailo10_01",
+        "comparison_backend": "hailo10h",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "bfc060417bfb1bad6ad966d75f194b75df00ac37afeaffe729b40391e36d5508",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_hailo10h__yolo26s__full__orin_nx_hailo10_01__9cd2b9200915/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_0f7088b0f09f44f784cf563743fd5e1c/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_hailo10h",
+        "model": "yolov7_paper",
+        "case": "full",
+        "setup_id": "orin_nx_hailo10_01",
+        "comparison_backend": "hailo10h",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "e8597e6d8f4c3dfdb24c7f921901d2bc0dbe22f7eefe8975b3db942a64240f14",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_hailo10h__yolov7_paper__full__orin_nx_hailo10_01__d7e917ac641a/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_08d9a6b698fc4b298644683e8e53d0f4/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_hailo8",
+        "model": "mobilenet_v3_large",
+        "case": "full",
+        "setup_id": "orin_nx_hailo8_01",
+        "comparison_backend": "hailo8",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "94581154cf5c217548b4390ad9d15eea73aa2ec2ba468e581010ae8a8f4bb1a5",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_hailo8__mobilenet_v3_large__full__orin_nx_hailo8_01__d880866490a5/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_581af9afc39e448abfc0ffe108ef4baf/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_hailo8",
+        "model": "regnet_x_1_6gf",
+        "case": "full",
+        "setup_id": "orin_nx_hailo8_01",
+        "comparison_backend": "hailo8",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "d3bdf249b3c0a4bcd0376c48c5bf4e0b61184d6384068f24d2b2e9447ed2587e",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_hailo8__regnet_x_1_6gf__full__orin_nx_hailo8_01__72fcc4e536b9/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_20bf9acbcaca48d388f9bc5bdbe3f7b2/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_hailo8",
+        "model": "resnet50",
+        "case": "full",
+        "setup_id": "orin_nx_hailo8_01",
+        "comparison_backend": "hailo8",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "d2b2c2feb3d81c5a0cec8fb0ecfb58d97dd643a6f81e088cf8c41555cc053945",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_hailo8__resnet50__full__orin_nx_hailo8_01__3a69f5e1b537/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_01ea5ec0e67349b781c0c3dd46ed5b61/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_hailo8",
+        "model": "yolo11l",
+        "case": "full",
+        "setup_id": "orin_nx_hailo8_01",
+        "comparison_backend": "hailo8",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "31108768148dabba55d82ee9179049a54674eab9c82598ebf078b792d5f0e723",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_hailo8__yolo11l__full__orin_nx_hailo8_01__f67e86b6b305/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_2defead832b849e0a5f29cdbf22fca60/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_hailo8",
+        "model": "yolo26m",
+        "case": "full",
+        "setup_id": "orin_nx_hailo8_01",
+        "comparison_backend": "hailo8",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "2bc61b6e7c531298817619ad12456315f12160dae02e9deb6e2bf465ed7ff37a",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_hailo8__yolo26m__full__orin_nx_hailo8_01__1c79c385a160/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_2d924e62ac354b8cbea0e89477936a95/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_hailo8",
+        "model": "yolo26s",
+        "case": "full",
+        "setup_id": "orin_nx_hailo8_01",
+        "comparison_backend": "hailo8",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "a96e12699e289605300eb7ae551a63cfeba758796276336467fddce50132fc56",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_hailo8__yolo26s__full__orin_nx_hailo8_01__e7949c2f7f7b/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_36e5dc85ee554ebfa6405c90525e2da9/energy_aggregate.json"
+      }
+    },
+    {
+      "ok": true,
+      "row": {
+        "backend": "native_full_hailo8",
+        "model": "yolov7_paper",
+        "case": "full",
+        "setup_id": "orin_nx_hailo8_01",
+        "comparison_backend": "hailo8",
+        "precision": "uint8_cast_fp16",
+        "duration_s": 1.0,
+        "energy_scope": "FS",
+        "measurement_requested_repeats": 3,
+        "measurement_effective_repeats": 3,
+        "runtime_success": true
+      },
+      "run": {
+        "rc": 0,
+        "timed_out": false,
+        "energy_aggregate_bound": true,
+        "energy_aggregate_complete": true,
+        "energy_aggregate_valid_repeat_count": 3,
+        "energy_aggregate_effective_repeat_count": 3,
+        "energy_aggregate_requested_repeat_count": 3,
+        "energy_aggregate_verified": true,
+        "energy_aggregate_sha256": "760b426097e106f3489b506024490130441a9809880b72988b0a3217487c2d40",
+        "energy_aggregate_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/reports/native_energy_measurements/measurements/native_full_hailo8__yolov7_paper__full__orin_nx_hailo8_01__cea0e99016f0/plan_c3d3f836910c4548bd19770ad6ccf451/attempt_dfc1b802642c46c6ba198825c4b0ac02/energy_aggregate.json"
+      }
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+[
+  {
+    "case_id": "full",
+    "run_id": "deepx_m1_full",
+    "provider": "deepx_m1",
+    "backend": "deepx_m1",
+    "primary_variant": "full",
+    "variant": "full",
+    "compile_ok": false,
+    "runtime_ok": false,
+    "validation_ok": false,
+    "buildable": false,
+    "runtime_executable": false,
+    "contract_consistent": false,
+    "task_valid": false,
+    "accuracy_gate_pass": false,
+    "accuracy_gate_source": "none",
+    "accuracy_gate_reason": "missing_artifact",
+    "eligible_for_ranking": false,
+    "error_class": "missing_artifact",
+    "error_detail": "DeepX DXNN missing: /home/nx/splitpoint_runs/legacy_suite/biggerset_20260908_210306_mobilenet_v3_large_orin_nx_deepx_m1_01/1/suite/deepx/deepx_m1/full/model.dxnn",
+    "throughput_kind": "full_backend",
+    "pipeline_applicable": false
+  }
+]

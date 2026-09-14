@@ -1,0 +1,75 @@
+{
+  "scope": "unchanged historical diagnostics; not v34 hardware execution",
+  "original_members": [
+    {
+      "archive": "hailo10_xla_toolchain_r2_20260909T142235Z_9bmz7l5n.zip",
+      "archive_sha256": "df4b5168b9d20888842865c8c617874725e8bd45a27bbf301e3005eac80f0ef7",
+      "member": "summary.json",
+      "fixture": "tests/fixtures/v27934_gpu_history/R2/summary.json",
+      "sha256": "a9c98a6653da2eddc281b21d899de56e7184ff6dfad799d87f1c6b956d908785"
+    },
+    {
+      "archive": "hailo10_xla_toolchain_r2_20260909T142235Z_9bmz7l5n.zip",
+      "archive_sha256": "df4b5168b9d20888842865c8c617874725e8bd45a27bbf301e3005eac80f0ef7",
+      "member": "environment.json",
+      "fixture": "tests/fixtures/v27934_gpu_history/R2/environment.json",
+      "sha256": "ee817d285ccb07e2b593ac991f1f82750f3050b67fd1eecc4eaed4c246c9fb4b"
+    },
+    {
+      "archive": "hailo10_xla_toolchain_r2_20260909T142235Z_9bmz7l5n.zip",
+      "archive_sha256": "df4b5168b9d20888842865c8c617874725e8bd45a27bbf301e3005eac80f0ef7",
+      "member": "compute/gpu_compute_result.json",
+      "fixture": "tests/fixtures/v27934_gpu_history/R2/compute/gpu_compute_result.json",
+      "sha256": "407ccf985d03b3de5e7121e3b750552a52e2ebf98ef8b8da7df4c3de3a768769"
+    },
+    {
+      "archive": "hailo10_xla_toolchain_r2_20260909T142235Z_9bmz7l5n.zip",
+      "archive_sha256": "df4b5168b9d20888842865c8c617874725e8bd45a27bbf301e3005eac80f0ef7",
+      "member": "ptxas_invocations.jsonl",
+      "fixture": "tests/fixtures/v27934_gpu_history/R2/ptxas_invocations.jsonl",
+      "sha256": "6ba2ff9e08bf9249b13a71786052a4f4372764d924829dab574ac1d7afcd1b65"
+    },
+    {
+      "archive": "hailo10_xla_toolchain_r2_20260909T142235Z_9bmz7l5n.zip",
+      "archive_sha256": "df4b5168b9d20888842865c8c617874725e8bd45a27bbf301e3005eac80f0ef7",
+      "member": "source/probe.py",
+      "fixture": "tests/fixtures/v27934_gpu_history/R2/source/probe.py",
+      "sha256": "bea2d17dc6989626db7479a9703e161fc846e2f968587933dc14c02fbef9a427"
+    },
+    {
+      "archive": "hailo10_xla_toolchain_r2_20260909T142235Z_9bmz7l5n.zip",
+      "archive_sha256": "df4b5168b9d20888842865c8c617874725e8bd45a27bbf301e3005eac80f0ef7",
+      "member": "source/worker.py",
+      "fixture": "tests/fixtures/v27934_gpu_history/R2/source/worker.py",
+      "sha256": "aff9934b5eecc0d06deba668fb6a24921519a6b7cd1ba46758dffa430fb02981"
+    },
+    {
+      "archive": "hailo_toolchain_diagnostic_20260909T134145Z_nwr3oigk.zip",
+      "archive_sha256": "8994a43329204c950d8b34a1410952f3965d887320049eed562a47d4a267397e",
+      "member": "diagnostic.json",
+      "fixture": "tests/fixtures/v27934_gpu_history/TARGET/diagnostic.json",
+      "sha256": "7abe2cf0ebecf693a1159e19b0adad4daa912f68ebf1b3532a104db8a875b8e3"
+    },
+    {
+      "archive": "hailo_gpu_compute_r1_fix1_20260909T131909Z_v1gkoh5m.zip",
+      "archive_sha256": "d271e717fc343e9ec72a171d1ee06d9899d2c2851754a49c53394ed3005a4282",
+      "member": "collection_summary.json",
+      "fixture": "tests/fixtures/v27934_gpu_history/FIX1/collection_summary.json",
+      "sha256": "5a18873bb2efef3490704edb375dc50eb0763d4e2e45ad26dd0954d070907af2"
+    },
+    {
+      "archive": "hailo_gpu_compute_r1_fix1_20260909T131909Z_v1gkoh5m.zip",
+      "archive_sha256": "d271e717fc343e9ec72a171d1ee06d9899d2c2851754a49c53394ed3005a4282",
+      "member": "hailo8/gpu_compute_result.json",
+      "fixture": "tests/fixtures/v27934_gpu_history/FIX1/hailo8/gpu_compute_result.json",
+      "sha256": "32704f3cc3c40f338a09b98279b6b53f5dffc80ac5841ebb8e7b13113e436f4b"
+    },
+    {
+      "archive": "hailo_gpu_compute_r1_fix1_20260909T131909Z_v1gkoh5m.zip",
+      "archive_sha256": "d271e717fc343e9ec72a171d1ee06d9899d2c2851754a49c53394ed3005a4282",
+      "member": "hailo10h/gpu_compute_result.json",
+      "fixture": "tests/fixtures/v27934_gpu_history/FIX1/hailo10h/gpu_compute_result.json",
+      "sha256": "da719d8ec524e7b1dc52a211b0ae3de58cb1700af04f3eee335ab2fd0cff2530"
+    }
+  ]
+}

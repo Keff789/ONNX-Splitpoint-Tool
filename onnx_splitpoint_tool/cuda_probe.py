@@ -240,6 +240,22 @@ def auto_configure_cuda(*, prefer_gpu: bool = True) -> Dict[str, Any]:
         - "auto" -> default behaviour
     """
 
+    # v34: a resolved compiler job is authoritative all the way to SDK import.
+    # Never re-probe system CUDA or remask it here: this hook can run after the
+    # parent has selected a family-local private ptxas/libdevice view.
+    from .hailo_compiler_context import validate_compiler_child_environment
+    resolved = validate_compiler_child_environment()
+    if resolved is not None:
+        gpu = resolved["device"] == "gpu"
+        return {
+            **resolved, "mode": "gpu_resolved" if gpu else "cpu_resolved",
+            "gpu_ok": gpu, "forced_cpu": not gpu,
+            "cuda_visible_devices_effective": os.environ.get("CUDA_VISIBLE_DEVICES"),
+            "cuda_root": resolved.get("view_root"),
+            "xla_cuda_data_dir": resolved.get("view_root"),
+            "summary": f"Compute: {'GPU' if gpu else 'CPU'} (resolved {resolved['family']} job)",
+        }
+
     mode_override = (os.environ.get("ONNX_SPLITPOINT_HAILO_COMPUTE") or "").strip().lower()
     if mode_override in {"cpu", "force_cpu"}:
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
@@ -277,6 +293,7 @@ def auto_configure_cuda(*, prefer_gpu: bool = True) -> Dict[str, Any]:
 
     # Fallback: CPU.
     os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    os.environ["ONNX_SPLITPOINT_CUDA_MASK_SOURCE"] = "tool_default"
     info["mode"] = "cpu_auto"
     info["forced_cpu"] = True
     info["cuda_visible_devices_effective"] = "-1"

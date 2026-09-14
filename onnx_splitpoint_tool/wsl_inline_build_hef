@@ -51,6 +51,11 @@ def main() -> int:
     ap.add_argument("--hw-arch", default="hailo8")
     ap.add_argument("--net-name", default=None)
     ap.add_argument("--outdir", default=None)
+    ap.add_argument(
+        "--net-input-shapes-json",
+        default=None,
+        help="Optional canonical JSON list/object of DFC translate input shapes",
+    )
     ap.add_argument("--start-node-names-json", default=None, help="Optional JSON array of parser start node names")
     ap.add_argument("--end-node-names-json", default=None, help="Optional JSON array of parser end node names")
 
@@ -70,9 +75,20 @@ def main() -> int:
     ap.add_argument("--activation-part1-onnx", default=None, help="Optional Part1 ONNX used to generate activation calibration for multi-input Part2 models")
     ap.add_argument("--activation-gen-batch", type=int, default=8, help="Batch size when running Part1 to generate activation calibration")
     ap.add_argument("--force", default="0", choices=["0", "1"], help="Overwrite compiled.hef if it exists")
+    ap.add_argument("--cache-only", default="0", choices=["0", "1"], help="Reuse an exact HEF cache hit or return a structured deferred cache miss without compiling")
+    ap.add_argument("--publish-artifacts", default="1", choices=["0", "1"], help="Publish reusable production artifacts; 0 requires an isolated managed child")
     ap.add_argument("--keep-artifacts", default="0", choices=["0", "1"], help="Save parsed/quantized HAR")
     ap.add_argument("--extra-model-script-b64", default=None, help="Optional base64-encoded Hailo model script appended before compile")
     args = ap.parse_args()
+    if args.force == "1" and args.publish_artifacts != "0":
+        print(RESULT_MARKER + json.dumps({
+            "ok": False, "elapsed_s": 0.0, "hw_arch": args.hw_arch,
+            "net_name": args.net_name or Path(args.onnx).stem,
+            "failure_kind": "force_build_disabled_for_productive_jobs",
+            "last_stage": "configuration", "returncode": 2,
+            "error": "Force is restricted to an isolated --publish-artifacts 0 diagnostic job.",
+        }), flush=True)
+        return 2
 
     # Ensure we can import the tool package even if it isn't installed in the venv.
     root = _repo_root()
@@ -106,7 +122,10 @@ def main() -> int:
 
     start_node_names = None
     end_node_names = None
+    net_input_shapes = None
     try:
+        if args.net_input_shapes_json:
+            net_input_shapes = json.loads(str(args.net_input_shapes_json))
         if args.start_node_names_json:
             start_node_names = list(json.loads(str(args.start_node_names_json)) or [])
         if args.end_node_names_json:
@@ -118,7 +137,7 @@ def main() -> int:
             'hw_arch': str(args.hw_arch),
             'net_name': str(net_name),
             'backend': str(os.environ.get('ONNX_SPLITPOINT_HAILO_HELPER_BACKEND') or 'wsl'),
-            'error': f'Invalid parser node override JSON: {type(exc).__name__}: {exc}',
+            'error': f'Invalid Hailo build JSON: {type(exc).__name__}: {exc}',
             'returncode': 2,
         }
         print(RESULT_MARKER + json.dumps(payload, ensure_ascii=False), flush=True)
@@ -146,6 +165,7 @@ def main() -> int:
         hw_arch=str(args.hw_arch),
         net_name=str(net_name),
         outdir=str(outdir) if outdir is not None else None,
+        net_input_shapes=net_input_shapes,
         fixup=(args.fixup == "1"),
         add_conv_defaults=(args.add_conv_defaults == "1"),
         disable_rt_metadata_extraction=(args.disable_rt_metadata_extraction == "1"),
@@ -156,7 +176,9 @@ def main() -> int:
         activation_part1_onnx=str(args.activation_part1_onnx) if args.activation_part1_onnx else None,
         activation_gen_batch=int(args.activation_gen_batch),
         force=(args.force == "1"),
+        cache_only=(args.cache_only == "1"),
         keep_artifacts=(args.keep_artifacts == "1"),
+        publish_artifacts=(args.publish_artifacts == "1"),
         extra_model_script=extra_model_script,
         start_node_names=start_node_names,
         end_node_names=end_node_names,

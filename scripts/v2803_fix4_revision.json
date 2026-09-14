@@ -1,0 +1,16 @@
+{
+  "version": "2.80.3",
+  "revision": "FIX4",
+  "parent_revision": "FIX3",
+  "scope": [
+    "tensorrt_preflight_matches_requested_variants",
+    "strict_warm_cache_compiler_admission",
+    "explicit_full_reference_scope",
+    "targeted_yolo11l_b062_reference_native_smoke"
+  ],
+  "force_rebuild_policy": "unchanged_off",
+  "acceptance_scope": "focused_software_regressions_and_isolated_update",
+  "full_acceptance_rerun": "NOT_RUN",
+  "hardware_acceptance": "NOT_RUN",
+  "quality_acceptance": "NOT_EVALUATED"
+}

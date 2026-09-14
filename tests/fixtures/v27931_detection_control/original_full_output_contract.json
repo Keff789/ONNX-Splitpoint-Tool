@@ -1,0 +1,189 @@
+{
+  "artifact_kind": "dxnn",
+  "artifact_path": "/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_4b8ff9dce56ca705_958dacf708b58fc3/model.dxnn",
+  "artifact_sha256": "a3421a676a4243232d1c0296fe5024a98b12cdf8114e0cd90e6f19aa4648f59e",
+  "artifact_size_bytes": 21363746,
+  "backend": "deepx_m1",
+  "build_onnx_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+  "cache_contract_sha256": null,
+  "cache_key": "deepx_m1_full_4b8ff9dce56ca705_958dacf708b58fc3",
+  "calibration_manifest_identity_sha256": null,
+  "classification_preprocessing": "not_applicable",
+  "compiler_identity_sha256": null,
+  "contract_complete_enough_for_reports": true,
+  "contract_family": "decoded_nms",
+  "endpoint_contract_complete_enough_for_quality": true,
+  "endpoint_mode": "decoded",
+  "endpoint_semantic_attestation": {
+    "authoritative_contract": {
+      "artifact_path": "",
+      "backend": "deepx_m1",
+      "class_id_semantics": "integer_model_label_index",
+      "contract_status": "recorded",
+      "coordinate_format": "xyxy_score_class",
+      "coordinate_space": "model_input_letterbox_xyxy_pixels",
+      "endpoint_mode": "decoded",
+      "full_end_node_names": [],
+      "host_tail_required": false,
+      "model_id": "yolo26s",
+      "output_format": "bn6_detections",
+      "output_record_format": "xyxy_score_class",
+      "postprocessing_required": false,
+      "requires_external_postprocess": false,
+      "schema": "onnx-splitpoint/output-contract",
+      "schema_version": 1,
+      "score_semantics": "probability_0_1",
+      "source_coordinate_space": "model_input_letterbox_xyxy_pixels",
+      "source_onnx_detection_endpoint": {
+        "multiscale_raw_head": false,
+        "output_shapes": [
+          [
+            1,
+            300,
+            6
+          ]
+        ],
+        "sidecar_status": "unavailable",
+        "stage": "decoded_nms"
+      },
+      "source_onnx_multiscale_raw_head": false,
+      "task": "detection",
+      "variant": "full",
+      "warning": ""
+    },
+    "authoritative_contract_sha256": "cf9ff938706e0faf711b22638d91b866b6bf0fef0a6a5d6de86d995b4d22a341",
+    "backend": "deepx_m1",
+    "declared_output_semantics": "xyxy_score_class",
+    "endpoint_mode": "decoded",
+    "host_tail_required": false,
+    "model_id": "yolo26s",
+    "output_format": "bn6_detections",
+    "pass": true,
+    "postprocessing_required": false,
+    "reason": "authoritative_recorded_output_contract_bound",
+    "schema": "onnx-splitpoint/deepx-endpoint-semantic-attestation",
+    "schema_version": 1,
+    "semantic_attestation_policy": "recorded_endpoint_plus_runtime_value_validation",
+    "source_coordinate_space": "model_input_letterbox_xyxy_pixels",
+    "source_endpoint_has_integrated_nms": true,
+    "source_endpoint_semantics": "decoded_final_output",
+    "sources": [
+      {
+        "file_sha256": "8c18a24955d43ff7843d141b82f6224d82c228a1a64e4316c2c8978b7ece1f4f",
+        "path": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/models/yolo26s/benchmark_set/legacy_suite/output_contracts.json",
+        "schema": "onnx-splitpoint/output-contracts"
+      },
+      {
+        "file_sha256": "8c18a24955d43ff7843d141b82f6224d82c228a1a64e4316c2c8978b7ece1f4f",
+        "path": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/models/yolo26s/full_baselines/output_contracts.json",
+        "schema": "onnx-splitpoint/output-contracts"
+      }
+    ],
+    "stage": "decoded_nms",
+    "status": "attested",
+    "variant": "full"
+  },
+  "full_cache_contract_mode": "legacy_implicit",
+  "host_tail_required": false,
+  "input": {
+    "classification_preprocessing": "not_applicable",
+    "color_space": "RGB",
+    "contract_source": "task_bound_dxcom_image_loader_preprocessing",
+    "dtype": "uint8",
+    "embedded_numeric_path": "dxcom_div255_detection_default",
+    "layout": "HWC",
+    "letterbox_pad_value": 114,
+    "letterbox_pad_value_effective": 114,
+    "letterbox_pad_value_requested": 114,
+    "name": "images",
+    "normalization": "embedded_dxcom_preprocessing",
+    "preprocess_mode": "letterbox",
+    "preprocess_mode_effective": "letterbox",
+    "preprocess_mode_requested": "auto",
+    "shape": [
+      640,
+      640,
+      3
+    ],
+    "task": "detection"
+  },
+  "model_id": "yolo26s",
+  "output": {
+    "source": "runtime_report_or_model_output",
+    "status": "declared_no_parse_model_pending_placeholder"
+  },
+  "outputs": [
+    {
+      "contract_source": "runtime_report_or_model_output",
+      "dtype": "float32",
+      "name": "model_outputs",
+      "shape": null
+    }
+  ],
+  "postprocessing": {
+    "host_required": false,
+    "nms_on_host": false,
+    "type": "integrated_decoded_nms"
+  },
+  "postprocessing_required": false,
+  "preprocessing_contract": {
+    "contract_sha256": "59d7c7aa7ff879883cb6bf94aa7fe0e1972ef39407eb4cf2a22ab066f6fd61f9",
+    "numeric_preprocessing": {
+      "build_onnx_adapter": {
+        "kind": "identity"
+      },
+      "dxcom_loader": {
+        "color_space": "RGB",
+        "letterbox_pad_value": 114,
+        "operations_contract": "letterbox_div255_bgr2rgb_transpose_expanddim",
+        "output_dtype": "float32",
+        "output_layout": "NCHW",
+        "scale_divisor": 255.0
+      },
+      "mode": "task_default_letterbox_scale_only",
+      "schema": "onnx-splitpoint/deepx-detection-preprocessing",
+      "schema_version": 1
+    },
+    "runtime_input": {
+      "classification_preprocessing": "not_applicable",
+      "color_space": "RGB",
+      "contract_source": "task_bound_dxcom_image_loader_preprocessing",
+      "dtype": "uint8",
+      "embedded_numeric_path": "dxcom_div255_detection_default",
+      "layout": "HWC",
+      "letterbox_pad_value": 114,
+      "letterbox_pad_value_effective": 114,
+      "letterbox_pad_value_requested": 114,
+      "name": "images",
+      "normalization": "embedded_dxcom_preprocessing",
+      "preprocess_mode": "letterbox",
+      "preprocess_mode_effective": "letterbox",
+      "preprocess_mode_requested": "auto",
+      "shape": [
+        640,
+        640,
+        3
+      ],
+      "task": "detection"
+    },
+    "schema": "onnx-splitpoint/deepx-full-preprocessing-contract",
+    "schema_version": 1,
+    "task": "detection"
+  },
+  "source_model_input": {
+    "dtype": "float32",
+    "layout": "NCHW",
+    "name": "images",
+    "shape": [
+      1,
+      3,
+      640,
+      640
+    ]
+  },
+  "source_onnx_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+  "suite_artifact_path": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/models/yolo26s/benchmark_set/legacy_suite/deepx/deepx_m1/full/model.dxnn",
+  "suite_artifact_sha256": "a3421a676a4243232d1c0296fe5024a98b12cdf8114e0cd90e6f19aa4648f59e",
+  "suite_artifact_size_bytes": 21363746,
+  "variant": "full"
+}

@@ -14,35 +14,320 @@ quickly reject candidates that cannot be parsed/translated at all.
 
 from __future__ import annotations
 
+from .config_values import parse_config_bool
+
 import base64
+import hashlib
 import json
 import os
 import re
 import shlex
 import shutil
 import subprocess
-import signal
 import threading
 import sys
 import time
+import tempfile
 import logging
 import platform
 from dataclasses import asdict
 from dataclasses import dataclass
 from dataclasses import fields
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
-import onnx
-from onnx import AttributeProto, helper
+try:  # ONNX is required for actual graph translation, but cache-only lookup remains usable without it.
+    import onnx  # type: ignore
+    from onnx import AttributeProto, helper  # type: ignore
+except Exception:  # pragma: no cover - optional in lightweight report/test environments
+    onnx = None  # type: ignore
+    AttributeProto = Any  # type: ignore
+    helper = None  # type: ignore
 
 # Optional (pure python) helper to resolve multiple DFC versions (Hailo-8 vs Hailo-10)
 from .hailo.backend_mode import auto_prefers_subprocess, normalize_hailo_backend, subprocess_backend_for_platform
+from .cache_verify_policy import (
+    cache_miss_blocked_message,
+    compiler_dispatch_forbidden,
+)
+from .filesystem_admission import inspect_write_target
 from .runners.backends.hailo_utils import get_dfc_manager
+from .process_control import (
+    current_process_registry,
+    terminate_process_tree,
+)
+from .remote.process_lease import (
+    REMOTE_LEASE_OUTER_CLEANUP_MARGIN_S,
+    current_remote_process_registry,
+    journaled_ssh_wrapper_argv,
+)
+from .preprocessing_contract import (
+    canonical_image_preprocessing_contract,
+    normalize_image_task,
+    prepare_rgb_uint8_image,
+    preprocessing_contract_sha256,
+    resolve_image_preprocessing_contract,
+    target_hw_from_shape,
+)
+from .hailo_timeout_policy import (
+    is_hailo_timeout_unlimited,
+    parse_hailo_timeout_seconds,
+)
 
 
 log = logging.getLogger(__name__)
+
+# Successful component target checks are reused in this process, keyed by
+# selected venv/component stat identity and actual GPU UUID/architecture.
+# This is bounded transient state, never a model/cache hash or persistent file.
+_HAILO_COMPILER_PROBE_CACHE: Dict[Any, Any] = {}
+
+
+def _run_owned_subprocess(
+    args: Any,
+    *,
+    input: Any = None,
+    capture_output: bool = False,
+    timeout: float | None = None,
+    check: bool = False,
+    **kwargs: Any,
+) -> subprocess.CompletedProcess[Any]:
+    """Use workflow ownership for otherwise synchronous Hailo helpers.
+
+    Outside an Evaluation Workflow this is exactly ``subprocess.run``.  During
+    a workflow the child gets its own process group, is registered before the
+    blocking communicate call, and is therefore interruptible by GUI/CLI
+    cancellation even while a DFC probe or compiler is completely silent.
+    """
+
+    registry = current_process_registry()
+    remote_registry = current_remote_process_registry()
+    raw_args = [str(value) for value in args] if isinstance(args, (list, tuple)) else []
+    if (
+        remote_registry is not None
+        and raw_args
+        and os.path.basename(raw_args[0]).lower() in {"ssh", "ssh.exe"}
+    ):
+        lease_env = remote_registry.journal_environment()
+        merged_env = dict(os.environ)
+        if kwargs.get("env") is not None:
+            merged_env.update(
+                {str(key): str(value) for key, value in kwargs["env"].items()}
+            )
+        merged_env.update(lease_env)
+        kwargs["env"] = merged_env
+        args = journaled_ssh_wrapper_argv(
+            raw_args,
+            label="hailo-activation-proxy",
+            env=merged_env,
+            timeout_s=timeout,
+        )
+        if timeout is not None:
+            timeout = float(timeout) + REMOTE_LEASE_OUTER_CLEANUP_MARGIN_S
+    if registry is None:
+        return subprocess.run(
+            args,
+            input=input,
+            capture_output=capture_output,
+            timeout=timeout,
+            check=check,
+            **kwargs,
+        )
+    if bool(getattr(registry, "cancelled", False)):
+        text_mode = bool(
+            kwargs.get("text")
+            or kwargs.get("universal_newlines")
+            or kwargs.get("encoding")
+            or kwargs.get("errors")
+        )
+        empty: Any = "" if text_mode else b""
+        completed = subprocess.CompletedProcess(
+            args=args,
+            returncode=130,
+            stdout=(
+                empty
+                if capture_output or kwargs.get("stdout") == subprocess.PIPE
+                else None
+            ),
+            stderr=(
+                empty
+                if capture_output or kwargs.get("stderr") == subprocess.PIPE
+                else None
+            ),
+        )
+        if check:
+            completed.check_returncode()
+        return completed
+    if capture_output:
+        if kwargs.get("stdout") is not None or kwargs.get("stderr") is not None:
+            raise ValueError(
+                "stdout and stderr arguments may not be used with capture_output"
+            )
+        kwargs["stdout"] = subprocess.PIPE
+        kwargs["stderr"] = subprocess.PIPE
+    if os.name == "posix":
+        kwargs.setdefault("start_new_session", True)
+    elif hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):  # pragma: no cover
+        kwargs.setdefault(
+            "creationflags", subprocess.CREATE_NEW_PROCESS_GROUP
+        )
+    proc = subprocess.Popen(args, **kwargs)
+
+    def _terminate_owned(grace_s: float) -> None:
+        registry.terminate_registered(proc, grace_s=grace_s)
+
+    def _cancel_leased_remote_best_effort() -> None:
+        if (
+            remote_registry is None
+            or not raw_args
+            or os.path.basename(raw_args[0]).lower() not in {"ssh", "ssh.exe"}
+        ):
+            return
+        try:
+            remote_registry.cancel_all(grace_s=3.0)
+        except BaseException:
+            # The descriptor remains registered.  The runner's final
+            # quarantine gate will retry and fail closed if proof is absent.
+            pass
+
+    try:
+        registry.register(proc, label="hailo-owned-subprocess")
+    except BaseException:
+        _cancel_leased_remote_best_effort()
+        _terminate_owned(0.5)
+        raise
+
+    def _bounded_collect_after_stop() -> tuple[Any, Any]:
+        try:
+            return proc.communicate(timeout=2.0)
+        except subprocess.TimeoutExpired as exc:
+            partial_stdout = exc.output
+            partial_stderr = exc.stderr
+            try:
+                _terminate_owned(0.0)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            try:
+                return proc.communicate(timeout=0.5)
+            except subprocess.TimeoutExpired as final_exc:
+                return (
+                    final_exc.output if final_exc.output is not None else partial_stdout,
+                    final_exc.stderr if final_exc.stderr is not None else partial_stderr,
+                )
+
+    try:
+        deadline = (
+            time.monotonic() + max(0.0, float(timeout))
+            if timeout is not None else None
+        )
+        pending_input = input
+        cancelled = False
+        while True:
+            if bool(getattr(registry, "cancelled", False)):
+                cancelled = True
+                _cancel_leased_remote_best_effort()
+                _terminate_owned(0.5)
+                stdout, stderr = _bounded_collect_after_stop()
+                break
+            wait_s = 0.2
+            if deadline is not None:
+                remaining_s = deadline - time.monotonic()
+                if remaining_s <= 0.0:
+                    _cancel_leased_remote_best_effort()
+                    _terminate_owned(0.5)
+                    stdout, stderr = _bounded_collect_after_stop()
+                    raise subprocess.TimeoutExpired(
+                        args,
+                        timeout,
+                        output=stdout,
+                        stderr=stderr,
+                    )
+                wait_s = min(wait_s, remaining_s)
+            try:
+                stdout, stderr = proc.communicate(
+                    input=pending_input,
+                    timeout=wait_s,
+                )
+                break
+            except subprocess.TimeoutExpired:
+                # communicate() retains a partially written input buffer; it
+                # must not be submitted a second time on the next poll.
+                pending_input = None
+                continue
+        completed = subprocess.CompletedProcess(
+            args=args,
+            returncode=130 if cancelled else int(proc.returncode or 0),
+            stdout=stdout,
+            stderr=stderr,
+        )
+        if check:
+            completed.check_returncode()
+        return completed
+    except BaseException:
+        # Unexpected Python/pipe failures must preserve the same ordering as
+        # cooperative workflow cancellation: exact remote control first,
+        # then bounded local process-tree teardown.
+        _cancel_leased_remote_best_effort()
+        _terminate_owned(0.5)
+        raise
+    finally:
+        registry.unregister(proc)
+
+
+def _owned_check_output(args: Any, **kwargs: Any) -> Any:
+    if "stdout" in kwargs:
+        raise ValueError("stdout argument not allowed; it will be overridden")
+    return _run_owned_subprocess(
+        args,
+        stdout=subprocess.PIPE,
+        check=True,
+        **kwargs,
+    ).stdout
+
+
+def _hailo_heartbeat_interval_s() -> float:
+    try:
+        return max(0.0, float(os.environ.get("ONNX_SPLITPOINT_HAILO_HEARTBEAT_S", "30")))
+    except Exception:
+        return 30.0
+
+
+def _run_with_hailo_heartbeat(label: str, fn: Callable[[], Any]) -> Any:
+    """Run a potentially long blocking Hailo SDK call with periodic stdout
+    heartbeats.  Hailo optimization/compile can be silent for minutes, which
+    looks like a hung benchmark-set generator in the GUI.  This helper does not
+    change SDK semantics; it only makes long phases observable.
+    """
+    interval = _hailo_heartbeat_interval_s()
+    if interval <= 0:
+        return fn()
+    stop = threading.Event()
+    started = time.time()
+
+    def _beat() -> None:
+        # Print only after the first interval so short calls stay quiet.
+        while not stop.wait(interval):
+            elapsed = time.time() - started
+            try:
+                print(f"[hailo][heartbeat] {label} still running after {elapsed:.0f}s", flush=True)
+            except Exception:
+                pass
+
+    t = threading.Thread(target=_beat, name=f"hailo-heartbeat-{label[:20]}", daemon=True)
+    t.start()
+    try:
+        return fn()
+    finally:
+        stop.set()
+        elapsed = time.time() - started
+        try:
+            print(f"[hailo][heartbeat] {label} finished after {elapsed:.1f}s", flush=True)
+        except Exception:
+            pass
 
 
 def _parse_simple_version(ver: str) -> Optional[Tuple[int, int]]:
@@ -347,7 +632,7 @@ def wsl_list_distros(*, timeout_s: float = 3.0) -> List[str]:
         return []
     exe = _wsl_exe()
     try:
-        proc = subprocess.run(
+        proc = _run_owned_subprocess(
             [exe, "-l", "-q"],
             capture_output=True,
             text=True,
@@ -485,6 +770,47 @@ def _resolve_managed_venv_python(
     return str(resolved.profile_id), py, str(act_path)
 
 
+def _managed_venv_child_env(
+    python_path: Union[str, Path],
+    base_env: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, str]:
+    """Project normal venv activation semantics into a direct child launch.
+
+    Managed DFC helpers intentionally invoke the venv interpreter by absolute
+    path instead of sourcing ``bin/activate``.  Python imports then work, but
+    vendor subprocesses such as ``onnxsim`` still resolve through the inherited
+    host ``PATH`` unless the venv's ``bin`` directory is projected explicitly.
+    """
+
+    # Keep the lexical venv path.  POSIX venv interpreters are normally
+    # symlinks to a system interpreter; ``resolve()`` would therefore turn
+    # ``<venv>/bin/python`` into (for example) ``/usr/bin/python3.10`` and
+    # project the system ``bin`` directory instead of the managed venv.
+    py = Path(
+        os.path.abspath(
+            os.fspath(Path(str(python_path)).expanduser())
+        )
+    )
+    bin_dir = py.parent
+    venv_dir = bin_dir.parent
+    source = os.environ if base_env is None else base_env
+    env = {str(key): str(value) for key, value in dict(source).items()}
+    inherited_path = str(env.get("PATH") or "")
+    path_parts = [str(bin_dir)]
+    path_parts.extend(
+        part
+        for part in inherited_path.split(os.pathsep)
+        if part
+        and Path(
+            os.path.abspath(os.fspath(Path(part).expanduser()))
+        ) != bin_dir
+    )
+    env["PATH"] = os.pathsep.join(path_parts)
+    env["VIRTUAL_ENV"] = str(venv_dir)
+    env.pop("PYTHONHOME", None)
+    return env
+
+
 def hailo_probe_via_venv(
     *,
     hw_arch: str = "hailo8",
@@ -542,7 +868,7 @@ def hailo_probe_via_venv(
         req = _parse_simple_version(getattr(prof, "glibc_min", "") or "") if prof is not None else None
         req_tuple = req if req is not None else _default_glibc_min_for_hw_arch(str(hw_arch))
         if req_tuple is not None:
-            out_glibc = subprocess.check_output(["getconf", "GNU_LIBC_VERSION"], text=True, stderr=subprocess.STDOUT).strip()
+            out_glibc = _owned_check_output(["getconf", "GNU_LIBC_VERSION"], text=True, stderr=subprocess.STDOUT).strip()
             cur = _parse_simple_version(out_glibc)
             if cur is not None and _version_lt(cur, req_tuple):
                 details = {
@@ -566,11 +892,11 @@ def hailo_probe_via_venv(
     # Self-heal: setuptools 82+ removed pkg_resources, but some Hailo SDK
     # components still import it.
     try:
-        _ = subprocess.check_output([str(py), "-c", "import pkg_resources"], text=True, stderr=subprocess.STDOUT)
+        _ = _owned_check_output([str(py), "-c", "import pkg_resources"], text=True, stderr=subprocess.STDOUT)
     except Exception:
         try:
             log.info("[hailo][probe][venv] pkg_resources missing -> installing setuptools<82 (self-heal)")
-            subprocess.run(
+            _run_owned_subprocess(
                 [str(py), "-m", "pip", "install", "--force-reinstall", "setuptools<82"],
                 capture_output=True,
                 text=True,
@@ -614,7 +940,7 @@ def hailo_probe_via_venv(
 
     # Pass an explicit environment to the probe. This keeps behavior
     # deterministic and avoids crashes like: "name 'env' is not defined".
-    env = os.environ.copy()
+    env = _managed_venv_child_env(py)
     env.setdefault("PYTHONUNBUFFERED", "1")
 
     # Make the tool package importable inside the managed venv probe so we can
@@ -633,7 +959,7 @@ def hailo_probe_via_venv(
         # Importing hailo_sdk_client can trigger an *interactive* system requirements check
         # on first use ("Continue? [Y/n]"). In a GUI / non-interactive context this would
         # block forever and end in a timeout. We proactively feed "y".
-        proc = subprocess.run(
+        proc = _run_owned_subprocess(
             cmd,
             capture_output=True,
             text=True,
@@ -924,7 +1250,7 @@ def hailo_probe_via_wsl(
             if distro_eff:
                 glibc_cmd += ["-d", distro_eff]
             glibc_cmd += ["--", "getconf", "GNU_LIBC_VERSION"]
-            gproc = subprocess.run(
+            gproc = _run_owned_subprocess(
                 glibc_cmd,
                 capture_output=True,
                 text=True,
@@ -960,7 +1286,7 @@ def hailo_probe_via_wsl(
         # Importing hailo_sdk_client can trigger an *interactive* system requirements check
         # on first use ("Continue? [Y/n]"). In a non-interactive WSL probe this would block
         # forever and end in a timeout. We proactively feed "y".
-        proc = subprocess.run(
+        proc = _run_owned_subprocess(
             cmd,
             capture_output=True,
             text=True,
@@ -1079,11 +1405,14 @@ class _StreamedSubprocessResult:
     last_stage: Optional[str] = None
     stage_history: Optional[List[Dict[str, Any]]] = None
     elapsed_s: float = 0.0
+    cleanup: Optional[Dict[str, Any]] = None
 
 
 def _hailo_stage_from_line(line: str) -> Optional[str]:
     s = str(line or '').strip().lower()
-    if not s:
+    # Structured result recipe keys include "calibration" and "part1" even
+    # after publication. They are data, not compiler progress messages.
+    if not s or s.startswith('__splitpoint_hailo_result__'):
         return None
     if 'statistics collector' in s or s.startswith('calibration:'):
         return 'statistics_collector'
@@ -1099,7 +1428,13 @@ def _hailo_stage_from_line(line: str) -> Optional[str]:
         return 'allocation'
     if 'model optimization' in s or 'optimization level' in s:
         return 'optimization'
-    if 'activation calibration' in s or ('calib' in s and 'part1' in s):
+    if (
+        'activation calibration' in s
+        or '[hailo][activation' in s
+        or 'activation_from_part1' in s
+        or ('calib' in s and 'part1' in s)
+        or ('[hailo][calib]' in s and 'image_preprocess' in s)
+    ):
         return 'activation_calibration'
     if 'translate' in s or 'translation' in s or 'parsing' in s:
         return 'translation'
@@ -1122,38 +1457,61 @@ def _env_int_first_positive(*names: str) -> Optional[int]:
     return None
 
 
-def _resolve_hef_timeout_policy(requested_timeout_s: int) -> Tuple[int, Optional[int]]:
-    """Return ``(hard_timeout_s, idle_timeout_s)`` for HEF helper processes.
+def _timeout_env_token(*names: str) -> Optional[str]:
+    for name in names:
+        raw = os.environ.get(name)
+        if raw is not None and str(raw).strip() != "":
+            return str(raw).strip()
+    return None
 
-    Legacy GUI code passes ``3600`` unconditionally. Treat that as the old
-    default and upgrade it to a safer 3h hard timeout unless the user overrides
-    it via environment variables.
+
+def _timeout_disabled_token(value: Any) -> bool:
+    """Compatibility wrapper around the canonical timeout-token parser."""
+
+    return is_hailo_timeout_unlimited(value)
+
+
+def _resolve_hef_timeout_policy(requested_timeout_s: Any) -> Tuple[int, Optional[int]]:
+    """Return ``(hard_timeout_s, idle_timeout_s)`` for HEF helpers.
+
+    The historic default remains a 10,800-second hard watchdog.  A caller may
+    now explicitly disable only the hard timeout with any canonical unlimited
+    token (``0``, ``off``, ``none``, ``unlimited`` or ``disabled``).
+    Heartbeats, process ownership, GUI/manual cancellation, and an explicitly
+    configured idle watchdog remain active.
     """
 
-    env_hard = _env_int_first_positive('ONNX_SPLITPOINT_HAILO_HEF_TIMEOUT_S', 'OSP_HAILO_HARD_TIMEOUT_S')
-    env_idle = _env_int_first_positive('ONNX_SPLITPOINT_HAILO_HEF_IDLE_TIMEOUT_S', 'OSP_HAILO_IDLE_TIMEOUT_S')
+    env_hard_raw = _timeout_env_token(
+        'ONNX_SPLITPOINT_HAILO_HEF_TIMEOUT_S',
+        'OSP_HAILO_HARD_TIMEOUT_S',
+    )
+    env_idle_raw = _timeout_env_token(
+        'ONNX_SPLITPOINT_HAILO_HEF_IDLE_TIMEOUT_S',
+        'OSP_HAILO_IDLE_TIMEOUT_S',
+    )
 
-    try:
-        requested = int(requested_timeout_s)
-    except Exception:
-        requested = 0
-
-    if env_hard is not None:
-        hard_timeout_s = int(env_hard)
-    elif requested <= 0:
+    selected_hard = (
+        env_hard_raw if env_hard_raw is not None else requested_timeout_s
+    )
+    hard_timeout_s = parse_hailo_timeout_seconds(
+        selected_hard,
+        default=3600,
+        minimum_enabled_s=60,
+        label="Hailo hard timeout",
+    )
+    # Preserve the historic backend default expansion, but only for the
+    # default request.  An explicit zero/token always remained zero above.
+    if env_hard_raw is None and hard_timeout_s == 3600:
         hard_timeout_s = 10800
-    elif requested == 3600:
-        hard_timeout_s = 10800
-    else:
-        hard_timeout_s = max(60, int(requested))
 
-    if env_idle is not None:
-        idle_timeout_s: Optional[int] = int(env_idle)
-    else:
-        idle_timeout_s = min(3600, max(1800, int(hard_timeout_s // 3)))
-
-    if idle_timeout_s is not None and idle_timeout_s <= 0:
-        idle_timeout_s = None
+    idle_timeout_s: Optional[int]
+    parsed_idle = parse_hailo_timeout_seconds(
+        env_idle_raw,
+        default=0,
+        minimum_enabled_s=1,
+        label="Hailo idle timeout",
+    )
+    idle_timeout_s = None if parsed_idle == 0 else parsed_idle
     return int(hard_timeout_s), idle_timeout_s
 
 
@@ -1211,7 +1569,7 @@ def _merge_detail_dict(base: Optional[Dict[str, Any]], extra: Optional[Dict[str,
 
 def _capture_command_snapshot(cmd: List[str], *, timeout_s: float = 2.0, max_chars: int = 4000) -> Optional[Dict[str, Any]]:
     try:
-        proc = subprocess.run(
+        proc = _run_owned_subprocess(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -1418,6 +1776,8 @@ def _build_subprocess_detail_bundle(
     include_system_snapshot: bool,
 ) -> Optional[Dict[str, Any]]:
     details: Dict[str, Any] = {}
+    if getattr(run, "cleanup", None) is not None:
+        details["process_cleanup"] = dict(run.cleanup)
     proc_summary = _extract_hailo_process_summary(
         stdout,
         stderr,
@@ -1433,58 +1793,7 @@ def _build_subprocess_detail_bundle(
 
 
 def _kill_process_tree(proc: subprocess.Popen[Any], *, grace_s: float = 10.0) -> None:
-    if proc.poll() is not None:
-        return
-
-    if os.name == 'nt':
-        try:
-            subprocess.run(
-                ['taskkill', '/PID', str(proc.pid), '/T', '/F'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=False,
-                text=True,
-            )
-        except Exception:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-        return
-
-    try:
-        pgid = os.getpgid(proc.pid)
-    except Exception:
-        pgid = None
-
-    try:
-        if pgid is not None:
-            os.killpg(pgid, signal.SIGTERM)
-        else:
-            proc.terminate()
-    except Exception:
-        try:
-            proc.terminate()
-        except Exception:
-            pass
-
-    deadline = time.monotonic() + max(0.1, float(grace_s))
-    while proc.poll() is None and time.monotonic() < deadline:
-        time.sleep(0.1)
-
-    if proc.poll() is not None:
-        return
-
-    try:
-        if pgid is not None:
-            os.killpg(pgid, signal.SIGKILL)
-        else:
-            proc.kill()
-    except Exception:
-        try:
-            proc.kill()
-        except Exception:
-            pass
+    terminate_process_tree(proc, grace_s=grace_s)
 
 
 def _run_streamed_subprocess(
@@ -1505,6 +1814,11 @@ def _run_streamed_subprocess(
         'stage_history': [],
     }
     t0 = time.monotonic()
+    try:
+        heartbeat_s = max(0.0, float(os.environ.get('ONNX_SPLITPOINT_HAILO_SUBPROCESS_HEARTBEAT_S', os.environ.get('ONNX_SPLITPOINT_HAILO_HEARTBEAT_S', '60')) or '60'))
+    except Exception:
+        heartbeat_s = 60.0
+    next_heartbeat_ts = t0 + heartbeat_s if heartbeat_s > 0 else 0.0
 
     def _emit(stream_name: str, line: str) -> None:
         if on_log is None:
@@ -1513,6 +1827,21 @@ def _run_streamed_subprocess(
             on_log(stream_name, line)
         except Exception:
             return
+
+    from .process_control import ProcessTreeRegistry
+    registry = current_process_registry() or ProcessTreeRegistry()
+    cleanup: Dict[str, Any] = {}
+    if registry is not None and bool(getattr(registry, 'cancelled', False)):
+        message = 'CANCELLED before Hailo subprocess start'
+        _emit('status', message)
+        return _StreamedSubprocessResult(
+            returncode=130,
+            stdout='',
+            stderr=message,
+            last_stage='cancelled',
+            stage_history=[],
+            elapsed_s=float(time.monotonic() - t0),
+        )
 
     popen_kwargs: Dict[str, Any] = {
         'stdout': subprocess.PIPE,
@@ -1535,6 +1864,15 @@ def _run_streamed_subprocess(
         popen_kwargs['start_new_session'] = True
 
     proc = subprocess.Popen(cmd, **popen_kwargs)
+    if registry is not None:
+        registry.register(proc, label='hailo-streamed-subprocess')
+
+    def _terminate_owned(grace_s: float = 3.0) -> None:
+        nonlocal cleanup
+        if registry is not None:
+            cleanup = registry.terminate_registered(proc, grace_s=grace_s)
+        else:
+            _kill_process_tree(proc, grace_s=grace_s)
 
     if stdin_yes:
         try:
@@ -1579,46 +1917,77 @@ def _run_streamed_subprocess(
     t_err.start()
 
     timed_out = False
+    cancelled = False
     timeout_kind: Optional[str] = None
-    while True:
-        rc = proc.poll()
-        if rc is not None:
-            break
-        now = time.monotonic()
-        if hard_timeout_s is not None and hard_timeout_s > 0 and (now - t0) > float(hard_timeout_s):
-            timed_out = True
-            timeout_kind = 'hard'
-            break
-        if idle_timeout_s is not None and idle_timeout_s > 0 and (now - float(state['last_output_ts'])) > float(idle_timeout_s):
-            timed_out = True
-            timeout_kind = 'idle'
-            break
-        time.sleep(0.2)
+    try:
+        while True:
+            if registry is not None and bool(getattr(registry, 'cancelled', False)):
+                cancelled = True
+                state['last_stage'] = 'cancelled'
+                _emit('status', 'CANCELLED by Evaluation Workflow')
+                if proc.poll() is None:
+                    _terminate_owned(3.0)
+                break
+            rc = proc.poll()
+            if rc is not None:
+                break
+            now = time.monotonic()
+            if hard_timeout_s is not None and hard_timeout_s > 0 and (now - t0) > float(hard_timeout_s):
+                timed_out = True
+                timeout_kind = 'hard'
+                break
+            if heartbeat_s > 0 and now >= next_heartbeat_ts:
+                silence_s = now - float(state.get('last_output_ts') or t0)
+                elapsed_s = now - t0
+                stage = str(state.get('last_stage') or 'unknown')
+                _emit('status', f"[hailo][subprocess][heartbeat] still running after {elapsed_s:.0f}s; stage={stage}; silence={silence_s:.0f}s; hard_timeout_s={hard_timeout_s if hard_timeout_s else 'off'}; idle_timeout_s={idle_timeout_s if idle_timeout_s else 'off'}")
+                next_heartbeat_ts = now + heartbeat_s
+            if idle_timeout_s is not None and idle_timeout_s > 0 and (now - float(state['last_output_ts'])) > float(idle_timeout_s):
+                timed_out = True
+                timeout_kind = 'idle'
+                break
+            time.sleep(0.2)
 
-    if timed_out:
-        _kill_process_tree(proc)
+        if timed_out:
+            _terminate_owned(10.0)
         try:
             proc.wait(timeout=5)
         except Exception:
-            pass
-    else:
-        try:
-            proc.wait(timeout=5)
-        except Exception:
-            pass
+            _terminate_owned(0.5)
+        # SDK roots may exit while their captured workers still own scratch
+        # files or inherited pipes. Retain the component view until all owned
+        # children have been cleaned through the existing identity registry.
+        _terminate_owned(0.5)
+        if int(cleanup.get("remaining_process_count", 0)):
+            raise RuntimeError("hailo_owned_children_not_quiescent:" + json.dumps(cleanup, sort_keys=True))
+    except BaseException:
+        _terminate_owned(0.5)
+        t_out.join(timeout=2)
+        t_err.join(timeout=2)
+        if registry is not None:
+            registry.unregister(proc)
+        raise
 
     t_out.join(timeout=2)
     t_err.join(timeout=2)
 
+    if registry is not None:
+        registry.unregister(proc)
+
+    stderr_text = _sanitize_wsl_text('\n'.join(stderr_lines))
+    if cancelled:
+        stderr_text = (stderr_text + '\nCANCELLED by Evaluation Workflow').strip()
+
     return _StreamedSubprocessResult(
-        returncode=int(getattr(proc, 'returncode', 0) or 0),
+        returncode=130 if cancelled else int(getattr(proc, 'returncode', 0) or 0),
         stdout=_sanitize_wsl_text('\n'.join(stdout_lines)),
-        stderr=_sanitize_wsl_text('\n'.join(stderr_lines)),
+        stderr=stderr_text,
         timed_out=bool(timed_out),
         timeout_kind=timeout_kind,
         last_stage=(str(state.get('last_stage')) if state.get('last_stage') else None),
         stage_history=list(state.get('stage_history') or []),
         elapsed_s=float(time.monotonic() - t0),
+        cleanup=cleanup,
     )
 
 
@@ -1773,7 +2142,7 @@ def hailo_parse_check_via_wsl(
         )
         log.debug("[hailo][parse][wsl] cmd=%s", wsl_cmd)
 
-        proc = subprocess.run(
+        proc = _run_owned_subprocess(
             wsl_cmd,
             capture_output=True,
             text=True,
@@ -1905,11 +2274,11 @@ def hailo_parse_check_via_venv(
     # Self-heal: setuptools 82+ removed pkg_resources, but some Hailo SDK
     # components still import it.
     try:
-        _ = subprocess.check_output([str(py), "-c", "import pkg_resources"], text=True, stderr=subprocess.STDOUT)
+        _ = _owned_check_output([str(py), "-c", "import pkg_resources"], text=True, stderr=subprocess.STDOUT)
     except Exception:
         try:
             log.info("[hailo][hef][venv] pkg_resources missing -> installing setuptools<82 (self-heal)")
-            subprocess.run(
+            _run_owned_subprocess(
                 [str(py), "-m", "pip", "install", "--force-reinstall", "setuptools<82"],
                 capture_output=True,
                 text=True,
@@ -1923,11 +2292,11 @@ def hailo_parse_check_via_venv(
     # Self-heal: setuptools 82+ removed pkg_resources, but some Hailo SDK
     # components still import it.
     try:
-        _ = subprocess.check_output([str(py), "-c", "import pkg_resources"], text=True, stderr=subprocess.STDOUT)
+        _ = _owned_check_output([str(py), "-c", "import pkg_resources"], text=True, stderr=subprocess.STDOUT)
     except Exception:
         try:
             log.info("[hailo][parse][venv] pkg_resources missing -> installing setuptools<82 (self-heal)")
-            subprocess.run(
+            _run_owned_subprocess(
                 [str(py), "-m", "pip", "install", "--force-reinstall", "setuptools<82"],
                 capture_output=True,
                 text=True,
@@ -1993,7 +2362,15 @@ def hailo_parse_check_via_venv(
         # cluttering the user's project/repo directory.
         from .paths import ensure_dir, splitpoint_logs_dir
 
-        hailo_log_cwd = ensure_dir(splitpoint_logs_dir() / "hailo_sdk" / str(profile_id))
+        # Hailo-8 and Hailo-10 may compile concurrently.  Give each physical
+        # architecture its own SDK cwd and HailoRT log instead of sharing the
+        # profile directory, where vendor-created hailo_sdk.* files can collide.
+        hailo_log_cwd = ensure_dir(
+            splitpoint_logs_dir()
+            / "hailo_sdk"
+            / str(profile_id)
+            / _normalize_hailo_hw_arch(hw_arch)
+        )
 
         # Best-effort log retention for Hailo SDK logs. The SDK tends to drop
         # multiple rotating log files into the working directory.
@@ -2013,11 +2390,11 @@ def hailo_parse_check_via_venv(
             )
         except Exception:
             pass
-        env = dict(os.environ)
+        env = _managed_venv_child_env(py)
         # HailoRT can be configured to write logs to a single file.
-        env.setdefault("HAILORT_LOGGER_PATH", str(hailo_log_cwd / "hailort.log"))
+        env["HAILORT_LOGGER_PATH"] = str(hailo_log_cwd / "hailort.log")
 
-        proc = subprocess.run(
+        proc = _run_owned_subprocess(
             cmd,
             capture_output=True,
             text=True,
@@ -2501,11 +2878,16 @@ def hailo_parse_check(
             model_for_parse = onnx_path
 
     # If user didn't provide shapes, try to infer.
-    if net_input_shapes is None:
-        try:
-            m_tmp = onnx.load(str(model_for_parse))
-            net_input_shapes = infer_net_input_shapes_from_model(m_tmp)
-        except Exception:
+    inferred_default_net_input_shapes = None
+    try:
+        m_tmp = onnx.load(str(model_for_parse))
+        inferred_default_net_input_shapes = infer_net_input_shapes_from_model(
+            m_tmp
+        )
+        if net_input_shapes is None:
+            net_input_shapes = inferred_default_net_input_shapes
+    except Exception:
+        if net_input_shapes is None:
             net_input_shapes = None
 
     try:
@@ -2600,6 +2982,185 @@ def _make_hef_result(**kwargs: Any) -> HailoHefBuildResult:
     return HailoHefBuildResult(**data)
 
 
+def _hailo_workspace_env_int(name: str, default: int) -> int:
+    try:
+        return max(0, int(str(os.environ.get(name, default)).strip()))
+    except (TypeError, ValueError, OverflowError):
+        return max(0, int(default))
+
+
+def _hailo_workspace_env_float(name: str, default: float) -> float:
+    try:
+        return max(0.0, float(str(os.environ.get(name, default)).strip()))
+    except (TypeError, ValueError, OverflowError):
+        return max(0.0, float(default))
+
+
+def hailo_dfc_workspace_preflight(
+    path: Union[str, Path],
+    *,
+    calibration_count: int,
+    input_shapes: Sequence[Sequence[int]],
+) -> Dict[str, Any]:
+    """Check local DFC workspace bytes and inodes before SDK dispatch.
+
+    DFC Bias Correction can materialize roughly 24 float32 calibration-set
+    equivalents.  For the observed 500 x 640 x 640 x 3 campaign this predicts
+    about 54.9 GiB, matching the DFC's own runtime estimate.  The preflight
+    adds a bounded reserve and records the exact calculation so an admission
+    failure is distinguishable from a compiler/model failure.
+    """
+
+    enabled = str(
+        os.environ.get(
+            "ONNX_SPLITPOINT_HAILO_DFC_WORKSPACE_PREFLIGHT", "1",
+        )
+    ).strip().lower() not in {"0", "false", "no", "off"}
+    contract_problems: List[str] = []
+    try:
+        count = int(calibration_count)
+        if isinstance(calibration_count, bool) or count <= 0:
+            raise ValueError("nonpositive calibration count")
+    except (TypeError, ValueError, OverflowError):
+        count = 0
+        contract_problems.append("effective_calibration_count_unresolved")
+    elements_per_sample = 0
+    normalized_shapes: List[List[int]] = []
+    for raw_shape in input_shapes:
+        try:
+            shape = [int(value) for value in raw_shape]
+        except (TypeError, ValueError, OverflowError):
+            contract_problems.append("calibration_identity_shapes_unresolved")
+            continue
+        if not shape or any(value <= 0 for value in shape):
+            contract_problems.append("calibration_identity_shapes_unresolved")
+            continue
+        elements = 1
+        for value in shape:
+            elements *= int(value)
+        elements_per_sample += elements
+        normalized_shapes.append(shape)
+
+    if not normalized_shapes:
+        contract_problems.append("calibration_identity_shapes_unresolved")
+    if not str(path or "").strip():
+        contract_problems.append("workspace_target_unresolved")
+    calibration_bytes = int(count * elements_per_sample * 4)
+    multiplier = _hailo_workspace_env_float(
+        "ONNX_SPLITPOINT_HAILO_DFC_WORKSPACE_MULTIPLIER", 24.0,
+    )
+    reserve_bytes = _hailo_workspace_env_int(
+        "ONNX_SPLITPOINT_HAILO_DFC_WORKSPACE_RESERVE_BYTES",
+        2 * 1024 * 1024 * 1024,
+    )
+    floor_bytes = _hailo_workspace_env_int(
+        "ONNX_SPLITPOINT_HAILO_DFC_MIN_FREE_BYTES",
+        4 * 1024 * 1024 * 1024,
+    )
+    required_bytes = max(
+        floor_bytes,
+        int(calibration_bytes * multiplier) + reserve_bytes,
+    )
+    required_inodes = _hailo_workspace_env_int(
+        "ONNX_SPLITPOINT_HAILO_DFC_MIN_FREE_INODES", 50_000,
+    )
+    inspection = inspect_write_target(Path(path))
+    problems: List[str] = []
+    if enabled:
+        if not inspection.writable:
+            problems.append(str(inspection.reason or "workspace_not_writable"))
+        if int(inspection.free_bytes) < required_bytes:
+            problems.append(
+                f"free_bytes={inspection.free_bytes}<required={required_bytes}"
+            )
+        if int(inspection.free_inodes) < required_inodes:
+            problems.append(
+                f"free_inodes={inspection.free_inodes}"
+                f"<required={required_inodes}"
+            )
+    return {
+        "schema": "onnx-splitpoint/hailo-dfc-workspace-preflight",
+        "schema_version": 1,
+        "status": (
+            "disabled" if not enabled else "unknown" if contract_problems
+            else "failed" if problems else "passed"
+        ),
+        "estimate_complete": not contract_problems,
+        "enabled": enabled,
+        "workspace": inspection.as_dict(),
+        "calculation": {
+            "calibration_count": count,
+            "input_shapes": normalized_shapes,
+            "float32_calibration_bytes": calibration_bytes,
+            "workspace_multiplier": multiplier,
+            "reserve_bytes": reserve_bytes,
+            "floor_bytes": floor_bytes,
+            "required_free_bytes": required_bytes if not contract_problems else None,
+            "required_free_inodes": required_inodes,
+        },
+        "problems": list(dict.fromkeys(contract_problems)) + problems,
+    }
+
+
+
+def _classify_hailo_failure_text(text: str) -> Dict[str, Any]:
+    """Return structured failure metadata for common Hailo DFC host failures."""
+    low = str(text or "").lower()
+    out: Dict[str, Any] = {}
+    if any(tok in low for tok in (
+        "no space left on device",
+        "errno 28",
+        "disk quota exceeded",
+    )):
+        out.update({
+            "failure_kind": "local_dfc_workspace_exhausted",
+            "error_class": "local_dfc_workspace_exhausted",
+            "root_cause_hint": "local_dfc_workspace_enospc",
+            "diagnostic_hint": (
+                "The local filesystem ran out of bytes or inodes during DFC "
+                "execution. This is infrastructure capacity exhaustion, not "
+                "evidence that the splitpoint is semantically invalid."
+            ),
+            "timed_out": False,
+        })
+    elif any(tok in low for tok in (
+        "mapping failed (timeout",
+        "watchdog expired after",
+        "mapping failed: timeout",
+    )):
+        out.update({
+            "failure_kind": "hailo_dfc_mapping_timeout",
+            "error_class": "hailo_dfc_mapping_timeout",
+            "root_cause_hint": "hailo_dfc_internal_mapping_watchdog",
+            "diagnostic_hint": (
+                "The Hailo compiler's internal mapper exhausted its watchdog "
+                "budget. The compiler invocation returned normally, but the "
+                "artifact outcome is a mapping timeout."
+            ),
+            "timed_out": True,
+            "timeout_kind": "hailo_dfc_mapping_watchdog",
+        })
+    elif any(tok in low for tok in (
+        "cudnn_status_execution_failed",
+        "no algorithm worked",
+        "unknown cudnn status",
+        "cuda_dnn.cc",
+        "xla/stream_executor/cuda",
+    )):
+        out.update({
+            "failure_kind": "hailo_dfc_cuda_cudnn_failure",
+            "error_class": "hailo_dfc_cuda_cudnn_failure",
+            "root_cause_hint": "tensorflow_xla_conv2d_no_algorithm_or_cudnn_failure",
+            "diagnostic_hint": "Hailo DFC failed in TensorFlow/XLA/cuDNN Conv2D profiling. This is a host CUDA/cuDNN environment issue, not proof that the splitpoint is semantically invalid. Prefer CPU-only DFC build or repair the DFC CUDA stack.",
+        })
+    elif "hailo sdk not available" in low and "no module named" in low:
+        out.update({
+            "failure_kind": "hailo_dfc_import_failed",
+            "error_class": "hailo_dfc_import_failed",
+            "root_cause_hint": "hailo_sdk_client_import_failed",
+        })
+    return out
+
 def _hef_result_from_payload(
     payload: Optional[Dict[str, Any]],
     *,
@@ -2622,8 +3183,46 @@ def _hef_result_from_payload(
         body["returncode"] = int(returncode)
     if debug_log and not body.get("debug_log"):
         body["debug_log"] = str(debug_log)
+    if body["ok"] and not body.get("last_stage"):
+        # The managed child's completed phase is more precise than a trailing
+        # SDK prose line. Failed results keep their primary failure stage.
+        for section in (body.get("details"), body.get("calib_info")):
+            events = section.get("phase_events") if isinstance(section, Mapping) else None
+            if isinstance(events, list) and events:
+                event = events[-1]
+                if (isinstance(event, Mapping) and event.get("state") == "completed"
+                        and event.get("phase") in {"sdk_initialization", "translate",
+                            "calibration_materialization", "optimize", "compile", "publication"}):
+                    body["last_stage"] = str(event["phase"])
+                    break
     if last_stage and not body.get("last_stage"):
         body["last_stage"] = str(last_stage)
+
+    # Classify common host-environment failures before returning.  Older helper
+    # code surfaced TensorFlow/cuDNN build failures as "Hailo SDK not available",
+    # which made reports look like a missing SDK instead of a host CUDA/cuDNN
+    # failure.  Preserve the raw error but add machine-readable metadata.
+    if not bool(body.get("ok")):
+        combined_err = "\n".join(str(body.get(k) or "") for k in ("error", "stderr", "stdout"))
+        try:
+            details_for_text = body.get("details")
+            if isinstance(details_for_text, dict):
+                combined_err += "\n" + json.dumps(details_for_text, ensure_ascii=False)[:12000]
+        except Exception:
+            pass
+        cls = _classify_hailo_failure_text(combined_err)
+        if cls:
+            if not body.get("failure_kind"):
+                body["failure_kind"] = cls.get("failure_kind")
+            if cls.get("timed_out") is True:
+                body["timed_out"] = True
+            if cls.get("timeout_kind") and not body.get("timeout_kind"):
+                body["timeout_kind"] = cls.get("timeout_kind")
+            details = dict(body.get("details") or {})
+            details.setdefault("error_class", cls.get("error_class"))
+            details.setdefault("root_cause_hint", cls.get("root_cause_hint"))
+            details.setdefault("diagnostic_hint", cls.get("diagnostic_hint"))
+            body["details"] = details
 
     # Best-effort: if the helper already persisted a result JSON and that path is
     # directly accessible from this process (managed venv / native Linux), refresh
@@ -2638,6 +3237,95 @@ def _hef_result_from_payload(
         pass
 
     return _make_hef_result(**body)
+
+
+def _recover_hef_result_from_compiled_artifact(
+    outdir: Optional[Union[str, Path]],
+    *,
+    elapsed_s: float,
+    hw_arch: str,
+    net_name: str,
+    backend: str,
+    returncode: Optional[int],
+    debug_log: Optional[str] = None,
+    last_stage: Optional[str] = None,
+    details: Optional[Dict[str, Any]] = None,
+) -> Optional[HailoHefBuildResult]:
+    """Recover a successful HEF build when helper stdout lost the marker.
+
+    Some long DFC/Hailo builds complete successfully and leave a valid
+    ``compiled.hef`` in the requested output directory, but the wrapper process
+    does not return the single-line structured marker.  Treating that as a hard
+    compile failure discards expensive, valid benchmark candidates.  Recovery is
+    deliberately conservative: rc==0, a non-empty compiled.hef, and a valid
+    v2 build receipt are all required.  A bare HEF cannot prove which image
+    geometry was used during calibration.
+    """
+    try:
+        if returncode not in (0, None):
+            return None
+        if outdir is None:
+            return None
+        out_p = Path(str(outdir)).expanduser().resolve()
+        hef = out_p / "compiled.hef"
+        if not hef.is_file() or hef.stat().st_size <= 0:
+            return None
+        snapshot = hef.resolve()
+        receipt = _load_valid_hailo_receipt(
+            snapshot, expected_net_name=str(net_name), allow_legacy_v2=True,
+        )
+        if receipt is None:
+            return None
+        if str(receipt.get("hw_arch") or "") != str(_normalize_hailo_hw_arch(hw_arch)):
+            return None
+        snapshot = _publish_hailo_bundle(
+            source_hef=snapshot, destination=hef, receipt=receipt,
+            source="structured_result_recovery",
+        )
+        parsed = out_p / "parsed.har"
+        quant = out_p / "quantized.har"
+        fixed = None
+        try:
+            fixed_hits = sorted(out_p.glob("*_hailo_fixed.onnx"))
+            fixed = fixed_hits[0] if fixed_hits else None
+        except Exception:
+            fixed = None
+        rec_details = _merge_detail_dict(
+            details,
+            {
+                "recovered_from_missing_structured_result": True,
+                "recovery_reason": "compiled.hef exists after helper returncode 0",
+                "recovered_hef_size_bytes": int(snapshot.stat().st_size),
+                "build_receipt": receipt,
+            },
+        )
+        result = _make_hef_result(
+            ok=True,
+            elapsed_s=float(elapsed_s),
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend=str(backend),
+            error=None,
+            hef_path=str(hef),
+            parsed_har_path=(str(parsed) if parsed.is_file() else None),
+            quant_har_path=(str(quant) if quant.is_file() else None),
+            fixed_onnx_path=(str(fixed) if fixed is not None and fixed.is_file() else None),
+            returncode=int(returncode or 0),
+            debug_log=debug_log,
+            last_stage=last_stage,
+            failure_kind=None,
+            details=rec_details,
+        )
+        try:
+            (out_p / "hailo_hef_build_result.json").write_text(
+                json.dumps(asdict(result), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+        return result
+    except Exception:
+        return None
 
 
 def _safe_filename(s: str) -> str:
@@ -2874,27 +3562,318 @@ def _estimate_bytes(shape: List[int], n: int, dtype_bytes: int = 4) -> int:
     return int(total * int(n))
 
 
-def _clamp_calib_count(shape: List[int], requested: int, *, cap_bytes: int = 256 * 1024 * 1024) -> int:
-    """Avoid accidentally allocating multi-GB random calibration sets."""
+def _calibration_storage_mode() -> str:
+    raw = str(os.environ.get("ONNX_SPLITPOINT_HAILO_CALIBRATION_STORAGE") or os.environ.get("ONNX_SPLITPOINT_HAILO_CALIB_STORAGE") or "memory").strip().lower()
+    return raw if raw in {"memory", "memmap"} else "memory"
 
+
+def _calibration_memory_cap_bytes(default_mb: int = 256) -> int:
+    try:
+        mb = max(32, int(float(os.environ.get("ONNX_SPLITPOINT_HAILO_CALIB_CAP_MB", default_mb))))
+    except Exception:
+        mb = default_mb
+    return int(mb) * 1024 * 1024
+
+
+def _clamp_calib_count(shape: List[int], requested: int, *, cap_bytes: int | None = None, storage: str | None = None) -> int:
+    """Return the executable calibration count for the selected storage mode.
+
+    Standard/Final use a disk-backed memmap, so the requested sample count is
+    not silently reduced to 445/54 by a 256 MiB in-memory array cap.
+    """
     n = max(1, int(requested))
-    est = _estimate_bytes(shape, n, dtype_bytes=4)
-    if est <= 0:
+    mode = str(storage or _calibration_storage_mode()).strip().lower()
+    if mode == "memmap":
         return n
-    if est <= cap_bytes:
+    cap = int(cap_bytes or _calibration_memory_cap_bytes())
+    est = _estimate_bytes(shape, n, dtype_bytes=4)
+    if est <= 0 or est <= cap:
         return n
     per = max(1, _estimate_bytes(shape, 1, dtype_bytes=4))
     if per <= 0:
         return n
-    n2 = max(1, cap_bytes // per)
-    return min(n, int(n2))
+    return min(n, max(1, int(cap // per)))
 
 
+def _resolve_hailo_calibration_storage(requested: int) -> str:
+    """Resolve ``auto`` before the cache identity is computed.
+
+    The selected storage mode changes whether the requested calibration count
+    is executable under the memory cap.  It is therefore part of the build
+    identity, not an implementation detail that may be chosen after a cache
+    lookup.
+    """
+
+    raw = str(
+        os.environ.get("ONNX_SPLITPOINT_HAILO_CALIBRATION_STORAGE") or "auto"
+    ).strip().lower()
+    if raw == "auto":
+        return "memmap" if int(requested) > 64 else "memory"
+    if raw not in {"memory", "memmap"}:
+        raise ValueError(f"unsupported_hailo_calibration_storage:{raw}")
+    return raw
+
+
+def _hailo_calibration_shape_candidates(
+    net_input_shapes: Optional[Union[List[int], Dict[str, List[int]]]],
+    preprocessing_contract: Mapping[str, Any],
+) -> List[List[int]]:
+    """Return deterministic positive shapes for pre-cache count clamping."""
+
+    raw_shapes: List[Any]
+    if isinstance(net_input_shapes, Mapping):
+        raw_shapes = list(net_input_shapes.values())
+    elif isinstance(net_input_shapes, list):
+        raw_shapes = [net_input_shapes]
+    else:
+        raw_shapes = []
+    shapes: List[List[int]] = []
+    for raw_shape in raw_shapes:
+        if not isinstance(raw_shape, (list, tuple)):
+            continue
+        try:
+            shape = [int(value) for value in raw_shape]
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if shape and all(value > 0 for value in shape):
+            shapes.append(shape)
+    if not shapes:
+        target_hw = preprocessing_contract.get("target_hw")
+        if isinstance(target_hw, (list, tuple)) and len(target_hw) == 2:
+            try:
+                height, width = (int(target_hw[0]), int(target_hw[1]))
+            except (TypeError, ValueError, OverflowError):
+                height = width = 0
+            if height > 0 and width > 0:
+                shapes.append([height, width, 3])
+    if not shapes:
+        raise ValueError("hailo_calibration_shape_identity_unavailable")
+    return shapes
+
+
+def _effective_hailo_calibration_count(
+    *,
+    requested: int,
+    shapes: Sequence[Sequence[int]],
+    storage: str,
+    cap_bytes: int,
+) -> int:
+    """Compute the exact count sealed into both cache payload and receipt."""
+
+    count = max(1, int(requested))
+    if str(storage) == "memory":
+        for raw_shape in shapes:
+            count = min(
+                count,
+                _clamp_calib_count(
+                    [int(value) for value in raw_shape],
+                    int(requested),
+                    cap_bytes=int(cap_bytes),
+                    storage="memory",
+                ),
+            )
+    return int(count)
+
+
+def _hailo_authoritative_calibration_sample_count(
+    calib_dir: Path | None,
+) -> tuple[int | None, str]:
+    """Return a deterministic source-sample ceiling when one is available.
+
+    An explicitly selected dataset manifest is authoritative.  Without one,
+    individual image files are also one-sample records by construction.  NPY
+    and NPZ files may contain arbitrary batches, so their sample count is left
+    to the post-materialisation guard instead of being guessed from filenames.
+    """
+
+    manifest_hint = str(
+        os.environ.get("ONNX_SPLITPOINT_HAILO_CALIB_MANIFEST") or ""
+    ).strip()
+    if manifest_hint:
+        manifest_path = Path(os.path.expanduser(manifest_hint))
+        if not manifest_path.is_file():
+            raise ValueError(
+                f"hailo_calibration_manifest_missing:{manifest_path}"
+            )
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, Mapping):
+            raise ValueError("hailo_calibration_manifest_not_object")
+        listed_items = payload.get("items")
+        listed_count = (
+            len(listed_items) if isinstance(listed_items, list) else None
+        )
+        declared_counts = [
+            value for value in (
+                payload.get("item_count"),
+                payload.get("sample_count"),
+                payload.get("count"),
+            )
+            if value is not None
+        ]
+        normalized_counts: list[int] = []
+        for value in declared_counts:
+            if type(value) is not int or value <= 0:
+                raise ValueError(
+                    "hailo_calibration_manifest_sample_count_invalid"
+                )
+            normalized_counts.append(int(value))
+        if listed_count is not None:
+            if listed_count <= 0:
+                raise ValueError("hailo_calibration_manifest_items_empty")
+            normalized_counts.append(int(listed_count))
+        if not normalized_counts or len(set(normalized_counts)) != 1:
+            raise ValueError(
+                "hailo_calibration_manifest_sample_count_ambiguous"
+            )
+        return normalized_counts[0], "manifest"
+
+    if calib_dir is None or not calib_dir.is_dir():
+        return None, "unavailable"
+    items = _iter_calib_items(calib_dir, recursive=True)
+    if not items:
+        return None, "unavailable"
+    image_suffixes = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+    if all(path.suffix.lower() in image_suffixes for path in items):
+        return len(items), "image_files"
+    return None, "materialization_required"
+
+
+def _verify_hailo_materialized_calibration_count(
+    *,
+    sealed_effective_count: int,
+    calib_inputs: Mapping[str, np.ndarray],
+) -> int:
+    """Reject a sample-count drift before optimize/compile consumes it."""
+
+    counts: dict[str, int] = {}
+    for name, array in calib_inputs.items():
+        shape = getattr(array, "shape", ())
+        try:
+            count = int(shape[0])
+        except (IndexError, TypeError, ValueError, OverflowError):
+            count = 0
+        counts[str(name)] = count
+    distinct = set(counts.values())
+    if (
+        not counts
+        or len(distinct) != 1
+        or next(iter(distinct)) != int(sealed_effective_count)
+    ):
+        raise RuntimeError(
+            "hailo_calibration_materialized_count_mismatch:"
+            f"sealed={int(sealed_effective_count)}:observed={counts}"
+        )
+    return next(iter(distinct))
+
+
+def _verify_hailo_calibration_count_after_translation(
+    *,
+    sealed_effective_count: int,
+    requested: int,
+    expected_shapes: Mapping[str, Sequence[int]],
+    storage: str,
+    cap_bytes: int,
+    available_sample_count: int | None = None,
+) -> int:
+    """Fail closed if the translated HN changes the sealed memory footprint."""
+
+    observed = _effective_hailo_calibration_count(
+        requested=int(requested),
+        shapes=list(expected_shapes.values()),
+        storage=str(storage),
+        cap_bytes=int(cap_bytes),
+    )
+    if available_sample_count is not None:
+        observed = min(observed, max(1, int(available_sample_count)))
+    if observed != int(sealed_effective_count):
+        raise RuntimeError(
+            "hailo_calibration_effective_count_changed_after_translation:"
+            f"sealed={int(sealed_effective_count)}:observed={observed}"
+        )
+    return observed
+
+
+
+def _infer_hailo_image_preprocess(
+    *,
+    model_path: Optional[Path],
+    expected_shapes: Dict[str, List[int]],
+    activation_part1_onnx: Optional[Path] = None,
+) -> str:
+    """Infer preprocessing for image calibration data.
+
+    Defaults:
+    - classification-like 224x224 RGB models -> ImageNet mean/std
+    - detector-like / larger RGB models -> 0..1 norm
+
+    Can be overridden with ONNX_SPLITPOINT_HAILO_IMAGE_PREPROCESS=norm|raw|imagenet|clip.
+    """
+    env = str(os.environ.get('ONNX_SPLITPOINT_HAILO_IMAGE_PREPROCESS') or os.environ.get('SPLITPOINT_HAILO_IMAGE_PREPROCESS') or '').strip().lower()
+    if env in {'raw', 'norm', 'imagenet', 'clip'}:
+        return env
+    if activation_part1_onnx is not None:
+        path_hint = activation_part1_onnx
+    else:
+        path_hint = model_path
+    name = str(getattr(path_hint, 'stem', '') or '').lower()
+    detector_markers = ('yolo', 'detr', 'detect', 'seg', 'pose', 'obb', 'scrfd', 'retina', 'ssd')
+    class_markers = ('resnet', 'mobilenet', 'regnet', 'efficientnet', 'convnext', 'densenet', 'vit', 'swin', 'inception', 'vgg', 'classification', 'classifier')
+    if any(m in name for m in detector_markers):
+        return 'norm'
+    if any(m in name for m in class_markers):
+        return 'imagenet'
+
+    for shp in (expected_shapes or {}).values():
+        try:
+            dims = [int(x) for x in shp]
+        except Exception:
+            continue
+        if len(dims) == 3:
+            # HWC or CHW image shapes.
+            if dims[-1] in (1, 3) and dims[0] <= 384 and dims[1] <= 384:
+                return 'imagenet' if dims[-1] == 3 else 'norm'
+            if dims[0] in (1, 3) and dims[1] <= 384 and dims[2] <= 384:
+                return 'imagenet' if dims[0] == 3 else 'norm'
+    return 'norm'
+
+
+def _apply_image_preprocess_for_model_input(x: np.ndarray, preprocess: str) -> np.ndarray:
+    """Convert HWC image array to the model input preprocessing domain."""
+    mode = str(preprocess or 'norm').strip().lower()
+    y = np.asarray(x)
+    if y.dtype == np.uint8 or (np.issubdtype(y.dtype, np.integer)):
+        y = y.astype(np.float32)
+    else:
+        y = y.astype(np.float32, copy=False)
+    # Convert obvious raw 0..255 floats to 0..1 for normalized modes.
+    if mode in {'norm', 'imagenet', 'clip'} and y.size and float(np.nanmax(y)) > 1.5:
+        y = y / 255.0
+    if mode == 'raw':
+        # Preserve raw 0..255 scale if present.  If the input was 0..1, upscale.
+        if y.size and float(np.nanmax(y)) <= 1.5:
+            y = y * 255.0
+        return np.ascontiguousarray(y.astype(np.float32, copy=False))
+    if mode == 'imagenet' and y.ndim == 3 and y.shape[-1] == 3:
+        mean = np.asarray([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
+        std = np.asarray([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
+        y = (y - mean) / std
+    elif mode == 'clip' and y.ndim == 3 and y.shape[-1] == 3:
+        mean = np.asarray([0.48145466, 0.4578275, 0.40821073], dtype=np.float32).reshape(1, 1, 3)
+        std = np.asarray([0.26862954, 0.26130258, 0.27577711], dtype=np.float32).reshape(1, 1, 3)
+        y = (y - mean) / std
+    # norm -> already 0..1
+    return np.ascontiguousarray(y.astype(np.float32, copy=False))
 def _try_build_calib_from_dir(
     *,
     calib_dir: Path,
     expected_shape: List[int],
     limit: int,
+    preprocess: str = 'norm',
+    storage: str | None = None,
+    storage_mode: str | None = None,
+    memmap_dir: Path | None = None,
+    memmap_path: Path | None = None,
+    preprocessing_contract: Mapping[str, Any] | None = None,
 ) -> Optional[np.ndarray]:
     if not calib_dir.exists():
         return None
@@ -2903,32 +3882,60 @@ def _try_build_calib_from_dir(
     if not items:
         return None
 
+    tgt = [int(v) for v in expected_shape]
+    contract_eff: Optional[Dict[str, Any]] = None
+    if preprocessing_contract is not None:
+        if len(tgt) != 3 or tgt[-1] not in (1, 3):
+            raise ValueError(
+                "Canonical image preprocessing can only feed an HWC image input; "
+                f"expected_shape={tgt}"
+            )
+        contract_eff, _ = resolve_image_preprocessing_contract(
+            task=preprocessing_contract.get("task"),
+            target_hw=[tgt[0], tgt[1]],
+            declared=preprocessing_contract,
+        )
+    mode = str(storage_mode or storage or _calibration_storage_mode()).strip().lower()
+    mmap: np.memmap | None = None
+    mmap_path_local: Path | None = None
     batches: List[np.ndarray] = []
     total = 0
-    tgt = [int(v) for v in expected_shape]
-    for p in items:
+    if mode == 'memmap':
+        if memmap_path is not None:
+            mmap_path_local = Path(memmap_path)
+            mmap_path_local.parent.mkdir(parents=True, exist_ok=True)
+            mmap_path_local.unlink(missing_ok=True)
+        else:
+            tmp_dir = Path(memmap_dir) if memmap_dir is not None else Path(tempfile.gettempdir())
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            fd, raw_path = tempfile.mkstemp(prefix='splitpoint_hailo_calib_', suffix='.mmap', dir=str(tmp_dir))
+            os.close(fd)
+            mmap_path_local = Path(raw_path)
+        mmap = np.memmap(mmap_path_local, dtype=np.float32, mode='w+', shape=(int(limit), *tgt))
+
+    for pth in items:
         try:
-            a = _load_calib_item_any(p)
+            a = _load_calib_item_any(pth)
         except Exception:
             continue
-
         a = np.asarray(a)
         if len(tgt) == 3 and a.ndim in (2, 3, 4):
-            try:
-                a = _resize_hwc_image(a, tgt[0], tgt[1], target_c=tgt[2])[None, ...]
-            except Exception:
-                pass
-
+            if contract_eff is not None:
+                a, _geometry = prepare_rgb_uint8_image(a, contract_eff)
+                a = a[None, ...]
+            else:
+                try:
+                    a = _resize_hwc_image(a, tgt[0], tgt[1], target_c=tgt[2])[None, ...]
+                except Exception:
+                    pass
         if a.ndim == len(tgt):
             a = a[None, ...]
         if a.ndim != len(tgt) + 1:
             continue
-
-        if a.dtype == np.uint8:
-            a = a.astype(np.float32) / 255.0
+        if len(tgt) == 3 and a.ndim == 4 and a.shape[-1] in (1, 3):
+            a = np.stack([_apply_image_preprocess_for_model_input(ss, preprocess) for ss in a], axis=0)
         else:
-            a = a.astype(np.float32, copy=False)
-
+            a = a.astype(np.float32) / 255.0 if a.dtype == np.uint8 else a.astype(np.float32, copy=False)
         sample = list(a.shape[1:])
         if sample == tgt:
             pass
@@ -2941,19 +3948,33 @@ def _try_build_calib_from_dir(
                 continue
         else:
             continue
-
-        batches.append(np.ascontiguousarray(a))
-        total += int(a.shape[0])
+        a = np.ascontiguousarray(a.astype(np.float32, copy=False))
+        take = min(int(a.shape[0]), int(limit) - total)
+        if take <= 0:
+            break
+        if mmap is not None:
+            mmap[total:total + take] = a[:take]
+        else:
+            batches.append(a[:take])
+        total += take
         if total >= int(limit):
             break
 
-    if not batches:
+    if total <= 0:
+        if mmap is not None:
+            try:
+                mmap._mmap.close()
+            except Exception:
+                pass
+        if mmap_path_local is not None:
+            mmap_path_local.unlink(missing_ok=True)
         return None
-
+    if mmap is not None:
+        mmap.flush()
+        # Return a memmap view; caller removes its backing file after optimize.
+        return mmap[:total]
     ds = np.concatenate(batches, axis=0)
-    if ds.shape[0] > int(limit):
-        ds = ds[: int(limit)]
-    return np.ascontiguousarray(ds.astype(np.float32, copy=False))
+    return np.ascontiguousarray(ds[: int(limit)].astype(np.float32, copy=False))
 
 
 
@@ -3453,15 +4474,33 @@ def _ort_input_hwc_spec(inp: Any) -> Tuple[Optional[int], Optional[int], Optiona
     return None, None, None, layout
 
 
-def _prepare_part1_input_for_activation_calib(arr: np.ndarray, inp: Any) -> np.ndarray:
+def _prepare_part1_input_for_activation_calib(
+    arr: np.ndarray,
+    inp: Any,
+    preprocess: str = 'norm',
+    preprocessing_contract: Mapping[str, Any] | None = None,
+) -> np.ndarray:
     tgt_h, tgt_w, tgt_c, layout = _ort_input_hwc_spec(inp)
-    x = _resize_hwc_image(arr, tgt_h, tgt_w, target_c=tgt_c)
+    if tgt_h is None or tgt_w is None:
+        raise ValueError("Part1 image input requires static height and width")
+    if preprocessing_contract is not None:
+        if tgt_c not in (3, None):
+            raise ValueError(
+                "Canonical RGB preprocessing cannot feed a non-RGB Part1 input; "
+                f"channels={tgt_c}"
+            )
+        contract_eff, _ = resolve_image_preprocessing_contract(
+            task=preprocessing_contract.get("task"),
+            target_hw=[tgt_h, tgt_w],
+            declared=preprocessing_contract,
+        )
+        x, _geometry = prepare_rgb_uint8_image(arr, contract_eff)
+    else:
+        x = _resize_hwc_image(arr, tgt_h, tgt_w, target_c=tgt_c)
 
     exp_type = str(getattr(inp, 'type', '') or '').lower()
     if 'float' in exp_type:
-        x = x.astype(np.float32)
-        if x.size and float(np.nanmax(x)) > 1.5:
-            x = x / 255.0
+        x = _apply_image_preprocess_for_model_input(x, preprocess)
     else:
         if np.issubdtype(x.dtype, np.floating):
             if x.size and float(np.nanmax(x)) <= 1.5:
@@ -3495,6 +4534,533 @@ def _convert_calib_dataset_to_hn_shape(ds: np.ndarray, hn_shape: List[int]) -> T
     raise ValueError(f'Cannot convert calib dataset sample_shape={sample_shape} to hn_shape={target}')
 
 
+
+def _activation_proxy_strict_enabled() -> bool:
+    """Return whether activation proxy fallback is forbidden.
+
+    This is intentionally checked in the backend code, not only in the GUI, so
+    CLI runs and background GUI jobs behave the same way.
+    """
+    raw = str(
+        os.environ.get('ONNX_SPLITPOINT_ACTIVATION_PROXY_STRICT')
+        or os.environ.get('SPLITPOINT_ACTIVATION_PROXY_STRICT')
+        or os.environ.get('ONNX_SPLITPOINT_ACTIVATION_PROXY_NO_FALLBACK')
+        or ''
+    ).strip().lower()
+    return raw in {'1', 'true', 'yes', 'on', 'strict', 'fail', 'no_fallback'}
+
+
+def _activation_proxy_backend_request() -> str:
+    """Return requested activation proxy producer backend.
+
+    The default prefers CUDA ORT when available and falls back to ORT CPU.  This is a pragmatic proxy for Stage2 accelerator calibration on a CUDA build workstation.  For faster/better proxy
+    calibration on a build workstation, set::
+
+        ONNX_SPLITPOINT_ACTIVATION_PROXY_BACKEND=cuda_ort
+        ONNX_SPLITPOINT_ACTIVATION_PROXY_BACKEND=tensorrt_ort
+
+    The selected backend is still a *proxy* for Stage2 calibration unless it is
+    generated by the actual runtime producer.
+    """
+    raw = str(os.environ.get('ONNX_SPLITPOINT_ACTIVATION_PROXY_BACKEND') or os.environ.get('SPLITPOINT_ACTIVATION_PROXY_BACKEND') or 'cuda_ort').strip().lower().replace('-', '_')
+    aliases = {
+        '': 'ort_cpu',
+        'auto': 'cuda_ort',
+        'cpu': 'ort_cpu',
+        'ort': 'ort_cpu',
+        'ort_cpu': 'ort_cpu',
+        'cpu_ort': 'ort_cpu',
+        'cuda': 'cuda_ort',
+        'gpu': 'cuda_ort',
+        'ort_cuda': 'cuda_ort',
+        'cuda_ort': 'cuda_ort',
+        'trt': 'tensorrt_ort',
+        'tensorrt': 'tensorrt_ort',
+        'ort_tensorrt': 'tensorrt_ort',
+        'tensorrt_ort': 'tensorrt_ort',
+        'trt_ort': 'tensorrt_ort',
+        'remote': 'remote_deepx_tensorrt',
+        'remote_deepx': 'remote_deepx_tensorrt',
+        'remote_trt': 'remote_deepx_tensorrt',
+        'remote_tensorrt': 'remote_deepx_tensorrt',
+        'remote_deepx_trt': 'remote_deepx_tensorrt',
+        'remote_deepx_tensorrt': 'remote_deepx_tensorrt',
+        'remote_cuda': 'remote_deepx_cuda',
+        'remote_deepx_cuda': 'remote_deepx_cuda',
+    }
+    return aliases.get(raw, 'ort_cpu')
+
+
+
+
+
+def _activation_proxy_is_remote_backend(backend: str) -> bool:
+    return str(backend or '').strip().lower().replace('-', '_').startswith('remote_')
+
+
+def _load_activation_proxy_deepx_remote_setup() -> Dict[str, Any]:
+    """Resolve the DeepX NX runtime setup from ~/.onnx_splitpoint_tool/hardware_setups.yaml."""
+    try:
+        import yaml  # type: ignore
+    except Exception as exc:
+        raise RuntimeError(f"PyYAML is required to read hardware_setups.yaml: {type(exc).__name__}: {exc}") from exc
+    try:
+        from .workflow.hardware_matrix import ensure_hardware_setups_file, canon_accelerator  # type: ignore
+    except Exception:
+        from onnx_splitpoint_tool.workflow.hardware_matrix import ensure_hardware_setups_file, canon_accelerator  # type: ignore
+    p = ensure_hardware_setups_file()
+    data = yaml.safe_load(Path(p).read_text(encoding='utf-8')) or {}
+    setups = list(data.get('hardware_setups') or []) if isinstance(data, dict) else []
+    candidates: List[Dict[str, Any]] = []
+    for raw in setups:
+        if not isinstance(raw, dict):
+            continue
+        acc = canon_accelerator(raw.get('accelerator') or raw.get('backend') or raw.get('target') or raw.get('id'))
+        if acc == 'deepx_m1' or 'deepx' in str(raw.get('id') or '').lower():
+            candidates.append(dict(raw))
+    if not candidates:
+        raise RuntimeError(f"No DeepX hardware setup found in {p}")
+    selected = None
+    for c in candidates:
+        h = c.get('host') if isinstance(c.get('host'), dict) else {}
+        addr = str(h.get('address') or h.get('host') or c.get('address') or c.get('host') or '').strip()
+        if addr:
+            selected = c
+            break
+    selected = selected or candidates[0]
+    host_map = selected.get('host') if isinstance(selected.get('host'), dict) else {}
+    runtime = selected.get('runtime') if isinstance(selected.get('runtime'), dict) else {}
+    remote = selected.get('remote') if isinstance(selected.get('remote'), dict) else {}
+    host = str(host_map.get('address') or host_map.get('host') or remote.get('host') or runtime.get('host') or selected.get('host') or '').strip()
+    user = str(host_map.get('user') or remote.get('user') or runtime.get('user') or selected.get('user') or 'nx').strip() or 'nx'
+    port = int(host_map.get('port') or remote.get('port') or runtime.get('port') or selected.get('port') or 22)
+    base_dir = str(host_map.get('base_dir') or remote.get('remote_base_dir') or runtime.get('remote_base_dir') or selected.get('remote_base_dir') or '~/splitpoint_runs')
+    activate = str(runtime.get('activate') or runtime.get('venv_activate') or runtime.get('venv') or remote.get('remote_venv') or selected.get('remote_venv') or 'source ~/venvs/deepx-runtime/bin/activate')
+    provider = str(runtime.get('provider') or remote.get('provider') or selected.get('provider') or 'deepx_m1')
+    if not host:
+        raise RuntimeError(f"DeepX hardware setup {selected.get('id') or '<unknown>'} has no host configured in {p}")
+    return {'id': str(selected.get('id') or 'orin_nx_deepx_m1_01'), 'label': str(selected.get('label') or selected.get('name') or 'Orin NX + DeepX DX-M1'), 'host': host, 'user': user, 'port': port, 'base_dir': base_dir, 'activate': activate, 'provider': provider, 'registry': str(p)}
+
+
+_REMOTE_ACTIVATION_PROXY_SCRIPT = '#!/usr/bin/env python3\nfrom __future__ import annotations\nimport argparse, json, re, tarfile\nfrom pathlib import Path\nimport numpy as np\n\ndef _safe_key(name: str) -> str:\n    s = re.sub(r\'[^A-Za-z0-9_]+\', \'_\', str(name)).strip(\'_\')\n    return s or \'tensor\'\n\ndef _load_item(path: Path):\n    suf = path.suffix.lower()\n    if suf == \'.npy\':\n        return np.asarray(np.load(str(path)))\n    if suf == \'.npz\':\n        data = np.load(str(path)); return np.asarray(data[list(data.files)[0]])\n    import cv2\n    im = cv2.imread(str(path), cv2.IMREAD_COLOR)\n    if im is None: raise RuntimeError(f\'cv2.imread failed for {path}\')\n    return cv2.cvtColor(im, cv2.COLOR_BGR2RGB)\n\ndef _onnx_io_meta(path: Path):\n    import onnx\n    m = onnx.load(str(path))\n    def dims(v):\n        out=[]\n        for d in v.type.tensor_type.shape.dim:\n            if getattr(d,\'dim_value\',0): out.append(int(d.dim_value))\n            elif getattr(d,\'dim_param\',\'\'): out.append(str(d.dim_param))\n            else: out.append(None)\n        return out\n    def typ(v):\n        try:\n            code=int(v.type.tensor_type.elem_type)\n            try:\n                import onnx\n                return str(onnx.TensorProto.DataType.Name(code))\n            except Exception:\n                return str(code)\n        except Exception: return \'\'\n    return {\'inputs\':[{\'name\':i.name,\'shape\':dims(i),\'type\':typ(i)} for i in m.graph.input], \'outputs\':[{\'name\':o.name,\'shape\':dims(o),\'type\':typ(o)} for o in m.graph.output]}\n\ndef _is_float_type(t):\n    s=str(t or \'\').strip().lower()\n    return s in {\'1\',\'float\',\'float32\',\'tensor_float\',\'tensor(float)\',\'float16\',\'tensor(float16)\',\'float64\',\'double\',\'tensor(double)\'} or \'float\' in s or \'double\' in s\n\ndef _hwc_spec(meta):\n    shape=list(meta.get(\'shape\') or [])\n    if len(shape)==4:\n        if shape[1] in (1,3): return int(shape[2]), int(shape[3]), int(shape[1]), \'NCHW\'\n        return int(shape[1]), int(shape[2]), int(shape[3]), \'NHWC\'\n    if len(shape)==3:\n        if shape[0] in (1,3): return int(shape[1]), int(shape[2]), int(shape[0]), \'NCHW\'\n        return int(shape[0]), int(shape[1]), int(shape[2]), \'NHWC\'\n    return 224,224,3,\'NHWC\'\n\ndef _prepare_input(arr, inp_meta, preprocess):\n    import cv2\n    h,w,c,layout=_hwc_spec(inp_meta)\n    x=np.asarray(arr)\n    if x.ndim==2: x=np.stack([x,x,x], axis=-1)\n    if x.ndim==4 and x.shape[0]==1: x=x[0]\n    if x.ndim==3 and x.shape[-1] not in (1,3) and x.shape[0] in (1,3): x=np.transpose(x,(1,2,0))\n    if x.ndim != 3: raise RuntimeError(f\'bad calibration input rank {x.ndim}\')\n    if c==1 and x.shape[-1]!=1: x=cv2.cvtColor(x.astype(np.uint8), cv2.COLOR_RGB2GRAY)[...,None]\n    elif c==3 and x.shape[-1]==1: x=np.repeat(x,3,axis=-1)\n    x=cv2.resize(x,(w,h),interpolation=cv2.INTER_LINEAR).astype(np.float32)\n    mode=str(preprocess or \'norm\').lower()\n    exp_type=str(inp_meta.get(\'type\') or \'\').lower()\n    if _is_float_type(exp_type):\n        if mode in {\'norm\',\'imagenet\',\'clip\'} and x.size and float(np.nanmax(x))>1.5: x=x/255.0\n        if mode==\'imagenet\' and x.shape[-1]==3:\n            mean=np.asarray([0.485,0.456,0.406],np.float32).reshape(1,1,3); std=np.asarray([0.229,0.224,0.225],np.float32).reshape(1,1,3); x=(x-mean)/std\n        elif mode==\'clip\' and x.shape[-1]==3:\n            mean=np.asarray([0.48145466,0.4578275,0.40821073],np.float32).reshape(1,1,3); std=np.asarray([0.26862954,0.26130258,0.27577711],np.float32).reshape(1,1,3); x=(x-mean)/std\n        elif mode==\'raw\' and x.size and float(np.nanmax(x))<=1.5: x=x*255.0\n    else:\n        if x.size and float(np.nanmax(x))<=1.5: x=x*255.0\n        x=np.clip(x,0,255).astype(np.uint8)\n    if layout==\'NCHW\': x=np.transpose(x,(2,0,1))[None,...]\n    else: x=x[None,...]\n    return np.ascontiguousarray(x)\n\ndef main():\n    ap=argparse.ArgumentParser(); ap.add_argument(\'--meta\', required=True); ns=ap.parse_args()\n    meta=json.loads(Path(ns.meta).read_text())\n    root=Path(meta.get(\'work_dir\') or \'.\').resolve()\n    part1=root/\'part1.onnx\'; part2=root/\'part2.onnx\'; images=root/\'images\'\n    provider_mode=str(meta.get(\'provider_mode\') or \'tensorrt\').lower()\n    preprocess=str(meta.get(\'input_preprocess\') or \'norm\')\n    limit=int(meta.get(\'limit\') or 100)\n    import onnxruntime as ort\n    try:\n        if hasattr(ort,\'preload_dlls\'): ort.preload_dlls(directory=\'\')\n    except Exception: pass\n    p1m=_onnx_io_meta(part1); p2m=_onnx_io_meta(part2)\n    p1_in=p1m[\'inputs\'][0]\n    p1_out_names=[o[\'name\'] for o in p1m[\'outputs\']]\n    p2_in_names=[i[\'name\'] for i in p2m[\'inputs\']]\n    missing=[n for n in p2_in_names if n not in set(p1_out_names)]\n    if missing: raise RuntimeError(\'Part2 inputs are not Part1 outputs: \'+\', \'.join(missing))\n    providers=[\'CPUExecutionProvider\']\n    if provider_mode in {\'tensorrt\',\'trt\',\'remote_deepx_tensorrt\'}: providers=[\'TensorrtExecutionProvider\',\'CUDAExecutionProvider\',\'CPUExecutionProvider\']\n    elif provider_mode in {\'cuda\',\'remote_deepx_cuda\'}: providers=[\'CUDAExecutionProvider\',\'CPUExecutionProvider\']\n    so=ort.SessionOptions(); so.intra_op_num_threads=1; so.inter_op_num_threads=1; so.graph_optimization_level=ort.GraphOptimizationLevel.ORT_ENABLE_ALL\n    sess=ort.InferenceSession(str(part1), sess_options=so, providers=providers)\n    used=list(sess.get_providers() or [])\n    primary=\'TensorrtExecutionProvider\' if \'TensorrtExecutionProvider\' in providers else (\'CUDAExecutionProvider\' if \'CUDAExecutionProvider\' in providers else \'CPUExecutionProvider\')\n    if bool(meta.get(\'strict\')) and primary not in used: raise RuntimeError(f\'remote strict proxy requested {primary}, but session providers are {used}\')\n    exts={\'.jpg\',\'.jpeg\',\'.png\',\'.bmp\',\'.npy\',\'.npz\'}\n    items=[p for p in sorted(images.rglob(\'*\')) if p.is_file() and p.suffix.lower() in exts][:limit]\n    if not items: raise RuntimeError(\'no calibration items in remote images directory\')\n    per={n: [] for n in p2_in_names}\n    for p in items:\n        x=_prepare_input(_load_item(p), p1_in, preprocess)\n        outs=sess.run(p2_in_names, {p1_in[\'name\']: x})\n        for n,o in zip(p2_in_names, outs):\n            arr=np.asarray(o)\n            if arr.ndim>=1 and arr.shape[0]==x.shape[0]: per[n].append(np.asarray(arr[0], dtype=np.float32))\n            else: per[n].append(np.asarray(arr, dtype=np.float32))\n    arrays={n:np.stack(v,axis=0).astype(np.float32) for n,v in per.items()}\n    key_map={}; payload={}\n    for n,a in arrays.items():\n        k=_safe_key(n)\n        while k in payload: k=k+\'_x\'\n        key_map[k]=n; payload[k]=a\n    np.savez_compressed(str(root/\'arrays.npz\'), **payload)\n    (root/\'key_map.json\').write_text(json.dumps(key_map, indent=2), encoding=\'utf-8\')\n    producer=\'remote_deepx_cpu\'\n    if \'TensorrtExecutionProvider\' in used: producer=\'remote_deepx_tensorrt\'\n    elif \'CUDAExecutionProvider\' in used: producer=\'remote_deepx_cuda\'\n    debug={\'remote_activation_proxy\': True, \'remote_host\': meta.get(\'remote_host\'), \'remote_setup_id\': meta.get(\'remote_setup_id\'), \'activation_proxy_requested_backend\': meta.get(\'requested_backend\'), \'activation_proxy_producer_backend\': producer, \'activation_proxy_source\': producer + \'_reference_proxy\', \'activation_proxy_provider_fallback\': \'\' if producer==meta.get(\'requested_backend\') else f\'remote requested {meta.get("requested_backend")}, session providers={used}\', \'remote_session_providers\': used, \'calib_items_total\': len(items), \'calib_source_dir\': str(images), \'input_preprocess\': preprocess, \'part1_input\': p1_in, \'part2_inputs\': p2m[\'inputs\'], \'calib_shapes_before_hn\': {k:{\'dataset_shape\':list(v.shape),\'dtype\':str(v.dtype)} for k,v in arrays.items()}}\n    (root/\'debug.json\').write_text(json.dumps(debug, indent=2), encoding=\'utf-8\')\n    with tarfile.open(root/\'output.tgz\',\'w:gz\') as tf:\n        for name in [\'arrays.npz\',\'key_map.json\',\'debug.json\']: tf.add(root/name, arcname=name)\n    return 0\nif __name__==\'__main__\': raise SystemExit(main())\n'
+
+# Canonical inputs are materialized as RGB uint8 .npy files before transfer.
+# A same-size OpenCV resize would normally be a copy, but skipping it makes the
+# byte-preservation guarantee explicit and independent of OpenCV versions.
+_REMOTE_ACTIVATION_PROXY_SCRIPT = _REMOTE_ACTIVATION_PROXY_SCRIPT.replace(
+    "    x=cv2.resize(x,(w,h),interpolation=cv2.INTER_LINEAR).astype(np.float32)\n",
+    "    if tuple(x.shape[:2]) != (h,w): x=cv2.resize(x,(w,h),interpolation=cv2.INTER_LINEAR)\n"
+    "    x=x.astype(np.float32)\n",
+)
+
+
+def _ssh_run_for_activation_proxy(setup: Dict[str, Any], command: str, *, timeout_s: int = 3600) -> tuple[int, str, str]:
+    host = f"{setup['user']}@{setup['host']}"
+    # Send a single quoted remote command.  Passing ['bash','-lc', command]
+    # directly to ssh can lose quoting because ssh joins remote argv with
+    # spaces before the remote shell sees it.
+    remote_cmd = 'bash -lc ' + shlex.quote(str(command))
+    ssh_cmd = ['ssh', '-p', str(setup.get('port') or 22), host, remote_cmd]
+    proc = _run_owned_subprocess(ssh_cmd, text=True, capture_output=True, timeout=int(timeout_s))
+    return int(proc.returncode), proc.stdout or '', proc.stderr or ''
+
+
+def _scp_for_activation_proxy(setup: Dict[str, Any], src: str | Path, dst_remote: str) -> tuple[int, str, str]:
+    """Copy a local file to the remote DeepX host.
+
+    ``dst_remote`` must be an already-expanded absolute path returned by the
+    remote shell.  Do not pass shlex-quoted strings here: scp does not perform a
+    second shell expansion for single-quoted ``~/...`` paths, which previously
+    produced paths such as ``'~/splitpoint_runs/...'`` and failed with
+    "No such file or directory".
+    """
+    host = f"{setup['user']}@{setup['host']}"
+    proc = _run_owned_subprocess(['scp', '-P', str(setup.get('port') or 22), str(src), f'{host}:{str(dst_remote)}'], text=True, capture_output=True)
+    return int(proc.returncode), proc.stdout or '', proc.stderr or ''
+
+
+def _scp_from_activation_proxy(setup: Dict[str, Any], src_remote: str, dst: str | Path) -> tuple[int, str, str]:
+    """Copy a remote file back from the DeepX host.
+
+    ``src_remote`` must be an expanded absolute path.  Keep it unquoted for scp.
+    """
+    host = f"{setup['user']}@{setup['host']}"
+    proc = _run_owned_subprocess(['scp', '-P', str(setup.get('port') or 22), f'{host}:{str(src_remote)}', str(dst)], text=True, capture_output=True)
+    return int(proc.returncode), proc.stdout or '', proc.stderr or ''
+
+
+def _build_activation_calib_from_part1_onnx_remote_deepx(
+    *,
+    requested_backend: str,
+    part1_onnx: Path,
+    part2_onnx: Path,
+    calib_dir: Path,
+    limit: int,
+    gen_batch: int,
+    input_preprocess: str = 'norm',
+    preprocessing_contract: Mapping[str, Any] | None = None,
+) -> Tuple[List[str], Dict[str, np.ndarray], Dict[str, Any]]:
+    import tempfile, tarfile, uuid
+    if compiler_dispatch_forbidden() and (
+        "tensorrt" in str(requested_backend).lower()
+        or "trt" in str(requested_backend).lower()
+    ):
+        raise RuntimeError(cache_miss_blocked_message(
+            "tensorrt_ort_ep",
+            "remote activation proxy requested TensorRTExecutionProvider",
+        ))
+    setup = _load_activation_proxy_deepx_remote_setup()
+    calib_scan = _scan_calib_dir(calib_dir, recursive=True, limit=max(1, int(limit)))
+    calib_items = list(calib_scan.get('items') or [])
+    if not calib_items:
+        raise FileNotFoundError(f'No calibration items (.npy/.npz/images) in: {calib_dir}')
+    strict_proxy = _activation_proxy_strict_enabled()
+    provider_mode = 'tensorrt' if 'tensorrt' in str(requested_backend) or 'trt' in str(requested_backend) else 'cuda'
+    base = str(setup.get('base_dir') or '~/splitpoint_runs').strip()
+    # Normalize stale paths that accidentally persisted as /home/<user>/~/...
+    # before we hand them to the remote shell.  The remote shell expansion below
+    # then returns a real absolute path for scp, e.g. /home/nx/splitpoint_runs.
+    if '/~/' in base:
+        base = '~/' + base.split('/~/')[-1]
+    elif base.endswith('/~'):
+        base = '~'
+    prefix = 'splitpoint_actproxy_' + uuid.uuid4().hex[:10]
+    # Resolve the remote base directory on the remote shell.  Do not pass
+    # quoted '~' paths to scp: scp will not expand them and then fails with
+    # "dest open '~/...': No such file or directory".  The mktemp command
+    # below always returns an absolute path such as /home/nx/splitpoint_runs/...
+    mkcmd = f'''set -e
+raw_base={shlex.quote(base)}
+case "$raw_base" in
+  "") base="$HOME/splitpoint_runs" ;;
+  "~") base="$HOME" ;;
+  "~/"*) base="$HOME/${{raw_base#~/}}" ;;
+  */~/*) base="$HOME/${{raw_base#*~/}}" ;;
+  */~) base="$HOME" ;;
+  /*) base="$raw_base" ;;
+  *) base="$HOME/$raw_base" ;;
+esac
+mkdir -p "$base/activation_proxy"
+mktemp -d "$base/activation_proxy/{prefix}.XXXXXX"
+'''
+    rc, out, err = _ssh_run_for_activation_proxy(setup, mkcmd, timeout_s=60)
+    if rc != 0 or not out.strip():
+        raise RuntimeError(f'remote mktemp failed rc={rc}: {err[-1000:]}')
+    remote_dir = out.strip().splitlines()[-1].strip()
+    with tempfile.TemporaryDirectory(prefix='splitpoint_remote_proxy_') as td:
+        tdp = Path(td); payload = tdp / 'payload'; (payload / 'images').mkdir(parents=True, exist_ok=True)
+        shutil.copy2(part1_onnx, payload / 'part1.onnx'); shutil.copy2(part2_onnx, payload / 'part2.onnx')
+        copied = 0
+        for i, item in enumerate(calib_items[:max(1, int(limit))]):
+            try:
+                src = Path(item)
+                if preprocessing_contract is not None:
+                    prepared, _geometry = prepare_rgb_uint8_image(
+                        _load_calib_item_any(src), preprocessing_contract
+                    )
+                    np.save(payload / 'images' / f'{i:06d}.npy', prepared)
+                else:
+                    shutil.copy2(src, payload / 'images' / f'{i:06d}_{src.name}')
+                copied += 1
+            except Exception:
+                if preprocessing_contract is not None:
+                    raise
+        meta = {'work_dir': str(remote_dir), 'limit': max(1, int(limit)), 'gen_batch': max(1, int(gen_batch)), 'input_preprocess': str(input_preprocess), 'provider_mode': provider_mode, 'strict': bool(strict_proxy), 'requested_backend': str(requested_backend), 'remote_host': f"{setup.get('user')}@{setup.get('host')}:{setup.get('port')}", 'remote_setup_id': setup.get('id'), 'preprocessing_contract': dict(preprocessing_contract or {}), 'preprocessing_contract_sha256': preprocessing_contract_sha256(preprocessing_contract) if preprocessing_contract else None, 'inputs_prepared_before_transfer': bool(preprocessing_contract), 'inputs_copied': int(copied)}
+        (payload / 'meta.json').write_text(json.dumps(meta, indent=2), encoding='utf-8')
+        (payload / 'remote_activation_proxy.py').write_text(_REMOTE_ACTIVATION_PROXY_SCRIPT, encoding='utf-8')
+        archive = tdp / 'input.tgz'
+        with tarfile.open(archive, 'w:gz') as tf:
+            for p in payload.rglob('*'):
+                tf.add(p, arcname=str(p.relative_to(payload)))
+        rc, _out, err = _scp_for_activation_proxy(setup, archive, remote_dir + '/input.tgz')
+        if rc != 0:
+            raise RuntimeError(f'remote scp input failed rc={rc}: {err[-1000:]}')
+        activate = str(setup.get('activate') or 'source ~/venvs/deepx-runtime/bin/activate')
+        # Execute with the Python from the activated remote venv.  Some remote
+        # shells keep a stale PATH or do not provide 'python'; use VIRTUAL_ENV
+        # directly when available.
+        remote_cmd = f'''
+set -e
+cd {shlex.quote(remote_dir)}
+tar -xzf input.tgz
+ACTIVATE_CMD={shlex.quote(activate)}
+eval "$ACTIVATE_CMD"
+export LD_LIBRARY_PATH=/usr/local/cuda/targets/aarch64-linux/lib:/usr/local/cuda/lib64:/usr/lib/aarch64-linux-gnu:/usr/lib/aarch64-linux-gnu/tegra:/usr/lib/aarch64-linux-gnu/nvidia:${{LD_LIBRARY_PATH:-}}
+PYBIN=python3
+if [ -n "${{VIRTUAL_ENV:-}}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+  PYBIN="$VIRTUAL_ENV/bin/python"
+elif [ -n "${{VIRTUAL_ENV:-}}" ] && [ -x "$VIRTUAL_ENV/bin/python3" ]; then
+  PYBIN="$VIRTUAL_ENV/bin/python3"
+fi
+"$PYBIN" remote_activation_proxy.py --meta meta.json
+'''
+        rc, out, err = _ssh_run_for_activation_proxy(setup, remote_cmd, timeout_s=7200)
+        if rc != 0:
+            raise RuntimeError(f'remote activation proxy failed rc={rc}; dir={remote_dir}; stdout_tail={out[-1500:]}; stderr_tail={err[-2500:]}')
+        out_archive = tdp / 'output.tgz'
+        rc, _out2, err2 = _scp_from_activation_proxy(setup, remote_dir + '/output.tgz', out_archive)
+        if rc != 0 or not out_archive.exists():
+            raise RuntimeError(f'remote scp output failed rc={rc}: {err2[-1000:]}')
+        outdir = tdp / 'out'; outdir.mkdir()
+        with tarfile.open(out_archive, 'r:gz') as tf:
+            tf.extractall(outdir)
+        key_map = json.loads((outdir / 'key_map.json').read_text(encoding='utf-8'))
+        debug = json.loads((outdir / 'debug.json').read_text(encoding='utf-8'))
+        npz = np.load(str(outdir / 'arrays.npz'))
+        arrays: Dict[str, np.ndarray] = {str(name): np.asarray(npz[key]).astype(np.float32, copy=False) for key, name in key_map.items()}
+        names = [str(v) for v in key_map.values()]
+        debug.update({'activation_proxy_remote_work_dir': remote_dir, 'activation_proxy_remote_setup': setup, 'activation_proxy_remote_requested_backend': str(requested_backend), 'activation_proxy_remote_stdout_tail': out[-2000:], 'activation_proxy_calib_items_copied': int(copied), 'preprocessing_contract': dict(preprocessing_contract or {}), 'preprocessing_contract_sha256': preprocessing_contract_sha256(preprocessing_contract) if preprocessing_contract else None, 'calib_scan': {k: v for k, v in calib_scan.items() if k != 'items'}})
+        return names, arrays, debug
+
+
+
+
+def _preload_nvidia_cuda_wheel_libs_for_ort() -> Dict[str, Any]:
+    """Best-effort CUDA/cuDNN/cuBLAS preload for ONNX Runtime provider sessions.
+
+    This mirrors scripts/check_activation_proxy_backend.py.  It helps when the
+    build-host activation proxy is cuda_ort/tensorrt_ort and the CUDA runtime
+    libraries are installed via NVIDIA Python wheels rather than system ldconfig.
+    """
+    try:
+        import ctypes
+        import site
+        import sys as _sys
+        roots: List[Path] = []
+        try:
+            roots.extend(Path(x) for x in site.getsitepackages())
+        except Exception:
+            pass
+        try:
+            roots.append(Path(site.getusersitepackages()))
+        except Exception:
+            pass
+        for x in _sys.path:
+            if x and 'site-packages' in x:
+                roots.append(Path(x))
+        uniq: List[Path] = []
+        for r in roots:
+            if r and r.exists() and r not in uniq:
+                uniq.append(r)
+        patterns = [
+            '**/libcudart.so*', '**/libnvrtc.so*', '**/libnvJitLink.so*',
+            '**/libcublas.so*', '**/libcublasLt.so*', '**/libcudnn.so*',
+            '**/libcufft.so*', '**/libcurand.so*', '**/libcusparse.so*', '**/libcusolver.so*',
+            '**/libnvinfer.so*', '**/libnvinfer_plugin.so*', '**/libnvonnxparser.so*',
+        ]
+        found: List[Path] = []
+        for root in uniq:
+            for pat in patterns:
+                try:
+                    for q in root.glob(pat):
+                        if q.is_file() and q not in found:
+                            found.append(q)
+                except Exception:
+                    pass
+        order = ['libcudart','libnvrtc','libnvJitLink','libcublas','libcublasLt','libcudnn','libcufft','libcurand','libcusparse','libcusolver','libnvinfer','libnvinfer_plugin','libnvonnxparser']
+        def key(q: Path):
+            for i,prefix in enumerate(order):
+                if q.name.startswith(prefix):
+                    return (i,q.name)
+            return (999,q.name)
+        found = sorted(found, key=key)
+        dirs: List[str] = []
+        for q in found:
+            d=str(q.parent)
+            if d not in dirs:
+                dirs.append(d)
+        if dirs:
+            os.environ['LD_LIBRARY_PATH'] = ':'.join(dirs + [os.environ.get('LD_LIBRARY_PATH','')])
+        loaded: List[str] = []
+        errors: List[str] = []
+        for q in found:
+            try:
+                ctypes.CDLL(str(q), mode=getattr(ctypes, 'RTLD_GLOBAL', 0))
+                loaded.append(str(q))
+            except Exception as exc:
+                errors.append(f'{q}: {type(exc).__name__}: {exc}')
+        return {'attempted': True, 'found_count': len(found), 'loaded_count': len(loaded), 'loaded_tail': loaded[-20:], 'dirs': dirs, 'errors': errors[:10]}
+    except Exception as exc:
+        return {'attempted': True, 'error': f'{type(exc).__name__}: {exc}'}
+
+def _activation_proxy_provider_session_smoke(ort: Any, provider: str) -> Dict[str, Any]:
+    """Return whether an ORT provider can actually create a session.
+
+    Provider listing alone is not enough on workstations: ORT can list the
+    TensorRT/CUDA EPs while session creation silently falls back to CUDA/CPU
+    because a shared library such as libnvinfer, libcublas, or libcudnn is not
+    loadable. The activation proxy must record the provider that *actually*
+    produced calibration tensors.
+    """
+    if (
+        provider == 'TensorrtExecutionProvider'
+        and compiler_dispatch_forbidden()
+    ):
+        return {
+            'ok': False,
+            'requested_provider': provider,
+            'blocked': True,
+            'error': cache_miss_blocked_message(
+                'tensorrt_ort_ep', 'activation proxy provider smoke'
+            ),
+        }
+    try:
+        import tempfile
+        import numpy as _np
+        _cuda_preload_info = _preload_nvidia_cuda_wheel_libs_for_ort()
+        import onnx as _onnx  # type: ignore
+        from onnx import TensorProto as _TensorProto, helper as _helper  # type: ignore
+    except Exception as exc:
+        return {'ok': False, 'error': f'smoke prerequisites missing: {type(exc).__name__}: {exc}'}
+    try:
+        x = _helper.make_tensor_value_info('x', _TensorProto.FLOAT, [1, 4])
+        y = _helper.make_tensor_value_info('y', _TensorProto.FLOAT, [1, 4])
+        node = _helper.make_node('Relu', ['x'], ['y'])
+        graph = _helper.make_graph([node], 'splitpoint_activation_proxy_provider_smoke', [x], [y])
+        model = _helper.make_model(graph, producer_name='splitpoint-activation-proxy-smoke', opset_imports=[_helper.make_opsetid('', 17)])
+        model.ir_version = min(getattr(model, 'ir_version', 9), 9)
+        with tempfile.NamedTemporaryFile(suffix='.onnx', delete=False) as f:
+            path = f.name
+        _onnx.save(model, path)
+        providers = [provider]
+        if provider == 'TensorrtExecutionProvider':
+            providers.extend(['CUDAExecutionProvider', 'CPUExecutionProvider'])
+        elif provider == 'CUDAExecutionProvider':
+            providers.append('CPUExecutionProvider')
+        sess = ort.InferenceSession(path, providers=providers)
+        got = list(sess.get_providers() or [])
+        out = sess.run(None, {'x': _np.array([[-1.0, 0.0, 2.0, 3.0]], dtype=_np.float32)})[0]
+        active = provider in set(got)
+        conv_smoke = {'ok': None, 'skipped': True}
+        if active and provider in {'CUDAExecutionProvider', 'TensorrtExecutionProvider'}:
+            try:
+                x2 = _helper.make_tensor_value_info('x', _TensorProto.FLOAT, [1, 3, 16, 16])
+                w2 = _helper.make_tensor_value_info('w', _TensorProto.FLOAT, [4, 3, 3, 3])
+                y2 = _helper.make_tensor_value_info('y', _TensorProto.FLOAT, [1, 4, 14, 14])
+                node2 = _helper.make_node('Conv', ['x', 'w'], ['y'], pads=[0, 0, 0, 0], strides=[1, 1])
+                graph2 = _helper.make_graph([node2], 'splitpoint_activation_proxy_provider_conv_smoke', [x2, w2], [y2])
+                model2 = _helper.make_model(graph2, producer_name='splitpoint-activation-proxy-conv-smoke', opset_imports=[_helper.make_opsetid('', 17)])
+                model2.ir_version = min(getattr(model2, 'ir_version', 9), 9)
+                with tempfile.NamedTemporaryFile(suffix='.onnx', delete=False) as f2:
+                    path2 = f2.name
+                _onnx.save(model2, path2)
+                sess2 = ort.InferenceSession(path2, providers=providers)
+                got2 = list(sess2.get_providers() or [])
+                yarr = sess2.run(None, {'x': _np.zeros((1, 3, 16, 16), dtype=_np.float32), 'w': _np.ones((4, 3, 3, 3), dtype=_np.float32)})[0]
+                conv_smoke = {'ok': bool(provider in set(got2) and tuple(yarr.shape) == (1, 4, 14, 14)), 'session_providers': got2}
+            except Exception as conv_exc:
+                conv_smoke = {'ok': False, 'error': f'{type(conv_exc).__name__}: {conv_exc}'}
+        return {
+            'ok': bool(active and tuple(out.shape) == (1, 4) and conv_smoke.get('ok') is not False),
+            'requested_provider': provider,
+            'session_providers': got,
+            'provider_active': bool(active),
+            'conv_smoke': conv_smoke,
+            'cuda_preload': _cuda_preload_info,
+        }
+    except Exception as exc:
+        return {'ok': False, 'requested_provider': provider, 'error': f'{type(exc).__name__}: {exc}'}
+
+def _activation_proxy_provider_selection(ort: Any) -> Dict[str, Any]:
+    requested = _activation_proxy_backend_request()
+    try:
+        available = list(ort.get_available_providers() or [])
+    except Exception:
+        available = []
+
+    def has(ep: str) -> bool:
+        return ep in set(available)
+
+    def smoke(ep: str) -> Dict[str, Any]:
+        return _activation_proxy_provider_session_smoke(ort, ep)
+
+    fallback_reason = ''
+    producer = 'ort_cpu'
+    providers = ['CPUExecutionProvider']
+    smoke_results: Dict[str, Any] = {}
+
+    if compiler_dispatch_forbidden() and requested == 'tensorrt_ort':
+        return {
+            'requested_backend': requested,
+            'producer_backend': 'ort_cpu',
+            'source': 'ort_cpu_reference_proxy',
+            'providers_requested': ['CPUExecutionProvider'],
+            'available_providers': available,
+            'fallback_reason': cache_miss_blocked_message(
+                'tensorrt_ort_ep',
+                'activation proxy forced to CPU without creating a TensorRT EP session',
+            ),
+            'provider_session_smoke': smoke_results,
+        }
+
+    if requested == 'tensorrt_ort':
+        if has('TensorrtExecutionProvider'):
+            smoke_results['TensorrtExecutionProvider'] = smoke('TensorrtExecutionProvider')
+            if bool(smoke_results['TensorrtExecutionProvider'].get('ok')):
+                producer = 'tensorrt_ort'
+                providers = [p for p in ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider'] if has(p)]
+            elif has('CUDAExecutionProvider'):
+                smoke_results['CUDAExecutionProvider'] = smoke('CUDAExecutionProvider')
+                if bool(smoke_results['CUDAExecutionProvider'].get('ok')):
+                    producer = 'cuda_ort'
+                    providers = [p for p in ['CUDAExecutionProvider', 'CPUExecutionProvider'] if has(p)]
+                    fallback_reason = 'requested tensorrt_ort but TensorrtExecutionProvider session smoke failed; using cuda_ort proxy'
+                else:
+                    producer = 'ort_cpu'
+                    providers = ['CPUExecutionProvider'] if has('CPUExecutionProvider') else list(available or ['CPUExecutionProvider'])
+                    fallback_reason = 'requested tensorrt_ort but TensorRT and CUDA session smoke failed; using ort_cpu proxy'
+            else:
+                producer = 'ort_cpu'
+                providers = ['CPUExecutionProvider'] if has('CPUExecutionProvider') else list(available or ['CPUExecutionProvider'])
+                fallback_reason = 'requested tensorrt_ort but TensorRT session smoke failed and CUDAExecutionProvider is unavailable; using ort_cpu proxy'
+        elif has('CUDAExecutionProvider'):
+            smoke_results['CUDAExecutionProvider'] = smoke('CUDAExecutionProvider')
+            if bool(smoke_results['CUDAExecutionProvider'].get('ok')):
+                producer = 'cuda_ort'
+                providers = [p for p in ['CUDAExecutionProvider', 'CPUExecutionProvider'] if has(p)]
+                fallback_reason = 'requested tensorrt_ort but TensorrtExecutionProvider is unavailable; using cuda_ort proxy'
+            else:
+                producer = 'ort_cpu'
+                providers = ['CPUExecutionProvider'] if has('CPUExecutionProvider') else list(available or ['CPUExecutionProvider'])
+                fallback_reason = 'requested tensorrt_ort but CUDA session smoke failed; using ort_cpu proxy'
+        else:
+            producer = 'ort_cpu'
+            providers = ['CPUExecutionProvider'] if has('CPUExecutionProvider') else list(available or ['CPUExecutionProvider'])
+            fallback_reason = 'requested tensorrt_ort but TensorRT/CUDA EPs are unavailable; using ort_cpu proxy'
+    elif requested == 'cuda_ort':
+        if has('CUDAExecutionProvider'):
+            smoke_results['CUDAExecutionProvider'] = smoke('CUDAExecutionProvider')
+            if bool(smoke_results['CUDAExecutionProvider'].get('ok')):
+                producer = 'cuda_ort'
+                providers = [p for p in ['CUDAExecutionProvider', 'CPUExecutionProvider'] if has(p)]
+            else:
+                producer = 'ort_cpu'
+                providers = ['CPUExecutionProvider'] if has('CPUExecutionProvider') else list(available or ['CPUExecutionProvider'])
+                fallback_reason = 'requested cuda_ort but CUDAExecutionProvider session smoke failed; using ort_cpu proxy'
+        else:
+            producer = 'ort_cpu'
+            providers = ['CPUExecutionProvider'] if has('CPUExecutionProvider') else list(available or ['CPUExecutionProvider'])
+            fallback_reason = 'requested cuda_ort but CUDAExecutionProvider is unavailable; using ort_cpu proxy'
+    else:
+        producer = 'ort_cpu'
+        providers = ['CPUExecutionProvider'] if has('CPUExecutionProvider') else list(available or ['CPUExecutionProvider'])
+
+    if not providers:
+        providers = ['CPUExecutionProvider']
+        producer = 'ort_cpu'
+        fallback_reason = fallback_reason or 'no ONNX Runtime providers reported; using CPUExecutionProvider by name'
+
+    source = f'{producer}_reference_proxy'
+    return {
+        'requested_backend': requested,
+        'producer_backend': producer,
+        'source': source,
+        'providers_requested': providers,
+        'available_providers': available,
+        'fallback_reason': fallback_reason,
+        'provider_session_smoke': smoke_results,
+    }
+
 def _build_activation_calib_from_part1_onnx(
     *,
     part1_onnx: Path,
@@ -3502,9 +5068,56 @@ def _build_activation_calib_from_part1_onnx(
     calib_dir: Path,
     limit: int,
     gen_batch: int,
+    input_preprocess: str = 'norm',
+    preprocessing_contract: Mapping[str, Any] | None = None,
 ) -> Tuple[List[str], Dict[str, np.ndarray], Dict[str, Any]]:
+    requested_backend_for_proxy = _activation_proxy_backend_request()
+    if _activation_proxy_is_remote_backend(requested_backend_for_proxy):
+        try:
+            return _build_activation_calib_from_part1_onnx_remote_deepx(
+                requested_backend=requested_backend_for_proxy,
+                part1_onnx=part1_onnx,
+                part2_onnx=part2_onnx,
+                calib_dir=calib_dir,
+                limit=limit,
+                gen_batch=gen_batch,
+                input_preprocess=input_preprocess,
+                preprocessing_contract=preprocessing_contract,
+            )
+        except Exception as remote_exc:
+            if _activation_proxy_strict_enabled():
+                raise RuntimeError(
+                    'Activation proxy strict mode: remote DeepX proxy failed and fallback is disabled; '
+                    f'requested={requested_backend_for_proxy}; error={type(remote_exc).__name__}: {remote_exc}'
+                ) from remote_exc
+            old_env = os.environ.get('ONNX_SPLITPOINT_ACTIVATION_PROXY_BACKEND')
+            old_env2 = os.environ.get('SPLITPOINT_ACTIVATION_PROXY_BACKEND')
+            os.environ['ONNX_SPLITPOINT_ACTIVATION_PROXY_BACKEND'] = 'ort_cpu'
+            os.environ['SPLITPOINT_ACTIVATION_PROXY_BACKEND'] = 'ort_cpu'
+            try:
+                names, arrays, debug = _build_activation_calib_from_part1_onnx(
+                    part1_onnx=part1_onnx, part2_onnx=part2_onnx, calib_dir=calib_dir,
+                    limit=limit, gen_batch=gen_batch, input_preprocess=input_preprocess,
+                    preprocessing_contract=preprocessing_contract,
+                )
+            finally:
+                if old_env is None: os.environ.pop('ONNX_SPLITPOINT_ACTIVATION_PROXY_BACKEND', None)
+                else: os.environ['ONNX_SPLITPOINT_ACTIVATION_PROXY_BACKEND'] = old_env
+                if old_env2 is None: os.environ.pop('SPLITPOINT_ACTIVATION_PROXY_BACKEND', None)
+                else: os.environ['SPLITPOINT_ACTIVATION_PROXY_BACKEND'] = old_env2
+            debug['activation_proxy_requested_backend'] = requested_backend_for_proxy
+            debug['activation_proxy_provider_fallback'] = (str(debug.get('activation_proxy_provider_fallback') or '') + ('; ' if debug.get('activation_proxy_provider_fallback') else '') + f'remote proxy failed ({type(remote_exc).__name__}: {remote_exc}); using ort_cpu proxy').strip()
+            debug['activation_proxy_remote_fallback'] = True
+            debug['activation_proxy_remote_fallback_error'] = f'{type(remote_exc).__name__}: {remote_exc}'
+            return names, arrays, debug
     try:
+        _cuda_preload_info = _preload_nvidia_cuda_wheel_libs_for_ort()
         import onnxruntime as ort  # type: ignore
+        if hasattr(ort, 'preload_dlls'):
+            try:
+                ort.preload_dlls(directory='')
+            except Exception:
+                pass
     except Exception as exc:
         raise RuntimeError(f'onnxruntime is required to generate multi-input activation calibration: {type(exc).__name__}: {exc}')
 
@@ -3519,8 +5132,35 @@ def _build_activation_calib_from_part1_onnx(
     so.intra_op_num_threads = 1
     so.inter_op_num_threads = 1
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    p1_sess = ort.InferenceSession(str(part1_onnx), sess_options=so, providers=['CPUExecutionProvider'])
-    p2_sess = ort.InferenceSession(str(part2_onnx), providers=['CPUExecutionProvider'])
+    provider_selection = _activation_proxy_provider_selection(ort)
+    strict_proxy = _activation_proxy_strict_enabled()
+    try:
+        provider_selection.setdefault('cuda_wheel_preload', _cuda_preload_info)
+        provider_selection['strict_proxy'] = bool(strict_proxy)
+    except Exception:
+        pass
+    _req_backend = str(provider_selection.get('requested_backend') or 'ort_cpu')
+    _prod_backend = str(provider_selection.get('producer_backend') or 'ort_cpu')
+    _fb_reason = str(provider_selection.get('fallback_reason') or '')
+    if strict_proxy and _req_backend in {'cuda_ort', 'tensorrt_ort'} and _prod_backend != _req_backend:
+        raise RuntimeError(
+            'Activation proxy strict mode: requested accelerated proxy did not pass provider selection; '
+            f'requested={_req_backend}; selected={_prod_backend}; reason={_fb_reason or "provider unavailable or session smoke failed"}'
+        )
+    p1_providers = list(provider_selection.get('providers_requested') or ['CPUExecutionProvider'])
+    # Part2 is inspected for input metadata only.  Keep this on CPU to avoid
+    # building/optimizing the suffix while generating activation calibration.
+    p2_providers = ['CPUExecutionProvider'] if 'CPUExecutionProvider' in set(provider_selection.get('available_providers') or []) else p1_providers
+    if compiler_dispatch_forbidden() and any(
+        str(provider) == 'TensorrtExecutionProvider'
+        for provider in [*p1_providers, *p2_providers]
+    ):
+        raise RuntimeError(cache_miss_blocked_message(
+            'tensorrt_ort_ep',
+            'activation proxy attempted to create a TensorRT EP session',
+        ))
+    p1_sess = ort.InferenceSession(str(part1_onnx), sess_options=so, providers=p1_providers)
+    p2_sess = ort.InferenceSession(str(part2_onnx), providers=p2_providers)
 
     p1_in = p1_sess.get_inputs()[0]
     p1_in_name = p1_in.name
@@ -3536,11 +5176,28 @@ def _build_activation_calib_from_part1_onnx(
     per_input_samples: Dict[str, List[np.ndarray]] = {n: [] for n in p2_in_names}
 
     debug: Dict[str, Any] = {
+        'activation_proxy_requested_backend': provider_selection.get('requested_backend'),
+        'activation_proxy_producer_backend': provider_selection.get('producer_backend'),
+        'activation_proxy_source': provider_selection.get('source'),
+        'activation_proxy_providers_requested': list(provider_selection.get('providers_requested') or []),
+        'activation_proxy_available_providers': list(provider_selection.get('available_providers') or []),
+        'activation_proxy_provider_fallback': provider_selection.get('fallback_reason') or '',
+        'activation_proxy_strict': bool(_activation_proxy_strict_enabled()),
+        'activation_proxy_env_strict': str(os.environ.get('ONNX_SPLITPOINT_ACTIVATION_PROXY_STRICT') or os.environ.get('SPLITPOINT_ACTIVATION_PROXY_STRICT') or ''),
+        'activation_proxy_part1_session_providers': list(p1_sess.get_providers() or []),
+        'activation_proxy_part2_session_providers': list(p2_sess.get_providers() or []),
         'part1_input': {'name': p1_in_name, 'type': str(getattr(p1_in, 'type', '') or ''), 'shape': list(getattr(p1_in, 'shape', []) or [])},
         'mapping_part2in_to_part1out': dict(mapping),
         'mapping_debug': mapping_debug,
         'part2_inputs': {m.name: {'type': str(getattr(m, 'type', '') or ''), 'shape': [d if isinstance(d, int) else None for d in (getattr(m, 'shape', []) or [])]} for m in p2_inputs},
         'calib_source_dir': str(calib_dir),
+        'input_preprocess': str(input_preprocess),
+        'preprocessing_contract': dict(preprocessing_contract or {}),
+        'preprocessing_contract_sha256': (
+            preprocessing_contract_sha256(preprocessing_contract)
+            if preprocessing_contract
+            else None
+        ),
         'calib_items_total': int(len(calib_items)),
         'calib_items_preview': list(calib_scan.get('preview') or []),
         'calib_item_suffixes': list(calib_scan.get('suffixes') or []),
@@ -3560,14 +5217,55 @@ def _build_activation_calib_from_part1_onnx(
 
     idx = 0
     N = len(calib_items)
+    runtime_fallback_done = False
     while idx < N:
         batch_paths = calib_items[idx: idx + gen_batch]
         xs: List[np.ndarray] = []
         for pp in batch_paths:
             arr = _load_calib_item_any(pp)
-            xs.append(_prepare_part1_input_for_activation_calib(arr, p1_in))
+            xs.append(
+                _prepare_part1_input_for_activation_calib(
+                    arr,
+                    p1_in,
+                    preprocess=input_preprocess,
+                    preprocessing_contract=preprocessing_contract,
+                )
+            )
         xb = np.concatenate(xs, axis=0) if len(xs) > 1 else xs[0]
-        outs = p1_sess.run(req_out_names, {p1_in_name: xb})
+        try:
+            outs = p1_sess.run(req_out_names, {p1_in_name: xb})
+        except Exception as run_exc:
+            # CUDA/TensorRT provider listing and tiny smoke tests can still pass while
+            # the real Part1 graph fails later, e.g. with CUDNN_FE errors on specific
+            # convolution shapes.  By default we fall back to CPU ORT for broad-screening
+            # continuity.  Set ONNX_SPLITPOINT_ACTIVATION_PROXY_STRICT=1 to make such
+            # fallback a hard error; this is useful when verifying that the selected
+            # proxy backend was actually used.
+            cur_providers = list(p1_sess.get_providers() or [])
+            if (not runtime_fallback_done) and any(p != 'CPUExecutionProvider' for p in cur_providers):
+                strict_proxy = _activation_proxy_strict_enabled()
+                fallback_reason = f'{type(run_exc).__name__}: {run_exc}'
+                if strict_proxy:
+                    raise RuntimeError(
+                        'Activation proxy strict mode: requested accelerated proxy failed during real Part1 forward; '
+                        f'env_strict={os.environ.get("ONNX_SPLITPOINT_ACTIVATION_PROXY_STRICT")!r}; providers={cur_providers}; error={fallback_reason}'
+                    ) from run_exc
+                runtime_fallback_done = True
+                debug['activation_proxy_runtime_fallback'] = True
+                debug['activation_proxy_runtime_fallback_from_providers'] = cur_providers
+                debug['activation_proxy_runtime_fallback_reason'] = fallback_reason
+                debug['activation_proxy_requested_backend_before_runtime_fallback'] = debug.get('activation_proxy_requested_backend')
+                debug['activation_proxy_producer_backend_before_runtime_fallback'] = debug.get('activation_proxy_producer_backend')
+                debug['activation_proxy_source_before_runtime_fallback'] = debug.get('activation_proxy_source')
+                debug['activation_proxy_producer_backend'] = 'ort_cpu'
+                debug['activation_proxy_source'] = 'ort_cpu_reference_proxy'
+                debug['activation_proxy_provider_fallback'] = (str(debug.get('activation_proxy_provider_fallback') or '') + ('; ' if debug.get('activation_proxy_provider_fallback') else '') + 'runtime inference failed on accelerated provider; using ort_cpu proxy').strip()
+                p1_sess = ort.InferenceSession(str(part1_onnx), sess_options=so, providers=['CPUExecutionProvider'])
+                debug['activation_proxy_part1_session_providers_after_runtime_fallback'] = list(p1_sess.get_providers() or [])
+                per_input_samples = {n: [] for n in p2_in_names}
+                idx = 0
+                continue
+            raise
         for p2_name, out_arr in zip(p2_in_names, outs):
             oa = np.asarray(out_arr)
             if oa.ndim >= 1 and oa.shape[0] == xb.shape[0]:
@@ -3589,7 +5287,1468 @@ def _build_activation_calib_from_part1_onnx(
     return p2_in_names, calib_arrays, debug
 
 
-def hailo_build_hef(
+
+def _array_stats_for_manifest(arr: np.ndarray) -> Dict[str, Any]:
+    """Small, JSON-safe statistics for activation proxy calibration tensors."""
+    try:
+        x = np.asarray(arr)
+        if x.size <= 0:
+            return {"shape": list(x.shape), "dtype": str(x.dtype), "empty": True}
+        xf = x.astype(np.float64, copy=False).reshape(-1)
+        return {
+            "shape": list(x.shape),
+            "dtype": str(x.dtype),
+            "min": float(np.min(xf)),
+            "max": float(np.max(xf)),
+            "mean": float(np.mean(xf)),
+            "std": float(np.std(xf)),
+            "p01": float(np.percentile(xf, 1.0)),
+            "p50": float(np.percentile(xf, 50.0)),
+            "p99": float(np.percentile(xf, 99.0)),
+        }
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _write_activation_proxy_cache_manifest(
+    *,
+    out_dir: Path,
+    part1_onnx: Path,
+    part2_onnx: Path,
+    calib_dir: Optional[Path],
+    calib_arrays_by_part2_input: Dict[str, np.ndarray],
+    activation_debug: Optional[Dict[str, Any]],
+    eff_count: int,
+    gen_batch: int,
+    stage2_backend: str = "hailo",
+    store_samples_env: str = "ONNX_SPLITPOINT_ACTIVATION_PROXY_STORE_SAMPLES",
+    force_store_samples: int = 0,
+) -> Optional[str]:
+    """Persist a lightweight ORT-CPU activation proxy calibration manifest.
+
+    The Hailo DFC compile path already generated the cut tensors in memory and
+    consumed them for optimizer calibration.  Persisting the full activation
+    dataset for every split would be expensive, so the default is a manifest +
+    statistics only.  Set ``ONNX_SPLITPOINT_ACTIVATION_PROXY_STORE_SAMPLES`` to
+    a small positive integer to store a few sample NPZ files for debugging.
+    """
+    try:
+        cache_dir = out_dir / "activation_proxy_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        stats: Dict[str, Any] = {}
+        tensors: List[Dict[str, Any]] = []
+        for name, arr in calib_arrays_by_part2_input.items():
+            x = np.asarray(arr)
+            st = _array_stats_for_manifest(x)
+            stats[str(name)] = st
+            sample_shape = list(x.shape[1:]) if x.ndim >= 1 else list(x.shape)
+            tensors.append({
+                "name": str(name),
+                "dataset_shape": list(x.shape),
+                "sample_shape": sample_shape,
+                "dtype": str(x.dtype),
+                "layout": "unknown",
+                "stats": st,
+            })
+        store_n = 0
+        try:
+            store_n = max(0, int(os.environ.get(store_samples_env, "0") or "0"))
+        except Exception:
+            store_n = 0
+        try:
+            store_n = max(store_n, int(force_store_samples or 0))
+        except Exception:
+            pass
+        stored_sample_count = 0
+        if store_n > 0 and calib_arrays_by_part2_input:
+            first = next(iter(calib_arrays_by_part2_input.values()))
+            try:
+                n_avail = int(np.asarray(first).shape[0])
+            except Exception:
+                n_avail = 0
+            stored_sample_count = min(store_n, n_avail)
+            for i in range(stored_sample_count):
+                payload = {str(name): np.asarray(arr)[i].astype(np.float32, copy=False) for name, arr in calib_arrays_by_part2_input.items() if np.asarray(arr).shape[0] > i}
+                np.savez_compressed(str(cache_dir / f"sample_{i:06d}.npz"), **payload)
+        producer_backend = str((activation_debug or {}).get('activation_proxy_producer_backend') or 'ort_cpu')
+        proxy_source = str((activation_debug or {}).get('activation_proxy_source') or f'{producer_backend}_reference_proxy')
+        requested_backend = str((activation_debug or {}).get('activation_proxy_requested_backend') or 'ort_cpu')
+        fallback_reason = str((activation_debug or {}).get('activation_proxy_provider_fallback') or '')
+        manifest = {
+            "schema_version": 2,
+            "cache_kind": "activation_calibration",
+            "cache_version": "v52u_proxy",
+            "source": proxy_source,
+            "calibration_source": proxy_source,
+            "producer_backend": producer_backend,
+            "requested_backend": requested_backend,
+            "producer_exact": False,
+            "trust_level": "proxy",
+            "status": "ready",
+            "compiler_consumed_direct": True,
+            "note": "Cut tensors were generated from an ONNX Runtime Part1 proxy during accelerator Part2 compilation. This is a fast proxy calibration source for broad screening; producer-exact calibration is reserved for final candidates or failed proxy cases.",
+            "provider_fallback_reason": fallback_reason,
+            "stage2_backend": str(stage2_backend),
+            "part1_onnx": str(part1_onnx),
+            "part2_onnx": str(part2_onnx),
+            "calib_source_dir": str(calib_dir) if calib_dir is not None else None,
+            "requested_count": int(eff_count),
+            "sample_count": int(next(iter(calib_arrays_by_part2_input.values())).shape[0]) if calib_arrays_by_part2_input else int(eff_count),
+            "stored_sample_count": int(stored_sample_count),
+            "sample_storage": "npz_debug_samples" if stored_sample_count else "manifest_stats_only",
+            "activation_gen_batch": int(gen_batch),
+            "preprocessing_contract": dict(
+                (activation_debug or {}).get("preprocessing_contract") or {}
+            ),
+            "preprocessing_contract_sha256": (
+                (activation_debug or {}).get("preprocessing_contract_sha256")
+            ),
+            "tensors": tensors,
+            "stats": stats,
+            "debug": activation_debug or {},
+        }
+        p_manifest = cache_dir / "manifest.json"
+        p_manifest.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+        try:
+            (cache_dir / "stats.json").write_text(json.dumps(stats, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+        return str(p_manifest)
+    except Exception:
+        log.debug("Failed to persist activation proxy cache manifest", exc_info=True)
+        return None
+
+def _bare_file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open('rb') as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+_HAILO_HEF_RECEIPT_NAME = "hailo_hef_build_receipt.json"
+_HAILO_HEF_RECEIPT_SCHEMA = "onnx-splitpoint/hailo-hef-build-receipt/v2"
+_HAILO_HEF_CACHE_SCHEMA_V2 = "onnx-splitpoint/hailo-hef-cache-key-v2"
+_HAILO_HEF_CACHE_SCHEMA_V3 = "onnx-splitpoint/hailo-hef-cache-key-v3"
+_HAILO_HEF_CACHE_SCHEMA = _HAILO_HEF_CACHE_SCHEMA_V3
+_HAILO_HEF_CACHE_SCHEMAS = {
+    _HAILO_HEF_CACHE_SCHEMA_V2, _HAILO_HEF_CACHE_SCHEMA_V3,
+}
+
+
+def _first_shape(value: Any) -> Optional[List[int]]:
+    if isinstance(value, dict):
+        for shape in value.values():
+            if isinstance(shape, (list, tuple)):
+                return [int(v) for v in shape]
+        return None
+    if isinstance(value, (list, tuple)):
+        return [int(v) for v in value]
+    return None
+
+
+def _onnx_first_input_shape(path: Path) -> Optional[List[int]]:
+    if onnx is None or not path.is_file():
+        return None
+    try:
+        model = onnx.load(str(path), load_external_data=False)
+        shapes = infer_net_input_shapes_from_model(model)
+        return _first_shape(shapes)
+    except Exception:
+        return None
+
+
+def _resolve_hailo_image_contract(
+    *,
+    model_path: Path,
+    activation_part1: Path | None,
+    net_input_shapes: Any,
+    task: Any = None,
+    declared: Mapping[str, Any] | str | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Resolve the semantic calibration contract before cache/DFC activity."""
+
+    declared_eff: Mapping[str, Any] | str | None = declared
+    if declared_eff is None:
+        declared_eff = str(
+            os.environ.get("ONNX_SPLITPOINT_HAILO_PREPROCESSING_CONTRACT_JSON")
+            or os.environ.get("SPLITPOINT_HAILO_PREPROCESSING_CONTRACT_JSON")
+            or ""
+        ).strip() or None
+    task_declared = str(
+        task
+        or os.environ.get("ONNX_SPLITPOINT_HAILO_CALIB_TASK")
+        or os.environ.get("SPLITPOINT_HAILO_CALIB_TASK")
+        or ""
+    ).strip()
+    declared_payload: Mapping[str, Any] | None = None
+    if declared_eff is not None:
+        if isinstance(declared_eff, Mapping):
+            declared_payload = declared_eff
+        elif isinstance(declared_eff, str):
+            text = declared_eff.strip()
+            if text:
+                parsed = json.loads(text)
+                if not isinstance(parsed, Mapping):
+                    raise ValueError(
+                        "Declared Hailo image preprocessing contract must be a JSON object"
+                    )
+                declared_payload = parsed
+        else:
+            raise ValueError(
+                "Declared Hailo image preprocessing contract must be a mapping or JSON object"
+            )
+    if not task_declared and declared_payload is not None:
+        task_declared = str(declared_payload.get("task") or "").strip()
+    if not task_declared:
+        raise ValueError(
+            "Hailo image preprocessing requires an explicit task='detection' or "
+            "task='classification' (or a declared preprocessing contract containing "
+            "that task). Model names and input dimensions must not infer semantics."
+        )
+    task_eff = normalize_image_task(task_declared)
+    semantic_model = activation_part1 if activation_part1 is not None else model_path
+    shape = (
+        _onnx_first_input_shape(semantic_model)
+        if activation_part1 is not None
+        else _first_shape(net_input_shapes) or _onnx_first_input_shape(model_path)
+    )
+    if shape is None:
+        raise ValueError(
+            "Cannot seal Hailo preprocessing: the semantic image input shape is unavailable"
+        )
+    target_hw = target_hw_from_shape(shape)
+    return resolve_image_preprocessing_contract(
+        task=task_eff, target_hw=target_hw, declared=declared_eff
+    )
+
+
+def _hailo_receipt_path(hef_path: Path) -> Path:
+    # Resolve once so a concurrent bundle publication cannot mix generations.
+    return Path(hef_path).resolve().parent / _HAILO_HEF_RECEIPT_NAME
+
+
+def _hailo_cache_meta_path(hef_path: Path) -> Path:
+    return Path(hef_path).resolve().parent / "cache_meta.json"
+
+
+def _hailo_cache_meta_from_receipt(
+    receipt: Mapping[str, Any], *, source: str = "hailo_build_hef",
+) -> Dict[str, Any]:
+    return {
+        "schema": "onnx-splitpoint/hailo-hef-cache-meta-v2",
+        "cache_key": str(receipt.get("cache_key") or ""),
+        "payload": dict(receipt.get("cache_payload") or {}),
+        "created_at": time.time(),
+        "hef_size": receipt.get("hef_size_bytes"),
+        "hef_sha256": str(receipt.get("hef_sha256") or ""),
+        "preprocessing_contract_sha256": str(
+            receipt.get("preprocessing_contract_sha256") or ""
+        ),
+        "net_name": str(receipt.get("net_name") or ""),
+        "hw_arch": str(receipt.get("hw_arch") or ""),
+        "source": source,
+    }
+
+
+def _hailo_cache_meta_matches_receipt(
+    metadata: Mapping[str, Any], receipt: Mapping[str, Any],
+) -> bool:
+    expected = _hailo_cache_meta_from_receipt(receipt)
+    return all(
+        metadata.get(key) == value
+        for key, value in expected.items()
+        if key not in {"created_at", "source"}
+    )
+
+
+def _publish_hailo_bundle(
+    *, source_hef: Path, destination: Path, receipt: Mapping[str, Any],
+    source: str = "hailo_build_hef",
+) -> Path:
+    from .hailo_cache_bundle import publish_bundle
+    payload = dict(receipt.get("cache_payload") or {})
+    return publish_bundle(
+        source_hef=source_hef, destination=destination, receipt=receipt,
+        cache_meta=_hailo_cache_meta_from_receipt(receipt, source=source),
+        validator=lambda staged: _load_valid_hailo_receipt(
+            staged,
+            cache_key=str(receipt.get("cache_key") or ""),
+            cache_payload=payload,
+            source_onnx_sha256=str(receipt.get("source_onnx_sha256") or ""),
+            preprocessing_sha256=str(receipt.get("preprocessing_contract_sha256") or ""),
+            expected_net_name=str(receipt.get("net_name") or ""),
+            expected_net_input_shapes=payload.get("net_input_shapes"),
+            expected_disable_rt_metadata_extraction=payload.get("disable_rt_metadata_extraction"),
+            allow_legacy_v2=payload.get("schema") == _HAILO_HEF_CACHE_SCHEMA_V2,
+            allow_diagnostic=receipt.get("diagnostic_only") is True,
+        ),
+    )
+
+
+def _hailo_cache_bundle_status(hef_path: Path) -> Dict[str, Any]:
+    """Read-only classification; HEF-only generations never count as hits."""
+    hef = Path(hef_path).resolve()
+    receipt_path = _hailo_receipt_path(hef)
+    meta_path = _hailo_cache_meta_path(hef)
+    result: Dict[str, Any] = {
+        "hef_path": str(hef), "receipt_path": str(receipt_path),
+        "cache_meta_path": str(meta_path),
+        "hef_present": hef.is_file(), "receipt_present": receipt_path.is_file(),
+        "cache_meta_present": meta_path.is_file(), "reusable": False,
+    }
+    if not hef.is_file():
+        result["status"] = "missing"
+    elif not receipt_path.is_file():
+        result["status"] = "legacy_unsealed"
+    else:
+        receipt = _load_valid_hailo_receipt(hef, validate_cache_meta=False)
+        if receipt is None:
+            result["status"] = "receipt_invalid"
+        elif not meta_path.is_file():
+            result.update(status="metadata_missing", reusable=(
+                hef.parent.parent.name != ".hailo-generations"
+            ))
+        else:
+            try:
+                metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+                valid = isinstance(metadata, dict) and _hailo_cache_meta_matches_receipt(metadata, receipt)
+            except Exception:
+                valid = False
+            result.update(status="sealed" if valid else "metadata_invalid", reusable=bool(valid))
+    return result
+
+
+def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(dict(payload), handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    finally:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+
+
+def _load_valid_hailo_receipt(
+    hef_path: Path,
+    *,
+    preprocessing_sha256: str | None = None,
+    source_onnx_sha256: str | None = None,
+    cache_key: str | None = None,
+    cache_payload: Mapping[str, Any] | None = None,
+    expected_net_name: str | None = None,
+    expected_net_input_shapes: Any = None,
+    expected_disable_rt_metadata_extraction: bool | None = None,
+    allow_legacy_v2: bool = False,
+    validate_cache_meta: bool = True,
+    allow_diagnostic: bool = False,
+    receipt_override: Mapping[str, Any] | None = None,
+    hash_fn: Any = None,
+) -> Optional[Dict[str, Any]]:
+    hef_path = Path(hef_path).resolve()
+    receipt_path = _hailo_receipt_path(hef_path)
+    try:
+        receipt = (dict(receipt_override) if receipt_override is not None
+                   else json.loads(receipt_path.read_text(encoding="utf-8")))
+        if not isinstance(receipt, dict):
+            return None
+        if not allow_diagnostic and (receipt.get("diagnostic_only") is True or receipt.get("publish_artifacts") is False):
+            return None
+
+        def _sha_token(value: Any) -> str:
+            token = str(value or "").strip().lower()
+            if token.startswith("sha256:"):
+                token = token[7:]
+            if len(token) != 64 or any(
+                character not in "0123456789abcdef" for character in token
+            ):
+                return ""
+            return token
+
+        if receipt.get("schema") != _HAILO_HEF_RECEIPT_SCHEMA:
+            return None
+        if not hef_path.is_file() or hef_path.stat().st_size <= 0:
+            return None
+        actual_hef_sha = _sha_token((
+            _bare_file_sha256 if hash_fn is None else hash_fn
+        )(hef_path))
+        if not actual_hef_sha or _sha_token(receipt.get("hef_sha256")) != actual_hef_sha:
+            return None
+        receipt_hef_size = receipt.get("hef_size_bytes")
+        if (
+            type(receipt_hef_size) is not int
+            or receipt_hef_size <= 0
+            or receipt_hef_size != int(hef_path.stat().st_size)
+        ):
+            return None
+        source_sha = _sha_token(receipt.get("source_onnx_sha256"))
+        compiler_sha = _sha_token(receipt.get("compiler_onnx_sha256"))
+        compiler_filename = str(
+            receipt.get("compiler_onnx_filename") or ""
+        ).strip()
+        if (
+            not source_sha
+            or not compiler_sha
+            or not compiler_filename
+            or Path(compiler_filename).name != compiler_filename
+            or not compiler_filename.lower().endswith(".onnx")
+        ):
+            return None
+        if source_onnx_sha256 and source_sha != _sha_token(source_onnx_sha256):
+            return None
+        if not str(receipt.get("hw_arch") or "").strip():
+            return None
+        receipt_net_name = str(receipt.get("net_name") or "").strip()
+        if not receipt_net_name:
+            return None
+        if (
+            expected_net_name is not None
+            and receipt_net_name != str(expected_net_name).strip()
+        ):
+            return None
+
+        contract = receipt.get("preprocessing_contract")
+        if not isinstance(contract, dict):
+            return None
+        resolved_contract, resolved_preprocessing_sha = (
+            resolve_image_preprocessing_contract(
+                task=contract.get("task"),
+                target_hw=contract.get("target_hw"),
+                declared=contract,
+            )
+        )
+        receipt_preprocessing_sha = _sha_token(
+            receipt.get("preprocessing_contract_sha256")
+        )
+        if (
+            dict(resolved_contract) != contract
+            or receipt_preprocessing_sha != resolved_preprocessing_sha
+        ):
+            return None
+        if (
+            preprocessing_sha256
+            and receipt_preprocessing_sha != _sha_token(preprocessing_sha256)
+        ):
+            return None
+
+        sealed_cache_payload = receipt.get("cache_payload")
+        if not isinstance(sealed_cache_payload, dict):
+            return None
+        cache_schema = sealed_cache_payload.get("schema")
+        if cache_schema not in _HAILO_HEF_CACHE_SCHEMAS:
+            return None
+        receipt_cache_key = _sha_token(receipt.get("cache_key"))
+        calculated_cache_key = hashlib.sha256(
+            json.dumps(
+                sealed_cache_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        if not receipt_cache_key or receipt_cache_key != calculated_cache_key:
+            return None
+        if cache_key and receipt_cache_key != _sha_token(cache_key):
+            return None
+        if cache_payload is not None and sealed_cache_payload != dict(cache_payload):
+            return None
+        if _sha_token(sealed_cache_payload.get("model_sha256")) != compiler_sha:
+            return None
+        if dict(sealed_cache_payload.get("preprocessing_contract") or {}) != contract:
+            return None
+        if _sha_token(
+            sealed_cache_payload.get("preprocessing_contract_sha256")
+        ) != receipt_preprocessing_sha:
+            return None
+        if str(sealed_cache_payload.get("hw_arch") or "") != str(
+            receipt.get("hw_arch") or ""
+        ):
+            return None
+        if cache_schema == _HAILO_HEF_CACHE_SCHEMA_V3:
+            try:
+                sealed_shapes = _normalize_hailo_net_input_shapes(
+                    sealed_cache_payload.get("net_input_shapes")
+                )
+            except ValueError:
+                return None
+            if (
+                str(sealed_cache_payload.get("net_name") or "").strip()
+                != receipt_net_name
+                or sealed_cache_payload.get("net_input_shapes")
+                != sealed_shapes
+                or type(
+                    sealed_cache_payload.get(
+                        "disable_rt_metadata_extraction"
+                    )
+                ) is not bool
+            ):
+                return None
+            if (
+                expected_net_name is not None
+                and str(sealed_cache_payload.get("net_name") or "").strip()
+                != str(expected_net_name).strip()
+            ):
+                return None
+            if (
+                expected_disable_rt_metadata_extraction is not None
+                and sealed_cache_payload.get(
+                    "disable_rt_metadata_extraction"
+                ) is not bool(expected_disable_rt_metadata_extraction)
+            ):
+                return None
+            if (
+                expected_net_input_shapes is not None
+                and sealed_cache_payload.get("net_input_shapes")
+                != _normalize_hailo_net_input_shapes(
+                    expected_net_input_shapes
+                )
+            ):
+                return None
+        elif (
+            not allow_legacy_v2
+            and (
+                expected_net_name is not None
+                or expected_net_input_shapes is not None
+                or expected_disable_rt_metadata_extraction is not None
+            )
+        ):
+            return None
+        receipt_sdk = str(receipt.get("hailo_sdk_version") or "").strip()
+        if not receipt_sdk or receipt_sdk != str(
+            sealed_cache_payload.get("hailo_sdk_version") or ""
+        ).strip():
+            return None
+        receipt_count = receipt.get("calibration_count")
+        cache_count = sealed_cache_payload.get("calibration_count")
+        receipt_requested_count = receipt.get(
+            "requested_calibration_count"
+        )
+        cache_requested_count = sealed_cache_payload.get(
+            "requested_calibration_count"
+        )
+        receipt_storage = str(
+            receipt.get("calibration_storage") or ""
+        ).strip().lower()
+        cache_storage = str(
+            sealed_cache_payload.get("calibration_storage") or ""
+        ).strip().lower()
+        receipt_memory_cap = receipt.get(
+            "calibration_memory_cap_bytes"
+        )
+        cache_memory_cap = sealed_cache_payload.get(
+            "calibration_memory_cap_bytes"
+        )
+        cache_batch_size = sealed_cache_payload.get(
+            "calibration_batch_size"
+        )
+        cache_integrity = str(
+            sealed_cache_payload.get("integrity") or ""
+        )
+        cache_nodes_valid = all(
+            isinstance(values, list)
+            and all(
+                isinstance(value, str)
+                and value
+                and value == value.strip()
+                for value in values
+            )
+            and len(values) == len(set(values))
+            for values in (
+                sealed_cache_payload.get("start_nodes"),
+                sealed_cache_payload.get("end_nodes"),
+            )
+        )
+        if (
+            type(receipt_count) is not int
+            or type(cache_count) is not int
+            or receipt_count <= 0
+            or cache_count <= 0
+            or receipt_count != cache_count
+            or type(receipt_requested_count) is not int
+            or type(cache_requested_count) is not int
+            or receipt_requested_count < receipt_count
+            or receipt_requested_count != cache_requested_count
+            or receipt_storage not in {"memory", "memmap"}
+            or receipt_storage != cache_storage
+            or type(receipt_memory_cap) is not int
+            or type(cache_memory_cap) is not int
+            or receipt_memory_cap <= 0
+            or receipt_memory_cap != cache_memory_cap
+            or type(cache_batch_size) is not int
+            or cache_batch_size <= 0
+            or cache_integrity not in {"strict", "relaxed"}
+            or not cache_nodes_valid
+        ):
+            return None
+        receipt_calibration = str(
+            receipt.get("calibration_identity") or ""
+        ).strip()
+        cache_calibration = str(
+            sealed_cache_payload.get("calibration_identity") or ""
+        ).strip()
+        if not receipt_calibration or receipt_calibration != cache_calibration:
+            return None
+        prepared_calibration_sha = hashlib.sha256(
+            json.dumps(
+                {
+                    "calibration_identity": cache_calibration,
+                    "preprocessing_contract_sha256": receipt_preprocessing_sha,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        if _sha_token(
+            receipt.get("prepared_calibration_identity_sha256")
+        ) != prepared_calibration_sha:
+            return None
+        if _sha_token(
+            sealed_cache_payload.get("prepared_calibration_identity_sha256")
+        ) != prepared_calibration_sha:
+            return None
+        if validate_cache_meta:
+            meta_path = _hailo_cache_meta_path(hef_path)
+            if meta_path.is_file():
+                metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+                if not isinstance(metadata, dict) or not _hailo_cache_meta_matches_receipt(metadata, receipt):
+                    return None
+            elif hef_path.parent.parent.name == ".hailo-generations":
+                return None
+        return dict(receipt)
+    except Exception:
+        return None
+
+
+def _write_hailo_receipt(
+    *,
+    hef_path: Path,
+    source_onnx: Path,
+    compiler_onnx: Path,
+    hw_arch: str,
+    net_name: str,
+    preprocessing_contract: Mapping[str, Any],
+    preprocessing_sha256: str,
+    cache_key: str,
+    cache_payload: Mapping[str, Any],
+    calibration_identity: str,
+    calibration_count: int,
+) -> Dict[str, Any]:
+    sealed_cache_payload = dict(cache_payload)
+    try:
+        resolved_contract, resolved_preprocessing_sha = (
+            resolve_image_preprocessing_contract(
+                task=preprocessing_contract.get("task"),
+                target_hw=preprocessing_contract.get("target_hw"),
+                declared=preprocessing_contract,
+            )
+        )
+    except Exception as exc:
+        raise ValueError(
+            "inconsistent_hailo_cache_receipt_preprocessing"
+        ) from exc
+    calculated_cache_key = hashlib.sha256(
+        json.dumps(
+            sealed_cache_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    cache_count = sealed_cache_payload.get("calibration_count")
+    requested_count = sealed_cache_payload.get(
+        "requested_calibration_count"
+    )
+    storage = str(
+        sealed_cache_payload.get("calibration_storage") or ""
+    ).strip().lower()
+    memory_cap_bytes = sealed_cache_payload.get(
+        "calibration_memory_cap_bytes"
+    )
+    sdk_version = _hailo_sdk_version_token()
+    cache_calibration_identity = str(
+        sealed_cache_payload.get("calibration_identity") or ""
+    )
+    prepared_calibration_identity = hashlib.sha256(
+        json.dumps(
+            {
+                "calibration_identity": cache_calibration_identity,
+                "preprocessing_contract_sha256": resolved_preprocessing_sha,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    start_nodes = sealed_cache_payload.get("start_nodes")
+    end_nodes = sealed_cache_payload.get("end_nodes")
+    nodes_valid = all(
+        isinstance(values, list)
+        and all(
+            isinstance(value, str)
+            and value
+            and value == value.strip()
+            for value in values
+        )
+        and len(values) == len(set(values))
+        for values in (start_nodes, end_nodes)
+    )
+    if (
+        sealed_cache_payload.get("schema") not in _HAILO_HEF_CACHE_SCHEMAS
+        or str(cache_key) != calculated_cache_key
+        or type(cache_count) is not int
+        or cache_count <= 0
+        or cache_count != int(calibration_count)
+        or type(requested_count) is not int
+        or requested_count < cache_count
+        or storage not in {"memory", "memmap"}
+        or type(memory_cap_bytes) is not int
+        or memory_cap_bytes <= 0
+        or str(sealed_cache_payload.get("hw_arch") or "")
+        != str(hw_arch)
+        or str(sealed_cache_payload.get("hailo_sdk_version") or "")
+        != sdk_version
+        or str(sealed_cache_payload.get("calibration_identity") or "")
+        != str(calibration_identity)
+        or str(sealed_cache_payload.get("model_sha256") or "")
+        != _bare_file_sha256(compiler_onnx)
+        or dict(resolved_contract) != dict(preprocessing_contract)
+        or str(preprocessing_sha256) != resolved_preprocessing_sha
+        or dict(sealed_cache_payload.get("preprocessing_contract") or {})
+        != dict(resolved_contract)
+        or str(
+            sealed_cache_payload.get("preprocessing_contract_sha256") or ""
+        ) != resolved_preprocessing_sha
+        or str(
+            sealed_cache_payload.get(
+                "prepared_calibration_identity_sha256"
+            ) or ""
+        ) != prepared_calibration_identity
+        or not nodes_valid
+    ):
+        raise ValueError("inconsistent_hailo_cache_receipt_identity")
+    if sealed_cache_payload.get("schema") == _HAILO_HEF_CACHE_SCHEMA_V3:
+        try:
+            normalized_shapes = _normalize_hailo_net_input_shapes(
+                sealed_cache_payload.get("net_input_shapes")
+            )
+        except ValueError:
+            normalized_shapes = object()
+        if (
+            str(sealed_cache_payload.get("net_name") or "").strip()
+            != str(net_name).strip()
+            or type(
+                sealed_cache_payload.get(
+                    "disable_rt_metadata_extraction"
+                )
+            ) is not bool
+            or "net_input_shapes" not in sealed_cache_payload
+            or sealed_cache_payload.get("net_input_shapes")
+            != normalized_shapes
+        ):
+            raise ValueError("inconsistent_hailo_cache_receipt_identity")
+    receipt = {
+        "schema": _HAILO_HEF_RECEIPT_SCHEMA,
+        "created_at_unix_s": time.time(),
+        "source_onnx_sha256": _bare_file_sha256(source_onnx),
+        "compiler_onnx_sha256": _bare_file_sha256(compiler_onnx),
+        "compiler_onnx_filename": compiler_onnx.name,
+        "hef_sha256": _bare_file_sha256(hef_path),
+        "hef_size_bytes": int(hef_path.stat().st_size),
+        "hw_arch": str(hw_arch),
+        "net_name": str(net_name),
+        "hailo_sdk_version": sdk_version,
+        "calibration_identity": str(calibration_identity),
+        "prepared_calibration_identity_sha256": str(
+            prepared_calibration_identity
+        ),
+        "calibration_count": int(calibration_count),
+        "requested_calibration_count": int(requested_count),
+        "calibration_storage": storage,
+        "calibration_memory_cap_bytes": int(memory_cap_bytes),
+        "preprocessing_contract": dict(preprocessing_contract),
+        "preprocessing_contract_sha256": str(preprocessing_sha256),
+        "cache_key": str(cache_key),
+        "cache_payload": sealed_cache_payload,
+    }
+    _atomic_write_json(_hailo_receipt_path(hef_path), receipt)
+    return receipt
+
+
+def _calibration_identity(calib_dir: Path | None, *, strict: bool) -> str:
+    if calib_dir is None or not calib_dir.exists():
+        return 'none'
+    manifest_hint = str(os.environ.get('ONNX_SPLITPOINT_HAILO_CALIB_MANIFEST') or '').strip()
+    if manifest_hint:
+        mp = Path(os.path.expanduser(manifest_hint))
+        if mp.is_file():
+            return 'manifest:' + _bare_file_sha256(mp)
+    rows = []
+    for path in sorted(p for p in calib_dir.rglob('*') if p.is_file()):
+        try:
+            st = path.stat()
+            rel = str(path.relative_to(calib_dir)).replace('\\', '/')
+            identity = _bare_file_sha256(path) if strict else f'{st.st_size}:{st.st_mtime_ns}'
+            rows.append((rel, identity))
+        except Exception:
+            continue
+    return hashlib.sha256(json.dumps(rows, separators=(',', ':'), ensure_ascii=False).encode('utf-8')).hexdigest()
+
+
+def _hailo_sdk_version_token_from_controller_metadata() -> str | None:
+    """Return controller-side DFC identity without importing compiler code."""
+
+    try:
+        from importlib.metadata import version
+        for package in ("hailo-dataflow-compiler", "hailo_sdk_client", "hailo-model-zoo"):
+            try:
+                value = str(version(package) or "").strip()
+                if value:
+                    return f"{package}:{value}"
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def _hailo_sdk_version_token() -> str:
+    """Best-effort DFC version token for build-cache invalidation."""
+
+    metadata_token = _hailo_sdk_version_token_from_controller_metadata()
+    if metadata_token:
+        return metadata_token
+    try:
+        import hailo_sdk_client  # type: ignore
+        value = str(getattr(hailo_sdk_client, "__version__", "") or "").strip()
+        if value:
+            return f"hailo_sdk_client:{value}"
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _hailo_sdk_version_token_from_managed_venv(
+    *,
+    hw_arch: str,
+    venv_activate: str = "auto",
+) -> str | None:
+    """Read the managed DFC distribution version without executing its Python.
+
+    Cache lookup happens in the controller interpreter, while Hailo builds run
+    in a dedicated managed venv.  Using the controller's package metadata made
+    an existing managed-venv cache invisible whenever the controller did not
+    itself have DFC installed.  Reading ``*.dist-info`` through
+    :mod:`importlib.metadata` is process-free and preserves the exact token the
+    compiler interpreter writes into receipts.
+    """
+
+    try:
+        from importlib.metadata import distributions
+
+        _profile_id, python_path, _activate = _resolve_managed_venv_python(
+            hw_arch=str(hw_arch),
+            venv_activate=str(venv_activate or "auto"),
+        )
+    except Exception:
+        return None
+
+    venv_dir = Path(python_path).parent.parent
+    site_packages = sorted({
+        path.resolve()
+        for lib_name in ("lib", "lib64")
+        for path in (venv_dir / lib_name).glob("python*/site-packages")
+        if path.is_dir()
+    })
+    if not site_packages:
+        return None
+
+    def _normalise_distribution_name(value: Any) -> str:
+        return re.sub(r"[-_.]+", "-", str(value or "").strip().lower())
+
+    found: dict[str, set[str]] = {}
+    try:
+        for distribution in distributions(
+            path=[str(path) for path in site_packages]
+        ):
+            name = str(distribution.metadata.get("Name") or "").strip()
+            version = str(distribution.version or "").strip()
+            if not name or not version:
+                continue
+            found.setdefault(
+                _normalise_distribution_name(name), set()
+            ).add(version)
+    except Exception:
+        return None
+
+    for package in (
+        "hailo-dataflow-compiler",
+        "hailo_sdk_client",
+        "hailo-model-zoo",
+    ):
+        versions = found.get(_normalise_distribution_name(package), set())
+        if len(versions) == 1:
+            return f"{package}:{next(iter(versions))}"
+        if len(versions) > 1:
+            # Multiple versions for the authoritative distribution are an
+            # ambiguous compiler identity.  Fail closed instead of guessing.
+            return None
+    return None
+
+
+def _normalize_hailo_net_input_shapes(value: Any) -> Any:
+    """Return a canonical JSON form for the compiler's input-shape override."""
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        normalized: Dict[str, List[int]] = {}
+        for name in sorted(value, key=lambda item: str(item)):
+            shape = value[name]
+            if not isinstance(shape, (list, tuple)) or not shape:
+                raise ValueError("invalid_hailo_net_input_shapes")
+            values = []
+            for dimension in shape:
+                if isinstance(dimension, bool) or not isinstance(dimension, int):
+                    raise ValueError("invalid_hailo_net_input_shapes")
+                values.append(int(dimension))
+            normalized[str(name)] = values
+        return normalized
+    if isinstance(value, (list, tuple)) and value:
+        values = []
+        for dimension in value:
+            if isinstance(dimension, bool) or not isinstance(dimension, int):
+                raise ValueError("invalid_hailo_net_input_shapes")
+            values.append(int(dimension))
+        return values
+    raise ValueError("invalid_hailo_net_input_shapes")
+
+
+def _hailo_net_input_shapes_semantically_equal(left: Any, right: Any) -> bool:
+    normalized_left = _normalize_hailo_net_input_shapes(left)
+    normalized_right = _normalize_hailo_net_input_shapes(right)
+    if normalized_left == normalized_right:
+        return True
+    if isinstance(normalized_left, dict) and len(normalized_left) == 1:
+        return next(iter(normalized_left.values())) == normalized_right
+    if isinstance(normalized_right, dict) and len(normalized_right) == 1:
+        return next(iter(normalized_right.values())) == normalized_left
+    return False
+
+
+def _hailo_legacy_contract_translate_axes_match(
+    contract: Any,
+    *,
+    net_name: str,
+    net_input_shapes: Any,
+    disable_rt_metadata_extraction: bool,
+) -> bool:
+    """Reject legacy records that contradict a requested translate identity.
+
+    Early v2.75 ArtifactStore records did not always persist these axes.  Their
+    absence therefore remains eligible for the narrowly defined historical
+    defaults, but an axis that *is* present must agree exactly.  This prevents
+    a coarse historical contract from overriding the stronger v3 request.
+    """
+
+    if not isinstance(contract, Mapping):
+        return True
+    candidates: list[Mapping[str, Any]] = [contract]
+    for key in ("build_contract", "compiler", "hailo", "translate"):
+        nested = contract.get(key)
+        if isinstance(nested, Mapping):
+            candidates.append(nested)
+    expected_name = str(net_name).strip()
+    for candidate in candidates:
+        if "net_name" in candidate:
+            actual_name = str(candidate.get("net_name") or "").strip()
+            if not actual_name or actual_name != expected_name:
+                return False
+        if "net_input_shapes" in candidate:
+            try:
+                if not _hailo_net_input_shapes_semantically_equal(
+                    candidate.get("net_input_shapes"), net_input_shapes,
+                ):
+                    return False
+            except ValueError:
+                return False
+        if "disable_rt_metadata_extraction" in candidate:
+            actual_rt_flag = candidate.get(
+                "disable_rt_metadata_extraction"
+            )
+            if (
+                type(actual_rt_flag) is not bool
+                or actual_rt_flag is not bool(
+                    disable_rt_metadata_extraction
+                )
+            ):
+                return False
+    return True
+
+
+def _hailo_cache_key(
+    *,
+    model_path: Path,
+    activation_part1: Path | None,
+    hw_arch: str,
+    opt_level: int,
+    calib_dir: Path | None,
+    calib_count: int,
+    calib_batch_size: int,
+    extra_model_script: str,
+    start_nodes: Sequence[str] | None,
+    end_nodes: Sequence[str] | None,
+    preprocessing_contract: Mapping[str, Any] | None = None,
+    effective_calib_count: int | None = None,
+    calibration_storage: str | None = None,
+    calibration_memory_cap_bytes: int | None = None,
+    net_name: str | None = None,
+    net_input_shapes: Any = None,
+    disable_rt_metadata_extraction: bool | None = None,
+    hailo_sdk_version_token: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    strict = str(os.environ.get('ONNX_SPLITPOINT_HAILO_CACHE_INTEGRITY') or 'relaxed').lower() == 'strict'
+    calibration_identity = _calibration_identity(calib_dir, strict=strict)
+    preprocessing_sha = (
+        preprocessing_contract_sha256(preprocessing_contract)
+        if preprocessing_contract
+        else 'unsealed-legacy-call'
+    )
+    prepared_calibration_identity = hashlib.sha256(
+        json.dumps(
+            {
+                'calibration_identity': calibration_identity,
+                'preprocessing_contract_sha256': preprocessing_sha,
+            },
+            sort_keys=True,
+            separators=(',', ':'),
+            ensure_ascii=False,
+        ).encode('utf-8')
+    ).hexdigest()
+    requested_count = max(1, int(calib_count))
+    effective_count = (
+        max(1, int(effective_calib_count))
+        if effective_calib_count is not None else requested_count
+    )
+    if effective_count > requested_count:
+        raise ValueError(
+            "effective Hailo calibration count cannot exceed requested count"
+        )
+    storage = str(
+        calibration_storage
+        or _resolve_hailo_calibration_storage(requested_count)
+    ).strip().lower()
+    if storage not in {"memory", "memmap"}:
+        raise ValueError(f"unsupported_hailo_calibration_storage:{storage}")
+    memory_cap_bytes = int(
+        calibration_memory_cap_bytes
+        if calibration_memory_cap_bytes is not None
+        else _calibration_memory_cap_bytes()
+    )
+    if memory_cap_bytes <= 0:
+        raise ValueError("hailo calibration memory cap must be positive")
+    semantic_v3 = (
+        net_name is not None
+        and disable_rt_metadata_extraction is not None
+    )
+    payload = {
+        'schema': (
+            _HAILO_HEF_CACHE_SCHEMA_V3
+            if semantic_v3 else _HAILO_HEF_CACHE_SCHEMA_V2
+        ),
+        'model_sha256': _bare_file_sha256(model_path),
+        'activation_part1_sha256': _bare_file_sha256(activation_part1) if activation_part1 and activation_part1.is_file() else '',
+        'hw_arch': str(hw_arch),
+        'hailo_sdk_version': str(
+            hailo_sdk_version_token or _hailo_sdk_version_token()
+        ),
+        'optimization_level': int(opt_level),
+        'calibration_identity': calibration_identity,
+        'prepared_calibration_identity_sha256': prepared_calibration_identity,
+        'calibration_count': effective_count,
+        'requested_calibration_count': requested_count,
+        'calibration_storage': storage,
+        'calibration_memory_cap_bytes': memory_cap_bytes,
+        'calibration_batch_size': int(calib_batch_size),
+        'extra_model_script': str(extra_model_script or ''),
+        'start_nodes': list(start_nodes or []),
+        'end_nodes': list(end_nodes or []),
+        'integrity': 'strict' if strict else 'relaxed',
+        'preprocessing_contract': dict(preprocessing_contract or {}),
+        'preprocessing_contract_sha256': preprocessing_sha,
+    }
+    if semantic_v3:
+        normalized_net_name = str(net_name or "").strip()
+        if not normalized_net_name:
+            raise ValueError("hailo net_name must be non-empty")
+        payload.update({
+            'net_name': normalized_net_name,
+            'net_input_shapes': _normalize_hailo_net_input_shapes(
+                net_input_shapes
+            ),
+            'disable_rt_metadata_extraction': bool(
+                disable_rt_metadata_extraction
+            ),
+        })
+    key = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')).hexdigest()
+    return key, payload
+
+
+def _hailo_cache_root() -> Path:
+    return Path(os.path.expanduser(os.environ.get('ONNX_SPLITPOINT_HAILO_CACHE_ROOT') or '~/.cache/onnx_splitpoint/hailo_hef')).resolve()
+
+
+def _migrate_hailo_receipt_to_cache_contract(
+    receipt: Mapping[str, Any], *, cache_key: str,
+    cache_payload: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Reseal a verified v2 receipt under a stronger version-neutral key."""
+    migrated = dict(receipt)
+    old_key = str(migrated.get("cache_key") or "")
+    migrated["cache_key"] = str(cache_key)
+    migrated["cache_payload"] = dict(cache_payload)
+    if old_key and old_key != str(cache_key):
+        migrated["migrated_from_cache_key"] = old_key
+    return migrated
+
+
+def _load_migrated_hailo_v2_receipt(
+    hef_path: Path, *, legacy_cache_key: str,
+    legacy_cache_payload: Mapping[str, Any], cache_key: str,
+    cache_payload: Mapping[str, Any], preprocessing_sha256: str,
+    source_onnx_sha256: str, net_name: str,
+    net_input_shapes: Any,
+    disable_rt_metadata_extraction: bool,
+    allow_legacy_v2: bool,
+) -> Optional[Dict[str, Any]]:
+    if not allow_legacy_v2:
+        return None
+    receipt = _load_valid_hailo_receipt(
+        hef_path,
+        preprocessing_sha256=preprocessing_sha256,
+        source_onnx_sha256=source_onnx_sha256,
+        cache_key=legacy_cache_key,
+        cache_payload=legacy_cache_payload,
+        expected_net_name=net_name,
+        expected_net_input_shapes=net_input_shapes,
+        expected_disable_rt_metadata_extraction=(
+            disable_rt_metadata_extraction
+        ),
+        allow_legacy_v2=True,
+    )
+    if receipt is None:
+        return None
+    migrated = _migrate_hailo_receipt_to_cache_contract(
+        receipt, cache_key=cache_key, cache_payload=cache_payload,
+    )
+    return migrated
+
+
+def _backfill_hailo_exact_cache(
+    *,
+    cache_dir: Path,
+    hef_path: Path,
+    receipt: Mapping[str, Any],
+    cache_key: str,
+    cache_payload: Mapping[str, Any],
+    preprocessing_sha256: str,
+    source_onnx_sha256: str,
+    net_name: str,
+    hw_arch: str,
+) -> bool:
+    """Atomically back up all three files under the existing exact cache key."""
+    try:
+        if (
+            str(receipt.get("cache_key") or "") != str(cache_key)
+            or receipt.get("cache_payload") != dict(cache_payload)
+            or str(receipt.get("preprocessing_contract_sha256") or "") != str(preprocessing_sha256)
+            or str(receipt.get("source_onnx_sha256") or "") != str(source_onnx_sha256)
+            or str(receipt.get("net_name") or "") != str(net_name)
+            or str(receipt.get("hw_arch") or "") != str(hw_arch)
+        ):
+            raise ValueError("hailo_cache_backfill_identity_mismatch")
+        _publish_hailo_bundle(
+            source_hef=hef_path, destination=cache_dir / "compiled.hef",
+            receipt=receipt, source="artifact_store_exact_v2_restore",
+        )
+        return True
+    except Exception as exc:
+        log.warning("[hailo][cache] atomic bundle backup failed: %s", exc)
+        return False
+
+
+def _restore_hailo_v2_artifact_store_exact(
+    *,
+    destination: Path,
+    cache_dir: Path | None,
+    cache_key: str,
+    cache_payload: Mapping[str, Any],
+    preprocessing_sha256: str,
+    source_onnx_sha256: str,
+    net_name: str,
+    hw_arch: str,
+    legacy_cache_key: str = "",
+    legacy_cache_payload: Mapping[str, Any] | None = None,
+    allow_legacy_v2: bool = False,
+    diagnostics: Optional[Dict[str, Any]] = None,
+    read_only: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Restore a byte- and build-identical ArtifactStore HEF.
+
+    The historical unified-library contract is intentionally not consulted:
+    it was computed before ONNX fixup, effective calibration clamping and SDK
+    resolution.  Existing v2.75 records remain addressable through the exact
+    ``legacy_cache_key`` plus their embedded canonical v2 receipt.
+    """
+
+    try:
+        from .artifact_store import ArtifactStore, artifact_store_enabled
+
+        if not artifact_store_enabled():
+            return None
+        store = ArtifactStore(
+            os.environ.get("ONNX_SPLITPOINT_ARTIFACT_STORE_ROOT") or None,
+            read_only=bool(read_only),
+        )
+        exact_candidates: List[Tuple[Any, Dict[str, Any], bool]] = []
+        audit = diagnostics if diagnostics is not None else {}
+        audit.update(matched_candidates=0, valid_candidates=0, rejected_candidates=0,
+                     legacy_unsealed_candidates=0,
+                     status="missing", selection_order="artifact_id_ascending")
+        for record in store.list(kind="hailo_hef", limit=1_000_000):
+            try:
+                metadata = record.metadata if isinstance(record.metadata, dict) else {}
+                record_key = str(metadata.get("legacy_cache_key") or "")
+                candidate_is_legacy = bool(
+                    allow_legacy_v2
+                    and legacy_cache_key
+                    and record_key == str(legacy_cache_key)
+                )
+                expected_key = (
+                    str(legacy_cache_key) if candidate_is_legacy
+                    else str(cache_key)
+                )
+                expected_payload = (
+                    dict(legacy_cache_payload or {})
+                    if candidate_is_legacy else dict(cache_payload)
+                )
+                if record_key != expected_key:
+                    continue
+                audit["matched_candidates"] += 1
+                if (
+                    candidate_is_legacy
+                    and not _hailo_legacy_contract_translate_axes_match(
+                        record.contract,
+                        net_name=net_name,
+                        net_input_shapes=cache_payload.get(
+                            "net_input_shapes"
+                        ),
+                        disable_rt_metadata_extraction=bool(
+                            cache_payload.get(
+                                "disable_rt_metadata_extraction"
+                            )
+                        ),
+                    )
+                ):
+                    continue
+                receipt = metadata.get("build_receipt")
+                if not isinstance(receipt, dict):
+                    audit["legacy_unsealed_candidates"] += 1
+                    continue
+                if receipt.get("schema") != _HAILO_HEF_RECEIPT_SCHEMA:
+                    continue
+                if str(receipt.get("cache_key") or "") != expected_key:
+                    continue
+                if receipt.get("cache_payload") != expected_payload:
+                    continue
+                if str(receipt.get("net_name") or "").strip() != str(
+                    net_name
+                ).strip():
+                    continue
+                if str(receipt.get("hw_arch") or "") != str(hw_arch):
+                    continue
+                if str(receipt.get("source_onnx_sha256") or "") != str(
+                    source_onnx_sha256
+                ):
+                    continue
+                if str(receipt.get("preprocessing_contract_sha256") or "") != str(
+                    preprocessing_sha256
+                ):
+                    continue
+                if str(receipt.get("hef_sha256") or "") != str(record.artifact_hash):
+                    continue
+                object_path = Path(record.object_path)
+                if (
+                    not object_path.is_file()
+                    or int(object_path.stat().st_size) != int(record.size_bytes)
+                    or _bare_file_sha256(object_path) != str(record.artifact_hash)
+                ):
+                    continue
+                # Fully validate every candidate before conflict detection or
+                # ordering. A corrupt low-id duplicate must not mask a valid one.
+                if metadata.get("bundle_status") == "sealed":
+                    valid_record, _reason = store.validate_record(record, verify="strict")
+                    if not valid_record:
+                        continue
+                validated = _load_valid_hailo_receipt(
+                    object_path, preprocessing_sha256=preprocessing_sha256,
+                    source_onnx_sha256=source_onnx_sha256,
+                    cache_key=expected_key, cache_payload=expected_payload,
+                    expected_net_name=net_name,
+                    expected_net_input_shapes=cache_payload.get("net_input_shapes"),
+                    expected_disable_rt_metadata_extraction=cache_payload.get("disable_rt_metadata_extraction"),
+                    allow_legacy_v2=candidate_is_legacy,
+                    receipt_override=receipt, validate_cache_meta=False,
+                )
+                if validated is None:
+                    continue
+                exact_candidates.append((record, dict(validated), candidate_is_legacy))
+            except Exception as candidate_error:
+                log.warning("[hailo][artifact-store] invalid candidate id=%s: %s",
+                            getattr(record, "artifact_id", "?"), candidate_error)
+                continue
+        audit["valid_candidates"] = len(exact_candidates)
+        audit["rejected_candidates"] = audit["matched_candidates"] - len(exact_candidates)
+
+        if any(not is_legacy for _record, _receipt, is_legacy in exact_candidates):
+            exact_candidates = [
+                item for item in exact_candidates if not item[2]
+            ]
+        identities = {
+            (
+                str(record.artifact_hash),
+                json.dumps(
+                    {
+                        key: value for key, value in receipt.items()
+                        if key not in {
+                            "created_at_unix_s",
+                            "migrated_from_cache_key",
+                        }
+                    },
+                    sort_keys=True, separators=(",", ":"),
+                ),
+            )
+            for record, receipt, _is_legacy in exact_candidates
+        }
+        if len(identities) > 1:
+            audit["status"] = "conflicting_valid_duplicates"
+            audit["conflicting_artifact_ids"] = sorted(int(item[0].artifact_id) for item in exact_candidates)
+            log.warning(
+                "[hailo][artifact-store] conflicting exact records for key=%s",
+                cache_key[:12],
+            )
+            return None
+        if not exact_candidates:
+            if audit["matched_candidates"]:
+                audit["status"] = (
+                    "legacy_unsealed"
+                    if audit["legacy_unsealed_candidates"] == audit["matched_candidates"]
+                    else "all_candidates_invalid"
+                )
+            return None
+        record, receipt, candidate_is_legacy = sorted(
+            exact_candidates, key=lambda item: int(item[0].artifact_id),
+        )[0]
+        if candidate_is_legacy:
+            receipt = _migrate_hailo_receipt_to_cache_contract(
+                receipt, cache_key=cache_key, cache_payload=cache_payload,
+            )
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix=".hailo-artifact-restore-", dir=str(destination.parent)
+        ) as temporary_dir:
+            staged_hef = Path(temporary_dir) / "compiled.hef"
+            if read_only:
+                shutil.copy2(Path(record.object_path), staged_hef)
+                materialize_method = "copy_read_only_probe"
+            elif dict(record.metadata or {}).get("bundle_status") != "sealed":
+                # The complete historical receipt was validated above; the
+                # generic store intentionally refuses HEF-only materialization.
+                shutil.copy2(Path(record.object_path), staged_hef)
+                materialize_method = "copy_verified_legacy_receipt"
+            else:
+                materialize_method = store.materialize(
+                    record, staged_hef, reference=f"hailo-exact-v2:{cache_key}",
+                )
+            committed_hef = _publish_hailo_bundle(
+                source_hef=staged_hef, destination=destination, receipt=receipt,
+                source="artifact_store_exact_v2_restore",
+            )
+        # Publication already validated the immutable snapshot. Do not reread
+        # the public pointer, which another successful publisher may advance.
+        validated_receipt = dict(receipt)
+        audit.update(status="selected", selected_artifact_id=int(record.artifact_id))
+        cache_backfilled = bool(
+            not read_only and cache_dir is not None
+            and _backfill_hailo_exact_cache(
+                cache_dir=cache_dir,
+                hef_path=committed_hef,
+                receipt=validated_receipt,
+                cache_key=cache_key,
+                cache_payload=cache_payload,
+                preprocessing_sha256=preprocessing_sha256,
+                source_onnx_sha256=source_onnx_sha256,
+                net_name=net_name,
+                hw_arch=hw_arch,
+            )
+        )
+        restored = {
+            "artifact_id": int(record.artifact_id),
+            "contract_hash": str(record.contract_hash),
+            "artifact_hash": str(record.artifact_hash),
+            "source": str(record.object_path),
+            "destination": str(committed_hef),
+            "materialize_method": materialize_method,
+            "cache_key": str(cache_key),
+            "cache_backfilled": cache_backfilled,
+            "build_receipt": validated_receipt,
+            "duplicate_selection": dict(audit),
+        }
+        try:
+            _atomic_write_json(
+                destination.parent / "artifact_store_restore.json", restored
+            )
+        except Exception:
+            pass
+        return restored
+    except Exception as exc:
+        log.warning("[hailo][artifact-store] exact v2 restore failed: %s", exc)
+        return None
+
+
+def _inspect_hailo_diagnostic_hef(path: Path) -> Dict[str, Any]:
+    """Read the compiled container through the installed HailoRT API only.
+
+    A missing reader is explicit evidence, never a synthetic HEF-header PASS.
+    No accelerator is opened by these metadata queries.
+    """
+    try:
+        from hailo_platform import HEF
+    except ImportError as exc:
+        return {"status": "unavailable", "reader": "hailo_platform.HEF", "error": str(exc)}
+    try:
+        container = HEF(str(path))
+        inputs = list(container.get_input_vstream_infos())
+        outputs = list(container.get_output_vstream_infos())
+        if not inputs or not outputs:
+            raise ValueError("HEF has no readable input or output stream metadata")
+        return {"status": "passed", "reader": "hailo_platform.HEF",
+                "input_count": len(inputs), "output_count": len(outputs),
+                "inputs": [str(v.name) for v in inputs], "outputs": [str(v.name) for v in outputs]}
+    except Exception as exc:
+        return {"status": "failed", "reader": "hailo_platform.HEF", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _hailo_build_hef_legacy(
     onnx_path: Union[str, Path],
     *,
     hw_arch: str = "hailo8",
@@ -3606,10 +6765,17 @@ def hailo_build_hef(
     activation_part1_onnx: Optional[Union[str, Path]] = None,
     activation_gen_batch: int = 8,
     force: bool = False,
+    cache_only: bool = False,
     keep_artifacts: bool = False,
+    publish_artifacts: bool = True,
     extra_model_script: Optional[str] = None,
     start_node_names: Optional[Sequence[str]] = None,
     end_node_names: Optional[Sequence[str]] = None,
+    task: Optional[str] = None,
+    preprocessing_contract: Optional[Union[Mapping[str, Any], str]] = None,
+    sdk_version_token: Optional[str] = None,
+    read_only_cache_probe: Optional[bool] = None,
+    negative_evidence_identity_authoritative: bool = True,
 ) -> HailoHefBuildResult:
     """Translate + optimize + compile an ONNX to a HEF.
 
@@ -3624,10 +6790,48 @@ def hailo_build_hef(
   on HN input-layer shapes.
     """
 
+    force = parse_config_bool(force, field="hailo_build.force_build")
+    publish_artifacts = parse_config_bool(publish_artifacts, field="hailo_build.publish_artifacts")
+    if not publish_artifacts:
+        _validate_hailo_diagnostic_environment(outdir)
     t0 = time.time()
+    policy_cache_verify = compiler_dispatch_forbidden()
+    read_only_probe = bool(
+        policy_cache_verify or (cache_only if read_only_cache_probe is None else read_only_cache_probe)
+    )
+    cache_only = bool(cache_only or policy_cache_verify)
     onnx_path = Path(onnx_path)
-    if net_name is None:
-        net_name = onnx_path.stem
+    net_name = str(net_name or onnx_path.stem).strip()
+    if not net_name:
+        return _make_hef_result(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name="",
+            backend="local",
+            failure_kind="invalid_build_contract",
+            error="Hailo net_name must be non-empty after normalization",
+            last_stage="cache_contract",
+            timed_out=False,
+        )
+
+    if bool(cache_only) and bool(force):
+        return _make_hef_result(
+            ok=False,
+            elapsed_s=0.0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend="local",
+            skipped=True,
+            failure_kind="cache_miss_blocked",
+            unsupported_reason="cache_verify_only_force_conflict",
+            error=(
+                "cache_miss_blocked[hailo_dfc]: cache_only and force are "
+                "mutually exclusive; DFC dispatch was not started"
+            ),
+            last_stage="cache_lookup",
+            timed_out=False,
+        )
 
     hw_arch_eff = _normalize_hailo_hw_arch(hw_arch)
     if hw_arch_eff != str(hw_arch or "").strip().lower():
@@ -3636,8 +6840,40 @@ def hailo_build_hef(
     out_dir = Path(outdir) if outdir is not None else onnx_path.parent
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # A new probe/recipe supersedes the prior run-local negative diagnostic.
+    # The persistent evidence index is append-only and remains untouched.
+    prior_negative = out_dir / "hailo_negative_evidence.json"
+    if prior_negative.is_file():
+        _atomic_write_json(prior_negative, {
+            "net_name": net_name, "hw_arch": hw_arch_eff,
+            "negative_evidence_hit": False,
+            "build_evidence": {"status": "UNAVAILABLE", "reusable": False,
+                               "reason": "superseded_by_current_probe"},
+        })
+
     activation_part1_onnx_p = Path(activation_part1_onnx).expanduser().resolve() if activation_part1_onnx else None
     calib_dir_p = Path(calib_dir).expanduser().resolve() if calib_dir else None
+
+    try:
+        preprocessing_contract_eff, preprocessing_sha256 = _resolve_hailo_image_contract(
+            model_path=onnx_path.expanduser().resolve(),
+            activation_part1=activation_part1_onnx_p,
+            net_input_shapes=net_input_shapes,
+            task=task,
+            declared=preprocessing_contract,
+        )
+    except Exception as exc:
+        return _make_hef_result(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch_eff),
+            net_name=str(net_name),
+            backend="local",
+            error=f"Invalid Hailo image preprocessing contract: {type(exc).__name__}: {exc}",
+            failure_kind="invalid_preprocessing_contract",
+            last_stage="preprocessing_contract_preflight",
+            timed_out=False,
+        )
 
     if activation_part1_onnx_p is not None:
         preflight = _activation_calib_preflight(part1_onnx=activation_part1_onnx_p, part2_onnx=onnx_path)
@@ -3660,28 +6896,6 @@ def hailo_build_hef(
             )
 
     hef_path = out_dir / "compiled.hef"
-    if hef_path.exists() and not bool(force):
-        return HailoHefBuildResult(
-            ok=True,
-            elapsed_s=time.time() - t0,
-            hw_arch=str(hw_arch_eff),
-            net_name=str(net_name),
-            backend="local",
-            hef_path=str(hef_path),
-            skipped=True,
-        )
-
-    try:
-        from hailo_sdk_client import ClientRunner
-    except Exception as e:
-        return HailoHefBuildResult(
-            ok=False,
-            elapsed_s=time.time() - t0,
-            hw_arch=str(hw_arch_eff),
-            net_name=str(net_name),
-            backend="local",
-            error=f"Hailo SDK not available: {e}",
-        )
 
     fixed_path: Optional[Path] = None
     fixup_report: Optional[Dict[str, Any]] = None
@@ -3699,13 +6913,669 @@ def hailo_build_hef(
             model_for_parse = onnx_path
             fixed_path = None
 
-    if net_input_shapes is None:
-        try:
-            m_tmp = onnx.load(str(model_for_parse))
-            net_input_shapes = infer_net_input_shapes_from_model(m_tmp)
-        except Exception:
+    inferred_default_net_input_shapes = None
+    try:
+        m_tmp = onnx.load(str(model_for_parse))
+        inferred_default_net_input_shapes = infer_net_input_shapes_from_model(
+            m_tmp
+        )
+        if net_input_shapes is None:
+            net_input_shapes = inferred_default_net_input_shapes
+    except Exception:
+        if net_input_shapes is None:
             net_input_shapes = None
 
+    try:
+        calibration_storage = _resolve_hailo_calibration_storage(
+            int(calib_count)
+        )
+        calibration_memory_cap = _calibration_memory_cap_bytes()
+        calibration_identity_shapes = _hailo_calibration_shape_candidates(
+            net_input_shapes, preprocessing_contract_eff,
+        )
+        effective_calib_count = _effective_hailo_calibration_count(
+            requested=int(calib_count),
+            shapes=calibration_identity_shapes,
+            storage=calibration_storage,
+            cap_bytes=calibration_memory_cap,
+        )
+        memory_limited_calib_count = int(effective_calib_count)
+        (
+            calibration_available_count,
+            calibration_available_count_source,
+        ) = _hailo_authoritative_calibration_sample_count(calib_dir_p)
+        if calibration_available_count is not None:
+            effective_calib_count = min(
+                int(effective_calib_count),
+                int(calibration_available_count),
+            )
+    except Exception as calibration_identity_exc:
+        return _make_hef_result(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch_eff),
+            net_name=str(net_name),
+            backend="local",
+            failure_kind="invalid_build_contract",
+            error=(
+                "Unable to seal Hailo calibration count identity: "
+                f"{type(calibration_identity_exc).__name__}: "
+                f"{calibration_identity_exc}"
+            ),
+            last_stage="calibration_count_contract",
+            timed_out=False,
+        )
+
+    # v60o: content-addressed HEF build cache.  Building Hailo artifacts
+    # dominates repeated development runs, so identical model/configuration
+    # requests reuse the compiled HEF.  Final mode uses strict calibration
+    # content identity; relaxed modes use path/size/mtime identity.
+    cache_enabled = publish_artifacts and str(os.environ.get('ONNX_SPLITPOINT_HAILO_CACHE_ENABLED', '1')).strip().lower() not in {'0', 'false', 'no', 'off'}
+    cache_key = ''
+    cache_payload: dict[str, Any] = {}
+    legacy_cache_key = ''
+    legacy_cache_payload: dict[str, Any] = {}
+    cache_dir: Path | None = None
+    cache_lookup_error = ""
+    try:
+        cache_key, cache_payload = _hailo_cache_key(
+            model_path=model_for_parse,
+            activation_part1=activation_part1_onnx_p,
+            hw_arch=str(hw_arch_eff),
+            opt_level=int(opt_level),
+            calib_dir=calib_dir_p,
+            calib_count=int(calib_count),
+            calib_batch_size=int(calib_batch_size),
+            extra_model_script=str(extra_model_script or ''),
+            start_nodes=start_node_names,
+            end_nodes=end_node_names,
+            preprocessing_contract=preprocessing_contract_eff,
+            effective_calib_count=effective_calib_count,
+            calibration_storage=calibration_storage,
+            calibration_memory_cap_bytes=calibration_memory_cap,
+            net_name=str(net_name),
+            net_input_shapes=net_input_shapes,
+            disable_rt_metadata_extraction=bool(
+                disable_rt_metadata_extraction
+            ),
+            hailo_sdk_version_token=sdk_version_token,
+        )
+        legacy_cache_key, legacy_cache_payload = _hailo_cache_key(
+            model_path=model_for_parse,
+            activation_part1=activation_part1_onnx_p,
+            hw_arch=str(hw_arch_eff),
+            opt_level=int(opt_level),
+            calib_dir=calib_dir_p,
+            calib_count=int(calib_count),
+            calib_batch_size=int(calib_batch_size),
+            extra_model_script=str(extra_model_script or ''),
+            start_nodes=start_node_names,
+            end_nodes=end_node_names,
+            preprocessing_contract=preprocessing_contract_eff,
+            effective_calib_count=effective_calib_count,
+            calibration_storage=calibration_storage,
+            calibration_memory_cap_bytes=calibration_memory_cap,
+            hailo_sdk_version_token=sdk_version_token,
+        )
+    except Exception as cache_exc:
+        return _make_hef_result(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch_eff),
+            net_name=str(net_name),
+            backend='local',
+            failure_kind='invalid_build_contract',
+            error=f'Unable to seal Hailo cache/build contract: {type(cache_exc).__name__}: {cache_exc}',
+            last_stage='cache_contract',
+            timed_out=False,
+        )
+
+    # Force bypasses lookup, not backup. Establish the destination independently
+    # so forced successful builds also seal and retain the complete cache tuple.
+    if cache_enabled:
+        cache_dir = _hailo_cache_root() / cache_key
+
+    try:
+        legacy_v2_eligible = bool(
+            disable_rt_metadata_extraction
+            and _hailo_net_input_shapes_semantically_equal(
+                net_input_shapes, inferred_default_net_input_shapes,
+            )
+        )
+    except ValueError:
+        legacy_v2_eligible = False
+
+    artifact_store_diagnostics: Dict[str, Any] = {}
+    source_onnx_sha256 = _bare_file_sha256(onnx_path)
+    if hef_path.is_file() and not bool(force):
+        existing_hef = hef_path.resolve()
+        existing_receipt = _load_valid_hailo_receipt(
+            existing_hef,
+            preprocessing_sha256=preprocessing_sha256,
+            source_onnx_sha256=source_onnx_sha256,
+            cache_key=cache_key,
+            cache_payload=cache_payload,
+            expected_net_name=str(net_name),
+            expected_net_input_shapes=net_input_shapes,
+            expected_disable_rt_metadata_extraction=bool(
+                disable_rt_metadata_extraction
+            ),
+        )
+        if existing_receipt is None:
+            existing_receipt = _load_migrated_hailo_v2_receipt(
+                existing_hef,
+                legacy_cache_key=legacy_cache_key,
+                legacy_cache_payload=legacy_cache_payload,
+                cache_key=cache_key,
+                cache_payload=cache_payload,
+                preprocessing_sha256=preprocessing_sha256,
+                source_onnx_sha256=source_onnx_sha256,
+                net_name=str(net_name),
+                net_input_shapes=net_input_shapes,
+                disable_rt_metadata_extraction=bool(
+                    disable_rt_metadata_extraction
+                ),
+                allow_legacy_v2=legacy_v2_eligible,
+            )
+        if existing_receipt is not None:
+            if not read_only_probe:
+                _publish_hailo_bundle(
+                    source_hef=existing_hef, destination=hef_path,
+                    receipt=existing_receipt, source="validated_existing_artifact",
+                )
+            return HailoHefBuildResult(
+                ok=True,
+                elapsed_s=time.time() - t0,
+                hw_arch=str(hw_arch_eff),
+                net_name=str(net_name),
+                backend="local",
+                hef_path=str(hef_path),
+                skipped=True,
+                calib_info={
+                    "source": "validated_existing_artifact",
+                    "compiler_dispatch_count": 0, "cache_hit": True,
+                    "preprocessing_contract": preprocessing_contract_eff,
+                    "preprocessing_contract_sha256": preprocessing_sha256,
+                    "build_receipt": existing_receipt,
+                },
+            )
+        log.warning(
+            "[hailo][reuse] ignoring unsealed or stale compiled.hef at %s", hef_path
+        )
+
+    if cache_enabled and not bool(force):
+        try:
+            cache_dir = _hailo_cache_root() / cache_key
+            cached_hef = (cache_dir / 'compiled.hef').resolve()
+            cached_meta = _hailo_cache_meta_path(cached_hef)
+            cached_receipt = _load_valid_hailo_receipt(
+                cached_hef,
+                preprocessing_sha256=preprocessing_sha256,
+                source_onnx_sha256=source_onnx_sha256,
+                cache_key=cache_key,
+                cache_payload=cache_payload,
+                expected_net_name=str(net_name),
+                expected_net_input_shapes=net_input_shapes,
+                expected_disable_rt_metadata_extraction=bool(
+                    disable_rt_metadata_extraction
+                ),
+            )
+            if cached_receipt is not None:
+                _publish_hailo_bundle(
+                    source_hef=cached_hef, destination=hef_path,
+                    receipt=cached_receipt, source="local_exact_cache",
+                )
+                hit_payload = {
+                    'compiler_dispatch_count': 0, 'cache_hit': True,
+                    'cache_key': cache_key,
+                    'cache_dir': str(cache_dir),
+                    'requested_count': int(calib_count),
+                    'payload': cache_payload,
+                    'preprocessing_contract': preprocessing_contract_eff,
+                    'preprocessing_contract_sha256': preprocessing_sha256,
+                    'build_receipt': cached_receipt,
+                }
+                try:
+                    if cached_meta.is_file():
+                        hit_payload['cache_meta'] = json.loads(cached_meta.read_text(encoding='utf-8'))
+                except Exception:
+                    pass
+                try:
+                    (out_dir / 'hailo_cache_hit.json').write_text(json.dumps(hit_payload, indent=2), encoding='utf-8')
+                except Exception:
+                    pass
+                print(
+                    f"[hailo-cache] HIT role=hef model={net_name} "
+                    f"identity={cache_key} reason=receipt_verified "
+                    f"artifact={cached_hef} hw_arch={hw_arch_eff}",
+                    flush=True,
+                )
+                return HailoHefBuildResult(
+                    ok=True,
+                    elapsed_s=time.time() - t0,
+                    hw_arch=str(hw_arch_eff),
+                    net_name=str(net_name),
+                    backend='local',
+                    hef_path=str(hef_path),
+                    fixed_onnx_path=str(fixed_path) if fixed_path else None,
+                    fixup_report=fixup_report,
+                    skipped=True,
+                    calib_info=hit_payload,
+                    details={'compiler_dispatch_count': 0, 'cache_hit': True, 'cache_key': cache_key, 'cache_dir': str(cache_dir)},
+                )
+            legacy_cache_dir = _hailo_cache_root() / legacy_cache_key
+            legacy_cached_hef = (legacy_cache_dir / 'compiled.hef').resolve()
+            migrated_receipt = _load_migrated_hailo_v2_receipt(
+                legacy_cached_hef,
+                legacy_cache_key=legacy_cache_key,
+                legacy_cache_payload=legacy_cache_payload,
+                cache_key=cache_key,
+                cache_payload=cache_payload,
+                preprocessing_sha256=preprocessing_sha256,
+                source_onnx_sha256=source_onnx_sha256,
+                net_name=str(net_name),
+                net_input_shapes=net_input_shapes,
+                disable_rt_metadata_extraction=bool(
+                    disable_rt_metadata_extraction
+                ),
+                allow_legacy_v2=legacy_v2_eligible,
+            )
+            if migrated_receipt is not None:
+                committed_hef = _publish_hailo_bundle(
+                    source_hef=legacy_cached_hef, destination=hef_path,
+                    receipt=migrated_receipt, source="local_exact_v2_migrated",
+                )
+                cache_backfilled = not read_only_probe and _backfill_hailo_exact_cache(
+                    cache_dir=cache_dir,
+                    hef_path=committed_hef,
+                    receipt=migrated_receipt,
+                    cache_key=cache_key,
+                    cache_payload=cache_payload,
+                    preprocessing_sha256=preprocessing_sha256,
+                    source_onnx_sha256=source_onnx_sha256,
+                    net_name=str(net_name),
+                    hw_arch=str(hw_arch_eff),
+                )
+                hit_payload = {
+                    'compiler_dispatch_count': 0, 'cache_hit': True,
+                    'cache_source': 'local_exact_v2_migrated',
+                    'cache_key': cache_key,
+                    'legacy_cache_key': legacy_cache_key,
+                    'cache_dir': str(cache_dir),
+                    'cache_backfilled': bool(cache_backfilled),
+                    'requested_count': int(calib_count),
+                    'payload': cache_payload,
+                    'preprocessing_contract': preprocessing_contract_eff,
+                    'preprocessing_contract_sha256': preprocessing_sha256,
+                    'build_receipt': migrated_receipt,
+                }
+                print(
+                    f"[hailo-cache] HIT role=hef model={net_name} "
+                    f"identity={cache_key} reason=legacy_receipt_migrated "
+                    f"artifact={legacy_cached_hef} hw_arch={hw_arch_eff}",
+                    flush=True,
+                )
+                return HailoHefBuildResult(
+                    ok=True,
+                    elapsed_s=time.time() - t0,
+                    hw_arch=str(hw_arch_eff),
+                    net_name=str(net_name),
+                    backend='local',
+                    hef_path=str(hef_path),
+                    fixed_onnx_path=str(fixed_path) if fixed_path else None,
+                    fixup_report=fixup_report,
+                    skipped=True,
+                    calib_info=hit_payload,
+                    details={
+                        'compiler_dispatch_count': 0, 'cache_hit': True,
+                        'cache_source': 'local_exact_v2_migrated',
+                        'cache_key': cache_key,
+                        'legacy_cache_key': legacy_cache_key,
+                        'cache_dir': str(cache_dir),
+                    },
+                )
+        except Exception as cache_exc:
+            log.warning("[hailo][cache] lookup failed: %s", cache_exc)
+            cache_lookup_error = f"{type(cache_exc).__name__}: {cache_exc}"
+            cache_dir = None
+
+    if publish_artifacts and not bool(force):
+        exact_cache_dir = cache_dir
+        if exact_cache_dir is None and cache_enabled:
+            try:
+                exact_cache_dir = _hailo_cache_root() / cache_key
+            except Exception:
+                exact_cache_dir = None
+        restored = _restore_hailo_v2_artifact_store_exact(
+            destination=hef_path,
+            cache_dir=exact_cache_dir,
+            cache_key=cache_key,
+            cache_payload=cache_payload,
+            preprocessing_sha256=preprocessing_sha256,
+            source_onnx_sha256=source_onnx_sha256,
+            net_name=str(net_name),
+            hw_arch=str(hw_arch_eff),
+            legacy_cache_key=legacy_cache_key,
+            legacy_cache_payload=legacy_cache_payload,
+            allow_legacy_v2=legacy_v2_eligible,
+            diagnostics=artifact_store_diagnostics, read_only=read_only_probe,
+        )
+        if restored is not None:
+            restored_receipt = dict(restored.get("build_receipt") or {})
+            hit_payload = {
+                "source": "artifact_store_exact_v2",
+                "compiler_dispatch_count": 0, "cache_hit": True,
+                "cache_source": "artifact_store_exact_v2",
+                "cache_key": cache_key,
+                "cache_dir": str(exact_cache_dir or ""),
+                "cache_backfilled": bool(restored.get("cache_backfilled")),
+                "requested_count": int(calib_count),
+                "payload": cache_payload,
+                "preprocessing_contract": preprocessing_contract_eff,
+                "preprocessing_contract_sha256": preprocessing_sha256,
+                "artifact_id": restored.get("artifact_id"),
+                "contract_hash": restored.get("contract_hash"),
+                "artifact_hash": restored.get("artifact_hash"),
+                "build_receipt": restored_receipt,
+            }
+            try:
+                _atomic_write_json(out_dir / "hailo_cache_hit.json", hit_payload)
+            except Exception:
+                pass
+            print(
+                f"[hailo-cache] HIT role=hef model={net_name} "
+                f"identity={cache_key} reason=artifact_store_receipt_verified "
+                f"artifact={hef_path} hw_arch={hw_arch_eff}",
+                flush=True,
+            )
+            return HailoHefBuildResult(
+                ok=True,
+                elapsed_s=time.time() - t0,
+                hw_arch=str(hw_arch_eff),
+                net_name=str(net_name),
+                backend="artifact_store",
+                hef_path=str(hef_path),
+                fixed_onnx_path=str(fixed_path) if fixed_path else None,
+                fixup_report=fixup_report,
+                skipped=True,
+                calib_info=hit_payload,
+                details={
+                    "compiler_dispatch_count": 0, "cache_hit": True,
+                    "cache_source": "artifact_store_exact_v2",
+                    "cache_key": cache_key,
+                    "cache_dir": str(exact_cache_dir or ""),
+                    "artifact_store_restore": dict(restored),
+                },
+            )
+
+    bundle_statuses = {
+        "destination": _hailo_cache_bundle_status(hef_path),
+        "exact_v3": _hailo_cache_bundle_status(_hailo_cache_root() / cache_key / "compiled.hef"),
+        "legacy_v2": _hailo_cache_bundle_status(_hailo_cache_root() / legacy_cache_key / "compiled.hef"),
+    }
+    cache_miss_reason = (
+        "force_rebuild_requested" if bool(force)
+        else "cache_disabled" if not cache_enabled
+        else str(artifact_store_diagnostics.get("status"))
+        if artifact_store_diagnostics.get("status") in {"conflicting_valid_duplicates", "all_candidates_invalid", "legacy_unsealed"}
+        else "legacy_unsealed"
+        if any(item.get("status") == "legacy_unsealed" for item in bundle_statuses.values())
+        else "not_found_or_receipt_invalid"
+    )
+    print(
+        f"[hailo-cache] MISS role=hef model={net_name} "
+        f"identity={cache_key} reason={cache_miss_reason} "
+        f"artifact={hef_path} hw_arch={hw_arch_eff}",
+        flush=True,
+    )
+
+    # A verified positive HEF above always wins.  Negative evidence uses the
+    # same exact v3 payload, including compiler/recipe/calibration identity.
+    # force=True is used by automatic retries too and must not bypass it.
+    from .hailo_negative_evidence import lookup_before_compile
+    negative_info = lookup_before_compile(
+        cache_payload=cache_payload, cache_key=cache_key,
+        source_onnx=onnx_path, net_name=net_name, hw_arch=hw_arch_eff,
+        force=bool(force),
+        authoritative_sdk=bool(negative_evidence_identity_authoritative),
+        publish_artifacts=publish_artifacts,
+    )
+    if negative_info.get("compiler_dispatch_allowed") is False:
+        negative_hit = bool(negative_info.get("negative_evidence_hit"))
+        info = {
+            "cache_hit": False, "cache_only": bool(cache_only),
+            "negative_evidence_hit": negative_hit,
+            "build_evidence": negative_info, "cache_key": cache_key,
+            "payload": cache_payload, "net_name": net_name, "hw_arch": hw_arch_eff,
+            "reason": str(negative_info.get("state") or negative_info.get("reason") or ""),
+            "compiler_dispatch_allowed": False,
+            "compiler_dispatch_count": 0,
+        }
+        try:
+            _atomic_write_json(out_dir / "hailo_negative_evidence.json", info)
+        except Exception as exc:
+            log.warning("[build-evidence] failed to write run diagnostic: %s", exc)
+        return _make_hef_result(
+            ok=False, elapsed_s=time.time() - t0, hw_arch=str(hw_arch_eff),
+            net_name=str(net_name), backend="local", skipped=True,
+            failure_kind=("known_negative_build_evidence" if negative_hit else
+                          "build_evidence_" + str(negative_info.get("status") or "error").lower()),
+            unsupported_reason=str(negative_info.get("state") or "") if negative_hit else None,
+            error=(f"Exact build evidence prevents repeated compiler attempt: "
+                   f"{negative_info.get('state') or negative_info.get('status')} "
+                   f"({negative_info.get('reason')})"),
+            last_stage="build_evidence_lookup", timed_out=False,
+            calib_info=info, details=info,
+            fixed_onnx_path=str(fixed_path) if fixed_path else None,
+            fixup_report=fixup_report,
+        )
+
+    if bool(cache_only):
+        cache_root_text = ""
+        exact_cache_dir_text = str(cache_dir or "")
+        legacy_cache_dir_text = ""
+        exact_cache_hef_present = False
+        exact_cache_receipt_present = False
+        legacy_cache_hef_present = False
+        legacy_cache_receipt_present = False
+        try:
+            cache_root = _hailo_cache_root()
+            cache_root_text = str(cache_root)
+            exact_cache_dir = cache_dir or (cache_root / cache_key)
+            legacy_cache_dir = cache_root / legacy_cache_key
+            exact_cache_dir_text = str(exact_cache_dir)
+            legacy_cache_dir_text = str(legacy_cache_dir)
+            exact_cached_hef = exact_cache_dir / "compiled.hef"
+            legacy_cached_hef = legacy_cache_dir / "compiled.hef"
+            exact_cache_hef_present = exact_cached_hef.is_file()
+            exact_cache_receipt_present = _hailo_receipt_path(
+                exact_cached_hef
+            ).is_file()
+            legacy_cache_hef_present = legacy_cached_hef.is_file()
+            legacy_cache_receipt_present = _hailo_receipt_path(
+                legacy_cached_hef
+            ).is_file()
+        except Exception as diagnostic_exc:
+            if not cache_lookup_error:
+                cache_lookup_error = (
+                    f"{type(diagnostic_exc).__name__}: {diagnostic_exc}"
+                )
+
+        diagnostic_path = out_dir / "hailo_cache_miss.json"
+        diagnostic = {
+            "schema": "onnx-splitpoint/hailo-cache-miss/v1",
+            "status": (
+                "cache_miss_blocked" if policy_cache_verify else "cache_miss"
+            ),
+            "artifact_kind": "hailo_hef",
+            "reason": cache_miss_reason,
+            "bundle_statuses": bundle_statuses,
+            "artifact_store_candidates": artifact_store_diagnostics,
+            "net_name": str(net_name),
+            "hw_arch": str(hw_arch_eff),
+            "cache_key_v3": cache_key,
+            "cache_payload_v3": cache_payload,
+            "cache_key_v2": legacy_cache_key,
+            "cache_payload_v2": legacy_cache_payload,
+            "cache_root": cache_root_text,
+            "probe_outcomes": {
+                "destination_hef_present": hef_path.is_file(),
+                "destination_receipt_present": _hailo_receipt_path(
+                    hef_path
+                ).is_file(),
+                "exact_v3_cache_dir": exact_cache_dir_text,
+                "exact_v3_hef_present": exact_cache_hef_present,
+                "exact_v3_receipt_present": exact_cache_receipt_present,
+                "legacy_v2_cache_dir": legacy_cache_dir_text,
+                "legacy_v2_hef_present": legacy_cache_hef_present,
+                "legacy_v2_receipt_present": legacy_cache_receipt_present,
+                "artifact_store_restored": False,
+                "cache_lookup_error": cache_lookup_error,
+            },
+            "compiler_dispatch_allowed": False,
+            # Execution provenance only: copied from the effective prepared
+            # builder contract, never added to either cache identity.
+            "workspace_contract": {
+                "out_dir": str(out_dir.resolve()),
+                "effective_calibration_count": int(effective_calib_count),
+                "calibration_identity_shapes": calibration_identity_shapes,
+                "calibration_storage": calibration_storage,
+                "source": "prepared_hailo_build_contract",
+            },
+        }
+        try:
+            _atomic_write_json(diagnostic_path, diagnostic)
+            diagnostic_path_text = str(diagnostic_path)
+        except Exception:
+            diagnostic_path_text = ""
+        info = {
+            'cache_hit': False,
+            'cache_only': True,
+            'reason': cache_miss_reason,
+            'bundle_statuses': bundle_statuses,
+            'artifact_store_candidates': artifact_store_diagnostics,
+            'cache_key': cache_key,
+            'cache_dir': str(cache_dir or ''),
+            'requested_count': int(calib_count),
+            'payload': cache_payload,
+            'diagnostic_path': diagnostic_path_text,
+            'build_evidence': negative_info,
+            'workspace_contract': diagnostic['workspace_contract'],
+            'compiler_dispatch_count': 0,
+        }
+        if policy_cache_verify:
+            return _make_hef_result(
+                ok=False,
+                elapsed_s=time.time() - t0,
+                hw_arch=str(hw_arch_eff),
+                net_name=str(net_name),
+                backend="local",
+                skipped=True,
+                failure_kind="cache_miss_blocked",
+                unsupported_reason="cache_verify_only_policy",
+                error=cache_miss_blocked_message(
+                    "hailo_dfc",
+                    f"exact cache miss key={cache_key[:12]} "
+                    f"net={net_name} hw_arch={hw_arch_eff}",
+                ),
+                last_stage="cache_lookup",
+                timed_out=False,
+                calib_info=info,
+                details=info,
+                fixed_onnx_path=str(fixed_path) if fixed_path else None,
+                fixup_report=fixup_report,
+            )
+        return _make_hef_result(
+            ok=False, elapsed_s=time.time() - t0, hw_arch=str(hw_arch_eff),
+            net_name=str(net_name), backend='local', skipped=True,
+            failure_kind='deferred_cold_full_cache_miss',
+            unsupported_reason='cache_only_policy',
+            error='Smoke cold-build policy deferred a Hailo Full cache miss.',
+            last_stage='cache_lookup', timed_out=False, calib_info=info,
+            details=info,
+            fixed_onnx_path=str(fixed_path) if fixed_path else None, fixup_report=fixup_report,
+        )
+
+    workspace_preflight = hailo_dfc_workspace_preflight(
+        out_dir,
+        calibration_count=int(effective_calib_count),
+        input_shapes=calibration_identity_shapes,
+    )
+    workspace_preflight_path = out_dir / "hailo_dfc_workspace_preflight.json"
+    try:
+        _atomic_write_json(workspace_preflight_path, workspace_preflight)
+    except Exception:
+        pass
+    if workspace_preflight.get("status") in {"failed", "unknown"}:
+        problems = ";".join(
+            str(value) for value in workspace_preflight.get("problems") or []
+        )
+        return _make_hef_result(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch_eff),
+            net_name=str(net_name),
+            backend="local",
+            error=(
+                "Local Hailo DFC workspace preflight failed before compiler "
+                f"dispatch: {problems}"
+            ),
+            failure_kind=("local_dfc_workspace_unresolved"
+                          if workspace_preflight.get("status") == "unknown"
+                          else "local_dfc_workspace_insufficient"),
+            last_stage="local_dfc_workspace_preflight",
+            timed_out=False,
+            fixed_onnx_path=str(fixed_path) if fixed_path else None,
+            fixup_report=fixup_report,
+            details={
+                "workspace_preflight": workspace_preflight,
+                "workspace_preflight_path": str(workspace_preflight_path),
+                "compiler_dispatch_count": 0,
+                "compiler_dispatched": False,
+            },
+        )
+
+    # Keep the proprietary SDK import call-local.  Controller hosts without DFC
+    # must still be able to import this module, and cache-only Smoke runs must
+    # be able to defer a cold Full build before the SDK is imported.
+    compiler_context_effective: Dict[str, Any] = {}
+    try:
+        from .hailo_compiler_context import validate_compiler_child_environment
+        if "ONNX_SPLITPOINT_HAILO_RESOLVED_COMPILER_CONTEXT" in os.environ:
+            compiler_context_effective = validate_compiler_child_environment()
+        from hailo_sdk_client import ClientRunner  # type: ignore
+    except Exception as e:
+        return _make_hef_result(
+            ok=False, elapsed_s=time.time() - t0, hw_arch=str(hw_arch_eff),
+            net_name=str(net_name), backend='local',
+            error=f'Hailo SDK initialization failed: {e}', failure_kind=getattr(e, 'reason', 'sdk_unavailable'),
+            last_stage='compiler_context' if hasattr(e, 'reason') else 'sdk_import', timed_out=False,
+            details={'compiler_dispatch_count': 0, 'compiler_context': compiler_context_effective, 'context_error': getattr(e, 'details', {})},
+            fixed_onnx_path=str(fixed_path) if fixed_path else None,
+            fixup_report=fixup_report,
+        )
+
+    phase_events: List[Dict[str, Any]] = []
+    phase_started = time.monotonic()
+    def phase_start(name: str) -> None:
+        nonlocal phase_started
+        phase_started = time.monotonic()
+        phase_events.append({"phase": name, "state": "started", "event": "started", "timestamp": time.time(),
+                             "monotonic_s": phase_started, "monotonic": phase_started, "pid": os.getpid()})
+        try:
+            _atomic_write_json(out_dir / "hailo_build_phases.json", {"events": phase_events})
+        except OSError as exc:
+            log.warning("[hailo][phases] could not persist phase evidence: %s", exc)
+    def phase_finish(name: str, state: str = "completed") -> None:
+        phase_events.append({"phase": name, "state": state, "event": state, "timestamp": time.time(),
+                             "monotonic_s": time.monotonic(), "monotonic": time.monotonic(), "elapsed_s": max(0.0, time.monotonic()-phase_started),
+                             "pid": os.getpid()})
+        try:
+            _atomic_write_json(out_dir / "hailo_build_phases.json", {"events": phase_events})
+        except OSError as exc:
+            log.warning("[hailo][phases] could not persist phase evidence: %s", exc)
+    active_dfc_stage = "sdk_initialization"
+    phase_start(active_dfc_stage)
     try:
         runner = ClientRunner(hw_arch=str(hw_arch_eff))
         translate_kwargs = _apply_translate_node_overrides({
@@ -3714,7 +7584,13 @@ def hailo_build_hef(
             'net_input_shapes': net_input_shapes,
             'disable_rt_metadata_extraction': bool(disable_rt_metadata_extraction),
         }, start_node_names=start_node_names, end_node_names=end_node_names)
-        runner.translate_onnx_model(**translate_kwargs)
+        phase_finish(active_dfc_stage)
+        active_dfc_stage = "translate"
+        phase_start(active_dfc_stage)
+        print(f"[hailo][translate] start net={net_name} hw_arch={hw_arch_eff}", flush=True)
+        _run_with_hailo_heartbeat(f"translate net={net_name}", lambda: runner.translate_onnx_model(**translate_kwargs))
+        print(f"[hailo][translate] done net={net_name}", flush=True)
+        phase_finish(active_dfc_stage)
 
         parsed_har = out_dir / "parsed.har"
         if keep_artifacts:
@@ -3724,6 +7600,8 @@ def hailo_build_hef(
                 pass
 
         # Build calibration dataset
+        active_dfc_stage = "calibration_materialization"
+        phase_start(active_dfc_stage)
         hn = runner.get_hn_dict() or {}
         hn_layers = hn.get("layers") or {}
         if not isinstance(hn_layers, dict):
@@ -3758,11 +7636,36 @@ def hailo_build_hef(
                 shp = [1]
             expected_shapes[in_name] = [int(x) for x in shp]
 
-        # Decide an effective calib_count that won't explode memory
-        eff_count = int(calib_count)
-        for shp in expected_shapes.values():
-            eff_count = min(eff_count, _clamp_calib_count(shp, int(calib_count)))
-        eff_count = max(1, eff_count)
+        image_preprocess_eff = _infer_hailo_image_preprocess(
+            model_path=onnx_path,
+            expected_shapes=expected_shapes,
+            activation_part1_onnx=activation_part1_onnx_p,
+        )
+        if str(image_preprocess_eff) != str(
+            preprocessing_contract_eff.get("image_scale") or ""
+        ):
+            raise RuntimeError(
+                "Hailo numeric image preprocessing contradicts the sealed task contract: "
+                f"resolved={image_preprocess_eff!r} "
+                f"contract={preprocessing_contract_eff.get('image_scale')!r}"
+            )
+        try:
+            print(f"[hailo][calib] image_preprocess={image_preprocess_eff}")
+        except Exception:
+            pass
+
+        # v60o: Smoke keeps the memory cap; Standard/Final use disk-backed
+        # calibration tensors so requested counts (e.g. 500 detector images)
+        # are not silently reduced to ~54 samples.
+        eff_count = _verify_hailo_calibration_count_after_translation(
+            sealed_effective_count=effective_calib_count,
+            requested=int(calib_count),
+            expected_shapes=expected_shapes,
+            storage=calibration_storage,
+            cap_bytes=calibration_memory_cap,
+            available_sample_count=calibration_available_count,
+        )
+        calib_temp_paths: List[Path] = []
 
         used_dir = False
         used_activation = False
@@ -3789,12 +7692,26 @@ def hailo_build_hef(
             # fallback only for models without a Part1 activation source.
             if activation_part1_onnx_p is not None:
                 try:
-                    activation_part2_names, calib_by_part2_input, activation_debug = _build_activation_calib_from_part1_onnx(
-                        part1_onnx=activation_part1_onnx_p,
-                        part2_onnx=model_for_parse,
-                        calib_dir=calib_dir_p,
-                        limit=eff_count,
-                        gen_batch=max(1, int(activation_gen_batch)),
+                    print(
+                        f"[hailo][activation] start net={net_name} hw_arch={hw_arch_eff} "
+                        f"source=part1 limit={eff_count} batch={max(1, int(activation_gen_batch))}",
+                        flush=True,
+                    )
+                    activation_part2_names, calib_by_part2_input, activation_debug = _run_with_hailo_heartbeat(
+                        f"activation_calibration net={net_name}",
+                        lambda: _build_activation_calib_from_part1_onnx(
+                            part1_onnx=activation_part1_onnx_p,
+                            part2_onnx=model_for_parse,
+                            calib_dir=calib_dir_p,
+                            limit=eff_count,
+                            gen_batch=max(1, int(activation_gen_batch)),
+                            input_preprocess=str(image_preprocess_eff),
+                            preprocessing_contract=preprocessing_contract_eff,
+                        ),
+                    )
+                    print(
+                        f"[hailo][activation] done net={net_name} inputs={len(activation_part2_names or [])}",
+                        flush=True,
                     )
                     if len(activation_part2_names) != len(input_layers):
                         raise RuntimeError(
@@ -3826,6 +7743,19 @@ def hailo_build_hef(
                         (out_dir / 'calib_activations_shapes.json').write_text(json.dumps(activation_debug, indent=2), encoding='utf-8')
                     except Exception:
                         pass
+                    proxy_manifest_path = _write_activation_proxy_cache_manifest(
+                        out_dir=out_dir,
+                        part1_onnx=activation_part1_onnx_p,
+                        part2_onnx=model_for_parse,
+                        calib_dir=calib_dir_p,
+                        calib_arrays_by_part2_input=calib_by_part2_input,
+                        activation_debug=activation_debug,
+                        eff_count=int(eff_count),
+                        gen_batch=max(1, int(activation_gen_batch)),
+                        stage2_backend=str(hw_arch_eff),
+                    )
+                    if proxy_manifest_path:
+                        activation_debug['activation_proxy_cache_manifest'] = proxy_manifest_path
                     used_activation = True
                 except Exception as exc:
                     msg = (
@@ -3863,7 +7793,14 @@ def hailo_build_hef(
                     )
             elif len(input_layers) == 1:
                 in0 = input_layers[0]
-                ds = _try_build_calib_from_dir(calib_dir=calib_dir_p, expected_shape=expected_shapes[in0], limit=eff_count)
+                memmap_path = out_dir / f"{net_name}_calibration_float32.mmap" if calibration_storage == 'memmap' else None
+                ds = _try_build_calib_from_dir(
+                    calib_dir=calib_dir_p, expected_shape=expected_shapes[in0], limit=eff_count,
+                    preprocess=str(image_preprocess_eff), storage_mode=calibration_storage, memmap_path=memmap_path,
+                    preprocessing_contract=preprocessing_contract_eff,
+                )
+                if ds is not None and memmap_path is not None:
+                    calib_temp_paths.append(memmap_path)
                 if ds is not None:
                     calib_inputs[in0] = ds
                     used_dir = True
@@ -3872,27 +7809,85 @@ def hailo_build_hef(
             rng = np.random.default_rng(0)
             for in_name in input_layers:
                 shp = expected_shapes[in_name]
-                ds = rng.random((eff_count, *shp), dtype=np.float32)
-                calib_inputs[in_name] = np.ascontiguousarray(ds)
+                if calibration_storage == 'memmap':
+                    fd, raw_path = tempfile.mkstemp(prefix='splitpoint_hailo_random_', suffix='.mmap', dir=str(out_dir))
+                    os.close(fd)
+                    ds = np.memmap(raw_path, dtype=np.float32, mode='w+', shape=(eff_count, *shp))
+                    chunk = max(1, min(16, eff_count))
+                    for pos in range(0, eff_count, chunk):
+                        stop = min(eff_count, pos + chunk)
+                        ds[pos:stop] = rng.random((stop - pos, *shp), dtype=np.float32)
+                    ds.flush()
+                    calib_temp_paths.append(Path(raw_path))
+                    calib_inputs[in_name] = ds
+                else:
+                    ds = rng.random((eff_count, *shp), dtype=np.float32)
+                    calib_inputs[in_name] = np.ascontiguousarray(ds)
 
-        # Determine batch size
-        bs = max(1, min(int(calib_batch_size), int(eff_count)))
+        actual_count = _verify_hailo_materialized_calibration_count(
+            sealed_effective_count=int(eff_count),
+            calib_inputs=calib_inputs,
+        )
+        # Determine batch size from the materialised dataset, not the requested count.
+        bs = max(1, min(int(calib_batch_size), int(actual_count)))
         if used_activation:
             calib_meta['source'] = 'activation_from_part1'
             calib_meta['activation_part1_onnx'] = str(activation_part1_onnx_p) if activation_part1_onnx_p is not None else None
             calib_meta['activation_gen_batch'] = int(max(1, int(activation_gen_batch)))
             if activation_debug is not None:
                 calib_meta['activation_debug_path'] = str(out_dir / 'calib_activations_shapes.json')
+                if activation_debug.get('activation_proxy_cache_manifest'):
+                    calib_meta['activation_proxy_cache_manifest'] = str(activation_debug.get('activation_proxy_cache_manifest'))
+                _ap_source = str(activation_debug.get('activation_proxy_source') or 'ort_cpu_reference_proxy')
+                calib_meta['activation_calibration_source'] = _ap_source
+                calib_meta['trust_level'] = 'proxy'
+                calib_meta['producer_backend'] = str(activation_debug.get('activation_proxy_producer_backend') or 'ort_cpu')
+                calib_meta['requested_backend'] = str(activation_debug.get('activation_proxy_requested_backend') or 'ort_cpu')
+                calib_meta['producer_exact'] = False
+                calib_meta['providers_requested'] = list(activation_debug.get('activation_proxy_providers_requested') or [])
+                calib_meta['available_providers'] = list(activation_debug.get('activation_proxy_available_providers') or [])
+                if activation_debug.get('activation_proxy_provider_fallback'):
+                    calib_meta['provider_fallback_reason'] = str(activation_debug.get('activation_proxy_provider_fallback'))
         else:
             calib_meta['source'] = str(calib_dir_p) if used_dir and calib_dir_p is not None else 'random'
-        calib_meta['used_count'] = int(next(iter(calib_inputs.values())).shape[0]) if calib_inputs else int(eff_count)
+        calib_meta['image_preprocess'] = str(image_preprocess_eff)
+        calib_meta['preprocessing_contract'] = dict(preprocessing_contract_eff)
+        calib_meta['preprocessing_contract_sha256'] = str(preprocessing_sha256)
+        calib_meta['requested_count'] = int(calib_count)
+        calib_meta['effective_count'] = int(eff_count)
+        calib_meta['available_sample_count'] = (
+            int(calibration_available_count)
+            if calibration_available_count is not None else None
+        )
+        calib_meta['available_sample_count_source'] = str(
+            calibration_available_count_source
+        )
+        calib_meta['clamped'] = bool(int(eff_count) < int(calib_count))
+        clamp_reasons: List[str] = []
+        if memory_limited_calib_count < int(calib_count):
+            clamp_reasons.append('memory_cap')
+        if (
+            calibration_available_count is not None
+            and int(calibration_available_count)
+            < memory_limited_calib_count
+        ):
+            clamp_reasons.append(
+                f'available_samples:{calibration_available_count_source}'
+            )
+        calib_meta['clamped_reason'] = '+'.join(clamp_reasons)
+        calib_meta['storage_mode'] = calibration_storage
+        calib_meta['calibration_memory_cap_bytes'] = int(
+            calibration_memory_cap
+        )
+        calib_meta['effective_requested_count'] = int(eff_count)
+        calib_meta['used_count'] = int(actual_count)
         calib_meta['batch_size'] = int(bs)
         for k, shp in expected_shapes.items():
             calib_meta['inputs'][k] = {'shape': list(shp)}
 
         model_script = (
             f"model_optimization_flavor(optimization_level={int(opt_level)}, batch_size={int(bs)})\n"
-            f"model_optimization_config(calibration, batch_size={int(bs)}, calibset_size={int(eff_count)})\n"
+            f"model_optimization_config(calibration, batch_size={int(bs)}, calibset_size={int(actual_count)})\n"
         )
         extra_script = str(extra_model_script or "").strip()
         if extra_script:
@@ -3901,7 +7896,40 @@ def hailo_build_hef(
                 model_script += "\n"
         runner.load_model_script(model_script)
 
-        runner.optimize(calib_inputs)
+        phase_finish(active_dfc_stage)
+        active_dfc_stage = "optimize"
+        phase_start(active_dfc_stage)
+        print(
+            f"[hailo][optimize] start net={net_name} hw_arch={hw_arch_eff} "
+            f"calib_source={calib_meta.get('source')} used_count={calib_meta.get('used_count')} "
+            f"batch_size={calib_meta.get('batch_size')} opt_level={int(opt_level)}",
+            flush=True,
+        )
+        _run_with_hailo_heartbeat(f"optimize net={net_name}", lambda: runner.optimize(calib_inputs))
+        print(f"[hailo][optimize] done net={net_name}", flush=True)
+        phase_finish(active_dfc_stage)
+        # The SDK consumed calibration synchronously. Release disk-backed arrays
+        # before compilation so multi-model runs do not accumulate GiB-sized files.
+        if calib_temp_paths:
+            import gc
+            for _arr in list(calib_inputs.values()):
+                try:
+                    if isinstance(_arr, np.memmap):
+                        _arr.flush()
+                        if getattr(_arr, '_mmap', None) is not None:
+                            _arr._mmap.close()
+                except Exception:
+                    pass
+            calib_inputs.clear()
+            gc.collect()
+            for _tmp in calib_temp_paths:
+                try:
+                    _tmp.unlink(missing_ok=True)
+                except TypeError:
+                    if _tmp.exists():
+                        _tmp.unlink()
+                except Exception:
+                    pass
 
         quant_har = out_dir / "quantized.har"
         if keep_artifacts:
@@ -3910,8 +7938,76 @@ def hailo_build_hef(
             except Exception:
                 pass
 
-        hef_bytes = runner.compile()
-        hef_path.write_bytes(hef_bytes)
+        active_dfc_stage = "compile"
+        phase_start(active_dfc_stage)
+        print(f"[hailo][compile] start net={net_name} hw_arch={hw_arch_eff}", flush=True)
+        hef_bytes = _run_with_hailo_heartbeat(f"compile net={net_name}", lambda: runner.compile())
+        print(f"[hailo][compile] done net={net_name} bytes={len(hef_bytes) if hef_bytes is not None else 'none'}", flush=True)
+        if not hef_bytes:
+            raise RuntimeError("hailo_compiler_empty_hef")
+        phase_finish(active_dfc_stage)
+        active_dfc_stage = "publication"
+        phase_start(active_dfc_stage)
+        # Never write through the public HEF symlink: a forced rebuild must
+        # preserve the prior immutable generation until the full tuple commits.
+        with tempfile.TemporaryDirectory(prefix=".hailo-compile-", dir=out_dir) as stage_dir:
+            staged_hef = Path(stage_dir) / "compiled.hef"
+            staged_hef.write_bytes(hef_bytes)
+            hef_validation = (_inspect_hailo_diagnostic_hef(staged_hef) if not publish_artifacts
+                              else {"status": "not_run", "reason": "regular_compiler_receipt_contract"})
+            calib_meta["hef_validation"] = hef_validation
+            if hef_validation["status"] == "failed":
+                raise RuntimeError("hailo_diagnostic_hef_validation_failed:" + json.dumps(hef_validation, sort_keys=True))
+            build_receipt = _write_hailo_receipt(
+                hef_path=staged_hef,
+                source_onnx=onnx_path,
+                compiler_onnx=model_for_parse,
+                hw_arch=str(hw_arch_eff),
+                net_name=str(net_name),
+                preprocessing_contract=preprocessing_contract_eff,
+                preprocessing_sha256=preprocessing_sha256,
+                cache_key=cache_key,
+                cache_payload=cache_payload,
+                calibration_identity=str(cache_payload.get('calibration_identity') or 'none'),
+                calibration_count=int(actual_count),
+            )
+            build_receipt.update({"compiler_context": compiler_context_effective,
+                                  "phase_events": list(phase_events),
+                                  "publish_artifacts": publish_artifacts,
+                                  "diagnostic_only": not publish_artifacts,
+                                  "hef_validation": hef_validation})
+            _atomic_write_json(_hailo_receipt_path(staged_hef), build_receipt)
+            committed_hef = _publish_hailo_bundle(
+                source_hef=staged_hef, destination=hef_path, receipt=build_receipt,
+                source="compiler",
+            )
+        phase_finish(active_dfc_stage)
+        calib_meta.update({"compiler_dispatch_count": 1, "compiler_context": compiler_context_effective,
+                           "phase_events": phase_events, "publish_artifacts": publish_artifacts,
+                           "gpu_execution_status": "gpu_execution_unproven" if compiler_context_effective.get("device") == "gpu" else "not_requested"})
+        calib_meta['build_receipt'] = build_receipt
+        calib_meta['build_receipt_path'] = str(_hailo_receipt_path(committed_hef))
+        calib_meta['cache_hit'] = False
+        calib_meta['cache_key'] = cache_key
+        if cache_enabled and cache_dir is not None and cache_key:
+            cache_backfilled = _backfill_hailo_exact_cache(
+                cache_dir=cache_dir, hef_path=committed_hef,
+                receipt=build_receipt, cache_key=cache_key,
+                cache_payload=cache_payload, preprocessing_sha256=preprocessing_sha256,
+                source_onnx_sha256=source_onnx_sha256, net_name=str(net_name),
+                hw_arch=str(hw_arch_eff),
+            )
+            calib_meta['cache_bundle_backup'] = "sealed" if cache_backfilled else "failed"
+            if not cache_backfilled:
+                calib_meta['cache_backup_error'] = "atomic_cache_bundle_backup_failed"
+                log.warning("[hailo][cache] HEF build succeeded but bundle backup failed: %s", cache_dir)
+
+        print(
+            f"[hailo-cache] BUILD role=hef model={net_name} "
+            f"identity={cache_key} reason={cache_miss_reason} "
+            f"artifact={hef_path} hw_arch={hw_arch_eff}",
+            flush=True,
+        )
 
         return HailoHefBuildResult(
             ok=True,
@@ -3926,9 +8022,34 @@ def hailo_build_hef(
             fixup_report=fixup_report,
             skipped=False,
             calib_info=calib_meta,
+            details={
+                'hef_validation': hef_validation,
+                'compiler_dispatch_count': 1,
+                'phase_events': phase_events,
+                'compiler_context': compiler_context_effective,
+                'publish_artifacts': publish_artifacts,
+                'cache_hit': False,
+                'cache_key': cache_key or None,
+                'cache_dir': str(cache_dir) if cache_dir is not None else None,
+                'preprocessing_contract': preprocessing_contract_eff,
+                'preprocessing_contract_sha256': preprocessing_sha256,
+                'build_receipt': build_receipt,
+            },
         )
 
     except Exception as e:
+        phase_finish(active_dfc_stage, "failed")
+        for array in list(locals().get("calib_inputs", {}).values()):
+            try:
+                if isinstance(array, np.memmap) and getattr(array, "_mmap", None) is not None:
+                    array._mmap.close()
+            except Exception:
+                pass
+        for path in locals().get("calib_temp_paths", []):
+            try:
+                Path(path).unlink(missing_ok=True)
+            except OSError:
+                pass
         err = str(e)
         # Helpful hint for a very common binary-compatibility issue in WSL/Linux.
         # Example: "libc.so.6: version GLIBC_2.34 not found".
@@ -3940,7 +8061,8 @@ def hailo_build_hef(
                 + "Use a newer distro (e.g. Ubuntu 22.04/24.04) and provision the DFC venv there, "
                 + "or (on Windows) set the GUI 'WSL distro' field to that newer distro."
             )
-        return HailoHefBuildResult(
+        classification = _classify_hailo_failure_text(err)
+        return _make_hef_result(
             ok=False,
             elapsed_s=time.time() - t0,
             hw_arch=str(hw_arch_eff),
@@ -3949,6 +8071,9 @@ def hailo_build_hef(
             error=err,
             fixed_onnx_path=str(fixed_path) if fixed_path is not None else None,
             fixup_report=fixup_report,
+            last_stage=active_dfc_stage,
+            details={"compiler_dispatch_count": 1, "phase_events": phase_events, "compiler_context": compiler_context_effective, "publish_artifacts": publish_artifacts},
+            **classification,
         )
 
 
@@ -3958,6 +8083,7 @@ def hailo_build_hef_via_wsl(
     hw_arch: str = "hailo8",
     net_name: Optional[str] = None,
     outdir: Optional[Union[str, Path]] = None,
+    net_input_shapes: Optional[Union[List[int], Dict[str, List[int]]]] = None,
     fixup: bool = True,
     add_conv_defaults: bool = True,
     disable_rt_metadata_extraction: bool = True,
@@ -3968,10 +8094,18 @@ def hailo_build_hef_via_wsl(
     activation_part1_onnx: Optional[Union[str, Path]] = None,
     activation_gen_batch: int = 8,
     force: bool = False,
+    cache_only: bool = False,
     keep_artifacts: bool = False,
+    publish_artifacts: bool = True,
+    compute_device: Optional[str] = None,
+    gpu_selector: Optional[str] = None,
+    compute_by_family: Optional[Mapping[str, Any]] = None,
+    compiler_context: Optional[Mapping[str, Any]] = None,
     extra_model_script: Optional[str] = None,
     start_node_names: Optional[Sequence[str]] = None,
     end_node_names: Optional[Sequence[str]] = None,
+    task: Optional[str] = None,
+    preprocessing_contract: Optional[Union[Mapping[str, Any], str]] = None,
     # WSL bridge settings
     wsl_distro: Optional[str] = None,
     wsl_venv_activate: str = "auto",
@@ -3980,10 +8114,45 @@ def hailo_build_hef_via_wsl(
 ) -> HailoHefBuildResult:
     """Build a HEF inside WSL (Windows host -> WSL2 backend)."""
 
+    force = parse_config_bool(force, field="hailo_build.force_build")
+    publish_artifacts = parse_config_bool(publish_artifacts, field="hailo_build.publish_artifacts")
+    if not publish_artifacts or compute_device is not None or gpu_selector is not None or compute_by_family is not None or compiler_context is not None:
+        return _make_hef_result(ok=False, elapsed_s=0.0, hw_arch=str(hw_arch),
+            net_name=str(net_name or Path(onnx_path).stem), backend="wsl",
+            failure_kind="hailo_compute_requires_managed_child", last_stage="compiler_context",
+            error="Explicit family compute and isolated diagnostics require running backend='venv' inside Linux/WSL.")
     t0 = time.time()
     onnx_path = Path(onnx_path)
-    if net_name is None:
-        net_name = onnx_path.stem
+    net_name = str(net_name or onnx_path.stem).strip()
+    if not net_name:
+        return _make_hef_result(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name="",
+            backend="wsl",
+            failure_kind="invalid_build_contract",
+            error="Hailo net_name must be non-empty after normalization",
+            last_stage="cache_contract",
+            timed_out=False,
+        )
+    try:
+        net_input_shapes_eff = (
+            _normalize_hailo_net_input_shapes(net_input_shapes)
+            if net_input_shapes is not None else None
+        )
+    except ValueError as exc:
+        return _make_hef_result(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=net_name,
+            backend="wsl",
+            failure_kind="invalid_build_contract",
+            error=f"Invalid Hailo net_input_shapes: {exc}",
+            last_stage="cache_contract",
+            timed_out=False,
+        )
 
     activation_part1_onnx_p = Path(activation_part1_onnx).expanduser().resolve() if activation_part1_onnx else None
     if activation_part1_onnx_p is not None:
@@ -4002,7 +8171,7 @@ def hailo_build_hef_via_wsl(
                 calib_info={'source': 'activation_from_part1', 'preflight': preflight},
             )
 
-    hard_timeout_s, idle_timeout_s = _resolve_hef_timeout_policy(int(wsl_timeout_s))
+    hard_timeout_s, idle_timeout_s = _resolve_hef_timeout_policy(wsl_timeout_s)
 
     if sys.platform != "win32":
         return HailoHefBuildResult(
@@ -4073,12 +8242,40 @@ def hailo_build_hef_via_wsl(
 
     venv_activate = venv_eff  # do not quote '~'
 
+    preprocessing_json = (
+        json.dumps(dict(preprocessing_contract), sort_keys=True, separators=(',', ':'))
+        if isinstance(preprocessing_contract, Mapping)
+        else str(
+            preprocessing_contract
+            or os.environ.get("ONNX_SPLITPOINT_HAILO_PREPROCESSING_CONTRACT_JSON")
+            or ""
+        )
+    )
+    task_env_value = str(
+        task or os.environ.get("ONNX_SPLITPOINT_HAILO_CALIB_TASK") or ""
+    )
+
+    from .hailo_negative_evidence import child_context
+    evidence_context = child_context()
+    if evidence_context.get("full_source_onnx_path"):
+        evidence_context["full_source_onnx_path"] = windows_path_to_wsl(
+            str(evidence_context["full_source_onnx_path"])
+        )
+    evidence_root = Path(os.environ.get("ONNX_SPLITPOINT_BUILD_EVIDENCE_ROOT")
+                         or (Path.home() / ".onnx_splitpoint_tool" / "build_evidence"))
+    evidence_root_wsl = windows_path_to_wsl(str(evidence_root.resolve()))
+    evidence_json = json.dumps(evidence_context, sort_keys=True, separators=(",", ":"))
+
     cmd = (
         "set -e; "
         "echo __SPLITPOINT_WSL_BEGIN__; "
         f"source {venv_activate}; "
         "echo __SPLITPOINT_WSL_VENV_OK__; "
         "export PYTHONUNBUFFERED=1; "
+        f"export ONNX_SPLITPOINT_HAILO_CALIB_TASK={_bash_quote(task_env_value)}; "
+        f"export ONNX_SPLITPOINT_HAILO_PREPROCESSING_CONTRACT_JSON={_bash_quote(preprocessing_json)}; "
+        f"export ONNX_SPLITPOINT_BUILD_EVIDENCE_CONTEXT_JSON={_bash_quote(evidence_json)}; "
+        f"export ONNX_SPLITPOINT_BUILD_EVIDENCE_ROOT={_bash_quote(evidence_root_wsl)}; "
         # Self-heal: setuptools 82+ removed pkg_resources, but some Hailo SDK
         # components still import it.
         "python -c \"import pkg_resources\" >/dev/null 2>&1 || "
@@ -4095,10 +8292,20 @@ def hailo_build_hef_via_wsl(
         f" --calib-count {int(calib_count)}"
         f" --calib-batch-size {int(calib_batch_size)}"
         f" --force {'1' if force else '0'}"
+        f" --cache-only {'1' if cache_only else '0'}"
         f" --keep-artifacts {'1' if keep_artifacts else '0'}"
     )
     if outdir_wsl is not None:
         cmd += f" --outdir {_bash_quote(outdir_wsl)}"
+    if net_input_shapes_eff is not None:
+        cmd += (
+            " --net-input-shapes-json "
+            + _bash_quote(json.dumps(
+                net_input_shapes_eff,
+                sort_keys=True,
+                separators=(",", ":"),
+            ))
+        )
     if start_node_names:
         cmd += f" --start-node-names-json {_bash_quote(json.dumps(list(start_node_names)))}"
     if end_node_names:
@@ -4220,6 +8427,20 @@ def hailo_build_hef_via_wsl(
             rc_signed,
             dbg_path or "-",
         )
+        recovered = _recover_hef_result_from_compiled_artifact(
+            outdir,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend="wsl",
+            returncode=rc,
+            debug_log=dbg_path,
+            last_stage=run.last_stage,
+            details=_build_subprocess_detail_bundle(run, stdout, stderr, include_system_snapshot=False),
+        )
+        if recovered is not None:
+            log.info("[hailo][hef][wsl] recovered structured HEF result from compiled.hef: %s", recovered.hef_path)
+            return recovered
         return _make_hef_result(
             ok=False,
             elapsed_s=time.time() - t0,
@@ -4279,12 +8500,70 @@ def hailo_build_hef_via_wsl(
     )
 
 
+
+_HAILO_DIAGNOSTIC_PATHS = {
+    "HOME": "home", "XDG_CACHE_HOME": "cache", "XDG_CONFIG_HOME": "config",
+    "XDG_DATA_HOME": "data", "TFHUB_CACHE_DIR": "tfhub",
+    "TORCH_EXTENSIONS_DIR": "torch-extensions", "JOBLIB_TEMP_FOLDER": "joblib",
+    "XDG_STATE_HOME": "state", "TMPDIR": "tmp", "TEMP": "tmp", "TMP": "tmp",
+    "PYTHONPYCACHEPREFIX": "pycache", "NUMBA_CACHE_DIR": "numba", "TORCH_HOME": "torch",
+    "TRITON_CACHE_DIR": "triton", "CUDA_CACHE_PATH": "cuda-cache", "KERAS_HOME": "keras",
+    "MPLCONFIGDIR": "matplotlib", "ONNX_SPLITPOINT_HAILO_CACHE_ROOT": "hef-cache",
+    "ONNX_SPLITPOINT_ARTIFACT_STORE_ROOT": "artifact-store",
+    "ONNX_SPLITPOINT_BUILD_EVIDENCE_ROOT": "build-evidence",
+    "ONNX_SPLITPOINT_TOOL_ROOT": "tool-state",
+}
+
+
+def _hailo_diagnostic_child_environment(parent_env: Mapping[str, str], outdir: Path) -> Dict[str, str]:
+    """Scope all backend/framework writable state to one explicit diagnostic job.
+
+    Called in the controller but only returns a child environment. No parent
+    HOME, config, cache roots or TensorFlow state are changed.
+    """
+    root = Path(outdir).absolute()
+    if any(c.isspace() for c in str(root)):
+        raise ValueError("hailo_diagnostic_outdir_requires_whitespace_free_path")
+    if root.is_symlink() or root.resolve() != root:
+        raise ValueError("hailo_diagnostic_outdir_must_not_traverse_symlinks")
+    root.mkdir(parents=True, exist_ok=True)
+    env = dict(parent_env)
+    state = root / "diagnostic_state"
+    for key, directory in _HAILO_DIAGNOSTIC_PATHS.items():
+        path = state / directory
+        if path.is_symlink() or path.resolve() != path:
+            raise ValueError("hailo_diagnostic_state_symlink:" + str(path))
+        path.mkdir(parents=True, exist_ok=True)
+        env[key] = str(path)
+    env.update(ONNX_SPLITPOINT_HAILO_PUBLISH_ARTIFACTS="0",
+               ONNX_SPLITPOINT_HAILO_DIAGNOSTIC_ROOT=str(root),
+               ONNX_SPLITPOINT_HAILO_CACHE_ENABLED="0",
+               ONNX_SPLITPOINT_ARTIFACT_STORE_ENABLED="0",
+               PYTHONDONTWRITEBYTECODE="1")
+    return env
+
+
+def _validate_hailo_diagnostic_environment(outdir: Any) -> None:
+    raw = os.environ.get("ONNX_SPLITPOINT_HAILO_DIAGNOSTIC_ROOT", "")
+    if not outdir or not raw:
+        raise ValueError("hailo_diagnostic_requires_isolated_managed_child")
+    root = Path(raw).absolute()
+    if root.resolve() != root or Path(outdir).resolve() != root:
+        raise ValueError("hailo_diagnostic_outdir_mismatch")
+    state = root / "diagnostic_state"
+    for key, directory in _HAILO_DIAGNOSTIC_PATHS.items():
+        expected = state / directory
+        if os.environ.get(key) != str(expected) or expected.resolve() != expected:
+            raise ValueError("hailo_diagnostic_write_target_not_isolated:" + key)
+
+
 def hailo_build_hef_via_venv(
     onnx_path: Union[str, Path],
     *,
     hw_arch: str = "hailo8",
     net_name: Optional[str] = None,
     outdir: Optional[Union[str, Path]] = None,
+    net_input_shapes: Optional[Union[List[int], Dict[str, List[int]]]] = None,
     fixup: bool = True,
     add_conv_defaults: bool = True,
     disable_rt_metadata_extraction: bool = True,
@@ -4295,19 +8574,60 @@ def hailo_build_hef_via_venv(
     activation_part1_onnx: Optional[Union[str, Path]] = None,
     activation_gen_batch: int = 8,
     force: bool = False,
+    cache_only: bool = False,
     keep_artifacts: bool = False,
+    publish_artifacts: bool = True,
+    compute_device: Optional[str] = None,
+    gpu_selector: Optional[str] = None,
+    compute_by_family: Optional[Mapping[str, Any]] = None,
+    compiler_context: Optional[Mapping[str, Any]] = None,
     extra_model_script: Optional[str] = None,
     start_node_names: Optional[Sequence[str]] = None,
     end_node_names: Optional[Sequence[str]] = None,
+    task: Optional[str] = None,
+    preprocessing_contract: Optional[Union[Mapping[str, Any], str]] = None,
     venv_activate: str = "auto",
     timeout_s: int = 3600,
     on_log: Optional[Callable[[str, str], None]] = None,
 ) -> HailoHefBuildResult:
     """Build a HEF inside a managed DFC venv (Linux / WSL)."""
 
+    force = parse_config_bool(force, field="hailo_build.force_build")
+    publish_artifacts = parse_config_bool(publish_artifacts, field="hailo_build.publish_artifacts")
+    if not publish_artifacts and outdir is None:
+        raise ValueError("hailo_diagnostic_outdir_required")
     t0 = time.time()
     onnx_path = Path(str(onnx_path)).expanduser().resolve()
-    net_name_eff = str(net_name or onnx_path.stem)
+    net_name_eff = str(net_name or onnx_path.stem).strip()
+    if not net_name_eff:
+        return _make_hef_result(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name="",
+            backend="venv",
+            failure_kind="invalid_build_contract",
+            error="Hailo net_name must be non-empty after normalization",
+            last_stage="cache_contract",
+            timed_out=False,
+        )
+    try:
+        net_input_shapes_eff = (
+            _normalize_hailo_net_input_shapes(net_input_shapes)
+            if net_input_shapes is not None else None
+        )
+    except ValueError as exc:
+        return _make_hef_result(
+            ok=False,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=net_name_eff,
+            backend="venv",
+            failure_kind="invalid_build_contract",
+            error=f"Invalid Hailo net_input_shapes: {exc}",
+            last_stage="cache_contract",
+            timed_out=False,
+        )
     outdir_path = Path(str(outdir)).expanduser().resolve() if outdir else None
     if outdir_path is not None:
         outdir_path.mkdir(parents=True, exist_ok=True)
@@ -4329,7 +8649,7 @@ def hailo_build_hef_via_venv(
                 calib_info={'source': 'activation_from_part1', 'preflight': preflight},
             )
 
-    hard_timeout_s, idle_timeout_s = _resolve_hef_timeout_policy(int(timeout_s))
+    hard_timeout_s, idle_timeout_s = _resolve_hef_timeout_policy(timeout_s)
 
     if sys.platform == "win32":
         return HailoHefBuildResult(
@@ -4352,6 +8672,24 @@ def hailo_build_hef_via_venv(
             backend="venv",
             error=f"Failed to resolve managed DFC venv: {e}",
         )
+
+    # Direct managed callers receive the same compiler-free reuse path as
+    # auto dispatch. Even an explicit GPU request must not probe hardware for
+    # an already verified artifact.
+    if publish_artifacts and not force:
+        import inspect
+        values = locals().copy()
+        probe_kwargs = {name: values[name] for name in inspect.signature(_hailo_build_hef_legacy).parameters
+                        if name in values and name != "onnx_path"}
+        probe_kwargs.update(cache_only=True, read_only_cache_probe=bool(cache_only),
+                            sdk_version_token=_hailo_sdk_version_token_from_managed_venv(
+                                hw_arch=str(hw_arch), venv_activate=venv_activate) or "unknown")
+        probe = _hailo_build_hef_legacy(onnx_path, **probe_kwargs)
+        if (probe.ok and (probe.calib_info or {}).get("cache_hit")) or cache_only or compiler_dispatch_forbidden():
+            return probe
+        if probe.failure_kind in {"known_negative_build_evidence", "build_evidence_error", "build_evidence_conflict",
+                                  "invalid_preprocessing_contract", "invalid_build_contract"}:
+            return probe
 
     helper = Path(__file__).resolve().parent / "wsl_inline_build_hef"
     if not helper.exists():
@@ -4387,11 +8725,24 @@ def hailo_build_hef_via_venv(
         str(int(calib_batch_size)),
         "--force",
         "1" if force else "0",
+        "--cache-only",
+        "1" if cache_only else "0",
+        "--publish-artifacts",
+        "1" if publish_artifacts else "0",
         "--keep-artifacts",
         "1" if keep_artifacts else "0",
     ]
     if outdir_path is not None:
         cmd += ["--outdir", str(outdir_path)]
+    if net_input_shapes_eff is not None:
+        cmd += [
+            "--net-input-shapes-json",
+            json.dumps(
+                net_input_shapes_eff,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        ]
     if start_node_names:
         cmd += ["--start-node-names-json", json.dumps(list(start_node_names))]
     if end_node_names:
@@ -4424,14 +8775,19 @@ def hailo_build_hef_via_venv(
         # cluttering the user's project/repo directory.
         from .paths import ensure_dir, splitpoint_logs_dir
 
-        hailo_log_cwd = ensure_dir(splitpoint_logs_dir() / "hailo_sdk" / str(profile_id))
+        # Target-local SDK cwd is required when the evaluation scheduler runs
+        # Hailo-8 and Hailo-10 helpers at the same time.
+        hailo_log_cwd = ensure_dir(
+            (outdir_path / "sdk_logs") if not publish_artifacts
+            else (splitpoint_logs_dir() / "hailo_sdk" / str(profile_id) / _normalize_hailo_hw_arch(hw_arch))
+        )
 
         # Best-effort log retention for Hailo SDK logs.
         try:
             from .log_retention import LogRetentionPolicy, apply_log_retention
 
             apply_log_retention(
-                [hailo_log_cwd],
+                [hailo_log_cwd] if publish_artifacts else [],
                 policy=LogRetentionPolicy(
                     enabled=True,
                     max_age_days=14,
@@ -4443,19 +8799,45 @@ def hailo_build_hef_via_venv(
             )
         except Exception:
             pass
-        env = dict(os.environ)
-        env.setdefault("HAILORT_LOGGER_PATH", str(hailo_log_cwd / "hailort.log"))
+        env = _managed_venv_child_env(py)
+        from .hailo_negative_evidence import CONTEXT_ENV, child_context
+        env[CONTEXT_ENV] = json.dumps(child_context(), sort_keys=True, separators=(",", ":"))
+        env["HAILORT_LOGGER_PATH"] = str(hailo_log_cwd / "hailort.log")
         env.setdefault("ONNX_SPLITPOINT_HAILO_HELPER_BACKEND", "venv")
-
-        run = _run_streamed_subprocess(
-            cmd,
-            cwd=str(hailo_log_cwd),
-            env=env,
-            stdin_yes=True,
-            on_log=on_log,
-            hard_timeout_s=hard_timeout_s,
-            idle_timeout_s=idle_timeout_s,
+        if task is not None:
+            env["ONNX_SPLITPOINT_HAILO_CALIB_TASK"] = str(task)
+        if preprocessing_contract is not None:
+            env["ONNX_SPLITPOINT_HAILO_PREPROCESSING_CONTRACT_JSON"] = (
+                json.dumps(dict(preprocessing_contract), sort_keys=True, separators=(",", ":"))
+                if isinstance(preprocessing_contract, Mapping)
+                else str(preprocessing_contract)
+            )
+        from .hailo_compiler_context import (
+            resolve_hailo_compiler_context, compiler_child_environment,
         )
+        job_override = None
+        if compute_device is not None or gpu_selector is not None:
+            job_override = {"device": compute_device or "gpu"}
+            if gpu_selector is not None:
+                job_override["gpu_selector"] = str(gpu_selector)
+        if not publish_artifacts:
+            env = _hailo_diagnostic_child_environment(env, outdir_path)
+            env[CONTEXT_ENV] = "{}"
+        if len(_HAILO_COMPILER_PROBE_CACHE) > 128:
+            _HAILO_COMPILER_PROBE_CACHE.clear()
+        resolved_context = resolve_hailo_compiler_context(
+            str(py), str(hw_arch), job_override=job_override,
+            compute_by_family=compute_by_family, explicit_context=compiler_context,
+            parent_env=env, probe_cache=_HAILO_COMPILER_PROBE_CACHE, work_dir=outdir_path,
+        )
+        with compiler_child_environment(resolved_context, parent_env=env,
+                                        work_dir=outdir_path) as (env, effective_context):
+            if outdir_path is not None:
+                _atomic_write_json(outdir_path / "hailo_compiler_context.json", effective_context)
+            run = _run_streamed_subprocess(
+                cmd, cwd=str(hailo_log_cwd), env=env, stdin_yes=True, on_log=on_log,
+                hard_timeout_s=hard_timeout_s, idle_timeout_s=idle_timeout_s,
+            )
     except Exception as e:
         return _make_hef_result(
             ok=False,
@@ -4464,7 +8846,9 @@ def hailo_build_hef_via_venv(
             net_name=net_name_eff,
             backend="venv",
             error=f"Venv HEF build failed to launch: {type(e).__name__}: {e}",
-            failure_kind='launch_error',
+            failure_kind=getattr(e, 'reason', 'launch_error'),
+            last_stage='compiler_context' if hasattr(e, 'reason') or 'resolved_context' in locals() else 'launch',
+            details={'publish_artifacts': publish_artifacts, 'compiler_context': locals().get('resolved_context', {}), 'error_details': getattr(e, 'details', {})},
         )
 
     stdout = run.stdout
@@ -4476,6 +8860,8 @@ def hailo_build_hef_via_venv(
         stderr,
         include_system_snapshot=bool(run.timed_out),
     )
+
+    proc_details.update(compiler_context=effective_context, publish_artifacts=publish_artifacts)
 
     if run.timed_out:
         dbg_path = _write_wsl_debug_log(
@@ -4532,22 +8918,45 @@ def hailo_build_hef_via_venv(
             rc,
             dbg_path or "-",
         )
+        recovered = _recover_hef_result_from_compiled_artifact(
+            outdir_path,
+            elapsed_s=time.time() - t0,
+            hw_arch=str(hw_arch),
+            net_name=net_name_eff,
+            backend="venv",
+            returncode=rc,
+            debug_log=dbg_path,
+            last_stage=run.last_stage,
+            details=_build_subprocess_detail_bundle(run, stdout, stderr, include_system_snapshot=False),
+        )
+        if recovered is not None:
+            log.info("[hailo][hef][venv] recovered structured HEF result from compiled.hef: %s", recovered.hef_path)
+            return recovered
+        _err_msg = (
+            "Venv HEF build did not return a structured result. "
+            f"exit_code={rc}. tail=\n{tail}\n\n"
+            "Details were written to gui.log (Logs tab)."
+        )
+        _cls = _classify_hailo_failure_text(_err_msg + "\n" + str(stdout or "") + "\n" + str(stderr or ""))
+        _details = _build_subprocess_detail_bundle(run, stdout, stderr, include_system_snapshot=True)
+        if _cls:
+            _details = _merge_detail_dict(_details, {
+                "error_class": _cls.get("error_class"),
+                "root_cause_hint": _cls.get("root_cause_hint"),
+                "diagnostic_hint": _cls.get("diagnostic_hint"),
+            })
         return _make_hef_result(
             ok=False,
             elapsed_s=time.time() - t0,
             hw_arch=str(hw_arch),
             net_name=net_name_eff,
             backend="venv",
-            error=(
-                "Venv HEF build did not return a structured result. "
-                f"exit_code={rc}. tail=\n{tail}\n\n"
-                "Details were written to gui.log (Logs tab)."
-            ),
+            error=_err_msg,
             returncode=rc,
             debug_log=dbg_path,
             last_stage=run.last_stage,
-            failure_kind='missing_structured_result',
-            details=_build_subprocess_detail_bundle(run, stdout, stderr, include_system_snapshot=True),
+            failure_kind=_cls.get("failure_kind") if _cls else 'missing_structured_result',
+            details=_details,
         )
 
     # Structured result present. Still write a debug log on failures so users can
@@ -4577,6 +8986,7 @@ def hailo_build_hef_via_venv(
         stderr,
         include_system_snapshot=not bool(payload.get("ok")),
     )
+    merged_payload_details.update(compiler_context=effective_context, publish_artifacts=publish_artifacts)
     if merged_payload_details:
         payload['details'] = _merge_detail_dict(payload.get('details'), merged_payload_details)
 
@@ -4609,19 +9019,215 @@ def hailo_build_hef_auto(
     activation_part1_onnx: Optional[Union[str, Path]] = None,
     activation_gen_batch: int = 8,
     force: bool = False,
+    cache_only: bool = False,
     keep_artifacts: bool = False,
+    publish_artifacts: bool = True,
+    compute_device: Optional[str] = None,
+    gpu_selector: Optional[str] = None,
+    compute_by_family: Optional[Mapping[str, Any]] = None,
+    compiler_context: Optional[Mapping[str, Any]] = None,
     extra_model_script: Optional[str] = None,
     start_node_names: Optional[Sequence[str]] = None,
     end_node_names: Optional[Sequence[str]] = None,
+    task: Optional[str] = None,
+    preprocessing_contract: Optional[Union[Mapping[str, Any], str]] = None,
     # WSL bridge
     wsl_distro: Optional[str] = None,
     wsl_venv_activate: str = "auto",
     wsl_timeout_s: int = 3600,
     on_log: Optional[Callable[[str, str], None]] = None,
 ) -> HailoHefBuildResult:
+    force = parse_config_bool(force, field="hailo_build.force_build")
+    publish_artifacts = parse_config_bool(publish_artifacts, field="hailo_build.publish_artifacts")
+    if not publish_artifacts and outdir is None:
+        raise ValueError("hailo_diagnostic_outdir_required")
+    policy_cache_verify = compiler_dispatch_forbidden()
+    cache_only = bool(cache_only or policy_cache_verify)
     mode = normalize_hailo_backend(backend)
     if mode == "subprocess":
         mode = subprocess_backend_for_platform()
+    net_name = str(net_name or Path(str(onnx_path)).stem).strip()
+    if not net_name:
+        return _make_hef_result(
+            ok=False,
+            elapsed_s=0.0,
+            hw_arch=str(hw_arch),
+            net_name="",
+            backend=str(mode),
+            failure_kind="invalid_build_contract",
+            error="Hailo net_name must be non-empty after normalization",
+            last_stage="cache_contract",
+            timed_out=False,
+        )
+
+    if bool(cache_only) and bool(force):
+        return _make_hef_result(
+            ok=False,
+            elapsed_s=0.0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name),
+            backend=str(mode),
+            skipped=True,
+            failure_kind="cache_miss_blocked",
+            unsupported_reason="cache_verify_only_force_conflict",
+            error=(
+                "cache_miss_blocked[hailo_dfc]: cache_only and force are "
+                "mutually exclusive; DFC dispatch was not started"
+            ),
+            last_stage="cache_lookup",
+            timed_out=False,
+        )
+
+    # Every backend must reject an undeclared image task before backend cache
+    # reuse, environment/profile resolution, or compiler launch.  In
+    # particular, a 320x320 detector must never be reclassified as a classifier
+    # by size.
+    try:
+        _resolve_hailo_image_contract(
+            model_path=Path(onnx_path).expanduser().resolve(),
+            activation_part1=(
+                Path(activation_part1_onnx).expanduser().resolve()
+                if activation_part1_onnx
+                else None
+            ),
+            net_input_shapes=net_input_shapes,
+            task=task,
+            declared=preprocessing_contract,
+        )
+    except Exception as exc:
+        return _make_hef_result(
+            ok=False,
+            elapsed_s=0.0,
+            hw_arch=str(hw_arch),
+            net_name=str(net_name or Path(onnx_path).stem),
+            backend=str(mode),
+            error=f"Invalid Hailo image preprocessing contract: {type(exc).__name__}: {exc}",
+            failure_kind="invalid_preprocessing_contract",
+            last_stage="preprocessing_contract_preflight",
+            timed_out=False,
+        )
+
+    # A subprocess/venv dispatcher must not be launched merely to discover a
+    # reusable artifact.  Run the compiler-free legacy cache path first; it
+    # may return only an exact destination/local-cache/ArtifactStore v2 hit.
+    # A miss continues through the selected backend unchanged.
+    if publish_artifacts and (mode != "local" or bool(cache_only)) and not bool(force):
+        exact_probe_sdk_token: Optional[str] = None
+        exact_probe_sdk_source = ""
+        # Cache verification must not call backend discovery merely to learn
+        # the compiler identity: some discovery paths import or probe DFC.
+        # ``auto`` uses the managed Linux venv when one is present, and the
+        # metadata reader below is itself filesystem-only and returns ``None``
+        # when that venv is absent.
+        managed_backend_selected = bool(
+            mode == "venv"
+            or (mode == "auto" and sys.platform != "win32")
+        )
+        if managed_backend_selected:
+            exact_probe_sdk_token = _hailo_sdk_version_token_from_managed_venv(
+                hw_arch=str(hw_arch),
+                venv_activate=str(wsl_venv_activate or "auto"),
+            )
+            if exact_probe_sdk_token:
+                exact_probe_sdk_source = "managed_venv"
+            if not exact_probe_sdk_token and mode == "auto":
+                # ``auto`` may legitimately select a controller-local DFC.
+                # Distribution metadata is still process-free and does not
+                # import the compiler module.
+                exact_probe_sdk_token = (
+                    _hailo_sdk_version_token_from_controller_metadata()
+                )
+                if exact_probe_sdk_token:
+                    exact_probe_sdk_source = "controller_metadata"
+        elif mode == "local":
+            exact_probe_sdk_token = (
+                _hailo_sdk_version_token_from_controller_metadata()
+            )
+            if exact_probe_sdk_token:
+                exact_probe_sdk_source = "controller_metadata"
+
+        if exact_probe_sdk_token:
+            print(
+                "[hailo][cache] compiler identity "
+                f"source={exact_probe_sdk_source} "
+                f"token={exact_probe_sdk_token}",
+                flush=True,
+            )
+
+        if (policy_cache_verify or bool(cache_only)) and not exact_probe_sdk_token:
+            return _make_hef_result(
+                ok=False,
+                elapsed_s=0.0,
+                hw_arch=str(hw_arch),
+                net_name=str(net_name),
+                backend=str(mode),
+                skipped=True,
+                failure_kind="cache_miss_blocked",
+                unsupported_reason="compiler_identity_unavailable",
+                error=cache_miss_blocked_message(
+                    "hailo_dfc",
+                    "managed compiler identity unavailable; filesystem-only "
+                    "package metadata did not identify the DFC version",
+                ),
+                last_stage="cache_identity",
+                timed_out=False,
+                details={
+                    "cache_hit": False,
+                    "compiler_identity_available": False,
+                    "compiler_dispatch_allowed": False,
+                },
+            )
+        exact_probe = _hailo_build_hef_legacy(
+            onnx_path,
+            hw_arch=hw_arch,
+            net_name=net_name,
+            outdir=outdir,
+            net_input_shapes=net_input_shapes,
+            fixup=fixup,
+            add_conv_defaults=add_conv_defaults,
+            disable_rt_metadata_extraction=disable_rt_metadata_extraction,
+            opt_level=int(opt_level),
+            calib_dir=calib_dir,
+            calib_count=int(calib_count),
+            calib_batch_size=int(calib_batch_size),
+            activation_part1_onnx=activation_part1_onnx,
+            activation_gen_batch=int(activation_gen_batch),
+            force=False,
+            cache_only=True,
+            read_only_cache_probe=bool(cache_only),
+            keep_artifacts=bool(keep_artifacts),
+            publish_artifacts=publish_artifacts,
+            extra_model_script=extra_model_script,
+            start_node_names=start_node_names,
+            end_node_names=end_node_names,
+            task=task,
+            preprocessing_contract=preprocessing_contract,
+            # A controller prelookup never imports the compiler to discover
+            # its identity. Missing metadata remains explicitly unknown; a
+            # permitted real build can identify its SDK in the managed child.
+            sdk_version_token=exact_probe_sdk_token or "unknown",
+            negative_evidence_identity_authoritative=bool(
+                exact_probe_sdk_token
+                and (exact_probe_sdk_source == "managed_venv" or mode == "local")
+            ),
+        )
+        exact_probe_info = getattr(exact_probe, "calib_info", None)
+        if (
+            bool(getattr(exact_probe, "ok", False))
+            and bool(getattr(exact_probe, "skipped", False))
+            and isinstance(exact_probe_info, Mapping)
+            and exact_probe_info.get("cache_hit") is True
+        ):
+            return exact_probe
+        if str(getattr(exact_probe, "failure_kind", "") or "") in {
+            "known_negative_build_evidence", "build_evidence_error", "build_evidence_conflict",
+        }:
+            return exact_probe
+        if bool(cache_only):
+            # The parent process has already exhausted destination, exact v3,
+            # legacy-v2 migration and ArtifactStore restore. Never start a
+            # managed venv/WSL/local compiler child merely to repeat the miss.
+            return exact_probe
 
     def _run_local() -> HailoHefBuildResult:
         return hailo_build_hef(
@@ -4640,10 +9246,14 @@ def hailo_build_hef_auto(
             activation_part1_onnx=activation_part1_onnx,
             activation_gen_batch=int(activation_gen_batch),
             force=bool(force),
+            cache_only=bool(cache_only),
             keep_artifacts=bool(keep_artifacts),
+            publish_artifacts=publish_artifacts,
             extra_model_script=extra_model_script,
             start_node_names=start_node_names,
             end_node_names=end_node_names,
+            task=task,
+            preprocessing_contract=preprocessing_contract,
         )
 
     def _run_venv() -> HailoHefBuildResult:
@@ -4652,6 +9262,7 @@ def hailo_build_hef_auto(
             hw_arch=hw_arch,
             net_name=net_name,
             outdir=outdir,
+            net_input_shapes=net_input_shapes,
             fixup=fixup,
             add_conv_defaults=add_conv_defaults,
             disable_rt_metadata_extraction=disable_rt_metadata_extraction,
@@ -4662,15 +9273,36 @@ def hailo_build_hef_auto(
             activation_part1_onnx=activation_part1_onnx,
             activation_gen_batch=int(activation_gen_batch),
             force=bool(force),
+            cache_only=bool(cache_only),
             keep_artifacts=bool(keep_artifacts),
+            publish_artifacts=publish_artifacts,
             extra_model_script=extra_model_script,
             start_node_names=start_node_names,
             end_node_names=end_node_names,
+            task=task,
+            preprocessing_contract=preprocessing_contract,
+            **{key: value for key, value in {
+                "compute_device": compute_device, "gpu_selector": gpu_selector,
+                "compute_by_family": compute_by_family, "compiler_context": compiler_context,
+            }.items() if value is not None},
             venv_activate=wsl_venv_activate,
             timeout_s=int(wsl_timeout_s),
             on_log=on_log,
         )
 
+    explicit_compute = bool(not publish_artifacts or compute_device is not None or gpu_selector is not None
+                            or compute_by_family is not None or compiler_context is not None
+                            or os.environ.get("ONNX_SPLITPOINT_HAILO_COMPUTE_BY_FAMILY")
+                            or os.environ.get("ONNX_SPLITPOINT_HAILO_COMPUTE_OVERRIDE"))
+    if mode == "auto" and explicit_compute and sys.platform != "win32":
+        # A failed selected compiler environment must not become a differently
+        # configured in-process SDK build via auto fallback.
+        return _run_venv()
+    if mode == "local" and explicit_compute:
+        return _make_hef_result(ok=False, elapsed_s=0.0, hw_arch=str(hw_arch),
+            net_name=str(net_name or Path(onnx_path).stem), backend="local",
+            failure_kind="hailo_compute_requires_managed_child",
+            last_stage="compiler_context", error="Explicit compute selection and diagnostic isolation require backend='venv'.")
     if mode == "local":
         return _run_local()
     if mode == "venv":
@@ -4681,6 +9313,7 @@ def hailo_build_hef_auto(
             hw_arch=hw_arch,
             net_name=net_name,
             outdir=outdir,
+            net_input_shapes=net_input_shapes,
             fixup=fixup,
             add_conv_defaults=add_conv_defaults,
             disable_rt_metadata_extraction=disable_rt_metadata_extraction,
@@ -4691,10 +9324,18 @@ def hailo_build_hef_auto(
             activation_part1_onnx=activation_part1_onnx,
             activation_gen_batch=int(activation_gen_batch),
             force=bool(force),
+            cache_only=bool(cache_only),
             keep_artifacts=bool(keep_artifacts),
+            publish_artifacts=publish_artifacts,
             extra_model_script=extra_model_script,
             start_node_names=start_node_names,
             end_node_names=end_node_names,
+            task=task,
+            preprocessing_contract=preprocessing_contract,
+            **{key: value for key, value in {
+                "compute_device": compute_device, "gpu_selector": gpu_selector,
+                "compute_by_family": compute_by_family, "compiler_context": compiler_context,
+            }.items() if value is not None},
             wsl_distro=wsl_distro,
             wsl_venv_activate=wsl_venv_activate,
             wsl_timeout_s=int(wsl_timeout_s),
@@ -4725,6 +9366,7 @@ def hailo_build_hef_auto(
             hw_arch=hw_arch,
             net_name=net_name,
             outdir=outdir,
+            net_input_shapes=net_input_shapes,
             fixup=fixup,
             add_conv_defaults=add_conv_defaults,
             disable_rt_metadata_extraction=disable_rt_metadata_extraction,
@@ -4735,8 +9377,16 @@ def hailo_build_hef_auto(
             activation_part1_onnx=activation_part1_onnx,
             activation_gen_batch=int(activation_gen_batch),
             force=bool(force),
+            cache_only=bool(cache_only),
             keep_artifacts=bool(keep_artifacts),
+            publish_artifacts=publish_artifacts,
             extra_model_script=extra_model_script,
+            task=task,
+            preprocessing_contract=preprocessing_contract,
+            **{key: value for key, value in {
+                "compute_device": compute_device, "gpu_selector": gpu_selector,
+                "compute_by_family": compute_by_family, "compiler_context": compiler_context,
+            }.items() if value is not None},
             wsl_distro=wsl_distro,
             wsl_venv_activate=wsl_venv_activate,
             wsl_timeout_s=int(wsl_timeout_s),
@@ -4753,3 +9403,402 @@ def hailo_build_hef_auto(
             "Install hailo_sdk_client in this Python env, or use the managed Hailo DFC venv/backend (auto/subprocess/venv). On Windows you can also configure the WSL backend."
         ),
     )
+
+
+# v60s unified artifact-library bridge ---------------------------------------
+def _v60s_hailo_extract_hef(value):
+    from pathlib import Path as _Path
+    if isinstance(value, (_Path, str)):
+        p = _Path(value).expanduser()
+        if p.suffix.lower() == ".hef" and p.is_file():
+            return p.resolve()
+    if isinstance(value, dict):
+        for key in ("hef", "hef_path", "artifact", "artifact_path", "compiled_hef", "path"):
+            if key in value:
+                found = _v60s_hailo_extract_hef(value[key])
+                if found:
+                    return found
+        for item in value.values():
+            found = _v60s_hailo_extract_hef(item)
+            if found:
+                return found
+    if isinstance(value, (tuple, list)):
+        for item in value:
+            found = _v60s_hailo_extract_hef(item)
+            if found:
+                return found
+    for attr in ("hef_path", "artifact_path", "compiled_hef", "output_path", "path"):
+        try:
+            found = _v60s_hailo_extract_hef(getattr(value, attr))
+            if found:
+                return found
+        except Exception:
+            pass
+    return None
+
+
+def _v60s_hailo_bound(args, kwargs):
+    import inspect as _inspect
+    try:
+        return dict(_inspect.signature(_hailo_build_hef_legacy).bind_partial(*args, **kwargs).arguments)
+    except Exception:
+        return dict(kwargs)
+
+
+def _v60s_hailo_contract(bound):
+    from pathlib import Path as _Path
+    import hashlib as _hashlib
+    import json as _json
+    # Execution policy (cache-only/build-missing/timeouts) must not change the
+    # identity of the generated compiler artifact.  Otherwise a Full HEF built
+    # in Standard/Final could never satisfy a Smoke cache-only lookup.
+    skip = {"outdir", "out_dir", "output_dir", "workdir", "log_path", "logger", "progress", "callback",
+            "timeout_s", "wsl_timeout_s", "hard_timeout_s", "idle_timeout_s", "cache_dir", "cache_root", "force",
+            "cache_only", "publish_artifacts", "compute_device", "gpu_selector", "compute_by_family", "compiler_context", "tool_version", "workflow_version", "release", "release_id", "build_id",
+            "source_run", "run_id", "backend", "wsl_distro", "wsl_venv_activate", "venv_activate",
+            "on_log", "build_evidence_context", "negative_evidence_identity_authoritative"}
+    payload = {"schema": "onnx-splitpoint/hailo-build-contract/v2"}
+    try:
+        model_path = _Path(bound.get("onnx_path")).expanduser().resolve()
+        activation_part1 = (
+            _Path(bound.get("activation_part1_onnx")).expanduser().resolve()
+            if bound.get("activation_part1_onnx")
+            else None
+        )
+        canonical_preprocess, canonical_preprocess_sha = _resolve_hailo_image_contract(
+            model_path=model_path,
+            activation_part1=activation_part1,
+            net_input_shapes=bound.get("net_input_shapes"),
+            task=bound.get("task"),
+            declared=bound.get("preprocessing_contract"),
+        )
+        payload["preprocessing_contract"] = canonical_preprocess
+        payload["preprocessing_contract_sha256"] = canonical_preprocess_sha
+    except Exception as exc:
+        # Keep the contract non-reusable.  The legacy builder returns the
+        # structured fail-closed preprocessing error immediately afterwards.
+        payload["preprocessing_contract_error"] = f"{type(exc).__name__}: {exc}"
+    for key, value in sorted(bound.items()):
+        name = str(key)
+        if name in skip or name in {"task", "preprocessing_contract"} or callable(value):
+            continue
+        if name == "calib_dir" and value:
+            p = _Path(value).expanduser()
+            manifest = next(
+                (
+                    candidate
+                    for candidate in (
+                        p / "selection.json",
+                        p / "manifest.json",
+                        p / "dataset_manifest.json",
+                    )
+                    if candidate.is_file()
+                ),
+                None,
+            )
+            if manifest is not None:
+                # Preserve the exact 2.69f contract representation so existing
+                # ArtifactStore records remain reusable across the upgrade.
+                payload[name] = {
+                    "name": p.name,
+                    "manifest_sha256": _hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                }
+            else:
+                strict = str(os.environ.get('ONNX_SPLITPOINT_HAILO_CACHE_INTEGRITY') or 'relaxed').lower() == 'strict'
+                payload[name] = {
+                    "name": p.name,
+                    "identity": _calibration_identity(p, strict=strict),
+                    "integrity": "strict" if strict else "relaxed",
+                }
+            continue
+        if isinstance(value, _Path) or (
+            isinstance(value, str)
+            and (
+                "path" in name
+                or "onnx" in name
+                or name.endswith("file")
+                or name in {"model"}
+            )
+        ):
+            p = _Path(value).expanduser()
+            if p.is_file():
+                h = _hashlib.sha256()
+                with p.open("rb") as fh:
+                    for chunk in iter(lambda: fh.read(4 * 1024 * 1024), b""):
+                        h.update(chunk)
+                payload[name] = {"name": p.name, "sha256": h.hexdigest(), "size": p.stat().st_size}
+            elif p.is_dir():
+                manifest = next((x for x in (p / "selection.json", p / "manifest.json", p / "dataset_manifest.json") if x.is_file()), None)
+                payload[name] = {"name": p.name, "manifest_sha256": _hashlib.sha256(manifest.read_bytes()).hexdigest() if manifest else ""}
+            else:
+                payload[name] = str(value)
+            continue
+        try:
+            _json.dumps(value)
+            payload[name] = value
+        except Exception:
+            payload[name] = repr(value)
+    for env_name in ("ONNX_SPLITPOINT_HAILO_PROFILE", "ONNX_SPLITPOINT_HAILO_TARGET_ARCHES", "ONNX_SPLITPOINT_RUN_MODE"):
+        if os.environ.get(env_name):
+            payload[env_name.lower()] = os.environ.get(env_name)
+    return payload
+
+
+def _v60s_hailo_destination(bound):
+    from pathlib import Path as _Path
+    for name in ("hef_path", "output_path", "artifact_path"):
+        value = bound.get(name)
+        if value:
+            p = _Path(value).expanduser()
+            if p.suffix.lower() == ".hef":
+                return p
+    for name in ("outdir", "out_dir", "output_dir"):
+        value = bound.get(name)
+        if value:
+            return _Path(value).expanduser() / "compiled.hef"
+    return None
+
+
+def _v60s_hailo_restore(bound, contract):
+    """Disabled compatibility shim for the former coarse pre-key restore.
+
+    Restore is now performed by ``_hailo_build_hef_legacy`` only after the
+    compiler ONNX, effective calibration settings, SDK token and canonical
+    preprocessing have produced the exact v2 cache key and payload.
+    """
+
+    return None
+
+
+def _v60s_hailo_restored_result(bound, restored):
+    result = HailoHefBuildResult(
+        ok=True,
+        elapsed_s=0.0,
+        hw_arch=str(bound.get("hw_arch") or bound.get("target_arch") or bound.get("arch") or "hailo8"),
+        net_name=str(bound.get("net_name") or Path(str(bound.get("onnx_path") or "model")).stem),
+        backend="artifact_store",
+        hef_path=str(restored["destination"]),
+        skipped=True,
+    )
+    calib_info = {
+        "source": "artifact_store",
+        "compiler_dispatch_count": 0, "cache_hit": True,
+        "cache_source": "artifact_store",
+        "artifact_id": restored["artifact_id"],
+        "contract_hash": restored["contract_hash"],
+        "artifact_hash": restored["artifact_hash"],
+        "preprocessing_contract": restored.get("build_receipt", {}).get("preprocessing_contract"),
+        "preprocessing_contract_sha256": restored.get("build_receipt", {}).get("preprocessing_contract_sha256"),
+        "build_receipt": restored.get("build_receipt"),
+    }
+    result.calib_info = calib_info
+    result.details = {
+        "compiler_dispatch_count": 0, "cache_hit": True,
+        "cache_source": "artifact_store",
+        "artifact_store_restore": dict(restored),
+    }
+    return result
+
+
+def _v60s_hailo_register(result, bound, contract):
+    # Compiler-free probes may materialize their temporary output, but must
+    # never register/touch persistent store records or pin references.
+    if not bound.get("publish_artifacts", True) or bool(bound.get("cache_only")) or compiler_dispatch_forbidden():
+        return
+
+    def record_status(status, error=None):
+        detail = dict((result.get("details") if isinstance(result, dict)
+                       else getattr(result, "details", None)) or {})
+        detail["artifact_store_bundle_backup"] = status
+        if error:
+            detail["artifact_store_backup_error"] = str(error)
+        if isinstance(result, dict):
+            result["details"] = detail
+        else:
+            result.details = detail
+
+    try:
+        from .artifact_store import ArtifactStore, artifact_store_enabled
+        if not artifact_store_enabled():
+            return
+        result_ok = result.get("ok") if isinstance(result, dict) else getattr(result, "ok", None)
+        if result_ok is not True:
+            return
+        path = _v60s_hailo_extract_hef(result)
+        if path is None:
+            destination = _v60s_hailo_destination(bound)
+            if destination is not None and destination.is_file():
+                path = destination.resolve()
+        if path is None:
+            return
+        source_identity = contract.get("onnx_path")
+        expected_source_sha = (
+            str(source_identity.get("sha256") or "")
+            if isinstance(source_identity, Mapping)
+            else ""
+        )
+        receipt = _load_valid_hailo_receipt(
+            path,
+            preprocessing_sha256=str(contract.get("preprocessing_contract_sha256") or ""),
+            source_onnx_sha256=expected_source_sha,
+        )
+        if receipt is None:
+            record_status("failed", "invalid_hailo_receipt")
+            log.warning("[hailo][artifact-store] bundle backup rejected: invalid receipt at %s", path)
+            return
+        if not _hailo_cache_meta_path(path).is_file():
+            # Historical receipt-bearing outputs can be upgraded safely;
+            # HEF-only outputs were rejected above and are never resealed.
+            destination = _v60s_hailo_destination(bound) or path
+            path = _publish_hailo_bundle(
+                source_hef=path, destination=destination, receipt=receipt,
+                source="historical_receipt_upgrade",
+            )
+        store = ArtifactStore(os.environ.get("ONNX_SPLITPOINT_ARTIFACT_STORE_ROOT") or None)
+        pin = str(os.environ.get("ONNX_SPLITPOINT_ARTIFACT_PIN_FINAL", "0")).lower() in {"1","true","yes","on"}
+        store.register_hailo_bundle(source_path=path,
+                       receipt_path=_hailo_receipt_path(path),
+                       cache_meta_path=_hailo_cache_meta_path(path), contract=contract,
+                       metadata={"target": str(bound.get("hw_arch") or bound.get("target_arch") or bound.get("arch") or ""),
+                                 "legacy_cache_key": str(receipt.get("cache_key") or ""),
+                                 "preprocessing_contract_sha256": str(receipt.get("preprocessing_contract_sha256") or ""),
+                                 "build_receipt": receipt,
+                                 "bridge": "hailo_build_hef"},
+                       source_run=os.environ.get("ONNX_SPLITPOINT_RUN_ID", ""),
+                       pin=pin, pin_label="final-campaign" if pin else "")
+        record_status("sealed")
+    except Exception as exc:
+        record_status("failed", f"{type(exc).__name__}: {exc}")
+        log.warning("[hailo][artifact-store] atomic bundle backup failed: %s", exc)
+        return
+
+
+def hailo_build_hef(*args, **kwargs):
+    kwargs["force"] = parse_config_bool(kwargs.get("force", False), field="hailo_build.force_build")
+    kwargs["publish_artifacts"] = parse_config_bool(kwargs.get("publish_artifacts", True), field="hailo_build.publish_artifacts")
+    from .hailo_negative_evidence import attach_and_record, build_evidence_scope
+    context = kwargs.pop("build_evidence_context", None)
+    bound = _v60s_hailo_bound(args, kwargs)
+    contract = _v60s_hailo_contract(bound)
+    with build_evidence_scope(context, bound):
+        result = _hailo_build_hef_legacy(*args, **kwargs)
+        result = attach_and_record(result, bound) if bound.get("publish_artifacts", True) else result
+        _v60s_hailo_register(result, bound, contract)
+    return result
+
+
+_hailo_build_hef_auto_dispatch = hailo_build_hef_auto
+
+
+def _v60s_hailo_auto_bound(args, kwargs):
+    import inspect as _inspect
+    try:
+        call = _inspect.signature(_hailo_build_hef_auto_dispatch).bind_partial(*args, **kwargs)
+        call.apply_defaults()
+        legacy_names = set(_inspect.signature(_hailo_build_hef_legacy).parameters)
+        provenance_names = {"wsl_timeout_s", "timeout_s", "compute_device", "gpu_selector", "compute_by_family", "compiler_context"}
+        return {key: value for key, value in call.arguments.items() if key in legacy_names | provenance_names}
+    except Exception:
+        return dict(kwargs)
+
+
+def _hailo_build_hef_auto_with_attempt(*args, **kwargs):
+    """Dispatch a HEF build and retain every terminal compiler attempt."""
+
+    from .hailo_attempt_receipts import (
+        begin_hailo_attempt, finalize_hailo_attempt,
+    )
+
+    bound = _v60s_hailo_auto_bound(args, kwargs)
+    contract = _v60s_hailo_contract(bound)
+    outdir = Path(
+        bound.get("outdir") or bound.get("out_dir")
+        or bound.get("output_dir") or Path.cwd()
+    ).expanduser()
+    requested_timeout = bound.get("wsl_timeout_s", bound.get("timeout_s", 3600))
+    try:
+        hard_timeout_s, idle_timeout_s = _resolve_hef_timeout_policy(
+            requested_timeout
+        )
+    except Exception:
+        hard_timeout_s, idle_timeout_s = None, None
+    receipt_bound = dict(bound)
+    net_token = str(bound.get("net_name") or "").strip().lower()
+    has_start = bool(bound.get("start_node_names"))
+    has_end = bool(bound.get("end_node_names"))
+    if "full" in net_token and has_end:
+        attempt_endpoint = "raw_head_fallback"
+    elif "full" in net_token and not has_start and not has_end:
+        attempt_endpoint = "decoded_full"
+    elif has_end and not has_start:
+        attempt_endpoint = "split_part1"
+    elif has_start:
+        attempt_endpoint = "split_part2"
+    else:
+        attempt_endpoint = "full_or_unspecified"
+    receipt_bound.update({
+        "hard_timeout_s": hard_timeout_s,
+        "idle_timeout_s": idle_timeout_s,
+        "timeout_s": requested_timeout,
+        "endpoint": attempt_endpoint,
+        # Activation Part1 is a calibration producer, not the compiler input.
+        "compiler_onnx_path": str(bound.get("onnx_path") or ""),
+    })
+    attempt = begin_hailo_attempt(outdir=outdir, bound=receipt_bound)
+    try:
+        result = _hailo_build_hef_auto_dispatch(*args, **kwargs)
+    except BaseException as exc:
+        from .hailo_negative_evidence import current_evidence_info
+        attempt["metadata"] = {**dict(attempt.get("metadata") or {}),
+                               "build_evidence": current_evidence_info()}
+        finalize_hailo_attempt(attempt=attempt, error=exc)
+        raise
+    from .hailo_negative_evidence import attach_and_record
+    result = attach_and_record(result, bound) if bound.get("publish_artifacts", True) else result
+    finalize_hailo_attempt(attempt=attempt, result=result)
+    _v60s_hailo_register(result, bound, contract)
+    return result
+
+
+def hailo_build_hef_auto(*args, **kwargs):
+    """Use shared exact negative evidence for every normal Hailo backend."""
+    kwargs["force"] = parse_config_bool(kwargs.get("force", False), field="hailo_build.force_build")
+    kwargs["publish_artifacts"] = parse_config_bool(kwargs.get("publish_artifacts", True), field="hailo_build.publish_artifacts")
+    if kwargs["force"] and kwargs.get("publish_artifacts", True):
+        raise ValueError("force_build_disabled_for_productive_jobs: use reuse_and_build_missing; force is restricted to an isolated publish_artifacts=False diagnostic job")
+    publish = parse_config_bool(kwargs.get("publish_artifacts", True), field="hailo_build.publish_artifacts")
+    if not publish:
+        if not kwargs.get("outdir"):
+            raise ValueError("hailo_diagnostic_outdir_required")
+        raw_root = Path(kwargs["outdir"]).expanduser().absolute()
+        if raw_root.resolve() != raw_root or any(c.isspace() for c in str(raw_root)):
+            raise ValueError("hailo_diagnostic_outdir_requires_whitespace_free_path_without_symlinks")
+    from .hailo_negative_evidence import build_evidence_scope
+    context = kwargs.pop("build_evidence_context", None)
+    bound = _v60s_hailo_auto_bound(args, kwargs)
+    with build_evidence_scope(context, bound):
+        return _hailo_build_hef_auto_with_attempt(*args, **kwargs)
+
+
+def _with_hailo_evidence_context(function):
+    # Direct managed-backend callers also pass the same context into the
+    # helper, where the real compiler version is known before SDK import.
+    from functools import wraps
+    import inspect
+
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        kwargs["publish_artifacts"] = parse_config_bool(kwargs.get("publish_artifacts", True), field="hailo_build.publish_artifacts")
+        from .hailo_negative_evidence import attach_and_record, build_evidence_scope
+        context = kwargs.pop("build_evidence_context", None)
+        call = inspect.signature(function).bind_partial(*args, **kwargs)
+        call.apply_defaults()
+        bound = dict(call.arguments)
+        with build_evidence_scope(context, bound):
+            result = function(*args, **kwargs)
+            return attach_and_record(result, bound) if bound.get("publish_artifacts", True) else result
+    return wrapped
+
+
+hailo_build_hef_via_venv = _with_hailo_evidence_context(hailo_build_hef_via_venv)
+hailo_build_hef_via_wsl = _with_hailo_evidence_context(hailo_build_hef_via_wsl)

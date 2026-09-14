@@ -1,0 +1,16 @@
+locked: false
+contract_id: endpoint_adapters_v1
+scope: prospective_holdout
+selection_key: endpoint_contract_family
+model_id_dispatch_forbidden: true
+classification:
+  input_contract: REPLACE_WITH_FROZEN_PREPROCESSING_CONTRACT_ID
+  output_contract: logits_or_topk
+  class_mapping: REPLACE_WITH_FROZEN_LABEL_MAPPING
+detection:
+  supported_endpoint_families:
+    - REPLACE_WITH_FROZEN_ENDPOINT_FAMILY
+  layout_and_dequant_provenance: REPLACE_WITH_VENDOR_OR_COMPILER_METADATA
+  decoder_contract: REPLACE_WITH_FROZEN_DECODER_CONTRACT_ID
+  nms_contract: REPLACE_WITH_FROZEN_NMS_CONTRACT_ID
+note: Replace the placeholder implementation and values, test on synthetic/development fixtures, then set locked=true before opening any confirmatory hold-out outcome.

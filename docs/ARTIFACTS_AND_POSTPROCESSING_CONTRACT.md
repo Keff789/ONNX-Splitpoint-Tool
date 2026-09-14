@@ -5,6 +5,42 @@ This document describes **what artifacts** a benchmark run produces and the
 
 The goal is to keep the tool robust when new networks/harnesses are added.
 
+## Canonical image preprocessing (2.75.0)
+
+Image geometry is selected by task, never inferred from the output tensor
+format:
+
+| Task | Geometry | Color | Pad | Numeric encoding |
+|---|---|---|---:|---|
+| Detection | centered letterbox to the declared input size | RGB | 114 | normalized model input |
+| Classification | direct resize to the declared input size | RGB | 0 | ImageNet normalization |
+
+The semantic contract is
+`onnx-splitpoint/image-preprocessing-contract`, schema version 2. Central
+Quality, Hailo calibration, Runtime input manifests and build receipts carry
+its SHA-256. A caller-provided geometry or scaling flag that contradicts the
+contract is rejected before inference or compilation.
+
+Detection Completed-v2 records use original-image `xyxy`, probability score
+and integer model class ID. Raw accelerator heads remain a distinct physical
+endpoint; their frozen host decode/NMS tail produces the attested completed
+endpoint. BN6 is an output representation and does not opt out of letterbox.
+
+DeepX Full Performance and Energy use
+`deepx-sealed-runtime-input-v3`: an untimed semantic execution persists the
+exact numeric runtime tensor, and both measured paths verify and replay that
+same file by shape, dtype, layout, byte count and SHA-256. Detection rows are
+claimable only when the same hotloop also persists a separately verifiable
+Completed-v2 JSON artifact with matching content and file hashes.
+
+The Quality request and the later canonical Native-Full row additionally join
+the same source image ID/hash to the exact prepared tensor name, shape, dtype,
+layout, byte count and SHA-256. These identities may not drift across measured
+repetitions. The semantic manifest/tensor, DXNN and hotloop helper are confined
+to their canonical artifact-role roots, with every path component checked for
+symlinks before resolution. Completed-v2 writers likewise reject symlinked
+destinations or parents and use exclusive temporary files plus atomic replace.
+
 ## Directory layout
 
 Each benchmark case is executed in its own directory (e.g. `b155/`).

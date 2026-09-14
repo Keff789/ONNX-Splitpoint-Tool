@@ -1,0 +1,84 @@
+{
+  "schema": "onnx-splitpoint/reviewed-hailo8-overlay-migration",
+  "selection": {
+    "binding_sha256": "25167ba50cd6f05cb545c432205a345a2bc476d29e9c1796927a074d9d15781b",
+    "component_sha256": {
+      "libdevice_path": "8c593e48547f85458b6bfbed93a2e6b05484644ccc6b429bb0d8424e06a68b6c",
+      "ptxas_path": "08f9de5d031cd59f61e576ebc82dd5d3c785f9b6db5a5356e3279289445f3e2f"
+    },
+    "components": {
+      "component_root": "/home/kmika/.onnx_splitpoint_tool/hailo/hailo8_cuda_20260912T062240Z_hx7b7hcq/packages/nvidia/cuda_nvcc",
+      "libdevice_path": "/home/kmika/.onnx_splitpoint_tool/hailo/hailo8_cuda_20260912T062240Z_hx7b7hcq/packages/nvidia/cuda_nvcc/nvvm/libdevice/libdevice.10.bc",
+      "ptxas_path": "/home/kmika/.onnx_splitpoint_tool/hailo/hailo8_cuda_20260912T062240Z_hx7b7hcq/packages/nvidia/cuda_nvcc/bin/ptxas"
+    },
+    "manifest_sha256": "7d1b4a5ebf5986765de6fbd778541a02498c31a40aa8fc4375cb5a0544cf2d12",
+    "packages": [
+      {
+        "name": "nvidia-cublas-cu12",
+        "sha256": "ca070ad70e9fa6654084575d01bd001f30cc4665e33d4bb9fc8e0f321caa034b",
+        "version": "12.5.3.2"
+      },
+      {
+        "name": "nvidia-cuda-cupti-cu12",
+        "sha256": "bde77a5feb66752ec61db2adfe47f56b941842825b4c7e2068aff27c9d107953",
+        "version": "12.5.82"
+      },
+      {
+        "name": "nvidia-cuda-nvcc-cu12",
+        "sha256": "b03e545b8e8c3ce7ebcd7fc44063180ff52ff01d064ece2127ed90a04ef12cd0",
+        "version": "12.5.82"
+      },
+      {
+        "name": "nvidia-cuda-nvrtc-cu12",
+        "sha256": "3dbd97b0104b4bfbc3c4f8c79cd2496307c89c43c29a9f83125f1d76296ff3fd",
+        "version": "12.5.82"
+      },
+      {
+        "name": "nvidia-cuda-runtime-cu12",
+        "sha256": "3e79a060e126df40fd3a068f3f787eb000fa51b251ec6cd97d09579632687115",
+        "version": "12.5.82"
+      },
+      {
+        "name": "nvidia-cudnn-cu12",
+        "sha256": "9ad9c6929ebb5295eb4a1728024666d1c88283373e265a0c5c883e6f9d5cd76d",
+        "version": "9.3.0.75"
+      },
+      {
+        "name": "nvidia-cufft-cu12",
+        "sha256": "9a6e8df162585750f61983a638104a48c756aa13f9f48e19ab079b38e3c828b8",
+        "version": "11.2.3.61"
+      },
+      {
+        "name": "nvidia-curand-cu12",
+        "sha256": "2823fb27de4e44dbb22394a6adf53aa6e1b013aca0f8c22867d1cfae58405536",
+        "version": "10.3.6.82"
+      },
+      {
+        "name": "nvidia-cusolver-cu12",
+        "sha256": "93cfafacde4428b71778eeb092ec615a02a3d05404da1bcf91c53e3fa1bce42b",
+        "version": "11.6.3.83"
+      },
+      {
+        "name": "nvidia-cusparse-cu12",
+        "sha256": "016df8e993c437e8301e62739f01775cba988fd5253cd4c64173f8e8d2f8e752",
+        "version": "12.5.1.3"
+      },
+      {
+        "name": "nvidia-nccl-cu12",
+        "sha256": "8579076d30a8c24988834445f8d633c697d42397e92ffc3f63fa26766d25e0a0",
+        "version": "2.21.5"
+      },
+      {
+        "name": "nvidia-nvjitlink-cu12",
+        "sha256": "f9b37bc5c8cf7509665cb6ada5aaa0ce65618f2332b7d3e78e9790511f111212",
+        "version": "12.5.82"
+      }
+    ],
+    "path": "/home/kmika/.onnx_splitpoint_tool/hailo/hailo8_cuda_20260912T062240Z_hx7b7hcq/overlay_manifest.json",
+    "selected_venv": "/home/kmika/.onnx_splitpoint_tool/hailo/venv_hailo8",
+    "status": "validated",
+    "validation": "installed_full_family_venv_inventory_and_component_checks"
+  },
+  "source_compute_status": "compute_pass",
+  "source_evidence_sha256": "30ee88431ac0ec7e0697f1df17b911e57fee2461968917dd5f517ec649d1f2ac"
+}

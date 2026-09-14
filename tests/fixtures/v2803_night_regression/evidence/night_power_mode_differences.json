@@ -1,0 +1,520 @@
+{
+  "all_mode_headers": [
+    [
+      "NV Power Mode: MAXN_SUPER",
+      "0"
+    ],
+    [
+      "NV Power Mode: MAXN_SUPER",
+      "0"
+    ],
+    [
+      "NV Power Mode: MAXN_SUPER",
+      "0"
+    ]
+  ],
+  "differing_parameters": {
+    "EMC/MAX_FREQ": {
+      "orin_nx_deepx_m1_01": {
+        "real": "3199000000",
+        "configured": "9223372036854775807"
+      },
+      "orin_nx_hailo10_01": {
+        "real": "3199000000",
+        "configured": "9223372036854775807"
+      },
+      "orin_nx_hailo8_01": {
+        "real": "3200000000",
+        "configured": "9223372036854775807"
+      }
+    },
+    "TPC_POWER_GATING/TPC_PG_MASK": {
+      "orin_nx_deepx_m1_01": {
+        "real": "15",
+        "configured": "240"
+      },
+      "orin_nx_hailo10_01": {
+        "real": "240",
+        "configured": "240"
+      },
+      "orin_nx_hailo8_01": {
+        "real": "240",
+        "configured": "240"
+      }
+    }
+  },
+  "inputs": {
+    "orin_nx_deepx_m1_01": {
+      "mode_header": [
+        "NV Power Mode: MAXN_SUPER",
+        "0"
+      ],
+      "parameters": {
+        "CPU_ONLINE/CORE_0": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_1": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_2": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_3": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_4": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_5": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_6": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_7": {
+          "real": "1",
+          "configured": "1"
+        },
+        "FBP_POWER_GATING/FBP_PG_MASK": {
+          "real": "2",
+          "configured": "2"
+        },
+        "TPC_POWER_GATING/TPC_PG_MASK": {
+          "real": "15",
+          "configured": "240"
+        },
+        "GPU_POWER_CONTROL_ENABLE/GPU_PWR_CNTL_EN": {
+          "real": "auto",
+          "configured": "on"
+        },
+        "CPU_A78_0/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_0/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_1/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_1/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_2/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_2/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_3/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_3/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_4/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_4/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_5/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_5/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_6/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_6/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_7/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_7/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "GPU/MIN_FREQ": {
+          "real": "1173000000",
+          "configured": "0"
+        },
+        "GPU/MAX_FREQ": {
+          "real": "1173000000",
+          "configured": "9223372036854775807"
+        },
+        "GPU_POWER_CONTROL_DISABLE/GPU_PWR_CNTL_DIS": {
+          "real": "auto",
+          "configured": "auto"
+        },
+        "EMC/MAX_FREQ": {
+          "real": "3199000000",
+          "configured": "9223372036854775807"
+        },
+        "DLA0_CORE/MAX_FREQ": {
+          "real": "1228800000",
+          "configured": "9223372036854775807"
+        },
+        "DLA1_CORE/MAX_FREQ": {
+          "real": "1228800000",
+          "configured": "9223372036854775807"
+        },
+        "DLA0_FALCON/MAX_FREQ": {
+          "real": "652800000",
+          "configured": "9223372036854775807"
+        },
+        "DLA1_FALCON/MAX_FREQ": {
+          "real": "652800000",
+          "configured": "9223372036854775807"
+        },
+        "PVA0_VPS/MAX_FREQ": {
+          "real": "1190400000",
+          "configured": "9223372036854775807"
+        },
+        "PVA0_AXI/MAX_FREQ": {
+          "real": "857600000",
+          "configured": "9223372036854775807"
+        }
+      },
+      "jetson_clocks": "SOC family:tegra234  Machine:NVIDIA Jetson Orin NX Engineering Reference Developer Kit Super\nError: Run this script(/usr/bin/jetson_clocks) as a root user"
+    },
+    "orin_nx_hailo10_01": {
+      "mode_header": [
+        "NV Power Mode: MAXN_SUPER",
+        "0"
+      ],
+      "parameters": {
+        "CPU_ONLINE/CORE_0": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_1": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_2": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_3": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_4": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_5": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_6": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_7": {
+          "real": "1",
+          "configured": "1"
+        },
+        "FBP_POWER_GATING/FBP_PG_MASK": {
+          "real": "2",
+          "configured": "2"
+        },
+        "TPC_POWER_GATING/TPC_PG_MASK": {
+          "real": "240",
+          "configured": "240"
+        },
+        "GPU_POWER_CONTROL_ENABLE/GPU_PWR_CNTL_EN": {
+          "real": "auto",
+          "configured": "on"
+        },
+        "CPU_A78_0/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_0/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_1/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_1/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_2/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_2/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_3/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_3/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_4/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_4/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_5/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_5/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_6/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_6/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_7/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_7/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "GPU/MIN_FREQ": {
+          "real": "1173000000",
+          "configured": "0"
+        },
+        "GPU/MAX_FREQ": {
+          "real": "1173000000",
+          "configured": "9223372036854775807"
+        },
+        "GPU_POWER_CONTROL_DISABLE/GPU_PWR_CNTL_DIS": {
+          "real": "auto",
+          "configured": "auto"
+        },
+        "EMC/MAX_FREQ": {
+          "real": "3199000000",
+          "configured": "9223372036854775807"
+        },
+        "DLA0_CORE/MAX_FREQ": {
+          "real": "1228800000",
+          "configured": "9223372036854775807"
+        },
+        "DLA1_CORE/MAX_FREQ": {
+          "real": "1228800000",
+          "configured": "9223372036854775807"
+        },
+        "DLA0_FALCON/MAX_FREQ": {
+          "real": "652800000",
+          "configured": "9223372036854775807"
+        },
+        "DLA1_FALCON/MAX_FREQ": {
+          "real": "652800000",
+          "configured": "9223372036854775807"
+        },
+        "PVA0_VPS/MAX_FREQ": {
+          "real": "1190400000",
+          "configured": "9223372036854775807"
+        },
+        "PVA0_AXI/MAX_FREQ": {
+          "real": "857600000",
+          "configured": "9223372036854775807"
+        }
+      },
+      "jetson_clocks": "SOC family:tegra234  Machine:NVIDIA Jetson Orin NX Engineering Reference Developer Kit Super\nError: Run this script(/usr/bin/jetson_clocks) as a root user"
+    },
+    "orin_nx_hailo8_01": {
+      "mode_header": [
+        "NV Power Mode: MAXN_SUPER",
+        "0"
+      ],
+      "parameters": {
+        "CPU_ONLINE/CORE_0": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_1": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_2": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_3": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_4": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_5": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_6": {
+          "real": "1",
+          "configured": "1"
+        },
+        "CPU_ONLINE/CORE_7": {
+          "real": "1",
+          "configured": "1"
+        },
+        "FBP_POWER_GATING/FBP_PG_MASK": {
+          "real": "2",
+          "configured": "2"
+        },
+        "TPC_POWER_GATING/TPC_PG_MASK": {
+          "real": "240",
+          "configured": "240"
+        },
+        "GPU_POWER_CONTROL_ENABLE/GPU_PWR_CNTL_EN": {
+          "real": "auto",
+          "configured": "on"
+        },
+        "CPU_A78_0/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_0/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_1/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_1/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_2/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_2/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_3/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_3/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_4/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_4/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_5/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_5/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_6/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_6/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "CPU_A78_7/MIN_FREQ": {
+          "real": "1984000",
+          "configured": "729600"
+        },
+        "CPU_A78_7/MAX_FREQ": {
+          "real": "1984000",
+          "configured": "9223372036854775807"
+        },
+        "GPU/MIN_FREQ": {
+          "real": "1173000000",
+          "configured": "0"
+        },
+        "GPU/MAX_FREQ": {
+          "real": "1173000000",
+          "configured": "9223372036854775807"
+        },
+        "GPU_POWER_CONTROL_DISABLE/GPU_PWR_CNTL_DIS": {
+          "real": "auto",
+          "configured": "auto"
+        },
+        "EMC/MAX_FREQ": {
+          "real": "3200000000",
+          "configured": "9223372036854775807"
+        },
+        "DLA0_CORE/MAX_FREQ": {
+          "real": "1228800000",
+          "configured": "9223372036854775807"
+        },
+        "DLA1_CORE/MAX_FREQ": {
+          "real": "1228800000",
+          "configured": "9223372036854775807"
+        },
+        "DLA0_FALCON/MAX_FREQ": {
+          "real": "652800000",
+          "configured": "9223372036854775807"
+        },
+        "DLA1_FALCON/MAX_FREQ": {
+          "real": "652800000",
+          "configured": "9223372036854775807"
+        },
+        "PVA0_VPS/MAX_FREQ": {
+          "real": "1190400000",
+          "configured": "9223372036854775807"
+        },
+        "PVA0_AXI/MAX_FREQ": {
+          "real": "857600000",
+          "configured": "9223372036854775807"
+        }
+      },
+      "jetson_clocks": "SOC family:tegra234  Machine:NVIDIA Jetson Orin NX Engineering Reference Developer Kit Super\nError: Run this script(/usr/bin/jetson_clocks) as a root user"
+    }
+  },
+  "note": "No changes to hardware. Raw masks are not interpreted as enabled core counts."
+}

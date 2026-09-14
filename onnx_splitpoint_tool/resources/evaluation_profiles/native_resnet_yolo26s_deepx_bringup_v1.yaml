@@ -1,0 +1,150 @@
+name: native_resnet_yolo26s_deepx_bringup_v1
+purpose: "Focused DeepX native-producer bring-up for ResNet50 b052 and YOLO26s b038. Runs DeepX Part1 -> TensorRT Part2 contract smoke with standardized output/boundary dumps."
+models_root_hint: /home/kmika/Models
+selection_policy:
+  max_accepted_cases_per_model: 1
+  preferred_shortlist: 160
+  min_gap: 1
+  candidate_search_pool: 320
+  report_blocked_configs: true
+  report_plan_adjustments: true
+  keep_partial_hailo_cases: true
+  full_model_hailo_preflight_policy: skip
+  selection_strategy: stratified_windows
+  forced_cases:
+    resnet50: [b052]
+    yolo26s: [b038]
+model_suite:
+  primary:
+  - id: resnet50
+    task: classification
+    family: resnet
+    source: torchvision
+    input_shape: [1, 3, 224, 224]
+    semantic_dataset: imagenet_val
+    development_subset: imagenet_val_mini_200
+    note: DeepX native bring-up anchor, preferred split b052.
+  - id: yolo26s
+    task: detection
+    family: yolo26
+    source: ultralytics
+    input_shape: [1, 3, 640, 640]
+    semantic_dataset: coco2017_val
+    development_subset: coco_50
+    note: DeepX native bring-up anchor, preferred split b038.
+run_profiles:
+- id: ort_cpu
+  type: same_backend_reference
+  full: cpu
+  stage1: cpu
+  stage2: cpu
+  required: true
+- id: deepx_to_trt
+  type: mixed_backend
+  full_reference: cpu_full
+  stage1: deepx_m1
+  stage2: tensorrt
+  required: false
+  treat_preflight_block_as_result: true
+validation:
+  split_fidelity_reference_mode: auto
+  classification_metrics: [top1, top5, logit_cosine_similarity]
+  detection_metrics: [semantic_proxy_match_ratio, semantic_proxy_mean_iou]
+  backend_drift_reference: cpu_full
+  report_blocked_and_infeasible: true
+  mode: summary_only
+  require_explicit: false
+  require_task_metrics: false
+reporting:
+  include_decision_summary: true
+  include_backend_drift_block: true
+  include_task_specific_quality_block: true
+  aggregate_by_model: true
+  aggregate_by_run_profile: true
+workflow:
+  execution_mode: generate_and_run
+  skip_runtime_benchmarks: true
+  no_model_hash: true
+  include_reserve: false
+  parallel_remote_setups: true
+  max_parallel_setups: 1
+  max_parallel_uploads: 1
+  powercalc_workers: 1
+benchmark_execution:
+  provider: auto
+  warmup: 1
+  runs: 3
+  timeout_s: 900
+  backend: auto
+remote_execution:
+  enabled: true
+  host_id: deepx_nx
+  hosts:
+  - id: deepx_nx
+    label: DeepX DX-M1 NX
+    host: 192.168.0.102
+    user: nx
+    port: 22
+  reuse_bundle: true
+  resume: true
+  timeout_s: 1800
+  warmup: 5
+  iters: 50
+  validation_max_images: 50
+deepx_build:
+  mode: reuse_and_build_missing
+  target: deepx_m1
+  calib_dir: /homes/kmika/hailomz/data/coco
+  calib_count: 64
+  calibration_method: ema
+  opt_level: 0
+  cache_dir: ~/Models/BackendArtifacts/deepx
+native_producers:
+  enabled: true
+  refresh_suites: false
+  backends: [deepx]
+  case_policy: case_map_only
+  frames: 50
+  warmup: 5
+  queue_depth: 3
+  remote_root: /home/nx/native_fifo_evalsets
+  remote_tool_dir: /home/nx/ONNX-Splitpoint-Tool
+  build_missing_engines: true
+  copy_benchmarksets: true
+  strict_supported_only: true
+  timeout_s: 3600
+  dump_outputs: true
+  dump_boundary: true
+  validation:
+    enabled: true
+    mode: full_onnx_self_reference
+    topk: 5
+    timeout_s: 900
+  energy:
+    enabled: true
+    mode: plan
+    duration_s: 0
+  remotes:
+    deepx:
+      ssh: nx@192.168.0.102
+      env: "source ~/venvs/deepx-runtime/bin/activate"
+  variants:
+  - id: resnet50_b052_deepx_fp16_contract_smoke
+    backends: [deepx]
+    case_map:
+      resnet50: [b052]
+    precision: fp16
+    boundary_layout: as_input
+    native_boundary_debug: true
+  - id: yolo26s_b038_deepx_fp16_contract_smoke
+    backends: [deepx]
+    case_map:
+      yolo26s: [b038]
+    precision: fp16
+    boundary_layout: as_input
+    native_boundary_debug: true
+model_preparation:
+  mode: current
+  note: DeepX bring-up profile. The initial contract smoke creates native outputs and boundary/input dumps; success is claim_ok if Full-ONNX self-reference matches, otherwise the report captures the exact next action.
+energy:
+  enabled: false

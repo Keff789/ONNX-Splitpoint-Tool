@@ -6,7 +6,7 @@ external scripts can simply import a single module.
 
 from __future__ import annotations
 
-from . import __version__
+from . import __release__, __version__
 
 # High-level analysis helper
 from .core_analysis import analyze_model
@@ -61,6 +61,9 @@ from .split_export import (
     make_fallback_value_info,
     make_random_inputs,
     model_external_data_locations,
+    part2_external_inputs_for_boundary,
+    part2_external_inputs_for_cut_tensors,
+    part2_input_count_for_boundary,
     rename_value_in_model,
     save_model,
     split_model_on_cut_tensors,
@@ -73,6 +76,7 @@ from .split_export import (
 
 __all__ = [
     "__version__",
+    "__release__",
     "analyze_model",
     # units
     "UNIT_MULT",
@@ -115,6 +119,9 @@ __all__ = [
     "compute_strict_boundary_ok",
     "rename_value_in_model",
     "cut_tensors_for_boundary",
+    "part2_external_inputs_for_cut_tensors",
+    "part2_external_inputs_for_boundary",
+    "part2_input_count_for_boundary",
     "model_external_data_locations",
     "ensure_external_data_files",
     "export_boundary_graphviz_context",

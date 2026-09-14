@@ -1,0 +1,697 @@
+{
+  "source": {
+    "filename": "Eingefügter Text(20260912-121049).txt",
+    "library_file_id": "libfile_f9ad6b6d1b6c8191a80a81a456fad5f5",
+    "file_id": "file_00000000baa882438590b7f12b731aa9",
+    "size_bytes": 12949,
+    "path": "/Diss/Eingefügter Text(20260912-121049).txt",
+    "availability": "complete_terminal_text_read",
+    "original_sha256": null
+  },
+  "derived_from": "complete printed JSON in terminal transcript",
+  "report": {
+    "model": "mobilenet_v3_large",
+    "setup_id": "orin_nx_hailo8_01",
+    "remote_host": "192.168.0.104",
+    "remote_python": "/home/nx/hailo_py/bin/python",
+    "fixed_image_ids": [
+      "n02788148/ILSVRC2012_val_00049054.JPEG",
+      "n02098413/ILSVRC2012_val_00031453.JPEG",
+      "n02086910/ILSVRC2012_val_00040564.JPEG",
+      "n02102177/ILSVRC2012_val_00006947.JPEG",
+      "n01817953/ILSVRC2012_val_00002791.JPEG",
+      "n03297495/ILSVRC2012_val_00020583.JPEG",
+      "n01818515/ILSVRC2012_val_00036879.JPEG",
+      "n04326547/ILSVRC2012_val_00013931.JPEG",
+      "n04086273/ILSVRC2012_val_00015260.JPEG",
+      "n04251144/ILSVRC2012_val_00010908.JPEG",
+      "n04597913/ILSVRC2012_val_00041290.JPEG",
+      "n04192698/ILSVRC2012_val_00026513.JPEG",
+      "n01664065/ILSVRC2012_val_00022469.JPEG",
+      "n04372370/ILSVRC2012_val_00035646.JPEG",
+      "n03065424/ILSVRC2012_val_00020012.JPEG",
+      "n03459775/ILSVRC2012_val_00041657.JPEG"
+    ],
+    "model_build_status": "pass",
+    "gpu_execution_status": "pass",
+    "runtime_status": "pass",
+    "quality_status": "not_evaluated_against_campaign_gate",
+    "claim_eligible": false,
+    "compiler_invoked": false,
+    "energy_invoked": false,
+    "remote_process_cleanup_complete": true,
+    "remote_staging_path": "/tmp/onnx-hailo8-fixed16-r1-uEg528zMdK",
+    "remote_staging_cleanup": {
+      "status": "pass",
+      "attempted": true,
+      "returncode": 0,
+      "timed_out": false,
+      "error": null
+    },
+    "status": "diagnostic_evaluated",
+    "stages": {
+      "source_float": {
+        "status": "evaluated",
+        "shape": [
+          16,
+          1000
+        ],
+        "dtype": "float32",
+        "finite": true,
+        "origin": {
+          "artifact_sha256": "2f5e79b1e4280251e7b6eefe1d6161c4831e2fc27858e1e9fe2fac697f44489e",
+          "provider": "CPUExecutionProvider",
+          "feed": "same_actual_product_logical_feed_before_HEF_quantization"
+        },
+        "top1": [
+          421,
+          204,
+          151,
+          218,
+          87,
+          550,
+          88,
+          825,
+          763,
+          801,
+          910,
+          787,
+          33,
+          846,
+          506,
+          656
+        ],
+        "top5": [
+          [
+            421,
+            506,
+            556,
+            520,
+            743
+          ],
+          [
+            204,
+            155,
+            153,
+            200,
+            154
+          ],
+          [
+            151,
+            157,
+            154,
+            158,
+            219
+          ],
+          [
+            218,
+            217,
+            219,
+            220,
+            216
+          ],
+          [
+            87,
+            88,
+            89,
+            600,
+            823
+          ],
+          [
+            550,
+            473,
+            786,
+            708,
+            856
+          ],
+          [
+            88,
+            92,
+            90,
+            87,
+            95
+          ],
+          [
+            825,
+            212,
+            172,
+            251,
+            708
+          ],
+          [
+            763,
+            764,
+            413,
+            597,
+            740
+          ],
+          [
+            801,
+            983,
+            329,
+            973,
+            65
+          ],
+          [
+            910,
+            618,
+            788,
+            693,
+            792
+          ],
+          [
+            787,
+            524,
+            490,
+            461,
+            439
+          ],
+          [
+            33,
+            34,
+            36,
+            35,
+            37
+          ],
+          [
+            846,
+            619,
+            519,
+            771,
+            707
+          ],
+          [
+            506,
+            755,
+            807,
+            694,
+            545
+          ],
+          [
+            656,
+            821,
+            864,
+            436,
+            654
+          ]
+        ],
+        "top1_correct": 13,
+        "top5_correct": 14,
+        "item_count": 16
+      },
+      "build_float": {
+        "status": "evaluated",
+        "shape": [
+          16,
+          1000
+        ],
+        "dtype": "float32",
+        "finite": true,
+        "origin": {
+          "artifact_sha256": "511b13a4882c2cb4f1b904cb831b86d1e441c3f11c4eb87fec958b5529bcf438",
+          "provider": "CPUExecutionProvider",
+          "feed": "same_actual_product_logical_feed_before_HEF_quantization"
+        },
+        "top1": [
+          421,
+          204,
+          151,
+          218,
+          87,
+          550,
+          88,
+          825,
+          763,
+          801,
+          910,
+          787,
+          33,
+          846,
+          506,
+          656
+        ],
+        "top5": [
+          [
+            421,
+            506,
+            556,
+            520,
+            743
+          ],
+          [
+            204,
+            155,
+            153,
+            200,
+            154
+          ],
+          [
+            151,
+            157,
+            154,
+            158,
+            219
+          ],
+          [
+            218,
+            217,
+            219,
+            220,
+            216
+          ],
+          [
+            87,
+            88,
+            89,
+            600,
+            823
+          ],
+          [
+            550,
+            473,
+            786,
+            708,
+            856
+          ],
+          [
+            88,
+            92,
+            90,
+            87,
+            95
+          ],
+          [
+            825,
+            212,
+            172,
+            251,
+            708
+          ],
+          [
+            763,
+            764,
+            413,
+            597,
+            740
+          ],
+          [
+            801,
+            983,
+            329,
+            973,
+            65
+          ],
+          [
+            910,
+            618,
+            788,
+            693,
+            792
+          ],
+          [
+            787,
+            524,
+            490,
+            461,
+            439
+          ],
+          [
+            33,
+            34,
+            36,
+            35,
+            37
+          ],
+          [
+            846,
+            619,
+            519,
+            771,
+            707
+          ],
+          [
+            506,
+            755,
+            807,
+            694,
+            545
+          ],
+          [
+            656,
+            821,
+            864,
+            436,
+            654
+          ]
+        ],
+        "top1_correct": 13,
+        "top5_correct": 14,
+        "item_count": 16
+      },
+      "cpu_hef": {
+        "status": "evaluated",
+        "shape": [
+          16,
+          1000
+        ],
+        "dtype": "float32",
+        "finite": true,
+        "origin": {
+          "artifact_sha256": "8d1cb584e05307a641d41eab4dd51c1d1c7824e99a97469935f88089cf756f85",
+          "setup_id": "orin_nx_hailo8_01",
+          "collector": "existing_product_HailoBackend_fixed16_unmeasured"
+        },
+        "top1": [
+          421,
+          155,
+          151,
+          217,
+          87,
+          786,
+          88,
+          82,
+          763,
+          801,
+          112,
+          787,
+          33,
+          846,
+          506,
+          468
+        ],
+        "top5": [
+          [
+            421,
+            506,
+            877,
+            576,
+            556
+          ],
+          [
+            155,
+            204,
+            153,
+            200,
+            154
+          ],
+          [
+            151,
+            219,
+            156,
+            207,
+            154
+          ],
+          [
+            217,
+            218,
+            220,
+            219,
+            215
+          ],
+          [
+            87,
+            88,
+            406,
+            892,
+            865
+          ],
+          [
+            786,
+            872,
+            550,
+            708,
+            746
+          ],
+          [
+            88,
+            775,
+            863,
+            552,
+            90
+          ],
+          [
+            82,
+            825,
+            716,
+            912,
+            81
+          ],
+          [
+            763,
+            764,
+            740,
+            597,
+            413
+          ],
+          [
+            801,
+            983,
+            65,
+            433,
+            6
+          ],
+          [
+            112,
+            910,
+            459,
+            738,
+            618
+          ],
+          [
+            787,
+            455,
+            919,
+            524,
+            643
+          ],
+          [
+            33,
+            34,
+            36,
+            37,
+            35
+          ],
+          [
+            846,
+            619,
+            844,
+            480,
+            648
+          ],
+          [
+            506,
+            835,
+            545,
+            749,
+            549
+          ],
+          [
+            468,
+            656,
+            654,
+            436,
+            407
+          ]
+        ],
+        "top1_correct": 8,
+        "top5_correct": 14,
+        "item_count": 16
+      },
+      "gpu_hef": {
+        "status": "evaluated",
+        "shape": [
+          16,
+          1000
+        ],
+        "dtype": "float32",
+        "finite": true,
+        "origin": {
+          "artifact_sha256": "bdfdf620ea557fff667b22343678db19e00d4b833afa2bf56de7161c766d64b0",
+          "setup_id": "orin_nx_hailo8_01",
+          "collector": "existing_product_HailoBackend_fixed16_unmeasured"
+        },
+        "top1": [
+          421,
+          204,
+          151,
+          217,
+          87,
+          550,
+          88,
+          912,
+          763,
+          801,
+          788,
+          787,
+          33,
+          619,
+          506,
+          656
+        ],
+        "top5": [
+          [
+            421,
+            506,
+            877,
+            743,
+            576
+          ],
+          [
+            204,
+            153,
+            155,
+            200,
+            154
+          ],
+          [
+            151,
+            154,
+            219,
+            158,
+            157
+          ],
+          [
+            217,
+            218,
+            220,
+            219,
+            216
+          ],
+          [
+            87,
+            88,
+            406,
+            865,
+            600
+          ],
+          [
+            550,
+            708,
+            872,
+            786,
+            613
+          ],
+          [
+            88,
+            552,
+            775,
+            90,
+            863
+          ],
+          [
+            912,
+            82,
+            716,
+            825,
+            272
+          ],
+          [
+            763,
+            597,
+            764,
+            413,
+            740
+          ],
+          [
+            801,
+            983,
+            65,
+            433,
+            973
+          ],
+          [
+            788,
+            910,
+            459,
+            738,
+            755
+          ],
+          [
+            787,
+            455,
+            919,
+            524,
+            637
+          ],
+          [
+            33,
+            34,
+            36,
+            37,
+            35
+          ],
+          [
+            619,
+            846,
+            844,
+            894,
+            999
+          ],
+          [
+            506,
+            646,
+            545,
+            749,
+            821
+          ],
+          [
+            656,
+            436,
+            468,
+            654,
+            717
+          ]
+        ],
+        "top1_correct": 10,
+        "top5_correct": 15,
+        "item_count": 16
+      },
+      "full_precision": {
+        "status": "not_available"
+      },
+      "quantized_emulation": {
+        "status": "not_available"
+      }
+    },
+    "comparisons": {
+      "source_float_vs_build_float": {
+        "status": "compared",
+        "max_abs_difference": 0,
+        "rms_difference": 0,
+        "top1_changed_count": 0,
+        "correct_count_delta": 0
+      },
+      "build_float_vs_cpu_hef": {
+        "status": "compared",
+        "max_abs_difference": 5.274633467197418,
+        "rms_difference": 0.7123772020982143,
+        "top1_changed_count": 6,
+        "correct_count_delta": -5
+      },
+      "cpu_hef_vs_gpu_hef": {
+        "status": "compared",
+        "max_abs_difference": 2.1949431896209717,
+        "rms_difference": 0.3447882514625216,
+        "top1_changed_count": 6,
+        "correct_count_delta": 2
+      }
+    },
+    "holdout": false,
+    "thresholds_changed": false,
+    "original_quality_decision_preserved": true,
+    "hef_readability_status": {
+      "cpu_hef": "pass",
+      "gpu_hef": "pass"
+    },
+    "actual_runtime_feed_status": "logical_and_actual_vstream_feeds_identical",
+    "actual_vstream_feed_equal": true,
+    "internal_uint8_feed_observed": false,
+    "runtime_api": "vstreams",
+    "input_format": "FLOAT32",
+    "quantization_note": "HailoRT quantizes FLOAT32 using each HEF QuantInfo; internal UINT8 buffers are not captured.",
+    "frozen_inputs_and_registry_unchanged": true,
+    "remote_cleanup_complete": true,
+    "g3_status": "pass"
+  }
+}
+

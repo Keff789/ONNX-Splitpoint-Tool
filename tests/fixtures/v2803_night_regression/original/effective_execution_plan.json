@@ -1,0 +1,435 @@
+{
+  "artifact_policy": "normal",
+  "automatic_reference_profiles": [
+    "ort_cpu"
+  ],
+  "batched_remote_dispatches_per_model": 3,
+  "batched_remote_dispatches_total": 21,
+  "benchmark_runs": 5,
+  "benchmark_warmup": 3,
+  "bootstrap_repetitions": 5000,
+  "cache_verify_actual_plan": {},
+  "cache_verify_expected_plan": {},
+  "calibration_items": {
+    "classification": 500,
+    "detection": 500
+  },
+  "candidate_count_semantics": "ranking_candidate_population",
+  "candidate_counts_by_model": {
+    "mobilenet_v3_large": 2,
+    "regnet_x_1_6gf": 2,
+    "resnet50": 2,
+    "yolo11l": 2,
+    "yolo26m": 2,
+    "yolo26s": 2,
+    "yolov7_paper": 2
+  },
+  "cases_per_model": 2,
+  "classification_model_count": 3,
+  "cold_suite_uploads_per_model": 3,
+  "cold_suite_uploads_total": 21,
+  "compiler_dispatch_allowed": true,
+  "deepx_cache_dir": "~/Models/BackendArtifacts/deepx",
+  "deepx_classification_preprocessing": "imagenet_mean_std",
+  "deepx_classification_preprocessing_explicit": true,
+  "deepx_full_cache_contract": "v2_exact_explicit",
+  "deployment_shortlist_cases_per_model": 2,
+  "deployment_shortlist_upper_bound_by_model": {
+    "mobilenet_v3_large": 2,
+    "regnet_x_1_6gf": 2,
+    "resnet50": 2,
+    "yolo11l": 2,
+    "yolo26m": 2,
+    "yolo26s": 2,
+    "yolov7_paper": 2
+  },
+  "detection_model_count": 4,
+  "development_audit_counts": {},
+  "effective_generic_run_ids": [
+    "ort_tensorrt",
+    "hailo8",
+    "hailo8_to_trt",
+    "hailo10",
+    "hailo10_to_tensorrt",
+    "deepx_m1_full",
+    "deepx_m1_to_tensorrt"
+  ],
+  "effective_require_single_part2_input": true,
+  "energy_configuration_errors": [],
+  "energy_measurement_path": "native_only",
+  "energy_plan_blocked": false,
+  "estimated_validation_files_total": 55011,
+  "execution_union_candidate_count_min_total": 14,
+  "execution_union_candidate_count_upper_bound_total": 14,
+  "execution_union_candidate_counts_min_by_model": {
+    "mobilenet_v3_large": 2,
+    "regnet_x_1_6gf": 2,
+    "resnet50": 2,
+    "yolo11l": 2,
+    "yolo26m": 2,
+    "yolo26s": 2,
+    "yolov7_paper": 2
+  },
+  "execution_union_candidate_counts_upper_bound_by_model": {
+    "mobilenet_v3_large": 2,
+    "regnet_x_1_6gf": 2,
+    "resnet50": 2,
+    "yolo11l": 2,
+    "yolo26m": 2,
+    "yolo26s": 2,
+    "yolov7_paper": 2
+  },
+  "execution_union_count_semantics": "configured_range_before_audit_shortlist_deduplication; resource_estimates_use_upper_bound",
+  "expected_full_quality_identities": [],
+  "expected_full_quality_ids": [],
+  "expected_full_quality_results_per_model": 0,
+  "expected_full_quality_results_total": 0,
+  "expected_full_quality_setup_ids": [],
+  "expected_generic_result_rows_by_model": {
+    "mobilenet_v3_large": 12,
+    "regnet_x_1_6gf": 12,
+    "resnet50": 12,
+    "yolo11l": 12,
+    "yolo26m": 12,
+    "yolo26s": 12,
+    "yolov7_paper": 12
+  },
+  "expected_generic_result_rows_min_by_model": {
+    "mobilenet_v3_large": 12,
+    "regnet_x_1_6gf": 12,
+    "resnet50": 12,
+    "yolo11l": 12,
+    "yolo26m": 12,
+    "yolo26s": 12,
+    "yolov7_paper": 12
+  },
+  "expected_generic_result_rows_min_total": 84,
+  "expected_generic_result_rows_semantics": "configured_minimum_and_upper_bound; legacy total/by_model fields contain the resource-safe upper bound",
+  "expected_generic_result_rows_total": 84,
+  "experiment_purpose": "legacy_unspecified",
+  "experiment_scope": {
+    "model_coverage_count": 7,
+    "observed_comparable_valid_candidates": null,
+    "planned_candidate_counts_by_model": {
+      "mobilenet_v3_large": 2,
+      "regnet_x_1_6gf": 2,
+      "resnet50": 2,
+      "yolo11l": 2,
+      "yolo26m": 2,
+      "yolo26s": 2,
+      "yolov7_paper": 2
+    },
+    "ranking_admission_status": "insufficient_planned_candidates",
+    "ranking_intended": true,
+    "scope_note": "Model coverage is distinct from ranking transfer; repetitions and other setups do not add split candidates."
+  },
+  "generic_energy_enabled": false,
+  "generic_logical_runs_per_model": 7,
+  "generic_logical_runs_total": 49,
+  "generic_rows_per_model": 12,
+  "generic_rows_total": 84,
+  "generic_runtime_enabled": true,
+  "hailo_calibration_storage": "memmap",
+  "hailo_optimization_level": 1,
+  "hailo_preset": "balanced",
+  "holdout_audit_counts": {},
+  "holdout_audit_size_default": 20,
+  "logical_run_profiles": [
+    "ort_tensorrt",
+    "hailo8",
+    "hailo8_to_trt",
+    "hailo10",
+    "hailo10_to_tensorrt",
+    "deepx_m1_full",
+    "deepx_m1_to_tensorrt"
+  ],
+  "management_reference_profiles": [
+    "ort_cpu"
+  ],
+  "model_count": 7,
+  "models": [
+    "mobilenet_v3_large",
+    "resnet50",
+    "yolo11l",
+    "yolo26m",
+    "yolo26s",
+    "regnet_x_1_6gf",
+    "yolov7_paper"
+  ],
+  "native_default": true,
+  "native_enabled": true,
+  "native_energy_default": false,
+  "native_energy_enabled": true,
+  "native_energy_override_active": true,
+  "native_energy_override_present": true,
+  "native_energy_requested": true,
+  "native_execution_contract": {
+    "contract_sha256": "53d45dee8f71a51336cfc3cfddac2081d9a914d7c2f2b339afc00483431e21dd",
+    "field_sources": {
+      "frames": "profile",
+      "inflight": "profile",
+      "queue_depth": "profile",
+      "repetitions": "mode_default",
+      "warmup": "profile"
+    },
+    "frames": 1000,
+    "inflight": 8,
+    "queue_depth": 3,
+    "repetitions": 3,
+    "run_mode": "final",
+    "schema": "onnx-splitpoint/native-execution-contract",
+    "schema_version": 1,
+    "warmup": 100
+  },
+  "native_execution_contract_sha256": "53d45dee8f71a51336cfc3cfddac2081d9a914d7c2f2b339afc00483431e21dd",
+  "native_frames": 1000,
+  "native_full_baselines": true,
+  "native_inflight": 8,
+  "native_multi_input_policy": "reject_and_backfill_from_frozen_prediction",
+  "native_override_active": false,
+  "native_override_present": true,
+  "native_performance_repetitions": 3,
+  "native_queue_depth": 3,
+  "native_split_backends": [
+    "hailo8",
+    "hailo10h",
+    "deepx"
+  ],
+  "native_split_plan_source": "evaluation_profile.run_profiles",
+  "native_split_requires_single_part2_input": true,
+  "native_warmup": 100,
+  "notes": [
+    "Generic-Runner energy is disabled by design; task validation and broad candidate screening remain Generic-Runner responsibilities.",
+    "Native energy is measured only after Native contract validation and with matching Native-Full baselines.",
+    "Run IDs sharing a physical setup execute in one setup-local benchmark invocation and reuse the same content-addressed suite and TensorRT cache."
+  ],
+  "official_coco_enabled": true,
+  "official_coco_required": false,
+  "performance_claims_emitted": null,
+  "quality_canary": {
+    "enabled": false,
+    "errors": [],
+    "execution_scope": "",
+    "expected_full_quality_identities": [],
+    "expected_full_quality_results": [],
+    "full_run_ids": [],
+    "ok": true,
+    "schema": "onnx-splitpoint/full-only-quality-canary",
+    "schema_version": 1,
+    "setup_local_tensorrt_companions": [],
+    "status": "not_requested"
+  },
+  "quality_canary_enabled": false,
+  "quality_canary_execution_scope": "",
+  "quality_execution_location": "central_management",
+  "quality_workers": 4,
+  "ranking_candidate_shortfall": 1,
+  "ranking_enabled": true,
+  "ranking_minimum_candidates": 3,
+  "ranking_requested": true,
+  "remote_run_invocations_per_model": 3,
+  "remote_run_invocations_total": 21,
+  "requested_require_single_part2_input": true,
+  "require_single_part2_input": true,
+  "run_mode": "final",
+  "run_mode_label": "Final Quality (Standard+)",
+  "schema": "onnx-splitpoint/effective-execution-plan",
+  "schema_version": 1,
+  "score_independent_audit_counts": {},
+  "score_independent_audit_enabled": false,
+  "score_independent_audit_minimum_valid": 10,
+  "score_independent_audit_minimum_valid_counts": {},
+  "score_independent_audit_requested": false,
+  "score_independent_audit_size": 20,
+  "selection_strategy": "stratified_windows",
+  "setup_groups": {
+    "deepx_setup": [
+      "deepx_m1_full",
+      "deepx_m1_to_tensorrt",
+      "ort_tensorrt"
+    ],
+    "hailo10h_setup": [
+      "hailo10",
+      "hailo10_to_tensorrt",
+      "ort_tensorrt"
+    ],
+    "hailo8_setup": [
+      "hailo8",
+      "hailo8_to_trt",
+      "ort_tensorrt"
+    ]
+  },
+  "setup_local_tensorrt_quality_companion_contract": {
+    "errors": [],
+    "identities": [
+      {
+        "backend": "tensorrt",
+        "dispatch_run_id": "ort_tensorrt",
+        "execution_role": "full_quality_only",
+        "id": "tensorrt_at_hailo8_full",
+        "identity_source": "scheduler_materialized_before_remote_dispatch",
+        "logical_setup_group": "hailo8_setup",
+        "performance_claims_emitted": false,
+        "producer": "hailo8",
+        "quality_companion_endpoint_id": "tensorrt_at_hailo8_full",
+        "run_id": "native_full_tensorrt",
+        "setup_id": "orin_nx_hailo8_01",
+        "source_run_id": "native_full_tensorrt",
+        "variant": "full"
+      },
+      {
+        "backend": "tensorrt",
+        "dispatch_run_id": "ort_tensorrt",
+        "execution_role": "full_quality_only",
+        "id": "tensorrt_at_hailo10h_full",
+        "identity_source": "scheduler_materialized_before_remote_dispatch",
+        "logical_setup_group": "hailo10h_setup",
+        "performance_claims_emitted": false,
+        "producer": "hailo10h",
+        "quality_companion_endpoint_id": "tensorrt_at_hailo10h_full",
+        "run_id": "native_full_tensorrt",
+        "setup_id": "orin_nx_hailo10_01",
+        "source_run_id": "native_full_tensorrt",
+        "variant": "full"
+      },
+      {
+        "backend": "tensorrt",
+        "dispatch_run_id": "ort_tensorrt",
+        "execution_role": "full_quality_only",
+        "id": "tensorrt_at_deepx_m1_full",
+        "identity_source": "scheduler_materialized_before_remote_dispatch",
+        "logical_setup_group": "deepx_setup",
+        "performance_claims_emitted": false,
+        "producer": "deepx",
+        "quality_companion_endpoint_id": "tensorrt_at_deepx_m1_full",
+        "run_id": "native_full_tensorrt",
+        "setup_id": "orin_nx_deepx_m1_01",
+        "source_run_id": "native_full_tensorrt",
+        "variant": "full"
+      }
+    ],
+    "identity_authority": "effective_execution_plan",
+    "identity_count": 3,
+    "mode": "standard_quality",
+    "models": [
+      "mobilenet_v3_large",
+      "resnet50",
+      "yolo11l",
+      "yolo26m",
+      "yolo26s",
+      "regnet_x_1_6gf",
+      "yolov7_paper"
+    ],
+    "physical_setup_ids_by_producer": {
+      "deepx": "orin_nx_deepx_m1_01",
+      "hailo10h": "orin_nx_hailo10_01",
+      "hailo8": "orin_nx_hailo8_01"
+    },
+    "quality_companion_endpoint_ids": [
+      "tensorrt_at_hailo8_full",
+      "tensorrt_at_hailo10h_full",
+      "tensorrt_at_deepx_m1_full"
+    ],
+    "requested": true,
+    "schema": "onnx-splitpoint/effective-plan-setup-local-tensorrt-quality-companions",
+    "schema_version": 1,
+    "setup_ids": [
+      "orin_nx_hailo8_01",
+      "orin_nx_hailo10_01",
+      "orin_nx_deepx_m1_01"
+    ],
+    "status": "ready"
+  },
+  "setup_local_tensorrt_quality_companion_identities": [
+    {
+      "backend": "tensorrt",
+      "dispatch_run_id": "ort_tensorrt",
+      "execution_role": "full_quality_only",
+      "id": "tensorrt_at_hailo8_full",
+      "identity_source": "scheduler_materialized_before_remote_dispatch",
+      "logical_setup_group": "hailo8_setup",
+      "performance_claims_emitted": false,
+      "producer": "hailo8",
+      "quality_companion_endpoint_id": "tensorrt_at_hailo8_full",
+      "run_id": "native_full_tensorrt",
+      "setup_id": "orin_nx_hailo8_01",
+      "source_run_id": "native_full_tensorrt",
+      "variant": "full"
+    },
+    {
+      "backend": "tensorrt",
+      "dispatch_run_id": "ort_tensorrt",
+      "execution_role": "full_quality_only",
+      "id": "tensorrt_at_hailo10h_full",
+      "identity_source": "scheduler_materialized_before_remote_dispatch",
+      "logical_setup_group": "hailo10h_setup",
+      "performance_claims_emitted": false,
+      "producer": "hailo10h",
+      "quality_companion_endpoint_id": "tensorrt_at_hailo10h_full",
+      "run_id": "native_full_tensorrt",
+      "setup_id": "orin_nx_hailo10_01",
+      "source_run_id": "native_full_tensorrt",
+      "variant": "full"
+    },
+    {
+      "backend": "tensorrt",
+      "dispatch_run_id": "ort_tensorrt",
+      "execution_role": "full_quality_only",
+      "id": "tensorrt_at_deepx_m1_full",
+      "identity_source": "scheduler_materialized_before_remote_dispatch",
+      "logical_setup_group": "deepx_setup",
+      "performance_claims_emitted": false,
+      "producer": "deepx",
+      "quality_companion_endpoint_id": "tensorrt_at_deepx_m1_full",
+      "run_id": "native_full_tensorrt",
+      "setup_id": "orin_nx_deepx_m1_01",
+      "source_run_id": "native_full_tensorrt",
+      "variant": "full"
+    }
+  ],
+  "setup_local_tensorrt_quality_companion_identity_ready": true,
+  "setup_local_tensorrt_quality_companions": true,
+  "setup_local_tensorrt_quality_companions_requested": true,
+  "setup_local_tensorrt_quality_only_groups": [
+    "hailo8_setup",
+    "hailo10h_setup"
+  ],
+  "setup_local_tensorrt_run_id": "ort_tensorrt",
+  "shortlist": 6,
+  "tensorrt_performance_owner_group": "deepx_setup",
+  "tensorrt_remote_cache": true,
+  "uploads_per_model_setup": 1,
+  "validation_embedding_policy": "exact_run_mode_subset",
+  "validation_items": {
+    "classification": 5000,
+    "detection": 5000
+  },
+  "warm_suite_uploads_total": 0,
+  "warnings": [
+    {
+      "candidate_counts_by_model": {
+        "mobilenet_v3_large": 2,
+        "regnet_x_1_6gf": 2,
+        "resnet50": 2,
+        "yolo11l": 2,
+        "yolo26m": 2,
+        "yolo26s": 2,
+        "yolov7_paper": 2
+      },
+      "id": "ranking_candidate_shortfall",
+      "message": "Ranking transfer requires at least 3 measured candidates per comparable model/backend/contract group. Insufficient planned candidate counts: {'mobilenet_v3_large': 1, 'resnet50': 1, 'yolo11l': 1, 'yolo26m': 1, 'yolo26s': 1, 'regnet_x_1_6gf': 1, 'yolov7_paper': 1}. For score-independent audits, this count comes from the audit universe and is not limited by max_accepted_cases_per_model. Performance and task-quality rows remain valid; Spearman/Kendall/Top-k transfer will be reported as insufficient_candidates.",
+      "minimum_candidates_for_correlation": 3,
+      "selected_cases_per_model": 2,
+      "severity": "warning",
+      "shortfall_by_model": {
+        "mobilenet_v3_large": 1,
+        "regnet_x_1_6gf": 1,
+        "resnet50": 1,
+        "yolo11l": 1,
+        "yolo26m": 1,
+        "yolo26s": 1,
+        "yolov7_paper": 1
+      }
+    }
+  ]
+}

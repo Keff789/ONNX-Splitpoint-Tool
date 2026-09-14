@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import math
@@ -120,6 +121,19 @@ def _sigmoid(x: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-x))
 
 
+def _yolov7_sigmoid_float64_to_float32(x: np.ndarray) -> np.ndarray:
+    """Evaluate the clipped existing sigmoid in float64, then round to float32.
+
+    Float32 NumPy exp dispatch may differ by an ulp between CPU implementations.
+    Evaluating exp and the denominator in float64 before the explicit final
+    float32 conversion prevents that observed dispatch error from entering the
+    task records. Thresholds, anchors, geometry and NMS are unchanged. Only
+    version-2 model-bound YOLOv7 decoder contracts select this numeric path.
+    """
+    values = np.clip(np.asarray(x, dtype=np.float64), -80.0, 80.0)
+    return (1.0 / (1.0 + np.exp(-values))).astype(np.float32)
+
+
 def _probability_or_sigmoid(x: np.ndarray) -> np.ndarray:
     """Return probabilities for tensors that may be logits or already activated.
 
@@ -205,8 +219,16 @@ class _Detections:
     class_ids: np.ndarray  # [N]
 
 
-def _decode_bn6(output: np.ndarray) -> _Detections:
-    """Decode already-materialized detections [N,6] or [1,N,6]."""
+def _decode_bn6(output: np.ndarray, conf_thresh: float = 0.25) -> _Detections:
+    """Decode already-materialized detections [N,6] or [1,N,6].
+
+    Important: BN6 tensors are often already post-NMS detections, but some
+    exports keep hundreds of low-confidence rows.  Older harness versions
+    returned all rows and only applied NMS/max_det afterwards; the overlay then
+    filled with boxes labelled ``0.00`` and semantic validation could compare
+    garbage against garbage.  Treat the score threshold as part of the BN6
+    decoder, just like the decoded/regcls YOLO paths.
+    """
 
     det = np.asarray(output)
     if det.ndim == 3 and det.shape[0] == 1:
@@ -216,7 +238,20 @@ def _decode_bn6(output: np.ndarray) -> _Detections:
     boxes = det[:, 0:4].astype(np.float32, copy=False)
     scores = det[:, 4].astype(np.float32, copy=False)
     cls = det[:, 5].astype(np.int64, copy=False)
-    return _Detections(boxes_xyxy=boxes, scores=scores, class_ids=cls)
+    finite = np.isfinite(scores)
+    keep = finite & (scores >= float(conf_thresh))
+    # Drop zero/negative-area boxes as another cheap guard against padded rows.
+    try:
+        keep = keep & np.isfinite(boxes).all(axis=1) & ((boxes[:, 2] - boxes[:, 0]) > 0.0) & ((boxes[:, 3] - boxes[:, 1]) > 0.0)
+    except Exception:
+        pass
+    if not np.any(keep):
+        return _Detections(
+            boxes_xyxy=np.zeros((0, 4), np.float32),
+            scores=np.zeros((0,), np.float32),
+            class_ids=np.zeros((0,), np.int64),
+        )
+    return _Detections(boxes_xyxy=boxes[keep], scores=scores[keep], class_ids=cls[keep])
 
 
 def _looks_like_yolo_decoded(output: np.ndarray) -> bool:
@@ -335,12 +370,334 @@ def _decode_concat_yolo(output: np.ndarray, conf_thresh: float) -> _Detections:
     return _Detections(boxes_xyxy=boxes, scores=score[keep].astype(np.float32), class_ids=cls_id[keep].astype(np.int64))
 
 
-# Default YOLOv5-style anchors for 640 input (works reasonably for many YOLOv5/7 exports).
+# This table is retained only for unidentified legacy YOLOv5/Tiny diagnostic
+# callers.  It must never be selected for the exact ``yolov7_paper`` model.
 _YOLOV5_ANCHORS_640 = {
     8: np.array([[10, 13], [16, 30], [33, 23]], dtype=np.float32),
     16: np.array([[30, 61], [62, 45], [59, 119]], dtype=np.float32),
     32: np.array([[116, 90], [156, 198], [373, 326]], dtype=np.float32),
 }
+
+YOLOV7_DECODER_CONTRACT_SCHEMA = (
+    "onnx-splitpoint/yolov7-model-bound-decoder"
+)
+YOLOV7_DECODER_CONTRACT_VERSION = 2
+YOLOV7_SIGMOID_ARITHMETIC = "clipped_float64_exp_denominator_to_float32_v1"
+YOLOV7_PAPER_MODEL_ID = "yolov7_paper"
+YOLOV7_PAPER_ONNX_SHA256 = (
+    "7a13e66f91047cce0e251c05f64159646847e842af31d60441c63dcdfad7825d"
+)
+YOLOV7_PAPER_DECODER_ID = (
+    "yolov7_paper_standard_anchor_classaware_nms_v2"
+)
+YOLOV7_STANDARD_ANCHOR_TABLE_ID = (
+    "yolov7_paper_standard_anchors_640_v1"
+)
+YOLOV7_LEGACY_TINY_ANCHOR_TABLE_ID = (
+    "yolov7_paper_legacy_tiny_anchors_640_v1"
+)
+YOLOV7_PRODUCTION_POLICY_ID = (
+    "retained_v27546_conf025_iou045_max300_policy_v1"
+)
+YOLOV7_UPSTREAM_SANITY_POLICY_ID = "upstream_yolov7_coco_sanity_policy_v1"
+YOLOV7_STANDARD_ANCHORS_640 = {
+    8: np.array([[12, 16], [19, 36], [40, 28]], dtype=np.float32),
+    16: np.array([[36, 75], [76, 55], [72, 146]], dtype=np.float32),
+    32: np.array([[142, 110], [192, 243], [459, 401]], dtype=np.float32),
+}
+YOLOV7_LEGACY_TINY_ANCHORS_640 = {
+    stride: np.asarray(value, dtype=np.float32).copy()
+    for stride, value in _YOLOV5_ANCHORS_640.items()
+}
+_YOLOV7_REGISTERED_ANCHOR_TABLES = {
+    YOLOV7_STANDARD_ANCHOR_TABLE_ID: YOLOV7_STANDARD_ANCHORS_640,
+    YOLOV7_LEGACY_TINY_ANCHOR_TABLE_ID: YOLOV7_LEGACY_TINY_ANCHORS_640,
+}
+_YOLOV7_ACTIVATION_MODES = {
+    "logits", "activated", "objcls_activated",
+}
+_YOLOV7_REGISTERED_POSTPROCESS_POLICIES = {
+    YOLOV7_PRODUCTION_POLICY_ID: {
+        "confidence_threshold": 0.25,
+        "iou_threshold": 0.45,
+        "max_detections": 300,
+        "use_scope": "production",
+    },
+    YOLOV7_UPSTREAM_SANITY_POLICY_ID: {
+        "confidence_threshold": 0.001,
+        "iou_threshold": 0.65,
+        "max_detections": 100,
+        "use_scope": "diagnostic_upstream_sanity",
+    },
+}
+
+
+def _canonical_contract_bytes(value: Mapping[str, Any]) -> bytes:
+    return json.dumps(
+        dict(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def _canonical_contract_sha256(value: Mapping[str, Any]) -> str:
+    return hashlib.sha256(_canonical_contract_bytes(value)).hexdigest()
+
+
+def _yolov7_anchor_records(
+    table: Mapping[int, np.ndarray], *, input_hw: Sequence[int],
+) -> List[Dict[str, Any]]:
+    height, width = (int(value) for value in input_hw)
+    records: List[Dict[str, Any]] = []
+    for role, stride in zip(("p3", "p4", "p5"), (8, 16, 32)):
+        records.append({
+            "head_role": role,
+            "stride": stride,
+            "grid_hw": [height // stride, width // stride],
+            "anchors_wh": [
+                [int(pair[0]), int(pair[1])]
+                for pair in np.asarray(table[stride]).tolist()
+            ],
+        })
+    return records
+
+
+def build_yolov7_decoder_contract(
+    *,
+    model_id: str,
+    model_sha256: str,
+    activation_mode: str,
+    anchor_table_id: str = YOLOV7_STANDARD_ANCHOR_TABLE_ID,
+    input_hw: Sequence[int] = (640, 640),
+    confidence_threshold: float = 0.25,
+    iou_threshold: float = 0.45,
+    max_detections: int = 300,
+    policy_id: str = YOLOV7_PRODUCTION_POLICY_ID,
+    allow_legacy_probe: bool = False,
+    schema_version: int = YOLOV7_DECODER_CONTRACT_VERSION,
+) -> Dict[str, Any]:
+    """Build the exact raw-head decoder identity for ``yolov7_paper``.
+
+    The old YOLOv5/Tiny anchors are available only as an explicitly labelled
+    A/B diagnostic.  Production callers receive the Standard-YOLOv7 table and
+    cannot silently fall back to another table or infer one from tensor values.
+    """
+
+    if str(model_id) != YOLOV7_PAPER_MODEL_ID:
+        raise ValueError("yolov7_decoder_contract_exact_model_id_required")
+    model_hash = str(model_sha256 or "").strip().lower()
+    if model_hash.startswith("sha256:"):
+        model_hash = model_hash.split(":", 1)[1]
+    if (
+        len(model_hash) != 64
+        or any(char not in "0123456789abcdef" for char in model_hash)
+    ):
+        raise ValueError("yolov7_decoder_contract_model_sha256_invalid")
+    if model_hash != YOLOV7_PAPER_ONNX_SHA256:
+        raise ValueError("yolov7_decoder_contract_model_sha256_mismatch")
+    mode = str(activation_mode or "").strip().lower()
+    if mode not in _YOLOV7_ACTIVATION_MODES:
+        raise ValueError("yolov7_decoder_contract_activation_mode_invalid")
+    table_id = str(anchor_table_id or "").strip()
+    if table_id not in _YOLOV7_REGISTERED_ANCHOR_TABLES:
+        raise ValueError("yolov7_decoder_contract_anchor_table_unregistered")
+    diagnostic = table_id == YOLOV7_LEGACY_TINY_ANCHOR_TABLE_ID
+    if diagnostic and not allow_legacy_probe:
+        raise ValueError("yolov7_legacy_tiny_contract_probe_only")
+    values = [int(value) for value in input_hw]
+    if values != [640, 640]:
+        raise ValueError("yolov7_decoder_contract_input_hw_invalid")
+    policy_token = str(policy_id or "").strip()
+    policy = _YOLOV7_REGISTERED_POSTPROCESS_POLICIES.get(policy_token)
+    if policy is None:
+        raise ValueError("yolov7_decoder_contract_policy_unregistered")
+    if (
+        isinstance(max_detections, bool)
+        or int(max_detections) != int(policy["max_detections"])
+        or float(confidence_threshold)
+        != float(policy["confidence_threshold"])
+        or float(iou_threshold) != float(policy["iou_threshold"])
+    ):
+        raise ValueError("yolov7_decoder_contract_threshold_policy_invalid")
+    if type(schema_version) is not int or schema_version not in {1, 2}:
+        raise ValueError("yolov7_decoder_contract_schema_version_invalid")
+    identity: Dict[str, Any] = {
+        "schema": YOLOV7_DECODER_CONTRACT_SCHEMA,
+        "schema_version": schema_version,
+        "model_id": YOLOV7_PAPER_MODEL_ID,
+        "model_sha256": model_hash,
+        "model_family": "yolov7",
+        "decoder_id": YOLOV7_PAPER_DECODER_ID,
+        "postprocess_policy_id": policy_token,
+        "output_format": "multiscale_head",
+        "input_hw": values,
+        "anchor_table_id": table_id,
+        "anchors_by_stride": _yolov7_anchor_records(
+            _YOLOV7_REGISTERED_ANCHOR_TABLES[table_id],
+            input_hw=values,
+        ),
+        "head_to_stride_policy": (
+            "validated_grid_geometry_p3_s8_p4_s16_p5_s32_v1"
+        ),
+        "raw_record_semantics": (
+            "xywh_objectness_coco80_class_channels"
+        ),
+        "activation_mode": mode,
+        "decode_equations_id": "yolov5_yolov7_xywh_2x_square_v1",
+        "objectness_class_combination": (
+            "objectness_probability_times_class_probability"
+        ),
+        "preprocess_identity": {
+            "contract_id": "centered_letterbox_rgb_float32_0_1_pad114_v1",
+            "resize": "bilinear_preserve_aspect_round",
+            "placement": "centered_integer_floor_remainder_right_bottom",
+            "color_space": "RGB",
+            "pad_value": 114,
+            "input_layout": "NCHW",
+            "input_dtype": "float32",
+            "input_scale": "divide_by_255",
+            "inverse_geometry": "remove_centered_padding_then_divide_gain_v1",
+        },
+        "nms_identity": {
+            "implementation": "numpy_class_aware_nms_xyxy_v1",
+            "class_aware": True,
+            "confidence_threshold": float(policy["confidence_threshold"]),
+            "iou_threshold": float(policy["iou_threshold"]),
+            "max_detections": int(policy["max_detections"]),
+            "multi_label": False,
+        },
+        "use_scope": (
+            "diagnostic_ab_probe_only"
+            if diagnostic else str(policy["use_scope"])
+        ),
+    }
+    if schema_version == 2:
+        identity["sigmoid_arithmetic"] = YOLOV7_SIGMOID_ARITHMETIC
+    return {
+        **identity,
+        "decoder_contract_sha256": _canonical_contract_sha256(identity),
+    }
+
+
+def registered_yolov7_decoder_contract(
+    *,
+    model_id: str,
+    model_sha256: str,
+    activation_mode: str,
+    variant: str = "standard",
+    input_hw: Sequence[int] = (640, 640),
+    confidence_threshold: float = 0.25,
+    iou_threshold: float = 0.45,
+    max_detections: int = 300,
+    policy: str = "production",
+) -> Dict[str, Any]:
+    variant_token = str(variant or "").strip().lower()
+    variants = {
+        "standard": YOLOV7_STANDARD_ANCHOR_TABLE_ID,
+        "legacy_tiny": YOLOV7_LEGACY_TINY_ANCHOR_TABLE_ID,
+    }
+    if variant_token not in variants:
+        raise ValueError("yolov7_decoder_contract_variant_invalid")
+    policy_ids = {
+        "production": YOLOV7_PRODUCTION_POLICY_ID,
+        "upstream_sanity": YOLOV7_UPSTREAM_SANITY_POLICY_ID,
+    }
+    policy_token = str(policy or "").strip().lower()
+    if policy_token not in policy_ids:
+        raise ValueError("yolov7_decoder_contract_policy_unregistered")
+    registered_policy = _YOLOV7_REGISTERED_POSTPROCESS_POLICIES[
+        policy_ids[policy_token]
+    ]
+    if (
+        float(confidence_threshold) == 0.25
+        and float(iou_threshold) == 0.45
+        and int(max_detections) == 300
+        and policy_token == "upstream_sanity"
+    ):
+        confidence_threshold = float(
+            registered_policy["confidence_threshold"]
+        )
+        iou_threshold = float(registered_policy["iou_threshold"])
+        max_detections = int(registered_policy["max_detections"])
+    return build_yolov7_decoder_contract(
+        model_id=model_id,
+        model_sha256=model_sha256,
+        activation_mode=activation_mode,
+        anchor_table_id=variants[variant_token],
+        input_hw=input_hw,
+        confidence_threshold=confidence_threshold,
+        iou_threshold=iou_threshold,
+        max_detections=max_detections,
+        policy_id=policy_ids[policy_token],
+        allow_legacy_probe=variant_token == "legacy_tiny",
+    )
+
+
+def verify_yolov7_decoder_contract(
+    raw: Any,
+    *,
+    expected_model_id: str = YOLOV7_PAPER_MODEL_ID,
+    allow_diagnostic: bool = False,
+) -> Dict[str, Any]:
+    if not isinstance(raw, Mapping):
+        raise ValueError("yolov7_decoder_contract_missing")
+    contract = dict(raw)
+    declared = str(contract.pop("decoder_contract_sha256", "") or "").lower()
+    if len(declared) != 64 or _canonical_contract_sha256(contract) != declared:
+        raise ValueError("yolov7_decoder_contract_sha256_mismatch")
+    if str(expected_model_id) != YOLOV7_PAPER_MODEL_ID:
+        raise ValueError("yolov7_decoder_contract_exact_model_id_required")
+    table_id = str(contract.get("anchor_table_id") or "")
+    diagnostic = table_id == YOLOV7_LEGACY_TINY_ANCHOR_TABLE_ID
+    expected = build_yolov7_decoder_contract(
+        model_id=str(contract.get("model_id") or ""),
+        model_sha256=str(contract.get("model_sha256") or ""),
+        activation_mode=str(contract.get("activation_mode") or ""),
+        anchor_table_id=table_id,
+        input_hw=contract.get("input_hw") or [],
+        confidence_threshold=(
+            (contract.get("nms_identity") or {}).get(
+                "confidence_threshold", -1.0
+            )
+            if isinstance(contract.get("nms_identity"), Mapping)
+            else -1.0
+        ),
+        iou_threshold=(
+            (contract.get("nms_identity") or {}).get("iou_threshold", -1.0)
+            if isinstance(contract.get("nms_identity"), Mapping)
+            else -1.0
+        ),
+        max_detections=(
+            (contract.get("nms_identity") or {}).get("max_detections", 0)
+            if isinstance(contract.get("nms_identity"), Mapping)
+            else 0
+        ),
+        policy_id=str(contract.get("postprocess_policy_id") or ""),
+        allow_legacy_probe=diagnostic,
+        schema_version=contract.get("schema_version"),
+    )
+    if expected != {**contract, "decoder_contract_sha256": declared}:
+        raise ValueError("yolov7_decoder_contract_fields_invalid")
+    diagnostic_scope = str(contract.get("use_scope") or "") != "production"
+    if diagnostic_scope and not allow_diagnostic:
+        raise ValueError("yolov7_legacy_tiny_contract_probe_only")
+    if not diagnostic_scope and contract.get("use_scope") != "production":
+        raise ValueError("yolov7_decoder_contract_scope_invalid")
+    return expected
+
+
+def infer_yolov7_activation_mode(
+    outputs: Mapping[str, Any] | Sequence[np.ndarray],
+) -> str:
+    values = (
+        [np.asarray(value) for value in outputs.values()]
+        if isinstance(outputs, Mapping)
+        else [np.asarray(value) for value in outputs]
+    )
+    _names, normalized, _meta = _normalize_multiscale_outputs(values)
+    return _infer_multiscale_head_activation_mode(normalized)
 
 
 def _yolo_multiscale_name_hint(name: str) -> Tuple[int, int]:
@@ -452,6 +809,20 @@ def _get_ultralytics_regcls_pairs(
                 k = _try_parse_suffix_int(low)
                 if k is not None:
                     cls_map[k] = i
+            else:
+                # Hailo full-model raw-head contracts retain the original
+                # Ultralytics cv2/cv3 end-node names when possible.  cv2 is
+                # the box-regression branch and cv3 is the class branch.  Use
+                # that explicit semantic contract before falling back to
+                # channel heuristics (the HEF runtime may rename the same
+                # tensors to generic convXX names).
+                match = re.search(r'(?:one2one_)?cv(?P<branch>[23])\.(?P<level>\d+)(?:\.|/)', n.lower())
+                if match is not None:
+                    level = int(match.group('level'))
+                    if match.group('branch') == '2':
+                        reg_map[level] = i
+                    else:
+                        cls_map[level] = i
         common = sorted(set(reg_map.keys()) & set(cls_map.keys()))
         if len(common) >= 2:
             for k in common:
@@ -510,11 +881,23 @@ def _get_ultralytics_regcls_pairs(
             bonus += 1
         return 1 + bonus
 
-    reg_ch, cls_ch = ch_a, ch_b
-    if _reg_score(ch_b) > _reg_score(ch_a):
+    # YOLO26 one-to-one heads can expose a direct four-channel l/t/r/b branch
+    # together with an 80-channel COCO class branch.  The older DFL-only score
+    # interpreted C=80 as 4*reg_max and C=4 as four classes, swapping the two
+    # branches and producing hundreds of false detections.  Treat the observed
+    # C=4/C=80 COCO contract (or C=4 plus a channel count that cannot be DFL)
+    # as direct boxes. Retain DFL scoring for ambiguous combinations such as
+    # C=64/C=4, which can legitimately mean 64-channel DFL + four classes.
+    if ch_a == 4 and ch_b > 4 and (ch_b == 80 or _reg_score(ch_b) < 0):
+        reg_ch, cls_ch = ch_a, ch_b
+    elif ch_b == 4 and ch_a > 4 and (ch_a == 80 or _reg_score(ch_a) < 0):
         reg_ch, cls_ch = ch_b, ch_a
-    elif _reg_score(ch_a) == _reg_score(ch_b) and ch_b < ch_a:
-        reg_ch, cls_ch = ch_b, ch_a
+    else:
+        reg_ch, cls_ch = ch_a, ch_b
+        if _reg_score(ch_b) > _reg_score(ch_a):
+            reg_ch, cls_ch = ch_b, ch_a
+        elif _reg_score(ch_a) == _reg_score(ch_b) and ch_b < ch_a:
+            reg_ch, cls_ch = ch_b, ch_a
 
     sp_reg = _sp_map(reg_ch)
     sp_cls = _sp_map(cls_ch)
@@ -728,12 +1111,19 @@ def _decode_multiscale_head_once(
     conf_thresh: float,
     *,
     activation_mode: str,
+    anchors_by_stride: Optional[Mapping[int, np.ndarray]] = None,
+    require_registered_strides: bool = False,
+    sigmoid_arithmetic: str = "legacy_numpy_float32",
 ) -> _Detections:
     ih, iw = input_hw
 
     all_boxes: List[np.ndarray] = []
     all_scores: List[np.ndarray] = []
     all_cls: List[np.ndarray] = []
+    sigmoid = (
+        _yolov7_sigmoid_float64_to_float32
+        if sigmoid_arithmetic == YOLOV7_SIGMOID_ARITHMETIC else _sigmoid
+    )
 
     for p in outputs:
         b, na, gh, gw, ch = p.shape
@@ -744,13 +1134,37 @@ def _decode_multiscale_head_once(
         nc = ch - 5
 
         stride_h = ih / float(gh) if gh > 0 else 0.0
+        stride_w = iw / float(gw) if gw > 0 else 0.0
         stride = int(round(stride_h)) if stride_h > 0 else None
         if stride is None or stride <= 0:
             raise ValueError("Could not infer stride")
+        if require_registered_strides and (
+            not math.isclose(stride_h, float(stride), abs_tol=1e-9)
+            or not math.isclose(stride_w, float(stride), abs_tol=1e-9)
+        ):
+            raise ValueError(
+                "yolov7_decoder_contract_head_stride_geometry_mismatch"
+            )
 
-        anchors = _YOLOV5_ANCHORS_640.get(stride)
+        anchor_table = (
+            anchors_by_stride
+            if anchors_by_stride is not None else _YOLOV5_ANCHORS_640
+        )
+        anchors = anchor_table.get(stride)
         if anchors is None:
-            anchors = np.array([[10, 13], [16, 30], [33, 23]], dtype=np.float32) * (stride / 8.0)
+            if require_registered_strides:
+                raise ValueError(
+                    f"Model-bound YOLOv7 decoder has no stride-{stride} anchors"
+                )
+            anchors = np.array(
+                [[10, 13], [16, 30], [33, 23]], dtype=np.float32,
+            ) * (stride / 8.0)
+        anchors = np.asarray(anchors, dtype=np.float32)
+        if anchors.shape != (na, 2):
+            raise ValueError(
+                "YOLO multiscale anchor/head cardinality mismatch: "
+                f"stride={stride} anchors={anchors.shape} head_na={na}"
+            )
 
         ys, xs = np.meshgrid(np.arange(gh), np.arange(gw), indexing="ij")
         grid = np.stack([xs, ys], axis=-1).astype(np.float32)[None, ...]
@@ -762,15 +1176,15 @@ def _decode_multiscale_head_once(
             obj = _clip_unit_interval(raw[..., 4])
             cls = _clip_unit_interval(raw[..., 5:])
         elif activation_mode == "objcls_activated":
-            txy = _sigmoid(raw[..., 0:2])
-            twh = _sigmoid(raw[..., 2:4])
+            txy = sigmoid(raw[..., 0:2])
+            twh = sigmoid(raw[..., 2:4])
             obj = _clip_unit_interval(raw[..., 4])
             cls = _clip_unit_interval(raw[..., 5:])
         else:
-            txy = _sigmoid(raw[..., 0:2])
-            twh = _sigmoid(raw[..., 2:4])
-            obj = _sigmoid(raw[..., 4])
-            cls = _sigmoid(raw[..., 5:])
+            txy = sigmoid(raw[..., 0:2])
+            twh = sigmoid(raw[..., 2:4])
+            obj = sigmoid(raw[..., 4])
+            cls = sigmoid(raw[..., 5:])
 
         xy = (txy * 2.0 - 0.5 + grid) * float(stride)
         wh = (twh * 2.0) ** 2 * anchors[:, None, None, :]
@@ -814,7 +1228,15 @@ def _multiscale_candidate_quality(det: _Detections) -> float:
     return mean_top - 0.01 * float(min(n, 200))
 
 
-def _decode_multiscale_head(outputs: Sequence[np.ndarray], input_hw: Tuple[int, int], conf_thresh: float) -> _Detections:
+def _decode_multiscale_head(
+    outputs: Sequence[np.ndarray],
+    input_hw: Tuple[int, int],
+    conf_thresh: float,
+    *,
+    activation_mode: Optional[str] = None,
+    decoder_contract: Optional[Mapping[str, Any]] = None,
+    allow_diagnostic_contract: bool = False,
+) -> _Detections:
     """Decode YOLOv5/YOLOv7-style multi-scale head outputs.
 
     Supports common layouts:
@@ -822,15 +1244,119 @@ def _decode_multiscale_head(outputs: Sequence[np.ndarray], input_hw: Tuple[int, 
     - [B,ch,gh,gw] where ch = na*(5+nc)
     - Hailo packed channels-last heads such as [gh,gw,255]
 
-    The decoder auto-detects whether the heads look like raw logits or already
-    sigmoid-activated tensors (common with Hailo builds) and chooses the more
-    plausible decoding path.
+    A frozen completion contract supplies ``activation_mode`` and therefore
+    executes exactly one decoder.  The legacy ``None`` mode retains automatic
+    selection only for non-contract UI/diagnostic callers.
     """
 
+    if decoder_contract is not None and len(outputs) != 3:
+        raise ValueError(
+            "yolov7_decoder_contract_exactly_three_heads_required"
+        )
     if len(outputs) < 3:
         raise ValueError("multiscale head expects >=3 outputs")
 
-    _norm_names, norm, _norm_meta = _normalize_multiscale_outputs(outputs)
+    try:
+        _norm_names, norm, _norm_meta = _normalize_multiscale_outputs(outputs)
+    except Exception as exc:
+        if decoder_contract is not None:
+            raise ValueError(
+                "yolov7_decoder_contract_head_normalization_invalid"
+            ) from exc
+        raise
+
+    anchors_by_stride: Optional[Mapping[int, np.ndarray]] = None
+    require_registered_strides = False
+    sigmoid_arithmetic = "legacy_numpy_float32"
+    if decoder_contract is not None:
+        verified_decoder = verify_yolov7_decoder_contract(
+            decoder_contract,
+            allow_diagnostic=allow_diagnostic_contract,
+        )
+        sigmoid_arithmetic = str(verified_decoder.get("sigmoid_arithmetic") or "legacy_numpy_float32")
+        if list(verified_decoder["input_hw"]) != [
+            int(input_hw[0]), int(input_hw[1]),
+        ]:
+            raise ValueError("yolov7_decoder_contract_input_hw_mismatch")
+        anchors_by_stride = {
+            int(record["stride"]): np.asarray(
+                record["anchors_wh"], dtype=np.float32,
+            )
+            for record in verified_decoder["anchors_by_stride"]
+        }
+        expected_heads = {
+            int(record["stride"]): tuple(
+                int(value) for value in record["grid_hw"]
+            )
+            for record in verified_decoder["anchors_by_stride"]
+        }
+        observed_strides: set[int] = set()
+        for head in norm:
+            if (
+                head.ndim != 5
+                or int(head.shape[0]) != 1
+                or int(head.shape[1]) != 3
+                or int(head.shape[4]) != 85
+            ):
+                raise ValueError(
+                    "yolov7_decoder_contract_head_shape_not_1x3xgridxgridx85"
+                )
+            if not bool(np.all(np.isfinite(head))):
+                raise ValueError(
+                    "yolov7_decoder_contract_head_nonfinite"
+                )
+            gh, gw = int(head.shape[2]), int(head.shape[3])
+            matches = [
+                stride
+                for stride, grid_hw in expected_heads.items()
+                if (gh, gw) == grid_hw
+            ]
+            if len(matches) != 1:
+                raise ValueError(
+                    "yolov7_decoder_contract_head_grid_mismatch"
+                )
+            stride = matches[0]
+            if stride in observed_strides:
+                raise ValueError(
+                    "yolov7_decoder_contract_duplicate_stride_head"
+                )
+            stride_h = int(input_hw[0]) / float(gh)
+            stride_w = int(input_hw[1]) / float(gw)
+            if (
+                not math.isclose(stride_h, float(stride), abs_tol=1e-9)
+                or not math.isclose(stride_w, float(stride), abs_tol=1e-9)
+            ):
+                raise ValueError(
+                    "yolov7_decoder_contract_head_stride_geometry_mismatch"
+                )
+            observed_strides.add(stride)
+        if observed_strides != set(expected_heads):
+            raise ValueError(
+                "yolov7_decoder_contract_exact_head_set_required"
+            )
+        require_registered_strides = True
+        contract_mode = str(verified_decoder["activation_mode"])
+        if activation_mode is not None and (
+            str(activation_mode).strip().lower() != contract_mode
+        ):
+            raise ValueError("yolov7_decoder_contract_activation_mismatch")
+        activation_mode = contract_mode
+
+    if activation_mode is not None:
+        mode = str(activation_mode).strip().lower()
+        if mode not in {"logits", "activated", "objcls_activated"}:
+            raise ValueError(
+                f"Unsupported multiscale activation mode: {activation_mode}"
+            )
+        return _decode_multiscale_head_once(
+            norm,
+            input_hw=input_hw,
+            conf_thresh=conf_thresh,
+            activation_mode=mode,
+            anchors_by_stride=anchors_by_stride,
+            require_registered_strides=require_registered_strides,
+            sigmoid_arithmetic=sigmoid_arithmetic,
+        )
 
     inferred_mode = _infer_multiscale_head_activation_mode(norm)
     modes_to_try = [inferred_mode]
@@ -841,7 +1367,14 @@ def _decode_multiscale_head(outputs: Sequence[np.ndarray], input_hw: Tuple[int, 
     best_det: Optional[_Detections] = None
     best_quality = -1e18
     for mode in modes_to_try:
-        det = _decode_multiscale_head_once(norm, input_hw=input_hw, conf_thresh=conf_thresh, activation_mode=mode)
+        det = _decode_multiscale_head_once(
+            norm,
+            input_hw=input_hw,
+            conf_thresh=conf_thresh,
+            activation_mode=mode,
+            anchors_by_stride=anchors_by_stride,
+            require_registered_strides=require_registered_strides,
+        )
         quality = _multiscale_candidate_quality(det)
         if best_det is None or quality > best_quality:
             best_det = det
@@ -1148,10 +1681,61 @@ class YoloHarness:
         iou_thresh: float = 0.45,
         max_det: int = 300,
         class_names: Optional[Sequence[str]] = None,
+        multiscale_activation_mode: Optional[str] = None,
+        model_id: Optional[str] = None,
+        multiscale_decoder_contract: Optional[Mapping[str, Any]] = None,
+        allow_diagnostic_yolov7_contract: bool = False,
     ) -> None:
         self.conf_thresh = float(conf_thresh)
         self.iou_thresh = float(iou_thresh)
         self.max_det = int(max_det)
+        if (
+            multiscale_activation_mode is not None
+            and str(multiscale_activation_mode).strip().lower()
+            not in {"logits", "activated", "objcls_activated"}
+        ):
+            raise ValueError(
+                "multiscale_activation_mode must be logits, activated, "
+                "objcls_activated, or None"
+            )
+        self.multiscale_activation_mode = (
+            str(multiscale_activation_mode).strip().lower()
+            if multiscale_activation_mode is not None else None
+        )
+        self.model_id = str(model_id or "").strip()
+        self.allow_diagnostic_yolov7_contract = bool(
+            allow_diagnostic_yolov7_contract
+        )
+        self.multiscale_decoder_contract: Optional[Dict[str, Any]] = None
+        if multiscale_decoder_contract is not None:
+            verified = verify_yolov7_decoder_contract(
+                multiscale_decoder_contract,
+                expected_model_id=(self.model_id or YOLOV7_PAPER_MODEL_ID),
+                allow_diagnostic=self.allow_diagnostic_yolov7_contract,
+            )
+            if self.model_id and self.model_id != verified["model_id"]:
+                raise ValueError("yolov7_decoder_contract_model_id_mismatch")
+            self.model_id = str(verified["model_id"])
+            contract_mode = str(verified["activation_mode"])
+            if (
+                self.multiscale_activation_mode is not None
+                and self.multiscale_activation_mode != contract_mode
+            ):
+                raise ValueError(
+                    "yolov7_decoder_contract_activation_mismatch"
+                )
+            nms_identity = verified["nms_identity"]
+            if (
+                self.conf_thresh
+                != float(nms_identity["confidence_threshold"])
+                or self.iou_thresh != float(nms_identity["iou_threshold"])
+                or self.max_det != int(nms_identity["max_detections"])
+            ):
+                raise ValueError(
+                    "yolov7_decoder_contract_nms_policy_mismatch"
+                )
+            self.multiscale_activation_mode = contract_mode
+            self.multiscale_decoder_contract = verified
 
         # Class names are primarily a UI/UX concern. Prefer a versioned asset
         # file, allow the caller (manifest/CLI) to override, and fall back to a
@@ -1238,7 +1822,11 @@ class YoloHarness:
                     output_names=output_names,
                 )
                 decoded_output_shapes = {name: [int(x) for x in np.asarray(arr).shape] for name, arr in zip(output_names, out_list)}
-                multiscale_activation_hint = _infer_multiscale_head_activation_mode(out_list)
+                multiscale_activation_hint = (
+                    self.multiscale_activation_mode
+                    if self.multiscale_activation_mode is not None
+                    else _infer_multiscale_head_activation_mode(out_list)
+                )
             except Exception:
                 output_normalization = None
 
@@ -1248,9 +1836,51 @@ class YoloHarness:
             if isinstance(ihw, (tuple, list)) and len(ihw) == 2:
                 input_hw = (int(ihw[0]), int(ihw[1]))
 
+        context_model_id = str(
+            (context or {}).get("model_id") or self.model_id or ""
+        ).strip()
+        exact_registered_yolov7_raw_geometry = (
+            fmt == "multiscale_head"
+            and tuple(input_hw) == (640, 640)
+            and len(out_list) == 3
+            and {
+                tuple(int(dim) for dim in np.asarray(value).shape)
+                for value in out_list
+            }
+            == {
+                (1, 3, 80, 80, 85),
+                (1, 3, 40, 40, 85),
+                (1, 3, 20, 20, 85),
+            }
+        )
+        if (
+            self.multiscale_decoder_contract is not None
+            and fmt != "multiscale_head"
+        ):
+            raise ValueError(
+                "yolov7_decoder_contract_output_format_mismatch"
+            )
+        if (
+            fmt == "multiscale_head"
+            and (
+                context_model_id == YOLOV7_PAPER_MODEL_ID
+                or exact_registered_yolov7_raw_geometry
+            )
+            and self.multiscale_decoder_contract is None
+        ):
+            raise ValueError(
+                "yolov7_paper_raw_head_requires_model_bound_decoder_contract"
+            )
+        if (
+            self.multiscale_decoder_contract is not None
+            and context_model_id
+            and context_model_id != YOLOV7_PAPER_MODEL_ID
+        ):
+            raise ValueError("yolov7_decoder_contract_model_id_mismatch")
+
         det: _Detections
         if fmt == "bn6_detections":
-            det = _decode_bn6(out_list[0])
+            det = _decode_bn6(out_list[0], conf_thresh=self.conf_thresh)
         elif fmt == "concat":
             det = _decode_concat_yolo(out_list[0], conf_thresh=self.conf_thresh)
         elif fmt == "ultralytics_decoded":
@@ -1258,7 +1888,16 @@ class YoloHarness:
         elif fmt == "ultralytics_regcls":
             det = _decode_ultralytics_regcls(out_list, input_hw=input_hw, conf_thresh=self.conf_thresh, output_names=output_names)
         elif fmt == "multiscale_head":
-            det = _decode_multiscale_head(out_list, input_hw=input_hw, conf_thresh=self.conf_thresh)
+            det = _decode_multiscale_head(
+                out_list,
+                input_hw=input_hw,
+                conf_thresh=self.conf_thresh,
+                activation_mode=self.multiscale_activation_mode,
+                decoder_contract=self.multiscale_decoder_contract,
+                allow_diagnostic_contract=(
+                    self.allow_diagnostic_yolov7_contract
+                ),
+            )
         else:
             # Unknown: don't crash; return empty.
             det = _Detections(
@@ -1290,7 +1929,15 @@ class YoloHarness:
         image_path = None
         if context:
             image_path = context.get("image_path")
-        if image_path:
+            raw_original_wh = context.get("original_wh")
+            if isinstance(raw_original_wh, (tuple, list)) and len(raw_original_wh) == 2:
+                try:
+                    candidate = (int(raw_original_wh[0]), int(raw_original_wh[1]))
+                    if candidate[0] > 0 and candidate[1] > 0:
+                        orig_wh = candidate
+                except Exception:
+                    orig_wh = None
+        if image_path and orig_wh is None:
             try:
                 from PIL import Image
 
@@ -1357,6 +2004,30 @@ class YoloHarness:
                 "max_det": int(self.max_det),
             },
         }
+        if self.multiscale_decoder_contract is not None:
+            provenance["decoder"].update({
+                "model_id": YOLOV7_PAPER_MODEL_ID,
+                "decoder_id": self.multiscale_decoder_contract[
+                    "decoder_id"
+                ],
+                "anchor_table_id": self.multiscale_decoder_contract[
+                    "anchor_table_id"
+                ],
+                "anchors_by_stride": self.multiscale_decoder_contract[
+                    "anchors_by_stride"
+                ],
+                "model_bound_decoder_contract_sha256": (
+                    self.multiscale_decoder_contract[
+                        "decoder_contract_sha256"
+                    ]
+                ),
+                "preprocess_identity": self.multiscale_decoder_contract[
+                    "preprocess_identity"
+                ],
+                "nms_identity": self.multiscale_decoder_contract[
+                    "nms_identity"
+                ],
+            })
         if multiscale_activation_hint is not None:
             try:
                 provenance["decoder"]["activation_mode_hint"] = str(multiscale_activation_hint)

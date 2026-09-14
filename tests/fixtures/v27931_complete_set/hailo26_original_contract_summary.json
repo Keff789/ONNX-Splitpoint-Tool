@@ -1,0 +1,941 @@
+{
+  "provenance": "Unmodified field projection from user original Complete Set; no raw tensor payloads included in the source archive.",
+  "hardware_runtime_fix_verified": false,
+  "raw_payloads_available": false,
+  "cases": [
+    {
+      "model": "yolo26m",
+      "case": "b398",
+      "source_path": "models/yolo26m/benchmark_results/benchmark_results_hailo10_to_tensorrt_auto.json",
+      "source_file_sha256": "0d8b04b0810c62853821f83b89c352a0b909c6e3bcda874f61e9f3abf4f8164b",
+      "row_projection": {
+        "setup_id": "orin_nx_hailo10_01",
+        "case_id": "b398",
+        "native_tensorrt": {
+          "requested_runtime": "native",
+          "precision": "uint8_dequant_fp16",
+          "workspace_mb": 4096,
+          "build_timeout_s": 7200,
+          "fallback_allowed": false,
+          "sessions": {
+            "part2:tensorrt": {
+              "runtime": "native_tensorrt",
+              "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b398/hailo10h_to_trt/9d1e99730c9207d0d9a618144d41009701c04935adc5a37cbcebedec3057dca8/engine_cache/b398/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine",
+              "model": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b398/hailo10h_to_trt/9d1e99730c9207d0d9a618144d41009701c04935adc5a37cbcebedec3057dca8/engine_cache/b398/part2/uint8_dequant_fp16/source_part2_uint8_dequant_bridge.onnx",
+              "source_model": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b398/hailo10h_to_trt/9d1e99730c9207d0d9a618144d41009701c04935adc5a37cbcebedec3057dca8/engine_cache/b398/part2/uint8_dequant_fp16/source_part2_uint8_dequant_bridge.onnx",
+              "source_model_sha256": "95e1e467d2daa6d67327d2df759e8f08e555595ef6b62731770250985e5c3bd8",
+              "precision": "uint8_dequant_fp16",
+              "requested_precision": "uint8_dequant_fp16",
+              "cache_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/splits/b398",
+              "cache_hit": true,
+              "cache_miss_reason": "",
+              "canonical_role_layout": true,
+              "explicit_engine": true,
+              "engine_build_receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b398/hailo10h_to_trt/9d1e99730c9207d0d9a618144d41009701c04935adc5a37cbcebedec3057dca8/engine_cache/b398/part2/uint8_dequant_fp16/engine_build_receipt.json",
+              "engine_sha256": "e8b1ca02663f936ea4ab3378329331184f36281805932dd9dc452a52b705eb7a",
+              "engine_build_receipt_sha256": "d7607119cf7badb899d15b72b7e8a5f37ee957e002f153f3006859cf0cf228c0",
+              "engine_build_receipt_file_sha256": "f750de74fbc22d939048a422e21abf210a3e495ac02214bf1dffee47cd160475",
+              "trtexec": "/usr/src/tensorrt/bin/trtexec",
+              "trtexec_sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4",
+              "artifact_binding_status": "verified_exact_native_tensorrt_engine_receipt",
+              "build_disabled": true,
+              "fallback_disabled": true,
+              "cuda_binding": "ctypes-libcudart",
+              "cuda_python_import_error": "ModuleNotFoundError: No module named 'cuda'",
+              "inputs": [
+                {
+                  "name": "/model.23/Concat_3_output_0",
+                  "shape": [
+                    1,
+                    84,
+                    8400
+                  ],
+                  "type": "tensor(uint8)"
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "output0",
+                  "shape": [
+                    1,
+                    300,
+                    6
+                  ],
+                  "type": "tensor(float)"
+                }
+              ]
+            }
+          },
+          "used": true,
+          "session_count": 1
+        },
+        "run_cfg": {
+          "manifest": "split_manifest.json",
+          "provider": "tensorrt",
+          "variants": "part1,part2,composed",
+          "full_provider": "",
+          "stage1_provider": "hailo10",
+          "stage2_provider": "tensorrt",
+          "trt_runtime": "native_preferred",
+          "native_trt_precision": "uint8_dequant_fp16",
+          "native_trt_workspace_mb": 4096,
+          "native_trt_build_timeout_s": 7200,
+          "native_trt_no_fallback": false,
+          "native_trt_build": false,
+          "native_trt_engine_path": "",
+          "native_trt_build_onnx_path": "",
+          "native_trt_build_receipt": "",
+          "native_split_quality_binding": "/home/nx/splitpoint_runs/legacy_suite/complete_set_20260907_161614_yolo26m_orin_nx_hailo10_01/1/suite/b398/results_hailo10_to_tensorrt/task_quality_inputs/native_split_quality_binding.json",
+          "quality_evidence_only": false,
+          "model_id": "yolo26m",
+          "quality_evidence_eval_id": "complete_set_20260907_161614",
+          "quality_evidence_model_id": "yolo26m",
+          "quality_evidence_setup_id": "orin_nx_hailo10_01",
+          "quality_evidence_source_run_id": "hailo10_to_tensorrt",
+          "quality_evidence_originating_plan_run_id": "",
+          "full_only_quality_identity_json": "",
+          "boundary_mode": "raw_uint8_hailo",
+          "handoff_profile": "off",
+          "trt_runtime_mode": "native_preferred",
+          "trt_native_precision": "uint8_dequant_fp16",
+          "trt_native_workspace_mb": 4096,
+          "out_dir": "results_hailo10_to_tensorrt",
+          "warmup": 3,
+          "runs": 5,
+          "phase_runs": 5,
+          "throughput_frames": 24,
+          "throughput_warmup_frames": 6,
+          "throughput_queue_depth": 2,
+          "streaming_impl": "auto",
+          "verbose_runs": false,
+          "progress_every": 0,
+          "eps": 0.0001,
+          "interface_eps": 0.05,
+          "baseline_cache": "auto",
+          "validation_mode": "auto",
+          "validation_images": "/home/nx/splitpoint_runs/legacy_suite/complete_set_20260907_161614_yolo26m_orin_nx_hailo10_01/1/suite/resources/validation/detection/val2017_n500_s20260710",
+          "validation_max_images": 500,
+          "validation_reference_mode": "auto",
+          "benchmark_task": "detection",
+          "validation_pass_image_ratio": 0.8,
+          "mini_coco_ap50": true,
+          "mini_classification_eval": false,
+          "quality_gate_json": "{\"canonical_reference\":\"canonical_full_onnx\",\"claim_eligible\":null,\"classification\":{\"guardrails\":{\"top5_accuracy_margin\":0.01},\"non_inferiority_margin\":0.01,\"primary_metric\":\"top1_accuracy\"},\"dataset_tier\":\"screening\",\"detection\":{\"guardrails\":{\"ap50_margin\":0.01,\"ap75_margin\":0.01},\"non_inferiority_margin\":0.01,\"primary_metric\":\"coco_ap_50_95\"},\"diagnostic_only\":false,\"enforcement\":{\"claim_eligibility\":\"complete_valid_evidence_only\",\"metric_threshold_miss\":\"enforced_quality_decision\",\"native_energy_after_technical_error\":\"collect_raw_quality_unqualified\",\"technical_quality_error\":\"hard_fail\"},\"frozen_before_final_campaign\":false,\"legacy_point_estimate_eligible_for_ranking\":false,\"name\":\"task_quality_development_500\",\"native_contract\":{\"detection_self_reference\":{\"class_aware\":true,\"confidence_threshold\":0.25,\"denominator\":\"reference_detections\",\"iou_threshold\":0.5,\"min_mean_matched_iou\":0.85,\"min_reference_match_ratio\":0.8,\"policy_id\":\"class_aware_iou50_postnms_v2\"},\"detection_self_reference_min_match_ratio\":0.8,\"numerical_similarity_required_for_claim\":true,\"self_reference_counts_as_task_accuracy\":false},\"profile_id\":\"task_quality_development_500\",\"schema\":\"onnx-splitpoint/task-quality-policy\",\"schema_version\":3,\"screening_eligible_for_ranking\":false,\"statistics\":{\"bootstrap_repetitions\":500,\"confidence_level\":0.95,\"decision\":\"lower_one_sided_bound\",\"execution_location\":\"central_management\",\"method\":\"paired_bootstrap\",\"seed\":20260710,\"workers\":4}}",
+          "seed": 0,
+          "batch": null,
+          "shape_override": null,
+          "inputs_npz": null,
+          "save_inputs_npz": null,
+          "image": "/home/nx/splitpoint_runs/legacy_suite/complete_set_20260907_161614_yolo26m_orin_nx_hailo10_01/1/suite/resources/validation/detection/val2017_n500_s20260710/000000403584.jpg",
+          "image_scale": "auto",
+          "viz": "auto",
+          "no_report_plots": false,
+          "energy_measurement_only": false,
+          "yolo_conf": 0.25,
+          "yolo_iou": 0.45,
+          "yolo_max_det": 300,
+          "detr_conf": 0.25,
+          "detr_iou": 0.5,
+          "detr_max_det": 200,
+          "labels": null,
+          "dump_interface": null,
+          "dump_interface_out": null,
+          "external_output_dump": "",
+          "external_output_variant": "composed",
+          "external_output_provider": "native_fifo",
+          "dump_output_variant": "",
+          "dump_output_dir": "",
+          "dump_output_provider": "",
+          "output_dump_only": false,
+          "build_only": false,
+          "ort_log_severity": 2,
+          "trt_cache_dir": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/splits/b398",
+          "trt_full_cache_dir": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4",
+          "trt_cache": true,
+          "trt_fp16": false,
+          "trt_dump_subgraphs": false,
+          "trt_fast_build": false,
+          "trt_dla_core": null,
+          "trt_gpu_fallback": true,
+          "trt_max_workspace_size": null,
+          "hailo_activation_mode": "auto",
+          "validation_max_items": 500,
+          "_full_only_quality_identity_context": null,
+          "viz_conf": 0.25,
+          "viz_iou": 0.5,
+          "viz_max_det": 200
+        },
+        "deployment_contract": {
+          "full_endpoint_mode": "raw_detection_head",
+          "full_raw_detection_head": true,
+          "full_end_node_names": [
+            "/model.23/one2one_cv2.0/one2one_cv2.0.2/Conv",
+            "/model.23/one2one_cv3.0/one2one_cv3.0.2/Conv",
+            "/model.23/one2one_cv2.1/one2one_cv2.1.2/Conv",
+            "/model.23/one2one_cv3.1/one2one_cv3.1.2/Conv",
+            "/model.23/one2one_cv2.2/one2one_cv2.2.2/Conv",
+            "/model.23/one2one_cv3.2/one2one_cv3.2.2/Conv"
+          ],
+          "part2_output_strategy": "original",
+          "part2_raw_detection_head": false,
+          "part2_effective_outputs": [
+            "output0"
+          ],
+          "part2_host_tail_required": false,
+          "part2_host_tail_model": null,
+          "full_primary_timing_scope": "backend_endpoint",
+          "full_primary_host_tail_sha256": "",
+          "full_endpoint_runtime_attestation": {},
+          "hailo_io_contracts": {
+            "full": null,
+            "part1": {
+              "schema_version": 3,
+              "backend": "hailo",
+              "runtime_api": "infer_model",
+              "artifact": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b398/hailo10h_to_trt/9d1e99730c9207d0d9a618144d41009701c04935adc5a37cbcebedec3057dca8/part1.hef",
+              "quantized_inputs": true,
+              "quantized_outputs": true,
+              "runtime_input_format": "uint8",
+              "runtime_output_format": "uint8",
+              "runtime_input_formats": {
+                "yolo26m_part1_b398/input_layer1": "UINT8"
+              },
+              "runtime_output_formats": {
+                "yolo26m_part1_b398/concat25": "UINT8"
+              },
+              "runtime_input_quantization": {
+                "yolo26m_part1_b398/input_layer1": {
+                  "scale": 0.003921568859368563,
+                  "zero_point": 0.0
+                }
+              },
+              "runtime_output_quantization": {
+                "yolo26m_part1_b398/concat25": {
+                  "scale": 3.4920754432678223,
+                  "zero_point": 39.0
+                }
+              },
+              "outputs_dequantized": false,
+              "persistent_activation": false,
+              "hotloop": true,
+              "copy_outputs": true,
+              "hef_inputs": [
+                "yolo26m_part1_b398/input_layer1"
+              ],
+              "canonical_inputs": [
+                "images"
+              ],
+              "hef_outputs": [
+                "yolo26m_part1_b398/concat25"
+              ],
+              "canonical_outputs": [
+                "/model.23/Concat_3_output_0"
+              ],
+              "input_aliases": {
+                "yolo26m_part1_b398/input_layer1": "images"
+              },
+              "output_aliases": {
+                "yolo26m_part1_b398/concat25": "/model.23/Concat_3_output_0"
+              },
+              "runtime_input_shapes": {
+                "images": [
+                  640,
+                  640,
+                  3
+                ]
+              },
+              "runtime_output_shapes": {
+                "/model.23/Concat_3_output_0": [
+                  1,
+                  8400,
+                  84
+                ]
+              },
+              "onnx_input_shapes": {
+                "images": [
+                  1,
+                  3,
+                  640,
+                  640
+                ]
+              },
+              "onnx_output_shapes": {
+                "/model.23/Concat_3_output_0": [
+                  1,
+                  84,
+                  8400
+                ]
+              }
+            },
+            "part2": null
+          },
+          "deepx_io_contracts": {
+            "part1": null,
+            "part2": null
+          },
+          "native_trt_io_contracts": {
+            "full": null,
+            "part2": {
+              "schema_version": 2,
+              "backend": "native_tensorrt",
+              "artifact": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b398/hailo10h_to_trt/9d1e99730c9207d0d9a618144d41009701c04935adc5a37cbcebedec3057dca8/engine_cache/b398/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine",
+              "precision": "uint8_dequant_fp16",
+              "inputs": {
+                "/model.23/Concat_3_output_0": {
+                  "shape": [
+                    1,
+                    84,
+                    8400
+                  ],
+                  "dtype": "uint8"
+                }
+              },
+              "outputs": {
+                "output0": {
+                  "shape": [
+                    1,
+                    300,
+                    6
+                  ],
+                  "dtype": "float32"
+                }
+              },
+              "input_names": [
+                "/model.23/Concat_3_output_0"
+              ],
+              "output_names": [
+                "output0"
+              ],
+              "build_info": {
+                "runtime": "native_tensorrt",
+                "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b398/hailo10h_to_trt/9d1e99730c9207d0d9a618144d41009701c04935adc5a37cbcebedec3057dca8/engine_cache/b398/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine",
+                "model": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b398/hailo10h_to_trt/9d1e99730c9207d0d9a618144d41009701c04935adc5a37cbcebedec3057dca8/engine_cache/b398/part2/uint8_dequant_fp16/source_part2_uint8_dequant_bridge.onnx",
+                "source_model": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b398/hailo10h_to_trt/9d1e99730c9207d0d9a618144d41009701c04935adc5a37cbcebedec3057dca8/engine_cache/b398/part2/uint8_dequant_fp16/source_part2_uint8_dequant_bridge.onnx",
+                "source_model_sha256": "95e1e467d2daa6d67327d2df759e8f08e555595ef6b62731770250985e5c3bd8",
+                "precision": "uint8_dequant_fp16",
+                "requested_precision": "uint8_dequant_fp16",
+                "cache_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/splits/b398",
+                "cache_hit": true,
+                "cache_miss_reason": "",
+                "canonical_role_layout": true,
+                "explicit_engine": true,
+                "engine_build_receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b398/hailo10h_to_trt/9d1e99730c9207d0d9a618144d41009701c04935adc5a37cbcebedec3057dca8/engine_cache/b398/part2/uint8_dequant_fp16/engine_build_receipt.json",
+                "engine_sha256": "e8b1ca02663f936ea4ab3378329331184f36281805932dd9dc452a52b705eb7a",
+                "engine_build_receipt_sha256": "d7607119cf7badb899d15b72b7e8a5f37ee957e002f153f3006859cf0cf228c0",
+                "engine_build_receipt_file_sha256": "f750de74fbc22d939048a422e21abf210a3e495ac02214bf1dffee47cd160475",
+                "trtexec": "/usr/src/tensorrt/bin/trtexec",
+                "trtexec_sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4",
+                "artifact_binding_status": "verified_exact_native_tensorrt_engine_receipt",
+                "build_disabled": true,
+                "fallback_disabled": true,
+                "cuda_binding": "ctypes-libcudart",
+                "cuda_python_import_error": "ModuleNotFoundError: No module named 'cuda'"
+              }
+            }
+          },
+          "stage2_accelerator_calibration_gate": {
+            "required": false,
+            "available": null,
+            "status": "not_required"
+          },
+          "contract_summary": {
+            "schema_version": 2,
+            "variant": "composed",
+            "task": "detection",
+            "endpoint_mode": "decoded_or_native",
+            "full_endpoint_mode": "decoded_or_native",
+            "part2_endpoint_mode": "decoded_or_native",
+            "raw_head_contract_present": false,
+            "raw_head_contract_status": "none",
+            "host_tail_required": false,
+            "host_tail_available": false,
+            "host_tail_model": null,
+            "stage2_input_contract_kind": "image_or_decoded",
+            "stage2_calibration_required": false,
+            "stage2_calibration_available": false,
+            "stage2_calibration_source": null,
+            "stage2_calibration_trust_level": null
+          },
+          "contracts_by_variant": {
+            "full": {
+              "schema_version": 2,
+              "variant": "full",
+              "task": "detection",
+              "endpoint_mode": "decoded_or_native",
+              "full_endpoint_mode": "decoded_or_native",
+              "part2_endpoint_mode": "not_applicable",
+              "raw_head_contract_present": false,
+              "raw_head_contract_status": "none",
+              "host_tail_required": false,
+              "host_tail_available": false,
+              "host_tail_model": null,
+              "stage2_input_contract_kind": "image_or_decoded",
+              "stage2_calibration_required": false,
+              "stage2_calibration_available": false,
+              "stage2_calibration_source": null,
+              "stage2_calibration_trust_level": null
+            },
+            "part1": {
+              "schema_version": 2,
+              "variant": "part1",
+              "task": "detection",
+              "endpoint_mode": "decoded_or_native",
+              "full_endpoint_mode": "decoded_or_native",
+              "part2_endpoint_mode": "not_applicable",
+              "raw_head_contract_present": false,
+              "raw_head_contract_status": "none",
+              "host_tail_required": false,
+              "host_tail_available": false,
+              "host_tail_model": null,
+              "stage2_input_contract_kind": "image_or_decoded",
+              "stage2_calibration_required": false,
+              "stage2_calibration_available": false,
+              "stage2_calibration_source": null,
+              "stage2_calibration_trust_level": null
+            },
+            "part2": {
+              "schema_version": 2,
+              "variant": "part2",
+              "task": "detection",
+              "endpoint_mode": "decoded_or_native",
+              "full_endpoint_mode": "decoded_or_native",
+              "part2_endpoint_mode": "decoded_or_native",
+              "raw_head_contract_present": false,
+              "raw_head_contract_status": "none",
+              "host_tail_required": false,
+              "host_tail_available": false,
+              "host_tail_model": null,
+              "stage2_input_contract_kind": "image_or_decoded",
+              "stage2_calibration_required": false,
+              "stage2_calibration_available": false,
+              "stage2_calibration_source": null,
+              "stage2_calibration_trust_level": null
+            },
+            "composed": {
+              "schema_version": 2,
+              "variant": "composed",
+              "task": "detection",
+              "endpoint_mode": "decoded_or_native",
+              "full_endpoint_mode": "decoded_or_native",
+              "part2_endpoint_mode": "decoded_or_native",
+              "raw_head_contract_present": false,
+              "raw_head_contract_status": "none",
+              "host_tail_required": false,
+              "host_tail_available": false,
+              "host_tail_model": null,
+              "stage2_input_contract_kind": "image_or_decoded",
+              "stage2_calibration_required": false,
+              "stage2_calibration_available": false,
+              "stage2_calibration_source": null,
+              "stage2_calibration_trust_level": null
+            }
+          }
+        },
+        "part1": "yolo26m_part1_b398.onnx",
+        "part2": "yolo26m_part2_b398.onnx"
+      },
+      "native_path": "native_producers/hailo10h/yolo26m/benchmark_set/native_pipeline/b398/hailo10h_to_trt/uint8_dequant_fp16/hailo10_native_fifo_e2e_results.json",
+      "native_file_sha256": "cab0292a0f02e882aa106c9c66cd1ef5f01a14d0d1079181d981b12f182b7fc5",
+      "native_result": {
+        "ok": false,
+        "mode": "hailo10h_python_native_fifo_e2e",
+        "benchmark_set": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolo26m/benchmark_set",
+        "case": "b398",
+        "hw_arch": "hailo10h",
+        "precision": "uint8_dequant_fp16",
+        "producer_impl_requested": "auto",
+        "input_image": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolo26m/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+        "input_image_sha256": "a4cd7f45ac1ce27eaafb254b23af7c0b18a064be08870ceaaf03b2147f2ce550",
+        "input_image_source": "exact_file",
+        "boundary_layout": "memory_nhwc_to_nchw",
+        "dequant_scale": 3.4920754432678223,
+        "dequant_zero_point": 39.0,
+        "hef": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolo26m/benchmark_set/b398/hailo/hailo10/part1/compiled.hef",
+        "engine": "",
+        "energy_workload_only": false,
+        "energy_preflight_status": "",
+        "replay_artifact_verification": {
+          "runner_sha256": "4e4352d0632c22726d45dcaf63320af12b9f04a64c298a6b4a45882b737bc498",
+          "input_image_sha256": "a4cd7f45ac1ce27eaafb254b23af7c0b18a064be08870ceaaf03b2147f2ce550",
+          "hef_sha256": "f5ae969245623effc61a2fdbf8bfb1d49c02525e7bcbdf560a20a2145cfec6df",
+          "engine_sha256": "",
+          "source_contract_sha256": ""
+        },
+        "hef_output_quantization": {
+          "name": "yolo26m_part1_b398/concat25",
+          "scale": 3.4920754432678223,
+          "zero_point": 39.0,
+          "source": "exact_loaded_hef_quant_info"
+        },
+        "error": "RuntimeError('missing_native_trt_part2_engine')"
+      }
+    },
+    {
+      "model": "yolo26s",
+      "case": "b364",
+      "source_path": "models/yolo26s/benchmark_results/benchmark_results_hailo10_to_tensorrt_auto.json",
+      "source_file_sha256": "64aaddf44870797fd9c88fa30125cbde8145968833b049fc53672654d319b0df",
+      "row_projection": {
+        "setup_id": "orin_nx_hailo10_01",
+        "case_id": "b364",
+        "native_tensorrt": {
+          "requested_runtime": "native",
+          "precision": "uint8_dequant_fp16",
+          "workspace_mb": 4096,
+          "build_timeout_s": 7200,
+          "fallback_allowed": false,
+          "sessions": {
+            "part2:tensorrt": {
+              "runtime": "native_tensorrt",
+              "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/native_split_quality/orin_nx_hailo10_01/yolo26s/b364/hailo10h_to_trt/7dd6f0b079186331531ae4f4f3f8bbb921cc79bc44513d3751dc10d5a63a7cf3/engine_cache/b364/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine",
+              "model": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/native_split_quality/orin_nx_hailo10_01/yolo26s/b364/hailo10h_to_trt/7dd6f0b079186331531ae4f4f3f8bbb921cc79bc44513d3751dc10d5a63a7cf3/engine_cache/b364/part2/uint8_dequant_fp16/source_part2_uint8_dequant_bridge.onnx",
+              "source_model": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/native_split_quality/orin_nx_hailo10_01/yolo26s/b364/hailo10h_to_trt/7dd6f0b079186331531ae4f4f3f8bbb921cc79bc44513d3751dc10d5a63a7cf3/engine_cache/b364/part2/uint8_dequant_fp16/source_part2_uint8_dequant_bridge.onnx",
+              "source_model_sha256": "bbbed09d2f7d6e11b36720aca94401b2e75a41186a63009af2a18a3b3b67c971",
+              "precision": "uint8_dequant_fp16",
+              "requested_precision": "uint8_dequant_fp16",
+              "cache_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/splits/b364",
+              "cache_hit": true,
+              "cache_miss_reason": "",
+              "canonical_role_layout": true,
+              "explicit_engine": true,
+              "engine_build_receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/native_split_quality/orin_nx_hailo10_01/yolo26s/b364/hailo10h_to_trt/7dd6f0b079186331531ae4f4f3f8bbb921cc79bc44513d3751dc10d5a63a7cf3/engine_cache/b364/part2/uint8_dequant_fp16/engine_build_receipt.json",
+              "engine_sha256": "9727babe0ae6dd08fc0f7c5bdf263f8f95e85c652948d10ceb6872ca77a6b3f7",
+              "engine_build_receipt_sha256": "4f5a665c13cc59f6d6b03fbbdc2aa44523f8473cd62188cdfff9edc10d63f136",
+              "engine_build_receipt_file_sha256": "c6e96805c70fd68cf1a90e7be32b1948ea18c7f99860a1a1966e3c106244e50a",
+              "trtexec": "/usr/src/tensorrt/bin/trtexec",
+              "trtexec_sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4",
+              "artifact_binding_status": "verified_exact_native_tensorrt_engine_receipt",
+              "build_disabled": true,
+              "fallback_disabled": true,
+              "cuda_binding": "ctypes-libcudart",
+              "cuda_python_import_error": "ModuleNotFoundError: No module named 'cuda'",
+              "inputs": [
+                {
+                  "name": "/model.23/Concat_3_output_0",
+                  "shape": [
+                    1,
+                    84,
+                    8400
+                  ],
+                  "type": "tensor(uint8)"
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "output0",
+                  "shape": [
+                    1,
+                    300,
+                    6
+                  ],
+                  "type": "tensor(float)"
+                }
+              ]
+            }
+          },
+          "used": true,
+          "session_count": 1
+        },
+        "run_cfg": {
+          "manifest": "split_manifest.json",
+          "provider": "tensorrt",
+          "variants": "part1,part2,composed",
+          "full_provider": "",
+          "stage1_provider": "hailo10",
+          "stage2_provider": "tensorrt",
+          "trt_runtime": "native_preferred",
+          "native_trt_precision": "uint8_dequant_fp16",
+          "native_trt_workspace_mb": 4096,
+          "native_trt_build_timeout_s": 7200,
+          "native_trt_no_fallback": false,
+          "native_trt_build": false,
+          "native_trt_engine_path": "",
+          "native_trt_build_onnx_path": "",
+          "native_trt_build_receipt": "",
+          "native_split_quality_binding": "/home/nx/splitpoint_runs/legacy_suite/complete_set_20260907_161614_yolo26s_orin_nx_hailo10_01/1/suite/b364/results_hailo10_to_tensorrt/task_quality_inputs/native_split_quality_binding.json",
+          "quality_evidence_only": false,
+          "model_id": "yolo26s",
+          "quality_evidence_eval_id": "complete_set_20260907_161614",
+          "quality_evidence_model_id": "yolo26s",
+          "quality_evidence_setup_id": "orin_nx_hailo10_01",
+          "quality_evidence_source_run_id": "hailo10_to_tensorrt",
+          "quality_evidence_originating_plan_run_id": "",
+          "full_only_quality_identity_json": "",
+          "boundary_mode": "raw_uint8_hailo",
+          "handoff_profile": "off",
+          "trt_runtime_mode": "native_preferred",
+          "trt_native_precision": "uint8_dequant_fp16",
+          "trt_native_workspace_mb": 4096,
+          "out_dir": "results_hailo10_to_tensorrt",
+          "warmup": 3,
+          "runs": 5,
+          "phase_runs": 5,
+          "throughput_frames": 24,
+          "throughput_warmup_frames": 6,
+          "throughput_queue_depth": 2,
+          "streaming_impl": "auto",
+          "verbose_runs": false,
+          "progress_every": 0,
+          "eps": 0.0001,
+          "interface_eps": 0.05,
+          "baseline_cache": "auto",
+          "validation_mode": "auto",
+          "validation_images": "/home/nx/splitpoint_runs/legacy_suite/complete_set_20260907_161614_yolo26s_orin_nx_hailo10_01/1/suite/resources/validation/detection/val2017_n500_s20260710",
+          "validation_max_images": 500,
+          "validation_reference_mode": "auto",
+          "benchmark_task": "detection",
+          "validation_pass_image_ratio": 0.8,
+          "mini_coco_ap50": true,
+          "mini_classification_eval": false,
+          "quality_gate_json": "{\"canonical_reference\":\"canonical_full_onnx\",\"claim_eligible\":null,\"classification\":{\"guardrails\":{\"top5_accuracy_margin\":0.01},\"non_inferiority_margin\":0.01,\"primary_metric\":\"top1_accuracy\"},\"dataset_tier\":\"screening\",\"detection\":{\"guardrails\":{\"ap50_margin\":0.01,\"ap75_margin\":0.01},\"non_inferiority_margin\":0.01,\"primary_metric\":\"coco_ap_50_95\"},\"diagnostic_only\":false,\"enforcement\":{\"claim_eligibility\":\"complete_valid_evidence_only\",\"metric_threshold_miss\":\"enforced_quality_decision\",\"native_energy_after_technical_error\":\"collect_raw_quality_unqualified\",\"technical_quality_error\":\"hard_fail\"},\"frozen_before_final_campaign\":false,\"legacy_point_estimate_eligible_for_ranking\":false,\"name\":\"task_quality_development_500\",\"native_contract\":{\"detection_self_reference\":{\"class_aware\":true,\"confidence_threshold\":0.25,\"denominator\":\"reference_detections\",\"iou_threshold\":0.5,\"min_mean_matched_iou\":0.85,\"min_reference_match_ratio\":0.8,\"policy_id\":\"class_aware_iou50_postnms_v2\"},\"detection_self_reference_min_match_ratio\":0.8,\"numerical_similarity_required_for_claim\":true,\"self_reference_counts_as_task_accuracy\":false},\"profile_id\":\"task_quality_development_500\",\"schema\":\"onnx-splitpoint/task-quality-policy\",\"schema_version\":3,\"screening_eligible_for_ranking\":false,\"statistics\":{\"bootstrap_repetitions\":500,\"confidence_level\":0.95,\"decision\":\"lower_one_sided_bound\",\"execution_location\":\"central_management\",\"method\":\"paired_bootstrap\",\"seed\":20260710,\"workers\":4}}",
+          "seed": 0,
+          "batch": null,
+          "shape_override": null,
+          "inputs_npz": null,
+          "save_inputs_npz": null,
+          "image": "/home/nx/splitpoint_runs/legacy_suite/complete_set_20260907_161614_yolo26s_orin_nx_hailo10_01/1/suite/resources/validation/detection/val2017_n500_s20260710/000000386134.jpg",
+          "image_scale": "auto",
+          "viz": "auto",
+          "no_report_plots": false,
+          "energy_measurement_only": false,
+          "yolo_conf": 0.25,
+          "yolo_iou": 0.45,
+          "yolo_max_det": 300,
+          "detr_conf": 0.25,
+          "detr_iou": 0.5,
+          "detr_max_det": 200,
+          "labels": null,
+          "dump_interface": null,
+          "dump_interface_out": null,
+          "external_output_dump": "",
+          "external_output_variant": "composed",
+          "external_output_provider": "native_fifo",
+          "dump_output_variant": "",
+          "dump_output_dir": "",
+          "dump_output_provider": "",
+          "output_dump_only": false,
+          "build_only": false,
+          "ort_log_severity": 2,
+          "trt_cache_dir": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/splits/b364",
+          "trt_full_cache_dir": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251",
+          "trt_cache": true,
+          "trt_fp16": false,
+          "trt_dump_subgraphs": false,
+          "trt_fast_build": false,
+          "trt_dla_core": null,
+          "trt_gpu_fallback": true,
+          "trt_max_workspace_size": null,
+          "hailo_activation_mode": "auto",
+          "validation_max_items": 500,
+          "_full_only_quality_identity_context": null,
+          "viz_conf": 0.25,
+          "viz_iou": 0.5,
+          "viz_max_det": 200
+        },
+        "deployment_contract": {
+          "full_endpoint_mode": "raw_detection_head",
+          "full_raw_detection_head": true,
+          "full_end_node_names": [
+            "/model.23/one2one_cv2.0/one2one_cv2.0.2/Conv",
+            "/model.23/one2one_cv3.0/one2one_cv3.0.2/Conv",
+            "/model.23/one2one_cv2.1/one2one_cv2.1.2/Conv",
+            "/model.23/one2one_cv3.1/one2one_cv3.1.2/Conv",
+            "/model.23/one2one_cv2.2/one2one_cv2.2.2/Conv",
+            "/model.23/one2one_cv3.2/one2one_cv3.2.2/Conv"
+          ],
+          "part2_output_strategy": "original",
+          "part2_raw_detection_head": false,
+          "part2_effective_outputs": [
+            "output0"
+          ],
+          "part2_host_tail_required": false,
+          "part2_host_tail_model": null,
+          "full_primary_timing_scope": "backend_endpoint",
+          "full_primary_host_tail_sha256": "",
+          "full_endpoint_runtime_attestation": {},
+          "hailo_io_contracts": {
+            "full": null,
+            "part1": {
+              "schema_version": 3,
+              "backend": "hailo",
+              "runtime_api": "infer_model",
+              "artifact": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/native_split_quality/orin_nx_hailo10_01/yolo26s/b364/hailo10h_to_trt/7dd6f0b079186331531ae4f4f3f8bbb921cc79bc44513d3751dc10d5a63a7cf3/part1.hef",
+              "quantized_inputs": true,
+              "quantized_outputs": true,
+              "runtime_input_format": "uint8",
+              "runtime_output_format": "uint8",
+              "runtime_input_formats": {
+                "yolo26s_part1_b364/input_layer1": "UINT8"
+              },
+              "runtime_output_formats": {
+                "yolo26s_part1_b364/concat23": "UINT8"
+              },
+              "runtime_input_quantization": {
+                "yolo26s_part1_b364/input_layer1": {
+                  "scale": 0.003921568859368563,
+                  "zero_point": 0.0
+                }
+              },
+              "runtime_output_quantization": {
+                "yolo26s_part1_b364/concat23": {
+                  "scale": 3.1612741947174072,
+                  "zero_point": 35.0
+                }
+              },
+              "outputs_dequantized": false,
+              "persistent_activation": false,
+              "hotloop": true,
+              "copy_outputs": true,
+              "hef_inputs": [
+                "yolo26s_part1_b364/input_layer1"
+              ],
+              "canonical_inputs": [
+                "images"
+              ],
+              "hef_outputs": [
+                "yolo26s_part1_b364/concat23"
+              ],
+              "canonical_outputs": [
+                "/model.23/Concat_3_output_0"
+              ],
+              "input_aliases": {
+                "yolo26s_part1_b364/input_layer1": "images"
+              },
+              "output_aliases": {
+                "yolo26s_part1_b364/concat23": "/model.23/Concat_3_output_0"
+              },
+              "runtime_input_shapes": {
+                "images": [
+                  640,
+                  640,
+                  3
+                ]
+              },
+              "runtime_output_shapes": {
+                "/model.23/Concat_3_output_0": [
+                  1,
+                  8400,
+                  84
+                ]
+              },
+              "onnx_input_shapes": {
+                "images": [
+                  1,
+                  3,
+                  640,
+                  640
+                ]
+              },
+              "onnx_output_shapes": {
+                "/model.23/Concat_3_output_0": [
+                  1,
+                  84,
+                  8400
+                ]
+              }
+            },
+            "part2": null
+          },
+          "deepx_io_contracts": {
+            "part1": null,
+            "part2": null
+          },
+          "native_trt_io_contracts": {
+            "full": null,
+            "part2": {
+              "schema_version": 2,
+              "backend": "native_tensorrt",
+              "artifact": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/native_split_quality/orin_nx_hailo10_01/yolo26s/b364/hailo10h_to_trt/7dd6f0b079186331531ae4f4f3f8bbb921cc79bc44513d3751dc10d5a63a7cf3/engine_cache/b364/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine",
+              "precision": "uint8_dequant_fp16",
+              "inputs": {
+                "/model.23/Concat_3_output_0": {
+                  "shape": [
+                    1,
+                    84,
+                    8400
+                  ],
+                  "dtype": "uint8"
+                }
+              },
+              "outputs": {
+                "output0": {
+                  "shape": [
+                    1,
+                    300,
+                    6
+                  ],
+                  "dtype": "float32"
+                }
+              },
+              "input_names": [
+                "/model.23/Concat_3_output_0"
+              ],
+              "output_names": [
+                "output0"
+              ],
+              "build_info": {
+                "runtime": "native_tensorrt",
+                "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/native_split_quality/orin_nx_hailo10_01/yolo26s/b364/hailo10h_to_trt/7dd6f0b079186331531ae4f4f3f8bbb921cc79bc44513d3751dc10d5a63a7cf3/engine_cache/b364/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine",
+                "model": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/native_split_quality/orin_nx_hailo10_01/yolo26s/b364/hailo10h_to_trt/7dd6f0b079186331531ae4f4f3f8bbb921cc79bc44513d3751dc10d5a63a7cf3/engine_cache/b364/part2/uint8_dequant_fp16/source_part2_uint8_dequant_bridge.onnx",
+                "source_model": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/native_split_quality/orin_nx_hailo10_01/yolo26s/b364/hailo10h_to_trt/7dd6f0b079186331531ae4f4f3f8bbb921cc79bc44513d3751dc10d5a63a7cf3/engine_cache/b364/part2/uint8_dequant_fp16/source_part2_uint8_dequant_bridge.onnx",
+                "source_model_sha256": "bbbed09d2f7d6e11b36720aca94401b2e75a41186a63009af2a18a3b3b67c971",
+                "precision": "uint8_dequant_fp16",
+                "requested_precision": "uint8_dequant_fp16",
+                "cache_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/splits/b364",
+                "cache_hit": true,
+                "cache_miss_reason": "",
+                "canonical_role_layout": true,
+                "explicit_engine": true,
+                "engine_build_receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/native_split_quality/orin_nx_hailo10_01/yolo26s/b364/hailo10h_to_trt/7dd6f0b079186331531ae4f4f3f8bbb921cc79bc44513d3751dc10d5a63a7cf3/engine_cache/b364/part2/uint8_dequant_fp16/engine_build_receipt.json",
+                "engine_sha256": "9727babe0ae6dd08fc0f7c5bdf263f8f95e85c652948d10ceb6872ca77a6b3f7",
+                "engine_build_receipt_sha256": "4f5a665c13cc59f6d6b03fbbdc2aa44523f8473cd62188cdfff9edc10d63f136",
+                "engine_build_receipt_file_sha256": "c6e96805c70fd68cf1a90e7be32b1948ea18c7f99860a1a1966e3c106244e50a",
+                "trtexec": "/usr/src/tensorrt/bin/trtexec",
+                "trtexec_sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4",
+                "artifact_binding_status": "verified_exact_native_tensorrt_engine_receipt",
+                "build_disabled": true,
+                "fallback_disabled": true,
+                "cuda_binding": "ctypes-libcudart",
+                "cuda_python_import_error": "ModuleNotFoundError: No module named 'cuda'"
+              }
+            }
+          },
+          "stage2_accelerator_calibration_gate": {
+            "required": false,
+            "available": null,
+            "status": "not_required"
+          },
+          "contract_summary": {
+            "schema_version": 2,
+            "variant": "composed",
+            "task": "detection",
+            "endpoint_mode": "decoded_or_native",
+            "full_endpoint_mode": "decoded_or_native",
+            "part2_endpoint_mode": "decoded_or_native",
+            "raw_head_contract_present": false,
+            "raw_head_contract_status": "none",
+            "host_tail_required": false,
+            "host_tail_available": false,
+            "host_tail_model": null,
+            "stage2_input_contract_kind": "image_or_decoded",
+            "stage2_calibration_required": false,
+            "stage2_calibration_available": false,
+            "stage2_calibration_source": null,
+            "stage2_calibration_trust_level": null
+          },
+          "contracts_by_variant": {
+            "full": {
+              "schema_version": 2,
+              "variant": "full",
+              "task": "detection",
+              "endpoint_mode": "decoded_or_native",
+              "full_endpoint_mode": "decoded_or_native",
+              "part2_endpoint_mode": "not_applicable",
+              "raw_head_contract_present": false,
+              "raw_head_contract_status": "none",
+              "host_tail_required": false,
+              "host_tail_available": false,
+              "host_tail_model": null,
+              "stage2_input_contract_kind": "image_or_decoded",
+              "stage2_calibration_required": false,
+              "stage2_calibration_available": false,
+              "stage2_calibration_source": null,
+              "stage2_calibration_trust_level": null
+            },
+            "part1": {
+              "schema_version": 2,
+              "variant": "part1",
+              "task": "detection",
+              "endpoint_mode": "decoded_or_native",
+              "full_endpoint_mode": "decoded_or_native",
+              "part2_endpoint_mode": "not_applicable",
+              "raw_head_contract_present": false,
+              "raw_head_contract_status": "none",
+              "host_tail_required": false,
+              "host_tail_available": false,
+              "host_tail_model": null,
+              "stage2_input_contract_kind": "image_or_decoded",
+              "stage2_calibration_required": false,
+              "stage2_calibration_available": false,
+              "stage2_calibration_source": null,
+              "stage2_calibration_trust_level": null
+            },
+            "part2": {
+              "schema_version": 2,
+              "variant": "part2",
+              "task": "detection",
+              "endpoint_mode": "decoded_or_native",
+              "full_endpoint_mode": "decoded_or_native",
+              "part2_endpoint_mode": "decoded_or_native",
+              "raw_head_contract_present": false,
+              "raw_head_contract_status": "none",
+              "host_tail_required": false,
+              "host_tail_available": false,
+              "host_tail_model": null,
+              "stage2_input_contract_kind": "image_or_decoded",
+              "stage2_calibration_required": false,
+              "stage2_calibration_available": false,
+              "stage2_calibration_source": null,
+              "stage2_calibration_trust_level": null
+            },
+            "composed": {
+              "schema_version": 2,
+              "variant": "composed",
+              "task": "detection",
+              "endpoint_mode": "decoded_or_native",
+              "full_endpoint_mode": "decoded_or_native",
+              "part2_endpoint_mode": "decoded_or_native",
+              "raw_head_contract_present": false,
+              "raw_head_contract_status": "none",
+              "host_tail_required": false,
+              "host_tail_available": false,
+              "host_tail_model": null,
+              "stage2_input_contract_kind": "image_or_decoded",
+              "stage2_calibration_required": false,
+              "stage2_calibration_available": false,
+              "stage2_calibration_source": null,
+              "stage2_calibration_trust_level": null
+            }
+          }
+        },
+        "part1": "yolo26s_part1_b364.onnx",
+        "part2": "yolo26s_part2_b364.onnx"
+      },
+      "native_path": "native_producers/hailo10h/yolo26s/benchmark_set/native_pipeline/b364/hailo10h_to_trt/uint8_dequant_fp16/hailo10_native_fifo_e2e_results.json",
+      "native_file_sha256": "07a1ad8877f4ba7090bec83dc78eb63f70f4909f08ec01060791acab5fbdec30",
+      "native_result": {
+        "ok": false,
+        "mode": "hailo10h_python_native_fifo_e2e",
+        "benchmark_set": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolo26s/benchmark_set",
+        "case": "b364",
+        "hw_arch": "hailo10h",
+        "precision": "uint8_dequant_fp16",
+        "producer_impl_requested": "auto",
+        "input_image": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolo26s/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+        "input_image_sha256": "a4cd7f45ac1ce27eaafb254b23af7c0b18a064be08870ceaaf03b2147f2ce550",
+        "input_image_source": "exact_file",
+        "boundary_layout": "memory_nhwc_to_nchw",
+        "dequant_scale": 3.1612741947174072,
+        "dequant_zero_point": 35.0,
+        "hef": "/home/nx/native_fifo_evalsets/complete_set_20260907_161614/yolo26s/benchmark_set/b364/hailo/hailo10/part1/compiled.hef",
+        "engine": "",
+        "energy_workload_only": false,
+        "energy_preflight_status": "",
+        "replay_artifact_verification": {
+          "runner_sha256": "4e4352d0632c22726d45dcaf63320af12b9f04a64c298a6b4a45882b737bc498",
+          "input_image_sha256": "a4cd7f45ac1ce27eaafb254b23af7c0b18a064be08870ceaaf03b2147f2ce550",
+          "hef_sha256": "24adc12d0e4b9e37cbaf2b54a811e142c58f918bb52ec5a0d30045175f57b685",
+          "engine_sha256": "",
+          "source_contract_sha256": ""
+        },
+        "hef_output_quantization": {
+          "name": "yolo26s_part1_b364/concat23",
+          "scale": 3.1612741947174072,
+          "zero_point": 35.0,
+          "source": "exact_loaded_hef_quant_info"
+        },
+        "error": "RuntimeError('missing_native_trt_part2_engine')"
+      }
+    }
+  ]
+}

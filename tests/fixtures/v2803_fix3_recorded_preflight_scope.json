@@ -1,0 +1,837 @@
+{
+  "evidence_kind": "recorded_preflight_scope_projection_not_new_artifact_validation",
+  "source_debug_pack_sha256": "76126d14a21de7fd1a6e8e689c06fa96548b73bf2ad6b3fb856447a37ab23199",
+  "scope_note": "Exact recorded plan rows and recorded verifier observations; missing benchmark_set reconstructed from observed selected boundary. No artifact bytes available.",
+  "models": [
+    {
+      "model_id": "mobilenet_v3_large",
+      "cases": [
+        "b056"
+      ],
+      "plan": {
+        "runs": [
+          {
+            "automatic_reference": false,
+            "backend": "ort_cpu",
+            "benchmark_task": "classification",
+            "canonical_cpu_reference": true,
+            "energy_eligible": false,
+            "execution_location": "central_management",
+            "id": "ort_cpu",
+            "image_scale": "auto",
+            "mini_classification_eval": true,
+            "mini_coco_ap50": false,
+            "pareto_eligible": false,
+            "performance_eligible": false,
+            "provider": "cpu",
+            "ranking_eligible": false,
+            "semantic_reference_only": true,
+            "stage1": {
+              "provider": "cpu",
+              "type": "onnxruntime"
+            },
+            "stage2": {
+              "provider": "cpu",
+              "type": "onnxruntime"
+            },
+            "type": "onnxruntime",
+            "validation_budget_authoritative": true,
+            "validation_images": "resources/validation/classification/val_by_wnid_n16_s20260710",
+            "validation_items_requested": 16,
+            "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+            "validation_max_images": 16,
+            "validation_reference_mode": "auto",
+            "validation_source_kind": "content_addressed_manifest",
+            "variant": "full",
+            "variants": [
+              "full"
+            ]
+          },
+          {
+            "benchmark_task": "classification",
+            "id": "ort_tensorrt",
+            "image_scale": "auto",
+            "mini_classification_eval": true,
+            "mini_coco_ap50": false,
+            "provider": "tensorrt",
+            "stage1": {
+              "provider": "tensorrt",
+              "type": "onnxruntime"
+            },
+            "stage2": {
+              "provider": "tensorrt",
+              "type": "onnxruntime"
+            },
+            "type": "onnxruntime",
+            "validation_budget_authoritative": true,
+            "validation_images": "resources/validation/classification/val_by_wnid_n16_s20260710",
+            "validation_items_requested": 16,
+            "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+            "validation_max_images": 16,
+            "validation_reference_mode": "auto",
+            "validation_source_kind": "content_addressed_manifest"
+          },
+          {
+            "benchmark_task": "classification",
+            "hw_arch": "hailo10",
+            "id": "hailo10",
+            "image_scale": "auto",
+            "mini_classification_eval": true,
+            "mini_coco_ap50": false,
+            "same_backend_split_diagnostics_enabled": false,
+            "stage1": {
+              "hw_arch": "hailo10",
+              "type": "hailo"
+            },
+            "stage2": {
+              "hw_arch": "hailo10",
+              "type": "hailo"
+            },
+            "type": "hailo",
+            "validation_budget_authoritative": true,
+            "validation_images": "resources/validation/classification/val_by_wnid_n16_s20260710",
+            "validation_items_requested": 16,
+            "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+            "validation_max_images": 16,
+            "validation_reference_mode": "auto",
+            "validation_source_kind": "content_addressed_manifest",
+            "variants": [
+              "full"
+            ]
+          },
+          {
+            "benchmark_task": "classification",
+            "id": "hailo10_to_tensorrt",
+            "image_scale": "auto",
+            "mini_classification_eval": true,
+            "mini_coco_ap50": false,
+            "provider": "tensorrt",
+            "stage1": {
+              "hw_arch": "hailo10",
+              "type": "hailo"
+            },
+            "stage2": {
+              "provider": "tensorrt",
+              "type": "onnxruntime"
+            },
+            "type": "matrix",
+            "validation_budget_authoritative": true,
+            "validation_images": "resources/validation/classification/val_by_wnid_n16_s20260710",
+            "validation_items_requested": 16,
+            "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+            "validation_max_images": 16,
+            "validation_reference_mode": "auto",
+            "validation_source_kind": "content_addressed_manifest",
+            "variants": [
+              "full",
+              "part1",
+              "part2",
+              "composed"
+            ]
+          }
+        ],
+        "planned_runs": [
+          {
+            "automatic_reference": false,
+            "backend": "ort_cpu",
+            "benchmark_task": "classification",
+            "canonical_cpu_reference": true,
+            "energy_eligible": false,
+            "execution_location": "central_management",
+            "id": "ort_cpu",
+            "image_scale": "auto",
+            "mini_classification_eval": true,
+            "mini_coco_ap50": false,
+            "pareto_eligible": false,
+            "performance_eligible": false,
+            "provider": "cpu",
+            "ranking_eligible": false,
+            "semantic_reference_only": true,
+            "stage1": {
+              "provider": "cpu",
+              "type": "onnxruntime"
+            },
+            "stage2": {
+              "provider": "cpu",
+              "type": "onnxruntime"
+            },
+            "type": "onnxruntime",
+            "validation_budget_authoritative": true,
+            "validation_images": "resources/validation/classification/val_by_wnid_n16_s20260710",
+            "validation_items_requested": 16,
+            "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+            "validation_max_images": 16,
+            "validation_reference_mode": "auto",
+            "validation_source_kind": "content_addressed_manifest",
+            "variant": "full",
+            "variants": [
+              "full"
+            ]
+          },
+          {
+            "benchmark_task": "classification",
+            "id": "ort_tensorrt",
+            "image_scale": "auto",
+            "mini_classification_eval": true,
+            "mini_coco_ap50": false,
+            "provider": "tensorrt",
+            "stage1": {
+              "provider": "tensorrt",
+              "type": "onnxruntime"
+            },
+            "stage2": {
+              "provider": "tensorrt",
+              "type": "onnxruntime"
+            },
+            "type": "onnxruntime",
+            "validation_budget_authoritative": true,
+            "validation_images": "resources/validation/classification/val_by_wnid_n16_s20260710",
+            "validation_items_requested": 16,
+            "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+            "validation_max_images": 16,
+            "validation_reference_mode": "auto",
+            "validation_source_kind": "content_addressed_manifest"
+          },
+          {
+            "benchmark_task": "classification",
+            "hw_arch": "hailo10",
+            "id": "hailo10",
+            "image_scale": "auto",
+            "mini_classification_eval": true,
+            "mini_coco_ap50": false,
+            "same_backend_split_diagnostics_enabled": false,
+            "stage1": {
+              "hw_arch": "hailo10",
+              "type": "hailo"
+            },
+            "stage2": {
+              "hw_arch": "hailo10",
+              "type": "hailo"
+            },
+            "type": "hailo",
+            "validation_budget_authoritative": true,
+            "validation_images": "resources/validation/classification/val_by_wnid_n16_s20260710",
+            "validation_items_requested": 16,
+            "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+            "validation_max_images": 16,
+            "validation_reference_mode": "auto",
+            "validation_source_kind": "content_addressed_manifest",
+            "variants": [
+              "full"
+            ]
+          },
+          {
+            "benchmark_task": "classification",
+            "id": "hailo10_to_tensorrt",
+            "image_scale": "auto",
+            "mini_classification_eval": true,
+            "mini_coco_ap50": false,
+            "provider": "tensorrt",
+            "stage1": {
+              "hw_arch": "hailo10",
+              "type": "hailo"
+            },
+            "stage2": {
+              "provider": "tensorrt",
+              "type": "onnxruntime"
+            },
+            "type": "matrix",
+            "validation_budget_authoritative": true,
+            "validation_images": "resources/validation/classification/val_by_wnid_n16_s20260710",
+            "validation_items_requested": 16,
+            "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+            "validation_max_images": 16,
+            "validation_reference_mode": "auto",
+            "validation_source_kind": "content_addressed_manifest",
+            "variants": [
+              "full",
+              "part1",
+              "part2",
+              "composed"
+            ]
+          }
+        ]
+      },
+      "observations": [
+        {
+          "model_id": "mobilenet_v3_large",
+          "role": "hailo10_hef",
+          "item_id": "b056:part1",
+          "status": "HIT",
+          "reason": "existing_hailo_receipt_valid",
+          "expectation": "warm",
+          "artifact_path": "/home/kmika/Downloads/v2803_fix2_hardware_DrGax2qT/runs/v2803_reference_native_fixed16_20260911_181353/models/mobilenet_v3_large/benchmark_set/legacy_suite/b056/hailo/hailo10/part1/.hailo-generations/d01e6a9b92f54268a98e15e4290448fd/compiled.hef",
+          "receipt_path": "/home/kmika/Downloads/v2803_fix2_hardware_DrGax2qT/runs/v2803_reference_native_fixed16_20260911_181353/models/mobilenet_v3_large/benchmark_set/legacy_suite/b056/hailo/hailo10/part1/.hailo-generations/d01e6a9b92f54268a98e15e4290448fd/hailo_hef_build_receipt.json",
+          "identity": "d2e0d43d13b4b6c734f718011f92a223eada05b8e78367acc2f6cae3e9b3be31",
+          "source": "hailo_artifact_service_plan",
+          "source_namespace": "",
+          "evidence": {
+            "service_plan": "/home/kmika/Downloads/v2803_fix2_hardware_DrGax2qT/runs/v2803_reference_native_fixed16_20260911_181353/models/mobilenet_v3_large/benchmark_set/hailo_artifact_service_plan.json",
+            "service_status": "ready_existing_hef",
+            "current_build": false,
+            "cache_probe_ok": true
+          },
+          "boundary": "b056",
+          "backend": "hailo10h",
+          "artifact_stage": "part1",
+          "evidence_origin": "",
+          "compiler_dispatch_allowed": false,
+          "runtime_artifact_available": true,
+          "build_label": "hailo10h_part1"
+        },
+        {
+          "model_id": "mobilenet_v3_large",
+          "role": "hailo10_hef",
+          "item_id": "b056:part2",
+          "status": "UNKNOWN",
+          "reason": "pending_dfc_build",
+          "expectation": "warm",
+          "artifact_path": "",
+          "receipt_path": "",
+          "identity": "",
+          "source": "hailo_artifact_service_plan",
+          "source_namespace": "",
+          "evidence": {
+            "service_plan": "/home/kmika/Downloads/v2803_fix2_hardware_DrGax2qT/runs/v2803_reference_native_fixed16_20260911_181353/models/mobilenet_v3_large/benchmark_set/hailo_artifact_service_plan.json",
+            "service_status": "pending_dfc_build",
+            "current_build": false
+          },
+          "boundary": "b056",
+          "backend": "hailo10h",
+          "artifact_stage": "part2",
+          "evidence_origin": "",
+          "compiler_dispatch_allowed": false,
+          "runtime_artifact_available": false,
+          "build_label": "hailo10h_part2"
+        },
+        {
+          "model_id": "mobilenet_v3_large",
+          "role": "hailo10_hef",
+          "item_id": "full",
+          "status": "HIT",
+          "reason": "existing_hailo_receipt_valid",
+          "expectation": "warm",
+          "artifact_path": "/home/kmika/Downloads/v2803_fix2_hardware_DrGax2qT/runs/v2803_reference_native_fixed16_20260911_181353/models/mobilenet_v3_large/benchmark_set/legacy_suite/hailo/hailo10/full/.hailo-generations/6c9c5cf7616444f583f77f4ca295aae4/compiled.hef",
+          "receipt_path": "/home/kmika/Downloads/v2803_fix2_hardware_DrGax2qT/runs/v2803_reference_native_fixed16_20260911_181353/models/mobilenet_v3_large/benchmark_set/legacy_suite/hailo/hailo10/full/.hailo-generations/6c9c5cf7616444f583f77f4ca295aae4/hailo_hef_build_receipt.json",
+          "identity": "00577143b41b276e4dc33c342baff54986d3f078e8d46acc5681fb3a9b7c19b7",
+          "source": "hailo_artifact_service_plan",
+          "source_namespace": "",
+          "evidence": {
+            "service_plan": "/home/kmika/Downloads/v2803_fix2_hardware_DrGax2qT/runs/v2803_reference_native_fixed16_20260911_181353/models/mobilenet_v3_large/benchmark_set/hailo_artifact_service_plan.json",
+            "service_status": "ready_reused",
+            "current_build": false,
+            "cache_probe_ok": true
+          },
+          "boundary": "full",
+          "backend": "hailo10h",
+          "artifact_stage": "full",
+          "evidence_origin": "",
+          "compiler_dispatch_allowed": false,
+          "runtime_artifact_available": true,
+          "build_label": "hailo10h_full"
+        },
+        {
+          "model_id": "mobilenet_v3_large",
+          "role": "trt_full",
+          "item_id": "orin_nx_hailo10_01/full",
+          "status": "HIT",
+          "reason": "compatible_receipt",
+          "expectation": "warm",
+          "artifact_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/mobilenet_v3_large-a3603057150e0f6d/full/2f5e79b1e4280251e7b6eefe1d6161c4831e2fc27858e1e9fe2fac697f44489e/fp16/full_fp16.engine",
+          "receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/mobilenet_v3_large-a3603057150e0f6d/full/2f5e79b1e4280251e7b6eefe1d6161c4831e2fc27858e1e9fe2fac697f44489e/fp16/engine_build_receipt.json",
+          "identity": "2eebc19690d1fbd696ac83d425bb5044b88a15f7179d2b685565efef251c5473",
+          "source": "remote_trt_cache_preflight",
+          "source_namespace": "current",
+          "evidence": {
+            "current_engine_cache_key": "mobilenet_v3_large-a3603057150e0f6d",
+            "engine_sha256": "19b57aa1fad5ecd10a58471416bf2fe5e3ca49b34294260f3a83dc2ae0f9564c",
+            "namespace_owner_status": "exact_current",
+            "precision_flags": [
+              "--fp16"
+            ],
+            "previous_engine_cache_key": "mobilenet_v3_large-a3603057150e0f6d",
+            "shapes": "",
+            "source_onnx_sha256": "2f5e79b1e4280251e7b6eefe1d6161c4831e2fc27858e1e9fe2fac697f44489e",
+            "trtexec_sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4",
+            "verification_reason": "engine_build_receipt_verified",
+            "workspace": [
+              "mempool",
+              4096
+            ]
+          },
+          "boundary": "full",
+          "backend": "tensorrt",
+          "artifact_stage": "full",
+          "evidence_origin": "",
+          "compiler_dispatch_allowed": false,
+          "runtime_artifact_available": true,
+          "build_label": "tensorrt_full"
+        },
+        {
+          "model_id": "mobilenet_v3_large",
+          "role": "trt_p2",
+          "item_id": "orin_nx_hailo10_01/b056",
+          "status": "HIT",
+          "reason": "compatible_receipt",
+          "expectation": "warm",
+          "artifact_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/mobilenet_v3_large-a3603057150e0f6d/native_split_quality/orin_nx_hailo10_01/mobilenet_v3_large/b056/hailo10h_to_trt/78e78c7c7a9332447903be33a221c2ffdb11dbeb6a1c3a937daa49061d0f746f/engine_cache/b056/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine",
+          "receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/mobilenet_v3_large-a3603057150e0f6d/native_split_quality/orin_nx_hailo10_01/mobilenet_v3_large/b056/hailo10h_to_trt/78e78c7c7a9332447903be33a221c2ffdb11dbeb6a1c3a937daa49061d0f746f/engine_cache/b056/part2/uint8_dequant_fp16/engine_build_receipt.json",
+          "identity": "c8f38f2f158539eb78589bd759f95bf8f1d6d36d6441597f078c7435a16c45c3",
+          "source": "remote_trt_cache_preflight",
+          "source_namespace": "current",
+          "evidence": {
+            "binding_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/mobilenet_v3_large-a3603057150e0f6d/native_split_quality/orin_nx_hailo10_01/mobilenet_v3_large/b056/hailo10h_to_trt/78e78c7c7a9332447903be33a221c2ffdb11dbeb6a1c3a937daa49061d0f746f/native_split_quality_binding.json",
+            "binding_sha256": "9f9eb430993ab4cdc50de2b972e506328433c378befa9f5c0ee99670e09468f5",
+            "current_engine_cache_key": "mobilenet_v3_large-a3603057150e0f6d",
+            "engine_sha256": "812af24b41a8ebe1f2be4ae68ba207f48fb24610f6329af37fb0df155d3149ed",
+            "namespace_owner_status": "exact_current",
+            "precision_flags": [
+              "--fp16"
+            ],
+            "previous_engine_cache_key": "mobilenet_v3_large-a3603057150e0f6d",
+            "quality_binding_addressed": true,
+            "shapes": "",
+            "source_binding": "strict_native_split_quality_binding",
+            "source_onnx_sha256": "7fa33b24eee97cd00b4ddef8948436a22095016d420ac0b87b3d5aa66673968d",
+            "trtexec_sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4",
+            "validator_implementation": "splitpoint_runners.native_split_quality.validate_native_split_quality_binding",
+            "validator_module_sha256": {
+              "splitpoint_runners.native_command_contract": "2fe632426cd28cea377e9bac8d977d38f6a95310ba8407ecf50d5580f9d88208",
+              "splitpoint_runners.native_split_quality": "ea59ace5308abc00fa46fafe712c0c0e66dbfefde059cbeef5fc0fda4d085715"
+            },
+            "validator_source_identity": "splitpoint_runners.native_split_quality@sha256:ea59ace5308abc00fa46fafe712c0c0e66dbfefde059cbeef5fc0fda4d085715",
+            "validator_status": "local_files_rehashed_and_exact_cross_links_verified",
+            "validator_verification_mode": "local",
+            "verification_reason": "engine_build_receipt_verified",
+            "workspace": [
+              "mempool",
+              4096
+            ]
+          },
+          "boundary": "b056",
+          "backend": "tensorrt",
+          "artifact_stage": "part2",
+          "evidence_origin": "",
+          "compiler_dispatch_allowed": false,
+          "runtime_artifact_available": true,
+          "build_label": "tensorrt_part2"
+        }
+      ]
+    },
+    {
+      "model_id": "yolo11l",
+      "cases": [
+        "b062"
+      ],
+      "plan": {
+        "runs": [
+          {
+            "automatic_reference": false,
+            "backend": "ort_cpu",
+            "benchmark_task": "detection",
+            "canonical_cpu_reference": true,
+            "energy_eligible": false,
+            "execution_location": "central_management",
+            "id": "ort_cpu",
+            "image_scale": "auto",
+            "mini_classification_eval": false,
+            "mini_coco_ap50": true,
+            "pareto_eligible": false,
+            "performance_eligible": false,
+            "provider": "cpu",
+            "ranking_eligible": false,
+            "semantic_reference_only": true,
+            "stage1": {
+              "provider": "cpu",
+              "type": "onnxruntime"
+            },
+            "stage2": {
+              "provider": "cpu",
+              "type": "onnxruntime"
+            },
+            "type": "onnxruntime",
+            "validation_budget_authoritative": true,
+            "validation_images": "resources/validation/detection/val2017_n16_s20260710",
+            "validation_items_requested": 16,
+            "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+            "validation_max_images": 16,
+            "validation_reference_mode": "auto",
+            "validation_source_kind": "content_addressed_manifest",
+            "variant": "full",
+            "variants": [
+              "full"
+            ]
+          },
+          {
+            "benchmark_task": "detection",
+            "id": "ort_tensorrt",
+            "image_scale": "auto",
+            "mini_classification_eval": false,
+            "mini_coco_ap50": true,
+            "provider": "tensorrt",
+            "stage1": {
+              "provider": "tensorrt",
+              "type": "onnxruntime"
+            },
+            "stage2": {
+              "provider": "tensorrt",
+              "type": "onnxruntime"
+            },
+            "type": "onnxruntime",
+            "validation_budget_authoritative": true,
+            "validation_images": "resources/validation/detection/val2017_n16_s20260710",
+            "validation_items_requested": 16,
+            "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+            "validation_max_images": 16,
+            "validation_reference_mode": "auto",
+            "validation_source_kind": "content_addressed_manifest"
+          },
+          {
+            "benchmark_task": "detection",
+            "hw_arch": "hailo10",
+            "id": "hailo10",
+            "image_scale": "auto",
+            "mini_classification_eval": false,
+            "mini_coco_ap50": true,
+            "same_backend_split_diagnostics_enabled": false,
+            "stage1": {
+              "hw_arch": "hailo10",
+              "type": "hailo"
+            },
+            "stage2": {
+              "hw_arch": "hailo10",
+              "type": "hailo"
+            },
+            "type": "hailo",
+            "validation_budget_authoritative": true,
+            "validation_images": "resources/validation/detection/val2017_n16_s20260710",
+            "validation_items_requested": 16,
+            "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+            "validation_max_images": 16,
+            "validation_reference_mode": "auto",
+            "validation_source_kind": "content_addressed_manifest",
+            "variants": [
+              "full"
+            ]
+          },
+          {
+            "benchmark_task": "detection",
+            "id": "hailo10_to_tensorrt",
+            "image_scale": "auto",
+            "mini_classification_eval": false,
+            "mini_coco_ap50": true,
+            "provider": "tensorrt",
+            "stage1": {
+              "hw_arch": "hailo10",
+              "type": "hailo"
+            },
+            "stage2": {
+              "provider": "tensorrt",
+              "type": "onnxruntime"
+            },
+            "type": "matrix",
+            "validation_budget_authoritative": true,
+            "validation_images": "resources/validation/detection/val2017_n16_s20260710",
+            "validation_items_requested": 16,
+            "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+            "validation_max_images": 16,
+            "validation_reference_mode": "auto",
+            "validation_source_kind": "content_addressed_manifest",
+            "variants": [
+              "full",
+              "part1",
+              "part2",
+              "composed"
+            ]
+          }
+        ],
+        "planned_runs": [
+          {
+            "automatic_reference": false,
+            "backend": "ort_cpu",
+            "benchmark_task": "detection",
+            "canonical_cpu_reference": true,
+            "energy_eligible": false,
+            "execution_location": "central_management",
+            "id": "ort_cpu",
+            "image_scale": "auto",
+            "mini_classification_eval": false,
+            "mini_coco_ap50": true,
+            "pareto_eligible": false,
+            "performance_eligible": false,
+            "provider": "cpu",
+            "ranking_eligible": false,
+            "semantic_reference_only": true,
+            "stage1": {
+              "provider": "cpu",
+              "type": "onnxruntime"
+            },
+            "stage2": {
+              "provider": "cpu",
+              "type": "onnxruntime"
+            },
+            "type": "onnxruntime",
+            "validation_budget_authoritative": true,
+            "validation_images": "resources/validation/detection/val2017_n16_s20260710",
+            "validation_items_requested": 16,
+            "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+            "validation_max_images": 16,
+            "validation_reference_mode": "auto",
+            "validation_source_kind": "content_addressed_manifest",
+            "variant": "full",
+            "variants": [
+              "full"
+            ]
+          },
+          {
+            "benchmark_task": "detection",
+            "id": "ort_tensorrt",
+            "image_scale": "auto",
+            "mini_classification_eval": false,
+            "mini_coco_ap50": true,
+            "provider": "tensorrt",
+            "stage1": {
+              "provider": "tensorrt",
+              "type": "onnxruntime"
+            },
+            "stage2": {
+              "provider": "tensorrt",
+              "type": "onnxruntime"
+            },
+            "type": "onnxruntime",
+            "validation_budget_authoritative": true,
+            "validation_images": "resources/validation/detection/val2017_n16_s20260710",
+            "validation_items_requested": 16,
+            "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+            "validation_max_images": 16,
+            "validation_reference_mode": "auto",
+            "validation_source_kind": "content_addressed_manifest"
+          },
+          {
+            "benchmark_task": "detection",
+            "hw_arch": "hailo10",
+            "id": "hailo10",
+            "image_scale": "auto",
+            "mini_classification_eval": false,
+            "mini_coco_ap50": true,
+            "same_backend_split_diagnostics_enabled": false,
+            "stage1": {
+              "hw_arch": "hailo10",
+              "type": "hailo"
+            },
+            "stage2": {
+              "hw_arch": "hailo10",
+              "type": "hailo"
+            },
+            "type": "hailo",
+            "validation_budget_authoritative": true,
+            "validation_images": "resources/validation/detection/val2017_n16_s20260710",
+            "validation_items_requested": 16,
+            "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+            "validation_max_images": 16,
+            "validation_reference_mode": "auto",
+            "validation_source_kind": "content_addressed_manifest",
+            "variants": [
+              "full"
+            ]
+          },
+          {
+            "benchmark_task": "detection",
+            "id": "hailo10_to_tensorrt",
+            "image_scale": "auto",
+            "mini_classification_eval": false,
+            "mini_coco_ap50": true,
+            "provider": "tensorrt",
+            "stage1": {
+              "hw_arch": "hailo10",
+              "type": "hailo"
+            },
+            "stage2": {
+              "provider": "tensorrt",
+              "type": "onnxruntime"
+            },
+            "type": "matrix",
+            "validation_budget_authoritative": true,
+            "validation_images": "resources/validation/detection/val2017_n16_s20260710",
+            "validation_items_requested": 16,
+            "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/coco2017_val_manifest.json",
+            "validation_max_images": 16,
+            "validation_reference_mode": "auto",
+            "validation_source_kind": "content_addressed_manifest",
+            "variants": [
+              "full",
+              "part1",
+              "part2",
+              "composed"
+            ]
+          }
+        ]
+      },
+      "observations": [
+        {
+          "model_id": "yolo11l",
+          "role": "hailo10_hef",
+          "item_id": "b062:part1",
+          "status": "HIT",
+          "reason": "existing_hailo_receipt_valid",
+          "expectation": "warm",
+          "artifact_path": "/home/kmika/Downloads/v2803_fix2_hardware_DrGax2qT/runs/v2803_reference_native_fixed16_20260911_181353/models/yolo11l/benchmark_set/legacy_suite/b062/hailo/hailo10/part1/.hailo-generations/b298b79950664e4f832caca0d08ce03c/compiled.hef",
+          "receipt_path": "/home/kmika/Downloads/v2803_fix2_hardware_DrGax2qT/runs/v2803_reference_native_fixed16_20260911_181353/models/yolo11l/benchmark_set/legacy_suite/b062/hailo/hailo10/part1/.hailo-generations/b298b79950664e4f832caca0d08ce03c/hailo_hef_build_receipt.json",
+          "identity": "8e060eacd7ccdd77c072baea285b56c4ecc7b2f0eafd15effdbee07aeadb2656",
+          "source": "hailo_artifact_service_plan",
+          "source_namespace": "",
+          "evidence": {
+            "service_plan": "/home/kmika/Downloads/v2803_fix2_hardware_DrGax2qT/runs/v2803_reference_native_fixed16_20260911_181353/models/yolo11l/benchmark_set/hailo_artifact_service_plan.json",
+            "service_status": "ready_existing_hef",
+            "current_build": false,
+            "cache_probe_ok": true
+          },
+          "boundary": "b062",
+          "backend": "hailo10h",
+          "artifact_stage": "part1",
+          "evidence_origin": "",
+          "compiler_dispatch_allowed": false,
+          "runtime_artifact_available": true,
+          "build_label": "hailo10h_part1"
+        },
+        {
+          "model_id": "yolo11l",
+          "role": "hailo10_hef",
+          "item_id": "b062:part2",
+          "status": "UNKNOWN",
+          "reason": "pending_dfc_build",
+          "expectation": "warm",
+          "artifact_path": "",
+          "receipt_path": "",
+          "identity": "",
+          "source": "hailo_artifact_service_plan",
+          "source_namespace": "",
+          "evidence": {
+            "service_plan": "/home/kmika/Downloads/v2803_fix2_hardware_DrGax2qT/runs/v2803_reference_native_fixed16_20260911_181353/models/yolo11l/benchmark_set/hailo_artifact_service_plan.json",
+            "service_status": "pending_dfc_build",
+            "current_build": false
+          },
+          "boundary": "b062",
+          "backend": "hailo10h",
+          "artifact_stage": "part2",
+          "evidence_origin": "",
+          "compiler_dispatch_allowed": false,
+          "runtime_artifact_available": false,
+          "build_label": "hailo10h_part2"
+        },
+        {
+          "model_id": "yolo11l",
+          "role": "hailo10_hef",
+          "item_id": "full",
+          "status": "HIT",
+          "reason": "existing_hailo_receipt_valid",
+          "expectation": "warm",
+          "artifact_path": "/home/kmika/Downloads/v2803_fix2_hardware_DrGax2qT/runs/v2803_reference_native_fixed16_20260911_181353/models/yolo11l/benchmark_set/legacy_suite/hailo/hailo10/full/.hailo-generations/a5786a0156814f79abc69e71dbb93030/compiled.hef",
+          "receipt_path": "/home/kmika/Downloads/v2803_fix2_hardware_DrGax2qT/runs/v2803_reference_native_fixed16_20260911_181353/models/yolo11l/benchmark_set/legacy_suite/hailo/hailo10/full/.hailo-generations/a5786a0156814f79abc69e71dbb93030/hailo_hef_build_receipt.json",
+          "identity": "fc920bd8126a45a904b0fcdda6199154f067f3a767786190952770d642ea2ea5",
+          "source": "hailo_artifact_service_plan",
+          "source_namespace": "",
+          "evidence": {
+            "service_plan": "/home/kmika/Downloads/v2803_fix2_hardware_DrGax2qT/runs/v2803_reference_native_fixed16_20260911_181353/models/yolo11l/benchmark_set/hailo_artifact_service_plan.json",
+            "service_status": "ready_reused",
+            "current_build": false,
+            "cache_probe_ok": true
+          },
+          "boundary": "full",
+          "backend": "hailo10h",
+          "artifact_stage": "full",
+          "evidence_origin": "",
+          "compiler_dispatch_allowed": false,
+          "runtime_artifact_available": true,
+          "build_label": "hailo10h_full"
+        },
+        {
+          "model_id": "yolo11l",
+          "role": "trt_full",
+          "item_id": "orin_nx_hailo10_01/full",
+          "status": "HIT",
+          "reason": "compatible_receipt",
+          "expectation": "warm",
+          "artifact_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/full/f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147/fp16/full_fp16.engine",
+          "receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/full/f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147/fp16/engine_build_receipt.json",
+          "identity": "6192f925a05cd779a1f893b6babb8393faee83d970a00d45afbfb31732a50e9f",
+          "source": "remote_trt_cache_preflight",
+          "source_namespace": "current",
+          "evidence": {
+            "current_engine_cache_key": "yolo11l-b479a219175b061f",
+            "engine_sha256": "09778090a26f9dc3d02acc1979e1e158d7d69879533477b93fe85fb86a702e6c",
+            "namespace_owner_status": "exact_current",
+            "precision_flags": [
+              "--fp16"
+            ],
+            "previous_engine_cache_key": "yolo11l-b479a219175b061f",
+            "shapes": "",
+            "source_onnx_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+            "trtexec_sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4",
+            "verification_reason": "engine_build_receipt_verified",
+            "workspace": [
+              "mempool",
+              4096
+            ]
+          },
+          "boundary": "full",
+          "backend": "tensorrt",
+          "artifact_stage": "full",
+          "evidence_origin": "",
+          "compiler_dispatch_allowed": false,
+          "runtime_artifact_available": true,
+          "build_label": "tensorrt_full"
+        },
+        {
+          "model_id": "yolo11l",
+          "role": "trt_p2",
+          "item_id": "orin_nx_hailo10_01/b062",
+          "status": "HIT",
+          "reason": "compatible_receipt",
+          "expectation": "warm",
+          "artifact_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/native_split_quality/orin_nx_hailo10_01/yolo11l/b062/hailo10h_to_trt/b861a2b8bce3daa398dab687c02b2028abc753d9978145bb8130c07c268d0021/engine_cache/b062/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine",
+          "receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/native_split_quality/orin_nx_hailo10_01/yolo11l/b062/hailo10h_to_trt/b861a2b8bce3daa398dab687c02b2028abc753d9978145bb8130c07c268d0021/engine_cache/b062/part2/uint8_dequant_fp16/engine_build_receipt.json",
+          "identity": "0cbc47e476177b2af49891565c0ae5f46650ddf102ec9451ef21a90da42a9a71",
+          "source": "remote_trt_cache_preflight",
+          "source_namespace": "current",
+          "evidence": {
+            "binding_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/native_split_quality/orin_nx_hailo10_01/yolo11l/b062/hailo10h_to_trt/b861a2b8bce3daa398dab687c02b2028abc753d9978145bb8130c07c268d0021/native_split_quality_binding.json",
+            "binding_sha256": "086b4d606a555c8215a319ef8b5194e122119bbe7ea65047d87c99578c236781",
+            "current_engine_cache_key": "yolo11l-b479a219175b061f",
+            "engine_sha256": "fbc5f980fdfce6bbaa17b493f60f16360f0e9e084e131cda15f35a3c14536e84",
+            "namespace_owner_status": "exact_current",
+            "precision_flags": [
+              "--fp16"
+            ],
+            "previous_engine_cache_key": "yolo11l-b479a219175b061f",
+            "quality_binding_addressed": true,
+            "shapes": "",
+            "source_binding": "strict_native_split_quality_binding",
+            "source_onnx_sha256": "20f7ac3192ff906316fb2e0f077fba4becf0b23959b96b280b48b00e65257616",
+            "trtexec_sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4",
+            "validator_implementation": "splitpoint_runners.native_split_quality.validate_native_split_quality_binding",
+            "validator_module_sha256": {
+              "splitpoint_runners.native_command_contract": "2fe632426cd28cea377e9bac8d977d38f6a95310ba8407ecf50d5580f9d88208",
+              "splitpoint_runners.native_split_quality": "ea59ace5308abc00fa46fafe712c0c0e66dbfefde059cbeef5fc0fda4d085715"
+            },
+            "validator_source_identity": "splitpoint_runners.native_split_quality@sha256:ea59ace5308abc00fa46fafe712c0c0e66dbfefde059cbeef5fc0fda4d085715",
+            "validator_status": "local_files_rehashed_and_exact_cross_links_verified",
+            "validator_verification_mode": "local",
+            "verification_reason": "engine_build_receipt_verified",
+            "workspace": [
+              "mempool",
+              4096
+            ]
+          },
+          "boundary": "b062",
+          "backend": "tensorrt",
+          "artifact_stage": "part2",
+          "evidence_origin": "",
+          "compiler_dispatch_allowed": false,
+          "runtime_artifact_available": true,
+          "build_label": "tensorrt_part2"
+        }
+      ]
+    }
+  ]
+}

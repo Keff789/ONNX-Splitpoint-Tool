@@ -1,0 +1,22 @@
+{
+  "source_archive": "completsetdev_20260910_210826_debug_pack.zip",
+  "files": [
+    {
+      "archive_member": "profile.yaml",
+      "fixture_path": "original/profile.yaml",
+      "size_bytes": 31160,
+      "sha256": "f9296c35cb3520d9485371504a2f03184bb96284615086e4b6e1e8b2c3da96fe",
+      "copy_kind": "byte_identical_original",
+      "source_tool_version": "2.80.1"
+    },
+    {
+      "archive_member": "effective_execution_plan.json",
+      "fixture_path": "original/effective_execution_plan.json",
+      "size_bytes": 14501,
+      "sha256": "aafc862b78de3383d695c73fec355b9eeac000258989020046ee589557c65ef5",
+      "copy_kind": "byte_identical_original",
+      "source_tool_version": "2.80.1"
+    }
+  ],
+  "originals_mutated": false
+}

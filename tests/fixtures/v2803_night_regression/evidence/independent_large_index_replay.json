@@ -1,0 +1,28 @@
+{
+  "status": "REPRODUCED",
+  "valid_json": true,
+  "file_size": 33554546,
+  "limit": 33554432,
+  "inventory": {
+    "expected_members": [
+      "quality_management/references/example/management_cpu_reference_status.json"
+    ],
+    "present_source_members": [
+      "quality_management/references/example/management_cpu_reference_status.json"
+    ],
+    "admitted_source_members": [
+      "quality_management/references/example/management_cpu_reference_status.json"
+    ],
+    "missing_source_members": [],
+    "omitted_source_members": [],
+    "reference_failures": [
+      {
+        "path": "artifact_index.json",
+        "reason": "reference_diagnostic_index_invalid:ValueError"
+      }
+    ],
+    "max_file_bytes": 2097152,
+    "max_total_bytes": 8388608
+  },
+  "scope": "Actual v2.80.2 inventory with safe valid >32MiB index, one tiny diagnostic; no production index changed"
+}

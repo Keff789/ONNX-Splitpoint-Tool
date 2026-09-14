@@ -1,0 +1,18 @@
+# Prospective protocol inputs for a confirmatory campaign.
+#
+# Generate each referenced manifest before opening confirmatory measurements,
+# then run:
+#   onnx-splitpoint-campaign protocol-freeze --profile PROFILE --out protocol_freeze_v1.json
+version: "1.0"
+amendment: initial
+# release_identity is intentionally omitted. The freeze builder binds the
+# installed Tool package version at seal time unless the operator supplies an
+# explicit, reviewed override.
+evaluation_identity:
+  evaluation_id: TODO_CAMPAIGN_ID
+manifests:
+  candidate: candidate_universe_protocol_manifest.json
+  dag: dag_analysis_protocol_manifest.json
+  prediction: prediction_protocol_manifest.json
+  policy: quality_ranking_policy_manifest.json
+  energy: energy_protocol_manifest.json

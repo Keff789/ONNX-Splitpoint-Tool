@@ -1,0 +1,102 @@
+{
+  "schema": "onnx-splitpoint/yolov7-three-stage-canary-source-provenance",
+  "schema_version": 1,
+  "canary_id": "onnx_splitpoint_yolov7_three_stage_canary_v1",
+  "purpose": "Independent read-only integration test for one Native P1/P2/Postprocessing pipeline with a quality oracle outside the timing window.",
+  "base_tool": {
+    "version": "2.78.2",
+    "archive_name": "ONNX-Splitpoint-Tool_v2.78.2_source(1).zip",
+    "archive_sha256": "6d2366b571e34a3a87bc49b55f77ceed1b6ee9526c7f522fe689a17e417f1983",
+    "build_id": "v2.78.2-immutable-management-reference-evidence-fixes"
+  },
+  "input_evidence": [
+    {
+      "role": "resurrection_canary_source",
+      "archive_name": "onnx_splitpoint_native_resurrection_canary_v3.zip",
+      "sha256": "fea272f25c9ddbab2826a4d35ca6aa0695d677b775029f58cd77bc9b9829292c"
+    },
+    {
+      "role": "completion_tail_canary_source",
+      "archive_name": "onnx_splitpoint_completion_tail_canary_v2.zip",
+      "sha256": "84316583cd52f20c824ae8ddd5a8d40d283241d2862a4fd65f04fe60975af9fc"
+    },
+    {
+      "role": "completion_tail_result",
+      "archive_name": "completion_tail_v2_20260828_082714.zip",
+      "sha256": "53e11a2185d8fc3c0007c66b563b2505570bcd97f4e9e67dfbe2b66cc0ad9ee9"
+    },
+    {
+      "role": "fast_decode_canary_source",
+      "archive_name": "onnx_splitpoint_completion_tail_fast_decode_canary_v1.zip",
+      "sha256": "7c8ebd35847562103c8fbf1cb09675c6c05065496b0b9896ddc7825bc0b0c729"
+    },
+    {
+      "role": "multi_image_canary_source",
+      "archive_name": "onnx_splitpoint_yolov7_multi_image_fast_decode_parity_canary_v1.zip",
+      "sha256": "2e463b051b8cceb9b37c8e09134b1b3655eb070d23ed4036f9b30bb801e2705f"
+    },
+    {
+      "role": "multi_image_result",
+      "archive_name": "yolov7_multi_image_fast_decode_v1_20260828_101748.zip",
+      "sha256": "5a41d533e7026e81b17d0a8b1f6ca5484609410dff5f01a01ac2ce45ca773361"
+    }
+  ],
+  "frozen_runtime_identity": {
+    "model_id": "yolov7_paper",
+    "case_id": "b066",
+    "setup_id": "orin_nx_hailo8_01",
+    "precision": "uint8_dequant_fp16",
+    "hef_sha256": "e733652e523cbc6b51d696fd9ef62913f809e07b1d9137ca1e1e5413591cd70f",
+    "engine_sha256": "ddf2e26a2e784f87d2b20c4e19dd6576bcb4da33f0b86afb32ef0a9dfda65088",
+    "boundary_shape_nchw": [
+      1,
+      512,
+      80,
+      80
+    ],
+    "boundary_dtype": "uint8",
+    "boundary_bytes": 3276800
+  },
+  "implemented_topology": {
+    "P1": "C++ image read, letterbox and synchronous Hailo-8 part-1 VStreams",
+    "P2": "C++ boundary handoff, TensorRT part 2 and raw-head D2H into pinned host ring slots",
+    "Postprocessing": "dedicated C++ worker invoking an in-process contract-bound exact sparse NumPy callback",
+    "quality_oracle": "separate 32-image postflight outside all performance timing windows"
+  },
+  "endpoint_nomenclature": {
+    "raw": "raw_model_outputs",
+    "completed": "completed_detection",
+    "completed_location": "Orin NX host CPU / NumPy",
+    "note": "The completed endpoint is not called device_completed_detection because decode/NMS is not inside TensorRT in this universal canary."
+  },
+  "package_source_files": {
+    "cpp/CMakeLists.txt": {
+      "sha256": "41a040d8cd523e325e655b49b1ea1ab02a9bb3d062b4bd9e20f1576d4292b83d",
+      "size_bytes": 1735
+    },
+    "cpp/three_stage_canary.cpp": {
+      "sha256": "6d07e28a61c00c098782d6a37f897425f33a3bb361e84ab113ffda2cd2b14fdb",
+      "size_bytes": 41773
+    },
+    "fast_decode_runtime.py": {
+      "sha256": "3dbf0d560feb6f24adeeaf080eeb0c20bda01b8cbf56bac4486523e70a2b9b34",
+      "size_bytes": 13016
+    },
+    "three_stage_canary.py": {
+      "sha256": "008f6d60f21c8170addb27d2ddeea4d124caf8462f0727cfdbe19ddf9d5296ef",
+      "size_bytes": 40427
+    },
+    "stage_corpus.py": {
+      "sha256": "effb41fb0d9092aba34456c4ea9411075464959ac5253659921134b4f9062382",
+      "size_bytes": 9832
+    },
+    "stage_local_runtime_artifacts.py": {
+      "sha256": "149cf89c071e9909c5a68cdb339f6361536aae2bf984586980432b24f136e5ef",
+      "size_bytes": 6817
+    },
+    "run_from_smartmirror2.sh": {
+      "sha256": "7e82968ce20178b8bd2c86d1907af5c0fedb5f799edda5c6bac6a48e02a7d235",
+      "size_bytes": 5079
+    }
+  }
+}

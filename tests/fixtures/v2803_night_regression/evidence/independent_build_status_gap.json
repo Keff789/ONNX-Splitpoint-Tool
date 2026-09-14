@@ -1,0 +1,16 @@
+{
+  "status": "REPRODUCED_SOURCE_SLICE",
+  "scope": "Actual original return expression and receiving guard on original nightly jobs, not full builder/runner execution",
+  "failed_jobs": 1,
+  "producer_status": "partial",
+  "consumer_failed_guard_triggers": false,
+  "recorded_stage_status": "ok",
+  "recorded_backend_build_states": {
+    "artifacts": "ok",
+    "deepx": "ok",
+    "hailo": "ok"
+  },
+  "recorded_blocked_backend_count": 0,
+  "producer_line": 678,
+  "consumer_line": 27488
+}

@@ -1,0 +1,2332 @@
+{
+  "mobilenet_full_point_fail": {
+    "algorithm_version": "management_paired_quality_v2:classification-accuracy-v2",
+    "annotations_sha256": "76dda7ff292d4dbeced4967385462d82dcb3e8aef54eb532b6729189951f4f48",
+    "artifact_provenance_binding_status": "not_required",
+    "artifact_provenance_claim_eligible": false,
+    "backend": "deepx_m1",
+    "bootstrap_sharding": "contiguous_deterministic_resample_plan",
+    "bootstrap_workers_effective": 1,
+    "bootstrap_workers_requested": 4,
+    "cache_hit": false,
+    "candidate_execution_completion_contract_sha256": "",
+    "candidate_predictions_sha256": "352ca963a127875f3c543d87ef3c168cf96e727bd766613fecc062ccf5715e44",
+    "case_id": "full",
+    "completed_task_endpoint_contract": {},
+    "completed_task_endpoint_contract_hash": "",
+    "completed_task_output_endpoint_id": "",
+    "configured_guardrails": [
+      "top5_accuracy"
+    ],
+    "cpu_reference_include_in_latency_fps_energy": false,
+    "cpu_reference_include_in_pareto": false,
+    "cpu_reference_include_in_ranking": false,
+    "cpu_reference_semantic_only": true,
+    "cpu_reference_store_manifest": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/quality_management/cpu_reference_store/ed/ed35be4ec2f8161b4a4ae914d4f9b52a1349f35034d849bb08982b1a3ca225c6/manifest.json",
+    "decision": "fail",
+    "decoder_contract_sha256": "",
+    "endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+    "eval_run_id": "",
+    "evaluation_fingerprint": "627374e5f69462adfb94fcfcb0ebe788c260a5dd6a34cb4db7601c6e0e544af1",
+    "execution_device": "management_cpu",
+    "execution_location": "central_management",
+    "execution_role": "",
+    "gpu_used": false,
+    "guardrail_contract_complete": true,
+    "guardrails": {
+      "top5_accuracy": {
+        "bootstrap_elapsed_s": 0.1300755509873852,
+        "bootstrap_engine": "management_process_pool:onnx_splitpoint_tool.quality_metrics:classification_quality_evaluator",
+        "bootstrap_repetitions": 0,
+        "bootstrap_repetitions_requested": 500,
+        "bootstrap_skipped_reason": "point_estimate_below_non_inferiority_margin",
+        "candidate": 0.868,
+        "candidate_hits": 434,
+        "ci_high": -0.038,
+        "ci_low": -0.038,
+        "decision": "fail",
+        "delta": -0.038,
+        "margin": 0.01,
+        "metric": "top5_accuracy",
+        "n": 500,
+        "point_estimate_comparison_basis": "integer_hit_counts",
+        "reference": 0.906,
+        "reference_hits": 453,
+        "sample_count": 500,
+        "status": "fail"
+      }
+    },
+    "management_cpu_reference": {
+      "case_id": "b135",
+      "cpu_threads": 4,
+      "created_at": "2026-09-07T16:33:15+02:00",
+      "duration_s": 16.319777,
+      "errors": [],
+      "execution_location": "central_management",
+      "image_ids_sha256": "71032a98e158ca71711a5567de5d46fbf04f05777baa940f74f3c39fdf0c083f",
+      "include_in_latency_fps_energy": false,
+      "include_in_pareto": false,
+      "include_in_ranking": false,
+      "model_id": "mobilenet_v3_large",
+      "provider": "onnxruntime_cpu",
+      "record_count": 500,
+      "reference_immutable": true,
+      "reference_path": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/quality_management/references/mobilenet_v3_large/by_source_contract/6a01103a2eef42509f92ad7735e2dd6081775cc4275572f31e214720cd3c23f8/canonical_cpu_reference.json",
+      "reference_sha256": "bca7c852361bd830763107acb37a8a2172b5fb78713bb34bcc27cbf431698d64",
+      "reference_size_bytes": 72628,
+      "reference_storage": "immutable_source_contract",
+      "return_code": 0,
+      "schema": "onnx-splitpoint/management-cpu-reference-job",
+      "schema_version": 1,
+      "semantic_reference_only": true,
+      "source_contract_sha256": "sha256:6a01103a2eef42509f92ad7735e2dd6081775cc4275572f31e214720cd3c23f8",
+      "status": "completed",
+      "stdout_path": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/quality_management/references/mobilenet_v3_large/management_cpu_reference_stdout.txt",
+      "task": "classification"
+    },
+    "metric_gate_config": {
+      "guardrails": {
+        "top5_accuracy_margin": 0.01
+      },
+      "non_inferiority_margin": 0.01,
+      "primary_metric": "top1_accuracy"
+    },
+    "model_id": "mobilenet_v3_large",
+    "model_sha256": "2f5e79b1e4280251e7b6eefe1d6161c4831e2fc27858e1e9fe2fac697f44489e",
+    "n": 500,
+    "native_split_quality_binding": {},
+    "native_split_quality_binding_required": false,
+    "native_split_quality_binding_sha256": "",
+    "nms_contract_sha256": "",
+    "performance_claims_emitted": null,
+    "policy_sha256": "58bf34c5760ed51e4ff35faee4055891caf624b2722cb375df9d419863efa9c4",
+    "preprocessing_contract_sha256": "ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9",
+    "primary": {
+      "bootstrap_elapsed_s": 0.1300755509873852,
+      "bootstrap_engine": "management_process_pool:onnx_splitpoint_tool.quality_metrics:classification_quality_evaluator",
+      "bootstrap_repetitions": 0,
+      "bootstrap_repetitions_requested": 500,
+      "bootstrap_skipped_reason": "point_estimate_below_non_inferiority_margin",
+      "candidate": 0.67,
+      "candidate_hits": 335,
+      "ci_high": -0.066,
+      "ci_low": -0.066,
+      "decision": "fail",
+      "delta": -0.066,
+      "margin": 0.01,
+      "metric": "top1_accuracy",
+      "n": 500,
+      "point_estimate_comparison_basis": "integer_hit_counts",
+      "reference": 0.736,
+      "reference_hits": 368,
+      "sample_count": 500,
+      "status": "fail"
+    },
+    "producer_binding_eligible": false,
+    "quality_contract_sha256": "cc0d82a8744b46b11da50089225aa8f182c598f9e9e66272424d6db80792291a",
+    "quality_join_endpoint": "",
+    "quality_record_endpoint_contract_sha256": "5fc9e39c87e78b8a2b39c03469f5c2f803ff969295c655d734d383a8f554aaf6",
+    "quality_result_contract_version": 2,
+    "reference_identity": "ed35be4ec2f8161b4a4ae914d4f9b52a1349f35034d849bb08982b1a3ca225c6",
+    "reference_predictions_sha256": "948fa947a0a131691bb9d8b8f9b568458e68eb0952118785abb53d3f1ed24dfe",
+    "request_id": "mobilenet_v3_large:classification:full:58bf34c5760ed51e4ff35faee4055891caf624b2722cb375df9d419863efa9c4:sha256:2a4e9d0ff5efadf2034a7d1b352cc3f3a7a3203467923498afae1aeef5f2eb2b",
+    "request_identity": {
+      "artifact_provenance_binding_status": "not_required",
+      "artifact_provenance_claim_eligible": false,
+      "backend": "deepx_m1",
+      "case_id": "full",
+      "completed_task_endpoint_contract": {},
+      "completed_task_endpoint_contract_hash": "",
+      "completed_task_output_endpoint_id": "",
+      "contract_family": "classification_logits",
+      "decoder_contract_sha256": "",
+      "endpoint_contract_complete": true,
+      "endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+      "eval_run_id": "",
+      "execution_role": "",
+      "full_only_plan_identity": {},
+      "full_only_plan_identity_required": null,
+      "full_only_plan_identity_sha256": "",
+      "identity_errors": [],
+      "identity_valid": true,
+      "model_id": "mobilenet_v3_large",
+      "model_sha256": "2f5e79b1e4280251e7b6eefe1d6161c4831e2fc27858e1e9fe2fac697f44489e",
+      "nms_contract_sha256": "",
+      "performance_claims_emitted": null,
+      "preprocessing_contract_sha256": "ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9",
+      "producer_binding_eligible": false,
+      "producer_identity_validated": false,
+      "quality_canary_id": "",
+      "quality_contract_sha256": "cc0d82a8744b46b11da50089225aa8f182c598f9e9e66272424d6db80792291a",
+      "quality_join_endpoint": "",
+      "quality_record_endpoint_contract_sha256": "5fc9e39c87e78b8a2b39c03469f5c2f803ff969295c655d734d383a8f554aaf6",
+      "runtime_precision_identity": "deepx_dxnn_sha256:c2153dd819105e58efc5742d613ff9d51c92cdcbc52046741b423cc6a1149e04",
+      "schema": "onnx-splitpoint/central-quality-request-identity",
+      "schema_version": 3,
+      "setup_id": "orin_nx_deepx_m1_01",
+      "source_model_sha256": "2f5e79b1e4280251e7b6eefe1d6161c4831e2fc27858e1e9fe2fac697f44489e",
+      "source_request_sha256": "sha256:2a4e9d0ff5efadf2034a7d1b352cc3f3a7a3203467923498afae1aeef5f2eb2b",
+      "source_run_id": "deepx_m1_full",
+      "stage": "classification_logits",
+      "task": "classification",
+      "task_quality_policy_sha256": "58bf34c5760ed51e4ff35faee4055891caf624b2722cb375df9d419863efa9c4",
+      "validation_dataset_manifest_sha256": "64a7ef3bf55352bb39ef86f25fe73e6ff18a51ed1a02c8aca4940178f69e7b6c",
+      "validation_dataset_sha256": "64a7ef3bf55352bb39ef86f25fe73e6ff18a51ed1a02c8aca4940178f69e7b6c",
+      "validation_ground_truth_sha256": "87775e86ef3bcf3ec1e0d0a79696bf2f58fa215d5320ce80167bb1f417c7a177",
+      "validation_image_ids_sha256": "71032a98e158ca71711a5567de5d46fbf04f05777baa940f74f3c39fdf0c083f",
+      "variant": "full"
+    },
+    "run_id": "deepx_m1_full",
+    "runtime_precision_identity": "deepx_dxnn_sha256:c2153dd819105e58efc5742d613ff9d51c92cdcbc52046741b423cc6a1149e04",
+    "schema": "onnx-splitpoint/management-paired-quality-result",
+    "schema_version": 1,
+    "scientific_status": "fail",
+    "seed_schema": {
+      "image_count": 500,
+      "repetitions": 500,
+      "schema": "numpy-pcg64-index-plan-v1",
+      "seed": 20260710
+    },
+    "source_model_sha256": "2f5e79b1e4280251e7b6eefe1d6161c4831e2fc27858e1e9fe2fac697f44489e",
+    "source_request": "models/mobilenet_v3_large/benchmark_results/quality_inputs/orin_nx_deepx_m1_01/results/deepx_m1_full/task_quality_inputs/full_request.json",
+    "source_request_sha256": "sha256:2a4e9d0ff5efadf2034a7d1b352cc3f3a7a3203467923498afae1aeef5f2eb2b",
+    "source_run_id": "deepx_m1_full",
+    "source_setup_id": "orin_nx_deepx_m1_01",
+    "status": "completed",
+    "status_name": "evaluate_paired_quality_uncertainty",
+    "task": "classification",
+    "task_quality_policy_sha256": "58bf34c5760ed51e4ff35faee4055891caf624b2722cb375df9d419863efa9c4",
+    "technical_status": "completed",
+    "validation_dataset_manifest_sha256": "64a7ef3bf55352bb39ef86f25fe73e6ff18a51ed1a02c8aca4940178f69e7b6c",
+    "validation_dataset_sha256": "64a7ef3bf55352bb39ef86f25fe73e6ff18a51ed1a02c8aca4940178f69e7b6c",
+    "validation_ground_truth_sha256": "87775e86ef3bcf3ec1e0d0a79696bf2f58fa215d5320ce80167bb1f417c7a177",
+    "validation_image_ids_sha256": "71032a98e158ca71711a5567de5d46fbf04f05777baa940f74f3c39fdf0c083f",
+    "variant": "full",
+    "worker_model": "process_pool"
+  },
+  "regnet_identical": {
+    "algorithm_version": "management_paired_quality_v2:classification-accuracy-v2",
+    "annotations_sha256": "059b455d572771f5264a580d38027ff35c7c066fc160eaec4a249500ac1286e9",
+    "artifact_provenance_binding_status": "verified",
+    "artifact_provenance_claim_eligible": true,
+    "backend": "ort_tensorrt",
+    "bootstrap_sharding": "contiguous_deterministic_resample_plan",
+    "bootstrap_workers_effective": 1,
+    "bootstrap_workers_requested": 4,
+    "cache_hit": false,
+    "candidate_execution_completion_contract_sha256": "576f95d6232d635292c221758017285f2e60d4a485963ddd022be155d3106eae",
+    "candidate_predictions_sha256": "99c4d034efb04f6064b29348e3021f43cecb006b2aac51a2b53e1c997860d7f8",
+    "case_id": "b132",
+    "completed_task_endpoint_contract": {},
+    "completed_task_endpoint_contract_hash": "",
+    "completed_task_output_endpoint_id": "",
+    "configured_guardrails": [
+      "top5_accuracy"
+    ],
+    "cpu_reference_include_in_latency_fps_energy": false,
+    "cpu_reference_include_in_pareto": false,
+    "cpu_reference_include_in_ranking": false,
+    "cpu_reference_semantic_only": true,
+    "cpu_reference_store_manifest": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/quality_management/cpu_reference_store/4b/4b2b182d56c7c8e92bd00b8d71bf00f1e7f329e27faa4f47fbfd3200805ef7f0/manifest.json",
+    "decision": "pass",
+    "decoder_contract_sha256": "",
+    "endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+    "eval_run_id": "complete_set_20260907_161614",
+    "evaluation_fingerprint": "5114bc69d63d4c640bb881e7ac1283a901a8140063d9051def381c088ef2e629",
+    "execution_device": "management_cpu",
+    "execution_location": "central_management",
+    "execution_role": "generic_composed_quality_candidate",
+    "gpu_used": false,
+    "guardrail_contract_complete": true,
+    "guardrails": {
+      "top5_accuracy": {
+        "bootstrap_elapsed_s": 0.06713374797254801,
+        "bootstrap_engine": "management_process_pool:onnx_splitpoint_tool.quality_metrics:classification_quality_evaluator",
+        "bootstrap_repetitions": 0,
+        "bootstrap_repetitions_requested": 500,
+        "bootstrap_skipped_reason": "candidate_reference_identical",
+        "candidate": 0.932,
+        "candidate_hits": 466,
+        "ci_high": 0.0,
+        "ci_low": 0.0,
+        "decision": "pass",
+        "delta": 0.0,
+        "margin": 0.01,
+        "metric": "top5_accuracy",
+        "n": 500,
+        "point_estimate_comparison_basis": "integer_hit_counts",
+        "reference": 0.932,
+        "reference_hits": 466,
+        "sample_count": 500,
+        "status": "pass"
+      }
+    },
+    "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+    "management_cpu_reference": {
+      "case_id": "b132",
+      "cpu_threads": 4,
+      "created_at": "2026-09-07T16:36:17+02:00",
+      "duration_s": 28.201946,
+      "errors": [],
+      "execution_location": "central_management",
+      "image_ids_sha256": "71032a98e158ca71711a5567de5d46fbf04f05777baa940f74f3c39fdf0c083f",
+      "include_in_latency_fps_energy": false,
+      "include_in_pareto": false,
+      "include_in_ranking": false,
+      "model_id": "regnet_x_1_6gf",
+      "provider": "onnxruntime_cpu",
+      "record_count": 500,
+      "reference_immutable": true,
+      "reference_path": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/quality_management/references/regnet_x_1_6gf/by_source_contract/aa2d3fad11893ef0f7d0084c86c13be31fc62c89c868bd56c67f175469c68a3c/canonical_cpu_reference.json",
+      "reference_sha256": "2357cc40a087e6e1d3b3ec8dc8ca7c0a2214ef0add48a43faf4f0cc5243f40df",
+      "reference_size_bytes": 72587,
+      "reference_storage": "immutable_source_contract",
+      "return_code": 0,
+      "schema": "onnx-splitpoint/management-cpu-reference-job",
+      "schema_version": 1,
+      "semantic_reference_only": true,
+      "source_contract_sha256": "sha256:aa2d3fad11893ef0f7d0084c86c13be31fc62c89c868bd56c67f175469c68a3c",
+      "status": "completed",
+      "stdout_path": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/quality_management/references/regnet_x_1_6gf/management_cpu_reference_stdout.txt",
+      "task": "classification"
+    },
+    "metric_gate_config": {
+      "guardrails": {
+        "top5_accuracy_margin": 0.01
+      },
+      "non_inferiority_margin": 0.01,
+      "primary_metric": "top1_accuracy"
+    },
+    "model_id": "regnet_x_1_6gf",
+    "model_sha256": "fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3",
+    "n": 500,
+    "native_split_quality_binding": {},
+    "native_split_quality_binding_required": false,
+    "native_split_quality_binding_sha256": "",
+    "nms_contract_sha256": "",
+    "part1_model_sha256": "0ad1b5bca67360f83178c9d69192d999c9eb9d32cde80598ccf31e10a45a2a72",
+    "part2_model_sha256": "0c4ca31eb6af4403562b1f04df7103743b173677f8ea33b013a43d198fd0210d",
+    "performance_claims_emitted": false,
+    "policy_sha256": "58bf34c5760ed51e4ff35faee4055891caf624b2722cb375df9d419863efa9c4",
+    "preprocessing_contract_sha256": "ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9",
+    "primary": {
+      "bootstrap_elapsed_s": 0.06713374797254801,
+      "bootstrap_engine": "management_process_pool:onnx_splitpoint_tool.quality_metrics:classification_quality_evaluator",
+      "bootstrap_repetitions": 0,
+      "bootstrap_repetitions_requested": 500,
+      "bootstrap_skipped_reason": "candidate_reference_identical",
+      "candidate": 0.784,
+      "candidate_hits": 392,
+      "ci_high": 0.0,
+      "ci_low": 0.0,
+      "decision": "pass",
+      "delta": 0.0,
+      "margin": 0.01,
+      "metric": "top1_accuracy",
+      "n": 500,
+      "point_estimate_comparison_basis": "integer_hit_counts",
+      "reference": 0.784,
+      "reference_hits": 392,
+      "sample_count": 500,
+      "status": "pass"
+    },
+    "producer_binding_eligible": true,
+    "producer_identity": {
+      "backend": "ort_tensorrt",
+      "candidate_execution_completion_contract": {
+        "case_id": "b132",
+        "completed_endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+        "completion_mode": "stage1_stage2_then_canonical_quality_adapter",
+        "contract_sha256": "576f95d6232d635292c221758017285f2e60d4a485963ddd022be155d3106eae",
+        "eval_run_id": "complete_set_20260907_161614",
+        "model_id": "regnet_x_1_6gf",
+        "runtime_artifact_set_sha256": "b9fe91107cdec359db41e545e6e50af6c6882c49b9aadd8a07bfa5307ec1a874",
+        "runtime_precision_identity": "fp16",
+        "schema": "onnx-splitpoint/composed-candidate-completion-contract",
+        "schema_version": 1,
+        "setup_id": "orin_nx_deepx_m1_01",
+        "source_run_id": "ort_tensorrt",
+        "stage1_backend": "tensorrt",
+        "stage2_backend": "tensorrt",
+        "task": "classification",
+        "variant": "composed"
+      },
+      "candidate_execution_completion_contract_sha256": "576f95d6232d635292c221758017285f2e60d4a485963ddd022be155d3106eae",
+      "case_id": "b132",
+      "dataset": {
+        "class_identity": "label_id",
+        "ground_truth_sha256": "87775e86ef3bcf3ec1e0d0a79696bf2f58fa215d5320ce80167bb1f417c7a177",
+        "image_count": 500,
+        "image_ids_sha256": "71032a98e158ca71711a5567de5d46fbf04f05777baa940f74f3c39fdf0c083f",
+        "manifest_name": "manifest.json",
+        "manifest_sha256": "64a7ef3bf55352bb39ef86f25fe73e6ff18a51ed1a02c8aca4940178f69e7b6c"
+      },
+      "decoder_contract_sha256": "",
+      "endpoint_contract": {
+        "contract_family": "classification_logits",
+        "contract_resolution_status": "attested",
+        "contract_source": "authoritative_suite_contract_plus_runtime_tensor:v4",
+        "endpoint_contract_complete": true,
+        "endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+        "full_model_sha256": "fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3",
+        "graph_binding_source": "authoritative_suite_output_contract_plus_exact_onnx_endpoint:v2",
+        "output_endpoint_attestation": {
+          "attested": true,
+          "class_count": 1000,
+          "declaration_source_contract_sha256": "3f6ee0b69c3747fee7300ad7644c36e259005aaba5cb6720ab61bfd65b958f55",
+          "declaration_source_contracts_sha256": "f7db280b4c4e3c354571699f9704700c6c63f02ff54dbbdd15e29d2f2b85f545",
+          "endpoint": "classification_logits",
+          "endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+          "reason": "single_finite_multiclass_tensor",
+          "schema": "onnx-splitpoint/runtime-output-endpoint-attestation",
+          "schema_version": 3,
+          "stage": "classification_logits",
+          "status": "passed"
+        },
+        "output_format": "classification_logits",
+        "producer_endpoint_identity": {
+          "output_format": "classification_logits",
+          "schema": "onnx-splitpoint/output-endpoint-contract",
+          "schema_version": 3,
+          "semantic": {},
+          "stage": "classification_logits",
+          "task": "classification",
+          "tensor_signature": {
+            "tensor_count": 1,
+            "tensors": [
+              {
+                "index": 0,
+                "rank": 1,
+                "shape": [
+                  1000
+                ]
+              }
+            ]
+          }
+        },
+        "recorded_contract_sha256": "3f6ee0b69c3747fee7300ad7644c36e259005aaba5cb6720ab61bfd65b958f55",
+        "source_contracts_sha256": "f7db280b4c4e3c354571699f9704700c6c63f02ff54dbbdd15e29d2f2b85f545",
+        "stage": "classification_logits",
+        "task": "classification",
+        "tensor_signature": {
+          "tensor_count": 1,
+          "tensors": [
+            {
+              "dtype": "float32",
+              "index": 0,
+              "name": "logits",
+              "rank": 2,
+              "shape": [
+                1,
+                1000
+              ]
+            }
+          ]
+        },
+        "terminal_model_sha256": "0c4ca31eb6af4403562b1f04df7103743b173677f8ea33b013a43d198fd0210d"
+      },
+      "endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+      "eval_run_id": "complete_set_20260907_161614",
+      "execution_role": "generic_composed_quality_candidate",
+      "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+      "implementation_runner_size_bytes": 1049135,
+      "model": {
+        "part1_onnx_sha256": "0ad1b5bca67360f83178c9d69192d999c9eb9d32cde80598ccf31e10a45a2a72",
+        "part1_onnx_size_bytes": 33373726,
+        "part2_onnx_sha256": "0c4ca31eb6af4403562b1f04df7103743b173677f8ea33b013a43d198fd0210d",
+        "part2_onnx_size_bytes": 3654704,
+        "runtime_artifact_sha256": "b9fe91107cdec359db41e545e6e50af6c6882c49b9aadd8a07bfa5307ec1a874",
+        "source_onnx_sha256": "fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3",
+        "source_onnx_size_bytes": 37070373
+      },
+      "model_id": "regnet_x_1_6gf",
+      "nms_contract_sha256": "",
+      "performance_claims_emitted": false,
+      "preprocessing": {
+        "identity": {
+          "color_space": "RGB",
+          "contract_scope": "prepared_rgb_uint8_semantics",
+          "image_scale": "imagenet",
+          "input_domain": "uint8_0_255",
+          "letterbox": false,
+          "letterbox_pad_value": 0,
+          "pad_value": 0,
+          "placement": "not_applicable",
+          "preprocess_mode": "resize",
+          "resize_interpolation": "bilinear",
+          "resize_rounding": "python_round_ties_to_even",
+          "schema": "onnx-splitpoint/image-preprocessing-contract",
+          "schema_version": 2,
+          "spatial_transform": "direct_resize",
+          "target_hw": [
+            224,
+            224
+          ],
+          "task": "classification"
+        },
+        "runtime_input_encoding": {
+          "image_scale": "imagenet",
+          "input_dtype": "float32",
+          "schema": "onnx-splitpoint/model-input-encoding-contract",
+          "schema_version": 1
+        },
+        "runtime_input_encoding_sha256": "9aa116ccc00468785c9bb15e630a792db93a5d888b1d76ba285d028ea83923e8",
+        "sha256": "ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9"
+      },
+      "preprocessing_contract_sha256": "ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9",
+      "producer_identity_sha256": "42d0c6f2902b308de9c24b13da9bafbc139e920cf00a55a8d9f82b84ca1c4afe",
+      "quality_contract": {
+        "canonical_record_endpoint": "classification_topk_hits",
+        "contract_scope": "canonical_quality_record_semantics",
+        "dataset": {
+          "class_identity": "label_id",
+          "ground_truth_sha256": "87775e86ef3bcf3ec1e0d0a79696bf2f58fa215d5320ce80167bb1f417c7a177",
+          "image_count": 500,
+          "image_ids_sha256": "71032a98e158ca71711a5567de5d46fbf04f05777baa940f74f3c39fdf0c083f",
+          "manifest_name": "manifest.json",
+          "manifest_sha256": "64a7ef3bf55352bb39ef86f25fe73e6ff18a51ed1a02c8aca4940178f69e7b6c"
+        },
+        "model": {
+          "artifact_name": "regnet_x_1_6gf.onnx",
+          "sha256": "fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3"
+        },
+        "postprocessor": {
+          "identity": {
+            "canonical_record_endpoint": "classification_topk_hits",
+            "implementation_functions": [
+              "_classification_logits_vector",
+              "_classification_gt_metrics"
+            ],
+            "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+            "schema": "onnx-splitpoint/classification-topk-postprocessor-contract",
+            "schema_version": 1,
+            "sort_order": "score_descending",
+            "topk": 5
+          },
+          "sha256": "92ac878e935dcff302f1f28da7b1291a3d956aec868db9e24a6fbecaf64ff4cf"
+        },
+        "preprocessing": {
+          "identity": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "imagenet",
+            "input_domain": "uint8_0_255",
+            "letterbox": false,
+            "letterbox_pad_value": 0,
+            "pad_value": 0,
+            "placement": "not_applicable",
+            "preprocess_mode": "resize",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "direct_resize",
+            "target_hw": [
+              224,
+              224
+            ],
+            "task": "classification"
+          },
+          "runtime_input_encoding": {
+            "image_scale": "imagenet",
+            "input_dtype": "float32",
+            "schema": "onnx-splitpoint/model-input-encoding-contract",
+            "schema_version": 1
+          },
+          "runtime_input_encoding_sha256": "9aa116ccc00468785c9bb15e630a792db93a5d888b1d76ba285d028ea83923e8",
+          "sha256": "ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9"
+        },
+        "quality_contract_sha256": "24ffdfd728a0d5d68378fd5af43f3a846bb6b9c1fe7e72cc5044a0f64eed386f",
+        "quality_record_endpoint": {
+          "identity": {
+            "canonical_record_endpoint": "classification_topk_hits",
+            "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+            "postprocessor_contract_sha256": "92ac878e935dcff302f1f28da7b1291a3d956aec868db9e24a6fbecaf64ff4cf",
+            "schema": "onnx-splitpoint/classification-quality-record-endpoint-contract",
+            "schema_version": 1,
+            "vendored_endpoint_attestor_sha256": "45416300d9f26eaed4dea37cd9d3bbc518883028aae176e5148cadcee5da269e"
+          },
+          "sha256": "c1127637a39ff278a4ef07ecc33ef2dd8afa48f5cb9583856b4e947a77839905"
+        },
+        "quality_record_endpoint_contract_sha256": "c1127637a39ff278a4ef07ecc33ef2dd8afa48f5cb9583856b4e947a77839905",
+        "schema": "onnx-splitpoint/central-classification-quality-contract",
+        "schema_version": 1,
+        "task": "classification"
+      },
+      "quality_contract_sha256": "24ffdfd728a0d5d68378fd5af43f3a846bb6b9c1fe7e72cc5044a0f64eed386f",
+      "quality_record_endpoint": {
+        "identity": {
+          "canonical_record_endpoint": "classification_topk_hits",
+          "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+          "postprocessor_contract_sha256": "92ac878e935dcff302f1f28da7b1291a3d956aec868db9e24a6fbecaf64ff4cf",
+          "schema": "onnx-splitpoint/classification-quality-record-endpoint-contract",
+          "schema_version": 1,
+          "vendored_endpoint_attestor_sha256": "45416300d9f26eaed4dea37cd9d3bbc518883028aae176e5148cadcee5da269e"
+        },
+        "sha256": "c1127637a39ff278a4ef07ecc33ef2dd8afa48f5cb9583856b4e947a77839905"
+      },
+      "quality_record_endpoint_contract_sha256": "c1127637a39ff278a4ef07ecc33ef2dd8afa48f5cb9583856b4e947a77839905",
+      "runtime_artifact_set_sha256": "b9fe91107cdec359db41e545e6e50af6c6882c49b9aadd8a07bfa5307ec1a874",
+      "runtime_artifacts": [
+        {
+          "backend": "tensorrt",
+          "name": "regnet_x_1_6gf_part1_b132.onnx",
+          "role": "stage1_runtime",
+          "sha256": "0ad1b5bca67360f83178c9d69192d999c9eb9d32cde80598ccf31e10a45a2a72",
+          "size_bytes": 33373726
+        },
+        {
+          "backend": "native_tensorrt",
+          "name": "part2_fp16.engine",
+          "role": "stage2_runtime",
+          "sha256": "b246da69aec647fbb71bd58a625b01e1757a606a86c31a9564a7d348973da3be",
+          "size_bytes": 1838612
+        }
+      ],
+      "runtime_precision_identity": "fp16",
+      "schema": "onnx-splitpoint/generic-composed-quality-producer-identity",
+      "schema_version": 1,
+      "setup_id": "orin_nx_deepx_m1_01",
+      "source_run_id": "ort_tensorrt",
+      "stage1_backend": "tensorrt",
+      "stage2_backend": "tensorrt",
+      "task": "classification",
+      "variant": "composed"
+    },
+    "producer_identity_sha256": "42d0c6f2902b308de9c24b13da9bafbc139e920cf00a55a8d9f82b84ca1c4afe",
+    "quality_contract_sha256": "24ffdfd728a0d5d68378fd5af43f3a846bb6b9c1fe7e72cc5044a0f64eed386f",
+    "quality_join_endpoint": "",
+    "quality_record_endpoint_contract_sha256": "c1127637a39ff278a4ef07ecc33ef2dd8afa48f5cb9583856b4e947a77839905",
+    "quality_result_contract_version": 2,
+    "reference_identity": "4b2b182d56c7c8e92bd00b8d71bf00f1e7f329e27faa4f47fbfd3200805ef7f0",
+    "reference_predictions_sha256": "99c4d034efb04f6064b29348e3021f43cecb006b2aac51a2b53e1c997860d7f8",
+    "request_id": "regnet_x_1_6gf:classification:composed:58bf34c5760ed51e4ff35faee4055891caf624b2722cb375df9d419863efa9c4:sha256:9c36dfee0ce6f03e595ad21c6ef1ef91a7f6252d77c451b39c09f1947fcbd912",
+    "request_identity": {
+      "artifact_provenance_binding_status": "verified",
+      "artifact_provenance_claim_eligible": true,
+      "backend": "ort_tensorrt",
+      "candidate_execution_completion_contract_sha256": "576f95d6232d635292c221758017285f2e60d4a485963ddd022be155d3106eae",
+      "case_id": "b132",
+      "completed_task_endpoint_contract": {},
+      "completed_task_endpoint_contract_hash": "",
+      "completed_task_output_endpoint_id": "",
+      "contract_family": "classification_logits",
+      "decoder_contract_sha256": "",
+      "endpoint_contract_complete": true,
+      "endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+      "eval_run_id": "complete_set_20260907_161614",
+      "execution_role": "generic_composed_quality_candidate",
+      "full_only_plan_identity": {},
+      "full_only_plan_identity_required": null,
+      "full_only_plan_identity_sha256": "",
+      "identity_errors": [],
+      "identity_valid": true,
+      "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+      "model_id": "regnet_x_1_6gf",
+      "model_sha256": "fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3",
+      "nms_contract_sha256": "",
+      "part1_model_sha256": "0ad1b5bca67360f83178c9d69192d999c9eb9d32cde80598ccf31e10a45a2a72",
+      "part2_model_sha256": "0c4ca31eb6af4403562b1f04df7103743b173677f8ea33b013a43d198fd0210d",
+      "performance_claims_emitted": false,
+      "preprocessing_contract_sha256": "ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9",
+      "producer_backend": "ort_tensorrt",
+      "producer_binding_eligible": true,
+      "producer_identity": {
+        "backend": "ort_tensorrt",
+        "candidate_execution_completion_contract": {
+          "case_id": "b132",
+          "completed_endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+          "completion_mode": "stage1_stage2_then_canonical_quality_adapter",
+          "contract_sha256": "576f95d6232d635292c221758017285f2e60d4a485963ddd022be155d3106eae",
+          "eval_run_id": "complete_set_20260907_161614",
+          "model_id": "regnet_x_1_6gf",
+          "runtime_artifact_set_sha256": "b9fe91107cdec359db41e545e6e50af6c6882c49b9aadd8a07bfa5307ec1a874",
+          "runtime_precision_identity": "fp16",
+          "schema": "onnx-splitpoint/composed-candidate-completion-contract",
+          "schema_version": 1,
+          "setup_id": "orin_nx_deepx_m1_01",
+          "source_run_id": "ort_tensorrt",
+          "stage1_backend": "tensorrt",
+          "stage2_backend": "tensorrt",
+          "task": "classification",
+          "variant": "composed"
+        },
+        "candidate_execution_completion_contract_sha256": "576f95d6232d635292c221758017285f2e60d4a485963ddd022be155d3106eae",
+        "case_id": "b132",
+        "dataset": {
+          "class_identity": "label_id",
+          "ground_truth_sha256": "87775e86ef3bcf3ec1e0d0a79696bf2f58fa215d5320ce80167bb1f417c7a177",
+          "image_count": 500,
+          "image_ids_sha256": "71032a98e158ca71711a5567de5d46fbf04f05777baa940f74f3c39fdf0c083f",
+          "manifest_name": "manifest.json",
+          "manifest_sha256": "64a7ef3bf55352bb39ef86f25fe73e6ff18a51ed1a02c8aca4940178f69e7b6c"
+        },
+        "decoder_contract_sha256": "",
+        "endpoint_contract": {
+          "contract_family": "classification_logits",
+          "contract_resolution_status": "attested",
+          "contract_source": "authoritative_suite_contract_plus_runtime_tensor:v4",
+          "endpoint_contract_complete": true,
+          "endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+          "full_model_sha256": "fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3",
+          "graph_binding_source": "authoritative_suite_output_contract_plus_exact_onnx_endpoint:v2",
+          "output_endpoint_attestation": {
+            "attested": true,
+            "class_count": 1000,
+            "declaration_source_contract_sha256": "3f6ee0b69c3747fee7300ad7644c36e259005aaba5cb6720ab61bfd65b958f55",
+            "declaration_source_contracts_sha256": "f7db280b4c4e3c354571699f9704700c6c63f02ff54dbbdd15e29d2f2b85f545",
+            "endpoint": "classification_logits",
+            "endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+            "reason": "single_finite_multiclass_tensor",
+            "schema": "onnx-splitpoint/runtime-output-endpoint-attestation",
+            "schema_version": 3,
+            "stage": "classification_logits",
+            "status": "passed"
+          },
+          "output_format": "classification_logits",
+          "producer_endpoint_identity": {
+            "output_format": "classification_logits",
+            "schema": "onnx-splitpoint/output-endpoint-contract",
+            "schema_version": 3,
+            "semantic": {},
+            "stage": "classification_logits",
+            "task": "classification",
+            "tensor_signature": {
+              "tensor_count": 1,
+              "tensors": [
+                {
+                  "index": 0,
+                  "rank": 1,
+                  "shape": [
+                    1000
+                  ]
+                }
+              ]
+            }
+          },
+          "recorded_contract_sha256": "3f6ee0b69c3747fee7300ad7644c36e259005aaba5cb6720ab61bfd65b958f55",
+          "source_contracts_sha256": "f7db280b4c4e3c354571699f9704700c6c63f02ff54dbbdd15e29d2f2b85f545",
+          "stage": "classification_logits",
+          "task": "classification",
+          "tensor_signature": {
+            "tensor_count": 1,
+            "tensors": [
+              {
+                "dtype": "float32",
+                "index": 0,
+                "name": "logits",
+                "rank": 2,
+                "shape": [
+                  1,
+                  1000
+                ]
+              }
+            ]
+          },
+          "terminal_model_sha256": "0c4ca31eb6af4403562b1f04df7103743b173677f8ea33b013a43d198fd0210d"
+        },
+        "endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+        "eval_run_id": "complete_set_20260907_161614",
+        "execution_role": "generic_composed_quality_candidate",
+        "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+        "implementation_runner_size_bytes": 1049135,
+        "model": {
+          "part1_onnx_sha256": "0ad1b5bca67360f83178c9d69192d999c9eb9d32cde80598ccf31e10a45a2a72",
+          "part1_onnx_size_bytes": 33373726,
+          "part2_onnx_sha256": "0c4ca31eb6af4403562b1f04df7103743b173677f8ea33b013a43d198fd0210d",
+          "part2_onnx_size_bytes": 3654704,
+          "runtime_artifact_sha256": "b9fe91107cdec359db41e545e6e50af6c6882c49b9aadd8a07bfa5307ec1a874",
+          "source_onnx_sha256": "fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3",
+          "source_onnx_size_bytes": 37070373
+        },
+        "model_id": "regnet_x_1_6gf",
+        "nms_contract_sha256": "",
+        "performance_claims_emitted": false,
+        "preprocessing": {
+          "identity": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "imagenet",
+            "input_domain": "uint8_0_255",
+            "letterbox": false,
+            "letterbox_pad_value": 0,
+            "pad_value": 0,
+            "placement": "not_applicable",
+            "preprocess_mode": "resize",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "direct_resize",
+            "target_hw": [
+              224,
+              224
+            ],
+            "task": "classification"
+          },
+          "runtime_input_encoding": {
+            "image_scale": "imagenet",
+            "input_dtype": "float32",
+            "schema": "onnx-splitpoint/model-input-encoding-contract",
+            "schema_version": 1
+          },
+          "runtime_input_encoding_sha256": "9aa116ccc00468785c9bb15e630a792db93a5d888b1d76ba285d028ea83923e8",
+          "sha256": "ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9"
+        },
+        "preprocessing_contract_sha256": "ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9",
+        "producer_identity_sha256": "42d0c6f2902b308de9c24b13da9bafbc139e920cf00a55a8d9f82b84ca1c4afe",
+        "quality_contract": {
+          "canonical_record_endpoint": "classification_topk_hits",
+          "contract_scope": "canonical_quality_record_semantics",
+          "dataset": {
+            "class_identity": "label_id",
+            "ground_truth_sha256": "87775e86ef3bcf3ec1e0d0a79696bf2f58fa215d5320ce80167bb1f417c7a177",
+            "image_count": 500,
+            "image_ids_sha256": "71032a98e158ca71711a5567de5d46fbf04f05777baa940f74f3c39fdf0c083f",
+            "manifest_name": "manifest.json",
+            "manifest_sha256": "64a7ef3bf55352bb39ef86f25fe73e6ff18a51ed1a02c8aca4940178f69e7b6c"
+          },
+          "model": {
+            "artifact_name": "regnet_x_1_6gf.onnx",
+            "sha256": "fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3"
+          },
+          "postprocessor": {
+            "identity": {
+              "canonical_record_endpoint": "classification_topk_hits",
+              "implementation_functions": [
+                "_classification_logits_vector",
+                "_classification_gt_metrics"
+              ],
+              "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+              "schema": "onnx-splitpoint/classification-topk-postprocessor-contract",
+              "schema_version": 1,
+              "sort_order": "score_descending",
+              "topk": 5
+            },
+            "sha256": "92ac878e935dcff302f1f28da7b1291a3d956aec868db9e24a6fbecaf64ff4cf"
+          },
+          "preprocessing": {
+            "identity": {
+              "color_space": "RGB",
+              "contract_scope": "prepared_rgb_uint8_semantics",
+              "image_scale": "imagenet",
+              "input_domain": "uint8_0_255",
+              "letterbox": false,
+              "letterbox_pad_value": 0,
+              "pad_value": 0,
+              "placement": "not_applicable",
+              "preprocess_mode": "resize",
+              "resize_interpolation": "bilinear",
+              "resize_rounding": "python_round_ties_to_even",
+              "schema": "onnx-splitpoint/image-preprocessing-contract",
+              "schema_version": 2,
+              "spatial_transform": "direct_resize",
+              "target_hw": [
+                224,
+                224
+              ],
+              "task": "classification"
+            },
+            "runtime_input_encoding": {
+              "image_scale": "imagenet",
+              "input_dtype": "float32",
+              "schema": "onnx-splitpoint/model-input-encoding-contract",
+              "schema_version": 1
+            },
+            "runtime_input_encoding_sha256": "9aa116ccc00468785c9bb15e630a792db93a5d888b1d76ba285d028ea83923e8",
+            "sha256": "ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9"
+          },
+          "quality_contract_sha256": "24ffdfd728a0d5d68378fd5af43f3a846bb6b9c1fe7e72cc5044a0f64eed386f",
+          "quality_record_endpoint": {
+            "identity": {
+              "canonical_record_endpoint": "classification_topk_hits",
+              "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+              "postprocessor_contract_sha256": "92ac878e935dcff302f1f28da7b1291a3d956aec868db9e24a6fbecaf64ff4cf",
+              "schema": "onnx-splitpoint/classification-quality-record-endpoint-contract",
+              "schema_version": 1,
+              "vendored_endpoint_attestor_sha256": "45416300d9f26eaed4dea37cd9d3bbc518883028aae176e5148cadcee5da269e"
+            },
+            "sha256": "c1127637a39ff278a4ef07ecc33ef2dd8afa48f5cb9583856b4e947a77839905"
+          },
+          "quality_record_endpoint_contract_sha256": "c1127637a39ff278a4ef07ecc33ef2dd8afa48f5cb9583856b4e947a77839905",
+          "schema": "onnx-splitpoint/central-classification-quality-contract",
+          "schema_version": 1,
+          "task": "classification"
+        },
+        "quality_contract_sha256": "24ffdfd728a0d5d68378fd5af43f3a846bb6b9c1fe7e72cc5044a0f64eed386f",
+        "quality_record_endpoint": {
+          "identity": {
+            "canonical_record_endpoint": "classification_topk_hits",
+            "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+            "postprocessor_contract_sha256": "92ac878e935dcff302f1f28da7b1291a3d956aec868db9e24a6fbecaf64ff4cf",
+            "schema": "onnx-splitpoint/classification-quality-record-endpoint-contract",
+            "schema_version": 1,
+            "vendored_endpoint_attestor_sha256": "45416300d9f26eaed4dea37cd9d3bbc518883028aae176e5148cadcee5da269e"
+          },
+          "sha256": "c1127637a39ff278a4ef07ecc33ef2dd8afa48f5cb9583856b4e947a77839905"
+        },
+        "quality_record_endpoint_contract_sha256": "c1127637a39ff278a4ef07ecc33ef2dd8afa48f5cb9583856b4e947a77839905",
+        "runtime_artifact_set_sha256": "b9fe91107cdec359db41e545e6e50af6c6882c49b9aadd8a07bfa5307ec1a874",
+        "runtime_artifacts": [
+          {
+            "backend": "tensorrt",
+            "name": "regnet_x_1_6gf_part1_b132.onnx",
+            "role": "stage1_runtime",
+            "sha256": "0ad1b5bca67360f83178c9d69192d999c9eb9d32cde80598ccf31e10a45a2a72",
+            "size_bytes": 33373726
+          },
+          {
+            "backend": "native_tensorrt",
+            "name": "part2_fp16.engine",
+            "role": "stage2_runtime",
+            "sha256": "b246da69aec647fbb71bd58a625b01e1757a606a86c31a9564a7d348973da3be",
+            "size_bytes": 1838612
+          }
+        ],
+        "runtime_precision_identity": "fp16",
+        "schema": "onnx-splitpoint/generic-composed-quality-producer-identity",
+        "schema_version": 1,
+        "setup_id": "orin_nx_deepx_m1_01",
+        "source_run_id": "ort_tensorrt",
+        "stage1_backend": "tensorrt",
+        "stage2_backend": "tensorrt",
+        "task": "classification",
+        "variant": "composed"
+      },
+      "producer_identity_sha256": "42d0c6f2902b308de9c24b13da9bafbc139e920cf00a55a8d9f82b84ca1c4afe",
+      "producer_identity_validated": true,
+      "quality_canary_id": "",
+      "quality_contract_sha256": "24ffdfd728a0d5d68378fd5af43f3a846bb6b9c1fe7e72cc5044a0f64eed386f",
+      "quality_join_endpoint": "",
+      "quality_record_endpoint_contract_sha256": "c1127637a39ff278a4ef07ecc33ef2dd8afa48f5cb9583856b4e947a77839905",
+      "runtime_artifact_set_sha256": "b9fe91107cdec359db41e545e6e50af6c6882c49b9aadd8a07bfa5307ec1a874",
+      "runtime_artifacts": [
+        {
+          "backend": "tensorrt",
+          "name": "regnet_x_1_6gf_part1_b132.onnx",
+          "role": "stage1_runtime",
+          "sha256": "0ad1b5bca67360f83178c9d69192d999c9eb9d32cde80598ccf31e10a45a2a72",
+          "size_bytes": 33373726
+        },
+        {
+          "backend": "native_tensorrt",
+          "name": "part2_fp16.engine",
+          "role": "stage2_runtime",
+          "sha256": "b246da69aec647fbb71bd58a625b01e1757a606a86c31a9564a7d348973da3be",
+          "size_bytes": 1838612
+        }
+      ],
+      "runtime_precision_identity": "fp16",
+      "schema": "onnx-splitpoint/central-quality-request-identity",
+      "schema_version": 6,
+      "setup_id": "orin_nx_deepx_m1_01",
+      "source_model_sha256": "fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3",
+      "source_request_sha256": "sha256:9c36dfee0ce6f03e595ad21c6ef1ef91a7f6252d77c451b39c09f1947fcbd912",
+      "source_run_id": "ort_tensorrt",
+      "stage": "classification_logits",
+      "task": "classification",
+      "task_quality_policy_sha256": "58bf34c5760ed51e4ff35faee4055891caf624b2722cb375df9d419863efa9c4",
+      "validation_dataset_manifest_sha256": "64a7ef3bf55352bb39ef86f25fe73e6ff18a51ed1a02c8aca4940178f69e7b6c",
+      "validation_dataset_sha256": "64a7ef3bf55352bb39ef86f25fe73e6ff18a51ed1a02c8aca4940178f69e7b6c",
+      "validation_ground_truth_sha256": "87775e86ef3bcf3ec1e0d0a79696bf2f58fa215d5320ce80167bb1f417c7a177",
+      "validation_image_ids_sha256": "71032a98e158ca71711a5567de5d46fbf04f05777baa940f74f3c39fdf0c083f",
+      "variant": "composed"
+    },
+    "run_id": "ort_tensorrt",
+    "runtime_artifact_set_sha256": "b9fe91107cdec359db41e545e6e50af6c6882c49b9aadd8a07bfa5307ec1a874",
+    "runtime_artifacts": [
+      {
+        "backend": "tensorrt",
+        "name": "regnet_x_1_6gf_part1_b132.onnx",
+        "role": "stage1_runtime",
+        "sha256": "0ad1b5bca67360f83178c9d69192d999c9eb9d32cde80598ccf31e10a45a2a72",
+        "size_bytes": 33373726
+      },
+      {
+        "backend": "native_tensorrt",
+        "name": "part2_fp16.engine",
+        "role": "stage2_runtime",
+        "sha256": "b246da69aec647fbb71bd58a625b01e1757a606a86c31a9564a7d348973da3be",
+        "size_bytes": 1838612
+      }
+    ],
+    "runtime_precision_identity": "fp16",
+    "schema": "onnx-splitpoint/management-paired-quality-result",
+    "schema_version": 1,
+    "scientific_status": "pass",
+    "seed_schema": {
+      "image_count": 500,
+      "repetitions": 500,
+      "schema": "numpy-pcg64-index-plan-v1",
+      "seed": 20260710
+    },
+    "setup_id": "orin_nx_deepx_m1_01",
+    "source_model_sha256": "fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3",
+    "source_request": "models/regnet_x_1_6gf/benchmark_results/quality_inputs/orin_nx_deepx_m1_01/results/b132/results_ort_tensorrt/task_quality_inputs/composed_request.json",
+    "source_request_sha256": "sha256:9c36dfee0ce6f03e595ad21c6ef1ef91a7f6252d77c451b39c09f1947fcbd912",
+    "source_run_id": "ort_tensorrt",
+    "source_setup_id": "orin_nx_deepx_m1_01",
+    "status": "completed",
+    "status_name": "evaluate_paired_quality_uncertainty",
+    "task": "classification",
+    "task_quality_policy_sha256": "58bf34c5760ed51e4ff35faee4055891caf624b2722cb375df9d419863efa9c4",
+    "technical_status": "completed",
+    "validation_dataset_manifest_sha256": "64a7ef3bf55352bb39ef86f25fe73e6ff18a51ed1a02c8aca4940178f69e7b6c",
+    "validation_dataset_sha256": "64a7ef3bf55352bb39ef86f25fe73e6ff18a51ed1a02c8aca4940178f69e7b6c",
+    "validation_ground_truth_sha256": "87775e86ef3bcf3ec1e0d0a79696bf2f58fa215d5320ce80167bb1f417c7a177",
+    "validation_image_ids_sha256": "71032a98e158ca71711a5567de5d46fbf04f05777baa940f74f3c39fdf0c083f",
+    "variant": "composed",
+    "worker_model": "process_pool"
+  },
+  "yolo11_computed": {
+    "algorithm_version": "management_paired_quality_v2:detection-cached-matching-v2-ap75",
+    "annotations_sha256": "cc762beff133abf33a162f6036465117cd0a245679f0871b23f2021c6708ff3c",
+    "artifact_provenance_binding_status": "verified",
+    "artifact_provenance_claim_eligible": true,
+    "backend": "ort_tensorrt",
+    "bootstrap_sharding": "contiguous_deterministic_resample_plan",
+    "bootstrap_workers_effective": 4,
+    "bootstrap_workers_requested": 4,
+    "cache_hit": false,
+    "candidate_execution_completion_contract_sha256": "9acae679086631d232659e9566dbabc9040d4ef37bda62ff4dcd59deb144cffe",
+    "candidate_predictions_sha256": "6565be445d2d37e0cd69d949240d93317cea4f0b3d3d3d7915aa672a28044128",
+    "case_id": "b062",
+    "completed_task_endpoint_contract": {},
+    "completed_task_endpoint_contract_hash": "",
+    "completed_task_output_endpoint_id": "",
+    "configured_guardrails": [
+      "ap50",
+      "ap75"
+    ],
+    "cpu_reference_include_in_latency_fps_energy": false,
+    "cpu_reference_include_in_pareto": false,
+    "cpu_reference_include_in_ranking": false,
+    "cpu_reference_semantic_only": true,
+    "cpu_reference_store_manifest": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/quality_management/cpu_reference_store/2f/2f78dc76b3f46f5b9942f5c59d5d9d0381d4707f54bf24c6f85ad7d2f0c9faf6/manifest.json",
+    "decision": "pass",
+    "decoder_contract_sha256": "52ea3d9107d0d48a7d40759a62496b2dffd0373ee9a237fd34241e9504b8a364",
+    "endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+    "eval_run_id": "complete_set_20260907_161614",
+    "evaluation_fingerprint": "3a5b647ed5b70ddf4444f035c9800644d79d876798b9fbbc5a01eb52799ee6e9",
+    "execution_device": "management_cpu",
+    "execution_location": "central_management",
+    "execution_role": "generic_composed_quality_candidate",
+    "gpu_used": false,
+    "guardrail_contract_complete": true,
+    "guardrails": {
+      "ap50": {
+        "bootstrap_elapsed_s": 233.46512578002876,
+        "bootstrap_engine": "management_process_pool:onnx_splitpoint_tool.quality_metrics:detection_quality_evaluator",
+        "bootstrap_repetitions": 500,
+        "bootstrap_repetitions_requested": 500,
+        "bootstrap_skipped_reason": "",
+        "candidate": 0.5923569715480402,
+        "ci_high": 0.0002526834607123327,
+        "ci_low": -0.00030274847192059406,
+        "decision": "pass",
+        "delta": 4.3015027105242076e-05,
+        "margin": 0.01,
+        "metric": "ap50",
+        "n": 500,
+        "point_estimate_comparison_basis": "float_inclusive_threshold_tolerance",
+        "reference": 0.592313956520935,
+        "status": "pass"
+      },
+      "ap75": {
+        "bootstrap_elapsed_s": 233.46512578002876,
+        "bootstrap_engine": "management_process_pool:onnx_splitpoint_tool.quality_metrics:detection_quality_evaluator",
+        "bootstrap_repetitions": 500,
+        "bootstrap_repetitions_requested": 500,
+        "bootstrap_skipped_reason": "",
+        "candidate": 0.5034281461508853,
+        "ci_high": 0.0005384433845312499,
+        "ci_low": -0.003850376436136536,
+        "decision": "pass",
+        "delta": -0.0013841832812764299,
+        "margin": 0.01,
+        "metric": "ap75",
+        "n": 500,
+        "point_estimate_comparison_basis": "float_inclusive_threshold_tolerance",
+        "reference": 0.5048123294321617,
+        "status": "pass"
+      }
+    },
+    "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+    "management_cpu_reference": {
+      "canonical_record_endpoint": "decoded_xyxy_score_class_detections",
+      "case_id": "b062",
+      "cpu_threads": 4,
+      "created_at": "2026-09-07T16:41:44+02:00",
+      "dataset_manifest_sha256": "4badbe579a8fd40a5e49104ab0d8138325041561cd6c1ffa2642b0f288d14e59",
+      "decoder_sha256": "52ea3d9107d0d48a7d40759a62496b2dffd0373ee9a237fd34241e9504b8a364",
+      "duration_s": 196.681184,
+      "errors": [],
+      "execution_location": "central_management",
+      "image_ids_sha256": "b8ac329f5d3e7e201a3938d36c63bfe96a13c8a2be6e4fe6ddfab89cbc135e45",
+      "include_in_latency_fps_energy": false,
+      "include_in_pareto": false,
+      "include_in_ranking": false,
+      "model_id": "yolo11l",
+      "model_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+      "nms_sha256": "a5bf85464d71aa7580e8ec2ef9c500902e37ae861d57d64abc0dff1a7d2a941b",
+      "preprocessing_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+      "provider": "onnxruntime_cpu",
+      "quality_contract": {
+        "canonical_coordinate_space": "original_image_xyxy_pixels",
+        "canonical_record_endpoint": "decoded_xyxy_score_class_detections",
+        "contract_scope": "canonical_quality_record_semantics",
+        "dataset": {
+          "coordinate_space": "original_image_xyxy_pixels",
+          "ground_truth_sha256": "38a3ecae14dfcb4c2555e2f7377578cba90de63ed4a9f74f523f914ebce35a61",
+          "image_count": 500,
+          "image_ids_sha256": "b8ac329f5d3e7e201a3938d36c63bfe96a13c8a2be6e4fe6ddfab89cbc135e45",
+          "manifest_name": "manifest.json",
+          "manifest_sha256": "4badbe579a8fd40a5e49104ab0d8138325041561cd6c1ffa2642b0f288d14e59"
+        },
+        "decoder": {
+          "identity": {
+            "adapter_id": "vendored_yolo_harness_with_local_fallback_v1",
+            "adapter_location": "quality_record_host_postprocessor",
+            "canonical_record_endpoint": "decoded_xyxy_score_class_detections",
+            "confidence_threshold": 0.25,
+            "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+            "labels_sha256": "a2bb9c8218affdef450cc85951e6a5abc5e4d956cd37b1be3d04840ae0120c8e",
+            "schema": "onnx-splitpoint/detection-decoder-contract",
+            "schema_version": 1,
+            "source_endpoint_has_integrated_nms": false,
+            "source_endpoint_semantics": "ultralytics_decoded",
+            "source_output_format": "ultralytics_decoded",
+            "source_output_names": [
+              "output0"
+            ]
+          },
+          "sha256": "52ea3d9107d0d48a7d40759a62496b2dffd0373ee9a237fd34241e9504b8a364"
+        },
+        "model": {
+          "artifact_name": "yolo11l.onnx",
+          "sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147"
+        },
+        "nms": {
+          "identity": {
+            "adapter_id": "vendored_yolo_harness_with_local_fallback_v1",
+            "detr_or_bn6_confidence_threshold": 0.25,
+            "detr_or_bn6_iou_threshold": 0.45,
+            "detr_or_bn6_max_detections": 300,
+            "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+            "iou_threshold": 0.45,
+            "max_detections": 300,
+            "schema": "onnx-splitpoint/detection-nms-contract",
+            "schema_version": 1
+          },
+          "sha256": "a5bf85464d71aa7580e8ec2ef9c500902e37ae861d57d64abc0dff1a7d2a941b"
+        },
+        "preprocessing": {
+          "identity": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "norm",
+            "input_domain": "uint8_0_255",
+            "letterbox": true,
+            "letterbox_pad_value": 114,
+            "pad_value": 114,
+            "placement": "floor_top_left_remainder_bottom_right",
+            "preprocess_mode": "letterbox",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "centered_letterbox",
+            "target_hw": [
+              640,
+              640
+            ],
+            "task": "detection"
+          },
+          "runtime_input_encoding": {
+            "image_scale": "norm",
+            "input_dtype": "float32",
+            "schema": "onnx-splitpoint/model-input-encoding-contract",
+            "schema_version": 1
+          },
+          "runtime_input_encoding_sha256": "4ceacc87aae48c1f60bb631b6d636603f1b5dabe4b84b6b812d58ba74ebde43e",
+          "sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e"
+        },
+        "quality_contract_sha256": "9729266db40fa45d2ae657647919e7e9238dd43ee5a36b8eeca8dcaf90e07780",
+        "quality_record_endpoint": {
+          "identity": {
+            "canonical_record_endpoint": "decoded_xyxy_score_class_detections",
+            "decoder_contract_sha256": "52ea3d9107d0d48a7d40759a62496b2dffd0373ee9a237fd34241e9504b8a364",
+            "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+            "nms_contract_sha256": "a5bf85464d71aa7580e8ec2ef9c500902e37ae861d57d64abc0dff1a7d2a941b",
+            "schema": "onnx-splitpoint/detection-quality-record-endpoint-contract",
+            "schema_version": 1,
+            "vendored_endpoint_attestor_sha256": "45416300d9f26eaed4dea37cd9d3bbc518883028aae176e5148cadcee5da269e"
+          },
+          "sha256": "1e724566352984cba63d97215247c5190493961a8deee663a56613b4cab5b742"
+        },
+        "quality_record_endpoint_contract_sha256": "1e724566352984cba63d97215247c5190493961a8deee663a56613b4cab5b742",
+        "schema": "onnx-splitpoint/central-detection-quality-contract",
+        "schema_version": 1,
+        "source_endpoint_is_raw": false,
+        "source_endpoint_role": "canonical_reference_model_output",
+        "task": "detection"
+      },
+      "quality_contract_sha256": "9729266db40fa45d2ae657647919e7e9238dd43ee5a36b8eeca8dcaf90e07780",
+      "record_count": 500,
+      "reference_immutable": true,
+      "reference_path": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/quality_management/references/yolo11l/by_source_contract/2d6429d2929a3ad17b9823ea1caddc794fda7fb3574a7f6b5aca8a446372c060/canonical_cpu_reference.json",
+      "reference_sha256": "d2fb4b612412aee1d48e753677a67ae6f515103894bf99d707eda42895f5ddf8",
+      "reference_size_bytes": 901365,
+      "reference_storage": "immutable_source_contract",
+      "return_code": 0,
+      "schema": "onnx-splitpoint/management-cpu-reference-job",
+      "schema_version": 1,
+      "semantic_reference_only": true,
+      "source_contract_sha256": "sha256:2d6429d2929a3ad17b9823ea1caddc794fda7fb3574a7f6b5aca8a446372c060",
+      "source_endpoint_is_raw": false,
+      "status": "completed",
+      "stdout_path": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/quality_management/references/yolo11l/management_cpu_reference_stdout.txt",
+      "task": "detection"
+    },
+    "metric_gate_config": {
+      "guardrails": {
+        "ap50_margin": 0.01,
+        "ap75_margin": 0.01
+      },
+      "non_inferiority_margin": 0.01,
+      "primary_metric": "coco_ap_50_95"
+    },
+    "model_id": "yolo11l",
+    "model_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+    "n": 500,
+    "native_split_quality_binding": {},
+    "native_split_quality_binding_required": false,
+    "native_split_quality_binding_sha256": "",
+    "nms_contract_sha256": "a5bf85464d71aa7580e8ec2ef9c500902e37ae861d57d64abc0dff1a7d2a941b",
+    "part1_model_sha256": "af7e7d94396d71f37495666ed1af85cf2eeff38aa3f102e733a72ae0e787f84a",
+    "part2_model_sha256": "8ae1d799e9c1bfca498f5250bbea975202dd1f798d3497f84f3fc130f589f7ff",
+    "performance_claims_emitted": false,
+    "policy_sha256": "58bf34c5760ed51e4ff35faee4055891caf624b2722cb375df9d419863efa9c4",
+    "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+    "primary": {
+      "bootstrap_elapsed_s": 233.46512578002876,
+      "bootstrap_engine": "management_process_pool:onnx_splitpoint_tool.quality_metrics:detection_quality_evaluator",
+      "bootstrap_repetitions": 500,
+      "bootstrap_repetitions_requested": 500,
+      "bootstrap_skipped_reason": "",
+      "candidate": 0.46431509268599197,
+      "ci_high": 0.00036593416547664974,
+      "ci_low": -0.0009519269743579056,
+      "decision": "pass",
+      "delta": -0.00029634070057088513,
+      "margin": 0.01,
+      "metric": "coco_ap_50_95",
+      "n": 500,
+      "point_estimate_comparison_basis": "float_inclusive_threshold_tolerance",
+      "reference": 0.46461143338656286,
+      "status": "pass"
+    },
+    "producer_binding_eligible": true,
+    "producer_identity": {
+      "backend": "ort_tensorrt",
+      "candidate_execution_completion_contract": {
+        "case_id": "b062",
+        "completed_endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+        "completion_mode": "stage1_stage2_then_canonical_quality_adapter",
+        "contract_sha256": "9acae679086631d232659e9566dbabc9040d4ef37bda62ff4dcd59deb144cffe",
+        "eval_run_id": "complete_set_20260907_161614",
+        "model_id": "yolo11l",
+        "runtime_artifact_set_sha256": "f51846fe71cb566fca6cbe903613a2a50a3b3f8383d0a08f451f9447b407bcd8",
+        "runtime_precision_identity": "fp16",
+        "schema": "onnx-splitpoint/composed-candidate-completion-contract",
+        "schema_version": 1,
+        "setup_id": "orin_nx_deepx_m1_01",
+        "source_run_id": "ort_tensorrt",
+        "stage1_backend": "tensorrt",
+        "stage2_backend": "tensorrt",
+        "task": "detection",
+        "variant": "composed"
+      },
+      "candidate_execution_completion_contract_sha256": "9acae679086631d232659e9566dbabc9040d4ef37bda62ff4dcd59deb144cffe",
+      "case_id": "b062",
+      "dataset": {
+        "coordinate_space": "original_image_xyxy_pixels",
+        "ground_truth_sha256": "38a3ecae14dfcb4c2555e2f7377578cba90de63ed4a9f74f523f914ebce35a61",
+        "image_count": 500,
+        "image_ids_sha256": "b8ac329f5d3e7e201a3938d36c63bfe96a13c8a2be6e4fe6ddfab89cbc135e45",
+        "manifest_name": "manifest.json",
+        "manifest_sha256": "4badbe579a8fd40a5e49104ab0d8138325041561cd6c1ffa2642b0f288d14e59"
+      },
+      "decoder_contract_sha256": "52ea3d9107d0d48a7d40759a62496b2dffd0373ee9a237fd34241e9504b8a364",
+      "endpoint_contract": {
+        "contract_family": "decoded_pre_nms",
+        "contract_resolution_status": "attested",
+        "contract_source": "explicit_producer_export_contract",
+        "endpoint_contract_complete": true,
+        "endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+        "full_model_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+        "graph_binding_source": "authoritative_suite_output_contract_plus_exact_onnx_endpoint:v2",
+        "output_endpoint_attestation": {
+          "attested": true,
+          "declared_stage": "decoded_pre_nms",
+          "endpoint": "decoded_pre_nms",
+          "endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+          "reason": "raw_detection_tensor_structure_verified",
+          "stage": "decoded_pre_nms",
+          "status": "passed",
+          "tensor_signature": {
+            "tensor_count": 1,
+            "tensors": [
+              {
+                "dtype": "float32",
+                "index": 0,
+                "name": "output0",
+                "rank": 3,
+                "shape": [
+                  1,
+                  84,
+                  8400
+                ]
+              }
+            ]
+          }
+        },
+        "output_format": "ultralytics_decoded",
+        "producer_endpoint_identity": {
+          "output_format": "ultralytics_decoded",
+          "schema": "onnx-splitpoint/output-endpoint-contract",
+          "schema_version": 3,
+          "semantic": {},
+          "stage": "decoded_pre_nms",
+          "task": "detection",
+          "tensor_signature": {
+            "tensor_count": 1,
+            "tensors": [
+              {
+                "index": 0,
+                "rank": 3,
+                "shape": [
+                  1,
+                  84,
+                  8400
+                ]
+              }
+            ]
+          }
+        },
+        "raw_fallback_requested": false,
+        "recorded_contract_sha256": "f60aee02264feb3413164e0a689991a7e8c4a290e87cc10729bbdba178f910c0",
+        "source_contracts_sha256": "12d708952f1ed60a6a50605b0357e6ada5c7a04fbfef682b9dc675e134edba80",
+        "stage": "decoded_pre_nms",
+        "task": "detection",
+        "tensor_signature": {
+          "tensor_count": 1,
+          "tensors": [
+            {
+              "dtype": "float32",
+              "index": 0,
+              "name": "output0",
+              "rank": 3,
+              "shape": [
+                1,
+                84,
+                8400
+              ]
+            }
+          ]
+        },
+        "terminal_model_sha256": "8ae1d799e9c1bfca498f5250bbea975202dd1f798d3497f84f3fc130f589f7ff"
+      },
+      "endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+      "eval_run_id": "complete_set_20260907_161614",
+      "execution_role": "generic_composed_quality_candidate",
+      "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+      "implementation_runner_size_bytes": 1049135,
+      "model": {
+        "part1_onnx_sha256": "af7e7d94396d71f37495666ed1af85cf2eeff38aa3f102e733a72ae0e787f84a",
+        "part1_onnx_size_bytes": 3377571,
+        "part2_onnx_sha256": "8ae1d799e9c1bfca498f5250bbea975202dd1f798d3497f84f3fc130f589f7ff",
+        "part2_onnx_size_bytes": 98368932,
+        "runtime_artifact_sha256": "f51846fe71cb566fca6cbe903613a2a50a3b3f8383d0a08f451f9447b407bcd8",
+        "source_onnx_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+        "source_onnx_size_bytes": 101744337
+      },
+      "model_id": "yolo11l",
+      "nms_contract_sha256": "a5bf85464d71aa7580e8ec2ef9c500902e37ae861d57d64abc0dff1a7d2a941b",
+      "performance_claims_emitted": false,
+      "preprocessing": {
+        "identity": {
+          "color_space": "RGB",
+          "contract_scope": "prepared_rgb_uint8_semantics",
+          "image_scale": "norm",
+          "input_domain": "uint8_0_255",
+          "letterbox": true,
+          "letterbox_pad_value": 114,
+          "pad_value": 114,
+          "placement": "floor_top_left_remainder_bottom_right",
+          "preprocess_mode": "letterbox",
+          "resize_interpolation": "bilinear",
+          "resize_rounding": "python_round_ties_to_even",
+          "schema": "onnx-splitpoint/image-preprocessing-contract",
+          "schema_version": 2,
+          "spatial_transform": "centered_letterbox",
+          "target_hw": [
+            640,
+            640
+          ],
+          "task": "detection"
+        },
+        "runtime_input_encoding": {
+          "image_scale": "norm",
+          "input_dtype": "float32",
+          "schema": "onnx-splitpoint/model-input-encoding-contract",
+          "schema_version": 1
+        },
+        "runtime_input_encoding_sha256": "4ceacc87aae48c1f60bb631b6d636603f1b5dabe4b84b6b812d58ba74ebde43e",
+        "sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e"
+      },
+      "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+      "producer_identity_sha256": "38157ed93c213f06a73a1a05be7bd5a888abaef103a43430e440870eff773614",
+      "quality_contract": {
+        "canonical_coordinate_space": "original_image_xyxy_pixels",
+        "canonical_record_endpoint": "decoded_xyxy_score_class_detections",
+        "contract_scope": "canonical_quality_record_semantics",
+        "dataset": {
+          "coordinate_space": "original_image_xyxy_pixels",
+          "ground_truth_sha256": "38a3ecae14dfcb4c2555e2f7377578cba90de63ed4a9f74f523f914ebce35a61",
+          "image_count": 500,
+          "image_ids_sha256": "b8ac329f5d3e7e201a3938d36c63bfe96a13c8a2be6e4fe6ddfab89cbc135e45",
+          "manifest_name": "manifest.json",
+          "manifest_sha256": "4badbe579a8fd40a5e49104ab0d8138325041561cd6c1ffa2642b0f288d14e59"
+        },
+        "decoder": {
+          "identity": {
+            "adapter_id": "vendored_yolo_harness_with_local_fallback_v1",
+            "adapter_location": "quality_record_host_postprocessor",
+            "canonical_record_endpoint": "decoded_xyxy_score_class_detections",
+            "confidence_threshold": 0.25,
+            "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+            "labels_sha256": "a2bb9c8218affdef450cc85951e6a5abc5e4d956cd37b1be3d04840ae0120c8e",
+            "schema": "onnx-splitpoint/detection-decoder-contract",
+            "schema_version": 1,
+            "source_endpoint_has_integrated_nms": false,
+            "source_endpoint_semantics": "ultralytics_decoded",
+            "source_output_format": "ultralytics_decoded",
+            "source_output_names": [
+              "output0"
+            ]
+          },
+          "sha256": "52ea3d9107d0d48a7d40759a62496b2dffd0373ee9a237fd34241e9504b8a364"
+        },
+        "model": {
+          "artifact_name": "yolo11l.onnx",
+          "sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147"
+        },
+        "nms": {
+          "identity": {
+            "adapter_id": "vendored_yolo_harness_with_local_fallback_v1",
+            "detr_or_bn6_confidence_threshold": 0.25,
+            "detr_or_bn6_iou_threshold": 0.45,
+            "detr_or_bn6_max_detections": 300,
+            "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+            "iou_threshold": 0.45,
+            "max_detections": 300,
+            "schema": "onnx-splitpoint/detection-nms-contract",
+            "schema_version": 1
+          },
+          "sha256": "a5bf85464d71aa7580e8ec2ef9c500902e37ae861d57d64abc0dff1a7d2a941b"
+        },
+        "preprocessing": {
+          "identity": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "norm",
+            "input_domain": "uint8_0_255",
+            "letterbox": true,
+            "letterbox_pad_value": 114,
+            "pad_value": 114,
+            "placement": "floor_top_left_remainder_bottom_right",
+            "preprocess_mode": "letterbox",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "centered_letterbox",
+            "target_hw": [
+              640,
+              640
+            ],
+            "task": "detection"
+          },
+          "runtime_input_encoding": {
+            "image_scale": "norm",
+            "input_dtype": "float32",
+            "schema": "onnx-splitpoint/model-input-encoding-contract",
+            "schema_version": 1
+          },
+          "runtime_input_encoding_sha256": "4ceacc87aae48c1f60bb631b6d636603f1b5dabe4b84b6b812d58ba74ebde43e",
+          "sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e"
+        },
+        "quality_contract_sha256": "9729266db40fa45d2ae657647919e7e9238dd43ee5a36b8eeca8dcaf90e07780",
+        "quality_record_endpoint": {
+          "identity": {
+            "canonical_record_endpoint": "decoded_xyxy_score_class_detections",
+            "decoder_contract_sha256": "52ea3d9107d0d48a7d40759a62496b2dffd0373ee9a237fd34241e9504b8a364",
+            "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+            "nms_contract_sha256": "a5bf85464d71aa7580e8ec2ef9c500902e37ae861d57d64abc0dff1a7d2a941b",
+            "schema": "onnx-splitpoint/detection-quality-record-endpoint-contract",
+            "schema_version": 1,
+            "vendored_endpoint_attestor_sha256": "45416300d9f26eaed4dea37cd9d3bbc518883028aae176e5148cadcee5da269e"
+          },
+          "sha256": "1e724566352984cba63d97215247c5190493961a8deee663a56613b4cab5b742"
+        },
+        "quality_record_endpoint_contract_sha256": "1e724566352984cba63d97215247c5190493961a8deee663a56613b4cab5b742",
+        "schema": "onnx-splitpoint/central-detection-quality-contract",
+        "schema_version": 1,
+        "source_endpoint_is_raw": false,
+        "source_endpoint_role": "canonical_reference_model_output",
+        "task": "detection"
+      },
+      "quality_contract_sha256": "9729266db40fa45d2ae657647919e7e9238dd43ee5a36b8eeca8dcaf90e07780",
+      "quality_record_endpoint": {
+        "identity": {
+          "canonical_record_endpoint": "decoded_xyxy_score_class_detections",
+          "decoder_contract_sha256": "52ea3d9107d0d48a7d40759a62496b2dffd0373ee9a237fd34241e9504b8a364",
+          "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+          "nms_contract_sha256": "a5bf85464d71aa7580e8ec2ef9c500902e37ae861d57d64abc0dff1a7d2a941b",
+          "schema": "onnx-splitpoint/detection-quality-record-endpoint-contract",
+          "schema_version": 1,
+          "vendored_endpoint_attestor_sha256": "45416300d9f26eaed4dea37cd9d3bbc518883028aae176e5148cadcee5da269e"
+        },
+        "sha256": "1e724566352984cba63d97215247c5190493961a8deee663a56613b4cab5b742"
+      },
+      "quality_record_endpoint_contract_sha256": "1e724566352984cba63d97215247c5190493961a8deee663a56613b4cab5b742",
+      "runtime_artifact_set_sha256": "f51846fe71cb566fca6cbe903613a2a50a3b3f8383d0a08f451f9447b407bcd8",
+      "runtime_artifacts": [
+        {
+          "backend": "tensorrt",
+          "name": "yolo11l_part1_b62.onnx",
+          "role": "stage1_runtime",
+          "sha256": "af7e7d94396d71f37495666ed1af85cf2eeff38aa3f102e733a72ae0e787f84a",
+          "size_bytes": 3377571
+        },
+        {
+          "backend": "native_tensorrt",
+          "name": "part2_fp16.engine",
+          "role": "stage2_runtime",
+          "sha256": "77ec9745a398b803297baad7d77ad137a5ee4bf0798162def347070026520aae",
+          "size_bytes": 52690404
+        }
+      ],
+      "runtime_precision_identity": "fp16",
+      "schema": "onnx-splitpoint/generic-composed-quality-producer-identity",
+      "schema_version": 1,
+      "setup_id": "orin_nx_deepx_m1_01",
+      "source_run_id": "ort_tensorrt",
+      "stage1_backend": "tensorrt",
+      "stage2_backend": "tensorrt",
+      "task": "detection",
+      "variant": "composed"
+    },
+    "producer_identity_sha256": "38157ed93c213f06a73a1a05be7bd5a888abaef103a43430e440870eff773614",
+    "quality_contract_sha256": "9729266db40fa45d2ae657647919e7e9238dd43ee5a36b8eeca8dcaf90e07780",
+    "quality_join_endpoint": "",
+    "quality_record_endpoint_contract_sha256": "1e724566352984cba63d97215247c5190493961a8deee663a56613b4cab5b742",
+    "quality_result_contract_version": 2,
+    "reference_identity": "2f78dc76b3f46f5b9942f5c59d5d9d0381d4707f54bf24c6f85ad7d2f0c9faf6",
+    "reference_predictions_sha256": "1a0b675e85cc94f8b3f2a247cdfa9192a70eecb0a55d31ffe0f303d93dbcd208",
+    "request_id": "yolo11l:detection:composed:58bf34c5760ed51e4ff35faee4055891caf624b2722cb375df9d419863efa9c4:sha256:6a767bb701754e30b5425d83323d84c4c46a31027f4f89034b57952c289b4f2e",
+    "request_identity": {
+      "artifact_provenance_binding_status": "verified",
+      "artifact_provenance_claim_eligible": true,
+      "backend": "ort_tensorrt",
+      "candidate_execution_completion_contract_sha256": "9acae679086631d232659e9566dbabc9040d4ef37bda62ff4dcd59deb144cffe",
+      "case_id": "b062",
+      "completed_task_endpoint_contract": {},
+      "completed_task_endpoint_contract_hash": "",
+      "completed_task_output_endpoint_id": "",
+      "contract_family": "decoded_pre_nms",
+      "decoder_contract_sha256": "52ea3d9107d0d48a7d40759a62496b2dffd0373ee9a237fd34241e9504b8a364",
+      "endpoint_contract_complete": true,
+      "endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+      "eval_run_id": "complete_set_20260907_161614",
+      "execution_role": "generic_composed_quality_candidate",
+      "full_only_plan_identity": {},
+      "full_only_plan_identity_required": null,
+      "full_only_plan_identity_sha256": "",
+      "identity_errors": [],
+      "identity_valid": true,
+      "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+      "model_id": "yolo11l",
+      "model_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+      "nms_contract_sha256": "a5bf85464d71aa7580e8ec2ef9c500902e37ae861d57d64abc0dff1a7d2a941b",
+      "part1_model_sha256": "af7e7d94396d71f37495666ed1af85cf2eeff38aa3f102e733a72ae0e787f84a",
+      "part2_model_sha256": "8ae1d799e9c1bfca498f5250bbea975202dd1f798d3497f84f3fc130f589f7ff",
+      "performance_claims_emitted": false,
+      "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+      "producer_backend": "ort_tensorrt",
+      "producer_binding_eligible": true,
+      "producer_identity": {
+        "backend": "ort_tensorrt",
+        "candidate_execution_completion_contract": {
+          "case_id": "b062",
+          "completed_endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+          "completion_mode": "stage1_stage2_then_canonical_quality_adapter",
+          "contract_sha256": "9acae679086631d232659e9566dbabc9040d4ef37bda62ff4dcd59deb144cffe",
+          "eval_run_id": "complete_set_20260907_161614",
+          "model_id": "yolo11l",
+          "runtime_artifact_set_sha256": "f51846fe71cb566fca6cbe903613a2a50a3b3f8383d0a08f451f9447b407bcd8",
+          "runtime_precision_identity": "fp16",
+          "schema": "onnx-splitpoint/composed-candidate-completion-contract",
+          "schema_version": 1,
+          "setup_id": "orin_nx_deepx_m1_01",
+          "source_run_id": "ort_tensorrt",
+          "stage1_backend": "tensorrt",
+          "stage2_backend": "tensorrt",
+          "task": "detection",
+          "variant": "composed"
+        },
+        "candidate_execution_completion_contract_sha256": "9acae679086631d232659e9566dbabc9040d4ef37bda62ff4dcd59deb144cffe",
+        "case_id": "b062",
+        "dataset": {
+          "coordinate_space": "original_image_xyxy_pixels",
+          "ground_truth_sha256": "38a3ecae14dfcb4c2555e2f7377578cba90de63ed4a9f74f523f914ebce35a61",
+          "image_count": 500,
+          "image_ids_sha256": "b8ac329f5d3e7e201a3938d36c63bfe96a13c8a2be6e4fe6ddfab89cbc135e45",
+          "manifest_name": "manifest.json",
+          "manifest_sha256": "4badbe579a8fd40a5e49104ab0d8138325041561cd6c1ffa2642b0f288d14e59"
+        },
+        "decoder_contract_sha256": "52ea3d9107d0d48a7d40759a62496b2dffd0373ee9a237fd34241e9504b8a364",
+        "endpoint_contract": {
+          "contract_family": "decoded_pre_nms",
+          "contract_resolution_status": "attested",
+          "contract_source": "explicit_producer_export_contract",
+          "endpoint_contract_complete": true,
+          "endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+          "full_model_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+          "graph_binding_source": "authoritative_suite_output_contract_plus_exact_onnx_endpoint:v2",
+          "output_endpoint_attestation": {
+            "attested": true,
+            "declared_stage": "decoded_pre_nms",
+            "endpoint": "decoded_pre_nms",
+            "endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+            "reason": "raw_detection_tensor_structure_verified",
+            "stage": "decoded_pre_nms",
+            "status": "passed",
+            "tensor_signature": {
+              "tensor_count": 1,
+              "tensors": [
+                {
+                  "dtype": "float32",
+                  "index": 0,
+                  "name": "output0",
+                  "rank": 3,
+                  "shape": [
+                    1,
+                    84,
+                    8400
+                  ]
+                }
+              ]
+            }
+          },
+          "output_format": "ultralytics_decoded",
+          "producer_endpoint_identity": {
+            "output_format": "ultralytics_decoded",
+            "schema": "onnx-splitpoint/output-endpoint-contract",
+            "schema_version": 3,
+            "semantic": {},
+            "stage": "decoded_pre_nms",
+            "task": "detection",
+            "tensor_signature": {
+              "tensor_count": 1,
+              "tensors": [
+                {
+                  "index": 0,
+                  "rank": 3,
+                  "shape": [
+                    1,
+                    84,
+                    8400
+                  ]
+                }
+              ]
+            }
+          },
+          "raw_fallback_requested": false,
+          "recorded_contract_sha256": "f60aee02264feb3413164e0a689991a7e8c4a290e87cc10729bbdba178f910c0",
+          "source_contracts_sha256": "12d708952f1ed60a6a50605b0357e6ada5c7a04fbfef682b9dc675e134edba80",
+          "stage": "decoded_pre_nms",
+          "task": "detection",
+          "tensor_signature": {
+            "tensor_count": 1,
+            "tensors": [
+              {
+                "dtype": "float32",
+                "index": 0,
+                "name": "output0",
+                "rank": 3,
+                "shape": [
+                  1,
+                  84,
+                  8400
+                ]
+              }
+            ]
+          },
+          "terminal_model_sha256": "8ae1d799e9c1bfca498f5250bbea975202dd1f798d3497f84f3fc130f589f7ff"
+        },
+        "endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+        "eval_run_id": "complete_set_20260907_161614",
+        "execution_role": "generic_composed_quality_candidate",
+        "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+        "implementation_runner_size_bytes": 1049135,
+        "model": {
+          "part1_onnx_sha256": "af7e7d94396d71f37495666ed1af85cf2eeff38aa3f102e733a72ae0e787f84a",
+          "part1_onnx_size_bytes": 3377571,
+          "part2_onnx_sha256": "8ae1d799e9c1bfca498f5250bbea975202dd1f798d3497f84f3fc130f589f7ff",
+          "part2_onnx_size_bytes": 98368932,
+          "runtime_artifact_sha256": "f51846fe71cb566fca6cbe903613a2a50a3b3f8383d0a08f451f9447b407bcd8",
+          "source_onnx_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+          "source_onnx_size_bytes": 101744337
+        },
+        "model_id": "yolo11l",
+        "nms_contract_sha256": "a5bf85464d71aa7580e8ec2ef9c500902e37ae861d57d64abc0dff1a7d2a941b",
+        "performance_claims_emitted": false,
+        "preprocessing": {
+          "identity": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "norm",
+            "input_domain": "uint8_0_255",
+            "letterbox": true,
+            "letterbox_pad_value": 114,
+            "pad_value": 114,
+            "placement": "floor_top_left_remainder_bottom_right",
+            "preprocess_mode": "letterbox",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "centered_letterbox",
+            "target_hw": [
+              640,
+              640
+            ],
+            "task": "detection"
+          },
+          "runtime_input_encoding": {
+            "image_scale": "norm",
+            "input_dtype": "float32",
+            "schema": "onnx-splitpoint/model-input-encoding-contract",
+            "schema_version": 1
+          },
+          "runtime_input_encoding_sha256": "4ceacc87aae48c1f60bb631b6d636603f1b5dabe4b84b6b812d58ba74ebde43e",
+          "sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e"
+        },
+        "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+        "producer_identity_sha256": "38157ed93c213f06a73a1a05be7bd5a888abaef103a43430e440870eff773614",
+        "quality_contract": {
+          "canonical_coordinate_space": "original_image_xyxy_pixels",
+          "canonical_record_endpoint": "decoded_xyxy_score_class_detections",
+          "contract_scope": "canonical_quality_record_semantics",
+          "dataset": {
+            "coordinate_space": "original_image_xyxy_pixels",
+            "ground_truth_sha256": "38a3ecae14dfcb4c2555e2f7377578cba90de63ed4a9f74f523f914ebce35a61",
+            "image_count": 500,
+            "image_ids_sha256": "b8ac329f5d3e7e201a3938d36c63bfe96a13c8a2be6e4fe6ddfab89cbc135e45",
+            "manifest_name": "manifest.json",
+            "manifest_sha256": "4badbe579a8fd40a5e49104ab0d8138325041561cd6c1ffa2642b0f288d14e59"
+          },
+          "decoder": {
+            "identity": {
+              "adapter_id": "vendored_yolo_harness_with_local_fallback_v1",
+              "adapter_location": "quality_record_host_postprocessor",
+              "canonical_record_endpoint": "decoded_xyxy_score_class_detections",
+              "confidence_threshold": 0.25,
+              "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+              "labels_sha256": "a2bb9c8218affdef450cc85951e6a5abc5e4d956cd37b1be3d04840ae0120c8e",
+              "schema": "onnx-splitpoint/detection-decoder-contract",
+              "schema_version": 1,
+              "source_endpoint_has_integrated_nms": false,
+              "source_endpoint_semantics": "ultralytics_decoded",
+              "source_output_format": "ultralytics_decoded",
+              "source_output_names": [
+                "output0"
+              ]
+            },
+            "sha256": "52ea3d9107d0d48a7d40759a62496b2dffd0373ee9a237fd34241e9504b8a364"
+          },
+          "model": {
+            "artifact_name": "yolo11l.onnx",
+            "sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147"
+          },
+          "nms": {
+            "identity": {
+              "adapter_id": "vendored_yolo_harness_with_local_fallback_v1",
+              "detr_or_bn6_confidence_threshold": 0.25,
+              "detr_or_bn6_iou_threshold": 0.45,
+              "detr_or_bn6_max_detections": 300,
+              "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+              "iou_threshold": 0.45,
+              "max_detections": 300,
+              "schema": "onnx-splitpoint/detection-nms-contract",
+              "schema_version": 1
+            },
+            "sha256": "a5bf85464d71aa7580e8ec2ef9c500902e37ae861d57d64abc0dff1a7d2a941b"
+          },
+          "preprocessing": {
+            "identity": {
+              "color_space": "RGB",
+              "contract_scope": "prepared_rgb_uint8_semantics",
+              "image_scale": "norm",
+              "input_domain": "uint8_0_255",
+              "letterbox": true,
+              "letterbox_pad_value": 114,
+              "pad_value": 114,
+              "placement": "floor_top_left_remainder_bottom_right",
+              "preprocess_mode": "letterbox",
+              "resize_interpolation": "bilinear",
+              "resize_rounding": "python_round_ties_to_even",
+              "schema": "onnx-splitpoint/image-preprocessing-contract",
+              "schema_version": 2,
+              "spatial_transform": "centered_letterbox",
+              "target_hw": [
+                640,
+                640
+              ],
+              "task": "detection"
+            },
+            "runtime_input_encoding": {
+              "image_scale": "norm",
+              "input_dtype": "float32",
+              "schema": "onnx-splitpoint/model-input-encoding-contract",
+              "schema_version": 1
+            },
+            "runtime_input_encoding_sha256": "4ceacc87aae48c1f60bb631b6d636603f1b5dabe4b84b6b812d58ba74ebde43e",
+            "sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e"
+          },
+          "quality_contract_sha256": "9729266db40fa45d2ae657647919e7e9238dd43ee5a36b8eeca8dcaf90e07780",
+          "quality_record_endpoint": {
+            "identity": {
+              "canonical_record_endpoint": "decoded_xyxy_score_class_detections",
+              "decoder_contract_sha256": "52ea3d9107d0d48a7d40759a62496b2dffd0373ee9a237fd34241e9504b8a364",
+              "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+              "nms_contract_sha256": "a5bf85464d71aa7580e8ec2ef9c500902e37ae861d57d64abc0dff1a7d2a941b",
+              "schema": "onnx-splitpoint/detection-quality-record-endpoint-contract",
+              "schema_version": 1,
+              "vendored_endpoint_attestor_sha256": "45416300d9f26eaed4dea37cd9d3bbc518883028aae176e5148cadcee5da269e"
+            },
+            "sha256": "1e724566352984cba63d97215247c5190493961a8deee663a56613b4cab5b742"
+          },
+          "quality_record_endpoint_contract_sha256": "1e724566352984cba63d97215247c5190493961a8deee663a56613b4cab5b742",
+          "schema": "onnx-splitpoint/central-detection-quality-contract",
+          "schema_version": 1,
+          "source_endpoint_is_raw": false,
+          "source_endpoint_role": "canonical_reference_model_output",
+          "task": "detection"
+        },
+        "quality_contract_sha256": "9729266db40fa45d2ae657647919e7e9238dd43ee5a36b8eeca8dcaf90e07780",
+        "quality_record_endpoint": {
+          "identity": {
+            "canonical_record_endpoint": "decoded_xyxy_score_class_detections",
+            "decoder_contract_sha256": "52ea3d9107d0d48a7d40759a62496b2dffd0373ee9a237fd34241e9504b8a364",
+            "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+            "nms_contract_sha256": "a5bf85464d71aa7580e8ec2ef9c500902e37ae861d57d64abc0dff1a7d2a941b",
+            "schema": "onnx-splitpoint/detection-quality-record-endpoint-contract",
+            "schema_version": 1,
+            "vendored_endpoint_attestor_sha256": "45416300d9f26eaed4dea37cd9d3bbc518883028aae176e5148cadcee5da269e"
+          },
+          "sha256": "1e724566352984cba63d97215247c5190493961a8deee663a56613b4cab5b742"
+        },
+        "quality_record_endpoint_contract_sha256": "1e724566352984cba63d97215247c5190493961a8deee663a56613b4cab5b742",
+        "runtime_artifact_set_sha256": "f51846fe71cb566fca6cbe903613a2a50a3b3f8383d0a08f451f9447b407bcd8",
+        "runtime_artifacts": [
+          {
+            "backend": "tensorrt",
+            "name": "yolo11l_part1_b62.onnx",
+            "role": "stage1_runtime",
+            "sha256": "af7e7d94396d71f37495666ed1af85cf2eeff38aa3f102e733a72ae0e787f84a",
+            "size_bytes": 3377571
+          },
+          {
+            "backend": "native_tensorrt",
+            "name": "part2_fp16.engine",
+            "role": "stage2_runtime",
+            "sha256": "77ec9745a398b803297baad7d77ad137a5ee4bf0798162def347070026520aae",
+            "size_bytes": 52690404
+          }
+        ],
+        "runtime_precision_identity": "fp16",
+        "schema": "onnx-splitpoint/generic-composed-quality-producer-identity",
+        "schema_version": 1,
+        "setup_id": "orin_nx_deepx_m1_01",
+        "source_run_id": "ort_tensorrt",
+        "stage1_backend": "tensorrt",
+        "stage2_backend": "tensorrt",
+        "task": "detection",
+        "variant": "composed"
+      },
+      "producer_identity_sha256": "38157ed93c213f06a73a1a05be7bd5a888abaef103a43430e440870eff773614",
+      "producer_identity_validated": true,
+      "quality_canary_id": "",
+      "quality_contract_sha256": "9729266db40fa45d2ae657647919e7e9238dd43ee5a36b8eeca8dcaf90e07780",
+      "quality_join_endpoint": "",
+      "quality_record_endpoint_contract_sha256": "1e724566352984cba63d97215247c5190493961a8deee663a56613b4cab5b742",
+      "runtime_artifact_set_sha256": "f51846fe71cb566fca6cbe903613a2a50a3b3f8383d0a08f451f9447b407bcd8",
+      "runtime_artifacts": [
+        {
+          "backend": "tensorrt",
+          "name": "yolo11l_part1_b62.onnx",
+          "role": "stage1_runtime",
+          "sha256": "af7e7d94396d71f37495666ed1af85cf2eeff38aa3f102e733a72ae0e787f84a",
+          "size_bytes": 3377571
+        },
+        {
+          "backend": "native_tensorrt",
+          "name": "part2_fp16.engine",
+          "role": "stage2_runtime",
+          "sha256": "77ec9745a398b803297baad7d77ad137a5ee4bf0798162def347070026520aae",
+          "size_bytes": 52690404
+        }
+      ],
+      "runtime_precision_identity": "fp16",
+      "schema": "onnx-splitpoint/central-quality-request-identity",
+      "schema_version": 6,
+      "setup_id": "orin_nx_deepx_m1_01",
+      "source_model_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+      "source_request_sha256": "sha256:6a767bb701754e30b5425d83323d84c4c46a31027f4f89034b57952c289b4f2e",
+      "source_run_id": "ort_tensorrt",
+      "stage": "decoded_pre_nms",
+      "task": "detection",
+      "task_quality_policy_sha256": "58bf34c5760ed51e4ff35faee4055891caf624b2722cb375df9d419863efa9c4",
+      "validation_dataset_manifest_sha256": "4badbe579a8fd40a5e49104ab0d8138325041561cd6c1ffa2642b0f288d14e59",
+      "validation_dataset_sha256": "4badbe579a8fd40a5e49104ab0d8138325041561cd6c1ffa2642b0f288d14e59",
+      "validation_ground_truth_sha256": "38a3ecae14dfcb4c2555e2f7377578cba90de63ed4a9f74f523f914ebce35a61",
+      "validation_image_ids_sha256": "b8ac329f5d3e7e201a3938d36c63bfe96a13c8a2be6e4fe6ddfab89cbc135e45",
+      "variant": "composed"
+    },
+    "run_id": "ort_tensorrt",
+    "runtime_artifact_set_sha256": "f51846fe71cb566fca6cbe903613a2a50a3b3f8383d0a08f451f9447b407bcd8",
+    "runtime_artifacts": [
+      {
+        "backend": "tensorrt",
+        "name": "yolo11l_part1_b62.onnx",
+        "role": "stage1_runtime",
+        "sha256": "af7e7d94396d71f37495666ed1af85cf2eeff38aa3f102e733a72ae0e787f84a",
+        "size_bytes": 3377571
+      },
+      {
+        "backend": "native_tensorrt",
+        "name": "part2_fp16.engine",
+        "role": "stage2_runtime",
+        "sha256": "77ec9745a398b803297baad7d77ad137a5ee4bf0798162def347070026520aae",
+        "size_bytes": 52690404
+      }
+    ],
+    "runtime_precision_identity": "fp16",
+    "schema": "onnx-splitpoint/management-paired-quality-result",
+    "schema_version": 1,
+    "scientific_status": "pass",
+    "seed_schema": {
+      "image_count": 500,
+      "repetitions": 500,
+      "schema": "numpy-pcg64-index-plan-v1",
+      "seed": 20260710
+    },
+    "setup_id": "orin_nx_deepx_m1_01",
+    "source_model_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+    "source_request": "models/yolo11l/benchmark_results/quality_inputs/orin_nx_deepx_m1_01/results/b062/results_ort_tensorrt/task_quality_inputs/composed_request.json",
+    "source_request_sha256": "sha256:6a767bb701754e30b5425d83323d84c4c46a31027f4f89034b57952c289b4f2e",
+    "source_run_id": "ort_tensorrt",
+    "source_setup_id": "orin_nx_deepx_m1_01",
+    "status": "completed",
+    "status_name": "evaluate_paired_quality_uncertainty",
+    "task": "detection",
+    "task_quality_policy_sha256": "58bf34c5760ed51e4ff35faee4055891caf624b2722cb375df9d419863efa9c4",
+    "technical_status": "completed",
+    "validation_dataset_manifest_sha256": "4badbe579a8fd40a5e49104ab0d8138325041561cd6c1ffa2642b0f288d14e59",
+    "validation_dataset_sha256": "4badbe579a8fd40a5e49104ab0d8138325041561cd6c1ffa2642b0f288d14e59",
+    "validation_ground_truth_sha256": "38a3ecae14dfcb4c2555e2f7377578cba90de63ed4a9f74f523f914ebce35a61",
+    "validation_image_ids_sha256": "b8ac329f5d3e7e201a3938d36c63bfe96a13c8a2be6e4fe6ddfab89cbc135e45",
+    "variant": "composed",
+    "worker_model": "process_pool"
+  },
+  "yolo26s_guardrail_fail": {
+    "algorithm_version": "management_paired_quality_v2:detection-cached-matching-v2-ap75",
+    "annotations_sha256": "cc762beff133abf33a162f6036465117cd0a245679f0871b23f2021c6708ff3c",
+    "artifact_provenance_binding_status": "not_required",
+    "artifact_provenance_claim_eligible": false,
+    "backend": "deepx_m1",
+    "bootstrap_sharding": "contiguous_deterministic_resample_plan",
+    "bootstrap_workers_effective": 1,
+    "bootstrap_workers_requested": 4,
+    "cache_hit": false,
+    "candidate_execution_completion_contract_sha256": "",
+    "candidate_predictions_sha256": "e5907313b6b24fd4068a0885531b84413e88626c654f9698528613129a5c5105",
+    "case_id": "full",
+    "completed_task_endpoint_contract": {
+      "canonical_completion_policy_id": "decoded_nms_xyxy_original_classaware_postfilter_v2",
+      "class_aware": true,
+      "class_id_semantics": "integer_model_label_index",
+      "contract_family": "decoded_nms",
+      "coordinate_space": "original_image_xyxy_pixels",
+      "endpoint_contract_complete": true,
+      "endpoint_contract_hash": "0153c6c2c964096ca2469182c8e2c0fd276d3b57166b737de759dbc39ca75dad",
+      "input_hw": [
+        640,
+        640
+      ],
+      "iou_threshold": 0.45,
+      "max_detections": 300,
+      "model_family": "yolo26",
+      "model_id": "yolo26s",
+      "nms_semantics_id": "class_aware_nms_xyxy_v1",
+      "output_endpoint_id": "detection:decoded_nms:comparison:0153c6c2c964096ca2469182c8e2c0fd276d3b57166b737de759dbc39ca75dad",
+      "output_record_format": "xyxy_score_class",
+      "schema": "onnx-splitpoint/completed-task-comparison-endpoint",
+      "schema_version": 2,
+      "score_semantics": "probability_0_1",
+      "score_threshold": 0.25,
+      "stage": "decoded_nms",
+      "task": "detection"
+    },
+    "completed_task_endpoint_contract_hash": "0153c6c2c964096ca2469182c8e2c0fd276d3b57166b737de759dbc39ca75dad",
+    "completed_task_output_endpoint_id": "detection:decoded_nms:comparison:0153c6c2c964096ca2469182c8e2c0fd276d3b57166b737de759dbc39ca75dad",
+    "configured_guardrails": [
+      "ap50",
+      "ap75"
+    ],
+    "cpu_reference_include_in_latency_fps_energy": false,
+    "cpu_reference_include_in_pareto": false,
+    "cpu_reference_include_in_ranking": false,
+    "cpu_reference_semantic_only": true,
+    "cpu_reference_store_manifest": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/quality_management/cpu_reference_store/c2/c29b66e21a3af5257895a65bb83e038769f5526a1107df73d5497558f176ef94/manifest.json",
+    "decision": "fail",
+    "decoder_contract_sha256": "6d05809d0a30951e5afa198528dc3c83b5ce135434c0f42fb2d5c5fb3bf71c7b",
+    "endpoint_contract_hash": "d0972f0eb8de8e451288e18e2d2cd3497cf48cd3a02b854522aca5f2ae417e73",
+    "eval_run_id": "",
+    "evaluation_fingerprint": "961b7f4b799b032e247629783ded10fbc4563a50979c06ec6f1b81b78aa7994a",
+    "execution_device": "management_cpu",
+    "execution_location": "central_management",
+    "execution_role": "",
+    "gpu_used": false,
+    "guardrail_contract_complete": true,
+    "guardrails": {
+      "ap50": {
+        "bootstrap_elapsed_s": 3.6857058529858477,
+        "bootstrap_engine": "management_process_pool:onnx_splitpoint_tool.quality_metrics:detection_quality_evaluator",
+        "bootstrap_repetitions": 0,
+        "bootstrap_repetitions_requested": 500,
+        "bootstrap_skipped_reason": "point_estimate_below_non_inferiority_margin",
+        "candidate": 0.5309947824621997,
+        "ci_high": 0.0013787870230798083,
+        "ci_low": 0.0013787870230798083,
+        "decision": "pass",
+        "delta": 0.0013787870230798083,
+        "margin": 0.01,
+        "metric": "ap50",
+        "n": 500,
+        "point_estimate_comparison_basis": "float_inclusive_threshold_tolerance",
+        "reference": 0.5296159954391199,
+        "status": "pass"
+      },
+      "ap75": {
+        "bootstrap_elapsed_s": 3.6857058529858477,
+        "bootstrap_engine": "management_process_pool:onnx_splitpoint_tool.quality_metrics:detection_quality_evaluator",
+        "bootstrap_repetitions": 0,
+        "bootstrap_repetitions_requested": 500,
+        "bootstrap_skipped_reason": "point_estimate_below_non_inferiority_margin",
+        "candidate": 0.4366680600689632,
+        "ci_high": -0.015021279456075454,
+        "ci_low": -0.015021279456075454,
+        "decision": "fail",
+        "delta": -0.015021279456075454,
+        "margin": 0.01,
+        "metric": "ap75",
+        "n": 500,
+        "point_estimate_comparison_basis": "float_inclusive_threshold_tolerance",
+        "reference": 0.45168933952503865,
+        "status": "fail"
+      }
+    },
+    "management_cpu_reference": {
+      "canonical_record_endpoint": "decoded_xyxy_score_class_detections",
+      "case_id": "b364",
+      "cpu_threads": 4,
+      "created_at": "2026-09-07T16:53:20+02:00",
+      "dataset_manifest_sha256": "4badbe579a8fd40a5e49104ab0d8138325041561cd6c1ffa2642b0f288d14e59",
+      "decoder_sha256": "3530ba75ff02472ef1e9034e470abb2b50450aaab6e84df09a72f57ec566a99e",
+      "duration_s": 131.580222,
+      "errors": [],
+      "execution_location": "central_management",
+      "image_ids_sha256": "b8ac329f5d3e7e201a3938d36c63bfe96a13c8a2be6e4fe6ddfab89cbc135e45",
+      "include_in_latency_fps_energy": false,
+      "include_in_pareto": false,
+      "include_in_ranking": false,
+      "model_id": "yolo26s",
+      "model_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+      "nms_sha256": "a5bf85464d71aa7580e8ec2ef9c500902e37ae861d57d64abc0dff1a7d2a941b",
+      "preprocessing_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+      "provider": "onnxruntime_cpu",
+      "quality_contract": {
+        "canonical_coordinate_space": "original_image_xyxy_pixels",
+        "canonical_record_endpoint": "decoded_xyxy_score_class_detections",
+        "contract_scope": "canonical_quality_record_semantics",
+        "dataset": {
+          "coordinate_space": "original_image_xyxy_pixels",
+          "ground_truth_sha256": "38a3ecae14dfcb4c2555e2f7377578cba90de63ed4a9f74f523f914ebce35a61",
+          "image_count": 500,
+          "image_ids_sha256": "b8ac329f5d3e7e201a3938d36c63bfe96a13c8a2be6e4fe6ddfab89cbc135e45",
+          "manifest_name": "manifest.json",
+          "manifest_sha256": "4badbe579a8fd40a5e49104ab0d8138325041561cd6c1ffa2642b0f288d14e59"
+        },
+        "decoder": {
+          "identity": {
+            "adapter_id": "vendored_yolo_harness_with_local_fallback_v1",
+            "adapter_location": "quality_record_host_postprocessor",
+            "canonical_record_endpoint": "decoded_xyxy_score_class_detections",
+            "confidence_threshold": 0.25,
+            "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+            "labels_sha256": "a2bb9c8218affdef450cc85951e6a5abc5e4d956cd37b1be3d04840ae0120c8e",
+            "schema": "onnx-splitpoint/detection-decoder-contract",
+            "schema_version": 1,
+            "source_endpoint_has_integrated_nms": null,
+            "source_endpoint_semantics": "bn6_detections",
+            "source_output_format": "bn6_detections",
+            "source_output_names": [
+              "output0"
+            ]
+          },
+          "sha256": "3530ba75ff02472ef1e9034e470abb2b50450aaab6e84df09a72f57ec566a99e"
+        },
+        "model": {
+          "artifact_name": "yolo26s.onnx",
+          "sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a"
+        },
+        "nms": {
+          "identity": {
+            "adapter_id": "vendored_yolo_harness_with_local_fallback_v1",
+            "detr_or_bn6_confidence_threshold": 0.25,
+            "detr_or_bn6_iou_threshold": 0.45,
+            "detr_or_bn6_max_detections": 300,
+            "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+            "iou_threshold": 0.45,
+            "max_detections": 300,
+            "schema": "onnx-splitpoint/detection-nms-contract",
+            "schema_version": 1
+          },
+          "sha256": "a5bf85464d71aa7580e8ec2ef9c500902e37ae861d57d64abc0dff1a7d2a941b"
+        },
+        "preprocessing": {
+          "identity": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "norm",
+            "input_domain": "uint8_0_255",
+            "letterbox": true,
+            "letterbox_pad_value": 114,
+            "pad_value": 114,
+            "placement": "floor_top_left_remainder_bottom_right",
+            "preprocess_mode": "letterbox",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "centered_letterbox",
+            "target_hw": [
+              640,
+              640
+            ],
+            "task": "detection"
+          },
+          "runtime_input_encoding": {
+            "image_scale": "norm",
+            "input_dtype": "float32",
+            "schema": "onnx-splitpoint/model-input-encoding-contract",
+            "schema_version": 1
+          },
+          "runtime_input_encoding_sha256": "4ceacc87aae48c1f60bb631b6d636603f1b5dabe4b84b6b812d58ba74ebde43e",
+          "sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e"
+        },
+        "quality_contract_sha256": "50f2305fe2470e0a3cd81c7882540a3d0fd702b11b4457ee23bacf808ab93a47",
+        "quality_record_endpoint": {
+          "identity": {
+            "canonical_record_endpoint": "decoded_xyxy_score_class_detections",
+            "decoder_contract_sha256": "3530ba75ff02472ef1e9034e470abb2b50450aaab6e84df09a72f57ec566a99e",
+            "implementation_runner_sha256": "162cfd5bbadb5b290f55fb24028f5bca8ac6990f83f98d745909c0f062860ad6",
+            "nms_contract_sha256": "a5bf85464d71aa7580e8ec2ef9c500902e37ae861d57d64abc0dff1a7d2a941b",
+            "schema": "onnx-splitpoint/detection-quality-record-endpoint-contract",
+            "schema_version": 1,
+            "vendored_endpoint_attestor_sha256": "45416300d9f26eaed4dea37cd9d3bbc518883028aae176e5148cadcee5da269e"
+          },
+          "sha256": "f30bc845395cc9902f4ad9c3733cf1870965e8a1fc24c65ab14d09b5ee517e28"
+        },
+        "quality_record_endpoint_contract_sha256": "f30bc845395cc9902f4ad9c3733cf1870965e8a1fc24c65ab14d09b5ee517e28",
+        "schema": "onnx-splitpoint/central-detection-quality-contract",
+        "schema_version": 1,
+        "source_endpoint_is_raw": false,
+        "source_endpoint_role": "canonical_reference_model_output",
+        "task": "detection"
+      },
+      "quality_contract_sha256": "50f2305fe2470e0a3cd81c7882540a3d0fd702b11b4457ee23bacf808ab93a47",
+      "record_count": 500,
+      "reference_immutable": true,
+      "reference_path": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/quality_management/references/yolo26s/by_source_contract/069eb93a61b4e6786e8f8999a07171acf317786b3a4dd733cc766890e3bc1987/canonical_cpu_reference.json",
+      "reference_sha256": "358d66686dea5c71760aa41e389583be037105530daa28443dbbbe775d5404a8",
+      "reference_size_bytes": 836927,
+      "reference_storage": "immutable_source_contract",
+      "return_code": 0,
+      "schema": "onnx-splitpoint/management-cpu-reference-job",
+      "schema_version": 1,
+      "semantic_reference_only": true,
+      "source_contract_sha256": "sha256:069eb93a61b4e6786e8f8999a07171acf317786b3a4dd733cc766890e3bc1987",
+      "source_endpoint_is_raw": false,
+      "status": "completed",
+      "stdout_path": "/home/kmika/Models/EvaluationRuns/complete_set_20260907_161614/quality_management/references/yolo26s/management_cpu_reference_stdout.txt",
+      "task": "detection"
+    },
+    "metric_gate_config": {
+      "guardrails": {
+        "ap50_margin": 0.01,
+        "ap75_margin": 0.01
+      },
+      "non_inferiority_margin": 0.01,
+      "primary_metric": "coco_ap_50_95"
+    },
+    "model_id": "yolo26s",
+    "model_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+    "n": 500,
+    "native_split_quality_binding": {},
+    "native_split_quality_binding_required": false,
+    "native_split_quality_binding_sha256": "",
+    "nms_contract_sha256": "d5f41a932a81f43d7b2a2723740cd88ee41ac3df9743c8b0e54cff6dd2857cec",
+    "performance_claims_emitted": null,
+    "policy_sha256": "58bf34c5760ed51e4ff35faee4055891caf624b2722cb375df9d419863efa9c4",
+    "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+    "primary": {
+      "bootstrap_elapsed_s": 3.6857058529858477,
+      "bootstrap_engine": "management_process_pool:onnx_splitpoint_tool.quality_metrics:detection_quality_evaluator",
+      "bootstrap_repetitions": 0,
+      "bootstrap_repetitions_requested": 500,
+      "bootstrap_skipped_reason": "point_estimate_below_non_inferiority_margin",
+      "candidate": 0.4013927141680281,
+      "ci_high": -0.006142091075082956,
+      "ci_low": -0.006142091075082956,
+      "decision": "pass",
+      "delta": -0.006142091075082956,
+      "margin": 0.01,
+      "metric": "coco_ap_50_95",
+      "n": 500,
+      "point_estimate_comparison_basis": "float_inclusive_threshold_tolerance",
+      "reference": 0.40753480524311103,
+      "status": "pass"
+    },
+    "producer_binding_eligible": false,
+    "quality_contract_sha256": "9afcdf5fa43f5f63564ba82b65f254c4f58aa421b79178d0ad12a0d980d2ee5c",
+    "quality_join_endpoint": "completed_task_decoded_nms",
+    "quality_record_endpoint_contract_sha256": "1c087d6c9104317383690049fa9649fcd2d5662cd49dc806936e89f0bee104ed",
+    "quality_result_contract_version": 2,
+    "reference_identity": "c29b66e21a3af5257895a65bb83e038769f5526a1107df73d5497558f176ef94",
+    "reference_predictions_sha256": "c241f9c79098479b6c2990e8718aa662d82b60994f252f8e33603e419627937d",
+    "request_id": "yolo26s:detection:full:58bf34c5760ed51e4ff35faee4055891caf624b2722cb375df9d419863efa9c4:sha256:21ea4b6916658370064f69483a11e2e31b5f60b058e681dd481aac6fbacdc517",
+    "request_identity": {
+      "artifact_provenance_binding_status": "not_required",
+      "artifact_provenance_claim_eligible": false,
+      "backend": "deepx_m1",
+      "case_id": "full",
+      "completed_task_endpoint_contract": {
+        "canonical_completion_policy_id": "decoded_nms_xyxy_original_classaware_postfilter_v2",
+        "class_aware": true,
+        "class_id_semantics": "integer_model_label_index",
+        "contract_family": "decoded_nms",
+        "coordinate_space": "original_image_xyxy_pixels",
+        "endpoint_contract_complete": true,
+        "endpoint_contract_hash": "0153c6c2c964096ca2469182c8e2c0fd276d3b57166b737de759dbc39ca75dad",
+        "input_hw": [
+          640,
+          640
+        ],
+        "iou_threshold": 0.45,
+        "max_detections": 300,
+        "model_family": "yolo26",
+        "model_id": "yolo26s",
+        "nms_semantics_id": "class_aware_nms_xyxy_v1",
+        "output_endpoint_id": "detection:decoded_nms:comparison:0153c6c2c964096ca2469182c8e2c0fd276d3b57166b737de759dbc39ca75dad",
+        "output_record_format": "xyxy_score_class",
+        "schema": "onnx-splitpoint/completed-task-comparison-endpoint",
+        "schema_version": 2,
+        "score_semantics": "probability_0_1",
+        "score_threshold": 0.25,
+        "stage": "decoded_nms",
+        "task": "detection"
+      },
+      "completed_task_endpoint_contract_hash": "0153c6c2c964096ca2469182c8e2c0fd276d3b57166b737de759dbc39ca75dad",
+      "completed_task_output_endpoint_id": "detection:decoded_nms:comparison:0153c6c2c964096ca2469182c8e2c0fd276d3b57166b737de759dbc39ca75dad",
+      "contract_family": "decoded_nms",
+      "decoder_contract_sha256": "6d05809d0a30951e5afa198528dc3c83b5ce135434c0f42fb2d5c5fb3bf71c7b",
+      "endpoint_contract_complete": true,
+      "endpoint_contract_hash": "d0972f0eb8de8e451288e18e2d2cd3497cf48cd3a02b854522aca5f2ae417e73",
+      "eval_run_id": "",
+      "execution_role": "",
+      "full_only_plan_identity": {},
+      "full_only_plan_identity_required": null,
+      "full_only_plan_identity_sha256": "",
+      "identity_errors": [],
+      "identity_valid": true,
+      "model_id": "yolo26s",
+      "model_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+      "nms_contract_sha256": "d5f41a932a81f43d7b2a2723740cd88ee41ac3df9743c8b0e54cff6dd2857cec",
+      "performance_claims_emitted": null,
+      "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+      "producer_binding_eligible": false,
+      "producer_identity_validated": false,
+      "quality_canary_id": "",
+      "quality_contract_sha256": "9afcdf5fa43f5f63564ba82b65f254c4f58aa421b79178d0ad12a0d980d2ee5c",
+      "quality_join_endpoint": "completed_task_decoded_nms",
+      "quality_record_endpoint_contract_sha256": "1c087d6c9104317383690049fa9649fcd2d5662cd49dc806936e89f0bee104ed",
+      "runtime_precision_identity": "deepx_dxnn_sha256:a3421a676a4243232d1c0296fe5024a98b12cdf8114e0cd90e6f19aa4648f59e",
+      "schema": "onnx-splitpoint/central-quality-request-identity",
+      "schema_version": 3,
+      "setup_id": "orin_nx_deepx_m1_01",
+      "source_model_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+      "source_request_sha256": "sha256:21ea4b6916658370064f69483a11e2e31b5f60b058e681dd481aac6fbacdc517",
+      "source_run_id": "deepx_m1_full",
+      "stage": "decoded_nms",
+      "task": "detection",
+      "task_quality_policy_sha256": "58bf34c5760ed51e4ff35faee4055891caf624b2722cb375df9d419863efa9c4",
+      "validation_dataset_manifest_sha256": "4badbe579a8fd40a5e49104ab0d8138325041561cd6c1ffa2642b0f288d14e59",
+      "validation_dataset_sha256": "4badbe579a8fd40a5e49104ab0d8138325041561cd6c1ffa2642b0f288d14e59",
+      "validation_ground_truth_sha256": "38a3ecae14dfcb4c2555e2f7377578cba90de63ed4a9f74f523f914ebce35a61",
+      "validation_image_ids_sha256": "b8ac329f5d3e7e201a3938d36c63bfe96a13c8a2be6e4fe6ddfab89cbc135e45",
+      "variant": "full"
+    },
+    "run_id": "deepx_m1_full",
+    "runtime_precision_identity": "deepx_dxnn_sha256:a3421a676a4243232d1c0296fe5024a98b12cdf8114e0cd90e6f19aa4648f59e",
+    "schema": "onnx-splitpoint/management-paired-quality-result",
+    "schema_version": 1,
+    "scientific_status": "fail",
+    "seed_schema": {
+      "image_count": 500,
+      "repetitions": 500,
+      "schema": "numpy-pcg64-index-plan-v1",
+      "seed": 20260710
+    },
+    "source_model_sha256": "4b8ff9dce56ca7058c53e1a08feca69a59f8504a8f2ef68c85c065ae837ce04a",
+    "source_request": "models/yolo26s/benchmark_results/quality_inputs/orin_nx_deepx_m1_01/results/deepx_m1_full/task_quality_inputs/full_request.json",
+    "source_request_sha256": "sha256:21ea4b6916658370064f69483a11e2e31b5f60b058e681dd481aac6fbacdc517",
+    "source_run_id": "deepx_m1_full",
+    "source_setup_id": "orin_nx_deepx_m1_01",
+    "status": "completed",
+    "status_name": "evaluate_paired_quality_uncertainty",
+    "task": "detection",
+    "task_quality_policy_sha256": "58bf34c5760ed51e4ff35faee4055891caf624b2722cb375df9d419863efa9c4",
+    "technical_status": "completed",
+    "validation_dataset_manifest_sha256": "4badbe579a8fd40a5e49104ab0d8138325041561cd6c1ffa2642b0f288d14e59",
+    "validation_dataset_sha256": "4badbe579a8fd40a5e49104ab0d8138325041561cd6c1ffa2642b0f288d14e59",
+    "validation_ground_truth_sha256": "38a3ecae14dfcb4c2555e2f7377578cba90de63ed4a9f74f523f914ebce35a61",
+    "validation_image_ids_sha256": "b8ac329f5d3e7e201a3938d36c63bfe96a13c8a2be6e4fe6ddfab89cbc135e45",
+    "variant": "full",
+    "worker_model": "process_pool"
+  }
+}

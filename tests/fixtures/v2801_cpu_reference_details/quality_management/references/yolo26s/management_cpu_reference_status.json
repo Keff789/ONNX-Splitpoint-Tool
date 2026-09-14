@@ -1,0 +1,24 @@
+{
+  "case_id": "b364",
+  "cpu_threads": 4,
+  "created_at": "2026-09-10T10:11:19+02:00",
+  "duration_s": 2.001544,
+  "errors": [
+    "quality_reference_not_emitted"
+  ],
+  "execution_location": "central_management",
+  "include_in_latency_fps_energy": false,
+  "include_in_pareto": false,
+  "include_in_ranking": false,
+  "model_id": "yolo26s",
+  "provider": "onnxruntime_cpu",
+  "reference_immutable": true,
+  "reference_storage": "immutable_source_contract",
+  "return_code": 1,
+  "schema": "onnx-splitpoint/management-cpu-reference-job",
+  "schema_version": 1,
+  "semantic_reference_only": true,
+  "source_contract_sha256": "sha256:39deb9872bc05f45d93c62d070edf51b46c16e37d96e7ad2a62b08f4059c6baf",
+  "status": "failed",
+  "stdout_path": "/home/kmika/Models/EvaluationRuns/biggerset_20260910_094202/quality_management/references/yolo26s/management_cpu_reference_stdout.txt"
+}

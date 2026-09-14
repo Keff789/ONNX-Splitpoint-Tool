@@ -1,0 +1,84 @@
+{
+  "artifacts": {
+    "cmake": {
+      "path": "/home/nx/native_fifo_evalsets/resnet_yolo26s_yolo7_20260729_214045/yolo26s/benchmark_set/native_pipeline/b038/hailo_to_trt/uint8_dequant_fp16/CMakeLists.txt",
+      "sha256": "a6734f5ccd8f08d2fabd2bdef17bbaa2a567e16a5e8e264ef0d0c128c582cae3"
+    },
+    "generated_cpp": {
+      "path": "/home/nx/native_fifo_evalsets/resnet_yolo26s_yolo7_20260729_214045/yolo26s/benchmark_set/native_pipeline/b038/hailo_to_trt/uint8_dequant_fp16/main.cpp",
+      "sha256": "99dfa223ac4aa4ec2500ad4b5e032396e26abec197b7dd20e647eff314aa22ae"
+    },
+    "native_executable": {
+      "path": "/usr/bin/python3.10",
+      "sha256": "7b13b22842816e9accd853f2c752aab43acf2ef6e16f48376b2f61c74c6c614b"
+    },
+    "prepared_input": {
+      "path": "/home/nx/native_fifo_evalsets/resnet_yolo26s_yolo7_20260729_214045/yolo26s/benchmark_set/native_pipeline/b038/hailo_to_trt/uint8_dequant_fp16/contract_artifacts/hailo8_prepared_input_python.bin",
+      "sha256": "df599577640019eafdfad855df15b2059fd26f2f05c034b2726d318873708d9b"
+    },
+    "python_executable": {
+      "path": "/usr/bin/python3.10",
+      "sha256": "7b13b22842816e9accd853f2c752aab43acf2ef6e16f48376b2f61c74c6c614b"
+    },
+    "semantic_boundary_manifest": {
+      "path": "/home/nx/native_fifo_evalsets/resnet_yolo26s_yolo7_20260729_214045/yolo26s/benchmark_set/native_pipeline/b038/hailo_to_trt/uint8_dequant_fp16/native_fifo_boundary/native_fifo_boundary_manifest.json",
+      "sha256": "ef178b3e58b2d84eabce7a118c31b80c132823bc96bdbef3204bf4318f8923cc",
+      "size_bytes": 2658
+    },
+    "semantic_output_manifest": {
+      "path": "/home/nx/native_fifo_evalsets/resnet_yolo26s_yolo7_20260729_214045/yolo26s/benchmark_set/native_pipeline/b038/hailo_to_trt/uint8_dequant_fp16/native_fifo_outputs/native_fifo_output_manifest.json",
+      "sha256": "c5b9c34e3add7ee4d54ca4124009f70fb30200b132efda89cda60f3ab8f5f077",
+      "size_bytes": 6087
+    }
+  },
+  "backend": "hailo8_to_trt",
+  "case": "b038",
+  "complete": true,
+  "fixture_provenance": {
+    "description": "Claim-relevant projection of the archived successful YOLO26s/b038 Hailo-8 Python command contract",
+    "source_contract_sha256": "dc73b798d80e13bda48df8f4625bf2d1a3838f96eac9c58912bc4f8c2e3f10dc",
+    "source_summary": "native_producer_combined_summary.json",
+    "source_summary_sha256": "a66d9fb108b17c305d4f8169e44150ba122819bf9035b9994f8803419bce22db"
+  },
+  "input_image": "/home/nx/native_fifo_evalsets/resnet_yolo26s_yolo7_20260729_214045/yolo26s/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+  "input_image_sha256": "a4cd7f45ac1ce27eaafb254b23af7c0b18a064be08870ceaaf03b2147f2ce550",
+  "interpreter_identity": {
+    "executable": "/usr/bin/python3.10",
+    "executable_sha256": "7b13b22842816e9accd853f2c752aab43acf2ef6e16f48376b2f61c74c6c614b",
+    "process_local_extra_sites": [
+      "/home/nx/hailo_py/lib/python3.10/site-packages"
+    ],
+    "resolved_executable": "/usr/bin/python3.10",
+    "runtime_mode": "system_tensorrt_with_process_local_hailo_sites"
+  },
+  "mixed_runtime_contract": {
+    "process_local_extra_sites": [
+      "/home/nx/hailo_py/lib/python3.10/site-packages"
+    ],
+    "python_executable": "/usr/bin/python3.10",
+    "resolved_python_executable": "/usr/bin/python3.10",
+    "runtime_mode": "system_tensorrt_with_process_local_hailo_sites",
+    "site_policy": "site.addsitedir_after_system_defaults",
+    "source_closure_ok": true,
+    "status": "ready"
+  },
+  "model": "yolo26s",
+  "native_executable": "/usr/bin/python3.10",
+  "native_executable_sha256": "7b13b22842816e9accd853f2c752aab43acf2ef6e16f48376b2f61c74c6c614b",
+  "python_executable": "/usr/bin/python3.10",
+  "runner": "scripts/native_hailo_trt_fifo_from_benchmarkset.py",
+  "runner_sha256": "36234b829afdf3f8eede6ef18875ebfb70f05fa8a97b3f03acf37fbe42983f15",
+  "runtime_options": {
+    "energy_prepared_feed_capable": true,
+    "mixed_runtime_site_policy": "site.addsitedir_after_system_defaults",
+    "prepared_input_bound": true,
+    "process_local_extra_sites": [
+      "/home/nx/hailo_py/lib/python3.10/site-packages"
+    ],
+    "producer_impl": "hailo8_python_vstreams_fifo",
+    "task": "detection"
+  },
+  "schema": "onnx-splitpoint/native-command-contract",
+  "schema_version": 1,
+  "setup_id": "orin_nx_hailo8_01"
+}

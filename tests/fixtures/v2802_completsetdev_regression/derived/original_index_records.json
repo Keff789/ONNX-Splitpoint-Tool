@@ -1,0 +1,130 @@
+{
+  "artifacts": [
+    {
+      "created_at": "2026-09-10T15:33:31+02:00",
+      "kind": "terminal_evidence",
+      "model_id": null,
+      "path": "quality_management/references/mobilenet_v3_large/management_cpu_reference_status.json",
+      "producer_stage": "workflow_terminal_index_closure",
+      "sha256": "sha256:3a83a47cee0e6d72d5e037c7ffc122b916588189b0de14fab3830e99f4b10074",
+      "size_bytes": 2616
+    },
+    {
+      "created_at": "2026-09-10T15:33:31+02:00",
+      "kind": "terminal_evidence",
+      "model_id": null,
+      "path": "quality_management/references/mobilenet_v3_large/management_cpu_reference_stdout.txt",
+      "producer_stage": "workflow_terminal_index_closure",
+      "sha256": "sha256:1fd4929625b041a72a9c45bc571f4e467b2aefc05809c30ba08f90d669426a8c",
+      "size_bytes": 1514
+    },
+    {
+      "created_at": "2026-09-10T15:33:31+02:00",
+      "kind": "terminal_evidence",
+      "model_id": null,
+      "path": "quality_management/references/regnet_x_1_6gf/management_cpu_reference_status.json",
+      "producer_stage": "workflow_terminal_index_closure",
+      "sha256": "sha256:3e584b462547a77eca5f63bb4d47a27425a29cfdd63232f653071f01bcb8a63f",
+      "size_bytes": 2592
+    },
+    {
+      "created_at": "2026-09-10T15:33:31+02:00",
+      "kind": "terminal_evidence",
+      "model_id": null,
+      "path": "quality_management/references/regnet_x_1_6gf/management_cpu_reference_stdout.txt",
+      "producer_stage": "workflow_terminal_index_closure",
+      "sha256": "sha256:1e58b91b732ef8fa42d78a29021f085f7d36f9073de3a39111a41f1c0728a5b3",
+      "size_bytes": 1498
+    },
+    {
+      "created_at": "2026-09-10T15:33:31+02:00",
+      "kind": "terminal_evidence",
+      "model_id": null,
+      "path": "quality_management/references/resnet50/management_cpu_reference_status.json",
+      "producer_stage": "workflow_terminal_index_closure",
+      "sha256": "sha256:949928f045c9da053fba4888cfe0b9ff4555a637291a797fbf426e12b1452537",
+      "size_bytes": 2556
+    },
+    {
+      "created_at": "2026-09-10T15:33:31+02:00",
+      "kind": "terminal_evidence",
+      "model_id": null,
+      "path": "quality_management/references/resnet50/management_cpu_reference_stdout.txt",
+      "producer_stage": "workflow_terminal_index_closure",
+      "sha256": "sha256:6efd6a9387418a9febe61e614e4bce70c021093f403473648c04d8b36ad66231",
+      "size_bytes": 1474
+    },
+    {
+      "created_at": "2026-09-10T15:33:31+02:00",
+      "kind": "terminal_evidence",
+      "model_id": null,
+      "path": "quality_management/references/yolo11l/management_cpu_reference_status.json",
+      "producer_stage": "workflow_terminal_index_closure",
+      "sha256": "sha256:bfe656d298f636e758555ad3d9a4f5f973c98b71a2213f7ee10e0fa9f5654b38",
+      "size_bytes": 2550
+    },
+    {
+      "created_at": "2026-09-10T15:33:31+02:00",
+      "kind": "terminal_evidence",
+      "model_id": null,
+      "path": "quality_management/references/yolo11l/management_cpu_reference_stdout.txt",
+      "producer_stage": "workflow_terminal_index_closure",
+      "sha256": "sha256:34bd210a615e036eb7004011c3f85bffcc0bec136e036e6caabf0997a88a4d99",
+      "size_bytes": 1470
+    },
+    {
+      "created_at": "2026-09-10T15:33:31+02:00",
+      "kind": "terminal_evidence",
+      "model_id": null,
+      "path": "quality_management/references/yolo26m/management_cpu_reference_status.json",
+      "producer_stage": "workflow_terminal_index_closure",
+      "sha256": "sha256:c2675b445c106355d6f814a003eeaa84ff787c2ba59e395035dc0cdeb10802a5",
+      "size_bytes": 2550
+    },
+    {
+      "created_at": "2026-09-10T15:33:31+02:00",
+      "kind": "terminal_evidence",
+      "model_id": null,
+      "path": "quality_management/references/yolo26m/management_cpu_reference_stdout.txt",
+      "producer_stage": "workflow_terminal_index_closure",
+      "sha256": "sha256:1eddb29e3a736c803a59bd40a4d4cdcc65ccc6109f99f58398163df9fe093747",
+      "size_bytes": 1470
+    },
+    {
+      "created_at": "2026-09-10T15:33:31+02:00",
+      "kind": "terminal_evidence",
+      "model_id": null,
+      "path": "quality_management/references/yolo26s/management_cpu_reference_status.json",
+      "producer_stage": "workflow_terminal_index_closure",
+      "sha256": "sha256:c5e73005577715e3d1ce3ffb55ba27aa1d7c3c0b0d88dbd577efc6644bac974c",
+      "size_bytes": 2550
+    },
+    {
+      "created_at": "2026-09-10T15:33:31+02:00",
+      "kind": "terminal_evidence",
+      "model_id": null,
+      "path": "quality_management/references/yolo26s/management_cpu_reference_stdout.txt",
+      "producer_stage": "workflow_terminal_index_closure",
+      "sha256": "sha256:3282e0642cd6eaaf3f6df430e1d8bae585606c980d9f8505285bc1071126ff8b",
+      "size_bytes": 1470
+    },
+    {
+      "created_at": "2026-09-10T15:33:31+02:00",
+      "kind": "terminal_evidence",
+      "model_id": null,
+      "path": "quality_management/references/yolov7_paper/management_cpu_reference_status.json",
+      "producer_stage": "workflow_terminal_index_closure",
+      "sha256": "sha256:e849fea1258cb6b1362b166934aeb20473c2fb96234f29badb12af9cf2aa1b4e",
+      "size_bytes": 2580
+    },
+    {
+      "created_at": "2026-09-10T15:33:31+02:00",
+      "kind": "terminal_evidence",
+      "model_id": null,
+      "path": "quality_management/references/yolov7_paper/management_cpu_reference_stdout.txt",
+      "producer_stage": "workflow_terminal_index_closure",
+      "sha256": "sha256:512e6fe05a3612a641d1d71792af10e0d90cd797c493bd275ba656b73e4c35f9",
+      "size_bytes": 1490
+    }
+  ]
+}

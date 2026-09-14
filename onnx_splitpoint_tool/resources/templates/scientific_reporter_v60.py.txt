@@ -1,0 +1,1054 @@
+"""Standalone v60 scientific reporter vendored into generated BenchmarkSets.
+
+The module intentionally has no dependency on the main package.  It consumes
+runtime rows plus the prospective ranking_predictions_frozen.csv artefact that
+was copied into the suite before execution.
+"""
+from __future__ import annotations
+
+import csv
+import hashlib
+import json
+import math
+import shutil
+import subprocess
+from collections import Counter, defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+
+METHOD_ORDER = (
+    "cut_bytes_only",
+    "weighted_score",
+    "cycle_time_no_handover",
+    "cycle_time_with_handover",
+    "onnx_real_boundary_hardware_aware",
+)
+METHOD_LABELS = {
+    "cut_bytes_only": "Cut bytes only",
+    "weighted_score": "Weighted score",
+    "cycle_time_no_handover": "Cycle time without handover",
+    "cycle_time_with_handover": "Cycle time with runner/direction handover",
+    "onnx_real_boundary_hardware_aware": "Hardware-aware ONNX-boundary baseline",
+}
+
+
+def _normalize_evaluation_role(value: Any) -> str:
+    """Canonicalize the legacy holdout spelling without package imports."""
+    role = str(value or "").strip().lower().replace("-", "_")
+    return "confirmatory_holdout" if role == "holdout" else role
+
+
+def _is_confirmatory_holdout(value: Any) -> bool:
+    return _normalize_evaluation_role(value) == "confirmatory_holdout"
+
+
+def _campaign_claim_scope(plan: Mapping[str, Any]) -> Dict[str, Any]:
+    campaign = plan.get("campaign") if isinstance(plan.get("campaign"), Mapping) else {}
+    if "claim_scope" in campaign:
+        scope = str(campaign.get("claim_scope") or "").strip()
+        return {
+            "scope": scope,
+            "valid": scope in {"evaluated_matrix", "ranking_generalization"},
+            "explicit": True,
+            "source": "campaign.claim_scope",
+        }
+    ranking = plan.get("ranking_validation") if isinstance(plan.get("ranking_validation"), Mapping) else {}
+    suite = plan.get("model_suite") if isinstance(plan.get("model_suite"), Mapping) else {}
+    has_holdout = any(
+        _is_confirmatory_holdout(item.get("evaluation_role"))
+        for tier in ("primary", "reserve")
+        for item in list(suite.get(tier) or [])
+        if isinstance(item, Mapping) and item.get("enabled") is not False
+    )
+    strict = bool(ranking.get("enabled") or has_holdout)
+    return {
+        "scope": "ranking_generalization" if strict else "evaluated_matrix",
+        "valid": True,
+        "explicit": False,
+        "source": "legacy_ranking_or_holdout_intent" if strict else "legacy_evaluated_matrix_intent",
+    }
+
+
+def _f(value: Any) -> Optional[float]:
+    try:
+        if value in (None, ""):
+            return None
+        number = float(value)
+        return number if math.isfinite(number) else None
+    except Exception:
+        return None
+
+
+def _b(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if value in (None, ""):
+        return None
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "ok", "pass", "passed", "eligible", "claim_ok", "valid"}:
+        return True
+    if text in {"0", "false", "no", "fail", "failed", "invalid", "error"}:
+        return False
+    return None
+
+
+def _first(row: Mapping[str, Any], keys: Sequence[str]) -> Any:
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _sha256(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return "sha256:" + digest.hexdigest()
+
+
+def _normalize_sha256(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text.startswith("sha256:"):
+        text = text.split(":", 1)[1]
+    return text
+
+
+def _same_sha256(left: Any, right: Any) -> bool:
+    a = _normalize_sha256(left)
+    b = _normalize_sha256(right)
+    return bool(a and b and a == b)
+
+
+def _sha256_payload(payload: Any) -> str:
+    # Keep this byte-for-byte compatible with
+    # workflow.artifacts.sha256_json/stable_json_dumps.  The standalone
+    # reporter verifies producer-created universe and approval payload hashes,
+    # so using a different (compact) JSON encoding would reject intact freezes.
+    raw = json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def _read_json(path: Path) -> Dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return dict(value or {}) if isinstance(value, Mapping) else {}
+    except Exception:
+        return {}
+
+
+def _read_csv(path: Path) -> List[Dict[str, Any]]:
+    if not path.is_file():
+        return []
+    try:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            return [dict(row) for row in csv.DictReader(handle)]
+    except Exception:
+        return []
+
+
+def _write_json(path: Path, payload: Any) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return path
+
+
+def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields: List[str] = []
+    for row in rows:
+        for key in row:
+            if str(key) not in fields:
+                fields.append(str(key))
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(dict(row))
+    return path
+
+
+def _slug(value: Any) -> str:
+    import re
+    return re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
+
+
+def _backend(value: Any) -> str:
+    text = _slug(value)
+    if "tensorrt" in text or text in {"trt", "ort_tensorrt"}:
+        return "tensorrt"
+    if "hailo10h" in text:
+        return "hailo10h"
+    if "hailo10" in text:
+        return "hailo10"
+    if "hailo8" in text or text == "hailo":
+        return "hailo8"
+    if "deepx" in text or text in {"dx", "dx_m1", "dxm1"}:
+        return "deepx_m1"
+    if text in {"ort_cuda", "cuda_ort"}:
+        return "cuda"
+    if text in {"ort_cpu", "cpu_ort"}:
+        return "cpu"
+    return text
+
+
+def _direction(row: Mapping[str, Any]) -> str:
+    raw = _slug(row.get("direction") or row.get("backend") or row.get("run_id"))
+    if "_to_" in raw:
+        left, right = raw.split("_to_", 1)
+        return f"{_backend(left)}_to_{_backend(right)}"
+    left = _backend(row.get("stage1_provider") or row.get("stage1"))
+    right = _backend(row.get("stage2_provider") or row.get("stage2"))
+    return f"{left}_to_{right}" if left and right and left != right else raw
+
+
+def _runner(row: Mapping[str, Any]) -> str:
+    text = " ".join(str(row.get(key) or "").lower() for key in ("runner_regime", "runner", "run_id", "backend", "source"))
+    return "native_fifo" if "native" in text or "fifo" in text else "generic"
+
+
+def _is_split(row: Mapping[str, Any]) -> bool:
+    variant = str(row.get("variant") or "").lower()
+    if variant in {"split", "composed", "native_split", "native_producer"}:
+        return True
+    direction = _direction(row)
+    return "_to_" in direction
+
+
+def _task_gate(row: Mapping[str, Any], plan: Mapping[str, Any]) -> Dict[str, Any]:
+    block = row.get("task_quality_gate") if isinstance(row.get("task_quality_gate"), Mapping) else {}
+    profile = plan.get("quality_gate") if isinstance(plan.get("quality_gate"), Mapping) else {}
+    primary = block.get("primary") if isinstance(block.get("primary"), Mapping) else block
+    metrics = block.get("metrics") if isinstance(block.get("metrics"), Mapping) else {}
+    tier = str(block.get("tier") or row.get("accuracy_gate_tier") or profile.get("dataset_tier") or "screening")
+    status = str(block.get("status") or primary.get("status") or row.get("gate_status") or "")
+    decision = str(block.get("decision") or primary.get("decision") or row.get("accuracy_gate_decision") or "")
+    metric = primary.get("metric") or block.get("primary_metric") or block.get("metric") or row.get("accuracy_gate_metric")
+    candidate = primary.get("candidate", block.get("candidate", metrics.get("candidate")))
+    reference = primary.get("reference", block.get("reference", metrics.get("reference")))
+    delta = primary.get("delta", block.get("delta", row.get("accuracy_gate_delta")))
+    ci_low = primary.get("ci_low", block.get("ci_low", row.get("accuracy_gate_ci_low")))
+    ci_high = primary.get("ci_high", block.get("ci_high", row.get("accuracy_gate_ci_high")))
+    margin = primary.get("margin", block.get("margin", block.get("threshold", row.get("accuracy_gate_threshold"))))
+    source = "runtime_paired_bootstrap" if block else "legacy_point_estimate"
+    if not status:
+        status = "legacy_point_estimate_only" if any(value not in (None, "") for value in (candidate, delta)) else "unavailable"
+    if not decision:
+        decision = "inconclusive" if status != "pass" else "pass"
+    trigger_reasons: List[str] = []
+    if decision == "fail" and block:
+        def _component_reason(prefix: str, component: Mapping[str, Any]) -> str:
+            metric_name = str(component.get("metric") or prefix)
+            explicit = str(component.get("failure_reason") or component.get("reason") or "").strip()
+            skipped = str(component.get("bootstrap_skipped_reason") or "").strip()
+            delta_value = _f(component.get("delta"))
+            ci_low_value = _f(component.get("ci_low"))
+            margin_value = _f(component.get("margin"))
+            if explicit:
+                cause = explicit
+            elif skipped == "point_estimate_below_non_inferiority_margin":
+                cause = skipped
+            elif delta_value is not None and margin_value is not None and delta_value < -margin_value:
+                cause = "point_estimate_below_non_inferiority_margin"
+            elif ci_low_value is not None and margin_value is not None and ci_low_value < -margin_value:
+                cause = "confidence_bound_below_non_inferiority_margin"
+            else:
+                cause = skipped or "decision_fail"
+            return f"{prefix}:{metric_name}:{cause}"
+        if str(primary.get("decision") or primary.get("status") or "").lower() in {"fail", "failed"}:
+            trigger_reasons.append(_component_reason("primary", primary))
+        guardrails = block.get("guardrails") if isinstance(block.get("guardrails"), Mapping) else {}
+        for guardrail_name, guardrail in sorted(guardrails.items(), key=lambda item: str(item[0])):
+            if isinstance(guardrail, Mapping) and str(guardrail.get("decision") or guardrail.get("status") or "").lower() in {"fail", "failed"}:
+                trigger_reasons.append(_component_reason(f"guardrail:{guardrail_name}", guardrail))
+        if not trigger_reasons:
+            trigger_reasons.append(str(block.get("failure_reason") or block.get("reason") or "runtime_gate_declared_fail_without_component_reason"))
+    final_pass = bool(tier == "final" and decision == "pass" and status == "pass")
+    return {
+        "tier": tier,
+        "status": status,
+        "decision": decision,
+        "metric": metric,
+        "candidate": candidate,
+        "reference": reference,
+        "delta": delta,
+        "ci_low": ci_low,
+        "ci_high": ci_high,
+        "margin": margin,
+        "bootstrap_repetitions": primary.get("bootstrap_repetitions"),
+        "bootstrap_skipped_reason": primary.get(
+            "bootstrap_skipped_reason"
+        ),
+        "source": source,
+        "trigger_reason": ";".join(trigger_reasons),
+        "trigger_reasons": trigger_reasons,
+        "final_pass": final_pass,
+    }
+
+
+def _scientific_rows(rows_by_tag: Mapping[str, Sequence[Mapping[str, Any]]], plan: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    fallback_model = str(plan.get("model_id") or plan.get("model") or "model")
+    output: List[Dict[str, Any]] = []
+    for tag, rows in sorted(rows_by_tag.items()):
+        for source in rows:
+            row = dict(source)
+            gate = _task_gate(row, plan)
+            try:
+                bootstrap_repetitions = int(
+                    gate.get("bootstrap_repetitions")
+                )
+            except (TypeError, ValueError):
+                bootstrap_repetitions = None
+            bootstrap_skipped_reason = str(
+                gate.get("bootstrap_skipped_reason") or ""
+            ).strip()
+            bound_computed = bool(
+                bootstrap_repetitions is not None
+                and bootstrap_repetitions > 0
+                and gate.get("ci_low") not in (None, "")
+                and not bootstrap_skipped_reason
+            )
+            bound_evidence = (
+                "computed_95_percent_lcb"
+                if bound_computed
+                else "not_computed:"
+                + (
+                    bootstrap_skipped_reason
+                    or (
+                        "zero_bootstrap_repetitions"
+                        if bootstrap_repetitions == 0
+                        else "bootstrap_computation_not_attested"
+                    )
+                )
+            )
+            eligibility = row.get("row_eligibility") if isinstance(row.get("row_eligibility"), Mapping) else {}
+            runtime = _b(_first(row, ("runtime_pass", "runtime_executable", "runtime_ok", "run_ok")))
+            contract = _b(_first(row, ("io_contract_pass", "contract_consistent", "interface_contract_pass", "semantic_validation_passed", "final_pass_all")))
+            base_ok = runtime is not False and contract is not False
+            explicit_ranking = _b(eligibility.get("ranking_eligible", row.get("ranking_eligible")))
+            ranking_eligible = explicit_ranking is True or (explicit_ranking is None and base_ok and gate["final_pass"])
+            explicit_performance = _b(eligibility.get("performance_eligible", row.get("performance_eligible")))
+            performance_eligible = explicit_performance is True or (explicit_performance is None and base_ok and gate["final_pass"])
+            explicit_energy = _b(eligibility.get("energy_eligible", row.get("energy_eligible")))
+            energy_trace = _b(_first(row, ("energy_trace_pass", "energy_valid", "trace_pass")))
+            energy_eligible = explicit_energy is True or (explicit_energy is None and performance_eligible and energy_trace is True)
+            host_normalization_role = str(row.get("host_normalization_role") or "none").strip().lower()
+            energy_comparison_ready = _b(row.get("energy_comparison_claim_ready")) is True
+            if host_normalization_role == "tensorrt_full" and not energy_comparison_ready:
+                energy_eligible = False
+            effective_power = _f(
+                row.get("comparison_average_power_w")
+                if host_normalization_role == "tensorrt_full"
+                else _first(row, ("energy_streaming_avg_power_w", "avg_power_w"))
+            )
+            effective_energy_per_work = _f(
+                row.get("comparison_energy_per_work_j")
+                if host_normalization_role == "tensorrt_full"
+                else _first(row, ("row_energy_streaming_j_per_frame", "row_energy_latency_j_per_inference", "energy_j_per_frame"))
+            )
+            cycle = _f(_first(row, ("pipeline_cycle_selected_ms", "pipeline_cycle_with_transfer_ms", "composed_mean_ms", "total_latency_ms")))
+            throughput = _f(_first(row, ("throughput_primary_fps", "pipeline_fps_selected", "throughput_fps_makespan", "full_backend_throughput_fps")))
+            if throughput is None and cycle not in (None, 0):
+                throughput = 1000.0 / float(cycle)
+            exclusion = str(eligibility.get("exclusion_reason") or row.get("exclusion_reason") or "")
+            if not exclusion and not gate["final_pass"]:
+                exclusion = "task_quality_not_final_pass"
+            if host_normalization_role == "tensorrt_full" and not energy_comparison_ready:
+                exclusion = ";".join(
+                    value for value in (
+                        exclusion,
+                        str(row.get("energy_comparison_status") or "required_tensorrt_full_normalization_unavailable"),
+                    ) if value
+                )
+            model_id = str(
+                row.get("model_id")
+                or row.get("model")
+                or row.get("model_name")
+                or fallback_model
+            ).strip()
+            if model_id.lower() == "model":
+                model_id = str(row.get("model") or row.get("model_name") or "unknown_model").strip()
+            model_identity_resolved = bool(model_id and model_id.lower() not in {"model", "unknown_model"})
+            diagnostic_only = _b(row.get("diagnostic_only")) is True
+            declared_claim_eligible = _b(row.get("claim_eligible"))
+            if not model_identity_resolved or diagnostic_only or declared_claim_eligible is False:
+                ranking_eligible = False
+                performance_eligible = False
+                energy_eligible = False
+            task = str(
+                row.get("benchmark_task")
+                or row.get("task")
+                or row.get("benchmark_task_used")
+                or row.get("benchmark_task_requested")
+                or plan.get("benchmark_task")
+                or ("detection" if "yolo" in model_id.lower() else "classification")
+            ).strip().lower()
+            if task not in {"classification", "detection"}:
+                task = "detection" if any(token in model_id.lower() for token in ("yolo", "detr")) else "classification"
+            run_id = str(row.get("run_id") or row.get("source_tag") or row.get("backend") or tag).strip()
+            output.append({
+                "model_id": model_id,
+                "model_identity_resolved": model_identity_resolved,
+                "setup_id": row.get("setup_id") or row.get("energy_setup_id"),
+                "source_run_id": row.get("source_run_id") or row.get("run_id"),
+                "source_release": row.get("release") or row.get("tool_release") or row.get("tool_version"),
+                "diagnostic_only": diagnostic_only,
+                "declared_claim_eligible": declared_claim_eligible,
+                "task": task,
+                "evaluation_role": str(row.get("evaluation_role") or plan.get("evaluation_role") or "development"),
+                "case_id": str(row.get("case_id") or row.get("case_dir") or ""),
+                "backend": str(row.get("run_id") or row.get("backend") or tag),
+                "run_id": run_id,
+                "variant": "split" if _is_split(row) else "full",
+                "direction": _direction(row),
+                "runner_regime": _runner(row),
+                "buildable": _b(_first(row, ("build_pass", "buildable", "compile_ok", "build_ok"))),
+                "runtime_executable": runtime,
+                "contract_consistent": contract,
+                "task_quality_tier": gate["tier"],
+                "task_quality_status": gate["status"],
+                "task_quality_decision": gate["decision"],
+                "task_quality_gate_reason": gate["trigger_reason"],
+                "task_quality_gate_reasons": gate["trigger_reasons"],
+                "task_quality_metric": gate["metric"],
+                "task_quality_candidate": gate["candidate"],
+                "task_quality_reference": gate["reference"],
+                "task_quality_delta": gate["delta"],
+                "task_quality_ci_low": gate["ci_low"],
+                "task_quality_ci_high": gate["ci_high"],
+                "task_quality_margin": gate["margin"],
+                "task_quality_bootstrap_repetitions": (
+                    bootstrap_repetitions
+                ),
+                "task_quality_bootstrap_skipped_reason": (
+                    bootstrap_skipped_reason
+                ),
+                "task_quality_ci_computed": bound_computed,
+                "task_quality_bound_value": (
+                    gate["ci_low"] if bound_computed else None
+                ),
+                "task_quality_bound_evidence": bound_evidence,
+                "task_quality_source": gate["source"],
+                "ranking_eligible": ranking_eligible,
+                "performance_eligible": performance_eligible,
+                "energy_eligible": energy_eligible,
+                "pareto_eligible": bool(
+                    model_identity_resolved
+                    and not diagnostic_only
+                    and declared_claim_eligible is not False
+                    and _b(eligibility.get("pareto_eligible", row.get("pareto_eligible"))) is True
+                ),
+                "exclusion_reason": exclusion,
+                "latency_ms": _f(_first(row, ("split_latency_e2e_ms", "total_latency_ms", "full_e2e_latency_ms"))),
+                "cycle_ms": cycle,
+                "throughput_fps": throughput,
+                "average_power_w": effective_power,
+                "raw_average_power_w": _f(_first(row, ("energy_streaming_avg_power_w", "avg_power_w"))),
+                "host_normalized_average_power_est_w": _f(row.get("host_normalized_average_power_est_w") or row.get("host_normalized_streaming_avg_power_est_w")),
+                "average_power_ci_low_w": _f(_first(row, ("energy_streaming_avg_power_w_ci_low", "avg_power_w_ci_low"))),
+                "average_power_ci_high_w": _f(_first(row, ("energy_streaming_avg_power_w_ci_high", "avg_power_w_ci_high"))),
+                "energy_per_work_j": effective_energy_per_work,
+                "raw_energy_per_work_j": _f(_first(row, ("row_energy_streaming_j_per_frame", "row_energy_latency_j_per_inference", "energy_j_per_frame"))),
+                "host_normalized_energy_per_work_est_j": _f(row.get("host_normalized_energy_per_work_est_j") or row.get("row_host_normalized_energy_streaming_j_per_frame_est") or row.get("row_host_normalized_energy_latency_j_per_inference_est")),
+                "energy_comparison_basis": row.get("energy_comparison_basis"),
+                "energy_comparison_status": row.get("energy_comparison_status"),
+                "energy_per_work_sample_stddev_j": _f(row.get("comparison_energy_per_work_sample_stddev_j") if host_normalization_role == "tensorrt_full" else _first(row, ("row_energy_streaming_j_per_frame_sample_stddev", "row_energy_latency_j_per_inference_sample_stddev"))),
+                "energy_per_work_ci_low_j": _f(row.get("comparison_energy_per_work_ci_low_j") if host_normalization_role == "tensorrt_full" else _first(row, ("row_energy_streaming_j_per_frame_ci_low", "row_energy_latency_j_per_inference_ci_low"))),
+                "energy_per_work_ci_high_j": _f(row.get("comparison_energy_per_work_ci_high_j") if host_normalization_role == "tensorrt_full" else _first(row, ("row_energy_streaming_j_per_frame_ci_high", "row_energy_latency_j_per_inference_ci_high"))),
+                "energy_repeat_n": _first(row, ("energy_streaming_repeat_n", "energy_latency_repeat_n", "energy_valid_window_count")),
+                "energy_confidence_level": _f(row.get("energy_confidence_level")),
+                "energy_scope": _first(row, ("energy_physical_scope", "measurement_scope", "energy_scope")),
+                "energy_window": _first(row, ("energy_window_label", "energy_measurement_window", "energy_window", "window_type")),
+            })
+    return output
+
+
+def _ranks(values: Sequence[float]) -> List[float]:
+    order = sorted(range(len(values)), key=lambda index: values[index])
+    output = [0.0] * len(values)
+    position = 0
+    while position < len(order):
+        end = position + 1
+        while end < len(order) and values[order[end]] == values[order[position]]:
+            end += 1
+        rank = (position + 1 + end) / 2.0
+        for index in order[position:end]:
+            output[index] = rank
+        position = end
+    return output
+
+
+def _pearson(x: Sequence[float], y: Sequence[float]) -> Optional[float]:
+    if len(x) != len(y) or len(x) < 2:
+        return None
+    mx, my = sum(x) / len(x), sum(y) / len(y)
+    dx, dy = [value - mx for value in x], [value - my for value in y]
+    denominator = math.sqrt(sum(value * value for value in dx) * sum(value * value for value in dy))
+    return sum(a * b for a, b in zip(dx, dy)) / denominator if denominator > 0 else None
+
+
+def _spearman(x: Sequence[float], y: Sequence[float]) -> Optional[float]:
+    return _pearson(_ranks(x), _ranks(y))
+
+
+def _kendall(x: Sequence[float], y: Sequence[float]) -> Optional[float]:
+    if len(x) != len(y) or len(x) < 2:
+        return None
+    concordant = discordant = ties_x = ties_y = 0
+    for i in range(len(x)):
+        for j in range(i + 1, len(x)):
+            sx = (x[i] > x[j]) - (x[i] < x[j])
+            sy = (y[i] > y[j]) - (y[i] < y[j])
+            if sx == 0 and sy == 0:
+                continue
+            if sx == 0:
+                ties_x += 1
+            elif sy == 0:
+                ties_y += 1
+            elif sx == sy:
+                concordant += 1
+            else:
+                discordant += 1
+    denominator = math.sqrt((concordant + discordant + ties_x) * (concordant + discordant + ties_y))
+    return (concordant - discordant) / denominator if denominator > 0 else None
+
+
+def _mean(values: Iterable[Optional[float]]) -> Optional[float]:
+    valid = [float(value) for value in values if value is not None and math.isfinite(float(value))]
+    return sum(valid) / len(valid) if valid else None
+
+
+def _median(values: Iterable[Optional[float]]) -> Optional[float]:
+    valid = sorted(float(value) for value in values if value is not None and math.isfinite(float(value)))
+    if not valid:
+        return None
+    count = len(valid)
+    return valid[count // 2] if count % 2 else (valid[count // 2 - 1] + valid[count // 2]) / 2.0
+
+
+def _freeze(root: Path, plan: Mapping[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, Any]], bool, Dict[str, Any]]:
+    manifest = _read_json(root / "prediction_freeze_manifest.json")
+    prediction = root / str(manifest.get("prediction_json") or "prediction.json")
+    base_csv = root / str(manifest.get("prediction_csv") or "predictions_frozen.csv")
+    method_csv = root / str(manifest.get("ranking_prediction_csv") or "ranking_predictions_frozen.csv")
+    universe_path = root / str(manifest.get("candidate_universe_manifest") or "candidate_universe_manifest.json")
+    universe = _read_json(universe_path)
+    universe_declared = bool(manifest.get("candidate_universe_manifest") or manifest.get("candidate_universe_sha256"))
+    freeze_model_id = str(manifest.get("model_id") or plan.get("model_id") or "").strip()
+    suite = plan.get("model_suite") if isinstance(plan.get("model_suite"), Mapping) else {}
+    plan_holdout = _is_confirmatory_holdout(plan.get("evaluation_role"))
+    for tier in ("primary", "reserve"):
+        for item in list(suite.get(tier) or []):
+            if not isinstance(item, Mapping) or item.get("enabled") is False:
+                continue
+            item_id = str(item.get("id") or "").strip()
+            if freeze_model_id and item_id != freeze_model_id:
+                continue
+            if _is_confirmatory_holdout(item.get("evaluation_role")):
+                plan_holdout = True
+                break
+        if plan_holdout:
+            break
+    ranking_cfg = plan.get("ranking_validation") if isinstance(plan.get("ranking_validation"), Mapping) else {}
+    universe_required = bool(
+        _is_confirmatory_holdout(manifest.get("evaluation_role"))
+        or _b(manifest.get("valid_for_holdout")) is True
+        or plan_holdout
+        or ranking_cfg.get("require_complete_candidate_universe") is True
+    )
+    universe_self_hash = (
+        _sha256_payload({
+            key: value
+            for key, value in universe.items()
+            if key not in {"universe_sha256", "created_at"}
+        })
+        if universe_declared and universe_path.is_file() and universe
+        else ""
+    )
+    universe_manifest_valid = bool(
+        universe_declared
+        and universe_self_hash
+        and str(universe.get("universe_sha256") or "") == universe_self_hash
+        and str(manifest.get("candidate_universe_sha256") or "") == universe_self_hash
+    )
+    universe_hash_ok = bool(
+        universe_manifest_valid
+        or (not universe_declared and not universe_required)
+    )
+    universe_csv = root / str(manifest.get("candidate_universe_csv") or "candidate_universe.csv")
+    expected_universe_csv_hash = str(manifest.get("candidate_universe_csv_sha256") or "")
+    actual_universe_csv_hash = _sha256(universe_csv)
+    universe_csv_hash_ok = bool(
+        not expected_universe_csv_hash
+        or (actual_universe_csv_hash and _same_sha256(expected_universe_csv_hash, actual_universe_csv_hash))
+    )
+    campaign = plan.get("campaign") if isinstance(plan.get("campaign"), Mapping) else {}
+    approval_required = bool(campaign.get("require_prediction_freeze_approval"))
+    require_crypto = bool(campaign.get("require_cryptographic_prediction_signature"))
+    approval_path = root / "prediction_freeze_approval.json"
+    approval = _read_json(approval_path)
+    approval_payload_hash_ok = bool(
+        approval
+        and str(approval.get("approval_payload_sha256") or "")
+        == _sha256_payload({key: value for key, value in approval.items() if key != "approval_payload_sha256"})
+    )
+    approval_binding_ok = bool(
+        approval
+        and _same_sha256(approval.get("prediction_freeze_manifest_sha256"), _sha256(root / "prediction_freeze_manifest.json"))
+        and str(approval.get("candidate_universe_sha256") or "") == str(universe.get("universe_sha256") or "")
+        and str(approval.get("model_id") or "") == str(manifest.get("model_id") or "")
+    )
+    signature_status = "not_present"
+    signature = root / "prediction_freeze_approval.json.sig"
+    public_key = root / "prediction_freeze_public_key.pem"
+    if signature.is_file() and public_key.is_file():
+        try:
+            cp = subprocess.run(
+                ["openssl", "dgst", "-sha256", "-verify", str(public_key), "-signature", str(signature), str(approval_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=30,
+            )
+            signature_status = "valid" if cp.returncode == 0 else "invalid"
+        except Exception:
+            signature_status = "invalid"
+    signature_ok = signature_status == "valid" if require_crypto else signature_status != "invalid"
+    approval_ok = bool(
+        (not approval_required)
+        or (
+            approval.get("approved") is True
+            and str(approval.get("signer") or "").strip()
+            and approval_payload_hash_ok
+            and approval_binding_ok
+            and signature_ok
+        )
+    )
+    valid = bool(
+        manifest
+        and manifest.get("prospective")
+        and prediction.is_file()
+        and base_csv.is_file()
+        and method_csv.is_file()
+        and _same_sha256(_sha256(prediction), manifest.get("prediction_sha256"))
+        and _same_sha256(_sha256(base_csv), manifest.get("prediction_csv_sha256"))
+        and _same_sha256(_sha256(method_csv), manifest.get("ranking_prediction_csv_sha256"))
+        and universe_hash_ok
+        and universe_csv_hash_ok
+        and approval_ok
+        and not (root / "prediction_freeze_conflict.json").is_file()
+    )
+    audit = universe.get("audit") if isinstance(universe.get("audit"), Mapping) else {}
+    try:
+        audit_minimum_valid_candidates = max(0, int(audit.get("minimum_valid_candidates") or 0))
+    except Exception:
+        audit_minimum_valid_candidates = 0
+    return manifest, _read_csv(method_csv), valid, {
+        "candidate_universe_required": universe_required,
+        "candidate_universe_valid": universe_manifest_valid and universe_csv_hash_ok,
+        "candidate_universe_scope": universe.get("claim_scope", ""),
+        "candidate_universe_complete": universe.get("declared_complete"),
+        "candidate_universe_selected_case_ids": [
+            str(value)
+            for value in list(universe.get("selected_case_ids") or [])
+            if str(value)
+        ],
+        "candidate_universe_minimum_valid_candidates": audit_minimum_valid_candidates,
+        "prediction_freeze_approval_required": approval_required,
+        "prediction_freeze_approval_valid": approval_ok,
+        "prediction_freeze_signature_status": signature_status,
+    }
+
+
+def _candidate_universe_complete(plan: Mapping[str, Any], model_id: str) -> bool:
+    suite = plan.get("model_suite") if isinstance(plan.get("model_suite"), Mapping) else {}
+    for tier in ("primary", "reserve"):
+        for item in list(suite.get(tier) or []):
+            if isinstance(item, Mapping) and str(item.get("id") or "") == model_id:
+                return bool(item.get("candidate_universe_complete"))
+    ranking = plan.get("ranking_validation") if isinstance(plan.get("ranking_validation"), Mapping) else {}
+    return bool(plan.get("candidate_universe_complete", ranking.get("candidate_universe_complete", False)))
+
+
+def _ranking_comparison(root: Path, scientific_rows: Sequence[Mapping[str, Any]], plan: Mapping[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+    ranking_policy = plan.get("ranking_validation") if isinstance(plan.get("ranking_validation"), Mapping) else {}
+    if ranking_policy.get("enabled") is False:
+        return [], [], {"status": "disabled", "method_count": 0}
+    methods = [method for method in METHOD_ORDER if method in list(ranking_policy.get("methods") or METHOD_ORDER)] or list(METHOD_ORDER)
+    k_values = sorted({int(value) for value in list(ranking_policy.get("k_values") or [1, 3, 5]) if int(value) > 0})
+    elite_q = sorted({int(value) for value in list(ranking_policy.get("elite_q_values") or [1, 3]) if int(value) > 0})
+    primary_k = int(ranking_policy.get("primary_k") or 5)
+    min_n = int(ranking_policy.get("minimum_candidates_for_correlation") or 3)
+    epsilon = float(ranking_policy.get("near_optimal_relative_epsilon") or 0.01)
+    require_complete = bool(ranking_policy.get("require_complete_candidate_universe", True))
+    require_frozen = bool(ranking_policy.get("require_frozen_predictions", True))
+    manifest, predictions, frozen_valid, freeze_details = _freeze(root, plan)
+    groups: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = defaultdict(list)
+    for source in scientific_rows:
+        if str(source.get("variant") or "") != "split" or _f(source.get("cycle_ms")) is None:
+            continue
+        groups[(str(source.get("model_id") or ""), str(source.get("direction") or ""), str(source.get("runner_regime") or "generic"))].append(dict(source))
+    details: List[Dict[str, Any]] = []
+    for (model_id, direction, runner), group_source in sorted(groups.items()):
+        unscoped_measured = {
+            str(row.get("case_id") or ""): row
+            for row in group_source
+            if str(row.get("case_id") or "")
+        }
+        role = _normalize_evaluation_role(
+            (group_source[0].get("evaluation_role") if group_source else "development")
+            or "development"
+        )
+        candidate_universe_scope = str(freeze_details.get("candidate_universe_scope") or "")
+        audit_case_ids = {
+            str(value)
+            for value in list(freeze_details.get("candidate_universe_selected_case_ids") or [])
+            if str(value)
+        }
+        audit_scoped = bool(
+            _is_confirmatory_holdout(role)
+            and candidate_universe_scope == "predeclared_audit_universe"
+        )
+        measured = (
+            {case_id: row for case_id, row in unscoped_measured.items() if case_id in audit_case_ids}
+            if audit_scoped
+            else unscoped_measured
+        )
+        deployment_only_measurement_count = len(unscoped_measured) - len(measured)
+        valid_rows = [row for row in measured.values() if row.get("ranking_eligible") is True and _f(row.get("cycle_ms")) is not None]
+        actual = sorted(valid_rows, key=lambda row: float(_f(row.get("cycle_ms")) or math.inf))
+        actual_best = actual[0] if actual else None
+        best_cycle = _f((actual_best or {}).get("cycle_ms"))
+        near = {str(row.get("case_id") or "") for row in actual if best_cycle is not None and (_f(row.get("cycle_ms")) or math.inf) <= best_cycle * (1.0 + epsilon)}
+        elites = {q: {str(row.get("case_id") or "") for row in actual[:min(q, len(actual))]} for q in elite_q}
+        context_predictions = [row for row in predictions if _direction(row) == direction and _runner(row) == runner]
+        if audit_scoped:
+            context_predictions = [
+                row for row in context_predictions
+                if str(row.get("case_id") or "") in audit_case_ids
+            ]
+        try:
+            audit_minimum = int(freeze_details.get("candidate_universe_minimum_valid_candidates") or 0)
+        except Exception:
+            audit_minimum = 0
+        effective_min_n = max(min_n, audit_minimum if audit_scoped else 0)
+        for method in methods:
+            method_rows = [row for row in context_predictions if str(row.get("method_id") or "") == method]
+            available = [row for row in method_rows if _b(row.get("prediction_available")) is not False and _f(row.get("predicted_value")) is not None]
+            method_ids = {str(row.get("case_id") or "") for row in method_rows if str(row.get("case_id") or "")}
+            expected_ids = set(audit_case_ids) if audit_scoped else set(method_ids)
+            declared_complete = (
+                bool(freeze_details.get("candidate_universe_complete"))
+                if audit_scoped
+                else _candidate_universe_complete(plan, model_id)
+            )
+            missing = expected_ids - set(measured)
+            universe_complete = bool((declared_complete and expected_ids and not missing) or not require_complete)
+            universe_status = "complete" if universe_complete else (f"declared_complete_but_missing_{len(missing)}" if declared_complete else "not_declared_complete")
+            pred_by_case = {str(row.get("case_id") or ""): row for row in available if str(row.get("case_id") or "")}
+            available_ids = set(pred_by_case)
+            prediction_coverage_complete = bool(
+                expected_ids
+                and expected_ids <= method_ids
+                and expected_ids <= available_ids
+            )
+            pairs = []
+            for row in valid_rows:
+                predicted = pred_by_case.get(str(row.get("case_id") or ""))
+                pval = _f((predicted or {}).get("predicted_value"))
+                mval = _f(row.get("cycle_ms"))
+                if pval is not None and mval is not None:
+                    pairs.append((pval, mval))
+            unit = str((available[0].get("prediction_unit") if available else "") or "")
+            absolute = unit == "ms"
+            errors = [abs(p - m) for p, m in pairs] if absolute else []
+            mape = [abs(p - m) / abs(m) * 100.0 for p, m in pairs if absolute and abs(m) > 1e-12]
+            bias = [p - m for p, m in pairs] if absolute else []
+            measured_median = _median([m for _, m in pairs])
+            predicted_sorted = sorted(available, key=lambda row: (float(_f(row.get("predicted_value")) or math.inf), int(_f(row.get("predicted_rank")) or 10**9)))
+            detail: Dict[str, Any] = {
+                "model_id": model_id,
+                "evaluation_role": role,
+                "direction": direction,
+                "runner_regime": runner,
+                "method_id": method,
+                "method_label": METHOD_LABELS.get(method, method),
+                "prediction_unit": unit,
+                "prediction_available_count": len(available),
+                "prediction_expected_count": len(expected_ids),
+                "prediction_coverage_complete": prediction_coverage_complete,
+                "prediction_missing_candidate_count": len(expected_ids - available_ids),
+                "unscoped_measured_candidate_count": len(unscoped_measured),
+                "measured_candidate_count": len(measured),
+                "deployment_only_measurement_count_excluded": deployment_only_measurement_count,
+                "audit_scope_enforced": audit_scoped,
+                "valid_candidate_count": len(valid_rows),
+                "paired_candidate_count": len(pairs),
+                "minimum_valid_candidates_required": effective_min_n,
+                "expected_candidate_count": len(expected_ids),
+                "candidate_universe_complete": universe_complete,
+                "candidate_universe_status": universe_status,
+                "candidate_universe_scope": candidate_universe_scope,
+                "ranking_metric_scope": (
+                    "audit_relative"
+                    if audit_scoped
+                    else ("global_feasible_universe" if candidate_universe_scope == "complete_feasible_universe" else "declared_universe")
+                ),
+                "predictions_frozen": frozen_valid,
+                "prediction_freeze_status": str(manifest.get("freeze_status") or ("prospective_frozen" if frozen_valid else "invalid")),
+                "prediction_freeze_approval_required": freeze_details.get("prediction_freeze_approval_required"),
+                "prediction_freeze_approval_valid": freeze_details.get("prediction_freeze_approval_valid"),
+                "candidate_universe_manifest_valid": freeze_details.get("candidate_universe_valid"),
+                "mae_ms": _mean(errors) if absolute else None,
+                "mape_percent": _mean(mape) if absolute else None,
+                "bias_ms": _mean(bias) if absolute else None,
+                "nmae": (_mean(errors) / measured_median if absolute and _mean(errors) is not None and measured_median not in (None, 0) else None),
+                "spearman_rho": _spearman([p for p, _ in pairs], [m for _, m in pairs]) if len(pairs) >= effective_min_n and prediction_coverage_complete else None,
+                "kendall_tau_b": _kendall([p for p, _ in pairs], [m for _, m in pairs]) if len(pairs) >= effective_min_n and prediction_coverage_complete else None,
+                "best_measured_case": str((actual_best or {}).get("case_id") or ""),
+                "best_measured_cycle_ms": best_cycle,
+                "validity_at_k_is_diagnostic_only": True,
+            }
+            paired_valid_ids = {
+                str(row.get("case_id") or "")
+                for row in valid_rows
+                if str(row.get("case_id") or "") in pred_by_case
+            }
+            for k in k_values:
+                top = predicted_sorted[:min(k, len(predicted_sorted))]
+                top_ids = {str(row.get("case_id") or "") for row in top}
+                valid_top = [measured[case_id] for case_id in top_ids if case_id in measured and measured[case_id].get("ranking_eligible") is True]
+                top_cycles = [_f(row.get("cycle_ms")) for row in valid_top if _f(row.get("cycle_ms")) is not None]
+                best_top = min(top_cycles) if top_cycles else None
+                rank_quality_available = bool(
+                    universe_complete
+                    and prediction_coverage_complete
+                    and len(pairs) >= effective_min_n
+                    and k <= len(pairs)
+                    and len(top) == k
+                    and len(top_ids) == k
+                    and top_ids <= paired_valid_ids
+                )
+                detail[f"hit_at_{k}"] = (str((actual_best or {}).get("case_id") or "") in top_ids) if rank_quality_available and actual_best else None
+                detail[f"near_optimal_hit_at_{k}"] = bool(top_ids & near) if rank_quality_available and near else None
+                detail[f"validity_at_{k}"] = len(valid_top) / len(top) if top else None
+                detail[f"diagnostic_validity_at_{k}"] = detail[f"validity_at_{k}"]
+                detail[f"regret_at_{k}"] = ((best_top - best_cycle) / best_cycle) if rank_quality_available and best_top is not None and best_cycle not in (None, 0) else None
+                for q, elite_ids in elites.items():
+                    detail[f"elite_recall_at_{k}_q{q}"] = len(top_ids & elite_ids) / len(elite_ids) if rank_quality_available and q <= len(pairs) and elite_ids else None
+            if not available:
+                status = "handover_model_unavailable" if method == "cycle_time_with_handover" and runner == "native_fifo" else "method_unavailable"
+            elif not prediction_coverage_complete:
+                status = "frozen_prediction_coverage_incomplete"
+            elif len(pairs) < effective_min_n:
+                status = "insufficient_valid_audit_candidates" if audit_scoped else "insufficient_candidates_for_correlation"
+            elif not universe_complete:
+                status = "candidate_universe_not_auditable"
+            elif require_frozen and not frozen_valid:
+                status = "predictions_not_frozen"
+            elif not _is_confirmatory_holdout(role):
+                status = "development_evidence_only"
+            else:
+                status = "holdout_validated"
+            detail["status"] = status
+            details.append(detail)
+    macros: List[Dict[str, Any]] = []
+    for method in methods:
+        method_details = [row for row in details if row.get("method_id") == method]
+        holdout = [
+            row for row in method_details
+            if _is_confirmatory_holdout(row.get("evaluation_role"))
+        ]
+        validated = [row for row in holdout if row.get("status") == "holdout_validated"]
+        source = validated or holdout or method_details
+        macro: Dict[str, Any] = {
+            "method_id": method,
+            "method_label": METHOD_LABELS.get(method, method),
+            "group_count": len(method_details),
+            "holdout_group_count": len(holdout),
+            "validated_holdout_group_count": len(validated),
+            "macro_mae_ms": _mean([_f(row.get("mae_ms")) for row in source]),
+            "macro_mape_percent": _mean([_f(row.get("mape_percent")) for row in source]),
+            "macro_spearman_rho": _mean([_f(row.get("spearman_rho")) for row in source]),
+            "macro_kendall_tau_b": _mean([_f(row.get("kendall_tau_b")) for row in source]),
+            "status": "holdout_available" if validated else ("holdout_incomplete" if holdout else ("development_only" if method_details else "unavailable")),
+        }
+        for k in k_values:
+            macro[f"macro_hit_at_{k}"] = _mean([float(bool(row.get(f"hit_at_{k}"))) for row in source if row.get(f"hit_at_{k}") is not None])
+            macro[f"macro_validity_at_{k}"] = _mean([_f(row.get(f"validity_at_{k}")) for row in source])
+            macro[f"macro_regret_at_{k}"] = _mean([_f(row.get(f"regret_at_{k}")) for row in source])
+            for q in elite_q:
+                macro[f"macro_elite_recall_at_{k}_q{q}"] = _mean([_f(row.get(f"elite_recall_at_{k}_q{q}")) for row in source])
+        macros.append(macro)
+    comparable = [row for row in macros if row.get(f"macro_hit_at_{primary_k}") is not None or row.get("macro_spearman_rho") is not None]
+    def sort_key(row: Mapping[str, Any]) -> Tuple[Any, ...]:
+        hit = _f(row.get(f"macro_hit_at_{primary_k}"))
+        regret = _f(row.get(f"macro_regret_at_{primary_k}"))
+        kendall = _f(row.get("macro_kendall_tau_b"))
+        return (-(hit if hit is not None else -1), regret if regret is not None else math.inf, -(kendall if kendall is not None else -1), METHOD_ORDER.index(str(row.get("method_id"))) if str(row.get("method_id")) in METHOD_ORDER else 99)
+    best = sorted(comparable, key=sort_key)[0] if comparable else {}
+    non_unavailable = [row for row in macros if row.get("status") != "unavailable"]
+    summary = {
+        "status": "holdout_available" if non_unavailable and all(row.get("status") == "holdout_available" for row in non_unavailable) else ("holdout_incomplete" if any(row.get("holdout_group_count") for row in macros) else ("development_only" if details else "unavailable")),
+        "method_count": len(macros),
+        "group_method_row_count": len(details),
+        "best_method_id": best.get("method_id", ""),
+        "best_method_label": best.get("method_label", ""),
+        "primary_k": primary_k,
+    }
+    return details, macros, summary
+
+
+def _tex_escape(value: Any) -> str:
+    text = str(value if value not in (None, "") else "")
+    replacements = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "_": r"\_", "#": r"\#", "$": r"\$", "{": r"\{", "}": r"\}"}
+    return "".join(replacements.get(character, character) for character in text)
+
+
+def _tex_header(value: Any) -> str:
+    text = str(value if value not in (None, "") else "")
+    return text if len(text) >= 2 and text.startswith("$") and text.endswith("$") else _tex_escape(text)
+
+
+def _write_tex(path: Path, rows: Sequence[Mapping[str, Any]], columns: Sequence[Tuple[str, str, str]], caption: str, label: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [r"\begin{table}[t]", r"\centering", r"\small", f"\\caption{{{_tex_escape(caption)}}}", f"\\label{{{_tex_escape(label)}}}", f"\\begin{{tabular}}{{{'l' + 'r' * (len(columns)-1)}}}", r"\toprule", " & ".join(_tex_header(title) for _, title, _ in columns) + r" \\", r"\midrule"]
+    for row in rows:
+        values = []
+        for key, _, kind in columns:
+            value = row.get(key)
+            number = _f(value)
+            values.append(f"{number:.3f}" if kind == "number" and number is not None else ("--" if kind == "number" else _tex_escape(value)))
+        lines.append(" & ".join(values) + r" \\")
+    lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table}", ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+def _figures(report_root: Path, rows: Sequence[Mapping[str, Any]], macros: Sequence[Mapping[str, Any]]) -> List[str]:
+    try:
+        import matplotlib.pyplot as plt
+    except Exception:
+        return []
+    figure_dir = report_root / "figures"
+    figure_dir.mkdir(parents=True, exist_ok=True)
+    written: List[str] = []
+    counts = Counter(str(row.get("task_quality_status") or "unavailable") for row in rows)
+    if counts:
+        figure, axis = plt.subplots(figsize=(8.0, 4.2))
+        labels, values = list(counts.keys()), list(counts.values())
+        axis.bar(range(len(labels)), values)
+        axis.set_xticks(range(len(labels)), labels, rotation=35, ha="right")
+        axis.set_ylabel("Rows")
+        axis.set_title("Task-quality status")
+        axis.grid(axis="y", alpha=0.25)
+        for extension in ("pdf", "png"):
+            path = figure_dir / f"task_quality_status_counts.{extension}"
+            figure.savefig(path, bbox_inches="tight", dpi=220 if extension == "png" else None)
+            written.append(path.relative_to(report_root).as_posix())
+        plt.close(figure)
+    usable = [row for row in macros if row.get("status") != "unavailable"]
+    if usable:
+        labels = [str(row.get("method_label") or row.get("method_id") or "") for row in usable]
+        for field, title, ylabel, filename in (("macro_spearman_rho", "Ranking fidelity by method", "Macro Spearman rho", "ranking_method_spearman"), ("macro_hit_at_5", "Best-candidate retention by method", "Macro Hit@5", "ranking_method_hit_at_5"), ("macro_regret_at_5", "Shortlist regret by method", "Macro regret@5", "ranking_method_regret_at_5")):
+            values = [_f(row.get(field)) for row in usable]
+            if not any(value is not None for value in values):
+                continue
+            figure, axis = plt.subplots(figsize=(9.0, 4.8))
+            axis.bar(range(len(labels)), [float(value) if value is not None else math.nan for value in values])
+            axis.set_xticks(range(len(labels)), labels, rotation=25, ha="right")
+            axis.set_ylabel(ylabel)
+            axis.set_title(title)
+            axis.grid(axis="y", alpha=0.25)
+            for extension in ("pdf", "png"):
+                path = figure_dir / f"{filename}.{extension}"
+                figure.savefig(path, bbox_inches="tight", dpi=220 if extension == "png" else None)
+                written.append(path.relative_to(report_root).as_posix())
+            plt.close(figure)
+    return written
+
+
+def write_scientific_report(root: Path, rows_by_tag: Mapping[str, Sequence[Mapping[str, Any]]], plan: Mapping[str, Any], cases: Optional[Sequence[Mapping[str, Any]]] = None) -> Dict[str, Any]:
+    root = Path(root)
+    report_root = root / "scientific_report"
+    if report_root.is_dir():
+        shutil.rmtree(report_root, ignore_errors=True)
+    report_root.mkdir(parents=True, exist_ok=True)
+    rows = _scientific_rows(rows_by_tag, plan)
+    details, macros, ranking_summary = _ranking_comparison(root, rows, plan)
+    quality_policy = plan.get("quality_gate") if isinstance(plan.get("quality_gate"), Mapping) else {}
+    ranking_policy = plan.get("ranking_validation") if isinstance(plan.get("ranking_validation"), Mapping) else {}
+    claim_scope = _campaign_claim_scope(plan)
+    generalization_claim = bool(
+        not claim_scope.get("valid")
+        or claim_scope.get("scope") == "ranking_generalization"
+    )
+    open_items: List[Dict[str, str]] = []
+    if not claim_scope.get("valid"):
+        open_items.append({"id": "campaign_claim_scope_invalid", "severity": "required", "detail": "The campaign claim_scope is invalid; reporting remains fail-closed under ranking-generalization requirements."})
+    if not quality_policy.get("frozen_before_final_campaign", False):
+        open_items.append({"id": "quality_profile_not_frozen", "severity": "required", "detail": "Freeze validation manifests, preprocessing/decoder hashes, margins and bootstrap settings before the final campaign."})
+    if not any(row.get("task_quality_tier") == "final" and row.get("task_quality_decision") == "pass" for row in rows):
+        open_items.append({"id": "no_final_task_quality_pass", "severity": "required", "detail": "This run contains no final-tier paired-bootstrap non-inferiority pass."})
+    if not generalization_claim:
+        open_items.append({"id": "ranking_generalization_out_of_scope", "severity": "informational", "detail": "The claim is limited to the explicitly evaluated workload/hardware matrix; unseen-model ranking generalization is not claimed."})
+    if generalization_claim and ranking_policy.get("enabled") is False:
+        open_items.append({"id": "ranking_validation_disabled", "severity": "required", "detail": "ranking_generalization requires ranking_validation.enabled=true."})
+    if generalization_claim and ranking_summary.get("status") != "holdout_available":
+        open_items.append({"id": "ranking_holdout_incomplete", "severity": "required", "detail": "The four pre-registered baselines plus workflow-selector comparison is not yet supported by a complete prospective model-level hold-out."})
+    if generalization_claim and any(row.get("status") == "handover_model_unavailable" for row in details):
+        open_items.append({"id": "native_handover_model_unconfigured", "severity": "required", "detail": "Freeze a Native FIFO runner/direction handover model before final native hold-out runs."})
+    summary = {
+        "row_count": len(rows),
+        "ranking_eligible_count": sum(row.get("ranking_eligible") is True for row in rows),
+        "performance_eligible_count": sum(row.get("performance_eligible") is True for row in rows),
+        "energy_eligible_count": sum(row.get("energy_eligible") is True for row in rows),
+        "task_quality_status_counts": dict(Counter(str(row.get("task_quality_status") or "unavailable") for row in rows)),
+        "ranking": ranking_summary,
+    }
+    payload = {
+        "schema": "onnx-splitpoint/scientific-report",
+        "schema_version": 2,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "source_kind": "benchmark_set",
+        "profile_id": str((plan.get("evaluation_profile") or {}).get("profile_id") if isinstance(plan.get("evaluation_profile"), Mapping) else plan.get("profile_id") or root.name),
+        "quality_gate_policy": quality_policy,
+        "ranking_validation_policy": ranking_policy,
+        "claim_scope": str(claim_scope.get("scope") or ""),
+        "campaign_claim_scope": claim_scope,
+        "summary": summary,
+        "rows": rows,
+        "ranking_method_comparison": details,
+        "ranking_method_macro": macros,
+        "open_items": open_items,
+    }
+    _write_json(report_root / "scientific_report.json", payload)
+    _write_csv(report_root / "row_eligibility.csv", rows)
+    _write_csv(report_root / "task_quality.csv", [{key: row.get(key) for key in ("model_id", "task", "case_id", "backend", "variant", "task_quality_tier", "task_quality_status", "task_quality_decision", "task_quality_gate_reason", "task_quality_metric", "task_quality_candidate", "task_quality_reference", "task_quality_delta", "task_quality_ci_low", "task_quality_ci_high", "task_quality_margin", "task_quality_bootstrap_repetitions", "task_quality_bootstrap_skipped_reason", "task_quality_ci_computed", "task_quality_bound_value", "task_quality_bound_evidence", "contract_consistent", "ranking_eligible", "exclusion_reason")} for row in rows])
+    _write_csv(report_root / "performance_results.csv", [row for row in rows if row.get("performance_eligible") is True])
+    _write_csv(report_root / "energy_results.csv", [row for row in rows if row.get("energy_eligible") is True])
+    _write_csv(report_root / "ranking_method_comparison.csv", details)
+    _write_csv(report_root / "ranking_method_macro.csv", macros)
+    lines = ["# Scientific Evaluation Report", "", f"Generated: `{payload['created_at']}`", f"Profile: `{payload['profile_id']}`", "", "## Decision summary", "", f"- Claim scope: **{payload['claim_scope']}**", f"- Rows: **{summary['row_count']}**", f"- Ranking eligible: **{summary['ranking_eligible_count']}**", f"- Performance eligible: **{summary['performance_eligible_count']}**", f"- Energy eligible: **{summary['energy_eligible_count']}**", f"- Ranking-method comparison: **{ranking_summary['status']}**", f"- Best method: **{ranking_summary.get('best_method_label') or 'not available'}**", "", "## Ranking-method comparison", "", "| Method | Groups | Hold-outs | MAE [ms] | MAPE [%] | Spearman | Kendall | Hit@5 | Elite R@5 | Regret@5 | Status |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|"]
+    for row in macros:
+        lines.append("| " + " | ".join(str(row.get(key) if row.get(key) not in (None, "") else "") for key in ("method_label", "group_count", "validated_holdout_group_count", "macro_mae_ms", "macro_mape_percent", "macro_spearman_rho", "macro_kendall_tau_b", "macro_hit_at_5", "macro_elite_recall_at_5_q3", "macro_regret_at_5", "status")) + " |")
+    lines.extend(["", "## Open items", ""])
+    lines.extend(f"- **{item['severity']} — {item['id']}**: {item['detail']}" for item in open_items)
+    (report_root / "scientific_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    table_root = report_root / "thesis_tables"
+    _write_tex(table_root / "task_quality_gates.tex", rows, [("model_id", "Model", "text"), ("backend", "Backend", "text"), ("case_id", "Boundary", "text"), ("task_quality_metric", "Metric", "text"), ("task_quality_delta", "$\\Delta$", "number"), ("task_quality_bound_value", "Lower bound", "number"), ("task_quality_bound_evidence", "Bound evidence", "text"), ("task_quality_margin", "Margin", "number"), ("task_quality_status", "Decision", "text")], "Pre-registered task-quality non-inferiority gates.", "tab:task-quality-gates")
+    _write_tex(table_root / "ranking_method_comparison.tex", macros, [("method_label", "Method", "text"), ("validated_holdout_group_count", "$n_{HO}$", "number"), ("macro_mae_ms", "MAE [ms]", "number"), ("macro_mape_percent", "MAPE [percent]", "number"), ("macro_spearman_rho", "$\\rho$", "number"), ("macro_kendall_tau_b", "$\\tau_b$", "number"), ("macro_hit_at_5", "Hit@5", "number"), ("macro_elite_recall_at_5_q3", "Elite R@5", "number"), ("macro_regret_at_5", "Regret@5", "number"), ("status", "Status", "text")], "Comparison of the frozen Cut Bytes workflow selector with four pre-registered alternative ranking baselines; Top-k and regret are audit-relative for deterministic-audit universes.", "tab:ranking-method-comparison")
+    _write_tex(table_root / "performance_results.tex", [row for row in rows if row.get("performance_eligible") is True], [("model_id", "Model", "text"), ("backend", "Backend", "text"), ("case_id", "Boundary", "text"), ("runner_regime", "Runner", "text"), ("latency_ms", "Latency [ms]", "number"), ("throughput_fps", "FPS", "number"), ("task_quality_status", "Quality", "text")], "Performance rows satisfying the declared runtime and task-quality gates.", "tab:performance-results")
+    _write_tex(table_root / "energy_results.tex", [row for row in rows if row.get("energy_eligible") is True], [("model_id", "Model", "text"), ("backend", "Backend", "text"), ("case_id", "Boundary", "text"), ("average_power_w", "Power [W]", "number"), ("energy_per_work_j", "Energy/work [J]", "number"), ("energy_per_work_ci_low_j", "CI low [J]", "number"), ("energy_per_work_ci_high_j", "CI high [J]", "number"), ("energy_repeat_n", "$n$", "number"), ("energy_scope", "Scope", "text"), ("energy_window", "Window", "text")], "Energy results under compatible declared scopes and workload windows.", "tab:energy-results")
+    figures = _figures(report_root, rows, macros)
+    artifacts = []
+    for path in sorted(item for item in report_root.rglob("*") if item.is_file() and item.name != "report_manifest.json"):
+        artifacts.append({"path": path.relative_to(report_root).as_posix(), "size_bytes": path.stat().st_size, "sha256": _sha256(path)})
+    _write_json(report_root / "report_manifest.json", {"schema": "onnx-splitpoint/scientific-report-manifest", "schema_version": 2, "created_at": payload["created_at"], "artifacts": artifacts, "figure_count": len(figures)})
+    return payload
+
+# v60z quality-evidence augmentation is performed by the package reporter when available.

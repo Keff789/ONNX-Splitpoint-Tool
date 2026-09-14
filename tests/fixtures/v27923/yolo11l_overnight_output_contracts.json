@@ -1,0 +1,41 @@
+{
+  "contracts": [
+    {
+      "artifact_path": "",
+      "backend": "cuda_ort",
+      "contract_family": "decoded_pre_nms",
+      "contract_status": "recorded",
+      "endpoint_mode": "decoded_pre_nms",
+      "full_end_node_names": [],
+      "host_tail_required": true,
+      "model_id": "yolo11l",
+      "output_format": "ultralytics_decoded",
+      "postprocessing_required": true,
+      "requires_external_postprocess": true,
+      "schema": "onnx-splitpoint/output-contract",
+      "schema_version": 1,
+      "source_endpoint_semantics": "decoded_pre_nms",
+      "source_onnx_detection_endpoint": {
+        "multiscale_raw_head": false,
+        "output_shapes": [
+          [
+            1,
+            84,
+            8400
+          ]
+        ],
+        "sidecar_status": "onnx_sha256_mismatch",
+        "stage": "decoded_pre_nms"
+      },
+      "source_onnx_multiscale_raw_head": false,
+      "stage": "decoded_pre_nms",
+      "task": "detection",
+      "variant": "full",
+      "warning": "Do not compare a pre-NMS detection endpoint as if it were decoded/NMS output."
+    }
+  ],
+  "model_id": "yolo11l",
+  "schema": "onnx-splitpoint/output-contracts",
+  "schema_version": 1,
+  "task": "detection"
+}

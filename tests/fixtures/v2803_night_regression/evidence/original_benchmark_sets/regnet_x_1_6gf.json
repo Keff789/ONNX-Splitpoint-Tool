@@ -1,0 +1,3109 @@
+{
+  "analysis_params": {
+    "min_gap": 1,
+    "objective": "workflow_legacy_adapter",
+    "require_single_part2_input": true,
+    "topk": 39
+  },
+  "analysis_version": 2,
+  "artifact_manifest": {
+    "analysis_version": 2,
+    "counts": {
+      "analysis_plots": 0,
+      "analysis_tables": 0,
+      "cases": 2,
+      "deepx": 0,
+      "hailo": 20,
+      "model_sidecars": 2,
+      "models": 1,
+      "native_pipeline": 0,
+      "native_trt": 0,
+      "root": 3,
+      "schemas": 0
+    },
+    "files": {
+      "analysis_plots": [],
+      "analysis_tables": [],
+      "cases": [
+        "b052",
+        "b132"
+      ],
+      "deepx": [],
+      "hailo": [
+        "hailo/hailo10/full/.hailo-generations/989cc89a96f4424aa5ffefe9cff30508/cache_meta.json",
+        "hailo/hailo10/full/.hailo-generations/989cc89a96f4424aa5ffefe9cff30508/compiled.hef",
+        "hailo/hailo10/full/.hailo-generations/989cc89a96f4424aa5ffefe9cff30508/hailo_hef_build_receipt.json",
+        "hailo/hailo10/full/.hailo-publish.lock",
+        "hailo/hailo10/full/deferred_hailo_build.json",
+        "hailo/hailo10/full/hailo_attempt_receipts/attempt_20260910T191232Z_d5a6d8beddcb4c0a95cc6149e78197a7.json",
+        "hailo/hailo10/full/hailo_attempt_receipts/attempt_20260910T191232Z_d5a6d8beddcb4c0a95cc6149e78197a7.started.json",
+        "hailo/hailo10/full/hailo_attempt_receipts/terminal_attempt.json",
+        "hailo/hailo10/full/hailo_cache_hit.json",
+        "hailo/hailo10/full/regnet_x_1_6gf_hailo_fixed.onnx",
+        "hailo/hailo8/full/.hailo-generations/51b1903a07a54115823137b2daea9db4/cache_meta.json",
+        "hailo/hailo8/full/.hailo-generations/51b1903a07a54115823137b2daea9db4/compiled.hef",
+        "hailo/hailo8/full/.hailo-generations/51b1903a07a54115823137b2daea9db4/hailo_hef_build_receipt.json",
+        "hailo/hailo8/full/.hailo-publish.lock",
+        "hailo/hailo8/full/deferred_hailo_build.json",
+        "hailo/hailo8/full/hailo_attempt_receipts/attempt_20260910T191233Z_7cd57439fb2548a4ba7f877e65129af1.json",
+        "hailo/hailo8/full/hailo_attempt_receipts/attempt_20260910T191233Z_7cd57439fb2548a4ba7f877e65129af1.started.json",
+        "hailo/hailo8/full/hailo_attempt_receipts/terminal_attempt.json",
+        "hailo/hailo8/full/hailo_cache_hit.json",
+        "hailo/hailo8/full/regnet_x_1_6gf_hailo_fixed.onnx"
+      ],
+      "model_sidecars": [
+        "models/regnet_x_1_6gf.categories.json",
+        "models/regnet_x_1_6gf.export.json"
+      ],
+      "models": [
+        "models/regnet_x_1_6gf.onnx"
+      ],
+      "native_pipeline": [],
+      "native_trt": [],
+      "root": [
+        "benchmark_plan.json",
+        "benchmark_generation.log",
+        "generation_state.json"
+      ],
+      "schemas": []
+    },
+    "generated_at": "2026-09-10T21:12:37",
+    "schema": "onnx-splitpoint/benchmark-set",
+    "schema_version": 2,
+    "suite_dir": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/regnet_x_1_6gf/benchmark_set/legacy_suite"
+  },
+  "benchmark_task": "classification",
+  "bundle_options": {
+    "results_bundle_modes": [
+      "full",
+      "lean"
+    ]
+  },
+  "cases": [
+    {
+      "boundary": 52,
+      "case_dir": "b052",
+      "folder": "b052",
+      "hailo_backend_terminal_states": [
+        {
+          "available": true,
+          "hw_arch": "hailo10h",
+          "reason": "artifact_available",
+          "status": "ready",
+          "terminal": true,
+          "variant": "full"
+        },
+        {
+          "available": true,
+          "hw_arch": "hailo10h",
+          "reason": "artifact_available",
+          "status": "ready",
+          "terminal": true,
+          "variant": "part1"
+        },
+        {
+          "available": true,
+          "hw_arch": "hailo8",
+          "reason": "artifact_available",
+          "status": "ready",
+          "terminal": true,
+          "variant": "full"
+        },
+        {
+          "available": true,
+          "hw_arch": "hailo8",
+          "reason": "artifact_available",
+          "status": "ready",
+          "terminal": true,
+          "variant": "part1"
+        }
+      ],
+      "hailo_case_variant_availability": {
+        "hailo10h": {
+          "composed": false,
+          "full": true,
+          "full_error": "",
+          "full_failed": false,
+          "part1": true,
+          "part1_error": "",
+          "part1_failed": false,
+          "part2": false,
+          "part2_error": "",
+          "part2_failed": false
+        },
+        "hailo8": {
+          "composed": false,
+          "full": true,
+          "full_error": "",
+          "full_failed": false,
+          "part1": true,
+          "part1_error": "",
+          "part1_failed": false,
+          "part2": false,
+          "part2_error": "",
+          "part2_failed": false
+        }
+      },
+      "hailo_compile": {
+        "hailo10": {
+          "part1": {
+            "build_receipt_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/regnet_x_1_6gf/benchmark_set/legacy_suite/b052/hailo/hailo10/part1/hailo_hef_build_receipt.json",
+            "cache_hit": true,
+            "calib_source": "validated_existing_artifact",
+            "compiler_onnx_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/regnet_x_1_6gf/benchmark_set/legacy_suite/b052/regnet_x_1_6gf_part1_b52.onnx",
+            "context_mode": "skipped",
+            "elapsed_s": 0.06686663627624512,
+            "hef_path": "hailo/hailo10/part1/compiled.hef",
+            "mapping_failed": false,
+            "multi_context_used": false,
+            "ok": true,
+            "single_context_failed": false,
+            "single_context_used": false,
+            "skipped": true,
+            "source_onnx_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/regnet_x_1_6gf/benchmark_set/legacy_suite/b052/regnet_x_1_6gf_part1_b52.onnx",
+            "timed_out": false,
+            "watchdog_expired": false
+          }
+        },
+        "hailo8": {
+          "part1": {
+            "build_receipt_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/regnet_x_1_6gf/benchmark_set/legacy_suite/b052/hailo/hailo8/part1/hailo_hef_build_receipt.json",
+            "cache_hit": true,
+            "calib_source": "validated_existing_artifact",
+            "compiler_onnx_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/regnet_x_1_6gf/benchmark_set/legacy_suite/b052/regnet_x_1_6gf_part1_b52.onnx",
+            "context_mode": "skipped",
+            "elapsed_s": 0.07616543769836426,
+            "hef_path": "hailo/hailo8/part1/compiled.hef",
+            "mapping_failed": false,
+            "multi_context_used": false,
+            "ok": true,
+            "single_context_failed": false,
+            "single_context_used": false,
+            "skipped": true,
+            "source_onnx_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/regnet_x_1_6gf/benchmark_set/legacy_suite/b052/regnet_x_1_6gf_part1_b52.onnx",
+            "timed_out": false,
+            "watchdog_expired": false
+          }
+        }
+      },
+      "manifest": "split_manifest.json",
+      "predicted": {
+        "cut_bytes": 319872.0,
+        "cut_mib": 0.3050537109375,
+        "flops_left": 637653856.0,
+        "hailo_compile_risk_score": 0.3587925792511417,
+        "hailo_cut_mib": 0.3050537109375,
+        "hailo_flops_left_ratio": 0.3936084162391368,
+        "hailo_flops_right_ratio": 0.6063915837608632,
+        "hailo_hardware_fit_score": 0.08334560994890337,
+        "hailo_n_cut_tensors": null,
+        "hailo_peak_act_left_mib": 4.306640625,
+        "hailo_peak_act_right_mib": 0.85235595703125,
+        "hailo_single_context_probability": 0.9474691517118095,
+        "hailo_stage1_fit_score": 0.018762945683697865,
+        "hailo_strict_ok": null
+      }
+    },
+    {
+      "boundary": 132,
+      "case_dir": "b132",
+      "folder": "b132",
+      "hailo_backend_terminal_states": [
+        {
+          "available": true,
+          "hw_arch": "hailo10h",
+          "reason": "artifact_available",
+          "status": "ready",
+          "terminal": true,
+          "variant": "full"
+        },
+        {
+          "available": true,
+          "hw_arch": "hailo10h",
+          "reason": "artifact_available",
+          "status": "ready",
+          "terminal": true,
+          "variant": "part1"
+        },
+        {
+          "available": true,
+          "hw_arch": "hailo8",
+          "reason": "artifact_available",
+          "status": "ready",
+          "terminal": true,
+          "variant": "full"
+        },
+        {
+          "available": true,
+          "hw_arch": "hailo8",
+          "reason": "artifact_available",
+          "status": "ready",
+          "terminal": true,
+          "variant": "part1"
+        }
+      ],
+      "hailo_case_variant_availability": {
+        "hailo10h": {
+          "composed": false,
+          "full": true,
+          "full_error": "",
+          "full_failed": false,
+          "part1": true,
+          "part1_error": "",
+          "part1_failed": false,
+          "part2": false,
+          "part2_error": "",
+          "part2_failed": false
+        },
+        "hailo8": {
+          "composed": false,
+          "full": true,
+          "full_error": "",
+          "full_failed": false,
+          "part1": true,
+          "part1_error": "",
+          "part1_failed": false,
+          "part2": false,
+          "part2_error": "",
+          "part2_failed": false
+        }
+      },
+      "hailo_compile": {
+        "hailo10": {
+          "part1": {
+            "build_receipt_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/regnet_x_1_6gf/benchmark_set/legacy_suite/b132/hailo/hailo10/part1/hailo_hef_build_receipt.json",
+            "cache_hit": true,
+            "calib_source": "validated_existing_artifact",
+            "compiler_onnx_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/regnet_x_1_6gf/benchmark_set/legacy_suite/b132/regnet_x_1_6gf_part1_b132.onnx",
+            "context_mode": "skipped",
+            "elapsed_s": 0.45920228958129883,
+            "hef_path": "hailo/hailo10/part1/compiled.hef",
+            "mapping_failed": false,
+            "multi_context_used": false,
+            "ok": true,
+            "single_context_failed": false,
+            "single_context_used": false,
+            "skipped": true,
+            "source_onnx_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/regnet_x_1_6gf/benchmark_set/legacy_suite/b132/regnet_x_1_6gf_part1_b132.onnx",
+            "timed_out": false,
+            "watchdog_expired": false
+          }
+        },
+        "hailo8": {
+          "part1": {
+            "build_receipt_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/regnet_x_1_6gf/benchmark_set/legacy_suite/b132/hailo/hailo8/part1/hailo_hef_build_receipt.json",
+            "cache_hit": true,
+            "calib_source": "validated_existing_artifact",
+            "compiler_onnx_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/regnet_x_1_6gf/benchmark_set/legacy_suite/b132/regnet_x_1_6gf_part1_b132.onnx",
+            "context_mode": "skipped",
+            "elapsed_s": 0.4672424793243408,
+            "hef_path": "hailo/hailo8/part1/compiled.hef",
+            "mapping_failed": false,
+            "multi_context_used": false,
+            "ok": true,
+            "single_context_failed": false,
+            "single_context_used": false,
+            "skipped": true,
+            "source_onnx_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/regnet_x_1_6gf/benchmark_set/legacy_suite/b132/regnet_x_1_6gf_part1_b132.onnx",
+            "timed_out": false,
+            "watchdog_expired": false
+          }
+        }
+      },
+      "manifest": "split_manifest.json",
+      "predicted": {
+        "cut_bytes": 3648.0,
+        "cut_mib": 0.00347900390625,
+        "flops_left": 1619188144.0,
+        "hailo_compile_risk_score": 1.5676008528364365,
+        "hailo_cut_mib": 0.00347900390625,
+        "hailo_flops_left_ratio": 0.9994859671216783,
+        "hailo_flops_right_ratio": 0.0005140328783217516,
+        "hailo_hardware_fit_score": 5.706819847463286,
+        "hailo_n_cut_tensors": null,
+        "hailo_peak_act_left_mib": 4.306640625,
+        "hailo_peak_act_right_mib": 0.00347900390625,
+        "hailo_single_context_probability": 0.7852903504315736,
+        "hailo_stage1_fit_score": 5.424651693952727,
+        "hailo_strict_ok": null
+      }
+    }
+  ],
+  "created_at": "2026-09-10T21:12:37",
+  "discarded_cases": [],
+  "errors": [],
+  "evaluation_profile": {
+    "profile_id": "completsetdev",
+    "source": "evaluation_workflow"
+  },
+  "generation_log": "benchmark_generation.log",
+  "hailo": {
+    "build": {
+      "full": true,
+      "part1": true,
+      "part2": false
+    },
+    "config": {
+      "backend": "auto",
+      "calib_batch_size": 8,
+      "calib_count": 500,
+      "calib_dir": "/home/kmika/.onnx_splitpoint_tool/final_datasets/imagenet2012/prepared/train_calibration_n500_s20260710",
+      "fixup": true,
+      "force": false,
+      "full_model_preflight_policy": "skip",
+      "keep_artifacts": false,
+      "opt_level": 1,
+      "wsl_distro": null,
+      "wsl_venv": "auto"
+    },
+    "context_summary": {
+      "hailo10": {
+        "both_parts_single_context": 0,
+        "cases": 2,
+        "multi_context": 0,
+        "part2_single_context": 0,
+        "single_to_multi_fallback": 0
+      },
+      "hailo8": {
+        "both_parts_single_context": 0,
+        "cases": 2,
+        "multi_context": 0,
+        "part2_single_context": 0,
+        "single_to_multi_fallback": 0
+      }
+    },
+    "full_model_preflight": {
+      "aborted": false,
+      "all_failed_explicit": false,
+      "backend": "auto",
+      "checked": false,
+      "failed_count": 0,
+      "model_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260910_210826/models/regnet_x_1_6gf/benchmark_set/legacy_suite/models/regnet_x_1_6gf.onnx",
+      "ok_count": 0,
+      "policy": "skip",
+      "result_count": 0,
+      "results": [],
+      "skipped": true,
+      "unsupported_failure_count": 0
+    },
+    "hefs": {
+      "hailo10h": {
+        "full": "hailo/hailo10/full/compiled.hef",
+        "full_build": {
+          "artifact_hash": "95164809abd797d39d8fb3206d4662080782a9c6b18e9976b88b8927b7e0f292",
+          "build_receipt_file_sha256": "756b0b430afd104c23bada1d0c4ef4460a6046b865f754a766e3fdcd159acb27",
+          "build_receipt_identity_sha256": "1f5b0faf90c85bc6d98866e1349608c6d76cadf44775e50f2c2bbb95bc1d0eae",
+          "build_receipt_path": "hailo/hailo10/full/.hailo-generations/989cc89a96f4424aa5ffefe9cff30508/hailo_hef_build_receipt.json",
+          "cache_hit": true,
+          "calib_source": "validated_existing_artifact",
+          "compiler_onnx_filename": "regnet_x_1_6gf_hailo_fixed.onnx",
+          "compiler_onnx_path": "hailo/hailo10/full/regnet_x_1_6gf_hailo_fixed.onnx",
+          "compiler_onnx_sha256": "9b4f71478bafb39d540b3d04114bedacb6fa646fdcbefbea98d4c05ddb67dd7f",
+          "context_mode": "skipped",
+          "elapsed_s": 0.4962470531463623,
+          "hailo_build_receipt_cache_key": "59629dbf135a582ac59e6921e3619e8231a84de3b0109800f81d59f6e7bae8b0",
+          "hailo_build_receipt_cache_payload_sha256": "59629dbf135a582ac59e6921e3619e8231a84de3b0109800f81d59f6e7bae8b0",
+          "hailo_build_receipt_calibration_count": 500,
+          "hailo_build_receipt_calibration_identity": "manifest:6d6978cafd1b828d6fa9438b232120f2a769311c28492bea5a141af586c3d58c",
+          "hailo_build_receipt_calibration_memory_cap_bytes": 268435456,
+          "hailo_build_receipt_calibration_storage": "memmap",
+          "hailo_build_receipt_end_nodes": [],
+          "hailo_build_receipt_file_sha256": "756b0b430afd104c23bada1d0c4ef4460a6046b865f754a766e3fdcd159acb27",
+          "hailo_build_receipt_hw_arch": "hailo10h",
+          "hailo_build_receipt_identity_sha256": "1f5b0faf90c85bc6d98866e1349608c6d76cadf44775e50f2c2bbb95bc1d0eae",
+          "hailo_build_receipt_path": "hailo/hailo10/full/.hailo-generations/989cc89a96f4424aa5ffefe9cff30508/hailo_hef_build_receipt.json",
+          "hailo_build_receipt_prepared_calibration_identity_sha256": "fb09c137fe8380101f4d02f4c3998037407c0cce5d1b09aa854c61ba41172b18",
+          "hailo_build_receipt_requested_calibration_count": 500,
+          "hailo_build_receipt_schema": "onnx-splitpoint/hailo-hef-build-receipt/v2",
+          "hailo_build_receipt_sdk_version": "hailo-dataflow-compiler:5.3.0",
+          "hailo_build_receipt_size_bytes": 3494,
+          "mapping_failed": false,
+          "multi_context_used": false,
+          "ok": true,
+          "preprocessing_contract": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "imagenet",
+            "input_domain": "uint8_0_255",
+            "letterbox": false,
+            "letterbox_pad_value": 0,
+            "pad_value": 0,
+            "placement": "not_applicable",
+            "preprocess_mode": "resize",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "direct_resize",
+            "target_hw": [
+              224,
+              224
+            ],
+            "task": "classification"
+          },
+          "preprocessing_contract_sha256": "ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9",
+          "receipt_validated": true,
+          "single_context_failed": false,
+          "single_context_used": false,
+          "skipped": true,
+          "source_onnx_path": "/home/kmika/Models/regnet_x_1_6gf.onnx",
+          "source_onnx_sha256": "fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3",
+          "status": "receipt_attested",
+          "timed_out": false,
+          "watchdog_expired": false
+        },
+        "full_build_receipt": {
+          "build_receipt_file_sha256": "756b0b430afd104c23bada1d0c4ef4460a6046b865f754a766e3fdcd159acb27",
+          "build_receipt_identity_sha256": "1f5b0faf90c85bc6d98866e1349608c6d76cadf44775e50f2c2bbb95bc1d0eae",
+          "build_receipt_path": "hailo/hailo10/full/.hailo-generations/989cc89a96f4424aa5ffefe9cff30508/hailo_hef_build_receipt.json",
+          "compiler_onnx_filename": "regnet_x_1_6gf_hailo_fixed.onnx",
+          "compiler_onnx_path": "hailo/hailo10/full/regnet_x_1_6gf_hailo_fixed.onnx",
+          "compiler_onnx_sha256": "9b4f71478bafb39d540b3d04114bedacb6fa646fdcbefbea98d4c05ddb67dd7f",
+          "hailo_build_receipt_cache_key": "59629dbf135a582ac59e6921e3619e8231a84de3b0109800f81d59f6e7bae8b0",
+          "hailo_build_receipt_cache_payload_sha256": "59629dbf135a582ac59e6921e3619e8231a84de3b0109800f81d59f6e7bae8b0",
+          "hailo_build_receipt_calibration_count": 500,
+          "hailo_build_receipt_calibration_identity": "manifest:6d6978cafd1b828d6fa9438b232120f2a769311c28492bea5a141af586c3d58c",
+          "hailo_build_receipt_calibration_memory_cap_bytes": 268435456,
+          "hailo_build_receipt_calibration_storage": "memmap",
+          "hailo_build_receipt_end_nodes": [],
+          "hailo_build_receipt_file_sha256": "756b0b430afd104c23bada1d0c4ef4460a6046b865f754a766e3fdcd159acb27",
+          "hailo_build_receipt_hw_arch": "hailo10h",
+          "hailo_build_receipt_identity_sha256": "1f5b0faf90c85bc6d98866e1349608c6d76cadf44775e50f2c2bbb95bc1d0eae",
+          "hailo_build_receipt_path": "hailo/hailo10/full/.hailo-generations/989cc89a96f4424aa5ffefe9cff30508/hailo_hef_build_receipt.json",
+          "hailo_build_receipt_prepared_calibration_identity_sha256": "fb09c137fe8380101f4d02f4c3998037407c0cce5d1b09aa854c61ba41172b18",
+          "hailo_build_receipt_requested_calibration_count": 500,
+          "hailo_build_receipt_schema": "onnx-splitpoint/hailo-hef-build-receipt/v2",
+          "hailo_build_receipt_sdk_version": "hailo-dataflow-compiler:5.3.0",
+          "hailo_build_receipt_size_bytes": 3494,
+          "preprocessing_contract": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "imagenet",
+            "input_domain": "uint8_0_255",
+            "letterbox": false,
+            "letterbox_pad_value": 0,
+            "pad_value": 0,
+            "placement": "not_applicable",
+            "preprocess_mode": "resize",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "direct_resize",
+            "target_hw": [
+              224,
+              224
+            ],
+            "task": "classification"
+          },
+          "preprocessing_contract_sha256": "ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9",
+          "source_onnx_sha256": "fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3"
+        },
+        "full_output_contract": {
+          "artifact_binding_sha256": "4aca999a781df94cb05b3c45b2ee5b54dac648c3f9c87c323dc088e72725c0c9",
+          "artifact_binding_source": "benchmark_set_declared_full_artifact+receipt_attested_full_artifact",
+          "artifact_binding_status": "verified",
+          "artifact_path": "hailo/hailo10/full/.hailo-generations/989cc89a96f4424aa5ffefe9cff30508/compiled.hef",
+          "artifact_sha256": "95164809abd797d39d8fb3206d4662080782a9c6b18e9976b88b8927b7e0f292",
+          "artifact_size_bytes": 9793536,
+          "backend": "hailo10",
+          "build_receipt_file_sha256": "756b0b430afd104c23bada1d0c4ef4460a6046b865f754a766e3fdcd159acb27",
+          "build_receipt_identity_sha256": "1f5b0faf90c85bc6d98866e1349608c6d76cadf44775e50f2c2bbb95bc1d0eae",
+          "build_receipt_path": "hailo/hailo10/full/.hailo-generations/989cc89a96f4424aa5ffefe9cff30508/hailo_hef_build_receipt.json",
+          "compiler_onnx_filename": "regnet_x_1_6gf_hailo_fixed.onnx",
+          "compiler_onnx_path": "hailo/hailo10/full/regnet_x_1_6gf_hailo_fixed.onnx",
+          "compiler_onnx_sha256": "9b4f71478bafb39d540b3d04114bedacb6fa646fdcbefbea98d4c05ddb67dd7f",
+          "contract_status": "recorded",
+          "endpoint_mode": "decoded",
+          "full_end_node_names": [],
+          "hailo_build_receipt_cache_key": "59629dbf135a582ac59e6921e3619e8231a84de3b0109800f81d59f6e7bae8b0",
+          "hailo_build_receipt_cache_payload_sha256": "59629dbf135a582ac59e6921e3619e8231a84de3b0109800f81d59f6e7bae8b0",
+          "hailo_build_receipt_calibration_count": 500,
+          "hailo_build_receipt_calibration_identity": "manifest:6d6978cafd1b828d6fa9438b232120f2a769311c28492bea5a141af586c3d58c",
+          "hailo_build_receipt_calibration_memory_cap_bytes": 268435456,
+          "hailo_build_receipt_calibration_storage": "memmap",
+          "hailo_build_receipt_end_nodes": [],
+          "hailo_build_receipt_file_sha256": "756b0b430afd104c23bada1d0c4ef4460a6046b865f754a766e3fdcd159acb27",
+          "hailo_build_receipt_hw_arch": "hailo10h",
+          "hailo_build_receipt_identity_sha256": "1f5b0faf90c85bc6d98866e1349608c6d76cadf44775e50f2c2bbb95bc1d0eae",
+          "hailo_build_receipt_path": "hailo/hailo10/full/.hailo-generations/989cc89a96f4424aa5ffefe9cff30508/hailo_hef_build_receipt.json",
+          "hailo_build_receipt_prepared_calibration_identity_sha256": "fb09c137fe8380101f4d02f4c3998037407c0cce5d1b09aa854c61ba41172b18",
+          "hailo_build_receipt_requested_calibration_count": 500,
+          "hailo_build_receipt_schema": "onnx-splitpoint/hailo-hef-build-receipt/v2",
+          "hailo_build_receipt_sdk_version": "hailo-dataflow-compiler:5.3.0",
+          "hailo_build_receipt_size_bytes": 3494,
+          "host_tail_required": false,
+          "model_id": "regnet_x_1_6gf",
+          "postprocessing_required": false,
+          "preprocessing_contract": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "imagenet",
+            "input_domain": "uint8_0_255",
+            "letterbox": false,
+            "letterbox_pad_value": 0,
+            "pad_value": 0,
+            "placement": "not_applicable",
+            "preprocess_mode": "resize",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "direct_resize",
+            "target_hw": [
+              224,
+              224
+            ],
+            "task": "classification"
+          },
+          "preprocessing_contract_sha256": "ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9",
+          "recorded_artifact_path": "hailo/hailo10/full/.hailo-generations/989cc89a96f4424aa5ffefe9cff30508/compiled.hef",
+          "recorded_artifact_sha256": "95164809abd797d39d8fb3206d4662080782a9c6b18e9976b88b8927b7e0f292",
+          "recorded_artifact_size_bytes": 9793536,
+          "request_status": "requested",
+          "requested": true,
+          "requires_external_postprocess": false,
+          "schema": "onnx-splitpoint/output-contract",
+          "schema_version": 1,
+          "source_onnx_detection_endpoint": {
+            "multiscale_raw_head": false,
+            "output_shapes": [],
+            "sidecar_status": "not_applicable",
+            "stage": "not_detection"
+          },
+          "source_onnx_multiscale_raw_head": false,
+          "source_onnx_sha256": "fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3",
+          "task": "classification",
+          "variant": "full",
+          "warning": ""
+        },
+        "full_prepared_baseline": false,
+        "full_receipt_attested": true,
+        "full_required": true
+      },
+      "hailo8": {
+        "full": "hailo/hailo8/full/compiled.hef",
+        "full_build": {
+          "artifact_hash": "6c12f8ac7b8af0dc10dcde7b0656b2b5cc1728c2fe3a9f3b06d682ae26c33261",
+          "build_receipt_file_sha256": "bfb8ec10b427cedcf1d2c6c3444f9554e94d7b65a67ed3a0df6b3b7ee6fb26dd",
+          "build_receipt_identity_sha256": "cf372a9e2f6b90c931bfff73141f7939f8f782779a1d4125ffa7e6cd705b0c88",
+          "build_receipt_path": "hailo/hailo8/full/.hailo-generations/51b1903a07a54115823137b2daea9db4/hailo_hef_build_receipt.json",
+          "cache_hit": true,
+          "calib_source": "validated_existing_artifact",
+          "compiler_onnx_filename": "regnet_x_1_6gf_hailo_fixed.onnx",
+          "compiler_onnx_path": "hailo/hailo8/full/regnet_x_1_6gf_hailo_fixed.onnx",
+          "compiler_onnx_sha256": "9b4f71478bafb39d540b3d04114bedacb6fa646fdcbefbea98d4c05ddb67dd7f",
+          "context_mode": "skipped",
+          "elapsed_s": 0.4981510639190674,
+          "hailo_build_receipt_cache_key": "04bd56468e92678116728c9217e01ecf4d6079441ce28afd77cdd4d89ca085dc",
+          "hailo_build_receipt_cache_payload_sha256": "04bd56468e92678116728c9217e01ecf4d6079441ce28afd77cdd4d89ca085dc",
+          "hailo_build_receipt_calibration_count": 500,
+          "hailo_build_receipt_calibration_identity": "manifest:6d6978cafd1b828d6fa9438b232120f2a769311c28492bea5a141af586c3d58c",
+          "hailo_build_receipt_calibration_memory_cap_bytes": 268435456,
+          "hailo_build_receipt_calibration_storage": "memmap",
+          "hailo_build_receipt_end_nodes": [],
+          "hailo_build_receipt_file_sha256": "bfb8ec10b427cedcf1d2c6c3444f9554e94d7b65a67ed3a0df6b3b7ee6fb26dd",
+          "hailo_build_receipt_hw_arch": "hailo8",
+          "hailo_build_receipt_identity_sha256": "cf372a9e2f6b90c931bfff73141f7939f8f782779a1d4125ffa7e6cd705b0c88",
+          "hailo_build_receipt_path": "hailo/hailo8/full/.hailo-generations/51b1903a07a54115823137b2daea9db4/hailo_hef_build_receipt.json",
+          "hailo_build_receipt_prepared_calibration_identity_sha256": "fb09c137fe8380101f4d02f4c3998037407c0cce5d1b09aa854c61ba41172b18",
+          "hailo_build_receipt_requested_calibration_count": 500,
+          "hailo_build_receipt_schema": "onnx-splitpoint/hailo-hef-build-receipt/v2",
+          "hailo_build_receipt_sdk_version": "hailo-dataflow-compiler:3.33.1",
+          "hailo_build_receipt_size_bytes": 3492,
+          "mapping_failed": false,
+          "multi_context_used": false,
+          "ok": true,
+          "preprocessing_contract": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "imagenet",
+            "input_domain": "uint8_0_255",
+            "letterbox": false,
+            "letterbox_pad_value": 0,
+            "pad_value": 0,
+            "placement": "not_applicable",
+            "preprocess_mode": "resize",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "direct_resize",
+            "target_hw": [
+              224,
+              224
+            ],
+            "task": "classification"
+          },
+          "preprocessing_contract_sha256": "ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9",
+          "receipt_validated": true,
+          "single_context_failed": false,
+          "single_context_used": false,
+          "skipped": true,
+          "source_onnx_path": "/home/kmika/Models/regnet_x_1_6gf.onnx",
+          "source_onnx_sha256": "fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3",
+          "status": "receipt_attested",
+          "timed_out": false,
+          "watchdog_expired": false
+        },
+        "full_build_receipt": {
+          "build_receipt_file_sha256": "bfb8ec10b427cedcf1d2c6c3444f9554e94d7b65a67ed3a0df6b3b7ee6fb26dd",
+          "build_receipt_identity_sha256": "cf372a9e2f6b90c931bfff73141f7939f8f782779a1d4125ffa7e6cd705b0c88",
+          "build_receipt_path": "hailo/hailo8/full/.hailo-generations/51b1903a07a54115823137b2daea9db4/hailo_hef_build_receipt.json",
+          "compiler_onnx_filename": "regnet_x_1_6gf_hailo_fixed.onnx",
+          "compiler_onnx_path": "hailo/hailo8/full/regnet_x_1_6gf_hailo_fixed.onnx",
+          "compiler_onnx_sha256": "9b4f71478bafb39d540b3d04114bedacb6fa646fdcbefbea98d4c05ddb67dd7f",
+          "hailo_build_receipt_cache_key": "04bd56468e92678116728c9217e01ecf4d6079441ce28afd77cdd4d89ca085dc",
+          "hailo_build_receipt_cache_payload_sha256": "04bd56468e92678116728c9217e01ecf4d6079441ce28afd77cdd4d89ca085dc",
+          "hailo_build_receipt_calibration_count": 500,
+          "hailo_build_receipt_calibration_identity": "manifest:6d6978cafd1b828d6fa9438b232120f2a769311c28492bea5a141af586c3d58c",
+          "hailo_build_receipt_calibration_memory_cap_bytes": 268435456,
+          "hailo_build_receipt_calibration_storage": "memmap",
+          "hailo_build_receipt_end_nodes": [],
+          "hailo_build_receipt_file_sha256": "bfb8ec10b427cedcf1d2c6c3444f9554e94d7b65a67ed3a0df6b3b7ee6fb26dd",
+          "hailo_build_receipt_hw_arch": "hailo8",
+          "hailo_build_receipt_identity_sha256": "cf372a9e2f6b90c931bfff73141f7939f8f782779a1d4125ffa7e6cd705b0c88",
+          "hailo_build_receipt_path": "hailo/hailo8/full/.hailo-generations/51b1903a07a54115823137b2daea9db4/hailo_hef_build_receipt.json",
+          "hailo_build_receipt_prepared_calibration_identity_sha256": "fb09c137fe8380101f4d02f4c3998037407c0cce5d1b09aa854c61ba41172b18",
+          "hailo_build_receipt_requested_calibration_count": 500,
+          "hailo_build_receipt_schema": "onnx-splitpoint/hailo-hef-build-receipt/v2",
+          "hailo_build_receipt_sdk_version": "hailo-dataflow-compiler:3.33.1",
+          "hailo_build_receipt_size_bytes": 3492,
+          "preprocessing_contract": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "imagenet",
+            "input_domain": "uint8_0_255",
+            "letterbox": false,
+            "letterbox_pad_value": 0,
+            "pad_value": 0,
+            "placement": "not_applicable",
+            "preprocess_mode": "resize",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "direct_resize",
+            "target_hw": [
+              224,
+              224
+            ],
+            "task": "classification"
+          },
+          "preprocessing_contract_sha256": "ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9",
+          "source_onnx_sha256": "fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3"
+        },
+        "full_output_contract": {
+          "artifact_binding_sha256": "0125fc4e783327bfb7f6d73111ec64dd106df4a11b1dca9a22e062a7dd48a857",
+          "artifact_binding_source": "benchmark_set_declared_full_artifact+receipt_attested_full_artifact",
+          "artifact_binding_status": "verified",
+          "artifact_path": "hailo/hailo8/full/.hailo-generations/51b1903a07a54115823137b2daea9db4/compiled.hef",
+          "artifact_sha256": "6c12f8ac7b8af0dc10dcde7b0656b2b5cc1728c2fe3a9f3b06d682ae26c33261",
+          "artifact_size_bytes": 8596821,
+          "backend": "hailo8",
+          "build_receipt_file_sha256": "bfb8ec10b427cedcf1d2c6c3444f9554e94d7b65a67ed3a0df6b3b7ee6fb26dd",
+          "build_receipt_identity_sha256": "cf372a9e2f6b90c931bfff73141f7939f8f782779a1d4125ffa7e6cd705b0c88",
+          "build_receipt_path": "hailo/hailo8/full/.hailo-generations/51b1903a07a54115823137b2daea9db4/hailo_hef_build_receipt.json",
+          "compiler_onnx_filename": "regnet_x_1_6gf_hailo_fixed.onnx",
+          "compiler_onnx_path": "hailo/hailo8/full/regnet_x_1_6gf_hailo_fixed.onnx",
+          "compiler_onnx_sha256": "9b4f71478bafb39d540b3d04114bedacb6fa646fdcbefbea98d4c05ddb67dd7f",
+          "contract_status": "recorded",
+          "endpoint_mode": "decoded",
+          "full_end_node_names": [],
+          "hailo_build_receipt_cache_key": "04bd56468e92678116728c9217e01ecf4d6079441ce28afd77cdd4d89ca085dc",
+          "hailo_build_receipt_cache_payload_sha256": "04bd56468e92678116728c9217e01ecf4d6079441ce28afd77cdd4d89ca085dc",
+          "hailo_build_receipt_calibration_count": 500,
+          "hailo_build_receipt_calibration_identity": "manifest:6d6978cafd1b828d6fa9438b232120f2a769311c28492bea5a141af586c3d58c",
+          "hailo_build_receipt_calibration_memory_cap_bytes": 268435456,
+          "hailo_build_receipt_calibration_storage": "memmap",
+          "hailo_build_receipt_end_nodes": [],
+          "hailo_build_receipt_file_sha256": "bfb8ec10b427cedcf1d2c6c3444f9554e94d7b65a67ed3a0df6b3b7ee6fb26dd",
+          "hailo_build_receipt_hw_arch": "hailo8",
+          "hailo_build_receipt_identity_sha256": "cf372a9e2f6b90c931bfff73141f7939f8f782779a1d4125ffa7e6cd705b0c88",
+          "hailo_build_receipt_path": "hailo/hailo8/full/.hailo-generations/51b1903a07a54115823137b2daea9db4/hailo_hef_build_receipt.json",
+          "hailo_build_receipt_prepared_calibration_identity_sha256": "fb09c137fe8380101f4d02f4c3998037407c0cce5d1b09aa854c61ba41172b18",
+          "hailo_build_receipt_requested_calibration_count": 500,
+          "hailo_build_receipt_schema": "onnx-splitpoint/hailo-hef-build-receipt/v2",
+          "hailo_build_receipt_sdk_version": "hailo-dataflow-compiler:3.33.1",
+          "hailo_build_receipt_size_bytes": 3492,
+          "host_tail_required": false,
+          "model_id": "regnet_x_1_6gf",
+          "postprocessing_required": false,
+          "preprocessing_contract": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "imagenet",
+            "input_domain": "uint8_0_255",
+            "letterbox": false,
+            "letterbox_pad_value": 0,
+            "pad_value": 0,
+            "placement": "not_applicable",
+            "preprocess_mode": "resize",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "direct_resize",
+            "target_hw": [
+              224,
+              224
+            ],
+            "task": "classification"
+          },
+          "preprocessing_contract_sha256": "ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9",
+          "recorded_artifact_path": "hailo/hailo8/full/.hailo-generations/51b1903a07a54115823137b2daea9db4/compiled.hef",
+          "recorded_artifact_sha256": "6c12f8ac7b8af0dc10dcde7b0656b2b5cc1728c2fe3a9f3b06d682ae26c33261",
+          "recorded_artifact_size_bytes": 8596821,
+          "request_status": "requested",
+          "requested": true,
+          "requires_external_postprocess": false,
+          "schema": "onnx-splitpoint/output-contract",
+          "schema_version": 1,
+          "source_onnx_detection_endpoint": {
+            "multiscale_raw_head": false,
+            "output_shapes": [],
+            "sidecar_status": "not_applicable",
+            "stage": "not_detection"
+          },
+          "source_onnx_multiscale_raw_head": false,
+          "source_onnx_sha256": "fba2c5b46ff63bd4b4bc65f1cf60fd86fa84e16e7432fcaa60d5efbd2c99b8f3",
+          "task": "classification",
+          "variant": "full",
+          "warning": ""
+        },
+        "full_prepared_baseline": false,
+        "full_receipt_attested": true,
+        "full_required": true
+      }
+    },
+    "targets": [
+      "hailo10",
+      "hailo8"
+    ]
+  },
+  "management_cpu_reference_invariant": {
+    "execution_location": "central_management",
+    "performance_dispatch_allowed": false,
+    "recipe_count": 1,
+    "run_plan_sha256": "sha256:84d69cd276619589b63babddbd0457d6429616ec3b5758bcca4d9e44c2e3224f",
+    "status": "verified"
+  },
+  "model": "models/regnet_x_1_6gf.onnx",
+  "model_name": "regnet_x_1_6gf",
+  "model_source": "/home/kmika/Models/regnet_x_1_6gf.onnx",
+  "model_task": "classification",
+  "native_split_quality_selection": {
+    "applicable": true,
+    "schema": "onnx-splitpoint/native-split-quality-selection",
+    "schema_version": 1,
+    "split_backends": [
+      "hailo8",
+      "hailo10h",
+      "deepx"
+    ],
+    "split_selection_source": "evaluation_profile.run_profiles"
+  },
+  "objective": "workflow_legacy_adapter",
+  "plan": {
+    "benchmark_task": "classification",
+    "created_at": "2026-09-10T21:12:37",
+    "evaluation_profile": {
+      "profile_id": "completsetdev",
+      "source": "evaluation_workflow"
+    },
+    "management_cpu_reference_invariant": {
+      "execution_location": "central_management",
+      "performance_dispatch_allowed": false,
+      "recipe_count": 1,
+      "run_plan_sha256": "sha256:84d69cd276619589b63babddbd0457d6429616ec3b5758bcca4d9e44c2e3224f",
+      "status": "verified"
+    },
+    "matrix": [],
+    "model_task": "classification",
+    "native_split_quality_selection": {
+      "applicable": true,
+      "schema": "onnx-splitpoint/native-split-quality-selection",
+      "schema_version": 1,
+      "split_backends": [
+        "hailo8",
+        "hailo10h",
+        "deepx"
+      ],
+      "split_selection_source": "evaluation_profile.run_profiles"
+    },
+    "objective": "workflow_legacy_adapter",
+    "planned_runs": [
+      {
+        "automatic_reference": false,
+        "backend": "ort_cpu",
+        "benchmark_task": "classification",
+        "canonical_cpu_reference": true,
+        "energy_eligible": false,
+        "execution_location": "central_management",
+        "id": "ort_cpu",
+        "image_scale": "auto",
+        "mini_classification_eval": true,
+        "mini_coco_ap50": false,
+        "pareto_eligible": false,
+        "performance_eligible": false,
+        "provider": "cpu",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "ranking_eligible": false,
+        "semantic_reference_only": true,
+        "stage1": {
+          "provider": "cpu",
+          "type": "onnxruntime"
+        },
+        "stage2": {
+          "provider": "cpu",
+          "type": "onnxruntime"
+        },
+        "task": "classification",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "onnxruntime",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variant": "full",
+        "variants": [
+          "full"
+        ]
+      },
+      {
+        "benchmark_task": "classification",
+        "id": "ort_tensorrt",
+        "image_scale": "auto",
+        "mini_classification_eval": true,
+        "mini_coco_ap50": false,
+        "provider": "tensorrt",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "stage2": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "task": "classification",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "onnxruntime",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest"
+      },
+      {
+        "benchmark_task": "classification",
+        "hw_arch": "hailo8",
+        "id": "hailo8",
+        "image_scale": "auto",
+        "mini_classification_eval": true,
+        "mini_coco_ap50": false,
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "same_backend_split_diagnostics_enabled": false,
+        "stage1": {
+          "hw_arch": "hailo8",
+          "type": "hailo"
+        },
+        "stage2": {
+          "hw_arch": "hailo8",
+          "type": "hailo"
+        },
+        "task": "classification",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "hailo",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full"
+        ]
+      },
+      {
+        "benchmark_task": "classification",
+        "hw_arch": "hailo10",
+        "id": "hailo10",
+        "image_scale": "auto",
+        "mini_classification_eval": true,
+        "mini_coco_ap50": false,
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "same_backend_split_diagnostics_enabled": false,
+        "stage1": {
+          "hw_arch": "hailo10",
+          "type": "hailo"
+        },
+        "stage2": {
+          "hw_arch": "hailo10",
+          "type": "hailo"
+        },
+        "task": "classification",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "hailo",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full"
+        ]
+      },
+      {
+        "backend": "deepx_m1",
+        "benchmark_task": "classification",
+        "contract_path": "deepx/deepx_m1/full/output_contract.json",
+        "dxnn_path": "deepx/deepx_m1/full/model.dxnn",
+        "id": "deepx_m1_full",
+        "image_scale": "auto",
+        "mini_classification_eval": true,
+        "mini_coco_ap50": false,
+        "provider": "deepx_m1",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "backend": "deepx_m1",
+          "type": "deepx"
+        },
+        "stage2": {
+          "backend": "deepx_m1",
+          "type": "deepx"
+        },
+        "task": "classification",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "deepx",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full"
+        ]
+      },
+      {
+        "benchmark_task": "classification",
+        "id": "deepx_m1_to_tensorrt",
+        "image_scale": "auto",
+        "mini_classification_eval": true,
+        "mini_coco_ap50": false,
+        "provider": "tensorrt",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "backend": "deepx_m1",
+          "type": "deepx"
+        },
+        "stage2": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "task": "classification",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "matrix",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "part1",
+          "part2",
+          "composed"
+        ]
+      },
+      {
+        "benchmark_task": "classification",
+        "id": "hailo8_to_trt",
+        "image_scale": "auto",
+        "mini_classification_eval": true,
+        "mini_coco_ap50": false,
+        "provider": "tensorrt",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "hw_arch": "hailo8",
+          "type": "hailo"
+        },
+        "stage2": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "task": "classification",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "matrix",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full",
+          "part1",
+          "part2",
+          "composed"
+        ]
+      },
+      {
+        "benchmark_task": "classification",
+        "id": "hailo10_to_tensorrt",
+        "image_scale": "auto",
+        "mini_classification_eval": true,
+        "mini_coco_ap50": false,
+        "provider": "tensorrt",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "hw_arch": "hailo10",
+          "type": "hailo"
+        },
+        "stage2": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "task": "classification",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "matrix",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full",
+          "part1",
+          "part2",
+          "composed"
+        ]
+      }
+    ],
+    "quality_gate": {
+      "canonical_reference": "canonical_full_onnx",
+      "claim_eligible": null,
+      "classification": {
+        "guardrails": {
+          "top5_accuracy_margin": 0.01
+        },
+        "non_inferiority_margin": 0.01,
+        "primary_metric": "top1_accuracy"
+      },
+      "dataset_tier": "final",
+      "detection": {
+        "guardrails": {
+          "ap50_margin": 0.01,
+          "ap75_margin": 0.01
+        },
+        "non_inferiority_margin": 0.01,
+        "primary_metric": "coco_ap_50_95"
+      },
+      "diagnostic_only": false,
+      "enforcement": {
+        "claim_eligibility": "complete_valid_evidence_only",
+        "metric_threshold_miss": "enforced_quality_decision",
+        "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+        "technical_quality_error": "hard_fail"
+      },
+      "frozen_before_final_campaign": false,
+      "legacy_point_estimate_eligible_for_ranking": false,
+      "name": "task_quality_final_5000",
+      "native_contract": {
+        "detection_self_reference": {
+          "class_aware": true,
+          "confidence_threshold": 0.25,
+          "denominator": "reference_detections",
+          "iou_threshold": 0.5,
+          "min_mean_matched_iou": 0.85,
+          "min_reference_match_ratio": 0.8,
+          "policy_id": "class_aware_iou50_postnms_v2"
+        },
+        "detection_self_reference_min_match_ratio": 0.8,
+        "numerical_similarity_required_for_claim": true,
+        "self_reference_counts_as_task_accuracy": false
+      },
+      "profile_id": "task_quality_final_5000",
+      "schema": "onnx-splitpoint/task-quality-policy",
+      "schema_version": 3,
+      "screening_eligible_for_ranking": false,
+      "statistics": {
+        "bootstrap_repetitions": 5000,
+        "confidence_level": 0.95,
+        "decision": "lower_one_sided_bound",
+        "execution_location": "central_management",
+        "method": "paired_bootstrap",
+        "seed": 20260710,
+        "workers": 4
+      }
+    },
+    "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+    "runs": [
+      {
+        "automatic_reference": false,
+        "backend": "ort_cpu",
+        "benchmark_task": "classification",
+        "canonical_cpu_reference": true,
+        "energy_eligible": false,
+        "execution_location": "central_management",
+        "id": "ort_cpu",
+        "image_scale": "auto",
+        "mini_classification_eval": true,
+        "mini_coco_ap50": false,
+        "pareto_eligible": false,
+        "performance_eligible": false,
+        "provider": "cpu",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "ranking_eligible": false,
+        "semantic_reference_only": true,
+        "stage1": {
+          "provider": "cpu",
+          "type": "onnxruntime"
+        },
+        "stage2": {
+          "provider": "cpu",
+          "type": "onnxruntime"
+        },
+        "task": "classification",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "onnxruntime",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variant": "full",
+        "variants": [
+          "full"
+        ]
+      },
+      {
+        "benchmark_task": "classification",
+        "id": "ort_tensorrt",
+        "image_scale": "auto",
+        "mini_classification_eval": true,
+        "mini_coco_ap50": false,
+        "provider": "tensorrt",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "stage2": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "task": "classification",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "onnxruntime",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest"
+      },
+      {
+        "benchmark_task": "classification",
+        "hw_arch": "hailo8",
+        "id": "hailo8",
+        "image_scale": "auto",
+        "mini_classification_eval": true,
+        "mini_coco_ap50": false,
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "same_backend_split_diagnostics_enabled": false,
+        "stage1": {
+          "hw_arch": "hailo8",
+          "type": "hailo"
+        },
+        "stage2": {
+          "hw_arch": "hailo8",
+          "type": "hailo"
+        },
+        "task": "classification",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "hailo",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full"
+        ]
+      },
+      {
+        "benchmark_task": "classification",
+        "hw_arch": "hailo10",
+        "id": "hailo10",
+        "image_scale": "auto",
+        "mini_classification_eval": true,
+        "mini_coco_ap50": false,
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "same_backend_split_diagnostics_enabled": false,
+        "stage1": {
+          "hw_arch": "hailo10",
+          "type": "hailo"
+        },
+        "stage2": {
+          "hw_arch": "hailo10",
+          "type": "hailo"
+        },
+        "task": "classification",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "hailo",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full"
+        ]
+      },
+      {
+        "backend": "deepx_m1",
+        "benchmark_task": "classification",
+        "contract_path": "deepx/deepx_m1/full/output_contract.json",
+        "dxnn_path": "deepx/deepx_m1/full/model.dxnn",
+        "id": "deepx_m1_full",
+        "image_scale": "auto",
+        "mini_classification_eval": true,
+        "mini_coco_ap50": false,
+        "provider": "deepx_m1",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "backend": "deepx_m1",
+          "type": "deepx"
+        },
+        "stage2": {
+          "backend": "deepx_m1",
+          "type": "deepx"
+        },
+        "task": "classification",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "deepx",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full"
+        ]
+      },
+      {
+        "benchmark_task": "classification",
+        "id": "deepx_m1_to_tensorrt",
+        "image_scale": "auto",
+        "mini_classification_eval": true,
+        "mini_coco_ap50": false,
+        "provider": "tensorrt",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "backend": "deepx_m1",
+          "type": "deepx"
+        },
+        "stage2": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "task": "classification",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "matrix",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "part1",
+          "part2",
+          "composed"
+        ]
+      },
+      {
+        "benchmark_task": "classification",
+        "id": "hailo8_to_trt",
+        "image_scale": "auto",
+        "mini_classification_eval": true,
+        "mini_coco_ap50": false,
+        "provider": "tensorrt",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "hw_arch": "hailo8",
+          "type": "hailo"
+        },
+        "stage2": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "task": "classification",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "matrix",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full",
+          "part1",
+          "part2",
+          "composed"
+        ]
+      },
+      {
+        "benchmark_task": "classification",
+        "id": "hailo10_to_tensorrt",
+        "image_scale": "auto",
+        "mini_classification_eval": true,
+        "mini_coco_ap50": false,
+        "provider": "tensorrt",
+        "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+        "stage1": {
+          "hw_arch": "hailo10",
+          "type": "hailo"
+        },
+        "stage2": {
+          "provider": "tensorrt",
+          "type": "onnxruntime"
+        },
+        "task": "classification",
+        "task_quality_gate": {
+          "canonical_reference": "canonical_full_onnx",
+          "claim_eligible": null,
+          "classification": {
+            "guardrails": {
+              "top5_accuracy_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "top1_accuracy"
+          },
+          "dataset_tier": "final",
+          "detection": {
+            "guardrails": {
+              "ap50_margin": 0.01,
+              "ap75_margin": 0.01
+            },
+            "non_inferiority_margin": 0.01,
+            "primary_metric": "coco_ap_50_95"
+          },
+          "diagnostic_only": false,
+          "enforcement": {
+            "claim_eligibility": "complete_valid_evidence_only",
+            "metric_threshold_miss": "enforced_quality_decision",
+            "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+            "technical_quality_error": "hard_fail"
+          },
+          "frozen_before_final_campaign": false,
+          "legacy_point_estimate_eligible_for_ranking": false,
+          "name": "task_quality_final_5000",
+          "native_contract": {
+            "detection_self_reference": {
+              "class_aware": true,
+              "confidence_threshold": 0.25,
+              "denominator": "reference_detections",
+              "iou_threshold": 0.5,
+              "min_mean_matched_iou": 0.85,
+              "min_reference_match_ratio": 0.8,
+              "policy_id": "class_aware_iou50_postnms_v2"
+            },
+            "detection_self_reference_min_match_ratio": 0.8,
+            "numerical_similarity_required_for_claim": true,
+            "self_reference_counts_as_task_accuracy": false
+          },
+          "profile_id": "task_quality_final_5000",
+          "schema": "onnx-splitpoint/task-quality-policy",
+          "schema_version": 3,
+          "screening_eligible_for_ranking": false,
+          "statistics": {
+            "bootstrap_repetitions": 5000,
+            "confidence_level": 0.95,
+            "decision": "lower_one_sided_bound",
+            "execution_location": "central_management",
+            "method": "paired_bootstrap",
+            "seed": 20260710,
+            "workers": 4
+          }
+        },
+        "type": "matrix",
+        "validation_budget_authoritative": true,
+        "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+        "validation_items_requested": 5000,
+        "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+        "validation_max_images": 5000,
+        "validation_reference_mode": "auto",
+        "validation_source_kind": "content_addressed_manifest",
+        "variants": [
+          "full",
+          "part1",
+          "part2",
+          "composed"
+        ]
+      }
+    ],
+    "schema": "onnx-splitpoint/benchmark-plan",
+    "schema_version": 1,
+    "stage_schema_normalized_by": "v60i-final-evidence-pipeline-fixes",
+    "task": "classification"
+  },
+  "planned_runs": [
+    {
+      "automatic_reference": false,
+      "backend": "ort_cpu",
+      "benchmark_task": "classification",
+      "canonical_cpu_reference": true,
+      "energy_eligible": false,
+      "execution_location": "central_management",
+      "id": "ort_cpu",
+      "image_scale": "auto",
+      "mini_classification_eval": true,
+      "mini_coco_ap50": false,
+      "pareto_eligible": false,
+      "performance_eligible": false,
+      "provider": "cpu",
+      "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+      "ranking_eligible": false,
+      "semantic_reference_only": true,
+      "stage1": {
+        "provider": "cpu",
+        "type": "onnxruntime"
+      },
+      "stage2": {
+        "provider": "cpu",
+        "type": "onnxruntime"
+      },
+      "task": "classification",
+      "task_quality_gate": {
+        "canonical_reference": "canonical_full_onnx",
+        "claim_eligible": null,
+        "classification": {
+          "guardrails": {
+            "top5_accuracy_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "top1_accuracy"
+        },
+        "dataset_tier": "final",
+        "detection": {
+          "guardrails": {
+            "ap50_margin": 0.01,
+            "ap75_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "coco_ap_50_95"
+        },
+        "diagnostic_only": false,
+        "enforcement": {
+          "claim_eligibility": "complete_valid_evidence_only",
+          "metric_threshold_miss": "enforced_quality_decision",
+          "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+          "technical_quality_error": "hard_fail"
+        },
+        "frozen_before_final_campaign": false,
+        "legacy_point_estimate_eligible_for_ranking": false,
+        "name": "task_quality_final_5000",
+        "native_contract": {
+          "detection_self_reference": {
+            "class_aware": true,
+            "confidence_threshold": 0.25,
+            "denominator": "reference_detections",
+            "iou_threshold": 0.5,
+            "min_mean_matched_iou": 0.85,
+            "min_reference_match_ratio": 0.8,
+            "policy_id": "class_aware_iou50_postnms_v2"
+          },
+          "detection_self_reference_min_match_ratio": 0.8,
+          "numerical_similarity_required_for_claim": true,
+          "self_reference_counts_as_task_accuracy": false
+        },
+        "profile_id": "task_quality_final_5000",
+        "schema": "onnx-splitpoint/task-quality-policy",
+        "schema_version": 3,
+        "screening_eligible_for_ranking": false,
+        "statistics": {
+          "bootstrap_repetitions": 5000,
+          "confidence_level": 0.95,
+          "decision": "lower_one_sided_bound",
+          "execution_location": "central_management",
+          "method": "paired_bootstrap",
+          "seed": 20260710,
+          "workers": 4
+        }
+      },
+      "type": "onnxruntime",
+      "validation_budget_authoritative": true,
+      "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+      "validation_items_requested": 5000,
+      "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+      "validation_max_images": 5000,
+      "validation_reference_mode": "auto",
+      "validation_source_kind": "content_addressed_manifest",
+      "variant": "full",
+      "variants": [
+        "full"
+      ]
+    },
+    {
+      "benchmark_task": "classification",
+      "id": "ort_tensorrt",
+      "image_scale": "auto",
+      "mini_classification_eval": true,
+      "mini_coco_ap50": false,
+      "provider": "tensorrt",
+      "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+      "stage1": {
+        "provider": "tensorrt",
+        "type": "onnxruntime"
+      },
+      "stage2": {
+        "provider": "tensorrt",
+        "type": "onnxruntime"
+      },
+      "task": "classification",
+      "task_quality_gate": {
+        "canonical_reference": "canonical_full_onnx",
+        "claim_eligible": null,
+        "classification": {
+          "guardrails": {
+            "top5_accuracy_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "top1_accuracy"
+        },
+        "dataset_tier": "final",
+        "detection": {
+          "guardrails": {
+            "ap50_margin": 0.01,
+            "ap75_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "coco_ap_50_95"
+        },
+        "diagnostic_only": false,
+        "enforcement": {
+          "claim_eligibility": "complete_valid_evidence_only",
+          "metric_threshold_miss": "enforced_quality_decision",
+          "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+          "technical_quality_error": "hard_fail"
+        },
+        "frozen_before_final_campaign": false,
+        "legacy_point_estimate_eligible_for_ranking": false,
+        "name": "task_quality_final_5000",
+        "native_contract": {
+          "detection_self_reference": {
+            "class_aware": true,
+            "confidence_threshold": 0.25,
+            "denominator": "reference_detections",
+            "iou_threshold": 0.5,
+            "min_mean_matched_iou": 0.85,
+            "min_reference_match_ratio": 0.8,
+            "policy_id": "class_aware_iou50_postnms_v2"
+          },
+          "detection_self_reference_min_match_ratio": 0.8,
+          "numerical_similarity_required_for_claim": true,
+          "self_reference_counts_as_task_accuracy": false
+        },
+        "profile_id": "task_quality_final_5000",
+        "schema": "onnx-splitpoint/task-quality-policy",
+        "schema_version": 3,
+        "screening_eligible_for_ranking": false,
+        "statistics": {
+          "bootstrap_repetitions": 5000,
+          "confidence_level": 0.95,
+          "decision": "lower_one_sided_bound",
+          "execution_location": "central_management",
+          "method": "paired_bootstrap",
+          "seed": 20260710,
+          "workers": 4
+        }
+      },
+      "type": "onnxruntime",
+      "validation_budget_authoritative": true,
+      "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+      "validation_items_requested": 5000,
+      "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+      "validation_max_images": 5000,
+      "validation_reference_mode": "auto",
+      "validation_source_kind": "content_addressed_manifest"
+    },
+    {
+      "benchmark_task": "classification",
+      "hw_arch": "hailo8",
+      "id": "hailo8",
+      "image_scale": "auto",
+      "mini_classification_eval": true,
+      "mini_coco_ap50": false,
+      "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+      "same_backend_split_diagnostics_enabled": false,
+      "stage1": {
+        "hw_arch": "hailo8",
+        "type": "hailo"
+      },
+      "stage2": {
+        "hw_arch": "hailo8",
+        "type": "hailo"
+      },
+      "task": "classification",
+      "task_quality_gate": {
+        "canonical_reference": "canonical_full_onnx",
+        "claim_eligible": null,
+        "classification": {
+          "guardrails": {
+            "top5_accuracy_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "top1_accuracy"
+        },
+        "dataset_tier": "final",
+        "detection": {
+          "guardrails": {
+            "ap50_margin": 0.01,
+            "ap75_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "coco_ap_50_95"
+        },
+        "diagnostic_only": false,
+        "enforcement": {
+          "claim_eligibility": "complete_valid_evidence_only",
+          "metric_threshold_miss": "enforced_quality_decision",
+          "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+          "technical_quality_error": "hard_fail"
+        },
+        "frozen_before_final_campaign": false,
+        "legacy_point_estimate_eligible_for_ranking": false,
+        "name": "task_quality_final_5000",
+        "native_contract": {
+          "detection_self_reference": {
+            "class_aware": true,
+            "confidence_threshold": 0.25,
+            "denominator": "reference_detections",
+            "iou_threshold": 0.5,
+            "min_mean_matched_iou": 0.85,
+            "min_reference_match_ratio": 0.8,
+            "policy_id": "class_aware_iou50_postnms_v2"
+          },
+          "detection_self_reference_min_match_ratio": 0.8,
+          "numerical_similarity_required_for_claim": true,
+          "self_reference_counts_as_task_accuracy": false
+        },
+        "profile_id": "task_quality_final_5000",
+        "schema": "onnx-splitpoint/task-quality-policy",
+        "schema_version": 3,
+        "screening_eligible_for_ranking": false,
+        "statistics": {
+          "bootstrap_repetitions": 5000,
+          "confidence_level": 0.95,
+          "decision": "lower_one_sided_bound",
+          "execution_location": "central_management",
+          "method": "paired_bootstrap",
+          "seed": 20260710,
+          "workers": 4
+        }
+      },
+      "type": "hailo",
+      "validation_budget_authoritative": true,
+      "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+      "validation_items_requested": 5000,
+      "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+      "validation_max_images": 5000,
+      "validation_reference_mode": "auto",
+      "validation_source_kind": "content_addressed_manifest",
+      "variants": [
+        "full"
+      ]
+    },
+    {
+      "benchmark_task": "classification",
+      "hw_arch": "hailo10",
+      "id": "hailo10",
+      "image_scale": "auto",
+      "mini_classification_eval": true,
+      "mini_coco_ap50": false,
+      "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+      "same_backend_split_diagnostics_enabled": false,
+      "stage1": {
+        "hw_arch": "hailo10",
+        "type": "hailo"
+      },
+      "stage2": {
+        "hw_arch": "hailo10",
+        "type": "hailo"
+      },
+      "task": "classification",
+      "task_quality_gate": {
+        "canonical_reference": "canonical_full_onnx",
+        "claim_eligible": null,
+        "classification": {
+          "guardrails": {
+            "top5_accuracy_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "top1_accuracy"
+        },
+        "dataset_tier": "final",
+        "detection": {
+          "guardrails": {
+            "ap50_margin": 0.01,
+            "ap75_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "coco_ap_50_95"
+        },
+        "diagnostic_only": false,
+        "enforcement": {
+          "claim_eligibility": "complete_valid_evidence_only",
+          "metric_threshold_miss": "enforced_quality_decision",
+          "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+          "technical_quality_error": "hard_fail"
+        },
+        "frozen_before_final_campaign": false,
+        "legacy_point_estimate_eligible_for_ranking": false,
+        "name": "task_quality_final_5000",
+        "native_contract": {
+          "detection_self_reference": {
+            "class_aware": true,
+            "confidence_threshold": 0.25,
+            "denominator": "reference_detections",
+            "iou_threshold": 0.5,
+            "min_mean_matched_iou": 0.85,
+            "min_reference_match_ratio": 0.8,
+            "policy_id": "class_aware_iou50_postnms_v2"
+          },
+          "detection_self_reference_min_match_ratio": 0.8,
+          "numerical_similarity_required_for_claim": true,
+          "self_reference_counts_as_task_accuracy": false
+        },
+        "profile_id": "task_quality_final_5000",
+        "schema": "onnx-splitpoint/task-quality-policy",
+        "schema_version": 3,
+        "screening_eligible_for_ranking": false,
+        "statistics": {
+          "bootstrap_repetitions": 5000,
+          "confidence_level": 0.95,
+          "decision": "lower_one_sided_bound",
+          "execution_location": "central_management",
+          "method": "paired_bootstrap",
+          "seed": 20260710,
+          "workers": 4
+        }
+      },
+      "type": "hailo",
+      "validation_budget_authoritative": true,
+      "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+      "validation_items_requested": 5000,
+      "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+      "validation_max_images": 5000,
+      "validation_reference_mode": "auto",
+      "validation_source_kind": "content_addressed_manifest",
+      "variants": [
+        "full"
+      ]
+    },
+    {
+      "backend": "deepx_m1",
+      "benchmark_task": "classification",
+      "contract_path": "deepx/deepx_m1/full/output_contract.json",
+      "dxnn_path": "deepx/deepx_m1/full/model.dxnn",
+      "id": "deepx_m1_full",
+      "image_scale": "auto",
+      "mini_classification_eval": true,
+      "mini_coco_ap50": false,
+      "provider": "deepx_m1",
+      "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+      "stage1": {
+        "backend": "deepx_m1",
+        "type": "deepx"
+      },
+      "stage2": {
+        "backend": "deepx_m1",
+        "type": "deepx"
+      },
+      "task": "classification",
+      "task_quality_gate": {
+        "canonical_reference": "canonical_full_onnx",
+        "claim_eligible": null,
+        "classification": {
+          "guardrails": {
+            "top5_accuracy_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "top1_accuracy"
+        },
+        "dataset_tier": "final",
+        "detection": {
+          "guardrails": {
+            "ap50_margin": 0.01,
+            "ap75_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "coco_ap_50_95"
+        },
+        "diagnostic_only": false,
+        "enforcement": {
+          "claim_eligibility": "complete_valid_evidence_only",
+          "metric_threshold_miss": "enforced_quality_decision",
+          "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+          "technical_quality_error": "hard_fail"
+        },
+        "frozen_before_final_campaign": false,
+        "legacy_point_estimate_eligible_for_ranking": false,
+        "name": "task_quality_final_5000",
+        "native_contract": {
+          "detection_self_reference": {
+            "class_aware": true,
+            "confidence_threshold": 0.25,
+            "denominator": "reference_detections",
+            "iou_threshold": 0.5,
+            "min_mean_matched_iou": 0.85,
+            "min_reference_match_ratio": 0.8,
+            "policy_id": "class_aware_iou50_postnms_v2"
+          },
+          "detection_self_reference_min_match_ratio": 0.8,
+          "numerical_similarity_required_for_claim": true,
+          "self_reference_counts_as_task_accuracy": false
+        },
+        "profile_id": "task_quality_final_5000",
+        "schema": "onnx-splitpoint/task-quality-policy",
+        "schema_version": 3,
+        "screening_eligible_for_ranking": false,
+        "statistics": {
+          "bootstrap_repetitions": 5000,
+          "confidence_level": 0.95,
+          "decision": "lower_one_sided_bound",
+          "execution_location": "central_management",
+          "method": "paired_bootstrap",
+          "seed": 20260710,
+          "workers": 4
+        }
+      },
+      "type": "deepx",
+      "validation_budget_authoritative": true,
+      "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+      "validation_items_requested": 5000,
+      "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+      "validation_max_images": 5000,
+      "validation_reference_mode": "auto",
+      "validation_source_kind": "content_addressed_manifest",
+      "variants": [
+        "full"
+      ]
+    },
+    {
+      "benchmark_task": "classification",
+      "id": "deepx_m1_to_tensorrt",
+      "image_scale": "auto",
+      "mini_classification_eval": true,
+      "mini_coco_ap50": false,
+      "provider": "tensorrt",
+      "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+      "stage1": {
+        "backend": "deepx_m1",
+        "type": "deepx"
+      },
+      "stage2": {
+        "provider": "tensorrt",
+        "type": "onnxruntime"
+      },
+      "task": "classification",
+      "task_quality_gate": {
+        "canonical_reference": "canonical_full_onnx",
+        "claim_eligible": null,
+        "classification": {
+          "guardrails": {
+            "top5_accuracy_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "top1_accuracy"
+        },
+        "dataset_tier": "final",
+        "detection": {
+          "guardrails": {
+            "ap50_margin": 0.01,
+            "ap75_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "coco_ap_50_95"
+        },
+        "diagnostic_only": false,
+        "enforcement": {
+          "claim_eligibility": "complete_valid_evidence_only",
+          "metric_threshold_miss": "enforced_quality_decision",
+          "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+          "technical_quality_error": "hard_fail"
+        },
+        "frozen_before_final_campaign": false,
+        "legacy_point_estimate_eligible_for_ranking": false,
+        "name": "task_quality_final_5000",
+        "native_contract": {
+          "detection_self_reference": {
+            "class_aware": true,
+            "confidence_threshold": 0.25,
+            "denominator": "reference_detections",
+            "iou_threshold": 0.5,
+            "min_mean_matched_iou": 0.85,
+            "min_reference_match_ratio": 0.8,
+            "policy_id": "class_aware_iou50_postnms_v2"
+          },
+          "detection_self_reference_min_match_ratio": 0.8,
+          "numerical_similarity_required_for_claim": true,
+          "self_reference_counts_as_task_accuracy": false
+        },
+        "profile_id": "task_quality_final_5000",
+        "schema": "onnx-splitpoint/task-quality-policy",
+        "schema_version": 3,
+        "screening_eligible_for_ranking": false,
+        "statistics": {
+          "bootstrap_repetitions": 5000,
+          "confidence_level": 0.95,
+          "decision": "lower_one_sided_bound",
+          "execution_location": "central_management",
+          "method": "paired_bootstrap",
+          "seed": 20260710,
+          "workers": 4
+        }
+      },
+      "type": "matrix",
+      "validation_budget_authoritative": true,
+      "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+      "validation_items_requested": 5000,
+      "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+      "validation_max_images": 5000,
+      "validation_reference_mode": "auto",
+      "validation_source_kind": "content_addressed_manifest",
+      "variants": [
+        "part1",
+        "part2",
+        "composed"
+      ]
+    },
+    {
+      "benchmark_task": "classification",
+      "id": "hailo8_to_trt",
+      "image_scale": "auto",
+      "mini_classification_eval": true,
+      "mini_coco_ap50": false,
+      "provider": "tensorrt",
+      "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+      "stage1": {
+        "hw_arch": "hailo8",
+        "type": "hailo"
+      },
+      "stage2": {
+        "provider": "tensorrt",
+        "type": "onnxruntime"
+      },
+      "task": "classification",
+      "task_quality_gate": {
+        "canonical_reference": "canonical_full_onnx",
+        "claim_eligible": null,
+        "classification": {
+          "guardrails": {
+            "top5_accuracy_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "top1_accuracy"
+        },
+        "dataset_tier": "final",
+        "detection": {
+          "guardrails": {
+            "ap50_margin": 0.01,
+            "ap75_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "coco_ap_50_95"
+        },
+        "diagnostic_only": false,
+        "enforcement": {
+          "claim_eligibility": "complete_valid_evidence_only",
+          "metric_threshold_miss": "enforced_quality_decision",
+          "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+          "technical_quality_error": "hard_fail"
+        },
+        "frozen_before_final_campaign": false,
+        "legacy_point_estimate_eligible_for_ranking": false,
+        "name": "task_quality_final_5000",
+        "native_contract": {
+          "detection_self_reference": {
+            "class_aware": true,
+            "confidence_threshold": 0.25,
+            "denominator": "reference_detections",
+            "iou_threshold": 0.5,
+            "min_mean_matched_iou": 0.85,
+            "min_reference_match_ratio": 0.8,
+            "policy_id": "class_aware_iou50_postnms_v2"
+          },
+          "detection_self_reference_min_match_ratio": 0.8,
+          "numerical_similarity_required_for_claim": true,
+          "self_reference_counts_as_task_accuracy": false
+        },
+        "profile_id": "task_quality_final_5000",
+        "schema": "onnx-splitpoint/task-quality-policy",
+        "schema_version": 3,
+        "screening_eligible_for_ranking": false,
+        "statistics": {
+          "bootstrap_repetitions": 5000,
+          "confidence_level": 0.95,
+          "decision": "lower_one_sided_bound",
+          "execution_location": "central_management",
+          "method": "paired_bootstrap",
+          "seed": 20260710,
+          "workers": 4
+        }
+      },
+      "type": "matrix",
+      "validation_budget_authoritative": true,
+      "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+      "validation_items_requested": 5000,
+      "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+      "validation_max_images": 5000,
+      "validation_reference_mode": "auto",
+      "validation_source_kind": "content_addressed_manifest",
+      "variants": [
+        "full",
+        "part1",
+        "part2",
+        "composed"
+      ]
+    },
+    {
+      "benchmark_task": "classification",
+      "id": "hailo10_to_tensorrt",
+      "image_scale": "auto",
+      "mini_classification_eval": true,
+      "mini_coco_ap50": false,
+      "provider": "tensorrt",
+      "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+      "stage1": {
+        "hw_arch": "hailo10",
+        "type": "hailo"
+      },
+      "stage2": {
+        "provider": "tensorrt",
+        "type": "onnxruntime"
+      },
+      "task": "classification",
+      "task_quality_gate": {
+        "canonical_reference": "canonical_full_onnx",
+        "claim_eligible": null,
+        "classification": {
+          "guardrails": {
+            "top5_accuracy_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "top1_accuracy"
+        },
+        "dataset_tier": "final",
+        "detection": {
+          "guardrails": {
+            "ap50_margin": 0.01,
+            "ap75_margin": 0.01
+          },
+          "non_inferiority_margin": 0.01,
+          "primary_metric": "coco_ap_50_95"
+        },
+        "diagnostic_only": false,
+        "enforcement": {
+          "claim_eligibility": "complete_valid_evidence_only",
+          "metric_threshold_miss": "enforced_quality_decision",
+          "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+          "technical_quality_error": "hard_fail"
+        },
+        "frozen_before_final_campaign": false,
+        "legacy_point_estimate_eligible_for_ranking": false,
+        "name": "task_quality_final_5000",
+        "native_contract": {
+          "detection_self_reference": {
+            "class_aware": true,
+            "confidence_threshold": 0.25,
+            "denominator": "reference_detections",
+            "iou_threshold": 0.5,
+            "min_mean_matched_iou": 0.85,
+            "min_reference_match_ratio": 0.8,
+            "policy_id": "class_aware_iou50_postnms_v2"
+          },
+          "detection_self_reference_min_match_ratio": 0.8,
+          "numerical_similarity_required_for_claim": true,
+          "self_reference_counts_as_task_accuracy": false
+        },
+        "profile_id": "task_quality_final_5000",
+        "schema": "onnx-splitpoint/task-quality-policy",
+        "schema_version": 3,
+        "screening_eligible_for_ranking": false,
+        "statistics": {
+          "bootstrap_repetitions": 5000,
+          "confidence_level": 0.95,
+          "decision": "lower_one_sided_bound",
+          "execution_location": "central_management",
+          "method": "paired_bootstrap",
+          "seed": 20260710,
+          "workers": 4
+        }
+      },
+      "type": "matrix",
+      "validation_budget_authoritative": true,
+      "validation_images": "resources/validation/classification/val_by_wnid_n5000_s20260710",
+      "validation_items_requested": 5000,
+      "validation_manifest": "/home/kmika/.onnx_splitpoint_tool/final_datasets/manifests/imagenet_val_manifest.json",
+      "validation_max_images": 5000,
+      "validation_reference_mode": "auto",
+      "validation_source_kind": "content_addressed_manifest",
+      "variants": [
+        "full",
+        "part1",
+        "part2",
+        "composed"
+      ]
+    }
+  ],
+  "quality_gate": {
+    "canonical_reference": "canonical_full_onnx",
+    "claim_eligible": null,
+    "classification": {
+      "guardrails": {
+        "top5_accuracy_margin": 0.01
+      },
+      "non_inferiority_margin": 0.01,
+      "primary_metric": "top1_accuracy"
+    },
+    "dataset_tier": "final",
+    "detection": {
+      "guardrails": {
+        "ap50_margin": 0.01,
+        "ap75_margin": 0.01
+      },
+      "non_inferiority_margin": 0.01,
+      "primary_metric": "coco_ap_50_95"
+    },
+    "diagnostic_only": false,
+    "enforcement": {
+      "claim_eligibility": "complete_valid_evidence_only",
+      "metric_threshold_miss": "enforced_quality_decision",
+      "native_energy_after_technical_error": "collect_raw_quality_unqualified",
+      "technical_quality_error": "hard_fail"
+    },
+    "frozen_before_final_campaign": false,
+    "legacy_point_estimate_eligible_for_ranking": false,
+    "name": "task_quality_final_5000",
+    "native_contract": {
+      "detection_self_reference": {
+        "class_aware": true,
+        "confidence_threshold": 0.25,
+        "denominator": "reference_detections",
+        "iou_threshold": 0.5,
+        "min_mean_matched_iou": 0.85,
+        "min_reference_match_ratio": 0.8,
+        "policy_id": "class_aware_iou50_postnms_v2"
+      },
+      "detection_self_reference_min_match_ratio": 0.8,
+      "numerical_similarity_required_for_claim": true,
+      "self_reference_counts_as_task_accuracy": false
+    },
+    "profile_id": "task_quality_final_5000",
+    "schema": "onnx-splitpoint/task-quality-policy",
+    "schema_version": 3,
+    "screening_eligible_for_ranking": false,
+    "statistics": {
+      "bootstrap_repetitions": 5000,
+      "confidence_level": 0.95,
+      "decision": "lower_one_sided_bound",
+      "execution_location": "central_management",
+      "method": "paired_bootstrap",
+      "seed": 20260710,
+      "workers": 4
+    }
+  },
+  "quality_gate_policy_sha256": "5596355e7d5b459a030dfc7681d4d57966d04f1c8e31554f9d8e902dfb8aac05",
+  "schema": "onnx-splitpoint/benchmark-set",
+  "schema_version": 2,
+  "stage_schema_normalized_by": "v60i-final-evidence-pipeline-fixes",
+  "summary": {
+    "auto_filtered_candidates": 0,
+    "candidate_search_pool": 39,
+    "candidate_search_stop": null,
+    "candidate_search_stopped": false,
+    "discarded_cases": 0,
+    "generated_cases": 2,
+    "preferred_shortlist_after_prefilter": 2,
+    "preferred_shortlist_cases": 2,
+    "preferred_shortlist_filtered_candidates": 0,
+    "requested_cases": 2,
+    "search_pool_exhausted": false,
+    "shortfall": 0
+  },
+  "system_spec": null,
+  "task": "classification",
+  "tool": {
+    "core": "2.80.1",
+    "gui": "workflow-legacy-adapter"
+  }
+}

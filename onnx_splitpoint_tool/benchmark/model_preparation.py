@@ -802,6 +802,7 @@ def _run_raw_detection_head_probe(
     label: str,
     family: str,
     model_path: Path,
+    task: str,
     runtime: PreparationRuntimeOptions,
     screening_dir: Path,
     log: PreparationLog = None,
@@ -818,6 +819,7 @@ def _run_raw_detection_head_probe(
         screening_dir=screening_dir,
         log=log,
         end_node_names=nodes,
+        task=task,
     )
     if ok:
         _prepare_log(log, f"[prepare][raw-head] {base_variant_id}: raw detection-head endpoint probe succeeded")
@@ -880,6 +882,7 @@ def _run_tier2_parser_endnode_probe(
     base_variant_id: str,
     label: str,
     model_path: Path,
+    task: str,
     full_hailo_error: Optional[str],
     runtime: PreparationRuntimeOptions,
     screening_dir: Path,
@@ -896,6 +899,7 @@ def _run_tier2_parser_endnode_probe(
         screening_dir=screening_dir,
         log=log,
         end_node_names=suggested,
+        task=task,
     )
     if ok:
         _prepare_log(log, f"[prepare][tier2] {base_variant_id}: parser-suggested end-node probe succeeded (diagnostic only)")
@@ -1037,6 +1041,7 @@ def _probe_full_hailo(
     *,
     runtime: PreparationRuntimeOptions,
     screening_dir: Path,
+    task: str,
     log: PreparationLog = None,
     end_node_names: Optional[List[str]] = None,
 ) -> tuple[bool, Optional[str], Optional[str], Optional[str], Optional[float], Optional[Any]]:
@@ -1047,6 +1052,7 @@ def _probe_full_hailo(
     _prepare_log(log, f"[prepare][hailo] {variant_id}: probing full HEF build{suffix}")
     try:
         from ..hailo_backend import hailo_build_hef_auto
+        from ..hailo_build_context import make_build_evidence_context
         result = hailo_build_hef_auto(
             onnx_path,
             backend=str(runtime.hailo_backend or "auto"),
@@ -1065,6 +1071,10 @@ def _probe_full_hailo(
             wsl_timeout_s=int(runtime.hef_timeout_s or 3600),
             on_log=(lambda level, msg: _prepare_log(log, f"[prepare][hailo][{level}] {msg}")),
             end_node_names=list(end_node_names or []) or None,
+            task=task,
+            build_evidence_context=make_build_evidence_context(
+                onnx_path, stage="full", model_id=onnx_path.stem,
+            ),
         )
     except Exception as exc:
         elapsed = time.time() - t0
@@ -1180,7 +1190,14 @@ def prepare_model_for_benchmark(
         if cancel_event is not None and bool(getattr(cancel_event, 'is_set', lambda: False)()):
             raise RuntimeError('Preparation cancelled.')
         if spec.include_current_onnx:
-            ok, err, result_json, hef_path, elapsed_probe, _probe_obj = _probe_full_hailo(src_path, spec.variant_id, runtime=runtime, screening_dir=screening_dir, log=log)
+            ok, err, result_json, hef_path, elapsed_probe, _probe_obj = _probe_full_hailo(
+                src_path,
+                spec.variant_id,
+                runtime=runtime,
+                screening_dir=screening_dir,
+                task=task_type,
+                log=log,
+            )
             rec = PreparedVariantResult(
                 variant_id=spec.variant_id,
                 label=spec.label,
@@ -1207,6 +1224,7 @@ def prepare_model_for_benchmark(
                 label=spec.label,
                 family=family,
                 model_path=src_path,
+                task=task_type,
                 runtime=runtime,
                 screening_dir=screening_dir,
                 log=log,
@@ -1250,6 +1268,7 @@ def prepare_model_for_benchmark(
                 base_variant_id=spec.variant_id,
                 label=spec.label,
                 model_path=src_path,
+                task=task_type,
                 full_hailo_error=err,
                 runtime=runtime,
                 screening_dir=screening_dir,
@@ -1291,7 +1310,14 @@ def prepare_model_for_benchmark(
             elapsed_export_s=elapsed_export,
         )
         if exp_ok:
-            ok, err, result_json, hef_path, elapsed_probe, _probe_obj = _probe_full_hailo(out_path, spec.variant_id, runtime=runtime, screening_dir=screening_dir, log=log)
+            ok, err, result_json, hef_path, elapsed_probe, _probe_obj = _probe_full_hailo(
+                out_path,
+                spec.variant_id,
+                runtime=runtime,
+                screening_dir=screening_dir,
+                task=task_type,
+                log=log,
+            )
             rec.full_hailo_ok = ok
             rec.full_hailo_error = err
             rec.full_hailo_result_json = result_json
@@ -1308,6 +1334,7 @@ def prepare_model_for_benchmark(
                 label=spec.label,
                 family=family,
                 model_path=out_path,
+                task=task_type,
                 runtime=runtime,
                 screening_dir=screening_dir,
                 log=log,
@@ -1342,6 +1369,7 @@ def prepare_model_for_benchmark(
                     base_variant_id=spec.variant_id,
                     label=spec.label,
                     model_path=out_path,
+                    task=task_type,
                     full_hailo_error=err,
                     runtime=runtime,
                     screening_dir=screening_dir,

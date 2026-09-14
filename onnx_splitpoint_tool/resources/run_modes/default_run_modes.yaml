@@ -1,0 +1,661 @@
+schema: onnx-splitpoint/run-modes
+schema_version: 13
+default_mode: standard
+modes:
+  smoke:
+    label: Smoke
+    description: Fastest end-to-end check. Minimal calibration, a tiny validation
+      sample and one timing run.
+    recommended_for: GUI/remote wiring, compiler/runtime regression and contract smoke
+      tests.
+    defaults:
+      native_enabled: false
+      energy_enabled: false
+    reproducibility:
+      level: relaxed
+      verify_model_content: false
+      verify_dataset_content: false
+      verify_remote_scripts: capabilities
+      cache_unchanged_files: true
+      dataset_sample_size: 4
+    campaign:
+      claim_scope: evaluated_matrix
+      mode: development
+      enforcement: warn
+      frozen_before_final_campaign: false
+      auto_bind_dataset_registry: true
+      require_protocol_freeze: false
+      require_fitted_stage_time: false
+      require_native_handover_model: false
+      require_campaign_freeze: false
+      require_prediction_freeze_approval: false
+      require_cryptographic_prediction_signature: false
+    data:
+      use_final_dataset_registry: true
+      calibration_items:
+        classification: 8
+        detection: 8
+      validation_items:
+        classification: 16
+        detection: 12
+    build:
+      model_preparation: current
+      hailo:
+        mode: reuse_and_build_missing
+        compute_by_family:
+          hailo8:
+            device: cpu
+          hailo10h:
+            device: cpu
+        preset: smoke
+        optimization_level: 0
+        calibration_items: 8
+        calibration_batch_size: 8
+        calibration_storage: memory
+        calibration_memory_cap_mb: 256
+        cache_enabled: true
+        cache_root: ~/.cache/onnx_splitpoint/hailo_hef
+        cache_integrity: relaxed
+        timeout_s: 900
+        full_baseline_cold_build_policy: cache_or_defer
+        deferred_full_baseline_required: false
+        cold_build_timeout_s: 3600
+        preserve_attempt_provenance: true
+        build_full: true
+        build_part1: true
+        build_part2: true
+        force_build: false
+        keep_artifacts: false
+      deepx:
+        classification_preprocessing: imagenet_mean_std
+        mode: reuse_and_build_missing
+        optimization_level: 0
+        calibration_items: 8
+        calibration_method: ema
+        force_build: false
+      artifact_store:
+        enabled: true
+        root: ~/.onnx_splitpoint_tool/artifact_store
+        verify_on_reuse: metadata
+        pin_for_campaign: false
+        register_hailo: true
+        register_deepx: true
+        register_tensorrt: false
+      scheduler:
+        enabled: true
+        max_workers: 3
+        cpu_tokens: 0
+        ram_mb: 0
+        family_limits:
+          hailo8: 1
+          hailo10: 1
+          deepx: 1
+        weights:
+          hailo8:
+            cpu_tokens: 4
+            ram_mb: 6144
+          hailo10:
+            cpu_tokens: 4
+            ram_mb: 6144
+          deepx:
+            cpu_tokens: 2
+            ram_mb: 4096
+        prefetch_deepx_full: true
+        pipeline_next_model: false
+      hardware_smoke: summary_only
+    runtime:
+      execution_mode: generate_and_run
+      skip_runtime_benchmarks: false
+      benchmark:
+        provider: auto
+        warmup: 1
+        runs: 1
+        timeout_s: 3600
+      parallel:
+        remote_setups: true
+        max_setups: 3
+        max_uploads: 1
+        powercalc_workers: 1
+      remote_cache:
+        upload_once_per_model_setup: true
+        reuse_tensorrt_engines: true
+        stable_cache_root: ~/.cache/onnx_splitpoint
+        suite_cache_root: ~/.cache/onnx_splitpoint/suites
+        engine_cache_root: ~/.cache/onnx_splitpoint/tensorrt
+        copy_strategy: auto
+      native:
+        backends:
+        - hailo8
+        - hailo10h
+        - deepx
+        case_policy: all_accepted
+        precision: uint8_cast_fp16
+        frames: 100
+        warmup: 10
+        repetitions: 1
+        queue_depth: 2
+        inflight: 4
+        full_baselines: false
+        validation: true
+        dump_outputs: true
+        build_missing_engines: true
+        copy_benchmarksets: true
+        strict_supported_only: true
+        contract_selection: metadata_first
+        preserve_row_failures: true
+        require_contract_family_match: true
+    quality:
+      profile_id: task_quality_development_25
+      dataset_tier: screening
+      canonical_reference: canonical_full_onnx
+      classification_margin_pp: 1.0
+      classification_top5_margin_pp: 1.0
+      detection_margin_ap: 1.0
+      detection_ap50_margin: 1.0
+      detection_ap75_margin: 1.0
+      confidence_level: 0.95
+      bootstrap_repetitions: 25
+      bootstrap_seed: 20260710
+      execution_location: central_management
+      workers: 4
+      cache_task_quality: true
+      cadence: once_per_artifact
+      official_coco_enabled: false
+      official_coco_required: false
+      archive_coco_eval_tensors: false
+    holdout:
+      candidate_universe: deterministic_audit
+      audit_size: 12
+      minimum_valid_candidates: 10
+      seed: 20260710
+      prediction_freeze_enabled: false
+      require_complete_candidate_universe: false
+      require_frozen_predictions: false
+      require_unseen_attestation: false
+    ranking:
+      enabled: false
+      methods:
+      - cut_bytes_only
+      - weighted_score
+      - cycle_time_no_handover
+      - cycle_time_with_handover
+      - onnx_real_boundary_hardware_aware
+      k_values:
+      - 1
+      - 3
+      - 5
+      elite_q_values:
+      - 1
+      - 3
+      primary_k: 5
+      minimum_candidates_for_correlation: 3
+      near_optimal_relative_epsilon: 0.01
+      bootstrap_repetitions: 50
+      bootstrap_seed: 20260710
+    reporting:
+      include_decision_summary: true
+      include_backend_drift_block: true
+      include_task_specific_quality_block: true
+      canonical_scientific_report: true
+      cleanup_legacy_reports: true
+      generate_thesis_tex: false
+      generate_thesis_figures: false
+      include_campaign_readiness: true
+    energy:
+      scope: row_variant
+      physical_scope: FS
+      window_label: command
+      repeats: 1
+      phases:
+      - streaming
+      target_policy: best_valid_only
+      skip_backends:
+      - ort_cpu
+      heartbeat_s: 60
+      max_targets_per_run_id: 1
+      max_work_units_per_window: 0
+      max_window_duration_s: 0
+      timeout_s_per_window: 0
+      sizing_probe_max_work_units: 256
+      include_raw_parquet_in_debug_pack: false
+      strict: false
+      native_mode: plan
+      native_duration_s: 0
+  standard:
+    label: Standard (balanced)
+    description: Balanced development run with useful accuracy screening and moderate
+      build effort.
+    recommended_for: Normal development results, candidate comparison and pre-final
+      hardware campaigns.
+    defaults:
+      native_enabled: true
+      energy_enabled: false
+    reproducibility:
+      level: relaxed
+      verify_model_content: false
+      verify_dataset_content: false
+      verify_remote_scripts: capabilities
+      cache_unchanged_files: true
+      dataset_sample_size: 24
+    campaign:
+      claim_scope: evaluated_matrix
+      mode: development
+      enforcement: warn
+      frozen_before_final_campaign: false
+      auto_bind_dataset_registry: true
+      require_protocol_freeze: false
+      require_fitted_stage_time: false
+      require_native_handover_model: false
+      require_campaign_freeze: false
+      require_prediction_freeze_approval: false
+      require_cryptographic_prediction_signature: false
+    data:
+      use_final_dataset_registry: true
+      calibration_items:
+        classification: 500
+        detection: 500
+      validation_items:
+        classification: 500
+        detection: 500
+    build:
+      model_preparation: current
+      hailo:
+        mode: reuse_and_build_missing
+        compute_by_family:
+          hailo8:
+            device: cpu
+          hailo10h:
+            device: cpu
+        preset: balanced
+        optimization_level: 1
+        calibration_items: 500
+        calibration_batch_size: 8
+        calibration_storage: memmap
+        calibration_memory_cap_mb: 256
+        cache_enabled: true
+        cache_root: ~/.cache/onnx_splitpoint/hailo_hef
+        cache_integrity: relaxed
+        timeout_s: 3600
+        full_baseline_cold_build_policy: build_missing
+        deferred_full_baseline_required: true
+        cold_build_timeout_s: 3600
+        preserve_attempt_provenance: true
+        build_full: true
+        build_part1: true
+        build_part2: true
+        force_build: false
+        keep_artifacts: false
+      deepx:
+        classification_preprocessing: imagenet_mean_std
+        mode: reuse_and_build_missing
+        optimization_level: 0
+        calibration_items: 500
+        calibration_method: ema
+        force_build: false
+      artifact_store:
+        enabled: true
+        root: ~/.onnx_splitpoint_tool/artifact_store
+        verify_on_reuse: metadata
+        pin_for_campaign: false
+        register_hailo: true
+        register_deepx: true
+        register_tensorrt: false
+      scheduler:
+        enabled: true
+        max_workers: 3
+        cpu_tokens: 0
+        ram_mb: 0
+        family_limits:
+          hailo8: 1
+          hailo10: 1
+          deepx: 1
+        weights:
+          hailo8:
+            cpu_tokens: 4
+            ram_mb: 6144
+          hailo10:
+            cpu_tokens: 4
+            ram_mb: 6144
+          deepx:
+            cpu_tokens: 2
+            ram_mb: 4096
+        prefetch_deepx_full: true
+        pipeline_next_model: false
+      hardware_smoke: summary_only
+    runtime:
+      execution_mode: generate_and_run
+      skip_runtime_benchmarks: false
+      benchmark:
+        provider: auto
+        warmup: 3
+        runs: 5
+        timeout_s: 0
+      parallel:
+        remote_setups: true
+        max_setups: 3
+        max_uploads: 1
+        powercalc_workers: 1
+      remote_cache:
+        upload_once_per_model_setup: true
+        reuse_tensorrt_engines: true
+        stable_cache_root: ~/.cache/onnx_splitpoint
+        suite_cache_root: ~/.cache/onnx_splitpoint/suites
+        engine_cache_root: ~/.cache/onnx_splitpoint/tensorrt
+        copy_strategy: auto
+      native:
+        backends:
+        - hailo8
+        - hailo10h
+        - deepx
+        case_policy: all_accepted
+        precision: uint8_cast_fp16
+        frames: 1000
+        warmup: 100
+        repetitions: 3
+        queue_depth: 3
+        inflight: 8
+        full_baselines: true
+        validation: true
+        dump_outputs: true
+        build_missing_engines: true
+        copy_benchmarksets: true
+        strict_supported_only: true
+        contract_selection: metadata_first
+        preserve_row_failures: true
+        require_contract_family_match: true
+    quality:
+      profile_id: task_quality_development_500
+      dataset_tier: screening
+      canonical_reference: canonical_full_onnx
+      classification_margin_pp: 1.0
+      classification_top5_margin_pp: 1.0
+      detection_margin_ap: 1.0
+      detection_ap50_margin: 1.0
+      detection_ap75_margin: 1.0
+      confidence_level: 0.95
+      bootstrap_repetitions: 500
+      bootstrap_seed: 20260710
+      execution_location: central_management
+      workers: 4
+      cache_task_quality: true
+      cadence: once_per_artifact
+      official_coco_enabled: true
+      official_coco_required: false
+      archive_coco_eval_tensors: false
+    holdout:
+      candidate_universe: deterministic_audit
+      audit_size: 20
+      minimum_valid_candidates: 10
+      seed: 20260710
+      prediction_freeze_enabled: false
+      require_complete_candidate_universe: false
+      require_frozen_predictions: false
+      require_unseen_attestation: false
+    ranking:
+      enabled: true
+      methods:
+      - cut_bytes_only
+      - weighted_score
+      - cycle_time_no_handover
+      - cycle_time_with_handover
+      - onnx_real_boundary_hardware_aware
+      k_values:
+      - 1
+      - 3
+      - 5
+      elite_q_values:
+      - 1
+      - 3
+      primary_k: 5
+      minimum_candidates_for_correlation: 3
+      near_optimal_relative_epsilon: 0.01
+      bootstrap_repetitions: 500
+      bootstrap_seed: 20260710
+    reporting:
+      include_decision_summary: true
+      include_backend_drift_block: true
+      include_task_specific_quality_block: true
+      canonical_scientific_report: true
+      cleanup_legacy_reports: true
+      generate_thesis_tex: true
+      generate_thesis_figures: true
+      include_campaign_readiness: true
+    energy:
+      scope: row_variant
+      physical_scope: FS
+      window_label: command
+      repeats: 3
+      phases:
+      - streaming
+      target_policy: best_valid_only
+      skip_backends:
+      - ort_cpu
+      heartbeat_s: 60
+      max_targets_per_run_id: 1
+      max_work_units_per_window: 0
+      max_window_duration_s: 0
+      timeout_s_per_window: 0
+      sizing_probe_max_work_units: 256
+      include_raw_parquet_in_debug_pack: false
+      strict: false
+      native_mode: plan
+      native_duration_s: 0
+  final:
+    label: Final Quality (Standard+)
+    description: 'Standard execution with stronger final-quality evaluation: 5,000
+      validation items per task and 5,000 bootstrap repetitions.'
+    recommended_for: Final thesis-quality model and split-point results without a
+      separate freeze, sealing or full-dataset hashing workflow.
+    defaults:
+      native_enabled: true
+      energy_enabled: false
+    reproducibility:
+      level: relaxed
+      verify_model_content: false
+      verify_dataset_content: false
+      verify_remote_scripts: capabilities
+      cache_unchanged_files: true
+      dataset_sample_size: 24
+    campaign:
+      claim_scope: evaluated_matrix
+      mode: development
+      enforcement: warn
+      frozen_before_final_campaign: false
+      auto_bind_dataset_registry: true
+      require_protocol_freeze: false
+      require_fitted_stage_time: false
+      require_native_handover_model: false
+      require_campaign_freeze: false
+      require_prediction_freeze_approval: false
+      require_cryptographic_prediction_signature: false
+    data:
+      use_final_dataset_registry: true
+      calibration_items:
+        classification: 500
+        detection: 500
+      validation_items:
+        classification: 5000
+        detection: 5000
+    build:
+      model_preparation: current
+      hailo:
+        mode: reuse_and_build_missing
+        compute_by_family:
+          hailo8:
+            device: cpu
+          hailo10h:
+            device: cpu
+        preset: balanced
+        optimization_level: 1
+        calibration_items: 500
+        calibration_batch_size: 8
+        calibration_storage: memmap
+        calibration_memory_cap_mb: 256
+        cache_enabled: true
+        cache_root: ~/.cache/onnx_splitpoint/hailo_hef
+        cache_integrity: relaxed
+        timeout_s: 3600
+        full_baseline_cold_build_policy: build_missing
+        deferred_full_baseline_required: true
+        cold_build_timeout_s: 3600
+        preserve_attempt_provenance: true
+        build_full: true
+        build_part1: true
+        build_part2: true
+        force_build: false
+        keep_artifacts: false
+      deepx:
+        classification_preprocessing: imagenet_mean_std
+        mode: reuse_and_build_missing
+        optimization_level: 0
+        calibration_items: 500
+        calibration_method: ema
+        force_build: false
+      artifact_store:
+        enabled: true
+        root: ~/.onnx_splitpoint_tool/artifact_store
+        verify_on_reuse: metadata
+        pin_for_campaign: false
+        register_hailo: true
+        register_deepx: true
+        register_tensorrt: false
+      scheduler:
+        enabled: true
+        max_workers: 3
+        cpu_tokens: 0
+        ram_mb: 0
+        family_limits:
+          hailo8: 1
+          hailo10: 1
+          deepx: 1
+        weights:
+          hailo8:
+            cpu_tokens: 4
+            ram_mb: 6144
+          hailo10:
+            cpu_tokens: 4
+            ram_mb: 6144
+          deepx:
+            cpu_tokens: 2
+            ram_mb: 4096
+        prefetch_deepx_full: true
+        pipeline_next_model: false
+      hardware_smoke: summary_only
+    runtime:
+      execution_mode: generate_and_run
+      skip_runtime_benchmarks: false
+      benchmark:
+        provider: auto
+        warmup: 3
+        runs: 5
+        timeout_s: 0
+      parallel:
+        remote_setups: true
+        max_setups: 3
+        max_uploads: 1
+        powercalc_workers: 1
+      remote_cache:
+        upload_once_per_model_setup: true
+        reuse_tensorrt_engines: true
+        stable_cache_root: ~/.cache/onnx_splitpoint
+        suite_cache_root: ~/.cache/onnx_splitpoint/suites
+        engine_cache_root: ~/.cache/onnx_splitpoint/tensorrt
+        copy_strategy: auto
+      native:
+        backends:
+        - hailo8
+        - hailo10h
+        - deepx
+        case_policy: all_accepted
+        precision: uint8_cast_fp16
+        frames: 1000
+        warmup: 100
+        repetitions: 3
+        queue_depth: 3
+        inflight: 8
+        full_baselines: true
+        validation: true
+        dump_outputs: true
+        build_missing_engines: true
+        copy_benchmarksets: true
+        strict_supported_only: true
+        contract_selection: metadata_first
+        preserve_row_failures: true
+        require_contract_family_match: true
+    quality:
+      profile_id: task_quality_final_5000
+      dataset_tier: final
+      canonical_reference: canonical_full_onnx
+      classification_margin_pp: 1.0
+      classification_top5_margin_pp: 1.0
+      detection_margin_ap: 1.0
+      detection_ap50_margin: 1.0
+      detection_ap75_margin: 1.0
+      confidence_level: 0.95
+      bootstrap_repetitions: 5000
+      bootstrap_seed: 20260710
+      execution_location: central_management
+      workers: 4
+      cache_task_quality: true
+      cadence: once_per_artifact
+      official_coco_enabled: true
+      official_coco_required: false
+      archive_coco_eval_tensors: false
+    holdout:
+      candidate_universe: deterministic_audit
+      audit_size: 20
+      minimum_valid_candidates: 10
+      seed: 20260710
+      prediction_freeze_enabled: false
+      require_complete_candidate_universe: false
+      require_frozen_predictions: false
+      require_unseen_attestation: false
+    ranking:
+      enabled: true
+      methods:
+      - cut_bytes_only
+      - weighted_score
+      - cycle_time_no_handover
+      - cycle_time_with_handover
+      - onnx_real_boundary_hardware_aware
+      k_values:
+      - 1
+      - 3
+      - 5
+      elite_q_values:
+      - 1
+      - 3
+      primary_k: 5
+      minimum_candidates_for_correlation: 3
+      near_optimal_relative_epsilon: 0.01
+      bootstrap_repetitions: 500
+      bootstrap_seed: 20260710
+    reporting:
+      include_decision_summary: true
+      include_backend_drift_block: true
+      include_task_specific_quality_block: true
+      canonical_scientific_report: true
+      cleanup_legacy_reports: true
+      generate_thesis_tex: true
+      generate_thesis_figures: true
+      include_campaign_readiness: true
+    energy:
+      scope: row_variant
+      physical_scope: FS
+      window_label: command
+      repeats: 3
+      phases:
+      - streaming
+      target_policy: best_valid_only
+      skip_backends:
+      - ort_cpu
+      heartbeat_s: 60
+      max_targets_per_run_id: 1
+      max_work_units_per_window: 0
+      max_window_duration_s: 0
+      timeout_s_per_window: 0
+      sizing_probe_max_work_units: 256
+      include_raw_parquet_in_debug_pack: false
+      strict: false
+      native_mode: plan
+      native_duration_s: 0

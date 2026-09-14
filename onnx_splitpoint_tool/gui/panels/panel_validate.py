@@ -4,8 +4,7 @@ This tab owns the *benchmark set* generator UI (moved from the Analysis tab).
 
 Note
 ----
-Hailo HEF generation settings live in the **Split & Export** tab. The benchmark
-set generator reuses those settings when building a suite.
+Backend artifact generation is driven by the benchmark/evaluation target selection. Hailo/DeepX compiler environments and build defaults live in Hardware.
 """
 
 from __future__ import annotations
@@ -348,6 +347,14 @@ def build_panel(parent, app=None) -> ttk.Frame:
 
     var_bench_topk = _str_var(app, "var_bench_topk", "20")
     var_bench_objective = _str_var(app, "var_bench_objective", "Use analysis objective")
+    # v59t: Manual benchmark-set generation used to silently re-order the
+    # user-visible Analyse ranking through the Hailo compile/outlook scorer.
+    # Keep that as an explicit option instead of a hidden default.
+    var_bench_selection_strategy = _str_var(app, "var_bench_selection_strategy", "rank_order")
+    var_bench_compile_aware_ordering = _bool_var(app, "var_bench_compile_aware_ordering", False)
+    var_bench_require_single_part2_input = _bool_var(
+        app, "var_bench_require_single_part2_input", False
+    )
 
     btn_bench = ttk.Button(bench_group, text="Generate benchmark set…", command=getattr(app, "_generate_benchmark_set", None))
     btn_bench.grid(row=0, column=0, padx=(8, 10), pady=8, sticky="w")
@@ -370,8 +377,8 @@ def build_panel(parent, app=None) -> ttk.Frame:
         app.btn_benchmark = btn_bench
         app.btn_resume_benchmark = btn_resume
         try:
-            if hasattr(app, "after_idle") and hasattr(app, "_set_ui_state") and hasattr(app, "_infer_ui_state"):
-                app.after_idle(lambda: app._set_ui_state(app._infer_ui_state()))
+            if hasattr(app, "after") and hasattr(app, "_set_ui_state") and hasattr(app, "_infer_ui_state"):
+                app.after(500, lambda: app._set_ui_state(app._infer_ui_state()))
         except Exception:
             logger.exception("Failed to refresh Benchmark button state after notebook rebind")
 
@@ -418,17 +425,57 @@ def build_panel(parent, app=None) -> ttk.Frame:
         "Use analysis objective mirrors the currently selected analysis ranking objective.",
     )
 
+    ttk.Label(bench_group, text="Selection:").grid(row=0, column=7, sticky="e", padx=(8, 2))
+    cb_bench_selection = ttk.Combobox(
+        bench_group,
+        textvariable=var_bench_selection_strategy,
+        state="readonly",
+        width=18,
+        values=["rank_order", "stratified_windows"],
+    )
+    cb_bench_selection.grid(row=0, column=8, sticky="w", padx=(0, 8))
+    attach_tooltip(
+        cb_bench_selection,
+        "rank_order: use the visible Analyse ranking order.\n"
+        "stratified_windows: spread requested cases across early/mid/late boundary windows, then rank within each window.",
+    )
+
+    chk_compile_order = ttk.Checkbutton(
+        bench_group,
+        text="Compile-aware ordering",
+        variable=var_bench_compile_aware_ordering,
+    )
+    chk_compile_order.grid(row=1, column=7, columnspan=2, sticky="w", padx=(8, 8), pady=(0, 8))
+    attach_tooltip(
+        chk_compile_order,
+        "If enabled, the Hailo compile/context outlook may reorder candidates before export.\n"
+        "If disabled, Hailo outlook remains diagnostic only and the Analyse/selection order is preserved.",
+    )
+    chk_single_part2 = ttk.Checkbutton(
+        bench_group,
+        text="Part-2 input count = 1",
+        variable=var_bench_require_single_part2_input,
+    )
+    chk_single_part2.grid(
+        row=1, column=4, columnspan=3, sticky="w", padx=(8, 8), pady=(0, 8)
+    )
+    attach_tooltip(
+        chk_single_part2,
+        "Selection-only constraint. Filters the preferred shortlist and the backfill pool before export,\n"
+        "then verifies the generated Part-2 ONNX defensively. Generic execution still supports multiple inputs and outputs.",
+    )
+
     info = ttk.Label(
         bench_group,
-        text="Hailo compile settings are configured in the 'Split & Export' tab.",
+        text="Backend artifacts are planned from the selected targets below. Hailo/DeepX build environments and calibration defaults are configured in Hardware.",
     )
-    info.grid(row=1, column=0, columnspan=8, sticky="w", padx=(8, 8), pady=(0, 8))
+    info.grid(row=2, column=0, columnspan=9, sticky="w", padx=(8, 8), pady=(0, 8))
 
     var_hailo_outlook_summary = _str_var(app, "var_bench_hailo_outlook_summary", "No analysis loaded yet.")
     var_hailo_outlook_detail = _str_var(app, "var_bench_hailo_outlook_detail", "")
 
     hailo_outlook_group = ttk.LabelFrame(bench_group, text="Hailo compile/context outlook")
-    hailo_outlook_group.grid(row=2, column=0, columnspan=8, sticky="ew", padx=(8, 8), pady=(0, 8))
+    hailo_outlook_group.grid(row=3, column=0, columnspan=9, sticky="ew", padx=(8, 8), pady=(0, 8))
     hailo_outlook_group.columnconfigure(0, weight=1)
 
     lbl_hailo_summary = ttk.Label(hailo_outlook_group, textvariable=var_hailo_outlook_summary, font=("TkDefaultFont", 10, "bold"))
@@ -493,15 +540,16 @@ def build_panel(parent, app=None) -> ttk.Frame:
 
     # ---------------------- Accelerators to benchmark ----------------------
 
-    acc_group = ttk.LabelFrame(sec_plan.body, text="Accelerators to benchmark")
+    acc_group = ttk.LabelFrame(sec_plan.body, text="Benchmark run targets")
     acc_group.grid(row=0, column=0, sticky="ew")
-    acc_group.columnconfigure(12, weight=1)
+    acc_group.columnconfigure(15, weight=1)
 
     var_acc_cpu = _bool_var(app, "var_bench_acc_cpu", True)
     var_acc_cuda = _bool_var(app, "var_bench_acc_cuda", False)
     var_acc_trt = _bool_var(app, "var_bench_acc_tensorrt", False)
     var_acc_h8 = _bool_var(app, "var_bench_acc_hailo8", False)
     var_acc_h10 = _bool_var(app, "var_bench_acc_hailo10", False)
+    var_acc_deepx = _bool_var(app, "var_bench_acc_deepx_m1", False)
     var_image_scale = _str_var(app, "var_bench_image_scale", "auto")
     var_validation_reference_mode = _str_var(app, "var_bench_validation_reference_mode", "auto")
     var_bench_task = _str_var(app, "var_bench_task", "auto")
@@ -521,7 +569,10 @@ def build_panel(parent, app=None) -> ttk.Frame:
     chk_h8.grid(row=0, column=6, sticky="w", padx=(0, 8), pady=8)
     chk_h10 = ttk.Checkbutton(acc_group, text="Hailo-10", variable=var_acc_h10)
     chk_h10.grid(row=0, column=7, sticky="w", padx=(0, 8), pady=8)
-    ttk.Label(acc_group, text="Validation ref:").grid(row=0, column=8, sticky="e", padx=(18, 6), pady=8)
+    ttk.Label(acc_group, text="DeepX:").grid(row=0, column=8, sticky="w", padx=(12, 6), pady=8)
+    chk_deepx = ttk.Checkbutton(acc_group, text="DX-M1", variable=var_acc_deepx)
+    chk_deepx.grid(row=0, column=9, sticky="w", padx=(0, 8), pady=8)
+    ttk.Label(acc_group, text="Validation ref:").grid(row=0, column=10, sticky="e", padx=(18, 6), pady=8)
     cb_val_ref = ttk.Combobox(
         acc_group,
         textvariable=var_validation_reference_mode,
@@ -529,8 +580,8 @@ def build_panel(parent, app=None) -> ttk.Frame:
         width=18,
         state="readonly",
     )
-    cb_val_ref.grid(row=0, column=9, sticky="w", padx=(0, 8), pady=8)
-    ttk.Label(acc_group, text="Task:").grid(row=0, column=10, sticky="e", padx=(8, 6), pady=8)
+    cb_val_ref.grid(row=0, column=11, sticky="w", padx=(0, 8), pady=8)
+    ttk.Label(acc_group, text="Task:").grid(row=0, column=12, sticky="e", padx=(8, 6), pady=8)
     cb_task = ttk.Combobox(
         acc_group,
         textvariable=var_bench_task,
@@ -538,7 +589,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
         width=16,
         state="readonly",
     )
-    cb_task.grid(row=0, column=11, sticky="w", padx=(0, 8), pady=8)
+    cb_task.grid(row=0, column=13, sticky="w", padx=(0, 8), pady=8)
 
     attach_tooltip(chk_cpu, "Benchmark split cases with ONNXRuntime on CPU.")
     attach_tooltip(
@@ -551,11 +602,15 @@ def build_panel(parent, app=None) -> ttk.Frame:
     )
     attach_tooltip(
         chk_h8,
-        "Include Hailo-8 in the benchmark plan. HEFs will be built using the settings in 'Split & Export'.",
+        "Include Hailo-8 in the benchmark plan. HEFs will be planned from this target selection and built/reused using Hardware build defaults.",
     )
     attach_tooltip(
         chk_h10,
-        "Include Hailo-10 in the benchmark plan. HEFs will be built using the settings in 'Split & Export'.",
+        "Include Hailo-10 in the benchmark plan. HEFs will be planned from this target selection and built/reused using Hardware build defaults.",
+    )
+    attach_tooltip(
+        chk_deepx,
+        "Include DeepX DX-M1 full baseline rows in the benchmark plan. DXNN artifacts are built/reused by Evaluation Workflow using the DeepX environment from Hardware.",
     )
     attach_tooltip(
         cb_val_ref,
@@ -695,7 +750,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
             else:
                 lbl_cls_preset_status.configure(text=f"Preset not imported locally yet: {preset}", foreground="#9a6500")
         else:
-            lbl_cls_preset_status.configure(text="ImageNet/Imagenette mini preset optional for classification", foreground="#666")
+            lbl_cls_preset_status.configure(text="Optional override; defaults come from Tool Config", foreground="#666")
 
     def _on_validation_preset_selected(_event=None):
         preset = str(var_validation_preset.get() or "").strip()
@@ -862,11 +917,12 @@ def build_panel(parent, app=None) -> ttk.Frame:
         opts = ttk.LabelFrame(dlg, text="Assets to prepare")
         opts.grid(row=1, column=0, columnspan=3, sticky="ew", padx=12, pady=(0, 6))
         opts.columnconfigure(1, weight=1)
-        ttk.Checkbutton(opts, text="COCO-50 detection", variable=coco_var).grid(row=0, column=0, sticky="w", padx=(8, 12), pady=4)
-        ttk.Checkbutton(opts, text="Imagenette mini-200 classification", variable=img200_var).grid(row=0, column=1, sticky="w", padx=(8, 12), pady=4)
-        ttk.Checkbutton(opts, text="Imagenette mini-500 classification", variable=img500_var).grid(row=1, column=1, sticky="w", padx=(8, 12), pady=4)
-        ttk.Checkbutton(opts, text="Runner test images", variable=test_var).grid(row=1, column=0, sticky="w", padx=(8, 12), pady=4)
-        ttk.Checkbutton(opts, text="Overwrite existing files", variable=overwrite_var).grid(row=2, column=0, columnspan=2, sticky="w", padx=(8, 12), pady=(4, 8))
+        ttk.Checkbutton(opts, text="COCO-50 detection validation", variable=coco_var).grid(row=0, column=0, sticky="w", padx=(8, 12), pady=4)
+        ttk.Checkbutton(opts, text="COCO-200 detection calibration", variable=coco200_var).grid(row=0, column=1, sticky="w", padx=(8, 12), pady=4)
+        ttk.Checkbutton(opts, text="Imagenette mini-200 classification validation", variable=img200_var).grid(row=1, column=0, sticky="w", padx=(8, 12), pady=4)
+        ttk.Checkbutton(opts, text="Imagenette mini-500 classification calibration", variable=img500_var).grid(row=1, column=1, sticky="w", padx=(8, 12), pady=4)
+        ttk.Checkbutton(opts, text="Runner test images", variable=test_var).grid(row=2, column=0, sticky="w", padx=(8, 12), pady=4)
+        ttk.Checkbutton(opts, text="Overwrite existing files", variable=overwrite_var).grid(row=3, column=0, columnspan=2, sticky="w", padx=(8, 12), pady=(4, 8))
 
         btns = ttk.Frame(dlg)
         btns.grid(row=2, column=0, columnspan=3, sticky="e", padx=12, pady=(6, 12))
@@ -927,6 +983,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
                 st = validation_assets_summary()
                 _append("Done.")
                 _append(f"COCO-50: {st.get('coco50_images', 0)}/50 images, {st.get('coco50_annotations', 0)}/50 annotation files")
+                _append(f"COCO-200: {st.get('coco200_images', 0)}/200 images, {st.get('coco200_annotations', 0)}/200 annotation files")
                 _append(f"Imagenette mini-200: {st.get('imagenette200_images', 0)}/200 images")
                 _append(f"Imagenette mini-500: {st.get('imagenette500_images', 0)}/500 images")
                 try:
@@ -947,12 +1004,11 @@ def build_panel(parent, app=None) -> ttk.Frame:
 
     cb_val_preset.bind("<<ComboboxSelected>>", _on_validation_preset_selected)
     btn_import_cls = ttk.Button(acc_group, text="Import…", command=_open_imagenet_preset_import_dialog)
-    btn_import_cls.grid(row=2, column=6, sticky="w", padx=(0, 6), pady=(0, 8))
+    # v52v: dataset preparation/import/calibration buttons live in Tool Config now.
+    # Keep the commands available internally, but do not clutter the Benchmark tab.
     btn_prepare_val = ttk.Button(acc_group, text="Prepare validation sets…", command=_open_prepare_validation_sets_dialog)
-    btn_prepare_val.grid(row=2, column=7, sticky="w", padx=(0, 6), pady=(0, 8))
     btn_cls_calib = ttk.Button(acc_group, text="Use for Hailo calib", command=_use_preset_for_hailo_calib)
-    btn_cls_calib.grid(row=3, column=7, sticky="w", padx=(0, 6), pady=(0, 4))
-    lbl_cls_preset_status = ttk.Label(acc_group, text="ImageNet/Imagenette mini preset optional for classification", foreground="#666")
+    lbl_cls_preset_status = ttk.Label(acc_group, text="Optional override; defaults come from Tool Config", foreground="#666")
     lbl_cls_preset_status.grid(row=3, column=3, columnspan=4, sticky="w", padx=(18, 6), pady=(0, 4))
     attach_tooltip(btn_import_cls, "Importiert imagenet_val_mini_200/500 aus einem lokalen ImageNet-Validation-Ordner plus Ground-Truth-Datei. Die Bilder werden lokal unter ~/.onnx_splitpoint_tool/validation_datasets/classification abgelegt.")
     attach_tooltip(btn_prepare_val, "Bereitet herunterladbare Validation-Sets außerhalb der Tool-ZIP vor. COCO-50 Detection und downloadbares Imagenette-mini für Classification werden außerhalb der Tool-ZIP vorbereitet.")
@@ -961,7 +1017,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
 
     lbl_val_default = ttk.Label(
         acc_group,
-        text="Detection default if empty: prepared COCO-50 · Classification: local ImageNet mini preset or labeled dataset",
+        text="Validation defaults are managed in Tool Config: detection=COCO-50, classification=Imagenette/ImageNet mini.",
     )
     lbl_val_default.grid(row=7, column=4, columnspan=8, sticky="w", padx=(0, 6), pady=(0, 8))
     attach_tooltip(
@@ -1178,9 +1234,11 @@ def build_panel(parent, app=None) -> ttk.Frame:
         var_hailo_custom_part2,
         var_acc_h8,
         var_acc_h10,
+        var_acc_deepx,
         var_hailo_full_hef_order,
         var_hailo_full_model_preflight,
         var_validation_reference_mode,
+        var_acc_deepx,
     ):
         try:
             v.trace_add("write", _update_hailo_mode_ui)
@@ -1294,40 +1352,50 @@ def build_panel(parent, app=None) -> ttk.Frame:
 
     # ------------------------ Split pipeline matrix ------------------------
 
-    # Matrix runs benchmark split pipelines where stage1 and stage2 can use different backends
+    # Split-pipeline runs benchmark cases where stage1 and stage2 can use different backends
     # (e.g. TensorRT for part1 and Hailo for part2).
     var_matrix_preset = _str_var(app, "var_matrix_preset", "None")
     var_matrix_trt_to_hailo = _bool_var(app, "var_matrix_trt_to_hailo", False)
     var_matrix_hailo_to_trt = _bool_var(app, "var_matrix_hailo_to_trt", False)
+    # v53a: DeepX split directions are no longer hidden auto rows.
+    # Users can explicitly include/exclude DeepX as Stage1 or Stage2.
+    var_matrix_deepx_to_trt = _bool_var(app, "var_matrix_deepx_to_trt", True)
+    var_matrix_trt_to_deepx = _bool_var(app, "var_matrix_trt_to_deepx", False)
     var_matrix_info = _str_var(app, "var_matrix_info", "")
 
-    ttk.Label(acc_group, text="Split matrix:").grid(row=7, column=0, sticky="w", padx=(8, 6), pady=(0, 8))
+    ttk.Label(acc_group, text="Accelerator split matrix:").grid(row=7, column=0, sticky="w", padx=(8, 6), pady=(0, 8))
     cb_matrix = ttk.Combobox(
         acc_group,
         textvariable=var_matrix_preset,
-        values=["None", "TRT ↔ Hailo (split)", "Custom"],
+        values=["None", "TensorRT ↔ M.2 accelerator", "Custom"],
         width=20,
         state="readonly",
     )
     cb_matrix.grid(row=7, column=1, sticky="w", padx=(0, 8), pady=(0, 8))
     attach_tooltip(
         cb_matrix,
-        "Generate additional matrix runs where the split stages use different backends.\n\n"
-        "TRT ↔ Hailo (split) adds:\n"
-        "  - TensorRT(part1) → Hailo(part2)\n"
-        "  - Hailo(part1) → TensorRT(part2)\n\n"
-        "Matrix runs benchmark: part1, part2, composed (no full).",
+        "Generate additional split-pipeline runs where the split stages use different backends.\n\n"
+        "M.2 accelerator covers Hailo-8/Hailo-10 and DeepX DX-M1.\n"
+        "Use Custom to explicitly choose Hailo and DeepX split directions. DeepX as Stage2 is experimental and uses activation-proxy calibration.\n\n"
+        "Split-pipeline runs benchmark: part1, part2, composed (no full).",
     )
 
     matrix_custom = ttk.Frame(acc_group)
     matrix_custom.grid(row=8, column=1, columnspan=9, sticky="w", padx=(0, 8), pady=(0, 8))
-    chk_trt_to_hailo = ttk.Checkbutton(matrix_custom, text="TensorRT → Hailo", variable=var_matrix_trt_to_hailo)
+    chk_trt_to_hailo = ttk.Checkbutton(matrix_custom, text="TensorRT → Hailo NPU", variable=var_matrix_trt_to_hailo)
     chk_trt_to_hailo.pack(side=tk.LEFT)
-    chk_hailo_to_trt = ttk.Checkbutton(matrix_custom, text="Hailo → TensorRT", variable=var_matrix_hailo_to_trt)
+    chk_hailo_to_trt = ttk.Checkbutton(matrix_custom, text="Hailo NPU → TensorRT", variable=var_matrix_hailo_to_trt)
     chk_hailo_to_trt.pack(side=tk.LEFT, padx=(12, 0))
 
-    attach_tooltip(chk_trt_to_hailo, "Matrix run: stage1=TensorRT, stage2=Hailo (per selected Hailo target).")
-    attach_tooltip(chk_hailo_to_trt, "Matrix run: stage1=Hailo, stage2=TensorRT (per selected Hailo target).")
+    chk_deepx_to_trt = ttk.Checkbutton(matrix_custom, text="DeepX DX-M1 → TensorRT", variable=var_matrix_deepx_to_trt)
+    chk_deepx_to_trt.pack(side=tk.LEFT, padx=(12, 0))
+    chk_trt_to_deepx = ttk.Checkbutton(matrix_custom, text="TensorRT → DeepX DX-M1 (experimental)", variable=var_matrix_trt_to_deepx)
+    chk_trt_to_deepx.pack(side=tk.LEFT, padx=(12, 0))
+
+    attach_tooltip(chk_trt_to_hailo, "Split-pipeline run: stage1=TensorRT, stage2=Hailo (per selected Hailo target). Requires/proxies feature-tensor calibration for Hailo stage2.")
+    attach_tooltip(chk_hailo_to_trt, "Split-pipeline run: stage1=Hailo, stage2=TensorRT (per selected Hailo target).")
+    attach_tooltip(chk_deepx_to_trt, "Split-pipeline run: stage1=DeepX DX-M1, stage2=TensorRT. Builds per-split DeepX Part1 DXNN artifacts.")
+    attach_tooltip(chk_trt_to_deepx, "Experimental split-pipeline run: stage1=TensorRT, stage2=DeepX DX-M1. Requires activation-proxy samples and experimental DeepX Part2 DX-COM build.")
 
     lbl_matrix = ttk.Label(acc_group, textvariable=var_matrix_info)
     lbl_matrix.grid(row=9, column=0, columnspan=11, sticky="w", padx=(8, 8), pady=(0, 8))
@@ -1341,8 +1409,8 @@ def build_panel(parent, app=None) -> ttk.Frame:
         try:
             trt_on = bool(var_acc_trt.get())
             hailo_on = bool(var_acc_h8.get() or var_acc_h10.get())
-            enabled = trt_on and hailo_on
-
+            deepx_on = bool(var_acc_deepx.get())
+            enabled = trt_on and (hailo_on or deepx_on)
             p = (var_matrix_preset.get() or "").strip().lower()
             is_custom = p.startswith("custom")
 
@@ -1355,13 +1423,15 @@ def build_panel(parent, app=None) -> ttk.Frame:
                 try:
                     chk_trt_to_hailo.configure(state="disabled")
                     chk_hailo_to_trt.configure(state="disabled")
+                    chk_deepx_to_trt.configure(state="disabled")
+                    chk_trt_to_deepx.configure(state="disabled")
                 except Exception:
                     pass
                 try:
                     matrix_custom.grid_remove()
                 except Exception:
                     pass
-                var_matrix_info.set("Matrix runs disabled (enable TensorRT + at least one Hailo target above).")
+                var_matrix_info.set("Split-pipeline runs disabled (enable TensorRT plus Hailo and/or DX-M1 above).")
                 return
 
             try:
@@ -1376,13 +1446,18 @@ def build_panel(parent, app=None) -> ttk.Frame:
                     pass
                 var_matrix_trt_to_hailo.set(False)
                 var_matrix_hailo_to_trt.set(False)
-            elif p.startswith("trt"):
+                var_matrix_deepx_to_trt.set(False)
+                var_matrix_trt_to_deepx.set(False)
+            elif p.startswith("trt") or p.startswith("tensorrt"):
                 try:
                     matrix_custom.grid_remove()
                 except Exception:
                     pass
-                var_matrix_trt_to_hailo.set(True)
-                var_matrix_hailo_to_trt.set(True)
+                # The preset toggles all available M.2 accelerator split directions.
+                var_matrix_trt_to_hailo.set(bool(hailo_on))
+                var_matrix_hailo_to_trt.set(bool(hailo_on))
+                var_matrix_deepx_to_trt.set(bool(deepx_on))
+                var_matrix_trt_to_deepx.set(bool(deepx_on))
             else:
                 try:
                     matrix_custom.grid()
@@ -1391,22 +1466,28 @@ def build_panel(parent, app=None) -> ttk.Frame:
 
             st = "normal" if is_custom else "disabled"
             try:
-                chk_trt_to_hailo.configure(state=st)
-                chk_hailo_to_trt.configure(state=st)
+                chk_trt_to_hailo.configure(state=st if hailo_on else "disabled")
+                chk_hailo_to_trt.configure(state=st if hailo_on else "disabled")
+                chk_deepx_to_trt.configure(state=st if deepx_on else "disabled")
+                chk_trt_to_deepx.configure(state=st if deepx_on else "disabled")
             except Exception:
                 pass
 
             runs = []
             if bool(var_matrix_trt_to_hailo.get()):
-                runs.append("TensorRT→Hailo")
+                runs.append("TensorRT→Hailo NPU")
             if bool(var_matrix_hailo_to_trt.get()):
-                runs.append("Hailo→TensorRT")
+                runs.append("Hailo NPU→TensorRT")
+            if bool(var_matrix_deepx_to_trt.get() and trt_on and deepx_on):
+                runs.append("DeepX DX-M1→TensorRT")
+            if bool(var_matrix_trt_to_deepx.get() and trt_on and deepx_on):
+                runs.append("TensorRT→DeepX DX-M1 (experimental)")
             if runs:
                 var_matrix_info.set(
-                    f"Matrix runs: {', '.join(runs)} · Will benchmark: part1, part2, composed (per selected Hailo target)"
+                    f"Split-pipeline runs: {', '.join(runs)} · Will benchmark: part1, part2, composed where supported"
                 )
             else:
-                var_matrix_info.set("Matrix runs: none")
+                var_matrix_info.set("Split-pipeline runs: none")
         finally:
             _in_matrix["flag"] = False
 
@@ -1414,10 +1495,13 @@ def build_panel(parent, app=None) -> ttk.Frame:
         var_matrix_preset,
         var_matrix_trt_to_hailo,
         var_matrix_hailo_to_trt,
+        var_matrix_deepx_to_trt,
+        var_matrix_trt_to_deepx,
         var_validation_reference_mode,
         var_acc_trt,
         var_acc_h8,
         var_acc_h10,
+        var_acc_deepx,
         var_hailo_full_hef_order,
         var_validation_reference_mode,
     ):
@@ -1427,7 +1511,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
             pass
     _update_matrix_ui()
 
-    # ------------------------ Evaluation profile ------------------------
+    # ------------------------ Advanced profile import (kept for legacy/manual use) ------------------------
 
     var_eval_profile = _str_var(app, "var_bench_evaluation_profile", "")
     var_eval_profile_info = _str_var(app, "var_bench_evaluation_profile_info", "No evaluation profile selected.")
@@ -1439,7 +1523,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
     var_model_preparation_mode = _str_var(app, "var_bench_model_preparation_mode", "Use current ONNX")
     var_model_preparation_info = _str_var(app, "var_bench_model_preparation_info", "Uses the current ONNX unchanged.")
 
-    ttk.Label(acc_group, text="Evaluation profile:").grid(row=10, column=0, sticky="w", padx=(8, 6), pady=(0, 6))
+    ttk.Label(acc_group, text="Advanced profile import:").grid(row=10, column=0, sticky="w", padx=(8, 6), pady=(0, 6))
     cb_eval_profile = ttk.Combobox(
         acc_group,
         textvariable=var_eval_profile,
@@ -1529,7 +1613,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
             var_mini_classification_eval.set(bool(ov.get('mini_classification_eval')))
         except Exception:
             pass
-        for vname, key in ((var_acc_cpu, 'acc_cpu'), (var_acc_cuda, 'acc_cuda'), (var_acc_trt, 'acc_trt'), (var_acc_h8, 'acc_h8'), (var_acc_h10, 'acc_h10')):
+        for vname, key in ((var_acc_cpu, 'acc_cpu'), (var_acc_cuda, 'acc_cuda'), (var_acc_trt, 'acc_trt'), (var_acc_h8, 'acc_h8'), (var_acc_h10, 'acc_h10'), (var_acc_deepx, 'acc_deepx')):
             try:
                 if key in ov:
                     vname.set(bool(ov.get(key)))
@@ -1561,12 +1645,16 @@ def build_panel(parent, app=None) -> ttk.Frame:
         try:
             trt_h = bool(ov.get('matrix_trt_to_hailo'))
             h_trt = bool(ov.get('matrix_hailo_to_trt'))
+            dx_trt = bool(ov.get('matrix_deepx_to_trt'))
+            trt_dx = bool(ov.get('matrix_trt_to_deepx'))
             var_matrix_trt_to_hailo.set(trt_h)
             var_matrix_hailo_to_trt.set(h_trt)
-            if trt_h and h_trt:
-                var_matrix_preset.set('TRT ↔ Hailo (split)')
-            elif trt_h or h_trt:
+            var_matrix_deepx_to_trt.set(dx_trt)
+            var_matrix_trt_to_deepx.set(trt_dx)
+            if (trt_h or h_trt or dx_trt or trt_dx) and not (trt_h and h_trt and dx_trt and trt_dx):
                 var_matrix_preset.set('Custom')
+            elif trt_h or h_trt or dx_trt or trt_dx:
+                var_matrix_preset.set('TensorRT ↔ M.2 accelerator')
             else:
                 var_matrix_preset.set('None')
         except Exception:
@@ -1574,6 +1662,13 @@ def build_panel(parent, app=None) -> ttk.Frame:
         try:
             if int(ov.get('requested_cases') or 0) > 0:
                 _str_var(app, 'var_bench_topk', '').set(str(int(ov.get('requested_cases'))))
+        except Exception:
+            pass
+        try:
+            if 'require_single_part2_input' in ov:
+                var_bench_require_single_part2_input.set(
+                    bool(ov.get('require_single_part2_input'))
+                )
         except Exception:
             pass
         try:
@@ -1760,7 +1855,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
 
     def _browse_profile_models_root():
         initial = str(var_profile_models_root.get() or (app.default_output_dir if app is not None else '') or os.getcwd())
-        picked = filedialog.askdirectory(title='Select model root for profile campaign', initialdir=initial)
+        picked = filedialog.askdirectory(title='Select model root for evaluation workflow', initialdir=initial)
         if picked:
             var_profile_models_root.set(str(picked))
 
@@ -1772,7 +1867,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
         prep_mode = normalize_model_preparation_mode(var_model_preparation_mode.get())
         prep_label = model_preparation_label(prep_mode)
         if not root:
-            var_profile_queue_info.set('Campaign queue inactive. Select a model root to enable batch processing for the profile.')
+            var_profile_queue_info.set('Evaluation workflow inactive. Select a model root to enable profile-based batch processing.')
             return
         desc = f'Model root: {root} · reserve={reserve} · remote={auto_remote} · analysis={auto_analysis} · prep={prep_label}'
         if auto_analysis and not auto_remote:
@@ -1786,12 +1881,12 @@ def build_panel(parent, app=None) -> ttk.Frame:
             var_model_preparation_info.set('Uses the current ONNX unchanged. Good default for classifiers and already screened models.')
             return
         if current_model is None:
-            var_model_preparation_info.set('Auto-screen YOLO full-Hailo is enabled. Load a model and use “Prepare current model…” or run a profile campaign.')
+            var_model_preparation_info.set('Auto-screen YOLO full-Hailo is enabled. Load a model and use “Prepare current model…” or run an evaluation workflow.')
             return
         if preparation_result_is_selected_model(current_model):
             var_model_preparation_info.set('Current ONNX already comes from a preparation-screening result. Re-run Analyse on this prepared model before generating the benchmark set.')
             return
-        var_model_preparation_info.set('Manual use: click “Prepare current model…” before Analyse. Profile campaigns run preparation automatically as the first queue stage.')
+        var_model_preparation_info.set('Manual use: click “Prepare current model…” before Analyse. Evaluation workflows run preparation automatically as an internal stage.')
 
     ttk.Button(acc_group, text='Profile YAML…', command=_browse_eval_profile_file).grid(row=10, column=3, sticky='w', padx=(0, 6), pady=(0, 6))
     ttk.Button(acc_group, text='Apply', command=_apply_eval_profile_to_ui).grid(row=10, column=4, sticky='w', padx=(0, 6), pady=(0, 6))
@@ -1805,7 +1900,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
     ent_profile_root = ttk.Entry(acc_group, textvariable=var_profile_models_root, width=56)
     ent_profile_root.grid(row=12, column=1, columnspan=3, sticky='ew', padx=(0, 6), pady=(0, 6))
     ttk.Button(acc_group, text='Browse…', command=_browse_profile_models_root).grid(row=12, column=4, sticky='w', padx=(0, 6), pady=(0, 6))
-    ttk.Button(acc_group, text='Queue profile…', command=getattr(app, '_queue_profile_campaign', None)).grid(row=12, column=5, sticky='w', padx=(0, 6), pady=(0, 6))
+    ttk.Button(acc_group, text='Start workflow…', command=getattr(app, '_queue_profile_campaign', None)).grid(row=12, column=5, sticky='w', padx=(0, 6), pady=(0, 6))
 
     chk_profile_reserve = ttk.Checkbutton(acc_group, text='Include reserve', variable=var_profile_include_reserve)
     chk_profile_reserve.grid(row=13, column=1, sticky='w', padx=(0, 8), pady=(0, 4))
@@ -1817,7 +1912,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
     lbl_profile_queue = ttk.Label(acc_group, textvariable=var_profile_queue_info, foreground='#555')
     lbl_profile_queue.grid(row=14, column=0, columnspan=11, sticky='w', padx=(8, 8), pady=(0, 8))
 
-    prep_section = CollapsibleSection(acc_group, 'Model preparation', expanded=False)
+    prep_section = CollapsibleSection(acc_group, 'Model preparation / Hailo diagnostics', expanded=False)
     prep_section.grid(row=15, column=0, columnspan=11, sticky='ew', padx=(8, 8), pady=(0, 8))
     try:
         prep_section.body.columnconfigure(1, weight=1)
@@ -1838,10 +1933,10 @@ def build_panel(parent, app=None) -> ttk.Frame:
 
     attach_tooltip(cb_eval_profile, 'Versionierte Evaluationsprofile setzen eine feste Run-Matrix und task-spezifische Defaults für die finale Kampagne. Die eigentlichen Cases werden weiter normal generiert; das Profil überschreibt nur die Plan-/Validierungsdefaults.')
     attach_tooltip(lbl_eval_profile, 'Zeigt, ob das aktuelle Modell von der ausgewählten Profil-Suite abgedeckt wird und welche Run-Matrix/Defaults daraus abgeleitet werden.')
-    attach_tooltip(ent_profile_root, 'Root folder containing the exported ONNX models referenced by the selected profile. The profile campaign scans this folder recursively and matches models by export metadata / file name.')
-    attach_tooltip(lbl_profile_queue, 'The profile campaign uses the existing Jobs infrastructure as a sequential queue: optional model preparation → analysis → benchmark-set generation → optional remote execution → optional automatic benchmark-analysis export.')
+    attach_tooltip(ent_profile_root, 'Root folder containing the exported ONNX models referenced by the selected profile. The evaluation workflow scans this folder recursively and matches models by export metadata / file name.')
+    attach_tooltip(lbl_profile_queue, 'The evaluation workflow uses the existing Jobs infrastructure as a sequential queue and writes EvaluationRuns/<profile>_<timestamp>/ with run_manifest.json plus per-stage stage_result.json files.')
     attach_tooltip(cb_prep_mode, 'Keeps the everyday UI simple. “Use current ONNX” does nothing extra. “Auto-screen YOLO full-Hailo” is the compact advanced mode: it tries the current ONNX first, then a tiny built-in set of Ultralytics export variants until one passes the full-Hailo probe.')
-    attach_tooltip(lbl_prep_info, 'Manual workflow: use “Prepare current model…” first, then rerun Analyse on the selected prepared ONNX. Profile campaigns perform this stage automatically before analysis.')
+    attach_tooltip(lbl_prep_info, 'Manual workflow: use “Prepare current model…” first, then rerun Analyse on the selected prepared ONNX. Evaluation workflows perform this stage automatically before analysis.')
     try:
         var_eval_profile.trace_add('write', _refresh_eval_profile_info)
     except Exception:
@@ -1859,6 +1954,40 @@ def build_panel(parent, app=None) -> ttk.Frame:
     _refresh_profile_queue_info()
     _refresh_model_preparation_info()
     # ------------------------ Accuracy / baseline ------------------------
+
+    # v52w: Run Plan tab is for backend/run selection only.
+    # Validation datasets, Hailo build defaults and profile workflows are centralized in Tool Config / Evaluation Workflow.
+    # Hide legacy widgets left in the code for backward-compatible variables and old saved sessions.
+    def _hide_legacy_run_plan_widgets() -> None:
+        try:
+            for child in list(acc_group.winfo_children()):
+                try:
+                    info = child.grid_info()
+                    if not info:
+                        continue
+                    row = int(info.get('row', -1))
+                    col = int(info.get('column', -1))
+                    hide = False
+                    if row == 0 and col >= 10:  # validation reference + task overrides
+                        hide = True
+                    if row == 1 and col >= 3:  # semantic validation path / max image overrides
+                        hide = True
+                    if row in {2, 3, 4, 5, 6}:  # Hailo benchmark/full settings now live in Tool Config
+                        hide = True
+                    if row == 7 and col >= 4:  # old validation default hint
+                        hide = True
+                    if row >= 10 and row <= 15:  # old profile workflow/model-prep controls
+                        hide = True
+                    if hide:
+                        child.grid_remove()
+                except Exception:
+                    pass
+            # Compact note for users.
+            note = ttk.Label(acc_group, text="Validation/calibration datasets and Hailo run defaults are configured in Tool Config. Evaluation profiles are configured in the Evaluation Workflow tab.", foreground="#666", wraplength=1050)
+            note.grid(row=10, column=0, columnspan=11, sticky='w', padx=(8, 8), pady=(4, 8))
+        except Exception:
+            pass
+    _hide_legacy_run_plan_widgets()
 
     accy_group = ttk.LabelFrame(sec_plan.body, text="Accuracy / baseline")
     accy_group.grid(row=1, column=0, sticky="ew", pady=(8, 0))
@@ -2011,6 +2140,13 @@ def build_panel(parent, app=None) -> ttk.Frame:
                 if bool(var_acc_h10.get()):
                     hailo_targets.append(_get_hailo_hw("hailo10"))
 
+                if bool(var_acc_deepx.get()):
+                    planned.append(("DeepX DX-M1", "deepx_m1", "deepx_m1", "same_backend_full", ["full"], "dxnn: full"))
+                    if bool(var_acc_trt.get()) and bool(var_matrix_deepx_to_trt.get()):
+                        planned.append(("DeepX DX-M1→TensorRT", "deepx_m1", "tensorrt", "cpu_full", ["part1", "part2", "composed"], "dxnn: part1; onnx/trt: part2"))
+                    if bool(var_acc_trt.get()) and bool(var_matrix_trt_to_deepx.get()):
+                        planned.append(("TensorRT→DeepX DX-M1", "tensorrt", "deepx_m1", "cpu_full", ["part1", "part2", "composed"], "onnx/trt: part1; dxnn: part2 (experimental)"))
+
                 hailo_variants = _effective_hailo_variants_for_validation()
                 for hw in hailo_targets:
                     s1 = hw
@@ -2081,6 +2217,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
         var_acc_trt,
         var_acc_h8,
         var_acc_h10,
+        var_acc_deepx,
         var_hailo_bench_preset,
         var_hailo_custom_full,
         var_hailo_custom_composed,
@@ -2089,6 +2226,8 @@ def build_panel(parent, app=None) -> ttk.Frame:
         var_matrix_preset,
         var_matrix_trt_to_hailo,
         var_matrix_hailo_to_trt,
+        var_matrix_deepx_to_trt,
+        var_matrix_trt_to_deepx,
         var_validation_reference_mode,
     ):
         try:
@@ -2115,6 +2254,12 @@ def build_panel(parent, app=None) -> ttk.Frame:
         app._benchmark_refresh_accuracy_ui = _update_accuracy_ui
 
     _update_accuracy_ui()
+    # v52ab: hide the verbose Accuracy/Baseline diagnostic by default.  It
+    # duplicated benchmark_plan.json and consumed valuable Benchmark-tab space.
+    try:
+        accy_group.grid_remove()
+    except Exception:
+        pass
     for _maybe_var in (var_acc_h8, var_acc_h10, getattr(app, "var_strict_boundary", None) if app is not None else None):
         try:
             if _maybe_var is not None:
@@ -2133,7 +2278,18 @@ def build_panel(parent, app=None) -> ttk.Frame:
             logger.debug("Failed to schedule Hailo compile outlook refresh; falling back to immediate refresh", exc_info=True)
             _refresh_hailo_compile_outlook()
 
-    _schedule_hailo_compile_outlook_refresh()
+    # v58v: do not run the Hailo compile outlook automatically during startup.
+    # Even if it is scheduled via after(), it can run before the first idle paint
+    # and make the GUI appear frozen.  It still refreshes when Hailo selections
+    # change, and users can trigger a refresh by changing Top-K/objective.
+    try:
+        if str(os.environ.get("ONNX_SPLITPOINT_STARTUP_COMPILE_OUTLOOK", "0")).strip().lower() in {"1", "true", "yes", "on"}:
+            _schedule_hailo_compile_outlook_refresh(5000)
+        else:
+            var_hailo_outlook_summary.set("Hailo compile outlook deferred until selection changes.")
+            logger.info("Benchmark Hailo compile outlook startup refresh disabled")
+    except Exception:
+        pass
 
 # ----------------------------- Runner (ORT) ------------------------------
 
@@ -2244,7 +2400,7 @@ def build_panel(parent, app=None) -> ttk.Frame:
 
         suite_scan_status_var = tk.StringVar(value=("Suite discovery pending…" if getattr(app, "default_output_dir", None) else "Set Working Dir to enable suite discovery."))
         lbl_suite_scan = ttk.Label(remote_group, textvariable=suite_scan_status_var)
-        lbl_suite_scan.grid(row=4, column=1, columnspan=3, sticky="w", padx=(0, 6), pady=(0, 4))
+        lbl_suite_scan.grid(row=5, column=1, columnspan=3, sticky="w", padx=(0, 6), pady=(0, 4))
 
         _suite_scan = {"thread": None, "request_id": 0, "values": list(_initial_suite_values), "scanned": False}
 
@@ -2353,58 +2509,136 @@ def build_panel(parent, app=None) -> ttk.Frame:
         )
         attach_tooltip(lbl_suite_scan, "Background status for benchmark suite discovery inside the Working Dir.")
 
-        # Host
-        ttk.Label(remote_group, text="Remote host:").grid(row=1, column=0, sticky="w", padx=(8, 6), pady=4)
-        host_disp = tk.StringVar(value="")
-        cb_host = ttk.Combobox(remote_group, textvariable=host_disp, state="readonly", width=26)
-        cb_host.grid(row=1, column=1, sticky="ew", padx=(0, 6), pady=4)
+        # Central hardware setups are configured in Tool Config and selected
+        # automatically from benchmark_plan.json.  A benchmark set can now fan
+        # out to Hailo-8, Hailo-10 and/or DeepX remotes in one run.
+        ttk.Label(remote_group, text="Remote dispatch:").grid(row=1, column=0, sticky="nw", padx=(8, 6), pady=4)
+        auto_dispatch_var = tk.StringVar(value="")
+        dispatch_outer = ttk.Frame(remote_group)
+        dispatch_outer.grid(row=1, column=1, columnspan=7, sticky="ew", padx=(0, 8), pady=4)
+        for _c in range(4):
+            dispatch_outer.columnconfigure(_c, weight=1, uniform="dispatch_cards")
+        dispatch_summary_var = tk.StringVar(value="Auto dispatch from benchmark_plan.json → Tool Config hardware_setups.yaml")
+        lbl_dispatch_summary = ttk.Label(dispatch_outer, textvariable=dispatch_summary_var, anchor="w")
+        lbl_dispatch_summary.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 4))
+        dispatch_cards = ttk.Frame(dispatch_outer)
+        dispatch_cards.grid(row=1, column=0, columnspan=4, sticky="ew")
+        for _c in range(4):
+            dispatch_cards.columnconfigure(_c, weight=1, uniform="dispatch_cards")
 
-        def _refresh_hosts():
-            vals = []
-            try:
-                vals = app._remote_hosts_values_for_combo()
-            except Exception:
-                vals = []
-            cb_host["values"] = vals
-            # Restore display from selected id
-            try:
-                sel_id = app.var_remote_host_id.get()
-            except Exception:
-                sel_id = ""
-            if sel_id:
-                for v in vals:
-                    if v.startswith(sel_id + " ") or v.startswith(sel_id + "—") or v.startswith(sel_id + " —"):
-                        host_disp.set(v)
-                        break
-
-        def _on_host_selected(event=None):
-            try:
-                # Let app parse and store only the id
-                app._remote_on_host_combo_selected(event)
-            except Exception:
-                pass
-
-        cb_host.bind("<<ComboboxSelected>>", _on_host_selected)
-
-        def _open_hosts():
-            try:
-                logger.info("[remote] Opening hosts dialog")
-                app._remote_open_hosts_dialog(refresh_callback=_refresh_hosts)
-            except Exception as e:
-                logger.exception("Failed to open hosts dialog")
+        def _clear_dispatch_cards() -> None:
+            for child in list(dispatch_cards.winfo_children()):
                 try:
-                    messagebox.showerror("Remote hosts", f"Failed to open hosts dialog:\n{e}")
+                    child.destroy()
                 except Exception:
                     pass
 
-        btn_hosts = ttk.Button(remote_group, text="Hosts…", command=_open_hosts)
-        btn_hosts.grid(row=1, column=2, sticky="w", padx=(0, 6), pady=4)
-        attach_tooltip(btn_hosts, "Add/edit remote SSH hosts (no passwords stored).")
+        def _short_acc_label(acc: str) -> str:
+            acc = (acc or "").lower().replace("-", "_")
+            if acc == "deepx_m1":
+                return "DeepX DX-M1"
+            if acc == "hailo8":
+                return "Hailo-8"
+            if acc == "hailo10":
+                return "Hailo-10"
+            if acc in {"tensorrt", "trt"}:
+                return "TensorRT"
+            return acc or "remote"
 
-        btn_test = ttk.Button(remote_group, text="Test", command=getattr(app, "_remote_test_connection", None))
-        btn_test.grid(row=1, column=3, sticky="w", padx=(0, 8), pady=4)
-        attach_tooltip(btn_test, "Run a quick 'ssh echo OK' to verify connectivity.")
+        def _set_dispatch_text(text: str) -> None:
+            # Compatibility for older hooks that still expect a string variable.
+            auto_dispatch_var.set(str(text or ""))
+            dispatch_summary_var.set(str(text or ""))
 
+        def _render_dispatch_cards(dispatches=None, message: str = "") -> None:
+            _clear_dispatch_cards()
+            if not dispatches:
+                dispatch_summary_var.set(message or "No matching configured hardware setup found. Configure hosts in Tool Config.")
+                lf = ttk.LabelFrame(dispatch_cards, text="No dispatch")
+                lf.grid(row=0, column=0, sticky="nsew", padx=(0, 8), pady=(0, 4))
+                ttk.Label(lf, text=message or "No matching setup. Open Tool Config and save/test the hardware setups.", wraplength=360, justify="left").pack(anchor="w", padx=8, pady=8)
+                return
+            total_runs = sum(len([x for x in (d.get("run_ids") or []) if str(x).strip()]) for d in dispatches)
+            dispatch_summary_var.set(f"Auto dispatch: {len(dispatches)} remote setup(s), {total_runs} run assignment(s)")
+            for idx, d in enumerate(dispatches):
+                payload = d.get("payload") or {}
+                setup_id = str(d.get("setup_id") or "").strip()
+                runs = [str(x) for x in (d.get("run_ids") or []) if str(x).strip()]
+                acc = str(payload.get("accelerator") or payload.get("provider") or "").strip()
+                title = str(payload.get("label") or _short_acc_label(acc) or setup_id)
+                remote = f"{payload.get('user') or ''}@{payload.get('host') or ''}:{payload.get('port') or 22}"
+                provider = str(payload.get("provider") or acc or "auto")
+                run_txt = ", ".join(runs) if runs else "all / legacy"
+                col = idx % 4
+                row = idx // 4
+                lf = ttk.LabelFrame(dispatch_cards, text=title)
+                lf.grid(row=row, column=col, sticky="nsew", padx=(0 if col == 0 else 6, 6), pady=(0, 6))
+                lf.columnconfigure(0, weight=1)
+                header = f"{setup_id}\n{remote}\nprovider: {provider}"
+                ttk.Label(lf, text=header, justify="left", anchor="w").grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 3))
+                ttk.Separator(lf, orient="horizontal").grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 4))
+                ttk.Label(lf, text=f"runs ({len(runs) if runs else 'all'}):", font=("TkDefaultFont", 9, "bold")).grid(row=2, column=0, sticky="w", padx=8)
+                ttk.Label(lf, text=run_txt, wraplength=330, justify="left").grid(row=3, column=0, sticky="ew", padx=8, pady=(2, 8))
+
+        def _open_tool_config():
+            try:
+                if hasattr(app, "_open_tool_config_tab"):
+                    app._open_tool_config_tab()
+                    return
+                nb = getattr(app, "main_notebook", None)
+                frames = getattr(app, "panel_frames", {}) or {}
+                if nb is not None and "hardware" in frames:
+                    nb.select(frames["hardware"])
+            except Exception:
+                pass
+
+        def _refresh_dispatch_summary():
+            try:
+                suite_path = str(getattr(app, "var_remote_benchmark_set", None).get() or "").strip() if app is not None else ""
+                p = Path(suite_path).expanduser() if suite_path else None
+                if p and p.is_dir():
+                    p = p / "benchmark_set.json"
+                dispatches = []
+                if p and p.exists() and hasattr(app, "_auto_remote_dispatch_plan"):
+                    dispatches = app._auto_remote_dispatch_plan(p)
+                if dispatches:
+                    _render_dispatch_cards(dispatches)
+                    try:
+                        if hasattr(app, "_benchmark_plan_runs_for_suite") and hasattr(app, "_benchmark_profile_requested_run_ids_for_suite"):
+                            runs = app._benchmark_plan_runs_for_suite(p)
+                            plan_ids = [app._benchmark_run_id(r) for r in runs if app._benchmark_run_id(r)]
+                            req_ids = app._benchmark_profile_requested_run_ids_for_suite(p)
+                            if req_ids and set(req_ids) != set(plan_ids):
+                                missing = [x for x in req_ids if x not in plan_ids]
+                                parts = [f"Auto dispatch: {len(dispatches)} remote setup(s), {sum(len([x for x in (d.get('run_ids') or []) if str(x).strip()]) for d in dispatches)} run assignment(s)"]
+                                if missing:
+                                    parts.append("profile requested but not materialized: " + ", ".join(missing))
+                                parts.append("regenerate/resume benchmark set to apply current target/profile selection")
+                                dispatch_summary_var.set(" · ".join(parts))
+                    except Exception:
+                        pass
+                elif hasattr(app, "_benchmark_auto_dispatch_summary"):
+                    # Fallback to the older string summary if the structured call is unavailable.
+                    msg = app._benchmark_auto_dispatch_summary(suite_path)
+                    _render_dispatch_cards([], msg)
+                else:
+                    _render_dispatch_cards([], "Auto dispatch summary unavailable.")
+            except Exception as exc:
+                _render_dispatch_cards([], f"Auto dispatch summary unavailable: {type(exc).__name__}")
+
+        _render_dispatch_cards([], "Auto from benchmark_plan.json → Tool Config hardware_setups.yaml")
+
+        btn_refresh_dispatch = ttk.Button(remote_group, text="Refresh dispatch", command=_refresh_dispatch_summary)
+        btn_refresh_dispatch.grid(row=2, column=5, sticky="nw", padx=(0, 6), pady=(0, 4))
+        attach_tooltip(btn_refresh_dispatch, "Refresh the derived hardware-dispatch summary for the selected benchmark_set.json.")
+
+        btn_tool_config = ttk.Button(remote_group, text="Tool Config…", command=_open_tool_config)
+        btn_tool_config.grid(row=2, column=6, sticky="nw", padx=(0, 6), pady=(0, 4))
+        attach_tooltip(btn_tool_config, "Edit/test the central Hailo-8/Hailo-10/DeepX remote setups. Benchmark rows are mapped to them automatically.")
+
+        btn_test_setups = ttk.Button(remote_group, text="Test setups", command=getattr(app, "_test_hardware_setups_for_current_suite", None))
+        btn_test_setups.grid(row=2, column=7, sticky="nw", padx=(0, 8), pady=(0, 4))
+        attach_tooltip(btn_test_setups, "Run SSH/runtime smoke tests for all configured central hardware setups.")
         # Transfer mode
         ttk.Label(advanced_group, text="Transfer:").grid(row=0, column=0, sticky="w", padx=(8, 6), pady=(8,4))
         cb_transfer = ttk.Combobox(
@@ -2458,20 +2692,20 @@ def build_panel(parent, app=None) -> ttk.Frame:
         )
 
         # Provider / run params
-        ttk.Label(remote_group, text="Provider (override):").grid(row=2, column=0, sticky="w", padx=(8, 6), pady=4)
+        ttk.Label(remote_group, text="Provider (override):").grid(row=3, column=0, sticky="w", padx=(8, 6), pady=4)
         cb_provider = ttk.Combobox(
             remote_group,
             textvariable=getattr(app, "var_remote_provider", None),
-            values=["auto", "cpu", "cuda", "tensorrt", "openvino"],
+            values=["auto", "cpu", "cuda", "tensorrt", "deepx_m1", "openvino"],
             width=10,
             state="readonly",
         )
-        cb_provider.grid(row=2, column=1, sticky="w", padx=(0, 6), pady=4)
+        cb_provider.grid(row=3, column=1, sticky="w", padx=(0, 6), pady=4)
         attach_tooltip(cb_provider, "auto = run benchmark_plan.json (all runs).\nOther values override to a single provider.")
 
         # Compact run controls (Repeats/Warmup/Runs) + a live "Total runs" preview.
         run_params = ttk.Frame(remote_group)
-        run_params.grid(row=2, column=2, columnspan=2, sticky="ne", padx=(16, 8), pady=4)
+        run_params.grid(row=3, column=2, columnspan=2, sticky="ne", padx=(16, 8), pady=4)
 
         ttk.Label(run_params, text="Repeats:").grid(row=0, column=0, sticky="e", padx=(0, 4))
         ent_rep = ttk.Entry(run_params, textvariable=getattr(app, "var_remote_repeats", None), width=6)
@@ -2516,6 +2750,36 @@ def build_panel(parent, app=None) -> ttk.Frame:
         total_runs_var = tk.StringVar(value="")
         lbl_total = ttk.Label(run_params, textvariable=total_runs_var, justify="left")
         lbl_total.grid(row=0, column=6, rowspan=4, sticky="w")
+
+        # v56i: explicit energy controls. Energy is measured per workload block: normal runs and streaming frames are separate u.RECS acquisitions.
+        energy_box = ttk.LabelFrame(remote_group, text="Energy measurement (u.RECS)")
+        energy_box.grid(row=4, column=0, columnspan=8, sticky="ew", padx=(8, 8), pady=(6, 4))
+        energy_box.columnconfigure(4, weight=1)
+        chk_energy = ttk.Checkbutton(
+            energy_box,
+            text="Measure energy",
+            variable=getattr(app, "var_remote_measure_energy", None),
+        )
+        chk_energy.grid(row=0, column=0, sticky="w", padx=(8, 8), pady=(6, 6))
+        ttk.Label(energy_box, text="Energy repeats override:").grid(row=0, column=1, sticky="w", padx=(8, 4), pady=(6, 6))
+        ent_energy_runs = ttk.Entry(energy_box, textvariable=getattr(app, "var_remote_energy_runs", None), width=5)
+        ent_energy_runs.grid(row=0, column=2, sticky="w", padx=(0, 8), pady=(6, 6))
+        ttk.Label(energy_box, text="0/empty = benchmark Repeats; measures latency and streaming phases separately").grid(row=0, column=3, sticky="w", padx=(0, 8), pady=(6, 6))
+        btn_energy_tools = ttk.Button(energy_box, text="Test energy tools", command=getattr(app, "_energy_test_tools_async", None))
+        btn_energy_tools.grid(row=0, column=5, sticky="e", padx=(8, 4), pady=(6, 6))
+        btn_energy_setups = ttk.Button(energy_box, text="Test energy setups", command=getattr(app, "_test_energy_setups_for_current_suite", None))
+        btn_energy_setups.grid(row=0, column=6, sticky="e", padx=(4, 8), pady=(6, 6))
+        attach_tooltip(
+            chk_energy,
+            "Measure u.RECS energy for each automatic remote dispatch/run-id.\n"
+            "Normal workload: one acquisition per Repeats value, each acquisition runs the configured measured Runs.\n"
+            "Streaming workload: one acquisition per Repeats value, each acquisition runs the configured streaming frames.\n"
+            "Example Repeats=2, Runs=100, Streaming=48 => 2 normal energy acquisitions + 2 streaming acquisitions per run-id.\n"
+            "The collector runs locally while the benchmark command executes via SSH.",
+        )
+        attach_tooltip(ent_energy_runs, "Override for u.RECS repeats per phase. Empty/0 uses the normal Repeats field. Positive value overrides Repeats for energy only.")
+        attach_tooltip(btn_energy_tools, "Check local urecs-data-collector and power_calculations binaries.")
+        attach_tooltip(btn_energy_setups, "Run short u.RECS energy setup checks for hardware setups used by the selected benchmark suite.")
 
         _tp_sync = {"flag": False}
         _tp_service = getattr(app, "_benchmark_generation_service", BenchmarkGenerationService()) if app is not None else BenchmarkGenerationService()
@@ -2603,25 +2867,13 @@ def build_panel(parent, app=None) -> ttk.Frame:
         attach_tooltip(ent_tp_q, "Queue-Tiefe für den Streaming-/Interleaving-Lauf. Höher erlaubt mehr Overlap, kann aber Host-Speicher kosten.")
         attach_tooltip(lbl_total, "Measured = Repeats × Runs. Total/run = Warmup + measured runs. Streaming zeigt den zusätzlichen heterogenen Throughput-Lauf (Frames/Warmup/Queue-Tiefe).")
 
-        ttk.Label(advanced_group, text="Remote venv:").grid(row=1, column=0, sticky="w", padx=(8, 6), pady=(4, 0))
-        ent_venv = ttk.Entry(advanced_group, textvariable=getattr(app, "var_remote_venv", None), width=55)
-        ent_venv.grid(row=1, column=1, columnspan=3, sticky="ew", padx=(0, 8), pady=(4, 0))
-        attach_tooltip(
-            ent_venv,
-            "Optional: activate a venv / environment on the remote host before running the suite.\n"
-            "If the activated env is missing core packages (onnx/onnxruntime), the tool falls back to the remote default python3 and appends the env site-packages to PYTHONPATH.\n"
-            "Examples:\n"
-            "  ~/hailo_py/bin/activate\n"
-            "  source /opt/hailo/setup_env.sh",
-        )
-
-        ttk.Label(advanced_group, text="Extra args:").grid(row=2, column=0, sticky="w", padx=(8, 6), pady=(4, 8))
+        ttk.Label(advanced_group, text="Extra args:").grid(row=1, column=0, sticky="w", padx=(8, 6), pady=(4, 8))
         ttk.Entry(advanced_group, textvariable=getattr(app, "var_remote_add_args", None), width=55).grid(
-            row=2, column=1, columnspan=3, sticky="ew", padx=(0, 8), pady=(4, 8)
+            row=1, column=1, columnspan=3, sticky="ew", padx=(0, 8), pady=(4, 8)
         )
 
         btn_run = ttk.Button(remote_group, text="Run remote benchmark", command=getattr(app, "_remote_run_benchmark", None))
-        btn_run.grid(row=5, column=0, columnspan=4, sticky="w", padx=(8, 8), pady=(4, 10))
+        btn_run.grid(row=6, column=0, columnspan=4, sticky="w", padx=(8, 8), pady=(4, 10))
         attach_tooltip(
             btn_run,
             "Bundle → scp upload → ssh run benchmark_suite.py → download results.\n"
@@ -2629,6 +2881,71 @@ def build_panel(parent, app=None) -> ttk.Frame:
         )
         app.btn_remote_benchmark = btn_run
 
-        _refresh_hosts()
+        # v52p: central hardware setups are resolved automatically from the
+        # selected benchmark plan.  The old Benchmark-tab combobox refresh
+        # helper was removed with the single-remote UI; keep startup independent
+        # from that legacy function.
+        try:
+            _refresh_dispatch_summary()
+        except Exception:
+            pass
+
+    # v52w: Keep the Benchmark tab focused on run-plan selection only.
+    # Dataset preparation, calibration policy, Hailo run defaults, and
+    # Evaluation-Profile workflow controls now live in Tool Config /
+    # Evaluation Workflow.  The variables/functions above remain in place for
+    # backward compatibility with old profiles and scripts, but the legacy
+    # widgets are hidden from this tab.
+    try:
+        # Hide old validation override widgets while keeping only backend target
+        # and input-scale controls visible.  Validation reference/task/dataset
+        # routing is derived from task + Tool Config presets.
+        for _w in list(acc_group.grid_slaves(row=0)):
+            try:
+                if int(str(_w.grid_info().get("column", 0))) >= 10:
+                    _w.grid_remove()
+            except Exception:
+                pass
+        for _w in list(acc_group.grid_slaves(row=1)):
+            try:
+                if int(str(_w.grid_info().get("column", 0))) >= 3:
+                    _w.grid_remove()
+            except Exception:
+                pass
+        # Hide old Hailo run-defaults and dataset-prep rows.
+        for _row in (2, 3, 4, 5, 6):
+            for _w in list(acc_group.grid_slaves(row=_row)):
+                try:
+                    _w.grid_remove()
+                except Exception:
+                    pass
+        # Keep Split matrix (row 7 col 0/1 and row 8/9), but remove the old
+        # validation-default explanatory label that occupied row 7 col >=4.
+        for _w in list(acc_group.grid_slaves(row=7)):
+            try:
+                if int(str(_w.grid_info().get("column", 0))) >= 4:
+                    _w.grid_remove()
+            except Exception:
+                pass
+        # Hide Evaluation-Profile campaign controls from Benchmark.  They are
+        # handled by the Evaluation Workflow tab.
+        for _row in (10, 11, 12, 13, 14, 15):
+            for _w in list(acc_group.grid_slaves(row=_row)):
+                try:
+                    _w.grid_remove()
+                except Exception:
+                    pass
+        ttk.Label(
+            acc_group,
+            text=(
+                "Datasets, calibration/validation split, Hailo run defaults, "
+                "Activation-Proxy settings and Evaluation Workflow profiles are configured centrally in Tool Config / Evaluation Workflow."
+            ),
+            foreground="#666",
+            wraplength=1120,
+            justify="left",
+        ).grid(row=2, column=0, columnspan=12, sticky="ew", padx=(8, 8), pady=(0, 8))
+    except Exception:
+        pass
     outer.content_frame = frame  # type: ignore[attr-defined]
     return outer

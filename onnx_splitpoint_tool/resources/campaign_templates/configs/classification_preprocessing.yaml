@@ -1,0 +1,30 @@
+locked: true
+contract_id: classification_preprocessing_v2
+task: classification
+identity:
+  schema: onnx-splitpoint/image-preprocessing-contract
+  schema_version: 2
+  contract_scope: prepared_rgb_uint8_semantics
+  task: classification
+  preprocess_mode: resize
+  spatial_transform: direct_resize
+  target_hw: [224, 224]
+  color_space: RGB
+  input_domain: uint8_0_255
+  resize_interpolation: bilinear
+  resize_rounding: python_round_ties_to_even
+  placement: not_applicable
+  pad_value: 0
+  letterbox_pad_value: 0
+  image_scale: imagenet
+  letterbox: false
+identity_sha256: ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9
+runtime_numeric_input:
+  policy: backend_attested_per_execution
+  schema: onnx-splitpoint/runtime-numeric-input-identity
+  schema_version: 1
+  semantic_preprocessing_sha256: ea28cf5ac35bd4c9a3321ac97fd559f32fd7a661dc4a93c324fe3ffc54188fa9
+note: >-
+  The semantic image transform is shared. Layout, dtype and numeric
+  normalization are separately attested for each CPU, TensorRT, Hailo and
+  DeepX runtime input and must not be inferred from this file.

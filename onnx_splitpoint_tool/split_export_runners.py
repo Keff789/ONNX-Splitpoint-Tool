@@ -7,6 +7,8 @@ used by exported split artifacts.
 from __future__ import annotations
 
 import base64
+import ast
+import hashlib
 import json
 import os
 import platform
@@ -112,6 +114,27 @@ XEIBA1CFDgxAGAoYgDDcQgMQhg4MQBgKGIAwFDAAYfgeGIAwdGAAwiQBBQxA1v8DLwZwb+dSBq8A
 AAAASUVORK5CYII=
 """
 
+def assert_generated_hailo_layout_current(path: Path) -> None:
+    """Compare the shipped adapter body, not just a self-asserted marker."""
+    def adapter_ast(source: str) -> str:
+        node = next(node for node in ast.parse(source).body
+                    if isinstance(node, ast.FunctionDef) and node.name == "_adapt_tensor")
+        # Type annotations and docstrings are irrelevant to runtime parity.
+        node.returns = None
+        for arg in node.args.args:
+            arg.annotation = None
+        if node.body and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant) and isinstance(node.body[0].value.value, str):
+            node.body.pop(0)
+        return ast.dump(node, include_attributes=False)
+    try:
+        actual = adapter_ast(Path(path).read_text(encoding="utf-8"))
+        expected = adapter_ast(read_text("runners", "backends", "hailo_backend.py"))
+    except (StopIteration, SyntaxError) as exc:
+        raise RuntimeError("generated Hailo adapter missing or invalid; refresh runner") from exc
+    if actual != expected:
+        raise RuntimeError("generated Hailo adapter is stale; refresh runner without rebuilding model artifacts")
+
+
 def write_runner_skeleton_onnxruntime(out_dir: str, *, manifest_filename: str = "split_manifest.json", target: str = "auto") -> str:
     """Generate a Python runner skeleton (onnxruntime) next to the exported split models.
 
@@ -133,7 +156,33 @@ def write_runner_skeleton_onnxruntime(out_dir: str, *, manifest_filename: str = 
 
     # Runner script (template + placeholder replacement)
     script = read_text("resources", "templates", "run_split_onnxruntime.py.txt")
+    # Derive the standalone adapter from the package implementation. Its two
+    # session types must never silently keep an older tensor memory contract.
+    backend_source = read_text("runners", "backends", "hailo_backend.py")
+    def adapter_source(source: str) -> str:
+        node = next(node for node in ast.parse(source).body
+                    if isinstance(node, ast.FunctionDef) and node.name == "_adapt_tensor")
+        return ast.get_source_segment(source, node)
+    script = script.replace(adapter_source(script), adapter_source(backend_source), 1)
+    template_source = read_text("resources", "templates", "run_split_onnxruntime.py.txt")
+    script = script.replace('"__GENERATED_SOURCE_FILES__"', repr({
+        "template": {"path": "onnx_splitpoint_tool/resources/templates/run_split_onnxruntime.py.txt",
+                     "source_sha256": hashlib.sha256(template_source.encode("utf-8")).hexdigest()},
+        "package_adapter": {"path": "onnx_splitpoint_tool/runners/backends/hailo_backend.py",
+                            "source_sha256": hashlib.sha256(backend_source.encode("utf-8")).hexdigest()},
+    }))
+    from .release_identity import VERSION, BUILD_ID
+    script = script.replace('"__GENERATED_RELEASE_IDENTITY__"',
+                            repr({"version": VERSION, "build_id": BUILD_ID}))
     script = script.replace("__MANIFEST_FILENAME__", str(manifest_filename))
+    endpoint_attestor_source = read_text("native_output_endpoint.py")
+    endpoint_attestor_sha256 = hashlib.sha256(
+        endpoint_attestor_source.encode("utf-8")
+    ).hexdigest()
+    script = script.replace(
+        "__VENDORED_ENDPOINT_ATTESTOR_SHA256__",
+        endpoint_attestor_sha256,
+    )
     target = (target or "auto").lower()
     if target not in {"auto","cpu","cuda","tensorrt"}:
         target = "auto"

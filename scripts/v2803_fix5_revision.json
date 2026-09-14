@@ -1,0 +1,15 @@
+{
+  "version": "2.80.3",
+  "revision": "FIX5",
+  "parent_revision": "FIX4",
+  "scope": [
+    "restore_executable_cache_policy_message_prefix",
+    "verify_actual_native_asset_sync_requirements",
+    "require_trt_build_guard_capability"
+  ],
+  "force_rebuild_policy": "unchanged_off",
+  "acceptance_scope": "focused_software_regressions_and_isolated_update",
+  "full_acceptance_rerun": "NOT_RUN",
+  "hardware_acceptance": "NOT_RUN",
+  "quality_acceptance": "NOT_EVALUATED"
+}

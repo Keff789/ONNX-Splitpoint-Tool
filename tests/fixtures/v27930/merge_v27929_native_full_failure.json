@@ -1,0 +1,2260 @@
+{
+  "fixture_origin": "Unchanged v2.79.29 native Full row; diagnostic negative evidence only",
+  "row": {
+    "backend": "native_full_deepx",
+    "producer_impl": "native_full_deepx_native_full_suite",
+    "model": "yolo11l",
+    "case": "full",
+    "execution_mode": "native_full_baseline",
+    "execution_precision": "",
+    "full_runtime_precision": "",
+    "runtime_precision_source": "unavailable",
+    "engine_precision": "unavailable",
+    "duration_s": 0.0,
+    "frames": 3000,
+    "warmup": 100,
+    "warmup_policy": "exact_untimed_frames_before_measured_loop",
+    "completed_frames": 3000,
+    "completed_work_units": 3000,
+    "completed_work_units_source": "dx_engine_prepared_feed_frozen_completion_timed_loop",
+    "completed_work_units_status": "exact_runtime_counter",
+    "ok": false,
+    "status": "partial_repetitions",
+    "fps_makespan": null,
+    "latency_mean_ms": null,
+    "latency_p50_ms": 47.69115000090096,
+    "latency_p95_ms": 47.85963705071481,
+    "latency_semantics": "synchronous_request_end_to_end",
+    "measured_makespan_s": 143.12980909700855,
+    "fps_source": "dx_engine_prepared_feed_outer_makespan",
+    "outer_makespan_verified": true,
+    "report": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_results_deepx_m1_full_auto.json",
+    "run_id": "deepx_m1_full",
+    "result_source": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_results_deepx_m1_full_auto.json",
+    "result_source_kind": "json",
+    "result_source_consistent": true,
+    "result_source_consistency_reason": "ok",
+    "result_source_conflicts": [],
+    "deepx_prepared_feed_projection_conflicts": [],
+    "runtime_python": "/home/nx/venvs/deepx-runtime/bin/python3",
+    "runtime_python_sites": [
+      "/home/nx/venvs/deepx-runtime/lib/python3.10/site-packages",
+      "/usr/local/lib/python3.10/dist-packages",
+      "/usr/lib/python3/dist-packages",
+      "/usr/lib/python3.10/dist-packages"
+    ],
+    "dxnn_path": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/deepx/deepx_m1/full/model.dxnn",
+    "deepx_prepared_feed_benchmark": {
+      "enabled": true,
+      "status": "ok",
+      "benchmark_kind": "prepared_feed_dx_engine",
+      "task": "detection",
+      "run_count": 3000,
+      "requested_frames": 3000,
+      "completed_frames": 3000,
+      "completed_work_units": 3000,
+      "completed_work_units_source": "dx_engine_prepared_feed_frozen_completion_timed_loop",
+      "completed_work_units_status": "exact_runtime_counter",
+      "warmup_count": 100,
+      "unique_input_images": 1,
+      "sequence_policy": "single_prepared_feed_repeated",
+      "same_image_schedule_as_ort_trt_hailo": true,
+      "uses_validation_dataset_images": false,
+      "semantic_validation_uses_dataset_images": true,
+      "preprocessing_timed": false,
+      "disk_io_timed": false,
+      "input_size": 640,
+      "prepared_feed_shape": [
+        640,
+        640,
+        3
+      ],
+      "original_image_wh": [
+        500,
+        335
+      ],
+      "prepared_feed_contract_version": "deepx-sealed-runtime-input-v3",
+      "input_contract": {
+        "artifact_kind": "dxnn",
+        "artifact_path": "/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_f0fcdf56a4ac24d8_958dacf708b58fc3/model.dxnn",
+        "artifact_sha256": "045c40d2250ab528822ef83c37c9842bb1a85bb0ca212d8dba20278ae21b797e",
+        "artifact_size_bytes": 54112354,
+        "backend": "deepx_m1",
+        "build_onnx_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+        "cache_contract_sha256": null,
+        "cache_key": "deepx_m1_full_f0fcdf56a4ac24d8_958dacf708b58fc3",
+        "calibration_manifest_identity_sha256": null,
+        "classification_preprocessing": "not_applicable",
+        "compiler_identity_sha256": null,
+        "contract_complete_enough_for_reports": true,
+        "contract_family": "decoded_pre_nms",
+        "endpoint_contract_complete_enough_for_quality": true,
+        "endpoint_mode": "decoded_pre_nms",
+        "endpoint_semantic_attestation": {
+          "schema": "onnx-splitpoint/deepx-endpoint-semantic-attestation",
+          "schema_version": 1,
+          "status": "attested",
+          "pass": true,
+          "reason": "authoritative_recorded_output_contract_bound",
+          "model_id": "yolo11l",
+          "backend": "deepx_m1",
+          "variant": "full",
+          "endpoint_mode": "decoded_pre_nms",
+          "host_tail_required": true,
+          "postprocessing_required": true,
+          "source_endpoint_semantics": "decoded_pre_nms",
+          "source_endpoint_has_integrated_nms": false,
+          "authoritative_contract": {
+            "artifact_path": "",
+            "backend": "deepx_m1",
+            "contract_family": "decoded_pre_nms",
+            "contract_status": "recorded",
+            "endpoint_mode": "decoded_pre_nms",
+            "full_end_node_names": [],
+            "host_tail_required": true,
+            "model_id": "yolo11l",
+            "output_format": "ultralytics_decoded",
+            "postprocessing_required": true,
+            "requires_external_postprocess": true,
+            "schema": "onnx-splitpoint/output-contract",
+            "schema_version": 1,
+            "source_endpoint_semantics": "decoded_pre_nms",
+            "source_onnx_detection_endpoint": {
+              "multiscale_raw_head": false,
+              "output_shapes": [
+                [
+                  1,
+                  84,
+                  8400
+                ]
+              ],
+              "sidecar_status": "onnx_sha256_mismatch",
+              "stage": "decoded_pre_nms"
+            },
+            "source_onnx_multiscale_raw_head": false,
+            "stage": "decoded_pre_nms",
+            "task": "detection",
+            "variant": "full",
+            "warning": "Do not compare a pre-NMS detection endpoint as if it were decoded/NMS output."
+          },
+          "authoritative_contract_sha256": "c57830b8f650dbe68c443b5379c2694580dc705f0921d0ca676240f069665f5f",
+          "source_path": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/output_contracts.json",
+          "source_file_sha256": "d5eff8720b9a4c2237bb717682cd6f75f2f31c022f11de06eae6d1fd05363246",
+          "stage": "decoded_pre_nms",
+          "output_format": "ultralytics_decoded",
+          "declared_output_semantics": "xywh_class_scores_pre_nms",
+          "semantic_attestation_policy": "recorded_endpoint_plus_runtime_structure_validation"
+        },
+        "full_cache_contract_mode": "legacy_implicit",
+        "host_tail_required": true,
+        "input": {
+          "classification_preprocessing": "not_applicable",
+          "color_space": "RGB",
+          "contract_source": "task_bound_dxcom_image_loader_preprocessing",
+          "dtype": "uint8",
+          "embedded_numeric_path": "dxcom_div255_detection_default",
+          "layout": "HWC",
+          "letterbox_pad_value": 114,
+          "letterbox_pad_value_effective": 114,
+          "letterbox_pad_value_requested": 114,
+          "name": "images",
+          "normalization": "embedded_dxcom_preprocessing",
+          "preprocess_mode": "letterbox",
+          "preprocess_mode_effective": "letterbox",
+          "preprocess_mode_requested": "auto",
+          "shape": [
+            640,
+            640,
+            3
+          ],
+          "task": "detection"
+        },
+        "model_id": "yolo11l",
+        "output": {
+          "source": "runtime_report_or_model_output",
+          "status": "declared_no_parse_model_pending_placeholder"
+        },
+        "outputs": [
+          {
+            "contract_source": "runtime_report_or_model_output",
+            "dtype": "float32",
+            "name": "model_outputs",
+            "shape": null
+          }
+        ],
+        "postprocessing": {
+          "type": "ultralytics_decoded_classaware_nms",
+          "host_required": true,
+          "nms_on_host": true
+        },
+        "postprocessing_required": true,
+        "preprocessing_contract": {
+          "contract_sha256": "59d7c7aa7ff879883cb6bf94aa7fe0e1972ef39407eb4cf2a22ab066f6fd61f9",
+          "numeric_preprocessing": {
+            "build_onnx_adapter": {
+              "kind": "identity"
+            },
+            "dxcom_loader": {
+              "color_space": "RGB",
+              "letterbox_pad_value": 114,
+              "operations_contract": "letterbox_div255_bgr2rgb_transpose_expanddim",
+              "output_dtype": "float32",
+              "output_layout": "NCHW",
+              "scale_divisor": 255.0
+            },
+            "mode": "task_default_letterbox_scale_only",
+            "schema": "onnx-splitpoint/deepx-detection-preprocessing",
+            "schema_version": 1
+          },
+          "runtime_input": {
+            "classification_preprocessing": "not_applicable",
+            "color_space": "RGB",
+            "contract_source": "task_bound_dxcom_image_loader_preprocessing",
+            "dtype": "uint8",
+            "embedded_numeric_path": "dxcom_div255_detection_default",
+            "layout": "HWC",
+            "letterbox_pad_value": 114,
+            "letterbox_pad_value_effective": 114,
+            "letterbox_pad_value_requested": 114,
+            "name": "images",
+            "normalization": "embedded_dxcom_preprocessing",
+            "preprocess_mode": "letterbox",
+            "preprocess_mode_effective": "letterbox",
+            "preprocess_mode_requested": "auto",
+            "shape": [
+              640,
+              640,
+              3
+            ],
+            "task": "detection"
+          },
+          "schema": "onnx-splitpoint/deepx-full-preprocessing-contract",
+          "schema_version": 1,
+          "task": "detection"
+        },
+        "source_model_input": {
+          "dtype": "float32",
+          "layout": "NCHW",
+          "name": "images",
+          "shape": [
+            1,
+            3,
+            640,
+            640
+          ]
+        },
+        "source_onnx_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+        "suite_artifact_path": "/home/kmika/Models/EvaluationRuns/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/models/yolo11l/benchmark_set/legacy_suite/deepx/deepx_m1/full/model.dxnn",
+        "suite_artifact_sha256": "045c40d2250ab528822ef83c37c9842bb1a85bb0ca212d8dba20278ae21b797e",
+        "suite_artifact_size_bytes": 54112354,
+        "variant": "full",
+        "source_path": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/deepx/deepx_m1/full/output_contract.json",
+        "source_label": "run.contract_path",
+        "contract_resolution_status": "resolved",
+        "resolved_input_geometry": {
+          "shape": [
+            640,
+            640,
+            3
+          ],
+          "layout": "HWC",
+          "height": 640,
+          "width": 640,
+          "channels": 3,
+          "batch": null,
+          "batch_shape": [
+            1,
+            640,
+            640,
+            3
+          ]
+        },
+        "endpoint_contract_binding_status": "attested",
+        "endpoint_contract_binding_reason": "authoritative_recorded_output_contract_bound"
+      },
+      "input_contract_mode": "explicit",
+      "preprocessing_contract_audit": {
+        "shape": [
+          640,
+          640,
+          3
+        ],
+        "dtype": "uint8",
+        "layout": "HWC",
+        "color_space": "RGB",
+        "preprocess_mode": "letterbox",
+        "normalization": "embedded_dxcom_preprocessing",
+        "letterbox_pad_value": 114,
+        "source_shape_hw": [
+          335,
+          500
+        ],
+        "contract_source": "task_bound_dxcom_image_loader_preprocessing",
+        "prepared_input_binding_verified": true,
+        "prepared_input_source": "sealed_semantic_dump_runtime_tensor",
+        "image_decode_used_for_numeric_input": false,
+        "sealed_preprocess": {
+          "mode": "letterbox_rgb_uint8",
+          "pad_value": 114,
+          "rgb": true,
+          "ort_model_scale": "norm",
+          "layout": "HWC",
+          "runtime_dtype": "uint8",
+          "normalization": "embedded_dxcom_preprocessing",
+          "color_space": "RGB",
+          "input_domain": "uint8_0_255",
+          "resize_interpolation": "bilinear",
+          "resize_rounding": "python_round_ties_to_even",
+          "placement": "floor_top_left_remainder_bottom_right"
+        }
+      },
+      "prepared_input_manifest": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_input_manifest.json",
+      "prepared_input_manifest_sha256": "8187a40116f2da8c150797b39e44427b8b2f6d739f018d7b12c2e5b1f4aa1e9a",
+      "prepared_input_file": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/runtime_input.bin",
+      "prepared_input_sha256": "06d2c2858d34bf69e66e3805b4b5f60984ecc895c8b681eb007bfc61334509be",
+      "prepared_input_file_sha256": "06d2c2858d34bf69e66e3805b4b5f60984ecc895c8b681eb007bfc61334509be",
+      "prepared_input_bytes": 1228800,
+      "prepared_input_name": "images",
+      "prepared_input_shape": [
+        640,
+        640,
+        3
+      ],
+      "prepared_input_dtype": "uint8",
+      "prepared_input_layout": "HWC",
+      "prepared_input_source_image_id": "000000212226.jpg",
+      "prepared_input_source_image_sha256": "261ba1b81c768f47b8452cd8fc7866a354a69c336a927032486d129b8684eb44",
+      "runtime_color_space": "RGB",
+      "runtime_normalization": "embedded_dxcom_preprocessing",
+      "runtime_preprocess_mode": "letterbox",
+      "runtime_preprocessing_identity": {
+        "schema": "onnx-splitpoint/image-preprocessing-contract",
+        "schema_version": 2,
+        "contract_scope": "prepared_rgb_uint8_semantics",
+        "task": "detection",
+        "preprocess_mode": "letterbox",
+        "spatial_transform": "centered_letterbox",
+        "target_hw": [
+          640,
+          640
+        ],
+        "color_space": "RGB",
+        "input_domain": "uint8_0_255",
+        "resize_interpolation": "bilinear",
+        "resize_rounding": "python_round_ties_to_even",
+        "placement": "floor_top_left_remainder_bottom_right",
+        "pad_value": 114,
+        "letterbox_pad_value": 114,
+        "image_scale": "norm",
+        "letterbox": true
+      },
+      "runtime_preprocessing_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+      "runtime_numeric_input_identity": {
+        "schema": "onnx-splitpoint/runtime-numeric-input-identity",
+        "schema_version": 1,
+        "backend": "native_full_deepx",
+        "task": "detection",
+        "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+        "runtime_input_name": "images",
+        "runtime_input_shape": [
+          640,
+          640,
+          3
+        ],
+        "runtime_input_dtype": "uint8",
+        "runtime_input_layout": "HWC",
+        "runtime_color_space": "RGB",
+        "runtime_normalization": "embedded_dxcom_preprocessing",
+        "runtime_numeric_domain": "uint8_0_255"
+      },
+      "runtime_numeric_input_sha256": "6b7720ffcaf322c96dc6b83ec3e879033777335e6f07730a1a1dd4441869ebc2",
+      "prepared_input_binding_verified": true,
+      "prepared_input_source": "sealed_semantic_dump_runtime_tensor",
+      "preprocess": {
+        "mode": "letterbox_rgb_uint8",
+        "pad_value": 114,
+        "rgb": true,
+        "ort_model_scale": "norm",
+        "layout": "HWC",
+        "runtime_dtype": "uint8",
+        "normalization": "embedded_dxcom_preprocessing",
+        "color_space": "RGB",
+        "input_domain": "uint8_0_255",
+        "resize_interpolation": "bilinear",
+        "resize_rounding": "python_round_ties_to_even",
+        "placement": "floor_top_left_remainder_bottom_right"
+      },
+      "image": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg",
+      "image_source": "explicit_prepared_feed_image",
+      "mean_ms": 47.707292817057656,
+      "p50_ms": 47.69115000090096,
+      "p95_ms": 47.85963705071481,
+      "latency_semantics": "synchronous_request_end_to_end",
+      "makespan_s": 143.12980909700855,
+      "fps_makespan": 20.95999441993737,
+      "fps_semantics": "completed_frames_over_outer_measured_makespan",
+      "fps_from_mean_latency": 20.96115585167834,
+      "runs_ms": [
+        47.6399069884792,
+        47.74867900414392,
+        47.58675300399773,
+        47.68054900341667,
+        47.69504501018673,
+        47.709604987176135,
+        47.871882998151705,
+        47.71584499394521,
+        47.81530500622466,
+        47.80595999909565,
+        47.69782899529673,
+        47.75651899399236,
+        47.65049897832796,
+        47.797929000807926,
+        48.006415978306904,
+        47.72339799092151,
+        47.64464302570559,
+        47.70099697634578,
+        47.680580988526344,
+        47.77219900279306,
+        47.682660981081426,
+        47.65545899863355,
+        47.685572993941605,
+        47.68618100206368,
+        47.81248897779733,
+        47.68054801388644,
+        47.869834990706295,
+        47.62115402263589,
+        47.66832300811075,
+        47.59664201992564,
+        47.83556199981831,
+        47.6027209952008
+      ],
+      "host_postprocess_frozen": true,
+      "normalization_frozen": false,
+      "runtime_endpoint_contract_family": "decoded_pre_nms",
+      "runtime_endpoint_contract_complete": true,
+      "source_endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+      "source_output_endpoint_attestation": {
+        "attested": true,
+        "status": "passed",
+        "stage": "decoded_pre_nms",
+        "endpoint": "decoded_pre_nms",
+        "reason": "raw_detection_tensor_structure_verified",
+        "endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+        "tensor_signature": {
+          "tensor_count": 1,
+          "tensors": [
+            {
+              "index": 0,
+              "name": "model_outputs",
+              "rank": 3,
+              "shape": [
+                1,
+                84,
+                8400
+              ],
+              "dtype": "float32"
+            }
+          ]
+        },
+        "declared_stage": "decoded_pre_nms"
+      },
+      "postprocess_included": true,
+      "postprocess_completed_frames": 3000,
+      "postprocess_completion_verified": true,
+      "frozen_host_postprocess_contract": {
+        "schema": "onnx-splitpoint/frozen-native-detection-postprocess",
+        "schema_version": 1,
+        "task": "detection",
+        "source_contract_family": "decoded_pre_nms",
+        "output_contract_family": "decoded_nms",
+        "model_id": "yolo11l",
+        "model_family": "yolo11",
+        "decoder_id": "ultralytics_decoded_classaware_nms_v1",
+        "decoder_format": "ultralytics_decoded",
+        "multiscale_activation_mode": null,
+        "nms_implementation": "numpy_class_aware_nms_xyxy_v1",
+        "class_aware": true,
+        "confidence_threshold": 0.25,
+        "iou_threshold": 0.45,
+        "max_detections": 300,
+        "input_hw": [
+          640,
+          640
+        ],
+        "original_wh": [
+          500,
+          335
+        ],
+        "raw_output_tensor_signature": {
+          "tensor_count": 1,
+          "tensors": [
+            {
+              "index": 0,
+              "name": "model_outputs",
+              "rank": 3,
+              "shape": [
+                1,
+                84,
+                8400
+              ],
+              "dtype": "float32"
+            }
+          ]
+        },
+        "implementation_artifacts": {
+          "native_detection_postprocess": {
+            "relative_path": "onnx_splitpoint_tool/native_detection_postprocess.py",
+            "sha256": "4e65d8b63316d1241e868063d4cf223ca403dab38d292c223fc9ab27fc1e0f0c"
+          },
+          "yolo_harness": {
+            "relative_path": "onnx_splitpoint_tool/runners/harness/yolo.py",
+            "sha256": "31657e2717a8cb6cfda53e7de8e06b7b2286ecb430070811546fdec65327a17a"
+          },
+          "harness_base": {
+            "relative_path": "onnx_splitpoint_tool/runners/harness/base.py",
+            "sha256": "938b3713f32e412dd1f57fcc07a397fa1f3b26ed30afbc945d22f1bb082db06c"
+          }
+        },
+        "execution_policy": "one_serial_host_tail_per_successful_accelerator_output",
+        "performance_scope": "prepared_input_to_post_nms_detections",
+        "energy_scope": "same_frozen_prepared_input_to_post_nms_hotloop",
+        "host_postprocess_frozen": true,
+        "postprocess_included": true,
+        "decoded_pre_nms_score_policy": {
+          "policy_id": "float32_probability_edges_abs_2pow_minus23_v1",
+          "dtype": "float32",
+          "absolute_tolerance": 1.1920928955078125e-07,
+          "action": "normalize_probability_edges_on_processing_copy"
+        },
+        "invariant_identity": {
+          "schema": "onnx-splitpoint/frozen-native-detection-postprocess",
+          "schema_version": 1,
+          "task": "detection",
+          "source_contract_family": "decoded_pre_nms",
+          "output_contract_family": "decoded_nms",
+          "model_id": "yolo11l",
+          "model_family": "yolo11",
+          "decoder_id": "ultralytics_decoded_classaware_nms_v1",
+          "decoder_format": "ultralytics_decoded",
+          "nms_implementation": "numpy_class_aware_nms_xyxy_v1",
+          "class_aware": true,
+          "confidence_threshold": 0.25,
+          "iou_threshold": 0.45,
+          "max_detections": 300,
+          "input_hw": [
+            640,
+            640
+          ],
+          "raw_output_tensor_signature": {
+            "tensor_count": 1,
+            "tensors": [
+              {
+                "index": 0,
+                "name": "model_outputs",
+                "rank": 3,
+                "shape": [
+                  1,
+                  84,
+                  8400
+                ],
+                "dtype": "float32"
+              }
+            ]
+          },
+          "implementation_artifacts": {
+            "native_detection_postprocess": {
+              "relative_path": "onnx_splitpoint_tool/native_detection_postprocess.py",
+              "sha256": "4e65d8b63316d1241e868063d4cf223ca403dab38d292c223fc9ab27fc1e0f0c"
+            },
+            "yolo_harness": {
+              "relative_path": "onnx_splitpoint_tool/runners/harness/yolo.py",
+              "sha256": "31657e2717a8cb6cfda53e7de8e06b7b2286ecb430070811546fdec65327a17a"
+            },
+            "harness_base": {
+              "relative_path": "onnx_splitpoint_tool/runners/harness/base.py",
+              "sha256": "938b3713f32e412dd1f57fcc07a397fa1f3b26ed30afbc945d22f1bb082db06c"
+            }
+          },
+          "execution_policy": "one_serial_host_tail_per_successful_accelerator_output",
+          "performance_scope": "prepared_input_to_post_nms_detections",
+          "energy_scope": "same_frozen_prepared_input_to_post_nms_hotloop",
+          "host_postprocess_frozen": true,
+          "postprocess_included": true,
+          "decoded_pre_nms_score_policy": {
+            "policy_id": "float32_probability_edges_abs_2pow_minus23_v1",
+            "dtype": "float32",
+            "absolute_tolerance": 1.1920928955078125e-07,
+            "action": "normalize_probability_edges_on_processing_copy"
+          }
+        },
+        "invariant_contract_sha256": "6d381834efe5219d41ee3794eaa5d0d9781fdd4fc3982ffd9caa78777cdd7a29",
+        "contract_sha256": "3b32a7f14ac37d46605eccb8ad86b608a0f536ca189cc6b198a0993016343b2f"
+      },
+      "frozen_host_postprocess_contract_sha256": "3b32a7f14ac37d46605eccb8ad86b608a0f536ca189cc6b198a0993016343b2f",
+      "frozen_host_postprocess_result": {
+        "task": "detection",
+        "contract_family": "decoded_nms",
+        "decoder_format": "ultralytics_decoded",
+        "coordinate_space": "original_image_xyxy_pixels",
+        "record_schema": "xyxy_score_class_id_v1",
+        "canonical_sort_policy": "score_desc_class_id_asc_xyxy_lexicographic_v1",
+        "detection_count": 2,
+        "detections_sha256": "d4bdac791cdc978674b32a5921edee345d73d97d485b49bb6ccc56df91c2fbc9",
+        "detections": [
+          {
+            "class_id": 0,
+            "score": 0.9233853816986084,
+            "x1": 234.4482421875,
+            "y1": 89.697265625,
+            "x2": 393.51806640625,
+            "y2": 269.56787109375
+          },
+          {
+            "class_id": 2,
+            "score": 0.32885265350341797,
+            "x1": 43.505859375,
+            "y1": 0.3173828125,
+            "x2": 490.185546875,
+            "y2": 332.0556640625
+          }
+        ],
+        "completed_result_artifact": {
+          "schema": "onnx-splitpoint/frozen-completed-detection-result-artifact",
+          "schema_version": 1,
+          "record_schema": "xyxy_score_class_id_v1",
+          "coordinate_space": "original_image_xyxy_pixels",
+          "sort_policy": "score_desc_class_id_asc_xyxy_lexicographic_v1",
+          "detections": [
+            {
+              "class_id": 0,
+              "score": 0.9233853816986084,
+              "x1": 234.4482421875,
+              "y1": 89.697265625,
+              "x2": 393.51806640625,
+              "y2": 269.56787109375
+            },
+            {
+              "class_id": 2,
+              "score": 0.32885265350341797,
+              "x1": 43.505859375,
+              "y1": 0.3173828125,
+              "x2": 490.185546875,
+              "y2": 332.0556640625
+            }
+          ]
+        },
+        "completed_result_artifact_sha256": "dba1ede2655d4255e75718e3bbe594dd63162821b7c96a4366b9bc6aa2b54ad8",
+        "postprocess_contract_sha256": "3b32a7f14ac37d46605eccb8ad86b608a0f536ca189cc6b198a0993016343b2f",
+        "decoded_pre_nms_score_normalization": {
+          "policy_id": "float32_probability_edges_abs_2pow_minus23_v1",
+          "absolute_tolerance": 1.1920928955078125e-07,
+          "scores_below_zero": 21,
+          "scores_above_one": 0,
+          "corrected_score_count": 21,
+          "maximum_absolute_correction": 5.960464477539063e-08,
+          "source_modified": false,
+          "processing_copy_created": true
+        }
+      },
+      "frozen_decoded_nms_normalization_contract": {},
+      "frozen_decoded_nms_normalization_contract_sha256": "",
+      "frozen_decoded_nms_normalization_result": {},
+      "completed_task_stage": "decoded_nms",
+      "completed_task_contract_family": "decoded_nms",
+      "completed_task_endpoint_contract_hash": "6b3d4277985967d584af9461ec72d1145cbba56d37e4884298e2677b44e368b6",
+      "completed_task_output_endpoint_id": "detection:decoded_nms:6b3d4277985967d584af9461ec72d1145cbba56d37e4884298e2677b44e368b6",
+      "completed_task_comparison_endpoint_contract": {
+        "schema": "onnx-splitpoint/completed-task-comparison-endpoint",
+        "schema_version": 2,
+        "task": "detection",
+        "stage": "decoded_nms",
+        "contract_family": "decoded_nms",
+        "model_id": "yolo11l",
+        "model_family": "yolo11",
+        "output_record_format": "xyxy_score_class",
+        "coordinate_space": "original_image_xyxy_pixels",
+        "score_semantics": "probability_0_1",
+        "class_id_semantics": "integer_model_label_index",
+        "class_aware": true,
+        "score_threshold": 0.25,
+        "iou_threshold": 0.45,
+        "max_detections": 300,
+        "input_hw": [
+          640,
+          640
+        ],
+        "canonical_completion_policy_id": "decoded_nms_xyxy_original_classaware_postfilter_v2",
+        "nms_semantics_id": "class_aware_nms_xyxy_v1",
+        "endpoint_contract_complete": true,
+        "endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+        "output_endpoint_id": "detection:decoded_nms:comparison:2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a"
+      },
+      "completed_task_comparison_endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+      "completed_task_comparison_output_endpoint_id": "detection:decoded_nms:comparison:2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+      "completed_task_completion_mode": "frozen_host_tail",
+      "completed_task_endpoint_attestation": {
+        "schema": "onnx-splitpoint/frozen-native-detection-completion-attestation",
+        "schema_version": 1,
+        "attested": true,
+        "status": "passed",
+        "task": "detection",
+        "source_stage": "decoded_pre_nms",
+        "stage": "decoded_nms",
+        "endpoint": "decoded_nms",
+        "contract_source": "frozen_host_decode_nms_inside_measured_interval:v1",
+        "endpoint_contract_complete": true,
+        "endpoint_contract_hash": "6b3d4277985967d584af9461ec72d1145cbba56d37e4884298e2677b44e368b6",
+        "output_endpoint_id": "detection:decoded_nms:6b3d4277985967d584af9461ec72d1145cbba56d37e4884298e2677b44e368b6",
+        "completed_frames": 3000,
+        "postprocess_completed_frames": 3000,
+        "postprocess_completion_verified": true,
+        "frozen_postprocess_contract_sha256": "3b32a7f14ac37d46605eccb8ad86b608a0f536ca189cc6b198a0993016343b2f",
+        "frozen_postprocess_result": {
+          "task": "detection",
+          "contract_family": "decoded_nms",
+          "decoder_format": "ultralytics_decoded",
+          "coordinate_space": "original_image_xyxy_pixels",
+          "record_schema": "xyxy_score_class_id_v1",
+          "canonical_sort_policy": "score_desc_class_id_asc_xyxy_lexicographic_v1",
+          "detection_count": 2,
+          "detections_sha256": "d4bdac791cdc978674b32a5921edee345d73d97d485b49bb6ccc56df91c2fbc9",
+          "detections": [
+            {
+              "class_id": 0,
+              "score": 0.9233853816986084,
+              "x1": 234.4482421875,
+              "y1": 89.697265625,
+              "x2": 393.51806640625,
+              "y2": 269.56787109375
+            },
+            {
+              "class_id": 2,
+              "score": 0.32885265350341797,
+              "x1": 43.505859375,
+              "y1": 0.3173828125,
+              "x2": 490.185546875,
+              "y2": 332.0556640625
+            }
+          ],
+          "completed_result_artifact": {
+            "schema": "onnx-splitpoint/frozen-completed-detection-result-artifact",
+            "schema_version": 1,
+            "record_schema": "xyxy_score_class_id_v1",
+            "coordinate_space": "original_image_xyxy_pixels",
+            "sort_policy": "score_desc_class_id_asc_xyxy_lexicographic_v1",
+            "detections": [
+              {
+                "class_id": 0,
+                "score": 0.9233853816986084,
+                "x1": 234.4482421875,
+                "y1": 89.697265625,
+                "x2": 393.51806640625,
+                "y2": 269.56787109375
+              },
+              {
+                "class_id": 2,
+                "score": 0.32885265350341797,
+                "x1": 43.505859375,
+                "y1": 0.3173828125,
+                "x2": 490.185546875,
+                "y2": 332.0556640625
+              }
+            ]
+          },
+          "completed_result_artifact_sha256": "dba1ede2655d4255e75718e3bbe594dd63162821b7c96a4366b9bc6aa2b54ad8",
+          "postprocess_contract_sha256": "3b32a7f14ac37d46605eccb8ad86b608a0f536ca189cc6b198a0993016343b2f",
+          "decoded_pre_nms_score_normalization": {
+            "policy_id": "float32_probability_edges_abs_2pow_minus23_v1",
+            "absolute_tolerance": 1.1920928955078125e-07,
+            "scores_below_zero": 21,
+            "scores_above_one": 0,
+            "corrected_score_count": 21,
+            "maximum_absolute_correction": 5.960464477539063e-08,
+            "source_modified": false,
+            "processing_copy_created": true
+          }
+        },
+        "completed_endpoint_contract": {
+          "schema": "onnx-splitpoint/frozen-native-detection-completed-endpoint",
+          "schema_version": 1,
+          "task": "detection",
+          "source_stage": "decoded_pre_nms",
+          "completed_stage": "decoded_nms",
+          "contract_source": "frozen_host_decode_nms_inside_measured_interval:v1",
+          "source_endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+          "raw_output_tensor_signature": {
+            "tensor_count": 1,
+            "tensors": [
+              {
+                "index": 0,
+                "name": "model_outputs",
+                "rank": 3,
+                "shape": [
+                  1,
+                  84,
+                  8400
+                ],
+                "dtype": "float32"
+              }
+            ]
+          },
+          "frozen_postprocess_contract_sha256": "3b32a7f14ac37d46605eccb8ad86b608a0f536ca189cc6b198a0993016343b2f",
+          "frozen_postprocess_invariant_contract_sha256": "6d381834efe5219d41ee3794eaa5d0d9781fdd4fc3982ffd9caa78777cdd7a29",
+          "decoder_id": "ultralytics_decoded_classaware_nms_v1",
+          "decoder_format": "ultralytics_decoded",
+          "nms_implementation": "numpy_class_aware_nms_xyxy_v1",
+          "class_aware": true,
+          "confidence_threshold": 0.25,
+          "iou_threshold": 0.45,
+          "max_detections": 300,
+          "input_hw": [
+            640,
+            640
+          ],
+          "original_wh": [
+            500,
+            335
+          ],
+          "performance_scope": "prepared_input_to_post_nms_detections",
+          "energy_scope": "same_frozen_prepared_input_to_post_nms_hotloop",
+          "endpoint_contract_complete": true,
+          "endpoint_contract_hash": "6b3d4277985967d584af9461ec72d1145cbba56d37e4884298e2677b44e368b6",
+          "output_endpoint_id": "detection:decoded_nms:6b3d4277985967d584af9461ec72d1145cbba56d37e4884298e2677b44e368b6"
+        },
+        "completed_task_comparison_endpoint_contract": {
+          "schema": "onnx-splitpoint/completed-task-comparison-endpoint",
+          "schema_version": 2,
+          "task": "detection",
+          "stage": "decoded_nms",
+          "contract_family": "decoded_nms",
+          "model_id": "yolo11l",
+          "model_family": "yolo11",
+          "output_record_format": "xyxy_score_class",
+          "coordinate_space": "original_image_xyxy_pixels",
+          "score_semantics": "probability_0_1",
+          "class_id_semantics": "integer_model_label_index",
+          "class_aware": true,
+          "score_threshold": 0.25,
+          "iou_threshold": 0.45,
+          "max_detections": 300,
+          "input_hw": [
+            640,
+            640
+          ],
+          "canonical_completion_policy_id": "decoded_nms_xyxy_original_classaware_postfilter_v2",
+          "nms_semantics_id": "class_aware_nms_xyxy_v1",
+          "endpoint_contract_complete": true,
+          "endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+          "output_endpoint_id": "detection:decoded_nms:comparison:2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a"
+        },
+        "completed_task_comparison_endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+        "completed_task_comparison_output_endpoint_id": "detection:decoded_nms:comparison:2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+        "completed_task_completion_mode": "frozen_host_tail"
+      },
+      "completed_task_result_artifact_saved": true,
+      "completed_task_result_artifact": {
+        "schema": "onnx-splitpoint/frozen-completed-detection-result-artifact",
+        "schema_version": 1,
+        "record_schema": "xyxy_score_class_id_v1",
+        "coordinate_space": "original_image_xyxy_pixels",
+        "sort_policy": "score_desc_class_id_asc_xyxy_lexicographic_v1",
+        "detections": [
+          {
+            "class_id": 0,
+            "score": 0.9233853816986084,
+            "x1": 234.4482421875,
+            "y1": 89.697265625,
+            "x2": 393.51806640625,
+            "y2": 269.56787109375
+          },
+          {
+            "class_id": 2,
+            "score": 0.32885265350341797,
+            "x1": 43.505859375,
+            "y1": 0.3173828125,
+            "x2": 490.185546875,
+            "y2": 332.0556640625
+          }
+        ]
+      },
+      "completed_task_result_artifact_sha256": "dba1ede2655d4255e75718e3bbe594dd63162821b7c96a4366b9bc6aa2b54ad8",
+      "completed_task_result_artifact_path": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/results/deepx_m1_full/deepx_prepared_feed.completed_task_result_artifact.json",
+      "completed_task_result_artifact_file_sha256": "dba1ede2655d4255e75718e3bbe594dd63162821b7c96a4366b9bc6aa2b54ad8",
+      "completed_task_result_artifact_verification_status": "verified_exact",
+      "performance_benchmark_source": "dx_engine_prepared_feed"
+    },
+    "e2e_scope": "full_task_pipeline",
+    "comparison_endpoint_stratum": "decoded_nms",
+    "measurement_concurrency": 1,
+    "host_postprocess_frozen": false,
+    "normalization_frozen": false,
+    "postprocess_included": false,
+    "postprocess_completed_frames": 3000,
+    "postprocess_completion_verified": true,
+    "frozen_host_postprocess_contract": {},
+    "frozen_host_postprocess_contract_sha256": "3b32a7f14ac37d46605eccb8ad86b608a0f536ca189cc6b198a0993016343b2f",
+    "frozen_host_postprocess_result": {},
+    "frozen_decoded_nms_normalization_contract": {},
+    "frozen_decoded_nms_normalization_contract_sha256": "",
+    "frozen_decoded_nms_normalization_result": {},
+    "completed_task_stage": "decoded_nms",
+    "completed_task_contract_family": "decoded_nms",
+    "completed_task_endpoint_contract_hash": "6b3d4277985967d584af9461ec72d1145cbba56d37e4884298e2677b44e368b6",
+    "completed_task_output_endpoint_id": "detection:decoded_nms:6b3d4277985967d584af9461ec72d1145cbba56d37e4884298e2677b44e368b6",
+    "completed_task_comparison_endpoint_contract": {
+      "schema": "onnx-splitpoint/completed-task-comparison-endpoint",
+      "schema_version": 2,
+      "task": "detection",
+      "stage": "decoded_nms",
+      "contract_family": "decoded_nms",
+      "model_id": "yolo11l",
+      "model_family": "yolo11",
+      "output_record_format": "xyxy_score_class",
+      "coordinate_space": "original_image_xyxy_pixels",
+      "score_semantics": "probability_0_1",
+      "class_id_semantics": "integer_model_label_index",
+      "class_aware": true,
+      "score_threshold": 0.25,
+      "iou_threshold": 0.45,
+      "max_detections": 300,
+      "input_hw": [
+        640,
+        640
+      ],
+      "canonical_completion_policy_id": "decoded_nms_xyxy_original_classaware_postfilter_v2",
+      "nms_semantics_id": "class_aware_nms_xyxy_v1",
+      "endpoint_contract_complete": true,
+      "endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+      "output_endpoint_id": "detection:decoded_nms:comparison:2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a"
+    },
+    "completed_task_comparison_endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+    "completed_task_comparison_output_endpoint_id": "detection:decoded_nms:comparison:2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+    "completed_task_completion_mode": "frozen_host_tail",
+    "completed_task_endpoint_attested": true,
+    "completed_task_endpoint_attestation_status": "passed",
+    "completed_task_endpoint_attestation": {
+      "schema": "onnx-splitpoint/frozen-native-detection-completion-attestation",
+      "schema_version": 1,
+      "attested": true,
+      "status": "passed",
+      "task": "detection",
+      "source_stage": "decoded_pre_nms",
+      "stage": "decoded_nms",
+      "endpoint": "decoded_nms",
+      "contract_source": "frozen_host_decode_nms_inside_measured_interval:v1",
+      "endpoint_contract_complete": true,
+      "endpoint_contract_hash": "6b3d4277985967d584af9461ec72d1145cbba56d37e4884298e2677b44e368b6",
+      "output_endpoint_id": "detection:decoded_nms:6b3d4277985967d584af9461ec72d1145cbba56d37e4884298e2677b44e368b6",
+      "completed_frames": 3000,
+      "postprocess_completed_frames": 3000,
+      "postprocess_completion_verified": true,
+      "frozen_postprocess_contract_sha256": "3b32a7f14ac37d46605eccb8ad86b608a0f536ca189cc6b198a0993016343b2f",
+      "frozen_postprocess_result": {
+        "task": "detection",
+        "contract_family": "decoded_nms",
+        "decoder_format": "ultralytics_decoded",
+        "coordinate_space": "original_image_xyxy_pixels",
+        "record_schema": "xyxy_score_class_id_v1",
+        "canonical_sort_policy": "score_desc_class_id_asc_xyxy_lexicographic_v1",
+        "detection_count": 2,
+        "detections_sha256": "d4bdac791cdc978674b32a5921edee345d73d97d485b49bb6ccc56df91c2fbc9",
+        "detections": [
+          {
+            "class_id": 0,
+            "score": 0.9233853816986084,
+            "x1": 234.4482421875,
+            "y1": 89.697265625,
+            "x2": 393.51806640625,
+            "y2": 269.56787109375
+          },
+          {
+            "class_id": 2,
+            "score": 0.32885265350341797,
+            "x1": 43.505859375,
+            "y1": 0.3173828125,
+            "x2": 490.185546875,
+            "y2": 332.0556640625
+          }
+        ],
+        "completed_result_artifact": {
+          "schema": "onnx-splitpoint/frozen-completed-detection-result-artifact",
+          "schema_version": 1,
+          "record_schema": "xyxy_score_class_id_v1",
+          "coordinate_space": "original_image_xyxy_pixels",
+          "sort_policy": "score_desc_class_id_asc_xyxy_lexicographic_v1",
+          "detections": [
+            {
+              "class_id": 0,
+              "score": 0.9233853816986084,
+              "x1": 234.4482421875,
+              "y1": 89.697265625,
+              "x2": 393.51806640625,
+              "y2": 269.56787109375
+            },
+            {
+              "class_id": 2,
+              "score": 0.32885265350341797,
+              "x1": 43.505859375,
+              "y1": 0.3173828125,
+              "x2": 490.185546875,
+              "y2": 332.0556640625
+            }
+          ]
+        },
+        "completed_result_artifact_sha256": "dba1ede2655d4255e75718e3bbe594dd63162821b7c96a4366b9bc6aa2b54ad8",
+        "postprocess_contract_sha256": "3b32a7f14ac37d46605eccb8ad86b608a0f536ca189cc6b198a0993016343b2f",
+        "decoded_pre_nms_score_normalization": {
+          "policy_id": "float32_probability_edges_abs_2pow_minus23_v1",
+          "absolute_tolerance": 1.1920928955078125e-07,
+          "scores_below_zero": 21,
+          "scores_above_one": 0,
+          "corrected_score_count": 21,
+          "maximum_absolute_correction": 5.960464477539063e-08,
+          "source_modified": false,
+          "processing_copy_created": true
+        }
+      },
+      "completed_endpoint_contract": {
+        "schema": "onnx-splitpoint/frozen-native-detection-completed-endpoint",
+        "schema_version": 1,
+        "task": "detection",
+        "source_stage": "decoded_pre_nms",
+        "completed_stage": "decoded_nms",
+        "contract_source": "frozen_host_decode_nms_inside_measured_interval:v1",
+        "source_endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+        "raw_output_tensor_signature": {
+          "tensor_count": 1,
+          "tensors": [
+            {
+              "index": 0,
+              "name": "model_outputs",
+              "rank": 3,
+              "shape": [
+                1,
+                84,
+                8400
+              ],
+              "dtype": "float32"
+            }
+          ]
+        },
+        "frozen_postprocess_contract_sha256": "3b32a7f14ac37d46605eccb8ad86b608a0f536ca189cc6b198a0993016343b2f",
+        "frozen_postprocess_invariant_contract_sha256": "6d381834efe5219d41ee3794eaa5d0d9781fdd4fc3982ffd9caa78777cdd7a29",
+        "decoder_id": "ultralytics_decoded_classaware_nms_v1",
+        "decoder_format": "ultralytics_decoded",
+        "nms_implementation": "numpy_class_aware_nms_xyxy_v1",
+        "class_aware": true,
+        "confidence_threshold": 0.25,
+        "iou_threshold": 0.45,
+        "max_detections": 300,
+        "input_hw": [
+          640,
+          640
+        ],
+        "original_wh": [
+          500,
+          335
+        ],
+        "performance_scope": "prepared_input_to_post_nms_detections",
+        "energy_scope": "same_frozen_prepared_input_to_post_nms_hotloop",
+        "endpoint_contract_complete": true,
+        "endpoint_contract_hash": "6b3d4277985967d584af9461ec72d1145cbba56d37e4884298e2677b44e368b6",
+        "output_endpoint_id": "detection:decoded_nms:6b3d4277985967d584af9461ec72d1145cbba56d37e4884298e2677b44e368b6"
+      },
+      "completed_task_comparison_endpoint_contract": {
+        "schema": "onnx-splitpoint/completed-task-comparison-endpoint",
+        "schema_version": 2,
+        "task": "detection",
+        "stage": "decoded_nms",
+        "contract_family": "decoded_nms",
+        "model_id": "yolo11l",
+        "model_family": "yolo11",
+        "output_record_format": "xyxy_score_class",
+        "coordinate_space": "original_image_xyxy_pixels",
+        "score_semantics": "probability_0_1",
+        "class_id_semantics": "integer_model_label_index",
+        "class_aware": true,
+        "score_threshold": 0.25,
+        "iou_threshold": 0.45,
+        "max_detections": 300,
+        "input_hw": [
+          640,
+          640
+        ],
+        "canonical_completion_policy_id": "decoded_nms_xyxy_original_classaware_postfilter_v2",
+        "nms_semantics_id": "class_aware_nms_xyxy_v1",
+        "endpoint_contract_complete": true,
+        "endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+        "output_endpoint_id": "detection:decoded_nms:comparison:2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a"
+      },
+      "completed_task_comparison_endpoint_contract_hash": "2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+      "completed_task_comparison_output_endpoint_id": "detection:decoded_nms:comparison:2ace95cb46d14e3d783aa3d914712cf3c4587aeaa84ce15b4fba2635b5e4c67a",
+      "completed_task_completion_mode": "frozen_host_tail"
+    },
+    "source_endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+    "source_output_endpoint_attestation": {
+      "attested": true,
+      "status": "passed",
+      "stage": "decoded_pre_nms",
+      "endpoint": "decoded_pre_nms",
+      "reason": "raw_detection_tensor_structure_verified",
+      "endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+      "tensor_signature": {
+        "tensor_count": 1,
+        "tensors": [
+          {
+            "index": 0,
+            "name": "model_outputs",
+            "rank": 3,
+            "shape": [
+              1,
+              84,
+              8400
+            ],
+            "dtype": "float32"
+          }
+        ]
+      },
+      "declared_stage": "decoded_pre_nms"
+    },
+    "original_image_wh": [
+      500,
+      335
+    ],
+    "input_image": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg",
+    "input_image_sha256": "261ba1b81c768f47b8452cd8fc7866a354a69c336a927032486d129b8684eb44",
+    "input_case": "b003",
+    "input_manifest": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_input_manifest.json",
+    "runtime_input_dtype": "uint8",
+    "runtime_input_shape": [
+      640,
+      640,
+      3
+    ],
+    "runtime_input_layout": "HWC",
+    "runtime_preprocess_mode": "letterbox",
+    "runtime_normalization": "embedded_dxcom_preprocessing",
+    "runtime_color_space": "RGB",
+    "task": "detection",
+    "performance_benchmark_source": "dx_engine_prepared_feed",
+    "prepared_feed_contract_version": "deepx-sealed-runtime-input-v3",
+    "expected_prepared_feed_contract_version": "deepx-sealed-runtime-input-v3",
+    "prepared_feed_contract_binding_ok": true,
+    "prepared_feed_image_binding_ok": true,
+    "prepared_input_binding_verified": true,
+    "prepared_input_binding_status": "verified_exact",
+    "prepared_input_file": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/runtime_input.bin",
+    "prepared_input_sha256": "06d2c2858d34bf69e66e3805b4b5f60984ecc895c8b681eb007bfc61334509be",
+    "prepared_input_file_sha256": "06d2c2858d34bf69e66e3805b4b5f60984ecc895c8b681eb007bfc61334509be",
+    "prepared_input_bytes": 1228800,
+    "prepared_input_name": "images",
+    "prepared_input_shape": [
+      640,
+      640,
+      3
+    ],
+    "prepared_input_dtype": "uint8",
+    "prepared_input_layout": "HWC",
+    "prepared_input_source_image_id": "000000212226.jpg",
+    "prepared_input_source_image_sha256": "261ba1b81c768f47b8452cd8fc7866a354a69c336a927032486d129b8684eb44",
+    "runtime_preprocessing_identity": {
+      "schema": "onnx-splitpoint/image-preprocessing-contract",
+      "schema_version": 2,
+      "contract_scope": "prepared_rgb_uint8_semantics",
+      "task": "detection",
+      "preprocess_mode": "letterbox",
+      "spatial_transform": "centered_letterbox",
+      "target_hw": [
+        640,
+        640
+      ],
+      "color_space": "RGB",
+      "input_domain": "uint8_0_255",
+      "resize_interpolation": "bilinear",
+      "resize_rounding": "python_round_ties_to_even",
+      "placement": "floor_top_left_remainder_bottom_right",
+      "pad_value": 114,
+      "letterbox_pad_value": 114,
+      "image_scale": "norm",
+      "letterbox": true
+    },
+    "runtime_preprocessing_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+    "runtime_numeric_input_identity": {
+      "schema": "onnx-splitpoint/runtime-numeric-input-identity",
+      "schema_version": 1,
+      "backend": "native_full_deepx",
+      "task": "detection",
+      "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+      "runtime_input_name": "images",
+      "runtime_input_shape": [
+        640,
+        640,
+        3
+      ],
+      "runtime_input_dtype": "uint8",
+      "runtime_input_layout": "HWC",
+      "runtime_color_space": "RGB",
+      "runtime_normalization": "embedded_dxcom_preprocessing",
+      "runtime_numeric_domain": "uint8_0_255"
+    },
+    "runtime_numeric_input_sha256": "6b7720ffcaf322c96dc6b83ec3e879033777335e6f07730a1a1dd4441869ebc2",
+    "completed_task_result_artifact_saved": true,
+    "completed_task_result_artifact": {
+      "schema": "onnx-splitpoint/frozen-completed-detection-result-artifact",
+      "schema_version": 1,
+      "record_schema": "xyxy_score_class_id_v1",
+      "coordinate_space": "original_image_xyxy_pixels",
+      "sort_policy": "score_desc_class_id_asc_xyxy_lexicographic_v1",
+      "detections": [
+        {
+          "class_id": 0,
+          "score": 0.9233853816986084,
+          "x1": 234.4482421875,
+          "y1": 89.697265625,
+          "x2": 393.51806640625,
+          "y2": 269.56787109375
+        },
+        {
+          "class_id": 2,
+          "score": 0.32885265350341797,
+          "x1": 43.505859375,
+          "y1": 0.3173828125,
+          "x2": 490.185546875,
+          "y2": 332.0556640625
+        }
+      ]
+    },
+    "completed_task_result_artifact_sha256": "dba1ede2655d4255e75718e3bbe594dd63162821b7c96a4366b9bc6aa2b54ad8",
+    "completed_task_result_artifact_path": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/results/deepx_m1_full/deepx_prepared_feed.completed_task_result_artifact.json",
+    "completed_task_result_artifact_file_sha256": "dba1ede2655d4255e75718e3bbe594dd63162821b7c96a4366b9bc6aa2b54ad8",
+    "completed_task_result_artifact_verification_status": "verified_exact",
+    "expected_prepared_feed_image": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg",
+    "expected_prepared_feed_image_sha256": "261ba1b81c768f47b8452cd8fc7866a354a69c336a927032486d129b8684eb44",
+    "actual_prepared_feed_image_sha256": "261ba1b81c768f47b8452cd8fc7866a354a69c336a927032486d129b8684eb44",
+    "performance_input_contract_mode": "explicit",
+    "steps": [
+      {
+        "cmd": [
+          "/home/nx/venvs/deepx-runtime/bin/python",
+          "/home/nx/ONNX-Splitpoint-Tool/scripts/run_benchmark_suite_from_set.py",
+          "--benchmark-set",
+          "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set",
+          "--python",
+          "/home/nx/venvs/deepx-runtime/bin/python3",
+          "--no-refresh",
+          "--",
+          "--run-id",
+          "deepx_m1_full",
+          "--warmup",
+          "100",
+          "--runs",
+          "50",
+          "--throughput-frames",
+          "3000",
+          "--throughput-warmup-frames",
+          "100",
+          "--energy-measurement-only",
+          "--prepared-feed-image",
+          "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg",
+          "--prepared-input-manifest",
+          "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_input_manifest.json",
+          "--quality-evidence-model-id",
+          "yolo11l",
+          "--quality-evidence-setup-id",
+          "orin_nx_deepx_m1_01"
+        ],
+        "rc": 0,
+        "returncode": 0,
+        "elapsed_s": 149.38702249526978,
+        "stdout": "[suite-wrapper] benchmark_set: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set\n[suite-wrapper] benchmark_json: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_set.json\n[suite-wrapper] suite: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py\n[suite-wrapper] python: /home/nx/venvs/deepx-runtime/bin/python3\n[suite-wrapper] extra_sites: /home/nx/venvs/deepx-runtime/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages\n[suite-wrapper] cmd: /home/nx/venvs/deepx-runtime/bin/python3 /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py --run-id deepx_m1_full --warmup 100 --runs 50 --throughput-frames 3000 --throughput-warmup-frames 100 --energy-measurement-only --prepared-feed-image /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg --prepared-input-manifest /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_input_manifest.json --quality-evidence-model-id yolo11l --quality-evidence-setup-id orin_nx_deepx_m1_01\n[energy] measurement-only mode: semantic datasets/reports/figures disabled\n[plan] selected run ids: deepx_m1_full\nWrote benchmark_results_deepx_m1_full_auto.json\nWrote benchmark_results_deepx_m1_full_auto.csv\n[energy] measurement-only: skipped canonical scientific report\nWrote benchmark_suite_status_matrix.md/csv/json\n\nDone.",
+        "stderr": "",
+        "stdout_tail": "[suite-wrapper] benchmark_set: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set\n[suite-wrapper] benchmark_json: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_set.json\n[suite-wrapper] suite: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py\n[suite-wrapper] python: /home/nx/venvs/deepx-runtime/bin/python3\n[suite-wrapper] extra_sites: /home/nx/venvs/deepx-runtime/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages\n[suite-wrapper] cmd: /home/nx/venvs/deepx-runtime/bin/python3 /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py --run-id deepx_m1_full --warmup 100 --runs 50 --throughput-frames 3000 --throughput-warmup-frames 100 --energy-measurement-only --prepared-feed-image /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg --prepared-input-manifest /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_input_manifest.json --quality-evidence-model-id yolo11l --quality-evidence-setup-id orin_nx_deepx_m1_01\n[energy] measurement-only mode: semantic datasets/reports/figures disabled\n[plan] selected run ids: deepx_m1_full\nWrote benchmark_results_deepx_m1_full_auto.json\nWrote benchmark_results_deepx_m1_full_auto.csv\n[energy] measurement-only: skipped canonical scientific report\nWrote benchmark_suite_status_matrix.md/csv/json\n\nDone.",
+        "stderr_tail": "",
+        "timed_out": false,
+        "cancelled": false
+      },
+      {
+        "cmd": [
+          "/home/nx/venvs/deepx-runtime/bin/python3",
+          "/home/nx/ONNX-Splitpoint-Tool/scripts/native_full_semantic_dump.py",
+          "--benchmark-set",
+          "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set",
+          "--backend",
+          "deepx",
+          "--model",
+          "yolo11l",
+          "--task",
+          "detection",
+          "--image",
+          "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg",
+          "--out-dir",
+          "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx",
+          "--trt-precision",
+          "fp16",
+          "--setup-id",
+          "orin_nx_deepx_m1_01",
+          "--comparison-backend",
+          "deepx",
+          "--json-out",
+          "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_semantic_dump.json",
+          "--prepared-input-manifest",
+          "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/results/deepx_m1_full/prepared_input/native_full_input_manifest.json"
+        ],
+        "rc": 0,
+        "returncode": 0,
+        "elapsed_s": 0.43749094009399414,
+        "stdout": "{\n  \"ok\": true,\n  \"output_manifest\": \"/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_outputs_manifest.json\",\n  \"input_manifest\": \"/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_input_manifest.json\",\n  \"dxnn\": \"/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/deepx/deepx_m1/full/model.dxnn\",\n  \"input_candidate\": \"shared_pre_timing_sealed_manifest\",\n  \"attempt_errors\": [],\n  \"frozen_host_postprocess_contract\": {},\n  \"frozen_host_postprocess_contract_sha256\": \"\",\n  \"frozen_host_postprocess_result\": {},\n  \"frozen_decoded_nms_normalization_contract\": {},\n  \"frozen_decoded_nms_normalization_contract_sha256\": \"\",\n  \"frozen_decoded_nms_normalization_result\": {},\n  \"backend\": \"native_full_deepx\",\n  \"model\": \"yolo11l\",\n  \"setup_id\": \"orin_nx_deepx_m1_01\",\n  \"comparison_backend\": \"deepx\",\n  \"task\": \"detection\",\n  \"image\": \"/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg\",\n  \"image_sha256\": \"261ba1b81c768f47b8452cd8fc7866a354a69c336a927032486d129b8684eb44\",\n  \"report\": \"/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_semantic_dump.json\"\n}",
+        "stderr": "",
+        "stdout_tail": "{\n  \"ok\": true,\n  \"output_manifest\": \"/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_outputs_manifest.json\",\n  \"input_manifest\": \"/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_input_manifest.json\",\n  \"dxnn\": \"/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/deepx/deepx_m1/full/model.dxnn\",\n  \"input_candidate\": \"shared_pre_timing_sealed_manifest\",\n  \"attempt_errors\": [],\n  \"frozen_host_postprocess_contract\": {},\n  \"frozen_host_postprocess_contract_sha256\": \"\",\n  \"frozen_host_postprocess_result\": {},\n  \"frozen_decoded_nms_normalization_contract\": {},\n  \"frozen_decoded_nms_normalization_contract_sha256\": \"\",\n  \"frozen_decoded_nms_normalization_result\": {},\n  \"backend\": \"native_full_deepx\",\n  \"model\": \"yolo11l\",\n  \"setup_id\": \"orin_nx_deepx_m1_01\",\n  \"comparison_backend\": \"deepx\",\n  \"task\": \"detection\",\n  \"image\": \"/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg\",\n  \"image_sha256\": \"261ba1b81c768f47b8452cd8fc7866a354a69c336a927032486d129b8684eb44\",\n  \"report\": \"/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_semantic_dump.json\"\n}",
+        "stderr_tail": "",
+        "timed_out": false,
+        "cancelled": false
+      }
+    ],
+    "failure_reason": "native_full_repetition_set_incomplete",
+    "status_detail": "examined_result_files=2;current_result_files=2;result_run_id=deepx_m1_full;result_runtime_ok=True;result_identity_ok=True;prepared_feed_contract_version=deepx-sealed-runtime-input-v3;prepared_feed_contract_binding_ok=True;prepared_feed_image_binding_ok=True;prepared_input_binding_ok=True;completed_result_persistence=verified_exact",
+    "error": "",
+    "timed_out": false,
+    "returncode": 0,
+    "stdout_tail": "[suite-wrapper] benchmark_set: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set\n[suite-wrapper] benchmark_json: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_set.json\n[suite-wrapper] suite: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py\n[suite-wrapper] python: /home/nx/venvs/deepx-runtime/bin/python3\n[suite-wrapper] extra_sites: /home/nx/venvs/deepx-runtime/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages\n[suite-wrapper] cmd: /home/nx/venvs/deepx-runtime/bin/python3 /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py --run-id deepx_m1_full --warmup 100 --runs 50 --throughput-frames 3000 --throughput-warmup-frames 100 --energy-measurement-only --prepared-feed-image /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg --prepared-input-manifest /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_input_manifest.json --quality-evidence-model-id yolo11l --quality-evidence-setup-id orin_nx_deepx_m1_01\n[energy] measurement-only mode: semantic datasets/reports/figures disabled\n[plan] selected run ids: deepx_m1_full\nWrote benchmark_results_deepx_m1_full_auto.json\nWrote benchmark_results_deepx_m1_full_auto.csv\n[energy] measurement-only: skipped canonical scientific report\nWrote benchmark_suite_status_matrix.md/csv/json\n\nDone.",
+    "stderr_tail": "",
+    "runtime_success": true,
+    "semantic_dump_status": "failed",
+    "semantic_dump_failure_reason": "semantic_performance_frozen_postprocess_contract_mismatch",
+    "output_dump_manifest": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_outputs_manifest.json",
+    "native_output_manifest": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_outputs_manifest.json",
+    "input_image_source": "generic_validation_image_map",
+    "output_format": "ultralytics_decoded",
+    "contract_family": "decoded_pre_nms",
+    "stage": "decoded_pre_nms",
+    "contract_source": "explicit_producer_export_contract",
+    "endpoint_contract_complete": true,
+    "endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+    "tensor_signature": {
+      "tensor_count": 1,
+      "tensors": [
+        {
+          "index": 0,
+          "name": "model_outputs",
+          "rank": 3,
+          "shape": [
+            1,
+            84,
+            8400
+          ],
+          "dtype": "float32"
+        }
+      ]
+    },
+    "output_endpoint_attestation": {
+      "attested": true,
+      "status": "passed",
+      "stage": "decoded_pre_nms",
+      "endpoint": "decoded_pre_nms",
+      "reason": "raw_detection_tensor_structure_verified",
+      "endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+      "tensor_signature": {
+        "tensor_count": 1,
+        "tensors": [
+          {
+            "index": 0,
+            "name": "model_outputs",
+            "rank": 3,
+            "shape": [
+              1,
+              84,
+              8400
+            ],
+            "dtype": "float32"
+          }
+        ]
+      },
+      "declared_stage": "decoded_pre_nms"
+    },
+    "quality_first_producer_identity_match": true,
+    "semantic_execution_command_sha256": "06b08ea45aff4c7727469c52fd06868be63edec3f47c2ac5f71ce55cfd9792f0",
+    "semantic_performance_source_binding_verified": true,
+    "semantic_performance_source_image_id": "000000212226.jpg",
+    "semantic_performance_source_image_sha256": "261ba1b81c768f47b8452cd8fc7866a354a69c336a927032486d129b8684eb44",
+    "repetition_index": 1,
+    "runtime_instance_id": "fresh_process:f71f9120175dd7df74fcc009dcca18f009c6b79ee5125483d548c5dae6d98897",
+    "repetition_runtime_scope": "fresh_process_per_repetition",
+    "setup_id": "orin_nx_deepx_m1_01",
+    "comparison_backend": "deepx",
+    "precision": "uint8_cast_fp16",
+    "comparison_precision": "uint8_cast_fp16",
+    "legacy_comparison_precision": "uint8_cast_fp16",
+    "fps_median": null,
+    "fps_makespan_median": null,
+    "fps_ci95_low": null,
+    "fps_ci95_high": null,
+    "fps_makespan_ci95_low": null,
+    "fps_makespan_ci95_high": null,
+    "latency_median_ms": null,
+    "latency_ci95_low_ms": null,
+    "latency_ci95_high_ms": null,
+    "repetition_count_requested": 3,
+    "repetition_count_attempted": 3,
+    "repetition_count_valid": 0,
+    "repetitions_requested": 3,
+    "repetitions_completed": 0,
+    "repetition_status": "partial",
+    "repetition_aggregation": "median_with_deterministic_percentile_bootstrap_ci95",
+    "repetition_independence_verified": false,
+    "repetition_identity_consistent": false,
+    "repetition_identity_drift_fields": [],
+    "repetition_identity_missing_fields": [],
+    "repetition_runtime_instance_ids": [
+      "fresh_process:f71f9120175dd7df74fcc009dcca18f009c6b79ee5125483d548c5dae6d98897",
+      "fresh_process:0511a15fc02d2444dc5f1545a66ca4a24dab0449ff6eab89ce9d821d8d00e81c",
+      "fresh_process:210f329edb0d8f9773d11c3296475a39d9027e62034866980394d9abff79b9f0"
+    ],
+    "fps_repetition_samples": [],
+    "latency_mean_repetition_samples_ms": [],
+    "primary_repetition_failure": {
+      "repetition_index": 1,
+      "status": "failed",
+      "failure_reason": "semantic_performance_frozen_postprocess_contract_mismatch",
+      "status_detail": "examined_result_files=2;current_result_files=2;result_run_id=deepx_m1_full;result_runtime_ok=True;result_identity_ok=True;prepared_feed_contract_version=deepx-sealed-runtime-input-v3;prepared_feed_contract_binding_ok=True;prepared_feed_image_binding_ok=True;prepared_input_binding_ok=True;completed_result_persistence=verified_exact",
+      "error": "",
+      "returncode": 0,
+      "timed_out": false,
+      "stdout_tail": "[suite-wrapper] benchmark_set: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set\n[suite-wrapper] benchmark_json: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_set.json\n[suite-wrapper] suite: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py\n[suite-wrapper] python: /home/nx/venvs/deepx-runtime/bin/python3\n[suite-wrapper] extra_sites: /home/nx/venvs/deepx-runtime/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages\n[suite-wrapper] cmd: /home/nx/venvs/deepx-runtime/bin/python3 /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py --run-id deepx_m1_full --warmup 100 --runs 50 --throughput-frames 3000 --throughput-warmup-frames 100 --energy-measurement-only --prepared-feed-image /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg --prepared-input-manifest /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_input_manifest.json --quality-evidence-model-id yolo11l --quality-evidence-setup-id orin_nx_deepx_m1_01\n[energy] measurement-only mode: semantic datasets/reports/figures disabled\n[plan] selected run ids: deepx_m1_full\nWrote benchmark_results_deepx_m1_full_auto.json\nWrote benchmark_results_deepx_m1_full_auto.csv\n[energy] measurement-only: skipped canonical scientific report\nWrote benchmark_suite_status_matrix.md/csv/json\n\nDone.",
+      "stderr_tail": "",
+      "report": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_results_deepx_m1_full_auto.json"
+    },
+    "primary_repetition_failure_reason": "semantic_performance_frozen_postprocess_contract_mismatch",
+    "primary_repetition_status_detail": "examined_result_files=2;current_result_files=2;result_run_id=deepx_m1_full;result_runtime_ok=True;result_identity_ok=True;prepared_feed_contract_version=deepx-sealed-runtime-input-v3;prepared_feed_contract_binding_ok=True;prepared_feed_image_binding_ok=True;prepared_input_binding_ok=True;completed_result_persistence=verified_exact",
+    "primary_repetition_error": "",
+    "repetition_records": [
+      {
+        "repetition_index": 1,
+        "ok": false,
+        "status": "failed",
+        "runtime_success": true,
+        "fps_makespan": 20.95999441993737,
+        "latency_mean_ms": 47.707292817057656,
+        "latency_p50_ms": 47.69115000090096,
+        "latency_p95_ms": 47.85963705071481,
+        "frames": 3000,
+        "completed_frames": 3000,
+        "completed_work_units": 3000,
+        "completed_work_units_status": "exact_runtime_counter",
+        "failure_reason": "semantic_performance_frozen_postprocess_contract_mismatch",
+        "status_detail": "examined_result_files=2;current_result_files=2;result_run_id=deepx_m1_full;result_runtime_ok=True;result_identity_ok=True;prepared_feed_contract_version=deepx-sealed-runtime-input-v3;prepared_feed_contract_binding_ok=True;prepared_feed_image_binding_ok=True;prepared_input_binding_ok=True;completed_result_persistence=verified_exact",
+        "error": "",
+        "returncode": 0,
+        "timed_out": false,
+        "stdout_tail": "[suite-wrapper] benchmark_set: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set\n[suite-wrapper] benchmark_json: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_set.json\n[suite-wrapper] suite: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py\n[suite-wrapper] python: /home/nx/venvs/deepx-runtime/bin/python3\n[suite-wrapper] extra_sites: /home/nx/venvs/deepx-runtime/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages\n[suite-wrapper] cmd: /home/nx/venvs/deepx-runtime/bin/python3 /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py --run-id deepx_m1_full --warmup 100 --runs 50 --throughput-frames 3000 --throughput-warmup-frames 100 --energy-measurement-only --prepared-feed-image /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg --prepared-input-manifest /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_input_manifest.json --quality-evidence-model-id yolo11l --quality-evidence-setup-id orin_nx_deepx_m1_01\n[energy] measurement-only mode: semantic datasets/reports/figures disabled\n[plan] selected run ids: deepx_m1_full\nWrote benchmark_results_deepx_m1_full_auto.json\nWrote benchmark_results_deepx_m1_full_auto.csv\n[energy] measurement-only: skipped canonical scientific report\nWrote benchmark_suite_status_matrix.md/csv/json\n\nDone.",
+        "stderr_tail": "",
+        "report": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_results_deepx_m1_full_auto.json",
+        "runtime_instance_id": "fresh_process:f71f9120175dd7df74fcc009dcca18f009c6b79ee5125483d548c5dae6d98897",
+        "workload_contract_sha256": "9a738ebc830c0a0cbdf965cd648fbff4520a83e5acdf1cdab57220ba4492ed3d"
+      },
+      {
+        "repetition_index": 2,
+        "ok": false,
+        "status": "failed",
+        "runtime_success": true,
+        "fps_makespan": 20.956632151141076,
+        "latency_mean_ms": 47.71514003336779,
+        "latency_p50_ms": 47.711430001072586,
+        "latency_p95_ms": 47.98015255946666,
+        "frames": 3000,
+        "completed_frames": 3000,
+        "completed_work_units": 3000,
+        "completed_work_units_status": "exact_runtime_counter",
+        "failure_reason": "semantic_performance_frozen_postprocess_contract_mismatch",
+        "status_detail": "examined_result_files=2;current_result_files=2;result_run_id=deepx_m1_full;result_runtime_ok=True;result_identity_ok=True;prepared_feed_contract_version=deepx-sealed-runtime-input-v3;prepared_feed_contract_binding_ok=True;prepared_feed_image_binding_ok=True;prepared_input_binding_ok=True;completed_result_persistence=verified_exact",
+        "error": "",
+        "returncode": 0,
+        "timed_out": false,
+        "stdout_tail": "[suite-wrapper] benchmark_set: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set\n[suite-wrapper] benchmark_json: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_set.json\n[suite-wrapper] suite: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py\n[suite-wrapper] python: /home/nx/venvs/deepx-runtime/bin/python3\n[suite-wrapper] extra_sites: /home/nx/venvs/deepx-runtime/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages\n[suite-wrapper] cmd: /home/nx/venvs/deepx-runtime/bin/python3 /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py --run-id deepx_m1_full --warmup 100 --runs 50 --throughput-frames 3000 --throughput-warmup-frames 100 --energy-measurement-only --prepared-feed-image /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg --prepared-input-manifest /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_input_manifest.json --quality-evidence-model-id yolo11l --quality-evidence-setup-id orin_nx_deepx_m1_01\n[energy] measurement-only mode: semantic datasets/reports/figures disabled\n[plan] selected run ids: deepx_m1_full\nWrote benchmark_results_deepx_m1_full_auto.json\nWrote benchmark_results_deepx_m1_full_auto.csv\n[energy] measurement-only: skipped canonical scientific report\nWrote benchmark_suite_status_matrix.md/csv/json\n\nDone.",
+        "stderr_tail": "",
+        "report": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_results_deepx_m1_full_auto.json",
+        "runtime_instance_id": "fresh_process:0511a15fc02d2444dc5f1545a66ca4a24dab0449ff6eab89ce9d821d8d00e81c",
+        "workload_contract_sha256": "9a738ebc830c0a0cbdf965cd648fbff4520a83e5acdf1cdab57220ba4492ed3d"
+      },
+      {
+        "repetition_index": 3,
+        "ok": false,
+        "status": "failed",
+        "runtime_success": true,
+        "fps_makespan": 21.407688408811,
+        "latency_mean_ms": 46.70953491758943,
+        "latency_p50_ms": 46.29113498958759,
+        "latency_p95_ms": 47.82310553564457,
+        "frames": 3000,
+        "completed_frames": 3000,
+        "completed_work_units": 3000,
+        "completed_work_units_status": "exact_runtime_counter",
+        "failure_reason": "semantic_performance_frozen_postprocess_contract_mismatch",
+        "status_detail": "examined_result_files=2;current_result_files=2;result_run_id=deepx_m1_full;result_runtime_ok=True;result_identity_ok=True;prepared_feed_contract_version=deepx-sealed-runtime-input-v3;prepared_feed_contract_binding_ok=True;prepared_feed_image_binding_ok=True;prepared_input_binding_ok=True;completed_result_persistence=verified_exact",
+        "error": "",
+        "returncode": 0,
+        "timed_out": false,
+        "stdout_tail": "[suite-wrapper] benchmark_set: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set\n[suite-wrapper] benchmark_json: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_set.json\n[suite-wrapper] suite: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py\n[suite-wrapper] python: /home/nx/venvs/deepx-runtime/bin/python3\n[suite-wrapper] extra_sites: /home/nx/venvs/deepx-runtime/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages\n[suite-wrapper] cmd: /home/nx/venvs/deepx-runtime/bin/python3 /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py --run-id deepx_m1_full --warmup 100 --runs 50 --throughput-frames 3000 --throughput-warmup-frames 100 --energy-measurement-only --prepared-feed-image /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg --prepared-input-manifest /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_input_manifest.json --quality-evidence-model-id yolo11l --quality-evidence-setup-id orin_nx_deepx_m1_01\n[energy] measurement-only mode: semantic datasets/reports/figures disabled\n[plan] selected run ids: deepx_m1_full\nWrote benchmark_results_deepx_m1_full_auto.json\nWrote benchmark_results_deepx_m1_full_auto.csv\n[energy] measurement-only: skipped canonical scientific report\nWrote benchmark_suite_status_matrix.md/csv/json\n\nDone.",
+        "stderr_tail": "",
+        "report": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_results_deepx_m1_full_auto.json",
+        "runtime_instance_id": "fresh_process:210f329edb0d8f9773d11c3296475a39d9027e62034866980394d9abff79b9f0",
+        "workload_contract_sha256": "9a738ebc830c0a0cbdf965cd648fbff4520a83e5acdf1cdab57220ba4492ed3d"
+      }
+    ],
+    "repetition_evidence": [
+      {
+        "repetition_index": 1,
+        "ok": false,
+        "status": "failed",
+        "runtime_success": true,
+        "fps_makespan": 20.95999441993737,
+        "latency_mean_ms": 47.707292817057656,
+        "latency_p50_ms": 47.69115000090096,
+        "latency_p95_ms": 47.85963705071481,
+        "frames": 3000,
+        "completed_frames": 3000,
+        "completed_work_units": 3000,
+        "completed_work_units_status": "exact_runtime_counter",
+        "failure_reason": "semantic_performance_frozen_postprocess_contract_mismatch",
+        "status_detail": "examined_result_files=2;current_result_files=2;result_run_id=deepx_m1_full;result_runtime_ok=True;result_identity_ok=True;prepared_feed_contract_version=deepx-sealed-runtime-input-v3;prepared_feed_contract_binding_ok=True;prepared_feed_image_binding_ok=True;prepared_input_binding_ok=True;completed_result_persistence=verified_exact",
+        "error": "",
+        "returncode": 0,
+        "timed_out": false,
+        "stdout_tail": "[suite-wrapper] benchmark_set: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set\n[suite-wrapper] benchmark_json: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_set.json\n[suite-wrapper] suite: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py\n[suite-wrapper] python: /home/nx/venvs/deepx-runtime/bin/python3\n[suite-wrapper] extra_sites: /home/nx/venvs/deepx-runtime/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages\n[suite-wrapper] cmd: /home/nx/venvs/deepx-runtime/bin/python3 /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py --run-id deepx_m1_full --warmup 100 --runs 50 --throughput-frames 3000 --throughput-warmup-frames 100 --energy-measurement-only --prepared-feed-image /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg --prepared-input-manifest /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_input_manifest.json --quality-evidence-model-id yolo11l --quality-evidence-setup-id orin_nx_deepx_m1_01\n[energy] measurement-only mode: semantic datasets/reports/figures disabled\n[plan] selected run ids: deepx_m1_full\nWrote benchmark_results_deepx_m1_full_auto.json\nWrote benchmark_results_deepx_m1_full_auto.csv\n[energy] measurement-only: skipped canonical scientific report\nWrote benchmark_suite_status_matrix.md/csv/json\n\nDone.",
+        "stderr_tail": "",
+        "report": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_results_deepx_m1_full_auto.json",
+        "runtime_instance_id": "fresh_process:f71f9120175dd7df74fcc009dcca18f009c6b79ee5125483d548c5dae6d98897",
+        "workload_contract_sha256": "9a738ebc830c0a0cbdf965cd648fbff4520a83e5acdf1cdab57220ba4492ed3d"
+      },
+      {
+        "repetition_index": 2,
+        "ok": false,
+        "status": "failed",
+        "runtime_success": true,
+        "fps_makespan": 20.956632151141076,
+        "latency_mean_ms": 47.71514003336779,
+        "latency_p50_ms": 47.711430001072586,
+        "latency_p95_ms": 47.98015255946666,
+        "frames": 3000,
+        "completed_frames": 3000,
+        "completed_work_units": 3000,
+        "completed_work_units_status": "exact_runtime_counter",
+        "failure_reason": "semantic_performance_frozen_postprocess_contract_mismatch",
+        "status_detail": "examined_result_files=2;current_result_files=2;result_run_id=deepx_m1_full;result_runtime_ok=True;result_identity_ok=True;prepared_feed_contract_version=deepx-sealed-runtime-input-v3;prepared_feed_contract_binding_ok=True;prepared_feed_image_binding_ok=True;prepared_input_binding_ok=True;completed_result_persistence=verified_exact",
+        "error": "",
+        "returncode": 0,
+        "timed_out": false,
+        "stdout_tail": "[suite-wrapper] benchmark_set: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set\n[suite-wrapper] benchmark_json: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_set.json\n[suite-wrapper] suite: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py\n[suite-wrapper] python: /home/nx/venvs/deepx-runtime/bin/python3\n[suite-wrapper] extra_sites: /home/nx/venvs/deepx-runtime/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages\n[suite-wrapper] cmd: /home/nx/venvs/deepx-runtime/bin/python3 /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py --run-id deepx_m1_full --warmup 100 --runs 50 --throughput-frames 3000 --throughput-warmup-frames 100 --energy-measurement-only --prepared-feed-image /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg --prepared-input-manifest /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_input_manifest.json --quality-evidence-model-id yolo11l --quality-evidence-setup-id orin_nx_deepx_m1_01\n[energy] measurement-only mode: semantic datasets/reports/figures disabled\n[plan] selected run ids: deepx_m1_full\nWrote benchmark_results_deepx_m1_full_auto.json\nWrote benchmark_results_deepx_m1_full_auto.csv\n[energy] measurement-only: skipped canonical scientific report\nWrote benchmark_suite_status_matrix.md/csv/json\n\nDone.",
+        "stderr_tail": "",
+        "report": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_results_deepx_m1_full_auto.json",
+        "runtime_instance_id": "fresh_process:0511a15fc02d2444dc5f1545a66ca4a24dab0449ff6eab89ce9d821d8d00e81c",
+        "workload_contract_sha256": "9a738ebc830c0a0cbdf965cd648fbff4520a83e5acdf1cdab57220ba4492ed3d"
+      },
+      {
+        "repetition_index": 3,
+        "ok": false,
+        "status": "failed",
+        "runtime_success": true,
+        "fps_makespan": 21.407688408811,
+        "latency_mean_ms": 46.70953491758943,
+        "latency_p50_ms": 46.29113498958759,
+        "latency_p95_ms": 47.82310553564457,
+        "frames": 3000,
+        "completed_frames": 3000,
+        "completed_work_units": 3000,
+        "completed_work_units_status": "exact_runtime_counter",
+        "failure_reason": "semantic_performance_frozen_postprocess_contract_mismatch",
+        "status_detail": "examined_result_files=2;current_result_files=2;result_run_id=deepx_m1_full;result_runtime_ok=True;result_identity_ok=True;prepared_feed_contract_version=deepx-sealed-runtime-input-v3;prepared_feed_contract_binding_ok=True;prepared_feed_image_binding_ok=True;prepared_input_binding_ok=True;completed_result_persistence=verified_exact",
+        "error": "",
+        "returncode": 0,
+        "timed_out": false,
+        "stdout_tail": "[suite-wrapper] benchmark_set: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set\n[suite-wrapper] benchmark_json: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_set.json\n[suite-wrapper] suite: /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py\n[suite-wrapper] python: /home/nx/venvs/deepx-runtime/bin/python3\n[suite-wrapper] extra_sites: /home/nx/venvs/deepx-runtime/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages\n[suite-wrapper] cmd: /home/nx/venvs/deepx-runtime/bin/python3 /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_suite.py --run-id deepx_m1_full --warmup 100 --runs 50 --throughput-frames 3000 --throughput-warmup-frames 100 --energy-measurement-only --prepared-feed-image /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg --prepared-input-manifest /home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_input_manifest.json --quality-evidence-model-id yolo11l --quality-evidence-setup-id orin_nx_deepx_m1_01\n[energy] measurement-only mode: semantic datasets/reports/figures disabled\n[plan] selected run ids: deepx_m1_full\nWrote benchmark_results_deepx_m1_full_auto.json\nWrote benchmark_results_deepx_m1_full_auto.csv\n[energy] measurement-only: skipped canonical scientific report\nWrote benchmark_suite_status_matrix.md/csv/json\n\nDone.",
+        "stderr_tail": "",
+        "report": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_results_deepx_m1_full_auto.json",
+        "runtime_instance_id": "fresh_process:210f329edb0d8f9773d11c3296475a39d9027e62034866980394d9abff79b9f0",
+        "workload_contract_sha256": "9a738ebc830c0a0cbdf965cd648fbff4520a83e5acdf1cdab57220ba4492ed3d"
+      }
+    ],
+    "quality_request_binding_required": true,
+    "quality_request_binding_status": "unavailable",
+    "quality_request_binding_errors": [
+      "missing_vendor_full_quality:native_full_deepx|yolo11l"
+    ],
+    "central_quality_evidence_verified": false,
+    "precision_quality_binding_verified": false,
+    "task_quality_observation_valid": false,
+    "claim_eligible": false,
+    "performance_claim_eligible": false,
+    "energy_claim_eligible": false,
+    "scientific_claim_eligible": false,
+    "eligible_for_scientific_claim": false,
+    "eligible_for_ranking": false,
+    "claim_exclusion_reason": "upstream_vendor_full_quality_binding_missing",
+    "claim_exclusion_reasons": [
+      "missing_vendor_full_quality:native_full_deepx|yolo11l"
+    ],
+    "full_command_contract": {
+      "schema": "onnx-splitpoint/native-full-command-contract",
+      "schema_version": 1,
+      "backend": "native_full_deepx",
+      "backend_arg": "deepx",
+      "model": "yolo11l",
+      "case": "full",
+      "setup_id": "orin_nx_deepx_m1_01",
+      "comparison_backend": "deepx",
+      "comparison_precision": "uint8_cast_fp16",
+      "legacy_comparison_precision": "uint8_cast_fp16",
+      "execution_precision": "",
+      "full_runtime_precision": "",
+      "python_executable": "/home/nx/venvs/deepx-runtime/bin/python",
+      "runner": "scripts/native_full_baseline_eval_runner.py",
+      "runner_sha256": "a14f370d1f5baea1b0f32bc057e3e6134b86115755f4d7f858d6d3e67762a01e",
+      "root": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417",
+      "benchmark_set": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set",
+      "input_case": "b003",
+      "input_image": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg",
+      "input_image_sha256": "261ba1b81c768f47b8452cd8fc7866a354a69c336a927032486d129b8684eb44",
+      "source_model_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+      "quality_first_producer_identity": {},
+      "quality_first_producer_identity_sha256": "",
+      "quality_request_binding": {},
+      "quality_request_binding_sha256": "",
+      "quality_request_binding_set_sha256": "",
+      "runtime_preprocessing_binding": {
+        "status": "runtime_preprocessing_and_numeric_identity_verified_exact",
+        "identity": {
+          "schema": "onnx-splitpoint/image-preprocessing-contract",
+          "schema_version": 2,
+          "contract_scope": "prepared_rgb_uint8_semantics",
+          "task": "detection",
+          "preprocess_mode": "letterbox",
+          "spatial_transform": "centered_letterbox",
+          "target_hw": [
+            640,
+            640
+          ],
+          "color_space": "RGB",
+          "input_domain": "uint8_0_255",
+          "resize_interpolation": "bilinear",
+          "resize_rounding": "python_round_ties_to_even",
+          "placement": "floor_top_left_remainder_bottom_right",
+          "pad_value": 114,
+          "letterbox_pad_value": 114,
+          "image_scale": "norm",
+          "letterbox": true
+        },
+        "sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+        "runtime_numeric_input_identity": {
+          "schema": "onnx-splitpoint/runtime-numeric-input-identity",
+          "schema_version": 1,
+          "backend": "native_full_deepx",
+          "task": "detection",
+          "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+          "runtime_input_name": "images",
+          "runtime_input_shape": [
+            640,
+            640,
+            3
+          ],
+          "runtime_input_dtype": "uint8",
+          "runtime_input_layout": "HWC",
+          "runtime_color_space": "RGB",
+          "runtime_normalization": "embedded_dxcom_preprocessing",
+          "runtime_numeric_domain": "uint8_0_255"
+        },
+        "runtime_numeric_input_sha256": "6b7720ffcaf322c96dc6b83ec3e879033777335e6f07730a1a1dd4441869ebc2",
+        "source_manifest_artifact": "input_manifest",
+        "source_runtime_input_artifact": "runtime_input_tensor"
+      },
+      "engine_build_receipt_path": "",
+      "engine_build_receipt_sha256": "",
+      "engine_build_receipt_file_sha256": "",
+      "trt_engine_build_receipt_sha256": "",
+      "engine_build_receipt_size_bytes": 0,
+      "engine_build_receipt_file_size_bytes": 0,
+      "trt_engine_build_receipt": {},
+      "trt_engine_build_receipt_status": "not_applicable",
+      "hailo_hef_build_receipt_status": "",
+      "hailo_hef_build_receipt_path": "",
+      "hailo_hef_build_receipt_file_sha256": "",
+      "hailo_hef_build_receipt_sha256": "",
+      "hailo_hef_build_receipt": {},
+      "hailo_hef_preprocessing_contract": {},
+      "hailo_hef_preprocessing_contract_sha256": "",
+      "model_binding": {
+        "source_artifact": "source_onnx",
+        "source_onnx_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+        "compiled_artifact": "dxnn",
+        "compiled_artifact_sha256": "045c40d2250ab528822ef83c37c9842bb1a85bb0ca212d8dba20278ae21b797e",
+        "status": "source_and_compiled_artifact_hash_bound"
+      },
+      "runtime_options": {
+        "frames": 3000,
+        "duration_s": 0.0,
+        "warmup": 100,
+        "performance_repetitions": 3,
+        "inflight": 1,
+        "trt_precision": "fp16",
+        "workspace_mb": 4096,
+        "engine_build_python": "/home/nx/venvs/deepx-runtime/bin/python3",
+        "no_shapes": false,
+        "dump_outputs": true,
+        "diagnostic_deepx_input_probes": false,
+        "image_map": {
+          "yolo11l": {
+            "b003": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg"
+          }
+        }
+      },
+      "energy_workload": {
+        "available": true,
+        "status": "available",
+        "kind": "deepx_full_prepared_feed_hotloop",
+        "runtime_python_artifact": "runtime_python",
+        "runner_artifact": "hotloop_runner",
+        "dxnn_artifact": "dxnn",
+        "source_model_artifact": "source_onnx",
+        "benchmark_set_manifest_artifact": "benchmark_set_manifest",
+        "source_model_binding_status": "benchmark_set_source_onnx_verified_exact",
+        "input_image": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000212226.jpg",
+        "input_image_sha256": "261ba1b81c768f47b8452cd8fc7866a354a69c336a927032486d129b8684eb44",
+        "input_image_matches_full_contract": true,
+        "prepared_input_source_image_id": "000000212226.jpg",
+        "prepared_input_source_image_sha256": "261ba1b81c768f47b8452cd8fc7866a354a69c336a927032486d129b8684eb44",
+        "input_manifest_artifact": "input_manifest",
+        "runtime_input_artifact": "runtime_input_tensor",
+        "runtime_input_name": "images",
+        "runtime_input_shape": [
+          640,
+          640,
+          3
+        ],
+        "runtime_input_dtype": "uint8",
+        "runtime_input_layout": "HWC",
+        "runtime_input_bytes": 1228800,
+        "runtime_input_sha256": "06d2c2858d34bf69e66e3805b4b5f60984ecc895c8b681eb007bfc61334509be",
+        "runtime_input_mode": "exact_semantic_dump_runtime_tensor",
+        "input_mode": "exact_semantic_dump_runtime_tensor",
+        "runtime_preprocessing_identity": {
+          "schema": "onnx-splitpoint/image-preprocessing-contract",
+          "schema_version": 2,
+          "contract_scope": "prepared_rgb_uint8_semantics",
+          "task": "detection",
+          "preprocess_mode": "letterbox",
+          "spatial_transform": "centered_letterbox",
+          "target_hw": [
+            640,
+            640
+          ],
+          "color_space": "RGB",
+          "input_domain": "uint8_0_255",
+          "resize_interpolation": "bilinear",
+          "resize_rounding": "python_round_ties_to_even",
+          "placement": "floor_top_left_remainder_bottom_right",
+          "pad_value": 114,
+          "letterbox_pad_value": 114,
+          "image_scale": "norm",
+          "letterbox": true
+        },
+        "runtime_preprocessing_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+        "runtime_numeric_input_identity": {
+          "schema": "onnx-splitpoint/runtime-numeric-input-identity",
+          "schema_version": 1,
+          "backend": "native_full_deepx",
+          "task": "detection",
+          "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+          "runtime_input_name": "images",
+          "runtime_input_shape": [
+            640,
+            640,
+            3
+          ],
+          "runtime_input_dtype": "uint8",
+          "runtime_input_layout": "HWC",
+          "runtime_color_space": "RGB",
+          "runtime_normalization": "embedded_dxcom_preprocessing",
+          "runtime_numeric_domain": "uint8_0_255"
+        },
+        "runtime_numeric_input_sha256": "6b7720ffcaf322c96dc6b83ec3e879033777335e6f07730a1a1dd4441869ebc2",
+        "runtime_input_binding_verified": true,
+        "performance_completed_result_artifact_status": "verified_exact",
+        "input_contract": {
+          "artifact_kind": "dxnn",
+          "artifact_path": "/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_f0fcdf56a4ac24d8_958dacf708b58fc3/model.dxnn",
+          "artifact_sha256": "045c40d2250ab528822ef83c37c9842bb1a85bb0ca212d8dba20278ae21b797e",
+          "artifact_size_bytes": 54112354,
+          "backend": "deepx_m1",
+          "build_onnx_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+          "cache_contract_sha256": null,
+          "cache_key": "deepx_m1_full_f0fcdf56a4ac24d8_958dacf708b58fc3",
+          "calibration_manifest_identity_sha256": null,
+          "classification_preprocessing": "not_applicable",
+          "compiler_identity_sha256": null,
+          "contract_complete_enough_for_reports": true,
+          "contract_family": "decoded_pre_nms",
+          "endpoint_contract_complete_enough_for_quality": true,
+          "endpoint_mode": "decoded_pre_nms",
+          "endpoint_semantic_attestation": {
+            "schema": "onnx-splitpoint/deepx-endpoint-semantic-attestation",
+            "schema_version": 1,
+            "status": "attested",
+            "pass": true,
+            "reason": "authoritative_recorded_output_contract_bound",
+            "model_id": "yolo11l",
+            "backend": "deepx_m1",
+            "variant": "full",
+            "endpoint_mode": "decoded_pre_nms",
+            "host_tail_required": true,
+            "postprocessing_required": true,
+            "source_endpoint_semantics": "decoded_pre_nms",
+            "source_endpoint_has_integrated_nms": false,
+            "authoritative_contract": {
+              "artifact_path": "",
+              "backend": "deepx_m1",
+              "contract_family": "decoded_pre_nms",
+              "contract_status": "recorded",
+              "endpoint_mode": "decoded_pre_nms",
+              "full_end_node_names": [],
+              "host_tail_required": true,
+              "model_id": "yolo11l",
+              "output_format": "ultralytics_decoded",
+              "postprocessing_required": true,
+              "requires_external_postprocess": true,
+              "schema": "onnx-splitpoint/output-contract",
+              "schema_version": 1,
+              "source_endpoint_semantics": "decoded_pre_nms",
+              "source_onnx_detection_endpoint": {
+                "multiscale_raw_head": false,
+                "output_shapes": [
+                  [
+                    1,
+                    84,
+                    8400
+                  ]
+                ],
+                "sidecar_status": "onnx_sha256_mismatch",
+                "stage": "decoded_pre_nms"
+              },
+              "source_onnx_multiscale_raw_head": false,
+              "stage": "decoded_pre_nms",
+              "task": "detection",
+              "variant": "full",
+              "warning": "Do not compare a pre-NMS detection endpoint as if it were decoded/NMS output."
+            },
+            "authoritative_contract_sha256": "c57830b8f650dbe68c443b5379c2694580dc705f0921d0ca676240f069665f5f",
+            "source_path": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/output_contracts.json",
+            "source_file_sha256": "d5eff8720b9a4c2237bb717682cd6f75f2f31c022f11de06eae6d1fd05363246",
+            "stage": "decoded_pre_nms",
+            "output_format": "ultralytics_decoded",
+            "declared_output_semantics": "xywh_class_scores_pre_nms",
+            "semantic_attestation_policy": "recorded_endpoint_plus_runtime_structure_validation"
+          },
+          "full_cache_contract_mode": "legacy_implicit",
+          "host_tail_required": true,
+          "input": {
+            "classification_preprocessing": "not_applicable",
+            "color_space": "RGB",
+            "contract_source": "task_bound_dxcom_image_loader_preprocessing",
+            "dtype": "uint8",
+            "embedded_numeric_path": "dxcom_div255_detection_default",
+            "layout": "HWC",
+            "letterbox_pad_value": 114,
+            "letterbox_pad_value_effective": 114,
+            "letterbox_pad_value_requested": 114,
+            "name": "images",
+            "normalization": "embedded_dxcom_preprocessing",
+            "preprocess_mode": "letterbox",
+            "preprocess_mode_effective": "letterbox",
+            "preprocess_mode_requested": "auto",
+            "shape": [
+              640,
+              640,
+              3
+            ],
+            "task": "detection"
+          },
+          "model_id": "yolo11l",
+          "output": {
+            "source": "runtime_report_or_model_output",
+            "status": "declared_no_parse_model_pending_placeholder"
+          },
+          "outputs": [
+            {
+              "contract_source": "runtime_report_or_model_output",
+              "dtype": "float32",
+              "name": "model_outputs",
+              "shape": null
+            }
+          ],
+          "postprocessing": {
+            "type": "ultralytics_decoded_classaware_nms",
+            "host_required": true,
+            "nms_on_host": true
+          },
+          "postprocessing_required": true,
+          "preprocessing_contract": {
+            "contract_sha256": "59d7c7aa7ff879883cb6bf94aa7fe0e1972ef39407eb4cf2a22ab066f6fd61f9",
+            "numeric_preprocessing": {
+              "build_onnx_adapter": {
+                "kind": "identity"
+              },
+              "dxcom_loader": {
+                "color_space": "RGB",
+                "letterbox_pad_value": 114,
+                "operations_contract": "letterbox_div255_bgr2rgb_transpose_expanddim",
+                "output_dtype": "float32",
+                "output_layout": "NCHW",
+                "scale_divisor": 255.0
+              },
+              "mode": "task_default_letterbox_scale_only",
+              "schema": "onnx-splitpoint/deepx-detection-preprocessing",
+              "schema_version": 1
+            },
+            "runtime_input": {
+              "classification_preprocessing": "not_applicable",
+              "color_space": "RGB",
+              "contract_source": "task_bound_dxcom_image_loader_preprocessing",
+              "dtype": "uint8",
+              "embedded_numeric_path": "dxcom_div255_detection_default",
+              "layout": "HWC",
+              "letterbox_pad_value": 114,
+              "letterbox_pad_value_effective": 114,
+              "letterbox_pad_value_requested": 114,
+              "name": "images",
+              "normalization": "embedded_dxcom_preprocessing",
+              "preprocess_mode": "letterbox",
+              "preprocess_mode_effective": "letterbox",
+              "preprocess_mode_requested": "auto",
+              "shape": [
+                640,
+                640,
+                3
+              ],
+              "task": "detection"
+            },
+            "schema": "onnx-splitpoint/deepx-full-preprocessing-contract",
+            "schema_version": 1,
+            "task": "detection"
+          },
+          "source_model_input": {
+            "dtype": "float32",
+            "layout": "NCHW",
+            "name": "images",
+            "shape": [
+              1,
+              3,
+              640,
+              640
+            ]
+          },
+          "source_onnx_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+          "suite_artifact_path": "/home/kmika/Models/EvaluationRuns/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/models/yolo11l/benchmark_set/legacy_suite/deepx/deepx_m1/full/model.dxnn",
+          "suite_artifact_sha256": "045c40d2250ab528822ef83c37c9842bb1a85bb0ca212d8dba20278ae21b797e",
+          "suite_artifact_size_bytes": 54112354,
+          "variant": "full",
+          "source_path": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/deepx/deepx_m1/full/output_contract.json",
+          "source_label": "run.contract_path",
+          "contract_resolution_status": "resolved",
+          "resolved_input_geometry": {
+            "shape": [
+              640,
+              640,
+              3
+            ],
+            "layout": "HWC",
+            "height": 640,
+            "width": 640,
+            "channels": 3,
+            "batch": null,
+            "batch_shape": [
+              1,
+              640,
+              640,
+              3
+            ]
+          },
+          "endpoint_contract_binding_status": "attested",
+          "endpoint_contract_binding_reason": "authoritative_recorded_output_contract_bound"
+        },
+        "prepared_feed_contract_version": "deepx-sealed-runtime-input-v3",
+        "warmup": 0,
+        "successful_run_warmup": 100,
+        "task": "detection",
+        "e2e_scope": "full_task_pipeline",
+        "postprocess_required": true,
+        "postprocess_included": true,
+        "host_postprocess_frozen": true,
+        "normalization_frozen": false,
+        "frozen_postprocess_implementation_bound": true,
+        "successful_run_postprocess_completed_frames": 3000,
+        "successful_run_completed_frames": 3000,
+        "postprocess_completed_frames": 3000,
+        "postprocess_completion_verified": true,
+        "original_image_wh": [
+          500,
+          335
+        ],
+        "completed_work_units_source": "dx_engine_prepared_feed_frozen_completion_timed_loop",
+        "source_endpoint_contract_hash": "74026d923a989d64ad8b3953d44d587f67aed96a6b38160f12a4a9bce56ac875",
+        "frozen_postprocess_contract": {
+          "schema": "onnx-splitpoint/frozen-native-detection-postprocess",
+          "schema_version": 1,
+          "task": "detection",
+          "source_contract_family": "decoded_pre_nms",
+          "output_contract_family": "decoded_nms",
+          "model_id": "yolo11l",
+          "model_family": "yolo11",
+          "decoder_id": "ultralytics_decoded_classaware_nms_v1",
+          "decoder_format": "ultralytics_decoded",
+          "multiscale_activation_mode": null,
+          "nms_implementation": "numpy_class_aware_nms_xyxy_v1",
+          "class_aware": true,
+          "confidence_threshold": 0.25,
+          "iou_threshold": 0.45,
+          "max_detections": 300,
+          "input_hw": [
+            640,
+            640
+          ],
+          "original_wh": [
+            500,
+            335
+          ],
+          "raw_output_tensor_signature": {
+            "tensor_count": 1,
+            "tensors": [
+              {
+                "index": 0,
+                "name": "model_outputs",
+                "rank": 3,
+                "shape": [
+                  1,
+                  84,
+                  8400
+                ],
+                "dtype": "float32"
+              }
+            ]
+          },
+          "implementation_artifacts": {
+            "native_detection_postprocess": {
+              "relative_path": "onnx_splitpoint_tool/native_detection_postprocess.py",
+              "sha256": "4e65d8b63316d1241e868063d4cf223ca403dab38d292c223fc9ab27fc1e0f0c"
+            },
+            "yolo_harness": {
+              "relative_path": "onnx_splitpoint_tool/runners/harness/yolo.py",
+              "sha256": "31657e2717a8cb6cfda53e7de8e06b7b2286ecb430070811546fdec65327a17a"
+            },
+            "harness_base": {
+              "relative_path": "onnx_splitpoint_tool/runners/harness/base.py",
+              "sha256": "938b3713f32e412dd1f57fcc07a397fa1f3b26ed30afbc945d22f1bb082db06c"
+            }
+          },
+          "execution_policy": "one_serial_host_tail_per_successful_accelerator_output",
+          "performance_scope": "prepared_input_to_post_nms_detections",
+          "energy_scope": "same_frozen_prepared_input_to_post_nms_hotloop",
+          "host_postprocess_frozen": true,
+          "postprocess_included": true,
+          "decoded_pre_nms_score_policy": {
+            "policy_id": "float32_probability_edges_abs_2pow_minus23_v1",
+            "dtype": "float32",
+            "absolute_tolerance": 1.1920928955078125e-07,
+            "action": "normalize_probability_edges_on_processing_copy"
+          },
+          "invariant_identity": {
+            "schema": "onnx-splitpoint/frozen-native-detection-postprocess",
+            "schema_version": 1,
+            "task": "detection",
+            "source_contract_family": "decoded_pre_nms",
+            "output_contract_family": "decoded_nms",
+            "model_id": "yolo11l",
+            "model_family": "yolo11",
+            "decoder_id": "ultralytics_decoded_classaware_nms_v1",
+            "decoder_format": "ultralytics_decoded",
+            "nms_implementation": "numpy_class_aware_nms_xyxy_v1",
+            "class_aware": true,
+            "confidence_threshold": 0.25,
+            "iou_threshold": 0.45,
+            "max_detections": 300,
+            "input_hw": [
+              640,
+              640
+            ],
+            "raw_output_tensor_signature": {
+              "tensor_count": 1,
+              "tensors": [
+                {
+                  "index": 0,
+                  "name": "model_outputs",
+                  "rank": 3,
+                  "shape": [
+                    1,
+                    84,
+                    8400
+                  ],
+                  "dtype": "float32"
+                }
+              ]
+            },
+            "implementation_artifacts": {
+              "native_detection_postprocess": {
+                "relative_path": "onnx_splitpoint_tool/native_detection_postprocess.py",
+                "sha256": "4e65d8b63316d1241e868063d4cf223ca403dab38d292c223fc9ab27fc1e0f0c"
+              },
+              "yolo_harness": {
+                "relative_path": "onnx_splitpoint_tool/runners/harness/yolo.py",
+                "sha256": "31657e2717a8cb6cfda53e7de8e06b7b2286ecb430070811546fdec65327a17a"
+              },
+              "harness_base": {
+                "relative_path": "onnx_splitpoint_tool/runners/harness/base.py",
+                "sha256": "938b3713f32e412dd1f57fcc07a397fa1f3b26ed30afbc945d22f1bb082db06c"
+              }
+            },
+            "execution_policy": "one_serial_host_tail_per_successful_accelerator_output",
+            "performance_scope": "prepared_input_to_post_nms_detections",
+            "energy_scope": "same_frozen_prepared_input_to_post_nms_hotloop",
+            "host_postprocess_frozen": true,
+            "postprocess_included": true,
+            "decoded_pre_nms_score_policy": {
+              "policy_id": "float32_probability_edges_abs_2pow_minus23_v1",
+              "dtype": "float32",
+              "absolute_tolerance": 1.1920928955078125e-07,
+              "action": "normalize_probability_edges_on_processing_copy"
+            }
+          },
+          "invariant_contract_sha256": "6d381834efe5219d41ee3794eaa5d0d9781fdd4fc3982ffd9caa78777cdd7a29",
+          "contract_sha256": "3b32a7f14ac37d46605eccb8ad86b608a0f536ca189cc6b198a0993016343b2f"
+        },
+        "frozen_postprocess_contract_sha256": "3b32a7f14ac37d46605eccb8ad86b608a0f536ca189cc6b198a0993016343b2f",
+        "completed_task_completion_mode": "frozen_host_tail",
+        "runtime_preprocessing_binding": {
+          "status": "runtime_preprocessing_and_numeric_identity_verified_exact",
+          "identity": {
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "task": "detection",
+            "preprocess_mode": "letterbox",
+            "spatial_transform": "centered_letterbox",
+            "target_hw": [
+              640,
+              640
+            ],
+            "color_space": "RGB",
+            "input_domain": "uint8_0_255",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "placement": "floor_top_left_remainder_bottom_right",
+            "pad_value": 114,
+            "letterbox_pad_value": 114,
+            "image_scale": "norm",
+            "letterbox": true
+          },
+          "sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+          "runtime_numeric_input_identity": {
+            "schema": "onnx-splitpoint/runtime-numeric-input-identity",
+            "schema_version": 1,
+            "backend": "native_full_deepx",
+            "task": "detection",
+            "preprocessing_contract_sha256": "411898b92628e2a769a2b8ea7aa35faff35373cfacb863c3ab34b243c105b70e",
+            "runtime_input_name": "images",
+            "runtime_input_shape": [
+              640,
+              640,
+              3
+            ],
+            "runtime_input_dtype": "uint8",
+            "runtime_input_layout": "HWC",
+            "runtime_color_space": "RGB",
+            "runtime_normalization": "embedded_dxcom_preprocessing",
+            "runtime_numeric_domain": "uint8_0_255"
+          },
+          "runtime_numeric_input_sha256": "6b7720ffcaf322c96dc6b83ec3e879033777335e6f07730a1a1dd4441869ebc2",
+          "source_manifest_artifact": "input_manifest",
+          "source_runtime_input_artifact": "runtime_input_tensor"
+        }
+      },
+      "artifacts": {
+        "command_python_executable": {
+          "path": "/usr/bin/python3.10",
+          "invocation_path": "/home/nx/venvs/deepx-runtime/bin/python",
+          "resolved_path": "/usr/bin/python3.10",
+          "sha256": "03bb5d246e83c44204ef38044b062fdc46c2835881874e763c44c48b4304c490",
+          "interpreter_identity": {
+            "executable": "/home/nx/venvs/deepx-runtime/bin/python",
+            "version": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+            "implementation": "CPython",
+            "cache_tag": "cpython-310"
+          }
+        },
+        "performance_report": {
+          "path": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_results_deepx_m1_full_auto.json",
+          "sha256": "cc5c0c625d006833094012c7cca02ca5ff4bc91673fd2515da7c8ea47820dfae"
+        },
+        "input_manifest": {
+          "path": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/native_full_input_manifest.json",
+          "sha256": "8187a40116f2da8c150797b39e44427b8b2f6d739f018d7b12c2e5b1f4aa1e9a"
+        },
+        "runtime_input_tensor": {
+          "path": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/native_full_outputs/model=yolo11l/backend=native_full_deepx/setup=orin_nx_deepx_m1_01/comparison=deepx/runtime_input.bin",
+          "sha256": "06d2c2858d34bf69e66e3805b4b5f60984ecc895c8b681eb007bfc61334509be",
+          "bytes": 1228800
+        },
+        "benchmark_set_manifest": {
+          "path": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/benchmark_set.json",
+          "sha256": "03da63c1fa0e6453e8b4de4a283308fbcd78634267582690ff3cbd566e108a35",
+          "size_bytes": 49479,
+          "role": "sealed_benchmark_set_manifest"
+        },
+        "source_onnx": {
+          "path": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/models/yolo11l.onnx",
+          "sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+          "size_bytes": 101744337,
+          "role": "sealed_benchmark_set_source_onnx",
+          "relative_path": "models/yolo11l.onnx",
+          "benchmark_set_manifest_sha256": "03da63c1fa0e6453e8b4de4a283308fbcd78634267582690ff3cbd566e108a35"
+        },
+        "runtime_python": {
+          "path": "/usr/bin/python3.10",
+          "invocation_path": "/home/nx/venvs/deepx-runtime/bin/python3",
+          "resolved_path": "/usr/bin/python3.10",
+          "sha256": "03bb5d246e83c44204ef38044b062fdc46c2835881874e763c44c48b4304c490",
+          "interpreter_identity": {
+            "executable": "/home/nx/venvs/deepx-runtime/bin/python3",
+            "version": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+            "implementation": "CPython",
+            "cache_tag": "cpython-310"
+          }
+        },
+        "dxnn": {
+          "path": "/home/nx/native_fifo_evalsets/v27929_acceptance_d_yolo11l_b003_deepx_gpu_20260907_151417/yolo11l/benchmark_set/deepx/deepx_m1/full/model.dxnn",
+          "sha256": "045c40d2250ab528822ef83c37c9842bb1a85bb0ca212d8dba20278ae21b797e"
+        },
+        "hotloop_runner": {
+          "path": "/home/nx/ONNX-Splitpoint-Tool/scripts/native_deepx_full_energy_hotloop.py",
+          "sha256": "18bc3040fec41a189badf8aa291c01b3aa14bbbf9832176148dd053ba3563f41"
+        },
+        "frozen_postprocess_native_detection_postprocess": {
+          "path": "/home/nx/ONNX-Splitpoint-Tool/onnx_splitpoint_tool/native_detection_postprocess.py",
+          "sha256": "4e65d8b63316d1241e868063d4cf223ca403dab38d292c223fc9ab27fc1e0f0c",
+          "role": "frozen_detection_host_postprocess_implementation"
+        },
+        "frozen_postprocess_yolo_harness": {
+          "path": "/home/nx/ONNX-Splitpoint-Tool/onnx_splitpoint_tool/runners/harness/yolo.py",
+          "sha256": "31657e2717a8cb6cfda53e7de8e06b7b2286ecb430070811546fdec65327a17a",
+          "role": "frozen_detection_host_postprocess_implementation"
+        },
+        "frozen_postprocess_harness_base": {
+          "path": "/home/nx/ONNX-Splitpoint-Tool/onnx_splitpoint_tool/runners/harness/base.py",
+          "sha256": "938b3713f32e412dd1f57fcc07a397fa1f3b26ed30afbc945d22f1bb082db06c",
+          "role": "frozen_detection_host_postprocess_implementation"
+        }
+      },
+      "complete": false,
+      "contract_sha256": "9a738ebc830c0a0cbdf965cd648fbff4520a83e5acdf1cdab57220ba4492ed3d"
+    },
+    "full_command_contract_sha256": "9a738ebc830c0a0cbdf965cd648fbff4520a83e5acdf1cdab57220ba4492ed3d",
+    "source_onnx_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+    "model_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+    "workload_contract_sha256": "9a738ebc830c0a0cbdf965cd648fbff4520a83e5acdf1cdab57220ba4492ed3d"
+  }
+}

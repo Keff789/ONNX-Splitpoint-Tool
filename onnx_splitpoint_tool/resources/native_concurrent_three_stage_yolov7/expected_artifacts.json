@@ -1,0 +1,83 @@
+{
+  "schema": "onnx-splitpoint/native-resurrection-canary-expected-artifacts",
+  "schema_version": 2,
+  "source_run_id": "paper_comparison_yolov7_b066_hailo8_native_full_energy_b500_20260827_110251",
+  "tool_build_id": "v2.78.2-immutable-management-reference-evidence-fixes",
+  "model_id": "yolov7_paper",
+  "case_id": "b066",
+  "setup_id": "orin_nx_hailo8_01",
+  "precision": "uint8_dequant_fp16",
+  "completed_task_mode": "hailo8_python_vstreams_trt_completed_detection_fifo",
+  "boundary_contract": {
+    "tensor_name": "mul_20",
+    "runtime_shape_hwc": [
+      80,
+      80,
+      512
+    ],
+    "canonical_shape_nchw": [
+      1,
+      512,
+      80,
+      80
+    ],
+    "dtype": "uint8",
+    "nbytes": 3276800,
+    "layout": "memory_nhwc_to_nchw",
+    "dequant_scale": 0.06533566862344742,
+    "dequant_zero_point": 5.0
+  },
+  "reference_metadata": {
+    "current_result": {
+      "file": "reference/current_completed_task_result.json",
+      "sha256": "04e5737b8f300c035c1b5e67682b18e81b38b9f288856b6ff1bee2ac584c074c"
+    },
+    "quality_binding": {
+      "file": "reference/native_split_quality_binding.json",
+      "sha256": "a5af2b4c0b8544208c7c7f7ad944bdce91844897c77564169efcb2c741d6ae62"
+    },
+    "boundary_manifest": {
+      "file": "reference/native_fifo_boundary_manifest.json",
+      "sha256": "bd9f16056e40eb24de3c97229b30d31a2d621052a422eb6b7265e9f0778997a7"
+    },
+    "output_manifest": {
+      "file": "reference/native_fifo_output_manifest.json",
+      "sha256": "64b51e8a2723d0b5a6147ee98ab724bae7a11f768c1f7909e862565231fd6f8b"
+    }
+  },
+  "runtime_artifacts": {
+    "hef": {
+      "sha256": "e733652e523cbc6b51d696fd9ef62913f809e07b1d9137ca1e1e5413591cd70f",
+      "size_bytes": 4447123,
+      "preferred_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-78dcf9bd33084c0c/native_split_quality/orin_nx_hailo8_01/yolov7_paper/b066/hailo8_to_trt/7d5d3e2943f6d344f9f5eb90e81c392b736d77457ff8480e40ffbd5e6fb157a0/part1.hef",
+      "staged_file": "staged_inputs/part1.hef"
+    },
+    "engine": {
+      "sha256": "ddf2e26a2e784f87d2b20c4e19dd6576bcb4da33f0b86afb32ef0a9dfda65088",
+      "size_bytes": 74695868,
+      "preferred_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-78dcf9bd33084c0c/native_split_quality/orin_nx_hailo8_01/yolov7_paper/b066/hailo8_to_trt/7d5d3e2943f6d344f9f5eb90e81c392b736d77457ff8480e40ffbd5e6fb157a0/engine_cache/b066/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine",
+      "staged_file": "staged_inputs/part2_uint8_dequant_fp16.engine"
+    },
+    "input_image": {
+      "sha256": "a4cd7f45ac1ce27eaafb254b23af7c0b18a064be08870ceaaf03b2147f2ce550",
+      "preferred_path": "/home/nx/native_fifo_evalsets/paper_comparison_yolov7_b066_hailo8_native_full_energy_b500_20260827_110251/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n500_s20260710/000000000632.jpg",
+      "staged_file": "staged_inputs/000000000632.jpg"
+    },
+    "prepared_input": {
+      "sha256": "df599577640019eafdfad855df15b2059fd26f2f05c034b2726d318873708d9b",
+      "size_bytes": 1228800,
+      "recovery": "regenerate_from_exact_image_with_cpp_letterbox_rgb_uint8",
+      "preferred_path": "/home/nx/native_fifo_evalsets/paper_comparison_yolov7_b066_hailo8_native_full_energy_b500_20260827_110251/yolov7_paper/benchmark_set/native_pipeline/b066/hailo_to_trt/uint8_dequant_fp16/native_fifo_boundary/prepared_input.bin",
+      "staged_file": "staged_inputs/prepared_input.bin"
+    },
+    "boundary": {
+      "sha256": "feb8090973962b71c684d1312a2fbd6982e9dfe5ae6f84a66c82c52abea61029",
+      "size_bytes": 3276800
+    }
+  },
+  "diagnostic_thresholds": {
+    "prepared_input_raw_min_fps": 90.0,
+    "image_paper_equivalent_min_fps": 80.0,
+    "max_handoff_ms": 1.0
+  }
+}

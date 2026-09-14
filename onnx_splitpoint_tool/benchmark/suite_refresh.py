@@ -33,17 +33,38 @@ def _log(log: Optional[Callable[[str], None]], line: str) -> None:
         pass
 
 
+def _as_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    return []
+
+
 def _embedded_semantic_validation_dataset_source() -> Optional[Path]:
     """Return the prepared/default COCO-50 validation resource if present."""
     return default_detection_validation_source()
 
 
-def _provision_embedded_semantic_validation_dataset(suite_dir: Path) -> tuple[Optional[str], bool]:
-    """Provision the default detection validation set exactly once at suite level."""
-    before = (Path(suite_dir) / 'resources' / 'validation' / 'coco_50_data').exists()
-    rel = provision_detection_validation_source_to_suite(Path(suite_dir))
-    after = bool(rel) and (Path(suite_dir) / str(rel)).exists()
-    return rel, bool(after and not before)
+def _provision_embedded_semantic_validation_dataset(
+    suite_dir: Path,
+    preset: str = "coco_50",
+    *,
+    max_images: int = 0,
+    manifest_path: str = "",
+) -> tuple[Optional[str], bool]:
+    """Provision the bounded detection subset exactly once at suite level."""
+    root = Path(suite_dir) / 'resources' / 'validation' / 'detection'
+    before = {p.name for p in root.iterdir()} if root.is_dir() else set()
+    rel = provision_detection_validation_source_to_suite(
+        Path(suite_dir),
+        preset=preset,
+        base_dir=Path(suite_dir),
+        max_images=max(0, int(max_images or 0)),
+        manifest_path=manifest_path,
+    )
+    after_path = (Path(suite_dir) / str(rel)).resolve() if rel else None
+    return rel, bool(after_path and after_path.exists() and after_path.name not in before)
 
 
 def _read_json_safe(path: Path) -> Optional[Dict[str, Any]]:
@@ -161,7 +182,49 @@ def diagnose_suite_generation(
     cases_with_part2_host_tail = 0
     cases_with_raw_head_full = 0
     cases_with_yolo_hailo = 0
+    cases_requiring_part2_host_tail = 0
+    cases_with_explicit_hailo_availability = 0
     sample_missing_host_tail: list[str] = []
+
+    def _case_names(case: Mapping[str, Any]) -> set[str]:
+        names: set[str] = set()
+        for key in ("case_id", "case_dir", "folder"):
+            v = str(case.get(key) or "").strip()
+            if v:
+                names.add(v)
+        b = case.get("boundary") if case.get("boundary") is not None else case.get("split_index")
+        try:
+            names.add(f"b{int(b):03d}")
+            names.add(f"b{int(b)}")
+        except Exception:
+            pass
+        return names
+
+    # New benchmarksets can intentionally have YOLO/Hailo raw-head Full/Part1
+    # artifacts without a Hailo Part2 host-tail artifact.  That is valid for
+    # Hailo->TensorRT/host-tail cases and must not be reported as an old-suite
+    # warning.  Only cases whose availability says Hailo Part2/composed exists
+    # actually require the v41h+ Part2 host-tail manifest fields.
+    case_requires_tail: dict[str, Optional[bool]] = {}
+    for raw_case in _as_list(payload.get("cases")):
+        if not isinstance(raw_case, Mapping):
+            continue
+        hav_all = raw_case.get("hailo_case_variant_availability")
+        if not isinstance(hav_all, Mapping):
+            continue
+        requires: Optional[bool] = None
+        for backend, availability in hav_all.items():
+            if "hailo" not in str(backend).lower() or not isinstance(availability, Mapping):
+                continue
+            cases_with_explicit_hailo_availability += 1
+            requires = bool(availability.get("part2") or availability.get("composed"))
+            break
+        if requires is not None:
+            for name in _case_names(raw_case):
+                case_requires_tail[name] = requires
+            if requires:
+                cases_requiring_part2_host_tail += 1
+
     for manifest in sorted(suite_dir.glob("b*/split_manifest.json")):
         case_count += 1
         m = _read_json_safe(manifest) or {}
@@ -185,12 +248,21 @@ def diagnose_suite_generation(
             cases_with_raw_head_full += 1
         if case_has_tail:
             cases_with_part2_host_tail += 1
-        if case_has_yolo and case_has_hailo and case_has_raw and not case_has_tail and len(sample_missing_host_tail) < 5:
-            sample_missing_host_tail.append(manifest.parent.name)
+        requires_tail = case_requires_tail.get(manifest.parent.name)
+        if case_has_yolo and case_has_hailo and case_has_raw and not case_has_tail:
+            # With explicit availability data, missing host-tail markers are only
+            # suspicious for cases that actually claim Hailo Part2/composed
+            # support.  Without availability data, keep the old conservative check.
+            if (requires_tail is True) or (requires_tail is None and not case_requires_tail):
+                if len(sample_missing_host_tail) < 5:
+                    sample_missing_host_tail.append(manifest.parent.name)
+
+    effective_has_host_tail_marker = bool(has_host_tail_marker or cases_with_part2_host_tail > 0)
+    has_cases_that_require_tail = bool(cases_requiring_part2_host_tail > 0 or not case_requires_tail)
 
     warnings: list[str] = []
     requires_regeneration = False
-    if has_yolo and has_hailo and (old_generation_markers or (has_raw_head and not has_host_tail_marker)):
+    if has_yolo and has_hailo and has_cases_that_require_tail and (old_generation_markers or (has_raw_head and not effective_has_host_tail_marker)):
         requires_regeneration = True
         warnings.append(
             "This benchmark suite looks like an older YOLO/Hailo raw-head suite without "
@@ -217,6 +289,8 @@ def diagnose_suite_generation(
         "cases_with_yolo_hailo_markers": int(cases_with_yolo_hailo),
         "cases_with_raw_head_full_markers": int(cases_with_raw_head_full),
         "cases_with_part2_host_tail_markers": int(cases_with_part2_host_tail),
+        "cases_requiring_part2_host_tail": int(cases_requiring_part2_host_tail),
+        "cases_with_explicit_hailo_availability": int(cases_with_explicit_hailo_availability),
         "sample_cases_missing_part2_host_tail": sample_missing_host_tail,
         "requires_regeneration_for_part2_host_tail": bool(requires_regeneration),
         "warnings": warnings,
@@ -259,6 +333,64 @@ def normalize_benchmark_task(value: Any, *, log: Optional[Callable[[str], None]]
         norm = 'auto'
     return norm
 
+
+def _effective_override(value: Any) -> str:
+    s = str(value or '').strip()
+    return '' if s.lower() in {'', 'auto', 'none', 'null', 'default'} else s
+
+
+def _task_gated_flags(task: str, mini_coco: bool, mini_cls: bool) -> tuple[bool, bool]:
+    task_l = normalize_benchmark_task(task)
+    if task_l == 'classification':
+        return False, bool(mini_cls)
+    if task_l == 'detection':
+        return bool(mini_coco), False
+    return False, False
+
+
+
+
+def _infer_task_from_payload(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return "auto"
+    blobs: list[str] = []
+    for key in (
+        "task",
+        "benchmark_task",
+        "model_task",
+        "model_name",
+        "model_id",
+        "model",
+        "model_source",
+        "source_model",
+        "source_model_path",
+        "source_onnx",
+        "onnx",
+        "onnx_path",
+        "family",
+    ):
+        val = payload.get(key)
+        if val:
+            blobs.append(str(val))
+    model_obj = payload.get("model")
+    if isinstance(model_obj, dict):
+        for key in ("task", "family", "id", "name", "path", "onnx", "onnx_path", "source_model", "source_model_path"):
+            val = model_obj.get(key)
+            if val:
+                blobs.append(str(val))
+    # Some benchmark_set.json files store model entries under lists/dicts.
+    for key in ("models", "model_suite", "primary", "reserve"):
+        val = payload.get(key)
+        if isinstance(val, dict):
+            blobs.append(json.dumps(val, sort_keys=True)[:4000])
+        elif isinstance(val, list):
+            blobs.append(json.dumps(val[:10], sort_keys=True)[:4000])
+    blob = " ".join(blobs).lower()
+    if any(tok in blob for tok in ("yolo", "coco", "detect", "detection", "object_detection")):
+        return "detection"
+    if any(tok in blob for tok in ("resnet", "mobilenet", "regnet", "efficientnet", "convnext", "imagenet", "imagenette", "classification", "classify")):
+        return "classification"
+    return "auto"
 
 def normalize_mini_classification_eval(value: Any, *, log: Optional[Callable[[str], None]] = None) -> bool:
     if isinstance(value, bool):
@@ -311,11 +443,14 @@ def normalize_semantic_validation_request(
     normalized_images = preset_name or raw_images
 
     if raw_images is not None and preset_name is None:
-        try:
-            cand = Path(os.path.expanduser(raw_images))
-            looks_ok = _path_looks_like_semantic_validation_source(cand)
-        except Exception:
-            looks_ok = False
+        if task != 'classification' and str(raw_images).strip().lower() in {'coco', 'coco_50', 'coco50', 'coco_200', 'coco200'}:
+            looks_ok = True
+        else:
+            try:
+                cand = Path(os.path.expanduser(raw_images))
+                looks_ok = _path_looks_like_semantic_validation_source(cand)
+            except Exception:
+                looks_ok = False
         if not looks_ok:
             if task == 'classification':
                 _log(log, f"[info] Requested classification validation source {raw_images!r} is not usable; disabling dataset validation.")
@@ -333,7 +468,7 @@ def normalize_semantic_validation_request(
             max_images = preset_default
     elif use_embedded:
         if max_images <= 0:
-            max_images = 50
+            max_images = 200 if str(os.environ.get('ONNX_SPLITPOINT_DETECTION_VALIDATION_PRESET') or 'coco_200').lower() in {'coco_200','coco200'} else 50
     else:
         max_images = max(0, int(max_images))
 
@@ -390,6 +525,8 @@ def _normalize_suite_validation_payloads(
     when no explicit semantic validation source is configured.
     """
     desired_task = normalize_benchmark_task(benchmark_task, log=log)
+    task_override_explicit = bool(_effective_override(benchmark_task))
+    images_override_explicit = bool(_effective_override(validation_images))
     desired_images, desired_max, use_embedded = normalize_semantic_validation_request(
         validation_images,
         validation_max_images,
@@ -402,66 +539,181 @@ def _normalize_suite_validation_payloads(
 
     embedded_rel: Optional[str] = None
     embedded_created = False
-    classification_rel_cache: Dict[str, Optional[str]] = {}
+    classification_rel_cache: Dict[tuple[str, int, str], Optional[str]] = {}
+    detection_rel_cache: Dict[tuple[str, int, str], Optional[str]] = {}
+    effective_return_images: Optional[str] = desired_images
+    effective_return_max: int = int(desired_max or 0)
     changed = False
     patched_files: list[str] = []
 
+    # v52f: old/manual suites may have per-run benchmark_task=auto while the
+    # suite-level model name clearly identifies ResNet/MobileNet/RegNet.
+    # Keep this as a hint so classification runs are not left on COCO-50.
+    suite_task_hint = "auto"
+    try:
+        bench_hint_path = benchmark_set_json if benchmark_set_json and benchmark_set_json.exists() else (suite_dir / "benchmark_set.json")
+        hint_payload = _read_json_safe(bench_hint_path)
+        suite_task_hint = _infer_task_from_payload(hint_payload)
+    except Exception:
+        suite_task_hint = "auto"
+
     def _normalize_one_run(run: Dict[str, Any]) -> bool:
-        nonlocal embedded_rel, embedded_created
+        nonlocal embedded_rel, embedded_created, effective_return_images, effective_return_max
         local_changed = False
-        old_images = str(run.get('validation_images') or '').strip() or None
         try:
             old_max = int(run.get('validation_max_images') or 0)
         except Exception:
             old_max = 0
+        budget_declared = bool(run.get('validation_budget_authoritative')) or ('validation_items_requested' in run)
+        try:
+            authoritative_budget = max(0, int(run.get('validation_items_requested') or 0))
+        except Exception:
+            authoritative_budget = 0
 
-        effective_images = desired_images
-        effective_max = desired_max
+        # v52d: when the CLI/profile task is "auto", preserve each run's
+        # benchmark_task instead of overwriting classification plans with COCO
+        # defaults.  This is the core guard against accidental COCO validation on
+        # ResNet/MobileNet/RegNet runs.
+        current_task = normalize_benchmark_task(run.get('benchmark_task') or run.get('task') or 'auto', log=log)
+        run_task = desired_task if task_override_explicit and desired_task != 'auto' else current_task
+        if run_task == 'auto' and suite_task_hint != 'auto':
+            run_task = suite_task_hint
+        if run_task == 'auto':
+            rid_blob = ' '.join(str(run.get(k) or '') for k in ('id', 'name', 'backend', 'provider'))
+            if 'yolo' in rid_blob.lower() or 'detect' in rid_blob.lower():
+                run_task = 'detection'
 
-        if use_embedded:
-            # Empty GUI field means: force the built-in suite-level dataset.
-            # Do not preserve stale values from older suites such as /homes/kmika/Models.
-            if embedded_rel is None:
-                embedded_rel, embedded_created = _provision_embedded_semantic_validation_dataset(suite_dir)
-                if embedded_rel:
-                    _log(log, f"[info] Using prepared semantic validation dataset: {embedded_rel}")
-            effective_images = embedded_rel
-            effective_max = max(50, desired_max)
-        else:
+        # Per-run dataset routing.  A generated Evaluation Workflow run binds an
+        # exact, already materialised subset through
+        # ``validation_budget_authoritative``/``validation_items_requested``.
+        # That binding covers the source *and* its cardinality.  Treating a
+        # target-level legacy preset (for example ``coco_50``) as a later source
+        # override created a second alias manifest on remote workers while the
+        # management CPU reference kept the originally selected manifest.  The
+        # two files described the same Image IDs and ground truth but had
+        # different byte hashes, so the strict quality-contract comparison
+        # correctly rejected every pair.  Preserve the exact per-run artefact;
+        # ad-hoc/manual plans without the authoritative marker retain the legacy
+        # override behaviour below.
+        existing_images = str(run.get('validation_images') or '').strip()
+        if budget_declared and existing_images:
+            effective_images = existing_images
+            effective_max = authoritative_budget
+            local_use_embedded = existing_images.replace('\\', '/').startswith('resources/validation/')
+        elif images_override_explicit or (task_override_explicit and desired_task != 'auto'):
             effective_images = desired_images
             effective_max = desired_max
-            if desired_task == 'classification' and str(desired_images or '').strip():
-                cache_key = str(desired_images)
+            local_use_embedded = use_embedded
+        else:
+            if run_task == 'classification':
+                if 'coco_50' in existing_images.lower() or not existing_images:
+                    default_cls = default_available_classification_validation_preset(base_dir=suite_dir) or 'imagenette_val_mini_200'
+                    effective_images = default_cls
+                    effective_max = desired_max or old_max or (500 if default_cls.endswith('_500') else 200)
+                else:
+                    effective_images = existing_images
+                    effective_max = desired_max or old_max or 200
+                local_use_embedded = False
+            elif run_task == 'detection':
+                if existing_images and existing_images.lower() not in {'coco_50', 'coco50', 'coco_50_data', 'coco_200', 'coco200', 'coco_200_data'}:
+                    effective_images = existing_images
+                    effective_max = desired_max or old_max or 50
+                    local_use_embedded = False
+                else:
+                    effective_images = existing_images if existing_images else (desired_images if desired_images else 'coco_50')
+                    effective_max = desired_max or old_max or (200 if '200' in str(effective_images) else 50)
+                    local_use_embedded = True
+            else:
+                effective_images = existing_images or desired_images
+                effective_max = old_max or desired_max
+                local_use_embedded = False
+
+        # v60r: the per-run value materialised from Smoke/Standard/Final is
+        # authoritative.  This is deliberately applied after all legacy
+        # source-routing branches so COCO-50/Imagenette defaults cannot expand
+        # a 12/16 item run back to 50.
+        if budget_declared:
+            effective_max = authoritative_budget
+
+        if run_task == 'classification':
+            if str(effective_images or '').strip():
+                manifest_ref = str(run.get('validation_manifest') or '')
+                cache_key = (str(effective_images), int(effective_max or 0), manifest_ref)
                 if cache_key not in classification_rel_cache:
                     classification_rel_cache[cache_key] = provision_classification_validation_source_to_suite(
                         suite_dir,
-                        desired_images,
+                        effective_images,
                         base_dir=suite_dir,
+                        max_images=max(0, int(effective_max or 0)),
+                        manifest_path=manifest_ref,
                     )
                     if classification_rel_cache[cache_key]:
                         _log(log, f"[info] Using suite-local classification validation dataset: {classification_rel_cache[cache_key]}")
                 if classification_rel_cache.get(cache_key):
                     effective_images = classification_rel_cache[cache_key]
+                elif 'coco_50' in str(effective_images or '').lower():
+                    # Strict guard: never leave COCO wired into a classification run.
+                    effective_images = ''
+            local_use_embedded = False
+        elif run_task == 'detection':
+            manifest_ref = str(run.get('validation_manifest') or '')
+            request = str(effective_images or desired_images or 'coco_50')
+            cache_key = (request, int(effective_max or 0), manifest_ref)
+            if cache_key not in detection_rel_cache:
+                before_root = suite_dir / 'resources' / 'validation' / 'detection'
+                before_names = {p.name for p in before_root.iterdir()} if before_root.is_dir() else set()
+                detection_rel_cache[cache_key] = provision_detection_validation_source_to_suite(
+                    suite_dir,
+                    request,
+                    base_dir=suite_dir,
+                    max_images=max(0, int(effective_max or 0)),
+                    manifest_path=manifest_ref,
+                )
+                rel_now = detection_rel_cache[cache_key]
+                if rel_now:
+                    target_now = suite_dir / str(rel_now)
+                    embedded_created = embedded_created or (target_now.name not in before_names)
+                    _log(log, f"[info] Using suite-local detection validation dataset: {rel_now}")
+            if detection_rel_cache.get(cache_key):
+                effective_images = detection_rel_cache[cache_key]
+                embedded_rel = str(effective_images)
+            local_use_embedded = bool(effective_images and str(effective_images).replace('\\', '/').startswith('resources/validation/'))
 
         norm_images = str(effective_images or '')
         norm_max = int(max(0, int(effective_max or 0)))
+        if norm_images:
+            effective_return_images = norm_images
+            effective_return_max = norm_max
+        mini_coco_run, mini_cls_run = _task_gated_flags(
+            run_task,
+            desired_mini_coco_ap50 if task_override_explicit else normalize_mini_coco_ap50(run.get('mini_coco_ap50'), log=log),
+            desired_mini_classification_eval if task_override_explicit else normalize_mini_classification_eval(run.get('mini_classification_eval'), log=log),
+        )
+        if run_task == 'classification' and not mini_cls_run and norm_images:
+            mini_cls_run = True
+        if run_task == 'detection' and not mini_coco_run and norm_images:
+            mini_coco_run = True
+
         if str(run.get('validation_images') or '') != norm_images:
             run['validation_images'] = norm_images
             local_changed = True
         if int(run.get('validation_max_images') or 0) != norm_max:
             run['validation_max_images'] = norm_max
             local_changed = True
+        if budget_declared and not bool(run.get('validation_budget_authoritative')):
+            run['validation_budget_authoritative'] = True
+            local_changed = True
         if str(run.get('validation_reference_mode') or 'auto') != desired_reference_mode:
             run['validation_reference_mode'] = desired_reference_mode
             local_changed = True
-        if bool(run.get('mini_coco_ap50')) != bool(desired_mini_coco_ap50):
-            run['mini_coco_ap50'] = bool(desired_mini_coco_ap50)
+        if bool(run.get('mini_coco_ap50')) != bool(mini_coco_run):
+            run['mini_coco_ap50'] = bool(mini_coco_run)
             local_changed = True
-        if str(run.get('benchmark_task') or 'auto') != desired_task:
-            run['benchmark_task'] = desired_task
+        if str(run.get('benchmark_task') or 'auto') != run_task:
+            run['benchmark_task'] = run_task
             local_changed = True
-        if bool(run.get('mini_classification_eval')) != bool(desired_mini_classification_eval):
-            run['mini_classification_eval'] = bool(desired_mini_classification_eval)
+        if bool(run.get('mini_classification_eval')) != bool(mini_cls_run):
+            run['mini_classification_eval'] = bool(mini_cls_run)
             local_changed = True
         return local_changed
 
@@ -501,13 +753,13 @@ def _normalize_suite_validation_payloads(
 
     return {
         'validation_changed': bool(changed),
-        'validation_images': embedded_rel if use_embedded else (classification_rel_cache.get(str(desired_images)) if (desired_task == 'classification' and str(desired_images or '').strip()) else desired_images),
-        'validation_max_images': int(desired_max if desired_max is not None else 0),
+        'validation_images': effective_return_images,
+        'validation_max_images': int(effective_return_max),
         'validation_patched_files': patched_files,
         'validation_reference_mode': desired_reference_mode,
-        'mini_coco_ap50': bool(desired_mini_coco_ap50),
+        'mini_coco_ap50': bool(desired_mini_coco_ap50 if desired_task == 'detection' else False),
         'benchmark_task': str(desired_task),
-        'mini_classification_eval': bool(desired_mini_classification_eval),
+        'mini_classification_eval': bool(desired_mini_classification_eval if desired_task == 'classification' else False),
         'validation_resource_provisioned': bool(embedded_created),
     }
 
@@ -541,6 +793,10 @@ def assert_generated_runner_is_self_consistent(path: Path) -> None:
     except SyntaxError as e:
         raise RuntimeError(f"{path} failed syntax self-check: {e}") from e
 
+    if "class HailoInferModelSession" in text:
+        from ..split_export_runners import assert_generated_hailo_layout_current
+        assert_generated_hailo_layout_current(path)
+
     required_helpers = (
         "_maybe_cast_for_onnx_input",
         "_shape_from_ort_input",
@@ -556,6 +812,20 @@ def assert_generated_runner_is_self_consistent(path: Path) -> None:
         raise RuntimeError(
             f"{path} references helper(s) {', '.join(missing)} but does not define them. "
             "Refusing to keep a stale or broken runner."
+        )
+
+    suite_runtime_import = text.find(
+        "from splitpoint_runners.native_split_quality_runtime import"
+    )
+    suite_path_bootstrap = text.find(
+        "\n_maybe_add_suite_runtime_to_syspath()\n"
+    )
+    if suite_runtime_import >= 0 and (
+        suite_path_bootstrap < 0 or suite_path_bootstrap > suite_runtime_import
+    ):
+        raise RuntimeError(
+            f"{path} imports the suite-owned quality runtime before the suite root "
+            "is added to sys.path. Refusing to keep a remotely unimportable runner."
         )
 
     module_requirements = {
@@ -644,6 +914,7 @@ def refresh_suite_harness(
         "bench_json_name": bench_json_name,
         "current_tool_version": str(_TOOL_VERSION),
         "suite_script_updated": False,
+        "scientific_reporter_updated": False,
         "runner_lib_files_updated": 0,
         "case_runner_cases_updated": 0,
         "case_runner_files_updated": 0,
@@ -730,6 +1001,21 @@ def refresh_suite_harness(
             stats["changed"] = True
             _log(log, f"[info] Refreshed benchmark_suite.py: {dst_script}")
 
+        # write_benchmark_suite_script also vendors the self-contained v60
+        # reporter.  Older refresh logic copied only benchmark_suite.py, which
+        # made remote suites fail with ModuleNotFoundError.
+        src_reporter = tmp_dir / "scientific_reporter_v60.py"
+        dst_reporter = suite_dir / "scientific_reporter_v60.py"
+        if src_reporter.is_file() and _copy_if_changed(src_reporter, dst_reporter):
+            stats["scientific_reporter_updated"] = True
+            stats["changed"] = True
+            _log(log, f"[info] Refreshed scientific_reporter_v60.py: {dst_reporter}")
+        if not dst_reporter.is_file():
+            raise RuntimeError(
+                "Suite refresh did not produce scientific_reporter_v60.py; "
+                "the generated benchmark suite would be incomplete."
+            )
+
         if src_runners.exists() and src_runners.is_dir():
             dst_runners = suite_dir / "splitpoint_runners"
             n_updated = 0
@@ -775,6 +1061,28 @@ def refresh_suite_harness(
                 if fname == "run_split_onnxruntime.py" and dst.exists():
                     try:
                         assert_generated_runner_is_self_consistent(dst)
+                    except Exception:
+                        dst_needs_repair = True
+
+                if fname == "run_split_onnxruntime.py" and dst.exists():
+                    # v53g: older benchmark suites may contain a syntactically
+                    # self-consistent runner that predates DeepX provider tokens.
+                    # The old runner passes the generic self-consistency check,
+                    # but remote TensorRT->DeepX dispatch then fails with
+                    # argparse: invalid choice 'deepx_m1'.  Treat that as stale
+                    # and force a current runner copy.
+                    try:
+                        _dst_text = dst.read_text(encoding="utf-8", errors="ignore")
+                        required_runtime_markers = (
+                            "deepx_m1",
+                            "dx_m1",
+                            "--phase-runs",
+                            "--external-output-dump",
+                            "run_stage2_prefix_map",
+                            "_run_full_variant_outputs_map",
+                        )
+                        if any(marker not in _dst_text for marker in required_runtime_markers):
+                            dst_needs_repair = True
                     except Exception:
                         dst_needs_repair = True
 

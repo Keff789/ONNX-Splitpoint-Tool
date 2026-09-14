@@ -1,0 +1,170 @@
+{
+  "artifact_kind": "dxnn",
+  "artifact_path": "/home/kmika/Models/BackendArtifacts/deepx/deepx_m1_full_f0fcdf56a4ac24d8_958dacf708b58fc3/model.dxnn",
+  "artifact_sha256": "045c40d2250ab528822ef83c37c9842bb1a85bb0ca212d8dba20278ae21b797e",
+  "artifact_size_bytes": 54112354,
+  "backend": "deepx_m1",
+  "build_onnx_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+  "cache_contract_sha256": null,
+  "cache_key": "deepx_m1_full_f0fcdf56a4ac24d8_958dacf708b58fc3",
+  "calibration_manifest_identity_sha256": null,
+  "classification_preprocessing": "not_applicable",
+  "compiler_identity_sha256": null,
+  "contract_complete_enough_for_reports": true,
+  "contract_family": "raw_head_or_unattested",
+  "endpoint_contract_complete_enough_for_quality": false,
+  "endpoint_mode": "unattested",
+  "endpoint_semantic_attestation": {
+    "invalid_contract": {
+      "artifact_path": "",
+      "backend": "deepx_m1",
+      "contract_family": "decoded_pre_nms",
+      "contract_status": "recorded",
+      "endpoint_mode": "decoded_pre_nms",
+      "full_end_node_names": [],
+      "host_tail_required": true,
+      "model_id": "yolo11l",
+      "output_format": "ultralytics_decoded",
+      "postprocessing_required": true,
+      "requires_external_postprocess": true,
+      "schema": "onnx-splitpoint/output-contract",
+      "schema_version": 1,
+      "source_endpoint_semantics": "decoded_pre_nms",
+      "source_onnx_detection_endpoint": {
+        "multiscale_raw_head": false,
+        "output_shapes": [
+          [
+            1,
+            84,
+            8400
+          ]
+        ],
+        "sidecar_status": "onnx_sha256_mismatch",
+        "stage": "decoded_pre_nms"
+      },
+      "source_onnx_multiscale_raw_head": false,
+      "stage": "decoded_pre_nms",
+      "task": "detection",
+      "variant": "full",
+      "warning": "Do not compare a pre-NMS detection endpoint as if it were decoded/NMS output."
+    },
+    "pass": false,
+    "reason": "recorded_deepx_full_endpoint_contract_invalid",
+    "sources": [
+      {
+        "file_sha256": "d5eff8720b9a4c2237bb717682cd6f75f2f31c022f11de06eae6d1fd05363246",
+        "path": "/home/kmika/Models/EvaluationRuns/v27925_acceptance_d_yolo11l_b003_deepx_gpu_20260907_063645/models/yolo11l/benchmark_set/legacy_suite/output_contracts.json",
+        "schema": "onnx-splitpoint/output-contracts"
+      },
+      {
+        "file_sha256": "d5eff8720b9a4c2237bb717682cd6f75f2f31c022f11de06eae6d1fd05363246",
+        "path": "/home/kmika/Models/EvaluationRuns/v27925_acceptance_d_yolo11l_b003_deepx_gpu_20260907_063645/models/yolo11l/full_baselines/output_contracts.json",
+        "schema": "onnx-splitpoint/output-contracts"
+      }
+    ],
+    "status": "conflict"
+  },
+  "full_cache_contract_mode": "legacy_implicit",
+  "host_tail_required": null,
+  "input": {
+    "classification_preprocessing": "not_applicable",
+    "color_space": "RGB",
+    "contract_source": "task_bound_dxcom_image_loader_preprocessing",
+    "dtype": "uint8",
+    "embedded_numeric_path": "dxcom_div255_detection_default",
+    "layout": "HWC",
+    "letterbox_pad_value": 114,
+    "letterbox_pad_value_effective": 114,
+    "letterbox_pad_value_requested": 114,
+    "name": "images",
+    "normalization": "embedded_dxcom_preprocessing",
+    "preprocess_mode": "letterbox",
+    "preprocess_mode_effective": "letterbox",
+    "preprocess_mode_requested": "auto",
+    "shape": [
+      640,
+      640,
+      3
+    ],
+    "task": "detection"
+  },
+  "model_id": "yolo11l",
+  "output": {
+    "source": "runtime_report_or_model_output",
+    "status": "declared_no_parse_model_pending_placeholder"
+  },
+  "outputs": [
+    {
+      "contract_source": "runtime_report_or_model_output",
+      "dtype": "float32",
+      "name": "model_outputs",
+      "shape": null
+    }
+  ],
+  "postprocessing": {
+    "host_required": true,
+    "nms_on_host": true,
+    "type": "yolo_host_decode_or_model_postprocess"
+  },
+  "postprocessing_required": null,
+  "preprocessing_contract": {
+    "contract_sha256": "59d7c7aa7ff879883cb6bf94aa7fe0e1972ef39407eb4cf2a22ab066f6fd61f9",
+    "numeric_preprocessing": {
+      "build_onnx_adapter": {
+        "kind": "identity"
+      },
+      "dxcom_loader": {
+        "color_space": "RGB",
+        "letterbox_pad_value": 114,
+        "operations_contract": "letterbox_div255_bgr2rgb_transpose_expanddim",
+        "output_dtype": "float32",
+        "output_layout": "NCHW",
+        "scale_divisor": 255.0
+      },
+      "mode": "task_default_letterbox_scale_only",
+      "schema": "onnx-splitpoint/deepx-detection-preprocessing",
+      "schema_version": 1
+    },
+    "runtime_input": {
+      "classification_preprocessing": "not_applicable",
+      "color_space": "RGB",
+      "contract_source": "task_bound_dxcom_image_loader_preprocessing",
+      "dtype": "uint8",
+      "embedded_numeric_path": "dxcom_div255_detection_default",
+      "layout": "HWC",
+      "letterbox_pad_value": 114,
+      "letterbox_pad_value_effective": 114,
+      "letterbox_pad_value_requested": 114,
+      "name": "images",
+      "normalization": "embedded_dxcom_preprocessing",
+      "preprocess_mode": "letterbox",
+      "preprocess_mode_effective": "letterbox",
+      "preprocess_mode_requested": "auto",
+      "shape": [
+        640,
+        640,
+        3
+      ],
+      "task": "detection"
+    },
+    "schema": "onnx-splitpoint/deepx-full-preprocessing-contract",
+    "schema_version": 1,
+    "task": "detection"
+  },
+  "source_model_input": {
+    "dtype": "float32",
+    "layout": "NCHW",
+    "name": "images",
+    "shape": [
+      1,
+      3,
+      640,
+      640
+    ]
+  },
+  "source_onnx_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+  "suite_artifact_path": "/home/kmika/Models/EvaluationRuns/v27925_acceptance_d_yolo11l_b003_deepx_gpu_20260907_063645/models/yolo11l/benchmark_set/legacy_suite/deepx/deepx_m1/full/model.dxnn",
+  "suite_artifact_sha256": "045c40d2250ab528822ef83c37c9842bb1a85bb0ca212d8dba20278ae21b797e",
+  "suite_artifact_size_bytes": 54112354,
+  "variant": "full"
+}

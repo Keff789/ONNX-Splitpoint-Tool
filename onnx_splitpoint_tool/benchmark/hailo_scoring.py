@@ -23,11 +23,15 @@ class HailoCompileHeuristic:
     base_score: Optional[float]
     cut_mib: Optional[float]
     peak_act_right_mib: Optional[float]
+    peak_act_left_mib: Optional[float]
     n_cut_tensors: Optional[int]
+    flops_left_ratio: Optional[float]
     flops_right_ratio: Optional[float]
     strict_ok: Optional[bool]
     compile_risk_score: float
     single_context_probability: float
+    stage1_fit_score: float
+    hardware_fit_score: float
 
 
 def _to_float(v: Any) -> Optional[float]:
@@ -67,6 +71,8 @@ def heuristic_for_boundary(analysis: Mapping[str, Any], boundary: int) -> HailoC
     cut_mib = (cut_bytes / MiB) if cut_bytes is not None else None
     peak_right_b = _to_float(_analysis_indexed_value(analysis.get('peak_act_mem_right_bytes') or [], b))
     peak_right_mib = (peak_right_b / MiB) if peak_right_b is not None else None
+    peak_left_b = _to_float(_analysis_indexed_value(analysis.get('peak_act_mem_left_bytes') or [], b))
+    peak_left_mib = (peak_left_b / MiB) if peak_left_b is not None else None
     n_cut = _analysis_indexed_value(analysis.get('crossing_counts_all') or analysis.get('crossing_counts_known') or [], b)
     try:
         n_cut_tensors = int(n_cut) if n_cut is not None else None
@@ -74,11 +80,14 @@ def heuristic_for_boundary(analysis: Mapping[str, Any], boundary: int) -> HailoC
         n_cut_tensors = None
     fl_left = _to_float(_analysis_indexed_value(analysis.get('flops_left_prefix') or [], b))
     total_flops = _to_float(analysis.get('total_flops'))
+    flops_left_ratio = None
     flops_right_ratio = None
     if fl_left is not None and total_flops not in (None, 0.0):
         try:
+            flops_left_ratio = max(0.0, min(1.0, float(fl_left) / float(total_flops)))
             flops_right_ratio = max(0.0, min(1.0, (float(total_flops) - float(fl_left)) / float(total_flops)))
         except Exception:
+            flops_left_ratio = None
             flops_right_ratio = None
     strict_ok_raw = _analysis_indexed_value(analysis.get('strict_ok') or [], b)
     strict_ok = (bool(strict_ok_raw) if strict_ok_raw is not None else None)
@@ -96,8 +105,16 @@ def heuristic_for_boundary(analysis: Mapping[str, Any], boundary: int) -> HailoC
             risk += 0.34
         if int(n_cut_tensors) >= 8:
             risk += 0.48
-    if flops_right_ratio is not None:
-        risk += 0.16 * max(float(flops_right_ratio), 0.0) * 5.0
+    if flops_left_ratio is not None:
+        # For Hailo->TensorRT the Hailo part is the LEFT/stage-1 side.  Earlier
+        # versions penalized right-side compute, which pushed the search toward
+        # very late detection-head cuts.  Hailo-8 prefers a compact, single-context
+        # P1: too little left compute wastes the accelerator, too much left compute
+        # risks multi-context/DDR behavior.
+        left = float(flops_left_ratio)
+        risk += 0.28 * max(0.0, 0.18 - left)
+        risk += 1.35 * max(0.0, left - 0.46)
+        risk += 2.20 * max(0.0, left - 0.62)
     if strict_ok is False:
         risk += 2.60
 
@@ -119,17 +136,37 @@ def heuristic_for_boundary(analysis: Mapping[str, Any], boundary: int) -> HailoC
         risk += 0.12
     risk += (b % 17) * 1e-4
 
+    # Hardware-fit score is intentionally not a pure compile-risk score.  It
+    # rewards compact single-tensor cuts with a moderate Hailo-side compute share
+    # and avoids forcing a 50/50 split on Hailo-8.
+    if flops_left_ratio is None:
+        stage1_fit = 0.35
+    else:
+        left = float(flops_left_ratio)
+        stage1_fit = abs(left - 0.34) * 0.35 + max(0.0, 0.18 - left) * 0.75 + max(0.0, left - 0.46) * 4.0 + max(0.0, left - 0.62) * 8.0
+    cut_fit = 0.0
+    if cut_mib is not None:
+        cut_fit = max(0.0, float(cut_mib) - 8.0) * 0.06 + max(0.0, float(cut_mib) - 16.0) * 0.18
+    tensor_fit = 0.0
+    if n_cut_tensors is not None:
+        tensor_fit = -0.18 if int(n_cut_tensors) <= 1 else 0.12 * (int(n_cut_tensors) - 1) + 0.05 * max(0, int(n_cut_tensors) - 3)
+    hardware_fit = float(stage1_fit + cut_fit + tensor_fit + 0.18 * max(0.0, risk))
+
     single_prob = 1.0 / (1.0 + math.exp(max(-8.0, min(8.0, (risk - 2.55) * 1.32))))
     return HailoCompileHeuristic(
         boundary=b,
         base_score=base_score,
         cut_mib=cut_mib,
         peak_act_right_mib=peak_right_mib,
+        peak_act_left_mib=peak_left_mib,
         n_cut_tensors=n_cut_tensors,
+        flops_left_ratio=flops_left_ratio,
         flops_right_ratio=flops_right_ratio,
         strict_ok=strict_ok,
         compile_risk_score=float(risk),
         single_context_probability=float(single_prob),
+        stage1_fit_score=float(stage1_fit),
+        hardware_fit_score=float(hardware_fit),
     )
 
 
@@ -140,7 +177,7 @@ def rerank_candidates_for_hailo(analysis: Mapping[str, Any], boundaries: Iterabl
     def _sort_key(h: HailoCompileHeuristic):
         strict_penalty = 0.0 if h.strict_ok is not False else 1.0
         base = h.base_score if h.base_score is not None else (h.cut_mib if h.cut_mib is not None else 1e9)
-        return (strict_penalty, h.compile_risk_score, float(base), int(h.boundary))
+        return (strict_penalty, h.hardware_fit_score, h.compile_risk_score, int(h.n_cut_tensors or 999), float(h.cut_mib if h.cut_mib is not None else 1e9), int(h.boundary))
 
     heuristics.sort(key=_sort_key)
     meta: Dict[int, Dict[str, Any]] = {
@@ -149,8 +186,12 @@ def rerank_candidates_for_hailo(analysis: Mapping[str, Any], boundaries: Iterabl
             'hailo_single_context_probability': h.single_context_probability,
             'hailo_cut_mib': h.cut_mib,
             'hailo_peak_act_right_mib': h.peak_act_right_mib,
+            'hailo_peak_act_left_mib': h.peak_act_left_mib,
             'hailo_n_cut_tensors': h.n_cut_tensors,
+            'hailo_flops_left_ratio': h.flops_left_ratio,
             'hailo_flops_right_ratio': h.flops_right_ratio,
+            'hailo_stage1_fit_score': h.stage1_fit_score,
+            'hailo_hardware_fit_score': h.hardware_fit_score,
             'hailo_strict_ok': h.strict_ok,
             **dict(candidate_policy_index.get(h.boundary) or {}),
         }
