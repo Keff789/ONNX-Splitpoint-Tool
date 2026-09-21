@@ -123,12 +123,38 @@ def _load_json(p: Path) -> Any:
         return None
 
 
+def _measurement_accounting(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize existing journal projections without changing repeat selection."""
+    runs = [dict(item.get('run') or {}) for item in results]
+
+    def count(field: str) -> int | None:
+        values = [run.get(field) for run in runs]
+        if any(type(value) is not int for value in values):
+            return None
+        return sum(values)
+
+    started_failed = sum(
+        item.get('ok') is not True and (run.get('energy_collector_attempt_count') or 0) > 0
+        for item, run in zip(results, runs)
+    )
+    return {
+        'collector_started_repeat_count_semantics': 'selected_logical_repeat_records_including_invalid',
+        'workload_started_repeat_count_semantics': 'selected_logical_repeat_records_including_invalid',
+        'physical_collector_attempt_count': count('energy_collector_attempt_count'),
+        'failed_physical_collector_attempt_count': count('energy_failed_collector_attempt_count'),
+        'selected_logical_repeat_count': sum(run.get('energy_aggregate_materialized_repeat_count') or 0 for run in runs),
+        'valid_logical_repeat_count': sum(run.get('energy_aggregate_valid_repeat_count') or 0 for run in runs),
+        'started_failed_measurement_row_count': started_failed,
+        'not_started_measurement_row_count': sum(run.get('execution_status') == 'NOT_RUN' for run in runs),
+    }
+
+
 def _measurement_start_observation(
     output_dir: str | Path,
     *,
     aggregate_verified: bool,
 ) -> dict[str, Any]:
-    """Project physical-start counters from the measurement's own evidence."""
+    """Project selected repeat records; retries remain in the physical journal."""
     root = Path(output_dir)
     summary = _load_json(root / 'energy_summary.json')
     aggregate_runs = (
@@ -337,6 +363,11 @@ def _energy_global_infrastructure_failure(
 
     for value in payloads:
         _visit(value)
+    if str(((result or {}).get('energy_task_budget') or {}).get('reason') or '').startswith('campaign_source_'):
+        # This acquisition fault is fenced by the persistent physical-source
+        # budget. Other sources and non-transport infrastructure errors retain
+        # their existing independent result/stop behavior.
+        structured = [item for item in structured if item[1] != 'urecs_transport_unavailable']
     if structured:
         category, code, detail = structured[0]
         return {
@@ -1135,6 +1166,8 @@ def _selected_energy_repeat_run_dir(
             or any(type(item.get('selected')) is not bool for item in history)):
             fail('energy_repeat_selection_history_invalid')
         selected = [item for item in history if item['selected'] is True]
+        if not selected:
+            fail('energy_repeat_selection_no_valid_attempt')
         if len(selected) != 1:
             fail('energy_repeat_selection_ambiguous')
         selected_index = run['selected_repeat_attempt_index']
@@ -1299,6 +1332,32 @@ def _verify_fresh_fast_energy_completion(
         }, "verified"
     except Exception as exc:
         return None, "energy_completion_invalid:" + str(exc)
+
+
+def _campaign_budget_block_projection(command: str, output_dir: str | Path) -> dict[str, Any]:
+    """Expose start refusal independently of the scientific aggregate importer."""
+    if not any(part == '--campaign-budget-file' or part.startswith('--campaign-budget-file=')
+               for part in shlex.split(command)):
+        return {}
+    checkpoint = _command_option(command, '--campaign-budget-file')
+    row_id = _command_option(command, '--campaign-row-id')
+    if not checkpoint or not row_id:
+        return {}
+    data = json.loads(Path(checkpoint).read_text(encoding='utf-8'))
+    task = data['tasks'][row_id]
+    source = data['sources'][task['source_id']]
+    reason = str(source.get('stop_reason') or task.get('stop_reason') or '')
+    if not reason:
+        return {}
+    current_root = Path(output_dir).resolve()
+    started = any(c.get('collector_started') and Path(c['run_directory']).resolve().is_relative_to(current_root)
+                  for c in task['chains'])
+    return {'status': 'BLOCKED', 'execution_status': 'INCOMPLETE' if started else 'NOT_RUN',
+            'energy_not_started_reason': reason,
+            'failure_category': 'energy_task_budget',
+            'energy_task_budget': {'checkpoint': str(Path(checkpoint).resolve()),
+                                   'row_id': row_id, 'source_id': task['source_id'],
+                                   'source': source, 'reason': reason}}
 
 
 def _attach_energy_aggregate(
@@ -1661,6 +1720,13 @@ def _attach_energy_aggregate(
             result['energy_aggregate_valid_repeat_count'] = repeat_values.get(
                 'valid_postprocessed_runs'
             )
+            budget = aggregate.get('task_budget') or {}
+            chains = budget.get('chains')
+            if isinstance(chains, list):
+                result['energy_collector_attempt_count'] = sum(c.get('collector_started') is True for c in chains)
+                result['energy_failed_collector_attempt_count'] = sum(
+                    c.get('collector_started') is True and c.get('finished') is True and c.get('valid') is not True
+                    for c in chains)
             result['energy_aggregate_materialized_repeat_count'] = repeat_values.get(
                 'materialized_logical_repeat_count'
             )
@@ -2854,8 +2920,12 @@ def _measurement_preflight_allows(
     )
 
 
+from onnx_splitpoint_tool.energy.task_budget import add_campaign_budget_arguments, campaign_budget_forward_args
+
+
 def _main_impl() -> int:
     ap=argparse.ArgumentParser(description=__doc__)
+    add_campaign_budget_arguments(ap)
     ap.add_argument('--summary', required=True)
     ap.add_argument('--out-dir', required=True)
     ap.add_argument(
@@ -3225,6 +3295,7 @@ def _main_impl() -> int:
             },
         )
     plan_cmd=[sys.executable, '-u', str(_script_path('native_producer_energy_plan.py')), '--summary', ns.summary, '--out-dir', str(plan_dir), '--hailo8-ssh', ns.hailo8_ssh, '--hailo10-ssh', ns.hailo10_ssh, '--deepx-ssh', ns.deepx_ssh, '--hailo8-env', ns.hailo8_env, '--hailo10-env', ns.hailo10_env, '--deepx-env', ns.deepx_env, '--engine-build-python', ns.engine_build_python, '--remote-tool-dir', ns.remote_tool_dir, '--remote-root', ns.remote_root, '--duration-s', str(float(ns.duration_s or 0.0)), '--frames', str(ns.frames), '--warmup', str(ns.warmup), '--timeout', str(ns.timeout), '--runs', str(max(1, int(ns.runs or 1))), '--physical-scope', ns.physical_scope, '--window-label', ns.window_label, '--calibration-manifest', ns.calibration_manifest, '--calibration-sha256', ns.calibration_sha256, '--pipeline-contract-manifest', ns.pipeline_contract_manifest, '--pipeline-contract-sha256', ns.pipeline_contract_sha256, '--model-hash-map', ns.model_hash_map, '--model-hash-map-sha256', ns.model_hash_map_sha256]
+    plan_cmd += campaign_budget_forward_args(ns)
     if str(ns.hardware_setups_file or '').strip():
         plan_cmd += ['--hardware-setups-file', str(ns.hardware_setups_file)]
     if str(ns.window_method_ab_json or '').strip():
@@ -3836,6 +3907,7 @@ def _main_impl() -> int:
             if ns.screening_energy else results
         )
         partial={
+            **_measurement_accounting(visible_rows),
             'ok': all(bool(x.get('ok')) for x in results),
             'complete': False,
             'plan':pr,
@@ -4306,6 +4378,8 @@ def _main_impl() -> int:
                     activity['workload_started_repeat_count']
                 )
                 rr['measurement_start_observation'] = activity
+                budget_projection = _campaign_budget_block_projection(execution['command'], execution['output_dir'])
+                rr.update(budget_projection)
                 quality_projection = _energy_quality_result_projection(
                     runtime_row,
                     measurement_started=(
@@ -4372,6 +4446,7 @@ def _main_impl() -> int:
                         row_global_infrastructure_failure.get('category') or ''
                     ),
                     **quality_projection,
+                    **budget_projection,
                 }, row_index=row_index if managed_journal is not None else None)
                 print(
                     f"[native-energy] ROW_END index={row_index + 1} "
@@ -4674,6 +4749,7 @@ def _main_impl() -> int:
         'workload_started_repeat_count': (
             workload_started_repeat_count
         ),
+        **_measurement_accounting(results),
         'dry_run': bool(ns.dry_run), 'plan':pr, 'plan_payload':plan_payload,
         'rows':results,
         'planned_row_count': total,
@@ -4815,6 +4891,7 @@ def _main_impl() -> int:
             pass
     try:
         print(json.dumps({
+            **_measurement_accounting(results),
             'ok': report['ok'],
             'rows': len(results),
             'json': str(published_json_path),

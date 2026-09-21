@@ -21,6 +21,7 @@ import numpy as np
 
 from .base import PreparedHandle
 from .hailo_utils import get_dfc_manager
+from ..request_latency import RequestLatency
 from .._types import BackendCaps, BackendRunOut, RunCfg
 from ...cache_verify_policy import (
     cache_miss_blocked_message,
@@ -1639,7 +1640,11 @@ class _HailoInferModelSession:
         self, slot: dict[str, Any], infer_inputs: dict[str, np.ndarray], *,
         copy_inputs: bool,
         postprocess_callback: Optional[Callable[[dict[str, np.ndarray]], Any]] = None,
+        request_latency: RequestLatency | None = None,
+        request_id: int = 0,
     ) -> None:
+        if request_latency is not None:
+            request_latency.start(request_id)
         self._wait_reusable_slot(slot)
         if copy_inputs or not bool(slot.get("prefilled")):
             self._fill_reusable_slot_inputs(slot, infer_inputs)
@@ -1662,6 +1667,8 @@ class _HailoInferModelSession:
                                 dict(_slot["output_buffers"]),
                             )
                         )
+                    if request_latency is not None:
+                        request_latency.complete(request_id)
                     with _slot["counter_lock"]:
                         _slot["completed_count"] = int(_slot.get("completed_count") or 0) + 1
                         if postprocess_callback is not None:
@@ -1712,7 +1719,11 @@ class _HailoInferModelSession:
                     total += int(slot.get("postprocess_completed_count") or 0)
             return int(total)
 
+        request_latency: RequestLatency | None = None
+        measured_submissions = 0
+
         def _run_frame_count(count: int) -> int:
+            nonlocal measured_submissions
             before = _completed_count()
             postprocess_before = _postprocess_completed_count()
             used_slot_indices: set[int] = set()
@@ -1723,7 +1734,11 @@ class _HailoInferModelSession:
                     slots[slot_index], infer_inputs,
                     copy_inputs=bool(copy_inputs),
                     postprocess_callback=postprocess_callback,
+                    request_latency=request_latency,
+                    request_id=measured_submissions,
                 )
+                if request_latency is not None:
+                    measured_submissions += 1
             # Drain only slots that received work in this interval.  Waiting on
             # untouched slots used to make the completion contract depend on
             # their initial Event state instead of observed callbacks.
@@ -1747,6 +1762,11 @@ class _HailoInferModelSession:
         else:
             warmup_completed = 0
 
+        request_latency = RequestLatency(frames, task_complete=postprocess_callback is not None,
+            start_anchor="hailo_infermodel_full:before_slot_wait_and_admission",
+            end_anchor="hailo_infermodel_full:callback_after_task_postprocess_or_host_output",
+            enabled=not duration_s)
+
         # ``frames`` is a minimum work budget, never a duration estimate.  For
         # energy replays the loop additionally remains active for the requested
         # wall-clock duration.  Additional chunks reuse the same configured
@@ -1755,19 +1775,23 @@ class _HailoInferModelSession:
         t0 = time.perf_counter()
         completed_frames = 0
         measured_postprocess_before = _postprocess_completed_count()
-        while completed_frames < frames or time.perf_counter() - t0 < duration_s:
-            remaining_frames = max(0, frames - completed_frames)
-            elapsed = max(0.0, time.perf_counter() - t0)
-            if remaining_frames > 0:
-                chunk = remaining_frames
-            else:
-                observed_fps = completed_frames / elapsed if completed_frames and elapsed > 0 else 0.0
-                remaining_s = max(0.0, duration_s - elapsed)
-                chunk = max(inflight, int(math.ceil(observed_fps * min(1.0, remaining_s))))
-            # Bound duration-extension chunks so cancellation/diagnostics are
-            # not hidden behind another very long submission batch.
-            chunk = max(1, min(int(chunk), 4096))
-            completed_frames += _run_frame_count(chunk)
+        try:
+            while completed_frames < frames or time.perf_counter() - t0 < duration_s:
+                remaining_frames = max(0, frames - completed_frames)
+                elapsed = max(0.0, time.perf_counter() - t0)
+                if remaining_frames > 0:
+                    chunk = remaining_frames
+                else:
+                    observed_fps = completed_frames / elapsed if completed_frames and elapsed > 0 else 0.0
+                    remaining_s = max(0.0, duration_s - elapsed)
+                    chunk = max(inflight, int(math.ceil(observed_fps * min(1.0, remaining_s))))
+                # Bound duration-extension chunks so cancellation/diagnostics are
+                # not hidden behind another very long submission batch.
+                chunk = max(1, min(int(chunk), 4096))
+                completed_frames += _run_frame_count(chunk)
+        except Exception as exc:
+            exc.request_latency = request_latency.report()
+            raise
         t1 = time.perf_counter()
         elapsed_s = max(0.0, float(t1 - t0))
         postprocess_completed_frames = (
@@ -1775,6 +1799,7 @@ class _HailoInferModelSession:
         )
         fps = (float(completed_frames) / elapsed_s) if elapsed_s > 0.0 and completed_frames > 0 else 0.0
         return {
+            "request_latency": request_latency.report(),
             "frames": int(completed_frames),
             "requested_frames": int(frames),
             "minimum_requested_frames": int(frames),

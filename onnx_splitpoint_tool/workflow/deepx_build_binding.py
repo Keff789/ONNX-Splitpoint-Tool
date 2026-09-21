@@ -637,6 +637,8 @@ def recorded_deepx_full_endpoint_attestation(
         }
     endpoint_mode, host_tail, postprocessing = next(iter(signatures))
     authoritative = dict(matches[0])
+    from ..native_output_endpoint import bn6_candidate_selection
+    candidate_selection = bn6_candidate_selection(authoritative)
     authoritative_sha256 = _canonical_json_sha256(authoritative)
     return {
         "schema": "onnx-splitpoint/deepx-endpoint-semantic-attestation",
@@ -651,10 +653,11 @@ def recorded_deepx_full_endpoint_attestation(
         "host_tail_required": bool(host_tail),
         "postprocessing_required": bool(postprocessing),
         "source_endpoint_semantics": (
+            "fixed_topk_xyxy_score_class_candidates" if candidate_selection else
             "decoded_final_output" if endpoint_mode == "decoded"
             else endpoint_mode
         ),
-        "source_endpoint_has_integrated_nms": bool(endpoint_mode == "decoded"),
+        "source_endpoint_has_integrated_nms": bool(endpoint_mode == "decoded" and not candidate_selection),
         "authoritative_contract": authoritative,
         "authoritative_contract_sha256": authoritative_sha256,
         "sources": sources,

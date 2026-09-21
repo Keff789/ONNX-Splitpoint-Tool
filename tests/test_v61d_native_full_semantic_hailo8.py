@@ -122,12 +122,20 @@ def test_semantic_full_dump_uses_direct_native_companion(tmp_path: Path, monkeyp
 
 
 def test_hailo8_full_uses_direct_hailo_runtime_and_writes_dump(tmp_path: Path, monkeypatch) -> None:
+    _check_hailo_full_adapter(tmp_path, monkeypatch, "hailo8")
+
+
+def test_hailo10_full_original_throughput_reaches_reader(tmp_path: Path, monkeypatch) -> None:
+    _check_hailo_full_adapter(tmp_path, monkeypatch, "hailo10h")
+
+
+def _check_hailo_full_adapter(tmp_path, monkeypatch, arch):
     mod = _load_script("v61d_full_runner_hailo8", Path("scripts/native_full_baseline_eval_runner.py"))
     bs = tmp_path / "resnet50" / "benchmark_set"
     (bs / "b052").mkdir(parents=True)
     (bs / "b052" / "run_split_onnxruntime.py").write_text("# marker\n", encoding="utf-8")
     (bs / "benchmark_set.json").write_text(json.dumps({"cases": [{"case_id": "b052"}], "benchmark_task": "classification"}), encoding="utf-8")
-    hef = bs / "hailo" / "hailo8" / "full" / "compiled.hef"
+    hef = bs / "hailo" / arch / "full" / "compiled.hef"
     hef.parent.mkdir(parents=True)
     hef.write_bytes(b"hef")
     source = bs / "models" / "resnet50.onnx"
@@ -147,7 +155,7 @@ def test_hailo8_full_uses_direct_hailo_runtime_and_writes_dump(tmp_path: Path, m
         "schema": "onnx-splitpoint/hailo-hef-cache-key-v2",
         "model_sha256": source_sha,
         "activation_part1_sha256": "",
-        "hw_arch": "hailo8",
+        "hw_arch": arch,
         "hailo_sdk_version": "test-sdk",
         "optimization_level": 1,
         "calibration_identity": calibration_identity,
@@ -171,7 +179,7 @@ def test_hailo8_full_uses_direct_hailo_runtime_and_writes_dump(tmp_path: Path, m
         "compiler_onnx_filename": source.name,
         "hef_sha256": mod._sha256_file(hef),
         "hef_size_bytes": hef.stat().st_size,
-        "hw_arch": "hailo8",
+        "hw_arch": arch,
         "net_name": "resnet50",
         "hailo_sdk_version": "test-sdk",
         "calibration_identity": calibration_identity,
@@ -194,7 +202,7 @@ def test_hailo8_full_uses_direct_hailo_runtime_and_writes_dump(tmp_path: Path, m
     benchmark_payload.update({
         "model": source.relative_to(bs).as_posix(),
         "model_source": str(source),
-        "hailo": {"hefs": {"hailo8": {
+        "hailo": {"hefs": {arch: {
             "full": hef.relative_to(bs).as_posix(),
             "full_build": {
                 "ok": True,
@@ -224,7 +232,7 @@ def test_hailo8_full_uses_direct_hailo_runtime_and_writes_dump(tmp_path: Path, m
             "schema_version": 1,
             "model_id": "resnet50",
             "task": "classification",
-            "backend": "hailo8",
+            "backend": arch,
             "variant": "full",
             "contract_status": "pending_build_or_prepare",
             "artifact_binding_status": "pending_receipt_validation",
@@ -239,6 +247,7 @@ def test_hailo8_full_uses_direct_hailo_runtime_and_writes_dump(tmp_path: Path, m
     image.parent.mkdir(parents=True)
     image.write_bytes(b"fake-jpeg")
     captured = {}
+    throughput = json.loads((Path(__file__).parent / "fixtures/v283_r9a_nachabnahme" / (arch + "_throughput.json")).read_text())["throughput"]
 
     monkeypatch.setattr(mod, "_select_hailo_python", lambda arch: (sys.executable, {"selected": sys.executable, "probes": []}))
 
@@ -248,21 +257,15 @@ def test_hailo8_full_uses_direct_hailo_runtime_and_writes_dump(tmp_path: Path, m
         dump_dir = Path(captured["cmd"][captured["cmd"].index("--dump-dir") + 1])
         manifest = dump_dir / "native_full_outputs_manifest.json"
         _write_output_manifest(
-            manifest, image, model="resnet50", backend="native_full_hailo8",
-            setup_id="h8", comparison_backend="hailo8",
+            manifest, image, model="resnet50", backend="native_full_" + arch,
+            setup_id="h8", comparison_backend=arch,
         )
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps({
             "ok": True,
             "copy_outputs": True,
             "claim_copy_outputs_verified": True,
-            "throughput": {
-                "fps": 123.0,
-                "requested_frames": 100,
-                "completed_frames": 100,
-                "completed_work_units_status": "exact_runtime_counter",
-                "completed_work_units_source": "hailo_callback_completion_counter",
-            },
+            "throughput": throughput,
             "input_image": str(image), "input_image_sha256": "abc",
             "output_manifest": str(manifest),
             "input_manifest": str(dump_dir / "native_full_input_manifest.json"),
@@ -271,24 +274,33 @@ def test_hailo8_full_uses_direct_hailo_runtime_and_writes_dump(tmp_path: Path, m
 
     monkeypatch.setattr(mod, "_run", fake_run)
     ns = Namespace(
-        frames=100, warmup=10, inflight=8, timeout=60, duration_s=0.0,
+        frames=1000, warmup=100, inflight=8, timeout=60, duration_s=0.0,
         setup_id="h8", image_map_data={"resnet50": {"b052": str(image)}},
-        comparison_backend="hailo8", dump_outputs=True,
+        comparison_backend=arch, dump_outputs=True,
     )
-    row = mod._native_hailo_full(bs, "resnet50", "hailo8", ns)
+    row = mod._native_hailo_full(bs, "resnet50", arch, ns)
     assert row["ok"] is True
-    assert row["fps_makespan"] == 123.0
+    assert row["fps_makespan"] == throughput["fps"]
+    from onnx_splitpoint_tool.native_rate_endpoints import rate_endpoint_fields, report_rate_fields
+    aggregated = mod._aggregate_full_repetitions([row], requested=1)
+    fields = rate_endpoint_fields(aggregated)
+    # The measured endpoint is logits, without a timed classification Top-k.
+    assert fields["completed_task_fps"] is None
+    assert fields["host_output_fps"] == throughput["fps"]
+    assert fields["host_output_rate"]["measurement_times_s"] == [throughput["elapsed_s"]]
+    # The local nested raw report must not replace the adapter's series.
+    assert report_rate_fields(aggregated)["host_output_fps"] == throughput["fps"]
     assert row["semantic_dump_status"] == "ok"
     assert Path(row["output_dump_manifest"]).is_file()
     command = " ".join(captured["cmd"])
     assert "smoke_hailo10_full_from_benchmarkset.py" in command
-    assert "--hw-arch hailo8" in command
-    assert "--runtime-api vstreams" in command
+    assert f"--hw-arch {arch}" in command
+    assert ("--runtime-api vstreams" if arch == "hailo8" else "--runtime-api infer_model") in command
     assert "--dump-outputs" in captured["cmd"]
     assert "--model resnet50" in command
     assert "--setup-id h8" in command
-    assert "--comparison-backend hailo8" in command
-    assert "/model=resnet50/backend=native_full_hailo8/setup=h8/comparison=hailo8/" in row["output_dump_manifest"]
+    assert f"--comparison-backend {arch}" in command
+    assert f"/model=resnet50/backend=native_full_{arch}/setup=h8/comparison={arch}/" in row["output_dump_manifest"]
     assert "run_benchmark_suite_from_set.py" not in command
 
 

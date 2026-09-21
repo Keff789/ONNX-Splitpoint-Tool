@@ -43,6 +43,8 @@ from onnx_splitpoint_tool.cache_verify_policy import (
     validate_cache_verify_only_profile,
 )
 from onnx_splitpoint_tool.energy.config import energy_ab_cli_args
+from onnx_splitpoint_tool.energy.task_budget import campaign_budget_profile_args
+from onnx_splitpoint_tool.workflow.hardware_matrix import default_hardware_setups_file
 from onnx_splitpoint_tool.quality_service import _validate_candidate_execution_contract
 from onnx_splitpoint_tool.trt_quality_chain import (
     PRODUCER_SET_SCHEMA,
@@ -1206,7 +1208,8 @@ def _energy_contract_context(
 def _common_energy_args(
     cfg: Mapping[str, Any], *, run_dir: Path, duration_s: float, timeout_s: int,
 ) -> list[str]:
-    return [
+    return campaign_budget_profile_args(cfg, run_dir) + [
+        "--hardware-setups-file", str((cfg.get("_workflow_context") or {}).get("hardware_setups_file") or default_hardware_setups_file()),
         "--hailo8-ssh", _remote_value(cfg, "hailo8", "ssh"),
         "--hailo10-ssh", _remote_value(cfg, "hailo10h", "ssh"),
         "--deepx-ssh", _remote_value(cfg, "deepx", "ssh"),

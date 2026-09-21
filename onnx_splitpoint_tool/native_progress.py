@@ -145,6 +145,7 @@ def run_streaming(
     reader_thread.start()
     last_output=start; last_heartbeat=start; eof=False; timed_out=False; cancelled=False
     root_exit_seen: float | None = None
+    pipe_drain_incomplete = False
     try:
         while True:
             now=time.time()
@@ -174,7 +175,8 @@ def run_streaming(
                 else: print(msg,flush=True)
                 if journal: journal.emit('HEARTBEAT',label=label,elapsed_s=now-start,silence_s=now-last_output,pid=proc.pid)
                 last_heartbeat=now
-            if timeout is not None and now-start>float(timeout):
+            if (timeout is not None and now-start>float(timeout)
+                    and (proc.poll() is None or reader_thread.is_alive())):
                 timed_out=True
                 if proc.poll() is None or not eof:
                     terminate_group()
@@ -187,7 +189,15 @@ def run_streaming(
                 # A separately-sessioned descendant may inherit stdout after
                 # the direct parent has exited.  Never wait unboundedly for
                 # that orphan to close the pipe.
-                if now - root_exit_seen >= 0.25:
+                # EOF can already be queued behind many lines while a slow
+                # display/diagnostic callback drains them. That finite queue
+                # is not a surviving descendant and must remain lossless.
+                if reader_thread.is_alive() and now - root_exit_seen >= 0.25:
+                    pipe_drain_incomplete = True
+                    message = '[native-progress] pipe_drain_incomplete: inherited output pipe remained open'
+                    tail.append(message)
+                    if line_callback:
+                        line_callback(message)
                     terminate_group()
                     break
         observed_returncode = proc.poll()
@@ -216,6 +226,7 @@ def run_streaming(
     except Exception:
         pass
     if timed_out and rc==0: rc=124
+    if pipe_drain_incomplete: rc=70
     if cancelled: rc=130
     if timed_out: output += f'\nTimeoutExpired after {timeout}s'
     if cancelled: output += '\nCancelled by workflow request'

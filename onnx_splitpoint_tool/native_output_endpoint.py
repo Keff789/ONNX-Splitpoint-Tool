@@ -3,8 +3,9 @@
 Runtime values can establish that a tensor *looks like* decoded detections, but
 they cannot establish that non-maximum suppression was executed.  In
 particular, a decoded pre-NMS tensor can have the same ``[B, N, 6]`` layout as
-an integrated-NMS tensor.  A ``decoded_nms`` endpoint is therefore emitted only
-when both the values and an explicit producer/export declaration attest it.
+an integrated-NMS tensor. The historical ``decoded_nms`` stage token also
+supports graph-bound TopK candidates; their explicit selection evidence records
+that no NMS was performed. Shape alone never authorizes this contract.
 """
 from __future__ import annotations
 
@@ -32,6 +33,150 @@ _NMS_NAME_TOKENS = (
 _TOPK_NAME_TOKENS = (
     "topk", "top_k", "indices", "labels", "class_ids", "classid",
 )
+
+
+def inspect_bn6_candidate_graph(path: str | Path) -> dict[str, Any]:
+    """Recognize a fixed TopK XYXY/score/class export by its dataflow.
+
+    This is source inspection, never inference. Unrecognized graphs retain the
+    strict final-record contract. Names, BN6 shape and exporter metadata alone
+    cannot authorize candidate filtering.
+    """
+    import onnx
+    from onnx import helper, numpy_helper
+
+    path = Path(path)
+    model = onnx.load(str(path), load_external_data=False)
+    graph = model.graph
+    if len(graph.output) != 1:
+        return {}
+    shape = [int(d.dim_value) for d in graph.output[0].type.tensor_type.shape.dim]
+    if len(shape) != 3 or shape[0] != 1 or shape[1] <= 0 or shape[2] != 6:
+        return {}
+    producers = {v: n for n in graph.node for v in n.output}
+    constants = {v.name: numpy_helper.to_array(v) for v in graph.initializer}
+    for node in graph.node:
+        if node.op_type == "Constant":
+            for attr in node.attribute:
+                if attr.name == "value":
+                    constants[node.output[0]] = numpy_helper.to_array(attr.t)
+    def node(value, op):
+        n = producers[value]
+        if n.op_type != op:
+            raise ValueError("different graph operation")
+        return n
+    def attr(n, key, default=None):
+        return next((helper.get_attribute_value(a) for a in n.attribute if a.name == key), default)
+    def scalar(value):
+        a = constants[value]
+        if a.size != 1:
+            raise ValueError("non-scalar graph parameter")
+        return int(a.reshape(-1)[0])
+    try:
+        final = node(graph.output[0].name, "Concat")
+        if len(final.input) != 3 or attr(final, "axis") not in (-1, 2):
+            return {}
+        boxes = node(final.input[0], "GatherElements")
+        scores = node(final.input[1], "Unsqueeze")
+        cast = node(final.input[2], "Cast")
+        classes = node(cast.input[0], "Unsqueeze")
+        top = node(scores.input[0], "TopK")
+        mod = node(classes.input[0], "Mod")
+        if (mod.input[0] != top.output[1] or scores.input[0] != top.output[0]
+                or attr(mod, "fmod", 0) != 0 or attr(cast, "to") != onnx.TensorProto.FLOAT
+                or scalar(scores.input[1]) not in (-1, 2) or scalar(classes.input[1]) not in (-1, 2)):
+            return {}
+        nc, k = scalar(mod.input[1]), scalar(top.input[1])
+        if nc <= 0 or k != shape[1] or attr(top, "axis", -1) not in (-1, 1) or attr(top, "largest", 1) != 1:
+            return {}
+        flat_scores = node(top.input[0], "Flatten")
+        selected_scores = node(flat_scores.input[0], "GatherElements")
+        split = node(boxes.input[0], "Split")
+        if (list(constants[split.input[1]]) != [4, nc] or selected_scores.input[0] != split.output[1]
+                or boxes.input[0] != split.output[0] or attr(split, "axis") not in (-1, 2)
+                or attr(flat_scores, "axis", 1) != 1):
+            return {}
+        score_tile = node(selected_scores.input[1], "Tile")
+        first_indices = node(score_tile.input[0], "Unsqueeze")
+        first = node(first_indices.input[0], "TopK")
+        maximum = node(first.input[0], "ReduceMax")
+        if (maximum.input[0] != split.output[1] or first_indices.input[0] != first.output[1]
+                or scalar(first.input[1]) != k or attr(first, "largest", 1) != 1
+                or scalar(maximum.input[1]) not in (-1, 2) or attr(maximum, "keepdims", 1) != 0
+                or scalar(first_indices.input[1]) not in (-1, 2) or attr(first, "axis", -1) not in (-1, 1)
+                or list(constants[score_tile.input[1]]) != [1, 1, nc]):
+            return {}
+        box_tile = node(boxes.input[1], "Tile")
+        gather = node(box_tile.input[0], "Gather")
+        flat_indices = node(gather.input[0], "Flatten")
+        quotient = node(gather.input[1], "Div")
+        if (flat_indices.input[0] != first_indices.output[0] or attr(flat_indices, "axis", 1) != 2
+                or attr(gather, "axis", 0) != 0 or list(constants[box_tile.input[1]]) != [1, 1, 4]
+                or quotient.input[0] != top.output[1] or scalar(quotient.input[1]) != nc
+                or attr(boxes, "axis") != 1 or attr(selected_scores, "axis") != 1):
+            return {}
+        # Establish XYXY, not XYWH: anchor - distance and anchor + distance,
+        # concatenated before positive stride multiplication. Scores are sigmoid.
+        transpose = node(split.input[0], "Transpose")
+        decoded = node(transpose.input[0], "Concat")
+        scaled = node(decoded.input[0], "Mul")
+        corners = node(scaled.input[0], "Concat")
+        lower = node(corners.input[0], "Sub")
+        upper = node(corners.input[1], "Add")
+        node(decoded.input[1], "Sigmoid")
+        if (attr(transpose, "perm") != [0, 2, 1]
+                or len(decoded.input) != 2 or len(corners.input) != 2
+                or attr(decoded, "axis") != 1 or attr(corners, "axis") != 1
+                or not np.all(np.isfinite(constants[scaled.input[1]]))
+                or not np.all(constants[scaled.input[1]] > 0)):
+            return {}
+        if lower.input[0] != upper.input[0] and not np.array_equal(constants[lower.input[0]], constants[upper.input[0]]):
+            return {}
+        # Only this connected tail is authorized. There is no score threshold,
+        # NMS or geometry repair between decoded boxes and the graph output.
+        tail = []
+        pending = [graph.output[0].name]
+        seen = set()
+        while pending:
+            value = pending.pop()
+            if value in seen or value in constants or value == split.input[0]:
+                continue
+            seen.add(value)
+            n = producers[value]
+            if n.op_type not in {"Concat", "GatherElements", "Gather", "Tile", "Split", "ReduceMax", "TopK", "Flatten", "Unsqueeze", "Div", "Mod", "Cast"}:
+                return {}
+            if n.name not in tail:
+                tail.append(n.name)
+            pending.extend(n.input)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return {}
+    return {
+        "selection_semantics": "fixed_topk_xyxy_score_class_candidates",
+        "source_onnx_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "output_name": graph.output[0].name, "output_shape": shape,
+        "candidate_count": k, "class_count": nc,
+        "confidence_selection": "consumer_threshold", "host_nms_required": False,
+        "graph_tail_nodes": sorted(tail),
+        "exporter": model.producer_name, "exporter_version": model.producer_version,
+    }
+
+
+def bn6_candidate_selection(declaration: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the graph evidence inside an already bound source declaration."""
+    endpoint = declaration.get("source_onnx_detection_endpoint") or {}
+    proof = endpoint.get("candidate_selection") or {}
+    if not proof:
+        return {}
+    shape = proof.get("output_shape") or []
+    if (proof.get("selection_semantics") != "fixed_topk_xyxy_score_class_candidates"
+            or not _is_sha256(proof.get("source_onnx_sha256"))
+            or shape != [1, proof.get("candidate_count"), 6]
+            or type(proof.get("candidate_count")) is not int or proof["candidate_count"] <= 0
+            or type(proof.get("class_count")) is not int or proof["class_count"] <= 0
+            or proof.get("confidence_selection") != "consumer_threshold"
+            or proof.get("host_nms_required") is not False or not proof.get("graph_tail_nodes")):
+        raise ValueError("bn6_candidate_graph_contract_invalid")
+    return dict(proof)
 
 
 def _canonical_sha256(payload: Mapping[str, Any]) -> str:
@@ -438,6 +583,7 @@ _AUTHORITATIVE_IDENTITY_FIELDS = (
     "artifact_binding_sha256",
     "source_contract_sha256",
     "source_contracts_sha256",
+    "source_onnx_detection_endpoint",
 )
 
 
@@ -572,10 +718,11 @@ def _comparison_tensor_signature(
     return {"tensor_count": int(signature.get("tensor_count") or 0), "tensors": tensors}
 
 
-def _endpoint_hash(
+def output_endpoint_identity(
     *, task: str, stage: str, output_format: str,
     signature: Mapping[str, Any], declaration: Mapping[str, Any] | None = None,
-) -> str:
+) -> dict[str, Any]:
+    """Project the existing v3 hash payload for runtime and quality consumers."""
     declaration = dict(declaration or {})
     semantic = {
         key: declaration.get(key)
@@ -583,10 +730,11 @@ def _endpoint_hash(
             "coordinate_format", "coordinate_space", "decoder_id",
             "decoder_sha256", "nms_implementation", "class_aware",
             "iou_threshold", "score_threshold", "max_detections",
+            "source_onnx_detection_endpoint",
         )
         if declaration.get(key) not in (None, "")
     }
-    return _canonical_sha256({
+    return {
         "schema": "onnx-splitpoint/output-endpoint-contract",
         "schema_version": 3,
         "task": str(task),
@@ -596,7 +744,17 @@ def _endpoint_hash(
             signature, task=task, stage=stage,
         ),
         "semantic": semantic,
-    })
+    }
+
+
+def _endpoint_hash(
+    *, task: str, stage: str, output_format: str,
+    signature: Mapping[str, Any], declaration: Mapping[str, Any] | None = None,
+) -> str:
+    return _canonical_sha256(output_endpoint_identity(
+        task=task, stage=stage, output_format=output_format,
+        signature=signature, declaration=declaration,
+    ))
 
 
 def _failed_attestation(reason: str, **evidence: Any) -> dict[str, Any]:
@@ -661,11 +819,13 @@ def attest_decoded_nms(
     outputs: Mapping[str, Any],
     declared_contract: Mapping[str, Any] | str | None = None,
 ) -> dict[str, Any]:
-    """Attest decoded NMS only from declaration *and* runtime values.
+    """Attest a decoded endpoint from declaration and runtime values.
 
     A plausible ``xyxy, score, class`` tensor without an explicit NMS
     declaration is reported as ``decoded_pre_nms_or_unknown`` and cannot open a
     performance-comparison gate.
+    A graph-bound end-to-end TopK source retains the legacy stage token, but
+    explicitly requires consumer score selection and has no integrated NMS.
     """
     signature = _tensor_signature(outputs)
     if not isinstance(outputs, Mapping) or len(outputs) != 1:
@@ -729,11 +889,22 @@ def attest_decoded_nms(
         "integer_epsilon": _INTEGER_EPSILON,
     }
     failures = []
+    declared, declaration, declaration_source = _declared_nms_contract(outputs, declared_contract)
+    try:
+        selection = bn6_candidate_selection(declaration) if declared else {}
+    except ValueError as exc:
+        return _failed_attestation(str(exc), **evidence)
+    if selection:
+        if shape != selection["output_shape"]:
+            return _failed_attestation("candidate_graph_output_shape_mismatch", **evidence)
+        if not bool(np.all(score_valid) and np.all(class_valid) and np.all(class_id < selection["class_count"])):
+            return _failed_attestation("candidate_score_or_class_invalid", **evidence)
+        evidence.update(candidate_selection=selection, raw_invalid_geometry_count=int(np.sum(~xyxy_valid)))
     if score_fraction < _FRACTION_THRESHOLD:
         failures.append("score_column_not_probability_like")
     if class_fraction < _FRACTION_THRESHOLD:
         failures.append("class_column_not_integer_nonnegative")
-    if xyxy_fraction < _FRACTION_THRESHOLD:
+    if not selection and xyxy_fraction < _FRACTION_THRESHOLD:
         failures.append("coordinates_not_ordered_xyxy")
     if failures:
         return _failed_attestation(";".join(failures), **evidence)
@@ -759,7 +930,8 @@ def attest_decoded_nms(
         "stage": "decoded_nms",
         "attested": True,
         "status": "passed",
-        "reason": "explicit_nms_declaration_and_runtime_values_verified",
+        "reason": ("graph_bound_topk_candidates_require_consumer_selection"
+                   if selection else "explicit_nms_declaration_and_runtime_values_verified"),
         "contract_source": DECODED_NMS_ATTESTATION_SOURCE,
         "values_decoded_xyxy_score_class": True,
         "declaration_attested": True,

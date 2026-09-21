@@ -1,0 +1,292 @@
+[
+  {
+    "provenance": {
+      "path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260915_211333/native_producers/hailo8/analysis_tables/native_full_baseline_eval.json",
+      "sha256": "6c9fb5794010be870275dbb5828f2f68f22d81e4fc2bad4447532d4187e3459c"
+    },
+    "row": {
+      "backend": "native_full_hailo8",
+      "model": "yolo11l",
+      "case": "full",
+      "completed_frames": 1000,
+      "completed_work_units": 1000,
+      "completed_work_units_status": "exact_runtime_counter",
+      "e2e_scope": "full_task_pipeline",
+      "comparison_endpoint_stratum": "decoded_nms",
+      "measurement_concurrency": 1,
+      "postprocess_completion_verified": true,
+      "completed_task_endpoint_contract_hash": "1f8320104fc7894ea828929eb2f2b63af3f8c880a6d9b61ff2c6329de7b3ff3b",
+      "completed_task_endpoint_attested": true,
+      "ok": true,
+      "status": "ok",
+      "fps_makespan": 11.338016175470294,
+      "task": "detection",
+      "output_format": "raw_detection_tensors",
+      "contract_family": "raw_head",
+      "setup_id": "orin_nx_hailo8_01",
+      "comparison_backend": "hailo8",
+      "precision": "uint8_cast_fp16",
+      "fps_median": 11.338016175470294,
+      "fps_ci95_low": 11.333535338511101,
+      "fps_ci95_high": 11.340895755276781,
+      "repetition_count_valid": 3,
+      "repetition_aggregation": "median_with_deterministic_percentile_bootstrap_ci95",
+      "fps_repetition_samples": [
+        11.338016175470294,
+        11.333535338511101,
+        11.340895755276781
+      ],
+      "full_command_contract_sha256": "8a6435458f08a067001432febedb1051bd7c0c32cf8495d95dfa7c5266023d1a",
+      "repetition_records": [
+        {
+          "ok": true,
+          "status": "ok",
+          "fps_makespan": 11.338016175470294,
+          "completed_frames": 1000,
+          "completed_work_units": 1000,
+          "completed_work_units_status": "exact_runtime_counter",
+          "runtime_instance_id": "fresh_process:3e07b87f7c634d9af67c21cd725544785beb042dc91a8601d717b94bb9612a1a",
+          "workload_contract_sha256": "8a6435458f08a067001432febedb1051bd7c0c32cf8495d95dfa7c5266023d1a"
+        },
+        {
+          "ok": true,
+          "status": "ok",
+          "fps_makespan": 11.333535338511101,
+          "completed_frames": 1000,
+          "completed_work_units": 1000,
+          "completed_work_units_status": "exact_runtime_counter",
+          "runtime_instance_id": "fresh_process:041cfd7860ed2c3d5b5c81789684048bc01cb7e69f8bf4e77e16518c4aa918c9",
+          "workload_contract_sha256": "8a6435458f08a067001432febedb1051bd7c0c32cf8495d95dfa7c5266023d1a"
+        },
+        {
+          "ok": true,
+          "status": "ok",
+          "fps_makespan": 11.340895755276781,
+          "completed_frames": 1000,
+          "completed_work_units": 1000,
+          "completed_work_units_status": "exact_runtime_counter",
+          "runtime_instance_id": "fresh_process:422f8adee180f6d222c9b17da25f0dd53484d743abedccf0293a1291641cd1ce",
+          "workload_contract_sha256": "8a6435458f08a067001432febedb1051bd7c0c32cf8495d95dfa7c5266023d1a"
+        }
+      ]
+    }
+  },
+  {
+    "provenance": {
+      "path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260915_211333/native_producers/hailo10h/analysis_tables/native_full_baseline_eval.json",
+      "sha256": "83d51349e46e5bd8e7dced0fa0050efc19297b2f6a22695ef7f62b182ae3465b"
+    },
+    "row": {
+      "backend": "native_full_hailo10h",
+      "model": "yolo11l",
+      "case": "full",
+      "completed_frames": 1000,
+      "completed_work_units": 1000,
+      "completed_work_units_status": "exact_runtime_counter",
+      "e2e_scope": "full_task_pipeline",
+      "comparison_endpoint_stratum": "decoded_nms",
+      "measurement_concurrency": 1,
+      "postprocess_completion_verified": true,
+      "completed_task_endpoint_contract_hash": "1f8320104fc7894ea828929eb2f2b63af3f8c880a6d9b61ff2c6329de7b3ff3b",
+      "completed_task_endpoint_attested": true,
+      "ok": true,
+      "status": "ok",
+      "fps_makespan": 10.660683517296818,
+      "task": "detection",
+      "output_format": "raw_detection_tensors",
+      "contract_family": "raw_head",
+      "setup_id": "orin_nx_hailo10_01",
+      "comparison_backend": "hailo10h",
+      "precision": "uint8_cast_fp16",
+      "fps_median": 10.660683517296818,
+      "fps_ci95_low": 10.628902047310435,
+      "fps_ci95_high": 10.672962225171524,
+      "repetition_count_valid": 3,
+      "repetition_aggregation": "median_with_deterministic_percentile_bootstrap_ci95",
+      "fps_repetition_samples": [
+        10.660683517296818,
+        10.672962225171524,
+        10.628902047310435
+      ],
+      "full_command_contract_sha256": "7984f5bb439fd09da41cb986aecb2f9d5ecbeb1b7ac5cc029ea9134707fb8305",
+      "repetition_records": [
+        {
+          "ok": true,
+          "status": "ok",
+          "fps_makespan": 10.660683517296818,
+          "completed_frames": 1000,
+          "completed_work_units": 1000,
+          "completed_work_units_status": "exact_runtime_counter",
+          "runtime_instance_id": "fresh_process:49789b620c319e3ebb0f987979227becb758ed18cd68d550595140612aaeb31a",
+          "workload_contract_sha256": "7984f5bb439fd09da41cb986aecb2f9d5ecbeb1b7ac5cc029ea9134707fb8305"
+        },
+        {
+          "ok": true,
+          "status": "ok",
+          "fps_makespan": 10.672962225171524,
+          "completed_frames": 1000,
+          "completed_work_units": 1000,
+          "completed_work_units_status": "exact_runtime_counter",
+          "runtime_instance_id": "fresh_process:238c5de36596966b772c6af39ece60d182edf2f384fa50ed72d7269c8af905e1",
+          "workload_contract_sha256": "7984f5bb439fd09da41cb986aecb2f9d5ecbeb1b7ac5cc029ea9134707fb8305"
+        },
+        {
+          "ok": true,
+          "status": "ok",
+          "fps_makespan": 10.628902047310435,
+          "completed_frames": 1000,
+          "completed_work_units": 1000,
+          "completed_work_units_status": "exact_runtime_counter",
+          "runtime_instance_id": "fresh_process:c7d7ccd504582ec11d304809d418d13aaeb4234dd3bc2c125bbc514985ab8bf4",
+          "workload_contract_sha256": "7984f5bb439fd09da41cb986aecb2f9d5ecbeb1b7ac5cc029ea9134707fb8305"
+        }
+      ]
+    }
+  },
+  {
+    "provenance": {
+      "path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260915_211333/native_producers/deepx/analysis_tables/native_full_baseline_eval.json",
+      "sha256": "9eaff75b192cc73639d2e69d3c21004bdebe9e3ef7955d281bc30e7cceb09ec9"
+    },
+    "row": {
+      "backend": "native_full_deepx",
+      "model": "yolo11l",
+      "case": "full",
+      "completed_frames": 1000,
+      "completed_work_units": 1000,
+      "completed_work_units_status": "exact_runtime_counter",
+      "ok": true,
+      "status": "ok",
+      "fps_makespan": 20.625386725576767,
+      "fps_source": "dx_engine_prepared_feed_outer_makespan",
+      "e2e_scope": "full_task_pipeline",
+      "comparison_endpoint_stratum": "decoded_nms",
+      "measurement_concurrency": 1,
+      "postprocess_completion_verified": true,
+      "completed_task_endpoint_contract_hash": "9b6dda3173ecd5bff33ecf447f790b0ff3462c196452632e9b6efcea61c2b380",
+      "completed_task_endpoint_attested": true,
+      "task": "detection",
+      "output_format": "ultralytics_decoded",
+      "contract_family": "decoded_pre_nms",
+      "setup_id": "orin_nx_deepx_m1_01",
+      "comparison_backend": "deepx",
+      "precision": "uint8_cast_fp16",
+      "fps_median": 20.625386725576767,
+      "fps_ci95_low": 20.404827644829272,
+      "fps_ci95_high": 20.64331658654159,
+      "repetition_count_valid": 3,
+      "repetition_aggregation": "median_with_deterministic_percentile_bootstrap_ci95",
+      "fps_repetition_samples": [
+        20.404827644829272,
+        20.625386725576767,
+        20.64331658654159
+      ],
+      "full_command_contract_sha256": "7a20939bc0c785af338bdf904650f31492e4b71cc0d8855d31a896b31e236b4d",
+      "repetition_records": [
+        {
+          "ok": true,
+          "status": "ok",
+          "fps_makespan": 20.404827644829272,
+          "completed_frames": 1000,
+          "completed_work_units": 1000,
+          "completed_work_units_status": "exact_runtime_counter",
+          "runtime_instance_id": "fresh_process:9edc45204464a77e55a1a3372b5a00767e8b0d2536e59bf6daa697387e1caf4a",
+          "workload_contract_sha256": "7a20939bc0c785af338bdf904650f31492e4b71cc0d8855d31a896b31e236b4d"
+        },
+        {
+          "ok": true,
+          "status": "ok",
+          "fps_makespan": 20.625386725576767,
+          "completed_frames": 1000,
+          "completed_work_units": 1000,
+          "completed_work_units_status": "exact_runtime_counter",
+          "runtime_instance_id": "fresh_process:8a850dbe641be33c5d029e0da69c8939be3e49f41ff3b70f6a8cbdb7e9b62159",
+          "workload_contract_sha256": "7a20939bc0c785af338bdf904650f31492e4b71cc0d8855d31a896b31e236b4d"
+        },
+        {
+          "ok": true,
+          "status": "ok",
+          "fps_makespan": 20.64331658654159,
+          "completed_frames": 1000,
+          "completed_work_units": 1000,
+          "completed_work_units_status": "exact_runtime_counter",
+          "runtime_instance_id": "fresh_process:1eecb53da5f90686479785c4cf01aa8a78f72646549e4debb893502670212187",
+          "workload_contract_sha256": "7a20939bc0c785af338bdf904650f31492e4b71cc0d8855d31a896b31e236b4d"
+        }
+      ]
+    }
+  },
+  {
+    "provenance": {
+      "path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260915_211333/native_producers/hailo8/analysis_tables/native_full_baseline_eval.json",
+      "sha256": "6c9fb5794010be870275dbb5828f2f68f22d81e4fc2bad4447532d4187e3459c"
+    },
+    "row": {
+      "backend": "native_full_tensorrt",
+      "model": "yolo11l",
+      "setup_id": "orin_nx_hailo8_01",
+      "case": "full",
+      "completed_work_units": 1000,
+      "completed_work_units_status": "exact_runtime_counter",
+      "ok": true,
+      "status": "ok",
+      "fps_makespan": 36.95408692767348,
+      "fps_source": "native_trt_full_completed_hotloop",
+      "task": "detection",
+      "output_format": "ultralytics_decoded",
+      "contract_family": "decoded_pre_nms",
+      "comparison_endpoint_stratum": "decoded_nms",
+      "measurement_concurrency": 1,
+      "completed_frames": 1000,
+      "e2e_scope": "full_task_pipeline",
+      "postprocess_completion_verified": true,
+      "completed_task_endpoint_contract_hash": "937ad9faff8ac0ada689a9a28d3b726db15cca6f296ff69e54a7efae35e18c24",
+      "completed_task_endpoint_attested": true,
+      "comparison_backend": "hailo8",
+      "precision": "uint8_cast_fp16",
+      "fps_median": 36.95408692767348,
+      "fps_ci95_low": 36.69797972943646,
+      "fps_ci95_high": 37.09528983699924,
+      "repetition_count_valid": 3,
+      "repetition_aggregation": "median_with_deterministic_percentile_bootstrap_ci95",
+      "fps_repetition_samples": [
+        36.95408692767348,
+        37.09528983699924,
+        36.69797972943646
+      ],
+      "full_command_contract_sha256": "8bd07d85453f4378c303ad9ffca6dcb4f7396b768dba7b747aa94d690b36e939",
+      "repetition_records": [
+        {
+          "ok": true,
+          "status": "ok",
+          "fps_makespan": 36.95408692767348,
+          "completed_frames": 1000,
+          "completed_work_units": 1000,
+          "completed_work_units_status": "exact_runtime_counter",
+          "runtime_instance_id": "fresh_process:a3c98e8ee2af10244e31077492b33f918bf7e7ba60ef7eb62675dd53dfea9d04",
+          "workload_contract_sha256": "8bd07d85453f4378c303ad9ffca6dcb4f7396b768dba7b747aa94d690b36e939"
+        },
+        {
+          "ok": true,
+          "status": "ok",
+          "fps_makespan": 37.09528983699924,
+          "completed_frames": 1000,
+          "completed_work_units": 1000,
+          "completed_work_units_status": "exact_runtime_counter",
+          "runtime_instance_id": "fresh_process:63b4f0e1e85631753629a448cfe2f33649f69c3cc2d760d7f201379d1f922f9a",
+          "workload_contract_sha256": "8bd07d85453f4378c303ad9ffca6dcb4f7396b768dba7b747aa94d690b36e939"
+        },
+        {
+          "ok": true,
+          "status": "ok",
+          "fps_makespan": 36.69797972943646,
+          "completed_frames": 1000,
+          "completed_work_units": 1000,
+          "completed_work_units_status": "exact_runtime_counter",
+          "runtime_instance_id": "fresh_process:2fbc5a19af7dddb4b65d8f5bd1e63a8d1e400cd636283e7210242594cc67f934",
+          "workload_contract_sha256": "8bd07d85453f4378c303ad9ffca6dcb4f7396b768dba7b747aa94d690b36e939"
+        }
+      ]
+    }
+  }
+]

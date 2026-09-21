@@ -76,6 +76,9 @@ source files:
 
 Do not delete, normalize or recreate these unless the task explicitly requires it.
 
+Create new Codex, pytest, snapshot and report outputs outside the source tree
+checked by the source-integrity verifier.
+
 ## Build and cache policy
 
 Force rebuild is OFF.
@@ -251,3 +254,7 @@ At the end of an implementation task report:
 9. recommended next action.
 
 Never claim a hardware PASS when only software tests were run.
+
+## R8 integration tracking
+
+Update `docs/ARBEITSSTAND.md` after each work package. Prioritize the normal GUI, collector protection, mode budgets and readable status. Record software and real normal-GUI acceptance separately; quality research remains deferred.

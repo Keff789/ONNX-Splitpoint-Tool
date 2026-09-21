@@ -6902,6 +6902,7 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
                 "after the visible summary was generated. The summary has been refreshed; review it "
                 "and press Start again."
             )
+        panel_evaluation_workflow.profile_energy_start_binding(payload)
         remote = dict(
             payload.get("remote_execution") or payload.get("remote") or {}
         )
@@ -7143,6 +7144,39 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         except Exception as exc:
             lines.append("")
             lines.append(f"Result dashboard: could not read {dashboard_path}: {type(exc).__name__}: {exc}")
+
+        if run_dir:
+            try:
+                from ..native_performance_reporting import collect_native_performance_matrix
+                from ..native_rate_endpoints import format_rate_endpoints
+                native_rates = collect_native_performance_matrix(run_dir)
+                lines.extend(["", "Native-Durchsatz (getrennte Messendpunkte):"])
+                for row in native_rates.get("observations", []):
+                    lines.append(f"  - {row.get('model_id')}/{row.get('case_id')}/{row.get('backend')}: " + format_rate_endpoints(row))
+            except Exception as exc:
+                lines.append(f"Native-Durchsatz unavailable: {type(exc).__name__}: {exc}")
+
+        if run_dir:
+            try:
+                from ..accuracy_reporting import accuracy_label
+                quality_file = Path(run_dir) / "reports/scientific/central_quality_results.json"
+                if quality_file.is_file():
+                    quality_rows = json.loads(quality_file.read_text(encoding="utf-8"))
+                    lines.extend(["", "Accuracy / Unsicherheit (CPU/ONNX-Referenz, gleiche Bilder):"])
+                    for quality_row in quality_rows:
+                        a = quality_row.get("accuracy_assessment")
+                        if not a:
+                            lines.append(f"  - {quality_row.get('model_id')}: Legacy {quality_row.get('task_quality_decision', 'unavailable')}")
+                            continue
+                        loss = a.get("relative_loss")
+                        loss_text = f"{100*loss:.2f}% relativ" if loss is not None else "relativ nicht definiert"
+                        lines.append(f"  - {quality_row.get('model_id')}/{quality_row.get('backend')}/{quality_row.get('case_id')}: "
+                                     f"{accuracy_label(a)}; {loss_text}; {a.get('absolute_loss_pp'):.3f} Punkte; "
+                                     f"95%-CI={a.get('relative_loss_ci')}; Technik={quality_row.get('technical_status')}")
+                        if quality_row.get("accuracy_warnings"):
+                            lines.append("    Warnung: " + ", ".join(quality_row["accuracy_warnings"]))
+            except Exception as exc:
+                lines.append(f"Accuracyreport nicht lesbar: {type(exc).__name__}: {exc}")
 
         suite_lines = []
         try:

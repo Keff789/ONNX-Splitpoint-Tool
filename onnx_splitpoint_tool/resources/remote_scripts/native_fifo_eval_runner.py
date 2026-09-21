@@ -248,6 +248,7 @@ def _extract_rows(
             'repetition_count_valid': res.get('repetition_count_valid', res.get('repetitions_completed')),
             'repetition_status': res.get('repetition_status'),
             'repetition_aggregation': res.get('repetition_aggregation'),
+            'request_latency': res.get('request_latency'),
             'repetition_records': res.get('repetition_records', res.get('repetition_evidence', [])),
             'repetition_evidence': res.get('repetition_evidence', res.get('repetition_records', [])),
             'paper_fps': r.get('paper_fps') if r.get('paper_fps') is not None else res.get('paper_equivalent_fps'),

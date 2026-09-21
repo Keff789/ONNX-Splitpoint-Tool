@@ -2818,6 +2818,8 @@ class BenchmarkGenerationService:
                 )
         if resume_generation and isinstance(resume_state_hint, Mapping) and resume_state_hint.get('created_at'):
             runtime.generation_state['created_at'] = resume_state_hint.get('created_at')
+            if isinstance(resume_state_hint.get('backend_backfill'), Mapping):
+                runtime.generation_state['backend_backfill'] = dict(resume_state_hint['backend_backfill'])
         if resume_generation and isinstance(resume_state_hint, Mapping):
             strict_feasibility_resume = bool(
                 resume_state_hint.get("_strict_hailo_feasibility_resume")
@@ -4505,6 +4507,9 @@ class BenchmarkGenerationExecutionConfig:
     hailo_salvage_neighbor_radius: int = 48
     evaluation_profile_meta: Optional[Mapping[str, Any]] = None
     require_complete_hailo_matrix_per_case: bool = False
+    backend_backfill_policy: Optional[Mapping[str, Any]] = None
+    hailo_metadata_targets: Sequence[Mapping[str, Any]] = field(default_factory=list)
+    hailo_metadata_store_root: str = ''
     should_cancel: Optional[Callable[[], bool]] = None
 
 
@@ -5654,6 +5659,7 @@ class BenchmarkGenerationExecutionService:
     def execute_case_build_loop(self, cfg: BenchmarkGenerationExecutionConfig, cb: BenchmarkGenerationExecutionCallbacks) -> List[int]:
         from .. import api as asc
 
+        output_metadata_observations: Dict[Any, Any] = {}
         runtime = cfg.runtime
         cases = runtime.cases
         errors = runtime.errors
@@ -5774,6 +5780,36 @@ class BenchmarkGenerationExecutionService:
                 "unbudgeted recipe retries disabled"
             )
 
+        backfill = None
+        from ..backend_backfill import BackendBackfill, selection_contracts, backend_key
+        contracts = selection_contracts(cfg.bench_plan_runs, cfg.hef_targets) if cfg.backend_backfill_policy else []
+        if cfg.backend_backfill_policy and not contracts:
+            # Full-only/CPU reference plans have no accelerator split quota.
+            # An enabled default must not suppress their normal case container.
+            cfg.backend_backfill_policy = None
+        if cfg.backend_backfill_policy:
+            state = runtime.generation_state.setdefault('backend_backfill', {})
+            backfill = BackendBackfill(state=state, policy=cfg.backend_backfill_policy,
+                pool=list(cfg.candidate_search_pool), initial=list(cfg.ranked_candidates),
+                quota=int(cfg.target_cases), contracts=contracts,
+                persist=lambda: cb.persist_state(status='running'))
+            committed_cases = {str(c.get('case_dir') or c.get('folder')) for c in runtime.cases}
+            if any(case not in committed_cases for c in state['contracts'] for case in c['selected_case_ids']):
+                raise RuntimeError('backend_backfill_resume_incomplete_case_commit')
+            if cfg.hailo_build_hef_fn is not None:
+                cfg.hailo_build_hef_fn = backfill.bind_builder(cfg.hailo_build_hef_fn)
+        original_hef_targets = list(cfg.hef_targets)
+        def _backfill_infrastructure_failure(boundary, reason):
+            if backfill:
+                for contract in backfill.active():
+                    contract['status'] = 'infrastructure_blocked'
+                runtime.candidate_search_stop = {'reason': 'infrastructure_blocked', 'detail': reason,
+                    'boundary': boundary, 'fallback_allowed': False, 'stop_workflow': True}
+                backfill.finish()
+                return True
+            return False
+
+
         semantic_cache: Dict[int, Any] = {}
         for row in list(cfg.analysis_candidates or []):
             try:
@@ -5868,7 +5904,7 @@ class BenchmarkGenerationExecutionService:
 
         for raw_boundary in list(cfg.candidate_search_pool):
             _raise_if_cancelled("candidate loop")
-            if made >= int(cfg.target_cases):
+            if (not backfill and made >= int(cfg.target_cases)) or (backfill and not backfill.active()):
                 break
             b = int(raw_boundary)
 
@@ -5877,12 +5913,18 @@ class BenchmarkGenerationExecutionService:
                 qput(("prog", made, f"b{b} (resume-skip)"))
                 continue
 
-            if int(cfg.gap) > 0 and any(abs(b - bb) < int(cfg.gap) for bb in chosen):
+            if not backfill and int(cfg.gap) > 0 and any(abs(b - bb) < int(cfg.gap) for bb in chosen):
                 log(f"b{b}: skip (min_gap)")
                 continue
 
+            active_backfill = backfill.begin(b, min_gap=int(cfg.gap)) if backfill else []
+            if backfill:
+                if not active_backfill:
+                    continue
+                cfg.hef_targets = [target for target in original_hef_targets
+                    if any(c['backend'] == backend_key(target) for c in active_backfill)]
             cluster_skip = None
-            if not feasibility_enabled:
+            if not feasibility_enabled and not backfill:
                 cluster_skip = should_skip_from_failure_cluster(
                     b,
                     hailo_failure_records,
@@ -5931,12 +5973,16 @@ class BenchmarkGenerationExecutionService:
             try:
                 cut_tensors = asc.cut_tensors_for_boundary(cfg.order, cfg.nodes, b)
             except Exception as exc:
+                if _backfill_infrastructure_failure(b, f"cut tensor error: {exc}"):
+                    return chosen
                 errors.append(f"b{b}: cut tensor error: {exc}")
                 log(f"b{b}: cut tensor error: {exc}")
                 qput(("prog", made, f"b{b} (skip)"))
                 continue
 
             if not cut_tensors:
+                if _backfill_infrastructure_failure(b, "no cut tensors"):
+                    return chosen
                 errors.append(f"b{b}: no cut tensors")
                 log(f"b{b}: no cut tensors")
                 qput(("prog", made, f"b{b} (skip)"))
@@ -5965,6 +6011,10 @@ class BenchmarkGenerationExecutionService:
                         f"({part2_input_names}); policy requires exactly 1."
                     )
                 if len(part2_input_names) != 1:
+                    if backfill:
+                        for contract in active_backfill:
+                            contract['considered'].remove(b)
+                        backfill.persist()
                     log(f"b{b}: skip (Part-2 input count policy) - {detail}")
                     record = build_benchmark_case_rejection(
                         boundary=int(b),
@@ -5983,7 +6033,7 @@ class BenchmarkGenerationExecutionService:
                     qput(("prog", made, f"b{b} (skip: Part-2 inputs != 1)"))
                     continue
 
-            static_part1_skip = self._yolo26_part1_static_skip_reason(cfg, cut_tensors)
+            static_part1_skip = "" if backfill else self._yolo26_part1_static_skip_reason(cfg, cut_tensors)
             if static_part1_skip:
                 log(f"b{b}: skip (YOLO26 static Hailo Part1 guard) - {static_part1_skip}")
                 discarded_cases.append(
@@ -6154,6 +6204,8 @@ class BenchmarkGenerationExecutionService:
                     p2_host_tail_path = os.path.join(case_dir, f"{cfg.base}_part2_host_tail_b{b}.onnx")
                     asc.save_model(p2_host_tail_model, p2_host_tail_path)
             except Exception as exc:
+                if _backfill_infrastructure_failure(b, f"split failed: {type(exc).__name__}: {exc}"):
+                    return chosen
                 errors.append(f"b{b}: split failed: {type(exc).__name__}: {exc}")
                 log(f"b{b}: split failed: {type(exc).__name__}: {exc}")
                 qput(("prog", made, f"b{b} (split failed)"))
@@ -6424,6 +6476,8 @@ class BenchmarkGenerationExecutionService:
                             timeout_override_s: Optional[float] = None,
                         ):
                             _raise_if_cancelled(f"before Hailo HEF build b{b}")
+                            if backfill:
+                                allow_retries = False
                             hw_arch = str(hw_arch).strip()
                             if not hw_arch:
                                 return None
@@ -6449,7 +6503,7 @@ class BenchmarkGenerationExecutionService:
                                 )
                             )
                             allow_retries_effective = (
-                                not getattr(cfg, "defer_hailo_builds", False)
+                                not backfill and not getattr(cfg, "defer_hailo_builds", False)
                                 and (True if allow_retries is None else bool(allow_retries))
                             )
                             timeout_effective = max(1, int(cfg.hef_timeout_s))
@@ -6499,7 +6553,7 @@ class BenchmarkGenerationExecutionService:
                                 if suite_tgt.get('full_error'):
                                     tgt_out['full_error'] = suite_tgt.get('full_error')
 
-                            if cfg.hef_part1:
+                            if cfg.hef_part1 and (not backfill or any(c['backend'] == backend_key(hw_arch) and c['stage'] == 'part1' for c in active_backfill)):
                                 out_p1 = os.path.join(case_dir, 'hailo', hw_arch, 'part1')
                                 os.makedirs(out_p1, exist_ok=True)
                                 p1_build_path = p1_hailo_accel_path or p1_path
@@ -6724,7 +6778,7 @@ class BenchmarkGenerationExecutionService:
                                         )
                                 target_diagnostics.append((f"benchmark b{b} part1 @ {hw_arch}", r1))
 
-                            if cfg.hef_part2 and not bool(part1_only):
+                            if cfg.hef_part2 and not bool(part1_only) and (not backfill or any(c['backend'] == backend_key(hw_arch) and c['stage'] == 'part2' for c in active_backfill)):
                                 out_p2 = os.path.join(case_dir, 'hailo', hw_arch, 'part2')
                                 os.makedirs(out_p2, exist_ok=True)
                                 if part2_output_strategy != 'original' or effective_part2_outputs or part2_output_contract:
@@ -7041,6 +7095,11 @@ class BenchmarkGenerationExecutionService:
                                 )
                                 or {}
                             )
+                        elif backfill:
+                            # Budget reservation order is the declared target
+                            # order, independent of scheduler/thread timing.
+                            target_outcomes = [_v60s_build_hailo_target_3797(target, str(cfg.hef_backend or ''))
+                                               for target in physical_hef_targets]
                         else:
                             target_outcomes = _run_hailo_target_builds_v60s(
                                 physical_hef_targets,
@@ -7187,6 +7246,8 @@ class BenchmarkGenerationExecutionService:
                         'missing_required_artifacts'
                     ] = missing_records
 
+            if backfill:
+                case_first_rejection = None
             if getattr(cfg, "defer_hailo_builds", False):
                 # A cache miss is a pending build, never permission to choose a
                 # different scientific boundary before the campaign preflight.
@@ -7264,7 +7325,7 @@ class BenchmarkGenerationExecutionService:
             # producer is ORT CPU; users may set
             # ONNX_SPLITPOINT_ACTIVATION_PROXY_BACKEND=cuda_ort or
             # tensorrt_ort on the build host for a faster/closer proxy.
-            if _benchmark_plan_has_deepx_stage2(cfg.bench_plan_runs):
+            if _benchmark_plan_has_deepx_stage2(cfg.bench_plan_runs) and (not backfill or any(c['backend'] == 'deepx' and c['stage'] == 'part2' for c in active_backfill)):
                 manifest_out.setdefault('deepx', {})
                 manifest_out['deepx'].setdefault('stage2_calibration', {})
                 try:
@@ -7345,7 +7406,10 @@ class BenchmarkGenerationExecutionService:
                         if _deepx_part2_requested and not (getattr(cfg, "defer_hailo_builds", False) or getattr(cfg, "defer_deepx_builds", False)):
                             try:
                                 from ..deepx.activation_proxy import compile_deepx_stage2_from_activation_proxy
-                                build_res = compile_deepx_stage2_from_activation_proxy(
+                                from ..backend_backfill import call_with_build_budget
+                                build_res = call_with_build_budget(compile_deepx_stage2_from_activation_proxy,
+                                    state=backfill.state if backfill else None,
+                                    persist=backfill.persist if backfill else None, stage='part2',
                                     case_dir=case_dir,
                                     part2_onnx=p2_path,
                                     activation_manifest=Path(case_dir) / str(proxy_res.get('manifest_rel')),
@@ -7510,6 +7574,38 @@ class BenchmarkGenerationExecutionService:
                     break
                 continue
 
+            selected_contracts = []
+            if backfill:
+                hefs = (manifest_out.get('hailo') or {}).get('hefs') or {}
+                if backfill.state['policy'].get('technical_output_contract_version') == 1:
+                    from ..runners.native_split_quality_runtime import resolve_hailo_output_suitability
+                    for arch, meta in hefs.items():
+                        if backend_key(arch) != 'hailo10h' or not meta.get('part1'):
+                            continue
+                        if not any(c['backend'] == 'hailo10h' and c['stage'] == 'part1' for c in active_backfill):
+                            continue
+                        artifact = str(Path(case_dir) / meta['part1'])
+                        meta['part1_output_artifact'] = artifact
+                        meta['part1_output_suitability'] = resolve_hailo_output_suitability(
+                            part1=Path(artifact), source_part1=Path(p1_path), source_part2=Path(p2_path), task=cfg.benchmark_task,
+                            metadata_context={'targets': cfg.hailo_metadata_targets,
+                                              'artifact_store_root': cfg.hailo_metadata_store_root,
+                                              'observations': output_metadata_observations})
+                selected_contracts = backfill.observe(b, active_backfill, hefs, case_id=folder)
+                manifest_out['backend_selection_contracts'] = selected_contracts
+                if not selected_contracts:
+                    unresolved = any(c['status'] == 'output_contract_unknown' for c in active_backfill)
+                    technical = any(meta.get('part1_output_suitability', {}).get('status') == 'INCOMPATIBLE' for meta in hefs.values())
+                    manifest_out['benchmark_status'] = ('output_contract_unknown' if unresolved else
+                        'excluded_output_contract_audit' if technical else 'excluded_build_audit')
+                    write_benchmark_json_atomic(Path(manifest_path), manifest_out)
+                    discarded_cases.append({'boundary': b, 'folder': folder, 'reason': ('output_contract_unknown' if unresolved else
+                                            'technical_output_incompatible' if technical else 'exact_backend_build_exclusion'),
+                                            'backend_backfill_audit': True})
+                    completed_boundaries.add(b)
+                    discarded_boundaries.add(b)
+                    cb.persist_state(status='running', current_boundary=b)
+                    continue
             write_benchmark_json_atomic(Path(manifest_path), manifest_out)
 
             case_entry = {
@@ -7538,6 +7634,8 @@ class BenchmarkGenerationExecutionService:
                     case_entry['hailo_part2_effective_outputs'] = list(effective_part2_outputs)
                 if part2_output_contract:
                     case_entry['hailo_part2_output_contract'] = dict(part2_output_contract)
+            if backfill:
+                case_entry['backend_selection_contracts'] = selected_contracts
             case_entry.update(hailo_parse_fields)
             cases.append(case_entry)
             accepted_boundaries.add(int(b))
@@ -7562,6 +7660,9 @@ class BenchmarkGenerationExecutionService:
                 )
                 break
 
+        if backfill:
+            cfg.hef_targets = original_hef_targets
+            backfill.finish()
         if feasibility_enabled and str(
             runtime.hailo_feasibility_state.get("outcome") or "RUNNING"
         ) == "RUNNING":
@@ -8883,7 +8984,14 @@ class BenchmarkGenerationOrchestrationService:
             # YOLO26 is handled above by trying the one2one raw-head full baseline
             # first; that avoids spending the first generation stage on the known
             # decoded end-to-end tail failure.
-            if (not _cold_full_deferred) and (not bool(getattr(r_full, 'ok', False))) and (not full_end_nodes) and not yolo26_raw_head_full_first:
+            # A decoded cache miss does not rule out the existing raw-head
+            # artifact. Keep the normal endpoint fallback, with cache_only
+            # on every lookup so this cannot dispatch a cold compiler.
+            fallback_cache_only = bool(
+                getattr(cfg, 'hailo_cache_only', False)
+                or getattr(cfg, 'hailo_full_cache_only', False)
+            )
+            if (not _cold_full_deferred or fallback_cache_only) and (not bool(getattr(r_full, 'ok', False))) and (not full_end_nodes) and not yolo26_raw_head_full_first:
                 raw_nodes = self._infer_suite_raw_head_end_nodes(cfg)
                 if raw_nodes:
                     endpoint_mode = 'raw_detection_head'
@@ -8913,6 +9021,10 @@ class BenchmarkGenerationOrchestrationService:
                     # The selected physical endpoints now describe this result,
                     # including a deferred probe or an exact negative outcome.
                     r_full = r_raw
+                    _cold_full_deferred = bool(
+                        str(getattr(r_full, 'failure_kind', '') or '') == 'deferred_cold_full_cache_miss'
+                        or str(getattr(r_full, 'unsupported_reason', '') or '') == 'cache_only_policy'
+                    )
                     if bool(getattr(r_raw, 'ok', False)):
                         log(f"suite: HEF(full,{hw_arch}) raw detection-head fallback OK")
                     else:
@@ -9432,7 +9544,10 @@ class BenchmarkGenerationOrchestrationService:
                 )
 
                 if isinstance(hailo_full_model_preflight, dict) and bool(hailo_full_model_preflight.get('all_failed_explicit')):
-                    cfg, adjusted = self._adjust_benchmark_plan_from_full_model_preflight(cfg, hailo_full_model_preflight, log=log)
+                    if cfg.execution_cfg.backend_backfill_policy:
+                        adjusted = False  # Full failure never changes split contracts.
+                    else:
+                        cfg, adjusted = self._adjust_benchmark_plan_from_full_model_preflight(cfg, hailo_full_model_preflight, log=log)
                     if adjusted:
                         log('suite: plan-aware Hailo preflight adjustment applied; generation will continue with the remaining runnable plan.')
                     elif bool(cfg.bench_plan_runs):
@@ -9459,7 +9574,7 @@ class BenchmarkGenerationOrchestrationService:
                 )
 
                 self._raise_if_cancelled(cfg, "before shortlist prefilter")
-                if bool(feasibility_gate.get("enabled")):
+                if bool(feasibility_gate.get("enabled")) or cfg.execution_cfg.backend_backfill_policy:
                     ranked_candidates = list(cfg.ranked_candidates)
                     candidate_search_pool = list(cfg.candidate_search_pool)
                     shortlist_prefiltered_boundaries = []
@@ -9483,6 +9598,7 @@ class BenchmarkGenerationOrchestrationService:
                 self._raise_if_cancelled(cfg, "before Hailo Part2 compatibility probe")
                 if (
                     not bool(feasibility_gate.get("enabled"))
+                    and not cfg.execution_cfg.backend_backfill_policy
                     and self._selected_plan_requires_hailo_part2_prefilter(cfg)
                 ):
                     any_part2_compatible = self._probe_any_hailo_part2_compatible(cfg, candidate_search_pool, log=log)

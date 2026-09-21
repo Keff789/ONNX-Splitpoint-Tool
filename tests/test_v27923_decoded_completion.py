@@ -235,6 +235,11 @@ def test_trt_full_semantic_probe_and_measured_dispatch_complete_nms(tmp_path, mo
     assert row["frozen_host_postprocess_result"]["detection_count"] == 2
     assert row["completed_task_endpoint_attestation"]["source_stage"] == "decoded_pre_nms"
     assert row["completed_task_result_artifact_saved"] is True
+    from onnx_splitpoint_tool.native_rate_endpoints import rate_endpoint_fields
+    projected = rate_endpoint_fields(full._aggregate_full_repetitions([row], requested=1))
+    assert projected["completed_task_fps"] == row["fps_makespan"]
+    assert projected["completed_task_work_unit_counts"] == [2]
+    assert projected["completed_task_measurement_times_s"] == [row["measured_duration_s"]]
     assert instances[-1].count == 4  # probe + warmup + two completed iterations
     assert all(instance.closed for instance in instances)
     from scripts import native_producer_validate_visualize as validator

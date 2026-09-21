@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 import argparse
 import ast
 import copy
@@ -237,7 +239,10 @@ def test_full_runtime_reuses_exact_quality_engine_without_build(
     def fake_run(command, **_kwargs):
         commands.append(list(command))
         work_dir = Path(producer["engine"]["path"]).parent
+        trace_path = work_dir / "trtexec_times.json"
+        trace_path.write_text(json.dumps([{"startH2dMs": i*10., "endD2hMs": (i+1)*10.} for i in range(7)]))
         (work_dir / "native_trt_meta.json").write_text(json.dumps({
+            "trtexec_export_times": {"path": str(trace_path)},
             "build_ok": True, "run_ok": True,
             "completed_work_units": 7,
             "completed_work_units_status": "exact_runtime_counter",
@@ -276,6 +281,13 @@ def test_full_runtime_reuses_exact_quality_engine_without_build(
     row = runner._native_trt_full(suite, "resnet50", _namespace(producer_file))
 
     assert row["ok"] is True
+    assert row["measured_duration_s"] == 0.07
+    assert row["fps_makespan"] == pytest.approx(100.)
+    assert row["trtexec_reported_fps"] == 123.5
+    from onnx_splitpoint_tool.native_rate_endpoints import rate_endpoint_fields
+    projected = rate_endpoint_fields(runner._aggregate_full_repetitions([row], requested=1))
+    assert projected["completed_task_fps"] == pytest.approx(100.)
+    assert projected["completed_task_measurement_times_s"] == [0.07]
     assert row["quality_first_producer_identity"] == producer
     assert row["quality_first_producer_identity_sha256"] == producer[
         "producer_identity_sha256"

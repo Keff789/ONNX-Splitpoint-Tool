@@ -342,6 +342,9 @@ def _expected_normalized_rows(
     return total
 
 
+from .energy.task_budget import campaign_budget_policy
+
+
 def build_effective_execution_plan(profile: Mapping[str, Any]) -> Dict[str, Any]:
     models = _model_rows(profile)
     logical = _logical_profiles(profile)
@@ -953,6 +956,7 @@ def build_effective_execution_plan(profile: Mapping[str, Any]) -> Dict[str, Any]
             native_enabled=native_enabled,
         ),
         "native_energy_enabled": native_energy,
+        "native_energy_task_budget": campaign_budget_policy(profile.get("native_producers") or {}),
         "energy_measurement_path": energy_measurement_path,
         "energy_configuration_errors": energy_configuration_errors,
         "energy_plan_blocked": bool(energy_configuration_errors),

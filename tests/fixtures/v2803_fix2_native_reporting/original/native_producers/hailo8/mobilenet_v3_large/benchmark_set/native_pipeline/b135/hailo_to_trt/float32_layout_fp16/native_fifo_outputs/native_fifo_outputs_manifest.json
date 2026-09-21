@@ -1,0 +1,99 @@
+{
+  "schema": "onnx-splitpoint/native-fifo-output-dump",
+  "schema_version": 4,
+  "outputs": [
+    {
+      "name": "logits",
+      "file": "logits.bin",
+      "dtype": "float32",
+      "bytes": 4000,
+      "shape": [
+        1,
+        1000
+      ],
+      "sha256": "d5bb065a45fe16023db56228d35ee797f6ce969e912fda90d3d42f7899fd21f6",
+      "size_bytes": 4000
+    }
+  ],
+  "payload_artifacts": [
+    {
+      "role": "outputs[0]",
+      "path": "logits.bin",
+      "sha256": "d5bb065a45fe16023db56228d35ee797f6ce969e912fda90d3d42f7899fd21f6",
+      "size_bytes": 4000
+    }
+  ],
+  "payload_artifacts_sha256": "4281e0a370c1d0770dcffe6924ea07494188ae15c1abfabaa216c5993a621142",
+  "input_image": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/mobilenet_v3_large/benchmark_set/resources/validation/classification/val_by_wnid_n500_s20260710/images/n01443537/ILSVRC2012_val_00013623.JPEG",
+  "provenance": {
+    "image": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/mobilenet_v3_large/benchmark_set/resources/validation/classification/val_by_wnid_n500_s20260710/images/n01443537/ILSVRC2012_val_00013623.JPEG",
+    "image_source": "exact_file",
+    "seq": 1099
+  },
+  "authoritative_output_contract_resolution": {
+    "artifact_path": "",
+    "backend": "cuda_ort",
+    "contract_status": "recorded",
+    "endpoint_mode": "classification_logits",
+    "full_end_node_names": [],
+    "host_tail_required": false,
+    "model_id": "mobilenet_v3_large",
+    "postprocessing_required": false,
+    "requires_external_postprocess": false,
+    "schema": "onnx-splitpoint/output-contract",
+    "schema_version": 1,
+    "source_onnx_detection_endpoint": {
+      "multiscale_raw_head": false,
+      "output_shapes": [],
+      "sidecar_status": "not_applicable",
+      "stage": "not_detection"
+    },
+    "source_onnx_multiscale_raw_head": false,
+    "task": "classification",
+    "variant": "full",
+    "warning": "",
+    "stage": "classification_logits",
+    "contract_family": "classification_logits",
+    "declaration_source": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/mobilenet_v3_large/benchmark_set/output_contracts.json",
+    "source_contracts_sha256": "f2f4ac770a5524d09ce26ae3a03404551077e2c80d0877517fda29b5498c5d7e",
+    "source_contract_sha256": "e21290ee6c73985db54a375ce1da2669714754a6a3a3f11c53709be0a9edbf52",
+    "authoritative_output_contract": true,
+    "contract_resolution_status": "attested",
+    "contract_resolution_reason": "exact_suite_output_contract"
+  },
+  "task": "classification",
+  "output_format": "classification_logits",
+  "contract_family": "classification_logits",
+  "stage": "classification_logits",
+  "contract_source": "authoritative_suite_contract_plus_runtime_tensor:v4",
+  "endpoint_contract_complete": true,
+  "endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+  "tensor_signature": {
+    "tensor_count": 1,
+    "tensors": [
+      {
+        "index": 0,
+        "name": "logits",
+        "rank": 2,
+        "shape": [
+          1,
+          1000
+        ],
+        "dtype": "float32"
+      }
+    ]
+  },
+  "output_endpoint_attestation": {
+    "schema": "onnx-splitpoint/runtime-output-endpoint-attestation",
+    "schema_version": 3,
+    "endpoint": "classification_logits",
+    "stage": "classification_logits",
+    "attested": true,
+    "status": "passed",
+    "reason": "single_finite_multiclass_tensor",
+    "class_count": 1000,
+    "endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+    "declaration_source_contract_sha256": "e21290ee6c73985db54a375ce1da2669714754a6a3a3f11c53709be0a9edbf52",
+    "declaration_source_contracts_sha256": "f2f4ac770a5524d09ce26ae3a03404551077e2c80d0877517fda29b5498c5d7e"
+  }
+}

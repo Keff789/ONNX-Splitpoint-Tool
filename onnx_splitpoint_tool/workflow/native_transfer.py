@@ -252,11 +252,15 @@ def build_native_validation_image_map(
     models: Sequence[str],
     case_map: Mapping[str, Sequence[str]],
     benchmark_sets: Mapping[str, str | Path] | None = None,
+    *,
+    prepared_input_bindings: Sequence[Mapping[str, Any]] = (),
 ) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]]:
-    """Resolve the exact Generic-Runner validation image per Native case.
+    """Resolve one deterministic comparison image per model before fan-out.
 
-    The preferred source is the ORT-CPU validation report because it records the
-    exact image used for the canonical self-reference.  If unavailable, the
+    An already sealed Full quality/prepared-input join fixes the image for all
+    Native rows of that model. Otherwise the preferred source is the ORT-CPU
+    validation report because it records the
+    exact image used for the first canonical self-reference. If unavailable, the
     function selects a deterministic image from the run-mode materialised
     validation subset.  Returned values are basenames/relative paths so they can
     be resolved inside the copied remote BenchmarkSet.
@@ -266,7 +270,55 @@ def build_native_validation_image_map(
     sources: dict[str, dict[str, str]] = {}
     bs_map = {str(k): Path(v) for k, v in dict(benchmark_sets or {}).items()}
     for model in models:
+        chosen = ""
+        source = ""
+        bound_images = set()
+        for binding in prepared_input_bindings:
+            if binding.get("model_id") != model or not binding.get("prepared_input_join_binding"):
+                continue
+            from ..native_command_contract import canonical_json_sha256
+            join = binding["prepared_input_join_binding"]
+            if (binding.get("variant") != "full"
+                    or canonical_json_sha256({k: v for k, v in binding.items() if k != "binding_sha256"}) != binding.get("binding_sha256")
+                    or not isinstance(join, Mapping)
+                    or join.get("schema") != "onnx-splitpoint/deepx-performance-quality-input-binding"
+                    or join.get("schema_version") != 1 or join.get("binding_verified") is not True
+                    or canonical_json_sha256(join) != binding.get("prepared_input_join_binding_sha256")):
+                raise ValueError(f"native_reference_prepared_binding_invalid:{model}")
+            name, digest = str(join.get("source_image_id") or ""), str(join.get("source_image_sha256") or "")
+            if not name or Path(name).name != name or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+                raise ValueError(f"native_reference_prepared_image_invalid:{model}")
+            bound_images.add((name, digest))
+        if len(bound_images) > 1:
+            raise ValueError(f"native_reference_prepared_images_conflict:{model}")
+        if bound_images:
+            name, digest = next(iter(bound_images))
+            bs = bs_map.get(model) or root / "models" / model / "benchmark_set"
+            if (bs / "legacy_suite").is_dir():
+                bs = bs / "legacy_suite"
+            matches = []
+            for path in sorted(bs.rglob(name)):
+                if (not path.is_file() or any(p.is_symlink() for p in (path, *path.parents))
+                        or not path.resolve().is_relative_to(bs.resolve())):
+                    continue
+                with path.open("rb") as stream:
+                    hasher = hashlib.sha256()
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        hasher.update(chunk)
+                    observed = hasher.hexdigest()
+                if observed == digest:
+                    matches.append(path)
+            if not matches:
+                raise ValueError(f"native_reference_prepared_image_unavailable:{model}:{name}")
+            chosen = matches[0].relative_to(bs).as_posix()
+            source = "vendor_full_quality_prepared_input:" + digest
+            image_map[model] = {"full": chosen}
+            sources[model] = {"full": source}
         for case in list(case_map.get(model) or []):
+            if chosen:
+                image_map[model][str(case)] = chosen
+                sources[model][str(case)] = source
+                continue
             candidates = [
                 root / "models" / model / "benchmark_results" / "remote_diagnostics" / "case_reports" / "results" / case / "results_ort_cpu" / "validation_report.json",
                 root / "models" / model / "benchmark_results" / "remote_diagnostics" / "lean_bundle" / case / "results_ort_cpu" / "validation_report.json",
@@ -300,6 +352,10 @@ def build_native_validation_image_map(
             if chosen:
                 image_map.setdefault(model, {})[str(case)] = chosen
                 sources.setdefault(model, {})[str(case)] = source
+        if chosen:
+            # Full may use a container case outside the accepted split list.
+            image_map[model]["full"] = chosen
+            sources[model]["full"] = source
     return image_map, sources
 
 

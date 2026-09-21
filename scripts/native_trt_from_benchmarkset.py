@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import time
+import signal
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -1052,7 +1053,7 @@ def _strict_warm_trt_build_forbidden(kind: str, *, case_id: str = "", generic_pa
     return trt_build_forbidden(kind, case_id=case_id, generic_part2=generic_part2)
 
 
-def _run(cmd: list[str], *, cwd: Path, log_path: Path, dry_run: bool, artifact_role: str = "", case_id: str = "", generic_part2: bool = False) -> dict[str, Any]:
+def _run(cmd: list[str], *, cwd: Path, log_path: Path, dry_run: bool, artifact_role: str = "", case_id: str = "", generic_part2: bool = False, build_state: str = "", max_build_starts: int = 0, timeout_s: int = 0) -> dict[str, Any]:
     meta: dict[str, Any] = {"cmd": cmd, "cwd": str(cwd), "log_path": str(log_path), "dry_run": dry_run}
     policy = str(os.environ.get("ONNX_SPLITPOINT_ARTIFACT_POLICY") or "normal").strip().lower().replace("-", "_")
     build_tokens = ("--onnx", "--saveEngine", "--buildOnly")
@@ -1080,8 +1081,46 @@ def _run(cmd: list[str], *, cwd: Path, log_path: Path, dry_run: bool, artifact_r
         log_path.write_text("DRY RUN\n" + " ".join(cmd) + "\n", encoding="utf-8")
         meta.update({"returncode": 0, "elapsed_s": 0.0})
         return meta
+    if build_state:
+        try:
+            try:
+                from splitpoint_runners.native_split_quality_runtime import reserve_trt_build_start
+            except ImportError:
+                from onnx_splitpoint_tool.runners.native_split_quality_runtime import reserve_trt_build_start
+            meta['build_reservation'] = reserve_trt_build_start(Path(build_state), max_build_starts, case_id=case_id, command=cmd)
+        except Exception as exc:
+            message = f"{type(exc).__name__}:{exc}"
+            log_path.write_text(message + "\n", encoding="utf-8")
+            status = 'build_budget_exhausted' if str(exc).startswith('build_budget_exhausted:') else 'infrastructure_blocked'
+            meta.update(returncode=78, elapsed_s=0.0, status=status, error=message, compiler_dispatched=False)
+            return meta
     t0 = time.perf_counter()
-    proc = subprocess.run(cmd, cwd=str(cwd), text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    owned_process = None
+    try:
+        if timeout_s > 0 and os.name == 'posix':
+            owned_process = subprocess.Popen(cmd, cwd=str(cwd), text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+            output, _ = owned_process.communicate(timeout=timeout_s)
+            proc = subprocess.CompletedProcess(cmd, owned_process.returncode, output)
+        else:
+            proc = subprocess.run(cmd, cwd=str(cwd), text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  **({'timeout': timeout_s} if timeout_s > 0 else {}))
+    except subprocess.TimeoutExpired as exc:
+        output = exc.stdout or ''
+        if isinstance(output, bytes): output = output.decode('utf-8', errors='replace')
+        log_path.write_text(output + "\ntrtexec build timeout\n", encoding='utf-8')
+        meta.update(returncode=124, elapsed_s=time.perf_counter()-t0, status='timed_out', compiler_dispatched=True)
+        return meta
+    finally:
+        if owned_process is not None and owned_process.poll() is None:
+            # This group belongs solely to this admitted trtexec start.
+            try: os.killpg(owned_process.pid, signal.SIGTERM)
+            except ProcessLookupError: pass
+            try: owned_process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                try: os.killpg(owned_process.pid, signal.SIGKILL)
+                except ProcessLookupError: pass
+                owned_process.communicate(timeout=5)
     elapsed = time.perf_counter() - t0
     log_path.write_text(proc.stdout or "", encoding="utf-8", errors="replace")
     meta.update({"returncode": int(proc.returncode), "elapsed_s": float(elapsed)})
@@ -1379,6 +1418,9 @@ def main() -> int:
     ap.add_argument("--expected-trtexec-size-bytes", type=int, default=0)
     ap.add_argument("--expected-engine-build-receipt-size-bytes", type=int, default=0, help="Canonical JSON byte length of the complete receipt.")
     ap.add_argument("--quality-first-producer-identity-sha256", default="", help="Signed central Quality-FIRST producer identity consumed by this exact run.")
+    ap.add_argument('--cold-build-state', default='', help='Run-owned persistent start budget checkpoint.')
+    ap.add_argument('--max-cold-build-starts', type=int, default=0)
+    ap.add_argument('--build-timeout-s', type=int, default=0)
     ap.add_argument("--workspace-mb", type=int, default=4096, help="TensorRT workspace in MiB.")
     ap.add_argument("--workspace-mode", default="auto", choices=["auto", "workspace", "mempool", "none"], help="TensorRT workspace flag style. auto chooses --memPoolSize for TRT10 and --workspace for older trtexec.")
     ap.add_argument("--no-shapes", action="store_true", help="Do not pass --shapes to trtexec. Useful for static-shape ONNX parse troubleshooting.")
@@ -1644,13 +1686,13 @@ def main() -> int:
                     extra_build_args,
                 )
                 log_path = work_dir / ("build_trtexec.log" if attempt_idx == 1 else f"build_trtexec_attempt{attempt_idx}.log")
-                build_meta = _run(cmd, cwd=work_dir, log_path=log_path, dry_run=bool(args.dry_run), artifact_role=str(art["variant"]), case_id=str(art.get("case") or ""), generic_part2=str(args.precision) in {"fp16", "fp32", "int8"})
+                build_meta = _run(cmd, cwd=work_dir, log_path=log_path, dry_run=bool(args.dry_run), artifact_role=str(art["variant"]), case_id=str(art.get("case") or ""), generic_part2=str(args.precision) in {"fp16", "fp32", "int8"}, build_state=args.cold_build_state, max_build_starts=args.max_cold_build_starts, timeout_s=args.build_timeout_s)
                 tail = _log_tail(log_path)
                 build_meta["attempt"] = attempt_idx
                 build_meta["reason"] = attempt_reason
                 build_meta["shapes_arg"] = attempt_shapes
                 build_meta["workspace_mode"] = attempt_workspace_mode
-                build_meta["compiler_dispatched"] = not bool(args.dry_run) and build_meta.get("status") != "cache_miss_blocked"
+                build_meta["compiler_dispatched"] = not bool(args.dry_run) and build_meta.get("status") not in {"cache_miss_blocked", "build_budget_exhausted", "infrastructure_blocked"}
                 build_meta["log_tail"] = tail[-6000:]
                 build_meta["failure_hint"] = _failure_hint(tail)
                 build_attempts.append(build_meta)

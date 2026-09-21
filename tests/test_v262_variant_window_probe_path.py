@@ -6,6 +6,9 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+import pytest
+
+from onnx_splitpoint_tool.remote.process_lease import RemoteProcessLeaseScope
 
 from onnx_splitpoint_tool.workflow.runner import EvaluationWorkflowRunner, WorkflowOptions
 
@@ -37,6 +40,50 @@ def _write_legacy_run_manifest(run_dir: Path) -> None:
     })
 
 
+def _private_workflow_context(runner):
+    """Real session journal and profile; only process/device leaves are faked."""
+    runner.profile_payload["quality_gate"] = {
+        "schema": "onnx-splitpoint/task-quality-policy", "schema_version": 3,
+        "name": "r6_fixture_quality", "profile_id": "r6_fixture_quality",
+    }
+    _write_json(runner.run_dir / "profile.yaml", runner.profile_payload)
+    from onnx_splitpoint_tool.release_identity import VERSION, BUILD_ID
+    _write_json(runner.run_dir / "run_manifest.json", {
+        "schema": "onnx-splitpoint/evaluation-run-manifest", "schema_version": 1,
+        "run_id": runner.run_id, "workflow_version": BUILD_ID, "tool_version": VERSION,
+    })
+    runner._remote_process_registry.configure_journal(
+        scope=RemoteProcessLeaseScope(runner.run_id, runner.session_id),
+        journal_dir=runner.run_dir / "jobs/remote_process_leases" / runner.session_id,
+    )
+
+
+def _assert_journal_environment(runner, kwargs):
+    expected = runner._remote_process_registry.journal_environment()
+    assert expected
+    assert all(kwargs["env"].get(k) == v for k, v in expected.items())
+
+
+def _terminal_child_handoff(runner, args, *, rc):
+    """Commit the real handoff contract for the controlled child process leaf."""
+    from onnx_splitpoint_tool.workflow.checkpoints import native_coordinator_input_hash, write_stage_checkpoint
+    from onnx_splitpoint_tool.validation.accuracy_gates import AccuracyGatePolicy
+    cmd = args[0]
+    config_path = Path(cmd[cmd.index("--config") + 1])
+    stage_path = runner.run_dir / "reports/native_producer_stage.json"
+    stage = json.loads(stage_path.read_text())
+    state = "failed" if rc else "completed"
+    stage.update(state=state, complete=True)
+    _write_json(stage_path, stage)
+    write_stage_checkpoint(
+        runner.run_dir / "stages/run_native_producers/native_coordinator/stage_result.json",
+        stage="native_coordinator", state=state, complete=True,
+        input_hash=native_coordinator_input_hash(runner.run_dir, config_path,
+            quality_gate_policy_sha256=AccuracyGatePolicy.from_mapping(runner.profile_payload["quality_gate"]).sha256()),
+        run_root=runner.run_dir, artifacts=[stage_path],
+        details={"return_code":rc,"stage_complete":True,"stage_state":state})
+
+
 def test_variant_coordinator_keeps_strict_smoke_probe_nonblocking_with_green_baseline(
     tmp_path: Path, monkeypatch,
 ) -> None:
@@ -44,18 +91,26 @@ def test_variant_coordinator_keeps_strict_smoke_probe_nonblocking_with_green_bas
         ROOT / "scripts" / "run_evalrun_native_producer_variants.py",
         "v262_variant_coordinator_test",
     )
-    run_dir = tmp_path / "EvaluationRun"
+    run_dir = tmp_path / "eval-native-split-001"
     reports = run_dir / "reports"
     (run_dir / "native_producers" / "hailo8").mkdir(parents=True)
     _write_legacy_run_manifest(run_dir)
+    suite = run_dir / "models/yolo26s/benchmark_set"
+    (suite / "b038").mkdir(parents=True)
+    _write_json(suite / "benchmark_set.json", {"benchmark_task": "detection", "cases": [{"id": "b038"}]})
+    _write_json(suite / "b038/split_manifest.json", {"part2_external_inputs": ["boundary_tensor"]})
+    _write_json(run_dir / "profile.yaml", {"quality_gate": {
+        "schema": "onnx-splitpoint/task-quality-policy", "schema_version": 3,
+        "name": "r6_fixture_quality", "profile_id": "r6_fixture_quality",
+    }})
     config = {
         "_workflow_context": {
             "campaign": {"mode": "development"},
             "execution_preset": {"id": "smoke"},
         },
-        "variants": [{"id": "resnet", "case_map": {"resnet50": ["b052"]}}],
+        "variants": [{"id": "resnet", "case_map": {"yolo26s": ["b038"]}}],
         "validation": {"enabled": True},
-        "remotes": {"hailo8": {"ssh": "nx@host", "env": "source env"}},
+        "remotes": {"hailo8": {"ssh": "nx@host", "env": "source env", "setup_id": "hailo8_setup"}},
         "energy": {
             "enabled": False,
             "window_method_validation_probe": {
@@ -66,6 +121,10 @@ def test_variant_coordinator_keeps_strict_smoke_probe_nonblocking_with_green_bas
             },
         },
     }
+    from tests.test_v269f_variant_native_split_quality_first import _binding_and_summary, _write_summary
+    _binding, summary = _binding_and_summary(tmp_path / "quality_fixture")
+    _write_summary(run_dir, summary)
+    config["precision"] = "uint8_dequant_fp16"
     config_path = tmp_path / "native.json"
     _write_json(config_path, config)
     calls: list[str] = []
@@ -75,8 +134,8 @@ def test_variant_coordinator_keeps_strict_smoke_probe_nonblocking_with_green_bas
         if label == "final_report":
             _write_json(reports / "native_producer_combined_summary.json", {
                 "rows": [{
-                    "backend": "hailo8_to_trt", "model": "resnet50", "case": "b052",
-                    "precision": "fp16", "setup_id": "h8", "ok": True,
+                    "backend": "hailo8_to_trt", "model": "yolo26s", "case": "b038",
+                    "precision": "uint8_dequant_fp16", "setup_id": "hailo8_setup", "ok": True,
                     "fps_makespan": 100.0,
                 }],
             })
@@ -123,6 +182,7 @@ def test_variant_coordinator_keeps_strict_smoke_probe_nonblocking_with_green_bas
     ])
 
     assert coordinator.main() == 0
+    assert calls.count("window-method-validation-probe") == 1
     stage = json.loads((reports / "native_producer_stage.json").read_text(encoding="utf-8"))
     probe = stage["window_method_validation_probe"]
     assert probe["status"] == "blocked_zero_measurements_started"
@@ -159,6 +219,7 @@ def test_workflow_variant_importer_normalizes_smoke_probe_to_nonblocking(
     }
 
     def fake_streaming(*_args, **_kwargs):
+        _assert_journal_environment(runner, _kwargs)
         probe = reports / "window_method_validation_probe"
         raw = probe / "measurement" / "run_000" / "collector_storage" / "trace.parquet"
         raw.parent.mkdir(parents=True, exist_ok=True)
@@ -180,9 +241,11 @@ def test_workflow_variant_importer_normalizes_smoke_probe_to_nonblocking(
             },
             "native_energy": {"enabled": False, "status": "skipped", "strict_failure": False},
         })
+        _terminal_child_handoff(runner, _args, rc=2)
         return SimpleNamespace(returncode=2, stdout="", stderr="strict probe failure")
 
     monkeypatch.setattr("onnx_splitpoint_tool.workflow.runner.run_streaming", fake_streaming)
+    _private_workflow_context(runner)
     with mock.patch.object(runner, "_native_producer_config", return_value=cfg):
         paths, details, _message, status = runner._stage_run_native_producers()
 
@@ -194,7 +257,8 @@ def test_workflow_variant_importer_normalizes_smoke_probe_to_nonblocking(
     assert details["window_method_validation_probe"]["workflow_blocking_requested"] is False
     assert details["window_method_validation_probe"]["strict_failure"] is False
     assert any(Path(path).name == "trace.parquet" for path in paths.values())
-    stage = json.loads((reports / "native_producer_stage.json").read_text(encoding="utf-8"))
+    assert json.loads((reports / "native_producer_stage.json").read_text())["status"] == "failed"
+    stage = json.loads((reports / "native_producer_parent_import.json").read_text(encoding="utf-8"))
     assert stage["status"] == "partial"
     assert stage["window_method_validation_probe_strict_failure"] is False
 
@@ -228,6 +292,7 @@ def test_workflow_variant_importer_keeps_incomplete_final_probe_nonblocking(
     }
 
     def fake_streaming(*_args, **_kwargs):
+        _assert_journal_environment(runner, _kwargs)
         _write_json(reports / "native_producer_summary.json", {"rows": [{
             "backend": "hailo8_to_trt",
             "model": "resnet50",
@@ -253,12 +318,14 @@ def test_workflow_variant_importer_keeps_incomplete_final_probe_nonblocking(
                 "strict_failure": False,
             },
         })
+        _terminal_child_handoff(runner, _args, rc=0)
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(
         "onnx_splitpoint_tool.workflow.runner.run_streaming",
         fake_streaming,
     )
+    _private_workflow_context(runner)
     with mock.patch.object(runner, "_native_producer_config", return_value=cfg):
         _paths, details, _message, status = runner._stage_run_native_producers()
 
@@ -299,58 +366,87 @@ def test_workflow_variant_coordinator_crash_without_state_fails_closed(
         },
     }
 
-    monkeypatch.setattr(
-        "onnx_splitpoint_tool.workflow.runner.run_streaming",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            returncode=9,
-            stdout="",
-            stderr="coordinator crashed before stage state",
-        ),
-    )
+    calls = []
+    def crash_child(*args, **kwargs):
+        _assert_journal_environment(runner, kwargs)
+        calls.append(kwargs["label"])
+        return SimpleNamespace(returncode=9, stdout="", stderr="coordinator crashed before stage state")
+    monkeypatch.setattr("onnx_splitpoint_tool.workflow.runner.run_streaming", crash_child)
+    _private_workflow_context(runner)
     with mock.patch.object(runner, "_native_producer_config", return_value=cfg):
         _paths, details, _message, status = runner._stage_run_native_producers()
 
-    assert status == "failed"
-    assert details["strict_failure"] is True
-    assert details["window_method_validation_probe"]["strict_failure"] is False
-    assert details["native_energy"]["strict_failure"] is True
-    stage = json.loads(
-        (runner.run_dir / "reports" / "native_producer_stage.json").read_text(encoding="utf-8")
-    )
-    assert stage["status"] == "failed"
-    assert stage["orchestration_status"] == "failed"
-    assert stage["coordinator_failed_before_strict_component_state"] is True
+    # Current durable-stage contract keeps an uncommitted crash incomplete.
+    # No terminal success/failure state may be invented by the parent.
+    assert status == "cancelled"
+    assert details["child_complete"] is False
+    assert details["coordinator_handoff_complete"] is False
+    assert details["variant_coordinator_rc"] == 9
+    assert runner._stop_requested is True
+    assert len(calls) == 1
+    assert not (runner.run_dir / "reports/native_producer_stage.json").exists()
+    imported = json.loads((runner.run_dir / "reports/native_producer_parent_import.json").read_text())
+    assert imported["variant_coordinator_rc"] == 9
+    assert imported.get("complete") is not True
 
 
 def test_standard_final_native_energy_exception_fails_closed(
     tmp_path: Path, monkeypatch,
 ) -> None:
     runner = EvaluationWorkflowRunner(WorkflowOptions(profile="", out=str(tmp_path)))
-    runner.run_id = "standard_energy_exception"
+    runner.run_id = "eval-native-split-001"
     runner.run_dir = tmp_path / runner.run_id
     runner.profile_payload = {
         "campaign": {"mode": "final"},
         "measurement_campaign": {"system_power": {"scope": "system", "window": "command"}},
     }
-    runner.manifest = {"models": {"resnet50": {}}}
-    suite = runner.run_dir / "models" / "resnet50" / "benchmark_set"
-    (suite / "b001").mkdir(parents=True)
-    _write_json(suite / "benchmark_set.json", {"cases": [{"id": "b001"}]})
+    registry = tmp_path / "hardware_setups.yaml"
+    _write_json(registry, {"schema": "onnx-splitpoint/hardware-setups", "schema_version": 2,
+        "hardware_setups": [{"id": "hailo8_setup", "accelerator": "hailo8", "enabled": True,
+            "host": {"address": "fixture.invalid", "user": "fixture"}}]})
+    runner.profile_payload["hardware"] = {"setups_file": str(registry), "selected_setups": ["hailo8_setup"]}
+    runner.options.hardware_setups_file = str(registry)
+    runner.manifest = {"models": {"yolo26s": {}}}
+    suite = runner.run_dir / "models" / "yolo26s" / "benchmark_set"
+    (suite / "b038").mkdir(parents=True)
+    _write_json(suite / "benchmark_set.json", {"cases": [{"id": "b038"}]})
     _write_json(suite / "benchmark_plan.json", {"runs": [{"id": "split"}]})
+    _write_json(suite / "b038/split_manifest.json", {"part2_external_inputs": ["boundary_tensor"]})
     (suite / "benchmark_suite.py").write_text("# test harness\n", encoding="utf-8")
     cfg = {
         "enabled": True,
-        "models": ["resnet50"],
+        "models": ["yolo26s"],
         "backends": ["hailo8"],
-        "remotes": {"hailo8": {}},
+        "remotes": {"hailo8": {"setup_id": "hailo8_setup", "ssh": "fixture@fixture.invalid"}},
+        "copy_benchmarksets": False, "build_missing_engines": False,
         "energy": {"enabled": True, "mode": "measure"},
         "cleanup_remote_native_root": False,
     }
 
+    from tests.test_v269f_variant_native_split_quality_first import _binding_and_summary, _write_summary
+    _binding, summary = _binding_and_summary(tmp_path / "quality_fixture")
+    _write_summary(runner.run_dir, summary)
+    cfg["precision"] = "uint8_dequant_fp16"
+    calls = []
+    def child_leaf(cmd, **kwargs):
+        _assert_journal_environment(runner, kwargs)
+        label = kwargs["label"]; calls.append(label)
+        if label == "energy:measure":
+            raise RuntimeError("r6 controlled energy child failure")
+        if label == "final_report":
+            _write_json(runner.run_dir / "reports/native_producer_combined_summary.json", {"rows": [{
+                "backend": "hailo8_to_trt", "model": "yolo26s", "case": "b038", "precision": "uint8_dequant_fp16",
+                "setup_id": "hailo8_setup", "ok": True, "fps_makespan": 100.0}]})
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr("onnx_splitpoint_tool.workflow.runner.run_streaming", child_leaf)
+    monkeypatch.setattr("onnx_splitpoint_tool.workflow.runner._sync_remote_script_v60i", lambda *a, **k: [])
+    monkeypatch.setattr("onnx_splitpoint_tool.workflow.runner._sync_remote_package_asset_v263", lambda *a, **k: [{"name":"fixture", "rc":0, "expected_sha256": __import__("hashlib").sha256((ROOT / k["relative_path"]).read_bytes()).hexdigest()}])
+    monkeypatch.setattr("onnx_splitpoint_tool.workflow.runner._verify_remote_module_binding_v263", lambda *a, **k: {"rc":0})
+    _private_workflow_context(runner)
     with mock.patch.object(runner, "_native_producer_config", return_value=cfg):
         _paths, details, _message, status = runner._stage_run_native_producers()
 
-    assert status == "failed"
+    assert status == "partial"
     assert details["strict_failure"] is True
     stage = json.loads(
         (runner.run_dir / "reports" / "native_producer_stage.json").read_text(encoding="utf-8")
@@ -360,6 +456,8 @@ def test_standard_final_native_energy_exception_fails_closed(
     assert stage["native_energy"]["strict_failure"] is True
     assert stage["native_energy"]["final_energy_contract_enforced"] is True
 
+    assert calls.count("energy:measure") == 1, calls
+    assert "r6 controlled energy child failure" in stage["native_energy"]["error"]
 
 def test_packaged_variant_helpers_resolve_siblings_without_source_scripts(tmp_path: Path) -> None:
     resource = ROOT / "onnx_splitpoint_tool" / "resources" / "remote_scripts"
@@ -409,3 +507,34 @@ def test_update_helper_syncs_self_contained_yolo_reference_probe() -> None:
     assert "from split_chain_reference_contract_probe import" not in probe_source
     assert "from native_boundary_activation_compare import" not in probe_source
     assert "def _input_dump_feed_from_manifest(" in probe_source
+
+
+@pytest.mark.parametrize('mode', ['missing', 'drift'])
+def test_private_quality_context_rejects_absence_or_drift_before_child(tmp_path, monkeypatch, mode):
+    coordinator = _load_script(ROOT / 'scripts/run_evalrun_native_producer_variants.py', 'r6_quality_negative_' + mode)
+    cfg = {'validation': {'enabled': True}, 'variants': [{'id': 'one'}]}
+    run = tmp_path / 'run'
+    if mode == 'drift':
+        policy = {'schema': 'onnx-splitpoint/task-quality-policy', 'schema_version': 3,
+                  'name': 'private-profile', 'profile_id': 'private-profile'}
+        _write_json(run / 'profile.yaml', {'quality_gate': policy})
+        cfg['quality_gate_policy'] = {**policy, 'name': 'different', 'profile_id': 'different'}
+    config = tmp_path / 'config.json'; _write_json(config, cfg)
+    calls = []
+    monkeypatch.setattr(coordinator, '_run', lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(sys, 'argv', ['coordinator', '--eval-run-dir', str(run), '--config', str(config)])
+    assert coordinator.main() == 2
+    assert calls == []
+    assert not (run / 'stages/run_native_producers/native_coordinator/stage_result.json').exists()
+
+
+def test_private_workflow_requires_real_journal_before_child(tmp_path, monkeypatch):
+    runner = EvaluationWorkflowRunner(WorkflowOptions(profile='', out=str(tmp_path)))
+    runner.run_id = 'missing_journal'; runner.run_dir = tmp_path / runner.run_id
+    runner.profile_payload = {'campaign': {'mode': 'development'}}
+    calls = []
+    monkeypatch.setattr('onnx_splitpoint_tool.workflow.runner.run_streaming', lambda *a, **k: calls.append(a))
+    with mock.patch.object(runner, '_native_producer_config', return_value={'enabled': True, 'variants': [{'id': 'one'}]}):
+        with pytest.raises(Exception, match='journal'):
+            runner._stage_run_native_producers()
+    assert calls == []

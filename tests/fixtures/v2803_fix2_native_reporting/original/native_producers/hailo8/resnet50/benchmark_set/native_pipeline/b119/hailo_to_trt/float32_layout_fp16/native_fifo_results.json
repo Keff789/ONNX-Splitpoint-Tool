@@ -1,0 +1,2019 @@
+{
+  "ok": true,
+  "mode": "native_hailort_tensorrt_fifo",
+  "hef": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1.hef",
+  "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+  "frames": 1000,
+  "completed_frames": 1000,
+  "requested_frames": 1000,
+  "duration_s": 0.0,
+  "warmup": 100,
+  "queue_depth": 3,
+  "hailo_format": "float32",
+  "task": "classification",
+  "preprocess_mode_effective": "resize",
+  "preprocess_pad_value_effective": 0,
+  "letterbox_pad_value": 0,
+  "reuse_preprocessed_input": true,
+  "prepared_feed_contract": "prepared_feed_preprocess_outside_counted_loop",
+  "prepared_feed_setup_ms": 5.044755,
+  "measurement_boundary": "workers_ready_to_last_completed_trt_frame",
+  "warmup_contract": "fully_drained_before_worker_start",
+  "dump_inference_scope": "separate_bound_inference_after_measurement",
+  "trt_host_memory_policy": "cuda_pinned_all_bindings",
+  "trt_output_materialization_policy": "synchronized_d2h_pinned_buffer_no_post_copy",
+  "trt_copy_outputs": true,
+  "hailo_runtime_output_count": 1,
+  "hailo_runtime_output_name": "resnet50_part1_b119/avgpool1",
+  "hailo_runtime_output_frame_bytes": 8192,
+  "native_split_quality_runtime_boundary_verified": true,
+  "prepared_input_rgb": "",
+  "prepared_input_out": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/contract_artifacts/hailo8_prepared_input_rgb_uint8.bin",
+  "prepared_input_shape": [
+    224,
+    224,
+    3
+  ],
+  "trt_input_dtype": "float32",
+  "trt_input_bytes": 8192,
+  "preprocess_ms": 0.000286,
+  "p1_ms": 6.968352,
+  "handoff_ms": 0.00127,
+  "trt_input_copy_ms": 0.001275,
+  "p2_run_ms": 0.113567,
+  "p1_thread_ms": 6.968626,
+  "p2_thread_ms": 0.114842,
+  "single_latency_model_ms": 7.085075,
+  "paper_equivalent_cycle_ms": 6.968626,
+  "paper_equivalent_fps": 143.50032,
+  "makespan_ms": 6970.398235,
+  "fps_makespan": 143.463826,
+  "native_fifo_output_manifest": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/native_fifo_outputs/native_fifo_outputs_manifest.json",
+  "native_fifo_boundary_manifest": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/native_fifo_boundary/native_fifo_boundary_manifest.json",
+  "runtime_instance_id": "fresh_process:1b56cefea6d6cd30658369ef124d33d9cff9bbb2386b5f09c85142709550c87e",
+  "repetition_id": "hailo8:95b93124c9fa461bbb16098e89564dc1",
+  "process_local_repetition_index": 3,
+  "repetition_runtime_scope": "fresh_process_per_repetition",
+  "repetitions_requested": 3,
+  "repetitions_completed": 3,
+  "repetition_count_requested": 3,
+  "repetition_count_attempted": 3,
+  "repetition_count_valid": 3,
+  "repetition_status": "complete",
+  "repetition_aggregation": "median_never_best_of",
+  "fps_makespan_median": 143.463826,
+  "fps_makespan_ci95_low": 143.429652,
+  "fps_makespan_ci95_high": 143.485478,
+  "fps_median": 143.463826,
+  "fps_ci95_low": 143.429652,
+  "fps_ci95_high": 143.485478,
+  "fps_makespan_ci95_method": "deterministic_percentile_bootstrap_of_repetition_medians_20000",
+  "fps_ci95_method": "deterministic_percentile_bootstrap_of_repetition_medians_20000",
+  "fps_ci95_level": 0.95,
+  "aggregate_total_completed_frames": 3000,
+  "repetition_evidence": [
+    {
+      "ok": true,
+      "mode": "native_hailort_tensorrt_fifo",
+      "hef": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1.hef",
+      "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+      "frames": 1000,
+      "completed_frames": 1000,
+      "requested_frames": 1000,
+      "duration_s": 0.0,
+      "warmup": 100,
+      "queue_depth": 3,
+      "hailo_format": "float32",
+      "task": "classification",
+      "preprocess_mode_effective": "resize",
+      "preprocess_pad_value_effective": 0,
+      "letterbox_pad_value": 0,
+      "reuse_preprocessed_input": true,
+      "prepared_feed_contract": "prepared_feed_preprocess_outside_counted_loop",
+      "prepared_feed_setup_ms": 5.100885,
+      "measurement_boundary": "workers_ready_to_last_completed_trt_frame",
+      "warmup_contract": "fully_drained_before_worker_start",
+      "dump_inference_scope": "separate_bound_inference_after_measurement",
+      "trt_host_memory_policy": "cuda_pinned_all_bindings",
+      "trt_output_materialization_policy": "synchronized_d2h_pinned_buffer_no_post_copy",
+      "trt_copy_outputs": true,
+      "hailo_runtime_output_count": 1,
+      "hailo_runtime_output_name": "resnet50_part1_b119/avgpool1",
+      "hailo_runtime_output_frame_bytes": 8192,
+      "native_split_quality_runtime_boundary_verified": true,
+      "prepared_input_rgb": "",
+      "prepared_input_out": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/contract_artifacts/hailo8_prepared_input_rgb_uint8.bin",
+      "prepared_input_shape": [
+        224,
+        224,
+        3
+      ],
+      "trt_input_dtype": "float32",
+      "trt_input_bytes": 8192,
+      "preprocess_ms": 0.000273,
+      "p1_ms": 6.968352,
+      "handoff_ms": 0.001233,
+      "trt_input_copy_ms": 0.001233,
+      "p2_run_ms": 0.144058,
+      "p1_thread_ms": 6.968626,
+      "p2_thread_ms": 0.145291,
+      "single_latency_model_ms": 7.113917,
+      "paper_equivalent_cycle_ms": 6.968626,
+      "paper_equivalent_fps": 143.50032,
+      "makespan_ms": 6970.398235,
+      "fps_makespan": 143.463826,
+      "runtime_instance_id": "fresh_process:8b115b0964a8e4d7828b0c256b75b7eba64aa30fc187c0e907c4bf88effeaf66",
+      "repetition_id": "hailo8:5c02d8bd48ff49c495f6aeaba86f26e1",
+      "process_local_repetition_index": 1,
+      "repetition_runtime_scope": "fresh_process_per_repetition",
+      "repetition_index": 1,
+      "completed_work_units": 1000,
+      "status": "ok",
+      "workload_contract_sha256": "e2f5b56e70ec7928bd7a780b478b1963204d5f7ee2d0523462926da831b86c5d"
+    },
+    {
+      "ok": true,
+      "mode": "native_hailort_tensorrt_fifo",
+      "hef": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1.hef",
+      "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+      "frames": 1000,
+      "completed_frames": 1000,
+      "requested_frames": 1000,
+      "duration_s": 0.0,
+      "warmup": 100,
+      "queue_depth": 3,
+      "hailo_format": "float32",
+      "task": "classification",
+      "preprocess_mode_effective": "resize",
+      "preprocess_pad_value_effective": 0,
+      "letterbox_pad_value": 0,
+      "reuse_preprocessed_input": true,
+      "prepared_feed_contract": "prepared_feed_preprocess_outside_counted_loop",
+      "prepared_feed_setup_ms": 5.063955,
+      "measurement_boundary": "workers_ready_to_last_completed_trt_frame",
+      "warmup_contract": "fully_drained_before_worker_start",
+      "dump_inference_scope": "separate_bound_inference_after_measurement",
+      "trt_host_memory_policy": "cuda_pinned_all_bindings",
+      "trt_output_materialization_policy": "synchronized_d2h_pinned_buffer_no_post_copy",
+      "trt_copy_outputs": true,
+      "hailo_runtime_output_count": 1,
+      "hailo_runtime_output_name": "resnet50_part1_b119/avgpool1",
+      "hailo_runtime_output_frame_bytes": 8192,
+      "native_split_quality_runtime_boundary_verified": true,
+      "prepared_input_rgb": "",
+      "prepared_input_out": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/contract_artifacts/hailo8_prepared_input_rgb_uint8.bin",
+      "prepared_input_shape": [
+        224,
+        224,
+        3
+      ],
+      "trt_input_dtype": "float32",
+      "trt_input_bytes": 8192,
+      "preprocess_ms": 0.000286,
+      "p1_ms": 6.966659,
+      "handoff_ms": 0.00127,
+      "trt_input_copy_ms": 0.00127,
+      "p2_run_ms": 0.110283,
+      "p1_thread_ms": 6.966945,
+      "p2_thread_ms": 0.111553,
+      "single_latency_model_ms": 7.078498,
+      "paper_equivalent_cycle_ms": 6.966945,
+      "paper_equivalent_fps": 143.534936,
+      "makespan_ms": 6969.346399,
+      "fps_makespan": 143.485478,
+      "runtime_instance_id": "fresh_process:2d5248d0d99818c95d7db7d8d2d33aac023c229a24309005fe41ba13a91fb180",
+      "repetition_id": "hailo8:9bbeeb1eafba4aa6864dd637e76100e1",
+      "process_local_repetition_index": 2,
+      "repetition_runtime_scope": "fresh_process_per_repetition",
+      "repetition_index": 2,
+      "completed_work_units": 1000,
+      "status": "ok",
+      "workload_contract_sha256": "e2f5b56e70ec7928bd7a780b478b1963204d5f7ee2d0523462926da831b86c5d"
+    },
+    {
+      "ok": true,
+      "mode": "native_hailort_tensorrt_fifo",
+      "hef": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1.hef",
+      "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+      "frames": 1000,
+      "completed_frames": 1000,
+      "requested_frames": 1000,
+      "duration_s": 0.0,
+      "warmup": 100,
+      "queue_depth": 3,
+      "hailo_format": "float32",
+      "task": "classification",
+      "preprocess_mode_effective": "resize",
+      "preprocess_pad_value_effective": 0,
+      "letterbox_pad_value": 0,
+      "reuse_preprocessed_input": true,
+      "prepared_feed_contract": "prepared_feed_preprocess_outside_counted_loop",
+      "prepared_feed_setup_ms": 5.044755,
+      "measurement_boundary": "workers_ready_to_last_completed_trt_frame",
+      "warmup_contract": "fully_drained_before_worker_start",
+      "dump_inference_scope": "separate_bound_inference_after_measurement",
+      "trt_host_memory_policy": "cuda_pinned_all_bindings",
+      "trt_output_materialization_policy": "synchronized_d2h_pinned_buffer_no_post_copy",
+      "trt_copy_outputs": true,
+      "hailo_runtime_output_count": 1,
+      "hailo_runtime_output_name": "resnet50_part1_b119/avgpool1",
+      "hailo_runtime_output_frame_bytes": 8192,
+      "native_split_quality_runtime_boundary_verified": true,
+      "prepared_input_rgb": "",
+      "prepared_input_out": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/contract_artifacts/hailo8_prepared_input_rgb_uint8.bin",
+      "prepared_input_shape": [
+        224,
+        224,
+        3
+      ],
+      "trt_input_dtype": "float32",
+      "trt_input_bytes": 8192,
+      "preprocess_ms": 0.00032,
+      "p1_ms": 6.969913,
+      "handoff_ms": 0.001275,
+      "trt_input_copy_ms": 0.001275,
+      "p2_run_ms": 0.113567,
+      "p1_thread_ms": 6.970233,
+      "p2_thread_ms": 0.114842,
+      "single_latency_model_ms": 7.085075,
+      "paper_equivalent_cycle_ms": 6.970233,
+      "paper_equivalent_fps": 143.467231,
+      "makespan_ms": 6972.059046,
+      "fps_makespan": 143.429652,
+      "native_fifo_output_manifest": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/native_fifo_outputs/native_fifo_outputs_manifest.json",
+      "native_fifo_boundary_manifest": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/native_fifo_boundary/native_fifo_boundary_manifest.json",
+      "runtime_instance_id": "fresh_process:1b56cefea6d6cd30658369ef124d33d9cff9bbb2386b5f09c85142709550c87e",
+      "repetition_id": "hailo8:95b93124c9fa461bbb16098e89564dc1",
+      "process_local_repetition_index": 3,
+      "repetition_runtime_scope": "fresh_process_per_repetition",
+      "repetition_index": 3,
+      "completed_work_units": 1000,
+      "status": "ok",
+      "workload_contract_sha256": "e2f5b56e70ec7928bd7a780b478b1963204d5f7ee2d0523462926da831b86c5d"
+    }
+  ],
+  "repetition_records": [
+    {
+      "ok": true,
+      "mode": "native_hailort_tensorrt_fifo",
+      "hef": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1.hef",
+      "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+      "frames": 1000,
+      "completed_frames": 1000,
+      "requested_frames": 1000,
+      "duration_s": 0.0,
+      "warmup": 100,
+      "queue_depth": 3,
+      "hailo_format": "float32",
+      "task": "classification",
+      "preprocess_mode_effective": "resize",
+      "preprocess_pad_value_effective": 0,
+      "letterbox_pad_value": 0,
+      "reuse_preprocessed_input": true,
+      "prepared_feed_contract": "prepared_feed_preprocess_outside_counted_loop",
+      "prepared_feed_setup_ms": 5.100885,
+      "measurement_boundary": "workers_ready_to_last_completed_trt_frame",
+      "warmup_contract": "fully_drained_before_worker_start",
+      "dump_inference_scope": "separate_bound_inference_after_measurement",
+      "trt_host_memory_policy": "cuda_pinned_all_bindings",
+      "trt_output_materialization_policy": "synchronized_d2h_pinned_buffer_no_post_copy",
+      "trt_copy_outputs": true,
+      "hailo_runtime_output_count": 1,
+      "hailo_runtime_output_name": "resnet50_part1_b119/avgpool1",
+      "hailo_runtime_output_frame_bytes": 8192,
+      "native_split_quality_runtime_boundary_verified": true,
+      "prepared_input_rgb": "",
+      "prepared_input_out": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/contract_artifacts/hailo8_prepared_input_rgb_uint8.bin",
+      "prepared_input_shape": [
+        224,
+        224,
+        3
+      ],
+      "trt_input_dtype": "float32",
+      "trt_input_bytes": 8192,
+      "preprocess_ms": 0.000273,
+      "p1_ms": 6.968352,
+      "handoff_ms": 0.001233,
+      "trt_input_copy_ms": 0.001233,
+      "p2_run_ms": 0.144058,
+      "p1_thread_ms": 6.968626,
+      "p2_thread_ms": 0.145291,
+      "single_latency_model_ms": 7.113917,
+      "paper_equivalent_cycle_ms": 6.968626,
+      "paper_equivalent_fps": 143.50032,
+      "makespan_ms": 6970.398235,
+      "fps_makespan": 143.463826,
+      "runtime_instance_id": "fresh_process:8b115b0964a8e4d7828b0c256b75b7eba64aa30fc187c0e907c4bf88effeaf66",
+      "repetition_id": "hailo8:5c02d8bd48ff49c495f6aeaba86f26e1",
+      "process_local_repetition_index": 1,
+      "repetition_runtime_scope": "fresh_process_per_repetition",
+      "repetition_index": 1,
+      "completed_work_units": 1000,
+      "status": "ok",
+      "workload_contract_sha256": "e2f5b56e70ec7928bd7a780b478b1963204d5f7ee2d0523462926da831b86c5d"
+    },
+    {
+      "ok": true,
+      "mode": "native_hailort_tensorrt_fifo",
+      "hef": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1.hef",
+      "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+      "frames": 1000,
+      "completed_frames": 1000,
+      "requested_frames": 1000,
+      "duration_s": 0.0,
+      "warmup": 100,
+      "queue_depth": 3,
+      "hailo_format": "float32",
+      "task": "classification",
+      "preprocess_mode_effective": "resize",
+      "preprocess_pad_value_effective": 0,
+      "letterbox_pad_value": 0,
+      "reuse_preprocessed_input": true,
+      "prepared_feed_contract": "prepared_feed_preprocess_outside_counted_loop",
+      "prepared_feed_setup_ms": 5.063955,
+      "measurement_boundary": "workers_ready_to_last_completed_trt_frame",
+      "warmup_contract": "fully_drained_before_worker_start",
+      "dump_inference_scope": "separate_bound_inference_after_measurement",
+      "trt_host_memory_policy": "cuda_pinned_all_bindings",
+      "trt_output_materialization_policy": "synchronized_d2h_pinned_buffer_no_post_copy",
+      "trt_copy_outputs": true,
+      "hailo_runtime_output_count": 1,
+      "hailo_runtime_output_name": "resnet50_part1_b119/avgpool1",
+      "hailo_runtime_output_frame_bytes": 8192,
+      "native_split_quality_runtime_boundary_verified": true,
+      "prepared_input_rgb": "",
+      "prepared_input_out": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/contract_artifacts/hailo8_prepared_input_rgb_uint8.bin",
+      "prepared_input_shape": [
+        224,
+        224,
+        3
+      ],
+      "trt_input_dtype": "float32",
+      "trt_input_bytes": 8192,
+      "preprocess_ms": 0.000286,
+      "p1_ms": 6.966659,
+      "handoff_ms": 0.00127,
+      "trt_input_copy_ms": 0.00127,
+      "p2_run_ms": 0.110283,
+      "p1_thread_ms": 6.966945,
+      "p2_thread_ms": 0.111553,
+      "single_latency_model_ms": 7.078498,
+      "paper_equivalent_cycle_ms": 6.966945,
+      "paper_equivalent_fps": 143.534936,
+      "makespan_ms": 6969.346399,
+      "fps_makespan": 143.485478,
+      "runtime_instance_id": "fresh_process:2d5248d0d99818c95d7db7d8d2d33aac023c229a24309005fe41ba13a91fb180",
+      "repetition_id": "hailo8:9bbeeb1eafba4aa6864dd637e76100e1",
+      "process_local_repetition_index": 2,
+      "repetition_runtime_scope": "fresh_process_per_repetition",
+      "repetition_index": 2,
+      "completed_work_units": 1000,
+      "status": "ok",
+      "workload_contract_sha256": "e2f5b56e70ec7928bd7a780b478b1963204d5f7ee2d0523462926da831b86c5d"
+    },
+    {
+      "ok": true,
+      "mode": "native_hailort_tensorrt_fifo",
+      "hef": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1.hef",
+      "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+      "frames": 1000,
+      "completed_frames": 1000,
+      "requested_frames": 1000,
+      "duration_s": 0.0,
+      "warmup": 100,
+      "queue_depth": 3,
+      "hailo_format": "float32",
+      "task": "classification",
+      "preprocess_mode_effective": "resize",
+      "preprocess_pad_value_effective": 0,
+      "letterbox_pad_value": 0,
+      "reuse_preprocessed_input": true,
+      "prepared_feed_contract": "prepared_feed_preprocess_outside_counted_loop",
+      "prepared_feed_setup_ms": 5.044755,
+      "measurement_boundary": "workers_ready_to_last_completed_trt_frame",
+      "warmup_contract": "fully_drained_before_worker_start",
+      "dump_inference_scope": "separate_bound_inference_after_measurement",
+      "trt_host_memory_policy": "cuda_pinned_all_bindings",
+      "trt_output_materialization_policy": "synchronized_d2h_pinned_buffer_no_post_copy",
+      "trt_copy_outputs": true,
+      "hailo_runtime_output_count": 1,
+      "hailo_runtime_output_name": "resnet50_part1_b119/avgpool1",
+      "hailo_runtime_output_frame_bytes": 8192,
+      "native_split_quality_runtime_boundary_verified": true,
+      "prepared_input_rgb": "",
+      "prepared_input_out": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/contract_artifacts/hailo8_prepared_input_rgb_uint8.bin",
+      "prepared_input_shape": [
+        224,
+        224,
+        3
+      ],
+      "trt_input_dtype": "float32",
+      "trt_input_bytes": 8192,
+      "preprocess_ms": 0.00032,
+      "p1_ms": 6.969913,
+      "handoff_ms": 0.001275,
+      "trt_input_copy_ms": 0.001275,
+      "p2_run_ms": 0.113567,
+      "p1_thread_ms": 6.970233,
+      "p2_thread_ms": 0.114842,
+      "single_latency_model_ms": 7.085075,
+      "paper_equivalent_cycle_ms": 6.970233,
+      "paper_equivalent_fps": 143.467231,
+      "makespan_ms": 6972.059046,
+      "fps_makespan": 143.429652,
+      "native_fifo_output_manifest": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/native_fifo_outputs/native_fifo_outputs_manifest.json",
+      "native_fifo_boundary_manifest": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/native_fifo_boundary/native_fifo_boundary_manifest.json",
+      "runtime_instance_id": "fresh_process:1b56cefea6d6cd30658369ef124d33d9cff9bbb2386b5f09c85142709550c87e",
+      "repetition_id": "hailo8:95b93124c9fa461bbb16098e89564dc1",
+      "process_local_repetition_index": 3,
+      "repetition_runtime_scope": "fresh_process_per_repetition",
+      "repetition_index": 3,
+      "completed_work_units": 1000,
+      "status": "ok",
+      "workload_contract_sha256": "e2f5b56e70ec7928bd7a780b478b1963204d5f7ee2d0523462926da831b86c5d"
+    }
+  ],
+  "repetition_independence_verified": true,
+  "repetition_runtime_instance_ids": [
+    "fresh_process:8b115b0964a8e4d7828b0c256b75b7eba64aa30fc187c0e907c4bf88effeaf66",
+    "fresh_process:2d5248d0d99818c95d7db7d8d2d33aac023c229a24309005fe41ba13a91fb180",
+    "fresh_process:1b56cefea6d6cd30658369ef124d33d9cff9bbb2386b5f09c85142709550c87e"
+  ],
+  "benchmark_set": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set",
+  "case": "b119",
+  "hw_arch": "hailo8",
+  "precision": "float32_layout_fp16",
+  "measurement_endpoint": "model_outputs",
+  "performance_endpoint": "model_outputs",
+  "primary_performance_endpoint": "model_outputs",
+  "application_performance_endpoint": "model_outputs",
+  "energy_performance_endpoint": "model_outputs",
+  "endpoint_energy_eligible": true,
+  "input_image": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/resources/validation/classification/val_by_wnid_n500_s20260710/images/n01443537/ILSVRC2012_val_00013623.JPEG",
+  "input_image_source": "exact_file",
+  "input_image_sha256": "7fcdd3d95ff2491a2a5fe235d786026b728ffe0f88d25c4543d9a3e253f71652",
+  "native_command_contract": {
+    "schema": "onnx-splitpoint/native-command-contract",
+    "schema_version": 1,
+    "backend": "hailo8_to_trt",
+    "model": "resnet50",
+    "setup_id": "orin_nx_hailo8_01",
+    "comparison_backend": "hailo8",
+    "runner": "scripts/native_hailo_trt_fifo_from_benchmarkset.py",
+    "python_executable": "/usr/bin/python",
+    "interpreter_identity": {
+      "executable": "/usr/bin/python",
+      "resolved_executable": "/usr/bin/python3.10",
+      "executable_sha256": "7b13b22842816e9accd853f2c752aab43acf2ef6e16f48376b2f61c74c6c614b",
+      "prefix": "/usr",
+      "base_prefix": "/usr",
+      "version": "3.10.12 (main, Jan  8 2026, 06:52:19) [GCC 11.4.0]",
+      "runtime_mode": "native_cpp_launcher",
+      "process_local_extra_sites": []
+    },
+    "runner_sha256": "2458d3214d7e5310f83b8b2a1859f3513c6692ef6ab7fb4ace4d12eb4455d7ca",
+    "benchmark_set": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set",
+    "case": "b119",
+    "hw_arch": "hailo8",
+    "precision": "float32_layout_fp16",
+    "input_image": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/resources/validation/classification/val_by_wnid_n500_s20260710/images/n01443537/ILSVRC2012_val_00013623.JPEG",
+    "input_image_source": "exact_file",
+    "input_image_sha256": "7fcdd3d95ff2491a2a5fe235d786026b728ffe0f88d25c4543d9a3e253f71652",
+    "hef": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1.hef",
+    "hef_sha256": "ae81b5ba66784f39eeccd309412b178a34ca1b162bf0a97d6d9a1420ffa489c5",
+    "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+    "engine_sha256": "0779e70da8f0571def46b3a1b62d74d913e3cdc7393b2a4f31daf7579e533985",
+    "native_executable": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/build/split_native_hailo_trt_fifo",
+    "native_executable_sha256": "70c1fed6fb874afa83ac03dba999e117fb4dc8aa795d952e4d298ebc2d696181",
+    "artifacts": {
+      "python_executable": {
+        "path": "/usr/bin/python",
+        "sha256": "7b13b22842816e9accd853f2c752aab43acf2ef6e16f48376b2f61c74c6c614b"
+      },
+      "hef": {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1.hef",
+        "sha256": "ae81b5ba66784f39eeccd309412b178a34ca1b162bf0a97d6d9a1420ffa489c5",
+        "size_bytes": 25150049
+      },
+      "engine": {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+        "sha256": "0779e70da8f0571def46b3a1b62d74d913e3cdc7393b2a4f31daf7579e533985",
+        "size_bytes": 4189108
+      },
+      "native_executable": {
+        "path": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/build/split_native_hailo_trt_fifo",
+        "sha256": "70c1fed6fb874afa83ac03dba999e117fb4dc8aa795d952e4d298ebc2d696181"
+      },
+      "generated_cpp": {
+        "path": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/main.cpp",
+        "sha256": "99dfa223ac4aa4ec2500ad4b5e032396e26abec197b7dd20e647eff314aa22ae"
+      },
+      "cmake": {
+        "path": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/CMakeLists.txt",
+        "sha256": "a6734f5ccd8f08d2fabd2bdef17bbaa2a567e16a5e8e264ef0d0c128c582cae3"
+      },
+      "boundary_metadata": {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1_boundary_metadata.json",
+        "sha256": "900c2b563044b7118792a71037325061b933c2dc06c4813d236213b0d0cec683",
+        "size_bytes": 887
+      },
+      "source_part2_onnx": {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/benchmark_set/b119/source_part2.onnx",
+        "sha256": "d77f5bfe15307c6a4a5330eb9a43bef218a64f29f529bdede915ff7783815def",
+        "size_bytes": 8198709
+      },
+      "build_part2_onnx": {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+        "sha256": "cdf2a6ce78dab9417bdc8e8e9ef59633beb4b4ae2644df4025886bf38e044d79",
+        "size_bytes": 8199042
+      },
+      "native_trt_meta": {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/native_trt_meta.json",
+        "sha256": "284a289c83148e4ce6ad9b18e8af0454683e2723093e98079fafeb8a73561a92",
+        "size_bytes": 8120
+      },
+      "engine_build_receipt": {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/engine_build_receipt.json",
+        "sha256": "2b0ae21e1344a2ce7d17e50c03878ed57fe001353dd0deccfcacfdf1e759d7b2",
+        "size_bytes": 2261
+      },
+      "trtexec": {
+        "path": "/usr/src/tensorrt/bin/trtexec",
+        "sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4",
+        "size_bytes": 1695696
+      },
+      "semantic_output_manifest": {
+        "path": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/native_fifo_outputs/native_fifo_outputs_manifest.json",
+        "sha256": "13cf2ce402f4880be2043bf8ab685f9826a6271681cb77a67a700de2b7437d04",
+        "size_bytes": 3729
+      },
+      "semantic_boundary_manifest": {
+        "path": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/native_fifo_boundary/native_fifo_boundary_manifest.json",
+        "sha256": "10928d00c6dfadfc506087a5e1b534473457bfaa243bf67d8f096ec5583edc6b",
+        "size_bytes": 2460
+      },
+      "prepared_input": {
+        "path": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/contract_artifacts/hailo8_prepared_input_rgb_uint8.bin",
+        "sha256": "bd5cb096b1ace4fa2a5b7e0328ad787b785b0b8385f7d66c6c36c3e04e201071"
+      }
+    },
+    "prepared_input_contract": {
+      "format": "raw_runtime_tensor",
+      "name": "",
+      "shape": [
+        224,
+        224,
+        3
+      ],
+      "dtype": "uint8",
+      "layout": "HWC",
+      "task": "classification",
+      "preprocess": "opencv_resize_rgb_uint8",
+      "preprocess_mode_requested": "resize",
+      "preprocess_mode_effective": "resize",
+      "letterbox_pad_value_requested": 0,
+      "letterbox_pad_value_effective": 0,
+      "letterbox_pad_value": 0,
+      "pad_value_effective": 0,
+      "source_image": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/resources/validation/classification/val_by_wnid_n500_s20260710/images/n01443537/ILSVRC2012_val_00013623.JPEG",
+      "source_image_sha256": "7fcdd3d95ff2491a2a5fe235d786026b728ffe0f88d25c4543d9a3e253f71652"
+    },
+    "measurement_endpoint": "model_outputs",
+    "runtime_options": {
+      "measurement_endpoint": "model_outputs",
+      "frames": 1000,
+      "duration_s": 0.0,
+      "warmup": 100,
+      "repetitions": 3,
+      "queue_depth": 3,
+      "hailo_format": "float32",
+      "task": "classification",
+      "preprocess_mode_requested": "resize",
+      "preprocess_mode_effective": "resize",
+      "letterbox_pad_value_requested": 0,
+      "letterbox_pad_value_effective": 0,
+      "letterbox_pad_value": 0,
+      "copy_outputs": true,
+      "dump_outputs": true,
+      "dump_boundary": true,
+      "device_id": "",
+      "build": true,
+      "energy_prepared_feed_capable": true,
+      "prepared_feed_policy": "exact_prepared_feed_reused_for_every_work_unit",
+      "producer_impl": "hailo8_cpp_vstreams_fifo",
+      "completion_runtime_mode": "fast_oracle_outside_timing",
+      "completion_execution_contract": null,
+      "completion_execution_contract_sha256": "",
+      "prepared_input_bound": true
+    },
+    "boundary_contract": {
+      "metadata_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/native_trt_meta.json",
+      "metadata_sha256": "284a289c83148e4ce6ad9b18e8af0454683e2723093e98079fafeb8a73561a92",
+      "boundary_layout_requested": "memory_nhwc_to_nchw",
+      "boundary_layout_effective": "memory_nhwc_to_nchw",
+      "dequant_scale": null,
+      "dequant_zero_point": null,
+      "bridge_schema": "onnx-splitpoint/float32-layout-bridge"
+    },
+    "eval_run_id": "completsetdev_20260911_115557",
+    "source_run_id": "hailo8_to_trt",
+    "native_split_quality_binding": {
+      "artifacts": {
+        "boundary_metadata": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1_boundary_metadata.json",
+          "sha256": "900c2b563044b7118792a71037325061b933c2dc06c4813d236213b0d0cec683",
+          "size_bytes": 887
+        },
+        "build_part2_onnx": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+          "sha256": "cdf2a6ce78dab9417bdc8e8e9ef59633beb4b4ae2644df4025886bf38e044d79",
+          "size_bytes": 8199042
+        },
+        "engine": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+          "sha256": "0779e70da8f0571def46b3a1b62d74d913e3cdc7393b2a4f31daf7579e533985",
+          "size_bytes": 4189108
+        },
+        "engine_build_receipt": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/engine_build_receipt.json",
+          "sha256": "2b0ae21e1344a2ce7d17e50c03878ed57fe001353dd0deccfcacfdf1e759d7b2",
+          "size_bytes": 2261
+        },
+        "native_trt_meta": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/native_trt_meta.json",
+          "sha256": "284a289c83148e4ce6ad9b18e8af0454683e2723093e98079fafeb8a73561a92",
+          "size_bytes": 8120
+        },
+        "part1_runtime": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1.hef",
+          "sha256": "ae81b5ba66784f39eeccd309412b178a34ca1b162bf0a97d6d9a1420ffa489c5",
+          "size_bytes": 25150049
+        },
+        "source_part2_onnx": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/benchmark_set/b119/source_part2.onnx",
+          "sha256": "d77f5bfe15307c6a4a5330eb9a43bef218a64f29f529bdede915ff7783815def",
+          "size_bytes": 8198709
+        },
+        "trtexec": {
+          "path": "/usr/src/tensorrt/bin/trtexec",
+          "sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4",
+          "size_bytes": 1695696
+        }
+      },
+      "boundary_contract": {
+        "boundary_layout": "memory_nhwc_to_nchw",
+        "boundary_metadata_file_sha256": "900c2b563044b7118792a71037325061b933c2dc06c4813d236213b0d0cec683",
+        "boundary_metadata_sha256": "b7aaa6abe19da1f590d52e69dd9eb3a657911f76c40d7670a8f4f545d2365d38",
+        "boundary_tensor_dtype": "float32",
+        "boundary_tensor_name": "mean",
+        "boundary_tensor_shape": [
+          2048
+        ],
+        "boundary_transform": "layout_only",
+        "dequant_scale": null,
+        "dequant_zero_point": null,
+        "precision": "float32_layout_fp16"
+      },
+      "boundary_contract_sha256": "37136d35fc4617f02a2860ac7672724ab23ea4bdfe16253c222e2460c39e2786",
+      "boundary_metadata_payload": {
+        "backend": "hailo8_to_trt",
+        "boundary_layout": "memory_nhwc_to_nchw",
+        "boundary_tensor": {
+          "canonical_part2_shape": [
+            1,
+            2048,
+            1,
+            1
+          ],
+          "dtype": "float32",
+          "hef_native_storage_dtype": "uint8",
+          "hef_vstream_format_type": "uint8",
+          "name": "mean",
+          "runtime_name": "resnet50_part1_b119/avgpool1",
+          "shape": [
+            2048
+          ]
+        },
+        "boundary_tensor_count": 1,
+        "boundary_transform": "layout_only",
+        "case_id": "b119",
+        "metadata_sha256": "b7aaa6abe19da1f590d52e69dd9eb3a657911f76c40d7670a8f4f545d2365d38",
+        "model_id": "resnet50",
+        "part1_artifact_sha256": "ae81b5ba66784f39eeccd309412b178a34ca1b162bf0a97d6d9a1420ffa489c5",
+        "part1_artifact_size_bytes": 25150049,
+        "schema": "onnx-splitpoint/native-part1-boundary-metadata",
+        "schema_version": 1,
+        "setup_id": "orin_nx_hailo8_01",
+        "source_run_id": "hailo8_to_trt"
+      },
+      "boundary_metadata_value_sha256": "f720bde942fb0eeff228b74fb258cac338676c3d2f489d5b8eb59badb6168033",
+      "central_quality_selection": {
+        "backend": "hailo8_to_trt",
+        "case_id": "b119",
+        "central_result_sha256": "9e188e91ac1b176071435b319e1efc0c05150ac9ad827e7d0703995452d6e5f4",
+        "eval_run_id": "completsetdev_20260911_115557",
+        "model_id": "resnet50",
+        "precision": "float32_layout_fp16",
+        "producer_binding_sha256": "04b8564df671319357dffdbc9497978f4313391a1b97a6838cd8ecc2282d88bb",
+        "receipt_sha256": "a998be94b37430dbc5a3f5d1f5e9632265f8254fbe74cc3e5672fa7de1c4904d",
+        "runtime_precision_identity": "float32_layout_fp16",
+        "schema": "onnx-splitpoint/native-split-quality-central-selection",
+        "schema_version": 1,
+        "setup_id": "orin_nx_hailo8_01",
+        "source_request_sha256": "53ffebf7bbe76b439f46f86516a4a1b1843d2bb53549d03e3ffc32024ec66a7d",
+        "source_run_id": "hailo8_to_trt",
+        "task": "classification",
+        "variant": "composed"
+      },
+      "central_quality_selection_sha256": "a998be94b37430dbc5a3f5d1f5e9632265f8254fbe74cc3e5672fa7de1c4904d",
+      "central_result_sha256": "9e188e91ac1b176071435b319e1efc0c05150ac9ad827e7d0703995452d6e5f4",
+      "engine_build_receipt": {
+        "build_returncode": 0,
+        "command": [
+          "/usr/src/tensorrt/bin/trtexec",
+          "--onnx=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+          "--saveEngine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+          "--fp16",
+          "--timingCacheFile=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/timing.cache",
+          "--memPoolSize=workspace:4096"
+        ],
+        "dry_run": false,
+        "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+        "engine_sha256": "0779e70da8f0571def46b3a1b62d74d913e3cdc7393b2a4f31daf7579e533985",
+        "receipt_sha256": "b6caab2ca82cc209606517c3292920aea69038109beada6a8529d0af2742ad9c",
+        "schema": "onnx-splitpoint/tensorrt-engine-build-receipt",
+        "schema_version": 1,
+        "source_onnx": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+        "source_onnx_sha256": "cdf2a6ce78dab9417bdc8e8e9ef59633beb4b4ae2644df4025886bf38e044d79",
+        "trtexec": "/usr/src/tensorrt/bin/trtexec",
+        "trtexec_sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4"
+      },
+      "engine_build_receipt_canonical_size_bytes": 2179,
+      "engine_build_receipt_file_sha256": "2b0ae21e1344a2ce7d17e50c03878ed57fe001353dd0deccfcacfdf1e759d7b2",
+      "engine_build_receipt_file_size_bytes": 2261,
+      "engine_build_receipt_outer_sha256": "71a24a2757b49e72e446c093dc084dcde059ec5c724aac6d93594f8f0ddc795b",
+      "engine_build_receipt_sha256": "b6caab2ca82cc209606517c3292920aea69038109beada6a8529d0af2742ad9c",
+      "eval_run_id": "completsetdev_20260911_115557",
+      "local_artifact_verification": {
+        "artifact_names": [
+          "part1_runtime",
+          "boundary_metadata",
+          "source_part2_onnx",
+          "build_part2_onnx",
+          "engine",
+          "native_trt_meta",
+          "engine_build_receipt",
+          "trtexec"
+        ],
+        "artifact_set_sha256": "0ec6613f042d3eec04ca7f0d844adaad5194badece1ad8280ba5e59ff353600e",
+        "artifacts": {
+          "boundary_metadata": {
+            "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1_boundary_metadata.json",
+            "sha256": "900c2b563044b7118792a71037325061b933c2dc06c4813d236213b0d0cec683",
+            "size_bytes": 887
+          },
+          "build_part2_onnx": {
+            "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+            "sha256": "cdf2a6ce78dab9417bdc8e8e9ef59633beb4b4ae2644df4025886bf38e044d79",
+            "size_bytes": 8199042
+          },
+          "engine": {
+            "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+            "sha256": "0779e70da8f0571def46b3a1b62d74d913e3cdc7393b2a4f31daf7579e533985",
+            "size_bytes": 4189108
+          },
+          "engine_build_receipt": {
+            "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/engine_build_receipt.json",
+            "sha256": "2b0ae21e1344a2ce7d17e50c03878ed57fe001353dd0deccfcacfdf1e759d7b2",
+            "size_bytes": 2261
+          },
+          "native_trt_meta": {
+            "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/native_trt_meta.json",
+            "sha256": "284a289c83148e4ce6ad9b18e8af0454683e2723093e98079fafeb8a73561a92",
+            "size_bytes": 8120
+          },
+          "part1_runtime": {
+            "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1.hef",
+            "sha256": "ae81b5ba66784f39eeccd309412b178a34ca1b162bf0a97d6d9a1420ffa489c5",
+            "size_bytes": 25150049
+          },
+          "source_part2_onnx": {
+            "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/benchmark_set/b119/source_part2.onnx",
+            "sha256": "d77f5bfe15307c6a4a5330eb9a43bef218a64f29f529bdede915ff7783815def",
+            "size_bytes": 8198709
+          },
+          "trtexec": {
+            "path": "/usr/src/tensorrt/bin/trtexec",
+            "sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4",
+            "size_bytes": 1695696
+          }
+        },
+        "boundary_metadata_value_sha256": "f720bde942fb0eeff228b74fb258cac338676c3d2f489d5b8eb59badb6168033",
+        "build_summary_row_sha256": "6265a597fbd90f7bf7aae866a2e790877b914e9c41e7cf83edf020815ad03193",
+        "embedded_json_files": {
+          "boundary_metadata": {
+            "canonical_value_sha256": "f720bde942fb0eeff228b74fb258cac338676c3d2f489d5b8eb59badb6168033",
+            "content_base64": "ewogICJiYWNrZW5kIjogImhhaWxvOF90b190cnQiLAogICJib3VuZGFyeV9sYXlvdXQiOiAibWVtb3J5X25od2NfdG9fbmNodyIsCiAgImJvdW5kYXJ5X3RlbnNvciI6IHsKICAgICJjYW5vbmljYWxfcGFydDJfc2hhcGUiOiBbCiAgICAgIDEsCiAgICAgIDIwNDgsCiAgICAgIDEsCiAgICAgIDEKICAgIF0sCiAgICAiZHR5cGUiOiAiZmxvYXQzMiIsCiAgICAiaGVmX25hdGl2ZV9zdG9yYWdlX2R0eXBlIjogInVpbnQ4IiwKICAgICJoZWZfdnN0cmVhbV9mb3JtYXRfdHlwZSI6ICJ1aW50OCIsCiAgICAibmFtZSI6ICJtZWFuIiwKICAgICJydW50aW1lX25hbWUiOiAicmVzbmV0NTBfcGFydDFfYjExOS9hdmdwb29sMSIsCiAgICAic2hhcGUiOiBbCiAgICAgIDIwNDgKICAgIF0KICB9LAogICJib3VuZGFyeV90ZW5zb3JfY291bnQiOiAxLAogICJib3VuZGFyeV90cmFuc2Zvcm0iOiAibGF5b3V0X29ubHkiLAogICJjYXNlX2lkIjogImIxMTkiLAogICJtZXRhZGF0YV9zaGEyNTYiOiAiYjdhYWE2YWJlMTlkYTFmNTkwZDUyZTY5ZGQ5ZWIzYTY1NzkxMWY3NmM0MGQ3NjcwYThmNGY1NDVkMjM2NWQzOCIsCiAgIm1vZGVsX2lkIjogInJlc25ldDUwIiwKICAicGFydDFfYXJ0aWZhY3Rfc2hhMjU2IjogImFlODFiNWJhNjY3ODRmMzllZWNjZDMwOTQxMmIxNzhhMzRjYTFiMTYyYmYwYTk3ZDZkOWExNDIwZmZhNDg5YzUiLAogICJwYXJ0MV9hcnRpZmFjdF9zaXplX2J5dGVzIjogMjUxNTAwNDksCiAgInNjaGVtYSI6ICJvbm54LXNwbGl0cG9pbnQvbmF0aXZlLXBhcnQxLWJvdW5kYXJ5LW1ldGFkYXRhIiwKICAic2NoZW1hX3ZlcnNpb24iOiAxLAogICJzZXR1cF9pZCI6ICJvcmluX254X2hhaWxvOF8wMSIsCiAgInNvdXJjZV9ydW5faWQiOiAiaGFpbG84X3RvX3RydCIKfQo=",
+            "encoding": "base64",
+            "file_sha256": "900c2b563044b7118792a71037325061b933c2dc06c4813d236213b0d0cec683",
+            "file_size_bytes": 887
+          },
+          "engine_build_receipt": {
+            "canonical_value_sha256": "71a24a2757b49e72e446c093dc084dcde059ec5c724aac6d93594f8f0ddc795b",
+            "content_base64": "ewogICJidWlsZF9yZXR1cm5jb2RlIjogMCwKICAiY29tbWFuZCI6IFsKICAgICIvdXNyL3NyYy90ZW5zb3JydC9iaW4vdHJ0ZXhlYyIsCiAgICAiLS1vbm54PS9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi9zb3VyY2VfcGFydDJfZmxvYXQzMl9sYXlvdXRfYnJpZGdlLm9ubngiLAogICAgIi0tc2F2ZUVuZ2luZT0vaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICAgIi0tZnAxNiIsCiAgICAiLS10aW1pbmdDYWNoZUZpbGU9L2hvbWUvbngvc3BsaXRwb2ludF9ydW5zL19vbm54X3NwbGl0cG9pbnRfY2FjaGUvdGVuc29ycnRfbWFuYWdlZF92Mjc1MTYvcmVzbmV0NTAtYzhmYjljMmI5M2FkYmQ4Ny9uYXRpdmVfc3BsaXRfcXVhbGl0eS9vcmluX254X2hhaWxvOF8wMS9yZXNuZXQ1MC9iMTE5L2hhaWxvOF90b190cnQvNmUxZjUzYTdjZGE3MThjMTc1YzM2ZDc1NzU5MWMxNGNiYWUxZWM4NjMwNTA0MjdiN2IyMjkyOGI1ZWM4NzhlMS9lbmdpbmVfY2FjaGUvYjExOS9wYXJ0Mi9mbG9hdDMyX2xheW91dF9mcDE2L3RpbWluZy5jYWNoZSIsCiAgICAiLS1tZW1Qb29sU2l6ZT13b3Jrc3BhY2U6NDA5NiIKICBdLAogICJkcnlfcnVuIjogZmFsc2UsCiAgImVuZ2luZSI6ICIvaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICJlbmdpbmVfc2hhMjU2IjogIjA3NzllNzBkYThmMDU3MWRlZjQ2YjNhMWI2MmQ3NGQ5MTNlM2NkYzczOTNiMmE0ZjMxZGFmNzU3OWU1MzM5ODUiLAogICJyZWNlaXB0X3NoYTI1NiI6ICJiNmNhYWIyY2E4MmNjMjA5NjA2NTE3YzMyOTI5MjBhZWE2OTAzODEwOWJlYWRhNmE4NTI5ZDBhZjI3NDJhZDljIiwKICAic2NoZW1hIjogIm9ubngtc3BsaXRwb2ludC90ZW5zb3JydC1lbmdpbmUtYnVpbGQtcmVjZWlwdCIsCiAgInNjaGVtYV92ZXJzaW9uIjogMSwKICAic291cmNlX29ubngiOiAiL2hvbWUvbngvc3BsaXRwb2ludF9ydW5zL19vbm54X3NwbGl0cG9pbnRfY2FjaGUvdGVuc29ycnRfbWFuYWdlZF92Mjc1MTYvcmVzbmV0NTAtYzhmYjljMmI5M2FkYmQ4Ny9uYXRpdmVfc3BsaXRfcXVhbGl0eS9vcmluX254X2hhaWxvOF8wMS9yZXNuZXQ1MC9iMTE5L2hhaWxvOF90b190cnQvNmUxZjUzYTdjZGE3MThjMTc1YzM2ZDc1NzU5MWMxNGNiYWUxZWM4NjMwNTA0MjdiN2IyMjkyOGI1ZWM4NzhlMS9lbmdpbmVfY2FjaGUvYjExOS9wYXJ0Mi9mbG9hdDMyX2xheW91dF9mcDE2L3NvdXJjZV9wYXJ0Ml9mbG9hdDMyX2xheW91dF9icmlkZ2Uub25ueCIsCiAgInNvdXJjZV9vbm54X3NoYTI1NiI6ICJjZGYyYTZjZTc4ZGFiOTQxN2JkYzhlOGU5ZWY1OTYzM2JlYjRiNGFlMjY0NGRmNDAyNTg4NmJmMzhlMDQ0ZDc5IiwKICAidHJ0ZXhlYyI6ICIvdXNyL3NyYy90ZW5zb3JydC9iaW4vdHJ0ZXhlYyIsCiAgInRydGV4ZWNfc2hhMjU2IjogImI4MDA5OTA1MDg3OTNhOWJmNTA3MTNkNzhkNGZlZGZlNDc1MzgxZDhjZDc0OWFiZGE4MDkwOWI5MTk3ZmExYzQiCn0=",
+            "encoding": "base64",
+            "file_sha256": "2b0ae21e1344a2ce7d17e50c03878ed57fe001353dd0deccfcacfdf1e759d7b2",
+            "file_size_bytes": 2261
+          },
+          "native_trt_meta": {
+            "canonical_value_sha256": "6265a597fbd90f7bf7aae866a2e790877b914e9c41e7cf83edf020815ad03193",
+            "content_base64": "ewogICJidWlsZCI6IHsKICAgICJjYWNoZV9oaXQiOiB0cnVlLAogICAgImNtZCI6IFsKICAgICAgIi91c3Ivc3JjL3RlbnNvcnJ0L2Jpbi90cnRleGVjIiwKICAgICAgIi0tb25ueD0vaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvc291cmNlX3BhcnQyX2Zsb2F0MzJfbGF5b3V0X2JyaWRnZS5vbm54IiwKICAgICAgIi0tc2F2ZUVuZ2luZT0vaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICAgICAiLS1mcDE2IiwKICAgICAgIi0tdGltaW5nQ2FjaGVGaWxlPS9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi90aW1pbmcuY2FjaGUiLAogICAgICAiLS1tZW1Qb29sU2l6ZT13b3Jrc3BhY2U6NDA5NiIKICAgIF0sCiAgICAiY29tcGlsZXJfZGlzcGF0Y2hlZCI6IGZhbHNlLAogICAgImRyeV9ydW4iOiBmYWxzZSwKICAgICJldmlkZW5jZV9zb3VyY2UiOiAidmVyaWZpZWRfZW5naW5lX2J1aWxkX3JlY2VpcHQiLAogICAgInJldHVybmNvZGUiOiAwCiAgfSwKICAiYnVpbGRfYXR0ZW1wdHMiOiBbXSwKICAiYnVpbGRfb2siOiB0cnVlLAogICJjYXNlIjogImIxMTkiLAogICJlbmdpbmUiOiAiL2hvbWUvbngvc3BsaXRwb2ludF9ydW5zL19vbm54X3NwbGl0cG9pbnRfY2FjaGUvdGVuc29ycnRfbWFuYWdlZF92Mjc1MTYvcmVzbmV0NTAtYzhmYjljMmI5M2FkYmQ4Ny9uYXRpdmVfc3BsaXRfcXVhbGl0eS9vcmluX254X2hhaWxvOF8wMS9yZXNuZXQ1MC9iMTE5L2hhaWxvOF90b190cnQvNmUxZjUzYTdjZGE3MThjMTc1YzM2ZDc1NzU5MWMxNGNiYWUxZWM4NjMwNTA0MjdiN2IyMjkyOGI1ZWM4NzhlMS9lbmdpbmVfY2FjaGUvYjExOS9wYXJ0Mi9mbG9hdDMyX2xheW91dF9mcDE2L3BhcnQyX2Zsb2F0MzJfbGF5b3V0X2ZwMTYuZW5naW5lIiwKICAiZW5naW5lX2J1aWxkX3JlY2VpcHQiOiB7CiAgICAiYnVpbGRfcmV0dXJuY29kZSI6IDAsCiAgICAiY29tbWFuZCI6IFsKICAgICAgIi91c3Ivc3JjL3RlbnNvcnJ0L2Jpbi90cnRleGVjIiwKICAgICAgIi0tb25ueD0vaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvc291cmNlX3BhcnQyX2Zsb2F0MzJfbGF5b3V0X2JyaWRnZS5vbm54IiwKICAgICAgIi0tc2F2ZUVuZ2luZT0vaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICAgICAiLS1mcDE2IiwKICAgICAgIi0tdGltaW5nQ2FjaGVGaWxlPS9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi90aW1pbmcuY2FjaGUiLAogICAgICAiLS1tZW1Qb29sU2l6ZT13b3Jrc3BhY2U6NDA5NiIKICAgIF0sCiAgICAiZHJ5X3J1biI6IGZhbHNlLAogICAgImVuZ2luZSI6ICIvaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICAgImVuZ2luZV9zaGEyNTYiOiAiMDc3OWU3MGRhOGYwNTcxZGVmNDZiM2ExYjYyZDc0ZDkxM2UzY2RjNzM5M2IyYTRmMzFkYWY3NTc5ZTUzMzk4NSIsCiAgICAicmVjZWlwdF9zaGEyNTYiOiAiYjZjYWFiMmNhODJjYzIwOTYwNjUxN2MzMjkyOTIwYWVhNjkwMzgxMDliZWFkYTZhODUyOWQwYWYyNzQyYWQ5YyIsCiAgICAic2NoZW1hIjogIm9ubngtc3BsaXRwb2ludC90ZW5zb3JydC1lbmdpbmUtYnVpbGQtcmVjZWlwdCIsCiAgICAic2NoZW1hX3ZlcnNpb24iOiAxLAogICAgInNvdXJjZV9vbm54IjogIi9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi9zb3VyY2VfcGFydDJfZmxvYXQzMl9sYXlvdXRfYnJpZGdlLm9ubngiLAogICAgInNvdXJjZV9vbm54X3NoYTI1NiI6ICJjZGYyYTZjZTc4ZGFiOTQxN2JkYzhlOGU5ZWY1OTYzM2JlYjRiNGFlMjY0NGRmNDAyNTg4NmJmMzhlMDQ0ZDc5IiwKICAgICJ0cnRleGVjIjogIi91c3Ivc3JjL3RlbnNvcnJ0L2Jpbi90cnRleGVjIiwKICAgICJ0cnRleGVjX3NoYTI1NiI6ICJiODAwOTkwNTA4NzkzYTliZjUwNzEzZDc4ZDRmZWRmZTQ3NTM4MWQ4Y2Q3NDlhYmRhODA5MDliOTE5N2ZhMWM0IgogIH0sCiAgImVuZ2luZV9idWlsZF9yZWNlaXB0X3BhdGgiOiAiL2hvbWUvbngvc3BsaXRwb2ludF9ydW5zL19vbm54X3NwbGl0cG9pbnRfY2FjaGUvdGVuc29ycnRfbWFuYWdlZF92Mjc1MTYvcmVzbmV0NTAtYzhmYjljMmI5M2FkYmQ4Ny9uYXRpdmVfc3BsaXRfcXVhbGl0eS9vcmluX254X2hhaWxvOF8wMS9yZXNuZXQ1MC9iMTE5L2hhaWxvOF90b190cnQvNmUxZjUzYTdjZGE3MThjMTc1YzM2ZDc1NzU5MWMxNGNiYWUxZWM4NjMwNTA0MjdiN2IyMjkyOGI1ZWM4NzhlMS9lbmdpbmVfY2FjaGUvYjExOS9wYXJ0Mi9mbG9hdDMyX2xheW91dF9mcDE2L2VuZ2luZV9idWlsZF9yZWNlaXB0Lmpzb24iLAogICJlbmdpbmVfYnVpbGRfcmVjZWlwdF9zdGF0dXMiOiAiZW5naW5lX2J1aWxkX3JlY2VpcHRfdmVyaWZpZWQiLAogICJpbnB1dHMiOiBbCiAgICB7CiAgICAgICJlbGVtX3R5cGUiOiAiRkxPQVQiLAogICAgICAiaGFzX2R5bmFtaWMiOiBmYWxzZSwKICAgICAgIm5hbWUiOiAibWVhbiIsCiAgICAgICJzaGFwZSI6IFsKICAgICAgICAxLAogICAgICAgIDIwNDgsCiAgICAgICAgMSwKICAgICAgICAxCiAgICAgIF0KICAgIH0KICBdLAogICJpbnB1dHNfc3RhdGljIjogdHJ1ZSwKICAib25ueCI6ICIvaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvc291cmNlX3BhcnQyX2Zsb2F0MzJfbGF5b3V0X2JyaWRnZS5vbm54IiwKICAib3V0cHV0cyI6IFsKICAgIHsKICAgICAgImVsZW1fdHlwZSI6ICJGTE9BVCIsCiAgICAgICJoYXNfZHluYW1pYyI6IGZhbHNlLAogICAgICAibmFtZSI6ICJsb2dpdHMiLAogICAgICAic2hhcGUiOiBbCiAgICAgICAgMSwKICAgICAgICAxMDAwCiAgICAgIF0KICAgIH0KICBdLAogICJwcmVjaXNpb24iOiAiZmxvYXQzMl9sYXlvdXRfZnAxNiIsCiAgInF1YWxpdHlfZmlyc3RfaWRlbnRpdHkiOiB7fSwKICAicmVxdWVzdGVkX3ByZWNpc2lvbiI6ICJmbG9hdDMyX2xheW91dF9mcDE2IiwKICAic2NoZW1hIjogIm9ubngtc3BsaXRwb2ludC9uYXRpdmUtdHJ0LW1ldGEiLAogICJzY2hlbWFfdmVyc2lvbiI6IDEsCiAgInNoYXBlc19hcmciOiAiIiwKICAic2hhcGVzX3BvbGljeV9lZmZlY3RpdmUiOiAiYXV0b19zdGF0aWNfb21pdCIsCiAgInNvdXJjZV9vbm54IjogIi9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi9zb3VyY2VfcGFydDJfZmxvYXQzMl9sYXlvdXRfYnJpZGdlLm9ubngiLAogICJ0cnRfY2FjaGUiOiB7CiAgICAiYXJ0aWZhY3RfcGF0aCI6ICIvaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICAgImNhc2VfaWQiOiAiYjExOSIsCiAgICAiY29tcGlsZXJfZGlzcGF0Y2hlZCI6IGZhbHNlLAogICAgImlkZW50aXR5IjogImI2Y2FhYjJjYTgyY2MyMDk2MDY1MTdjMzI5MjkyMGFlYTY5MDM4MTA5YmVhZGE2YTg1MjlkMGFmMjc0MmFkOWMiLAogICAgIm1vZGVsX2lkIjogInNvdXJjZV9wYXJ0Ml9mbG9hdDMyX2xheW91dF9icmlkZ2UiLAogICAgIm91dGNvbWUiOiAicmV1c2VkIiwKICAgICJyZWFzb24iOiAiY29tcGF0aWJsZV9yZWNlaXB0IiwKICAgICJyZWNlaXB0X3BhdGgiOiAiL2hvbWUvbngvc3BsaXRwb2ludF9ydW5zL19vbm54X3NwbGl0cG9pbnRfY2FjaGUvdGVuc29ycnRfbWFuYWdlZF92Mjc1MTYvcmVzbmV0NTAtYzhmYjljMmI5M2FkYmQ4Ny9uYXRpdmVfc3BsaXRfcXVhbGl0eS9vcmluX254X2hhaWxvOF8wMS9yZXNuZXQ1MC9iMTE5L2hhaWxvOF90b190cnQvNmUxZjUzYTdjZGE3MThjMTc1YzM2ZDc1NzU5MWMxNGNiYWUxZWM4NjMwNTA0MjdiN2IyMjkyOGI1ZWM4NzhlMS9lbmdpbmVfY2FjaGUvYjExOS9wYXJ0Mi9mbG9hdDMyX2xheW91dF9mcDE2L2VuZ2luZV9idWlsZF9yZWNlaXB0Lmpzb24iLAogICAgInJvbGUiOiAicGFydDIiLAogICAgInN0YXR1cyI6ICJISVQiCiAgfSwKICAidWludDhfY2FzdF9icmlkZ2UiOiB7CiAgICAiYm91bmRhcnlfbGF5b3V0IjogewogICAgICAiYXBwbGllZCI6IHRydWUsCiAgICAgICJlZmZlY3RpdmUiOiAibWVtb3J5X25od2NfdG9fbmNodyIsCiAgICAgICJtZW1vcnlfc2hhcGUiOiBbCiAgICAgICAgMSwKICAgICAgICAxLAogICAgICAgIDEsCiAgICAgICAgMjA0OAogICAgICBdLAogICAgICAib3V0cHV0IjogIm1lYW5fX2JvdW5kYXJ5X3RvX25jaHciLAogICAgICAicGVybSI6IFsKICAgICAgICAwLAogICAgICAgIDMsCiAgICAgICAgMSwKICAgICAgICAyCiAgICAgIF0sCiAgICAgICJyZXF1ZXN0ZWQiOiAibWVtb3J5X25od2NfdG9fbmNodyIKICAgIH0sCiAgICAiYnJpZGdlIjogIi9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi9zb3VyY2VfcGFydDJfZmxvYXQzMl9sYXlvdXRfYnJpZGdlLm9ubngiLAogICAgImJyaWRnZV9vdXRwdXQiOiAibWVhbl9fYm91bmRhcnlfdG9fbmNodyIsCiAgICAiYnJpZGdlX3NoYTI1NiI6ICJjZGYyYTZjZTc4ZGFiOTQxN2JkYzhlOGU5ZWY1OTYzM2JlYjRiNGFlMjY0NGRmNDAyNTg4NmJmMzhlMDQ0ZDc5IiwKICAgICJpbnB1dF9kdHlwZSI6ICJGTE9BVCIsCiAgICAiaW5wdXRfbmFtZSI6ICJtZWFuIiwKICAgICJpbnB1dF9zaGFwZSI6IFsKICAgICAgMSwKICAgICAgMjA0OCwKICAgICAgMSwKICAgICAgMQogICAgXSwKICAgICJwYXJhbXNfc291cmNlIjogImhhaWxvcnRfZmxvYXQzMl92c3RyZWFtIiwKICAgICJyZXBsYWNlZF91c2VzIjogMSwKICAgICJzY2hlbWEiOiAib25ueC1zcGxpdHBvaW50L2Zsb2F0MzItbGF5b3V0LWJyaWRnZSIsCiAgICAic2NoZW1hX3ZlcnNpb24iOiAxLAogICAgInNvdXJjZSI6ICIvaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2JlbmNobWFya19zZXQvYjExOS9zb3VyY2VfcGFydDIub25ueCIsCiAgICAic291cmNlX3NoYTI1NiI6ICJkNzdmNWJmZTE1MzA3YzZhNGE1MzMwZWI5YTQzYmVmMjE4YTY0ZjI5ZjUyOWJkZWRlOTE1ZmY3NzgzODE1ZGVmIgogIH0sCiAgInZhcmlhbnQiOiAicGFydDIiCn0=",
+            "encoding": "base64",
+            "file_sha256": "284a289c83148e4ce6ad9b18e8af0454683e2723093e98079fafeb8a73561a92",
+            "file_size_bytes": 8120
+          }
+        },
+        "engine_build_receipt_canonical_size_bytes": 2179,
+        "engine_build_receipt_inner_sha256": "b6caab2ca82cc209606517c3292920aea69038109beada6a8529d0af2742ad9c",
+        "engine_build_receipt_outer_sha256": "71a24a2757b49e72e446c093dc084dcde059ec5c724aac6d93594f8f0ddc795b",
+        "native_trt_meta_payload_sha256": "6265a597fbd90f7bf7aae866a2e790877b914e9c41e7cf83edf020815ad03193",
+        "proof_sha256": "577c4afa497492681804effcc856acfdb1a988a09ca4131cc64009ccf7befa73",
+        "schema": "onnx-splitpoint/native-split-local-artifact-verification",
+        "schema_version": 1,
+        "trt_build_command_sha256": "7ab6a62844df676addbb63eb5799f9369a6f7fdca04244b24211022ba5dee35c",
+        "verification_kind": "producer_local_file_rehash"
+      },
+      "native_trt_meta": {
+        "build": {
+          "cache_hit": true,
+          "cmd": [
+            "/usr/src/tensorrt/bin/trtexec",
+            "--onnx=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+            "--saveEngine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+            "--fp16",
+            "--timingCacheFile=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/timing.cache",
+            "--memPoolSize=workspace:4096"
+          ],
+          "compiler_dispatched": false,
+          "dry_run": false,
+          "evidence_source": "verified_engine_build_receipt",
+          "returncode": 0
+        },
+        "build_attempts": [],
+        "build_ok": true,
+        "case": "b119",
+        "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+        "engine_build_receipt": {
+          "build_returncode": 0,
+          "command": [
+            "/usr/src/tensorrt/bin/trtexec",
+            "--onnx=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+            "--saveEngine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+            "--fp16",
+            "--timingCacheFile=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/timing.cache",
+            "--memPoolSize=workspace:4096"
+          ],
+          "dry_run": false,
+          "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+          "engine_sha256": "0779e70da8f0571def46b3a1b62d74d913e3cdc7393b2a4f31daf7579e533985",
+          "receipt_sha256": "b6caab2ca82cc209606517c3292920aea69038109beada6a8529d0af2742ad9c",
+          "schema": "onnx-splitpoint/tensorrt-engine-build-receipt",
+          "schema_version": 1,
+          "source_onnx": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+          "source_onnx_sha256": "cdf2a6ce78dab9417bdc8e8e9ef59633beb4b4ae2644df4025886bf38e044d79",
+          "trtexec": "/usr/src/tensorrt/bin/trtexec",
+          "trtexec_sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4"
+        },
+        "engine_build_receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/engine_build_receipt.json",
+        "engine_build_receipt_status": "engine_build_receipt_verified",
+        "inputs": [
+          {
+            "elem_type": "FLOAT",
+            "has_dynamic": false,
+            "name": "mean",
+            "shape": [
+              1,
+              2048,
+              1,
+              1
+            ]
+          }
+        ],
+        "inputs_static": true,
+        "onnx": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+        "outputs": [
+          {
+            "elem_type": "FLOAT",
+            "has_dynamic": false,
+            "name": "logits",
+            "shape": [
+              1,
+              1000
+            ]
+          }
+        ],
+        "precision": "float32_layout_fp16",
+        "quality_first_identity": {},
+        "requested_precision": "float32_layout_fp16",
+        "schema": "onnx-splitpoint/native-trt-meta",
+        "schema_version": 1,
+        "shapes_arg": "",
+        "shapes_policy_effective": "auto_static_omit",
+        "source_onnx": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+        "trt_cache": {
+          "artifact_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+          "case_id": "b119",
+          "compiler_dispatched": false,
+          "identity": "b6caab2ca82cc209606517c3292920aea69038109beada6a8529d0af2742ad9c",
+          "model_id": "source_part2_float32_layout_bridge",
+          "outcome": "reused",
+          "reason": "compatible_receipt",
+          "receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/engine_build_receipt.json",
+          "role": "part2",
+          "status": "HIT"
+        },
+        "uint8_cast_bridge": {
+          "boundary_layout": {
+            "applied": true,
+            "effective": "memory_nhwc_to_nchw",
+            "memory_shape": [
+              1,
+              1,
+              1,
+              2048
+            ],
+            "output": "mean__boundary_to_nchw",
+            "perm": [
+              0,
+              3,
+              1,
+              2
+            ],
+            "requested": "memory_nhwc_to_nchw"
+          },
+          "bridge": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+          "bridge_output": "mean__boundary_to_nchw",
+          "bridge_sha256": "cdf2a6ce78dab9417bdc8e8e9ef59633beb4b4ae2644df4025886bf38e044d79",
+          "input_dtype": "FLOAT",
+          "input_name": "mean",
+          "input_shape": [
+            1,
+            2048,
+            1,
+            1
+          ],
+          "params_source": "hailort_float32_vstream",
+          "replaced_uses": 1,
+          "schema": "onnx-splitpoint/float32-layout-bridge",
+          "schema_version": 1,
+          "source": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/benchmark_set/b119/source_part2.onnx",
+          "source_sha256": "d77f5bfe15307c6a4a5330eb9a43bef218a64f29f529bdede915ff7783815def"
+        },
+        "variant": "part2"
+      },
+      "native_trt_meta_file_sha256": "284a289c83148e4ce6ad9b18e8af0454683e2723093e98079fafeb8a73561a92",
+      "native_trt_meta_file_size_bytes": 8120,
+      "native_trt_meta_payload": {
+        "build": {
+          "cache_hit": true,
+          "cmd": [
+            "/usr/src/tensorrt/bin/trtexec",
+            "--onnx=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+            "--saveEngine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+            "--fp16",
+            "--timingCacheFile=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/timing.cache",
+            "--memPoolSize=workspace:4096"
+          ],
+          "compiler_dispatched": false,
+          "dry_run": false,
+          "evidence_source": "verified_engine_build_receipt",
+          "returncode": 0
+        },
+        "build_attempts": [],
+        "build_ok": true,
+        "case": "b119",
+        "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+        "engine_build_receipt": {
+          "build_returncode": 0,
+          "command": [
+            "/usr/src/tensorrt/bin/trtexec",
+            "--onnx=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+            "--saveEngine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+            "--fp16",
+            "--timingCacheFile=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/timing.cache",
+            "--memPoolSize=workspace:4096"
+          ],
+          "dry_run": false,
+          "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+          "engine_sha256": "0779e70da8f0571def46b3a1b62d74d913e3cdc7393b2a4f31daf7579e533985",
+          "receipt_sha256": "b6caab2ca82cc209606517c3292920aea69038109beada6a8529d0af2742ad9c",
+          "schema": "onnx-splitpoint/tensorrt-engine-build-receipt",
+          "schema_version": 1,
+          "source_onnx": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+          "source_onnx_sha256": "cdf2a6ce78dab9417bdc8e8e9ef59633beb4b4ae2644df4025886bf38e044d79",
+          "trtexec": "/usr/src/tensorrt/bin/trtexec",
+          "trtexec_sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4"
+        },
+        "engine_build_receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/engine_build_receipt.json",
+        "engine_build_receipt_status": "engine_build_receipt_verified",
+        "inputs": [
+          {
+            "elem_type": "FLOAT",
+            "has_dynamic": false,
+            "name": "mean",
+            "shape": [
+              1,
+              2048,
+              1,
+              1
+            ]
+          }
+        ],
+        "inputs_static": true,
+        "onnx": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+        "outputs": [
+          {
+            "elem_type": "FLOAT",
+            "has_dynamic": false,
+            "name": "logits",
+            "shape": [
+              1,
+              1000
+            ]
+          }
+        ],
+        "precision": "float32_layout_fp16",
+        "quality_first_identity": {},
+        "requested_precision": "float32_layout_fp16",
+        "schema": "onnx-splitpoint/native-trt-meta",
+        "schema_version": 1,
+        "shapes_arg": "",
+        "shapes_policy_effective": "auto_static_omit",
+        "source_onnx": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+        "trt_cache": {
+          "artifact_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+          "case_id": "b119",
+          "compiler_dispatched": false,
+          "identity": "b6caab2ca82cc209606517c3292920aea69038109beada6a8529d0af2742ad9c",
+          "model_id": "source_part2_float32_layout_bridge",
+          "outcome": "reused",
+          "reason": "compatible_receipt",
+          "receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/engine_build_receipt.json",
+          "role": "part2",
+          "status": "HIT"
+        },
+        "uint8_cast_bridge": {
+          "boundary_layout": {
+            "applied": true,
+            "effective": "memory_nhwc_to_nchw",
+            "memory_shape": [
+              1,
+              1,
+              1,
+              2048
+            ],
+            "output": "mean__boundary_to_nchw",
+            "perm": [
+              0,
+              3,
+              1,
+              2
+            ],
+            "requested": "memory_nhwc_to_nchw"
+          },
+          "bridge": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+          "bridge_output": "mean__boundary_to_nchw",
+          "bridge_sha256": "cdf2a6ce78dab9417bdc8e8e9ef59633beb4b4ae2644df4025886bf38e044d79",
+          "input_dtype": "FLOAT",
+          "input_name": "mean",
+          "input_shape": [
+            1,
+            2048,
+            1,
+            1
+          ],
+          "params_source": "hailort_float32_vstream",
+          "replaced_uses": 1,
+          "schema": "onnx-splitpoint/float32-layout-bridge",
+          "schema_version": 1,
+          "source": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/benchmark_set/b119/source_part2.onnx",
+          "source_sha256": "d77f5bfe15307c6a4a5330eb9a43bef218a64f29f529bdede915ff7783815def"
+        },
+        "variant": "part2"
+      },
+      "native_trt_meta_payload_sha256": "6265a597fbd90f7bf7aae866a2e790877b914e9c41e7cf83edf020815ad03193",
+      "native_trt_meta_sha256": "6265a597fbd90f7bf7aae866a2e790877b914e9c41e7cf83edf020815ad03193",
+      "performance_claims_emitted": false,
+      "preselection": {
+        "backend": "hailo8_to_trt",
+        "boundary_dtype": "float32",
+        "boundary_layout": "memory_nhwc_to_nchw",
+        "boundary_metadata_file_sha256": "900c2b563044b7118792a71037325061b933c2dc06c4813d236213b0d0cec683",
+        "boundary_metadata_file_size_bytes": 887,
+        "boundary_metadata_sha256": "b7aaa6abe19da1f590d52e69dd9eb3a657911f76c40d7670a8f4f545d2365d38",
+        "boundary_tensor_dtype": "float32",
+        "boundary_tensor_name": "mean",
+        "boundary_tensor_shape": [
+          2048
+        ],
+        "boundary_transform": "layout_only",
+        "canonical_part2_shape": [
+          1,
+          2048,
+          1,
+          1
+        ],
+        "case_id": "b119",
+        "case_scope": "any_generated_split_case",
+        "dequant_scale": null,
+        "dequant_zero_point": null,
+        "engine_rebuild_allowed_after_quality": false,
+        "hailo_format": "float32",
+        "letterbox_pad_value": 0,
+        "model_family": "resnet",
+        "model_id": "resnet50",
+        "part1_artifact_sha256": "ae81b5ba66784f39eeccd309412b178a34ca1b162bf0a97d6d9a1420ffa489c5",
+        "part1_artifact_size_bytes": 25150049,
+        "policy_sha256": "006fdd8529f99e7f6d7279e137999ad4191c1a6bdfde7c61d1932801b4db0872",
+        "precision": "float32_layout_fp16",
+        "preprocess_mode": "resize",
+        "quantization_policy": "none",
+        "schema": "onnx-splitpoint/native-split-quality-preselection",
+        "schema_version": 1,
+        "selection_sha256": "f186dad6bee90ac6ee866a4dfa0e79c8d41e94166687ecff414465aa559b4590",
+        "setup_id": "orin_nx_hailo8_01",
+        "stage2_backend": "native_tensorrt",
+        "task": "classification"
+      },
+      "preselection_sha256": "f186dad6bee90ac6ee866a4dfa0e79c8d41e94166687ecff414465aa559b4590",
+      "producer_binding_sha256": "04b8564df671319357dffdbc9497978f4313391a1b97a6838cd8ecc2282d88bb",
+      "producer_command": [
+        "/usr/bin/python3",
+        "/home/nx/splitpoint_runs/legacy_suite/completsetdev_20260911_115557_resnet50_orin_nx_hailo8_01/1/suite/splitpoint_runners/native_trt_from_benchmarkset.py",
+        "--benchmark-set",
+        "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/benchmark_set",
+        "--case",
+        "b119",
+        "--variants",
+        "part2",
+        "--precision",
+        "float32_layout_fp16",
+        "--out-dir",
+        "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache",
+        "--boundary-layout",
+        "memory_nhwc_to_nchw",
+        "--workspace-mb",
+        "4096",
+        "--workspace-mode",
+        "auto",
+        "--no-run-smoke",
+        "--json-out",
+        "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/native_trt_summary.json",
+        "--no-build"
+      ],
+      "quality_completed": true,
+      "schema": "onnx-splitpoint/native-split-quality-binding",
+      "schema_version": 1,
+      "source_request_sha256": "53ffebf7bbe76b439f46f86516a4a1b1843d2bb53549d03e3ffc32024ec66a7d",
+      "source_run_id": "hailo8_to_trt",
+      "trt_build_command_sha256": "7ab6a62844df676addbb63eb5799f9369a6f7fdca04244b24211022ba5dee35c",
+      "binding_sha256": "babea235354093d8c064d16c6b3af52645ce758e34edb4c2095a162bd3b8d583"
+    },
+    "native_split_quality_binding_sha256": "babea235354093d8c064d16c6b3af52645ce758e34edb4c2095a162bd3b8d583",
+    "native_split_quality_eval_run_id": "completsetdev_20260911_115557",
+    "native_split_quality_source_run_id": "hailo8_to_trt",
+    "source_request_sha256": "53ffebf7bbe76b439f46f86516a4a1b1843d2bb53549d03e3ffc32024ec66a7d",
+    "native_split_quality_source_request_sha256": "53ffebf7bbe76b439f46f86516a4a1b1843d2bb53549d03e3ffc32024ec66a7d",
+    "native_split_quality_central_result_sha256": "9e188e91ac1b176071435b319e1efc0c05150ac9ad827e7d0703995452d6e5f4",
+    "native_split_quality_selection_sha256": "a998be94b37430dbc5a3f5d1f5e9632265f8254fbe74cc3e5672fa7de1c4904d",
+    "native_split_quality_local_verification": {
+      "artifact_names": [
+        "part1_runtime",
+        "boundary_metadata",
+        "source_part2_onnx",
+        "build_part2_onnx",
+        "engine",
+        "native_trt_meta",
+        "engine_build_receipt",
+        "trtexec"
+      ],
+      "artifact_set_sha256": "0ec6613f042d3eec04ca7f0d844adaad5194badece1ad8280ba5e59ff353600e",
+      "artifacts": {
+        "boundary_metadata": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1_boundary_metadata.json",
+          "sha256": "900c2b563044b7118792a71037325061b933c2dc06c4813d236213b0d0cec683",
+          "size_bytes": 887
+        },
+        "build_part2_onnx": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+          "sha256": "cdf2a6ce78dab9417bdc8e8e9ef59633beb4b4ae2644df4025886bf38e044d79",
+          "size_bytes": 8199042
+        },
+        "engine": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+          "sha256": "0779e70da8f0571def46b3a1b62d74d913e3cdc7393b2a4f31daf7579e533985",
+          "size_bytes": 4189108
+        },
+        "engine_build_receipt": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/engine_build_receipt.json",
+          "sha256": "2b0ae21e1344a2ce7d17e50c03878ed57fe001353dd0deccfcacfdf1e759d7b2",
+          "size_bytes": 2261
+        },
+        "native_trt_meta": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/native_trt_meta.json",
+          "sha256": "284a289c83148e4ce6ad9b18e8af0454683e2723093e98079fafeb8a73561a92",
+          "size_bytes": 8120
+        },
+        "part1_runtime": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1.hef",
+          "sha256": "ae81b5ba66784f39eeccd309412b178a34ca1b162bf0a97d6d9a1420ffa489c5",
+          "size_bytes": 25150049
+        },
+        "source_part2_onnx": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/benchmark_set/b119/source_part2.onnx",
+          "sha256": "d77f5bfe15307c6a4a5330eb9a43bef218a64f29f529bdede915ff7783815def",
+          "size_bytes": 8198709
+        },
+        "trtexec": {
+          "path": "/usr/src/tensorrt/bin/trtexec",
+          "sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4",
+          "size_bytes": 1695696
+        }
+      },
+      "boundary_metadata_value_sha256": "f720bde942fb0eeff228b74fb258cac338676c3d2f489d5b8eb59badb6168033",
+      "build_summary_row_sha256": "6265a597fbd90f7bf7aae866a2e790877b914e9c41e7cf83edf020815ad03193",
+      "embedded_json_files": {
+        "boundary_metadata": {
+          "canonical_value_sha256": "f720bde942fb0eeff228b74fb258cac338676c3d2f489d5b8eb59badb6168033",
+          "content_base64": "ewogICJiYWNrZW5kIjogImhhaWxvOF90b190cnQiLAogICJib3VuZGFyeV9sYXlvdXQiOiAibWVtb3J5X25od2NfdG9fbmNodyIsCiAgImJvdW5kYXJ5X3RlbnNvciI6IHsKICAgICJjYW5vbmljYWxfcGFydDJfc2hhcGUiOiBbCiAgICAgIDEsCiAgICAgIDIwNDgsCiAgICAgIDEsCiAgICAgIDEKICAgIF0sCiAgICAiZHR5cGUiOiAiZmxvYXQzMiIsCiAgICAiaGVmX25hdGl2ZV9zdG9yYWdlX2R0eXBlIjogInVpbnQ4IiwKICAgICJoZWZfdnN0cmVhbV9mb3JtYXRfdHlwZSI6ICJ1aW50OCIsCiAgICAibmFtZSI6ICJtZWFuIiwKICAgICJydW50aW1lX25hbWUiOiAicmVzbmV0NTBfcGFydDFfYjExOS9hdmdwb29sMSIsCiAgICAic2hhcGUiOiBbCiAgICAgIDIwNDgKICAgIF0KICB9LAogICJib3VuZGFyeV90ZW5zb3JfY291bnQiOiAxLAogICJib3VuZGFyeV90cmFuc2Zvcm0iOiAibGF5b3V0X29ubHkiLAogICJjYXNlX2lkIjogImIxMTkiLAogICJtZXRhZGF0YV9zaGEyNTYiOiAiYjdhYWE2YWJlMTlkYTFmNTkwZDUyZTY5ZGQ5ZWIzYTY1NzkxMWY3NmM0MGQ3NjcwYThmNGY1NDVkMjM2NWQzOCIsCiAgIm1vZGVsX2lkIjogInJlc25ldDUwIiwKICAicGFydDFfYXJ0aWZhY3Rfc2hhMjU2IjogImFlODFiNWJhNjY3ODRmMzllZWNjZDMwOTQxMmIxNzhhMzRjYTFiMTYyYmYwYTk3ZDZkOWExNDIwZmZhNDg5YzUiLAogICJwYXJ0MV9hcnRpZmFjdF9zaXplX2J5dGVzIjogMjUxNTAwNDksCiAgInNjaGVtYSI6ICJvbm54LXNwbGl0cG9pbnQvbmF0aXZlLXBhcnQxLWJvdW5kYXJ5LW1ldGFkYXRhIiwKICAic2NoZW1hX3ZlcnNpb24iOiAxLAogICJzZXR1cF9pZCI6ICJvcmluX254X2hhaWxvOF8wMSIsCiAgInNvdXJjZV9ydW5faWQiOiAiaGFpbG84X3RvX3RydCIKfQo=",
+          "encoding": "base64",
+          "file_sha256": "900c2b563044b7118792a71037325061b933c2dc06c4813d236213b0d0cec683",
+          "file_size_bytes": 887
+        },
+        "engine_build_receipt": {
+          "canonical_value_sha256": "71a24a2757b49e72e446c093dc084dcde059ec5c724aac6d93594f8f0ddc795b",
+          "content_base64": "ewogICJidWlsZF9yZXR1cm5jb2RlIjogMCwKICAiY29tbWFuZCI6IFsKICAgICIvdXNyL3NyYy90ZW5zb3JydC9iaW4vdHJ0ZXhlYyIsCiAgICAiLS1vbm54PS9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi9zb3VyY2VfcGFydDJfZmxvYXQzMl9sYXlvdXRfYnJpZGdlLm9ubngiLAogICAgIi0tc2F2ZUVuZ2luZT0vaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICAgIi0tZnAxNiIsCiAgICAiLS10aW1pbmdDYWNoZUZpbGU9L2hvbWUvbngvc3BsaXRwb2ludF9ydW5zL19vbm54X3NwbGl0cG9pbnRfY2FjaGUvdGVuc29ycnRfbWFuYWdlZF92Mjc1MTYvcmVzbmV0NTAtYzhmYjljMmI5M2FkYmQ4Ny9uYXRpdmVfc3BsaXRfcXVhbGl0eS9vcmluX254X2hhaWxvOF8wMS9yZXNuZXQ1MC9iMTE5L2hhaWxvOF90b190cnQvNmUxZjUzYTdjZGE3MThjMTc1YzM2ZDc1NzU5MWMxNGNiYWUxZWM4NjMwNTA0MjdiN2IyMjkyOGI1ZWM4NzhlMS9lbmdpbmVfY2FjaGUvYjExOS9wYXJ0Mi9mbG9hdDMyX2xheW91dF9mcDE2L3RpbWluZy5jYWNoZSIsCiAgICAiLS1tZW1Qb29sU2l6ZT13b3Jrc3BhY2U6NDA5NiIKICBdLAogICJkcnlfcnVuIjogZmFsc2UsCiAgImVuZ2luZSI6ICIvaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICJlbmdpbmVfc2hhMjU2IjogIjA3NzllNzBkYThmMDU3MWRlZjQ2YjNhMWI2MmQ3NGQ5MTNlM2NkYzczOTNiMmE0ZjMxZGFmNzU3OWU1MzM5ODUiLAogICJyZWNlaXB0X3NoYTI1NiI6ICJiNmNhYWIyY2E4MmNjMjA5NjA2NTE3YzMyOTI5MjBhZWE2OTAzODEwOWJlYWRhNmE4NTI5ZDBhZjI3NDJhZDljIiwKICAic2NoZW1hIjogIm9ubngtc3BsaXRwb2ludC90ZW5zb3JydC1lbmdpbmUtYnVpbGQtcmVjZWlwdCIsCiAgInNjaGVtYV92ZXJzaW9uIjogMSwKICAic291cmNlX29ubngiOiAiL2hvbWUvbngvc3BsaXRwb2ludF9ydW5zL19vbm54X3NwbGl0cG9pbnRfY2FjaGUvdGVuc29ycnRfbWFuYWdlZF92Mjc1MTYvcmVzbmV0NTAtYzhmYjljMmI5M2FkYmQ4Ny9uYXRpdmVfc3BsaXRfcXVhbGl0eS9vcmluX254X2hhaWxvOF8wMS9yZXNuZXQ1MC9iMTE5L2hhaWxvOF90b190cnQvNmUxZjUzYTdjZGE3MThjMTc1YzM2ZDc1NzU5MWMxNGNiYWUxZWM4NjMwNTA0MjdiN2IyMjkyOGI1ZWM4NzhlMS9lbmdpbmVfY2FjaGUvYjExOS9wYXJ0Mi9mbG9hdDMyX2xheW91dF9mcDE2L3NvdXJjZV9wYXJ0Ml9mbG9hdDMyX2xheW91dF9icmlkZ2Uub25ueCIsCiAgInNvdXJjZV9vbm54X3NoYTI1NiI6ICJjZGYyYTZjZTc4ZGFiOTQxN2JkYzhlOGU5ZWY1OTYzM2JlYjRiNGFlMjY0NGRmNDAyNTg4NmJmMzhlMDQ0ZDc5IiwKICAidHJ0ZXhlYyI6ICIvdXNyL3NyYy90ZW5zb3JydC9iaW4vdHJ0ZXhlYyIsCiAgInRydGV4ZWNfc2hhMjU2IjogImI4MDA5OTA1MDg3OTNhOWJmNTA3MTNkNzhkNGZlZGZlNDc1MzgxZDhjZDc0OWFiZGE4MDkwOWI5MTk3ZmExYzQiCn0=",
+          "encoding": "base64",
+          "file_sha256": "2b0ae21e1344a2ce7d17e50c03878ed57fe001353dd0deccfcacfdf1e759d7b2",
+          "file_size_bytes": 2261
+        },
+        "native_trt_meta": {
+          "canonical_value_sha256": "6265a597fbd90f7bf7aae866a2e790877b914e9c41e7cf83edf020815ad03193",
+          "content_base64": "ewogICJidWlsZCI6IHsKICAgICJjYWNoZV9oaXQiOiB0cnVlLAogICAgImNtZCI6IFsKICAgICAgIi91c3Ivc3JjL3RlbnNvcnJ0L2Jpbi90cnRleGVjIiwKICAgICAgIi0tb25ueD0vaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvc291cmNlX3BhcnQyX2Zsb2F0MzJfbGF5b3V0X2JyaWRnZS5vbm54IiwKICAgICAgIi0tc2F2ZUVuZ2luZT0vaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICAgICAiLS1mcDE2IiwKICAgICAgIi0tdGltaW5nQ2FjaGVGaWxlPS9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi90aW1pbmcuY2FjaGUiLAogICAgICAiLS1tZW1Qb29sU2l6ZT13b3Jrc3BhY2U6NDA5NiIKICAgIF0sCiAgICAiY29tcGlsZXJfZGlzcGF0Y2hlZCI6IGZhbHNlLAogICAgImRyeV9ydW4iOiBmYWxzZSwKICAgICJldmlkZW5jZV9zb3VyY2UiOiAidmVyaWZpZWRfZW5naW5lX2J1aWxkX3JlY2VpcHQiLAogICAgInJldHVybmNvZGUiOiAwCiAgfSwKICAiYnVpbGRfYXR0ZW1wdHMiOiBbXSwKICAiYnVpbGRfb2siOiB0cnVlLAogICJjYXNlIjogImIxMTkiLAogICJlbmdpbmUiOiAiL2hvbWUvbngvc3BsaXRwb2ludF9ydW5zL19vbm54X3NwbGl0cG9pbnRfY2FjaGUvdGVuc29ycnRfbWFuYWdlZF92Mjc1MTYvcmVzbmV0NTAtYzhmYjljMmI5M2FkYmQ4Ny9uYXRpdmVfc3BsaXRfcXVhbGl0eS9vcmluX254X2hhaWxvOF8wMS9yZXNuZXQ1MC9iMTE5L2hhaWxvOF90b190cnQvNmUxZjUzYTdjZGE3MThjMTc1YzM2ZDc1NzU5MWMxNGNiYWUxZWM4NjMwNTA0MjdiN2IyMjkyOGI1ZWM4NzhlMS9lbmdpbmVfY2FjaGUvYjExOS9wYXJ0Mi9mbG9hdDMyX2xheW91dF9mcDE2L3BhcnQyX2Zsb2F0MzJfbGF5b3V0X2ZwMTYuZW5naW5lIiwKICAiZW5naW5lX2J1aWxkX3JlY2VpcHQiOiB7CiAgICAiYnVpbGRfcmV0dXJuY29kZSI6IDAsCiAgICAiY29tbWFuZCI6IFsKICAgICAgIi91c3Ivc3JjL3RlbnNvcnJ0L2Jpbi90cnRleGVjIiwKICAgICAgIi0tb25ueD0vaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvc291cmNlX3BhcnQyX2Zsb2F0MzJfbGF5b3V0X2JyaWRnZS5vbm54IiwKICAgICAgIi0tc2F2ZUVuZ2luZT0vaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICAgICAiLS1mcDE2IiwKICAgICAgIi0tdGltaW5nQ2FjaGVGaWxlPS9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi90aW1pbmcuY2FjaGUiLAogICAgICAiLS1tZW1Qb29sU2l6ZT13b3Jrc3BhY2U6NDA5NiIKICAgIF0sCiAgICAiZHJ5X3J1biI6IGZhbHNlLAogICAgImVuZ2luZSI6ICIvaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICAgImVuZ2luZV9zaGEyNTYiOiAiMDc3OWU3MGRhOGYwNTcxZGVmNDZiM2ExYjYyZDc0ZDkxM2UzY2RjNzM5M2IyYTRmMzFkYWY3NTc5ZTUzMzk4NSIsCiAgICAicmVjZWlwdF9zaGEyNTYiOiAiYjZjYWFiMmNhODJjYzIwOTYwNjUxN2MzMjkyOTIwYWVhNjkwMzgxMDliZWFkYTZhODUyOWQwYWYyNzQyYWQ5YyIsCiAgICAic2NoZW1hIjogIm9ubngtc3BsaXRwb2ludC90ZW5zb3JydC1lbmdpbmUtYnVpbGQtcmVjZWlwdCIsCiAgICAic2NoZW1hX3ZlcnNpb24iOiAxLAogICAgInNvdXJjZV9vbm54IjogIi9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi9zb3VyY2VfcGFydDJfZmxvYXQzMl9sYXlvdXRfYnJpZGdlLm9ubngiLAogICAgInNvdXJjZV9vbm54X3NoYTI1NiI6ICJjZGYyYTZjZTc4ZGFiOTQxN2JkYzhlOGU5ZWY1OTYzM2JlYjRiNGFlMjY0NGRmNDAyNTg4NmJmMzhlMDQ0ZDc5IiwKICAgICJ0cnRleGVjIjogIi91c3Ivc3JjL3RlbnNvcnJ0L2Jpbi90cnRleGVjIiwKICAgICJ0cnRleGVjX3NoYTI1NiI6ICJiODAwOTkwNTA4NzkzYTliZjUwNzEzZDc4ZDRmZWRmZTQ3NTM4MWQ4Y2Q3NDlhYmRhODA5MDliOTE5N2ZhMWM0IgogIH0sCiAgImVuZ2luZV9idWlsZF9yZWNlaXB0X3BhdGgiOiAiL2hvbWUvbngvc3BsaXRwb2ludF9ydW5zL19vbm54X3NwbGl0cG9pbnRfY2FjaGUvdGVuc29ycnRfbWFuYWdlZF92Mjc1MTYvcmVzbmV0NTAtYzhmYjljMmI5M2FkYmQ4Ny9uYXRpdmVfc3BsaXRfcXVhbGl0eS9vcmluX254X2hhaWxvOF8wMS9yZXNuZXQ1MC9iMTE5L2hhaWxvOF90b190cnQvNmUxZjUzYTdjZGE3MThjMTc1YzM2ZDc1NzU5MWMxNGNiYWUxZWM4NjMwNTA0MjdiN2IyMjkyOGI1ZWM4NzhlMS9lbmdpbmVfY2FjaGUvYjExOS9wYXJ0Mi9mbG9hdDMyX2xheW91dF9mcDE2L2VuZ2luZV9idWlsZF9yZWNlaXB0Lmpzb24iLAogICJlbmdpbmVfYnVpbGRfcmVjZWlwdF9zdGF0dXMiOiAiZW5naW5lX2J1aWxkX3JlY2VpcHRfdmVyaWZpZWQiLAogICJpbnB1dHMiOiBbCiAgICB7CiAgICAgICJlbGVtX3R5cGUiOiAiRkxPQVQiLAogICAgICAiaGFzX2R5bmFtaWMiOiBmYWxzZSwKICAgICAgIm5hbWUiOiAibWVhbiIsCiAgICAgICJzaGFwZSI6IFsKICAgICAgICAxLAogICAgICAgIDIwNDgsCiAgICAgICAgMSwKICAgICAgICAxCiAgICAgIF0KICAgIH0KICBdLAogICJpbnB1dHNfc3RhdGljIjogdHJ1ZSwKICAib25ueCI6ICIvaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvc291cmNlX3BhcnQyX2Zsb2F0MzJfbGF5b3V0X2JyaWRnZS5vbm54IiwKICAib3V0cHV0cyI6IFsKICAgIHsKICAgICAgImVsZW1fdHlwZSI6ICJGTE9BVCIsCiAgICAgICJoYXNfZHluYW1pYyI6IGZhbHNlLAogICAgICAibmFtZSI6ICJsb2dpdHMiLAogICAgICAic2hhcGUiOiBbCiAgICAgICAgMSwKICAgICAgICAxMDAwCiAgICAgIF0KICAgIH0KICBdLAogICJwcmVjaXNpb24iOiAiZmxvYXQzMl9sYXlvdXRfZnAxNiIsCiAgInF1YWxpdHlfZmlyc3RfaWRlbnRpdHkiOiB7fSwKICAicmVxdWVzdGVkX3ByZWNpc2lvbiI6ICJmbG9hdDMyX2xheW91dF9mcDE2IiwKICAic2NoZW1hIjogIm9ubngtc3BsaXRwb2ludC9uYXRpdmUtdHJ0LW1ldGEiLAogICJzY2hlbWFfdmVyc2lvbiI6IDEsCiAgInNoYXBlc19hcmciOiAiIiwKICAic2hhcGVzX3BvbGljeV9lZmZlY3RpdmUiOiAiYXV0b19zdGF0aWNfb21pdCIsCiAgInNvdXJjZV9vbm54IjogIi9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi9zb3VyY2VfcGFydDJfZmxvYXQzMl9sYXlvdXRfYnJpZGdlLm9ubngiLAogICJ0cnRfY2FjaGUiOiB7CiAgICAiYXJ0aWZhY3RfcGF0aCI6ICIvaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICAgImNhc2VfaWQiOiAiYjExOSIsCiAgICAiY29tcGlsZXJfZGlzcGF0Y2hlZCI6IGZhbHNlLAogICAgImlkZW50aXR5IjogImI2Y2FhYjJjYTgyY2MyMDk2MDY1MTdjMzI5MjkyMGFlYTY5MDM4MTA5YmVhZGE2YTg1MjlkMGFmMjc0MmFkOWMiLAogICAgIm1vZGVsX2lkIjogInNvdXJjZV9wYXJ0Ml9mbG9hdDMyX2xheW91dF9icmlkZ2UiLAogICAgIm91dGNvbWUiOiAicmV1c2VkIiwKICAgICJyZWFzb24iOiAiY29tcGF0aWJsZV9yZWNlaXB0IiwKICAgICJyZWNlaXB0X3BhdGgiOiAiL2hvbWUvbngvc3BsaXRwb2ludF9ydW5zL19vbm54X3NwbGl0cG9pbnRfY2FjaGUvdGVuc29ycnRfbWFuYWdlZF92Mjc1MTYvcmVzbmV0NTAtYzhmYjljMmI5M2FkYmQ4Ny9uYXRpdmVfc3BsaXRfcXVhbGl0eS9vcmluX254X2hhaWxvOF8wMS9yZXNuZXQ1MC9iMTE5L2hhaWxvOF90b190cnQvNmUxZjUzYTdjZGE3MThjMTc1YzM2ZDc1NzU5MWMxNGNiYWUxZWM4NjMwNTA0MjdiN2IyMjkyOGI1ZWM4NzhlMS9lbmdpbmVfY2FjaGUvYjExOS9wYXJ0Mi9mbG9hdDMyX2xheW91dF9mcDE2L2VuZ2luZV9idWlsZF9yZWNlaXB0Lmpzb24iLAogICAgInJvbGUiOiAicGFydDIiLAogICAgInN0YXR1cyI6ICJISVQiCiAgfSwKICAidWludDhfY2FzdF9icmlkZ2UiOiB7CiAgICAiYm91bmRhcnlfbGF5b3V0IjogewogICAgICAiYXBwbGllZCI6IHRydWUsCiAgICAgICJlZmZlY3RpdmUiOiAibWVtb3J5X25od2NfdG9fbmNodyIsCiAgICAgICJtZW1vcnlfc2hhcGUiOiBbCiAgICAgICAgMSwKICAgICAgICAxLAogICAgICAgIDEsCiAgICAgICAgMjA0OAogICAgICBdLAogICAgICAib3V0cHV0IjogIm1lYW5fX2JvdW5kYXJ5X3RvX25jaHciLAogICAgICAicGVybSI6IFsKICAgICAgICAwLAogICAgICAgIDMsCiAgICAgICAgMSwKICAgICAgICAyCiAgICAgIF0sCiAgICAgICJyZXF1ZXN0ZWQiOiAibWVtb3J5X25od2NfdG9fbmNodyIKICAgIH0sCiAgICAiYnJpZGdlIjogIi9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi9zb3VyY2VfcGFydDJfZmxvYXQzMl9sYXlvdXRfYnJpZGdlLm9ubngiLAogICAgImJyaWRnZV9vdXRwdXQiOiAibWVhbl9fYm91bmRhcnlfdG9fbmNodyIsCiAgICAiYnJpZGdlX3NoYTI1NiI6ICJjZGYyYTZjZTc4ZGFiOTQxN2JkYzhlOGU5ZWY1OTYzM2JlYjRiNGFlMjY0NGRmNDAyNTg4NmJmMzhlMDQ0ZDc5IiwKICAgICJpbnB1dF9kdHlwZSI6ICJGTE9BVCIsCiAgICAiaW5wdXRfbmFtZSI6ICJtZWFuIiwKICAgICJpbnB1dF9zaGFwZSI6IFsKICAgICAgMSwKICAgICAgMjA0OCwKICAgICAgMSwKICAgICAgMQogICAgXSwKICAgICJwYXJhbXNfc291cmNlIjogImhhaWxvcnRfZmxvYXQzMl92c3RyZWFtIiwKICAgICJyZXBsYWNlZF91c2VzIjogMSwKICAgICJzY2hlbWEiOiAib25ueC1zcGxpdHBvaW50L2Zsb2F0MzItbGF5b3V0LWJyaWRnZSIsCiAgICAic2NoZW1hX3ZlcnNpb24iOiAxLAogICAgInNvdXJjZSI6ICIvaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2JlbmNobWFya19zZXQvYjExOS9zb3VyY2VfcGFydDIub25ueCIsCiAgICAic291cmNlX3NoYTI1NiI6ICJkNzdmNWJmZTE1MzA3YzZhNGE1MzMwZWI5YTQzYmVmMjE4YTY0ZjI5ZjUyOWJkZWRlOTE1ZmY3NzgzODE1ZGVmIgogIH0sCiAgInZhcmlhbnQiOiAicGFydDIiCn0=",
+          "encoding": "base64",
+          "file_sha256": "284a289c83148e4ce6ad9b18e8af0454683e2723093e98079fafeb8a73561a92",
+          "file_size_bytes": 8120
+        }
+      },
+      "engine_build_receipt_canonical_size_bytes": 2179,
+      "engine_build_receipt_inner_sha256": "b6caab2ca82cc209606517c3292920aea69038109beada6a8529d0af2742ad9c",
+      "engine_build_receipt_outer_sha256": "71a24a2757b49e72e446c093dc084dcde059ec5c724aac6d93594f8f0ddc795b",
+      "native_trt_meta_payload_sha256": "6265a597fbd90f7bf7aae866a2e790877b914e9c41e7cf83edf020815ad03193",
+      "proof_sha256": "577c4afa497492681804effcc856acfdb1a988a09ca4131cc64009ccf7befa73",
+      "schema": "onnx-splitpoint/native-split-local-artifact-verification",
+      "schema_version": 1,
+      "trt_build_command_sha256": "7ab6a62844df676addbb63eb5799f9369a6f7fdca04244b24211022ba5dee35c",
+      "verification_kind": "producer_local_file_rehash"
+    },
+    "quality_preselection": {
+      "backend": "hailo8_to_trt",
+      "boundary_dtype": "float32",
+      "boundary_layout": "memory_nhwc_to_nchw",
+      "boundary_metadata_file_sha256": "900c2b563044b7118792a71037325061b933c2dc06c4813d236213b0d0cec683",
+      "boundary_metadata_file_size_bytes": 887,
+      "boundary_metadata_sha256": "b7aaa6abe19da1f590d52e69dd9eb3a657911f76c40d7670a8f4f545d2365d38",
+      "boundary_tensor_dtype": "float32",
+      "boundary_tensor_name": "mean",
+      "boundary_tensor_shape": [
+        2048
+      ],
+      "boundary_transform": "layout_only",
+      "canonical_part2_shape": [
+        1,
+        2048,
+        1,
+        1
+      ],
+      "case_id": "b119",
+      "case_scope": "any_generated_split_case",
+      "dequant_scale": null,
+      "dequant_zero_point": null,
+      "engine_rebuild_allowed_after_quality": false,
+      "hailo_format": "float32",
+      "letterbox_pad_value": 0,
+      "model_family": "resnet",
+      "model_id": "resnet50",
+      "part1_artifact_sha256": "ae81b5ba66784f39eeccd309412b178a34ca1b162bf0a97d6d9a1420ffa489c5",
+      "part1_artifact_size_bytes": 25150049,
+      "policy_sha256": "006fdd8529f99e7f6d7279e137999ad4191c1a6bdfde7c61d1932801b4db0872",
+      "precision": "float32_layout_fp16",
+      "preprocess_mode": "resize",
+      "quantization_policy": "none",
+      "schema": "onnx-splitpoint/native-split-quality-preselection",
+      "schema_version": 1,
+      "selection_sha256": "f186dad6bee90ac6ee866a4dfa0e79c8d41e94166687ecff414465aa559b4590",
+      "setup_id": "orin_nx_hailo8_01",
+      "stage2_backend": "native_tensorrt",
+      "task": "classification"
+    },
+    "quality_preselection_sha256": "f186dad6bee90ac6ee866a4dfa0e79c8d41e94166687ecff414465aa559b4590",
+    "quality_boundary_contract": {
+      "boundary_layout": "memory_nhwc_to_nchw",
+      "boundary_metadata_file_sha256": "900c2b563044b7118792a71037325061b933c2dc06c4813d236213b0d0cec683",
+      "boundary_metadata_sha256": "b7aaa6abe19da1f590d52e69dd9eb3a657911f76c40d7670a8f4f545d2365d38",
+      "boundary_tensor_dtype": "float32",
+      "boundary_tensor_name": "mean",
+      "boundary_tensor_shape": [
+        2048
+      ],
+      "boundary_transform": "layout_only",
+      "dequant_scale": null,
+      "dequant_zero_point": null,
+      "precision": "float32_layout_fp16"
+    },
+    "quality_boundary_contract_sha256": "37136d35fc4617f02a2860ac7672724ab23ea4bdfe16253c222e2460c39e2786",
+    "runtime_boundary_evidence": {
+      "status": "exact_runtime_boundary_verified",
+      "output_count": 1,
+      "output_name": "resnet50_part1_b119/avgpool1",
+      "output_frame_bytes": 8192,
+      "output_shape": [],
+      "output_dtype": "",
+      "trt_input_name": "",
+      "trt_input_shape": []
+    },
+    "complete": true,
+    "contract_sha256": "e2f5b56e70ec7928bd7a780b478b1963204d5f7ee2d0523462926da831b86c5d"
+  },
+  "replay_verification": {
+    "requested": false,
+    "ok": true,
+    "checks": {
+      "runner_sha256": {
+        "actual": "2458d3214d7e5310f83b8b2a1859f3513c6692ef6ab7fb4ace4d12eb4455d7ca",
+        "expected": "",
+        "ok": true
+      },
+      "input_image_sha256": {
+        "actual": "7fcdd3d95ff2491a2a5fe235d786026b728ffe0f88d25c4543d9a3e253f71652",
+        "expected": "",
+        "ok": true
+      },
+      "hef_sha256": {
+        "actual": "ae81b5ba66784f39eeccd309412b178a34ca1b162bf0a97d6d9a1420ffa489c5",
+        "expected": "",
+        "ok": true
+      },
+      "engine_sha256": {
+        "actual": "0779e70da8f0571def46b3a1b62d74d913e3cdc7393b2a4f31daf7579e533985",
+        "expected": "",
+        "ok": true
+      },
+      "native_executable_sha256": {
+        "actual": "70c1fed6fb874afa83ac03dba999e117fb4dc8aa795d952e4d298ebc2d696181",
+        "expected": "",
+        "ok": true
+      },
+      "boundary_layout": {
+        "actual": "memory_nhwc_to_nchw",
+        "expected": "",
+        "ok": true
+      }
+    },
+    "mismatches": {},
+    "source_contract_sha256": ""
+  },
+  "resolved_config_json": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/native_fifo_config.json",
+  "native_command_contract_sha256": "e2f5b56e70ec7928bd7a780b478b1963204d5f7ee2d0523462926da831b86c5d",
+  "setup_id": "orin_nx_hailo8_01",
+  "eval_run_id": "completsetdev_20260911_115557",
+  "source_run_id": "hailo8_to_trt",
+  "native_split_quality_binding": {
+    "artifacts": {
+      "boundary_metadata": {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1_boundary_metadata.json",
+        "sha256": "900c2b563044b7118792a71037325061b933c2dc06c4813d236213b0d0cec683",
+        "size_bytes": 887
+      },
+      "build_part2_onnx": {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+        "sha256": "cdf2a6ce78dab9417bdc8e8e9ef59633beb4b4ae2644df4025886bf38e044d79",
+        "size_bytes": 8199042
+      },
+      "engine": {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+        "sha256": "0779e70da8f0571def46b3a1b62d74d913e3cdc7393b2a4f31daf7579e533985",
+        "size_bytes": 4189108
+      },
+      "engine_build_receipt": {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/engine_build_receipt.json",
+        "sha256": "2b0ae21e1344a2ce7d17e50c03878ed57fe001353dd0deccfcacfdf1e759d7b2",
+        "size_bytes": 2261
+      },
+      "native_trt_meta": {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/native_trt_meta.json",
+        "sha256": "284a289c83148e4ce6ad9b18e8af0454683e2723093e98079fafeb8a73561a92",
+        "size_bytes": 8120
+      },
+      "part1_runtime": {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1.hef",
+        "sha256": "ae81b5ba66784f39eeccd309412b178a34ca1b162bf0a97d6d9a1420ffa489c5",
+        "size_bytes": 25150049
+      },
+      "source_part2_onnx": {
+        "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/benchmark_set/b119/source_part2.onnx",
+        "sha256": "d77f5bfe15307c6a4a5330eb9a43bef218a64f29f529bdede915ff7783815def",
+        "size_bytes": 8198709
+      },
+      "trtexec": {
+        "path": "/usr/src/tensorrt/bin/trtexec",
+        "sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4",
+        "size_bytes": 1695696
+      }
+    },
+    "boundary_contract": {
+      "boundary_layout": "memory_nhwc_to_nchw",
+      "boundary_metadata_file_sha256": "900c2b563044b7118792a71037325061b933c2dc06c4813d236213b0d0cec683",
+      "boundary_metadata_sha256": "b7aaa6abe19da1f590d52e69dd9eb3a657911f76c40d7670a8f4f545d2365d38",
+      "boundary_tensor_dtype": "float32",
+      "boundary_tensor_name": "mean",
+      "boundary_tensor_shape": [
+        2048
+      ],
+      "boundary_transform": "layout_only",
+      "dequant_scale": null,
+      "dequant_zero_point": null,
+      "precision": "float32_layout_fp16"
+    },
+    "boundary_contract_sha256": "37136d35fc4617f02a2860ac7672724ab23ea4bdfe16253c222e2460c39e2786",
+    "boundary_metadata_payload": {
+      "backend": "hailo8_to_trt",
+      "boundary_layout": "memory_nhwc_to_nchw",
+      "boundary_tensor": {
+        "canonical_part2_shape": [
+          1,
+          2048,
+          1,
+          1
+        ],
+        "dtype": "float32",
+        "hef_native_storage_dtype": "uint8",
+        "hef_vstream_format_type": "uint8",
+        "name": "mean",
+        "runtime_name": "resnet50_part1_b119/avgpool1",
+        "shape": [
+          2048
+        ]
+      },
+      "boundary_tensor_count": 1,
+      "boundary_transform": "layout_only",
+      "case_id": "b119",
+      "metadata_sha256": "b7aaa6abe19da1f590d52e69dd9eb3a657911f76c40d7670a8f4f545d2365d38",
+      "model_id": "resnet50",
+      "part1_artifact_sha256": "ae81b5ba66784f39eeccd309412b178a34ca1b162bf0a97d6d9a1420ffa489c5",
+      "part1_artifact_size_bytes": 25150049,
+      "schema": "onnx-splitpoint/native-part1-boundary-metadata",
+      "schema_version": 1,
+      "setup_id": "orin_nx_hailo8_01",
+      "source_run_id": "hailo8_to_trt"
+    },
+    "boundary_metadata_value_sha256": "f720bde942fb0eeff228b74fb258cac338676c3d2f489d5b8eb59badb6168033",
+    "central_quality_selection": {
+      "backend": "hailo8_to_trt",
+      "case_id": "b119",
+      "central_result_sha256": "9e188e91ac1b176071435b319e1efc0c05150ac9ad827e7d0703995452d6e5f4",
+      "eval_run_id": "completsetdev_20260911_115557",
+      "model_id": "resnet50",
+      "precision": "float32_layout_fp16",
+      "producer_binding_sha256": "04b8564df671319357dffdbc9497978f4313391a1b97a6838cd8ecc2282d88bb",
+      "receipt_sha256": "a998be94b37430dbc5a3f5d1f5e9632265f8254fbe74cc3e5672fa7de1c4904d",
+      "runtime_precision_identity": "float32_layout_fp16",
+      "schema": "onnx-splitpoint/native-split-quality-central-selection",
+      "schema_version": 1,
+      "setup_id": "orin_nx_hailo8_01",
+      "source_request_sha256": "53ffebf7bbe76b439f46f86516a4a1b1843d2bb53549d03e3ffc32024ec66a7d",
+      "source_run_id": "hailo8_to_trt",
+      "task": "classification",
+      "variant": "composed"
+    },
+    "central_quality_selection_sha256": "a998be94b37430dbc5a3f5d1f5e9632265f8254fbe74cc3e5672fa7de1c4904d",
+    "central_result_sha256": "9e188e91ac1b176071435b319e1efc0c05150ac9ad827e7d0703995452d6e5f4",
+    "engine_build_receipt": {
+      "build_returncode": 0,
+      "command": [
+        "/usr/src/tensorrt/bin/trtexec",
+        "--onnx=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+        "--saveEngine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+        "--fp16",
+        "--timingCacheFile=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/timing.cache",
+        "--memPoolSize=workspace:4096"
+      ],
+      "dry_run": false,
+      "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+      "engine_sha256": "0779e70da8f0571def46b3a1b62d74d913e3cdc7393b2a4f31daf7579e533985",
+      "receipt_sha256": "b6caab2ca82cc209606517c3292920aea69038109beada6a8529d0af2742ad9c",
+      "schema": "onnx-splitpoint/tensorrt-engine-build-receipt",
+      "schema_version": 1,
+      "source_onnx": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+      "source_onnx_sha256": "cdf2a6ce78dab9417bdc8e8e9ef59633beb4b4ae2644df4025886bf38e044d79",
+      "trtexec": "/usr/src/tensorrt/bin/trtexec",
+      "trtexec_sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4"
+    },
+    "engine_build_receipt_canonical_size_bytes": 2179,
+    "engine_build_receipt_file_sha256": "2b0ae21e1344a2ce7d17e50c03878ed57fe001353dd0deccfcacfdf1e759d7b2",
+    "engine_build_receipt_file_size_bytes": 2261,
+    "engine_build_receipt_outer_sha256": "71a24a2757b49e72e446c093dc084dcde059ec5c724aac6d93594f8f0ddc795b",
+    "engine_build_receipt_sha256": "b6caab2ca82cc209606517c3292920aea69038109beada6a8529d0af2742ad9c",
+    "eval_run_id": "completsetdev_20260911_115557",
+    "local_artifact_verification": {
+      "artifact_names": [
+        "part1_runtime",
+        "boundary_metadata",
+        "source_part2_onnx",
+        "build_part2_onnx",
+        "engine",
+        "native_trt_meta",
+        "engine_build_receipt",
+        "trtexec"
+      ],
+      "artifact_set_sha256": "0ec6613f042d3eec04ca7f0d844adaad5194badece1ad8280ba5e59ff353600e",
+      "artifacts": {
+        "boundary_metadata": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1_boundary_metadata.json",
+          "sha256": "900c2b563044b7118792a71037325061b933c2dc06c4813d236213b0d0cec683",
+          "size_bytes": 887
+        },
+        "build_part2_onnx": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+          "sha256": "cdf2a6ce78dab9417bdc8e8e9ef59633beb4b4ae2644df4025886bf38e044d79",
+          "size_bytes": 8199042
+        },
+        "engine": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+          "sha256": "0779e70da8f0571def46b3a1b62d74d913e3cdc7393b2a4f31daf7579e533985",
+          "size_bytes": 4189108
+        },
+        "engine_build_receipt": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/engine_build_receipt.json",
+          "sha256": "2b0ae21e1344a2ce7d17e50c03878ed57fe001353dd0deccfcacfdf1e759d7b2",
+          "size_bytes": 2261
+        },
+        "native_trt_meta": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/native_trt_meta.json",
+          "sha256": "284a289c83148e4ce6ad9b18e8af0454683e2723093e98079fafeb8a73561a92",
+          "size_bytes": 8120
+        },
+        "part1_runtime": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/part1.hef",
+          "sha256": "ae81b5ba66784f39eeccd309412b178a34ca1b162bf0a97d6d9a1420ffa489c5",
+          "size_bytes": 25150049
+        },
+        "source_part2_onnx": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/benchmark_set/b119/source_part2.onnx",
+          "sha256": "d77f5bfe15307c6a4a5330eb9a43bef218a64f29f529bdede915ff7783815def",
+          "size_bytes": 8198709
+        },
+        "trtexec": {
+          "path": "/usr/src/tensorrt/bin/trtexec",
+          "sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4",
+          "size_bytes": 1695696
+        }
+      },
+      "boundary_metadata_value_sha256": "f720bde942fb0eeff228b74fb258cac338676c3d2f489d5b8eb59badb6168033",
+      "build_summary_row_sha256": "6265a597fbd90f7bf7aae866a2e790877b914e9c41e7cf83edf020815ad03193",
+      "embedded_json_files": {
+        "boundary_metadata": {
+          "canonical_value_sha256": "f720bde942fb0eeff228b74fb258cac338676c3d2f489d5b8eb59badb6168033",
+          "content_base64": "ewogICJiYWNrZW5kIjogImhhaWxvOF90b190cnQiLAogICJib3VuZGFyeV9sYXlvdXQiOiAibWVtb3J5X25od2NfdG9fbmNodyIsCiAgImJvdW5kYXJ5X3RlbnNvciI6IHsKICAgICJjYW5vbmljYWxfcGFydDJfc2hhcGUiOiBbCiAgICAgIDEsCiAgICAgIDIwNDgsCiAgICAgIDEsCiAgICAgIDEKICAgIF0sCiAgICAiZHR5cGUiOiAiZmxvYXQzMiIsCiAgICAiaGVmX25hdGl2ZV9zdG9yYWdlX2R0eXBlIjogInVpbnQ4IiwKICAgICJoZWZfdnN0cmVhbV9mb3JtYXRfdHlwZSI6ICJ1aW50OCIsCiAgICAibmFtZSI6ICJtZWFuIiwKICAgICJydW50aW1lX25hbWUiOiAicmVzbmV0NTBfcGFydDFfYjExOS9hdmdwb29sMSIsCiAgICAic2hhcGUiOiBbCiAgICAgIDIwNDgKICAgIF0KICB9LAogICJib3VuZGFyeV90ZW5zb3JfY291bnQiOiAxLAogICJib3VuZGFyeV90cmFuc2Zvcm0iOiAibGF5b3V0X29ubHkiLAogICJjYXNlX2lkIjogImIxMTkiLAogICJtZXRhZGF0YV9zaGEyNTYiOiAiYjdhYWE2YWJlMTlkYTFmNTkwZDUyZTY5ZGQ5ZWIzYTY1NzkxMWY3NmM0MGQ3NjcwYThmNGY1NDVkMjM2NWQzOCIsCiAgIm1vZGVsX2lkIjogInJlc25ldDUwIiwKICAicGFydDFfYXJ0aWZhY3Rfc2hhMjU2IjogImFlODFiNWJhNjY3ODRmMzllZWNjZDMwOTQxMmIxNzhhMzRjYTFiMTYyYmYwYTk3ZDZkOWExNDIwZmZhNDg5YzUiLAogICJwYXJ0MV9hcnRpZmFjdF9zaXplX2J5dGVzIjogMjUxNTAwNDksCiAgInNjaGVtYSI6ICJvbm54LXNwbGl0cG9pbnQvbmF0aXZlLXBhcnQxLWJvdW5kYXJ5LW1ldGFkYXRhIiwKICAic2NoZW1hX3ZlcnNpb24iOiAxLAogICJzZXR1cF9pZCI6ICJvcmluX254X2hhaWxvOF8wMSIsCiAgInNvdXJjZV9ydW5faWQiOiAiaGFpbG84X3RvX3RydCIKfQo=",
+          "encoding": "base64",
+          "file_sha256": "900c2b563044b7118792a71037325061b933c2dc06c4813d236213b0d0cec683",
+          "file_size_bytes": 887
+        },
+        "engine_build_receipt": {
+          "canonical_value_sha256": "71a24a2757b49e72e446c093dc084dcde059ec5c724aac6d93594f8f0ddc795b",
+          "content_base64": "ewogICJidWlsZF9yZXR1cm5jb2RlIjogMCwKICAiY29tbWFuZCI6IFsKICAgICIvdXNyL3NyYy90ZW5zb3JydC9iaW4vdHJ0ZXhlYyIsCiAgICAiLS1vbm54PS9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi9zb3VyY2VfcGFydDJfZmxvYXQzMl9sYXlvdXRfYnJpZGdlLm9ubngiLAogICAgIi0tc2F2ZUVuZ2luZT0vaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICAgIi0tZnAxNiIsCiAgICAiLS10aW1pbmdDYWNoZUZpbGU9L2hvbWUvbngvc3BsaXRwb2ludF9ydW5zL19vbm54X3NwbGl0cG9pbnRfY2FjaGUvdGVuc29ycnRfbWFuYWdlZF92Mjc1MTYvcmVzbmV0NTAtYzhmYjljMmI5M2FkYmQ4Ny9uYXRpdmVfc3BsaXRfcXVhbGl0eS9vcmluX254X2hhaWxvOF8wMS9yZXNuZXQ1MC9iMTE5L2hhaWxvOF90b190cnQvNmUxZjUzYTdjZGE3MThjMTc1YzM2ZDc1NzU5MWMxNGNiYWUxZWM4NjMwNTA0MjdiN2IyMjkyOGI1ZWM4NzhlMS9lbmdpbmVfY2FjaGUvYjExOS9wYXJ0Mi9mbG9hdDMyX2xheW91dF9mcDE2L3RpbWluZy5jYWNoZSIsCiAgICAiLS1tZW1Qb29sU2l6ZT13b3Jrc3BhY2U6NDA5NiIKICBdLAogICJkcnlfcnVuIjogZmFsc2UsCiAgImVuZ2luZSI6ICIvaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICJlbmdpbmVfc2hhMjU2IjogIjA3NzllNzBkYThmMDU3MWRlZjQ2YjNhMWI2MmQ3NGQ5MTNlM2NkYzczOTNiMmE0ZjMxZGFmNzU3OWU1MzM5ODUiLAogICJyZWNlaXB0X3NoYTI1NiI6ICJiNmNhYWIyY2E4MmNjMjA5NjA2NTE3YzMyOTI5MjBhZWE2OTAzODEwOWJlYWRhNmE4NTI5ZDBhZjI3NDJhZDljIiwKICAic2NoZW1hIjogIm9ubngtc3BsaXRwb2ludC90ZW5zb3JydC1lbmdpbmUtYnVpbGQtcmVjZWlwdCIsCiAgInNjaGVtYV92ZXJzaW9uIjogMSwKICAic291cmNlX29ubngiOiAiL2hvbWUvbngvc3BsaXRwb2ludF9ydW5zL19vbm54X3NwbGl0cG9pbnRfY2FjaGUvdGVuc29ycnRfbWFuYWdlZF92Mjc1MTYvcmVzbmV0NTAtYzhmYjljMmI5M2FkYmQ4Ny9uYXRpdmVfc3BsaXRfcXVhbGl0eS9vcmluX254X2hhaWxvOF8wMS9yZXNuZXQ1MC9iMTE5L2hhaWxvOF90b190cnQvNmUxZjUzYTdjZGE3MThjMTc1YzM2ZDc1NzU5MWMxNGNiYWUxZWM4NjMwNTA0MjdiN2IyMjkyOGI1ZWM4NzhlMS9lbmdpbmVfY2FjaGUvYjExOS9wYXJ0Mi9mbG9hdDMyX2xheW91dF9mcDE2L3NvdXJjZV9wYXJ0Ml9mbG9hdDMyX2xheW91dF9icmlkZ2Uub25ueCIsCiAgInNvdXJjZV9vbm54X3NoYTI1NiI6ICJjZGYyYTZjZTc4ZGFiOTQxN2JkYzhlOGU5ZWY1OTYzM2JlYjRiNGFlMjY0NGRmNDAyNTg4NmJmMzhlMDQ0ZDc5IiwKICAidHJ0ZXhlYyI6ICIvdXNyL3NyYy90ZW5zb3JydC9iaW4vdHJ0ZXhlYyIsCiAgInRydGV4ZWNfc2hhMjU2IjogImI4MDA5OTA1MDg3OTNhOWJmNTA3MTNkNzhkNGZlZGZlNDc1MzgxZDhjZDc0OWFiZGE4MDkwOWI5MTk3ZmExYzQiCn0=",
+          "encoding": "base64",
+          "file_sha256": "2b0ae21e1344a2ce7d17e50c03878ed57fe001353dd0deccfcacfdf1e759d7b2",
+          "file_size_bytes": 2261
+        },
+        "native_trt_meta": {
+          "canonical_value_sha256": "6265a597fbd90f7bf7aae866a2e790877b914e9c41e7cf83edf020815ad03193",
+          "content_base64": "ewogICJidWlsZCI6IHsKICAgICJjYWNoZV9oaXQiOiB0cnVlLAogICAgImNtZCI6IFsKICAgICAgIi91c3Ivc3JjL3RlbnNvcnJ0L2Jpbi90cnRleGVjIiwKICAgICAgIi0tb25ueD0vaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvc291cmNlX3BhcnQyX2Zsb2F0MzJfbGF5b3V0X2JyaWRnZS5vbm54IiwKICAgICAgIi0tc2F2ZUVuZ2luZT0vaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICAgICAiLS1mcDE2IiwKICAgICAgIi0tdGltaW5nQ2FjaGVGaWxlPS9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi90aW1pbmcuY2FjaGUiLAogICAgICAiLS1tZW1Qb29sU2l6ZT13b3Jrc3BhY2U6NDA5NiIKICAgIF0sCiAgICAiY29tcGlsZXJfZGlzcGF0Y2hlZCI6IGZhbHNlLAogICAgImRyeV9ydW4iOiBmYWxzZSwKICAgICJldmlkZW5jZV9zb3VyY2UiOiAidmVyaWZpZWRfZW5naW5lX2J1aWxkX3JlY2VpcHQiLAogICAgInJldHVybmNvZGUiOiAwCiAgfSwKICAiYnVpbGRfYXR0ZW1wdHMiOiBbXSwKICAiYnVpbGRfb2siOiB0cnVlLAogICJjYXNlIjogImIxMTkiLAogICJlbmdpbmUiOiAiL2hvbWUvbngvc3BsaXRwb2ludF9ydW5zL19vbm54X3NwbGl0cG9pbnRfY2FjaGUvdGVuc29ycnRfbWFuYWdlZF92Mjc1MTYvcmVzbmV0NTAtYzhmYjljMmI5M2FkYmQ4Ny9uYXRpdmVfc3BsaXRfcXVhbGl0eS9vcmluX254X2hhaWxvOF8wMS9yZXNuZXQ1MC9iMTE5L2hhaWxvOF90b190cnQvNmUxZjUzYTdjZGE3MThjMTc1YzM2ZDc1NzU5MWMxNGNiYWUxZWM4NjMwNTA0MjdiN2IyMjkyOGI1ZWM4NzhlMS9lbmdpbmVfY2FjaGUvYjExOS9wYXJ0Mi9mbG9hdDMyX2xheW91dF9mcDE2L3BhcnQyX2Zsb2F0MzJfbGF5b3V0X2ZwMTYuZW5naW5lIiwKICAiZW5naW5lX2J1aWxkX3JlY2VpcHQiOiB7CiAgICAiYnVpbGRfcmV0dXJuY29kZSI6IDAsCiAgICAiY29tbWFuZCI6IFsKICAgICAgIi91c3Ivc3JjL3RlbnNvcnJ0L2Jpbi90cnRleGVjIiwKICAgICAgIi0tb25ueD0vaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvc291cmNlX3BhcnQyX2Zsb2F0MzJfbGF5b3V0X2JyaWRnZS5vbm54IiwKICAgICAgIi0tc2F2ZUVuZ2luZT0vaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICAgICAiLS1mcDE2IiwKICAgICAgIi0tdGltaW5nQ2FjaGVGaWxlPS9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi90aW1pbmcuY2FjaGUiLAogICAgICAiLS1tZW1Qb29sU2l6ZT13b3Jrc3BhY2U6NDA5NiIKICAgIF0sCiAgICAiZHJ5X3J1biI6IGZhbHNlLAogICAgImVuZ2luZSI6ICIvaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICAgImVuZ2luZV9zaGEyNTYiOiAiMDc3OWU3MGRhOGYwNTcxZGVmNDZiM2ExYjYyZDc0ZDkxM2UzY2RjNzM5M2IyYTRmMzFkYWY3NTc5ZTUzMzk4NSIsCiAgICAicmVjZWlwdF9zaGEyNTYiOiAiYjZjYWFiMmNhODJjYzIwOTYwNjUxN2MzMjkyOTIwYWVhNjkwMzgxMDliZWFkYTZhODUyOWQwYWYyNzQyYWQ5YyIsCiAgICAic2NoZW1hIjogIm9ubngtc3BsaXRwb2ludC90ZW5zb3JydC1lbmdpbmUtYnVpbGQtcmVjZWlwdCIsCiAgICAic2NoZW1hX3ZlcnNpb24iOiAxLAogICAgInNvdXJjZV9vbm54IjogIi9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi9zb3VyY2VfcGFydDJfZmxvYXQzMl9sYXlvdXRfYnJpZGdlLm9ubngiLAogICAgInNvdXJjZV9vbm54X3NoYTI1NiI6ICJjZGYyYTZjZTc4ZGFiOTQxN2JkYzhlOGU5ZWY1OTYzM2JlYjRiNGFlMjY0NGRmNDAyNTg4NmJmMzhlMDQ0ZDc5IiwKICAgICJ0cnRleGVjIjogIi91c3Ivc3JjL3RlbnNvcnJ0L2Jpbi90cnRleGVjIiwKICAgICJ0cnRleGVjX3NoYTI1NiI6ICJiODAwOTkwNTA4NzkzYTliZjUwNzEzZDc4ZDRmZWRmZTQ3NTM4MWQ4Y2Q3NDlhYmRhODA5MDliOTE5N2ZhMWM0IgogIH0sCiAgImVuZ2luZV9idWlsZF9yZWNlaXB0X3BhdGgiOiAiL2hvbWUvbngvc3BsaXRwb2ludF9ydW5zL19vbm54X3NwbGl0cG9pbnRfY2FjaGUvdGVuc29ycnRfbWFuYWdlZF92Mjc1MTYvcmVzbmV0NTAtYzhmYjljMmI5M2FkYmQ4Ny9uYXRpdmVfc3BsaXRfcXVhbGl0eS9vcmluX254X2hhaWxvOF8wMS9yZXNuZXQ1MC9iMTE5L2hhaWxvOF90b190cnQvNmUxZjUzYTdjZGE3MThjMTc1YzM2ZDc1NzU5MWMxNGNiYWUxZWM4NjMwNTA0MjdiN2IyMjkyOGI1ZWM4NzhlMS9lbmdpbmVfY2FjaGUvYjExOS9wYXJ0Mi9mbG9hdDMyX2xheW91dF9mcDE2L2VuZ2luZV9idWlsZF9yZWNlaXB0Lmpzb24iLAogICJlbmdpbmVfYnVpbGRfcmVjZWlwdF9zdGF0dXMiOiAiZW5naW5lX2J1aWxkX3JlY2VpcHRfdmVyaWZpZWQiLAogICJpbnB1dHMiOiBbCiAgICB7CiAgICAgICJlbGVtX3R5cGUiOiAiRkxPQVQiLAogICAgICAiaGFzX2R5bmFtaWMiOiBmYWxzZSwKICAgICAgIm5hbWUiOiAibWVhbiIsCiAgICAgICJzaGFwZSI6IFsKICAgICAgICAxLAogICAgICAgIDIwNDgsCiAgICAgICAgMSwKICAgICAgICAxCiAgICAgIF0KICAgIH0KICBdLAogICJpbnB1dHNfc3RhdGljIjogdHJ1ZSwKICAib25ueCI6ICIvaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvc291cmNlX3BhcnQyX2Zsb2F0MzJfbGF5b3V0X2JyaWRnZS5vbm54IiwKICAib3V0cHV0cyI6IFsKICAgIHsKICAgICAgImVsZW1fdHlwZSI6ICJGTE9BVCIsCiAgICAgICJoYXNfZHluYW1pYyI6IGZhbHNlLAogICAgICAibmFtZSI6ICJsb2dpdHMiLAogICAgICAic2hhcGUiOiBbCiAgICAgICAgMSwKICAgICAgICAxMDAwCiAgICAgIF0KICAgIH0KICBdLAogICJwcmVjaXNpb24iOiAiZmxvYXQzMl9sYXlvdXRfZnAxNiIsCiAgInF1YWxpdHlfZmlyc3RfaWRlbnRpdHkiOiB7fSwKICAicmVxdWVzdGVkX3ByZWNpc2lvbiI6ICJmbG9hdDMyX2xheW91dF9mcDE2IiwKICAic2NoZW1hIjogIm9ubngtc3BsaXRwb2ludC9uYXRpdmUtdHJ0LW1ldGEiLAogICJzY2hlbWFfdmVyc2lvbiI6IDEsCiAgInNoYXBlc19hcmciOiAiIiwKICAic2hhcGVzX3BvbGljeV9lZmZlY3RpdmUiOiAiYXV0b19zdGF0aWNfb21pdCIsCiAgInNvdXJjZV9vbm54IjogIi9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi9zb3VyY2VfcGFydDJfZmxvYXQzMl9sYXlvdXRfYnJpZGdlLm9ubngiLAogICJ0cnRfY2FjaGUiOiB7CiAgICAiYXJ0aWZhY3RfcGF0aCI6ICIvaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2VuZ2luZV9jYWNoZS9iMTE5L3BhcnQyL2Zsb2F0MzJfbGF5b3V0X2ZwMTYvcGFydDJfZmxvYXQzMl9sYXlvdXRfZnAxNi5lbmdpbmUiLAogICAgImNhc2VfaWQiOiAiYjExOSIsCiAgICAiY29tcGlsZXJfZGlzcGF0Y2hlZCI6IGZhbHNlLAogICAgImlkZW50aXR5IjogImI2Y2FhYjJjYTgyY2MyMDk2MDY1MTdjMzI5MjkyMGFlYTY5MDM4MTA5YmVhZGE2YTg1MjlkMGFmMjc0MmFkOWMiLAogICAgIm1vZGVsX2lkIjogInNvdXJjZV9wYXJ0Ml9mbG9hdDMyX2xheW91dF9icmlkZ2UiLAogICAgIm91dGNvbWUiOiAicmV1c2VkIiwKICAgICJyZWFzb24iOiAiY29tcGF0aWJsZV9yZWNlaXB0IiwKICAgICJyZWNlaXB0X3BhdGgiOiAiL2hvbWUvbngvc3BsaXRwb2ludF9ydW5zL19vbm54X3NwbGl0cG9pbnRfY2FjaGUvdGVuc29ycnRfbWFuYWdlZF92Mjc1MTYvcmVzbmV0NTAtYzhmYjljMmI5M2FkYmQ4Ny9uYXRpdmVfc3BsaXRfcXVhbGl0eS9vcmluX254X2hhaWxvOF8wMS9yZXNuZXQ1MC9iMTE5L2hhaWxvOF90b190cnQvNmUxZjUzYTdjZGE3MThjMTc1YzM2ZDc1NzU5MWMxNGNiYWUxZWM4NjMwNTA0MjdiN2IyMjkyOGI1ZWM4NzhlMS9lbmdpbmVfY2FjaGUvYjExOS9wYXJ0Mi9mbG9hdDMyX2xheW91dF9mcDE2L2VuZ2luZV9idWlsZF9yZWNlaXB0Lmpzb24iLAogICAgInJvbGUiOiAicGFydDIiLAogICAgInN0YXR1cyI6ICJISVQiCiAgfSwKICAidWludDhfY2FzdF9icmlkZ2UiOiB7CiAgICAiYm91bmRhcnlfbGF5b3V0IjogewogICAgICAiYXBwbGllZCI6IHRydWUsCiAgICAgICJlZmZlY3RpdmUiOiAibWVtb3J5X25od2NfdG9fbmNodyIsCiAgICAgICJtZW1vcnlfc2hhcGUiOiBbCiAgICAgICAgMSwKICAgICAgICAxLAogICAgICAgIDEsCiAgICAgICAgMjA0OAogICAgICBdLAogICAgICAib3V0cHV0IjogIm1lYW5fX2JvdW5kYXJ5X3RvX25jaHciLAogICAgICAicGVybSI6IFsKICAgICAgICAwLAogICAgICAgIDMsCiAgICAgICAgMSwKICAgICAgICAyCiAgICAgIF0sCiAgICAgICJyZXF1ZXN0ZWQiOiAibWVtb3J5X25od2NfdG9fbmNodyIKICAgIH0sCiAgICAiYnJpZGdlIjogIi9ob21lL254L3NwbGl0cG9pbnRfcnVucy9fb25ueF9zcGxpdHBvaW50X2NhY2hlL3RlbnNvcnJ0X21hbmFnZWRfdjI3NTE2L3Jlc25ldDUwLWM4ZmI5YzJiOTNhZGJkODcvbmF0aXZlX3NwbGl0X3F1YWxpdHkvb3Jpbl9ueF9oYWlsbzhfMDEvcmVzbmV0NTAvYjExOS9oYWlsbzhfdG9fdHJ0LzZlMWY1M2E3Y2RhNzE4YzE3NWMzNmQ3NTc1OTFjMTRjYmFlMWVjODYzMDUwNDI3YjdiMjI5MjhiNWVjODc4ZTEvZW5naW5lX2NhY2hlL2IxMTkvcGFydDIvZmxvYXQzMl9sYXlvdXRfZnAxNi9zb3VyY2VfcGFydDJfZmxvYXQzMl9sYXlvdXRfYnJpZGdlLm9ubngiLAogICAgImJyaWRnZV9vdXRwdXQiOiAibWVhbl9fYm91bmRhcnlfdG9fbmNodyIsCiAgICAiYnJpZGdlX3NoYTI1NiI6ICJjZGYyYTZjZTc4ZGFiOTQxN2JkYzhlOGU5ZWY1OTYzM2JlYjRiNGFlMjY0NGRmNDAyNTg4NmJmMzhlMDQ0ZDc5IiwKICAgICJpbnB1dF9kdHlwZSI6ICJGTE9BVCIsCiAgICAiaW5wdXRfbmFtZSI6ICJtZWFuIiwKICAgICJpbnB1dF9zaGFwZSI6IFsKICAgICAgMSwKICAgICAgMjA0OCwKICAgICAgMSwKICAgICAgMQogICAgXSwKICAgICJwYXJhbXNfc291cmNlIjogImhhaWxvcnRfZmxvYXQzMl92c3RyZWFtIiwKICAgICJyZXBsYWNlZF91c2VzIjogMSwKICAgICJzY2hlbWEiOiAib25ueC1zcGxpdHBvaW50L2Zsb2F0MzItbGF5b3V0LWJyaWRnZSIsCiAgICAic2NoZW1hX3ZlcnNpb24iOiAxLAogICAgInNvdXJjZSI6ICIvaG9tZS9ueC9zcGxpdHBvaW50X3J1bnMvX29ubnhfc3BsaXRwb2ludF9jYWNoZS90ZW5zb3JydF9tYW5hZ2VkX3YyNzUxNi9yZXNuZXQ1MC1jOGZiOWMyYjkzYWRiZDg3L25hdGl2ZV9zcGxpdF9xdWFsaXR5L29yaW5fbnhfaGFpbG84XzAxL3Jlc25ldDUwL2IxMTkvaGFpbG84X3RvX3RydC82ZTFmNTNhN2NkYTcxOGMxNzVjMzZkNzU3NTkxYzE0Y2JhZTFlYzg2MzA1MDQyN2I3YjIyOTI4YjVlYzg3OGUxL2JlbmNobWFya19zZXQvYjExOS9zb3VyY2VfcGFydDIub25ueCIsCiAgICAic291cmNlX3NoYTI1NiI6ICJkNzdmNWJmZTE1MzA3YzZhNGE1MzMwZWI5YTQzYmVmMjE4YTY0ZjI5ZjUyOWJkZWRlOTE1ZmY3NzgzODE1ZGVmIgogIH0sCiAgInZhcmlhbnQiOiAicGFydDIiCn0=",
+          "encoding": "base64",
+          "file_sha256": "284a289c83148e4ce6ad9b18e8af0454683e2723093e98079fafeb8a73561a92",
+          "file_size_bytes": 8120
+        }
+      },
+      "engine_build_receipt_canonical_size_bytes": 2179,
+      "engine_build_receipt_inner_sha256": "b6caab2ca82cc209606517c3292920aea69038109beada6a8529d0af2742ad9c",
+      "engine_build_receipt_outer_sha256": "71a24a2757b49e72e446c093dc084dcde059ec5c724aac6d93594f8f0ddc795b",
+      "native_trt_meta_payload_sha256": "6265a597fbd90f7bf7aae866a2e790877b914e9c41e7cf83edf020815ad03193",
+      "proof_sha256": "577c4afa497492681804effcc856acfdb1a988a09ca4131cc64009ccf7befa73",
+      "schema": "onnx-splitpoint/native-split-local-artifact-verification",
+      "schema_version": 1,
+      "trt_build_command_sha256": "7ab6a62844df676addbb63eb5799f9369a6f7fdca04244b24211022ba5dee35c",
+      "verification_kind": "producer_local_file_rehash"
+    },
+    "native_trt_meta": {
+      "build": {
+        "cache_hit": true,
+        "cmd": [
+          "/usr/src/tensorrt/bin/trtexec",
+          "--onnx=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+          "--saveEngine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+          "--fp16",
+          "--timingCacheFile=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/timing.cache",
+          "--memPoolSize=workspace:4096"
+        ],
+        "compiler_dispatched": false,
+        "dry_run": false,
+        "evidence_source": "verified_engine_build_receipt",
+        "returncode": 0
+      },
+      "build_attempts": [],
+      "build_ok": true,
+      "case": "b119",
+      "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+      "engine_build_receipt": {
+        "build_returncode": 0,
+        "command": [
+          "/usr/src/tensorrt/bin/trtexec",
+          "--onnx=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+          "--saveEngine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+          "--fp16",
+          "--timingCacheFile=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/timing.cache",
+          "--memPoolSize=workspace:4096"
+        ],
+        "dry_run": false,
+        "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+        "engine_sha256": "0779e70da8f0571def46b3a1b62d74d913e3cdc7393b2a4f31daf7579e533985",
+        "receipt_sha256": "b6caab2ca82cc209606517c3292920aea69038109beada6a8529d0af2742ad9c",
+        "schema": "onnx-splitpoint/tensorrt-engine-build-receipt",
+        "schema_version": 1,
+        "source_onnx": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+        "source_onnx_sha256": "cdf2a6ce78dab9417bdc8e8e9ef59633beb4b4ae2644df4025886bf38e044d79",
+        "trtexec": "/usr/src/tensorrt/bin/trtexec",
+        "trtexec_sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4"
+      },
+      "engine_build_receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/engine_build_receipt.json",
+      "engine_build_receipt_status": "engine_build_receipt_verified",
+      "inputs": [
+        {
+          "elem_type": "FLOAT",
+          "has_dynamic": false,
+          "name": "mean",
+          "shape": [
+            1,
+            2048,
+            1,
+            1
+          ]
+        }
+      ],
+      "inputs_static": true,
+      "onnx": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+      "outputs": [
+        {
+          "elem_type": "FLOAT",
+          "has_dynamic": false,
+          "name": "logits",
+          "shape": [
+            1,
+            1000
+          ]
+        }
+      ],
+      "precision": "float32_layout_fp16",
+      "quality_first_identity": {},
+      "requested_precision": "float32_layout_fp16",
+      "schema": "onnx-splitpoint/native-trt-meta",
+      "schema_version": 1,
+      "shapes_arg": "",
+      "shapes_policy_effective": "auto_static_omit",
+      "source_onnx": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+      "trt_cache": {
+        "artifact_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+        "case_id": "b119",
+        "compiler_dispatched": false,
+        "identity": "b6caab2ca82cc209606517c3292920aea69038109beada6a8529d0af2742ad9c",
+        "model_id": "source_part2_float32_layout_bridge",
+        "outcome": "reused",
+        "reason": "compatible_receipt",
+        "receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/engine_build_receipt.json",
+        "role": "part2",
+        "status": "HIT"
+      },
+      "uint8_cast_bridge": {
+        "boundary_layout": {
+          "applied": true,
+          "effective": "memory_nhwc_to_nchw",
+          "memory_shape": [
+            1,
+            1,
+            1,
+            2048
+          ],
+          "output": "mean__boundary_to_nchw",
+          "perm": [
+            0,
+            3,
+            1,
+            2
+          ],
+          "requested": "memory_nhwc_to_nchw"
+        },
+        "bridge": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+        "bridge_output": "mean__boundary_to_nchw",
+        "bridge_sha256": "cdf2a6ce78dab9417bdc8e8e9ef59633beb4b4ae2644df4025886bf38e044d79",
+        "input_dtype": "FLOAT",
+        "input_name": "mean",
+        "input_shape": [
+          1,
+          2048,
+          1,
+          1
+        ],
+        "params_source": "hailort_float32_vstream",
+        "replaced_uses": 1,
+        "schema": "onnx-splitpoint/float32-layout-bridge",
+        "schema_version": 1,
+        "source": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/benchmark_set/b119/source_part2.onnx",
+        "source_sha256": "d77f5bfe15307c6a4a5330eb9a43bef218a64f29f529bdede915ff7783815def"
+      },
+      "variant": "part2"
+    },
+    "native_trt_meta_file_sha256": "284a289c83148e4ce6ad9b18e8af0454683e2723093e98079fafeb8a73561a92",
+    "native_trt_meta_file_size_bytes": 8120,
+    "native_trt_meta_payload": {
+      "build": {
+        "cache_hit": true,
+        "cmd": [
+          "/usr/src/tensorrt/bin/trtexec",
+          "--onnx=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+          "--saveEngine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+          "--fp16",
+          "--timingCacheFile=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/timing.cache",
+          "--memPoolSize=workspace:4096"
+        ],
+        "compiler_dispatched": false,
+        "dry_run": false,
+        "evidence_source": "verified_engine_build_receipt",
+        "returncode": 0
+      },
+      "build_attempts": [],
+      "build_ok": true,
+      "case": "b119",
+      "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+      "engine_build_receipt": {
+        "build_returncode": 0,
+        "command": [
+          "/usr/src/tensorrt/bin/trtexec",
+          "--onnx=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+          "--saveEngine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+          "--fp16",
+          "--timingCacheFile=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/timing.cache",
+          "--memPoolSize=workspace:4096"
+        ],
+        "dry_run": false,
+        "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+        "engine_sha256": "0779e70da8f0571def46b3a1b62d74d913e3cdc7393b2a4f31daf7579e533985",
+        "receipt_sha256": "b6caab2ca82cc209606517c3292920aea69038109beada6a8529d0af2742ad9c",
+        "schema": "onnx-splitpoint/tensorrt-engine-build-receipt",
+        "schema_version": 1,
+        "source_onnx": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+        "source_onnx_sha256": "cdf2a6ce78dab9417bdc8e8e9ef59633beb4b4ae2644df4025886bf38e044d79",
+        "trtexec": "/usr/src/tensorrt/bin/trtexec",
+        "trtexec_sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4"
+      },
+      "engine_build_receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/engine_build_receipt.json",
+      "engine_build_receipt_status": "engine_build_receipt_verified",
+      "inputs": [
+        {
+          "elem_type": "FLOAT",
+          "has_dynamic": false,
+          "name": "mean",
+          "shape": [
+            1,
+            2048,
+            1,
+            1
+          ]
+        }
+      ],
+      "inputs_static": true,
+      "onnx": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+      "outputs": [
+        {
+          "elem_type": "FLOAT",
+          "has_dynamic": false,
+          "name": "logits",
+          "shape": [
+            1,
+            1000
+          ]
+        }
+      ],
+      "precision": "float32_layout_fp16",
+      "quality_first_identity": {},
+      "requested_precision": "float32_layout_fp16",
+      "schema": "onnx-splitpoint/native-trt-meta",
+      "schema_version": 1,
+      "shapes_arg": "",
+      "shapes_policy_effective": "auto_static_omit",
+      "source_onnx": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+      "trt_cache": {
+        "artifact_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+        "case_id": "b119",
+        "compiler_dispatched": false,
+        "identity": "b6caab2ca82cc209606517c3292920aea69038109beada6a8529d0af2742ad9c",
+        "model_id": "source_part2_float32_layout_bridge",
+        "outcome": "reused",
+        "reason": "compatible_receipt",
+        "receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/engine_build_receipt.json",
+        "role": "part2",
+        "status": "HIT"
+      },
+      "uint8_cast_bridge": {
+        "boundary_layout": {
+          "applied": true,
+          "effective": "memory_nhwc_to_nchw",
+          "memory_shape": [
+            1,
+            1,
+            1,
+            2048
+          ],
+          "output": "mean__boundary_to_nchw",
+          "perm": [
+            0,
+            3,
+            1,
+            2
+          ],
+          "requested": "memory_nhwc_to_nchw"
+        },
+        "bridge": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache/b119/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+        "bridge_output": "mean__boundary_to_nchw",
+        "bridge_sha256": "cdf2a6ce78dab9417bdc8e8e9ef59633beb4b4ae2644df4025886bf38e044d79",
+        "input_dtype": "FLOAT",
+        "input_name": "mean",
+        "input_shape": [
+          1,
+          2048,
+          1,
+          1
+        ],
+        "params_source": "hailort_float32_vstream",
+        "replaced_uses": 1,
+        "schema": "onnx-splitpoint/float32-layout-bridge",
+        "schema_version": 1,
+        "source": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/benchmark_set/b119/source_part2.onnx",
+        "source_sha256": "d77f5bfe15307c6a4a5330eb9a43bef218a64f29f529bdede915ff7783815def"
+      },
+      "variant": "part2"
+    },
+    "native_trt_meta_payload_sha256": "6265a597fbd90f7bf7aae866a2e790877b914e9c41e7cf83edf020815ad03193",
+    "native_trt_meta_sha256": "6265a597fbd90f7bf7aae866a2e790877b914e9c41e7cf83edf020815ad03193",
+    "performance_claims_emitted": false,
+    "preselection": {
+      "backend": "hailo8_to_trt",
+      "boundary_dtype": "float32",
+      "boundary_layout": "memory_nhwc_to_nchw",
+      "boundary_metadata_file_sha256": "900c2b563044b7118792a71037325061b933c2dc06c4813d236213b0d0cec683",
+      "boundary_metadata_file_size_bytes": 887,
+      "boundary_metadata_sha256": "b7aaa6abe19da1f590d52e69dd9eb3a657911f76c40d7670a8f4f545d2365d38",
+      "boundary_tensor_dtype": "float32",
+      "boundary_tensor_name": "mean",
+      "boundary_tensor_shape": [
+        2048
+      ],
+      "boundary_transform": "layout_only",
+      "canonical_part2_shape": [
+        1,
+        2048,
+        1,
+        1
+      ],
+      "case_id": "b119",
+      "case_scope": "any_generated_split_case",
+      "dequant_scale": null,
+      "dequant_zero_point": null,
+      "engine_rebuild_allowed_after_quality": false,
+      "hailo_format": "float32",
+      "letterbox_pad_value": 0,
+      "model_family": "resnet",
+      "model_id": "resnet50",
+      "part1_artifact_sha256": "ae81b5ba66784f39eeccd309412b178a34ca1b162bf0a97d6d9a1420ffa489c5",
+      "part1_artifact_size_bytes": 25150049,
+      "policy_sha256": "006fdd8529f99e7f6d7279e137999ad4191c1a6bdfde7c61d1932801b4db0872",
+      "precision": "float32_layout_fp16",
+      "preprocess_mode": "resize",
+      "quantization_policy": "none",
+      "schema": "onnx-splitpoint/native-split-quality-preselection",
+      "schema_version": 1,
+      "selection_sha256": "f186dad6bee90ac6ee866a4dfa0e79c8d41e94166687ecff414465aa559b4590",
+      "setup_id": "orin_nx_hailo8_01",
+      "stage2_backend": "native_tensorrt",
+      "task": "classification"
+    },
+    "preselection_sha256": "f186dad6bee90ac6ee866a4dfa0e79c8d41e94166687ecff414465aa559b4590",
+    "producer_binding_sha256": "04b8564df671319357dffdbc9497978f4313391a1b97a6838cd8ecc2282d88bb",
+    "producer_command": [
+      "/usr/bin/python3",
+      "/home/nx/splitpoint_runs/legacy_suite/completsetdev_20260911_115557_resnet50_orin_nx_hailo8_01/1/suite/splitpoint_runners/native_trt_from_benchmarkset.py",
+      "--benchmark-set",
+      "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/benchmark_set",
+      "--case",
+      "b119",
+      "--variants",
+      "part2",
+      "--precision",
+      "float32_layout_fp16",
+      "--out-dir",
+      "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/engine_cache",
+      "--boundary-layout",
+      "memory_nhwc_to_nchw",
+      "--workspace-mb",
+      "4096",
+      "--workspace-mode",
+      "auto",
+      "--no-run-smoke",
+      "--json-out",
+      "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/resnet50-c8fb9c2b93adbd87/native_split_quality/orin_nx_hailo8_01/resnet50/b119/hailo8_to_trt/6e1f53a7cda718c175c36d757591c14cbae1ec863050427b7b22928b5ec878e1/native_trt_summary.json",
+      "--no-build"
+    ],
+    "quality_completed": true,
+    "schema": "onnx-splitpoint/native-split-quality-binding",
+    "schema_version": 1,
+    "source_request_sha256": "53ffebf7bbe76b439f46f86516a4a1b1843d2bb53549d03e3ffc32024ec66a7d",
+    "source_run_id": "hailo8_to_trt",
+    "trt_build_command_sha256": "7ab6a62844df676addbb63eb5799f9369a6f7fdca04244b24211022ba5dee35c",
+    "binding_sha256": "babea235354093d8c064d16c6b3af52645ce758e34edb4c2095a162bd3b8d583"
+  },
+  "native_split_quality_binding_sha256": "babea235354093d8c064d16c6b3af52645ce758e34edb4c2095a162bd3b8d583",
+  "native_split_quality_eval_run_id": "completsetdev_20260911_115557",
+  "native_split_quality_source_run_id": "hailo8_to_trt",
+  "source_request_sha256": "53ffebf7bbe76b439f46f86516a4a1b1843d2bb53549d03e3ffc32024ec66a7d",
+  "native_split_quality_source_request_sha256": "53ffebf7bbe76b439f46f86516a4a1b1843d2bb53549d03e3ffc32024ec66a7d",
+  "native_split_quality_central_result_sha256": "9e188e91ac1b176071435b319e1efc0c05150ac9ad827e7d0703995452d6e5f4",
+  "native_split_quality_selection_sha256": "a998be94b37430dbc5a3f5d1f5e9632265f8254fbe74cc3e5672fa7de1c4904d",
+  "native_split_quality_consumer_attestation": {
+    "schema": "onnx-splitpoint/native-split-quality-consumer-attestation",
+    "schema_version": 1,
+    "status": "local_files_rehashed_and_exact_command_join_verified",
+    "binding_sha256": "babea235354093d8c064d16c6b3af52645ce758e34edb4c2095a162bd3b8d583",
+    "command_contract_sha256": "e2f5b56e70ec7928bd7a780b478b1963204d5f7ee2d0523462926da831b86c5d",
+    "eval_run_id": "completsetdev_20260911_115557",
+    "source_run_id": "hailo8_to_trt",
+    "backend": "hailo8_to_trt",
+    "model_id": "resnet50",
+    "case_id": "b119",
+    "setup_id": "orin_nx_hailo8_01",
+    "task": "classification",
+    "precision": "float32_layout_fp16",
+    "local_artifact_verification_sha256": "add6cafc7714ada742fccd8a98f7f56e11e2806cb5869eccd228343ea5c8bb52",
+    "semantic_output_manifest_sha256": "13cf2ce402f4880be2043bf8ab685f9826a6271681cb77a67a700de2b7437d04",
+    "semantic_boundary_manifest_sha256": "10928d00c6dfadfc506087a5e1b534473457bfaa243bf67d8f096ec5583edc6b",
+    "source_request_sha256": "53ffebf7bbe76b439f46f86516a4a1b1843d2bb53549d03e3ffc32024ec66a7d",
+    "native_split_quality_source_request_sha256": "53ffebf7bbe76b439f46f86516a4a1b1843d2bb53549d03e3ffc32024ec66a7d",
+    "native_split_quality_central_result_sha256": "9e188e91ac1b176071435b319e1efc0c05150ac9ad827e7d0703995452d6e5f4",
+    "native_split_quality_selection_sha256": "a998be94b37430dbc5a3f5d1f5e9632265f8254fbe74cc3e5672fa7de1c4904d",
+    "attestation_sha256": "405e51a1f935de45915d76a5e3b6f5883a68e4a7a9b79cbb760698ebfe5f9e7a"
+  },
+  "native_split_quality_consumer_status": "exact_quality_native_engine_command_and_boundary_match",
+  "workload_contract_sha256": "e2f5b56e70ec7928bd7a780b478b1963204d5f7ee2d0523462926da831b86c5d",
+  "output_format": "classification_logits",
+  "contract_family": "classification_logits",
+  "stage": "classification_logits",
+  "contract_source": "authoritative_suite_contract_plus_runtime_tensor:v4",
+  "endpoint_contract_complete": true,
+  "endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+  "tensor_signature": {
+    "tensor_count": 1,
+    "tensors": [
+      {
+        "index": 0,
+        "name": "logits",
+        "rank": 2,
+        "shape": [
+          1,
+          1000
+        ],
+        "dtype": "float32"
+      }
+    ]
+  },
+  "output_endpoint_attestation": {
+    "schema": "onnx-splitpoint/runtime-output-endpoint-attestation",
+    "schema_version": 3,
+    "endpoint": "classification_logits",
+    "stage": "classification_logits",
+    "attested": true,
+    "status": "passed",
+    "reason": "single_finite_multiclass_tensor",
+    "class_count": 1000,
+    "endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+    "declaration_source_contract_sha256": "c268006842028389446cbe2236a760e12bab6a9e79fc71b1b9ef587a77fda046",
+    "declaration_source_contracts_sha256": "441a8ab0879c910e184509a794ee8724c9ad86f8414b7484e056596699b60eda"
+  }
+}

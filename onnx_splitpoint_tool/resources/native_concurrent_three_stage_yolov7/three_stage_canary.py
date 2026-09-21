@@ -502,6 +502,7 @@ def extract_runtime_metrics(runtime: Mapping[str, Any]) -> dict[str, Any]:
         "fast_decode_nms_inverse_letterbox_records"
     ) or {})
     return {
+        "request_latency": runtime.get("request_latency") or {},
         "raw_fps": float(raw.get("throughput_fps") or 0.0),
         "completed_fps": float(completed.get("throughput_fps") or 0.0),
         "completed_raw_ratio": float(completed.get("raw_ratio") or 0.0),

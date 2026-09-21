@@ -1,0 +1,99 @@
+{
+  "schema": "onnx-splitpoint/native-fifo-output-dump",
+  "schema_version": 4,
+  "outputs": [
+    {
+      "name": "logits",
+      "file": "logits.bin",
+      "dtype": "float32",
+      "bytes": 4000,
+      "shape": [
+        1,
+        1000
+      ],
+      "sha256": "8b4649152739caaaca229f778f15913eb43b64961d325fd056260a643960c799",
+      "size_bytes": 4000
+    }
+  ],
+  "payload_artifacts": [
+    {
+      "role": "outputs[0]",
+      "path": "logits.bin",
+      "sha256": "8b4649152739caaaca229f778f15913eb43b64961d325fd056260a643960c799",
+      "size_bytes": 4000
+    }
+  ],
+  "payload_artifacts_sha256": "7c759eb0e442df38a76946c5ef62ff6a78840755a92c290cf50a41f3ae619d01",
+  "input_image": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/regnet_x_1_6gf/benchmark_set/resources/validation/classification/val_by_wnid_n500_s20260710/images/n01443537/ILSVRC2012_val_00013623.JPEG",
+  "provenance": {
+    "image": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/regnet_x_1_6gf/benchmark_set/resources/validation/classification/val_by_wnid_n500_s20260710/images/n01443537/ILSVRC2012_val_00013623.JPEG",
+    "image_source": "exact_file",
+    "seq": 1099
+  },
+  "authoritative_output_contract_resolution": {
+    "artifact_path": "",
+    "backend": "cuda_ort",
+    "contract_status": "recorded",
+    "endpoint_mode": "classification_logits",
+    "full_end_node_names": [],
+    "host_tail_required": false,
+    "model_id": "regnet_x_1_6gf",
+    "postprocessing_required": false,
+    "requires_external_postprocess": false,
+    "schema": "onnx-splitpoint/output-contract",
+    "schema_version": 1,
+    "source_onnx_detection_endpoint": {
+      "multiscale_raw_head": false,
+      "output_shapes": [],
+      "sidecar_status": "not_applicable",
+      "stage": "not_detection"
+    },
+    "source_onnx_multiscale_raw_head": false,
+    "task": "classification",
+    "variant": "full",
+    "warning": "",
+    "stage": "classification_logits",
+    "contract_family": "classification_logits",
+    "declaration_source": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/regnet_x_1_6gf/benchmark_set/output_contracts.json",
+    "source_contracts_sha256": "672a9dfd1ef82d002627553546de2c536dfe54316d0d884cd391d6d10a668054",
+    "source_contract_sha256": "3f6ee0b69c3747fee7300ad7644c36e259005aaba5cb6720ab61bfd65b958f55",
+    "authoritative_output_contract": true,
+    "contract_resolution_status": "attested",
+    "contract_resolution_reason": "exact_suite_output_contract"
+  },
+  "task": "classification",
+  "output_format": "classification_logits",
+  "contract_family": "classification_logits",
+  "stage": "classification_logits",
+  "contract_source": "authoritative_suite_contract_plus_runtime_tensor:v4",
+  "endpoint_contract_complete": true,
+  "endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+  "tensor_signature": {
+    "tensor_count": 1,
+    "tensors": [
+      {
+        "index": 0,
+        "name": "logits",
+        "rank": 2,
+        "shape": [
+          1,
+          1000
+        ],
+        "dtype": "float32"
+      }
+    ]
+  },
+  "output_endpoint_attestation": {
+    "schema": "onnx-splitpoint/runtime-output-endpoint-attestation",
+    "schema_version": 3,
+    "endpoint": "classification_logits",
+    "stage": "classification_logits",
+    "attested": true,
+    "status": "passed",
+    "reason": "single_finite_multiclass_tensor",
+    "class_count": 1000,
+    "endpoint_contract_hash": "3af2122851f19c5bf2b16b9c3ef78a6ba11452db33ff8fb915b76e3461bbcb28",
+    "declaration_source_contract_sha256": "3f6ee0b69c3747fee7300ad7644c36e259005aaba5cb6720ab61bfd65b958f55",
+    "declaration_source_contracts_sha256": "672a9dfd1ef82d002627553546de2c536dfe54316d0d884cd391d6d10a668054"
+  }
+}

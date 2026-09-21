@@ -107,7 +107,7 @@ def test_generated_suite_vendors_shared_deepx_input_runtime_and_seals_pre_timing
     strict_load = source.index("strict_sealed = load_sealed_deepx_native_full_input(")
     sealed_load = source.index("feed, prepared_input_binding = _deepx_load_sealed_prepared_feed(")
     engine_start = source.index("engine = InferenceEngine(str(dxnn))", seal_call)
-    timed_loop = source.index("for _ in range(runs):", engine_start)
+    timed_loop = source.index("for request_id in range(runs):", engine_start)
     assert seal_call < strict_load < sealed_load < engine_start < timed_loop
 
 

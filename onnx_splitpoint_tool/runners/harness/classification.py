@@ -17,6 +17,65 @@ _IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 
+def classification_topk(outputs: Dict[str, np.ndarray], k: int = 5, *,
+                        label_offset: int = 0) -> np.ndarray:
+    """Rank current logits once per batch row, without softmax or result I/O.
+
+    Match the quality runner's named-output preference and stable float32
+    ranking. Singleton spatial axes from vendor runtimes are permitted; the
+    leading batch axis is never flattened into the class axis.
+    """
+    candidates = []
+    for name, value in outputs.items():
+        array = np.asarray(value)
+        if array.ndim > 2:
+            array = array.reshape(array.shape[0], -1) if sum(d > 1 for d in array.shape[1:]) <= 1 else array
+        if array.ndim == 1:
+            array = array[None, :]
+        if array.ndim == 2 and all(array.shape):
+            candidates.append((name, array))
+    if not candidates:
+        raise ValueError("classification_output_shape_invalid")
+    named = [item for item in candidates if any(token in item[0].lower()
+             for token in ("logit", "prob", "softmax", "pred"))]
+    _, array = named[0] if named else max(candidates, key=lambda item: item[1].shape[1])
+    if array.dtype.kind not in "fiu":
+        raise ValueError("classification_output_dtype_invalid")
+    values = array.astype(np.float32, copy=False)
+    if not np.isfinite(values).all():
+        raise ValueError("classification_output_nonfinite")
+    count = max(1, min(int(k), values.shape[1]))
+    return np.argsort(-values, axis=1, kind="stable")[:, :count] + int(label_offset)
+
+
+class ClassificationCompletion:
+    """Existing completion-hook interface; retain only the latest top-k."""
+    def __init__(self, *, label_offset: int = 0):
+        self.label_offset = int(label_offset)
+        self.completed_count = 0
+        self.last_result: dict[str, Any] = {}
+
+    def process(self, outputs: Dict[str, np.ndarray], **_geometry: Any) -> dict[str, Any]:
+        top5 = classification_topk(outputs, label_offset=self.label_offset)
+        self.last_result = {"top1": top5[:, 0], "top5": top5}
+        self.completed_count += 1
+        return self.last_result
+
+    def report(self, completed: int | None = None) -> dict[str, Any]:
+        count = self.completed_count if completed is None else int(completed)
+        return {"task": "classification", "task_complete": True,
+                "completed_task_stage": "classification_top1_top5",
+                "measurement_endpoint": "completed_task",
+                "measurement_boundary": "workers_ready_to_last_completed_task_frame",
+                "e2e_scope": "full_task_pipeline",
+                "comparison_endpoint_stratum": "classification_top1_top5",
+                "postprocess_location": "host",
+                "postprocess_included": True, "postprocess_completed_frames": count,
+                "postprocess_completion_verified": count > 0,
+                "last_completion_source": "current_output_top1_top5",
+                "classification_topk": {key: value.tolist() for key, value in self.last_result.items()}}
+
+
 @dataclass(frozen=True)
 class _Layout:
     """Represents how a model expects image tensors."""

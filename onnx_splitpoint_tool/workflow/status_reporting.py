@@ -12,7 +12,7 @@ def energy_axis_description(evidence: Mapping[str, Any]) -> str:
     projection = project_native_evidence_status(evidence)
     status = str(projection.get("energy_execution_status") or "unavailable")
     if projection.get("energy_requested") is False:
-        return status
+        return "not_requested"
     success = projection.get("energy_measurement_success_count")
     planned = projection.get("energy_plan_denominator_count")
     expected = projection.get("energy_matrix_denominator_count")

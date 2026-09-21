@@ -30,6 +30,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from onnx_splitpoint_tool.runners.request_latency import RequestLatency
+from onnx_splitpoint_tool.runners.harness.classification import ClassificationCompletion
 from onnx_splitpoint_tool.runners._types import RunCfg
 from onnx_splitpoint_tool.runners.backends.hailo_backend import HailoBackend
 from onnx_splitpoint_tool.native_command_contract import (
@@ -848,6 +850,10 @@ def _hailo10_async_fifo_run(
         raise RuntimeError(
             'detection completion runtime missing from warmup hotloop'
         )
+    if task_value == 'classification':
+        completion_runtime = ClassificationCompletion()
+        warmup_completion_runtime = ClassificationCompletion()
+
     infer_inputs = sess._prepare_infer_inputs(inputs)  # type: ignore[attr-defined]
     slots = [sess._create_reusable_binding_slot() for _ in range(inflight)]  # type: ignore[attr-defined]
     for slot in slots:
@@ -861,9 +867,13 @@ def _hailo10_async_fifo_run(
         outs = _extract_slot_outputs(sess, slot)
         name, arr = _pick_hailo_output(outs, trt)
         warm_outputs = trt.run({name: arr})
-        if task_value == 'detection':
+        if completion_runtime is not None:
             warmup_completion_runtime.process(warm_outputs)
 
+    request_latency = RequestLatency(frames, task_complete=True,
+        start_anchor="hailo10_async_fifo:before_slot_submission",
+        end_anchor="hailo10_async_fifo:after_completion_or_host_outputs", enabled=not duration_s)
+    slot_request_ids: dict[int, int] = {}
     q: queue.Queue[Any] = queue.Queue(maxsize=queue_depth)
     sentinel = object()
     errors: list[str] = []
@@ -891,7 +901,9 @@ def _hailo10_async_fifo_run(
                 continue
         return False
 
-    def submit_slot(slot: dict[str, Any]) -> None:
+    def submit_slot(slot: dict[str, Any], request_id: int) -> None:
+        request_latency.start(request_id)
+        slot_request_ids[id(slot)] = request_id
         submit_t[id(slot)] = time.perf_counter()
         sess._submit_reusable_slot(slot, infer_inputs, copy_inputs=False)  # type: ignore[attr-defined]
 
@@ -913,7 +925,7 @@ def _hailo10_async_fifo_run(
                 if duration_mode and time.perf_counter() >= deadline:
                     break
                 slot = slots[submitted % inflight]
-                submit_slot(slot); busy.add(id(slot)); submitted += 1
+                submit_slot(slot, submitted); busy.add(id(slot)); submitted += 1
             while not cancel_event.is_set() and (
                 busy or (not duration_mode and completed < frames)
             ):
@@ -943,7 +955,7 @@ def _hailo10_async_fifo_run(
                     payload = arr
                     t_put0 = time.perf_counter()
                     if not put_payload(
-                        (name, payload, time.perf_counter())
+                        (slot_request_ids.pop(sid), name, payload, time.perf_counter())
                     ):
                         break
                     t_put1 = time.perf_counter()
@@ -951,7 +963,7 @@ def _hailo10_async_fifo_run(
 
                     completed += 1; counters['produced'] = completed; busy.remove(sid); progressed = True
                     if (duration_mode or submitted < frames) and not (duration_mode and time.perf_counter() >= deadline):
-                        submit_slot(slot); busy.add(id(slot)); submitted += 1
+                        submit_slot(slot, submitted); busy.add(id(slot)); submitted += 1
                 if not progressed:
                     time.sleep(0.00005)
         except Exception as e:
@@ -989,18 +1001,19 @@ def _hailo10_async_fifo_run(
                     continue
                 if item is sentinel:
                     break
-                name, payload, t_put = item
+                request_id, name, payload, t_put = item
                 t0 = time.perf_counter()
                 queue_wait_ms.append((t0 - t_put) * 1000.0)
                 trt.prepare_inputs({name: payload})
                 t1 = time.perf_counter()
                 trt_outputs = trt.run_prepared()
                 t2 = time.perf_counter()
-                if task_value == 'detection':
+                if completion_runtime is not None:
                     completion_runtime.process(trt_outputs)
                     t3 = time.perf_counter()
                 else:
                     t3 = t2
+                request_latency.complete(request_id)
                 trt_input_copy_ms.append((t1 - t0) * 1000.0)
                 p2_ms.append((t2 - t1) * 1000.0)
                 completion_tail_ms.append((t3 - t2) * 1000.0)
@@ -1023,7 +1036,7 @@ def _hailo10_async_fifo_run(
     start_event.set()
     th_p.join(); th_c.join()
     if errors:
-        raise RuntimeError('; '.join(errors))
+        raise request_latency.failure('; '.join(errors))
 
     measured_frames = int(counters.get('consumed') or 0)
     if measured_frames <= 0 or measurement['last_completion'] <= 0.0:
@@ -1049,6 +1062,7 @@ def _hailo10_async_fifo_run(
     p2_thread = input_copy + p2 + completion_tail
     cycle = max(producer_effective_ms, p2_thread)
     result = {
+        'request_latency': request_latency.report(),
         'producer_impl': 'hailo10_infermodel_async_fifo',
         'frames': measured_frames,
         'requested_frames': frames,
@@ -1111,11 +1125,7 @@ def _hailo10_async_fifo_run(
             completed_work_units=int(counters['consumed']),
         ))
     else:
-        result.update({
-            'postprocess_included': False,
-            'postprocess_completed_frames': 0,
-            'postprocess_completion_verified': False,
-        })
+        result.update(completion_runtime.report())
     return result
 
 
@@ -2023,12 +2033,18 @@ def main() -> int:
                 and int(ns.warmup) > 0
                 else None
             )
+            if task_effective == 'classification':
+                measured_completion_runtime = ClassificationCompletion()
+                warmup_completion_runtime = ClassificationCompletion()
             for _ in range(max(0, ns.warmup)):
                 hout=backend.run(prepared, inputs).outputs
                 name, arr=_pick_hailo_output(hout, trt)
                 warm_outputs=trt.run({name:arr})
-                if task_effective == 'detection':
+                if warmup_completion_runtime is not None:
                     warmup_completion_runtime.process(warm_outputs)
+            request_latency = RequestLatency(int(ns.frames), task_complete=True,
+                start_anchor="hailo10_sync_fifo:before_backend_run",
+                end_anchor="hailo10_sync_fifo:after_completion_or_host_outputs", enabled=not ns.duration_s)
             q: queue.Queue[Any]=queue.Queue(maxsize=max(1, ns.queue_depth))
             p1_times=[]; p2_times=[]; handoff_times=[]; completion_tail_times=[]; errors=[]
             sentinel=object()
@@ -2046,12 +2062,13 @@ def main() -> int:
                 try:
                     _n = 0; _start = measured['start']
                     while not cancel_event.is_set() and ((ns.duration_s and time.perf_counter() - _start < ns.duration_s) or ((not ns.duration_s) and _n < ns.frames)):
+                        request_latency.start(_n)
                         _n += 1
                         t0=time.perf_counter(); out=backend.run(prepared, inputs); t1=time.perf_counter()
                         name, arr=_pick_hailo_output(out.outputs, trt)
                         payload=np.ascontiguousarray(arr)
                         p1_times.append((t1-t0)*1000.0)
-                        if not put_payload((name,payload,time.perf_counter())):
+                        if not put_payload((_n - 1,name,payload,time.perf_counter())):
                             break
                 except Exception as e:
                     errors.append('producer: '+repr(e))
@@ -2072,14 +2089,15 @@ def main() -> int:
                             if cancel_event.is_set(): break
                             continue
                         if item is sentinel: break
-                        name, payload, t_put=item
+                        request_id, name, payload, t_put=item
                         t0=time.perf_counter(); trt_outputs=trt.run({name:payload}); t1=time.perf_counter()
-                        if task_effective == 'detection':
+                        if measured_completion_runtime is not None:
                             measured_completion_runtime.process(trt_outputs)
                             t2=time.perf_counter()
                         else:
                             t2=t1
                         handoff_times.append((t0-t_put)*1000.0)
+                        request_latency.complete(request_id)
                         p2_times.append((t1-t0)*1000.0)
                         completion_tail_times.append((t2-t1)*1000.0)
                         measured['last_completion']=t2
@@ -2090,13 +2108,14 @@ def main() -> int:
             th1.start(); th2.start(); ready.wait()
             t_start=time.perf_counter(); measured['start']=t_start; start_event.set()
             th1.join(); th2.join(); t_end=measured['last_completion']
-            if errors: report['errors']=errors; raise RuntimeError('; '.join(errors))
+            if errors: report['errors']=errors; raise request_latency.failure('; '.join(errors))
             if not p2_times or t_end <= 0.0: raise RuntimeError('no measured Hailo10H->TensorRT frames completed')
             mean=lambda xs: float(np.mean(xs)) if xs else 0.0
             p1=mean(p1_times); p2=mean(p2_times); handoff=mean(handoff_times); completion_tail=mean(completion_tail_times)
             cycle=max(p1,p2+handoff+completion_tail); fps=1000.0/cycle if cycle>0 else 0.0
             measured_frames=len(p2_times)
             makespan_ms=(t_end-t_start)*1000.0; fps_makespan=measured_frames/(makespan_ms/1000.0) if makespan_ms>0 and measured_frames>0 else 0.0
+            report['request_latency'] = request_latency.report()
             report.update({'producer_impl':'hailo10_sync_fifo','frames':measured_frames,'completed_frames':measured_frames,'completed_work_units':measured_frames,'produced_frames':len(p1_times),'consumed_frames':measured_frames,'requested_frames':ns.frames,'duration_s':float(ns.duration_s or 0.0),'warmup':ns.warmup,'queue_depth':ns.queue_depth,'inflight':ns.inflight,'hailo_format':hailo_output_format,'trt_input_dtype':str(trt.dtypes[trt.inputs[0]]) if trt.inputs else '', 'p1_ms':p1, 'p1_effective_cycle_ms':p1, 'handoff_ms':handoff, 'p2_run_ms':p2,'completion_tail_ms':completion_tail,'postprocess_ms':completion_tail, 'p1_thread_ms':p1, 'p2_thread_ms':p2+handoff+completion_tail, 'paper_equivalent_cycle_ms':cycle, 'paper_equivalent_fps':fps, 'makespan_ms':makespan_ms,'fps_makespan':fps_makespan,'measurement_boundary':'workers_ready_to_last_completed_task_frame' if task_effective == 'detection' else 'workers_ready_to_last_completed_trt_frame','last_completion_source':'same_hotloop_completed_task_sentinel' if task_effective == 'detection' else 'native_trt_synchronized_output','warmup_contract':'fully_drained_before_worker_start','trt_host_memory_policy':getattr(trt,'host_memory_policy','unknown'),'trt_output_materialization_policy':getattr(trt,'output_materialization_policy','unknown'),'trt_copy_outputs':True,'runtime_instance_id':runtime_instance_id,'repetition_runtime_scope':'fresh_runtime_per_repetition','repetition_independence_verified':True})
             if task_effective == 'detection':
                 report.update(_completion_attestation_fields(
@@ -2104,11 +2123,7 @@ def main() -> int:
                     completed_work_units=measured_frames,
                 ))
             else:
-                report.update({
-                    'postprocess_included': False,
-                    'postprocess_completed_frames': 0,
-                    'postprocess_completion_verified': False,
-                })
+                report.update(measured_completion_runtime.report())
 
         if bool(getattr(ns, 'dump_outputs', False) or getattr(ns, 'dump_boundary', False)):
             try:
@@ -2249,6 +2264,9 @@ def main() -> int:
                     },
                     'prepared_input_bound': True,
                     'task': task_effective,
+                    **({'measurement_endpoint': 'completed_task',
+                        'completed_task_stage': 'classification_top1_top5'}
+                       if task_effective == 'classification' else {}),
                     'preprocess_mode_requested': str(ns.preprocess_mode),
                     'preprocess_mode_effective': preprocess_mode_effective,
                     'letterbox_pad_value_requested': int(ns.letterbox_pad_value),
@@ -2365,6 +2383,7 @@ def main() -> int:
                             record['workload_contract_sha256'] = report['workload_contract_sha256']
     except Exception as e:
         report['ok']=False; report['error']=repr(e)
+        if hasattr(e, 'request_latency'): report['request_latency'] = e.request_latency
     finally:
         try:
             if trt: trt.close()
@@ -2388,9 +2407,15 @@ def main() -> int:
                 'completion_execution_artifact_persistence_failed:'
                 f'{type(exc).__name__}:{exc}'
             )
+    if ns.energy_workload_only and task_effective == 'classification' and report.get('ok'):
+        if (report.get('completed_task_stage') != 'classification_top1_top5'
+            or report.get('postprocess_completion_verified') is not True
+            or int(report.get('postprocess_completed_frames') or 0) != int(report.get('completed_work_units') or 0)):
+            report.update(ok=False, error='energy_classification_completion_count_mismatch')
     out_path.write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(json.dumps({'ok':report.get('ok'), 'fps_makespan':report.get('fps_makespan'), 'paper_fps':report.get('paper_equivalent_fps'), 'producer_impl':report.get('producer_impl'), 'report':str(out_path), 'error':report.get('error','')}, indent=2))
     if ns.energy_workload_only and report.get('ok'):
+        print(json.dumps({key: report.get(key) for key in ("task", "task_complete", "completed_task_stage", "completed_work_units", "completed_frames", "postprocess_included", "postprocess_completed_frames", "postprocess_completion_verified", "source_contract_sha256",)}))
         print(f"__SPLITPOINT_WORK_UNITS__={int(report.get('completed_work_units') or 0)}")
         print("__SPLITPOINT_WORK_UNITS_SOURCE__=completed_work_units")
         print("__SPLITPOINT_WORK_UNITS_EXACT__=1")

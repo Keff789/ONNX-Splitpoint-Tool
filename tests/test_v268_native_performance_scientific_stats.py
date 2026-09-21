@@ -98,6 +98,16 @@ def test_full_and_split_median_latency_ci_and_repetitions_reach_scientific_outpu
             "fps_median": 100.0,
             "fps_ci95_low": 95.0,
             "fps_ci95_high": 105.0,
+            "task": "detection",
+            "repetition_records": [
+                {"ok": True, "task": "detection", "measurement_endpoint": "completed_task",
+                 "measurement_boundary": "workers_ready_to_last_completed_task_frame",
+                 "postprocess_completion_verified": True, "completed_task_endpoint_attested": True,
+                 "completed_task_endpoint_contract_hash": "c"*64,
+                 "completed_work_units": 100, "makespan_ms": 100000 / fps,
+                 "fps_makespan": fps, "repetition_id": f"fixture-{index}"}
+                for index, fps in enumerate((95.0, 100.0, 105.0))
+            ],
             "latency_mean_ms": median,
             "latency_median_ms": median,
             "latency_ci95_low_ms": low,
@@ -159,7 +169,8 @@ def test_full_and_split_median_latency_ci_and_repetitions_reach_scientific_outpu
     matrix_md = (report_root / "native_performance_matrix.md").read_text(encoding="utf-8")
     scientific_md = (report_root / "scientific_report.md").read_text(encoding="utf-8")
     table_tex = (report_root / "thesis_tables" / "native_performance_observations.tex").read_text(encoding="utf-8")
-    assert "Latency median [ms]" in matrix_md
+    assert "Legacy latency median [ms]" in matrix_md
+    assert all(row["request_latency_mean_ms"] is None for row in exported)
     assert "never as a best-of value" in scientific_md
     assert "median and 95-percent confidence interval" in table_tex
 

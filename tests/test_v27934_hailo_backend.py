@@ -31,14 +31,17 @@ def managed(tmp_path, monkeypatch):
     sdk = tmp_path / "sdk_boundary"
     sdk.mkdir()
     (sdk / "hailo_sdk_client.py").write_text('''
-import json, os
+import io, json, os, tarfile, time
+import numpy as np
 from pathlib import Path
 __version__ = "BOUNDARY_TEST"
 class ClientRunner:
     def __init__(self, **kwargs):
+        self.hw_arch = kwargs["hw_arch"]
+        self.state = "hailo_model"
         p = Path.cwd()/"sdk_observed.json"
         p.write_text(json.dumps({"environment":dict(os.environ),"pid":os.getpid(),"cwd":str(Path.cwd())}))
-    def translate_onnx_model(self, **kwargs): pass
+    def translate_onnx_model(self, **kwargs): self.net_name = kwargs["net_name"]
     def get_hn_dict(self):
         return {"layers":{"images":{"type":"input_layer","output_shape":[1,8,8,3]}}}
     def load_model_script(self, script):
@@ -47,8 +50,31 @@ class ClientRunner:
         assert values["images"].shape == (1,8,8,3), values["images"].shape
         if os.environ.get("TEST_SDK_FAIL") == "optimize":
             raise RuntimeError("synthetic SDK optimization infrastructure failure")
-    def save_har(self,path): Path(path).write_bytes(b"synthetic SDK HAR")
+        self.state = "quantized_model"
+    def save_har(self,path):
+        fault = os.environ.get("TEST_HAR_FAULT") if Path(path).name == "quantized.har" else None
+        if fault == "missing": return
+        if fault in {"empty", "corrupt"}:
+            Path(path).write_bytes(b"" if fault == "empty" else b"broken archive")
+            return
+        meta = {"model_name": "foreign" if fault == "foreign" else self.net_name,
+                "hw_arch": self.hw_arch, "state": self.state, "sdk_version": __version__,
+                "hn": "network.hn", "params": "network.npz"}
+        if fault == "parsed": meta["state"] = "hailo_model"
+        params = io.BytesIO()
+        np.savez(params, weights=np.zeros(1, dtype=np.float32))
+        with tarfile.open(path, "w") as archive:
+            for name, data in {"network.metadata.json": json.dumps(meta).encode(),
+                               "network.hn": b'{"layers": {}}', "network.npz": params.getvalue()}.items():
+                member = tarfile.TarInfo(name); member.size = len(data)
+                archive.addfile(member, io.BytesIO(data))
     def compile(self):
+        if os.environ.get("TEST_SDK_FAIL") == "exit": os._exit(3)
+        if os.environ.get("TEST_SDK_FAIL") == "compile":
+            raise RuntimeError("Compilation failed: No successful assignments: Agent infeasible")
+        if os.environ.get("TEST_SDK_FAIL") == "timeout":
+            print("Building optimization options", flush=True)
+            time.sleep(30)
         if os.environ.get("TEST_SDK_FAIL") == "empty": return b""
         return b"synthetic SDK HEF payload"
 ''')
@@ -57,6 +83,10 @@ class ClientRunner:
     token = "hailo_sdk_client:BOUNDARY_TEST"
     monkeypatch.setattr(backend,"_hailo_sdk_version_token_from_managed_venv",lambda **kw: token)
     monkeypatch.setattr(backend,"_hailo_sdk_version_token",lambda: token)
+    monkeypatch.setattr(backend,"_capture_parent_system_snapshot",lambda: {"scope": "synthetic_sdk_test"})
+    for key in ("TEST_SDK_FAIL", "TEST_HAR_FAULT", "ONNX_SPLITPOINT_HAILO_HEF_TIMEOUT_S",
+                "ONNX_SPLITPOINT_HAILO_HEF_IDLE_TIMEOUT_S"):
+        monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("ONNX_SPLITPOINT_HAILO_CALIBRATION_STORAGE", "memmap")
     monkeypatch.setenv("ONNX_SPLITPOINT_HAILO_CALIB_CAP_MB", "64")
     monkeypatch.setenv("ONNX_SPLITPOINT_HAILO_HEARTBEAT_S", "0")

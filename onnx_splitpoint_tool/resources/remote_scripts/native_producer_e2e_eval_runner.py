@@ -768,6 +768,7 @@ def main():
                 'repetition_count_valid':j.get('repetition_count_valid', j.get('repetitions_completed')),
                 'repetition_status':j.get('repetition_status'),
                 'repetition_aggregation':j.get('repetition_aggregation'),
+                'request_latency': j.get('request_latency'),
                 'repetition_records':j.get('repetition_records', j.get('repetition_evidence', [])),
                 'repetition_evidence':j.get('repetition_evidence', j.get('repetition_records', [])),
                 'handoff_ms':j.get('handoff_ms'), 'p1_ms':j.get('p1_ms'), 'p2_run_ms':j.get('p2_run_ms'),

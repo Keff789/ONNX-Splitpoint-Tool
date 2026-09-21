@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
 import zipfile
 from pathlib import Path
@@ -1588,6 +1589,115 @@ def _pack_source_identity(
     }
 
 
+def _external_remote_failure_diagnostics(root: Path, by_relative: Mapping[str, Path], *, max_bytes: int) -> tuple[dict[str, Any], dict[str, bytes]]:
+    """Bounded, redacted evidence from the exact failed RemoteBenchmarkRuns.
+
+    Only a matching controller/run/model/setup path is admitted. No recursive
+    external discovery, binary payloads or arbitrary referenced paths.
+    """
+    inventory: dict[str, Any] = {"targets": [], "missing": [], "rejected": [], "complete": True}
+    payloads: dict[str, bytes] = {}
+    total = 0
+    exported_total = 0
+
+    def redact(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: "[REDACTED]" if re.search(r"(?i)password|secret|token|credential|private_key|authorization|api_key|access_key", k) else redact(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [redact(v) for v in value]
+        if isinstance(value, str):
+            value = re.sub(r"(?is)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----", "[REDACTED PRIVATE KEY]", value)
+            value = re.sub(r"""(?i)((?:password|secret|token|credential|authorization|api_key|access_key)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)""", r"\1[REDACTED]", value)
+            value = re.sub(r"(?i)(authorization:\s*bearer\s+)\S+", r"\1[REDACTED]", value)
+            value = re.sub(r"(://)[^/@\s]+:[^/@\s]+@", r"\1[REDACTED]@", value)
+        return value
+
+    for relative, status_path in sorted(by_relative.items()):
+        match = re.fullmatch(r"models/([A-Za-z0-9_.-]+)/benchmark_results/remote_benchmark_status_([A-Za-z0-9_.-]+)\.json", relative)
+        if not match:
+            continue
+        if status_path.stat().st_size > max(64 * 1024, max_bytes):
+            inventory["rejected"].append({"source": relative, "reason": "status_size_limit"})
+            continue
+        try:
+            status = json.loads(require_safe_pack_source(status_path, root).read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(status, dict):
+            inventory["rejected"].append({"source": relative, "reason": "malformed_status"})
+            continue
+        if "remote_storage_preflight_failed" not in json.dumps(status):
+            continue
+        model, setup = match.groups()
+        if len(inventory["targets"]) >= 32:
+            inventory["rejected"].append({"source": relative, "reason": "target_limit"})
+            continue
+        external = root.parent / "RemoteBenchmarkRuns" / "Results" / "legacy_suite" / "1" / f"{root.name}_{model}_{setup}"
+        remote_output = status.get("remote_output") or {}
+        if not isinstance(remote_output, dict):
+            remote_output = {}
+        reference = status.get("local_run_dir") or remote_output.get("local_run_dir")
+        row = {"model_id": model, "setup_id": setup, "source_status": relative, "source_root": str(external), "members": []}
+        inventory["targets"].append(row)
+        if not reference or str(Path(str(reference)).expanduser()) != str(external):
+            inventory["rejected"].append({"source": relative, "reason": "external_run_binding_mismatch"})
+            continue
+        try:
+            require_safe_pack_directory(external, root.parent)
+            directories = [external]
+            if (external / "diagnostics").exists() or (external / "diagnostics").is_symlink():
+                directories.append(require_safe_pack_directory(external / "diagnostics", root.parent))
+            files = []
+            probe_evidence_present = False
+            for directory in directories:
+                # Hard discovery cap, before sorting or reading external data.
+                for ordinal, source in enumerate(directory.iterdir()):
+                    if ordinal >= 128:
+                        raise ValueError("diagnostic_directory_entry_limit")
+                    if source.suffix.lower() in {".json", ".log", ".txt"} and re.search(r"(?i)storage|preflight|timeout|process|lease|cleanup|run_status", source.name):
+                        files.append(source)
+            for source in sorted(files):
+                try:
+                    source = require_safe_pack_source(source, root.parent)
+                    size = source.stat().st_size
+                    if size > max_bytes or total + size > 8 * max_bytes:
+                        raise ValueError("external_diagnostic_size_limit")
+                    with source.open("rb") as stream:
+                        data = stream.read(max_bytes + 1)
+                    if len(data) != size or len(data) > max_bytes:
+                        raise ValueError("external_diagnostic_changed_or_oversized")
+                    total += size
+                    text = data.decode("utf-8", errors="strict")
+                    if source.suffix == ".json":
+                        decoded = json.loads(text)
+                        if isinstance(decoded, dict) and "before_uncached_suite_upload" in source.name:
+                            extra = decoded.get("extra") or {}
+                            transport = extra.get("transport") if isinstance(extra, dict) else {}
+                            transport = transport if isinstance(transport, dict) else {}
+                            probe_evidence_present = probe_evidence_present or bool(
+                                decoded.get("stage") == "before_uncached_suite_upload"
+                                and type(decoded.get("rc")) is int and decoded.get("command")
+                                and transport.get("phase") and transport.get("owner_pid"))
+                        text = json.dumps(redact(decoded), indent=2, sort_keys=True)
+                    else:
+                        text = redact(text)
+                    member = f"external_remote_diagnostics/{model}/{setup}/" + source.relative_to(external).as_posix()
+                    encoded = text.encode("utf-8")
+                    if len(encoded) > max_bytes or exported_total + len(encoded) > 8 * max_bytes:
+                        raise ValueError("redacted_diagnostic_size_limit")
+                    exported_total += len(encoded)
+                    payloads[member] = encoded
+                    row["members"].append(member)
+                except (OSError, UnicodeError, ValueError) as exc:
+                    inventory["rejected"].append({"source": str(source), "reason": str(exc)})
+            if not probe_evidence_present:
+                inventory["missing"].append({"model_id": model, "setup_id": setup, "phase": "before_uncached_suite_upload", "status": "NOT_RECORDED"})
+        except (OSError, ValueError) as exc:
+            inventory["missing"].append({"model_id": model, "setup_id": setup, "status": "NOT_RECORDED", "reason": str(exc)})
+    inventory["complete"] = not inventory["missing"] and not inventory["rejected"]
+    return inventory, payloads
+
+
 def create_evaluation_debug_pack(
     run_dir: str | Path,
     out_zip: str | Path | None = None,
@@ -1659,6 +1769,9 @@ def create_evaluation_debug_pack(
             f"EvaluationRun cannot be enumerated safely: {type(exc).__name__}: {exc}"
         ) from exc
     by_relative = {_relative(root, path): path for path in all_files}
+    external_diagnostics, external_payloads = _external_remote_failure_diagnostics(
+        root, by_relative, max_bytes=max_small_file_bytes,
+    )
     probe_include_raw = _probe_include_raw(root)
     native_include_raw = _native_include_raw(root)
     native_raw = _native_raw_inventory(
@@ -1873,6 +1986,12 @@ def create_evaluation_debug_pack(
                 "diagnostic_kind": "pack_source_identity",
             })
             written_paths.add("pack_source_identity.json")
+            for member, payload in external_payloads.items():
+                archive.writestr(member, payload)
+                written.append({"path": member, "size_bytes": len(payload),
+                                "sha256": "sha256:" + hashlib.sha256(payload).hexdigest(),
+                                "diagnostic_kind": "redacted_external_remote_failure"})
+                written_paths.add(member)
             if tail_fallback_present:
                 tail_source = by_relative[MAIN_WORKFLOW_TAIL]
                 source_size = int(tail_source.stat().st_size)
@@ -2171,6 +2290,7 @@ def create_evaluation_debug_pack(
                 "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "complete": bool(
                     main_present
+                    and external_diagnostics["complete"]
                     and audit_complete
                     and not central_missing
                     and not central.get("failures")
@@ -2182,6 +2302,7 @@ def create_evaluation_debug_pack(
                     and not energy_attempts["reference_failures"]
                     and set(energy_attempts["expected_members"]) <= written_paths
                 ),
+                "external_remote_diagnostics": external_diagnostics,
                 "archive_publication": {
                     "mode": "verified_temporary_then_atomic_replace",
                     "verification": "central_directory_and_all_member_crc",

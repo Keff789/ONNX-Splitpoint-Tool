@@ -1,0 +1,310 @@
+{
+  "status": "failed",
+  "local_run_dir": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/completsetdev_20260915_085558_yolo26s_orin_nx_hailo10_01",
+  "remote_output": {
+    "active_run_id": "completsetdev_20260915_085558_yolo26s_orin_nx_hailo10_01",
+    "bundle": {
+      "archive_metadata_policy": "uid_gid_mtime_zero; modes_preserved; gzip_mtime_zero",
+      "bundle_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260915_085558/models/yolo26s/benchmark_set/legacy_suite/dist/suite_bundle.tar.gz",
+      "bundle_sha256": "2c64e4ccd74b50e211f4f1c3447487ca2eb3fb18f80f1123ee9ecba908730fee",
+      "cache_policy": "v60q_locked_metadata_first_deterministic_bundle",
+      "created_at": "2026-09-15T07:27:00.674897Z",
+      "deterministic_archive": true,
+      "file_count": 1098,
+      "gzip_level": 1,
+      "integrity_mode": "fast",
+      "largest_files": [
+        {
+          "rel": "hailo/hailo10/full/yolo26s_hailo_fixed.onnx",
+          "size": 38291449
+        },
+        {
+          "rel": "hailo/hailo8/full/yolo26s_hailo_fixed.onnx",
+          "size": 38291449
+        },
+        {
+          "rel": "models/yolo26s.onnx",
+          "size": 38291449
+        },
+        {
+          "rel": "b364/hailo/hailo10/part1/yolo26s_part1_b364_hailo_fixed.onnx",
+          "size": 38286612
+        },
+        {
+          "rel": "b364/hailo/hailo8/part1/yolo26s_part1_b364_hailo_fixed.onnx",
+          "size": 38286612
+        },
+        {
+          "rel": "b364/yolo26s_part1_b364.onnx",
+          "size": 38286612
+        },
+        {
+          "rel": "deepx/deepx_m1/full/model.dxnn",
+          "size": 21363746
+        },
+        {
+          "rel": "b364/deepx/deepx_m1/part1/model.dxnn",
+          "size": 21359251
+        },
+        {
+          "rel": "hailo/hailo8/full/compiled.hef",
+          "size": 18489671
+        },
+        {
+          "rel": "b364/hailo/hailo10/part1/compiled.hef",
+          "size": 13139968
+        },
+        {
+          "rel": "hailo/hailo10/full/compiled.hef",
+          "size": 10350592
+        },
+        {
+          "rel": "resources/validation/detection/val2017_n500_s20260710/instances_subset.json",
+          "size": 4937470
+        },
+        {
+          "rel": "b364/run_split_onnxruntime.py",
+          "size": 1055049
+        },
+        {
+          "rel": "b364/resources/test_images/test_image_imagenet.png",
+          "size": 610817
+        },
+        {
+          "rel": "benchmark_suite.py",
+          "size": 590403
+        },
+        {
+          "rel": "b364/resources/test_images/test_image_coco.png",
+          "size": 509748
+        },
+        {
+          "rel": "resources/validation/detection/val2017_n500_s20260710/000000203639.jpg",
+          "size": 403707
+        },
+        {
+          "rel": "resources/validation/detection/val2017_n500_s20260710/000000176847.jpg",
+          "size": 353910
+        },
+        {
+          "rel": "resources/validation/detection/val2017_n500_s20260710/000000109827.jpg",
+          "size": 348846
+        },
+        {
+          "rel": "resources/validation/detection/val2017_n500_s20260710/000000009448.jpg",
+          "size": 339450
+        },
+        {
+          "rel": "resources/validation/detection/val2017_n500_s20260710/000000173799.jpg",
+          "size": 338696
+        },
+        {
+          "rel": "resources/validation/detection/val2017_n500_s20260710/000000484296.jpg",
+          "size": 337796
+        },
+        {
+          "rel": "resources/validation/detection/val2017_n500_s20260710/000000429718.jpg",
+          "size": 330721
+        },
+        {
+          "rel": "resources/validation/detection/val2017_n500_s20260710/000000025593.jpg",
+          "size": 322743
+        },
+        {
+          "rel": "resources/validation/detection/val2017_n500_s20260710/000000218424.jpg",
+          "size": 321557
+        }
+      ],
+      "manifest_path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260915_085558/models/yolo26s/benchmark_set/legacy_suite/dist/suite_bundle.tar.gz.manifest.json",
+      "minimal_excludes": [
+        "README_BENCHMARK.txt",
+        "analysis_plots/**",
+        "analysis_tables/**",
+        "**/split_context*.pdf",
+        "**/split_context*.svg",
+        "**/split_context*.dot",
+        "**/*.orig",
+        "**/*.har",
+        "**/*.harn",
+        "**/*.hn",
+        "**/*.hef.meta",
+        "**/*quantized*.har",
+        "**/*checkpoint*",
+        "**/*.npz",
+        "**/*.npy",
+        "**/*.pdf",
+        "**/*.svg",
+        "**/*.dot",
+        "**/paper_figures/**",
+        "**/paper_figures_*"
+      ],
+      "minimal_includes": [
+        "benchmark_plan.json",
+        "benchmark_set.json",
+        "benchmark_suite.py",
+        "scientific_reporter_v60.py",
+        "suite_model_artifacts.json",
+        "suite_packaging_preflight.json",
+        "output_contracts.json",
+        "*.onnx",
+        "*.onnx.data",
+        "*.data",
+        "*.bin",
+        "external_data/**",
+        "schemas/**",
+        "splitpoint_runners/**",
+        "models/**",
+        "hailo/**",
+        "deepx/**",
+        "native_trt/**",
+        "*.engine",
+        "*.plan",
+        "*.dxnn",
+        "b*/deepx/**",
+        "b*/native_trt/**",
+        "b*/*.engine",
+        "b*/*.plan",
+        "b*/*.dxnn",
+        "b*/split_manifest.json",
+        "b*/run_split_onnxruntime.py",
+        "b*/resources/test_images/**",
+        "b*/*.onnx",
+        "b*/*.onnx.data",
+        "b*/*.data",
+        "b*/*.bin",
+        "b*/external_data/**",
+        "b*/hailo/**",
+        "resources/validation/detection/val2017_n500_s20260710/**"
+      ],
+      "per_file_hashes": false,
+      "raw_total_bytes": 411427512,
+      "raw_total_mb": 392.368,
+      "reused": true,
+      "schema": "onnx-splitpoint/remote-suite-bundle-status",
+      "schema_version": 1,
+      "size_by_suffix": {
+        ".dxnn": 42722997,
+        ".hef": 41980231,
+        ".jpg": 83099340,
+        ".json": 10196591,
+        ".md": 2266,
+        ".onnx": 229741316,
+        ".png": 1120565,
+        ".py": 2553097,
+        ".txt": 11109
+      },
+      "slimming_policy": "v60q: run-mode validation subsets only; one locked deterministic build per suite; metadata-first reuse and fast gzip outside strict final campaigns",
+      "suite_dir": "/home/kmika/Models/EvaluationRuns/completsetdev_20260915_085558/models/yolo26s/benchmark_set/legacy_suite",
+      "tar_gz_bytes": 353853507,
+      "tar_gz_mb": 337.461,
+      "validation_assets_embedded": true,
+      "validation_footprint": {
+        "budget_items": 500,
+        "file_count": 1002,
+        "largest_files": [
+          {
+            "path": "instances_subset.json",
+            "size": 4937470
+          },
+          {
+            "path": "000000203639.jpg",
+            "size": 403707
+          },
+          {
+            "path": "000000176847.jpg",
+            "size": 353910
+          },
+          {
+            "path": "000000109827.jpg",
+            "size": 348846
+          },
+          {
+            "path": "000000009448.jpg",
+            "size": 339450
+          },
+          {
+            "path": "000000173799.jpg",
+            "size": 338696
+          },
+          {
+            "path": "000000484296.jpg",
+            "size": 337796
+          },
+          {
+            "path": "000000429718.jpg",
+            "size": 330721
+          },
+          {
+            "path": "000000025593.jpg",
+            "size": 322743
+          },
+          {
+            "path": "000000218424.jpg",
+            "size": 321557
+          }
+        ],
+        "max_bytes_guard": 4194304000,
+        "max_files_guard": 2050,
+        "root": "/home/kmika/Models/EvaluationRuns/completsetdev_20260915_085558/models/yolo26s/benchmark_set/legacy_suite/resources/validation/detection/val2017_n500_s20260710",
+        "source": "/home/kmika/Models/EvaluationRuns/completsetdev_20260915_085558/models/yolo26s/benchmark_set/legacy_suite/resources/validation/detection/val2017_n500_s20260710",
+        "total_bytes": 92420415
+      },
+      "validation_images": "resources/validation/detection/val2017_n500_s20260710"
+    },
+    "dispatch_status": "",
+    "energy_aggregate": null,
+    "energy_registry_binding": {
+      "energy_enabled": false,
+      "path": "",
+      "schema": "onnx-splitpoint/remote-energy-registry-binding",
+      "schema_version": 1,
+      "setup_id": "",
+      "snapshot_sha256": "",
+      "verified": false
+    },
+    "energy_registry_path": "",
+    "energy_registry_snapshot_sha256": "",
+    "energy_summary": null,
+    "error": "remote_storage_preflight_failed: read-only statvfs probe could not run at stage=before_uncached_suite_upload, rc=124: ",
+    "failure_kind": "",
+    "local_run_dir": "/home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/completsetdev_20260915_085558_yolo26s_orin_nx_hailo10_01",
+    "ok": false,
+    "pre_remote_mutation": false,
+    "primary_failure": {
+      "failure_kind": "terminal_remote_storage_failure",
+      "primary_error": "remote_storage_preflight_failed: read-only statvfs probe could not run at stage=before_uncached_suite_upload, rc=124:",
+      "primary_error_at": "2026-09-15T07:27:30.924091Z",
+      "primary_error_context": [
+        "remote_storage_preflight_failed: read-only statvfs probe could not run at stage=before_uncached_suite_upload, rc=124:"
+      ],
+      "remote_rc": null,
+      "schema": "onnx-splitpoint/terminal-remote-failure",
+      "schema_version": 1,
+      "terminal_remote_failure": true
+    },
+    "remote_cleanup": {
+      "attempted": false,
+      "enabled": true,
+      "policy": {
+        "cleanup_remote_after_download": true,
+        "cleanup_remote_on_partial": false,
+        "final_status": "failed",
+        "results_downloaded": false
+      },
+      "reason": "disabled_or_not_successful_or_no_download",
+      "remote_run_dir": "/home/nx/splitpoint_runs/legacy_suite/completsetdev_20260915_085558_yolo26s_orin_nx_hailo10_01/1",
+      "schema": "onnx-splitpoint/remote-cleanup",
+      "schema_version": 1,
+      "timestamp_utc": "2026-09-15T07:27:31.037138Z"
+    },
+    "remote_dispatch_failed": false,
+    "remote_dispatched": true,
+    "remote_rc": null,
+    "remote_run_dir": "/home/nx/splitpoint_runs/legacy_suite/completsetdev_20260915_085558_yolo26s_orin_nx_hailo10_01/1",
+    "requested_run_id": "completsetdev_20260915_085558_yolo26s_orin_nx_hailo10_01",
+    "resumed": false,
+    "status": "failed",
+    "terminal_remote_failure": true
+  },
+  "fixture_provenance": "Derived diagnostic projection of unchanged GUI run 20260915_085558; paths rebound only in tests."
+}

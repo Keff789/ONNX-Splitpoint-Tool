@@ -1,0 +1,59 @@
+{
+  "schema": "onnx-splitpoint/native-boundary-dump",
+  "schema_version": 2,
+  "dtype": "float32",
+  "nbytes": 8192,
+  "seq": 1099,
+  "trt_input_name": "mean",
+  "trt_input_dtype": "float32",
+  "trt_input_bytes": 8192,
+  "shape": [
+    1,
+    2048,
+    1,
+    1
+  ],
+  "boundary_shape_source": "tensorrt_input_binding",
+  "dump_inference_scope": "separate_bound_inference_after_measurement",
+  "image": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/resources/validation/classification/val_by_wnid_n500_s20260710/images/n01443537/ILSVRC2012_val_00013623.JPEG",
+  "file": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/native_fifo_boundary/boundary_float32.bin",
+  "input_dump": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/native_pipeline/b119/hailo_to_trt/float32_layout_fp16/native_fifo_boundary/input_rgb_uint8.bin",
+  "input_shape_hwc": [
+    224,
+    224,
+    3
+  ],
+  "preprocess": {
+    "task": "classification",
+    "mode": "resize_rgb_uint8",
+    "pad_value": 0,
+    "rgb": true,
+    "ort_model_scale": "norm"
+  },
+  "input_image": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/resources/validation/classification/val_by_wnid_n500_s20260710/images/n01443537/ILSVRC2012_val_00013623.JPEG",
+  "provenance": {
+    "image": "/home/nx/native_fifo_evalsets/completsetdev_20260911_115557/resnet50/benchmark_set/resources/validation/classification/val_by_wnid_n500_s20260710/images/n01443537/ILSVRC2012_val_00013623.JPEG",
+    "image_source": "exact_file",
+    "seq": 1099,
+    "precision": "float32_layout_fp16"
+  },
+  "file_sha256": "76186cad7a1d72cb300c8fbf3936b92aad2c85e9913c5bbfb8602f22345cbbe4",
+  "file_size_bytes": 8192,
+  "input_dump_sha256": "bd5cb096b1ace4fa2a5b7e0328ad787b785b0b8385f7d66c6c36c3e04e201071",
+  "input_dump_size_bytes": 150528,
+  "payload_artifacts": [
+    {
+      "role": "file",
+      "path": "boundary_float32.bin",
+      "sha256": "76186cad7a1d72cb300c8fbf3936b92aad2c85e9913c5bbfb8602f22345cbbe4",
+      "size_bytes": 8192
+    },
+    {
+      "role": "input_dump",
+      "path": "input_rgb_uint8.bin",
+      "sha256": "bd5cb096b1ace4fa2a5b7e0328ad787b785b0b8385f7d66c6c36c3e04e201071",
+      "size_bytes": 150528
+    }
+  ],
+  "payload_artifacts_sha256": "a5579e617a33707eca868c3052b7246380f59259c6d5de6b68aac6a960a62f12"
+}

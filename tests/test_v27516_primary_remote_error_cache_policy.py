@@ -46,6 +46,7 @@ class V27516PrimaryRemoteErrorCachePolicyTests(unittest.TestCase):
         namespace: Path,
         *,
         last_used: float,
+        builder_abi_sha256: str = "",
     ) -> None:
         namespace.mkdir(parents=True, exist_ok=True)
         (namespace / ".splitpoint_trt_cache_owner.json").write_text(
@@ -57,6 +58,7 @@ class V27516PrimaryRemoteErrorCachePolicyTests(unittest.TestCase):
                     "cache_key": namespace.name,
                     "created_at_unix": last_used,
                     "last_used_at_unix": last_used,
+                    "trt_builder_abi_sha256": builder_abi_sha256,
                 },
                 sort_keys=True,
                 separators=(",", ":"),
@@ -261,8 +263,10 @@ class V27516PrimaryRemoteErrorCachePolicyTests(unittest.TestCase):
                 message="partial",
             )
 
-            workflow = object.__new__(EvaluationWorkflowRunner)
+            workflow = EvaluationWorkflowRunner(SimpleNamespace(), log=mock.Mock())
             workflow.run_dir = root
+            workflow.artifact_index = {}
+            workflow.artifact_index_path = root / "artifact_index.json"
             workflow.profile_payload = {}
             workflow.options = SimpleNamespace()
             workflow.session_id = "test-session"
@@ -307,6 +311,7 @@ class V27516PrimaryRemoteErrorCachePolicyTests(unittest.TestCase):
             self.assertTrue(metrics["follow_on_failures_suppressed"])
             self.assertIn("primary_failure_json", artifacts)
             post_build.assert_not_called()
+            self.assertTrue(workflow._shutdown_management_services_bounded(timeout_s=2)["finished"])
 
     def test_suite_transport_and_managed_tensorrt_policy_are_bounded(self) -> None:
         command = _verified_uncached_suite_extract_command(
@@ -564,10 +569,10 @@ class V27516PrimaryRemoteErrorCachePolicyTests(unittest.TestCase):
                 ),
             )
 
-            # Runtime selection and enumeration order/index decide how an
-            # already-built engine is used, not its serialized ABI.
+            # Compare equivalent ABI descriptors under the same runtime
+            # contract. Runtime policy is a separate, intentional key input.
             runtime_variant = RemoteBenchmarkArgs(
-                add_args="--trt-runtime native --native-trt-precision fp16 "
+                add_args="--trt-runtime native_preferred --native-trt-precision fp16 "
                 "--native-trt-workspace-mb 4096"
             )
             structured_probe = dict(builder_abi)
@@ -577,6 +582,8 @@ class V27516PrimaryRemoteErrorCachePolicyTests(unittest.TestCase):
                 "compute_capability": "8.7",
                 "driver_version": "driver",
             }]
+            self.assertEqual(_trt_engine_builder_abi_contract(builder_abi),
+                             _trt_engine_builder_abi_contract(structured_probe))
             self.assertEqual(
                 engine_key,
                 _stable_trt_engine_cache_key(
@@ -1003,7 +1010,7 @@ int cuDeviceGetAttribute(int *value, int attribute, int device) {
             legacy_key = "resnet50-1111111111111111"
             stable_key = "resnet50-2222222222222222"
             legacy = managed / legacy_key
-            self._write_managed_owner(legacy, last_used=1.0)
+            self._write_managed_owner(legacy, last_used=1.0, builder_abi_sha256="b" * 64)
             source_payload = b"source-onnx"
             source_sha256 = hashlib.sha256(source_payload).hexdigest()
             leaf = (
@@ -1052,11 +1059,11 @@ int cuDeviceGetAttribute(int *value, int attribute, int device) {
             quality_leaf = (
                 legacy / "native_split_quality" / "orin_nx_hailo8_01"
                 / "resnet50" / "b052" / "hailo8_to_trt" / ("d" * 64)
-                / "engine_cache" / "b052" / "part2" / "float32_layout_fp16"
+                / "engine_cache" / "b052" / "part2" / "fp16"
             )
             quality_leaf.mkdir(parents=True)
-            quality_source = quality_leaf / "source_part2_float32_layout_bridge.onnx"
-            quality_engine = quality_leaf / "part2_float32_layout_fp16.engine"
+            quality_source = quality_leaf / "source_part2.onnx"
+            quality_engine = quality_leaf / "part2_fp16.engine"
             quality_source.write_bytes(b"quality-split-source")
             quality_engine.write_bytes(b"quality-split-engine")
             quality_receipt = {
@@ -1094,6 +1101,25 @@ int cuDeviceGetAttribute(int *value, int attribute, int device) {
                 json.dumps(quality_receipt, indent=2, sort_keys=True),
                 encoding="utf-8",
             )
+            # A special bridge without its binding proof must remain rejected,
+            # independently of the valid direct Part2 above.
+            bridge_leaf = quality_leaf.parent / "float32_layout_fp16"
+            bridge_leaf.mkdir()
+            bridge_source = bridge_leaf / "source_part2_float32_layout_bridge.onnx"
+            bridge_engine = bridge_leaf / "part2_float32_layout_fp16.engine"
+            bridge_source.write_bytes(b"unbound-special-bridge")
+            bridge_engine.write_bytes(b"bridge-engine")
+            bridge_receipt = dict(quality_receipt)
+            bridge_receipt.update(source_onnx=str(bridge_source.resolve()),
+                                  engine=str(bridge_engine.resolve()),
+                                  source_onnx_sha256=hashlib.sha256(bridge_source.read_bytes()).hexdigest(),
+                                  engine_sha256=hashlib.sha256(bridge_engine.read_bytes()).hexdigest(),
+                                  command=[str(trtexec.resolve()), f"--onnx={bridge_source.resolve()}",
+                                           f"--saveEngine={bridge_engine.resolve()}", "--fp16", "--memPoolSize=workspace:4096"])
+            bridge_receipt.pop("receipt_sha256")
+            bridge_receipt["receipt_sha256"] = hashlib.sha256(json.dumps(
+                bridge_receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+            (bridge_leaf / "engine_build_receipt.json").write_text(json.dumps(bridge_receipt))
             (legacy / ".active.lock").touch()
             legacy_before = {
                 path.relative_to(legacy): path.read_bytes()
@@ -1119,6 +1145,9 @@ int cuDeviceGetAttribute(int *value, int attribute, int device) {
             migration = payload["legacy_receipt_migration"]
             self.assertEqual(migration["status"], "verified_receipts_migrated")
             self.assertEqual(migration["migrated_receipts"], 2)
+            self.assertEqual(migration["rejected_receipts"], 1)
+            self.assertEqual(migration["candidate_failures"][0]["reason"], "special_bridge_binding_unverified")
+            self.assertFalse(any((managed / stable_key).rglob("part2_float32_layout_fp16.engine")))
             self.assertEqual(migration["source_keys"], [legacy_key])
             self.assertEqual(
                 legacy_before,
@@ -1134,7 +1163,7 @@ int cuDeviceGetAttribute(int *value, int attribute, int device) {
             migrated_quality_leaf = (
                 managed / stable_key / "splits" / "b052" / "part2"
                 / hashlib.sha256(quality_source.read_bytes()).hexdigest()
-                / "float32_layout_fp16"
+                / "fp16"
             )
             self.assertEqual(
                 (migrated_quality_leaf / quality_engine.name).read_bytes(),
@@ -1172,7 +1201,7 @@ int cuDeviceGetAttribute(int *value, int attribute, int device) {
             managed = base / "_onnx_splitpoint_cache" / "tensorrt_managed_v27516"
             legacy = managed / "resnet50-1111111111111111"
             stable_key = "resnet50-2222222222222222"
-            self._write_managed_owner(legacy, last_used=1.0)
+            self._write_managed_owner(legacy, last_used=1.0, builder_abi_sha256="b" * 64)
             source_payload = b"canonical-full-onnx"
             source_sha256 = hashlib.sha256(source_payload).hexdigest()
             leaf = (
@@ -1250,7 +1279,7 @@ int cuDeviceGetAttribute(int *value, int attribute, int device) {
                 legacy_key = "resnet50-1111111111111111"
                 stable_key = "resnet50-2222222222222222"
                 legacy = managed / legacy_key
-                self._write_managed_owner(legacy, last_used=1.0)
+                self._write_managed_owner(legacy, last_used=1.0, builder_abi_sha256="b" * 64)
                 source_payload = b"canonical-full-onnx"
                 source_sha256 = hashlib.sha256(source_payload).hexdigest()
                 leaf_precision = "fp32" if scenario == "precision_mismatch" else "fp16"
@@ -1332,7 +1361,20 @@ int cuDeviceGetAttribute(int *value, int attribute, int device) {
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 migration = payload["legacy_receipt_migration"]
                 self.assertEqual(migration["migrated_receipts"], 0)
-                self.assertGreaterEqual(migration["rejected_receipts"], 1)
+                self.assertEqual(migration["inventoried_receipts"], 1)
+                self.assertEqual(migration["rejected_receipts"], 1)
+                if scenario == "gpu_deserialization_failed":
+                    self.assertEqual(migration["gpu_deserialization_failures"], 1)
+                    self.assertEqual(migration["candidate_failures"], [])
+                else:
+                    self.assertEqual(migration["gpu_deserialization_failures"], 0)
+                    expected_reason = {
+                        "receipt_digest_tampered": "receipt_digest_invalid",
+                        "builder_binary_mismatch": "receipt_builder_abi_mismatch",
+                        "precision_mismatch": "receipt_runtime_precision_mismatch",
+                        "workspace_mismatch": "receipt_workspace_mismatch",
+                    }[scenario]
+                    self.assertEqual(migration["candidate_failures"][0]["reason"], expected_reason)
                 self.assertFalse(any((managed / stable_key).rglob("*.engine")))
                 self.assertEqual(
                     old_bytes,
@@ -1350,12 +1392,12 @@ int cuDeviceGetAttribute(int *value, int attribute, int device) {
             stable_key = "resnet50-2222222222222222"
             legacy = managed / legacy_key
             stable = managed / stable_key
-            self._write_managed_owner(legacy, last_used=1.0)
+            self._write_managed_owner(legacy, last_used=1.0, builder_abi_sha256="b" * 64)
             self._write_valid_engine_receipt(
                 legacy,
                 payload=b"valid-but-must-not-be-hashed-on-warm-retention",
             )
-            self._write_managed_owner(stable, last_used=2.0)
+            self._write_managed_owner(stable, last_used=2.0, builder_abi_sha256="b" * 64)
             sentinel = legacy / "legacy-sentinel.bin"
             sentinel.write_bytes(b"do-not-scan-or-copy")
             unmanaged = base / "_onnx_splitpoint_cache" / "tensorrt" / "old-suite"

@@ -1,4 +1,4 @@
-"""Hardware-independent release smoke for the v2.82 required build readiness, explicit Native non-starts and bounded debug export.
+"""Hardware-independent release smoke for the current release required build readiness, explicit Native non-starts and bounded debug export.
 
 Behavioral runtime, calibration, cache and negative-dispatch regressions are run by
 the dedicated small acceptance gate. This smoke validates the installed
@@ -54,10 +54,9 @@ def main() -> int:
     )
     cold_rows = report["expected_cold_build_rows"]
     checks = {
-        "version": __version__ == __release__ == VERSION == "2.82",
+        "version": __version__ == __release__ == VERSION,
         "lineage": __development_lineage__ == LINEAGE == "v2.79",
-        "build": __build_id__ == WORKFLOW_VERSION == BUILD_ID
-        == "v2.82-selected-energy-generic-roles-workspace-product-evidence",
+        "build": __build_id__ == WORKFLOW_VERSION == BUILD_ID,
         "focused_features": REQUIRED_FEATURES.issubset(set(__build_features__)),
         "infrastructure_failure_is_retryable": (
             classify_build_outcome({"error": "CUDA memory allocation failed: out of memory"})
@@ -83,7 +82,7 @@ def main() -> int:
             and report["runtime_dispatch_allowed"] is False
         ),
         "entrypoints": all(marker in pyproject for marker in (
-            'version = "2.82"',
+            f'version = "{VERSION}"',
             'onnx-splitpoint-smoke-v282 = "onnx_splitpoint_tool.v282_smoke:main"',
             'onnx-splitpoint-smoke-v2-82 = "onnx_splitpoint_tool.v282_smoke:main"',
             'onnx-splitpoint-smoke-v27923 = "onnx_splitpoint_tool.v27923_smoke:main"',
@@ -106,7 +105,7 @@ def main() -> int:
     }, indent=2, sort_keys=True))
     if failed:
         return 1
-    print("PASS v2.82 smoke")
+    print(f"PASS v{VERSION} smoke")
     return 0
 
 

@@ -106,6 +106,10 @@ def test_m01_genuine_semantic_and_suite_measurement_merge(tmp_path, monkeypatch)
     assert result["completed_task_endpoint_attestation"]["completed_frames"] == 3
     assert owned(result) == before
     assert case.processes == ["semantic", "performance"]
+    from onnx_splitpoint_tool.native_rate_endpoints import rate_endpoint_fields
+    projected = rate_endpoint_fields(runner._aggregate_full_repetitions([result], requested=1))
+    assert projected["completed_task_fps"] == result["fps_makespan"]
+    assert projected["completed_task_measurement_times_s"] == [result["measured_makespan_s"]]
 
 @pytest.mark.parametrize("mutation", ["empty_contract", "empty_result", "false", "different_contract", "bad_image", "bad_endpoint", "source_false", "wrong_stage", "wrong_signature"])
 def test_m02_m04_failure_preserves_measurements(tmp_path, monkeypatch, mutation):
@@ -192,6 +196,18 @@ def test_m07_classification_and_direct_normalization_keep_owners(tmp_path, monke
     result = attach(case, row, semantic)
     assert result["ok"] is True, result
     assert owned(result) == before
+    from onnx_splitpoint_tool.native_rate_endpoints import rate_endpoint_fields
+    projected = rate_endpoint_fields(runner._aggregate_full_repetitions([result], requested=1))
+    if task == "classification":
+        # R9C: this fixture executes the current prepared loop through Top-k.
+        # Historical logits-only evidence stays covered by the R9B regressions.
+        assert projected["completed_task_fps"] == result["fps_makespan"]
+        assert projected["host_output_fps"] is None
+        assert result["postprocess_completed_frames"] == 3
+        assert result["completed_task_stage"] == "classification_top1_top5"
+    else:
+        assert projected["completed_task_fps"] == result["fps_makespan"]
+        assert projected["completed_task_measurement_times_s"] == [result["measured_makespan_s"]]
     if task == "direct_bn6":
         assert result["normalization_frozen"] is True
         negative = copy.deepcopy(semantic)

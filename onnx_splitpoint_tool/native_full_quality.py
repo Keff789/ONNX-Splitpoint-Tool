@@ -366,10 +366,10 @@ def resolve_native_full_plan(profile: Mapping[str, Any]) -> NativeFullPlan:
         ):
             active.append(producer)
 
-    # If profiles use canonical IDs that the token parser cannot recognise,
-    # honour an already resolved producer map as fallback.
+    # Honour a previously resolved map only when no producer was recognised.
+    # Otherwise stale entries would widen a narrowed visible selection again.
     existing = _get(profile, "native_producers", "full_baselines", "backends_by_producer", default={})
-    if isinstance(existing, Mapping):
+    if not active and isinstance(existing, Mapping):
         for key in existing:
             prod = _normalise_token(key)
             if prod in {"hailo8", "hailo10h", "deepx"} and prod not in active:

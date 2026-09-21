@@ -4079,8 +4079,10 @@ def _full_command_contract(
         trt_completed_task_required = bool(
             trt_raw_completion_required
             or trt_direct_completion_required
+            or str(row.get("task") or "").strip().lower() == "classification"
         )
         if trt_completed_task_required:
+            classification = str(row.get("task") or "").strip().lower() == "classification"
             completed_runner = (
                 ROOT / "scripts" / "native_trt_full_completed_hotloop.py"
             ).resolve()
@@ -4164,6 +4166,15 @@ def _full_command_contract(
                     or bool(direct_workload_binding)
                 )
             )
+            if classification:
+                postprocess_binding_ok = bool(
+                    row.get("task_complete") is True
+                    and row.get("completed_task_stage") == "classification_top1_top5"
+                    and row.get("postprocess_included") is True
+                    and row.get("postprocess_completion_verified") is True
+                    and completed_frames > 0
+                    and postprocess_completed == completed_frames
+                )
             available = bool(
                 common_trt_available
                 and completed_runner.is_file()
@@ -4203,13 +4214,13 @@ def _full_command_contract(
                 "preprocess": dict(
                     (runtime_input_spec or {}).get("preprocess") or {}
                 ),
-                "task": "detection",
+                "task": "classification" if classification else "detection",
                 "input_mode": "exact_semantic_dump_runtime_tensor",
                 "input_image": input_image,
                 "input_image_sha256": input_sha,
                 "e2e_scope": "full_task_pipeline",
-                "completed_task_stage": "decoded_nms",
-                "completed_task_contract_family": "decoded_nms",
+                "completed_task_stage": "classification_top1_top5" if classification else "decoded_nms",
+                "completed_task_contract_family": "classification_top1_top5" if classification else "decoded_nms",
                 "measurement_concurrency": 1,
                 "postprocess_required": True,
                 "postprocess_included": True,
@@ -4676,6 +4687,14 @@ def _full_command_contract(
             })
         elif deepx_direct_normalization_required:
             energy_workload.update(direct_workload_binding)
+    if energy_workload.get("task") == "classification":
+        energy_workload.update({
+            "completed_task_stage": "classification_top1_top5",
+            "completed_task_contract_family": "classification_top1_top5",
+            "classification_postprocess_required": True,
+            "postprocess_included": True,
+            "e2e_scope": "full_task_pipeline",
+        })
     source_model_artifact = (
         artifacts.get("source_onnx")
         if isinstance(artifacts.get("source_onnx"), Mapping) else {}
@@ -5081,6 +5100,18 @@ def _sealed_frozen_postprocess_binding(contract: Mapping[str, Any]) -> bool:
         return False
     if workload.get("postprocess_required") is not True:
         return True
+    if workload.get("task") == "classification":
+        completed = _strict_positive_int(workload.get("successful_run_completed_frames"))
+        return bool(
+            workload.get("kind") == "tensorrt_full_completed_task_hotloop"
+            and workload.get("completed_task_stage") == "classification_top1_top5"
+            and workload.get("postprocess_included") is True
+            and workload.get("postprocess_completion_verified") is True
+            and completed is not None
+            and completed == _strict_positive_int(workload.get("successful_run_postprocess_completed_frames"))
+            and not workload.get("host_postprocess_frozen")
+            and not workload.get("normalization_frozen")
+        )
     raw_mode = isinstance(
         workload.get("frozen_postprocess_contract"), Mapping,
     )
@@ -5457,7 +5488,9 @@ def _verified_full_energy_contract(
             return None, "full_energy_deepx_source_model_metadata_invalid"
     if kind == "tensorrt_full_completed_task_hotloop" and (
         str(workload.get("e2e_scope") or "") != "full_task_pipeline"
-        or str(workload.get("completed_task_stage") or "") != "decoded_nms"
+        or str(workload.get("completed_task_stage") or "") != (
+            "classification_top1_top5" if workload.get("task") == "classification" else "decoded_nms"
+        )
         or int(workload.get("measurement_concurrency") or 0) != 1
     ):
         return None, "full_energy_completed_task_endpoint_contract_invalid"
@@ -5597,7 +5630,9 @@ def _sealed_full_energy_contract(
     kind = str(workload.get("kind") or "")
     if kind == "tensorrt_full_completed_task_hotloop" and (
         str(workload.get("e2e_scope") or "") != "full_task_pipeline"
-        or str(workload.get("completed_task_stage") or "") != "decoded_nms"
+        or str(workload.get("completed_task_stage") or "") != (
+            "classification_top1_top5" if workload.get("task") == "classification" else "decoded_nms"
+        )
         or int(workload.get("measurement_concurrency") or 0) != 1
     ):
         return None, "full_energy_completed_task_endpoint_contract_invalid"
@@ -6321,15 +6356,18 @@ def _energy_workload_only(ns: argparse.Namespace) -> int:
             if workload.get("normalization_frozen") is True
             else "frozen_postprocess_contract"
         )
+        classification = workload.get("task") == "classification"
         cmd = [
             runtime_python,
             str(runner_artifact["path"]),
             "--engine", str(engine_artifact["path"]),
             "--input-manifest", str(input_manifest_artifact["path"]),
-            completion_contract_option, json.dumps(
-                workload[completion_contract_field],
-                sort_keys=True, separators=(",", ":"),
-            ),
+            *(["--classification"] if classification else [
+                completion_contract_option, json.dumps(
+                    workload[completion_contract_field],
+                    sort_keys=True, separators=(",", ":"),
+                ),
+            ]),
             "--source-endpoint-contract-hash",
             str(workload.get("source_endpoint_contract_hash") or ""),
             "--quality-first-producer-identity-sha256",
@@ -6376,6 +6414,11 @@ def _energy_workload_only(ns: argparse.Namespace) -> int:
             and payload.get("postprocess_completion_verified") is True
             and (
                 (
+                    classification
+                    and payload.get("task_complete") is True
+                    and payload.get("completed_task_stage") == "classification_top1_top5"
+                )
+                or (
                     workload.get("normalization_frozen") is True
                     and payload.get("normalization_frozen") is True
                     and payload.get("host_postprocess_frozen")
@@ -6424,7 +6467,7 @@ def _energy_workload_only(ns: argparse.Namespace) -> int:
             and int(payload.get("postprocess_completed_frames") or 0)
             == int(payload.get("completed_work_units") or 0)
             and str(payload.get("completed_task_stage") or "")
-            == "decoded_nms"
+            == ("classification_top1_top5" if classification else "decoded_nms")
         )
         completed = (
             int((payload or {}).get("completed_work_units") or 0)
@@ -6511,6 +6554,14 @@ def _energy_workload_only(ns: argparse.Namespace) -> int:
         and report_path.stat().st_size > 0
     )
     payload_map = payload if isinstance(payload, Mapping) else {}
+    if workload.get("classification_postprocess_required") is True:
+        input_binding_verified = bool(
+            input_binding_verified
+            and payload_map.get("task_complete") is True
+            and payload_map.get("completed_task_stage") == "classification_top1_top5"
+            and payload_map.get("postprocess_completion_verified") is True
+            and int(payload_map.get("postprocess_completed_frames") or 0) == completed
+        )
     minimum_work_units = 1 if kind == "tensorrt_full_hotloop" and requested_duration_s > 0.0 else frames
     minimum_duration_satisfied = bool(
         requested_duration_s <= 0.0
@@ -6529,6 +6580,12 @@ def _energy_workload_only(ns: argparse.Namespace) -> int:
         "backend": contract.get("backend"),
         "model": contract.get("model"),
         "completed_work_units": completed if ok else None,
+        "task": workload.get("task"),
+        "workload_kind": kind,
+        **{key: payload_map.get(key) for key in (
+            "task_complete", "completed_task_stage", "postprocess_included",
+            "postprocess_completed_frames", "postprocess_completion_verified",
+        )},
         "completed_work_units_source": "verified_full_energy_hotloop",
         "requested_work_units": frames,
         "minimum_requested_work_units": minimum_work_units,
@@ -6595,7 +6652,8 @@ def _parse_image_map(raw: str) -> dict[str, dict[str, str]]:
 
 
 def _resolve_image(benchmark_set: Path, model: str, case: str, image_map: Mapping[str, Mapping[str, str]]) -> tuple[Path | None, str]:
-    value = str((image_map.get(model) or {}).get(case) or "").strip()
+    model_images = image_map.get(model) or {}
+    value = str(model_images.get("full") or model_images.get(case) or "").strip()
     if value:
         raw = Path(value).expanduser()
         candidates = [raw] if raw.is_absolute() else [benchmark_set / raw, benchmark_set / "legacy_suite" / raw]
@@ -6743,7 +6801,40 @@ def _semantic_full_dump(
         return {"ok": False, "status": "unsupported", "failure_reason": "semantic_backend_not_supported_by_companion"}
 
     prepared_input_manifest: Path | None = None
-    if backend == "native_full_deepx":
+    model_images = (getattr(ns, "image_map_data", {}) or {}).get(model) or {}
+    if backend == "native_full_deepx" and model_images.get("full"):
+        # New workflows bind one model-wide comparison image before fan-out.
+        # A Generic Full prepared feed may precede that selection and refer to
+        # a different image. Prepare the selected image with the same backend
+        # contract, once before the semantic/performance/energy dispatches.
+        # Preserve the earlier Generic evidence in its own result directory.
+        if image_source not in {
+            "generic_validation_image_map", "generic_validation_image_map_rebased",
+        } or not _confined_regular_file(image, allowed_root=benchmark_set):
+            return {
+                "ok": False, "status": "prepared_input_source_image_unavailable",
+                "failure_reason": "deepx_comparison_input_image_unavailable",
+            }
+        try:
+            from scripts.native_full_semantic_dump import _find_deepx_contract
+            from onnx_splitpoint_tool.runners.native_full_input import (
+                prepare_and_seal_deepx_native_full_input,
+            )
+            _dxnn, input_contract = _find_deepx_contract(benchmark_set)
+            prepared = prepare_and_seal_deepx_native_full_input(
+                image_path=image, input_contract=input_contract, task=task,
+                out_dir=_native_full_dump_dir(benchmark_set, model, backend, ns) / "prepared_input",
+                model=model, setup_id=str(ns.setup_id or ""),
+                comparison_backend=str(ns.comparison_backend or ""),
+            )
+            prepared_input_manifest = Path(prepared["manifest_path"])
+        except Exception as exc:
+            return {
+                "ok": False, "status": "prepared_input_manifest_unavailable",
+                "failure_reason": "deepx_comparison_input_preparation_failed",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+    elif backend == "native_full_deepx":
         run_component = str(run_id or "").strip()
         if (
             not run_component
@@ -7100,6 +7191,7 @@ def _attach_semantic_dump(
     # completion counts, results and its frozen contracts. Explicit false/empty
     # values are evidence too and must never be hidden by a truthiness fallback.
     measured_fields = (
+        "task_complete", "completed_task_stage", "classification_topk",
         "frozen_host_postprocess_contract", "frozen_host_postprocess_contract_sha256",
         "frozen_host_postprocess_result", "host_postprocess_frozen",
         "frozen_decoded_nms_normalization_contract",
@@ -7428,10 +7520,11 @@ def _attach_trt_completed_task_hotloop(
     model: str,
     ns: argparse.Namespace,
 ) -> dict[str, Any]:
-    """Replace physical TensorRT timing with the completed detection task."""
+    """Attach completed-task timing using the existing prepared-input runtime."""
     if not bool(row.get("ok")):
         return row
-    if str(row.get("task") or "").strip().lower() != "detection":
+    classification = str(row.get("task") or "").strip().lower() == "classification"
+    if str(row.get("task") or "").strip().lower() not in {"detection", "classification"}:
         row.setdefault(
             "comparison_endpoint_stratum",
             str(row.get("contract_family") or "accelerator_output"),
@@ -7443,7 +7536,10 @@ def _attach_trt_completed_task_hotloop(
     ).strip().lower()
     completion_kind = ""
     try:
-        if contract_family in {"raw_head", "decoded_pre_nms"}:
+        if classification:
+            completion_kind = "classification_top1_top5"
+            completion_contract = {}
+        elif contract_family in {"raw_head", "decoded_pre_nms"}:
             completion_kind = "raw_host_tail"
             completion_contract = verify_frozen_postprocess_contract(
                 row.get("frozen_host_postprocess_contract")
@@ -7516,16 +7612,11 @@ def _attach_trt_completed_task_hotloop(
         str(runner),
         "--engine", str(engine),
         "--input-manifest", str(input_manifest),
-        (
-            "--frozen-postprocess-contract-json"
-            if completion_kind == "raw_host_tail"
-            else (
-                "--frozen-decoded-nms-normalization-contract-json"
-            )
-        ),
-        json.dumps(
-            completion_contract, sort_keys=True, separators=(",", ":"),
-        ),
+        *(["--classification"] if classification else [
+            "--frozen-postprocess-contract-json" if completion_kind == "raw_host_tail"
+            else "--frozen-decoded-nms-normalization-contract-json",
+            json.dumps(completion_contract, sort_keys=True, separators=(",", ":")),
+        ]),
         "--source-endpoint-contract-hash",
         str(row.get("endpoint_contract_hash") or ""),
         "--quality-first-producer-identity-sha256",
@@ -7599,22 +7690,29 @@ def _attach_trt_completed_task_hotloop(
         and completed >= max(1, int(ns.frames))
         and postprocess_completed == completed
         and payload.get("postprocess_completion_verified") is True
-        and str(payload.get("completed_task_stage") or "")
-        == "decoded_nms"
-        and isinstance(
-            payload.get("completed_task_endpoint_attestation"), Mapping
-        )
         and (
-            payload.get("completed_task_endpoint_attestation") or {}
-        ).get("attested") is True
-        and completed_endpoint_attested
-        and str(
-            payload.get("completed_task_completion_mode")
-            or completed_attestation.get(
-                "completed_task_completion_mode"
+            classification
+            and payload.get("task_complete") is True
+            and payload.get("completed_task_stage") == "classification_top1_top5"
+            or not classification and (
+            str(payload.get("completed_task_stage") or "")
+            == "decoded_nms"
+            and isinstance(
+                payload.get("completed_task_endpoint_attestation"), Mapping
             )
-            or ""
-        ) == expected_completion_mode
+            and (
+                payload.get("completed_task_endpoint_attestation") or {}
+            ).get("attested") is True
+            and completed_endpoint_attested
+            and str(
+                payload.get("completed_task_completion_mode")
+                or completed_attestation.get(
+                    "completed_task_completion_mode"
+                )
+                or ""
+            ) == expected_completion_mode
+            )
+        )
     )
     row.setdefault("steps", []).append(step)
     row["accelerator_only_diagnostic"] = accelerator_diagnostic
@@ -7635,6 +7733,7 @@ def _attach_trt_completed_task_hotloop(
     row.update({
         "ok": True,
         "status": "ok",
+        "request_latency": payload.get("request_latency"),
         "producer_impl": "native_tensorrt_full_completed_task",
         "performance_benchmark_source": (
             "tensorrt_native_full_completed_task_hotloop"
@@ -7649,6 +7748,10 @@ def _attach_trt_completed_task_hotloop(
             payload.get("latency_semantics") or ""
         ),
         "fps_source": "native_trt_full_completed_hotloop",
+        "measured_duration_s": _num(payload.get("measured_duration_s")),
+        "measurement_endpoint": "completed_task",
+        "measurement_boundary": "first_task_start_to_last_task_completion",
+
         "completed_frames": completed,
         "completed_work_units": completed,
         "completed_work_units_source": str(
@@ -7754,6 +7857,13 @@ def _attach_trt_completed_task_hotloop(
         ),
         "completed_task_hotloop_report": str(report_path),
     })
+    if classification:
+        for key in ("task_complete", "completed_task_stage", "postprocess_completed_frames",
+                    "postprocess_completion_verified", "classification_topk"):
+            row[key] = payload.get(key)
+        row["completed_task_contract_family"] = "classification_top1_top5"
+        row["comparison_endpoint_stratum"] = "classification_top1_top5"
+        row["completed_task_completion_mode"] = "host_top1_top5"
     return row
 
 
@@ -8119,13 +8229,21 @@ def _aggregate_full_repetitions(
                 "ok": bool(row.get("ok")), "status": str(row.get("status") or ""),
                 "runtime_success": row.get("runtime_success") is True,
                 "fps_makespan": _num(row.get("fps_makespan")),
+                "request_latency": row.get("request_latency"),
                 "latency_mean_ms": _num(row.get("latency_mean_ms")),
                 "latency_p50_ms": _num(row.get("latency_p50_ms")),
                 "latency_p95_ms": _num(row.get("latency_p95_ms")),
                 "frames": int(_num(row.get("completed_work_units") or row.get("completed_frames") or row.get("frames")) or 0),
-                "completed_frames": int(_num(row.get("completed_work_units") or row.get("completed_frames") or row.get("frames")) or 0),
-                "completed_work_units": int(_num(row.get("completed_work_units") or row.get("completed_frames") or row.get("frames")) or 0),
+                "completed_frames": _num(row.get("completed_frames")),
+                "completed_work_units": _num(row.get("completed_work_units", row.get("completed_frames"))),
                 "completed_work_units_status": row.get("completed_work_units_status"),
+                **{key: row.get(key) for key in (
+                    "task", "task_complete", "completed_task_stage", "measurement_endpoint", "measurement_boundary", "measured_duration_s", "makespan_ms",
+                    "postprocess_completion_verified", "completed_task_endpoint_attested", "repetition_id",
+                    "completed_task_endpoint_contract_hash", "completion_execution_contract_sha256",
+                    "completed_work_units_source", "completed_work_units_status", "postprocess_completed_frames")},
+                "repetition_id": str(row.get('repetition_id') or row.get('runtime_instance_id') or row.get('repetition_index') or index),
+
                 "failure_reason": str(row.get("failure_reason") or ""),
                 "failure_stage": str(row.get("failure_stage") or ""),
                 "primary_failure_reason": str(
@@ -8623,7 +8741,24 @@ def _native_trt_full(benchmark_set: Path, model: str, ns: argparse.Namespace) ->
         and str(meta.get("completed_work_units_status") or "") == "exact_runtime_counter"
         and int(_num(meta.get("completed_work_units")) or -1) == int(ns.frames)
     )
+    # The trtexec process duration includes startup/warmup. Only its existing
+    # measured exportTimes trace binds a classification throughput to time.
+    trace = _load_json(Path(str((meta.get("trtexec_export_times") or {}).get("path") or "")))
+    trace = trace if isinstance(trace, list) else next((trace[key] for key in
+        ("times", "queries", "records", "results", "data")
+        if isinstance(trace, Mapping) and isinstance(trace.get(key), list)), [])
+    starts = [_num(r.get("startH2dMs")) for r in trace if isinstance(r, Mapping)]
+    ends = [_num(r.get("endD2hMs")) for r in trace if isinstance(r, Mapping)]
+    trace_duration_s = None
+    if (exact_count_ok and len(trace) == int(ns.frames) and len(starts) == len(trace)
+            and all(a is not None and b is not None and b >= a for a, b in zip(starts, ends))):
+        trace_duration_s = (max(ends) - min(starts)) / 1000.0
+        if trace_duration_s <= 0:
+            trace_duration_s = None
     fps = _num(metrics.get("fps_makespan"))
+    trace_rate = bool(str(producer.get("task")) == "classification" and trace_duration_s)
+    if trace_rate:
+        fps = int(meta["completed_work_units"]) / trace_duration_s
     ok = bool(
         step.get("rc") == 0 and build_ok is not False and run_ok is not False
         and quality_identity_match and exact_count_ok and fps is not None and fps > 0
@@ -8672,7 +8807,12 @@ def _native_trt_full(benchmark_set: Path, model: str, ns: argparse.Namespace) ->
         "latency_p95_ms": _num(metrics.get("latency_p95_ms")),
         "latency_semantics": "request_end_to_end_trtexec",
         "gpu_compute_mean_ms": _num(metrics.get("gpu_compute_mean_ms")),
-        "fps_source": metrics.get("fps_source") or ("run_trtexec.log" if fps else ""),
+        "fps_source": "trtexec_export_times_host_trace" if trace_rate else metrics.get("fps_source") or ("run_trtexec.log" if fps else ""),
+        "measured_duration_s": trace_duration_s if trace_rate else None,
+        "measurement_endpoint": "completed_task" if trace_rate else "",
+        "measurement_boundary": "first_task_start_to_last_task_completion" if trace_rate else "",
+        "classification_rate_source": "trtexec_export_times_host_trace" if trace_rate else "",
+        "trtexec_reported_fps": _num(metrics.get("fps_makespan")),
         "report": str(meta_path),
         "log_path": str(log_path),
         "input_manifest": str(meta.get("input_manifest") or "") if isinstance(meta, Mapping) else "",
@@ -9773,6 +9913,10 @@ def _native_hailo_full(
         "ok": ok,
         "status": "ok" if ok else "failed",
         "fps_makespan": fps,
+        "measured_duration_s": _num(throughput.get("elapsed_s")),
+        "measurement_endpoint": "completed_task",
+        "measurement_boundary": "first_task_start_to_last_task_completion",
+        "request_latency": throughput.get("request_latency") or report.get("request_latency"),
         # Async/inflight throughput cannot be inverted into request latency.
         # Preserve the reciprocal only under its correct service-interval name.
         "latency_mean_ms": None,
@@ -9882,6 +10026,11 @@ def _native_hailo_full(
         if isinstance(manifest_payload.get("output_endpoint_attestation"), Mapping) else {},
         "steps": [step],
         **_diagnostic_fields(step, failure_reason=reason),
+        **({key: report.get(key) for key in (
+            "task_complete", "completed_task_stage", "classification_topk",
+            "e2e_scope", "comparison_endpoint_stratum", "postprocess_location",
+            "postprocess_included", "postprocess_completed_frames", "postprocess_completion_verified",
+        )} if report.get("completed_task_stage") == "classification_top1_top5" else {}),
     }
 
 def _generic_full_via_suite(
@@ -10437,6 +10586,7 @@ def _generic_full_via_suite(
         "ok": ok,
         "status": status,
         "fps_makespan": fps,
+        "request_latency": prepared_feed.get("request_latency") or metric_row.get("request_latency"),
         "latency_mean_ms": latency,
         "latency_p50_ms": latency_p50,
         "latency_p95_ms": latency_p95,
@@ -10444,6 +10594,9 @@ def _generic_full_via_suite(
             prepared_feed.get("latency_semantics") or metric_row.get("latency_semantics") or ""
         ),
         "measured_makespan_s": measured_makespan_s,
+        "measured_duration_s": measured_makespan_s if outer_makespan_verified else None,
+        "measurement_endpoint": "completed_task",
+        "measurement_boundary": "first_task_start_to_last_task_completion",
         "fps_source": (
             "dx_engine_prepared_feed_outer_makespan" if outer_makespan_verified
             else ""
@@ -10651,6 +10804,11 @@ def _generic_full_via_suite(
                 f"completed_result_persistence={deepx_completed_artifact_status}"
             ),
         ),
+        **({key: prepared_feed.get(key) for key in (
+            "task_complete", "completed_task_stage", "classification_topk",
+            "e2e_scope", "comparison_endpoint_stratum", "postprocess_location",
+            "postprocess_included", "postprocess_completed_frames", "postprocess_completion_verified",
+        )} if prepared_feed.get("completed_task_stage") == "classification_top1_top5" else {}),
     }
 
 
@@ -11059,7 +11217,7 @@ def main() -> int:
             }, indent=2), flush=True)
             ns.quality_request_binding_set_data = {}
     rows: list[dict[str, Any]] = []
-    for model, benchmark_set in model_roots:
+    for model_index, (model, benchmark_set) in enumerate(model_roots, 1):
         for backend in backends:
             from onnx_splitpoint_tool.native_job_identity import planned_native_identity, attach_identity_without_conflicts
             planned_identity = planned_native_identity({"backend":"native_full_" + ("hailo10h" if backend == "hailo10" else backend),
@@ -11106,7 +11264,7 @@ def main() -> int:
             repetition_indices = () if blocked_row is not None else range(1, repetition_count + 1)
             for repetition_index in repetition_indices:
                 print(
-                    f"[native-full] {model}/{backend} repetition={repetition_index}/{repetition_count}",
+                    f"[native-full] Modell {model_index}/{len(model_roots)} · {model} · {ns.setup_id}/{backend} Full · repetition={repetition_index}/{repetition_count} · {ns.frames} Frames + {ns.warmup} Warmup · Performance",
                     flush=True,
                 )
                 rep_ns = argparse.Namespace(**vars(ns))

@@ -13,8 +13,9 @@ from scripts import build_source_manifest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "2.82"
-EXPECTED_BUILD = "v2.82-selected-energy-generic-roles-workspace-product-evidence"
+EXPECTED_VERSION = "2.90.1"
+EXPECTED_BUILD = "v2.90.1"
+HISTORICAL_V282_BUILD = "v2.82-selected-energy-generic-roles-workspace-product-evidence"
 
 
 def _read(relative: str) -> str:
@@ -65,8 +66,8 @@ def test_current_identity_and_smoke_alias() -> None:
 
 def test_current_entrypoints_retain_historical_aliases() -> None:
     pyproject = _read("pyproject.toml")
-    assert 'version = "2.82"' in pyproject
-    assert 'name = "onnx-splitpoint-tool"\nversion = "2.82"' in _read("uv.lock")
+    assert f'version = "{EXPECTED_VERSION}"' in pyproject
+    assert f'name = "onnx-splitpoint-tool"\nversion = "{EXPECTED_VERSION}"' in _read("uv.lock")
     for number in (19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34):
         for alias in (f"v279{number}", f"v2-79-{number}"):
             assert (
@@ -86,10 +87,10 @@ def test_current_entrypoints_retain_historical_aliases() -> None:
 def test_updater_exact_identity_and_retained_entrypoints() -> None:
     updater = _read("scripts/update_source_release.sh")
     for marker in (
-        'EXPECTED_VERSION = "2.82"',
+        f'EXPECTED_VERSION = "{EXPECTED_VERSION}"',
         f'EXPECTED_BUILD_ID = "{EXPECTED_BUILD}"',
-        "ONNX-Splitpoint-Tool_v2.82",
-        "--expected-version 2.82",
+        f"ONNX-Splitpoint-Tool_v{EXPECTED_VERSION}",
+        f"--expected-version {EXPECTED_VERSION}",
         "--run-entrypoint onnx-splitpoint-smoke-v282",
     ):
         assert marker in updater
@@ -109,9 +110,10 @@ def test_updater_supplies_each_entrypoint_as_a_separate_cli_option():
 
 
 def test_release_docs_are_current_and_historical_docs_are_retained() -> None:
+    assert EXPECTED_BUILD in _read("docs/RELEASE_2.90.1.md")
     for path in ("TESTANLEITUNG_2.82.md", "VERSION_2.82_BUILD_AND_TEST_REPORT.md"):
         contents = _read(path)
-        assert EXPECTED_BUILD in contents
+        assert HISTORICAL_V282_BUILD in contents
         assert "NOT_RUN" in contents
         assert "COMPILE_INFEASIBLE" in contents
         assert "TRANSIENT_INFRASTRUCTURE" in contents
@@ -193,7 +195,7 @@ def test_current_gate_retains_behavioral_regressions_not_old_identity_gate() -> 
 
 def test_current_hardware_independent_smoke(capsys) -> None:
     assert v282_smoke.main() == 0
-    assert "PASS v2.82 smoke" in capsys.readouterr().out
+    assert f"PASS v{EXPECTED_VERSION} smoke" in capsys.readouterr().out
 
 
 def _minimal_release(tmp_path: Path) -> Path:
@@ -288,16 +290,17 @@ modules = [importlib.import_module(name) for name in (
 )]
 paths = [str(pathlib.Path(module.__file__).resolve()) for module in modules]
 assert all(pathlib.Path(path).is_relative_to(root) for path in paths)
-assert modules[0].VERSION == "2.82"
+assert modules[0].VERSION == sys.argv[2]
+assert modules[0].BUILD_ID == sys.argv[3]
 print(json.dumps({"version": modules[0].VERSION, "paths": paths}))
 '''
     result = subprocess.run(
-        [sys.executable, "-I", "-B", "-c", code, str(ROOT)],
+        [sys.executable, "-I", "-B", "-c", code, str(ROOT), EXPECTED_VERSION, EXPECTED_BUILD],
         cwd=tmp_path, text=True, capture_output=True, timeout=45,
         env={key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "PYTHONHOME"}},
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert json.loads(result.stdout.strip().splitlines()[-1])["version"] == "2.82"
+    assert json.loads(result.stdout.strip().splitlines()[-1])["version"] == EXPECTED_VERSION
 
 
 def test_idle_or_paused_gui_blocks_updater_without_workflow_lock(tmp_path: Path) -> None:
@@ -382,9 +385,9 @@ def test_exact_recorded_npz_is_manifested_and_other_binaries_stay_excluded(tmp_p
     # Execute the installer's actual stdlib archive path predicate, not a copy
     # of the corrected expression. Its constant data shares the source policy.
     updater = _read("scripts/update_source_release.sh")
-    embedded = updater[updater.index('EXPECTED_VERSION = "2.82"'):]
+    embedded = updater.split("trusted_source_preflight() {", 1)[1].split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
     predicate = embedded[embedded.index("def valid_logical_path("):embedded.index("def strict_sha256(")]
-    ns = {"PurePosixPath": PurePosixPath, "EXPECTED_VERSION": "2.82"}
+    ns = {"PurePosixPath": PurePosixPath, "EXPECTED_VERSION": EXPECTED_VERSION}
     for name in (
         "ALLOWED_ROOT_FILES", "RETAINED_RELEASE_DOC_FILES", "ALLOWED_SOURCE_TREES",
         "ALLOWED_DOC_FILES", "EXCLUDED_FILE_NAMES", "EXCLUDED_CASEFOLD_FILE_NAMES",

@@ -633,6 +633,21 @@ def main() -> int:
             )
             completion_kind = "direct_bn6_normalization"
 
+        if str(ns.task) == "classification":
+            from onnx_splitpoint_tool.runners.harness.classification import ClassificationCompletion
+            completion_processor = ClassificationCompletion()
+            completion_kind = "classification_top1_top5"
+
+        def complete_outputs(raw):
+            if str(ns.task) == "classification":
+                values = list(raw) if isinstance(raw, (list, tuple)) else [raw]
+                outputs = dict(raw) if isinstance(raw, Mapping) else {
+                    f"output_{index}": value for index, value in enumerate(values)
+                }
+            else:
+                outputs = _named_outputs(raw, output_names)
+            return completion_processor.process(outputs, original_wh=original_wh)
+
         # Engine import/initialization is deliberately after every sealed
         # input and metadata check above.  No failing binding can infer once.
         if (
@@ -659,10 +674,7 @@ def main() -> int:
         for _ in range(warmup):
             raw = engine.run([feed])
             if completion_processor is not None:
-                completion_processor.process(
-                    _named_outputs(raw, output_names),
-                    original_wh=original_wh,
-                )
+                complete_outputs(raw)
 
         completion_result: dict[str, Any] = {}
         timings_ms: list[float] = []
@@ -675,10 +687,7 @@ def main() -> int:
             started = time.perf_counter()
             raw = engine.run([feed])
             if completion_processor is not None:
-                completion_result = completion_processor.process(
-                    _named_outputs(raw, output_names),
-                    original_wh=original_wh,
-                )
+                completion_result = complete_outputs(raw)
             timings_ms.append((time.perf_counter() - started) * 1000.0)
 
         completed = len(timings_ms)
@@ -695,8 +704,8 @@ def main() -> int:
             if completion_processor is not None else 0
         )
         postprocess_count_ok = bool(
-            not postprocess_required
-            or postprocess_completed == completed
+            completion_processor is not None
+            and postprocess_completed == completed
         )
 
         completion_attestation: dict[str, Any] = {}
@@ -913,6 +922,9 @@ def main() -> int:
             "source_contract_sha256": expected["source_contract"],
             "preflight_verified": True,
         }
+        if str(ns.task) == "classification":
+            payload.update(completion_processor.report(postprocess_completed))
+            payload["completed_work_units_source"] = "dx_engine_prepared_feed_top1_top5_timed_loop"
         _write_report(report, payload)
         print(json.dumps(payload), flush=True)
         return 0 if ok else 5

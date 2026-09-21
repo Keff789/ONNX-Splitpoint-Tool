@@ -1,0 +1,31 @@
+{
+  "provenance": {
+    "path": "/home/kmika/Models/EvaluationRuns/completsetdev_20260915_211333/native_producers/hailo8/mobilenet_v3_large/benchmark_set/native_full_outputs/model=mobilenet_v3_large/backend=native_full_hailo8/setup=orin_nx_hailo8_01/comparison=hailo8/native_full_hailo_report.json",
+    "sha256": "8d726caf901de1861d283905a48f4e4ba2fff4fd70704bf7283729981b39de41"
+  },
+  "throughput": {
+    "completed_frames": 1000,
+    "completed_work_units": 1000,
+    "completed_work_units_source": "synchronous_vstreams_successful_return_counter",
+    "completed_work_units_status": "exact_runtime_counter",
+    "completion_interval_mean_ms": 8.330548448022455,
+    "completion_interval_semantics": "reciprocal_steady_state_observed_completion_throughput",
+    "copy_inputs": true,
+    "elapsed_s": 8.330548448022455,
+    "fps": 120.04011575460974,
+    "frames": 1000,
+    "inflight": 1,
+    "latency_measured": false,
+    "measurement_control": "exact_frames",
+    "measurement_mode": "synchronous_vstreams_native_loop",
+    "minimum_duration_satisfied": true,
+    "minimum_requested_frames": 1000,
+    "postprocess_completed_frames": 0,
+    "postprocess_completion_status": "not_requested",
+    "postprocess_included": false,
+    "requested_duration_s": 0.0,
+    "requested_frames": 1000,
+    "warmup_completed_frames": 100,
+    "warmup_frames": 100
+  }
+}

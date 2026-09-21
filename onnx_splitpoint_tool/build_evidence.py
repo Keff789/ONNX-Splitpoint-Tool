@@ -791,6 +791,10 @@ def classify_build_outcome(
     with contextlib.suppress(TypeError, ValueError, OverflowError):
         returncode = int(returncode)
     semantic = str(body.get("semantic_status") or body.get("status") or "").lower()
+    # A supervisor enforces its deadline with SIGTERM/SIGKILL too. The
+    # explicit timeout result takes precedence over that cleanup exit code.
+    if terminal and body.get("timed_out") is True:
+        return TRANSIENT_INFRASTRUCTURE
     if (
         not terminal
         or returncode in {130, 143, -2, -15}
@@ -806,8 +810,6 @@ def classify_build_outcome(
         ))
     ):
         return ABORTED_UNKNOWN
-    if body.get("timed_out") is True:
-        return TRANSIENT_INFRASTRUCTURE
     if body.get("ok") is True:
         return ARTIFACT_PASS
     # Host/device resource exhaustion is not a statement about graph mapping.

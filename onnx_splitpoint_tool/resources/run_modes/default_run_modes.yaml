@@ -1,5 +1,5 @@
 schema: onnx-splitpoint/run-modes
-schema_version: 13
+schema_version: 15
 default_mode: standard
 modes:
   smoke:
@@ -349,9 +349,9 @@ modes:
         - deepx
         case_policy: all_accepted
         precision: uint8_cast_fp16
-        frames: 1000
-        warmup: 100
-        repetitions: 3
+        frames: 100
+        warmup: 10
+        repetitions: 1
         queue_depth: 3
         inflight: 8
         full_baselines: true
@@ -659,3 +659,12 @@ modes:
       strict: false
       native_mode: plan
       native_duration_s: 0
+backend_backfill:
+  technical_output_contract_version: 1
+  enabled: true
+  max_candidates_per_backend: 16
+  max_cold_builds: 8
+  max_hailo_part1_builds: 4
+  max_trt_part2_builds: 4
+  hailo_build_timeout_s: 3600
+  trt_build_timeout_s: 7200

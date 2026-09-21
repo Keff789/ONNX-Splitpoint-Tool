@@ -30,6 +30,7 @@ from .host_postprocess import (
 class AccuracyGatePolicy:
     schema: str = "onnx-splitpoint/task-quality-policy"
     schema_version: int = 3
+    reporting_policy: dict | None = None
     name: str = "thesis_task_quality_v2"
     profile_id: str = "thesis_task_quality_v2"
     frozen_before_final_campaign: bool = False
@@ -230,7 +231,10 @@ class AccuracyGatePolicy:
             v = flat.get(k)
             if v is None:
                 continue
-            if k in bool_fields:
+            if k == "reporting_policy":
+                from ..accuracy_reporting import reporting_policy
+                kwargs[k] = reporting_policy(v)
+            elif k in bool_fields:
                 kwargs[k] = _as_bool(v) is True
             elif k in int_fields:
                 try:
@@ -268,6 +272,8 @@ class AccuracyGatePolicy:
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
+        if not self.reporting_policy:
+            payload.pop("reporting_policy", None)
         if int(self.schema_version) < 3:
             for key in (
                 "native_self_reference_policy_id",
@@ -620,7 +626,7 @@ def _detection_postprocess_contract(row: Mapping[str, Any]) -> tuple[Optional[bo
 
 
 def _buildable(row: Mapping[str, Any]) -> bool:
-    b = _as_bool(_first(row, ("buildable", "build_ok", "engine_build_ok", "compile_ok", "compiled_ok", "producer_ready")))
+    b = _as_bool(_first(row, ("buildable", "build_ok", "build_pass", "engine_build_ok", "compile_ok", "compiled_ok", "producer_ready")))
     if b is not None:
         return b
     status = str(row.get("status") or "").lower()
@@ -636,6 +642,9 @@ def _buildable(row: Mapping[str, Any]) -> bool:
 
 
 def _runtime(row: Mapping[str, Any]) -> bool:
+    rc = row.get("runner_returncode", row.get("_runner_rc"))
+    if row.get("runner_terminal_failure") is True or (type(rc) is int and rc < 0):
+        return False
     r = _as_bool(_first(row, ("runtime_executable", "runtime_ok", "run_ok", "result_ok", "consumer_ready")))
     if r is not None:
         return r
@@ -1059,6 +1068,8 @@ def apply_accuracy_gate_to_row(row: MutableMapping[str, Any], policy: AccuracyGa
         not numerical_required or numerical_pass is True
     )
     quality = _quality_decision(row, task, pol)
+    if pol.reporting_policy:
+        return _apply_reporting_gate(row, pol, quality, task, buildable, runtime, contract, contract_reason, numerical)
     decision = str(quality.get("decision") or "unavailable").lower()
     quality_trigger_reasons = _failed_quality_component_reasons(quality)
     tier = str(quality.get("tier") or pol.dataset_tier).lower()
@@ -1374,3 +1385,75 @@ __all__ = [
     "apply_accuracy_gates", "apply_accuracy_gates_to_payload", "apply_accuracy_gates_to_rows",
     "apply_gate_fields", "gate_counts", "load_policy", "resolve_effective_policy",
 ]
+
+
+def _apply_reporting_gate(row, policy, quality, task, buildable, runtime, contract, contract_reason, numerical):
+    from ..accuracy_reporting import assess_accuracy, assessment_fields
+    raw = quality.get("raw") or {}
+    assessment = raw.get("accuracy_assessment")
+    complete = bool(isinstance(assessment, Mapping) and raw.get("technical_status", "completed") in {"completed", "ok"}
+                    and raw.get("canonical_reference") == "management_cpu_ort_full_onnx"
+                    and raw.get("reference_identity") and int(raw.get("n") or 0) > 0)
+    reason = "quality_missing_or_unbound"
+    embedded = quality.get("embedded_policy") or {}
+    policy_match = (not embedded or AccuracyGatePolicy.from_mapping(embedded).sha256() == policy.sha256())
+    for source in (row, raw):
+        for key in ("task_quality_policy_sha256", "runtime_quality_gate_policy_sha256", "policy_sha256"):
+            if source.get(key) and source[key] != policy.sha256():
+                policy_match = False
+    complete = complete and policy_match
+    if not policy_match:
+        reason = "quality_policy_mismatch"
+    if complete:
+        expected = assess_accuracy(quality.get("reference"), quality.get("candidate"), assessment.get("relative_loss_ci"),
+            policy=policy.reporting_policy, interval_reason=assessment.get("uncertainty_reason") or "interval_not_computed")
+        complete = (dict(assessment) == expected and quality.get("metric") == policy.reporting_policy["primary_metrics"].get(task))
+        reason = "quality_reporting_contract_mismatch" if not complete else ""
+    for field in ("output_shape_match", "shape_contract_pass", "tensor_structure_pass", "tensor_ok", "quality_identity_valid"):
+        if _as_bool(row.get(field)) is False:
+            contract, contract_reason = False, field + "_failed"
+    technical = bool(buildable and runtime and contract is True and complete)
+    decision = assessment.get("accuracy_class") or "not_estimable" if complete else quality.get("decision", "unavailable")
+    legacy = dict(row.get("legacy_accuracy_gate") or {})
+    if "accuracy_gate_semantics" not in row:
+        legacy.update({k: row[k] for k in list(row) if k.startswith("accuracy_gate_")})
+    if raw.get("legacy_decision"):
+        legacy["decision"] = raw["legacy_decision"]
+    cpu = _is_cpu_semantic_reference(row)
+    strict = bool(technical and assessment.get("accuracy_class") == "reference_close" and assessment.get("uncertainty") == "supported"
+                  and policy.dataset_tier == "final" and numerical.get("numerical_similarity_pass") is not False and not cpu) if complete else False
+    row.update({
+        **numerical, **(assessment_fields(assessment) if complete else {}),
+        "legacy_accuracy_gate": legacy,
+        "accuracy_gate_semantics": "technical_quality_completeness_only",
+        "accuracy_gate_pass": complete, "accuracy_gate_decision": decision,
+        "accuracy_gate_metrics": {k: quality.get(k) for k in ("candidate", "reference", "delta", "ci_low", "ci_high", "guardrails", "n")},
+        "accuracy_gate_metric": quality.get("metric"), "accuracy_gate_tier": policy.dataset_tier,
+        "accuracy_gate_policy": policy.as_dict(), "accuracy_gate_policy_sha256": policy.sha256(),
+        "accuracy_gate_reason": reason, "accuracy_gate_trigger_reasons": [],
+        "accuracy_warnings": list(raw.get("accuracy_warnings") or []),
+        "secondary_accuracy_assessments": dict(raw.get("secondary_accuracy_assessments") or {}),
+        "accuracy_gate_policy_match": policy_match,
+        "buildable": buildable, "runtime_executable": runtime, "execution_ok": bool(buildable and runtime),
+        "contract_consistent": contract, "contract_gate_reason": contract_reason,
+        "structural_contract_pass": contract, "structural_contract_reason": contract_reason,
+        "interface_valid": contract is True, "interface_status": "pass" if contract is True else "fail",
+        "task_valid": complete, "task_quality_pass": complete, "task_quality_status": decision,
+        "task_quality_decision": decision, "task_quality_observation_valid": complete,
+        "quality_valid": complete, "evidence_complete": technical,
+        "technical_status": "ok" if technical else "blocked" if quality.get("decision") == "pending_central_evaluation" else "failed",
+        "eligible_for_ranking": technical and not cpu, "ranking_eligible": technical and not cpu,
+        "pareto_eligible": technical and not cpu, "performance_eligible": technical and not cpu,
+        "energy_eligible": technical and not cpu and _as_bool(row.get("energy_trace_pass")) is not False,
+        "strict_quality_eligible": strict, "thesis_valid": strict,
+        "numerical_similarity_required_for_claim": False,
+        "ranking_exclusion_reason": "" if technical else contract_reason if contract is not True else reason,
+        "gate_status": "reported" if technical else "technical_contract_incomplete",
+        "quality_evaluation_pending": quality.get("decision") == "pending_central_evaluation",
+        "evidence_axes": {"structural_contract": {"pass": contract, "reason": contract_reason},
+                          "numerical_similarity": {"pass": numerical.get("numerical_similarity_pass"), "required_for_claim": False},
+                          "task_quality": {"pass": complete, "status": decision}},
+    })
+    if not technical:
+        row["claim_ok"] = False
+    return row

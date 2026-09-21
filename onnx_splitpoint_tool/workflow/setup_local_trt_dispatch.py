@@ -400,6 +400,30 @@ def build_setup_local_tensorrt_quality_dispatch(
     owner_producer = "deepx" if "deepx" in generic_setup_ids else (
         next(iter(generic_setup_ids), "")
     )
+    # The generated plan already binds performance (Full and split) to one
+    # physical setup. Target iteration order must not turn that setup into a
+    # quality-only companion while sending performance to a foreign setup.
+    declared_owner_ids = {
+        str(row.get(key) or "").strip()
+        for row in exact_trt
+        for key in ("expected_setup_id", "setup_id", "hardware_setup_id", "hardware_setup")
+        if str(row.get(key) or "").strip()
+    }
+    declared_owner_ids.update(
+        str(binding.get("setup_id") or "").strip()
+        for row in exact_trt
+        for binding in (row.get("backend_selection_contracts") or [])
+        if isinstance(binding, Mapping) and str(binding.get("setup_id") or "").strip()
+    )
+    if len(declared_owner_ids) > 1:
+        errors.append("tensorrt_performance_owner_binding_conflict")
+    elif declared_owner_ids:
+        declared_owner = next(iter(declared_owner_ids))
+        owners = [producer for producer, setup in generic_setup_ids.items() if setup == declared_owner]
+        if len(owners) != 1:
+            errors.append("tensorrt_performance_owner_target_not_one")
+        else:
+            owner_producer = owners[0]
     owner_setup_id = generic_setup_ids.get(owner_producer, "")
     if "deepx" in requested_rows and owner_producer != "deepx":
         errors.append("deepx_tensorrt_performance_owner_missing")

@@ -1436,7 +1436,31 @@ def _validate_deepx_candidate_execution_contract(
         for output in outputs:
             if not isinstance(output, Mapping) or not isinstance(output.get("shape"), list):
                 raise QualityArtifactIntegrityError(f"{role} detection runtime output attestation is incomplete")
-        if source_endpoint.get("has_integrated_nms") is False:
+        if source_endpoint.get("semantics") == "fixed_topk_xyxy_score_class_candidates":
+            # This producer has completed TopK, with no NMS in its graph.
+            # Admit only the same sealed, graph-bound selection that the
+            # actual per-image consumer executed at its unchanged threshold.
+            from .native_detection_postprocess import verify_detection_completion_execution_contract
+            from .native_output_endpoint import bn6_candidate_selection
+            try:
+                decoder = quality_endpoint_identity["decoder_contract"]
+                selection = bn6_candidate_selection({"source_onnx_detection_endpoint": {
+                    "candidate_selection": decoder["candidate_selection"]}})
+                execution = verify_detection_completion_execution_contract(decoder["completion_execution_contract"])
+                processor = execution["processor_contract"]
+                if (not selection or selection["source_onnx_sha256"] != model.get("source_onnx_sha256")
+                        or processor.get("candidate_selection") != selection
+                        or source_endpoint.get("has_integrated_nms") is not False
+                        or host_adapter.get("decoder_applied") is not False
+                        or host_adapter.get("nms_applied") is not False
+                        or host_adapter.get("confidence_threshold") != processor["confidence_threshold"]
+                        or host_adapter.get("iou_threshold") != processor["iou_threshold"]
+                        or host_adapter.get("max_detections") != processor["max_detections"]
+                        or [r["shape"] for r in outputs] != [selection["output_shape"]]):
+                    raise ValueError("candidate selection binding mismatch")
+            except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+                raise QualityArtifactIntegrityError(f"{role} candidate selection contract invalid: {exc}") from exc
+        elif source_endpoint.get("has_integrated_nms") is False:
             if host_adapter.get("decoder_applied") is not True or host_adapter.get("nms_applied") is not True:
                 raise QualityArtifactIntegrityError(f"{role} pre-NMS source lacks the applied host decoder/NMS")
             for field_name in ("confidence_threshold", "iou_threshold", "max_detections"):
@@ -3909,6 +3933,11 @@ def _prediction_identity_is_bound(payload: Mapping[str, Any]) -> bool:
         return False
 
 
+def _reporting(payload):
+    from .accuracy_reporting import active_policy
+    return active_policy(payload.get("metric_gate_config") or {})
+
+
 def _evaluate_payload_shard(
     payload: Mapping[str, Any],
     plan: np.ndarray,
@@ -3946,12 +3975,14 @@ def _evaluate_payload_shard(
     for name, component in dict(point.get("guardrails") or {}).items():
         component_points[f"guardrails.{name}"] = dict(component)
     bootstrap: dict[str, list[float]] = {name: [] for name in component_points}
+    ratio_draws = []
+    reporting = _reporting(payload)
     skipped_reason = ""
-    if _prediction_identity_is_bound(payload):
+    if not reporting and _prediction_identity_is_bound(payload):
         if any(float(component["delta"]) != 0.0 for component in component_points.values()):
             raise ValueError("identical prediction payloads produced nonzero metric differences")
         skipped_reason = "candidate_reference_identical"
-    elif any(
+    elif not reporting and any(
         _point_estimate_below_margin(component, default_margin)
         for component in component_points.values()
     ):
@@ -3971,6 +4002,10 @@ def _evaluate_payload_shard(
                 raise ValueError("quality evaluator returned a different metric set during resampling")
             for name, component in sampled_components.items():
                 bootstrap[name].append(float(component["delta"]))
+            if reporting:
+                from .accuracy_reporting import assess_accuracy
+                assessment = assess_accuracy(sampled["primary"]["reference"], sampled["primary"]["candidate"], policy=reporting)
+                ratio_draws.append(assessment["relative_loss"])
     return {
         "shard_index": int(shard_index),
         "repetition_offset": int(repetition_offset),
@@ -3978,6 +4013,7 @@ def _evaluate_payload_shard(
         "component_points": component_points,
         "configured_guardrails": list(configured_guardrails),
         "bootstrap": bootstrap,
+        "relative_loss_draws": ratio_draws,
         "skipped_reason": skipped_reason,
         "worker_elapsed_s": float(time.perf_counter() - started),
     }
@@ -4035,6 +4071,8 @@ def _combine_evaluation_shards(
         if any(len(values) != repetitions_requested for values in bootstrap.values()):
             raise ValueError("paired bootstrap shards did not cover the registered repetition plan exactly")
         alpha = max(0.0, min(0.5, 1.0 - float(payload["confidence_level"])))
+        if _reporting(payload):
+            alpha /= 2.0
         intervals = {}
         for name, values in bootstrap.items():
             distribution = np.asarray(values, dtype=np.float64)
@@ -4129,7 +4167,37 @@ def _combine_evaluation_shards(
             + ", ".join(missing_configured_guardrails)
             + "; evaluation fails closed"
         )
+    reporting_fields = {}
+    reporting = _reporting(payload)
+    if reporting:
+        from .accuracy_reporting import assess_accuracy
+        if float(payload["confidence_level"]) != reporting["confidence_level"]:
+            raise ValueError("reporting confidence level mismatch")
+        expected_metric = reporting["primary_metrics"].get(str((payload.get("metric_gate_config") or {}).get("task") or ""))
+        if expected_metric and primary["metric"] != expected_metric:
+            raise ValueError("reporting primary metric mismatch")
+        draws = [v for shard in ordered for v in shard.get("relative_loss_draws", [])]
+        if len(draws) != repetitions_requested:
+            raise ValueError("relative-loss draws do not cover the registered paired plan")
+        undefined = sum(v is None for v in draws)
+        ci = None if undefined else [float(x) for x in np.quantile(draws, [0.025, 0.975])]
+        assessment = assess_accuracy(primary["reference"], primary["candidate"], ci, policy=reporting,
+            interval_reason="undefined_bootstrap_zero_reference" if undefined else "")
+        secondary = {name: assess_accuracy(c["reference"], c["candidate"], policy=reporting) for name, c in guardrails.items()}
+        reporting_fields = {
+            "reporting_policy": reporting, "accuracy_assessment": assessment,
+            "secondary_accuracy_assessments": secondary,
+            "accuracy_warnings": [name + "_relative_loss_gt_5pct" for name, a in secondary.items() if a["accuracy_class"] == "accuracy_loss"],
+            "legacy_decision": decision, "relative_loss_undefined_draws": undefined,
+            "observed_image_ids": list(payload.get("image_ids") or []),
+            "evaluated_images": n,
+        }
+        decision = assessment["accuracy_class"] or "not_estimable"
+        for component in [primary, *guardrails.values()]:
+            component["legacy_decision"] = component.pop("decision")
+            component["status"] = "completed"
     return {
+        **reporting_fields,
         "schema": "onnx-splitpoint/management-paired-quality-result",
         "schema_version": 1,
         "quality_result_contract_version": QUALITY_RESULT_CONTRACT_VERSION,
@@ -4172,7 +4240,7 @@ def _evaluate_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
 
     started = time.perf_counter()
     n = len(list(payload["reference_records"]))
-    if _prediction_identity_is_bound(payload):
+    if not _reporting(payload) and _prediction_identity_is_bound(payload):
         plan = np.empty((0, n), dtype=np.int64)
     else:
         plan = deterministic_resample_plan(
@@ -4334,6 +4402,9 @@ class ManagementQualityService:
         self._groups: dict[str, _ShardEvaluation] = {}
         self._cancel_context: dict[str, Any] = {}
         self._closed = False
+        self._shutdown_lock = threading.RLock()
+        self._shutdown_processes = []
+        self._shutdown_manager_thread = None
         self._dispatcher = threading.Thread(
             target=self._dispatch_loop,
             name="management-quality-dispatch",
@@ -4425,7 +4496,7 @@ class ManagementQualityService:
             self.pause_gate.wait_until_resumed()
             payload = item.payload
             repetitions = int(payload.get("repetitions") or 1)
-            identical = _prediction_identity_is_bound(payload)
+            identical = not _reporting(payload) and _prediction_identity_is_bound(payload)
             shard_count = 1 if identical else max(1, min(self.workers, repetitions))
             acquired = 0
             for _ in range(shard_count):
@@ -4566,7 +4637,40 @@ class ManagementQualityService:
                 if not client.done():
                     client.set_exception(exc)
 
-    def shutdown(
+    def shutdown_state(self) -> dict[str, Any]:
+        processes = list(self._shutdown_processes or
+                         (getattr(self._executor, "_processes", {}) or {}).values())
+        manager = self._shutdown_manager_thread or getattr(self._executor, "_executor_manager_thread", None)
+        workers = [{"pid": p.pid, "exitcode": p.exitcode, "alive": p.is_alive()} for p in processes]
+        state = {"admission_closed": self._closed,
+                 "dispatcher_alive": self._dispatcher.is_alive(),
+                 "manager_alive": bool(manager and manager.is_alive()),
+                 "workers": workers, "inflight_keys": list(self._inflight),
+                 "group_keys": list(self._groups), "queue_size": self._queue.qsize()}
+        state["finished"] = bool(self._closed and not state["dispatcher_alive"]
+                                 and not state["manager_alive"] and not state["inflight_keys"]
+                                 and not state["group_keys"] and state["queue_size"] == 0
+                                 and not any(p["alive"] for p in workers))
+        return state
+
+    def shutdown(self, wait: bool = True, cancel_futures: bool = False,
+                 terminate_workers: bool = False,
+                 cancellation_context: Optional[Mapping[str, Any]] = None) -> None:
+        # Preserve ownership before Python clears its executor references on
+        # shutdown(wait=False), including a subsequent bounded finalizer.
+        with self._shutdown_lock:
+            self._shutdown_impl(wait, cancel_futures, terminate_workers, cancellation_context)
+            if wait:
+                for process in self._shutdown_processes:
+                    process.join(timeout=0)
+                manager = self._shutdown_manager_thread
+                if manager is not None and manager is not threading.current_thread():
+                    manager.join()
+                state = self.shutdown_state()
+                if not state["finished"]:
+                    raise RuntimeError("management_quality_shutdown_unresolved: " + str(state))
+
+    def _shutdown_impl(
         self,
         wait: bool = True,
         cancel_futures: bool = False,
@@ -4575,6 +4679,10 @@ class ManagementQualityService:
     ) -> None:
         with self._lock:
             already_closed = self._closed
+            if not self._shutdown_processes:
+                self._shutdown_processes = list((getattr(self._executor, "_processes", {}) or {}).values())
+            if self._shutdown_manager_thread is None:
+                self._shutdown_manager_thread = getattr(self._executor, "_executor_manager_thread", None)
             if not already_closed:
                 self._closed = True
                 if cancel_futures:
@@ -4607,6 +4715,15 @@ class ManagementQualityService:
                             waiter.client.cancel()
                     self._inflight.clear()
         if already_closed:
+            if terminate_workers:
+                for process in self._shutdown_processes:
+                    if process.is_alive():
+                        process.terminate()
+                for process in self._shutdown_processes:
+                    process.join(timeout=0.5)
+                    if process.is_alive():
+                        process.kill()
+                        process.join(timeout=0.5)
             if wait:
                 self._dispatcher.join()
                 self._executor.shutdown(

@@ -655,6 +655,9 @@ def _single_run_from_aggregate(out_dir: Path) -> tuple[dict[str, Any], Path | No
     return row, run_dir
 
 
+from .energy.task_budget import add_campaign_budget_arguments, campaign_budget_forward_args
+
+
 def run_probe(ns: argparse.Namespace) -> tuple[dict[str, Any], int]:
     out = Path(ns.out_dir).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -704,6 +707,9 @@ def run_probe(ns: argparse.Namespace) -> tuple[dict[str, Any], int]:
         "--calibration-manifest", ns.calibration_manifest,
         "--calibration-sha256", ns.calibration_sha256,
     ]
+    plan_cmd += campaign_budget_forward_args(ns)
+    if getattr(ns, "hardware_setups_file", ""):
+        plan_cmd += ["--hardware-setups-file", ns.hardware_setups_file]
     if ns.validation_summary:
         plan_cmd += ["--validation-summary", ns.validation_summary]
     plan_run = _run(plan_cmd, timeout=180)
@@ -781,6 +787,8 @@ def run_probe(ns: argparse.Namespace) -> tuple[dict[str, Any], int]:
     # owns one bounded *outer* recovery capture for a narrow acquisition-
     # integrity allow-list, using a fresh local directory and remote root.
     effective_reconnect_retries = min(1, requested_reconnect_retries)
+    if getattr(ns, "campaign_budget_file", None):
+        effective_reconnect_retries = min(effective_reconnect_retries, ns.campaign_max_retries)
     reconnect_backoff_s = max(0.0, min(60.0, float(ns.reconnect_backoff_s)))
     outer_retry_attempt_count = 0
     outer_retry_recovered_count = 0
@@ -837,7 +845,10 @@ def run_probe(ns: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 abort_reason = "remote_output_root_uniqueness_contract_failed"
                 break
             materialized_remote_output_roots.add(remote_output_root)
-            remote_preflight = _run(_hailo8_remote_preflight(contract, ns), timeout=180)
+            if getattr(ns, "campaign_budget_file", None):
+                remote_preflight = {"rc": 0, "status": "deferred_to_reserved_measurement_chain"}
+            else:
+                remote_preflight = _run(_hailo8_remote_preflight(contract, ns), timeout=180)
             if remote_preflight.get("rc") != 0:
                 attempt_history.append({
                     "attempt_index": reconnect_attempt,
@@ -867,10 +878,18 @@ def run_probe(ns: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 measure_cmd, "--run-id",
                 f"window_probe_{attempt_id}_r{repeat_index:03d}_a{reconnect_attempt:02d}",
             )
+            if getattr(ns, "campaign_budget_file", None):
+                row_id = base_measure_cmd[base_measure_cmd.index("--campaign-row-id") + 1]
+                measure_cmd = _option(measure_cmd, "--campaign-row-id", "window_probe:" + row_id)
+                measure_cmd = _option(measure_cmd, "--task-logical-repeat", f"repeat:{repeat_index}")
+                measure_cmd = _option(measure_cmd, "--preflight-prepare-command", shlex.join(_hailo8_remote_preflight(contract, ns)))
+                measure_cmd = _option(measure_cmd, "--preflight-timeout-s", "180")
             process = _run(measure_cmd, timeout=float(ns.timeout) + 600.0)
             row, run_dir = _single_run_from_aggregate(attempt_out)
             if run_dir is None:
                 run_dir = attempt_out / "run_000"
+            if getattr(ns, "campaign_budget_file", None):
+                remote_preflight = row.get("preflight_prepare_result") or {"status": "NOT_RUN", "reason": "campaign_budget_or_preflight_blocked"}
             row.update({
                 "run_index": repeat_index,
                 "_probe_run_dir": str(run_dir),
@@ -1047,6 +1066,8 @@ def run_probe(ns: argparse.Namespace) -> tuple[dict[str, Any], int]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    add_campaign_budget_arguments(parser)
+    parser.add_argument("--hardware-setups-file", default="")
     parser.add_argument("--summary", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--validation-summary", default="")

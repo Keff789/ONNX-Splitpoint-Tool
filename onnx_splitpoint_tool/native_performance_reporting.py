@@ -367,51 +367,10 @@ def collect_native_performance_matrix(run_dir: str | Path) -> dict[str, Any]:
             or detail.get("execution_mode")
             or ("native_full_baseline" if backend.startswith("native_full_") else "native_split")
         ).strip()
-        # The combined Native report is authoritative for repeated runs.  Its
-        # median must win over the concise row's compatibility ``fps`` alias;
-        # otherwise a legacy single/best row could silently replace the
-        # independent-run aggregate in the scientific observation.
-        measured_fps = next((
-            value for value in (
-                _num(source.get("p2_output_fps")),
-                _num(detail.get("p2_output_fps")),
-                _num(source.get("throughput_primary_fps")),
-                _num(detail.get("throughput_primary_fps")),
-                _num(source.get("raw_model_outputs_fps_median")),
-                _num(detail.get("raw_model_outputs_fps_median")),
-                _num(source.get("fps_median")),
-                _num(detail.get("fps_median")),
-                _num(source.get("fps")),
-                _num(source.get("fps_makespan")),
-                _num(detail.get("fps_makespan")),
-                _num(detail.get("fps")),
-            ) if value is not None
-        ), None)
-        measured_source = (
-            "native_stage_concise_summary.p2_output_fps"
-            if _num(source.get("p2_output_fps")) is not None
-            else "native_summary.p2_output_fps"
-            if _num(detail.get("p2_output_fps")) is not None
-            else "native_stage_concise_summary.throughput_primary_fps"
-            if _num(source.get("throughput_primary_fps")) is not None
-            else "native_summary.throughput_primary_fps"
-            if _num(detail.get("throughput_primary_fps")) is not None
-            else "native_stage_concise_summary.raw_model_outputs_fps_median"
-            if _num(source.get("raw_model_outputs_fps_median")) is not None
-            else "native_summary.raw_model_outputs_fps_median"
-            if _num(detail.get("raw_model_outputs_fps_median")) is not None
-            else "native_stage_concise_summary.fps_median"
-            if _num(source.get("fps_median")) is not None
-            else "native_summary.fps_median"
-            if _num(detail.get("fps_median")) is not None
-            else "native_stage_concise_summary.fps"
-            if _num(source.get("fps")) is not None
-            else "native_summary.fps_makespan"
-            if _num(detail.get("fps_makespan")) is not None
-            else "native_summary.fps"
-            if _num(detail.get("fps")) is not None
-            else "unavailable"
-        )
+        from .native_rate_endpoints import report_rate_fields
+        endpoint_fields = report_rate_fields(detail or source, run)
+        measured_fps = endpoint_fields['completed_task_fps']
+        measured_source = endpoint_fields['rate_endpoint_source']
         theoretical_cycle, theoretical_source = _theoretical_cycle(detail)
         setup_id = str(
             source.get("setup_id")
@@ -472,6 +431,11 @@ def collect_native_performance_matrix(run_dir: str | Path) -> dict[str, Any]:
                 _num(source.get("latency_ci95_high_ms")),
             ) if value is not None
         ), None)
+        latency_semantics = str(detail.get('latency_semantics') or source.get('latency_semantics') or '')
+        unmeasured_latency = not latency_semantics or any(token in latency_semantics.lower()
+            for token in ('not_measured', 'reciprocal', 'estimated', 'throughput'))
+        if unmeasured_latency:
+            latency_median_ms = latency_ci95_low_ms = latency_ci95_high_ms = None
         repetition_aggregation = str(
             detail.get("repetition_aggregation")
             or source.get("repetition_aggregation")
@@ -520,6 +484,9 @@ def collect_native_performance_matrix(run_dir: str | Path) -> dict[str, Any]:
             performance_contract_eligible = False
             if "raw_repeat_claim_gate_not_passed" not in exclusion_reasons:
                 exclusion_reasons.append("raw_repeat_claim_gate_not_passed")
+        if measured_fps is None:
+            performance_contract_eligible = False
+            exclusion_reasons.append(endpoint_fields['completed_task_fps_unavailable_reason'])
         repetition_count_valid = int(
             _num(detail.get("repetition_count_valid") or source.get("repetition_count_valid")) or 0
         )
@@ -632,6 +599,11 @@ def collect_native_performance_matrix(run_dir: str | Path) -> dict[str, Any]:
                 "quality_gate_status_not_admissible:"
                 + normalized_quality_gate_status
             )
+        selection = _load(run / 'models' / model / 'benchmark_set' / 'backend_selection.json')
+        selected_sets = {tuple(c.get('selected_case_ids') or []) for c in selection.get('contracts', [])}
+        common_cuts = len(selected_sets) <= 1
+        if not common_cuts:
+            ranking_exclusion_reasons.append('backend_optimized_different_boundaries')
         ranking_eligible = not ranking_exclusion_reasons
         observations.append({
             "model_id": model,
@@ -695,12 +667,15 @@ def collect_native_performance_matrix(run_dir: str | Path) -> dict[str, Any]:
             ).strip(),
             "runtime_status": str(source.get("runtime_status") or detail.get("status") or "unavailable"),
             "runtime_executable": runtime_ok,
+            **endpoint_fields,
+            "selection_comparison_group": "common_boundaries" if common_cuts else "backend_optimized_selection",
+            "common_boundary_comparison_eligible": common_cuts,
             "native_measured_throughput_fps": measured_fps,
             "throughput_fps": measured_fps,
             "native_measured_fps_source": measured_source,
-            "fps_median": _num(detail.get("fps_median") or source.get("fps_median") or measured_fps),
-            "fps_ci95_low": _num(detail.get("fps_ci95_low") or source.get("fps_ci95_low")),
-            "fps_ci95_high": _num(detail.get("fps_ci95_high") or source.get("fps_ci95_high")),
+            "fps_median": measured_fps,
+            "fps_ci95_low": endpoint_fields["fps_ci95_low"],
+            "fps_ci95_high": endpoint_fields["fps_ci95_high"],
             "repetition_count_requested": int(_num(detail.get("repetition_count_requested") or source.get("repetition_count_requested")) or 0),
             "repetition_count_attempted": int(_num(detail.get("repetition_count_attempted") or source.get("repetition_count_attempted")) or 0),
             "repetition_count_valid": repetition_count_valid,
@@ -727,8 +702,8 @@ def collect_native_performance_matrix(run_dir: str | Path) -> dict[str, Any]:
             "latency_median_ms": latency_median_ms,
             "latency_ci95_low_ms": latency_ci95_low_ms,
             "latency_ci95_high_ms": latency_ci95_high_ms,
-            "latency_p50_ms": _num(detail.get("latency_p50_ms") or source.get("latency_p50_ms")),
-            "latency_p95_ms": _num(detail.get("latency_p95_ms") or source.get("latency_p95_ms")),
+            "latency_p50_ms": None if unmeasured_latency else _num(detail.get("latency_p50_ms") or source.get("latency_p50_ms")),
+            "latency_p95_ms": None if unmeasured_latency else _num(detail.get("latency_p95_ms") or source.get("latency_p95_ms")),
             "latency_semantics": str(detail.get("latency_semantics") or source.get("latency_semantics") or ""),
             "completion_interval_mean_ms": _num(detail.get("completion_interval_mean_ms") or source.get("completion_interval_mean_ms")),
             "native_measured_cycle_ms": native_measured_cycle_ms,
@@ -736,24 +711,12 @@ def collect_native_performance_matrix(run_dir: str | Path) -> dict[str, Any]:
             # the measured Native makespan without deriving it a second time.
             "pipeline_cycle_selected_ms": native_measured_cycle_ms,
             "throughput_primary_fps": measured_fps,
-            "performance_endpoint": str(
-                _pick(source, detail, "performance_endpoint") or ""
-            ),
-            "primary_performance_endpoint": str(
-                _pick(source, detail, "primary_performance_endpoint") or ""
-            ),
-            "application_performance_endpoint": str(
-                _pick(source, detail, "application_performance_endpoint") or ""
-            ),
-            "p2_output_fps": _num(
-                _pick(source, detail, "p2_output_fps", "raw_model_outputs_fps_median")
-            ),
-            "completed_detection_fps": _num(
-                _pick(source, detail, "completed_detection_fps", "completed_task_fps_median")
-            ),
-            "application_throughput_fps": _num(
-                _pick(source, detail, "application_throughput_fps", "completed_detection_fps", "completed_task_fps_median")
-            ),
+            "performance_endpoint": "completed_task",
+            "primary_performance_endpoint": "completed_task",
+            "application_performance_endpoint": "completed_task",
+            "p2_output_fps": endpoint_fields["p2_output_fps"],
+            "completed_detection_fps": endpoint_fields["completed_detection_fps"],
+            "application_throughput_fps": measured_fps,
             "completed_to_p2_ratio": _num(
                 _pick(source, detail, "completed_to_p2_ratio")
             ),

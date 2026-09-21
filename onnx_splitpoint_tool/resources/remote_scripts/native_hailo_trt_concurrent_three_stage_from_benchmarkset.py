@@ -978,6 +978,9 @@ def _project_result(
     if ratio is None and p2_fps and completed_fps:
         ratio = completed_fps / p2_fps
 
+    latency_repeats = [{"repetition_id": f"three_stage:{r.get('repetition')}",
+                        "request_latency": (r.get("metrics") or {}).get("request_latency") or {}}
+                       for r in report.get("repetitions", [])]
     stage_timings = _v2793_stage_timings(report)
     parity = _v2793_oracle_parity(report)
     parity_passed = str(parity.get("status") or "").strip().lower() == "passed"
@@ -1013,6 +1016,8 @@ def _project_result(
         "performance_endpoint": "p2_output",
         "application_performance_endpoint": "completed_detection",
         "endpoint_execution_policy": "concurrent_three_stage_single_invocation",
+        "repetition_records": latency_repeats,
+        "repetition_count_requested": (report.get("measurement_contract") or {}).get("repetitions", len(latency_repeats)),
         "three_stage_concurrency_directly_measured": direct_measured,
         "three_stage_hardware_integration_status": (
             "directly_measured" if direct_measured else "failed_before_direct_measurement"

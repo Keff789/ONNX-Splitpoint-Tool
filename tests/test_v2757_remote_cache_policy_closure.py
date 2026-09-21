@@ -39,6 +39,7 @@ def test_cache_policy_is_staged_before_remote_hailo_backend_import(
         "onnx_splitpoint_tool/native_split_quality.py",
         "onnx_splitpoint_tool/resources_utils.py",
         "onnx_splitpoint_tool/runners/_types.py",
+        "onnx_splitpoint_tool/runners/request_latency.py",
         "onnx_splitpoint_tool/runners/backends/base.py",
         "onnx_splitpoint_tool/runners/backends/hailo_utils.py",
         "onnx_splitpoint_tool/runners/backends/hailo_backend.py",

@@ -260,9 +260,11 @@ def _build_paired_quality_decomposition(
             or row.get("task_quality_status")
             or row.get("decision")
         )
-        if quality_decision not in {"pass", "fail", "inconclusive"}:
+        if quality_decision not in {"pass", "fail", "inconclusive", "reference_close", "accuracy_loss", "not_estimable"}:
             quality_decision = "not_evaluated"
+        from .accuracy_reporting import assessment_fields
         record: dict[str, Any] = {
+            **assessment_fields(row.get("accuracy_assessment")),
             "model": str(row.get("model") or row.get("model_id") or "unknown"),
             "task": _task(row),
             "backend": _backend(row),

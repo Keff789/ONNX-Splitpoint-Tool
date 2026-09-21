@@ -1810,6 +1810,7 @@ def _remote_args_from_options(
     )
     return RemoteBenchmarkArgs(
         trt_build_guard=trt_build_guard,
+        native_build_budget_resume=bool(getattr(options, 'resume', False)),
         provider=provider or "auto",
         remote_venv=str(getattr(options, "remote_venv", "") or profile_remote.get("remote_venv") or ""),
         repeats=max(1, repeats),

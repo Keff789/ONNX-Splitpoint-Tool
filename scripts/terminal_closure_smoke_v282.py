@@ -10,6 +10,6 @@ sys.path.insert(0,str(root/"scripts"))
 from onnx_splitpoint_tool.release_identity import VERSION
 from terminal_closure_smoke_v27930 import main
 if __name__ == "__main__":
-    if VERSION != "2.82":
-        raise SystemExit("STOP: installed v2.82 required")
+    if VERSION != "2.83":
+        raise SystemExit("STOP: installed v2.83 required")
     raise SystemExit(main())

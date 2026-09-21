@@ -427,6 +427,7 @@ def _repeat_fields(*sources: dict[str, Any]) -> dict[str, Any]:
         "fps_median": median,
         "fps_ci95_low": _num(pick("fps_ci95_low", "fps_makespan_ci95_low", "performance_fps_ci95_low")),
         "fps_ci95_high": _num(pick("fps_ci95_high", "fps_makespan_ci95_high", "performance_fps_ci95_high")),
+        "request_latency": pick("request_latency") or {},
         "latency_mean_ms": _num(pick("latency_median_ms", "latency_mean_ms")),
         "latency_median_ms": _num(pick("latency_median_ms", "latency_mean_ms")),
         "latency_p50_ms": _num(pick("latency_p50_ms")),
@@ -450,6 +451,23 @@ def _repeat_fields(*sources: dict[str, Any]) -> dict[str, Any]:
 
 
 def _claim_contract_fields(*sources: dict[str, Any]) -> dict[str, Any]:
+    # Callers pass the summary first and the selected raw endpoint last. Keep
+    # its selection as one tuple, including missing values; never splice a
+    # repetition out of multiple reports or infer one from list order/mtime.
+    selection_keys = (
+        "semantic_evidence_repetition_index",
+        "semantic_evidence_repetition_id",
+        "semantic_evidence_runtime_instance_id",
+    )
+    selection_source = next((
+        source for source in reversed(sources)
+        if isinstance(source, Mapping) and (
+            any(key in source for key in selection_keys)
+            or isinstance(source.get("completed_task_endpoint_attestation"), Mapping)
+            or isinstance(source.get("completion_execution_attestation"), Mapping)
+        )
+    ), {})
+    selection = {key: selection_source.get(key) for key in selection_keys}
     def pick(key: str) -> Any:
         for source in sources:
             if isinstance(source, dict) and source.get(key) not in (None, ""):
@@ -574,6 +592,9 @@ def _claim_contract_fields(*sources: dict[str, Any]) -> dict[str, Any]:
         )
         if conflict(*keys)
     ]
+    completed_v2_projection_conflicts.extend(
+        key for key in selection_keys if conflict(key)
+    )
     raw_source_scope = pick("source_e2e_scope")
     evaluated_scope = pick("e2e_scope")
     source_scope = str(
@@ -717,6 +738,7 @@ def _claim_contract_fields(*sources: dict[str, Any]) -> dict[str, Any]:
         runtime_quality_gate_policy_sha256 = task_quality_policy_sha256
     return {
         "task": str(pick("task") or ""),
+        **selection,
         "stage": str(pick("stage") or ""),
         "output_format": str(pick("output_format") or ""),
         "contract_family": str(pick("contract_family") or ""),
@@ -1720,6 +1742,8 @@ def _find_eval_roots(root: Path, recursive: bool) -> list[Path]:
     return sorted(set(roots), key=lambda x: str(x))
 
 
+from onnx_splitpoint_tool.native_rate_endpoints import rate_endpoint_fields
+
 def _rows_from_native_fifo_runner(
     root: Path, *, include_direct_fallback: bool = True,
 ) -> list[dict[str, Any]]:
@@ -1788,7 +1812,7 @@ def _rows_from_native_fifo_runner(
                 if isinstance(endpoint_results.get('completed_task'), dict)
                 else {}
             )
-            primary_endpoint = raw_endpoint or j
+            primary_endpoint = completed_endpoint or j
             application_endpoint = completed_endpoint or j
             producer_impl = (
                 'hailo8_cpp_vstreams_fifo'
@@ -1851,7 +1875,8 @@ def _rows_from_native_fifo_runner(
                         'native_outputs/native_outputs_manifest.json',
                     ),
                 ),
-                **_repeat_fields(r, j),
+                **_repeat_fields(r, completed_endpoint or j),
+                **rate_endpoint_fields(j),
                 **diag,
                 'note': (
                     f'native {producer_impl} FIFO E2E measured'
@@ -2664,6 +2689,7 @@ def _rows_from_native_full(root: Path) -> list[dict[str, Any]]:
             'latency_mean_repetition_samples_ms': _repeat_fields(r).get('latency_mean_repetition_samples_ms') or (
                 [r.get('latency_mean_ms')] if r.get('latency_mean_ms') is not None else []
             ),
+            'request_latency': r.get('request_latency') or {},
             'repetition_records': r.get('repetition_records') or [],
             'performance_repetitions': r.get('performance_repetitions') or r.get('repetition_records') or [],
             'claim_ok': r.get('claim_ok'),
@@ -2712,6 +2738,13 @@ def _rows_from_native_full(root: Path) -> list[dict[str, Any]]:
             'steps': r.get('steps') or [],
             'note': 'native full baseline measured' if ok else (r.get('failure_reason') or r.get('status_detail') or r.get('error') or 'native full baseline failed'),
         })
+        # Preserve adapter timing and its series even when this report is
+        # exported without access to the collected source_root.
+        out[-1].update({key: r[key] for key in (
+            'measurement_endpoint', 'measurement_boundary', 'measured_duration_s',
+            'makespan_ms', 'completed_frames', 'completed_work_units',
+            'completed_work_units_status', 'historical_rate', 'fps_ci95_method', 'request_latency',
+        ) if key in r})
     return out
 
 def _measurement_identity(row: dict[str, Any]) -> tuple[str, ...]:
@@ -3003,6 +3036,9 @@ def _aggregate_repetitions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 raw_records.extend(dict(record) for record in embedded_records if isinstance(record, dict))
             elif row.get('repetition_index') not in (None, ''):
                 raw_records.append({
+                    'request_latency': row.get('request_latency'),
+                    'repetition_id': row.get('repetition_id'),
+                    'runtime_instance_id': row.get('runtime_instance_id'),
                     'repetition_index': row.get('repetition_index'),
                     'ok': row.get('ok'),
                     'status': row.get('status'),
@@ -5392,11 +5428,12 @@ def _write_model_scoped_reports(
                 if summary.get("matrix_bound") is True else ""
             ),
             "",
-            "| backend | case | precision | E2E scope | completed endpoint | host postprocess | status | ok | FPS | note |",
-            "|---|---|---|---|---|---|---|---:|---:|---|",
+            "| backend | case | precision | E2E scope | completed endpoint | host postprocess | status | ok | Completed Task FPS / CI95 | P2 FPS / CI95 | note |",
+            "|---|---|---|---|---|---|---|---:|---:|---:|---|",
         ]
         for row in model_rows:
-            fps = "" if row.get("fps_makespan") is None else f"{float(row.get('fps_makespan')):.3f}"
+            fps = "unavailable" if row.get("fps_makespan") is None else f"{float(row.get('fps_makespan')):.3f} [{row.get('fps_ci95_low')}, {row.get('fps_ci95_high')}]"
+            p2 = f"{row.get('p2_output_fps')} [{row.get('p2_output_fps_ci95_low')}, {row.get('p2_output_fps_ci95_high')}]"
             lines.append(
                 f"| {row.get('backend','')} | {row.get('case','')} | "
                 f"{row.get('precision','')} | {row.get('e2e_scope','')} | "
@@ -5404,7 +5441,7 @@ def _write_model_scoped_reports(
                 f"{row.get('completed_task_comparison_output_endpoint_id') or row.get('completed_task_output_endpoint_id','')} | "
                 f"{row.get('postprocess_location','')}:"
                 f"{row.get('host_postprocessing_available', row.get('host_postprocess_frozen',''))} | "
-                f"{row.get('status','')}{' / not_started' if row.get('repetition_status') == 'not_started' else ''} | {row.get('ok')} | {fps} | "
+                f"{row.get('status','')}{' / not_started' if row.get('repetition_status') == 'not_started' else ''} | {row.get('ok')} | {fps} | {p2} | "
                 f"{row.get('note','')} |"
             )
         md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -5543,8 +5580,18 @@ def main() -> int:
     rows = _apply_detection_claim_exclusions(
         rows, detection_exclusions,
     )
+    from onnx_splitpoint_tool.native_rate_endpoints import report_rate_fields
+    for row in rows:
+        row.update(report_rate_fields(row))
+        if row.get('completed_task_fps') is None:
+            row['performance_claim_eligible'] = False
+            row.setdefault('performance_claim_exclusion_reasons', []).append(row['completed_task_fps_unavailable_reason'])
+
     rows = sorted(rows, key=lambda r:(str(r.get('backend','')), str(r.get('model','')), str(r.get('case',''))))
     fields = ['backend','producer_impl','model','case','precision','setup_id','comparison_backend','execution_mode','status','ok','runtime_success','buildable','runtime_executable','fps_makespan','fps_median','fps_ci95_low','fps_ci95_high','legacy_reciprocal_latency_fps','latency_mean_ms','latency_median_ms','latency_p50_ms','latency_p95_ms','latency_ci95_low_ms','latency_ci95_high_ms','latency_semantics','completion_interval_mean_ms','outer_makespan_verified','repetition_count_requested','repetition_count_attempted','repetition_count_valid','repetition_status','repetition_aggregation','repetition_claim_identity_status','repetition_claim_identity_drift','repetition_claim_identity_incomplete','output_endpoint_id','physical_output_endpoint_id','comparison_output_endpoint_id','output_endpoint_match','comparison_endpoint_match','output_endpoint_comparison_stratum','comparison_stratum_explicit','runtime_precision_explicit','precision_quality_verified','precision_quality_binding_verified','task_quality_observation_valid','quality_claim_result_verified','quality_evidence_verified','quality_match_status','quality_match_count','quality_summary_status','quality_contract_consistent','quality_central_evidence_verified','quality_task_valid','quality_accuracy_gate_pass','quality_eligible_for_ranking','quality_gate_status','quality_accuracy_gate_reason','quality_ranking_exclusion_reason','structural_contract_pass','structural_contract_status','structural_contract_reason','numerical_similarity_pass','numerical_similarity_status','numerical_similarity_reason','numerical_similarity_scope','numerical_similarity_metric','numerical_similarity_value','numerical_similarity_threshold','numerical_similarity_mean_iou','numerical_similarity_mean_iou_threshold','numerical_similarity_policy_id','task_quality_pass','task_quality_status','task_quality_reason','quality_first_producer_identity_sha256','quality_first_producer_identity_match','quality_request_binding_status','quality_request_binding_sha256','quality_request_binding_set_sha256','central_quality_result_sha256','source_request_sha256','model_sha256','hailo_hef_build_receipt_status','hailo_hef_build_receipt_path','hailo_hef_build_receipt_file_sha256','hailo_hef_build_receipt_sha256','hailo_hef_source_onnx_path','hailo_hef_compiler_onnx_sha256','hailo_hef_preprocessing_contract','hailo_hef_preprocessing_contract_sha256','validation_dataset_sha256','validation_dataset_image_ids_sha256','validation_dataset_ground_truth_sha256','accuracy_gate_policy_sha256','task_quality_policy_sha256','runtime_quality_gate_policy_sha256','quality_contract_sha256','preprocessing_contract_sha256','decoder_contract_sha256','nms_contract_sha256','quality_record_endpoint_contract_sha256','repeat_claim_gate_pass','performance_claim_eligible','performance_claim_exclusion_reasons','paper_fps','handoff_ms','p1_ms','p2_run_ms','p1_thread_ms','p2_thread_ms','frames','warmup','inflight','producer_ready','consumer_ready','input_image','input_image_source','input_image_sha256','input_manifest','runtime_input_dtype','runtime_input_shape','runtime_input_layout','runtime_preprocess_mode','runtime_normalization','runtime_color_space','runtime_preprocessing_identity','runtime_preprocessing_sha256','runtime_numeric_input_identity','runtime_numeric_input_sha256','engine_precision','native_command_contract_sha256','output_dump_manifest','native_output_manifest','output_contract_manifest_status','semantic_dump_status','semantic_dump_failure_reason','task','stage','output_format','contract_family','contract_source','endpoint_contract_complete','endpoint_contract_hash','output_endpoint_attestation','accelerator_output_stage','accelerator_output_contract_family','accelerator_endpoint_contract_hash','accelerator_output_endpoint_attestation','source_e2e_scope','e2e_scope','e2e_claim_eligible','e2e_contract_reason','comparison_endpoint_stratum','measurement_concurrency','requires_host_decode_nms','postprocess_included','postprocess_location','host_postprocess_frozen','host_postprocessing_available','host_tail_available','host_postprocess_required','host_tail_required','host_postprocessing_evidence_status','host_postprocessing_evidence_source','host_postprocessing_legacy_alias_conflict','decoder_contract_pass','nms_ok','decoder_id','postprocess_completed_frames','postprocess_completion_verified','completed_task_result_artifact_verification_status','direct_source_endpoint_binding_verified','direct_source_endpoint_binding_status','frozen_host_postprocess_contract','frozen_host_postprocess_contract_sha256','frozen_host_postprocess_result','normalization_frozen','frozen_decoded_nms_normalization_contract','frozen_decoded_nms_normalization_contract_sha256','frozen_decoded_nms_normalization_result','direct_bn6_completion_projection_status','completed_task_stage','completed_task_contract_family','completed_task_endpoint_contract','completed_task_endpoint_contract_hash','completed_task_output_endpoint_id','completed_task_comparison_endpoint_contract','completed_task_comparison_endpoint_contract_hash','completed_task_comparison_output_endpoint_id','completed_task_completion_mode','completed_task_endpoint_attested','completed_task_endpoint_attestation','completed_task_endpoint_attestation_status','completed_task_result_artifact','completed_task_result_artifact_path','completed_task_result_artifact_saved','completed_task_result_artifact_sha256','completed_task_result_artifact_file_sha256','completed_task_endpoint_projection_status','performance_benchmark_source','performance_input_contract_mode','comparison_precision','legacy_comparison_precision','execution_precision','full_runtime_precision','runtime_precision_source','full_command_contract_sha256','failure_reason','status_detail','error','timed_out','returncode','fps_source','result_source','stdout_tail','stderr_tail','note','report','source_root']
+    from onnx_splitpoint_tool.native_rate_endpoints import rate_endpoint_fields
+    fields.extend(key for key in rate_endpoint_fields({}) if key not in fields)
+
     fields.extend((
         'prerequisite_status', 'failure_stage', 'primary_failure_reason',
         'upstream_evidence_path', 'aggregation_applied', 'disposition', 'build_exclusion',
@@ -5607,11 +5654,12 @@ def main() -> int:
         ])
     lines.extend([
         '', 'Roots:', *[f'- `{x}`' for x in all_roots], '',
-        '| backend | impl | model | case | precision | E2E scope | completed endpoint | host postprocess | structure | numerical | task quality | status | ok | FPS | handoff ms | note |',
-        '|---|---|---|---|---|---|---|---|---:|---:|---:|---|---:|---:|---:|---|',
+        '| backend | impl | model | case | precision | E2E scope | completed endpoint | host postprocess | structure | numerical | task quality | status | ok | Completed Task FPS / CI95 | P2 FPS / CI95 | handoff ms | note |',
+        '|---|---|---|---|---|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---|',
     ])
     for r in rows:
-        fps = '' if r.get('fps_makespan') is None else f"{float(r.get('fps_makespan')):.3f}"
+        fps = 'unavailable' if r.get('fps_makespan') is None else f"{float(r.get('fps_makespan')):.3f} [{r.get('fps_ci95_low')}, {r.get('fps_ci95_high')}]"
+        p2 = f"{r.get('p2_output_fps')} [{r.get('p2_output_fps_ci95_low')}, {r.get('p2_output_fps_ci95_high')}]"
         h = '' if r.get('handoff_ms') is None else f"{float(r.get('handoff_ms')):.3f}"
         lines.append(
             f"| {r.get('backend','')} | {r.get('producer_impl','')} | "
@@ -5624,7 +5672,7 @@ def main() -> int:
             f"{r.get('structural_contract_pass','')} | "
             f"{r.get('numerical_similarity_pass','')} | "
             f"{r.get('task_quality_pass','')} | {r.get('status','')}{' / not_started' if r.get('repetition_status') == 'not_started' else ''} | "
-            f"{r.get('ok')} | {fps} | {h} | {r.get('note','')} |"
+            f"{r.get('ok')} | {fps} | {p2} | {h} | {r.get('note','')} |"
         )
     mdp.write_text('\n'.join(lines)+'\n', encoding='utf-8')
     print(json.dumps({'ok': True, 'rows': len(rows), 'ok_count': data['ok_count'], 'evidence_status': data['evidence_status'], 'quality_evidence': quality_evidence, 'model_reports': model_reports, 'json': str(jsonp), 'csv': str(csvp), 'md': str(mdp)}, indent=2))

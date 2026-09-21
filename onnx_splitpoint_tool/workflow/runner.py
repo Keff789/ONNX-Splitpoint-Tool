@@ -24,6 +24,7 @@ import signal
 import stat
 import sys
 import threading
+import traceback
 import tempfile
 import uuid
 from pathlib import Path, PurePosixPath
@@ -1841,7 +1842,7 @@ def _benchmark_case_ids_v60r(benchmark_set_contract: Mapping[str, Any] | None) -
 
 def expected_profile_measurements_v60r(*, model_id: str, benchmark_plan: Mapping[str, Any] | None, benchmark_set_contract: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     """Actionable result rows implied by the selected logical hardware paths."""
-    case_ids = _benchmark_case_ids_v60r(benchmark_set_contract)
+    all_case_ids = _benchmark_case_ids_v60r(benchmark_set_contract)
     runs = [r for r in list((benchmark_plan or {}).get("runs") or []) if isinstance(r, Mapping)]
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
@@ -1852,10 +1853,6 @@ def expected_profile_measurements_v60r(*, model_id: str, benchmark_plan: Mapping
     ) -> None:
         backend_n = _canonical_backend_v60r(backend)
         variant_n = str(variant).lower()
-        key = (backend_n, variant_n, str(case_id) if variant_n == "split" else "full")
-        if key in seen:
-            return
-        seen.add(key)
         run = run or {}
         descriptor: Mapping[str, Any] = {}
         for candidate in list(run.get("physical_identity_descriptors") or []):
@@ -1871,6 +1868,23 @@ def expected_profile_measurements_v60r(*, model_id: str, benchmark_plan: Mapping
             ):
                 descriptor = candidate
                 break
+        if descriptor and not run.get('_selection_descriptor_expanded'):
+            for candidate in run.get('physical_identity_descriptors') or []:
+                if (_canonical_backend_v60r(candidate.get('backend')) != backend_n
+                        or candidate.get('variant') != variant_n
+                        or candidate.get('model_id') not in {None, '', model_id}):
+                    continue
+                if variant_n == 'split' and 'case_ids' in candidate and case_id not in candidate['case_ids']:
+                    continue
+                add(backend, variant, case_id, run_id,
+                    {**run, 'physical_identity_descriptors': [candidate], '_selection_descriptor_expanded': True})
+            return
+        key = (backend_n, variant_n, str(case_id) if variant_n == 'split' else 'full',
+               str(descriptor.get('expected_setup_id') or run.get('expected_setup_id') or run.get('setup_id') or ''),
+               str(descriptor.get('measurement_endpoint') or run.get('measurement_endpoint') or ''))
+        if key in seen:
+            return
+        seen.add(key)
         out.append({
             "schema": "onnx-splitpoint/required-profile-measurement",
             "schema_version": 3 if descriptor else 1,
@@ -1919,6 +1933,7 @@ def expected_profile_measurements_v60r(*, model_id: str, benchmark_plan: Mapping
             # service.  It is intentionally absent from the performance/result
             # matrix and must not add full/split result expectations.
             continue
+        case_ids = [c for c in all_case_ids if c in run["case_ids"]] if "case_ids" in run else all_case_ids
         rid = str(run.get("id") or run.get("run_id") or "").strip().lower().replace("-", "_")
         if rid == "ort_cpu":
             add("cpu_ort", "full", run_id=rid, run=run)
@@ -2045,7 +2060,30 @@ def _bind_results_to_required_scope_v2796(
             )
             if expected_setup and expected_setup != measured_setup:
                 continue
-            if expected_endpoint and expected_endpoint != measured_endpoint and not (
+            completed_full_transition = False
+            task = str(candidate.get("task") or row.get("task") or "").lower()
+            if (str(row.get("variant") or "").lower() == "full"
+                    and str(candidate.get("variant") or "").lower() == "full"
+                    and measured_endpoint == "completed_" + task):
+                # The old plan names the accelerator output. R9J measures the
+                # Full task including its host tail. Prove that transition on
+                # this Generic producer without changing its measured endpoint.
+                from ..runners.task_completion import validate_completion
+                backend = _logical_canonical_backend(row.get("backend"))
+                producer = ("generic_deepx_full" if backend == "deepx_m1" else
+                            "generic_hailo_full" if backend.startswith("hailo") else
+                            "generic_ort_full" if backend == "tensorrt" else "")
+                try:
+                    completed_full_transition = bool(producer) and validate_completion(
+                        row.get("generic_completion_evidence"), task=task, producer=producer)
+                except (ValueError, TypeError):
+                    pass
+                if not completed_full_transition:
+                    continue
+                completed_full_transition = expected_endpoint in (
+                    {"classification_logits", "classification_probabilities"}
+                    if task == "classification" else {"p2_output", "decoded_nms"})
+            if expected_endpoint and expected_endpoint != measured_endpoint and not completed_full_transition and not (
                 dispatch_terminal_failure
                 and candidate.get("terminal_outcome_required") is True
                 and candidate.get("success_required") is False
@@ -2678,6 +2716,9 @@ def _window_method_probe_final_campaign_v266(
 ) -> bool:
     """Compatibility alias for callers of the pre-v2.67 private helper."""
     return _window_method_probe_workflow_blocking_v267(profile_payload)
+
+
+from ..energy.task_budget import campaign_budget_profile_args
 
 
 def _native_energy_duration_for_execution_v269e(
@@ -5204,6 +5245,9 @@ def _native_concise_summary_v60w(
             "accelerator_only": "accelerator_output_endpoint",
             "accelerator_output": "accelerator_output_endpoint",
         }.get(raw_scope, raw_scope or "unavailable")
+        from ..native_rate_endpoints import report_rate_fields
+        concise_row.update(report_rate_fields(row, Path(reports).parent))
+        concise_row["fps"] = concise_row["completed_task_fps"]
         concise.append(concise_row)
 
     existing_keys = {
@@ -5355,6 +5399,8 @@ def _native_concise_summary_v60w(
         "output_endpoint_comparison_stratum",
         "quality_physical_evidence_conflict_fields",
     }
+    from ..native_rate_endpoints import report_rate_fields, rate_endpoint_fields
+    csv_fields.extend(key for key in rate_endpoint_fields({}) if key not in csv_fields)
     for concise_row in concise:
         for field in csv_fields:
             if (
@@ -5748,6 +5794,9 @@ def _authoritative_benchmark_plan_v2792(
         )
     else:
         projected = source
+    if projected.get('backend_backfill'):
+        from ..backend_backfill import bind_plan_cases
+        bind_plan_cases(projected, projected['backend_backfill'])
     evidence = {
         "schema": "onnx-splitpoint/authoritative-benchmark-plan-projection",
         "schema_version": 1,
@@ -5838,6 +5887,14 @@ class EvaluationWorkflowRunner:
         self._cancellation_watcher_stop = threading.Event()
         self._cancellation_watcher: Optional[threading.Thread] = None
         self._execution_session_index: Optional[int] = None
+        self._management_services_lock = threading.RLock()
+        self._management_admission_closed = False
+        self._management_cancel_event = threading.Event()
+        self._management_shutdown_thread = None
+        self._management_shutdown_state = {"phase": "not_started", "errors": []}
+        self._finalize_process_lock = threading.RLock()
+        self._finalize_process_finished = False
+        self._finalize_process_result = None
         self._management_reference_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
         self._management_reference_futures: Dict[str, concurrent.futures.Future] = {}
         self._management_reference_source_contracts: Dict[str, str] = {}
@@ -6279,53 +6336,66 @@ class EvaluationWorkflowRunner:
                 f"management CPU reference source contract is invalid for {model_id}"
             )
 
-        if self._management_reference_executor is None:
-            self._management_reference_executor = concurrent.futures.ThreadPoolExecutor(
-                max_workers=1,
-                thread_name_prefix="osp-management-cpu-reference",
+        with self._management_services_lock:
+            if self._management_admission_closed:
+                return
+            if self._management_reference_executor is None:
+                self._management_reference_executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=1,
+                    thread_name_prefix="osp-management-cpu-reference",
+                )
+            output_dir = self.run_dir / "quality_management" / "references" / model_id
+            future = self._management_reference_executor.submit(
+                generate_management_cpu_reference,
+                suite_dir=suite,
+                output_dir=output_dir,
+                model_id=model_id,
+                workers=_quality_workers_v263(self.profile_payload),
+                cancel_event=self._management_cancel_event,
+                process_registry=self._process_registry,
+                log=self.log,
             )
-        output_dir = self.run_dir / "quality_management" / "references" / model_id
-        future = self._management_reference_executor.submit(
-            generate_management_cpu_reference,
-            suite_dir=suite,
-            output_dir=output_dir,
-            model_id=model_id,
-            workers=_quality_workers_v263(self.profile_payload),
-            cancel_event=self._cancel_event,
-            process_registry=self._process_registry,
-            log=self.log,
-        )
-        self._management_reference_futures[model_id] = future
-        self._management_reference_source_contracts[model_id] = (
-            expected_source_contract
-        )
+            self._management_reference_futures[model_id] = future
+            self._management_reference_source_contracts[model_id] = (
+                expected_source_contract
+            )
         self._emit_log(
             f"[quality][management] queued one ORT-CPU semantic reference for {model_id}; "
             f"it runs with {_quality_workers_v263(self.profile_payload)} CPU threads in parallel with remote benchmarks"
         )
 
     def _ensure_central_quality_service(self) -> Any:
-        if self._central_quality_service is None:
-            from onnx_splitpoint_tool.quality_service import (
-                CPUQualityReferenceStore,
-                ManagementQualityService,
-            )
+        with self._management_services_lock:
+            if self._management_admission_closed:
+                from onnx_splitpoint_tool.quality_service import QualityServiceClosedError
+                error = QualityServiceClosedError("management admission closed after terminal workflow state")
+                if self._cancel_event.is_set():
+                    from onnx_splitpoint_tool.quality_lifecycle import stamp_exception
+                    return_service = self._central_quality_service
+                    context = getattr(return_service, "_cancel_context", None) or self._quality_cancel_context
+                    stamp_exception(error, context)
+                raise error
+            if self._central_quality_service is None:
+                from onnx_splitpoint_tool.quality_service import (
+                    CPUQualityReferenceStore,
+                    ManagementQualityService,
+                )
 
-            self._central_quality_service = ManagementQualityService(
-                self.run_dir / "quality_management" / "evaluation_cache",
-                workers=_quality_workers_v263(self.profile_payload),
-            )
-            # One shared instance avoids redundant per-request coordination;
-            # the store itself additionally protects independent processes.
-            self._central_quality_reference_store = CPUQualityReferenceStore(
-                self.run_dir / "quality_management" / "cpu_reference_store"
-            )
-        if self._central_quality_coord_executor is None:
-            self._central_quality_coord_executor = concurrent.futures.ThreadPoolExecutor(
-                max_workers=_quality_workers_v263(self.profile_payload),
-                thread_name_prefix="osp-central-quality-coordinator",
-            )
-        return self._central_quality_service
+                self._central_quality_service = ManagementQualityService(
+                    self.run_dir / "quality_management" / "evaluation_cache",
+                    workers=_quality_workers_v263(self.profile_payload),
+                )
+                # One shared instance avoids redundant per-request coordination;
+                # the store itself additionally protects independent processes.
+                self._central_quality_reference_store = CPUQualityReferenceStore(
+                    self.run_dir / "quality_management" / "cpu_reference_store"
+                )
+            if self._central_quality_coord_executor is None:
+                self._central_quality_coord_executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=_quality_workers_v263(self.profile_payload),
+                    thread_name_prefix="osp-central-quality-coordinator",
+                )
+            return self._central_quality_service
 
     @staticmethod
     def _quality_request_scope(path: Path) -> tuple[str, str]:
@@ -8704,7 +8774,9 @@ class EvaluationWorkflowRunner:
                     "execution_role": "full_quality_only",
                     "performance_claims_emitted": False,
                 })
-            write_json(result_path, result)
+            with self._control_lock:
+                if not self._terminal_sealing:
+                    write_json(result_path, result)
             return result
         except Exception as exc:
             case_id, run_id = self._quality_request_scope(request_path)
@@ -8820,7 +8892,9 @@ class EvaluationWorkflowRunner:
                     if field_name in request_identity:
                         failure[field_name] = copy.deepcopy(request_identity[field_name])
             failure.update(exception_outcome(exc, run_id=self.run_id))
-            write_json(result_path, failure)
+            with self._control_lock:
+                if not self._terminal_sealing:
+                    write_json(result_path, failure)
             return failure
 
     def _queue_central_quality_requests(self, model_id: str) -> int:
@@ -9053,16 +9127,19 @@ class EvaluationWorkflowRunner:
             )
 
         queued = 0
-        for key, path, target_key in prepared:
-            assert self._central_quality_coord_executor is not None
-            self._central_quality_futures[key] = self._central_quality_coord_executor.submit(
-                self._evaluate_central_quality_request,
-                model_id,
-                path,
-            )
-            if target_key is not None:
-                self._missing_full_quality_queued_keys.add(target_key)
-            queued += 1
+        with self._management_services_lock:
+            if self._management_admission_closed:
+                return 0
+            for key, path, target_key in prepared:
+                assert self._central_quality_coord_executor is not None
+                self._central_quality_futures[key] = self._central_quality_coord_executor.submit(
+                    self._evaluate_central_quality_request,
+                    model_id,
+                    path,
+                )
+                if target_key is not None:
+                    self._missing_full_quality_queued_keys.add(target_key)
+                queued += 1
         if queued:
             workers = _quality_workers_v263(self.profile_payload)
             self._emit_log(
@@ -9071,43 +9148,74 @@ class EvaluationWorkflowRunner:
             )
         return queued
 
+    def _close_management_admission(self) -> None:
+        with self._management_services_lock:
+            self._management_admission_closed = True
+            if self._cancel_event.is_set() or self._stop_requested:
+                self._management_cancel_event.set()
+
     def _shutdown_management_services(self) -> None:
-        cancelled = bool(self._cancel_event.is_set())
-        if cancelled and self._central_quality_service is not None:
-            # Release evaluating coordinator threads before joining them.
-            self._central_quality_service.shutdown(
+        self._close_management_admission()
+        cancelled = bool(self._cancel_event.is_set() or self._stop_requested)
+        state = self._management_shutdown_state
+        service = self._central_quality_service
+        if cancelled:
+            for future in list(self._management_reference_futures.values()) + list(self._central_quality_futures.values()):
+                future.cancel()
+        if cancelled and service is not None:
+            state["phase"] = "central_quality_service.cancel_workers"
+            service.shutdown(
                 wait=False, cancel_futures=True, terminate_workers=True,
-                cancellation_context=getattr(self, "_quality_cancel_context", None),
+                cancellation_context=(self._quality_cancel_context if self._cancel_event.is_set() else None),
             )
-        if self._management_reference_executor is not None:
-            try:
-                self._management_reference_executor.shutdown(
-                    wait=True,
-                    cancel_futures=cancelled,
-                )
-            except TypeError:  # Python 3.8 compatibility
-                self._management_reference_executor.shutdown(wait=True)
-            self._management_reference_executor = None
-        if self._central_quality_coord_executor is not None:
-            try:
-                self._central_quality_coord_executor.shutdown(
-                    wait=True,
-                    cancel_futures=cancelled,
-                )
-            except TypeError:
-                self._central_quality_coord_executor.shutdown(wait=True)
-            self._central_quality_coord_executor = None
-        if self._central_quality_service is not None:
-            try:
-                self._central_quality_service.shutdown(
-                    wait=True,
-                    cancel_futures=cancelled,
-                    terminate_workers=cancelled,
-                    cancellation_context=getattr(self, "_quality_cancel_context", None),
-                )
-            except Exception:
-                pass
-            self._central_quality_service = None
+        for name, executor in (
+            ("management_reference_executor", self._management_reference_executor),
+            ("central_quality_coord_executor", self._central_quality_coord_executor),
+        ):
+            if executor is not None:
+                state["phase"] = name + ".shutdown_join"
+                executor.shutdown(wait=True, cancel_futures=cancelled)
+        if service is not None:
+            state["phase"] = "central_quality_service.shutdown_join"
+            service.shutdown(wait=True, cancel_futures=cancelled, terminate_workers=cancelled,
+                             cancellation_context=(self._quality_cancel_context if self._cancel_event.is_set() else None))
+        state["phase"] = "completed"
+
+    def _management_shutdown_evidence(self) -> Dict[str, Any]:
+        def threads(executor: Any) -> List[Dict[str, Any]]:
+            rows = []
+            for thread in list(getattr(executor, "_threads", ())):
+                frame = sys._current_frames().get(thread.ident)
+                rows.append({"name": thread.name, "ident": thread.ident,
+                             "native_id": thread.native_id, "alive": thread.is_alive(),
+                             "stack": traceback.format_stack(frame, limit=6) if frame else []})
+            return rows
+
+        state = dict(self._management_shutdown_state)
+        state["errors"] = list(state["errors"])
+        state.update(owner_pid=os.getpid(), run_id=self.run_id, session_id=self.session_id,
+                     admission_closed=self._management_admission_closed,
+                     terminal_stop=self._stop_requested, user_cancel_requested=self._cancel_event.is_set())
+        for name, executor, futures in (
+            ("management_reference", self._management_reference_executor, self._management_reference_futures),
+            ("central_quality_coordinator", self._central_quality_coord_executor, self._central_quality_futures),
+        ):
+            state[name] = {"threads": threads(executor),
+                           "futures": {str(k): "cancelled" if f.cancelled() else "done" if f.done() else "running" if f.running() else "queued"
+                                       for k, f in list(futures.items())}}
+        service = self._central_quality_service
+        if service is not None:
+            probe = getattr(service, "shutdown_state", None)
+            state["central_quality_service"] = probe() if callable(probe) else {"finished": state["phase"] == "completed"}
+        worker = self._management_shutdown_thread
+        state["shutdown_thread"] = {"name": worker.name if worker else "", "ident": worker.ident if worker else None,
+                                    "alive": bool(worker and worker.is_alive())}
+        state["finished"] = bool(worker and not worker.is_alive() and state["phase"] == "completed"
+                                 and not state["errors"]
+                                 and all(not t["alive"] for key in ("management_reference", "central_quality_coordinator") for t in state[key]["threads"])
+                                 and all(v in {"done", "cancelled"} for key in ("management_reference", "central_quality_coordinator") for v in state[key]["futures"].values())
+                                 and state.get("central_quality_service", {"finished": True}).get("finished"))
+        return state
 
     def _terminal_progress(
         self, *, phase: str, done: int = 0, total: Optional[int] = None,
@@ -11297,32 +11405,34 @@ class EvaluationWorkflowRunner:
             return not watcher.is_alive()
         return True
 
-    def _shutdown_management_services_bounded(
-        self, *, timeout_s: float = 5.0
-    ) -> Dict[str, Any]:
-        """Bound final service joins; sticky registries own any late child."""
+    def _shutdown_management_services_bounded(self, *, timeout_s: float = 5.0) -> Dict[str, Any]:
+        """Join the same owned shutdown operation; report actual unresolved work."""
+        self._close_management_admission()
+        with self._management_services_lock:
+            if self._management_shutdown_thread is None:
+                def shutdown() -> None:
+                    try:
+                        self._shutdown_management_services()
+                    except BaseException as exc:
+                        self._management_shutdown_state["errors"].append(f"{type(exc).__name__}: {exc}")
+                self._management_shutdown_thread = threading.Thread(
+                    target=shutdown, name=f"evaluation-service-shutdown-{self.session_id[:8]}", daemon=True,
+                )
+                self._management_shutdown_thread.start()
+            worker = self._management_shutdown_thread
+        if worker is not threading.current_thread():
+            worker.join(timeout=max(0.0, float(timeout_s)))
+        return self._management_shutdown_evidence()
 
-        errors: List[str] = []
+    def _finalize_owned_processes(self) -> Optional[WorkflowRunCleanupQuarantineError]:
+        with self._finalize_process_lock:
+            if not self._finalize_process_finished:
+                self._close_management_admission()
+                self._finalize_process_result = self._finalize_owned_processes_once()
+                self._finalize_process_finished = True
+            return self._finalize_process_result
 
-        def _shutdown() -> None:
-            try:
-                self._shutdown_management_services()
-            except BaseException as exc:
-                errors.append(f"{type(exc).__name__}: {exc}")
-
-        worker = threading.Thread(
-            target=_shutdown,
-            name=f"evaluation-service-shutdown-{self.session_id[:8]}",
-            daemon=True,
-        )
-        worker.start()
-        worker.join(timeout=max(0.0, float(timeout_s)))
-        return {
-            "finished": not worker.is_alive(),
-            "errors": list(errors),
-        }
-
-    def _finalize_owned_processes(
+    def _finalize_owned_processes_once(
         self,
     ) -> Optional[WorkflowRunCleanupQuarantineError]:
         """Perform one bounded fail-closed cleanup pass while holding the lock."""
@@ -11415,6 +11525,8 @@ class EvaluationWorkflowRunner:
                 f"late_remote_quiescence:{type(exc).__name__}: {exc}"
             )
 
+        primary = read_json(self.run_dir / "primary_failure.json", default={}) or {}
+        details["primary_failure"] = primary
         if local_proven and remote_proven:
             return None
 
@@ -11456,6 +11568,11 @@ class EvaluationWorkflowRunner:
                 "fence could not be committed; do not reuse this run id"
             )
         )
+        if primary:
+            message += (f"; primary: model={primary.get('model_id')} setup={primary.get('hardware_target_id')}: "
+                        + str(primary.get("primary_error") or "unknown"))
+        message += "; cleanup: " + str(service_shutdown.get("phase")) + "; owner_pid=" + str(os.getpid())
+        message += "; " + ",".join(details["errors"])
         return WorkflowRunCleanupQuarantineError(
             message + marker_error + fence_error,
             owner=payload,
@@ -15294,6 +15411,11 @@ class EvaluationWorkflowRunner:
                         profile_payload=probe_profile,
                         log=self.log,
                     )
+                    from .deferred_hailo_builds import probe_deferred_deepx_part1_cache
+                    suite_dir = resolve_generated_benchmark_suite_dir(
+                        run_dir=self.run_dir, model_id=model_id,
+                    )
+                    probe_deferred_deepx_part1_cache(suite_dir, log=self.log)
                 except Exception as exc:
                     errors.append({
                         "model_id": model_id,
@@ -15744,7 +15866,7 @@ class EvaluationWorkflowRunner:
                 str(row.get("technical_status") or "")
                 in {"completed", "ok", "success"}
                 and str(row.get("task_quality_decision") or "")
-                in {"pass", "fail", "inconclusive"}
+                in {"pass", "fail", "inconclusive", "reference_close", "accuracy_loss", "not_estimable"}
                 for row in model_results
             )
         )
@@ -17983,6 +18105,9 @@ class EvaluationWorkflowRunner:
                         "technical_status": str(result.get("technical_status") or "completed"),
                         "scientific_status": str(result.get("scientific_status") or result.get("decision") or ""),
                     }
+                    for reporting_field in ("accuracy_assessment", "reporting_policy", "secondary_accuracy_assessments", "accuracy_warnings", "legacy_decision"):
+                        if reporting_field in result:
+                            gate[reporting_field] = copy.deepcopy(result[reporting_field])
                     matched_completed += 1
                 else:
                     gate = {
@@ -18433,8 +18558,9 @@ class EvaluationWorkflowRunner:
         )
         metric_threshold_misses = [
             result for result in technically_completed
-            if str(result.get("decision") or "").strip().lower() in {"fail", "failed"}
+            if str(result.get("decision") or "").strip().lower() in {"fail", "failed", "accuracy_loss"}
         ]
+        reporting_active = bool((self.profile_payload.get("quality_gate") or {}).get("reporting_policy"))
         status = (
             ("failed" if strict_quality else "partial")
             if technical_problem else ("ok" if results else "skipped")
@@ -18469,11 +18595,11 @@ class EvaluationWorkflowRunner:
                 "partial_continue_diagnostic" if smoke_quality else "hard_fail"
             ),
             "metric_threshold_policy": (
-                "warning_only" if smoke_quality else "enforced_quality_decision"
+                "warning_only" if smoke_quality or reporting_active else "enforced_quality_decision"
             ),
             "metric_threshold_miss_count": len(metric_threshold_misses),
             "metric_threshold_warning_count": (
-                len(metric_threshold_misses) if smoke_quality else 0
+                len(metric_threshold_misses) if smoke_quality or reporting_active else 0
             ),
             "matrix_required": int(evidence_state_summary.get("matrix_required") or 0),
             "matrix_present": int(evidence_state_summary.get("matrix_present") or 0),
@@ -18885,6 +19011,8 @@ class EvaluationWorkflowRunner:
             return "contract" in err and ("reject" in err or "fail" in err)
 
         def _row_final_valid(r: Mapping[str, Any]) -> bool:
+            if r.get("accuracy_gate_semantics") == "technical_quality_completeness_only":
+                return r.get("technical_status") == "ok"
             if _contract_rejected(r):
                 return False
             if str(r.get("runtime_contract_only") or "").lower() in {"true", "1", "yes"}:
@@ -19031,7 +19159,7 @@ class EvaluationWorkflowRunner:
             valid_complete_split_rows = [r for r in complete_split_rows if _row_final_valid(r)]
             invalid_complete_split_rows = [r for r in complete_split_rows if not _row_final_valid(r)]
             contract_rejected_split_rows = [r for r in split_rows if _contract_rejected(r)]
-            invalid_rows = [r for r in rows if _boolish(r.get("final_pass")) is False or _boolish(r.get("validation_ok")) is False or _boolish(r.get("semantic_validation_ok")) is False]
+            invalid_rows = [r for r in rows if (r.get("technical_status") != "ok" if r.get("accuracy_gate_semantics") == "technical_quality_completeness_only" else _boolish(r.get("final_pass")) is False or _boolish(r.get("validation_ok")) is False or _boolish(r.get("semantic_validation_ok")) is False)]
             unvalidated_rows = [r for r in rows if _boolish(r.get("final_pass")) is None and _boolish(r.get("validation_ok")) is None and _boolish(r.get("semantic_validation_ok")) is None]
             semantic_e2e_pass_rows = [r for r in rows if _boolish(r.get("semantic_e2e_pass")) is True or (_boolish(r.get("semantic_e2e_pass")) is None and _row_final_valid(r))]
             interface_known_split_rows = [r for r in split_rows if _boolish(r.get("interface_contract_pass")) is not None]
@@ -19539,6 +19667,25 @@ class EvaluationWorkflowRunner:
         )
         return cfg
 
+    def _native_energy_registry_file(self) -> str:
+        """Use the reviewed start snapshot for every Native energy entry."""
+        from .hardware_matrix import default_hardware_setups_file
+        hardware = self.profile_payload.get("hardware") or {}
+        frozen = hardware.get("energy_registry_snapshot")
+        if not isinstance(frozen, Mapping):
+            return str(self.options.hardware_setups_file or hardware.get("setups_file") or default_hardware_setups_file())
+        from ..energy.config import resolve_collector_binding
+        binding = resolve_collector_binding(frozen)
+        if not binding["collector_sha256"]:
+            raise RuntimeError("Native collector unavailable in frozen start snapshot")
+        path = self.run_dir / "reports" / "native_energy_hardware_snapshot.json"
+        if path.is_file():
+            if read_json(path, default={}) != frozen:
+                raise RuntimeError("Native energy registry snapshot changed within run")
+        else:
+            atomic_write_json(path, frozen)
+        return str(path)
+
     def _finish_native_direct_remote_lease(
         self,
         lease_operation: Any,
@@ -19729,11 +19876,11 @@ class EvaluationWorkflowRunner:
             merged_env = dict(native_env)
             if env:
                 merged_env.update({str(k): str(v) for k, v in env.items()})
-            def _forward(line: str) -> None:
-                if line.startswith("[native"):
-                    self.log(line)
-                else:
-                    self.log(f"[native:{label}] {line}")
+            from ..log_utils import NativeDisplayLog
+            import uuid
+            _forward = NativeDisplayLog(
+                reports / "diagnostics" / f"native_{slugify(label)}_{uuid.uuid4().hex[:10]}.log",
+                self.log, label=label, command=command)
             lease_operation = None
             if command and os.path.basename(command[0]).lower() in {"ssh", "ssh.exe"}:
                 try:
@@ -19773,6 +19920,7 @@ class EvaluationWorkflowRunner:
                     )
 
             completed = None
+            native_call_started = time.monotonic()
             try:
                 completed = run_streaming(
                     command, timeout=timeout_s, cwd=cwd, env=merged_env, label=label,
@@ -19786,6 +19934,7 @@ class EvaluationWorkflowRunner:
                         if lease_operation is not None else None
                     ),
                 )
+                _forward.finish(returncode=completed.returncode, elapsed_s=time.monotonic() - native_call_started)
                 return completed
             finally:
                 if lease_operation is not None:
@@ -19856,6 +20005,7 @@ class EvaluationWorkflowRunner:
             # The coordinator is a separate process.  Carry the top-level
             # campaign bindings required to build exactly the same Native
             # Energy/probe commands as the in-process non-variant path.
+            from .hardware_matrix import default_hardware_setups_file
             cfg_for_variants = dict(cfg)
             cfg_for_variants["_native_execution_contract"] = dict(
                 native_execution_contract
@@ -19864,6 +20014,7 @@ class EvaluationWorkflowRunner:
                 native_execution_contract["contract_sha256"]
             )
             cfg_for_variants["_workflow_context"] = {
+                "hardware_setups_file": self._native_energy_registry_file(),
                 "profile_path": self.profile_path,
                 "central_quality_summary": str(
                     self.run_dir / "quality_management" / "central_quality_summary.json"
@@ -20892,13 +21043,25 @@ class EvaluationWorkflowRunner:
             native_supported_case_map, separators=(",", ":"),
         )
 
-        validation_image_map, validation_image_sources = build_native_validation_image_map(
-            self.run_dir,
-            models,
-            {m: available_case_map.get(m, []) for m in models},
-            {m: _native_runnable_benchmark_set(m) for m in models},
-        )
-        validation_image_map_json = json.dumps(validation_image_map, separators=(",", ":"))
+        # Resolve the shared input after the exact vendor quality bindings are
+        # available, before any Native Full/Split dispatch.
+        validation_image_map: Dict[str, Dict[str, str]] = {}
+        validation_image_sources: Dict[str, Dict[str, str]] = {}
+
+        from ..backend_backfill import selected_cases_for_backend
+        def _backend_case_map(backend: str, source: Mapping[str, Any]) -> Dict[str, List[str]]:
+            result = {}
+            for model, cases in source.items():
+                contract = read_json(self.run_dir / 'models' / model / 'benchmark_set' / 'benchmark_set.json', default={}) or {}
+                selected = selected_cases_for_backend(
+                    contract.get('backend_backfill') or {}, backend, list(cases),
+                    setup_id=native_setup_ids.get(backend, ''),
+                    run_id={'hailo8': 'hailo8_to_trt', 'hailo10h': 'hailo10_to_tensorrt',
+                            'deepx': 'deepx_m1_to_tensorrt'}.get(backend, ''),
+                )
+                if selected:
+                    result[model] = selected
+            return result
 
         native_runnable_case_maps: Dict[str, Dict[str, List[str]]] = {}
 
@@ -20909,7 +21072,7 @@ class EvaluationWorkflowRunner:
             if not validation_enabled:
                 return []
             return _native_selection_contract_runs_v270e(
-                "hailo8", native_runnable_case_maps.get("hailo8", native_supported_case_map),
+                "hailo8", native_runnable_case_maps.get("hailo8", _backend_case_map("hailo8", native_supported_case_map)),
             )
 
         def _hailo10h_known_contract_runs() -> List[Dict[str, Any]]:
@@ -20919,7 +21082,7 @@ class EvaluationWorkflowRunner:
             if not validation_enabled:
                 return []
             return _native_selection_contract_runs_v270e(
-                "hailo10h", native_runnable_case_maps.get("hailo10h", native_supported_case_map),
+                "hailo10h", native_runnable_case_maps.get("hailo10h", _backend_case_map("hailo10h", native_supported_case_map)),
             )
 
         def _deepx_known_contract_runs() -> List[Dict[str, Any]]:
@@ -20929,7 +21092,7 @@ class EvaluationWorkflowRunner:
             if not validation_enabled:
                 return []
             return _native_selection_contract_runs_v270e(
-                "deepx", native_runnable_case_maps.get("deepx", native_supported_case_map),
+                "deepx", native_runnable_case_maps.get("deepx", _backend_case_map("deepx", native_supported_case_map)),
             )
 
         def _expected_rows_for_backend(native_backend: str) -> List[Dict[str, Any]]:
@@ -20953,7 +21116,7 @@ class EvaluationWorkflowRunner:
             # shortfall instead of shrinking to a misleading 36/36.
             if known:
                 known = _native_selection_contract_runs_v270e(
-                    native_backend, selected_native_case_map,
+                    native_backend, _backend_case_map(native_backend, selected_native_case_map),
                 )
             rows: List[Dict[str, Any]] = []
             if known:
@@ -20973,7 +21136,7 @@ class EvaluationWorkflowRunner:
                             })
                 return rows
             for model in models:
-                selected_cases = selected_native_case_map.get(model, [])
+                selected_cases = _backend_case_map(native_backend, selected_native_case_map).get(model, [])
                 for case in [str(x) for x in list(selected_cases or []) if str(x)]:
                     rows.append({
                         "backend_key": native_backend,
@@ -20987,17 +21150,6 @@ class EvaluationWorkflowRunner:
                         "execution_mode": "native_split",
                     })
             return rows
-
-        expected_native_rows: List[Dict[str, Any]] = []
-        for raw_backend in split_backends:
-            normalized_backend = str(raw_backend).strip().lower()
-            if normalized_backend in {"hailo10", "hailo10h_to_trt"}:
-                normalized_backend = "hailo10h"
-            elif normalized_backend in {"deepx_m1", "deepx_to_trt"}:
-                normalized_backend = "deepx"
-            elif normalized_backend == "hailo8_to_trt":
-                normalized_backend = "hailo8"
-            expected_native_rows.extend(_expected_rows_for_backend(normalized_backend))
 
         _native_hardware_targets = normalize_hardware_targets(self._profile_with_cli_hardware_overrides())
 
@@ -21067,6 +21219,17 @@ class EvaluationWorkflowRunner:
             if remote_config.get("setup_resolution_error"):
                 native_setup_ids[producer] = ""
                 self.log("[native-prerequisites] " + str(remote_config["setup_resolution_error"]))
+        expected_native_rows: List[Dict[str, Any]] = []
+        for raw_backend in split_backends:
+            normalized_backend = str(raw_backend).strip().lower()
+            if normalized_backend in {"hailo10", "hailo10h_to_trt"}:
+                normalized_backend = "hailo10h"
+            elif normalized_backend in {"deepx_m1", "deepx_to_trt"}:
+                normalized_backend = "deepx"
+            elif normalized_backend == "hailo8_to_trt":
+                normalized_backend = "hailo8"
+            expected_native_rows.extend(_expected_rows_for_backend(normalized_backend))
+
         expected_native_rows = bind_native_split_expected_setups(
             expected_native_rows,
             native_setup_ids,
@@ -21361,6 +21524,7 @@ class EvaluationWorkflowRunner:
         vendor_full_quality_sets_by_setup: Dict[str, Path] = {}
         vendor_full_quality_errors_by_setup: Dict[str, List[str]] = {}
         vendor_full_quality_required = False
+        native_prepared_input_bindings: List[Mapping[str, Any]] = []
         if native_full_enabled:
             for producer_name, raw_full_backends in sorted(
                 native_full_by_producer.items()
@@ -21398,6 +21562,8 @@ class EvaluationWorkflowRunner:
                     )
                 )
                 bindings = binding_set.get("bindings_by_backend_model")
+                if isinstance(bindings, Mapping):
+                    native_prepared_input_bindings.extend(bindings.values())
                 if (
                     isinstance(bindings, Mapping)
                     and binding_set.get("required_binding_keys")
@@ -21423,6 +21589,15 @@ class EvaluationWorkflowRunner:
                     vendor_full_quality_errors_by_setup.setdefault(
                         setup_id, []
                     ).append("vendor_full_quality_binding_set_incomplete")
+        resolved_images, resolved_sources = build_native_validation_image_map(
+            self.run_dir, models,
+            {m: available_case_map.get(m, []) for m in models},
+            {m: _native_runnable_benchmark_set(m) for m in models},
+            prepared_input_bindings=native_prepared_input_bindings,
+        )
+        validation_image_map.update(resolved_images)
+        validation_image_sources.update(resolved_sources)
+        validation_image_map_json = json.dumps(validation_image_map, separators=(",", ":"))
         stage["vendor_full_quality_requests"] = {
             "required": vendor_full_quality_required,
             "complete": bool(
@@ -21624,7 +21799,7 @@ class EvaluationWorkflowRunner:
             repetition_count_requested=repetitions,
         )
         for producer in active_native_producers:
-            runnable = copy.deepcopy(native_supported_case_map)
+            runnable = _backend_case_map(producer, native_supported_case_map)
             setup = native_setup_ids.get(producer, "")
             row_errors = split_quality_row_errors_by_setup.get(setup) or {}
             for planned_job in expected_native_rows:
@@ -23834,6 +24009,9 @@ class EvaluationWorkflowRunner:
                     "--strict" if probe_strict else "--no-strict",
                     "--include-raw-parquet" if probe_include_raw else "--no-include-raw-parquet",
                 ]
+                from .hardware_matrix import default_hardware_setups_file
+                cmd += ["--hardware-setups-file", self._native_energy_registry_file()]
+                cmd += campaign_budget_profile_args(cfg, self.run_dir)
                 if validation_path.is_file():
                     cmd += ["--validation-summary", str(validation_path)]
                 # One wrapper process performs all repeats.  The outer timeout
@@ -24136,7 +24314,7 @@ class EvaluationWorkflowRunner:
                         f"regular file: {native_registry_path}"
                     )
                 native_energy_contract_args = [
-                    "--hardware-setups-file", str(native_registry_path),
+                    "--hardware-setups-file", self._native_energy_registry_file(),
                     "--physical-scope", native_energy_scope,
                     "--window-label", native_energy_window,
                     "--calibration-manifest", str(calibration_path or calibration_raw),
@@ -24146,6 +24324,7 @@ class EvaluationWorkflowRunner:
                     "--model-hash-map", str(model_hash_map_path),
                     "--model-hash-map-sha256", str(model_hash_map_hash),
                 ]
+                native_energy_contract_args += campaign_budget_profile_args(cfg, self.run_dir)
                 native_energy_window_ab = _native_energy_window_ab_v263(
                     self.profile_payload, ecfg
                 )
@@ -26994,6 +27173,10 @@ class EvaluationWorkflowRunner:
                 shape = shapes[0]
                 if len(shape) == 3 and shape[-1] == 6:
                     result["stage"] = "decoded_nms"
+                    from ..native_output_endpoint import inspect_bn6_candidate_graph
+                    selection = inspect_bn6_candidate_graph(path)
+                    if selection:
+                        result["candidate_selection"] = selection
                 elif len(shape) >= 3:
                     # A single detection matrix still requires the frozen
                     # decoder/NMS adapter.  Keep that semantic distinction even
@@ -27054,7 +27237,7 @@ class EvaluationWorkflowRunner:
 
         source_detection_endpoint = (
             _source_onnx_detection_endpoint(model_path)
-            if requires_raw_head else {
+            if task == "detection" else {
                 "stage": "not_detection",
                 "multiscale_raw_head": False,
                 "output_shapes": [],
@@ -28540,6 +28723,7 @@ class EvaluationWorkflowRunner:
                 },
             )
             self._stop_requested = True
+            self._shutdown_management_services_bounded(timeout_s=0)
             failure_kind = str(
                 terminal_remote_failure.get("failure_kind") or
                 "terminal_remote_execution_failure"
@@ -28764,6 +28948,7 @@ class EvaluationWorkflowRunner:
         from .result_context import load_benchmark_source_contexts
         normalized_rows, source_records = normalize_benchmark_files(
             write_diagnostic_summaries=True,
+            record_completion_errors=True,
             model_id=model_id, source_paths=sources,
             source_contexts=load_benchmark_source_contexts(
                 bench_results_dir, model_id=model_id,

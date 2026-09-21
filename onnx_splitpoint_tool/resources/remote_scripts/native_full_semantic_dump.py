@@ -355,6 +355,7 @@ def _direct_normalization_for_outputs(
     if len(input_shape) != 3 or input_shape[0] <= 0 or input_shape[1] <= 0:
         raise RuntimeError("direct_bn6_input_hwc_shape_invalid")
     direct_contract = build_frozen_decoded_nms_normalization_contract(
+        source_completed=True,
         model_id=model,
         outputs=outputs,
         input_hw=[int(input_shape[0]), int(input_shape[1])],

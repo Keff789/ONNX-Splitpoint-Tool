@@ -19,6 +19,7 @@ import hashlib
 import json
 import math
 import os
+import platform
 import queue
 import random
 import shutil
@@ -106,6 +107,8 @@ from onnx_splitpoint_tool.native_detection_postprocess import (
     verify_detection_completion_execution_attestation,
     verify_detection_completion_execution_contract,
 )
+from onnx_splitpoint_tool.runners.request_latency import RequestLatency
+from onnx_splitpoint_tool.runners.harness.classification import ClassificationCompletion
 from onnx_splitpoint_tool.runners._types import RunCfg
 from onnx_splitpoint_tool.runners.backends.hailo_backend import HailoBackend
 
@@ -744,6 +747,9 @@ def _hailo8_python_fifo_run(
         trt_outputs = trt.run({name: boundary})
         warmup_completion_runtime.process(trt_outputs)
 
+    request_latency = RequestLatency(int(frames), task_complete=True,
+        start_anchor="hailo8_fifo:before_backend_run",
+        end_anchor="hailo8_fifo:after_completion_runtime_process", enabled=not duration_s)
     fifo: queue.Queue[Any] = queue.Queue(
         maxsize=max(1, int(queue_depth))
     )
@@ -783,6 +789,7 @@ def _hailo8_python_fifo_run(
                 )
                 or (not duration_mode and produced < int(frames))
             ):
+                request_latency.start(produced)
                 t0 = time.perf_counter()
                 hailo_outputs = backend.run(
                     prepared, dict(inputs)
@@ -801,7 +808,7 @@ def _hailo8_python_fifo_run(
                         "Hailo-8 runtime boundary evidence drift"
                     )
                 boundary_evidence.update(evidence)
-                if not put_payload((name, boundary)):
+                if not put_payload((produced, name, boundary)):
                     break
                 p1_times.append((t1 - t0) * 1000.0)
                 handoff_times.append((t2 - t1) * 1000.0)
@@ -832,12 +839,13 @@ def _hailo8_python_fifo_run(
                     continue
                 if item is sentinel:
                     break
-                name, boundary = item
+                request_id, name, boundary = item
                 t0 = time.perf_counter()
                 trt_outputs = trt.run({name: boundary})
                 t1 = time.perf_counter()
                 completion_runtime.process(trt_outputs)
                 t2 = time.perf_counter()
+                request_latency.complete(request_id)
                 p2_times.append((t1 - t0) * 1000.0)
                 completion_times.append((t2 - t1) * 1000.0)
                 counters["completed"] += 1
@@ -860,7 +868,7 @@ def _hailo8_python_fifo_run(
     producer_thread.join()
     consumer_thread.join()
     if errors:
-        raise RuntimeError("; ".join(errors))
+        raise request_latency.failure("; ".join(errors))
     completed = int(counters["completed"])
     if (
         completed <= 0
@@ -885,6 +893,7 @@ def _hailo8_python_fifo_run(
     p2_thread_ms = p2_ms + completion_ms
     cycle_ms = max(p1_thread_ms, p2_thread_ms)
     result = {
+        "request_latency": request_latency.report(),
         "ok": True,
         "mode": "hailo8_python_vstreams_trt_completed_detection_fifo",
         "producer_impl": "hailo8_python_vstreams_fifo",
@@ -931,10 +940,14 @@ def _hailo8_python_fifo_run(
         "fifo_payload_ownership": "owned_no_alias_to_vstreams_output",
         "strict_quality_boundary": boundary_evidence,
     }
-    result.update(_hailo8_completion_fields(
-        completion_runtime,
-        completed_work_units=completed,
-    ))
+    if isinstance(completion_runtime, ClassificationCompletion):
+        result.update(completion_runtime.report())
+        result["mode"] = "hailo8_python_vstreams_trt_completed_classification_fifo"
+    else:
+        result.update(_hailo8_completion_fields(
+            completion_runtime,
+            completed_work_units=completed,
+        ))
     return result
 
 
@@ -1310,7 +1323,9 @@ CPP_SOURCE = r'''
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cmath>
 #include <cstdint>
+#include <exception>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1641,6 +1656,30 @@ private:
     bool quality_boundary_verified_ = false;
 };
 
+// Classification ranking matches stable descending float32 quality indices.
+static std::vector<size_t> classification_top5(const std::vector<float> &values) {
+    if (values.empty()) throw std::runtime_error("classification_output_shape_invalid");
+    for (float value : values) if (!std::isfinite(value)) throw std::runtime_error("classification_output_nonfinite");
+    std::vector<size_t> order(values.size());
+    std::iota(order.begin(), order.end(), 0);
+    const size_t k = std::min<size_t>(5, order.size());
+    std::partial_sort(order.begin(), order.begin() + k, order.end(), [&](size_t a, size_t b) {
+        return values[a] > values[b] || (values[a] == values[b] && a < b);
+    });
+    order.resize(k);
+    return order;
+}
+
+static float classification_half(uint16_t bits) {
+    const int exponent = (bits >> 10) & 31;
+    const int fraction = bits & 1023;
+    const float value = exponent == 31 ? (fraction ? std::numeric_limits<float>::quiet_NaN() : std::numeric_limits<float>::infinity())
+        : exponent == 0 ? std::ldexp(static_cast<float>(fraction), -24)
+        : std::ldexp(static_cast<float>(1024 + fraction), exponent - 25);
+    return bits & 32768 ? -value : value;
+}
+// End classification scalar helpers.
+
 struct TensorBinding {
     std::string name;
     bool is_input = false;
@@ -1690,6 +1729,72 @@ public:
         if (stream_) cudaStreamDestroy(stream_);
     }
     const TensorBinding &input() const { return bindings_.at(static_cast<size_t>(input_index_)); }
+
+    void prepare_classification() {
+        if (!copy_outputs_) throw std::runtime_error("classification_requires_current_host_outputs");
+        bool selected_named = false;
+        for (size_t i = 0; i < bindings_.size(); ++i) {
+            const auto &b = bindings_[i];
+            if (b.is_input || b.dims.nbDims < 1 || b.elem_count == 0) continue;
+            int inner_axes = 0;
+            for (int j = 1; j < b.dims.nbDims; ++j) if (b.dims.d[j] > 1) ++inner_axes;
+            if (b.dims.nbDims > 2 && inner_axes > 1) continue;
+            size_t batch = b.dims.nbDims == 1 ? 1 : static_cast<size_t>(b.dims.d[0]);
+            size_t classes = b.elem_count / batch;
+            std::string name = b.name;
+            std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return std::tolower(c); });
+            bool named = name.find("logit") != std::string::npos || name.find("prob") != std::string::npos
+                || name.find("softmax") != std::string::npos || name.find("pred") != std::string::npos;
+            if (classification_index_ < 0 || (!selected_named && (named || classes > classification_values_.size()))) {
+                classification_index_ = static_cast<int>(i);
+                classification_batch_ = batch;
+                classification_values_.resize(classes);
+                selected_named = named;
+            }
+        }
+        if (classification_index_ < 0) throw std::runtime_error("classification_output_shape_invalid");
+        classification_results_.resize(classification_batch_);
+    }
+
+    void complete_classification() {
+        const auto &b = bindings_.at(static_cast<size_t>(classification_index_));
+        for (size_t batch = 0; batch < classification_batch_; ++batch) {
+            for (size_t c = 0; c < classification_values_.size(); ++c) {
+                const size_t i = batch * classification_values_.size() + c;
+                float value;
+                switch (b.dtype) {
+                    case nvinfer1::DataType::kFLOAT: value = static_cast<const float*>(b.host)[i]; break;
+                    case nvinfer1::DataType::kHALF: value = classification_half(static_cast<const uint16_t*>(b.host)[i]); break;
+                    case nvinfer1::DataType::kINT8: value = static_cast<const int8_t*>(b.host)[i]; break;
+                    case nvinfer1::DataType::kUINT8: value = static_cast<const uint8_t*>(b.host)[i]; break;
+                    case nvinfer1::DataType::kINT32: value = static_cast<float>(static_cast<const int32_t*>(b.host)[i]); break;
+#if NV_TENSORRT_MAJOR >= 10
+                    case nvinfer1::DataType::kINT64: value = static_cast<float>(static_cast<const int64_t*>(b.host)[i]); break;
+#endif
+                    default: throw std::runtime_error("classification_output_dtype_invalid");
+                }
+                classification_values_[c] = value;
+            }
+            classification_results_[batch] = classification_top5(classification_values_);
+        }
+    }
+
+    void write_classification(std::ostream &out) const {
+        out << "  \"classification_topk\": {\"top1\":[";
+        for (size_t batch = 0; batch < classification_results_.size(); ++batch) {
+            if (batch) out << ",";
+            out << classification_results_[batch].at(0);
+        }
+        out << "],\"top5\":[";
+        for (size_t batch = 0; batch < classification_results_.size(); ++batch) {
+            if (batch) out << ",";
+            out << "[";
+            const auto &top5 = classification_results_[batch];
+            for (size_t k = 0; k < top5.size(); ++k) { if (k) out << ","; out << top5[k]; }
+            out << "]";
+        }
+        out << "]},\n";
+    }
 
     void copy_input_from_boundary(const std::vector<uint8_t> &boundary) {
         TensorBinding &in = bindings_.at(static_cast<size_t>(input_index_));
@@ -1778,6 +1883,10 @@ private:
     std::unique_ptr<nvinfer1::IExecutionContext, ContextDel> context_;
     std::vector<TensorBinding> bindings_;
     int input_index_ = -1;
+    int classification_index_ = -1;
+    size_t classification_batch_ = 1;
+    std::vector<float> classification_values_;
+    std::vector<std::vector<size_t>> classification_results_;
     cudaStream_t stream_ = nullptr;
     bool copy_outputs_ = true;
 };
@@ -1796,6 +1905,8 @@ int main(int argc, char **argv) {
         auto images = list_images(opt.image);
         HailoStage hailo(opt);
         TRTStage trt(opt.engine, opt.copy_outputs);
+        const bool classification = opt.task == "classification";
+        if (classification) trt.prepare_classification();
         cv::Mat prepared_rgb;
         std::string prepared_image_path;
         double prepared_feed_setup_ms = 0.0;
@@ -1849,16 +1960,40 @@ int main(int argc, char **argv) {
             hailo.infer(rgb, warmup_boundary);
             trt.copy_input_from_boundary(warmup_boundary);
             trt.run();
+            if (classification) trt.complete_classification();
         }
 
         const int total = duration_mode ? std::numeric_limits<int>::max() : opt.frames;
         std::atomic<int> measured_frames{0};
+        const bool record_requests = !duration_mode && (opt.reuse_preprocessed_input || !opt.prepared_input_rgb.empty()) && opt.copy_outputs;
+        std::vector<int64_t> request_starts(record_requests ? opt.frames : 0, -1);
+        std::vector<int64_t> request_ends(record_requests ? opt.frames : 0, -1);
         std::vector<Slot> slots(static_cast<size_t>(opt.queue_depth));
         for (auto &s : slots) s.boundary.resize(hailo.output_frame_size());
         BlockingQueue<int> free_q(static_cast<size_t>(opt.queue_depth));
         BlockingQueue<int> filled_q(static_cast<size_t>(opt.queue_depth));
         for (int i = 0; i < opt.queue_depth; ++i) free_q.push(i);
         Stats pre_s, p1_s, handoff_s, p2run_s, p1thread_s, p2thread_s, latency_s;
+        std::exception_ptr worker_error;
+        std::mutex error_mu;
+        auto fail_worker = [&]() {
+            { std::lock_guard<std::mutex> guard(error_mu);
+              if (!worker_error) worker_error = std::current_exception(); }
+            free_q.close();
+            filled_q.close();
+        };
+        auto write_request_latency = [&](std::ostream &out) {
+        out << ",\n  \"request_latency\": {\"schema\":\"onnx-splitpoint/request-latency\",\"schema_version\":1,\"timestamp_unit\":\"ns\",\"clock\":\"steady_clock_ns\",\"clock_domain\":\"steady_clock_ns:runtime_report_local\",\"task_complete\":" << (classification ? "true" : "false") << ",\"start_endpoint\":\"prepared_input_before_first_admission\",\"end_endpoint\":\"" << (classification ? "host_result_after_required_transfer_sync_and_task_postprocess" : "host_model_outputs_without_task_postprocess") << "\",\"start_anchor\":\"H8_CPP:before_free_q_pop_prepared_feed\",\"end_anchor\":\"H8_CPP:after_synchronized_trt_outputs_and_required_completion\",\"admission_wait_included\":true,\"warmup_included\":false,\"expected_count\":" << opt.frames << ",\"disabled_reason\":\"" << (record_requests ? "" : "requires_fixed_prepared_feed_and_host_outputs") << "\",\"errors\":{\"worker_failures\":" << (worker_error ? 1 : 0) << "},\"pairs\":[";
+        for (size_t i = 0; i < request_starts.size(); ++i) {
+            if (i) out << ",";
+            out << "[" << i << ",";
+            if (request_starts[i] < 0) out << "null"; else out << request_starts[i];
+            out << ",";
+            if (request_ends[i] < 0) out << "null"; else out << request_ends[i];
+            out << "]";
+        }
+        out << "]}";
+        };
         Clock::time_point meas_start, meas_end;
         std::mutex start_mu;
         std::condition_variable start_cv;
@@ -1872,12 +2007,14 @@ int main(int argc, char **argv) {
         };
 
         auto p1_thread = [&]() {
+            try {
             wait_for_measurement_start();
             for (int seq = 0; seq < total; ++seq) {
                 if (duration_mode) {
                     double elapsed_s = std::chrono::duration<double>(Clock::now() - meas_start).count();
                     if (elapsed_s >= opt.duration_s) break;
                 }
+                if (record_requests) request_starts.at(seq) = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count();
                 int idx;
                 if (!free_q.pop(idx)) break;
                 if (duration_mode) {
@@ -1910,9 +2047,11 @@ int main(int argc, char **argv) {
                 filled_q.push(idx);
             }
             filled_q.close();
+            } catch (...) { fail_worker(); }
         };
 
         auto p2_thread = [&]() {
+            try {
             wait_for_measurement_start();
             int idx;
             while (filled_q.pop(idx)) {
@@ -1921,18 +2060,22 @@ int main(int argc, char **argv) {
                 trt.copy_input_from_boundary(slot.boundary);
                 auto t1 = Clock::now();
                 trt.run();
+                auto host_end = Clock::now();
+                if (classification) trt.complete_classification();
                 auto t2 = Clock::now();
+                if (record_requests) request_ends.at(slot.seq - opt.warmup) = std::chrono::duration_cast<std::chrono::nanoseconds>(t2.time_since_epoch()).count();
                 measured_frames.fetch_add(1);
                 pre_s.add(slot.pre_ms);
                 p1_s.add(slot.p1_ms);
                 handoff_s.add(ms_since(t0,t1));
-                p2run_s.add(ms_since(t1,t2));
+                p2run_s.add(ms_since(t1,host_end));
                 p1thread_s.add(slot.pre_ms + slot.p1_ms);
                 p2thread_s.add(ms_since(t0,t2));
                 latency_s.add(slot.pre_ms + slot.p1_ms + ms_since(t0,t2));
                 meas_end = t2;
                 free_q.push(idx);
             }
+            } catch (...) { fail_worker(); }
         };
 
         std::thread a(p1_thread);
@@ -1946,6 +2089,14 @@ int main(int argc, char **argv) {
         start_cv.notify_all();
         a.join();
         b.join();
+        if (worker_error) {
+            std::ofstream failure_out(opt.out_json);
+            failure_out << "{\"ok\":false,\"status\":\"runtime_failed\"";
+            write_request_latency(failure_out);
+            failure_out << "}\n";
+            failure_out.close();
+            std::rethrow_exception(worker_error);
+        }
         double makespan_ms = ms_since(meas_start, meas_end);
         int measured_count = measured_frames.load();
         if (measured_count <= 0 || makespan_ms <= 0.0) throw std::runtime_error("no measured frames completed");
@@ -2049,13 +2200,19 @@ int main(int argc, char **argv) {
         out << "  \"queue_depth\": " << opt.queue_depth << ",\n";
         out << "  \"hailo_format\": \"" << opt.hailo_format << "\",\n";
         out << "  \"task\": \"" << opt.task << "\",\n";
+        if (classification) {
+            trt.write_classification(out);
+            out << "  \"task_complete\": true,\n  \"completed_task_stage\": \"classification_top1_top5\",\n";
+            out << "  \"measurement_endpoint\": \"completed_task\",\n  \"postprocess_included\": true,\n  \"postprocess_completion_verified\": true,\n";
+            out << "  \"postprocess_completed_frames\": " << measured_count << ",\n";
+        }
         out << "  \"preprocess_mode_effective\": \"" << opt.preprocess_mode << "\",\n";
         out << "  \"preprocess_pad_value_effective\": " << ((opt.preprocess_mode == "letterbox") ? opt.letterbox_pad_value : 0) << ",\n";
         out << "  \"letterbox_pad_value\": " << opt.letterbox_pad_value << ",\n";
         out << "  \"reuse_preprocessed_input\": " << (opt.reuse_preprocessed_input ? "true" : "false") << ",\n";
         out << "  \"prepared_feed_contract\": \"" << (opt.reuse_preprocessed_input ? "prepared_feed_preprocess_outside_counted_loop" : "per_frame_preprocess") << "\",\n";
         out << "  \"prepared_feed_setup_ms\": " << prepared_feed_setup_ms << ",\n";
-        out << "  \"measurement_boundary\": \"workers_ready_to_last_completed_trt_frame\",\n";
+        out << "  \"measurement_boundary\": \"" << (classification ? "workers_ready_to_last_completed_task_frame" : "workers_ready_to_last_completed_trt_frame") << "\",\n";
         out << "  \"warmup_contract\": \"fully_drained_before_worker_start\",\n";
         out << "  \"dump_inference_scope\": \"separate_bound_inference_after_measurement\",\n";
         out << "  \"trt_host_memory_policy\": \"cuda_pinned_all_bindings\",\n";
@@ -2082,6 +2239,7 @@ int main(int argc, char **argv) {
         out << "  \"paper_equivalent_fps\": " << paper_fps << ",\n";
         out << "  \"makespan_ms\": " << makespan_ms << ",\n";
         out << "  \"fps_makespan\": " << fps_makespan;
+        write_request_latency(out);
         if (!output_manifest.empty()) out << ",\n  \"native_fifo_output_manifest\": \"" << output_manifest << "\"";
         if (!boundary_manifest.empty()) out << ",\n  \"native_fifo_boundary_manifest\": \"" << boundary_manifest << "\"";
         out << "\n}\n";
@@ -2423,6 +2581,7 @@ def _native_command_contract(
         "engine_sha256": _sha256_file(engine),
         "native_executable": str(executable),
         "native_executable_sha256": _sha256_file(executable),
+        "wrapper_build": dict(getattr(args, 'wrapper_build', {}) or {}),
         "artifacts": {
             "python_executable": {"path": str(sys.executable), "sha256": _sha256_file(sys.executable)},
             "hef": {"path": str(hef), "sha256": _sha256_file(hef)},
@@ -2480,7 +2639,7 @@ def _native_command_contract(
             if producer_impl == "hailo8_python_vstreams_fifo"
             else "raw_model_outputs"
             if str(args.task) == "detection"
-            else "model_outputs"
+            else "completed_task"
         ),
         "runtime_options": {
             "measurement_endpoint": (
@@ -2488,7 +2647,7 @@ def _native_command_contract(
                 if producer_impl == "hailo8_python_vstreams_fifo"
                 else "raw_model_outputs"
                 if str(args.task) == "detection"
-                else "model_outputs"
+                else "completed_task"
             ),
             "frames": int(args.frames),
             "duration_s": float(args.duration_s or 0.0),
@@ -2960,6 +3119,7 @@ def _energy_workload_only(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 9
+        print(json.dumps({key: payload.get(key) for key in ("task", "task_complete", "completed_task_stage", "completed_work_units", "completed_frames", "postprocess_included", "postprocess_completed_frames", "postprocess_completion_verified", "source_contract_sha256",)}))
         print(f"__SPLITPOINT_WORK_UNITS__={count}")
         print(
             "__SPLITPOINT_WORK_UNITS_SOURCE__="
@@ -3005,6 +3165,13 @@ def _energy_workload_only(args: argparse.Namespace) -> int:
     if count <= 0:
         print("split_energy_exact_completed_frames_missing", file=sys.stderr)
         return 10
+    if task == "classification" and (
+        payload.get("completed_task_stage") != "classification_top1_top5"
+        or payload.get("postprocess_completion_verified") is not True
+        or int(payload.get("postprocess_completed_frames") or 0) != count
+    ):
+        print("energy_classification_completion_count_mismatch", file=sys.stderr)
+        return 10
     if isinstance(payload, dict):
         payload.update({
             "completed_frames": count,
@@ -3016,6 +3183,7 @@ def _energy_workload_only(args: argparse.Namespace) -> int:
             "prepared_input_source": "preflight_verified_contract_artifact",
         })
         out_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print(json.dumps({key: payload.get(key) for key in ("task", "task_complete", "completed_task_stage", "completed_work_units", "completed_frames", "postprocess_included", "postprocess_completed_frames", "postprocess_completion_verified", "source_contract_sha256",)}))
     print(f"__SPLITPOINT_WORK_UNITS__={count}")
     print("__SPLITPOINT_WORK_UNITS_SOURCE__=completed_frames")
     print("__SPLITPOINT_WORK_UNITS_EXACT__=1")
@@ -3854,6 +4022,16 @@ def _run_detection_dual_endpoint(
     for path in (raw_result, completed_result):
         path.parent.mkdir(parents=True, exist_ok=True)
     phases: list[dict[str, Any]] = []
+    if not args.run:
+        # Only the raw endpoint needs a C++ wrapper. Preparation must never
+        # demand inference outputs or enter the Python completion hotloop.
+        from onnx_splitpoint_tool.native_progress import run_streaming
+        command = _dual_child_command(
+            args=args, endpoint='raw_model_outputs', work=work,
+            result_json=raw_result,
+            config_json=_endpoint_config_path(work, 'raw_model_outputs'),
+        )
+        return run_streaming(command, timeout=298, label='hailo8-wrapper-prepare').returncode
     # Run raw first so a completed-task failure never erases the recovered
     # hardware-fast observation.  The combined result is still fail-closed.
     for endpoint, result_path in (
@@ -4006,6 +4184,70 @@ def _run_detection_dual_endpoint(
         print("dual_endpoint_payload_parity_failed", file=sys.stderr)
         return 9
     return 0
+
+
+def _prepare_cpp_wrapper(work: Path, config_json: Path, cfg: dict, previous: Mapping[str, Any], *, allow_build: bool) -> dict:
+    """Reuse the existing config receipt, binding generated sources to the binary.
+
+    One failed/unfinished generation in this work directory is terminal. Source
+    changes create a new generation; runtime/model options never force a build.
+    """
+    from onnx_splitpoint_tool.native_progress import run_streaming
+    build_dir = work / 'build'
+    executable = build_dir / 'split_native_hailo_trt_fifo'
+    cmake_cache = build_dir / 'CMakeCache.txt'
+    identity = {
+        'generated_cpp_sha256': hashlib.sha256(CPP_SOURCE.encode()).hexdigest(),
+        'cmake_sha256': hashlib.sha256(CMAKE_TXT.encode()).hexdigest(),
+        'target_architecture': platform.machine(),
+        'configure_options': ['-DCMAKE_BUILD_TYPE=Release'],
+    }
+    saved = dict(previous.get('wrapper_build') or {})
+    matching = saved.get('identity') == identity
+    if (matching and saved.get('status') == 'ready'
+            and executable.is_file() and cmake_cache.is_file()
+            and saved.get('native_executable_sha256') == _sha256_file(executable)
+            and saved.get('cmake_cache_sha256') == _sha256_file(cmake_cache)):
+        receipt = dict(saved, reused=True, compiler_dispatch_count=0)
+        cfg['wrapper_build'] = receipt
+        config_json.write_text(json.dumps(cfg, indent=2), encoding='utf-8')
+        return receipt
+    if not allow_build:
+        raise RuntimeError('native_wrapper_reuse_binding_missing_or_mismatched')
+    if matching and saved.get('status') in {'started', 'failed'}:
+        raise RuntimeError('native_wrapper_generation_already_attempted')
+    receipt = {'identity': identity, 'status': 'started', 'reused': False,
+               'compiler_dispatch_count': 1, 'steps': [], 'timeout_s': 290}
+    cfg['wrapper_build'] = receipt
+    config_json.write_text(json.dumps(cfg, indent=2), encoding='utf-8')
+    build_dir.mkdir(exist_ok=True)
+    started = time.monotonic()
+    deadline = started + 290  # reserve cleanup inside the 300 s parent budget
+    try:
+        for command in (
+            ['cmake', '-S', str(work), '-B', str(build_dir), *identity['configure_options']],
+            ['cmake', '--build', str(build_dir), '-j'],
+        ):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('native_wrapper_build_deadline')
+            result = run_streaming(command, cwd=work, timeout=remaining, label='hailo8-wrapper-build')
+            receipt['steps'].append({'command': command, 'returncode': result.returncode,
+                                     'elapsed_s': result.elapsed_s})
+            if result.returncode:
+                raise RuntimeError(f'native_wrapper_build_failed: rc={result.returncode}')
+        if not executable.is_file() or not cmake_cache.is_file():
+            raise RuntimeError('native_wrapper_build_output_missing')
+        receipt.update(status='ready', native_executable_sha256=_sha256_file(executable),
+                       cmake_cache_sha256=_sha256_file(cmake_cache))
+    except BaseException as exc:
+        receipt.update(status='failed', error=f'{type(exc).__name__}: {exc}')
+        raise
+    finally:
+        receipt['elapsed_s'] = time.monotonic() - started
+        config_json.write_text(json.dumps(cfg, indent=2), encoding='utf-8')
+    return receipt
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description='Build/run native HailoRT->TensorRT FIFO fastpath for a BenchmarkSet case.')
@@ -4168,7 +4410,10 @@ def main() -> int:
         'native_command_contract_status': 'pending_native_executable',
     }
     config_json = Path(args.config_json).expanduser().resolve() if args.config_json else work / 'native_fifo_config.json'
+    previous_config = _load_json(config_json) if config_json.is_file() else {}
     config_json.parent.mkdir(parents=True, exist_ok=True)
+    if previous_config.get('wrapper_build'):
+        cfg['wrapper_build'] = previous_config['wrapper_build']
     config_json.write_text(json.dumps(cfg, indent=2), encoding='utf-8')
     print('[native-fifo] work_dir:', work)
     print('[native-fifo] hef:', hef)
@@ -4189,19 +4434,10 @@ def main() -> int:
         args.task == "detection"
         and args.detection_endpoints == "completed_task"
     )
-    if args.build and not python_detection:
-        build_dir = work / 'build'
-        build_dir.mkdir(exist_ok=True)
-        cmd1 = ['cmake', '-S', str(work), '-B', str(build_dir), '-DCMAKE_BUILD_TYPE=Release']
-        cmd2 = ['cmake', '--build', str(build_dir), '-j']
-        print('[native-fifo] cmake:', ' '.join(cmd1))
-        r1 = subprocess.run(cmd1, cwd=str(work))
-        if r1.returncode != 0:
-            return r1.returncode
-        print('[native-fifo] build:', ' '.join(cmd2))
-        r2 = subprocess.run(cmd2, cwd=str(work))
-        if r2.returncode != 0:
-            return r2.returncode
+    if not python_detection:
+        args.wrapper_build = _prepare_cpp_wrapper(
+            work, config_json, cfg, previous_config, allow_build=bool(args.build),
+        )
 
     exe = (
         Path(sys.executable).resolve()
@@ -4235,21 +4471,28 @@ def main() -> int:
                 if args.result_json else work / "native_fifo_results.json"
             )
             out_json.parent.mkdir(parents=True, exist_ok=True)
-            payload, prepared_input_path, completion_contract = (
-                _run_hailo8_python_detection(
-                    bs=bs,
-                    case=case,
-                    hef=hef,
-                    engine=engine,
-                    image=image,
-                    work=work,
-                    args=args,
-                    quality_binding=quality_binding,
-                    expected_boundary_name=expected_boundary_name,
-                    expected_boundary_shape=expected_boundary_shape,
-                    expected_boundary_dtype=expected_boundary_dtype,
+            try:
+                payload, prepared_input_path, completion_contract = (
+                    _run_hailo8_python_detection(
+                        bs=bs,
+                        case=case,
+                        hef=hef,
+                        engine=engine,
+                        image=image,
+                        work=work,
+                        args=args,
+                        quality_binding=quality_binding,
+                        expected_boundary_name=expected_boundary_name,
+                        expected_boundary_shape=expected_boundary_shape,
+                        expected_boundary_dtype=expected_boundary_dtype,
+                    )
                 )
-            )
+            except Exception as exc:
+                out_json.write_text(json.dumps({"ok": False, "status": "runtime_failed",
+                    "task": "detection", "model": bs.name, "case": case,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "request_latency": getattr(exc, "request_latency", {})}, indent=2))
+                raise
             command_contract = _native_command_contract(
                 bs=bs,
                 case=case,
@@ -4601,7 +4844,12 @@ def main() -> int:
             out_json.write_text(json.dumps(payload, indent=2), encoding='utf-8')
         print('[native-fifo] results:', out_json)
         if len(repetition_payloads) != int(args.repetitions):
+            failed_latency = {}
+            if failed_result_path and Path(failed_result_path).is_file():
+                try: failed_latency = _load_json(Path(failed_result_path)).get('request_latency') or {}
+                except (OSError, ValueError): pass
             err = {
+                'request_latency': failed_latency,
                 'ok': False,
                 'mode': 'native_hailort_tensorrt_fifo',
                 'returncode': 8 if raw_feed_error else int(r.returncode if r is not None else 1),
@@ -4661,27 +4909,27 @@ def main() -> int:
                         'measurement_endpoint': (
                             'raw_model_outputs'
                             if args.task == 'detection'
-                            else 'model_outputs'
+                            else 'completed_task'
                         ),
                         'performance_endpoint': (
                             'raw_model_outputs'
                             if args.task == 'detection'
-                            else 'model_outputs'
+                            else 'completed_task'
                         ),
                         'primary_performance_endpoint': (
                             'raw_model_outputs'
                             if args.task == 'detection'
-                            else 'model_outputs'
+                            else 'completed_task'
                         ),
                         'application_performance_endpoint': (
                             'completed_task'
                             if args.task == 'detection'
-                            else 'model_outputs'
+                            else 'completed_task'
                         ),
                         'energy_performance_endpoint': (
                             'completed_task'
                             if args.task == 'detection'
-                            else 'model_outputs'
+                            else 'completed_task'
                         ),
                         'endpoint_energy_eligible': args.task != 'detection',
                         'input_image': str(image),
@@ -4874,17 +5122,17 @@ def main() -> int:
                         'performance_endpoint': (
                             'raw_model_outputs'
                             if args.task == 'detection'
-                            else 'model_outputs'
+                            else 'completed_task'
                         ),
                         'primary_performance_endpoint': (
                             'raw_model_outputs'
                             if args.task == 'detection'
-                            else 'model_outputs'
+                            else 'completed_task'
                         ),
                         'energy_performance_endpoint': (
                             'completed_task'
                             if args.task == 'detection'
-                            else 'model_outputs'
+                            else 'completed_task'
                         ),
                         'throughput_primary_metric': (
                             'raw_model_outputs_fifo_makespan_fps'

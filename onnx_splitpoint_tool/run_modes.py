@@ -23,6 +23,7 @@ import json
 import os
 import stat
 import tempfile
+import shutil
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,8 @@ from typing import Any, Dict, Mapping, MutableMapping
 
 import yaml
 
+from .accuracy_reporting import DEFAULT_REPORTING_POLICY
+from .backend_backfill import DEFAULT_BACKFILL
 from .cache_verify_policy import apply_cache_verify_only_policy
 from .config_values import parse_config_bool, validate_profile_config_booleans
 from .hailo_compiler_context import normalize_compute_by_family, resolve_compute_selection
@@ -39,7 +42,7 @@ from .hailo_timeout_policy import (
 )
 
 RUN_MODE_SCHEMA = "onnx-splitpoint/run-modes"
-RUN_MODE_SCHEMA_VERSION = 13
+RUN_MODE_SCHEMA_VERSION = 15
 DEFAULT_MODE_ID = "standard"
 _MODE_ORDER = ("smoke", "standard", "final")
 EVALUATED_MATRIX_CLAIM_SCOPE = "evaluated_matrix"
@@ -451,12 +454,12 @@ def _legacy_v11_final_mode() -> Dict[str, Any]:
 
 
 def _final_quality_mode(standard_mode: Mapping[str, Any]) -> Dict[str, Any]:
-    """Build Final Quality as Standard with only a stronger quality budget.
+    """Build Final Quality with stronger quality and Native performance budgets.
 
     This intentionally retains the complete Standard execution path: relaxed
     sampled integrity checks, balanced compiler settings, timing and Native
-    budgets, cache policy, reporting and energy behaviour.  The only semantic
-    effort increase is the task-quality evaluation itself.
+    contracts, cache policy, reporting and energy behaviour. R8 keeps the
+    original Final Native effort while making Standard useful for development.
     """
 
     mode = copy.deepcopy(dict(standard_mode))
@@ -480,6 +483,7 @@ def _final_quality_mode(standard_mode: Mapping[str, Any]) -> Dict[str, Any]:
         "dataset_tier": "final",
         "bootstrap_repetitions": 5000,
     })
+    mode["runtime"]["native"].update(frames=1000, warmup=100, repetitions=3)
     return mode
 
 
@@ -506,8 +510,8 @@ def default_run_modes_config() -> Dict[str, Any]:
         benchmark_warmup=3,
         benchmark_runs=5,
         benchmark_timeout=0,
-        native_frames=1000,
-        native_warmup=100,
+        native_frames=100,
+        native_warmup=10,
         native_full=True,
         official_coco=True,
         official_coco_required=False,
@@ -517,10 +521,12 @@ def default_run_modes_config() -> Dict[str, Any]:
         energy_repeats=3,
         energy_policy="best_valid_only",
     )
+    standard_mode["runtime"]["native"]["repetitions"] = 1
     return {
         "schema": RUN_MODE_SCHEMA,
         "schema_version": RUN_MODE_SCHEMA_VERSION,
         "default_mode": DEFAULT_MODE_ID,
+        "backend_backfill": DEFAULT_BACKFILL.copy(),
         "modes": {
             "smoke": _mode(
                 label="Smoke",
@@ -752,6 +758,14 @@ def _migrate_run_modes_config_v60p(payload: Mapping[str, Any]) -> Dict[str, Any]
                 energy["physical_scope"] = "FS"
             if "window_label" not in energy:
                 energy["window_label"] = "command"
+    if version < 14:
+        native = ((modes.get("standard") or {}).get("runtime") or {}).get("native") or {}
+        if tuple(native.get(k) for k in ("frames", "warmup", "repetitions")) == (1000, 100, 3):
+            native.update(frames=100, warmup=10, repetitions=1)
+    if version < 15:
+        backfill = data.get('backend_backfill')
+        if isinstance(backfill, MutableMapping):
+            backfill.setdefault('technical_output_contract_version', 1)
     data["schema_version"] = RUN_MODE_SCHEMA_VERSION
     return data
 
@@ -984,6 +998,8 @@ def save_run_modes_config(
                 handle.write(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
                 handle.flush()
                 os.fsync(handle.fileno())
+            if dst.exists():
+                shutil.copystat(dst, tmp)
             os.replace(tmp, dst)
         finally:
             tmp.unlink(missing_ok=True)
@@ -1250,6 +1266,7 @@ def _materialized_blocks(mode_id: str, mode: Mapping[str, Any], *, profile_name:
             },
         },
         "quality_gate": {
+            "reporting_policy": copy.deepcopy(DEFAULT_REPORTING_POLICY),
             "schema": "onnx-splitpoint/task-quality-policy",
             "schema_version": 3,
             "name": str(quality_cfg.get("profile_id") or f"task_quality_{mode_id}"),
@@ -1476,7 +1493,7 @@ def _materialized_blocks(mode_id: str, mode: Mapping[str, Any], *, profile_name:
             "case_policy": str(native_cfg.get("case_policy") or "all_accepted"),
             "precision": str(native_cfg.get("precision") or "uint8_cast_fp16"),
             "frames": max(1, int(native_cfg.get("frames") or 100)),
-            "warmup": max(0, int(native_cfg.get("warmup") or 10)),
+            "warmup": max(0, int(native_cfg.get("warmup", 10))),
             "repetitions": max(1, int(native_cfg.get("repetitions") or (1 if mode_id == "smoke" else (5 if final else 3)))),
             "queue_depth": max(1, int(native_cfg.get("queue_depth") or 2)),
             "inflight": max(1, int(native_cfg.get("inflight") or 4)),
@@ -1603,6 +1620,21 @@ def apply_run_mode(
         if key in original
     }
     resolved: Dict[str, Any] = _deep_merge(blocks, preserved)
+    if follow:
+        selection = resolved.setdefault('selection_policy', {})
+        if 'backend_backfill' not in selection:
+            selection['backend_backfill'] = copy.deepcopy(cfg.get('backend_backfill') or {'enabled': False})
+            selection['backend_backfill_source'] = 'tool_config'
+    from .backend_backfill import backfill_policy
+    backfill_policy(resolved)
+
+
+    # Existing explicit command/timeout controls survive mode materialisation.
+    # They separate each inference deadline from the enclosing transport/build
+    # deadline without changing the central physical host bindings.
+    old_benchmark = original.get('benchmark_execution') or {}
+    if 'extra_args' in old_benchmark:
+        resolved['benchmark_execution']['extra_args'] = copy.deepcopy(old_benchmark['extra_args'])
 
     # The resolver also accepts the policy below ``workflow`` for compact
     # hand-written profiles.  Preserve that exact nested policy without
@@ -1698,12 +1730,9 @@ def apply_run_mode(
             ] = classification_preprocessing
 
     # Native execution is a profile-level contract.  A run-mode change may
-    # change build/data/quality effort, but it must never replace an already
-    # configured Native runner or Native-energy contract with the mode's
-    # convenience defaults.  New/legacy profiles without either block still
-    # receive the materialised defaults above; once present, the blocks are
-    # authoritative and survive every subsequent mode projection byte-for-
-    # value (apart from the canonical Full-binding projection below).
+    # change build/data/quality effort. Preserve Native execution recipes and
+    # energy contracts, while resolving the three performance budget fields
+    # from the mode unless the user explicitly changed them.
     old_native = (
         copy.deepcopy(dict(original.get("native_producers") or {}))
         if isinstance(original.get("native_producers"), Mapping)
@@ -1714,8 +1743,27 @@ def apply_run_mode(
         if isinstance(original.get("energy"), Mapping)
         else None
     )
+    native_budget_sources = {}
     if old_native is not None:
-        resolved["native_producers"] = old_native
+        resolved["native_producers"] = _deep_merge(resolved["native_producers"], old_native)
+    previous_native = ((existing_snapshot or {}).get("runtime") or {}).get("native") or {}
+    previous_sources = preset.get("native_budget_sources") or {}
+    explicit_native = (preset.get("overrides") or {}).get("native_performance") or {}
+    for field in ("frames", "warmup", "repetitions"):
+        old_value = (old_native or {}).get(field)
+        previous_value = previous_native.get(field)
+        custom = old_value is not None and (previous_value is None or old_value != previous_value)
+        if previous_sources.get(field) == "profile_override":
+            custom = True
+        if field in explicit_native:
+            resolved["native_producers"][field] = explicit_native[field]
+            native_budget_sources[field] = "profile_override"
+        elif custom:
+            resolved["native_producers"][field] = old_value
+            native_budget_sources[field] = "profile_override"
+        else:
+            resolved["native_producers"][field] = blocks["native_producers"][field]
+            native_budget_sources[field] = "tool_config" if follow else "frozen_resume"
     if old_energy is not None:
         resolved["energy"] = old_energy
 
@@ -1854,6 +1902,15 @@ def apply_run_mode(
         native_energy_cfg = {}
     native_energy_cfg = dict(native_energy_cfg)
     native_energy_cfg["enabled"] = bool(native_enabled and native_energy_enabled)
+    if follow and native_energy_cfg["enabled"]:
+        from .energy.task_budget import DEFAULT_CAMPAIGN_BUDGET, campaign_budget_policy
+        if "task_budget" not in native_energy_cfg:
+            native_energy_cfg["task_budget"] = dict(DEFAULT_CAMPAIGN_BUDGET)
+            native_energy_cfg["task_budget_source"] = "product_default"
+        elif (native_energy_cfg.get("task_budget_source") != "product_default"
+              or native_energy_cfg["task_budget"] != DEFAULT_CAMPAIGN_BUDGET):
+            native_energy_cfg["task_budget_source"] = "profile_override"
+        campaign_budget_policy({"energy": native_energy_cfg})
     # Preserve an explicitly configured plan/measure mode.  The simplified GUI
     # already writes its intended value; only profiles without one need the
     # compatibility default.
@@ -1869,6 +1926,10 @@ def apply_run_mode(
     # silently replaced with the mutable per-user default during run-mode
     # materialisation.
     resolved.pop("remote_execution", None)
+    old_remote = original.get('remote_execution') or original.get('remote') or {}
+    if 'timeout_s' in old_remote:
+        resolved.setdefault('remote_execution', {})['timeout_s'] = copy.deepcopy(old_remote['timeout_s'])
+
     resolved.pop("hardware_setups", None)
     resolved.pop("hardware_groups", None)
     resolved.pop("hardware_targets", None)
@@ -1928,7 +1989,9 @@ def apply_run_mode(
         "overrides": {
             "native_enabled": native_enabled,
             "energy_enabled": native_energy_enabled,
+            **({"native_performance": copy.deepcopy(explicit_native)} if explicit_native else {}),
         },
+        "native_budget_sources": native_budget_sources,
         "snapshot": mode,
         "effective": {
             "calibration_items": _task_calibration_items(mode),

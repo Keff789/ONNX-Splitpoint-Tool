@@ -420,6 +420,66 @@ def _completed_execution_host_postprocess(
     }
 
 
+def _generic_execution_host_postprocess(row: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Read the generic runner's measured frozen tail without Native aliases."""
+    evidence = row.get("generic_completion_evidence")
+    if not isinstance(evidence, Mapping) or evidence.get("task") != "detection":
+        return None
+    contract = evidence.get("postprocess_contract") or {}
+    # Direct BN6 normalization has its own endpoint contract. This branch
+    # consumes the existing frozen decode/NMS contract used by raw-head Full.
+    if isinstance(contract, Mapping) and contract.get("normalizer_id"):
+        return None
+    result = {
+        "available": False,
+        "status": "failed_invalid_generic_host_postprocess_evidence",
+        "source": "measured_generic_task_completion",
+        "canonical_evidence_present": True,
+        "legacy_alias_conflict": False,
+        "frozen_contract_sha256": "",
+        "completed_endpoint_contract_sha256": "",
+        "decoder_id": "",
+    }
+    try:
+        from ..runners.task_completion import validate_completion
+        from ..native_detection_postprocess import FrozenPostprocessError, verify_frozen_postprocess_contract
+
+        backend = str(row.get("backend") or "").lower()
+        producer = {
+            "hailo8": "generic_hailo_full", "hailo10": "generic_hailo_full",
+            "hailo10h": "generic_hailo_full", "deepx_m1": "generic_deepx_full",
+            "tensorrt": "generic_ort_full", "ort_tensorrt": "generic_ort_full",
+            "cuda_ort": "generic_ort_full", "cpu_ort": "generic_ort_full",
+        }.get(backend)
+        if (
+            not producer or row.get("variant") != "full"
+            or row.get("task") != "detection"
+        ):
+            raise ValueError("generic_host_tail_role_mismatch")
+        validate_completion(evidence, task="detection", producer=producer)
+        verified = verify_frozen_postprocess_contract(contract)
+        if verified["model_id"] != row.get("model_id"):
+            raise ValueError("generic_host_tail_model_mismatch")
+        if (
+            row.get("postprocess_included") is not True
+            or row.get("postprocess_completion_verified") is not True
+            or row.get("postprocess_completed_frames") != len(evidence["frames"])
+        ):
+            raise ValueError("generic_host_tail_completion_mismatch")
+        for name in ("host_tail_available", "host_postprocessing_available"):
+            if row.get(name) not in (None, "") and row[name] is not True:
+                result["legacy_alias_conflict"] = True
+                raise ValueError("generic_host_tail_alias_conflict")
+        result.update(
+            available=True, status="passed",
+            frozen_contract_sha256=verified["contract_sha256"],
+            decoder_id=verified["decoder_id"],
+        )
+    except (ValueError, TypeError, KeyError, FrozenPostprocessError):
+        pass
+    return result
+
+
 def resolve_host_postprocess_evidence(
     row: Mapping[str, Any],
     summary: Mapping[str, Any] | None = None,
@@ -436,6 +496,9 @@ def resolve_host_postprocess_evidence(
     )
     if completed_execution is not None:
         return completed_execution
+    generic_execution = _generic_execution_host_postprocess(row)
+    if generic_execution is not None:
+        return generic_execution
     attestation = (
         row.get("completed_task_endpoint_attestation")
         if isinstance(row.get("completed_task_endpoint_attestation"), Mapping)

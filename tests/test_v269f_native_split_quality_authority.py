@@ -336,12 +336,19 @@ def test_current_direct_without_binding_set_stops_before_remote_run(
         updater, "_run",
         lambda command, **_kwargs: calls.append(command) or {"rc": 0},
     )
-    stage = updater._run_native_producers(run, {
+    cfg = {
         "backends": ["hailo8"],
         "remotes": {"hailo8": {"ssh": "should-not-run", "setup_id": "hailo8_setup"}},
         "build_missing_engines": True,
         "native_force_rebuild_engines": True,
-    }, timeout=1)
+    }
+    # Force is rejected before the binding preflight, without side effects.
+    with pytest.raises(updater.TensorRTQualityChainError, match="productive_force_build_disabled"):
+        updater._run_native_producers(run, cfg, timeout=1)
+    assert calls == []
+    assert not (run / "reports" / "native_producer_stage.json").exists()
+    cfg["native_force_rebuild_engines"] = False
+    stage = updater._run_native_producers(run, cfg, timeout=1)
 
     assert calls == []
     assert stage["status"] == "failed"

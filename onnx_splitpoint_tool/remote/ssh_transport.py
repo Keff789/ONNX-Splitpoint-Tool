@@ -13,16 +13,20 @@ This module is used by the remote benchmarking flow.
 from __future__ import annotations
 
 import os
+import json
 import re
 import shlex
 import subprocess
 import threading
 import time
+import uuid
+from pathlib import Path
+from ..log_utils import redact_diagnostic, compact_diagnostic_cause
 from dataclasses import asdict, dataclass
 from queue import Empty, Queue
 from typing import Callable, Dict, List, Optional, Tuple
 
-from ..process_control import ProcessTreeRegistry, current_process_registry
+from ..process_control import ProcessTreeRegistry, current_process_registry, _proc_start_time
 from .process_lease import (
     RemoteProcessLeaseConfigurationError,
     RemoteProcessLeaseLaunchRejected,
@@ -99,10 +103,12 @@ class SSHTransport:
         remote_lease_registry: Optional[RemoteProcessLeaseRegistry] = None,
     ):
         self.host = host
+        self._read_only_state = threading.local()
         self._log = log
         self._cancel_event = cancel_event
         self._remote_lease_scope = remote_lease_scope
         self._remote_lease_registry = remote_lease_registry
+        self.diagnostics_dir = None
 
     # -------------------------
     # command builders
@@ -151,6 +157,16 @@ class SSHTransport:
                 self._log(s)
             except Exception:
                 pass
+
+    def _diagnostic(self, report: dict, *, path=None) -> str:
+        destination = Path(path) if path else Path(self.diagnostics_dir or (Path.home() / ".onnx_splitpoint_tool" / "logs" / "diagnostics")) / ("ssh_" + uuid.uuid4().hex + ".json")
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(json.dumps(redact_diagnostic(report), indent=2, ensure_ascii=False), encoding="utf-8")
+            return str(destination)
+        except OSError as exc:
+            self._log_line(f"[warn] SSH-Diagnose nicht schreibbar: {destination} ({type(exc).__name__})")
+            return "unavailable"
 
     def _cancel_requested(self, explicit: Optional[object] = None) -> bool:
         event = explicit if explicit is not None else self._cancel_event
@@ -209,9 +225,15 @@ class SSHTransport:
         *,
         timeout: Optional[int],
         remote_operation: Optional[RemoteProcessLeaseOperation] = None,
+        diagnostics: Optional[dict] = None,
     ) -> Tuple[int, str]:
         """Run SSH/SCP with cancellation polling even when output is silent."""
 
+        entered = time.monotonic()
+        diagnostic = diagnostics if diagnostics is not None else {}
+        diagnostic.update(command_argv=list(cmd), timeout_s=timeout,
+                          owner_pid=os.getpid(), phase="local_admission",
+                          remote_completion_proven=False)
         registry = current_process_registry() or ProcessTreeRegistry()
 
         def cancellation_requested() -> bool:
@@ -221,13 +243,17 @@ class SSHTransport:
             if remote_operation is not None:
                 remote_operation.cancel_remote(grace_s=3.0)
             return 130, "cancelled before process start"
+        diagnostic["phase"] = "local_spawn"
         proc = subprocess.Popen(
             cmd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             start_new_session=(os.name == "posix"),
         )
+        diagnostic.update(local_pid=proc.pid, local_start_time_ticks=_proc_start_time(proc.pid), local_pgid=os.getpgid(proc.pid) if os.name == "posix" else None,
+                          spawn_elapsed_s=time.monotonic() - entered, phase="local_registration")
         registry.register(proc, label="ssh-capture")
         chunks: List[str] = []
         reader_done = threading.Event()
@@ -252,12 +278,13 @@ class SSHTransport:
         )
         reader.start()
         started = time.monotonic()
+        diagnostic.update(phase="process_wait", pre_wait_elapsed_s=started - entered)
         forced_rc: Optional[int] = None
         try:
-            root_exit_seen: Optional[float] = None
             while True:
                 if cancellation_requested():
                     forced_rc = 130
+                    diagnostic["phase"] = "probe_cancelled"
                     if remote_operation is not None:
                         remote_operation.cancel_remote(grace_s=3.0)
                     registry.terminate_registered(proc, grace_s=3.0)
@@ -267,24 +294,30 @@ class SSHTransport:
                     and time.monotonic() - started > float(timeout)
                 ):
                     forced_rc = 124
+                    diagnostic["phase"] = "pipe_drain_timeout" if proc.poll() is not None else "process_wait_timeout"
                     if remote_operation is not None:
                         remote_operation.cancel_remote(grace_s=3.0)
                     registry.terminate_registered(proc, grace_s=3.0)
                     break
                 if proc.poll() is not None:
-                    if reader_done.is_set():
+                    # Use the existing bounded reader-join allowance before
+                    # classifying EOF as missing. Under host load the reader
+                    # can finish after root exit without any surviving child.
+                    # A pipe still held open after this wait remains an error.
+                    diagnostic["phase"] = "pipe_drain"
+                    if reader_done.wait(timeout=1.0):
                         break
-                    if root_exit_seen is None:
-                        root_exit_seen = time.monotonic()
-                    if time.monotonic() - root_exit_seen >= 0.25:
-                        registry.terminate_registered(proc, grace_s=0.5)
-                        break
+                    diagnostic["phase"] = "pipe_drain_incomplete"
+                    registry.terminate_registered(proc, grace_s=0.5)
+                    forced_rc = 70
+                    break
                 time.sleep(0.05)
             try:
                 rc = int(proc.wait(timeout=5))
             except Exception:
                 registry.terminate_registered(proc, grace_s=0.2)
                 rc = 1
+                diagnostic["phase"] = "process_exit_unknown"
         except BaseException:
             if remote_operation is not None:
                 remote_operation.cancel_remote(grace_s=0.5)
@@ -297,7 +330,20 @@ class SSHTransport:
                     proc.stdout.close()
             except Exception:
                 pass
+            diagnostic.update(local_exit_code=proc.poll(), reader_finished=not reader.is_alive(),
+                              elapsed_s=time.monotonic() - entered)
+            diagnostic["local_root_and_pipe_completion_proven"] = proc.poll() is not None and not reader.is_alive()
             registry.unregister(proc)
+            diagnostic["local_tree_survivors"] = [row for row in registry.survivor_reports()
+                                                  if row.get("root_pid") in (0, proc.pid)]
+            diagnostic["local_completion_proven"] = bool(
+                diagnostic["local_root_and_pipe_completion_proven"] and not diagnostic["local_tree_survivors"])
+            if not diagnostic["local_completion_proven"] and forced_rc is None:
+                forced_rc = 70
+                diagnostic["phase"] = "process_completion_unknown"
+            if forced_rc is None:
+                diagnostic["phase"] = "completed"
+            diagnostic["returncode"] = forced_rc if forced_rc is not None else locals().get("rc")
         return int(forced_rc if forced_rc is not None else rc), "".join(chunks)
 
     # -------------------------
@@ -397,6 +443,11 @@ class SSHTransport:
                 return line
         return remote_path
 
+    @property
+    def read_only_diagnostics(self) -> dict:
+        """Last probe evidence for this caller thread; never shared across targets."""
+        return dict(getattr(self._read_only_state, "report", {}) or {})
+
     def run_read_only(
         self,
         bash_cmd: str,
@@ -404,26 +455,35 @@ class SSHTransport:
         timeout_s: Optional[int] = None,
         env: Optional[dict] = None,
     ) -> Tuple[int, str]:
-        """Run a non-mutating admission probe without a remote lease.
+        """Run non-mutating admission without a remote lease or automatic retry.
 
-        Callers must use this only for commands that are themselves read-only.
-        Bypassing the lease is intentional here: lease publication writes
-        remote control files and would invalidate a before-first-mutation
-        storage check.
+        Local SSH exit does not prove the end of unleased remote work.
         """
-
         if timeout is None:
             timeout = timeout_s
         cmd = self._ssh_cmd(bash_cmd, env=env)
-        self._log_line(f"[ssh-read-only] $ {bash_cmd}")
+        report = {"target_id": self.host.id, "command": bash_cmd,
+                  "lease": "not_created_read_only", "phase": "local_spawn",
+                  "owner_pid": os.getpid(), "timeout_s": timeout,
+                  "remote_completion_proven": False, "retry_permitted": False}
+        self._read_only_state.report = report
+        started = time.monotonic()
+        diag = self._diagnostic(report)
+        self._log_line(f"[ssh-read-only] setup={self.host.id} gestartet · Diagnose: {diag}")
         try:
-            return self._run_capture(cmd, timeout=timeout)
+            result = self._run_capture(cmd, timeout=timeout, diagnostics=report)
         except FileNotFoundError as exc:
-            return 127, f"ssh not found: {exc}"
+            result = (127, f"ssh not found: {exc}")
         except subprocess.TimeoutExpired:
-            return 124, f"timeout after {timeout}s"
+            result = (124, f"timeout after {timeout}s")
         except Exception as exc:
-            return 1, f"ssh failed: {exc}"
+            result = (1, f"ssh failed: {type(exc).__name__}")
+        report["returncode"] = result[0]
+        report["output_tail"] = result[1][-12000:]
+        if diag != "unavailable":
+            self._diagnostic(dict(report, output=result[1]), path=diag)
+        self._log_line(f"[ssh-read-only-result] setup={self.host.id} rc={result[0]} · {time.monotonic()-started:.1f}s · phase={report.get('phase')} · Diagnose: {diag}" + (" · " + compact_diagnostic_cause(result[1]) if result[0] else ""))
+        return result
 
     def run(
         self,
@@ -448,7 +508,9 @@ class SSHTransport:
             else bash_cmd
         )
         cmd = self._ssh_cmd(remote_command, env=env)
-        self._log_line(f"[ssh] $ {bash_cmd}")
+        started = time.monotonic()
+        diag = self._diagnostic({"target_id": self.host.id, "command": bash_cmd, "command_argv": cmd})
+        self._log_line(f"[ssh] setup={self.host.id} gestartet · Diagnose: {diag}")
         result: Tuple[int, str]
         try:
             result = self._run_capture(
@@ -461,7 +523,7 @@ class SSHTransport:
         except subprocess.TimeoutExpired:
             result = (124, f"timeout after {timeout}s")
         except Exception as e:
-            result = (1, f"ssh failed: {e}")
+            result = (1, f"ssh failed: {type(e).__name__}")
         finally:
             # ``result`` is unavailable only for a BaseException, which must
             # also resolve the remote lease fail-closed.
@@ -470,11 +532,16 @@ class SSHTransport:
                 operation, abnormal=abnormal
             )
         if abnormal and not cleanup_proven:
-            return (
+            result = (
                 70,
                 str(result[1])
                 + "\nremote cleanup unproven; lease session poisoned",
             )
+        if diag != "unavailable":
+            self._diagnostic({"target_id": self.host.id, "command": bash_cmd, "command_argv": cmd,
+                              "returncode": result[0], "output": result[1],
+                              "cleanup_proven": cleanup_proven}, path=diag)
+        self._log_line(f"[ssh-result] setup={self.host.id} rc={result[0]} · {time.monotonic()-started:.1f}s · Diagnose: {diag}" + (" · " + compact_diagnostic_cause(result[1]) if result[0] else ""))
         return result
 
     def run_streaming(
@@ -514,7 +581,8 @@ class SSHTransport:
             else bash_cmd
         )
         cmd = self._ssh_cmd(remote_command, env=env)
-        self._log_line(f"[ssh-stream] $ {bash_cmd}")
+        diag = self._diagnostic({"target_id": self.host.id, "command": bash_cmd, "command_argv": cmd})
+        self._log_line(f"[ssh-stream] setup={self.host.id} gestartet · Diagnose: {diag}")
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -534,7 +602,7 @@ class SSHTransport:
             cleanup_proven = self._finish_remote_lease(
                 operation, abnormal=True
             )
-            on_line(f"ssh failed: {e}")
+            on_line(f"ssh failed: {type(e).__name__} · Diagnose: {diag}")
             return 1 if cleanup_proven else 70
 
         registry.register(proc, label="ssh-stream")
@@ -559,6 +627,7 @@ class SSHTransport:
             daemon=True,
         )
         reader.start()
+        pipe_drain_incomplete = False
         try:
             ansi_re = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
             ts_re = re.compile(r"(?<!^)(?<!\n)(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
@@ -594,6 +663,7 @@ class SSHTransport:
                 if (
                     timeout is not None
                     and (time.time() - start) > timeout
+                    and (proc.poll() is None or reader.is_alive())
                 ):
                     timed_out = True
                     on_line(f"[remote] timeout ({timeout}s) exceeded; terminating…")
@@ -608,7 +678,11 @@ class SSHTransport:
                         break
                     if root_exit_seen is None:
                         root_exit_seen = time.monotonic()
-                    if time.monotonic() - root_exit_seen >= 0.25:
+                    # A finished reader has queued EOF: drain its finite
+                    # output even when the observer is slower than 250 ms.
+                    if reader.is_alive() and time.monotonic() - root_exit_seen >= 0.25:
+                        pipe_drain_incomplete = True
+                        on_line('[remote] pipe_drain_incomplete: inherited output pipe remained open')
                         registry.terminate_registered(proc, grace_s=0.5)
                         break
         except BaseException:
@@ -632,7 +706,7 @@ class SSHTransport:
             registry.terminate_registered(proc, grace_s=0.2)
             rc = 1
 
-        final_rc = 130 if cancelled else 124 if timed_out else int(rc)
+        final_rc = 130 if cancelled else 124 if timed_out else 70 if pipe_drain_incomplete else int(rc)
         cleanup_proven = self._finish_remote_lease(
             operation, abnormal=final_rc != 0
         )

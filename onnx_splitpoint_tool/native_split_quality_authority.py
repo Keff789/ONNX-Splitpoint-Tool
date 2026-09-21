@@ -375,9 +375,13 @@ def apply_native_split_quality_authority(
     row["native_split_quality_authority_workflow_version"] = str(
         context.get("workflow_version") or ""
     )
-    row["native_split_quality_authority_errors"] = list(
-        context.get("errors") or ["native_split_quality_authority_missing"]
-    )
+    errors = list(context.get("errors") or [])
+    if not context:
+        errors = ["native_split_quality_authority_missing"]
+    previous = list(row.get("native_split_quality_authority_errors") or [])
+    if previous and previous != errors:
+        row["native_split_quality_authority_previous_errors"] = previous
+    row["native_split_quality_authority_errors"] = errors
     if required:
         row["native_split_quality_required"] = True
         row["native_split_quality_binding_required"] = True

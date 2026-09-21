@@ -974,6 +974,14 @@ def _merge_accelerator_env_card_fields(
         if isinstance(setup.get("energy"), Mapping)
         else {}
     )
+    if accelerator_idle_w != energy_saved.get("accelerator_idle_w"):
+        # A manual value is not the result attested by the previous calibration.
+        # Unchanged fields retain the original float and all evidence bindings.
+        for key in (
+            "accelerator_idle_calibrated_at", "accelerator_idle_calibration_evidence",
+            "accelerator_idle_calibration_binding_path", "accelerator_idle_calibration_binding_sha256",
+        ):
+            energy_saved.pop(key, None)
     energy_saved.update(
         {
             "enabled": bool(energy_enabled),
@@ -1082,6 +1090,9 @@ def _build_platform_power_ui(detail_parent: ttk.Frame, app=None) -> None:
         accelerator_idle_var = _str_var(
             app, f"var_hwsetup_{setup_id}_accel_idle_w", ""
         )
+        accelerator_idle_display_var = _str_var(
+            app, f"var_platform_power_{setup_id}_accel_idle_display_w", ""
+        )
         full_system_scale_var = _str_var(
             app, f"var_platform_power_{setup_id}_fs_scale", ""
         )
@@ -1171,6 +1182,9 @@ def _build_platform_power_ui(detail_parent: ttk.Frame, app=None) -> None:
                     host_text = "not configured"
                 accelerator_idle = energy.get("accelerator_idle_w")
                 accelerator_idle_var.set(
+                    "" if accelerator_idle is None else str(accelerator_idle)
+                )
+                accelerator_idle_display_var.set(
                     "" if accelerator_idle is None else f"{float(accelerator_idle):.6g}"
                 )
                 full_system_scale = energy.get(
@@ -1195,7 +1209,7 @@ def _build_platform_power_ui(detail_parent: ttk.Frame, app=None) -> None:
                     f"Setup: {setup_id}\n"
                     f"Jetson: {host_text}\n"
                     f"u.RECS: {str(energy.get('urecs_address') or 'not configured')}\n"
-                    f"Accelerator idle: {accelerator_idle_var.get() or 'not calibrated'} W\n"
+                    f"Accelerator idle: {accelerator_idle_display_var.get() or 'not calibrated'} W\n"
                     f"FS input scale: {full_system_scale_var.get() or 'identity / not calibrated'}\n"
                     f"Calibration: {stabilize:g}s stabilize + {measure:g}s measure; "
                     f"control {'enabled' if bool(power.get('enabled', True)) else 'disabled'}"

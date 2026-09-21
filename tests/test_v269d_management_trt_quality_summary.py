@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from onnx_splitpoint_tool.execution_plan import build_effective_execution_plan
-from onnx_splitpoint_tool.workflow.runner import EvaluationWorkflowRunner
+from onnx_splitpoint_tool.workflow.runner import EvaluationWorkflowRunner, WorkflowOptions
 
 
 SHA_SOURCE = hashlib.sha256(b"source").hexdigest()
@@ -1002,7 +1002,7 @@ def test_evaluator_preserves_producer_only_after_successful_service_load(
     import onnx_splitpoint_tool.quality_service as quality_service
 
     request_path, _ = _write_request(tmp_path)
-    runner = object.__new__(EvaluationWorkflowRunner)
+    runner = EvaluationWorkflowRunner(WorkflowOptions(profile="", out=str(tmp_path)))
     runner.run_dir = tmp_path
     runner.run_id = tmp_path.name
     runner._validate_quality_request_model_binding = lambda *_: None

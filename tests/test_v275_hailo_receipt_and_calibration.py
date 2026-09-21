@@ -626,8 +626,12 @@ def test_hailo_parse_path_has_no_build_only_calibration_state() -> None:
     assert "_hailo_build_hef_legacy" in functions
     owners = {
         name for name, node in functions.items()
-        if "calibration_identity_shapes" in (
-            ast.get_source_segment(source, node) or ""
+        # Match the state variable, not a diagnostic string such as
+        # "calibration_identity_shapes_unresolved" in workspace admission.
+        if any(
+            isinstance(child, ast.Name)
+            and child.id == "calibration_identity_shapes"
+            for child in ast.walk(node)
         )
     }
     assert owners == {"_hailo_build_hef_legacy"}

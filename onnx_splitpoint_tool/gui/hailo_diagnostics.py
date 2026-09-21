@@ -156,6 +156,8 @@ def collect_hailo_diagnostics(result: Any, *, label: str = "") -> Dict[str, Any]
             "quant_har": str(payload.get("quant_har_path") or "").strip(),
         },
         "process_summary": proc,
+        "phase_events": details.get("phase_events") or [],
+        "har_artifacts": _dict(details.get("har_artifacts")),
         "cuda_probe": cuda,
         "system_snapshot": snap,
         "calib_info": _dict(payload.get("calib_info")),
@@ -235,6 +237,11 @@ def format_hailo_diagnostics_short_lines(entry: Dict[str, Any]) -> List[str]:
     if err and status != "OK":
         lines.append(f"[hailo diag] error: {err}")
 
+    paths = _dict(entry.get("paths"))
+    for key, label_name in (("parsed_har", "Parsed HAR"), ("quant_har", "Quant HAR")):
+        if paths.get(key):
+            lines.append(f"[hailo diag] {label_name}: {paths[key]} (saved intermediate; not a HEF)")
+
     result_json = _dict(entry.get("paths")).get("result_json")
     if result_json:
         lines.append(f"[hailo diag] result_json: {result_json}")
@@ -265,6 +272,24 @@ def format_hailo_diagnostics_text(entry: Dict[str, Any]) -> str:
         lines.append(f"Return code: {entry.get('returncode')}")
     if entry.get("unsupported_reason"):
         lines.append(f"Unsupported reason: {entry.get('unsupported_reason')}")
+
+    events = entry.get("phase_events") or []
+    if events:
+        lines.append("")
+        lines.append("Build phases:")
+        for event in events:
+            if isinstance(event, dict):
+                duration = (f" ({_fmt_seconds(event['elapsed_s'])})"
+                            if event.get("elapsed_s") is not None else "")
+                lines.append(f"  - {event.get('phase')}: {event.get('state')}{duration}")
+    artifacts = _dict(entry.get("har_artifacts"))
+    if artifacts:
+        lines.append("HAR evidence (intermediates; no HEF success or resume approval):")
+        for kind, evidence in artifacts.items():
+            evidence = _dict(evidence)
+            lines.append(f"  - {kind}: {evidence.get('status', 'unknown')}")
+            if evidence.get("status") == "retained":
+                lines.append("    SDK loadability: not checked; resume contract: not validated")
 
     paths = _dict(entry.get("paths"))
     if paths:

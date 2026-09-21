@@ -1,0 +1,57 @@
+{
+  "source": "/home/kmika/.local/share/onnx-splitpoint-codex/v283_R9F_20260918_093308_gVtTP0/evidence/H10_RUNTIME_METADATA.json",
+  "contracts": [
+    {
+      "model": "yolo26s",
+      "artifact_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26s-9c1e24fdb8a6a251/native_split_quality/orin_nx_hailo10_01/yolo26s/b364/hailo10h_to_trt/7dd6f0b079186331531ae4f4f3f8bbb921cc79bc44513d3751dc10d5a63a7cf3/part1.hef",
+      "size_bytes": 13139968,
+      "native_output": {
+        "name": "yolo26s_part1_b364/concat23",
+        "shape": [
+          1,
+          8400,
+          84
+        ],
+        "format_type": "FormatType.UINT8",
+        "format_order": "FormatOrder.FCR",
+        "quant_info": {
+          "qp_scale": 3.1612741947174072,
+          "qp_zp": 35.0,
+          "limvals_min": -110.64459991455078,
+          "limvals_max": 695.4803466796875
+        }
+      },
+      "stream_mapping": {
+        "yolo26s_part1_b364/concat23": [
+          "yolo26s_part1_b364/concat23"
+        ]
+      }
+    },
+    {
+      "model": "yolo26m",
+      "artifact_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b398/hailo10h_to_trt/b3aa10a5df8555c03bb5f68bfcc3c1e36b2c0b4b6d73292f93e36b89a1492541/part1.hef",
+      "size_bytes": 20471808,
+      "native_output": {
+        "name": "yolo26m_part1_b398/concat25",
+        "shape": [
+          1,
+          8400,
+          84
+        ],
+        "format_type": "FormatType.UINT8",
+        "format_order": "FormatOrder.FCR",
+        "quant_info": {
+          "qp_scale": 3.4920754432678223,
+          "qp_zp": 39.0,
+          "limvals_min": -136.19094848632812,
+          "limvals_max": 754.288330078125
+        }
+      },
+      "stream_mapping": {
+        "yolo26m_part1_b398/concat25": [
+          "yolo26m_part1_b398/concat25"
+        ]
+      }
+    }
+  ]
+}

@@ -59,6 +59,9 @@ def _actual_endpoint(row: Mapping[str, Any]) -> str:
 def _quality_applicability(
     row: Mapping[str, Any], scope: Mapping[str, Any],
 ) -> str:
+    from ..native_job_identity import known_build_exclusion
+    if known_build_exclusion(row):
+        return "not_applicable"
     # Actual runtime evidence takes precedence over a pre-dispatch
     # ``conditional`` scope declaration.
     explicit_row = _token(row.get("quality_applicability"))
@@ -167,13 +170,15 @@ def project_evidence_state(
         else row.get("execution_ok")
     )
     compile_ok = _boolean(row.get("compile_ok"))
+    from ..native_job_identity import known_build_exclusion
+    exclusion = known_build_exclusion(row)
     if raw_representation == "missing":
         build_runtime = "missing"
     elif timed_out:
         build_runtime = "timeout"
     elif unsupported:
         build_runtime = "unsupported"
-    elif compile_ok is False or status in {"build_failed", "compile_failed"}:
+    elif exclusion or compile_ok is False or status in {"build_failed", "compile_failed"}:
         build_runtime = "build_failed"
     elif runtime_ok is False or status in {"runtime_failed", "failed", "error"}:
         build_runtime = "runtime_failed"
@@ -236,6 +241,10 @@ def project_evidence_state(
         "quality_decision": decision,
         "claim_eligible": claim,
         "measurement_endpoint": _actual_endpoint(row),
+        **({
+            "build_exclusion": exclusion,
+            "upstream_evidence_path": str(row.get("upstream_evidence_path") or ""),
+        } if exclusion else {}),
     }
 
 
@@ -368,6 +377,21 @@ def summarize_run_scope(run_dir: Any) -> dict[str, Any]:
             if isinstance(row, Mapping)
         ]
         rows = annotate_logical_measurements(raw_rows)
+        # The build stage already owns exact recipe/endpoint exclusion proof.
+        # Reuse its verifier and role-conflict checks for missing composed
+        # requests. A measured P2 remains an independent observation.
+        try:
+            build_stage = json.loads((
+                root / "models" / model_id
+                / "stages/build_backend_artifacts/stage_result.json"
+            ).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            build_stage = {}
+        readiness = (build_stage.get("details") or {}).get("deferred_build_readiness") or {}
+        try:
+            required_matrix = json.loads((normalized_path.parent / "required_profile_matrix.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            required_matrix = {}
         for entry in list(scope_payload.get("identities") or []):
             if not isinstance(entry, Mapping):
                 continue
@@ -375,12 +399,25 @@ def summarize_run_scope(run_dir: Any) -> dict[str, Any]:
             selected, ambiguous, representation_count = _select_scope_representation(
                 candidates, entry,
             )
+            if not selected and not ambiguous:
+                from ..native_job_identity import required_profile_build_exclusions, known_build_exclusion
+                stored = [item for item in required_matrix.get("excluded_results", [])
+                          if isinstance(item, Mapping) and _scope_match(item, entry)
+                          and item.get("logical_identity_sha256") == entry.get("logical_identity_sha256")
+                          and known_build_exclusion(item)]
+                excluded = required_profile_build_exclusions(
+                    stored if len(stored) == 1 else [],
+                    readiness, rows,
+                )
+                if len(excluded) == 1:
+                    selected = excluded[0]
             state = project_evidence_state(selected, scope=entry)
             state.update({
                 "model_id": _token(entry.get("model_id") or model_id),
                 "case_id": _token(entry.get("case_id") or "full"),
                 "run_id": canonical_run_id(entry.get("run_id")),
                 "backend": canonical_backend(entry.get("backend")),
+                "setup_id": str(entry.get("expected_setup_id") or entry.get("setup_id") or ""),
                 "variant": selected_variant(entry),
                 "scope_path": str(scope_path),
                 "scope_identity_sha256": str(

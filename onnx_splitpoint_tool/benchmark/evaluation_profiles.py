@@ -324,6 +324,8 @@ def load_evaluation_profile(
     # payload.  Legacy profiles without execution_preset remain unchanged.
     if isinstance(raw.get("execution_preset"), Mapping):
         raw, _run_mode_audit = apply_run_mode(raw)
+    from ..accuracy_reporting import active_policy
+    active_policy(raw.get("quality_gate") or {})
     if validate:
         raw = validate_evaluation_profile_payload(raw, source=str(src), strict_external=strict_external)
     root = Path(base_dir or evaluation_profile_default_root()).resolve()

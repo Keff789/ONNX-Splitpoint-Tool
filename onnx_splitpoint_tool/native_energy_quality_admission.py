@@ -53,7 +53,7 @@ def energy_quality_reason_projection(admission: Mapping[str, Any]) -> dict[str, 
     """
     decision = str(admission.get("local_task_quality_decision") or "").lower()
     observation = admission.get("task_quality_observation_valid") is True
-    if decision not in {"pass", "fail", "inconclusive", "reference"}:
+    if decision not in {"pass", "fail", "inconclusive", "reference", "reference_close", "accuracy_loss", "not_estimable"}:
         decision = ("pass" if admission.get("accuracy_gate_pass") is True else "not_pass") if observation else "unavailable"
     reason = str(admission.get("runtime_observation_reason") or "")
     campaign = list(admission.get("campaign_exclusion_reasons") or [])
@@ -63,7 +63,7 @@ def energy_quality_reason_projection(admission: Mapping[str, Any]) -> dict[str, 
         "central_quality_evidence_verified", "precision_quality_binding_verified",
         "task_quality_observation_valid", "quality_provenance_complete",
     ) if admission.get(field) is not True]
-    local = [] if decision in {"pass", "reference"} else ["task_quality_" + decision]
+    local = [] if decision in {"pass", "reference", "reference_close", "accuracy_loss", "not_estimable"} else ["task_quality_" + decision]
     exclusion = str(admission.get("scientific_claim_exclusion_reason") or "")
     if exclusion and exclusion not in local:
         local.append(exclusion)

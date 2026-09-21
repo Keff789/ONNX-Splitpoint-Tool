@@ -816,6 +816,7 @@ def _materialize_manual_deepx_part1_artifacts(
     classification_preprocessing: Optional[str] = None,
     force_build: bool = False,
     selected_case_dirs: Optional[list[str]] = None,
+    cache_only: bool = False,
     log: Any = None,
     build_config: Optional[Mapping[str, Any]] = None,
     profile_payload: Optional[Mapping[str, Any]] = None,
@@ -953,7 +954,7 @@ def _materialize_manual_deepx_part1_artifacts(
             status_path.write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
             return summary
 
-    cache_verify_only = compiler_dispatch_forbidden()
+    cache_verify_only = bool(cache_only or compiler_dispatch_forbidden())
     summary['artifact_policy'] = (
         'cache_verify_only' if cache_verify_only else 'normal'
     )
@@ -1230,6 +1231,17 @@ def _materialize_manual_deepx_part1_artifacts(
                     if cache_lookup['artifact']:
                         miss_line += f" artifact={cache_lookup['artifact']}"
                     log(miss_line)
+                if cache_verify_only:
+                    case_payload.update(
+                        ok=False, status='cache_miss_blocked',
+                        compiler_dispatched=False,
+                        error=cache_miss_blocked_message(
+                            'deepx_dx_com', f'manual Part1 exact cache miss for {case_id}: {miss_reason}',
+                        ),
+                    )
+                    fail_count += 1
+                    summary['cases'].append(case_payload)
+                    continue
                 if cached.is_file() and callable(log):
                     log(f'[deepx] {case_id}: cached Part1 DXNN rejected ({cache_reason}); rebuilding with task={task_norm} calibration={manifest_identity}')
                 if not cache_verify_only:
@@ -1397,6 +1409,20 @@ def _materialize_manual_deepx_part1_artifacts(
             case_payload.update({'ok': False, 'status': 'failed', 'error': f'{type(exc).__name__}: {exc}'})
             if callable(log):
                 log(f'[deepx] {case_id}: Part1 DXNN failed: {type(exc).__name__}: {exc}', level=logging.WARNING)
+        finally:
+            # A failed current probe must replace a previous per-case HIT.
+            # Keep artifacts intact; only the existing decision/manifest is updated.
+            if not case_payload.get('ok'):
+                failed_stage = case_dir / 'deepx' / 'deepx_m1' / 'part1'
+                failed_stage.mkdir(parents=True, exist_ok=True)
+                (failed_stage / 'deepx_part1_artifact_status.json').write_text(
+                    json.dumps(case_payload, indent=2, ensure_ascii=False), encoding='utf-8',
+                )
+                failed_manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+                failed_manifest.setdefault('deepx', {})['part1_dxnn'] = dict(case_payload)
+                failed_manifest.pop('deepx_part1_dxnn', None)
+                failed_manifest.pop('deepx_part1_output_contract', None)
+                manifest_path.write_text(json.dumps(failed_manifest, indent=2, ensure_ascii=False), encoding='utf-8')
         summary['cases'].append(case_payload)
     all_cache_misses = bool(summary['cases']) and all(
         str(row.get('status') or '') == 'cache_miss_blocked'

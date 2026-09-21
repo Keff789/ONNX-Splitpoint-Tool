@@ -292,8 +292,8 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 
-EXPECTED_VERSION = "2.82"
-EXPECTED_BUILD_ID = "v2.82-selected-energy-generic-roles-workspace-product-evidence"
+EXPECTED_VERSION = "2.90.1"
+EXPECTED_BUILD_ID = "v2.90.1"
 EXPECTED_PREFIX = f"ONNX-Splitpoint-Tool_v{EXPECTED_VERSION}"
 MANIFEST_SCHEMA = "onnx-splitpoint/source-manifest-v1"
 MANIFEST_NAME = "SOURCE_MANIFEST.json"
@@ -309,6 +309,9 @@ MAX_TOTAL_MEMBER_BYTES = 1024 * 1024 * 1024
 MAX_MEMBERS = 100_000
 
 ALLOWED_ROOT_FILES = {
+    ".gitignore",
+    "AGENTS.md",
+    "LICENSE",
     "IMPLEMENTIERUNGSABGLEICH_2.80.4.md",
     "IMPLEMENTIERUNGSABGLEICH_2.81.md",
     "IMPLEMENTIERUNGSABGLEICH_2.82.md",
@@ -330,6 +333,8 @@ ALLOWED_ROOT_FILES = {
 }
 RETAINED_RELEASE_DOC_FILES = {
     "TESTANLEITUNG_2.81.md",
+    "TESTANLEITUNG_2.82.md",
+    "VERSION_2.82_BUILD_AND_TEST_REPORT.md",
     "VERSION_2.81_BUILD_AND_TEST_REPORT.md",
     "TESTANLEITUNG_2.80.3.md",
     "TESTANLEITUNG_2.80.4.md",
@@ -393,6 +398,10 @@ ALLOWED_DOC_FILES = {
     "docs/RELEASE_SCOPE_V282.md",
     "docs/V282_EVIDENCE_INDEX.json",
     "docs/ONNX_SPLITPOINT_KnowledgeBase_CANONICAL_v2.82_2026-09-13.md",
+    "docs/RELEASE_2.83.md",
+    "docs/RELEASE_2.90.0.md",
+    "docs/RELEASE_2.90.1.md",
+    "docs/ARBEITSSTAND.md",
     "docs/V281_EVIDENCE_INDEX.json",
     "docs/ONNX_SPLITPOINT_KnowledgeBase_CANONICAL_v2.81_2026-09-13.md",
     "docs/RELEASE_SCOPE_V2804.md",
@@ -1143,7 +1152,7 @@ if [[ "$TRUSTED_ARCHIVE_REPORT" == *$'\n'* ]]; then
 fi
 IFS=$'\t' read -r -a TRUSTED_ARCHIVE_FIELDS <<<"$TRUSTED_ARCHIVE_REPORT"
 if [[ ${#TRUSTED_ARCHIVE_FIELDS[@]} -ne 3 || \
-      "${TRUSTED_ARCHIVE_FIELDS[0]}" != 'ONNX-Splitpoint-Tool_v2.82' || \
+      "${TRUSTED_ARCHIVE_FIELDS[0]}" != 'ONNX-Splitpoint-Tool_v2.90.1' || \
       ! "${TRUSTED_ARCHIVE_FIELDS[1]}" =~ ^[0-9a-f]{64}$ || \
       ! "${TRUSTED_ARCHIVE_FIELDS[2]}" =~ ^[0-9a-f]{64}$ ]]; then
   printf 'FEHLER: ungültige Ausgabe der vertrauenswürdigen Archivprüfung.\n' >&2
@@ -1373,7 +1382,7 @@ fi
 # install or fresh-process validation failure.
 PYTHONPATH= PYTHONHOME= "$PYTHON" -I -B scripts/refresh_editable_install.py \
   --root "$TOOL_DIR" \
-  --expected-version 2.82 \
+  --expected-version 2.90.1 \
   --require-entrypoint \
     'onnx-splitpoint-smoke-v279=onnx_splitpoint_tool.v279_smoke:main' \
   --require-entrypoint \
@@ -1625,7 +1634,7 @@ fi
 printf '%s\n' \
   "PASS source release synchronized" \
   "Venv erhalten: $TOOL_DIR/.venv" \
-  "Distribution aktualisiert: onnx-splitpoint-tool==2.82" \
+  "Distribution aktualisiert: onnx-splitpoint-tool==2.90.1" \
   "Release-Scope: Force AUS, Artefaktwiederverwendung, Hailo8-Compute-Umgebung und Runtime-Cleanup" \
   "Hardware-Kalibrierung: NOT_RUN (Updater führt keine Hardwareaktion aus)" \
   "YOLOv7-Probe-Abhängigkeiten: $YOLOV7_PROBE_DEPS_STATUS" \

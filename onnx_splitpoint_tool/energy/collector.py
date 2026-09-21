@@ -35,6 +35,7 @@ from .config import (
     hardware_registry_snapshot_sha256,
     load_hardware_registry,
 )
+from .task_budget import bounded_energy_task
 from .metrics import apply_energy_baselines, extract_power_calculation_summary
 from .comparison import verify_accelerator_idle_calibration_binding
 from .full_system_gain import (
@@ -48,6 +49,8 @@ from ..process_control import (
 )
 from ..remote.process_lease import (
     cancel_journaled_remote_processes_from_environment,
+    journaled_ssh_wrapper_argv,
+    REMOTE_LEASE_OUTER_CLEANUP_MARGIN_S,
 )
 
 HOST_NORMALIZATION_ROLE_NONE = "none"
@@ -384,35 +387,80 @@ class EnergyMeasurementResult:
 
 
 def _student_t_critical(confidence_level: float, degrees_of_freedom: int) -> float:
-    """Approximate the two-sided Student-t critical value without SciPy.
+    """Two-sided quantile, using SciPy or inversion of the regularized beta.
 
-    The Cornish-Fisher expansion is accurate enough for the small repeat counts
-    used by the final campaign and avoids adding a heavy numerical dependency.
-    The exact confidence level and degrees of freedom are written into every
-    statistics block, so the calculation remains auditable.
+    The dependency-free path evaluates the finite-sample CDF, not an
+    asymptotic expansion. Failure to converge never substitutes a normal CI.
     """
+    cl = float(confidence_level)
+    if not math.isfinite(cl) or not 0.0 < cl < 1.0:
+        raise ValueError("confidence_level must be finite and strictly between 0 and 1")
+    df = int(degrees_of_freedom)
+    if df < 1 or df != degrees_of_freedom:
+        raise ValueError("degrees_of_freedom must be a positive integer")
     try:
-        from statistics import NormalDist
+        from scipy.stats import t
+    except ImportError:
+        pass
+    else:
+        return float(t.isf((1.0 - cl) / 2.0, df))
+    if df == 1:
+        return 1.0 / math.tan(math.pi * (1.0 - cl) / 2.0)
+    if df == 2:
+        return cl * math.sqrt(2.0 / ((1.0 - cl) * (1.0 + cl)))
 
-        cl = min(0.999, max(0.50, float(confidence_level)))
-        df = max(1, int(degrees_of_freedom))
-        z = NormalDist().inv_cdf(0.5 + cl / 2.0)
-        z2 = z * z
-        z3 = z2 * z
-        z5 = z3 * z2
-        z7 = z5 * z2
-        d = float(df)
-        return float(
-            z
-            + (z3 + z) / (4.0 * d)
-            + (5.0 * z5 + 16.0 * z3 + 3.0 * z) / (96.0 * d * d)
-            + (3.0 * z7 + 19.0 * z5 + 17.0 * z3 - 15.0 * z) / (384.0 * d * d * d)
-        )
-    except Exception:
-        return 1.96
+    def beta_fraction(a: float, b: float, x: float) -> float:
+        # Modified Lentz evaluation of the incomplete-beta continued fraction.
+        tiny = 1e-300
+        def nonzero(value: float) -> float:
+            return value if abs(value) >= tiny else math.copysign(tiny, value)
+        c = 1.0
+        d = 1.0 / nonzero(1.0 - (a + b) * x / (a + 1.0))
+        h = d
+        for m in range(1, 1001):
+            for aa in (
+                m * (b - m) * x / ((a + 2*m - 1) * (a + 2*m)),
+                -(a + m) * (a + b + m) * x / ((a + 2*m) * (a + 2*m + 1)),
+            ):
+                d = 1.0 / nonzero(1.0 + aa * d)
+                c = nonzero(1.0 + aa / c)
+                delta = d * c
+                h *= delta
+            if abs(delta - 1.0) < 3e-15:
+                return h
+        raise ArithmeticError("Student-t incomplete beta did not converge")
+
+    def beta(x: float, a: float, b: float) -> float:
+        if x <= 0.0:
+            return 0.0
+        if x >= 1.0:
+            return 1.0
+        front = math.exp(math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
+                         + a * math.log(x) + b * math.log1p(-x))
+        if x < (a + 1.0) / (a + b + 2.0):
+            return front * beta_fraction(a, b, x) / a
+        return 1.0 - front * beta_fraction(b, a, 1.0 - x) / b
+
+    target = 1.0 - cl
+    lo, hi = 0.0, 1.0
+    def tail(value: float) -> float:
+        return beta(df / (df + value * value), df / 2.0, .5)
+    while tail(hi) > target:
+        hi *= 2.0
+    for _ in range(200):
+        mid = (lo + hi) / 2.0
+        if tail(mid) > target:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo <= 2e-14 * hi:
+            return (lo + hi) / 2.0
+    raise ArithmeticError("Student-t quantile did not converge")
 
 
 def _repeat_statistics(values: list[float], confidence_level: float) -> dict[str, Any]:
+    if not math.isfinite(float(confidence_level)) or not 0.0 < float(confidence_level) < 1.0:
+        raise ValueError("confidence_level must be finite and strictly between 0 and 1")
     vals = [float(value) for value in values if isinstance(value, (int, float)) and math.isfinite(float(value))]
     n = len(vals)
     if not vals:
@@ -646,6 +694,7 @@ def _energy_path_env() -> dict[str, str]:
     a user normally invokes them.
     """
     env = os.environ.copy()
+    env["URECS_RECEIVE_DIAGNOSTICS"] = "1"
     extras = [
         str(Path.home() / ".cargo" / "bin"),
         str(Path.home() / ".local" / "bin"),
@@ -2941,6 +2990,34 @@ def _measurement_suite_power_estimated_duration_s(workload_duration_s: float) ->
         return 1
 
 
+def _command_capture_budget(
+    workload_duration_s: float, defaults: EnergyDefaults,
+    measured_command_duration_s: float | None = None,
+) -> dict[str, Any]:
+    """Bound acquisition independently of inner load and scientific crop."""
+    load = float(workload_duration_s)
+    startup = float(defaults.command_startup_budget_s)
+    margin = float(defaults.duration_margin_s)
+    observed = float(measured_command_duration_s or 0.0)
+    if (not all(math.isfinite(x) for x in (load, startup, margin, observed))
+            or load <= 0 or not 0 <= startup <= 120 or not 0 <= margin <= 120
+            or observed < 0 or observed > load + 120):
+        raise ValueError("command_capture_budget_out_of_bounds")
+    planned = load + startup
+    return {
+        "configured_inner_workload_duration_s": load,
+        "observed_full_command_duration_s": measured_command_duration_s,
+        "command_startup_budget_s": startup,
+        "capture_margin_s": margin,
+        "collector_duration_s": max(1, math.ceil(max(planned, observed) + margin)),
+        "capture_budget_reason": (
+            "observed_full_command_exceeds_startup_budget" if observed > planned
+            else "inner_workload_plus_bounded_command_startup_reserve"
+        ),
+        "scientific_window": "unchanged_command_marker_crop",
+    }
+
+
 def _power_window_mode(defaults: EnergyDefaults) -> str:
     mode = str(getattr(defaults, "power_window_mode", "trimmed") or "trimmed").strip().lower().replace("-", "_")
     if mode in {"default", "default_detection", "trim", "trimmed_detection"}:
@@ -3107,6 +3184,15 @@ def _collector_command(
         raise RuntimeError("u.RECS address missing for energy setup")
     if defaults.mode not in {"fast_firmware", "fast-firmware"}:
         raise RuntimeError(f"Only fast_firmware mode is supported in v56a/b, got {defaults.mode!r}")
+    if defaults.collector_sha256:
+        import hashlib
+        binary = Path(defaults.collector_binary)
+        if not binary.is_absolute() or not binary.is_file():
+            raise RuntimeError("Native collector unavailable in frozen binding")
+        with binary.open("rb") as handle:
+            digest = hashlib.file_digest(handle, "sha256").hexdigest()
+        if digest != defaults.collector_sha256:
+            raise RuntimeError("Native collector bytes changed after start snapshot")
     return [
         _expand_binary(defaults.collector_binary),
         f"-s={storage_dir.as_posix()}",
@@ -3236,6 +3322,10 @@ def _run_one(
                 popen_kwargs["start_new_session"] = True
             elif hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):  # pragma: no cover
                 popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            if cancellation_requested():
+                return {"cmd": cmd, "rc": 130, "stdout": "", "stderr": "CANCELLED before process start",
+                        "duration_s": time.time() - start, "cancelled": True,
+                        "process_started": False, "process_started_at_unix_ns": 0}
             proc = subprocess.Popen(cmd, **popen_kwargs)
             process_started_at_unix_ns = time.time_ns()
             registry.register(proc, label="energy-collector-command")
@@ -3783,7 +3873,14 @@ def _energy_repeat_failure_text(entry: Mapping[str, Any], run_dir: Path | None) 
     condition.  Only the known transient collector/marker failures requested by
     the campaign are eligible.
     """
-    values = [json.dumps(dict(entry), sort_keys=True, default=str)]
+    # Recovery metadata describes the preceding attempt, not this capture.
+    # Including its trigger text makes a successful successor look like a
+    # second first-sample failure and schedules another acquisition.
+    current_attempt = {key: value for key, value in entry.items() if key not in {
+        "collector_recovery_before_start", "collector_reconnect_evidence",
+        "repeat_attempt_history", "repeat_retry_history", "task_budget",
+    }}
+    values = [json.dumps(current_attempt, sort_keys=True, default=str)]
     if run_dir is not None:
         for name in (
             "collector_stderr.log",
@@ -3804,6 +3901,10 @@ def _energy_repeat_retry_reasons(
     if bool(entry.get("cancelled")) or str(entry.get("status") or "") in {
         "cancelled", "preflight_failed",
     }:
+        return []
+    timing = entry.get("workload_timing") or {}
+    if timing.get("rc") not in (None, 0):
+        # Marker rejection caused by a failed workload is not a transport retry.
         return []
 
     reasons: list[str] = []
@@ -4493,6 +4594,7 @@ def _reload_claim_hardware_registry(
     return registry, report
 
 
+@bounded_energy_task
 def run_fast_firmware_measurement(
     command: str,
     out_dir: str | Path,
@@ -4501,6 +4603,7 @@ def run_fast_firmware_measurement(
     defaults: EnergyDefaults | None = None,
     cwd: str | Path | None = None,
     duration_s: float | None = None,
+    capture_command_duration_s: float | None = None,
     run_count: int | None = None,
     exact_run_count: bool = False,
     postprocess: bool | None = None,
@@ -4518,6 +4621,7 @@ def run_fast_firmware_measurement(
     calibration_manifest: str | None = None,
     calibration_sha256: str | None = None,
     preflight_command: str | None = None,
+    preflight_prepare_command: str | None = None,
     preflight_timeout_s: float = 300.0,
     preflight_attestation_max_age_s: float = 60.0,
     preflight_runtime_attestation_path: str | None = None,
@@ -4530,6 +4634,8 @@ def run_fast_firmware_measurement(
     host_normalization_target_variant: str | None = None,
     cancel_event: Any = None,
     subprocess_env: Mapping[str, str] | None = None,
+    _task_budget: Any = None,
+    _task_logical_repeat: str | None = None,
 ) -> dict[str, Any]:
     defaults = defaults or EnergyDefaults()
     setup_id_supplied = setup_id is not None
@@ -4953,6 +5059,9 @@ def run_fast_firmware_measurement(
         _write_json(out_dir / "energy_summary.json", payload)
         return payload
 
+    if duration_s is None and _task_budget is not None:
+        _task_budget.stop("task_requires_explicit_duration")
+        return {"ok": False, "status": "incomplete", "runs": []}
     if duration_s is None:
         probe_dir = out_dir / "probe"
         probe_command = command
@@ -5037,6 +5146,22 @@ def run_fast_firmware_measurement(
         _write_json(probe_dir / "duration_probe.json", probe)
         _write_json(out_dir / "duration_probe.json", probe)
 
+    capture_budget = None
+    # Screening also integrates the frozen command-marker window without
+    # requesting Final claim admission. Its capture must cover the same full
+    # command; the admission flags must not select the old short envelope.
+    command_marker_capture = bool(
+        require_command_window_alignment
+        or energy_ab.get("scientific_primary_method") == ENERGY_PRIMARY_METHOD
+    )
+    if command_marker_capture:
+        capture_budget = _command_capture_budget(workload_duration_s, defaults, capture_command_duration_s)
+        duration_s = capture_budget["collector_duration_s"]
+        probe["capture_budget"] = capture_budget
+        probe["collector_duration_s"] = duration_s
+        probe["measurement_suite_policy"] = "bounded_full_command_capture; unchanged_power_estimate_and_command_marker_crop"
+        _write_json(probe_dir / "duration_probe.json", probe)
+        _write_json(out_dir / "duration_probe.json", probe)
     try:
         power_estimated_s = int(probe.get("power_estimated_duration_s") or _measurement_suite_power_estimated_duration_s(float(probe.get("workload_duration_s") or duration_s)))
     except Exception:
@@ -5050,6 +5175,9 @@ def run_fast_firmware_measurement(
     write_command_script(out_dir / "energy_command.sh", command, cwd=cwd)
     runs: list[dict[str, Any]] = []
     for i in range(run_count):
+        task_logical_repeat = _task_logical_repeat or f"repeat:{i}"
+        if _task_budget is not None and not _task_budget.allowed(task_logical_repeat, cancel_event):
+            break
         if _cancel_requested(cancel_event):
             break
         recovery_before_start: dict[str, Any] | None = None
@@ -5074,6 +5202,11 @@ def run_fast_firmware_measurement(
                 if recovery_before_start.get("cancelled"):
                     break
         run_dir = out_dir / f"run_{i:03d}"
+        task_chain = None
+        if _task_budget is not None:
+            task_chain = _task_budget.reserve(task_logical_repeat, run_dir, preflight_requested or bool(preflight_prepare_command), cancel_event)
+            if task_chain is None:
+                break
         collector_run_id = str(
             run_id
             or f"{setup_id or setup.setup_id or 'energy'}:{out_dir.name}"
@@ -5084,7 +5217,22 @@ def run_fast_firmware_measurement(
         storage_dir.mkdir(parents=True, exist_ok=True)
         repeat_command = command
         preflight_evidence: dict[str, Any] | None = None
-        if preflight_requested:
+        prepare_result = None
+        if preflight_prepare_command:
+            prepare_argv = journaled_ssh_wrapper_argv(
+                shlex.split(preflight_prepare_command), label="window-probe-command",
+                env={**os.environ, **dict(subprocess_env or {})},
+                timeout_s=max(0.1, preflight_timeout_s - min(REMOTE_LEASE_OUTER_CLEANUP_MARGIN_S, max(1.0, preflight_timeout_s * 0.10))),
+            )
+            prepare_result = _run_one(
+                prepare_argv, cwd=None,
+                stdout_path=run_dir / "preflight_prepare_stdout.log",
+                stderr_path=run_dir / "preflight_prepare_stderr.log",
+                timeout=preflight_timeout_s, cancel_event=cancel_event,
+                subprocess_env=subprocess_env,
+            )
+        prepare_failed = prepare_result is not None and prepare_result.get("rc") != 0
+        if preflight_requested and not prepare_failed:
             preflight_evidence, repeat_command = _run_energy_preflight(
                 preflight_command,
                 workload_command_template=command,
@@ -5126,11 +5274,12 @@ def run_fast_firmware_measurement(
             ),
             "collector_recovery_before_start": recovery_before_start,
             "storage_dir": str(storage_dir),
-            "measurement_suite_policy": "collector=int(duration+1), power_estimated=int(duration+2)",
+            "measurement_suite_policy": probe["measurement_suite_policy"],
             # Keep the old unqualified field as a reader compatibility alias.
             "workload_duration_s": float(probe.get("workload_duration_s") or 0.0),
             "energy_configured_workload_duration_s": float(probe.get("workload_duration_s") or 0.0),
             "collector_measurement_duration_s": float(duration_s),
+            "capture_budget": capture_budget,
             "power_estimated_duration_s": float(power_estimated_s),
             "power_window_mode_configured": configured_power_mode,
             "power_window_mode_requested": power_mode,
@@ -5161,6 +5310,7 @@ def run_fast_firmware_measurement(
             "collector_timeout_s": energy_timeout_s,
             "preflight_requested": preflight_requested,
             "preflight_evidence": preflight_evidence,
+            "preflight_prepare_result": prepare_result,
             "preflight_status": (
                 str((preflight_evidence or {}).get("status") or "not_requested")
             ),
@@ -5171,7 +5321,7 @@ def run_fast_firmware_measurement(
             entry = _diagnostic_claim_payload(
                 entry, exclusion_reason=claim_exclusion_reason,
             )
-        if preflight_requested and not bool((preflight_evidence or {}).get("ok")):
+        if prepare_failed or (preflight_requested and not bool((preflight_evidence or {}).get("ok"))):
             preflight_cancelled = bool(
                 (preflight_evidence or {}).get("cancelled")
                 or _cancel_requested(cancel_event)
@@ -5212,6 +5362,8 @@ def run_fast_firmware_measurement(
                 "preflight_evidence": str(run_dir / "preflight" / "preflight_evidence.json"),
             })
             runs.append(entry)
+            if _task_budget is not None:
+                _task_budget.finish(task_chain, entry, run_dir)
             break
         entry["collector_started"] = False
         entry["collector_started_at_unix_ns"] = 0
@@ -5231,6 +5383,8 @@ def run_fast_firmware_measurement(
             proc: subprocess.Popen[Any], started_at_unix_ns: int,
         ) -> None:
             entry["collector_started"] = True
+            if _task_budget is not None:
+                _task_budget.collector_started(task_chain)
             entry["collector_started_at_unix_ns"] = int(
                 started_at_unix_ns
             )
@@ -5357,6 +5511,8 @@ def run_fast_firmware_measurement(
             ]
             _write_json(run_dir / "energy_summary.json", entry)
             runs.append(entry)
+            if _task_budget is not None:
+                _task_budget.finish(task_chain, entry, run_dir)
             if res.get("cancelled"):
                 break
             if global_infrastructure_failure:
@@ -5818,6 +5974,8 @@ def run_fast_firmware_measurement(
             )
         _write_json(run_dir / "energy_summary.json", entry)
         runs.append(entry)
+        if _task_budget is not None:
+            _task_budget.finish(task_chain, entry, run_dir)
         if global_infrastructure_failure:
             break
 
@@ -5885,6 +6043,9 @@ def run_fast_firmware_measurement(
             and invalid_repeat_max_retries > 0
         ):
             for retry_index in range(1, invalid_repeat_max_retries + 1):
+                retry_logical_repeat = _task_logical_repeat or f"repeat:{logical_index}"
+                if _task_budget is not None and not _task_budget.allowed(retry_logical_repeat, cancel_event):
+                    break
                 if _cancel_requested(cancel_event):
                     break
                 retry_attempt_count += 1
@@ -5920,6 +6081,10 @@ def run_fast_firmware_measurement(
                     defaults=retry_defaults,
                     cwd=cwd,
                     duration_s=float(probe.get("workload_duration_s") or 0.0) or None,
+                    capture_command_duration_s=(
+                        initial_entry.get("workload_execution_duration_s")
+                        if command_marker_capture else None
+                    ),
                     run_count=1,
                     exact_run_count=bool(exact_run_count),
                     postprocess=postprocess,
@@ -5947,6 +6112,9 @@ def run_fast_firmware_measurement(
                         preflight_expected_command_contract_sha256
                     ),
                     invalid_repeat_max_retries=0,
+                    _task_budget=_task_budget,
+                    preflight_prepare_command=preflight_prepare_command,
+                    _task_logical_repeat=retry_logical_repeat,
                     diagnostic_only=diagnostic_only,
                     claim_exclusion_reason=claim_exclusion_reason,
                     host_normalization_role=host_normalization_role,

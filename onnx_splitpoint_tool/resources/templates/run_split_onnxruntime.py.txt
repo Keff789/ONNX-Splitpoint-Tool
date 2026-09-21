@@ -1185,6 +1185,7 @@ try:
         _vendored_endpoint_module.load_authoritative_output_contract
     )
     runtime_output_contract = _vendored_endpoint_module.runtime_output_contract
+    output_endpoint_identity = _vendored_endpoint_module.output_endpoint_identity
 except Exception as _vendored_endpoint_import_exc:  # pragma: no cover - host dependent
     try:
         from onnx_splitpoint_tool import native_output_endpoint as _canonical_endpoint_module
@@ -1193,6 +1194,7 @@ except Exception as _vendored_endpoint_import_exc:  # pragma: no cover - host de
             _canonical_endpoint_module.load_authoritative_output_contract
         )
         runtime_output_contract = _canonical_endpoint_module.runtime_output_contract
+        output_endpoint_identity = _canonical_endpoint_module.output_endpoint_identity
         _canonical_endpoint_path = Path(
             str(_canonical_endpoint_module.__file__ or "")
         ).resolve()
@@ -7494,7 +7496,7 @@ def _detections_to_original_image_space(
 
 
 def _load_semantic_reference_detections_original(
-    img_file: Path, *, labels: Optional[List[str]] = None,
+    img_file: Path, *, labels: Optional[List[str]] = None, preserve_coco: bool = False,
 ) -> Tuple[Optional[List[Dict[str, Any]]], List[str]]:
     """Load annotation GT directly in original pixels without a round trip."""
     warnings: List[str] = []
@@ -7526,7 +7528,7 @@ def _load_semantic_reference_detections_original(
             skipped += 1
             continue
         try:
-            if int(ann.get("iscrowd", 0) or 0) != 0:
+            if not preserve_coco and int(ann.get("iscrowd", 0) or 0) != 0:
                 continue
             bbox = ann.get("bbox")
             if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
@@ -7546,7 +7548,10 @@ def _load_semantic_reference_detections_original(
             y2 = float(np.clip(y + height, 0.0, float(orig_h)))
             if x2 <= x1 or y2 <= y1:
                 raise ValueError("bbox collapsed")
+            if preserve_coco:
+                x1, y1, x2, y2 = x, y, x + width, y + height
             detections.append({
+                **({"iscrowd": int(ann.get("iscrowd", 0)), "area": float(ann.get("area", width*height))} if preserve_coco else {}),
                 "x1": x1, "y1": y1, "x2": x2, "y2": y2,
                 "score": 1.0, "class_id": int(class_id),
                 "class_name": str(class_name),
@@ -8223,6 +8228,8 @@ def _load_task_quality_policy(raw: Any) -> Dict[str, Any]:
             "native_self_reference_class_aware": native_class_aware,
             "numerical_similarity_required_for_claim": numerical_required,
         })
+    if data.get("reporting_policy"):
+        effective["reporting_policy"] = dict(data["reporting_policy"])
     payload = json.dumps(effective, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     policy_sha256 = hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -8281,6 +8288,7 @@ def _load_task_quality_policy(raw: Any) -> Dict[str, Any]:
             "execution_location": execution_location,
             "workers": workers,
         },
+        **({"reporting_policy": effective["reporting_policy"]} if effective.get("reporting_policy") else {}),
         "effective_policy": effective,
         "policy_sha256": policy_sha256,
     }
@@ -10147,7 +10155,9 @@ def _export_central_quality_inputs(
         "quality_contract_sha256": str((quality_contract or {}).get("quality_contract_sha256") or ""),
     }
     stats = policy.get("statistics") if isinstance(policy.get("statistics"), dict) else {}
-    metric_gate = policy.get(task_l) if isinstance(policy.get(task_l), dict) else {}
+    metric_gate = dict(policy.get(task_l) or {})
+    if policy.get("reporting_policy"):
+        metric_gate["reporting_policy"] = dict(policy["reporting_policy"])
     request_payload = {
         "schema": "onnx-splitpoint/central-quality-evaluation-request",
         "schema_version": 1,
@@ -10341,45 +10351,10 @@ def _central_quality_endpoint_contract(
         dict(resolved.get("tensor_signature") or {})
         if isinstance(resolved.get("tensor_signature"), Mapping) else {}
     )
-    semantic_tensors: List[Dict[str, Any]] = []
-    for row in list(physical_signature.get("tensors") or []):
-        if not isinstance(row, Mapping):
-            continue
-        shape = [int(value) for value in list(row.get("shape") or [])]
-        rank = int(row.get("rank") or 0)
-        if (
-            task_l == "classification"
-            and stage.startswith("classification_")
-            and len(shape) == 2 and shape[0] == 1
-        ):
-            shape = shape[1:]
-            rank = 1
-        semantic_tensors.append({
-            "index": int(row.get("index") or 0),
-            "rank": rank,
-            "shape": shape,
-        })
-    semantic = {
-        key: declared.get(key)
-        for key in (
-            "coordinate_format", "coordinate_space", "decoder_id",
-            "decoder_sha256", "nms_implementation", "class_aware",
-            "iou_threshold", "score_threshold", "max_detections",
-        )
-        if declared.get(key) not in (None, "")
-    }
-    producer_endpoint_identity = {
-        "schema": "onnx-splitpoint/output-endpoint-contract",
-        "schema_version": 3,
-        "task": task_l,
-        "stage": stage,
-        "output_format": output_format,
-        "tensor_signature": {
-            "tensor_count": int(physical_signature.get("tensor_count") or 0),
-            "tensors": semantic_tensors,
-        },
-        "semantic": semantic,
-    }
+    producer_endpoint_identity = output_endpoint_identity(
+        task=task_l, stage=stage, output_format=output_format,
+        signature=physical_signature, declaration=declared,
+    )
     if _quality_contract_sha256(producer_endpoint_identity) != str(
         resolved.get("endpoint_contract_hash") or ""
     ).strip().lower():
@@ -14465,6 +14440,8 @@ def _measured_endpoint_for_variant_v27927(
     variant = str(variant).lower()
     if variant == "part1":
         return "p1_output"
+    if variant == "full" and full_timing_scope == "generic_full_completed_task":
+        return "completed_" + str(task).lower()
     if str(task).lower() == "classification":
         return "classification_logits"
     if variant == "full":
@@ -14490,6 +14467,7 @@ def _deployment_contract_summary_for_variant(
     host_tail_model: Optional[str],
     stage2_input_contract_kind: str,
     stage2_calibration_gate: Optional[Dict[str, Any]],
+    full_completion_evidence: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Return the deployment contract of one measured output variant.
 
@@ -14501,18 +14479,32 @@ def _deployment_contract_summary_for_variant(
     variant_l = str(variant or "").strip().lower()
     full_hailo = _is_hailo_provider(str(full_provider or ""))
     stage2_hailo = _is_hailo_provider(str(stage2_provider or ""))
-    full_raw = bool(
-        variant_l == "full"
-        and full_hailo
-        and hailo_full_raw_detection_head
-    )
+    # Native graph outputs can also be raw heads on TRT/ORT. Derive their
+    # Full host tail from the measured timer and frozen decoder, not Hailo flags.
+    measured_full_raw = False
+    if variant_l == "full" and full_completion_evidence:
+        completion_contract = full_completion_evidence.get("postprocess_contract") or {}
+        if completion_contract.get("source_contract_family") == "raw_head":
+            from splitpoint_runners.task_completion import validate_completion
+            from splitpoint_runners.native_detection_postprocess import verify_frozen_postprocess_contract
+            if str(task) not in {"auto", "detection"}:
+                raise ValueError("raw Full completion task mismatch")
+            validate_completion(
+                full_completion_evidence, task="detection",
+                producer="generic_hailo_full" if full_hailo else "generic_ort_full",
+            )
+            verify_frozen_postprocess_contract(completion_contract)
+            measured_full_raw = True
+    full_raw = bool(measured_full_raw or (
+        variant_l == "full" and full_hailo and hailo_full_raw_detection_head
+    ))
     stage2_raw = bool(
         variant_l in {"part2", "composed"}
         and stage2_hailo
         and hailo_part2_raw_detection_head
     )
     raw_present = bool(full_raw or stage2_raw)
-    tail_available = bool(raw_present and host_tail_available)
+    tail_available = bool(raw_present and (host_tail_available or measured_full_raw))
     tail_required = bool(
         raw_present
         and (full_raw or hailo_part2_host_tail_required or stage2_raw)
@@ -14527,7 +14519,7 @@ def _deployment_contract_summary_for_variant(
         raw_status = "raw_head_only"
 
     if full_raw:
-        endpoint_mode = str(hailo_full_endpoint_mode or "raw_detection_head")
+        endpoint_mode = str(hailo_full_endpoint_mode or "raw_detection_head") if full_hailo else "raw_detection_head"
     elif stage2_raw:
         endpoint_mode = "raw_detection_head_prefix"
     else:
@@ -18608,7 +18600,6 @@ def main() -> int:
         hailo_full is not None
         and full_inputs_hailo is not None
         and hailo_full_raw_detection_head
-        and ort_p2_host_tail_sess is None
     ):
         if img_hw is None or img_path is None or not Path(img_path).is_file() or Image is None:
             variant_errors["full"] = (
@@ -18654,25 +18645,83 @@ def main() -> int:
                     f"{type(_frozen_exc).__name__}: {_frozen_exc}"
                 )
 
+    from splitpoint_runners.task_completion import TimedTaskCompletion
+    generic_full_completion_timer = TimedTaskCompletion("generic_hailo_full", "detection",
+        lambda: generic_full_frozen_postprocessor.completed_count if generic_full_frozen_postprocessor is not None else 0,
+        contract=generic_full_frozen_postprocess_contract)
+
     def _run_full_frozen_detection_hotloop() -> Dict[str, np.ndarray]:
         if hailo_full is None or full_inputs_hailo is None:
             raise RuntimeError("frozen Full detection hotloop lacks Hailo session")
         if generic_full_frozen_postprocessor is None:
             raise RuntimeError("frozen Full detection postprocessor is unavailable")
-        raw_map = hailo_full.infer(full_inputs_hailo)
-        generic_full_frozen_postprocessor.process(
-            raw_map, original_wh=generic_full_frozen_original_wh,
-        )
-        return raw_map
+        return generic_full_completion_timer.run(
+            lambda: hailo_full.infer(full_inputs_hailo),
+            lambda outputs: generic_full_frozen_postprocessor.process(outputs, original_wh=generic_full_frozen_original_wh))
+
+    # Full endpoints without raw Hailo heads use the same measured completion
+    # interface. Classification Top-k and detection materialization are inside
+    # every timed call; the output probe itself is not timed.
+    generic_other_full_processor = None
+    generic_other_full_timer = None
+    _generic_task = _normalize_benchmark_task(str(getattr(args, "benchmark_task", "auto") or manifest.get("task") or "auto"))
+    # The shared manifest may describe a Hailo raw head while this run uses
+    # TensorRT/ORT Full. Only an active Hailo Full owns that completion path.
+    if "full" in variants and (hailo_full is None or not hailo_full_raw_detection_head) and not variant_errors.get("full"):
+        try:
+            _generic_probe, _ = _run_full_variant_outputs_map(prefer_host_tail=False)
+            _generic_format = _detect_output_format(list(_generic_probe), list(_generic_probe.values()))
+            if _generic_task == "auto":
+                _generic_task = "classification" if _generic_format == "classification_logits" else "detection"
+            if _generic_task == "classification":
+                from splitpoint_runners.harness.classification import ClassificationCompletion
+                generic_other_full_processor = ClassificationCompletion()
+                _generic_contract = {"operation": "top1_top5"}
+            else:
+                from splitpoint_runners.native_detection_postprocess import (FrozenDetectionPostprocessor,
+                    FrozenDecodedNmsPostprocessor, build_frozen_postprocess_contract,
+                    build_frozen_decoded_nms_normalization_contract)
+                from splitpoint_runners.native_output_endpoint import load_authoritative_output_contract, runtime_output_contract
+                with Image.open(img_path) as _source:
+                    _generic_wh = list(_source.size)
+                _generic_model = str(args.model_id or args.quality_evidence_model_id or manifest.get("model_id") or (plan or {}).get("model_id") or full_path.stem)
+                if _generic_format == "bn6_detections":
+                    _declared = load_authoritative_output_contract(base_dir.parent, backend=str(full_tok), model_id=_generic_model, variant="full", task="detection")
+                    _endpoint = runtime_output_contract("detection", _generic_probe, raw_fallback=True, declared_contract=_declared)
+                    _generic_contract = build_frozen_decoded_nms_normalization_contract(model_id=_generic_model,
+                        outputs=_generic_probe, input_hw=list(img_hw), original_wh=_generic_wh,
+                        preprocess=_resolve_image_preprocessing_contract(task="detection", target_hw=img_hw)[0],
+                        source_completed=True,
+                        source_coordinate_space=str(_declared.get("source_coordinate_space") or ""),
+                        source_endpoint_contract_hash=str(_endpoint.get("endpoint_contract_hash") or ""),
+                        source_output_endpoint_attestation=_endpoint.get("output_endpoint_attestation") or {})
+                    generic_other_full_processor = FrozenDecodedNmsPostprocessor(_generic_contract)
+                else:
+                    _generic_contract = build_frozen_postprocess_contract(model_id=_generic_model, outputs=_generic_probe,
+                        input_hw=list(img_hw), original_wh=_generic_wh, model_sha256=_decoder_model_sha256,
+                        source_contract_family="decoded_pre_nms" if _generic_format == "ultralytics_decoded" else "raw_head")
+                    generic_other_full_processor = FrozenDetectionPostprocessor(_generic_contract)
+            generic_other_full_timer = TimedTaskCompletion("generic_hailo_full" if hailo_full is not None else "generic_ort_full",
+                _generic_task, lambda: generic_other_full_processor.completed_count, contract=_generic_contract)
+        except Exception as _completion_error:
+            variant_errors["full"] = f"Full task completion unavailable: {type(_completion_error).__name__}: {_completion_error}"
+
+    def _run_other_full_completed():
+        return generic_other_full_timer.run(lambda: _run_full_variant_outputs_map(prefer_host_tail=False)[0],
+            lambda outputs: generic_other_full_processor.process(outputs))
 
     # ----------------------------
     # Timings
     # ----------------------------
     if "full" in variants and not variant_errors.get("full"):
         try:
-            if hailo_full is not None and full_inputs_hailo is not None:
+            if generic_other_full_processor is not None:
+                full_mean, full_std, full_runs_ms = _bench("full_completed_task", _run_other_full_completed,
+                    args.warmup, args.runs, verbose_runs=args.verbose_runs, progress_every=args.progress_every)
+                full_primary_timing_scope = "generic_full_completed_task"
+            elif hailo_full is not None and full_inputs_hailo is not None:
                 if hailo_full_raw_detection_head:
-                    if ort_p2_host_tail_sess is not None and p2_host_tail_path is not None and p2_host_tail_path.is_file():
+                    if generic_full_frozen_postprocessor is None and ort_p2_host_tail_sess is not None and p2_host_tail_path is not None and p2_host_tail_path.is_file():
                         full_primary_host_tail_sha256 = _sp_file_sha256(p2_host_tail_path)
                         full_mean, full_std, full_runs_ms = _bench(
                             "full_rawhead_plus_frozen_host_tail",
@@ -20760,7 +20809,7 @@ def main() -> int:
                                 cache_entry["warnings"].extend(list(_gt_quality_warnings or []))
                                 _gt_original, _gt_original_warnings = (
                                     _load_semantic_reference_detections_original(
-                                        img_file, labels=labels,
+                                        img_file, labels=labels, preserve_coco=bool(task_quality_policy.get("reporting_policy")),
                                     )
                                 )
                                 cache_entry["gt_original"] = list(_gt_original or [])
@@ -22189,6 +22238,11 @@ def main() -> int:
             stage2_input_contract_kind = "feature_tensor"
     except Exception:
         pass
+    generic_full_completion_evidence = {}
+    if full_primary_timing_scope == "hailo_raw_head_plus_frozen_decode_nms" and variant_status.get("full") == "ok":
+        generic_full_completion_evidence = generic_full_completion_timer.report(args.warmup, args.runs)
+    if full_primary_timing_scope == "generic_full_completed_task" and variant_status.get("full") == "ok":
+        generic_full_completion_evidence = generic_other_full_timer.report(args.warmup, args.runs)
     deployment_contracts_by_variant = {
         variant_name: _deployment_contract_summary_for_variant(
             variant=variant_name,
@@ -22199,13 +22253,14 @@ def main() -> int:
             hailo_full_raw_detection_head=bool(hailo_full_raw_detection_head),
             hailo_part2_raw_detection_head=bool(hailo_part2_raw_detection_head),
             hailo_part2_host_tail_required=bool(hailo_part2_host_tail_required),
-            host_tail_available=bool(ort_p2_host_tail_sess is not None),
+            host_tail_available=bool(ort_p2_host_tail_sess is not None or (variant_name == "full" and generic_full_frozen_postprocessor is not None and variant_status.get("full") == "ok")),
             host_tail_model=(str(p2_host_tail_path) if p2_host_tail_path is not None else None),
             stage2_input_contract_kind=stage2_input_contract_kind,
             stage2_calibration_gate=(
                 dict(stage2_accel_calibration_gate)
                 if isinstance(stage2_accel_calibration_gate, dict) else {}
             ),
+            full_completion_evidence=generic_full_completion_evidence,
         )
         for variant_name in ("full", "part1", "part2", "composed")
     }
@@ -22554,6 +22609,7 @@ def main() -> int:
                 key: dict(value) for key, value in deployment_contracts_by_variant.items()
             },
         ),
+        generic_full_completion_evidence=generic_full_completion_evidence,
         deployment_contract_summary=dict(deployment_contract_summary),
         deployment_contracts_by_variant={
             key: dict(value) for key, value in deployment_contracts_by_variant.items()
@@ -22599,6 +22655,7 @@ def main() -> int:
     )
 
     # Write report JSON
+    print("[case-phase] report_write_begin", flush=True)
     report_path = out_dir / "validation_report.json"
     with open(report_path, "w") as f:
         json.dump(report, f, indent=2)
@@ -22608,11 +22665,14 @@ def main() -> int:
     # be disabled so the measured window contains inference loops only, not
     # report rendering.
     if not bool(getattr(args, "no_report_plots", False)):
+        print("[case-phase] report_plots_begin", flush=True)
         _try_write_report_plots(out_dir, report)
+        print("[case-phase] report_plots_end", flush=True)
     else:
         print("[energy] report plots disabled (--no-report-plots)")
 
     # Visualization / postprocess (best-effort)
+    print("[case-phase] visualization_begin", flush=True)
     if str(args.viz).lower() != 'none':
         try:
             viz_mode = str(args.viz).lower()
@@ -22947,6 +23007,7 @@ def main() -> int:
             pass
 
     # Rewrite report if viz added/updated
+    print("[case-phase] visualization_end_report_rewrite", flush=True)
     with open(report_path, "w") as f:
         json.dump(report, f, indent=2)
 
@@ -22959,6 +23020,7 @@ def main() -> int:
         )
 
     # Soft-fail policy: validation mismatch is a WARNING, not a hard failure.
+    print("[case-phase] main_return_before_resource_teardown", flush=True)
     return 0
 
 
@@ -22974,4 +23036,6 @@ except Exception:
     pass
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    _case_returncode = main()
+    print("[case-phase] main_resources_released_before_interpreter_shutdown", flush=True)
+    raise SystemExit(_case_returncode)

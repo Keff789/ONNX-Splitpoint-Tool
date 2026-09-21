@@ -589,6 +589,14 @@ def _hailo_observations(
                 "ready_built", "built", "build_succeeded", "compiled",
             }
         )
+        # An immutable invocation can succeed on cache reuse while its
+        # historical ``skipped`` projection remains false. The explicit
+        # physical dispatch counter is authoritative, including a real start
+        # whose legacy skipped/status projection contradicts the counter.
+        dispatch_count = attempt.get("compiler_dispatch_count")
+        if type(dispatch_count) is int and dispatch_count >= 0:
+            current_cold_build = dispatch_count > 0
+            evidence["compiler_dispatch_count"] = dispatch_count
         evidence["current_build"] = current_cold_build
         deferred_request = deferred_requests.get((role, item_id), {})
         if deferred_request:

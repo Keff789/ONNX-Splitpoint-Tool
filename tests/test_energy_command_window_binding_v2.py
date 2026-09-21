@@ -375,8 +375,11 @@ def _write_executable(path: Path, source: str) -> None:
     path.chmod(0o755)
 
 
+@pytest.mark.parametrize("startup_budget", [15.0, 30.0])
+@pytest.mark.parametrize("strict_claim_flags", [True, False])
 def test_fake_collector_and_postprocessor_complete_v2_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    startup_budget: float, strict_claim_flags: bool,
 ) -> None:
     collector = tmp_path / "fake-collector"
     powercalc = tmp_path / "fake-power-calculations"
@@ -393,6 +396,10 @@ run_id = sys.argv[sys.argv.index('--run-id') + 1]
 window_id = sys.argv[sys.argv.index('--window-id') + 1]
 storage.mkdir(parents=True, exist_ok=True)
 trace = storage / 'fast_firmware.parquet'
+# Model a late 14-second command end without making the unit test sleep.
+# The old inner-duration-only -d=2s cannot cover this acquisition.
+capture = float(next(x.split('=', 1)[1].removesuffix('s') for x in sys.argv if x.startswith('-d=')))
+assert capture >= 14, 'late_command_end_outside_capture'
 trace.write_bytes(b'firmware-trace' * 400)
 start_rt = time.time_ns(); start_mono = time.monotonic_ns()
 proc = subprocess.run([str(command)])
@@ -475,6 +482,7 @@ post = {
     defaults = EnergyDefaults(
         collector_binary=str(collector),
         power_calculations_binary=str(powercalc),
+        command_startup_budget_s=startup_budget,
         sample_rate=2000,
         pre_duration_s=0,
         post_duration_s=0,
@@ -498,12 +506,14 @@ post = {
         inference_count=100,
         physical_scope="MB",
         window_label="command",
-        require_runtime_work_units=True,
-        require_command_window_alignment=True,
+        require_runtime_work_units=strict_claim_flags,
+        require_command_window_alignment=strict_claim_flags,
     )
     assert output["ok"] is True
     assert output["energy_primary_metric"] == "calibrated_input_energy_unsubtracted"
     run = output["runs"][0]
+    assert run["collector_measurement_duration_s"] == startup_budget + 2
+    assert run["energy_configured_workload_duration_s"] == 1.0
     assert run["power_calculations_mode"] == "command_marker_crop"
     assert run["command_window_trace_binding"]["status"] == "verified"
     assert run["energy_window_alignment_status"] == "pass"

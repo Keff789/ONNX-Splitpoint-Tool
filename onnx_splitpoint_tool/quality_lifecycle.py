@@ -69,12 +69,16 @@ def summarize_requests(results: Sequence[Mapping[str, Any]], *, queued: int = 0,
     """Disjoint request counts. Companions remain separate caller identities."""
     counts: Counter[str] = Counter()
     decisions: Counter[str] = Counter()
+    uncertainty: Counter[str] = Counter()
     for result in results:
         status = str(result.get("technical_status") or result.get("status") or "failed").lower()
-        decision = str(result.get("decision") or result.get("quality_decision") or "").lower()
-        if status in {"completed", "ok", "success"} and decision in {"pass", "fail", "inconclusive"}:
+        decision = str(result.get("decision") or result.get("quality_decision") or result.get("task_quality_decision") or "").lower()
+        if status in {"completed", "ok", "success"} and decision in {"pass", "fail", "inconclusive", "reference_close", "accuracy_loss", "not_estimable"}:
             counts["evaluated"] += 1
             decisions[decision] += 1
+            assessment = result.get("accuracy_assessment") or {}
+            if assessment.get("uncertainty"):
+                uncertainty[str(assessment["uncertainty"])] += 1
         elif status == "cancelled":
             counts["cancelled"] += 1
         else:
@@ -85,12 +89,19 @@ def summarize_requests(results: Sequence[Mapping[str, Any]], *, queued: int = 0,
         "completed_count": counts["evaluated"], "cancelled_count": counts["cancelled"],
         "technical_failed_count": counts["technical_failed"],
         "queued_count": int(queued), "running_count": int(running),
-        "quality_decision_counts": {name: decisions[name] for name in ("pass", "fail", "inconclusive")},
+        "quality_decision_counts": {name: decisions[name] for name in ("pass", "fail", "inconclusive", "reference_close", "accuracy_loss", "not_estimable")},
+        "quality_uncertainty_counts": dict(uncertainty),
     }
 
 
 def progress_text(counts: Mapping[str, Any]) -> str:
     decisions = counts.get("quality_decision_counts") or {}
+    if any(decisions.get(k, 0) for k in ("reference_close", "accuracy_loss", "not_estimable")):
+        return (f"{counts['evaluated_count']}/{counts['request_count']} ausgewertet; "
+                f"{counts['technical_failed_count']} technische Fehler; "
+                f"{decisions.get('reference_close', 0)} Referenznah / {decisions.get('accuracy_loss', 0)} Genauigkeitsverlust / "
+                f"{decisions.get('not_estimable', 0)} nicht einstufbar; "
+                f"davon {(counts.get('quality_uncertainty_counts') or {}).get('inconclusive', 0)} statistisch unsicher")
     return (
         f"{counts['evaluated_count']}/{counts['request_count']} evaluated; "
         f"{counts['cancelled_count']} cancelled; {counts['technical_failed_count']} technical errors; "

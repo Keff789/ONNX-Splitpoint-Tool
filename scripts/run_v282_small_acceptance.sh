@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hardware-independent acceptance for v2.82 cold compiler readiness, shared Native input, Hailo10 layout and terminal status.
+# Hardware-independent acceptance for v2.83 cold compiler readiness, shared Native input, Hailo10 layout and terminal status.
 
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
   printf '%s\n' \
@@ -125,8 +125,8 @@ rc = requested_rc if requested_rc != 0 else (0 if all_pass else 70)
 payload = {
     "schema": "onnx-splitpoint/v282-small-acceptance/v1",
     "schema_version": 1,
-    "version": "2.82",
-    "build_id": "v2.82-selected-energy-generic-roles-workspace-product-evidence",
+    "version": "2.83",
+    "build_id": "v2.83-r9b-request-latency",
     "release_scope": "selected_energy_generic_roles_workspace_product_evidence",
     "started_at_utc": os.environ["STARTED"],
     "finished_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -442,4 +442,4 @@ do
 done
 SHELL=PASS
 
-echo 'PASS v2.82 small acceptance (real cache preflight and hardware EvalRun: NOT_RUN)'
+echo 'PASS v2.83 small acceptance (real cache preflight and hardware EvalRun: NOT_RUN)'

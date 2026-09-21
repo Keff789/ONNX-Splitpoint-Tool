@@ -34,15 +34,14 @@ _MODE_DEFAULTS = {
         "inflight": 4,
     },
     "standard": {
-        "frames": 1000,
-        "warmup": 100,
-        "repetitions": 3,
+        "frames": 100,
+        "warmup": 10,
+        "repetitions": 1,
         "queue_depth": 3,
         "inflight": 8,
     },
     "final": {
-        # Final Quality is Standard with a larger validation/bootstrap budget;
-        # its compact fallback must therefore retain Standard effort as well.
+        # Final Quality retains its larger Native performance budget.
         "frames": 1000,
         "warmup": 100,
         "repetitions": 3,
@@ -168,6 +167,8 @@ def resolve_native_execution_contract(
         default_config=_run_mode_native_defaults(profile),
     )
     for field in NATIVE_EXECUTION_FIELDS:
+        if field in (preset.get("native_budget_sources") or {}):
+            contract["field_sources"][field] = preset["native_budget_sources"][field]
         if field in explicit and explicit.get(field) is not None:
             contract["field_sources"][field] = "explicit_cli"
     unsigned = dict(contract)

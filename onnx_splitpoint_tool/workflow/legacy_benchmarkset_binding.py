@@ -2979,6 +2979,7 @@ def reconcile_candidate_plan_after_generation(
     accepted_cases: Sequence[Mapping[str, Any]],
     rejected_cases: Sequence[Mapping[str, Any]],
     generation_summary: Mapping[str, Any] | None = None,
+    backend_selection_state: Mapping[str, Any] | None = None,
     candidate_universe_path: str | Path | None = None,
     prediction_path: str | Path | None = None,
     selection_input_path: str | Path | None = None,
@@ -3035,7 +3036,30 @@ def reconcile_candidate_plan_after_generation(
         if frozen_union
         else _safe_int(original.get("requested_cases"), len(original_selected))
     )
-    if requested_cases > 0 and len(accepted) > requested_cases:
+    backend_union = False
+    if not frozen_union and backend_selection_state and backend_selection_state.get('enabled'):
+        state = backend_selection_state
+        contracts = list(state.get('contracts') or [])
+        definitions = {row['id'] for row in state.get('contract_definitions', [])}
+        if (state.get('quota') != requested_cases or not contracts
+                or {row['id'] for row in contracts} != definitions
+                or len(contracts) != len(definitions)):
+            raise ValueError('Generator backend selection contract/quota mismatch.')
+        memberships = {}
+        for contract in contracts:
+            cases = list(contract.get('selected_case_ids') or [])
+            if len(cases) > requested_cases or len(cases) != len(set(cases)):
+                raise ValueError('Generator returned more accepted cases than a backend requested.')
+            for case in cases:
+                memberships.setdefault(case, set()).add(contract['id'])
+        actual = {}
+        for idx, row in enumerate(accepted, start=1):
+            cid, _ = _generation_case_identity(row, idx)
+            actual[cid] = set(row.get('backend_selection_contracts') or [])
+        if actual != memberships:
+            raise ValueError('Generator accepted cases disagree with backend selection membership.')
+        backend_union = True
+    if requested_cases > 0 and len(accepted) > requested_cases and not backend_union:
         raise ValueError(
             "Generator returned more accepted cases than the authoritative "
             f"candidate plan requested ({len(accepted)} > {requested_cases})."
@@ -3799,13 +3823,16 @@ def materialize_legacy_benchmark_set(
         if isinstance(hailo_build_cfg, Mapping)
         else None
     )
+    from ..backend_backfill import backfill_policy, bind_plan_cases, selected_cases_for_backend, selection_contracts
+    backend_backfill_policy = ({} if frozen_predeclared_union or exact_candidate_scope or cache_guard
+                               else backfill_policy(profile_payload))
     defer_hailo_builds = bool(
         hailo_build_cfg.get("defer_until_cache_preflight")
         and not cache_verify_guard(profile_payload)
     )
     defer_deepx_builds = defer_hailo_builds
     selection_probe_preflight = bool(
-        defer_hailo_builds and hailo_feasibility_control.get("enabled")
+        defer_hailo_builds and (hailo_feasibility_control.get("enabled") or backend_backfill_policy)
     )
     if selection_probe_preflight:
         # Gate-A's accepted boundary depends on measured compiler feasibility.
@@ -3931,6 +3958,16 @@ def materialize_legacy_benchmark_set(
         ],
     )
 
+    if backend_backfill_policy:
+        from .required_run_scope import authoritative_run_descriptors, merge_authoritative_run_descriptors
+        physical_scope = _read_json(run_dir / 'required_run_scope.json', {}) or {}
+        descriptors = authoritative_run_descriptors(physical_scope, model_id=model_id)
+        if descriptors:
+            run_plan.bench_plan_runs = merge_authoritative_run_descriptors(
+                {'runs': run_plan.bench_plan_runs}, descriptors)['runs']
+        elif physical_scope.get('identity_mode') == 'physical_strict_v3':
+            raise ValueError('backend_backfill_physical_descriptors_missing')
+
     # A prospectively frozen score-independent audit observes the declared
     # case on every backend that can materialize it.  One missing Hailo backend
     # is therefore a backend-terminal observation, not permission to discard
@@ -4044,8 +4081,10 @@ def materialize_legacy_benchmark_set(
     build_mode = str(hailo_build_cfg.get("mode") or getattr(options, "hailo_build_mode", "reuse_and_build_missing") or "reuse_and_build_missing").strip().lower().replace("-", "_")
     if build_mode == "reuse_build_missing":
         build_mode = "reuse_and_build_missing"
-    hailo_cache_only = build_mode == "cache_verify_only"
-    active_build_mode = build_mode not in {"reuse_only", "disabled", "skip"}
+    # Reuse still needs the normal receipt-checked cache resolver. Disabling
+    # that helper also hid existing Full/Part1 HEFs from every new suite.
+    hailo_cache_only = build_mode in {"cache_verify_only", "reuse_only"}
+    active_build_mode = build_mode not in {"disabled", "skip"}
     preset = profile_payload.get("execution_preset") if isinstance(profile_payload.get("execution_preset"), Mapping) else {}
     run_mode_id = str(preset.get("id") or "").strip().lower()
     cold_full_policy = str(hailo_build_cfg.get("full_baseline_cold_build_policy") or ("cache_or_defer" if run_mode_id == "smoke" else "build_missing")).strip().lower().replace("-", "_")
@@ -4064,7 +4103,7 @@ def materialize_legacy_benchmark_set(
             )
         )
     )
-    if run_mode_id == "smoke" and native_hailo_full_required:
+    if run_mode_id == "smoke" and native_hailo_full_required and not hailo_cache_only:
         # A visible Full checkbox plus Native Runner means the user explicitly
         # requested a real Native Full baseline.  Do not silently defer the HEF
         # and then produce a missing Native-Full row.  Use the dedicated cold
@@ -4105,7 +4144,7 @@ def materialize_legacy_benchmark_set(
         )
     if hailo_cache_only:
         _log(
-            "[build-policy] cache_verify_only permits exact cache restoration "
+            f"[build-policy] {build_mode} permits exact cache restoration "
             "only; every miss terminates before DFC dispatch"
         )
     elif hailo_full_cache_only:
@@ -4115,7 +4154,7 @@ def materialize_legacy_benchmark_set(
         need_part2=bool(run_plan.hef_targets and run_plan.hef_part2),
     )
     if not active_build_mode and run_plan.hef_targets:
-        helpers.hailo_build_unavailable = "Hailo build mode is reuse_only; legacy generator may only reuse already prepared HEFs."
+        helpers.hailo_build_unavailable = f"Hailo build mode is {build_mode}; artifact lookup/build is disabled."
     if helpers.hailo_build_unavailable:
         _log(helpers.hailo_build_unavailable)
     if helpers.hailo_part2_import_error:
@@ -4163,8 +4202,15 @@ def materialize_legacy_benchmark_set(
         if bool(hailo_feasibility_control.get("enabled"))
         else None
     )
+    from .hardware_matrix import normalize_hardware_targets
     execution_cfg = BenchmarkGenerationExecutionConfig(
         runtime=runtime,
+        backend_backfill_policy=backend_backfill_policy,
+        hailo_metadata_store_root=str((profile_payload.get('artifact_store') or {}).get('root') or ''),
+        hailo_metadata_targets=(normalize_hardware_targets(profile_payload)
+            if (backend_backfill_policy or {}).get('technical_output_contract_version') == 1
+            and any(row['backend'] == 'hailo10h' and row['stage'] == 'part1'
+                    for row in selection_contracts(run_plan.bench_plan_runs)) else []),
         target_cases=int(requested),
         gap=int(gap),
         ranked_candidates=list(ranked_candidates),
@@ -4229,7 +4275,7 @@ def materialize_legacy_benchmark_set(
         hailo_part2_parser_precheck_fn=helpers.hailo_part2_parser_precheck_fn,
         hailo_part2_parser_precheck_error_fn=helpers.hailo_part2_parser_precheck_error_fn,
         hailo_part2_enable_suggested_endnode_fallback=True,
-        hailo_salvage_enable=not hailo_cache_only,
+        hailo_salvage_enable=not hailo_cache_only and not backend_backfill_policy,
         should_cancel=_cancel_requested,
     )
     callbacks = BenchmarkGenerationExecutionCallbacks(
@@ -4326,7 +4372,7 @@ def materialize_legacy_benchmark_set(
         hailo_full_timeout_explicit=hailo_full_timeout_explicit,
         hailo_run_mode=run_mode_id,
         full_hef_policy=normalize_full_hef_policy(full_hef_policy),
-        full_model_preflight_policy=("skip" if defer_hailo_builds else normalize_hailo_full_model_preflight_policy((policy or {}).get("full_model_hailo_preflight_policy") or "enabled")),
+        full_model_preflight_policy=("skip" if defer_hailo_builds or hailo_cache_only else normalize_hailo_full_model_preflight_policy((policy or {}).get("full_model_hailo_preflight_policy") or "enabled")),
         hailo_full_end_node_names=list(full_end_nodes or []),
         hailo_full_endpoint_mode=str(full_endpoint_mode or ""),
         hailo_full_output_contract=(dict(prep_baseline.get("output_contract") or {}) if isinstance(prep_baseline.get("output_contract"), Mapping) else None),
@@ -4541,6 +4587,7 @@ def materialize_legacy_benchmark_set(
         accepted_cases=accepted,
         rejected_cases=rejected,
         generation_summary=generation_summary,
+        backend_selection_state=state_payload.get('backend_backfill'),
         candidate_universe_path=candidate_universe_manifest_path,
         prediction_path=archived_prediction_path,
         selection_input_path=selection_input_path,
@@ -4576,7 +4623,7 @@ def materialize_legacy_benchmark_set(
         _selected_for_fallback = [dict(x) for x in list(candidate_plan.get("selected_candidates") or candidate_plan.get("candidates") or []) if isinstance(x, Mapping)]
     except Exception:
         _selected_for_fallback = []
-    if not accepted and _selected_for_fallback and not gate_enabled:
+    if not accepted and _selected_for_fallback and not gate_enabled and not backend_backfill_policy:
         try:
             from .generator_binding import materialize_suite_from_candidate_plan
             _log(
@@ -4769,6 +4816,14 @@ def materialize_legacy_benchmark_set(
         "candidate_plan_reconciliation": candidate_plan_reconciliation,
         "created_at": now_iso(),
     })
+    backend_state = runtime.generation_state.get('backend_backfill') or {}
+    if backend_state:
+        bind_plan_cases(plan_payload, backend_state)
+        write_json(suite_dir / 'benchmark_plan.json', plan_payload)
+        suite_contract = _read_json(suite_dir / 'benchmark_set.json', {})
+        suite_contract['backend_backfill'] = backend_state
+        write_json(suite_dir / 'benchmark_set.json', suite_contract)
+        write_json(formal_bdir / 'backend_selection.json', backend_state)
     p_contract = write_json(formal_bdir / "benchmark_set.json", {
         "schema": "onnx-splitpoint/benchmark-set-contract",
         "schema_version": 4,
@@ -4789,6 +4844,7 @@ def materialize_legacy_benchmark_set(
         "materialized": bool(accepted),
         "materialization_scope": "legacy_benchmarkset_full_pipeline",
         "cases": accepted,
+        "backend_backfill": backend_state,
         "rejected_cases": rejected,
         "planned_runs": list(plan_payload.get("runs") or plan_payload.get("planned_runs") or []),
         "status": (
@@ -4939,7 +4995,10 @@ def materialize_legacy_benchmark_set(
             or _preset_image_dir_local('', task=task_hint_for_calib)
         )
         deepx_materializer = defer_deepx_part1_build if defer_deepx_builds else _materialize_manual_deepx_part1_artifacts
-        deepx_part1_status = deepx_materializer(
+        from ..backend_backfill import call_with_build_budget
+        deepx_part1_status = call_with_build_budget(deepx_materializer,
+            state=backend_state, persist=runtime.persist, stage='part1',
+            selected_case_dirs=selected_cases_for_backend(backend_state, 'deepx', [str(c.get('folder') or c.get('case_dir')) for c in accepted]),
             out_dir=suite_dir,
             bench_plan_runs=list(plan_copy.get("runs") or plan_copy.get("planned_runs") or []),
             validation_images=str(validation_defaults.get("validation_images") or ""),
@@ -4971,6 +5030,9 @@ def materialize_legacy_benchmark_set(
     except Exception as exc:
         _log(f"[deepx] eval Part1 DXNN artifact materialization failed: {type(exc).__name__}: {exc}")
 
+    if backend_state:
+        bind_plan_cases(plan_copy, backend_state)
+        write_json(suite_dir / 'benchmark_plan.json', plan_copy)
     p_plan = write_json(formal_bdir / "benchmark_plan.json", plan_copy)
     cpu_reference_invariant = finalize_management_cpu_reference_plan_aliases(
         executable_plan_path=suite_dir / "benchmark_plan.json",

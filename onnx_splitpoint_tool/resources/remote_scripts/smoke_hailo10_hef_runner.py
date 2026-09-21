@@ -20,6 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from onnx_splitpoint_tool.runners.request_latency import RequestLatency
+from onnx_splitpoint_tool.runners.harness.classification import ClassificationCompletion
 from onnx_splitpoint_tool.runners._types import RunCfg
 from onnx_splitpoint_tool.runners.backends.hailo_backend import HailoBackend
 from onnx_splitpoint_tool.native_output_endpoint import (
@@ -1411,6 +1413,7 @@ def main() -> int:
                 ).strip()
                 frozen_decoded_nms_normalization_contract = (
                     build_frozen_decoded_nms_normalization_contract(
+                        source_completed=True,
                         model_id=str(args.model or ""),
                         outputs=frozen_postprocess_probe_outputs,
                         input_hw=[input_h, input_w],
@@ -1434,11 +1437,14 @@ def main() -> int:
                     "Native Full Hailo detection has no authoritative raw-head or decoded-NMS endpoint"
                 )
 
-        completion_processor = frozen_postprocessor or decoded_nms_normalizer
-        if completion_processor is not None and original_wh is None:
+        classification_processor = ClassificationCompletion() if str(args.task) == "classification" else None
+        completion_processor = frozen_postprocessor or decoded_nms_normalizer or classification_processor
+        if (frozen_postprocessor or decoded_nms_normalizer) is not None and original_wh is None:
             raise RuntimeError("frozen Native Full postprocess requires preverified original image geometry")
 
         def _timed_postprocess(outputs: dict[str, np.ndarray]) -> dict[str, Any]:
+            if classification_processor is not None:
+                return classification_processor.process(outputs)
             if frozen_postprocessor is not None:
                 canonical_outputs = _canonicalize_frozen_postprocess_outputs(
                     outputs, frozen_postprocess_contract,
@@ -1454,6 +1460,11 @@ def main() -> int:
 
         last_outputs: dict[str, Any] = {}
         timings_ms: list[float] = []
+        request_latency = RequestLatency(
+            int(args.frames) if args.throughput_mode else int(args.runs),
+            task_complete=completion_processor is not None,
+            start_anchor="hailo_full:before_backend_run",
+            end_anchor="hailo_full:after_postprocess_or_host_outputs", enabled=not args.duration_s)
         throughput_result: dict[str, Any] | None = None
         if bool(args.throughput_mode):
             if hasattr(prep.session, "benchmark_throughput"):
@@ -1504,10 +1515,12 @@ def main() -> int:
                     completed_frames < int(args.frames)
                     or time.perf_counter() - t0 < target_duration_s
                 ):
+                    request_latency.start(completed_frames)
                     out = backend.run(prepared, inputs)
                     last_outputs = dict(out.outputs)
                     if completion_processor is not None:
                         _timed_postprocess(last_outputs)
+                    request_latency.complete(completed_frames)
                     completed_frames += 1
                 elapsed_s = max(0.0, time.perf_counter() - t0)
                 if completed_frames < int(args.frames):
@@ -1516,6 +1529,7 @@ def main() -> int:
                     )
                 fps = (float(completed_frames) / elapsed_s) if completed_frames > 0 and elapsed_s > 0.0 else 0.0
                 throughput_result = {
+                    "request_latency": request_latency.report(),
                     "frames": int(completed_frames),
                     "requested_frames": int(args.frames),
                     "minimum_requested_frames": int(args.frames),
@@ -1579,7 +1593,8 @@ def main() -> int:
                 int(completion_processor.completed_count)
                 if completion_processor is not None else 0
             )
-            for _ in range(int(args.runs)):
+            for request_id in range(int(args.runs)):
+                request_latency.start(request_id)
                 iteration_started = time.perf_counter()
                 out = backend.run(prepared, inputs)
                 last_outputs = dict(out.outputs)
@@ -1592,6 +1607,8 @@ def main() -> int:
                     timings_ms.append(
                         float(out.metrics.get("infer_ms", 0.0))
                     )
+
+                request_latency.complete(request_id)
 
             if timings_ms:
                 print(
@@ -1764,7 +1781,7 @@ def main() -> int:
                     )
             completion_result = (
                 dict(completion_processor.last_result)
-                if completion_processor is not None else {}
+                if completion_processor is not None and classification_processor is None else {}
             )
             completed_result_artifact = (
                 dict(
@@ -1820,6 +1837,7 @@ def main() -> int:
                 "copy_inputs": bool(args.copy_inputs),
                 "throughput_mode": bool(args.throughput_mode),
                 "throughput": throughput_result,
+                "request_latency": (throughput_result or {}).get("request_latency") or request_latency.report(),
                 "completed_frames": (
                     measured_completed_frames
                 ),
@@ -2032,6 +2050,8 @@ def main() -> int:
                     or ""
                 ),
             }
+            if classification_processor is not None:
+                report.update(classification_processor.report(measured_postprocess_frames))
             if args.diagnostic_only:
                 report.update({
                     "diagnostic_only": True,
@@ -2041,6 +2061,16 @@ def main() -> int:
             json_path.parent.mkdir(parents=True, exist_ok=True)
             json_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
             print("[hailo10-smoke] wrote:", json_path)
+    except Exception as exc:
+        evidence = getattr(exc, "request_latency", None)
+        if evidence is None and "request_latency" in locals():
+            evidence = request_latency.report()
+        if args.json_out and evidence is not None:
+            failure_path = Path(args.json_out).expanduser()
+            failure_path.parent.mkdir(parents=True, exist_ok=True)
+            failure_path.write_text(json.dumps({"ok": False, "status": "runtime_failed",
+                "error": f"{type(exc).__name__}: {exc}", "request_latency": evidence}, indent=2))
+        raise
     finally:
         if prepared is not None:
             backend.cleanup(prepared)

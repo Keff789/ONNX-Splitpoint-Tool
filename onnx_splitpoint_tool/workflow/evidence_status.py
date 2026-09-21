@@ -9,6 +9,7 @@ SCHEMA_VERSION = 5
 
 
 _TASK_QUALITY_DECISIONS = {
+    "reference_close": "reference_close", "accuracy_loss": "accuracy_loss", "not_estimable": "not_estimable",
     "pass": "pass",
     "passed": "pass",
     "fail": "fail",
@@ -268,6 +269,8 @@ def _energy_accounting_projection(matrix, plan_rows, excluded_rows, result_rows,
     if groups["unexpected"]:
         conflicts.append("unexpected_identity")
     repeats, repeats_known = 0, True
+    requested_repeats = collector_attempts = failed_collector_attempts = 0
+    requested_known = attempts_known = bool(result_rows)
     per_row = []
     from ..native_energy_quality_admission import energy_quality_reason_projection
     quality_by_identity = {}
@@ -286,9 +289,21 @@ def _energy_accounting_projection(matrix, plan_rows, excluded_rows, result_rows,
             repeats += count
         else:
             repeats_known = False
+        requested = run.get("energy_aggregate_requested_repeat_count")
+        if type(requested) is int and requested >= 0:
+            requested_repeats += requested
+        else:
+            requested_known = False
+        attempts = run.get("energy_collector_attempt_count")
+        failed_attempts = run.get("energy_failed_collector_attempt_count")
+        if type(attempts) is int and type(failed_attempts) is int and 0 <= failed_attempts <= attempts:
+            collector_attempts += attempts
+            failed_collector_attempts += failed_attempts
+        else:
+            attempts_known = False
         display_admission = dict(admission)
         decisions = quality_by_identity.get(_ledger_identity(item), set())
-        if len(decisions) == 1 and next(iter(decisions)) in {"pass", "fail", "inconclusive", "reference"}:
+        if len(decisions) == 1 and next(iter(decisions)) in {"pass", "fail", "inconclusive", "reference", "reference_close", "accuracy_loss", "not_estimable"}:
             display_admission["local_task_quality_decision"] = next(iter(decisions))
         per_row.append({"identity": list(_ledger_identity(item)) if _ledger_identity(item) else None,
                         "local_quality_projection_source": "validation_row" if decisions else "stored_admission",
@@ -301,6 +316,9 @@ def _energy_accounting_projection(matrix, plan_rows, excluded_rows, result_rows,
         "counts": {key: len(values) for key, values in groups.items()},
         "expected_count": len(expected) if expected_rows else None,
         "valid_repetition_count": repeats if repeats_known else None,
+        "requested_repetition_count": requested_repeats if requested_known else None,
+        "collector_attempt_count": collector_attempts if attempts_known else None,
+        "failed_collector_attempt_count": failed_collector_attempts if attempts_known else None,
         "row_quality": per_row,
         "campaign_comparison_released": False,  # caller supplies existing scientific gate
     }
@@ -442,7 +460,7 @@ def derive_native_evidence_status(
             if decision == status
         )
         for status in (
-            "pass", "fail", "inconclusive", "reference", "unavailable",
+            "pass", "fail", "inconclusive", "reference", "reference_close", "accuracy_loss", "not_estimable", "unavailable",
         )
     }
     task_quality_conflict_count = sum(
@@ -451,7 +469,7 @@ def derive_native_evidence_status(
     )
     claim_decisions = sum(
         task_quality_counts[status]
-        for status in ("pass", "fail", "inconclusive", "reference")
+        for status in ("pass", "fail", "inconclusive", "reference", "reference_close", "accuracy_loss", "not_estimable")
     )
     claim_eligible = sum(
         1
@@ -1861,6 +1879,9 @@ def workflow_completion_projection(
     energy = evidence.get("energy") or {}
     task_quality = evidence.get("task_quality") or {}
     decisions = quality.get("decision_counts") or quality.get("quality_decision_counts") or {}
+    from ..quality_lifecycle import summarize_requests
+    uncertainty = (summarize_requests(quality["results"])["quality_uncertainty_counts"]
+                   if "results" in quality else quality.get("quality_uncertainty_counts") or {})
     status = str(technical_status or "unavailable").strip().lower()
     if status in {"completed", "success", "complete"}:
         status = "ok"
@@ -1877,8 +1898,11 @@ def workflow_completion_projection(
         "native_validation_total_technical_errors": count(evidence, "validation_technical_error_count"),
         "central_quality_started": count(quality, "request_count"),
         "central_quality_completed": count(quality, "completed_count"),
+        "central_quality_accuracy_loss": _int(decisions.get("accuracy_loss")),
+        "central_quality_reference_close": _int(decisions.get("reference_close")),
         "central_quality_failed": _int(decisions.get("fail")),
         "central_quality_inconclusive": _int(decisions.get("inconclusive")),
+        "central_quality_uncertainty_inconclusive": _int(uncertainty.get("inconclusive")),
         "central_quality_missing": count(quality, "campaign_quality_missing_count"),
         "energy_started": count(energy, "measurement_started_count"),
         "energy_verified": count(energy, "measurement_success_count"),
@@ -1887,7 +1911,8 @@ def workflow_completion_projection(
         "generic_excluded": max(0, _int(generic_excluded_count)),
     }
     quality_warning = bool(
-        counts["central_quality_failed"] or counts["central_quality_inconclusive"]
+        counts["central_quality_accuracy_loss"] or counts["central_quality_failed"] or counts["central_quality_inconclusive"]
+        or counts["central_quality_uncertainty_inconclusive"]
         or _int(task_quality.get("fail_count")) or _int(task_quality.get("inconclusive_count"))
     )
     warnings = bool(quality_warning or counts["native_excluded"]
@@ -1918,16 +1943,23 @@ def workflow_completion_projection(
     if counts["central_quality_completed"] is not None:
         details.append(
             f"Zentrale Qualität: {counts['central_quality_completed']} Auswertungen abgeschlossen, "
-            f"{counts['central_quality_failed']} außerhalb der Grenzen, "
+            f"{counts['central_quality_reference_close']} referenznah, {counts['central_quality_accuracy_loss']} mit Genauigkeitsverlust; "
+            f"davon {counts['central_quality_uncertainty_inconclusive']} statistisch unsicher. "
+            f"Legacy: {counts['central_quality_failed']} außerhalb der Grenzen, "
             f"{counts['central_quality_inconclusive']} uneindeutig."
         )
     if counts["central_quality_missing"]:
         details.append(f"Erforderliche Qualitätsresultate fehlend: {counts['central_quality_missing']}.")
     if energy.get("requested") is True:
+        accounting = energy.get("accounting") or {}
         details.append(
-            f"Native-Energie: {counts['energy_verified']} von {counts['energy_started']} gestarteten Ergebnissen verifiziert; "
+            f"Native-Energie: {counts['energy_verified']} von {counts['energy_started']} gestarteten Zeilen vollständig verifiziert; "
             f"{counts['energy_failed']} fehlgeschlagen/nicht importierbar."
         )
+        if accounting.get("valid_repetition_count") is not None:
+            details.append(f"Energie-Replikate: {accounting['valid_repetition_count']}/{accounting.get('requested_repetition_count') if accounting.get('requested_repetition_count') is not None else 'unbekannt'} gültige logische Wiederholungen.")
+        if accounting.get("failed_collector_attempt_count") is not None:
+            details.append(f"Collectorversuche: {accounting['collector_attempt_count']} gestartet, {accounting['failed_collector_attempt_count']} fehlgeschlagen (separate Versuchszählung).")
     if counts["generic_excluded"]:
         details.append(f"Generische Messmatrix: {counts['generic_excluded']} bekannte Build-Ausschlüsse.")
     return {"status": status, "label": label, "severity": severity,

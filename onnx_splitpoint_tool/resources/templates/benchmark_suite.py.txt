@@ -1386,7 +1386,7 @@ def _deepx_detection_decode(
         # Shape alone never proves an integrated-NMS endpoint.  Accept BN6 only
         # after the exact backend-specific recorded contract has been bound and
         # its hash/host-tail semantics cross-checked against this artifact.
-        runtime_attestation = _deepx_bn6_runtime_semantic_attestation(arr, contract)
+        runtime_attestation = _deepx_bn6_runtime_semantic_attestation(arr, contract, confidence_threshold=float(conf))
         bn6_attested = bool(runtime_attestation.get("attested"))
         bn6_reason = str(runtime_attestation.get("reason") or "bn6_runtime_semantics_not_attested")
         if raw_declared or not bn6_attested:
@@ -1440,8 +1440,10 @@ def _deepx_detection_decode(
                 "status": "ok", "pass": True, "family": family,
                 "decoder_id": processor_contract["normalizer_id"], "declared_decoder_id": decoder_id,
                 "output_format": "bn6_detections", "nms_included": True,
-                "source_endpoint_semantics": "post_nms_bn6_detections",
-                "source_endpoint_has_integrated_nms": True,
+                "source_endpoint_semantics": ("fixed_topk_xyxy_score_class_candidates"
+                    if processor_contract.get("candidate_selection") else "post_nms_bn6_detections"),
+                "source_endpoint_has_integrated_nms": processor_contract["source_nms_attested"],
+                "candidate_selection": processor_contract.get("candidate_selection", {}),
                 "host_decoder_applied": False, "host_nms_applied": False,
                 "inverse_geometry_applied": True,
                 "confidence_threshold": float(conf), "nms_iou_threshold": 0.45, "nms_max_detections": 300,
@@ -1633,9 +1635,9 @@ def _deepx_box_iou_xyxy(a: Any, b: Any) -> float:
         return 0.0
 
 
-def _deepx_coco_ann_to_det(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _deepx_coco_ann_to_det(ann: Dict[str, Any], *, preserve_coco: bool = False) -> Optional[Dict[str, Any]]:
     try:
-        if int(ann.get("iscrowd") or 0) != 0:
+        if not preserve_coco and int(ann.get("iscrowd") or 0) != 0:
             return None
         bbox = ann.get("bbox")
         if not isinstance(bbox, list) or len(bbox) < 4:
@@ -1934,6 +1936,11 @@ def _deepx_authoritative_endpoint_attestation(
         }
     endpoint_mode, host_tail, postprocessing = next(iter(signatures))
     authoritative = dict(matches[0])
+    try:
+        from splitpoint_runners.native_output_endpoint import bn6_candidate_selection
+    except ModuleNotFoundError:
+        from onnx_splitpoint_tool.native_output_endpoint import bn6_candidate_selection
+    candidate_selection = bn6_candidate_selection(authoritative)
     attestation = {
         "schema": "onnx-splitpoint/deepx-endpoint-semantic-attestation",
         "schema_version": 1,
@@ -1946,12 +1953,12 @@ def _deepx_authoritative_endpoint_attestation(
         "postprocessing_required": bool(postprocessing),
         "source_endpoint_semantics": (
             (
-                "decoded_final_output"
+                "fixed_topk_xyxy_score_class_candidates" if candidate_selection else "decoded_final_output"
                 if endpoint_mode == "decoded"
                 else endpoint_mode
             )
         ),
-        "source_endpoint_has_integrated_nms": bool(endpoint_mode == "decoded"),
+        "source_endpoint_has_integrated_nms": bool(endpoint_mode == "decoded" and not candidate_selection),
         "authoritative_contract": authoritative,
         "authoritative_contract_sha256": _deepx_endpoint_json_sha256(authoritative),
         "source_path": str(path),
@@ -1997,6 +2004,14 @@ def _deepx_bind_authoritative_endpoint_contract(
     authoritative_model_id = str(
         authoritative.get("model_id") or ""
     ).strip()
+    try:
+        from splitpoint_runners.native_output_endpoint import bn6_candidate_selection
+    except ModuleNotFoundError:
+        from onnx_splitpoint_tool.native_output_endpoint import bn6_candidate_selection
+    selection = bn6_candidate_selection(authoritative.get("authoritative_contract") or {})
+    if selection and any(str(bound.get(key) or "").lower() != selection["source_onnx_sha256"]
+                         for key in ("source_onnx_sha256", "build_onnx_sha256")):
+        conflicts.append("candidate_graph_artifact_source_mismatch")
     artifact_model_id = str(bound.get("model_id") or "").strip()
     if (
         artifact_model_id and authoritative_model_id
@@ -2092,6 +2107,7 @@ def _deepx_decoded_bn6_attestation(contract: Optional[Dict[str, Any]]) -> Tuple[
 
 def _deepx_bn6_runtime_semantic_attestation(
     output: Any, contract: Optional[Dict[str, Any]],
+    *, confidence_threshold: float = 0.25,
 ) -> Dict[str, Any]:
     """Combine the recorded declaration with runtime value semantics.
 
@@ -2131,6 +2147,24 @@ def _deepx_bn6_runtime_semantic_attestation(
     score_valid = (rows[:, 4] >= -1e-6) & (rows[:, 4] <= 1.0 + 1e-6)
     class_valid = (rows[:, 5] >= -1e-6) & (np.abs(rows[:, 5] - np.rint(rows[:, 5])) <= 1e-4)
     xyxy_valid = (rows[:, 2] + 1e-6 >= rows[:, 0]) & (rows[:, 3] + 1e-6 >= rows[:, 1])
+    try:
+        from splitpoint_runners.native_output_endpoint import bn6_candidate_selection
+    except ModuleNotFoundError:
+        from onnx_splitpoint_tool.native_output_endpoint import bn6_candidate_selection
+    selection = bn6_candidate_selection(((contract or {}).get("endpoint_semantic_attestation") or {}).get("authoritative_contract") or {})
+    raw_xyxy_fraction = float(np.mean(xyxy_valid))
+    if selection:
+        if shape != selection["output_shape"]:
+            return {"status": "failed", "pass": False, "attested": False, "reason": "candidate_graph_output_shape_mismatch", **base}
+        class_valid &= rows[:, 5] < selection["class_count"]
+        # Validate the records this consumer will select; the materializer is
+        # the sole execution of the unchanged path-specific score selection.
+        retained = rows[:, 4] >= float(confidence_threshold)
+        xyxy_valid = xyxy_valid | ~retained
+        base["candidate_selection"] = selection
+        base["raw_ordered_xyxy_fraction"] = raw_xyxy_fraction
+        base["raw_invalid_geometry_count"] = int(np.sum((rows[:, 2] < rows[:, 0]) | (rows[:, 3] < rows[:, 1])))
+        base["confidence_threshold"] = float(confidence_threshold)
     fractions = {
         "finite_fraction": float(np.mean(finite)),
         "score_range_fraction": float(np.mean(score_valid)),
@@ -2151,7 +2185,7 @@ def _deepx_bn6_runtime_semantic_attestation(
         "status": "passed", "pass": True, "attested": True,
         "reason": "recorded_decoded_endpoint_and_runtime_xyxy_score_class_verified",
         "values_decoded_xyxy_score_class": True,
-        "source_endpoint_has_integrated_nms": True,
+        "source_endpoint_has_integrated_nms": not bool(selection),
         "fraction_threshold": threshold, "row_count": int(rows.shape[0]),
         **fractions, **base,
     }
@@ -3121,13 +3155,21 @@ def _deepx_verified_endpoint_semantic_declaration(
                 "deepx_quality_endpoint_semantic_top_level_" + key + "_conflict"
             )
     if task_l == "detection":
-        expected_integrated_nms = endpoint_mode == "decoded"
+        try:
+            from splitpoint_runners.native_output_endpoint import bn6_candidate_selection
+        except ModuleNotFoundError:
+            from onnx_splitpoint_tool.native_output_endpoint import bn6_candidate_selection
+        selection = bn6_candidate_selection(authoritative)
+        expected_integrated_nms = endpoint_mode == "decoded" and not bool(selection)
+        expected_decode_tail = endpoint_mode != "decoded"
         if (
             source_has_integrated_nms is not expected_integrated_nms
             or attestation.get("source_endpoint_has_integrated_nms")
             is not expected_integrated_nms
-            or host_tail is expected_integrated_nms
-            or postprocessing is expected_integrated_nms
+            or host_tail is not expected_decode_tail
+            or postprocessing is not expected_decode_tail
+            or (selection and any(output_contract.get(key) != selection["source_onnx_sha256"]
+                                  for key in ("source_onnx_sha256", "build_onnx_sha256")))
         ):
             raise RuntimeError(
                 "deepx_quality_endpoint_semantic_runtime_stage_conflict"
@@ -3136,13 +3178,14 @@ def _deepx_verified_endpoint_semantic_declaration(
         "coordinate_format", "coordinate_space", "decoder_id",
         "decoder_sha256", "nms_implementation", "class_aware",
         "iou_threshold", "score_threshold", "max_detections",
+        "source_onnx_detection_endpoint",
     )
     semantic = {
         key: authoritative.get(key)
         for key in semantic_keys
         if authoritative.get(key) not in (None, "")
     }
-    if endpoint_mode == "decoded" and (
+    if task_l == "detection" and endpoint_mode == "decoded" and (
         not isinstance(semantic.get("coordinate_format"), str)
         or not str(semantic.get("coordinate_format") or "").strip()
         or semantic.get("coordinate_format")
@@ -3173,7 +3216,7 @@ def _deepx_standard_runtime_endpoint_identity(
 ) -> Dict[str, Any]:
     """Build the exact precision-neutral Native endpoint-hash identity.
 
-    This intentionally mirrors ``native_output_endpoint._endpoint_hash``.  It
+    Uses the same v3 payload projection as the runtime attestor. It
     describes the measured *pre-adapter* runtime endpoint.  DeepX host
     decoder/NMS or Top-K provenance is stored in a separate quality-record
     endpoint contract and therefore cannot change this join key.
@@ -3197,7 +3240,9 @@ def _deepx_standard_runtime_endpoint_identity(
             (semantic_attestation or {}).get("endpoint_mode")
             if isinstance(semantic_attestation, Mapping) else ""
         ).strip().lower()
-        if source_has_integrated_nms is True:
+        # A graph-bound decoded TopK output has no NMS but is not a raw head.
+        # The authority check above already verified graph and artifact binding.
+        if declared_endpoint_mode == "decoded":
             stage, output_format = "decoded_nms", "bn6_detections"
         elif source_has_integrated_nms is False:
             if declared_endpoint_mode == "decoded_pre_nms":
@@ -3229,39 +3274,23 @@ def _deepx_standard_runtime_endpoint_identity(
             raise RuntimeError("deepx_quality_classification_runtime_endpoint_stage_unattested")
         output_format = stage
         semantic = {}
+        if output_contract.get("endpoint_semantic_attestation"):
+            semantic = _deepx_verified_endpoint_semantic_declaration(
+                output_contract, task=task_l, source_has_integrated_nms=None,
+                expected_model_id=expected_model_id, expected_backend=expected_backend,
+                expected_variant=expected_variant,
+            )
     else:
         raise RuntimeError(f"deepx_quality_runtime_endpoint_task_unsupported:{task_l}")
-    comparison_signature = signature
-    if task_l == "classification" and stage.startswith("classification_"):
-        tensors: List[Dict[str, Any]] = []
-        for row in list(signature.get("tensors") or []):
-            shape = [int(value) for value in list(row.get("shape") or [])]
-            rank = int(row.get("rank") or len(shape))
-            # Match native_output_endpoint v3: classifier APIs may return [C]
-            # or [1,C], which is one semantic endpoint.  The original runtime
-            # observation above remains available as physical-shape evidence;
-            # only the cross-runner hash projection drops a singleton batch.
-            if len(shape) == 2 and shape[0] == 1:
-                shape = shape[1:]
-                rank = 1
-            tensors.append({
-                "index": int(row.get("index") or 0),
-                "rank": rank,
-                "shape": shape,
-            })
-        comparison_signature = {
-            "tensor_count": int(signature.get("tensor_count") or 0),
-            "tensors": tensors,
-        }
-    return {
-        "schema": "onnx-splitpoint/output-endpoint-contract",
-        "schema_version": 3,
-        "task": task_l,
-        "stage": stage,
-        "output_format": output_format,
-        "tensor_signature": comparison_signature,
-        "semantic": semantic,
-    }
+    try:
+        from splitpoint_runners.native_output_endpoint import output_endpoint_identity
+    except ModuleNotFoundError:
+        from onnx_splitpoint_tool.native_output_endpoint import output_endpoint_identity
+    return output_endpoint_identity(
+        task=task_l, stage=stage, output_format=output_format,
+        signature=signature, declaration=semantic,
+    )
+
 
 
 def _deepx_write_quality_json(path: Path, payload: Mapping[str, Any]) -> Dict[str, Any]:
@@ -3393,6 +3422,8 @@ def _deepx_normalize_quality_policy(raw: Any) -> Dict[str, Any]:
             "native_self_reference_class_aware": native_class_aware,
             "numerical_similarity_required_for_claim": numerical_required,
         })
+    if data.get("reporting_policy"):
+        effective["reporting_policy"] = dict(data["reporting_policy"])
     policy_sha = _deepx_quality_json_sha256(effective)
     return {
         "schema": effective["schema"],
@@ -3435,6 +3466,7 @@ def _deepx_normalize_quality_policy(raw: Any) -> Dict[str, Any]:
             "seed": seed, "decision": decision, "execution_location": execution,
             "workers": max(1, min(64, _int(stats.get("workers"), 4 if execution == "central_management" else 1))),
         },
+        **({"reporting_policy": effective["reporting_policy"]} if effective.get("reporting_policy") else {}),
         "effective_policy": effective, "policy_sha256": policy_sha,
     }
 
@@ -4049,7 +4081,7 @@ def _deepx_export_central_quality_request(
             })
             ground_truth: List[Dict[str, Any]] = []
             for ann in list(sample.get("annotations") or []):
-                projected = _deepx_coco_ann_to_det(dict(ann))
+                projected = _deepx_coco_ann_to_det(dict(ann), preserve_coco=bool(policy.get("reporting_policy")))
                 if projected is None:
                     continue
                 class_id = int(projected["class_id"])
@@ -4061,7 +4093,10 @@ def _deepx_export_central_quality_request(
                 )
                 if box[2] <= box[0] or box[3] <= box[1]:
                     continue
+                if policy.get("reporting_policy"):
+                    box = [projected[k] for k in ("x1", "y1", "x2", "y2")]
                 ground_truth.append({
+                    **({"iscrowd": int(ann.get("iscrowd", 0)), "area": float(ann.get("area", (box[2]-box[0])*(box[3]-box[1])))} if policy.get("reporting_policy") else {}),
                     "x1": box[0], "y1": box[1], "x2": box[2], "y2": box[3],
                     "score": 1.0, "class_id": class_id, "class_name": _DEEPX_COCO80[class_id],
                 })
@@ -4179,7 +4214,7 @@ def _deepx_export_central_quality_request(
             raise RuntimeError("deepx_quality_decoder_identity_incomplete")
         if not str(actual_decoder.get("source_endpoint_semantics") or ""):
             raise RuntimeError("deepx_quality_source_endpoint_semantics_missing")
-        if actual_decoder.get("source_endpoint_has_integrated_nms") is False and (
+        if actual_decoder.get("source_endpoint_has_integrated_nms") is False and not actual_decoder.get("candidate_selection") and (
             actual_decoder.get("host_decoder_applied") is not True
             or actual_decoder.get("host_nms_applied") is not True
             or actual_decoder.get("nms_iou_threshold") is None
@@ -4499,7 +4534,7 @@ def _deepx_export_central_quality_request(
             "quality_join_endpoint": "completed_task_decoded_nms",
         } if completed_task_contract else {}),
         "policy_sha256": str(policy.get("policy_sha256") or ""),
-        "metric_gate_config": dict(policy.get(task) or {}),
+        "metric_gate_config": {**dict(policy.get(task) or {}), **({"reporting_policy": policy["reporting_policy"]} if policy.get("reporting_policy") else {})},
         "statistics": {
             "method": str(stats.get("method") or "paired_bootstrap"),
             "bootstrap_repetitions": int(stats.get("bootstrap_repetitions") or 500),
@@ -5293,6 +5328,7 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
             )
             direct_normalization_contract = (
                 build_frozen_decoded_nms_normalization_contract(
+                    source_completed=True,
                     model_id=decoder_model_id,
                     outputs=structural_outputs,
                     input_hw=[
@@ -5329,10 +5365,17 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
             )
             completion_kind = "direct_bn6_normalization"
 
-        def _run_full_task_once() -> None:
+        try:
+            from splitpoint_runners.harness.classification import ClassificationCompletion
+        except ImportError:
+            from onnx_splitpoint_tool.runners.harness.classification import ClassificationCompletion
+        classification_processor = ClassificationCompletion() if task == "classification" else None
+
+        def _complete_full_task(raw_outputs) -> None:
             nonlocal frozen_postprocess_result
             nonlocal direct_normalization_result
-            raw_outputs = _engine_run()
+            if classification_processor is not None:
+                classification_processor.process(_named_runtime_outputs(raw_outputs))
             if diagnostic_only:
                 _capture_probe_outputs(_named_runtime_outputs(raw_outputs))
             if frozen_postprocessor is not None:
@@ -5347,6 +5390,17 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
                         original_wh[0], original_wh[1],
                     ],
                 )
+
+        try:
+            from splitpoint_runners.task_completion import TimedTaskCompletion
+        except ImportError:
+            from onnx_splitpoint_tool.runners.task_completion import TimedTaskCompletion
+        measured_processor = frozen_postprocessor or direct_normalizer or classification_processor
+        completion_timer = TimedTaskCompletion("generic_deepx_full", task,
+            lambda: measured_processor.completed_count if measured_processor is not None else 0,
+            contract=frozen_postprocess_contract or direct_normalization_contract or {"operation": "top1_top5"})
+        def _run_full_task_once():
+            return completion_timer.run(_engine_run, _complete_full_task)
 
         if diagnostic_only:
             if runtime_endpoint_contract_family != "decoded_pre_nms" or frozen_postprocessor is None:
@@ -5387,16 +5441,25 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
         diagnostic_phase = "warmup"
         for _ in range(warmup):
             _run_full_task_once()
+        try:
+            from splitpoint_runners.request_latency import RequestLatency
+        except ImportError:
+            from onnx_splitpoint_tool.runners.request_latency import RequestLatency
+        request_latency = RequestLatency(runs, task_complete=(frozen_postprocessor or direct_normalizer or classification_processor) is not None,
+            start_anchor="deepx_full_prepared_feed:before_engine_run",
+            end_anchor="deepx_full_prepared_feed:after_existing_full_task_completion")
         times: List[float] = []
         # The outer interval is the canonical throughput measurement.  Per-call
         # samples below remain request-latency evidence; their reciprocal is not
         # used as a substitute for measured makespan throughput.
         makespan_start = perf()
         diagnostic_phase = "timed_loop"
-        for _ in range(runs):
+        for request_id in range(runs):
+            request_latency.start(request_id)
             t0 = perf()
             _run_full_task_once()
             t1 = perf()
+            request_latency.complete(request_id)
             times.append((t1 - t0) * 1000.0)
         makespan_end = perf()
     except Exception as exc:
@@ -5404,6 +5467,7 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
         failure = {
             "enabled": True,
             "status": "runtime_failed",
+            "request_latency": request_latency.report() if "request_latency" in locals() else {},
             "error": f"{type(exc).__name__}: {exc}",
             "output_value_diagnostics": exception_diagnostics or output_value_diagnostics,
             "runtime_output_name_source": "declared_output_contract_by_position_with_index_fallback",
@@ -5443,7 +5507,7 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
     p95_ms = float(np.percentile(np.asarray(vals, dtype=np.float64), 95.0)) if vals else mean_ms
     makespan_s = max(0.0, float(makespan_end - makespan_start))
     fps_makespan = (float(len(times)) / makespan_s) if makespan_s > 0.0 else None
-    completion_processor = frozen_postprocessor or direct_normalizer
+    completion_processor = frozen_postprocessor or direct_normalizer or classification_processor
     postprocess_completed_frames = (
         int(completion_processor.completed_count) - int(warmup)
         if completion_processor is not None else 0
@@ -5459,7 +5523,7 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
         ),
     }
     if (
-        completion_processor is not None
+        (frozen_postprocessor or direct_normalizer) is not None
         and postprocess_completed_frames == len(times)
     ):
         from splitpoint_runners.native_detection_postprocess import (
@@ -5525,6 +5589,7 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
     out = {
         "enabled": True,
         "status": "ok",
+        "request_latency": request_latency.report(),
         "benchmark_kind": "prepared_feed_dx_engine",
         "task": task,
         "run_count": runs,
@@ -5641,6 +5706,9 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
         "completed_task_endpoint_attestation": completion_attestation,
         **completed_result_persistence,
     }
+    if classification_processor is not None:
+        out.update(classification_processor.report(postprocess_completed_frames))
+    out["generic_completion_evidence"] = completion_timer.report(warmup, runs)
     try:
         (results_dir / "deepx_prepared_feed_benchmark.json").write_text(json.dumps(out, indent=2), encoding="utf-8")
     except Exception:
@@ -5864,6 +5932,11 @@ def _run_deepx_full_run(
         semantic_ok = False
         semantic_metric_gate.update({"pass": False, "reason": f"metric_gate_error:{type(_metric_exc).__name__}:{_metric_exc}"})
 
+    if (run.get("task_quality_gate") or {}).get("reporting_policy") and semantic_status == "ok":
+        semantic_metric_gate["legacy_pass"] = semantic_metric_gate.get("pass")
+        semantic_metric_gate["metric_warning"] = semantic_metric_gate.get("pass") is False
+        semantic_ok = True
+
     # v52e: keep latency/runtime success separate from semantic correctness.
     # A run_model benchmark may be valid while dx_engine semantic validation is
     # unavailable or failed; do not report that as validation_ok=true.
@@ -5915,7 +5988,7 @@ def _run_deepx_full_run(
                 else "raw_model_outputs"
             )
         elif semantic_task == "classification":
-            observed_full_endpoint = "classification_logits"
+            observed_full_endpoint = "completed_classification"
     row = {
         "case_id": "full",
         "run_id": run_id,
@@ -6012,6 +6085,7 @@ def _run_deepx_full_run(
         ),
         "diagnostic_run_model_ok": None if diagnostic_skipped else bool(cp.returncode == 0),
         "diagnostic_run_model_returncode": None if diagnostic_skipped else int(cp.returncode),
+        "request_latency": prepared_bench.get("request_latency"),
         "deepx_prepared_feed_benchmark": prepared_bench,
         "fps_makespan": prepared_bench.get("fps_makespan") if performance_source == "dx_engine_prepared_feed" else None,
         "full_backend_throughput_fps": prepared_bench.get("fps_makespan") if performance_source == "dx_engine_prepared_feed" else None,
@@ -6071,6 +6145,9 @@ def _run_deepx_full_run(
         "stdout_path": str(stdout_path.relative_to(root)),
         "stderr_path": str(stderr_path.relative_to(root)),
     }
+    if prepared_runtime_ok and prepared_bench.get("generic_completion_evidence"):
+        from splitpoint_runners.task_completion import completion_projection
+        row.update(completion_projection(prepared_bench["generic_completion_evidence"], task=semantic_task, producer="generic_deepx_full"))
     if quality_export:
         quality_policy = dict(quality_export.pop("policy") or {})
         task_policy = dict(quality_policy.get(semantic_task) or {})
@@ -7211,6 +7288,10 @@ def _canonical_plan_run_id(value: Any) -> str:
 
     token = str(value or "").strip().lower().replace("-", "_")
     aliases = {
+        "hailo8_to_tensorrt": "hailo8_to_trt",
+        "deepx_to_trt": "deepx_m1_to_tensorrt",
+        "deepx_to_tensorrt": "deepx_m1_to_tensorrt",
+        "deepx_m1_to_trt": "deepx_m1_to_tensorrt",
         "hailo10_to_trt": "hailo10_to_tensorrt",
         "hailo10h_to_trt": "hailo10_to_tensorrt",
         "hailo10h_to_tensorrt": "hailo10_to_tensorrt",
@@ -7405,7 +7486,7 @@ def _filter_cases_cli(cases: List[Dict[str, Any]], selected: set[str]) -> List[D
         return list(cases)
     return [c for c in cases if {str(x).lower() for x in _case_identifiers(c)} & selected]
 
-def _cases_for_run(cases: List[Dict[str, Any]], run: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _cases_for_run(cases: List[Dict[str, Any]], run: Dict[str, Any], *, setup_id: str = '') -> List[Dict[str, Any]]:
     """Limit case-specific planned runs to their intended case.
 
     Formal workflow plans contain one matrix run per selected split candidate,
@@ -7416,6 +7497,17 @@ def _cases_for_run(cases: List[Dict[str, Any]], run: Dict[str, Any]) -> List[Dic
     case_id/case_ids so output folders and prediction-vs-benchmark rows stay
     one-to-one with the formal candidate plan.
     """
+    if 'backend_selection_contracts' in run:
+        contracts = run['backend_selection_contracts']
+        setups = {str(c.get('setup_id') or '') for c in contracts}
+        if not setup_id and len(setups) > 1:
+            raise ValueError('backend_selection_setup_identity_missing')
+        selected = [c for c in contracts
+                    if (not setup_id or str(c.get('setup_id') or '') in {'', setup_id})
+                    and _canonical_plan_run_id(c.get('run_id')) == _canonical_plan_run_id(run.get('id') or run.get('run_id'))]
+        run = dict(run, case_ids=list(dict.fromkeys(case for c in selected for case in c.get('selected_case_ids', []))))
+    if 'case_ids' in run and run['case_ids'] == []:
+        return []
     raw_ids: List[str] = []
     for key in ("case_ids", "cases"):
         value = run.get(key) if isinstance(run, dict) else None
@@ -8616,6 +8708,12 @@ def _collect_case_result(case_dir: Path, out_dir_name: str, run_id: str, provide
         r.setdefault("host_tail_required", dcs.get("host_tail_required"))
         r.setdefault("host_tail_available", dcs.get("host_tail_available"))
         r.setdefault("host_tail_model", dcs.get("host_tail_model"))
+        completion = r.get("generic_full_completion_evidence") or {}
+        if completion:
+            from splitpoint_runners.task_completion import completion_projection
+            r["generic_full_completion_evidence"] = completion
+            if str(r.get("primary_variant") or r.get("variant") or "full") == "full":
+                r.update(completion_projection(completion, task=str(r.get("task") or r.get("benchmark_task_used") or "detection"), producer=("generic_hailo_full" if "hailo" in str(provider).lower() else "generic_ort_full")))
         r.setdefault("stage2_input_contract_kind", dcs.get("stage2_input_contract_kind"))
         r.setdefault("stage2_calibration_required", dcs.get("stage2_calibration_required"))
         r.setdefault("stage2_calibration_available", dcs.get("stage2_calibration_available"))
@@ -9506,6 +9604,7 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
     rc = 0
     try:
         env = os.environ.copy()
+        env["PYTHONFAULTHANDLER"] = "1"
         env["ONNX_SPLITPOINT_TRT_BUILD_CASE"] = case_dir.name
         evidence_json = _stage2_calibration_evidence_env(stage2_gate)
         if evidence_json:
@@ -9705,6 +9804,10 @@ def _prepare_native_split_quality_for_case(
             output_path=output_path,
             workspace_mb=int(getattr(args, "native_trt_workspace_mb", 4096) or 4096),
             timeout_s=int(getattr(args, "native_trt_build_timeout_s", 7200) or 7200),
+            build_budget=({**(plan or {})['backend_backfill_build_budget'], 'remaining_cold_builds': 0}
+                          if (plan or {}).get('backend_backfill_build_budget') and getattr(args, 'no_native_cold_builds', False)
+                          else (plan or {}).get('backend_backfill_build_budget')),
+            resume=bool(getattr(args, 'native_build_budget_resume', False)),
         )
     except ValueError as exc:
         error = str(exc)
@@ -10798,6 +10901,8 @@ def main() -> int:
         help="Optional benchmark plan JSON (default: benchmark_plan.json if present). If set, runs all runs listed in the plan.",
     )
     parser.add_argument("--run-id", default=None, help="If using --plan, run only this run id.")
+    parser.add_argument('--native-build-budget-resume', action='store_true', help='Existing workflow continuation: missing build-consumption evidence forbids new native cold starts.')
+    parser.add_argument('--no-native-cold-builds', action='store_true', help='Reuse only: an earlier repetition owns the finite split-build allowance.')
     parser.add_argument("--run-ids", default=None, help="Comma-separated plan run ids. Used by EvalRun to upload a suite once per physical setup.")
     parser.add_argument("--quality-only-run-ids", default="", help="Scheduler-owned comma-separated run ids that stop after setup-local quality evidence and must not emit performance rows.")
     parser.add_argument("--quality-evidence-eval-id", default=os.environ.get("ONNX_SPLITPOINT_EVAL_RUN_ID", ""), help="Exact EvalRun ID sealed into setup-local TensorRT quality evidence.")
@@ -11133,8 +11238,13 @@ def main() -> int:
                 quality_companion_identities, companion_identity,
             )
             if execute_companion:
+                # The Full producer is model/setup-local. Its case is only
+                # an execution container, independent of the split/performance
+                # owner's backend selection (which may name another setup).
+                # Keep the explicit user filter and normal deterministic order.
                 companion_cases = _cases_for_run(
-                    _filter_cases_for_user_selection(cases, user_case_filter), run,
+                    _filter_cases_for_user_selection(cases, user_case_filter),
+                    {"variants": ["full"]},
                 )
                 quality_companion = _run_native_full_trt_quality_companion(
                     root=root,
@@ -11193,6 +11303,7 @@ def main() -> int:
                         cases, user_case_filter,
                     ),
                     run,
+                    setup_id=str(getattr(args, 'quality_evidence_setup_id', '') or run.get('expected_setup_id') or run.get('setup_id') or ''),
                 ),
                 args=args,
             )
@@ -11225,6 +11336,7 @@ def main() -> int:
             rows: List[Dict[str, Any]] = []
             run_cases = _cases_for_run(
                 _filter_cases_for_user_selection(cases, user_case_filter), run,
+                    setup_id=str(getattr(args, 'quality_evidence_setup_id', '') or run.get('expected_setup_id') or run.get('setup_id') or ''),
             )
             if not run_cases:
                 print(f"[warn] run {run_id!r} selected no cases; skipping")
@@ -11499,6 +11611,7 @@ def main() -> int:
             rows: List[Dict[str, Any]] = []
             run_cases = _cases_for_run(
                 _filter_cases_for_user_selection(cases, user_case_filter), run,
+                    setup_id=str(getattr(args, 'quality_evidence_setup_id', '') or run.get('expected_setup_id') or run.get('setup_id') or ''),
             )
             if not run_cases:
                 print(f"[warn] matrix run {run_id!r} selected no cases; skipping")
@@ -11730,6 +11843,7 @@ def main() -> int:
             rows: List[Dict[str, Any]] = []
             run_cases = _cases_for_run(
                 _filter_cases_for_user_selection(cases, user_case_filter), run,
+                    setup_id=str(getattr(args, 'quality_evidence_setup_id', '') or run.get('expected_setup_id') or run.get('setup_id') or ''),
             )
             if not run_cases:
                 print(f"[warn] Hailo run {run_id!r} selected no cases; skipping")

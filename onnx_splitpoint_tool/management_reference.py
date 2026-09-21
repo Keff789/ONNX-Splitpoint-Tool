@@ -459,6 +459,54 @@ def _link_or_copy(source: str, destination: str) -> str:
         return shutil.copy2(source, destination)
 
 
+def _bind_cpu_reference_output_contract(suite: Path, model_id: str) -> bool:
+    """Transfer a source-ONNX declaration to CPU only with exact graph proof.
+
+    The Full CPU and CUDA sessions consume the same ONNX. Backend-specific
+    accelerator declarations must never be used as a CPU coordinate default.
+    Replace the clone's hardlink atomically so the source suite stays immutable.
+    """
+    from .native_output_endpoint import (
+        bn6_candidate_selection, inspect_bn6_candidate_graph,
+        load_authoritative_output_contract,
+    )
+    cpu = load_authoritative_output_contract(
+        suite, backend="cpu_ort", model_id=model_id, task="detection")
+    if cpu.get("stage") or cpu.get("contract_resolution_status") == "conflict":
+        return False
+    source = load_authoritative_output_contract(
+        suite, backend="cuda_ort", model_id=model_id, task="detection")
+    if (source.get("stage") != "decoded_nms"
+            or source.get("source_coordinate_space") != "model_input_letterbox_xyxy_pixels"):
+        return False
+    proof = bn6_candidate_selection(source)
+    if not proof:
+        return False
+    models = set()
+    for manifest_path in suite.rglob("split_manifest.json"):
+        manifest = read_json(manifest_path, default={}) or {}
+        full = manifest.get("full_model") or manifest.get("full") or manifest.get("model")
+        if full:
+            models.add((manifest_path.parent / str(full)).resolve())
+    if not models or any(inspect_bn6_candidate_graph(path) != proof for path in models):
+        raise ValueError("management_cpu_source_onnx_graph_contract_mismatch")
+    path = suite / "output_contracts.json"
+    payload = read_json(path)
+    # Keep an explicit but invalid CPU declaration negative, even if CUDA works.
+    if any(str(row.get("backend") or "").lower() in {"cpu", "cpu_ort", "ort_cpu"}
+           for row in payload["contracts"]):
+        return False
+    declaration = {k: v for k, v in source.items()
+                   if not k.startswith("contract_resolution_") and k != "declaration_source"}
+    declaration["backend"] = "cpu_ort"
+    payload["contracts"].append(declaration)
+    with tempfile.NamedTemporaryFile(mode="w", dir=suite, encoding="utf-8", delete=False) as stream:
+        json.dump(payload, stream, indent=2)
+        temporary = Path(stream.name)
+    os.replace(temporary, path)
+    return True
+
+
 def _quality_reference_file(workspace: Path) -> Optional[Path]:
     files = sorted(workspace.rglob("task_quality_inputs/canonical_*_reference.json"))
     return files[0] if files else None
@@ -626,6 +674,10 @@ def _source_contract(source: Path, plan: Mapping[str, Any], contract: Mapping[st
         "runner_artifacts": runner_artifacts,
         "full_model_artifacts": model_artifacts,
         "validation_manifests": validation_manifests,
+        "output_contracts_sha256": (
+            sha256_file(source / "output_contracts.json")
+            if (source / "output_contracts.json").is_file() else ""
+        ),
     })
 
 
@@ -1425,6 +1477,7 @@ def generate_management_cpu_reference(
             copy_function=_link_or_copy,
             ignore=_ignore_clone,
         )
+        _bind_cpu_reference_output_contract(suite_copy, str(model_id))
         reference_plan = dict(plan)
         reference_plan["runs"] = [cpu_run]
         reference_plan["planned_runs"] = [cpu_run]

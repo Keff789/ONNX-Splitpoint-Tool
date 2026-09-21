@@ -74,6 +74,182 @@ class _BindingValidationError(ValueError):
     """Internal exception carrying one stable fail-closed status token."""
 
 
+def probability_quantization_suitability(semantic: Mapping[str, Any], tensor: Mapping[str, Any]) -> dict[str, Any]:
+    """Prove complete loss of declared probabilities, never infer it from samples.
+
+    Native affine encoding is monotone. Checking both endpoints therefore
+    covers the entire declared interval. Unknown rounding includes directed
+    rounding; it must not silently acquire the host's numpy rounding rule.
+    """
+    import math
+    result = {"status": "UNKNOWN", "reason": "score_semantics_unproven"}
+    if semantic.get("score_semantics") != "probability_0_1":
+        return result
+    result["required"] = True
+    try:
+        shape = list(semantic["shape"])
+        axis = semantic["channel_axis"]
+        channels = list(semantic["score_channels"])
+        if (not shape or any(type(v) is not int or v <= 0 for v in shape)
+                or type(axis) is not int or not 0 <= axis < len(shape)
+                or not channels or len(set(channels)) != len(channels)
+                or any(type(c) is not int or not 0 <= c < shape[axis] for c in channels)
+                or list(tensor["canonical_part2_shape"]) != shape):
+            raise ValueError("shape_or_channel_mapping_invalid")
+        dtype = tensor.get("hef_native_storage_dtype")
+        bounds = {"uint8": (0, 255), "uint16": (0, 65535), "int8": (-128, 127)}
+        if dtype not in bounds:
+            raise ValueError("native_integer_representation_unproven")
+        quant = tensor["quantization"]
+        if quant.get("source") != "hailort_hef_output_vstream_info":
+            raise ValueError("quantization_source_unproven")
+        scale, zp = quant["scale"], quant["zero_point"]
+        if isinstance(scale, (list, tuple)) or isinstance(zp, (list, tuple)):
+            if (quant.get("canonical_channel_axis") != axis
+                    or len(scale) != shape[axis] or len(zp) != shape[axis]):
+                raise ValueError("per_channel_mapping_unproven")
+            all_pairs = [(float(s), float(z)) for s, z in zip(scale, zp)]
+            pairs = [all_pairs[c] for c in channels]
+        else:
+            pairs = [(float(scale), float(zp))]
+            all_pairs = pairs
+        lo, hi = bounds[dtype]
+        if any(not math.isfinite(s) or s <= 0 or not math.isfinite(z)
+               or z != int(z) or not lo <= z <= hi for s, z in all_pairs):
+            raise ValueError("quantization_parameters_invalid")
+        rounding = quant.get("rounding", "unknown")
+        methods = {"nearest_even": (round,), "nearest_unspecified_ties": (round, lambda x: math.floor(x + .5), lambda x: math.ceil(x - .5)),
+                   "floor": (math.floor,), "ceil": (math.ceil,), "truncate": (math.trunc,)}
+        functions = methods.get(rounding, (round, math.floor, math.ceil, math.trunc, lambda x: math.floor(x + .5)))
+        collapsed, distinct = [], []
+        for s, z in pairs:
+            upper = z + 1.0 / s
+            if not math.isfinite(upper) or upper == z:
+                raise ValueError("quantization_arithmetic_unresolved")
+            endpoints = [(max(lo, min(hi, f(z))), max(lo, min(hi, f(upper)))) for f in functions]
+            collapsed.append(all(a == b == z for a, b in endpoints))
+            distinct.append(all(a != b for a, b in endpoints))
+        if all(collapsed):
+            result.update(status="INCOMPATIBLE", reason="probability_range_collapses_to_zero")
+        elif any(distinct):
+            result.update(status="NOT_COLLAPSED", reason="probability_range_has_distinct_codes")
+        else:
+            result.update(reason="complete_collapse_not_proven")
+        result.update(native_dtype=dtype, probability_interval=[0.0, 1.0], score_channel_count=len(channels), rounding=rounding)
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        result["reason"] = str(exc)
+    return result
+
+
+def detection_score_graph_contract(part1: Any, part2: Any, *, task: str) -> dict[str, Any]:
+    """Recognize a probability branch consumed as scores by a selection tail.
+
+    Names and model sizes carry no semantics. A Sigmoid feature map alone is
+    insufficient: the continuation must split the same channels, rank their
+    maximum, and pass score values to an output without learned arithmetic.
+    Unsupported graph forms remain UNKNOWN.
+    """
+    unknown = {"status": "UNKNOWN", "reason": "score_graph_semantics_unproven"}
+    if task != "detection":
+        return unknown
+    import onnx
+    import numpy as np
+    try:
+        if len(part1.graph.output) != 1 or len(part2.graph.input) != 1:
+            return unknown
+        if any(n.domain not in ('', 'ai.onnx') for g in (part1.graph, part2.graph) for n in g.node):
+            return unknown
+        p1 = onnx.shape_inference.infer_shapes(part1)
+        shapes = {v.name: [d.dim_value for d in v.type.tensor_type.shape.dim]
+                  for v in list(p1.graph.input) + list(p1.graph.value_info) + list(p1.graph.output)}
+        producers = {o: n for n in p1.graph.node for o in n.output}
+        output = p1.graph.output[0].name
+        if output != part2.graph.input[0].name:
+            return unknown
+        node = producers[output]
+        trailing = []
+        while node.op_type in {"Identity", "Transpose"}:
+            trailing.append(node)
+            node = producers[node.input[0]]
+        if node.op_type != "Concat":
+            return unknown
+        def attr(n, key, default=None):
+            return next((onnx.helper.get_attribute_value(a) for a in n.attribute if a.name == key), default)
+        concat_shape, shape = shapes[node.output[0]], shapes[output]
+        if not shape or any(d <= 0 for d in shape + concat_shape):
+            return unknown
+        axis = int(attr(node, "axis")) % len(concat_shape)
+        widths = [shapes[i][axis] for i in node.input]
+        if any(w <= 0 for w in widths) or sum(widths) != concat_shape[axis]:
+            return unknown
+        for transform in reversed(trailing):
+            if transform.op_type == "Transpose":
+                axis = list(attr(transform, "perm", list(reversed(range(len(shape)))))).index(axis)
+        score_branches = [i for i, name in enumerate(node.input) if producers.get(name) is not None and producers[name].op_type == "Sigmoid"]
+        if len(score_branches) != 1:
+            return unknown
+        branch = score_branches[0]
+        consumers = {}
+        for n in part2.graph.node:
+            for name in n.input:
+                consumers.setdefault(name, []).append(n)
+        current, mapped_axis = output, axis
+        while len(consumers.get(current, [])) == 1 and consumers[current][0].op_type in {"Identity", "Transpose"}:
+            n = consumers[current][0]
+            if n.op_type == "Transpose":
+                perm = list(attr(n, "perm", list(reversed(range(len(shape))))))
+                mapped_axis = perm.index(mapped_axis)
+            current = n.output[0]
+        split = consumers.get(current, [])
+        if len(split) != 1 or split[0].op_type != "Split":
+            return unknown
+        split = split[0]
+        constants = {t.name: onnx.numpy_helper.to_array(t) for t in part2.graph.initializer}
+        for n in part2.graph.node:
+            if n.op_type == "Constant":
+                value = attr(n, "value")
+                if value is not None:
+                    constants[n.output[0]] = onnx.numpy_helper.to_array(value)
+        sizes = constants.get(split.input[1]) if len(split.input) > 1 else attr(split, "split")
+        if (sizes is None or list(np.asarray(sizes).reshape(-1)) != widths
+                or int(attr(split, "axis", 0)) % len(shape) != mapped_axis):
+            return unknown
+        score = split.output[branch]
+        reductions = [n for n in consumers.get(score, []) if n.op_type == "ReduceMax"]
+        rank_indices = set()
+        for n in reductions:
+            axes = constants.get(n.input[1]) if len(n.input) > 1 else attr(n, "axes")
+            if axes is not None and [int(a) % len(shape) for a in np.asarray(axes).reshape(-1)] == [mapped_axis]:
+                for c in consumers.get(n.output[0], []):
+                    if c.op_type == "TopK" and c.input[0] == n.output[0] and len(c.output) == 2:
+                        rank_indices.add(c.output[1])
+        if not rank_indices:
+            return unknown
+        # Follow data values, never a TopK index, shape input or gather index.
+        values, selected_values = {score}, set()
+        passthrough = {"Identity", "Transpose", "Reshape", "Flatten", "Unsqueeze", "Squeeze", "Gather", "GatherElements", "TopK"}
+        for n in part2.graph.node:
+            if n.op_type in passthrough | {"Tile", "Expand", "Cast"} and n.input[0] in rank_indices:
+                rank_indices.add(n.output[0])
+            if n.op_type in passthrough and n.input[0] in values:
+                values.add(n.output[0])
+                if (n.input[0] in selected_values or n.op_type == "TopK"
+                        or n.op_type in {"Gather", "GatherElements"} and n.input[1] in rank_indices):
+                    selected_values.add(n.output[0])
+            elif n.op_type == "Concat" and any(i in values for i in n.input):
+                values.add(n.output[0])
+                if any(i in selected_values for i in n.input):
+                    selected_values.add(n.output[0])
+        if not any(o.name in selected_values for o in part2.graph.output):
+            return unknown
+        start = sum(widths[:branch])
+        return {"status": "PROVEN", "source": "onnx_sigmoid_split_ranked_score_output",
+                "score_semantics": "probability_0_1", "shape": shape, "channel_axis": axis,
+                "score_channels": list(range(start, start + widths[branch]))}
+    except (KeyError, TypeError, ValueError, IndexError, onnx.shape_inference.InferenceError):
+        return unknown
+
+
 def _reject(status: str) -> None:
     raise _BindingValidationError(status)
 

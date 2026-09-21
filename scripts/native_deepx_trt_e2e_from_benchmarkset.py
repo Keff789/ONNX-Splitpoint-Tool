@@ -47,6 +47,8 @@ except Exception as exc:  # pragma: no cover
 else:
     _NATIVE_TRT_IMPORT_ERROR = None
 
+from onnx_splitpoint_tool.runners.request_latency import RequestLatency
+from onnx_splitpoint_tool.runners.harness.classification import ClassificationCompletion
 from onnx_splitpoint_tool.native_command_contract import (
     load_split_energy_workload_binding,
     seal_native_command_contract,
@@ -1002,14 +1004,21 @@ def _deepx_fifo_run(
             raise RuntimeError('native_split_quality_runtime_boundary_evidence_drift')
         strict_evidence.update(current)
 
+    if task_value == 'classification':
+        completion_runtime = ClassificationCompletion()
+        warmup_completion_runtime = ClassificationCompletion()
+
     # Warmup synchronously.
     for _ in range(max(0, int(warmup))):
         outs = _run_deepx(engine, input_arr)
         n, arr, warmup_meta = _map_deepx_output_to_trt(outs, trt)
         record_strict_evidence(warmup_meta)
         warm_outputs = trt.run({n: arr})
-        if task_value == 'detection':
+        if completion_runtime is not None:
             warmup_completion_runtime.process(warm_outputs)
+    request_latency = RequestLatency(int(frames), task_complete=True,
+        start_anchor="deepx_fifo:before_engine_run",
+        end_anchor="deepx_fifo:after_completion_or_host_outputs", enabled=not duration_s)
     q: queue.Queue[Any] = queue.Queue(maxsize=max(1, int(queue_depth)))
     sentinel = object()
     prod_times=[]; map_times=[]; put_times=[]; input_copy_times=[]; p2_times=[]
@@ -1040,13 +1049,14 @@ def _deepx_fifo_run(
                 (duration_mode and time.perf_counter() - _start < float(duration_s))
                 or ((not duration_mode) and _n < int(frames))
             ):
+                request_latency.start(_n)
                 _n += 1
                 t0=_now_ms(); outs=_run_deepx(engine, input_arr); t1=_now_ms()
                 n, arr, meta = _map_deepx_output_to_trt(outs, trt); t2=_now_ms()
                 record_strict_evidence(meta)
                 boundary_copy_counts.append(int(meta.get('boundary_copy_count') or 0))
                 q0=_now_ms()
-                if not put_payload((n, arr)):
+                if not put_payload((_n - 1, n, arr)):
                     break
                 q1=_now_ms()
                 prod_times.append(t1-t0); map_times.append(t2-t1); put_times.append(q1-q0)
@@ -1073,14 +1083,15 @@ def _deepx_fifo_run(
                     continue
                 if item is sentinel:
                     break
-                n, arr = item
+                request_id, n, arr = item
                 t0=_now_ms(); trt.prepare_inputs({n: arr}); t1=_now_ms()
                 trt_outputs = trt.run_prepared(); t2=_now_ms()
-                if task_value == 'detection':
+                if completion_runtime is not None:
                     completion_runtime.process(trt_outputs)
                     t3=_now_ms()
                 else:
                     t3=t2
+                request_latency.complete(request_id)
                 input_copy_times.append(t1-t0); p2_times.append(t2-t1)
                 completion_tail_times.append(t3-t2)
                 measurement['last_completion']=t3 / 1000.0
@@ -1092,7 +1103,7 @@ def _deepx_fifo_run(
     t_start=time.perf_counter(); measurement['start']=t_start; start_event.set()
     pt.join(); ct.join()
     if errors:
-        raise RuntimeError('; '.join(errors))
+        raise request_latency.failure('; '.join(errors))
     if not p2_times or measurement['last_completion'] <= 0.0:
         raise RuntimeError('no measured DeepX->TensorRT frames completed')
     if len(boundary_copy_counts) != len(p2_times) or any(count != 1 for count in boundary_copy_counts):
@@ -1108,6 +1119,7 @@ def _deepx_fifo_run(
     p2_thread = input_copy_ms + p2_ms + completion_tail_ms
     cycle = max(p1_thread, p2_thread)
     result = {
+        'request_latency': request_latency.report(),
         'frames': len(p2_times),
         'completed_frames': len(p2_times),
         'completed_work_units': len(p2_times),
@@ -1156,11 +1168,7 @@ def _deepx_fifo_run(
             completed_work_units=len(p2_times),
         ))
     else:
-        result.update({
-            'postprocess_included': False,
-            'postprocess_completed_frames': 0,
-            'postprocess_completion_verified': False,
-        })
+        result.update(completion_runtime.report())
     return result
 
 
@@ -1761,6 +1769,9 @@ def main() -> int:
                     'build': bool(ns.build_missing_engine),
                     'prepared_input_bound': True,
                     'task': task,
+                    **({'measurement_endpoint': 'completed_task',
+                        'completed_task_stage': 'classification_top1_top5'}
+                       if task == 'classification' else {}),
                     'preprocess_mode_requested': str(ns.preprocess_mode),
                     'preprocess_mode_effective': preprocess_mode_effective,
                     'letterbox_pad_value_requested': int(ns.letterbox_pad_value),
@@ -1905,6 +1916,7 @@ def main() -> int:
     except Exception as e:
         report['ok'] = False
         report['error'] = f'{type(e).__name__}: {e}'
+        if hasattr(e, 'request_latency'): report['request_latency'] = e.request_latency
     if report.get('ok') and task == 'detection':
         try:
             report.update(
@@ -1921,9 +1933,15 @@ def main() -> int:
                 'completion_execution_artifact_persistence_failed:'
                 f'{type(exc).__name__}:{exc}'
             )
+    if ns.energy_workload_only and task == 'classification' and report.get('ok'):
+        if (report.get('completed_task_stage') != 'classification_top1_top5'
+            or report.get('postprocess_completion_verified') is not True
+            or int(report.get('postprocess_completed_frames') or 0) != int(report.get('completed_work_units') or 0)):
+            report.update(ok=False, error='energy_classification_completion_count_mismatch')
     out_path.write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(json.dumps({'ok': bool(report.get('ok')), 'fps_makespan': report.get('fps_makespan'), 'paper_fps': report.get('paper_equivalent_fps'), 'report': str(out_path), 'error': report.get('error','')}, indent=2))
     if ns.energy_workload_only and report.get('ok'):
+        print(json.dumps({key: report.get(key) for key in ("task", "task_complete", "completed_task_stage", "completed_work_units", "completed_frames", "postprocess_included", "postprocess_completed_frames", "postprocess_completion_verified", "source_contract_sha256",)}))
         print(f"__SPLITPOINT_WORK_UNITS__={int(report.get('completed_work_units') or 0)}")
         print("__SPLITPOINT_WORK_UNITS_SOURCE__=completed_work_units")
         print("__SPLITPOINT_WORK_UNITS_EXACT__=1")

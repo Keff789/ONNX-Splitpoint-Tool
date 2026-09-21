@@ -1201,6 +1201,17 @@ def _apply_validation_level_fields_v59j(row: dict[str, Any]) -> dict[str, Any]:
     # applicable; for heterogeneous rows it may be available, warning, or unknown.
     iface_pass = _bool_or_none(row.get("interface_check_pass"))
     iface_status = str(row.get("interface_check_status") or "").strip()
+    structural = [
+        _bool_or_none(row.get(key)) for key in (
+            "interface_stage1_structural_pass", "interface_stage1_mapping_pass",
+            "interface_stage1_shape_pass",
+        )
+    ]
+    if hetero and all(value is not None for value in structural):
+        # Legacy interface_check_pass combines numeric and structural results.
+        # Explicit mapping/shape evidence owns the structural axis only.
+        iface_pass = all(structural)
+        iface_status = "structural_interface_pass" if iface_pass else "structural_interface_failed"
     proxy_override = bool(
         str(row.get("runtime_contract_decision") or "").strip().lower()
         == "pass"
@@ -1234,8 +1245,18 @@ def _apply_validation_level_fields_v59j(row: dict[str, Any]) -> dict[str, Any]:
         row["interface_contract_pass"] = None
         row["interface_contract_status"] = "not_applicable_full_backend"
     elif not hetero:
-        row["interface_contract_pass"] = True if semantic is not False else False
-        row["interface_contract_status"] = iface_status or "same_backend_contract"
+        # Numerical agreement is a separate axis. Use actual structure evidence
+        # even for same-backend splits; execution alone does not prove the cut.
+        if all(value is not None for value in structural):
+            iface_pass = all(structural)
+        elif iface_pass is None and semantic is True:
+            # A successful comparison still carries its legacy positive
+            # structure evidence; a numeric mismatch does not prove breakage.
+            iface_pass = True
+        row["interface_contract_pass"] = iface_pass
+        row["interface_contract_status"] = iface_status or (
+            "same_backend_contract" if iface_pass is not None else "boundary_check_unavailable"
+        )
     else:
         if iface_pass is None:
             row["interface_contract_pass"] = None
@@ -1951,6 +1972,20 @@ def _augment_results_with_target_energy_v59j(results: Sequence[Mapping[str, Any]
     except Exception:
         profile_energy = {}
 
+    generic_not_requested = bool(
+        profile_energy.get("generic_enabled") is False
+        or (profile_energy.get("enabled") is False
+            and profile_energy.get("measurement_path") not in {"generic", "native_and_generic"})
+    )
+    if generic_not_requested:
+        for row in out:
+            if not _row_has_row_level_energy_v59j(row):
+                row["energy_coverage_status"] = "not_requested"
+                row["energy_enabled"] = False
+        summary["missing_split_energy_count"] = 0
+        summary["missing_split_energy_examples"] = []
+        summary["status"] = "not_requested"
+
     def _truthy_policy_v59o(value: Any) -> bool:
         if isinstance(value, bool):
             return value
@@ -2011,6 +2046,10 @@ def _augment_results_with_target_energy_v59j(results: Sequence[Mapping[str, Any]
         for r in missing_complete_policy_rows
     ][:20]
     summary["status_under_energy_policy"] = "complete" if not missing_complete_policy_rows else "partial"
+    if generic_not_requested:
+        summary["missing_complete_split_energy_count_under_policy"] = 0
+        summary["missing_complete_split_energy_examples_under_policy"] = []
+        summary["status_under_energy_policy"] = "not_requested"
     if final_all and not missing_complete_policy_rows:
         summary["status"] = "complete_under_energy_policy"
     return out, summary
@@ -2192,7 +2231,76 @@ def _measurement_endpoint_for_variant_v27927(
     return next(iter(explicit)) if len(explicit) == 1 else ""
 
 
-def normalize_benchmark_row(row: Mapping[str, Any], *, model_id: str, source_path: Path, tag: str = "") -> dict[str, Any]:
+def _generic_completion_projection(
+    raw: Mapping[str, Any], normalized: Mapping[str, Any], completion: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Project measured completion without overwriting contradictory evidence."""
+    from ..runners.task_completion import completion_projection
+
+    backend = str(normalized.get("backend") or "")
+    producer = (
+        "generic_deepx_full" if "deepx" in backend else
+        "generic_hailo_full" if "hailo" in backend else "generic_ort_full"
+    )
+    projected = completion_projection(
+        completion,
+        task=str(normalized.get("task") or raw.get("benchmark_task_used") or ""),
+        producer=producer,
+    )
+    # A report can contain both a split measurement and a Full baseline. Its
+    # primary completion fields describe only the primary variant; explicit
+    # Full deployment fields always describe the baseline.
+    same_variant = _dedupe_variant_key_v58g(raw) == _dedupe_variant_key_v58g(normalized)
+    declarations = [raw] if same_variant else []
+    if str(normalized.get("variant") or "") == "full":
+        declarations.append(_deployment_contract_for_variant(raw, "full"))
+        alias = raw.get("generic_full_completion_evidence")
+        if alias is not None and alias != completion:
+            raise ValueError("generic_completion_evidence_alias_conflict")
+        bound_hash = _mapping(raw.get("deployment_contract")).get("full_primary_host_tail_sha256")
+        if bound_hash not in (None, "") and bound_hash != _mapping(completion.get("postprocess_contract")).get("contract_sha256"):
+            raise ValueError("generic_completion_host_tail_binding_conflict")
+    expected = {key: projected[key] for key in (
+        "postprocess_included", "postprocess_completion_verified",
+        "postprocess_completed_frames",
+    )}
+    # Legacy availability=False means N/A for classification and integrated
+    # outputs. It is a conflict only where the producer requires a host tail.
+    if (normalized.get("host_tail_required") is True
+            or _mapping(completion.get("postprocess_contract")).get("source_contract_family") == "raw_head"):
+        expected.update(host_tail_available=True, host_postprocessing_available=True)
+    for declaration in declarations:
+        for key, value in expected.items():
+            declared = declaration.get(key)
+            if declared in (None, ""):
+                continue
+            if type(declared) is not type(value) or declared != value:
+                raise ValueError(f"generic_completion_projection_conflict:{key}")
+    return projected
+
+
+def _project_completion_or_record_error(raw, normalized, completion, *, record_errors):
+    """Retain a rejected variant for diagnostics without admitting its metrics.
+
+    Strict imports still raise. The workflow records the original cause on the
+    affected variant so independent measurements and the raw source survive.
+    """
+    try:
+        return _generic_completion_projection(raw, normalized, completion)
+    except ValueError as exc:
+        if not record_errors:
+            raise
+        return {
+            "normalization_error": f"{type(exc).__name__}: {exc}",
+            "error_class": "generic_completion_invalid",
+            "runtime_executable": False,
+            "structural_contract_pass": False,
+            "structural_contract_reason": str(exc),
+            "measurement_valid": False,
+        }
+
+
+def normalize_benchmark_row(row: Mapping[str, Any], *, model_id: str, source_path: Path, tag: str = "", record_completion_errors: bool = False) -> dict[str, Any]:
     endpoint_contract_complete_explicit = (
         row.get("endpoint_contract_complete_explicit")
         if isinstance(row.get("endpoint_contract_complete_explicit"), bool)
@@ -2286,7 +2394,7 @@ def normalize_benchmark_row(row: Mapping[str, Any], *, model_id: str, source_pat
     runtime_ok = _bool_or_none(_first(row, ["runtime_ok", "ok", "eps_pass"]))
     if runtime_ok is None and total is not None:
         runtime_ok = True
-    compile_ok = _bool_or_none(_first(row, ["compile_ok", "hailo_compile_ok", "part1_hailo_compile_ok", "part2_hailo_compile_ok"]))
+    compile_ok = _bool_or_none(_first(row, ["compile_ok", "build_pass", "hailo_compile_ok", "part1_hailo_compile_ok", "part2_hailo_compile_ok"]))
     contract_variant = str(
         row.get("primary_variant")
         or ("full" if variant == "full" else "composed")
@@ -2575,6 +2683,9 @@ def normalize_benchmark_row(row: Mapping[str, Any], *, model_id: str, source_pat
         ),
         "compile_ok": compile_ok,
         "runtime_ok": runtime_ok,
+        "runner_returncode": row.get("runner_returncode", row.get("_runner_rc")),
+        "runner_terminal_failure": row.get("runner_terminal_failure"),
+        "runner_signal_name": row.get("runner_signal_name"),
         "validation_ok": validation_ok,
         "final_pass": final_pass,
         "final_pass_all": final_pass_all,
@@ -2718,6 +2829,12 @@ def normalize_benchmark_row(row: Mapping[str, Any], *, model_id: str, source_pat
         "semantic_validation_metric_gate": _first(row, ["semantic_validation_metric_gate"]),
         "nms_ok": _bool_or_none(row.get("nms_ok")),
     }
+    completion = row.get("generic_completion_evidence") or (row.get("generic_full_completion_evidence") if str(out.get("variant") or "") == "full" else None)
+    if completion:
+        out.update(_project_completion_or_record_error(
+            row, out, completion, record_errors=record_completion_errors))
+    if row.get("generic_full_completion_evidence"):
+        out["generic_full_completion_evidence"] = row["generic_full_completion_evidence"]
     # v59j: preserve interface/drift evidence before deriving validation claim labels.
     # Variant-aware exclusion reconciliation must see explicit starts and
     # completions even when the primary row reports only a component timing.
@@ -2748,11 +2865,12 @@ def normalize_benchmark_row(row: Mapping[str, Any], *, model_id: str, source_pat
         out["interface_contract_pass"] = True
         out["contract_consistent"] = True
         out["contract_gate_reason"] = "full_backend_no_split_boundary"
-    _apply_validation_level_fields_v59j(out)
-    try:
-        apply_accuracy_gate_to_row(out, embedded_quality_policy or None)
-    except Exception:
-        pass
+    # Preserve the actual producer declaration for the same variant. It is
+    # provenance, not an inferred complete endpoint or a successful quality gate.
+    if _dedupe_variant_key_v58g(row) == _dedupe_variant_key_v58g(out):
+        for key in ("candidate_execution_contract", "candidate_execution_contract_sha256"):
+            if row.get(key) not in (None, "", {}):
+                out[key] = row[key]
     # Project the exact per-variant quality request while the original runner
     # payload is still available.  The request contains large per-sample
     # records, so normalized benchmark rows intentionally keep only the compact
@@ -2841,6 +2959,14 @@ def normalize_benchmark_row(row: Mapping[str, Any], *, model_id: str, source_pat
                 out["output_endpoint_attestation"] = dict(
                     selected_identity.get("output_endpoint_attestation") or {}
                 )
+    # Evaluate structure after the existing exact per-variant identity join.
+    # Otherwise its temporary absent-endpoint default becomes a persistent
+    # structural failure even when that same runner's request attests it.
+    _apply_validation_level_fields_v59j(out)
+    try:
+        apply_accuracy_gate_to_row(out, embedded_quality_policy or None)
+    except Exception:
+        pass
     return out
 
 
@@ -2878,7 +3004,7 @@ def _quality_evidence_only_payload(value: Mapping[str, Any]) -> bool:
     return performance_flag is not True
 
 
-def expand_normalized_benchmark_rows(row: Mapping[str, Any], *, model_id: str, source_path: Path, tag: str = "") -> list[dict[str, Any]]:
+def expand_normalized_benchmark_rows(row: Mapping[str, Any], *, model_id: str, source_path: Path, tag: str = "", record_completion_errors: bool = False) -> list[dict[str, Any]]:
     """Normalize one BenchmarkSet-suite row into one or more contract rows.
 
     Legacy validation reports can contain both a full-model timing and a split
@@ -2889,7 +3015,7 @@ def expand_normalized_benchmark_rows(row: Mapping[str, Any], *, model_id: str, s
     """
     if _quality_evidence_only_payload(row):
         return []
-    primary = normalize_benchmark_row(row, model_id=model_id, source_path=source_path, tag=tag)
+    primary = normalize_benchmark_row(row, model_id=model_id, source_path=source_path, tag=tag, record_completion_errors=record_completion_errors)
     rows: list[dict[str, Any]] = [primary]
     full_total, full_raw, full_e2e, full_status = _best_full_latency(row)
     if full_total is None:
@@ -2919,6 +3045,15 @@ def expand_normalized_benchmark_rows(row: Mapping[str, Any], *, model_id: str, s
         row.get("primary_variant") or row.get("variant") or ""
     ).strip().lower()
     full_row = dict(primary)
+    if raw_primary_variant != "full" and primary.get("normalization_error"):
+        # A rejected primary completion is not evidence about the independent
+        # Full timer. Its own declarations are checked below against raw input.
+        for field in ("normalization_error", "runtime_executable", "measurement_valid"):
+            full_row.pop(field, None)
+    if raw_primary_variant != "full":
+        # These are derived for the primary split, not evidence about Full.
+        for field in ("structural_contract_pass", "structural_contract_status", "structural_contract_reason"):
+            full_row.pop(field, None)
     full_row.update({
         "case_id": "full",
         "source_case_id": (
@@ -3084,6 +3219,10 @@ def expand_normalized_benchmark_rows(row: Mapping[str, Any], *, model_id: str, s
     if full_quality_gate.get("task"):
         full_row["task"] = str(full_quality_gate.get("task") or "").lower()
     _apply_validation_level_fields_v59j(full_row)
+    completion = row.get("generic_full_completion_evidence") or row.get("generic_completion_evidence")
+    if completion:
+        full_row.update(_project_completion_or_record_error(
+            row, full_row, completion, record_errors=record_completion_errors))
     try:
         apply_accuracy_gate_to_row(full_row, full_quality_policy or None)
     except Exception:
@@ -4637,7 +4776,7 @@ def _csv_mirrors_json_row_v27927(
     return comparable > 1
 
 
-def normalize_benchmark_files(*, model_id: str, source_paths: Iterable[str | Path], source_contexts: Sequence[Mapping[str, Any]] = (), write_diagnostic_summaries: bool = False) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def normalize_benchmark_files(*, model_id: str, source_paths: Iterable[str | Path], source_contexts: Sequence[Mapping[str, Any]] = (), write_diagnostic_summaries: bool = False, record_completion_errors: bool = False) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     normalized: list[dict[str, Any]] = []
     sources: list[dict[str, Any]] = []
     discovered = discover_result_files(source_paths)
@@ -4671,9 +4810,16 @@ def normalize_benchmark_files(*, model_id: str, source_paths: Iterable[str | Pat
             ]
             source["suppressed_csv_mirror_count"] = original_count - len(rows)
         for row in rows:
-            for nrow in expand_normalized_benchmark_rows(row, model_id=model_id, source_path=path, tag=tag):
+            for nrow in expand_normalized_benchmark_rows(row, model_id=model_id, source_path=path, tag=tag, record_completion_errors=record_completion_errors):
                 nrow.setdefault("source_path", str(path))
                 nrow.setdefault("source_tag", tag)
+                if nrow.get("normalization_error"):
+                    source.setdefault("normalization_errors", []).append({
+                        "variant": nrow.get("variant"),
+                        "case_id": nrow.get("case_id"),
+                        "source_row_sha256": nrow.get("source_row_sha256"),
+                        "reason": nrow["normalization_error"],
+                    })
                 normalized.append(bind_benchmark_source_context(nrow, source_contexts))
     canonical = _drop_spurious_full_placeholders_v58q(
         _dedupe_normalized_rows_v58f(normalized)

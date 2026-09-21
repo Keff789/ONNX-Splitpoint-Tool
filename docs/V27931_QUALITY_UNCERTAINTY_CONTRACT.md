@@ -30,3 +30,49 @@ Der zentrale Workflow-Summary-CSV-Writer übernimmt dieselben Primärfelder. Die
 `tests/fixtures/v27931_quality/PROVENANCE.json` benennt die Originalquelle, Prüfsummen und bewusst fehlenden großen Payloads. Vier ausgewählte Complete-Set-Resultate enthalten den MobileNet-Full-Point-Fail, die RegNet-Identitätsabkürzung, einen berechneten YOLO11-Bootstrap und den YOLO26s-Guardrail-Fail. Die originale YOLO11-Full-Qualityanfrage liegt zusätzlich bytegleich vor; der echte Vertragsvalidator und innere/äußere Mutationen werden geprüft. Diese reine Vertragsabnahme simuliert keine B500-Ausführung.
 
 Ein separat als synthetisch markierter, mit unverändertem v30 erzeugter Golden-Fall enthält Eingaben, den PCG64-Plan, beide tatsächlichen Shardverteilungen und sämtliche Komponenten. Vertrag 3 stimmt für die berechneten Resultatfelder exakt damit überein. Testgruppen T08.1–T08.6 sowie T00.2 stehen in `tests/test_v27931_quality_uncertainty.py`; die abschließenden Testzahlen werden aus dem tatsächlichen Release-JUnit übernommen.
+
+
+## R9J: neue Reportingpolicy ab 19.09.2026
+
+Die obigen historischen Regeln bleiben für alte Ergebnisse gültig. Neue normale
+Profile frieren `quality_gate.reporting_policy.policy_id=accuracy_reporting_v1`
+ein. 5% relativer Verlust und das Unsicherheitsband 3..7% sind neue
+Projektentscheidungen nach R9G/H/I, keine universellen oder rückwirkend
+präregistrierten Grenzwerte. Liveprofile und Engineartefakte werden nicht umgeschrieben.
+
+Primär sind Top-1 und offizielle COCO AP50:95 auf denselben gebundenen Bildern.
+L=(Referenz−Kandidat)/Referenz: L≤5% heißt Referenznah, sonst Genauigkeitsverlust;
+Verbesserungen sind eingeschlossen. Absolute Prozent-/AP-Punkte bleiben sichtbar.
+Top-5/AP50/AP75 liefern eigene Warnungen. Referenz0 bleibt ohne relative Klasse.
+NaN/Inf, Formen, falsche Joins, fehlende Quality und Endpunktfehler bleiben technisch negativ.
+
+Jeder gepaarte Bootstrapdraw berechnet beide Metriken und ihren relativen Verlust.
+Die offizielle COCO-Akkumulation wertet die resampelte Population aus, keinen
+Mittelwert von Einzelbild-AP. Zweiseitige Perzentile 2,5/97,5% liefern das95%-Intervall.
+Undefinierte Draws werden nicht entfernt: Intervall null mit Grund. Alte Fast-Fails
+werden nicht als berechnete CIs übernommen. Intervall vollständig auf einer Seite
+von5%: gestützt; L_low<3% und L_high>7%: unsicher; sonst Grenzüberdeckung: grenznah.
+Ein Widerspruch zur Punktklasse bleibt unsicher. Punktklasse ist kein Nichtunterlegenheitsbeweis.
+
+`accuracy_assessment` wird zentral bis JSON/CSV/GUI und Energie weitergereicht.
+Der explizit bezeichnete Kompatibilitätsalias `accuracy_gate_pass` bedeutet bei
+`accuracy_gate_semantics=technical_quality_completeness_only` nur Qualityvollständigkeit.
+Historische Entscheidungen bleiben unter `legacy_accuracy_gate`/`legacy_decision`.
+Deskriptive Ranking-/Paretoreihen behalten Accuracyverlust; streng qualifizierte
+Sichten und technische Bindungen bleiben getrennt. P2-/Logitszeiten werden nicht
+mit Native-Completed-Task-Raten verglichen. Ein Split ist keine Dreierkohorte.
+
+Generische Fullzeiten schließen tatsächliche Top-k- bzw. Decoder-/NMS-/Rückführungs-
+Callbacks ein; vorbereitete Eingaben liegen vor dem Timer. Counter und monotone
+Phasenzeitstempel belegen den Abschluss. Vorhandene finale SDK-NMS wird nicht wiederholt.
+Neue generische BN6-Verträge verwenden dafür die strikte v2-Materialisierung;
+historische v1-Postfilter bleiben ausdrücklich historische Verträge. Invertierte
+finale XYXY-Boxen und nichtfinite Werte scheitern vor einem Completionzähler,
+auch unterhalb der Scoreschwelle. Ein technisch fehlerhaftes Bild bleibt im
+angeforderten Nenner und in der Fehlerliste; es wird nicht zur gültigen AP-Zeile.
+Diese neuen Zeitgrenzen gelten ausschließlich für neue Messungen. Energie bleibt
+E_i/N_i derselben Aufnahme, FS und TRT-idle-normalisiert separat;1s Command bleibt
+kurze Commandmessung mit deklarierten Gewichten, kein stationärer Dauerbeleg.
+
+Methodische Referenzen: [SciPy paired bootstrap](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.bootstrap.html)
+und [offizieller COCOeval](https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocotools/cocoeval.py).

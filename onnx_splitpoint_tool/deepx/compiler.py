@@ -181,6 +181,8 @@ def _run_owned_compiler(
         popen_kwargs["start_new_session"] = True
     elif hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):  # pragma: no cover
         popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    from ..backend_backfill import reserve_active_build
+    reserve_active_build(cmd)
     proc = subprocess.Popen(cmd, **popen_kwargs)
     if registry is not None:
         try:

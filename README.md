@@ -1,6 +1,14 @@
+# ONNX Splitpoint Tool v2.90.1
+
+Aktueller Build: `v2.90.1`. Gesicherter R9L-Softwarestand mit Standardabnahme und separater Energie176-Ergänzung. Zusammengesetzte Evidenz, keine neue Hardware- oder Thesisabnahme durch den Versionswechsel. [Release 2.90.1](docs/RELEASE_2.90.1.md), [Arbeitsstand](docs/ARBEITSSTAND.md).
+
+# ONNX Splitpoint Tool v2.83
+
+Vorheriger Build: `v2.83-r9b-request-latency`. Backendbezogenes Nachrücken bei exaktem Buildausschluss und getrennte Completed-Task-/P2-FPS. Bestehende R1–R8-Fixes bleiben erhalten. Abnahme und offene Grenzen: [Arbeitsstand](docs/ARBEITSSTAND.md), [Release 2.83](docs/RELEASE_2.83.md).
+
 # ONNX Splitpoint Tool v2.82
 
-Aktueller Build: `v2.82-selected-energy-generic-roles-workspace-product-evidence`. Installation und gezielte Nachholung: `TESTANLEITUNG_2.82.md`. Befund-/Fixzuordnung: `IMPLEMENTIERUNGSABGLEICH_2.82.md`. Reale Hardwarefreigabe bleibt ein eigenes Gate.
+Vorheriger Build: `v2.82-selected-energy-generic-roles-workspace-product-evidence`. Installation und gezielte Nachholung: `TESTANLEITUNG_2.82.md`. Befund-/Fixzuordnung: `IMPLEMENTIERUNGSABGLEICH_2.82.md`. Reale Hardwarefreigabe bleibt ein eigenes Gate.
 
 # ONNX Splitpoint Tool v2.81
 
@@ -13,7 +21,7 @@ split candidates, builds accelerator artifacts, executes Generic and Native
 pipelines, and produces validation, performance, energy, and scientific
 reports for heterogeneous edge-AI systems.
 
-Current identity:
+Historical 2.81 identity:
 
 - package and GUI release: `2.81` (historical development lineage `v2.79`)
 - workflow/build: `v2.81-hailo-cold-preflight-shared-input-layout-terminal-status`
@@ -1349,4 +1357,3 @@ This maintenance release makes the shipped YOLO11 R8B gate profile valid for
 the strict evaluation-profile schema and verifies it through both real
 pre-hardware loader paths. It preserves the v2.79.7 runtime-identity,
 recovery, runner, ranking, Quality and energy contracts.
-

@@ -49,6 +49,7 @@ from ..campaign import (
 )
 from ..protocol_freeze import is_confirmatory_holdout, normalize_evaluation_role
 from ..quality_result_contract import (UNCERTAINTY_FIELDS, project_quality_result, project_quality_component, project_flat_quality_uncertainty)
+from ..accuracy_reporting import assessment_fields
 from ..validation.accuracy_gates import AccuracyGatePolicy, apply_accuracy_gate_to_row
 from .artifacts import now_iso, read_json, relpath, sha256_file, sha256_json, write_csv, write_json, write_text
 from .cross_runner_reporting import compute_cross_runner_report, markdown_for_cross_runner
@@ -223,8 +224,22 @@ def _claim_eligible_axis(
     explicit_key: str,
     legacy_key: str,
 ) -> bool:
-    """Resolve claim eligibility without overriding an explicit v2.72 veto."""
-    if explicit_key in row:
+    """Null is an absent assertion; false and conflicting evidence are vetoes."""
+    if (
+        any(_b(row.get(key)) is False for key in (
+            "claim_eligible", "declared_claim_eligible", "runtime_executable",
+            legacy_key,
+        ))
+        or _b(row.get("diagnostic_only")) is True
+        or row.get("identity_conflicts")
+        or row.get("completed_v2_projection_conflicts")
+        or _claim_exclusion_tokens(row.get(
+            "performance_claim_exclusion_reasons" if explicit_key == "performance_claim_eligible"
+            else "scientific_claim_exclusion_reasons"
+        ))
+    ):
+        return False
+    if row.get(explicit_key) is not None:
         return _b(row.get(explicit_key)) is True
     return _b(row.get(legacy_key)) is True
 
@@ -305,7 +320,7 @@ def _claim_exclusion_dimension(
     fallback: str,
 ) -> str:
     for key in keys:
-        value = str(row.get(key) or "").strip()
+        value = str(row.get(key) if row.get(key) is not None else "").strip()
         if value:
             return value
     return fallback
@@ -417,7 +432,7 @@ def _claim_exclusion_dimension_rows(
             if str(row.get("claim_kind") or "") == claim_kind
         ]
         for dimension, key in CLAIM_EXCLUSION_DIMENSIONS:
-            counts = Counter(str(row.get(key) or "") for row in kind_rows)
+            counts = Counter(str(row.get(key) if row.get(key) is not None else "") for row in kind_rows)
             rows.extend({
                 "claim_kind": claim_kind,
                 "dimension": dimension,
@@ -894,6 +909,8 @@ def _central_quality_setup_id(result: Mapping[str, Any]) -> str:
 
 def _canonical_quality_decision(value: Any) -> str:
     token = str(value or "").strip().lower().replace("-", "_")
+    if token in {"reference_close", "accuracy_loss", "not_estimable"}:
+        return token
     if token in {"pass", "passed", "ok", "success", "successful"}:
         return "pass"
     if token in {"fail", "failed", "failure"}:
@@ -1122,7 +1139,15 @@ def _central_quality_result_projection(
     gate_reasons = _central_quality_gate_reasons(
         result, primary, guardrails,
     )
+    from ..accuracy_reporting import assessment_fields
     projected = {
+        **assessment_fields(result.get("accuracy_assessment")),
+        "secondary_accuracy_assessments": result.get("secondary_accuracy_assessments"),
+        "accuracy_warnings": result.get("accuracy_warnings", []),
+        "legacy_decision": result.get("legacy_decision"),
+        "observed_image_ids": result.get("observed_image_ids", []),
+        "evaluated_images": result.get("evaluated_images"),
+        "collection_eval_run_id": result.get("collection_eval_run_id"),
         "row_role": CENTRAL_QUALITY_ROW_ROLE,
         "quality_result_id": result_id,
         "source_index": int(source_index),
@@ -1641,7 +1666,7 @@ def project_central_quality_status(
         if str(row.get("technical_status") or "")
         in {"completed", "ok", "success"}
         and _canonical_quality_decision(row.get("task_quality_decision"))
-        in {"fail", "inconclusive", "pass"}
+        in {"fail", "inconclusive", "pass", "reference_close", "accuracy_loss", "not_estimable"}
     )
     missing_guardrail_count = sum(
         1
@@ -1716,6 +1741,8 @@ def project_central_quality_status(
         else:
             aggregate_decision = "not_evaluated"
 
+    if results and all(row.get("accuracy_assessment") for row in results) and technical_status == "ok" and not not_evaluated_count and not campaign_missing_count:
+        aggregate_decision = "accuracy_loss" if decision_counts.get("accuracy_loss") else "reference_close" if decision_counts.get("reference_close") else "not_estimable"
     scientific_pass = bool(
         technical_status == "ok" and aggregate_decision == "pass"
     )
@@ -1752,6 +1779,7 @@ def project_central_quality_status(
         "queued_count": _int(source.get("queued_count")),
         "running_count": _int(source.get("running_count")),
         "quality_decision_counts": request_counts["quality_decision_counts"],
+        "quality_uncertainty_counts": request_counts["quality_uncertainty_counts"],
         "failed_count": failed_count,
         "unmatched_result_count": unmatched_count,
         "result_shortfall_count": result_shortfall_count,
@@ -2156,7 +2184,7 @@ def _median(values: Iterable[Optional[float]]) -> Optional[float]:
 
 def _runner_regime(row: Mapping[str, Any]) -> str:
     text = " ".join(
-        str(row.get(key) or "").lower()
+        str(row.get(key) if row.get(key) is not None else "").lower()
         for key in ("runner_regime", "run_id", "backend", "runner", "source", "validation_claim_level")
     )
     return canonical_runner(text)
@@ -2411,6 +2439,8 @@ def _ranking_groups(
 def _ranking_quality_decision(row: Mapping[str, Any]) -> str:
     """Resolve contradictory aliases with fail/inconclusive dominance."""
 
+    if isinstance(row.get("accuracy_assessment"), Mapping):
+        return str(row["accuracy_assessment"].get("accuracy_class") or "not_estimable")
     decisions: list[str] = []
     for key in (
         "task_quality_decision",
@@ -2418,7 +2448,7 @@ def _ranking_quality_decision(row: Mapping[str, Any]) -> str:
         "task_quality_status",
         "quality_gate_status",
     ):
-        raw = str(row.get(key) or "").strip().lower().replace("-", "_")
+        raw = str(row.get(key) if row.get(key) is not None else "").strip().lower().replace("-", "_")
         aliases = {
             "quality_pass": "pass",
             "quality_passed": "pass",
@@ -3704,6 +3734,7 @@ def _scientific_row(row: Mapping[str, Any]) -> dict[str, Any]:
     ).strip()
     scientific_row = {
         "row_role": PERFORMANCE_ROW_ROLE,
+        "normalization_error": row.get("normalization_error"),
         "model_id": model_id or "unknown_model",
         "model_identity_resolved": model_identity_resolved,
         "setup_id": row.get("setup_id") or row.get("energy_setup_id"),
@@ -3761,6 +3792,18 @@ def _scientific_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "direction": _direction(row),
         "buildable": row.get("buildable"),
         "runtime_executable": row.get("runtime_executable"),
+        # Preserve the measured endpoint and its existing completion evidence
+        # through Scientific JSON/CSV; never infer completion from a rate.
+        "measurement_endpoint": row.get("measurement_endpoint"),
+        "postprocess_included": row.get("postprocess_included"),
+        "postprocess_completion_verified": row.get("postprocess_completion_verified"),
+        "postprocess_completed_frames": row.get("postprocess_completed_frames"),
+        "decoder_id": row.get("decoder_id"),
+        "host_postprocessing_evidence_status": row.get("host_postprocessing_evidence_status"),
+        "host_postprocessing_evidence_source": row.get("host_postprocessing_evidence_source"),
+        "raw_stage_mean_ms": row.get("raw_stage_mean_ms"),
+        "host_tail_mean_ms": row.get("host_tail_mean_ms"),
+        "completed_task_mean_ms": row.get("completed_task_mean_ms"),
         "measurement_payload_present": row.get(
             "measurement_payload_present"
         ),
@@ -3776,6 +3819,7 @@ def _scientific_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "runtime_failure_evidence_line_number": row.get(
             "runtime_failure_evidence_line_number"
         ),
+        **assessment_fields(row.get("accuracy_assessment")),
         "contract_consistent": row.get("contract_consistent"),
         "task_quality_tier": (
             row.get("accuracy_gate_tier") or row.get("task_quality_tier")
@@ -3940,6 +3984,8 @@ def _scientific_row(row: Mapping[str, Any]) -> dict[str, Any]:
         not model_identity_resolved
         or scientific_row.get("diagnostic_only") is True
         or scientific_row.get("declared_claim_eligible") is False
+        or row.get("identity_conflicts")
+        or row.get("completed_v2_projection_conflicts")
     ):
         scientific_row["ranking_eligible"] = False
         scientific_row["performance_eligible"] = False
@@ -3980,7 +4026,7 @@ def _performance_cohort_projection(
             row.get("task_quality_decision")
             or row.get("task_quality_status")
         )
-        quality = bool(technical and quality_decision == "pass")
+        quality = bool(technical and (quality_decision == "pass" or (row.get("accuracy_assessment") and quality_decision in {"reference_close", "accuracy_loss", "not_estimable"})))
         claim = _performance_claim_eligible(row)
         technical_reasons: list[str] = []
         if _b(row.get("runtime_executable")) is not True:
@@ -4318,7 +4364,7 @@ def _tex_header(value: Any) -> str:
 
 def _tex_value(value: Any, digits: int = 3) -> str:
     number = _f(value)
-    return f"{number:.{digits}f}" if number is not None else "--"
+    return f"{number:.{digits}f}" if number is not None else "N/A"
 
 
 def _write_tex_table(
@@ -4327,8 +4373,11 @@ def _write_tex_table(
     columns: Sequence[tuple[str, str, str]],
     caption: str,
     label: str,
+    *, preview: bool = False,
 ) -> Path:
-    alignment = "l" + "r" * (len(columns) - 1)
+    alignment = "".join("r" if kind in {"number", "integer"} else "l" for _, _, kind in columns)
+    if any(kind in {"number", "integer"} and _f(row.get(key)) is None for row in rows for key, _, kind in columns):
+        caption += " N/A: metric unavailable or not estimable; see the row status/reason and source CSV for details."
     lines = [
         r"\begin{table}[t]",
         r"\centering",
@@ -4344,19 +4393,62 @@ def _write_tex_table(
         values: list[str] = []
         for key, _, kind in columns:
             value = row.get(key)
-            values.append(_tex_value(value, 3) if kind == "number" else _tex_escape(value))
+            values.append(_tex_value(value, 0 if kind == "integer" else 3) if kind in {"number", "integer"} else _tex_escape(value))
         lines.append(" & ".join(values) + r" \\")
     lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table}", ""])
+    if preview and rows:
+        from ..reporting_figures import table_preview
+        cells = [[_tex_value(row.get(key), 0 if kind == "integer" else 3) if kind in {"number", "integer"} else str(row.get(key) if row.get(key) is not None else "")
+                  for key, _, kind in columns] for row in rows]
+        figure = table_preview([title for _, title, _ in columns], cells, caption=caption)
+        _figure_outputs(figure, path.with_suffix(""))
     return write_text(path, "\n".join(lines))
 
 
 def _figure_outputs(figure: Any, base: Path) -> list[Path]:
+    import textwrap
+    for axis in figure.axes:
+        if len(axis.get_title()) > 80:
+            axis.set_title(textwrap.fill(axis.get_title(), 80))
     output: list[Path] = []
     for extension in ("pdf", "png"):
         path = base.with_suffix(f".{extension}")
         figure.savefig(path, bbox_inches="tight", dpi=220 if extension == "png" else None)
         output.append(path)
     return output
+
+
+def _figure_row_label(row):
+    family = "Native" if canonical_runner(row.get("runner_regime")) == "native_fifo" or str(row.get("execution_mode") or "").startswith("native") else "Generic"
+    return f"{family}: {row.get('model_id')} / {row.get('backend')} / {row.get('case_id')}"
+
+
+def _energy_figure_details(figure, axis, rows):
+    """Label the plotted comparison basis and only already stored intervals."""
+    from matplotlib.patches import Patch
+    bases = set()
+    for position, (bar, row) in enumerate(zip(axis.patches, rows)):
+        normalized = str(row.get("energy_comparison_basis") or "").startswith("host_normalized")
+        bar.set_hatch("//" if normalized else None)
+        bases.add(normalized)
+        low, high = _f(row.get("energy_per_work_ci_low_j")), _f(row.get("energy_per_work_ci_high_j"))
+        if (_f(row.get("energy_repeat_n")) or 0) >= 2 and low is not None and high is not None:
+            axis.hlines(position, 1000 * low, 1000 * high, color="black", linewidth=1)
+    legends = [Patch(facecolor="C0", hatch="//" if normalized else None,
+                     label="TRT host-normalized estimate" if normalized else "Measured input energy")
+               for normalized in sorted(bases)]
+    axis.legend(handles=legends, loc="best", fontsize=9)
+    counts = sorted({str(row.get("energy_repeat_n")) for row in rows if row.get("energy_repeat_n") is not None})
+    durations = [v for row in rows if (v := _f(row.get("active_duration_s"))) is not None]
+    window = f"mean window {min(durations):.2f}–{max(durations):.2f} s" if durations else "window duration N/A: not recorded"
+    scopes = ", ".join(sorted({str(row.get("energy_scope") or "N/A") for row in rows}))
+    intervals = sorted({str(100 * float(row["energy_confidence_level"])) + "%" for row in rows if _f(row.get("energy_confidence_level")) is not None})
+    ci = "/".join(intervals) + " stored repetition CI" if intervals else "CI level N/A: not recorded"
+    windows = ", ".join(sorted({str(row.get("energy_window_effective") or row.get("energy_window") or "N/A") for row in rows}))
+    figure.text(.5, -.025, f"Scope: {scopes}; {windows}; n={','.join(counts) or 'N/A'}; {window}.\n"
+                f"Bars: mean energy/image; lines: {ci} when n ≥ 2. Descriptive values; quality is a separate axis.",
+                ha="center", va="top", fontsize=9)
+    axis.set_xlabel("Comparison energy per completed image [mJ/image]")
 
 
 def _make_figures(
@@ -4366,8 +4458,8 @@ def _make_figures(
     figures_dir: Path,
 ) -> list[Path]:
     try:
-        import matplotlib.pyplot as plt
-    except Exception:
+        from ..reporting_figures import export_subplots
+    except ImportError:
         return []
     figures_dir.mkdir(parents=True, exist_ok=True)
     output: list[Path] = []
@@ -4380,7 +4472,7 @@ def _make_figures(
         for row in performance_rows
     )
     if counts:
-        figure, axis = plt.subplots(figsize=(8.2, 4.3))
+        figure, axis = export_subplots(figsize=(8.2, 4.3))
         labels, values = list(counts.keys()), list(counts.values())
         axis.bar(range(len(labels)), values)
         axis.set_xticks(range(len(labels)), labels, rotation=35, ha="right")
@@ -4388,7 +4480,6 @@ def _make_figures(
         axis.set_title("Task-quality and eligibility status")
         axis.grid(axis="y", alpha=0.25)
         output.extend(_figure_outputs(figure, figures_dir / "task_quality_status_counts"))
-        plt.close(figure)
 
     quality_rows = [
         row
@@ -4397,7 +4488,7 @@ def _make_figures(
     ]
     if quality_rows:
         quality_rows = quality_rows[:40]
-        figure, axis = plt.subplots(figsize=(9.2, max(4.0, 0.32 * len(quality_rows))))
+        figure, axis = export_subplots(figsize=(9.2, max(4.0, 0.32 * len(quality_rows))))
         positions = list(range(len(quality_rows)))
         values = [float(_f(row.get("task_quality_delta")) or 0.0) for row in quality_rows]
         computed_rows = []
@@ -4415,7 +4506,7 @@ def _make_figures(
             axis.hlines([item[0] for item in computed_rows], [item[2] for item in computed_rows], [item[3] for item in computed_rows], label="Berechnetes Bootstrap-Intervall")
             axis.plot([item[1] for item in computed_rows], [item[0] for item in computed_rows], "o", linestyle="none")
         if point_only_rows:
-            axis.plot([item[1] for item in point_only_rows], [item[0] for item in point_only_rows], "o", linestyle="none", label="Unsicherheit nicht berechnet")
+            axis.plot([item[1] for item in point_only_rows], [item[0] for item in point_only_rows], "x", linestyle="none", label="Unsicherheit nicht berechnet")
         axis.legend(loc="best")
         margins = [float(_f(row.get("task_quality_margin")) or 0.01) for row in quality_rows]
         if margins:
@@ -4423,13 +4514,12 @@ def _make_figures(
         axis.axvline(0.0, linewidth=1)
         axis.set_yticks(
             positions,
-            [f"{row.get('model_id')} / {row.get('backend')} / {row.get('case_id')}" for row in quality_rows],
+            [_figure_row_label(row) for row in quality_rows],
         )
         axis.set_xlabel("Candidate minus canonical reference")
         axis.set_title("Task-quality non-inferiority results")
         axis.grid(axis="x", alpha=0.25)
         output.extend(_figure_outputs(figure, figures_dir / "task_quality_noninferiority"))
-        plt.close(figure)
 
     macro_rows = [row for row in ranking_macro if str(row.get("status") or "") != "unavailable"]
     if macro_rows:
@@ -4442,14 +4532,13 @@ def _make_figures(
             values = [_f(row.get(field)) for row in macro_rows]
             if not any(value is not None for value in values):
                 continue
-            figure, axis = plt.subplots(figsize=(9.0, 4.8))
+            figure, axis = export_subplots(figsize=(9.0, 4.8))
             axis.bar(range(len(labels)), [float(value) if value is not None else math.nan for value in values])
             axis.set_xticks(range(len(labels)), labels, rotation=25, ha="right")
             axis.set_ylabel(y_label)
             axis.set_title(title)
             axis.grid(axis="y", alpha=0.25)
             output.extend(_figure_outputs(figure, figures_dir / filename))
-            plt.close(figure)
 
     performance = [
         row
@@ -4462,8 +4551,8 @@ def _make_figures(
             key=lambda row: float(_f(row.get("throughput_fps")) or 0),
             reverse=True,
         )[:30]
-        figure, axis = plt.subplots(figsize=(9.2, max(4.0, 0.30 * len(performance))))
-        labels = [f"{row.get('model_id')} / {row.get('backend')} / {row.get('case_id')}" for row in performance]
+        figure, axis = export_subplots(figsize=(9.2, max(4.0, 0.30 * len(performance))))
+        labels = [_figure_row_label(row) for row in performance]
         values = [float(_f(row.get("throughput_fps")) or 0.0) for row in performance]
         axis.barh(range(len(performance)), values)
         axis.set_yticks(range(len(performance)), labels)
@@ -4472,7 +4561,6 @@ def _make_figures(
         axis.set_title("Eligible full and split performance rows")
         axis.grid(axis="x", alpha=0.25)
         output.extend(_figure_outputs(figure, figures_dir / "eligible_throughput"))
-        plt.close(figure)
 
     screening_performance = [
         row for row in scientific_rows
@@ -4484,8 +4572,8 @@ def _make_figures(
             key=lambda row: float(_f(row.get("throughput_fps")) or 0),
             reverse=True,
         )[:30]
-        figure, axis = plt.subplots(figsize=(9.2, max(4.0, 0.30 * len(screening_performance))))
-        labels = [f"{row.get('model_id')} / {row.get('backend')} / {row.get('case_id')}" for row in screening_performance]
+        figure, axis = export_subplots(figsize=(9.2, max(4.0, 0.30 * len(screening_performance))))
+        labels = [_figure_row_label(row) for row in screening_performance]
         values = [float(_f(row.get("throughput_fps")) or 0.0) for row in screening_performance]
         axis.barh(range(len(screening_performance)), values)
         axis.set_yticks(range(len(screening_performance)), labels)
@@ -4494,7 +4582,6 @@ def _make_figures(
         axis.set_title("Development/screening throughput observations (not claim eligible)")
         axis.grid(axis="x", alpha=0.25)
         output.extend(_figure_outputs(figure, figures_dir / "screening_throughput_observations"))
-        plt.close(figure)
 
     energy = [
         row
@@ -4503,8 +4590,8 @@ def _make_figures(
     ]
     if energy:
         energy = sorted(energy, key=lambda row: float(_f(row.get("energy_per_work_j")) or math.inf))[:30]
-        figure, axis = plt.subplots(figsize=(9.2, max(4.0, 0.30 * len(energy))))
-        labels = [f"{row.get('model_id')} / {row.get('backend')} / {row.get('case_id')}" for row in energy]
+        figure, axis = export_subplots(figsize=(9.2, max(4.0, 0.30 * len(energy))))
+        labels = [_figure_row_label(row) for row in energy]
         values = [1000.0 * float(_f(row.get("energy_per_work_j")) or 0.0) for row in energy]
         axis.barh(range(len(energy)), values)
         axis.set_yticks(range(len(energy)), labels)
@@ -4512,8 +4599,8 @@ def _make_figures(
         axis.set_xlabel("Energy per completed work unit [mJ]")
         axis.set_title("Scope-compatible energy rows")
         axis.grid(axis="x", alpha=0.25)
+        _energy_figure_details(figure, axis, energy)
         output.extend(_figure_outputs(figure, figures_dir / "eligible_energy_per_work"))
-        plt.close(figure)
 
     screening_energy = [
         row for row in scientific_rows
@@ -4521,8 +4608,8 @@ def _make_figures(
     ]
     if screening_energy:
         screening_energy = sorted(screening_energy, key=lambda row: float(_f(row.get("energy_per_work_j")) or math.inf))[:30]
-        figure, axis = plt.subplots(figsize=(9.2, max(4.0, 0.30 * len(screening_energy))))
-        labels = [f"{row.get('model_id')} / {row.get('backend')} / {row.get('case_id')}" for row in screening_energy]
+        figure, axis = export_subplots(figsize=(9.2, max(4.0, 0.30 * len(screening_energy))))
+        labels = [_figure_row_label(row) for row in screening_energy]
         values = [1000.0 * float(_f(row.get("energy_per_work_j")) or 0.0) for row in screening_energy]
         axis.barh(range(len(screening_energy)), values)
         axis.set_yticks(range(len(screening_energy)), labels)
@@ -4530,8 +4617,8 @@ def _make_figures(
         axis.set_xlabel("Energy per completed work unit [mJ]")
         axis.set_title("Development/screening energy observations (not claim eligible)")
         axis.grid(axis="x", alpha=0.25)
+        _energy_figure_details(figure, axis, screening_energy)
         output.extend(_figure_outputs(figure, figures_dir / "screening_energy_observations"))
-        plt.close(figure)
     return output
 
 
@@ -5034,6 +5121,12 @@ def _write_reports(
         _task_quality_bound_display(row) for row in performance_rows
     ]
     payload["central_quality_results"] = central_quality_rows
+    if payload.get("quality_reporting_policy"):
+        write_json(report_root / "quality_policy.json", payload["quality_reporting_policy"])
+        from ..accuracy_reporting import observed_coverage
+        write_json(report_root / "sentinel_coverage.json", observed_coverage(
+            central_quality_rows, run_id=str(payload.get("run_id") or ""),
+            run_root=report_root.parent.parent))
     ranking = list(payload.get("ranking_method_comparison") or [])
     ranking_macro = list(payload.get("ranking_method_macro") or [])
     ranking_cohort_sensitivity = list(
@@ -5185,8 +5278,32 @@ def _write_reports(
             "completed_task_endpoint_attestation_status",
             "Completed attestation status",
         ),
-        ("native_measured_throughput_fps", "FPS median"),
-        ("latency_median_ms", "Latency median [ms]"),
+        ("native_measured_throughput_fps", "Completed Task FPS median"),
+        ("fps_ci95_low", "Completed Task CI95 low"),
+        ("fps_ci95_high", "Completed Task CI95 high"),
+        ("p2_output_fps", "P2 output FPS median"),
+        ("p2_output_fps_ci95_low", "P2 CI95 low"),
+        ("p2_output_fps_ci95_high", "P2 CI95 high"),
+        ("completed_task_fps_unavailable_reason", "Task FPS unavailable reason"),
+        ("historical_fps", "Historical diagnostic FPS"),
+        ("historical_fps_ci95_low", "Historical CI95 low"),
+        ("historical_fps_ci95_high", "Historical CI95 high"),
+        ("historical_performance_endpoint", "Historical endpoint"),
+        ("historical_fps_source", "Historical rate source"),
+        ("request_latency_mean_ms", "Einbildlatenz Mean [ms] ab vorbereitetem Input"),
+        ("request_latency_p50_ms", "Einbildlatenz P50 [ms]"),
+        ("request_latency_p95_ms", "Einbildlatenz P95 [ms]"),
+        ("request_latency_count", "Latenz n"),
+        ("request_latency_expected_count", "Latenz expected n"),
+        ("request_latency_semantics", "Latenzsemantik"),
+        ("request_latency_status", "Latenznachweis"),
+        ("request_latency_unavailable_reason", "Latenz fehlender Nachweis"),
+        ("host_output_latency_mean_ms", "Hostoutputlatenz Mean [ms] ohne Task-Postprocessing"),
+        ("host_output_fps", "Hostoutput FPS ohne Task-Postprocessing"),
+        ("host_output_fps_ci95_low", "Hostoutput FPS CI95 low"),
+        ("host_output_fps_ci95_high", "Hostoutput FPS CI95 high"),
+        ("host_output_rate_endpoint", "Hostoutput-Endpunkt"),
+        ("latency_median_ms", "Legacy latency median [ms]"),
         ("latency_ci95_low_ms", "Latency CI95 low [ms]"),
         ("latency_ci95_high_ms", "Latency CI95 high [ms]"),
         ("repetition_count_valid", "valid n"),
@@ -5200,6 +5317,10 @@ def _write_reports(
         ("task_quality_status", "Task quality"),
     ]
     native_evidence_number_fields = {
+        "request_latency_mean_ms", "request_latency_p50_ms", "request_latency_p95_ms",
+        "request_latency_count", "request_latency_expected_count", "host_output_latency_mean_ms",
+        "historical_fps", "historical_fps_ci95_low", "historical_fps_ci95_high",
+        "fps_ci95_low", "fps_ci95_high", "p2_output_fps", "p2_output_fps_ci95_low", "p2_output_fps_ci95_high",
         "numerical_similarity_mean_iou",
         "numerical_similarity_mean_iou_threshold",
         "measurement_concurrency",
@@ -5321,6 +5442,8 @@ def _write_reports(
                     "variant",
                     "execution_role",
                     "technical_status",
+                    "accuracy_assessment", "accuracy_class", "accuracy_relative_loss", "accuracy_absolute_loss_pp",
+                    "accuracy_relative_loss_ci", "accuracy_uncertainty", "accuracy_uncertainty_reason", "accuracy_policy_id",
                     "task_quality_tier",
                     "task_quality_status",
                     "task_quality_decision",
@@ -7029,6 +7152,24 @@ def build_scientific_reports(
         run_dir / "quality_management" / "central_quality_summary.json",
         default={},
     ) or {}
+    from .evidence_state_model import summarize_run_scope
+    current_scope = summarize_run_scope(run_dir)
+    if (isinstance(central_quality_source, Mapping)
+            and current_scope["matrix_required"] > 0
+            and current_scope["matrix_required"] == central_quality_source.get("matrix_required")):
+        # Re-evaluate only applicability from the same sealed model scopes.
+        # Historical results, decisions and source files remain untouched.
+        central_quality_source = dict(central_quality_source)
+        payload["quality_scope_projection"] = {
+            "source_quality_missing": central_quality_source.get("quality_missing"),
+            "source_evidence_state_summary": central_quality_source.get("evidence_state_summary"),
+            "projected_evidence_state_summary": current_scope,
+        }
+        central_quality_source.update({key: current_scope[key] for key in (
+            "matrix_required", "matrix_present", "quality_applicable", "quality_completed",
+            "quality_blocked", "quality_not_applicable", "quality_missing",
+        )})
+        central_quality_source["evidence_state_summary"] = current_scope
     central_quality_reporting = project_central_quality_status(
         central_quality_source
         if isinstance(central_quality_source, Mapping)
@@ -7043,6 +7184,7 @@ def build_scientific_reports(
     payload["central_quality_results"] = list(
         central_quality_reporting.get("results") or []
     )
+    payload["quality_reporting_policy"] = dict(policy.reporting_policy or {})
     from .run_discovery import build_measurement_set_contract
 
     measurement_set = build_measurement_set_contract(run_dir)

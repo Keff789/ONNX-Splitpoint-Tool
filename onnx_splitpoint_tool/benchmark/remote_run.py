@@ -35,7 +35,7 @@ DEEPX_DISCOVERY_SHELL = '\nDEEPX_PY=""\nDEEPX_SITE=""\n_deepx_has_py_bindings() 
 
 from onnx_splitpoint_tool.remote.bundle import BundleCancelled, build_suite_bundle, remote_minimal_bundle_patterns
 from onnx_splitpoint_tool.benchmark.results_bundle import create_results_bundle_from_results_dir
-from onnx_splitpoint_tool.log_utils import sanitize_log
+from onnx_splitpoint_tool.log_utils import compact_diagnostic_cause, sanitize_log
 from onnx_splitpoint_tool.remote.ssh_transport import HostConfig as RemoteHost
 from onnx_splitpoint_tool.remote.ssh_transport import SSHTransport
 from onnx_splitpoint_tool.remote.process_lease import (
@@ -1420,6 +1420,8 @@ class RemoteBenchmarkArgs:
     reuse_bundle: bool = True
     # Resume a previous partial run for the same suite/host/settings when possible.
     resume: bool = True
+    # Actual parent workflow continuation; distinct from reuse permission.
+    native_build_budget_resume: bool = False
 
     # Optional streaming/interleaving parameters for heterogeneous pipelines.
     throughput_frames: int = 24
@@ -3387,6 +3389,38 @@ def native_binding_for(receipt_path, root, requirement, receipt):
         engine_row = artifacts.get("engine") or {}
         if str(source_row.get("sha256") or "").lower() != requirement["source_sha256"]:
             return False, "source_onnx_mismatch", {}
+        # Identical FLOAT source/build bytes can represent a real no-op
+        # bridge. This is still a fully validated Native binding, never a
+        # direct generic engine. Check the additional no-op facts only on
+        # this newly admitted route; transformed bridges keep their contract.
+        if source_row.get("sha256") == build_row.get("sha256"):
+            selection = binding.get("preselection") or {}
+            meta = binding.get("native_trt_meta_payload") or {}
+            bridge_meta = meta.get("uint8_cast_bridge") or {}
+            layout = bridge_meta.get("boundary_layout") or {}
+            shape = bridge_meta.get("input_shape")
+            if not (
+                requirement.get("engine_precision") == "float32_layout_fp16"
+                and bridge_meta.get("schema") == "onnx-splitpoint/float32-layout-bridge"
+                and bridge_meta.get("schema_version") == 1
+                and bridge_meta.get("input_dtype") == "FLOAT"
+                and selection.get("boundary_tensor_dtype") == "float32"
+                and selection.get("boundary_layout") == "as_input"
+                and selection.get("boundary_transform") == "identity"
+                and layout.get("requested") == layout.get("effective") == "as_input"
+                and layout.get("applied") is False
+                and type(bridge_meta.get("replaced_uses")) is int
+                and bridge_meta["replaced_uses"] == 0
+                and bridge_meta.get("bridge_output") == bridge_meta.get("input_name")
+                and shape == selection.get("boundary_tensor_shape")
+                and shape == selection.get("canonical_part2_shape")
+                and re.fullmatch(r"[0-9a-f]{64}", str(requirement.get("part1_artifact_sha256") or ""))
+                and int(requirement.get("part1_artifact_size_bytes") or 0) > 0
+            ):
+                return False, "native_binding_noop_float_contract_mismatch", {
+                    "binding_path": str(candidate),
+                    "validator_status": str(validation_status or ""),
+                }
         expected_part1 = str(requirement.get("part1_artifact_sha256") or "").lower()
         if expected_part1:
             actual_part1 = artifacts.get("part1_runtime") or {}
@@ -3708,9 +3742,11 @@ def verify(receipt_path, root, namespace, owner_status, requirement):
         case_id = str(requirement.get("case_id") or "").lower()
         if case_id not in parts or "part2" not in parts:
             return None, "case_or_role_path_mismatch", {}
-        if source_sha == requirement["source_sha256"]:
-            if precision in special_bridge_precisions:
-                return None, "special_precision_direct_source_not_allowed", {}
+        if source_sha == requirement["source_sha256"] and precision in {
+            "uint8_cast_fp16", "uint8_dequant_fp16",
+        }:
+            return None, "special_precision_direct_source_not_allowed", {}
+        if source_sha == requirement["source_sha256"] and precision not in special_bridge_precisions:
             bridge = {"source_binding": "direct_part2_source"}
             shape_contract = dict(requirement.get("shape_contract") or {})
         else:
@@ -3871,6 +3907,7 @@ for requirement in P["requirements"]:
         "engine_sha256_mismatch", "receipt_integrity_mismatch",
         "native_binding_integrity_mismatch", "native_binding_receipt_mismatch",
         "native_binding_part1_mismatch", "native_binding_policy_mismatch",
+        "native_binding_noop_float_contract_mismatch", "native_binding_not_found",
         "generic_bridge_source_mismatch", "generic_bridge_sha256_mismatch",
         "generic_bridge_contract_mismatch",
         "special_precision_direct_source_not_allowed",
@@ -4159,6 +4196,14 @@ def probe_remote_trt_artifact_cache(
                         suite / str(requirement["case_id"]),
                         str(requirement["expected_backend"]),
                     )
+                    if str(requirement['expected_backend']).startswith('deepx'):
+                        decision = suite / str(requirement['case_id']) / 'deepx/deepx_m1/part1/deepx_part1_artifact_status.json'
+                        if decision.is_file():
+                            saved_parent = json.loads(decision.read_text(encoding='utf-8'))
+                            if (saved_parent.get('ok') is not True
+                                    or saved_parent.get('dxnn_sha256') != _stable_file_sha256(part1)
+                                    or saved_parent.get('dxnn_size_bytes') != part1.stat().st_size):
+                                raise RuntimeError('deepx_part1_current_cache_identity_invalid')
                     requirement["part1_artifact_sha256"] = _stable_file_sha256(part1)
                     requirement["part1_artifact_size_bytes"] = int(part1.stat().st_size)
                 except (OSError, RuntimeError, ValueError) as exc:
@@ -5872,6 +5917,14 @@ finally:
     )
 
 
+class RemoteStoragePreflightError(RuntimeError):
+    """Failed admission with exact probe evidence; no capacity claim on timeout."""
+
+    def __init__(self, message: str, diagnostic: dict[str, Any]):
+        super().__init__(message)
+        self.diagnostic = diagnostic
+
+
 def _remote_storage_preflight(
     transport: SSHTransport,
     remote_path: str,
@@ -5888,6 +5941,7 @@ def _remote_storage_preflight(
     """
 
     probe_script = r'''import json, os, stat, sys
+print("SPLITPOINT_STORAGE_PHASE=python_started", flush=True)
 requested = os.path.expanduser(sys.argv[1])
 probe = requested
 while not os.path.exists(probe):
@@ -5898,7 +5952,9 @@ while not os.path.exists(probe):
 if os.path.isfile(probe):
     probe = os.path.dirname(probe)
 st = os.stat(probe)
+print("SPLITPOINT_STORAGE_PHASE=statvfs_enter", flush=True)
 fs = os.statvfs(probe)
+print("SPLITPOINT_STORAGE_PHASE=statvfs_returned", flush=True)
 uid = os.geteuid()
 groups = set(os.getgroups()) | {os.getegid()}
 if uid == st.st_uid:
@@ -5920,22 +5976,33 @@ payload = {
 print("SPLITPOINT_STORAGE_JSON=" + json.dumps(payload, sort_keys=True, separators=(",", ":")))
 '''
     cmd = (
+        "printf 'SPLITPOINT_STORAGE_PHASE=shell_started\n'; "
         f"python3 - {shlex.quote(str(remote_path))} "
         "<<'SPLITPOINT_STORAGE_PY'\n"
         + probe_script
         + "\nSPLITPOINT_STORAGE_PY"
     )
     rc, output = transport.run_read_only(cmd, timeout=30)
+    transport_report = getattr(transport, "read_only_diagnostics", {})
+    transport_report = dict(transport_report) if isinstance(transport_report, dict) else {}
+    phases = [line.split("=", 1)[1] for line in str(output or "").splitlines()
+              if line.startswith("SPLITPOINT_STORAGE_PHASE=")]
+    diagnostic = {"stage": stage, "command": cmd, "rc": rc,
+                  "remote_path": remote_path, "output_tail": str(output or "")[-12000:],
+                  "transport": transport_report, "remote_phase": phases[-1] if phases else "NOT_RECORDED",
+                  "remote_completion_proven": rc == 0 and "statvfs_returned" in phases}
+
+    def reject(kind: str, detail: str) -> None:
+        diagnostic["failure_kind"] = kind
+        raise RemoteStoragePreflightError(
+            f"remote_storage_preflight_failed: {kind}; stage={stage}, rc={rc}: {detail}", diagnostic,
+        )
+
     if rc == 130:
-        detail = str(output or "").strip()
-        raise BundleCancelled(
-            detail or "cancelled during read-only remote storage admission"
-        )
+        raise BundleCancelled(str(output or "").strip() or "cancelled during read-only remote storage admission")
     if rc != 0:
-        raise RuntimeError(
-            "remote_storage_preflight_failed: read-only statvfs probe could not "
-            f"run at stage={stage}, rc={rc}: {str(output or '')[-2000:]}"
-        )
+        reject("probe_timeout" if rc == 124 else "probe_transport_failure",
+               f"read-only statvfs probe did not establish capacity; {str(output or '')[-2000:]}")
     marker = "SPLITPOINT_STORAGE_JSON="
     encoded = ""
     for line in str(output or "").splitlines():
@@ -5943,15 +6010,16 @@ print("SPLITPOINT_STORAGE_JSON=" + json.dumps(payload, sort_keys=True, separator
             encoded = line[len(marker):]
     try:
         payload = json.loads(encoded)
-    except (TypeError, json.JSONDecodeError) as exc:
-        raise RuntimeError(
-            "remote_storage_preflight_failed: remote probe returned no valid "
-            f"contract at stage={stage}: {str(output or '')[-2000:]}"
-        ) from exc
+    except (TypeError, json.JSONDecodeError):
+        reject("probe_malformed", "remote probe returned no valid contract")
     if not isinstance(payload, dict):
-        raise RuntimeError(
-            f"remote_storage_preflight_failed: invalid payload at stage={stage}"
-        )
+        reject("probe_malformed", "invalid payload")
+    for field in ("read_only_mount", "permission_bits_allow", "os_access_allow"):
+        if type(payload.get(field)) is not bool:
+            reject("probe_malformed", f"invalid or missing boolean {field}")
+    for field in ("free_bytes", "free_inodes"):
+        if type(payload.get(field)) is not int or payload[field] < 0:
+            reject("probe_malformed", f"invalid or missing capacity {field}")
 
     required_bytes = max(0, int(required_free_bytes))
     required_inodes = max(0, int(required_free_inodes))
@@ -5978,12 +6046,9 @@ print("SPLITPOINT_STORAGE_JSON=" + json.dumps(payload, sort_keys=True, separator
         }
     )
     if problems:
-        raise RuntimeError(
-            "remote_storage_preflight_failed: refusing remote mutation; "
-            f"stage={stage}, target={remote_path}, reason={';'.join(problems)}. "
-            "Choose a writable remote base with sufficient free blocks/inodes; "
-            "no measurement or cache directory was removed."
-        )
+        diagnostic["capacity"] = payload
+        reject("capacity_or_access_rejected",
+               "refusing remote mutation; " + ";".join(problems))
     return payload
 
 
@@ -6156,12 +6221,26 @@ def _verified_uncached_suite_extract_command(
 
     return (
         f"actual=$(sha256sum {shlex.quote(remote_bundle)} | awk '{{print $1}}'); "
-        f'test "$actual" = {shlex.quote(bundle_hash)} && '
+        f'test "$actual" = {shlex.quote(bundle_hash)} && ' +
+        _preserve_native_build_checkpoint_command(remote_suite_dir) +
         f"rm -rf {shlex.quote(remote_suite_dir)} && "
         f"mkdir -p {shlex.quote(remote_suite_dir)} && "
-        f"tar -xzf {shlex.quote(remote_bundle)} -C {shlex.quote(remote_suite_dir)} && "
+        f"tar -xzf {shlex.quote(remote_bundle)} -C {shlex.quote(remote_suite_dir)} && " +
+        _restore_native_build_checkpoint_command(remote_suite_dir) +
         f"rm -f {shlex.quote(remote_bundle)}"
     )
+
+
+def _preserve_native_build_checkpoint_command(suite: str) -> str:
+    checkpoint = shlex.quote(suite.rstrip('/') + '/native_trt_build_state.json')
+    saved = shlex.quote(suite.rstrip('/') + '.native_trt_build_state.json')
+    return f'(if [ -f {checkpoint} ]; then cp -a {checkpoint} {saved}; fi) && '
+
+
+def _restore_native_build_checkpoint_command(suite: str) -> str:
+    checkpoint = shlex.quote(suite.rstrip('/') + '/native_trt_build_state.json')
+    saved = shlex.quote(suite.rstrip('/') + '.native_trt_build_state.json')
+    return f'(if [ -f {saved} ]; then cp -a {saved} {checkpoint}; fi) && '
 
 
 @contextmanager
@@ -7147,7 +7226,7 @@ def _remote_result_collect_script(*, remote_results_dir: str, remote_suite_dir: 
         "\"$suite\"/benchmark_table_* \"$suite\"/benchmark_tables_* "
         "\"$suite\"/benchmark_report_* \"$suite\"/paper_figures_* "
         "\"$suite\"/benchmark_plan.json \"$suite\"/benchmark_set.json "
-        "\"$suite\"/run_meta.json \"$suite\"/benchmark_suite.py "
+        "\"$suite\"/run_meta.json \"$suite\"/benchmark_suite.py \"$suite\"/native_trt_build_state.json "
         "\"$suite\"/scientific_reporter_v60.py \"$suite\"/scientific_report "
         "\"$suite\"/logs; do "
         "  [ -e \"$p\" ] && cp -a \"$p\" \"$out/\" || true; "
@@ -7812,10 +7891,12 @@ def run_remote_benchmark(
     )
     transport = SSHTransport(
         host,
+        log=log,
         cancel_event=cancel_event,
         remote_lease_scope=remote_lease_scope,
         remote_lease_registry=remote_process_registry,
     )
+    transport.diagnostics_dir = local_run_dir / "diagnostics"
     remote_base_resolved_for_diag = ""
     # This boundary is authoritative for failure handling.  Read-only probes
     # before it deliberately mint no remote lease.  Once either flag becomes
@@ -7989,7 +8070,8 @@ def run_remote_benchmark(
             )
             raise RuntimeError(
                 admission_prefix
-                + f"Remote command failed (rc={rc}) at stage={stage}: {cmd}\n{out}\n"
+                + f"Remote command failed (rc={rc}) at stage={stage}: "
+                + compact_diagnostic_cause(out) + "\n"
                 f"Local diagnostics: {diag_path}"
                 + (f"\nRemote storage diagnostics: {storage_diag}" if storage_diag else "")
                 + hint
@@ -9376,9 +9458,11 @@ def run_remote_benchmark(
                 log(f"[remote] suite_dir={remote_suite_dir}")
                 progress(0.36, "Cloning cached suite on remote")
                 clone_cmd = (
+                    _preserve_native_build_checkpoint_command(remote_suite_dir) +
                     f"rm -rf {shlex.quote(remote_suite_dir)} && mkdir -p {shlex.quote(remote_suite_dir)} && "
                     f"(cp -a --reflink=auto {shlex.quote(remote_cached_suite)}/. {shlex.quote(remote_suite_dir)}/ "
-                    f"2>/dev/null || cp -a {shlex.quote(remote_cached_suite)}/. {shlex.quote(remote_suite_dir)}/)"
+                    f"2>/dev/null || cp -a {shlex.quote(remote_cached_suite)}/. {shlex.quote(remote_suite_dir)}/) && " +
+                    _restore_native_build_checkpoint_command(remote_suite_dir) + 'true'
                 )
                 run_checked(clone_cmd, stage="remote_suite_cache_clone")
                 progress(0.40, "Suite ready from cache")
@@ -9513,6 +9597,13 @@ def run_remote_benchmark(
             f" --phase-runs {phase_runs}"
         )
         # v52d: benchmark_task=auto must not force COCO-50 via CLI, because that
+        if str(repeats_idx).strip() not in {'', '1'}:
+            try:
+                selection_plan = json.loads((suite_dir / 'benchmark_plan.json').read_text())
+            except (OSError, ValueError):
+                selection_plan = {}
+            if selection_plan.get('backend_backfill_build_budget'):
+                bench_cmd += ' --no-native-cold-builds'
         # overrides per-run classification plans.  Only detection gets a CLI
         # COCO fallback; auto leaves validation_images empty so benchmark_suite.py
         # uses each run's benchmark_plan fields.
@@ -9570,6 +9661,8 @@ def run_remote_benchmark(
             bench_cmd += " --mini-classification-eval"
         if bool(getattr(args, "resume", True)):
             bench_cmd += " --resume"
+        if resume_requested or bool(getattr(args, 'native_build_budget_resume', False)):
+            bench_cmd += ' --native-build-budget-resume'
         if args.add_args:
             # Advanced args supported by benchmark_suite.py (raw passthrough).
             bench_cmd += f" {args.add_args}"
@@ -10442,6 +10535,14 @@ def run_remote_benchmark(
             and not remote_leased_operation_started
         )
         parsed_pre_mutation_rc = _remote_failure_rc(bench_error)
+        if isinstance(e, RemoteStoragePreflightError):
+            probe = e.diagnostic
+            remote_rc = probe["rc"]
+            _write_local_remote_failure_artifact(
+                kind="remote_storage_probe_failure", stage=probe["stage"],
+                cmd=probe["command"], rc=probe["rc"], output=probe["output_tail"],
+                extra=probe,
+            )
         pre_mutation_cancelled = bool(
             pre_mutation_failure
             and (
@@ -11094,7 +11195,7 @@ def run_remote_benchmark(
             terminal_remote_failure or pre_mutation_dispatch_failure
         ),
         "failure_kind": str(
-            pre_mutation_dispatch_failure.get("failure_kind") or ""
+            pre_mutation_dispatch_failure.get("failure_kind") or terminal_remote_failure.get("failure_kind") or ""
         ),
         "remote_dispatch_failed": bool(
             pre_mutation_dispatch_failure.get("remote_dispatch_failed")

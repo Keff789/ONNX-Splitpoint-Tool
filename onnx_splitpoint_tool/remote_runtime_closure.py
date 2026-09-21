@@ -18,6 +18,15 @@ RemotePackageAsset = Tuple[str, str, Tuple[str, ...]]
 
 
 NATIVE_REMOTE_PACKAGE_CLOSURE: Tuple[RemotePackageAsset, ...] = (
+    ("onnx_splitpoint_tool/accuracy_reporting.py", "onnx_splitpoint_tool.accuracy_reporting", ("def assess_accuracy", "def reporting_policy")),
+    ("onnx_splitpoint_tool/runners/task_completion.py", "onnx_splitpoint_tool.runners.task_completion", ("class TimedTaskCompletion", "def validate_completion")),
+    (
+        "onnx_splitpoint_tool/runners/request_latency.py",
+        "onnx_splitpoint_tool.runners.request_latency",
+        ("class RequestLatency", "def validate_latency", "def latency_fields"),
+    ),
+    ("onnx_splitpoint_tool/process_control.py", "onnx_splitpoint_tool.process_control", ("class ProcessTreeRegistry", "def current_process_registry")),
+    ("onnx_splitpoint_tool/native_progress.py", "onnx_splitpoint_tool.native_progress", ("def run_streaming", "terminate_registered")),
     ("onnx_splitpoint_tool/deepx/__init__.py", "onnx_splitpoint_tool.deepx", ("DeepX DX-M1",)),
     ("onnx_splitpoint_tool/deepx/config.py", "onnx_splitpoint_tool.deepx.config", ("def classification_profile_admission",)),
     ("onnx_splitpoint_tool/native_job_identity.py", "onnx_splitpoint_tool.native_job_identity", ("def planned_native_identity", "def failed_native_result")),

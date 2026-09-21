@@ -12,6 +12,7 @@ import os
 import re
 import shlex
 import stat
+import shutil
 
 from onnx_splitpoint_tool.workflow.artifacts import now_iso, sha256_json, write_json
 
@@ -129,6 +130,7 @@ class EffectiveEnergyState:
 class EnergyDefaults:
     enabled: bool = False
     collector_binary: str = "urecs-data-collector"
+    collector_sha256: str = ""
     power_calculations_binary: str = "power_calculations"
     mode: str = "fast_firmware"
     data_port: int = 3000
@@ -138,6 +140,10 @@ class EnergyDefaults:
     pre_duration_s: float = 5.0
     post_duration_s: float = 5.0
     duration_margin_s: float = 1.0
+    # Capture reserve for interpreter/SSH/runtime initialization outside the
+    # inner inference loop. It does not change the command-marker crop.
+    # The Sept-13 full TRT command took up to 10.04 s for a 1 s inner loop.
+    command_startup_budget_s: float = 15.0
     # Minimum active measurement window for u.RECS energy phases. Fast runs such
     # as DeepX Full can finish in a few seconds; such short windows are dominated
     # by idle/pre/post overhead and produce misleading energy-per-inference values.
@@ -1607,6 +1613,8 @@ def _write_hardware_registry_atomic(payload: Mapping[str, Any], path: Path) -> N
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(temporary, previous_mode if previous_mode is not None else 0o600)
+        if path.exists():
+            shutil.copystat(path, temporary)
         os.replace(temporary, path)
         if os.name == "posix":
             directory_fd = os.open(path.parent, os.O_RDONLY)
@@ -1822,6 +1830,7 @@ def _defaults_from_mapping(raw: Any) -> EnergyDefaults:
     return EnergyDefaults(
         enabled=_bool(raw.get("enabled"), False),
         collector_binary=str(raw.get("collector_binary") or "urecs-data-collector"),
+        collector_sha256=str(raw.get("collector_sha256") or ""),
         power_calculations_binary=str(raw.get("power_calculations_binary") or "power_calculations"),
         mode=str(raw.get("mode") or "fast_firmware"),
         data_port=data_port,
@@ -1831,6 +1840,7 @@ def _defaults_from_mapping(raw: Any) -> EnergyDefaults:
         pre_duration_s=_float(raw.get("pre_duration_s"), 5.0),
         post_duration_s=_float(raw.get("post_duration_s"), 5.0),
         duration_margin_s=_float(raw.get("duration_margin_s"), 1.0),
+        command_startup_budget_s=max(0.0, min(120.0, _float(raw.get("command_startup_budget_s"), 15.0))),
         min_active_duration_s=_float(raw.get("min_active_duration_s"), 30.0),
         power_estimated_duration_margin_s=_float(raw.get("power_estimated_duration_margin_s"), 2.0),
         measurement_duration_s=_float(raw.get("measurement_duration_s"), _float(raw.get("duration_s"), 60.0)),
@@ -2292,6 +2302,77 @@ def get_setup_energy(setup_id: str, registry_path: str | Path | None = None) -> 
         setup_id,
         registry_path=selected_input,
     )
+
+
+REVIEWED_COLLECTOR_SHA256 = "913c3f745a71809d85c1e98f56d0ca3265bb5e5492ad2b72407f7ce9bd8c3a46"
+
+
+def resolve_collector_binding(registry: Mapping[str, Any]) -> dict[str, str]:
+    """Resolve once, including bytes; execution must use this absolute path."""
+    from .collector import _expand_binary
+    configured = energy_defaults_from_registry(registry).collector_binary
+    path = Path(_expand_binary(configured)).expanduser().absolute()
+    digest = ""
+    if path.is_file():
+        with path.open("rb") as handle:
+            digest = hashlib.file_digest(handle, "sha256").hexdigest()
+    expected = str((registry.get("energy_defaults") or {}).get("collector_sha256") or "")
+    if expected and digest and expected != digest:
+        raise ValueError("Native collector bytes differ from configured binding: " + str(path))
+    return {"collector_binary": str(path), "collector_sha256": digest,
+            "collector_source": configured}
+
+
+def install_reviewed_collector(source: str | Path, backup_dir: str | Path) -> dict[str, Any]:
+    """Explicit, idempotent normal config migration. Never build or fall back."""
+    source = Path(source).expanduser().resolve()
+    with source.open("rb") as handle:
+        digest = hashlib.file_digest(handle, "sha256").hexdigest()
+    if digest != REVIEWED_COLLECTOR_SHA256:
+        raise ValueError("Reviewed collector SHA256 mismatch")
+    registry_path = Path(default_registry_path()).expanduser().resolve()
+    mirror_path = default_energy_config_file().expanduser().resolve()
+    destination = registry_path.parent / "collectors" / "r6-reviewed" / "urecs-data-collector"
+    backup = Path(backup_dir).expanduser().resolve()
+    backup.mkdir(parents=True, exist_ok=True)
+    changes = []
+    with _hardware_registry_write_lock(registry_path):
+        with _hardware_registry_write_lock(mirror_path):
+            payloads = []
+            for path in (registry_path, mirror_path):
+                if not path.is_file():
+                    continue
+                raw = yaml.safe_load(path.read_text())
+                defaults = raw.get("energy_defaults") or {}
+                old = str(defaults.get("collector_binary") or "urecs-data-collector")
+                if old not in {"urecs-data-collector", str(Path.home()/".cargo/bin/urecs-data-collector"), str(destination)}:
+                    raise ValueError("Explicit collector binding conflict: " + old)
+                for setup in raw.get("hardware_setups", []):
+                    if setup.get("enabled", True) and "collector_binary" in (setup.get("energy") or {}):
+                        raise ValueError("Setup collector override conflict: " + str(setup.get("id")))
+                after = copy.deepcopy(raw)
+                after.setdefault("energy_defaults", {}).update(collector_binary=str(destination), collector_sha256=digest)
+                if after != raw:
+                    saved = backup / path.name
+                    if saved.exists():
+                        raise ValueError("Backup already exists for a different migration: " + str(saved))
+                    shutil.copy2(path, saved)
+                    payloads.append((path, after))
+                    changes.append({"file": str(path), "before": defaults,
+                                    "after": after["energy_defaults"], "backup": str(saved)})
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.exists():
+                with destination.open("rb") as handle:
+                    if hashlib.file_digest(handle, "sha256").hexdigest() != digest:
+                        raise ValueError("Managed collector already exists with different bytes")
+            else:
+                temporary = destination.with_suffix(".tmp")
+                shutil.copy2(source, temporary)
+                os.replace(temporary, destination)
+            for path, after in payloads:
+                _write_hardware_registry_atomic(after, path)
+    return {"collector_binary": str(destination), "collector_sha256": digest,
+            "source": str(source), "changes": changes}
 
 # v60m: the top-level energy switch is authoritative for all native energy paths.
 from onnx_splitpoint_tool.v60m_policy import install_energy_object_guards as _v60m_install_energy_guards

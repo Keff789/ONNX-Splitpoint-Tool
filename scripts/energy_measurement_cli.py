@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from onnx_splitpoint_tool.energy.config import EnergyDefaults, apply_energy_ab_config, default_registry_path, energy_defaults_from_registry, energy_measurements_root, energy_setup_from_registry, get_setup_energy, load_energy_defaults, load_hardware_registry, save_energy_defaults  # noqa: E402
+from onnx_splitpoint_tool.energy.task_budget import add_campaign_budget_arguments, campaign_budget_measurement_kwargs
 from onnx_splitpoint_tool.energy.collector import check_energy_tools, run_fast_firmware_measurement, select_host_normalization_role  # noqa: E402
 from onnx_splitpoint_tool.workflow.hardware_matrix import ensure_hardware_setups_file  # noqa: E402
 
@@ -49,8 +50,9 @@ def _measurement_context(
     ``energy_config.yaml`` remains a legacy/UI mirror.  Once a setup owns any
     configured method identity, it must not be possible for that second file
     to override the registry snapshot used for the method and its channel
-    bindings.  Unconfigured legacy/manual calls retain their historical
-    standalone-default behaviour.
+    bindings. An explicitly selected registry also owns its collector/defaults
+    for unconfigured setups. Implicit legacy/manual calls retain their
+    historical standalone-default behaviour.
     """
 
     explicit_registry_path = registry_path not in (None, "")
@@ -73,7 +75,7 @@ def _measurement_context(
         or getattr(registry_setup, "calibration_sha256", "")
         or getattr(registry_setup, "expected_channel_bindings", ())
     )
-    if configured_method_identity:
+    if explicit_registry_path or configured_method_identity:
         return energy_defaults_from_registry(registry), registry_setup
     return (
         load_energy_defaults(),
@@ -243,6 +245,11 @@ def cmd_measure_native_fifo(args: argparse.Namespace) -> int:
         preflight_runtime_attestation_path=args.preflight_runtime_attestation_path,
         preflight_expected_command_contract_sha256=args.preflight_expected_command_contract_sha256,
         invalid_repeat_max_retries=getattr(args, "invalid_repeat_max_retries", None),
+        **campaign_budget_measurement_kwargs(args),
+        _task_logical_repeat=getattr(args, "task_logical_repeat", None),
+        task_budget_file=getattr(args, "task_budget_file", None),
+        task_max_chains=getattr(args, "task_max_chains", None),
+        task_max_transport_failures=getattr(args, "task_max_transport_failures", None),
         diagnostic_only=bool(getattr(args, "diagnostic_only", False)),
         claim_exclusion_reason=str(
             getattr(args, "claim_exclusion_reason", "") or ""
@@ -389,6 +396,11 @@ def cmd_measure(args: argparse.Namespace) -> int:
         preflight_runtime_attestation_path=args.preflight_runtime_attestation_path,
         preflight_expected_command_contract_sha256=args.preflight_expected_command_contract_sha256,
         invalid_repeat_max_retries=getattr(args, "invalid_repeat_max_retries", None),
+        **campaign_budget_measurement_kwargs(args),
+        _task_logical_repeat=getattr(args, "task_logical_repeat", None),
+        task_budget_file=getattr(args, "task_budget_file", None),
+        task_max_chains=getattr(args, "task_max_chains", None),
+        task_max_transport_failures=getattr(args, "task_max_transport_failures", None),
         diagnostic_only=bool(getattr(args, "diagnostic_only", False)),
         claim_exclusion_reason=str(
             getattr(args, "claim_exclusion_reason", "") or ""
@@ -431,6 +443,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--preflight-runtime-attestation-path", default="", help="Attestation path as seen by the workload host. Required for SSH/remote workloads when using the ATTESTATION placeholder; may include NONCE/REPEAT tokens.")
     p.add_argument("--preflight-expected-command-contract-sha256", default="", help="Required with preflight; binds its sealed attestation to the exact successful workload contract.")
     p.add_argument("--invalid-repeat-max-retries", type=int, default=None, help="Bounded retries for a logical repeat invalidated by collector marker/first-sample transport (default from Energy Config; normally 1).")
+    add_campaign_budget_arguments(p, measurement=True)
+    p.add_argument("--task-budget-file", default=None, help="Persistent checkpoint shared by all entries of one bounded energy task; existing limits cannot be reset.")
+    p.add_argument("--task-max-chains", type=int, default=None, help="Task-wide maximum including failed preflights; requires --task-budget-file and --task-max-transport-failures.")
+    p.add_argument("--task-max-transport-failures", type=int, default=None, help="Stop before any further chain after this many transport failures.")
     p.add_argument("--run-id", default="")
     p.add_argument("--cwd", default=None)
     p.add_argument("--duration", type=float, default=None)
@@ -489,6 +505,9 @@ def main(argv: list[str] | None = None) -> int:
         pnf.add_argument("--preflight-runtime-attestation-path", default="", help="Attestation path as seen by the workload host. Required for SSH/remote workloads when using the ATTESTATION placeholder; may include NONCE/REPEAT tokens.")
         pnf.add_argument("--preflight-expected-command-contract-sha256", default="", help="Required with preflight; binds its sealed attestation to the exact successful workload contract.")
         pnf.add_argument("--invalid-repeat-max-retries", type=int, default=None, help="Bounded retries for a logical repeat invalidated by collector marker/first-sample transport.")
+        pnf.add_argument("--task-budget-file", default=None, help="Persistent checkpoint shared by all entries of one bounded energy task; existing limits cannot be reset.")
+        pnf.add_argument("--task-max-chains", type=int, default=None, help="Task-wide maximum including failed preflights; requires --task-budget-file and --task-max-transport-failures.")
+        pnf.add_argument("--task-max-transport-failures", type=int, default=None, help="Stop before any further chain after this many transport failures.")
         pnf.add_argument("--run-id", default="yolov7_b066_native_fifo")
         pnf.add_argument("--cwd", default=None)
         pnf.add_argument("--duration", type=float, default=None, help="Known workload duration in seconds. If omitted, a duration probe is run first.")

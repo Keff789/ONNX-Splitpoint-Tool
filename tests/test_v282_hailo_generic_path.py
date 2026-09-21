@@ -127,6 +127,44 @@ def test_external_onnx_payload_is_required_and_bound(tmp_path):
         probe.external_closure(path)
 
 
+@pytest.mark.parametrize('mutation', ['nested_proof', 'invalid_binding', 'conflicting_binding'])
+def test_resolver_distinguishes_embedded_artifact_proof_from_binding(tmp_path, monkeypatch, mutation):
+    """Original R2 binding reaches its real portable validator before file IO."""
+    import copy
+    from test_v27931_hailo26_boundary_diagnostics import minimal_case
+    from onnx_splitpoint_tool.native_split_quality import validate_native_split_quality_binding
+    run, _, row = minimal_case(tmp_path)
+    binding = json.loads((ROOT / 'tests/fixtures/v283_h10_binding.json').read_text())
+    session = row['native_tensorrt']['sessions']['part2:tensorrt']
+    session.update(engine_sha256=binding['artifacts']['engine']['sha256'],
+                   source_model_sha256=binding['artifacts']['build_part2_onnx']['sha256'],
+                   precision=binding['preselection']['precision'])
+    assert validate_native_split_quality_binding(binding, verification_mode='portable')[0] is not None
+    row['binding'] = binding
+    if mutation == 'invalid_binding':
+        binding['binding_sha256'] = '0' * 64
+    elif mutation == 'conflicting_binding':
+        other = copy.deepcopy(binding)
+        other['binding_sha256'] = '0' * 64
+        row['other_binding'] = other
+    path = run / 'models/yolo26m/benchmark_results/benchmark_results_hailo10_to_tensorrt_auto.json'
+    path.write_text(json.dumps([row]))
+    # Artifact lookup follows candidate selection and the real binding gate.
+    # No real model, SSH or inference is needed for this resolver regression.
+    class ReachedArtifactLookup(Exception):
+        pass
+    def lookup(*args, **kwargs):
+        raise ReachedArtifactLookup()
+    monkeypatch.setattr(probe.retained, 'exact_file', lookup)
+    if mutation == 'nested_proof':
+        with pytest.raises(ReachedArtifactLookup):
+            probe.resolve_case(run, 'yolo26m')
+    else:
+        reason = 'binding_invalid' if mutation == 'invalid_binding' else 'binding_ambiguous'
+        with pytest.raises(ValueError, match=reason):
+            probe.resolve_case(run, 'yolo26m')
+
+
 def test_generic_feed_keeps_existing_bridge_order_without_double_transpose(generated):
     # The real Generic wrapper calls this exported helper. This is a layout
     # unit test, not a claim that a true YOLO26 endpoint executed successfully.

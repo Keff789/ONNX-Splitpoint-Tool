@@ -275,6 +275,39 @@ def confirm_force_build_start(
     return True
 
 
+def profile_energy_start_binding(profile: Mapping[str, Any]) -> list[str]:
+    """Show the explicit registry/collector binding without migrating a registry."""
+    from ...energy.config import default_registry_path, load_hardware_registry, resolve_collector_binding
+    import shutil
+    import yaml
+
+    registry_path = str((profile.get("hardware") or {}).get("setups_file") or "")
+    native = profile.get("native_producers") or {}
+    native_energy = native.get("energy") or {}
+    budget = native_energy.get("task_budget") or {}
+    lines = ["Hardware registry: " + (registry_path or "Tool Config"),
+             "Native campaign budget: " + (str(dict(budget)) if budget else "disabled / not configured")]
+    if native.get("enabled") and native_energy.get("enabled") and native_energy.get("mode") == "measure":
+        path = Path(registry_path or default_registry_path()).expanduser()
+        registry = (profile.get("hardware") or {}).get("energy_registry_snapshot") or load_hardware_registry(path)
+        binding = resolve_collector_binding(registry)
+        collector = binding["collector_binary"]
+        binary = Path(collector).expanduser()
+        found = str(binary) if binary.is_file() else None
+        if not found:
+            raise ValueError("Native collector unavailable in explicit hardware registry: " + collector)
+        import os
+        if not os.access(found, os.X_OK):
+            raise ValueError("Native collector is not executable: " + found)
+        lines.append("Native collector: " + found)
+        lines.append("Collector SHA256: " + binding["collector_sha256"])
+        lines.append("Budgetherkunft: " + str(native_energy.get("task_budget_source") or "Profil / Frozen Resume"))
+        if not budget.get("enabled"):
+            lines.append("WARN: Energieschutz deaktiviert; dieser Start ist nicht durch die Quellenpolicy geschützt.")
+    lines.append("Native-Budgetherkunft: " + str((profile.get("execution_preset") or {}).get("native_budget_sources") or "Frozen Resume"))
+    return lines
+
+
 def _profile_summary_payload(
     request: str,
 ) -> tuple[list[str], dict[str, str]]:
@@ -296,6 +329,7 @@ def _profile_summary_payload(
             profile_path=profile_path,
             profile_source=str(getattr(loaded, "source", "") or "file"),
         )
+        binding_lines = profile_energy_start_binding(raw)
         build_summary = profile_build_summary(raw)
         visible_snapshot = {
             "profile_request": request,
@@ -381,11 +415,12 @@ def _profile_summary_payload(
         f"Native Force: {build_summary['native_force_text']} · Hailo-Cache: {'AN' if build_summary['hailo_cache_enabled'] else 'AUS'} · Artifact Store: {'AN' if build_summary['artifact_store_enabled'] else 'AUS'}",
         f"Models: {len(primary)}" + (f" — {model_names}" if model_names else ""),
         f"Cases / selection: {selection.get('max_accepted_cases_per_model', 1)} per model · shortlist={selection.get('preferred_shortlist', 1)} · strategy={selection.get('selection_strategy', 'stratified_windows')} · min gap={selection.get('min_gap', 1)} · pool={selection.get('candidate_search_pool', 'auto')} · Part-2 inputs=1={'on' if selection.get('require_single_part2_input', False) else 'off'}",
+        "Backend-Nachrücken (je Modell/Vertrag; exakte Buildausschlüsse, technischer Outputvertrag gemäß Policyversion): " + str(selection.get("backend_backfill") or {"enabled": False}),
         f"Logical hardware profiles: {len(run_profiles)}" + (f" — {target_names}" if target_names else ""),
         f"Effective effort: calibration CLS/DET={_items_text(calib_cfg.get('classification'))}/{_items_text(calib_cfg.get('detection'))} · validation CLS/DET={_items_text(validation_cfg.get('classification'))}/{_items_text(validation_cfg.get('detection'))} · bootstrap={quality_cfg.get('bootstrap_repetitions', '?')}",
         f"Build / timing: Hailo preset={hailo_cfg.get('preset', mode_id)} opt={hailo_cfg.get('optimization_level', '?')} · benchmark warmup/runs={benchmark_cfg.get('warmup', '?')}/{benchmark_cfg.get('runs', '?')} · native frames/warmup={native_cfg.get('frames', '?')}/{native_cfg.get('warmup', '?')}",
         f"Reproducibility: {repro_cfg.get('level', 'relaxed')} · Campaign: {'final' if final_campaign else 'development'} (effektive Policy; kein impliziter Wechsel durch den Modusnamen)",
-        f"Hardware resolution: logical profiles are mapped automatically through Tool Config → Hardware run profiles.",
+        *binding_lines,
         f"Profile YAML: {profile_path}",
     ]
 

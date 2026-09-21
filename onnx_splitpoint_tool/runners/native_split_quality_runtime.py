@@ -25,6 +25,7 @@ _CACHE_BINDING_ARTIFACT_ROLES = (
     "build_part2_onnx", "engine", "native_trt_meta",
     "engine_build_receipt", "trtexec",
 )
+_HEF_METADATA_TIMEOUT_S = 60
 
 try:
     from splitpoint_runners.native_split_quality import (
@@ -447,28 +448,31 @@ def _hailo_native_output_format_type_name(hef: Any, info: Any) -> str:
         return ""
 
 
-def _hailo_metadata(
-    *, part1: Path, part2_input: Mapping[str, Any], policy: Mapping[str, Any],
-) -> dict[str, Any]:
-    hailo_python = str(os.environ.get("HAILO_PY") or "").strip()
-    if hailo_python:
-        # RUN_PY deliberately remains the TensorRT/CUDA interpreter on mixed
-        # Hailo -> TensorRT hosts.  Read only the HEF metadata in the Hailo
-        # environment and return plain JSON to the parent process.  Do not
-        # resolve or samefile-compare this path: a venv interpreter is often a
-        # symlink, while its invocation path is what activates the venv.
-        executable = Path(hailo_python).expanduser()
-        if not executable.is_file() or not os.access(executable, os.X_OK):
-            raise RuntimeError(
-                f"native_split_quality_hailo_python_invalid:{hailo_python}"
-            )
-        probe = r'''
+_HAILO_HEF_METADATA_PROBE = r'''
 import json
 import sys
+import hashlib
+from pathlib import Path
 
+path = Path(sys.argv[1]).expanduser()
+if not path.is_file():
+    print("hef_file_missing", file=sys.stderr)
+    raise SystemExit(66)
 import hailo_platform as hpf
 
-hef = hpf.HEF(sys.argv[1])
+before = path.stat()
+digest = None
+if "--identity" in sys.argv[2:]:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    if "--expected-sha256" in sys.argv:
+        expected = sys.argv[sys.argv.index("--expected-sha256") + 1]
+        size = int(sys.argv[sys.argv.index("--expected-size") + 1])
+        if digest.hexdigest() != expected or before.st_size != size:
+            raise RuntimeError("output_metadata_hef_identity_mismatch")
+hef = hpf.HEF(str(path))
 def format_type_name(info):
     return str(
         getattr(getattr(info, "format", None), "type", "") or ""
@@ -514,14 +518,66 @@ for info in list(hef.get_output_vstream_infos()):
         "name": str(getattr(info, "name", "") or ""),
         "shape": [int(dim) for dim in list(getattr(info, "shape", ()) or ())],
         "format_type": format_type_name(info),
+        "format_order": str(getattr(getattr(info, "format", None), "order", "") or ""),
         "native_format_type": native_output_format_type_name(info),
         "quantization": (
             {"scale": float(scale), "zero_point": float(zero_point)}
             if scale is not None and zero_point is not None else None
         ),
     })
-print(json.dumps({"outputs": rows}, sort_keys=True))
+    if getattr(quant, "rounding", None) is not None:
+        rows[-1]["quantization"]["rounding"] = str(quant.rounding)
+    if "--identity" in sys.argv[2:]:
+        # Preserve the physical stream contract separately from the host view.
+        groups = list(hef.get_network_group_names())
+        streams = []
+        names = []
+        if len(groups) == 1:
+            names = list(hef.get_stream_names_from_vstream_name(info.name, groups[0]))
+            for stream in hef.get_output_stream_infos(groups[0]):
+                if stream.name not in names:
+                    continue
+                q = getattr(stream, "quant_info", None)
+                streams.append({"name": stream.name, "format_type": format_type_name(stream),
+                    "format_order": str(getattr(getattr(stream, "format", None), "order", "") or ""),
+                    "shape": [int(d) for d in getattr(stream, "shape", ())],
+                    "quantization": {"scale": float(q.qp_scale), "zero_point": float(q.qp_zp)} if q is not None else None})
+                if getattr(q, "rounding", None) is not None:
+                    streams[-1]["quantization"]["rounding"] = str(q.rounding)
+        rows[-1]["native_stream_names"] = names
+        rows[-1]["native_streams"] = streams
+if "--identity" not in sys.argv[2:]:
+    print(json.dumps({"outputs": rows}, sort_keys=True))
+    raise SystemExit(0)
+after = path.stat()
+if (before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+    raise RuntimeError("hef_changed_during_read")
+print(json.dumps({"outputs": rows, "part1_artifact_sha256": digest.hexdigest(),
+    "part1_artifact_size_bytes": after.st_size, "artifact_path": str(path),
+    "runtime_version": str(getattr(hpf, "__version__", "")),
+    "device_opened": False}, sort_keys=True))
 '''
+
+
+def _hailo_metadata(
+    *, part1: Path, part2_input: Mapping[str, Any], policy: Mapping[str, Any],
+    output_metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    hailo_python = str(os.environ.get("HAILO_PY") or "").strip()
+    if output_metadata is not None:
+        outputs = list(output_metadata.get("outputs") or [])
+    elif hailo_python:
+        # RUN_PY deliberately remains the TensorRT/CUDA interpreter on mixed
+        # Hailo -> TensorRT hosts.  Read only the HEF metadata in the Hailo
+        # environment and return plain JSON to the parent process.  Do not
+        # resolve or samefile-compare this path: a venv interpreter is often a
+        # symlink, while its invocation path is what activates the venv.
+        executable = Path(hailo_python).expanduser()
+        if not executable.is_file() or not os.access(executable, os.X_OK):
+            raise RuntimeError(
+                f"native_split_quality_hailo_python_invalid:{hailo_python}"
+            )
+        probe = _HAILO_HEF_METADATA_PROBE
         try:
             completed = subprocess.run(
                 [str(executable), "-c", probe, str(part1)],
@@ -613,6 +669,8 @@ print(json.dumps({"outputs": rows}, sort_keys=True))
             f"expected={expected_dtype}:observed="
             f"{native_format_type or 'unresolved'}"
         )
+    if output_metadata is not None:
+        tensor["hef_format_order"] = str(info.get("format_order") or "")
     tensor["hef_vstream_format_type"] = format_type
     tensor["hef_native_storage_dtype"] = native_format_type
     if str(policy.get("quantization_policy") or "") != "none":
@@ -632,7 +690,413 @@ print(json.dumps({"outputs": rows}, sort_keys=True))
             "scale": float(scale),
             "zero_point": float(zero_point),
         }
+        if isinstance(info, Mapping) and quant.get("rounding"):
+            tensor["quantization"]["rounding"] = str(quant["rounding"])
     return tensor
+
+
+def _read_output_metadata_json(text: str) -> dict[str, Any]:
+    # No last-line recovery: truncated, duplicate or mixed documents are not evidence.
+    value = json.loads(text, object_pairs_hook=_unique_json_object)
+    if not isinstance(value, dict) or not isinstance(value.get("outputs"), list):
+        raise ValueError("hef_metadata_json_object_required")
+    if any(not isinstance(row, dict) for row in value["outputs"]):
+        raise ValueError("hef_metadata_output_object_required")
+    return value
+
+
+def _existing_hailo_metadata_parents(part1: Path, receipt: Mapping[str, Any],
+                                    context: Mapping[str, Any]) -> list[Path]:
+    """Follow existing exact artifact records; never walk caches or old runs."""
+    parents = list(dict.fromkeys((part1.parent, part1.resolve().parent)))
+    from onnx_splitpoint_tool.artifact_store import ArtifactStore
+    store = ArtifactStore(context.get('artifact_store_root') or None, read_only=True)
+    if not store.db_path.is_file():
+        return parents
+    import sqlite3
+    try:
+        records = store.candidates_by_metadata(kind='hailo_hef', key='legacy_cache_key', value=receipt['cache_key'])
+    except (OSError, ValueError, sqlite3.Error):
+        # The optional registry must not disable an independent local source.
+        return parents
+    for record in records:
+        if record.artifact_hash != receipt['hef_sha256'] or record.size_bytes != receipt['hef_size_bytes']:
+            continue
+        parents.append(Path(record.object_path).parent)
+        suite = record.metadata.get('suite_dir')
+        relative = Path(str(record.metadata.get('relative_path') or ''))
+        if suite and relative.name and not relative.is_absolute() and '..' not in relative.parts:
+            parents.append((Path(str(suite)) / relative).parent)
+    return list(dict.fromkeys(parents))
+
+
+_HEF_METADATA_STAGING = r'''
+import json, sys
+from pathlib import Path
+mode, base, leaf = sys.argv[1:]
+root = Path(base).expanduser().resolve(strict=True)
+assert root.is_dir() and leaf.startswith('.hef-metadata-') and '/' not in leaf
+stage = root / leaf
+owner = stage / 'owner'
+if mode == 'create':
+    stage.mkdir(mode=0o700)
+    try:
+        owner.write_text(leaf)
+    except BaseException:
+        stage.rmdir()
+        raise
+    print(json.dumps({'path': str(stage / 'compiled.hef')}))
+elif mode == 'cleanup':
+    if stage.exists() or stage.is_symlink():
+        assert not stage.is_symlink() and owner.read_text() == leaf
+        (stage / 'compiled.hef').unlink(missing_ok=True)
+        owner.unlink()
+        stage.rmdir()
+    print(json.dumps({'ok': True}))
+else:
+    raise ValueError('invalid_staging_operation')
+'''
+
+
+def _remote_hailo_metadata(*, part1: Path, receipt: Mapping[str, Any],
+                           context: Mapping[str, Any], targets: list) -> tuple[dict, dict]:
+    """Supply one exact file through the existing SSH/SCP and lease lifecycle."""
+    import uuid
+    from onnx_splitpoint_tool.remote.ssh_transport import SSHTransport, HostConfig, shell_quote
+    from onnx_splitpoint_tool.remote.process_lease import (
+        current_remote_process_registry, RemoteProcessLeaseRegistry,
+        RemoteProcessLeaseJournal, RemoteProcessLeaseScope,
+    )
+    from onnx_splitpoint_tool.process_control import ProcessTreeRegistry, bind_process_registry
+    from onnx_splitpoint_tool.benchmark.remote_run import _remote_trt_activation_shell
+
+    setup = str(context.get('setup_id') or '')
+    selected = [row for row in targets if not setup or row.get('id') == setup]
+    if len(selected) != 1:
+        reason = 'ambiguous' if len(selected) > 1 else 'unresolved'
+        raise ValueError('output_metadata_remote_setup_' + reason)
+    setup = str(selected[0].get('id') or '')
+    remote = dict(selected[0].get('remote') or {})
+    if not setup or not remote.get('enabled') or not remote.get('host') or not remote.get('remote_venv'):
+        raise ValueError('output_metadata_remote_reader_unconfigured')
+    reference = context.get('part1_runtime')
+    if reference and (reference.get('sha256') != receipt['hef_sha256']
+                      or reference.get('size_bytes') != receipt['hef_size_bytes']):
+        raise ValueError('output_metadata_remote_reference_identity_mismatch')
+    activation = _remote_trt_activation_shell(remote['remote_venv'])
+    registry = current_remote_process_registry()
+    if registry is None:
+        journal = RemoteProcessLeaseJournal.from_environment(required=False)
+        registry = RemoteProcessLeaseRegistry()
+        if journal is not None:
+            registry.configure_journal(scope=journal.scope, journal_dir=journal.directory)
+            if journal.is_cancelled():
+                raise RuntimeError('output_metadata_cancelled')
+    token = uuid.uuid4().hex
+    scope = registry.configured_scope or RemoteProcessLeaseScope('hef-metadata-' + token, token)
+    host = HostConfig.from_dict({**remote, 'id': setup})
+    transport = SSHTransport(host, remote_lease_scope=scope, remote_lease_registry=registry)
+    source = {'kind': 'remote_hef_reader', 'setup_id': setup, 'host': host.host,
+              'path': '', 'staged': False, 'transport_events': [], 'cleanup': {'required': False}}
+    leaf = '.hef-metadata-' + token
+    staging_started = False
+    primary = None
+
+    def run(command, *, phase, owner=transport):
+        event = {'phase': phase, 'command': command, 'timeout_s': _HEF_METADATA_TIMEOUT_S}
+        source['transport_events'].append(event)
+        rc, output = owner.run(command, timeout=_HEF_METADATA_TIMEOUT_S)
+        event.update(returncode=rc, output=output)
+        return rc, output
+
+    def staging_command(mode):
+        return 'python3 -B -c ' + shell_quote(_HEF_METADATA_STAGING) + ' ' + ' '.join(
+            shell_quote(str(value)) for value in (mode, remote['remote_base_dir'], leaf))
+
+    def read(path):
+        command = activation + ' && python -B -c ' + shell_quote(_HAILO_HEF_METADATA_PROBE)
+        command += ' ' + shell_quote(path) + ' --identity --expected-sha256 ' + shell_quote(receipt['hef_sha256'])
+        command += ' --expected-size ' + str(int(receipt['hef_size_bytes']))
+        return run(command, phase='reader')
+
+    try:
+        if transport._cancel_requested():
+            raise RuntimeError('output_metadata_cancelled')
+        if reference and reference.get('path'):
+            source['path'] = str(reference['path'])
+            rc, output = read(source['path'])
+            if rc != 66:  # Only a currently missing file permits private staging.
+                if rc:
+                    raise RuntimeError(f'output_metadata_remote_reader_exit_{rc}')
+                return _read_output_metadata_json(output), source
+        if not remote.get('remote_base_dir'):
+            raise ValueError('output_metadata_remote_staging_base_unconfigured')
+        staging_started = True
+        source['staged'] = True
+        rc, output = run(staging_command('create'), phase='stage')
+        if rc:
+            raise RuntimeError(f'output_metadata_remote_staging_exit_{rc}')
+        path = json.loads(output, object_pairs_hook=_unique_json_object)['path']
+        if not Path(path).is_absolute() or Path(path).parts[-2:] != (leaf, 'compiled.hef'):
+            raise ValueError('output_metadata_remote_staging_path_invalid')
+        source['path'] = path
+        event = {'phase': 'transfer', 'local_path': str(part1), 'remote_path': path,
+                 'sha256': receipt['hef_sha256'], 'size_bytes': receipt['hef_size_bytes'],
+                 'timeout_s': _HEF_METADATA_TIMEOUT_S}
+        source['transport_events'].append(event)
+        rc, output = transport.scp_upload(str(part1), path, timeout=_HEF_METADATA_TIMEOUT_S)
+        event.update(returncode=rc, output=output)
+        if rc:
+            raise RuntimeError(f'output_metadata_remote_transfer_exit_{rc}')
+        rc, output = read(path)
+        if rc:
+            raise RuntimeError(f'output_metadata_remote_reader_exit_{rc}')
+        return _read_output_metadata_json(output), source
+    except BaseException as exc:
+        primary = exc
+        exc.metadata_source = source
+        raise
+    finally:
+        if staging_started:
+            # Cancellation forbids new work, but must not suppress this exact
+            # owned-file cleanup. No workflow/platform lock is reacquired.
+            cleanup_transport = SSHTransport(host, remote_lease_scope=scope)
+            try:
+                with bind_process_registry(ProcessTreeRegistry()):
+                    rc, output = run(staging_command('cleanup'), phase='cleanup', owner=cleanup_transport)
+                ok = rc == 0 and json.loads(output, object_pairs_hook=_unique_json_object).get('ok') is True
+                source['cleanup'] = {'required': True, 'ok': ok, 'returncode': rc, 'output': output}
+            except Exception as exc:
+                source['cleanup'] = {'required': True, 'ok': False, 'error': str(exc)}
+            if not source['cleanup']['ok']:
+                try:
+                    registry.poison()
+                except Exception as exc:
+                    source['cleanup']['registry_error'] = str(exc)
+                if primary is None:
+                    error = RuntimeError('output_metadata_staging_cleanup_failed')
+                    error.metadata_source = source
+                    raise error
+
+
+def _read_intrinsic_hailo_metadata(*, part1: Path, receipt: Mapping[str, Any],
+                                 context: Mapping[str, Any]) -> dict[str, Any]:
+    """Read an exact HEF, independent of engines, captures and Quality success.
+
+    Configured readers use existing references or a private exact-file copy.
+    """
+    targets = [row for row in context.get("targets", []) if isinstance(row, Mapping)
+               and row.get('enabled') is not False
+               and str(row.get("accelerator") or row.get("provider") or "") in {"hailo10", "hailo10h"}]
+    def identity():
+        stat = part1.stat()
+        return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+    before = identity()
+    executable = str(os.environ.get("HAILO_PY") or "").strip()
+    if not executable:
+        try:
+            from onnx_splitpoint_tool.hailo_backend import _resolve_managed_venv_python
+            _, python, _ = _resolve_managed_venv_python(hw_arch="hailo10h", venv_activate="auto")
+            executable = str(python)
+        except Exception:
+            executable = sys.executable
+    attempts = []
+    try:
+        executable = str(Path(executable).expanduser())
+        child = subprocess.run([executable, "-B", "-c", _HAILO_HEF_METADATA_PROBE, str(part1), "--identity"],
+                               capture_output=True, text=True, timeout=_HEF_METADATA_TIMEOUT_S, check=False)
+        if child.returncode:
+            raise RuntimeError(f"reader_exit_{child.returncode}:" + (child.stderr or "")[-400:])
+        payload = _read_output_metadata_json(child.stdout)
+        source = {"kind": "local_hef_reader", "python": executable, "path": str(part1)}
+    except (OSError, subprocess.TimeoutExpired, ValueError, RuntimeError) as exc:
+        attempts.append(f"local_reader:{type(exc).__name__}:{str(exc)[:500]}")
+        if not targets:
+            raise RuntimeError('output_metadata_remote_setup_unresolved;' + attempts[0]) from exc
+        payload, source = _remote_hailo_metadata(part1=part1, receipt=receipt, context=context, targets=targets)
+    try:
+        if before != identity():
+            raise ValueError('output_metadata_local_hef_changed_during_read')
+        if (payload.get("part1_artifact_sha256") != receipt["hef_sha256"]
+                or payload.get("part1_artifact_size_bytes") != receipt["hef_size_bytes"]):
+            raise ValueError("output_metadata_hef_identity_mismatch")
+        for row in payload["outputs"]:
+            streams = row.get("native_streams") or []
+            if (len(streams) != 1 or row.get("native_stream_names") != [streams[0].get("name")]
+                    or streams[0].get("format_type") != row.get("native_format_type")
+                    or streams[0].get("quantization") is None
+                    or any(streams[0]["quantization"].get(k) != (row.get("quantization") or {}).get(k)
+                           for k in ("scale", "zero_point"))):
+                raise ValueError("output_metadata_native_mapping_or_quantization_unproven")
+            native_rounding = streams[0]["quantization"].get("rounding")
+            if native_rounding:
+                if row["quantization"].get("rounding", native_rounding) != native_rounding:
+                    raise ValueError("output_metadata_native_rounding_conflict")
+                row["quantization"]["rounding"] = native_rounding
+    except Exception as exc:
+        exc.metadata_source = source
+        raise
+    return {**payload, "metadata_source": source, "reader_attempts": attempts}
+
+
+def resolve_hailo_output_suitability(*, part1: Path, source_part1: Path, source_part2: Path,
+                                     task: str, binding: Mapping[str, Any] | None = None,
+                                     metadata_context: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Reuse this generation's observations while their exact files are unchanged."""
+    import copy
+    observations = (metadata_context or {}).get("observations")
+    signature = None
+    if isinstance(observations, dict):
+        from onnx_splitpoint_tool.hailo_backend import _hailo_receipt_path, _hailo_cache_meta_path
+        from onnx_splitpoint_tool.artifact_store import ArtifactStore
+        database = ArtifactStore(metadata_context.get('artifact_store_root') or None, read_only=True).db_path
+        parents = list(dict.fromkeys((part1.parent, part1.resolve().parent)))
+        paths = (part1, source_part1, source_part2, _hailo_receipt_path(part1), _hailo_cache_meta_path(part1),
+                 database, Path(str(database) + '-wal'),
+                 *(parent / name for parent in parents for name in
+                   ("native_split_quality_binding.json", "part1_boundary_metadata.json")))
+        signature = []
+        for path in paths:
+            try:
+                stat = path.stat()
+                signature.append((str(path), stat.st_dev, stat.st_ino, stat.st_size,
+                                  stat.st_mtime_ns, stat.st_ctime_ns))
+            except OSError:
+                signature.append((str(path), None))
+        signature = (tuple(signature), task, json.dumps(binding, sort_keys=True),
+                     json.dumps({k: v for k, v in metadata_context.items() if k != "observations"}, sort_keys=True),
+                     os.environ.get("HAILO_PY"))
+        if signature in observations:
+            saved = observations[signature]
+            unchanged = True
+            for path, expected in saved['dependencies']:
+                try:
+                    stat = Path(path).stat()
+                    actual = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+                except OSError:
+                    actual = None
+                unchanged = unchanged and actual == expected
+            if unchanged:
+                return copy.deepcopy(saved['result'])
+    result = _resolve_hailo_output_suitability(part1=part1, source_part1=source_part1,
+        source_part2=source_part2, task=task, binding=binding, metadata_context=metadata_context)
+    if signature is not None:
+        dependencies = []
+        for path in result.get('metadata_reference_files', []):
+            try:
+                stat = Path(path).stat()
+                value = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+            except OSError:
+                value = None
+            dependencies.append((path, value))
+        observations[signature] = {'result': copy.deepcopy(result), 'dependencies': dependencies}
+    return result
+
+
+def _resolve_hailo_output_suitability(*, part1: Path, source_part1: Path, source_part2: Path,
+                                     task: str, binding: Mapping[str, Any] | None = None,
+                                     metadata_context: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Read an exact existing output contract before automatic split admission.
+
+    Reuse adjacent sealed metadata where available, otherwise the existing
+    device-free HailoRT reader, optionally in the configured target environment.
+    No cache search, device opening, inference or build is started.
+    This result is run selection evidence, never negative compiler evidence.
+    """
+    from onnx_splitpoint_tool.native_split_quality import (
+        detection_score_graph_contract, probability_quantization_suitability,
+        validate_native_split_quality_binding,
+    )
+    from onnx_splitpoint_tool.hailo_backend import _load_valid_hailo_receipt
+    import onnx
+    result = {"status": "UNKNOWN", "reason": "output_contract_unavailable", "required": False}
+    try:
+        semantic = detection_score_graph_contract(
+            onnx.load(str(source_part1), load_external_data=False),
+            onnx.load(str(source_part2), load_external_data=False), task=task)
+        if semantic.get("status") != "PROVEN":
+            return {**result, "reason": semantic["reason"]}
+        result["required"] = True
+        receipt = _load_valid_hailo_receipt(part1, source_onnx_sha256=_sha256_file(source_part1), allow_legacy_v2=True)
+        if receipt is None or receipt.get("hw_arch") != "hailo10h":
+            return {**result, "reason": "exact_hef_source_receipt_unavailable"}
+        parents = list(dict.fromkeys((part1.parent, part1.resolve().parent)))
+        if binding is None and metadata_context is not None:
+            parents = _existing_hailo_metadata_parents(part1, receipt, metadata_context)
+            result['metadata_reference_files'] = [str(parent / name) for parent in parents
+                for name in ('native_split_quality_binding.json', 'part1_boundary_metadata.json')]
+        if binding is None:
+            for parent in parents:
+                adjacent = parent / "native_split_quality_binding.json"
+                if adjacent.is_file():
+                    binding = json.loads(adjacent.read_text(encoding="utf-8"), object_pairs_hook=_unique_json_object)
+                    break
+        if binding is not None:
+            verified, reason = validate_native_split_quality_binding(binding, verification_mode="portable")
+            if verified is None:
+                if metadata_context is None:
+                    return {**result, "reason": "output_binding_invalid:" + str(reason)}
+                # An early artifact reference need not claim successful Quality
+                # or an existing engine. Its tensor is not trusted: read the HEF.
+                artifacts = binding.get("artifacts") or {}
+            else:
+                artifacts = verified["artifacts"]
+            if (artifacts["part1_runtime"]["sha256"] != receipt["hef_sha256"]
+                    or artifacts["part1_runtime"]["size_bytes"] != receipt["hef_size_bytes"]
+                    or artifacts["source_part2_onnx"]["sha256"] != _sha256_file(source_part2)):
+                return {**result, "reason": "output_binding_artifact_mismatch"}
+            if verified is not None:
+                tensor = dict(verified["boundary_metadata_payload"]["boundary_tensor"])
+                result["metadata_source"] = {"kind": "verified_quality_binding"}
+            else:
+                metadata_context = {**metadata_context, "part1_runtime": artifacts["part1_runtime"],
+                    "setup_id": (binding.get("preselection") or {}).get("setup_id") or binding.get("setup_id")}
+        if binding is None or (metadata_context is not None and verified is None):
+            metadata = None
+            intrinsic = None
+            if binding is None and metadata_context is not None:
+                for parent in parents:
+                    adjacent = parent / "part1_boundary_metadata.json"
+                    if not adjacent.is_file():
+                        continue
+                    intrinsic = json.loads(adjacent.read_text(encoding="utf-8"), object_pairs_hook=_unique_json_object)
+                    content = {k: v for k, v in intrinsic.items() if k != 'metadata_sha256'}
+                    if (intrinsic.get('schema') != 'onnx-splitpoint/native-part1-boundary-metadata'
+                            or intrinsic.get('schema_version') != 1
+                            or canonical_json_sha256(content) != intrinsic.get('metadata_sha256')
+                            or intrinsic.get('part1_artifact_sha256') != receipt['hef_sha256']
+                            or intrinsic.get('part1_artifact_size_bytes') != receipt['hef_size_bytes']
+                            or intrinsic.get('boundary_tensor_count') != 1):
+                        raise ValueError('output_boundary_metadata_identity_invalid')
+                    tensor = dict(intrinsic['boundary_tensor'])
+                    if tensor.get('canonical_part2_shape') != _onnx_input(source_part2)['shape']:
+                        raise ValueError('output_boundary_metadata_part2_shape_mismatch')
+                    result['metadata_source'] = {'kind': 'exact_boundary_metadata', 'path': str(adjacent)}
+                    break
+            if intrinsic is None and metadata_context is not None:
+                metadata = _read_intrinsic_hailo_metadata(part1=part1, receipt=receipt, context=metadata_context)
+                result["metadata_source"] = metadata["metadata_source"]
+                result["reader_attempts"] = metadata["reader_attempts"]
+                result["output_metadata"] = metadata
+            if intrinsic is None:
+                tensor = _hailo_metadata(part1=part1, part2_input=_onnx_input(source_part2),
+                    policy={"boundary_dtype": "float32", "quantization_policy": "from_exact_part1_boundary_metadata"},
+                    **({"output_metadata": metadata} if metadata is not None else {}))
+        tensor = {**tensor, "quantization": dict(tensor.get("quantization") or {})}
+        # Version-bound native DFC output quantizer: APUOutputQuantElement,
+        # clip(round(x)); tie behavior is deliberately not needed for rejection.
+        if receipt.get("hailo_sdk_version") == "hailo-dataflow-compiler:5.3.0":
+            tensor["quantization"].setdefault("rounding", "nearest_unspecified_ties")
+        result = {**result, **probability_quantization_suitability(semantic, tensor)}
+        result.update(binding_verified=True, hef_sha256=receipt["hef_sha256"],
+                      source_onnx_sha256=receipt["source_onnx_sha256"],
+                      source_part2_sha256=_sha256_file(source_part2),
+                      artifact=str(part1), semantic=semantic, native_tensor=tensor)
+        return result
+    except Exception as exc:
+        if getattr(exc, 'metadata_source', None) is not None:
+            result['metadata_source'] = exc.metadata_source
+        return {**result, "reason": f"output_contract_read_failed:{type(exc).__name__}:{str(exc)[:240]}"}
 
 
 def _deepx_metadata(
@@ -978,11 +1442,44 @@ def _replay_cache_verified_native_split_binding(
     }
 
 
+def reserve_trt_build_start(path: Path, maximum: int, *, case_id: str, command: list[str]) -> dict[str, Any]:
+    """Durable run checkpoint immediately before a real trtexec dispatch."""
+    import fcntl
+    import tempfile
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_name('.' + path.name + '.lock').open('a+b') as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        if path.exists():
+            state = json.loads(path.read_text(encoding='utf-8'))
+            if state.get('max_build_starts') != maximum:
+                raise RuntimeError('build_budget_resume_limit_changed')
+        else:
+            state = {'max_build_starts': maximum, 'starts': []}
+        if len(state['starts']) >= maximum:
+            raise RuntimeError('build_budget_exhausted:trt_part2')
+        reservation = {'case_id': case_id, 'command': command, 'status': 'started', 'index': len(state['starts'])+1}
+        state['starts'].append(reservation)
+        fd, temp = tempfile.mkstemp(prefix='.'+path.name+'.', dir=str(path.parent))
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+                json.dump(state, handle, indent=2); handle.flush(); os.fsync(handle.fileno())
+            os.replace(temp, path)
+            parent_fd = os.open(path.parent, os.O_RDONLY)
+            try: os.fsync(parent_fd)
+            finally: os.close(parent_fd)
+        finally:
+            if os.path.exists(temp): os.unlink(temp)
+        return reservation
+
+
 def prepare_native_split_quality_binding(
     *, benchmark_set: str | Path, case_id: Any, model_id: Any,
     setup_id: Any, backend: Any, eval_run_id: Any, source_run_id: Any,
     cache_root: str | Path, output_path: str | Path,
     workspace_mb: int = 4096, timeout_s: int = 7200,
+    build_budget: Mapping[str, Any] | None = None,
+    resume: bool = False,
 ) -> dict[str, Any]:
     """Materialize and seal the exact split engine before semantic Quality.
 
@@ -1114,10 +1611,22 @@ def prepare_native_split_quality_binding(
         "--workspace-mode", "auto", "--no-run-smoke",
         "--json-out", str(summary_path),
     ]
+    if build_budget:
+        maximum = min(int(build_budget['max_trt_part2_builds']), int(build_budget['remaining_cold_builds']))
+        if 'trt_starts_by_setup' in build_budget:
+            maximum = min(maximum, int(build_budget['trt_starts_by_setup'].get(str(setup_id), 0)))
+        timeout_s = min(timeout_s, int(build_budget['trt_build_timeout_s']))
+        command += ['--cold-build-state', str(root / 'native_trt_build_state.json'),
+                    '--max-cold-build-starts', str(maximum), '--build-timeout-s', str(timeout_s),
+                    '--no-retry-without-shapes', '--no-retry-workspace-alt']
     if preselection.get("dequant_scale") is not None:
         command += ["--dequant-scale", repr(float(preselection["dequant_scale"]))]
         command += ["--dequant-zero-point", repr(float(preselection["dequant_zero_point"]))]
     strict_warm_cache = trt_build_forbidden("part2", case_id=case)
+    if build_budget and resume and not (root / 'native_trt_build_state.json').is_file():
+        # The existing remote transport may have lost an interrupted run's
+        # checkpoint. Missing consumption never authorizes a fresh budget.
+        strict_warm_cache = True
     if strict_warm_cache:
         command.append("--no-build")
     if _cache_verify_only():
@@ -1136,7 +1645,7 @@ def prepare_native_split_quality_binding(
             pass
         completed = subprocess.run(
             builder_command, text=True, stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, timeout=max(60, int(timeout_s)),
+            stderr=subprocess.STDOUT, timeout=max(60, int(timeout_s)) + (30 if build_budget else 0),
         )
         summary_payload: dict[str, Any] = {}
         if completed.returncode == 0:

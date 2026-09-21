@@ -15,6 +15,7 @@ GUI and by non-GUI callers alike.
 import copy
 import hashlib
 import json
+from pathlib import Path
 from typing import Any, Dict, Mapping, Sequence
 
 from ..cache_verify_policy import (
@@ -150,6 +151,7 @@ def profile_selection_view(profile: Mapping[str, Any], *, explicit_request: bool
                 "energy_enabled": bool(execution.get("energy_enabled")),
             }
     selection_keys = (
+        "backend_backfill", "backend_backfill_source",
         "max_accepted_cases_per_model",
         "preferred_shortlist",
         "selection_strategy",
@@ -264,9 +266,18 @@ def build_profile_start_snapshot(
         "execution_guard",
     ):
         requested_value = requested.get(field)
+        resolved_value = resolved.get(field)
+        if (field == 'selection_policy' and requested.get('follow_tool_config')
+                and 'backend_backfill' not in requested_value
+                and resolved_value.get('backend_backfill_source') == 'tool_config'):
+            # A new Config-following start may materialize the new default.
+            # Keep both complete views in the snapshot; explicit values must
+            # still compare exactly, including an explicit disabled policy.
+            resolved_value = {k: v for k, v in resolved_value.items()
+                              if k not in {'backend_backfill', 'backend_backfill_source'}}
         if field in {"profile_name", "run_mode"} and requested_value in {None, ""}:
             continue
-        _append_mismatch(mismatches, field, requested_value, resolved.get(field))
+        _append_mismatch(mismatches, field, requested_value, resolved_value)
     for field in ("native_enabled", "energy_enabled"):
         _append_mismatch(
             mismatches,
@@ -434,12 +445,30 @@ def materialize_runtime_profile(
 
     native = dict(resolved.get("native_producers") or {})
     energy = dict(native.get("energy") or {})
+    collector_binding = {}
+    if native.get("enabled") and energy.get("enabled") and energy.get("mode") == "measure":
+        from ..energy.config import default_registry_path, load_hardware_registry, resolve_collector_binding
+        frozen_registry = hardware.get("energy_registry_snapshot")
+        if not isinstance(frozen_registry, Mapping):
+            frozen_registry = load_hardware_registry(hardware.get("setups_file") or default_registry_path())
+        frozen_registry = copy.deepcopy(dict(frozen_registry))
+        collector_binding = resolve_collector_binding(frozen_registry)
+        frozen_registry.setdefault("energy_defaults", {}).update(
+            {k: collector_binding[k] for k in ("collector_binary", "collector_sha256")})
+        hardware["energy_registry_snapshot"] = frozen_registry
+        resolved["hardware"] = hardware
     raw_probe = energy.get("window_method_validation_probe")
     probe = dict(raw_probe) if isinstance(raw_probe, Mapping) else {}
     try:
         from ..energy.config import load_energy_defaults
 
-        defaults = load_energy_defaults()
+        if hardware.get("setups_file"):
+            import yaml
+            from ..energy.config import energy_defaults_from_registry
+            defaults = energy_defaults_from_registry(yaml.safe_load(
+                Path(str(hardware["setups_file"])).expanduser().read_text(encoding="utf-8")))
+        else:
+            defaults = load_energy_defaults()
     except Exception:
         defaults = None
 
@@ -635,6 +664,8 @@ def materialize_runtime_profile(
         "window_method_validation_probe": copy.deepcopy(probe_resolution),
         "native_energy_duration_s": float(native_energy_duration),
         "native_energy_duration_source": native_energy_duration_source,
+        "native_collector_binary": collector_binding.get("collector_binary", str(getattr(defaults, "collector_binary", ""))),
+        "native_collector_sha256": collector_binding.get("collector_sha256", ""),
         "hardware_targets": copy.deepcopy(frozen_hardware_targets),
         "hardware_targets_sha256": str(hardware.get("resolved_targets_sha256") or ""),
         "cache_verify_attestation": copy.deepcopy(cache_verify_attestation),

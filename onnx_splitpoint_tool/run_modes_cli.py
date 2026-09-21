@@ -74,6 +74,9 @@ def build_parser() -> argparse.ArgumentParser:
     default.add_argument("mode", choices=["smoke", "standard", "final"])
 
     sub.add_parser("path", help="Print the active run-mode registry path.")
+    integrate = sub.add_parser("integrate-runtime", help="Install reviewed collector and persist narrow Native Standard migration.")
+    integrate.add_argument("--collector-source", required=True)
+    integrate.add_argument("--backup-dir", required=True)
     return parser
 
 
@@ -84,6 +87,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     path = Path(args.file).expanduser().resolve() if str(args.file or "").strip() else default_run_modes_path().resolve()
 
     try:
+        if command == "integrate-runtime":
+            import shutil
+            from .energy.config import install_reviewed_collector
+            from .run_modes import _run_modes_write_lock
+            backup = Path(args.backup_dir).expanduser().resolve()
+            backup.mkdir(parents=True, exist_ok=True)
+            # Save validates/migrates under the existing lock; retain original
+            # bytes and ACLs before the first durable configuration write.
+            with _run_modes_write_lock(path):
+                raw = yaml.safe_load(path.read_text())
+                normalized = validate_run_modes_config(raw)
+                if raw != normalized:
+                    saved = backup / path.name
+                    if saved.exists():
+                        raise ValueError("Run-mode backup already exists; choose a fresh backup directory")
+                    shutil.copy2(path, saved)
+            result = install_reviewed_collector(args.collector_source, backup)
+            if raw != normalized:
+                save_run_modes_config(path, normalized, expected_revision=run_modes_revision(raw), baseline=raw)
+            result["run_modes"] = {"path": str(path), "before": raw, "after": normalized}
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 0
         if command == "path":
             print(path)
             return 0

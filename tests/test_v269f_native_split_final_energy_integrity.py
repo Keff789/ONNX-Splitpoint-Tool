@@ -569,6 +569,15 @@ def test_hailo8_manual_cli_without_quality_set_runs_diagnostic_only(
     image = benchmark_set / "resources/validation/classification/image.jpg"
     image.parent.mkdir(parents=True)
     image.write_bytes(b"diagnostic-image")
+    from onnx_splitpoint_tool import native_progress
+    from types import SimpleNamespace
+    preparations = []
+    def prepare(command, **kwargs):
+        assert '--no-run' in command and '--no-build' not in command
+        assert kwargs['timeout'] == 300
+        preparations.append(command)
+        return SimpleNamespace(returncode=0, elapsed_s=.01, stdout='fixture wrapper ready')
+    monkeypatch.setattr(native_progress, 'run_streaming', prepare)
 
     def fake_run(command: list[str], timeout: float = 0.0, env=None):
         if "native_fifo_capability_report.py" in " ".join(command):
@@ -581,6 +590,8 @@ def test_hailo8_manual_cli_without_quality_set_runs_diagnostic_only(
                 }],
             }), encoding="utf-8")
         elif "native_hailo_trt_fifo_from_benchmarkset.py" in " ".join(command):
+            assert len(preparations) == 1
+            assert '--no-build' in command and '--no-run' not in command
             result = (
                 benchmark_set / "native_pipeline/b001/hailo_to_trt/"
                 "uint8_cast_fp16/native_fifo_results.json"
@@ -610,6 +621,7 @@ def test_hailo8_manual_cli_without_quality_set_runs_diagnostic_only(
     assert result["execution_role"] == "legacy_manual_diagnostic"
     assert result["cases"][0]["result_ok"] is True
     assert result["cases"][0]["performance_claims_emitted"] is False
+    assert result['cases'][0]['steps'][-2]['name'] == 'native_wrapper_prepare'
 
 
 def test_managed_direct_cli_with_quality_set_never_falls_back_to_legacy(

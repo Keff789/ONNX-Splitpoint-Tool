@@ -896,9 +896,8 @@ def main() -> int:
             reason = 'no_default_image_or_validation_dir_found'
             row.update({'status': 'failed', 'reason': reason, 'failure_reason': reason, 'status_detail': reason, 'recommended_action': 'pass --image explicitly or copy validation resources', 'returncode': None, 'timed_out': False})
             rows.append(row); continue
-        # `--build` on the child compiles only the deterministic FIFO wrapper;
-        # it never builds a TensorRT engine.  Keep it enabled for a fresh suite.
-        # The engine itself is forced from the locally verified binding below.
+        # Prepare/reuse the source-bound wrapper outside the 120 s inference
+        # budget. This operation never builds model artifacts.
         result = bs/'native_pipeline'/cid/'hailo_to_trt'/ns.precision/'native_fifo_results.json'
         result_before = _result_file_identity(result)
         child_python = (
@@ -912,6 +911,20 @@ def main() -> int:
             cmd.append('--dump-outputs')
         if ns.dump_boundary:
             cmd.append('--dump-boundary')
+        from onnx_splitpoint_tool.native_progress import run_streaming
+        prepare_cmd = [*cmd, '--no-run']
+        prepared = run_streaming(prepare_cmd, timeout=300, env=child_env,
+                                 label='hailo8-wrapper-prepare')
+        row['steps'].append({'name': 'native_wrapper_prepare', 'cmd': prepare_cmd,
+                             'rc': prepared.returncode, 'elapsed_s': prepared.elapsed_s,
+                             'stdout_tail': prepared.stdout[-8000:]})
+        if prepared.returncode:
+            row.update(status='failed', reason='native_wrapper_prepare_failed',
+                       failure_reason='native_wrapper_prepare_failed',
+                       returncode=prepared.returncode)
+            rows.append(row)
+            continue
+        cmd.append('--no-build')
         step = _run(cmd, timeout=ns.timeout, env=child_env)
         row['steps'].append({'name': 'native_fifo_smoke', **step})
         result_after = _result_file_identity(result)
@@ -1076,6 +1089,7 @@ def main() -> int:
             'repetition_count_valid': res.get('repetition_count_valid', res.get('repetitions_completed')),
             'repetition_status': res.get('repetition_status'),
             'repetition_aggregation': res.get('repetition_aggregation'),
+            'request_latency': res.get('request_latency'),
             'repetition_records': res.get('repetition_records', res.get('repetition_evidence', [])),
             'paper_fps': primary_endpoint.get('paper_equivalent_fps'),
             'handoff_ms': primary_endpoint.get('handoff_ms'),

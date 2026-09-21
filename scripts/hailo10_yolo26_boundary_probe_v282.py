@@ -132,7 +132,11 @@ def resolve_case(run, model, artifact_roots=(), diagnostic_image=None):
         raise ValueError('diagnostic_engine_boundary_name_mismatch')
     roots = [run / f'models/{model}/benchmark_set/legacy_suite',
              run / f'native_producers/hailo10h/{model}/benchmark_set'] + [Path(p) for p in artifact_roots]
-    bindings = [obj for obj in _objects(row) if isinstance(obj.get('artifacts'), dict)
+    # A binding embeds local_artifact_verification with the same artifact
+    # roles. That proof is not a second binding and has no binding digest.
+    bindings = [obj for obj in _objects(row)
+                if obj.get('schema') == 'onnx-splitpoint/native-split-quality-binding'
+                and isinstance(obj.get('artifacts'), dict)
                 and 'part1_runtime' in obj['artifacts'] and 'engine' in obj['artifacts']]
     declared = row.get('run_cfg', {}).get('native_split_quality_binding')
     if declared:
@@ -266,8 +270,8 @@ def prepare_stage(destination, source, cases):
 
 def main(argv=None):
     from onnx_splitpoint_tool.release_identity import VERSION
-    if VERSION != '2.82':
-        raise ValueError('installed_v282_required')
+    if VERSION != '2.83':
+        raise ValueError('installed_v283_required')
     arguments = list(sys.argv[1:] if argv is None else argv)
     if '--run-dir' not in arguments and not any(arg.startswith('--run-dir=') for arg in arguments) and not set(arguments).intersection({'--help', '-h'}):
         raise ValueError('diagnostic_explicit_current_run_dir_required')

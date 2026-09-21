@@ -22,6 +22,8 @@ def make_runner(tmp_path, monkeypatch):
     # Provenance hashing has separate tests.  The runner/lock/cleanup/job/stream
     # path under examination remains the production implementation.
     monkeypatch.setattr(runner_module, "package_build_snapshot", lambda: {"build_id": "synthetic-only"})
+    monkeypatch.setattr("onnx_splitpoint_tool.workflow.artifacts.package_build_snapshot",
+                        lambda: {"build_id": "synthetic-only"})
     monkeypatch.setenv("ONNX_SPLITPOINT_CACHE_DIR", str(tmp_path / "cache"))
 
     def build(status="failed", **kwargs):
@@ -218,6 +220,11 @@ def _gui_fixture(tmp_path, monkeypatch, *, request, fail_closure=False, measurem
     for name in ("showinfo", "showwarning", "showerror"):
         monkeypatch.setattr(gui.messagebox, name, lambda *args, **kwargs: None)
     monkeypatch.setattr(runner_module, "package_build_snapshot", lambda: {"build_id": "synthetic-only"})
+    # environment_snapshot resolves this function in artifacts, independently
+    # of the runner's imported name. Keep the intended provenance-only stub
+    # complete: a growing shared hash cache must not consume the race deadline.
+    monkeypatch.setattr("onnx_splitpoint_tool.workflow.artifacts.package_build_snapshot",
+                        lambda: {"build_id": "synthetic-only"})
     root = _QueuedRoot()
     state = SimpleNamespace(value="", set=lambda value: setattr(state, "value", value))
     opts = options_for(tmp_path)

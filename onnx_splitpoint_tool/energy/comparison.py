@@ -277,6 +277,51 @@ def _arithmetic_close(left: float, right: float) -> bool:
     return math.isclose(left, right, rel_tol=1e-9, abs_tol=1e-12)
 
 
+def _normalized_repeat_arithmetic(
+    row: Mapping[str, Any], expected: Mapping[str, float | None], idle_w: float | None,
+) -> bool:
+    """Verify each ratio before averaging; all metrics share the same repeats."""
+    records = row.get("energy_normalization_repeats")
+    if not isinstance(records, list) or not records or idle_w is None:
+        return False
+    count = _strict_finite_number(row.get("energy_repeat_valid_n"), positive=True)
+    if count is None or count != len(records):
+        return False
+    indices = set()
+    totals = {key: [] for key in expected}
+    for record in records:
+        if not isinstance(record, Mapping):
+            return False
+        index = record.get("run_index")
+        if type(index) is not int or index in indices:
+            return False
+        indices.add(index)
+        if record.get("postprocess_status") != "ok" or record.get("accelerator_idle_correction_applied") is not True:
+            return False
+        values = {key: _strict_finite_number(record.get(key), positive=True) for key in (
+            *expected, "energy_work_units_used", "active_duration_s", "accelerator_idle_w_applied",
+        )}
+        if any(value is None for value in values.values()):
+            return False
+        energy = values["energy_total_j"]
+        normalized = values["host_normalized_energy_est_j"]
+        duration = values["active_duration_s"]
+        units = values["energy_work_units_used"]
+        if not all(_arithmetic_close(a, b) for a, b in (
+            (values["accelerator_idle_w_applied"], idle_w),
+            (normalized, energy - idle_w * duration),
+            (values["energy_per_work_unit_j"], energy / units),
+            (values["host_normalized_energy_per_work_unit_est_j"], normalized / units),
+            (values["avg_power_w"], energy / duration),
+            (values["host_normalized_average_power_est_w"], normalized / duration),
+        )):
+            return False
+        for key in totals:
+            totals[key].append(values[key])
+    return all(value is not None and _arithmetic_close(sum(totals[key]) / len(records), value)
+               for key, value in expected.items())
+
+
 def _uncertainty_is_valid(
     point: float | None,
     sample_stddev: float | None,
@@ -2602,6 +2647,15 @@ def resolve_energy_comparison(row: Mapping[str, Any]) -> dict[str, Any]:
                     strict_normalized_per_work * strict_work_units,
                 )
             )
+    if row.get("energy_normalization_repeats"):
+        arithmetic_ok = bool(not dual_phase and _normalized_repeat_arithmetic(row, {
+            "energy_total_j": strict_raw_total,
+            "host_normalized_energy_est_j": strict_normalized_total,
+            "energy_per_work_unit_j": strict_raw_per_work,
+            "host_normalized_energy_per_work_unit_est_j": strict_normalized_per_work,
+            "avg_power_w": strict_raw_power,
+            "host_normalized_average_power_est_w": strict_normalized_power,
+        }, strict_accelerator_idle_w))
     range_ok = bool(
         raw_total_coherent
         and normalized_total_coherent

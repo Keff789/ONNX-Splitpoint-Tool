@@ -494,6 +494,16 @@ def _model_family(model_id: str) -> str:
     raise FrozenPostprocessError(f"unsupported_native_full_raw_detection_model:{model_id}")
 
 
+def _completed_model_family(model_id: str) -> str:
+    """Canonical record comparisons do not need a model-specific head decoder."""
+    try:
+        return _model_family(model_id)
+    except FrozenPostprocessError:
+        if not str(model_id).strip():
+            raise
+        return "decoded_bn6"
+
+
 def _expected_decoder(
     model_id: str, *, source_contract_family: str = "raw_head",
 ) -> tuple[str, str]:
@@ -1745,8 +1755,13 @@ def build_frozen_decoded_nms_normalization_contract(
     confidence_threshold: float = 0.25,
     iou_threshold: float = 0.45,
     max_detections: int = 300,
+    source_completed: bool = False,
 ) -> dict[str, Any]:
-    """Freeze canonical BN6 filtering/NMS and inverse-letterbox projection."""
+    """Freeze BN6 normalization; completed sources never receive another NMS.
+
+    Version 1 retains the historical postfilter contract. New generic producers
+    opt into version 2 and reuse the strict Native materializer.
+    """
     if str(source_coordinate_space or "").strip().lower() != (
         "model_input_letterbox_xyxy_pixels"
     ):
@@ -1768,12 +1783,22 @@ def build_frozen_decoded_nms_normalization_contract(
         source_endpoint_contract_hash=source_hash,
         model_id=model_id,
     )
+    materialization = None
+    if source_completed:
+        materialization = build_attested_decoded_nms_materialization_contract(
+            model_id=model_id, outputs=outputs, input_hw=input_hw,
+            original_wh=original_wh, preprocess=preprocess,
+            source_endpoint_contract_hash=source_hash,
+            source_output_endpoint_attestation=attestation,
+            confidence_threshold=confidence_threshold,
+            iou_threshold=iou_threshold, max_detections=max_detections,
+        )
     harness = YoloHarness(
         conf_thresh=float(confidence_threshold),
         iou_thresh=float(iou_threshold),
         max_det=int(max_detections),
     )
-    probe = _result_json(harness.postprocess(
+    probe = {"format": "bn6_detections"} if materialization else _result_json(harness.postprocess(
         dict(outputs),
         {
             "input_hw": list(geometry["input_hw"]),
@@ -1798,7 +1823,7 @@ def build_frozen_decoded_nms_normalization_contract(
         "output_record_format": "xyxy_score_class",
         "output_coordinate_space": "original_image_xyxy_pixels",
         "model_id": str(model_id),
-        "model_family": _model_family(model_id),
+        "model_family": materialization["model_family"] if materialization else _model_family(model_id),
         "normalizer_id": (
             "bn6_classaware_postfilter_inverse_letterbox_v1"
         ),
@@ -1832,6 +1857,10 @@ def build_frozen_decoded_nms_normalization_contract(
         "normalization_frozen": True,
         "postprocess_included": True,
     }
+    if materialization is not None:
+        contract.update(schema_version=2, source_nms_attested=materialization["source_nms_attested"],
+                        host_nms_applied=False, materialization_contract=materialization,
+                        normalizer_id=NO_SECOND_NMS_NORMALIZER_ID, nms_implementation="none")
     contract["contract_sha256"] = canonical_json_sha256(contract)
     return contract
 
@@ -1898,13 +1927,27 @@ def verify_frozen_decoded_nms_normalization_contract(
         "performance_scope", "energy_scope", "normalization_frozen",
         "postprocess_included",
     }
+    source_completed = contract.get("schema_version") == 2
+    if source_completed:
+        expected_keys.update({"source_nms_attested", "host_nms_applied", "materialization_contract"})
+        materialization = verify_attested_decoded_nms_materialization_contract(
+            contract.get("materialization_contract"), outputs=outputs,
+            source_output_endpoint_attestation=source_output_endpoint_attestation,
+        )
+        shared = ("model_id", "model_family", "source_endpoint_contract_hash",
+                  "source_output_endpoint_attestation_sha256", "source_output_tensor_signature",
+                  "letterbox_geometry_contract", "confidence_threshold", "iou_threshold", "max_detections")
+        if (contract.get("source_nms_attested") is not materialization["source_nms_attested"]
+                or contract.get("host_nms_applied") is not False
+                or any(contract.get(key) != materialization.get(key) for key in shared)):
+            raise FrozenPostprocessError("direct_normalization_materialization_binding_invalid")
     model_id = contract.get("model_id")
     model_family = contract.get("model_family")
     if (
         set(contract) != expected_keys
         or contract.get("schema") != DIRECT_NORMALIZATION_SCHEMA
         or isinstance(contract.get("schema_version"), bool)
-        or contract.get("schema_version") != DIRECT_NORMALIZATION_VERSION
+        or contract.get("schema_version") not in (DIRECT_NORMALIZATION_VERSION, 2)
         or contract.get("task") != "detection"
         or contract.get("source_contract_family") != "decoded_nms"
         or contract.get("source_output_format") != "bn6_detections"
@@ -1915,9 +1958,9 @@ def verify_frozen_decoded_nms_normalization_contract(
         or contract.get("output_coordinate_space")
         != "original_image_xyxy_pixels"
         or contract.get("normalizer_id")
-        != "bn6_classaware_postfilter_inverse_letterbox_v1"
+        != (NO_SECOND_NMS_NORMALIZER_ID if source_completed else "bn6_classaware_postfilter_inverse_letterbox_v1")
         or contract.get("nms_implementation")
-        != "numpy_class_aware_nms_xyxy_v1"
+        != ("none" if source_completed else "numpy_class_aware_nms_xyxy_v1")
         or contract.get("class_aware") is not True
         or isinstance(contract.get("confidence_threshold"), bool)
         or isinstance(contract.get("iou_threshold"), bool)
@@ -1953,7 +1996,7 @@ def verify_frozen_decoded_nms_normalization_contract(
         != "same_frozen_prepared_input_to_canonical_detection_hotloop"
         or not isinstance(model_id, str)
         or not model_id.strip()
-        or model_family != _model_family(model_id)
+        or model_family != (materialization["model_family"] if source_completed else _model_family(model_id))
     ):
         raise FrozenPostprocessError(
             "direct_normalization_contract_fields_invalid"
@@ -2113,7 +2156,7 @@ def _completed_comparison_v2_identity(
     if frozen_contract is not None:
         source = verify_frozen_postprocess_contract(frozen_contract)
         model_id = str(source["model_id"])
-        model_family = str(source["model_family"])
+        model_family = _completed_model_family(model_id)
         input_hw = [int(value) for value in source["input_hw"]]
         class_aware = bool(source["class_aware"])
         score_threshold = float(source["confidence_threshold"])
@@ -2124,7 +2167,7 @@ def _completed_comparison_v2_identity(
             direct_normalization_contract
         )
         model_id = str(source["model_id"])
-        model_family = str(source["model_family"])
+        model_family = _completed_model_family(model_id)
         input_hw = [int(value) for value in source["input_hw"]]
         class_aware = bool(source["class_aware"])
         score_threshold = float(source["confidence_threshold"])
@@ -2288,7 +2331,7 @@ def verify_completed_detection_comparison_endpoint_contract(
     model_id = contract.get("model_id")
     model_family = contract.get("model_family")
     try:
-        expected_model_family = _model_family(
+        expected_model_family = (_completed_model_family if schema_version == COMPLETED_COMPARISON_ENDPOINT_VERSION else _model_family)(
             model_id if isinstance(model_id, str) else ""
         )
     except FrozenPostprocessError as exc:
@@ -2598,7 +2641,14 @@ def build_normalized_detection_endpoint_attestation(
                 "completed_result_artifact_sha256",
                 "normalization_contract_sha256",
             }
-        )
+        ) | ({"source_nms_attested", "host_nms_applied"}
+             if verified.get("schema_version") == 2 and "host_nms_applied" in result else set()) | (
+                 {"candidate_selection_observation"}
+                 if (verified.get("materialization_contract") or {}).get("candidate_selection")
+                    and "candidate_selection_observation" in result else set())
+        or ("host_nms_applied" in result and (
+            result.get("host_nms_applied") is not False
+            or result.get("source_nms_attested") is not verified.get("source_nms_attested")))
         or result.get("task") != "detection"
         or result.get("contract_family") != "decoded_nms"
         or result.get("decoder_format") != "bn6_detections"
@@ -2804,7 +2854,7 @@ class FrozenDetectionPostprocessor:
 
 
 class FrozenDecodedNmsPostprocessor:
-    """Canonical Direct-BN6 filter/NMS/deletterbox inside measured loops."""
+    """Execute the frozen BN6 contract, preserving legacy and no-second-NMS modes."""
 
     def __init__(self, contract: Mapping[str, Any]) -> None:
         self.contract = verify_frozen_decoded_nms_normalization_contract(
@@ -2814,6 +2864,10 @@ class FrozenDecodedNmsPostprocessor:
             conf_thresh=float(self.contract["confidence_threshold"]),
             iou_thresh=float(self.contract["iou_threshold"]),
             max_det=int(self.contract["max_detections"]),
+        )
+        self._materializer = (
+            _AttestedDecodedNmsMaterializer(self.contract["materialization_contract"], hash_detections=False)
+            if self.contract.get("schema_version") == 2 else None
         )
         self._lock = threading.Lock()
         self.completed_count = 0
@@ -2842,14 +2896,18 @@ class FrozenDecodedNmsPostprocessor:
                 raise FrozenPostprocessError(
                     "direct_normalization_original_wh_mismatch"
                 )
-            payload = _result_json(self._harness.postprocess(
-                dict(outputs),
-                {
-                    "input_hw": list(self.contract["input_hw"]),
-                    "original_wh": values,
-                    "variant": "native_full_direct_bn6",
-                },
-            ))
+            if self._materializer is not None:
+                self._materializer.process(outputs)
+                payload = {"format": "bn6_detections", "detections": self._materializer.last_detections}
+            else:
+                payload = _result_json(self._harness.postprocess(
+                    dict(outputs),
+                    {
+                        "input_hw": list(self.contract["input_hw"]),
+                        "original_wh": values,
+                        "variant": "native_full_direct_bn6",
+                    },
+                ))
             if str(payload.get("format") or "") != "bn6_detections":
                 raise FrozenPostprocessError(
                     "direct_normalization_runtime_format_mismatch"
@@ -2893,6 +2951,10 @@ class FrozenDecodedNmsPostprocessor:
                     self.contract["contract_sha256"]
                 ),
             }
+            if self._materializer is not None:
+                for key in ("source_nms_attested", "host_nms_applied", "candidate_selection_observation"):
+                    if key in self._materializer.last_result:
+                        self.last_result[key] = self._materializer.last_result[key]
             return dict(self.last_result)
 
 
@@ -3335,11 +3397,12 @@ def build_attested_decoded_nms_materialization_contract(
     iou_threshold: float = 0.45,
     max_detections: int = 300,
 ) -> dict[str, Any]:
-    """Seal normalization of an endpoint that already performed decode and NMS.
+    """Seal normalization of decoded records without applying another NMS.
 
     The measured host work may remove declared low-score padding, project the
     already-decoded boxes back to original-image coordinates, sort records, and
-    materialize them.  It must never decode boxes or apply NMS a second time.
+    materialize them. Bound TopK candidates use the same existing confidence
+    selection, with strict geometry checks on retained records.
     """
 
     if (
@@ -3371,6 +3434,8 @@ def build_attested_decoded_nms_materialization_contract(
         source_endpoint_contract_hash=source_hash,
         model_id=model_id,
     )
+    from .native_output_endpoint import bn6_candidate_selection
+    selection = bn6_candidate_selection(source_attestation.get("declared_contract") or {})
     geometry = build_letterbox_geometry_contract(
         input_hw=input_hw,
         original_wh=original_wh,
@@ -3381,7 +3446,7 @@ def build_attested_decoded_nms_materialization_contract(
         "schema_version": DECODED_NMS_MATERIALIZATION_VERSION,
         "task": "detection",
         "model_id": str(model_id),
-        "model_family": _model_family(model_id),
+        "model_family": "bn6_topk" if selection else _model_family(model_id),
         "source_stage": "decoded_nms",
         "completed_stage": "decoded_nms",
         "source_output_format": "bn6_detections",
@@ -3391,7 +3456,7 @@ def build_attested_decoded_nms_materialization_contract(
         "output_record_format": CANONICAL_DETECTION_RECORD_SCHEMA,
         "output_coordinate_space": "original_image_xyxy_pixels",
         "normalizer_id": NO_SECOND_NMS_NORMALIZER_ID,
-        "source_nms_attested": True,
+        "source_nms_attested": not bool(selection),
         "host_nms_applied": False,
         "padding_filter_policy": "score_below_declared_threshold_v1",
         "confidence_threshold": float(confidence_threshold),
@@ -3423,6 +3488,8 @@ def build_attested_decoded_nms_materialization_contract(
             "same_completion_execution_contract_inside_energy_hotloop"
         ),
     }
+    if selection:
+        contract["candidate_selection"] = selection
     contract["contract_sha256"] = canonical_json_sha256(contract)
     return contract
 
@@ -3462,6 +3529,14 @@ def verify_attested_decoded_nms_materialization_contract(
         "implementation_artifacts", "execution_policy",
         "performance_scope", "energy_scope",
     }
+    selection = contract.get("candidate_selection") or {}
+    if selection:
+        from .native_output_endpoint import bn6_candidate_selection
+        try:
+            bn6_candidate_selection({"source_onnx_detection_endpoint": {"candidate_selection": selection}})
+        except ValueError as exc:
+            raise FrozenPostprocessError(str(exc)) from exc
+        expected_keys.add("candidate_selection")
     geometry = verify_letterbox_geometry_contract(
         contract.get("letterbox_geometry_contract")
     )
@@ -3486,7 +3561,7 @@ def verify_attested_decoded_nms_materialization_contract(
         or contract.get("task") != "detection"
         or not isinstance(model_id, str)
         or not model_id
-        or contract.get("model_family") != _model_family(model_id)
+        or contract.get("model_family") != ("bn6_topk" if selection else _model_family(model_id))
         or contract.get("source_stage") != "decoded_nms"
         or contract.get("completed_stage") != "decoded_nms"
         or contract.get("source_output_format") != "bn6_detections"
@@ -3497,7 +3572,7 @@ def verify_attested_decoded_nms_materialization_contract(
         or contract.get("output_coordinate_space")
         != "original_image_xyxy_pixels"
         or contract.get("normalizer_id") != NO_SECOND_NMS_NORMALIZER_ID
-        or contract.get("source_nms_attested") is not True
+        or contract.get("source_nms_attested") is not (not bool(selection))
         or contract.get("host_nms_applied") is not False
         or contract.get("padding_filter_policy")
         != "score_below_declared_threshold_v1"
@@ -3525,6 +3600,7 @@ def verify_attested_decoded_nms_materialization_contract(
         or signature["tensors"][0].get("rank") != 3
         or (signature["tensors"][0].get("shape") or [])[-1:] != [6]
         or (signature["tensors"][0].get("shape") or [0])[0] != 1
+        or (bool(selection) and signature["tensors"][0].get("shape") != selection["output_shape"])
     ):
         raise FrozenPostprocessError(
             "decoded_nms_materialization_contract_fields_invalid"
@@ -3555,17 +3631,23 @@ def verify_attested_decoded_nms_materialization_contract(
             raise FrozenPostprocessError(
                 "decoded_nms_materialization_source_attestation_mismatch"
             )
+        from .native_output_endpoint import bn6_candidate_selection
+        if bn6_candidate_selection(verified_source.get("declared_contract") or {}) != selection:
+            raise FrozenPostprocessError(
+                "decoded_nms_materialization_candidate_graph_mismatch"
+            )
     return {**contract, "contract_sha256": declared}
 
 
 class _AttestedDecodedNmsMaterializer:
     """Materialize authoritative BN6 output without decoding or re-running NMS."""
 
-    def __init__(self, contract: Mapping[str, Any]) -> None:
+    def __init__(self, contract: Mapping[str, Any], *, hash_detections: bool = True) -> None:
         self.contract = (
             verify_attested_decoded_nms_materialization_contract(contract)
         )
         self.completed_count = 0
+        self._hash_detections = hash_detections
         self.last_result: dict[str, Any] = {}
         self.last_detections: list[dict[str, Any]] = []
 
@@ -3584,13 +3666,15 @@ class _AttestedDecodedNmsMaterializer:
             )
         scores = rows[:, 4]
         classes = rows[:, 5]
+        selection = self.contract.get("candidate_selection") or {}
+        geometry_invalid = (rows[:, 2] < rows[:, 0]) | (rows[:, 3] < rows[:, 1])
         if (
             bool(np.any(scores < 0.0))
             or bool(np.any(scores > 1.0))
             or bool(np.any(classes < 0.0))
             or not bool(np.equal(classes, np.rint(classes)).all())
-            or bool(np.any(rows[:, 2] < rows[:, 0]))
-            or bool(np.any(rows[:, 3] < rows[:, 1]))
+            or (bool(np.any(geometry_invalid)) and not selection)
+            or (bool(selection) and bool(np.any(classes >= selection["class_count"])))
         ):
             raise FrozenPostprocessError(
                 "decoded_nms_materialization_source_values_invalid"
@@ -3599,6 +3683,8 @@ class _AttestedDecodedNmsMaterializer:
         kept = rows[
             scores >= float(self.contract["confidence_threshold"])
         ]
+        if bool(np.any(kept[:, 2] < kept[:, 0]) or np.any(kept[:, 3] < kept[:, 1])):
+            raise FrozenPostprocessError("decoded_nms_materialization_retained_geometry_invalid")
         if len(kept) > int(self.contract["max_detections"]):
             raise FrozenPostprocessError(
                 "decoded_nms_materialization_count_exceeds_source_contract"
@@ -3650,13 +3736,21 @@ class _AttestedDecodedNmsMaterializer:
             "decoder_format": "bn6_detections",
             "coordinate_space": "original_image_xyxy_pixels",
             "detection_count": len(canonical),
-            "detections_sha256": canonical_json_sha256(canonical),
+            "detections_sha256": canonical_json_sha256(canonical) if self._hash_detections else "",
             "materialization_contract_sha256": str(
                 self.contract["contract_sha256"]
             ),
-            "source_nms_attested": True,
+            "source_nms_attested": self.contract["source_nms_attested"],
             "host_nms_applied": False,
         }
+        if selection:
+            result["candidate_selection_observation"] = {
+                "raw_record_count": len(rows), "retained_record_count": len(kept),
+                "raw_invalid_geometry_count": int(np.sum(geometry_invalid)),
+                "retained_invalid_geometry_count": 0,
+                "confidence_threshold": self.contract["confidence_threshold"],
+                "source_onnx_sha256": selection["source_onnx_sha256"],
+            }
         self.last_detections = canonical
         self.last_result = result
         self.completed_count += 1
@@ -3778,7 +3872,7 @@ def _build_materialized_detection_endpoint_contract(
         ],
         "materialization_contract_sha256": verified["contract_sha256"],
         "normalizer_id": verified["normalizer_id"],
-        "source_nms_attested": True,
+        "source_nms_attested": verified["source_nms_attested"],
         "host_nms_applied": False,
         "confidence_threshold": verified["confidence_threshold"],
         "iou_threshold": verified["iou_threshold"],
@@ -3811,7 +3905,7 @@ def _build_materialized_comparison_endpoint_contract(
         "stage": "decoded_nms",
         "contract_family": "decoded_nms",
         "model_id": str(verified["model_id"]),
-        "model_family": str(verified["model_family"]),
+        "model_family": _completed_model_family(str(verified["model_id"])),
         "output_record_format": "xyxy_score_class",
         "coordinate_space": "original_image_xyxy_pixels",
         "score_semantics": "probability_0_1",
@@ -4012,7 +4106,9 @@ def build_detection_completion_execution_contract(
         source_endpoint_contract,
         outputs=outputs,
     )
-    model_family = _model_family(model_id)
+    from .native_output_endpoint import bn6_candidate_selection
+    selection = bn6_candidate_selection((source_endpoint_contract.get("output_endpoint_attestation") or {}).get("declared_contract") or {})
+    model_family = "bn6_topk" if selection else _model_family(model_id)
     head_mapping: dict[str, Any] = {}
     if source["stage"] in {"raw_head", "decoded_pre_nms"}:
         if model_family == "yolov7":
@@ -4222,7 +4318,7 @@ def verify_detection_completion_execution_contract(
         or contract.get("task") != "detection"
         or not isinstance(model_id, str)
         or not model_id
-        or contract.get("model_family") != _model_family(model_id)
+        or contract.get("model_family") != ("bn6_topk" if isinstance(processor_raw, Mapping) and processor_raw.get("candidate_selection") else _model_family(model_id))
         or contract.get("completion_mode") not in {
             "raw_head_frozen_decode_nms",
             "decoded_pre_nms_frozen_nms",

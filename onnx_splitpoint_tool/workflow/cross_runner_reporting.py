@@ -43,6 +43,8 @@ def _b(value: Any) -> bool | None:
 
 
 def _quality_decision(row: Mapping[str, Any]) -> str:
+    if isinstance(row.get("accuracy_assessment"), Mapping):
+        return str(row["accuracy_assessment"].get("accuracy_class") or "not_estimable")
     decisions: list[str] = []
     for key in (
         "task_quality_decision", "accuracy_gate_decision",
@@ -444,7 +446,21 @@ def _identity_complete(identity: _ExactIdentity) -> bool:
     return all(identity)
 
 
+def _completed_task_measurement(row: Mapping[str, Any], *, native: bool = False) -> bool:
+    """Do not join P2/logits timing with a measured completed task rate."""
+    if native and row.get("rate_endpoint_projection_version") == 1:
+        value = _f(row.get("completed_task_fps"))
+        return value is not None and value > 0 and row.get("performance_endpoint") == "completed_task"
+    endpoint = str(row.get("measurement_endpoint") or row.get("performance_endpoint") or "")
+    return (endpoint in {"completed_detection", "completed_classification", "prepared_input_to_completed_task", "completed_task"}
+            and row.get("postprocess_completion_verified") is True
+            and (_f(row.get("postprocess_completed_frames")) or 0) > 0)
+
+
 def _measured_native_fps(row: Mapping[str, Any]) -> tuple[float | None, str]:
+    if row.get('rate_endpoint_projection_version') == 1:
+        value = row.get('completed_task_fps')
+        return (float(value), 'completed_task_count_time') if value is not None else (None, str(row.get('completed_task_fps_unavailable_reason') or 'completed_task_unavailable'))
     """Return an actually observed Native makespan rate and its source.
 
     ``paper_fps`` and ``1000 / cycle_ms`` are timing-model rates.  They are
@@ -643,7 +659,8 @@ def _load_native_rows(run_dir: Path) -> list[dict[str, Any]]:
         payload = read_json(path, default={}) or {}
         rows = payload.get("rows") if isinstance(payload, Mapping) else None
         if isinstance(rows, list):
-            return [dict(row) for row in rows if isinstance(row, Mapping)]
+            from ..native_rate_endpoints import report_rate_fields
+            return [{**dict(row), **report_rate_fields(row, run_dir)} for row in rows if isinstance(row, Mapping)]
     return []
 
 
@@ -1328,6 +1345,8 @@ def compute_cross_runner_report(
         native_theoretical_cycle = _f(native.get("_theoretical_cycle_ms"))
         technical_checks = {
             "exact_identity_complete": _identity_complete(key),
+            "generic_completed_task_measured": _completed_task_measurement(generic),
+            "native_completed_task_measured": _completed_task_measurement(native, native=True),
             "generic_runtime_measurement_present": generic_cycle > 0,
             "generic_measurement_not_explicitly_invalid": (
                 _b(generic.get("measurement_valid")) is not False
@@ -1345,8 +1364,8 @@ def compute_cross_runner_report(
         }
         quality_checks = {
             **technical_checks,
-            "generic_quality_pass": generic_quality == "pass",
-            "native_quality_pass": native_quality == "pass",
+            "generic_quality_observation_valid": generic_quality in {"pass", "reference_close", "accuracy_loss", "not_estimable"},
+            "native_quality_observation_valid": native_quality in {"pass", "reference_close", "accuracy_loss", "not_estimable"},
             "native_quality_evidence_verified": native_quality_evidence_verified,
             "native_precision_quality_verified": native_precision_quality_verified,
             "validation_semantic_ok": native_semantic is True,
@@ -1426,6 +1445,9 @@ def compute_cross_runner_report(
                 else None
             ),
             "native_theoretical_cycle_source": native.get("_theoretical_cycle_source"),
+            "generic_accuracy_assessment": generic.get("accuracy_assessment"),
+            "native_accuracy_assessment": native_validation.get("accuracy_assessment"),
+            "comparison_scope": "completed_task_only",
             "generic_task_quality_status": generic_quality,
             "native_task_quality_status": native_quality,
             "generic_contract_consistent": generic_contract,

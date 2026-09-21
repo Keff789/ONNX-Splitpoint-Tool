@@ -1,0 +1,418 @@
+[timeout-estimate] cases=4 plan_runs=8 effective_runs=5 total_phase_invocations≈1024 lower_bound≈146.56s recommended≈819s
+[suite-refresh] waiting for sibling setup to finish shared suite refresh
+[suite-refresh] shared refresh lock acquired after 4.2s
+[info] Using suite-local detection validation dataset: resources/validation/detection/val2017_n500_s20260710
+[info] Suite harness already up to date.
+[remote][storage] pre-mutation capacity contract ok: cold_required=10413.2 MiB, warm_required=4670.8 MiB, free=167463.4 MiB, inodes=28975399
+[diag] remote storage preflight: /home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/diagnostics/pre_mkdir_storage_remote_storage_diagnostics.json
+Remote host: nx@192.168.0.145:22
+Suite (local): /home/kmika/Models/EvaluationRuns/completsetdev_20260913_123411/models/yolo26m/benchmark_set/legacy_suite
+[remote] run_dir=/home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1
+[remote][cache] TensorRT cache=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4
+[remote][cache] TensorRT engine identity=yolo26m-8f895feae71fe4d4 builder_abi=d296895be53c11ea82675b98e5530f8b58999b44c5d7872ce0bed3deda18ec30; suite/resume identity=yolo26m-fa4932626df6800b
+[remote] mkdir -p /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1 /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/results
+[remote][cache][retention] {"active_working_set_bytes":6479098750,"admission_ok":true,"current_key":"yolo26m-8f895feae71fe4d4","current_namespace_bytes":994629316,"current_root":"/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4","effective_admission_max_bytes":27953935230,"eligible_remaining":0,"eligible_remaining_bytes":0,"eviction_history_path":"/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/.eviction_history.jsonl","legacy_inventory":{"deleted":false,"entries":[{"bytes":0,"files":0,"name":"resnet50-412056c1521d34b4","unsafe_symlink":false},{"bytes":0,"files":0,"name":"yolo26s-f5342b1cdbe0343f","unsafe_symlink":false},{"bytes":0,"files":0,"name":"yolov7_paper-4d2076a96adfba08","unsafe_symlink":false}],"exists":true,"inventory_mode":"shallow_existing_stable_namespace","symlink":false},"legacy_receipt_migration":{"candidate_failures":[],"existing_receipts":8,"gpu_deserialization_failures":0,"inventoried_receipts":8,"migrated_receipts":0,"owner_key_changes":[],"partial_target_leaves":0,"rejected_receipts":0,"requested":true,"source_key":"yolo26m-fa4932626df6800b","source_keys":["yolo26m-8f895feae71fe4d4"],"status":"compatible_receipts_already_present","target_key":"yolo26m-8f895feae71fe4d4","target_preexisting":true,"trigger":"partial_namespace_missing_artifact_scan"},"managed_bytes":6904448688,"managed_count":7,"managed_root":"/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516","max_bytes":21474836480,"max_namespaces":6,"planned_current_growth_bytes":5484469434,"prior_eviction":null,"projected_managed_bytes":12388918122,"protected":[{"bytes":327997935,"name":"mobilenet_v3_large-a3603057150e0f6d","reason":"active_workflow_may_reference_namespace"},{"bytes":369408330,"name":"regnet_x_1_6gf-aa35339d03c9ebf4","reason":"active_workflow_may_reference_namespace"},{"bytes":978183168,"name":"resnet50-c8fb9c2b93adbd87","reason":"active_workflow_may_reference_namespace"},{"bytes":2028032059,"name":"yolo11l-b479a219175b061f","reason":"active_workflow_may_reference_namespace"},{"bytes":471792122,"name":"yolo26s-9c1e24fdb8a6a251","reason":"active_workflow_may_reference_namespace"},{"bytes":1734405758,"name":"yolov7_paper-c098bef45c108b08","reason":"active_workflow_may_reference_namespace"}],"reason":"retention_deferred_active_workflow","removed":[],"retained_cache_budget_bytes":21474836480,"retained_noncurrent_bytes":5909819372,"retention_deferred":true,"retention_limits_exceeded":true,"schema":"onnx-splitpoint/remote-trt-cache-retention","schema_version":1,"selected_plan_reserve_applied":true}
+[trt-cache] RETENTION_DEFERRED reason=active_evaluation_workflow preserved_namespaces=7 soft_limits_exceeded=True; bound model artifacts remain available for later stages
+[trt-cache] migration status=compatible_receipts_already_present trigger=partial_namespace_missing_artifact_scan migrated=0 already_present=8
+[preflight] scoped to run-ids: hailo10,hailo10_to_tensorrt,ort_tensorrt
+[preflight] SYS_PY=/usr/bin/python3 ENV_PY=/home/nx/venvs/hailo10/bin/python3 RUN_PY=/home/nx/venvs/hailo10/bin/python3 HAILO_PY=/home/nx/venvs/hailo10/bin/python3 DEEPX_PY= EXTRA_SITES=/home/nx/venvs/hailo10/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages:/home/nx/.local/lib/python3.10/site-packages:/home/nx/venvs/hailo10/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages:/home/nx/.local/lib/python3.10/site-packages
+[preflight] wrote /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/results/preflight.json
+[preflight] python: /home/nx/venvs/hailo10/bin/python3
+[preflight] onnx 1.21.0 / onnxruntime 1.23.0
+[preflight] ort eps: ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
+[preflight] TensorRT Python: True version=10.3.0
+[preflight] trtexec: -
+[preflight] CUDA libs: {'libcublas.so.12': 'libcublas.so.12', 'libcublasLt.so.12': 'libcublasLt.so.12', 'libcudart.so.12': 'libcudart.so.12', 'libcudnn.so.9': 'libcudnn.so.9', 'libcufft.so.11': 'libcufft.so.11', 'libcurand.so.10': 'libcurand.so.10', 'libcusolver.so.11': 'libcusolver.so.11', 'libcusparse.so.12': 'libcusparse.so.12'}
+[preflight] /dev/hailo*: []
+[preflight] ps hailo:
+nx        278624 78.2 10.1 19647344 1632936 ?    Sl   13:06   0:03 /home/nx/venvs/hailo10/bin/python3 -
+[preflight] Device.scan: ['pci/0004:01:00.0']
+[preflight] vdevice_ok: True (markers=[])
+
+Packaging suite (bundle)
+[package] Embedding only selected validation root: resources/validation/detection/val2017_n500_s20260710
+[package] Validation footprint: items<= 500, files=1002, size=88.1 MiB
+[package] Waiting for shared bundle builder (1s)
+[package] Waiting for shared bundle builder (6s)
+[package] Waiting for shared bundle builder (11s)
+[package] Waiting for shared bundle builder (16s)
+[package] Waiting for shared bundle builder (21s)
+[package] Waiting for shared bundle builder (26s)
+[package] Waiting for shared bundle builder (31s)
+[package] Waiting for shared bundle builder (36s)
+[package] Waiting for shared bundle builder (41s)
+[package] Waiting for shared bundle builder (46s)
+[package] Waiting for shared bundle builder (51s)
+[package] Waiting for shared bundle builder (56s)
+[package] Waiting for shared bundle builder (62s)
+[package] Waiting for shared bundle builder (67s)
+[package] Waiting for shared bundle builder (72s)
+[package] Waiting for shared bundle builder (77s)
+[package] Waiting for shared bundle builder (82s)
+[package] Shared bundle lock acquired
+[package] Scanning suite files
+[package] Scanning 17 selected root(s) and 7 suite-root pattern(s)
+[package] Scanning suite: 1000 included files (1160.9 MB)
+[package] Found 1194 files (1181.4 MB)
+[package] Using cached bundle (metadata unchanged)
+[remote] bundle: /home/kmika/Models/EvaluationRuns/completsetdev_20260913_123411/models/yolo26m/benchmark_set/legacy_suite/dist/suite_bundle.tar.gz (raw 1181.4 MB, tar.gz 988.9 MB, files=1194, cached)
+[remote][scp] waiting for upload slot stage=scp_upload_suite (limit=1)
+[remote][scp] upload started stage=scp_upload_suite: suite_bundle.tar.gz (988.9 MiB) -> /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite_bundle.tar.gz; this may take minutes
+[remote][scp] upload finished stage=scp_upload_suite: suite_bundle.tar.gz (988.9 MiB)
+Running benchmark suite on remote
+[remote] python: SYS_PY=/usr/bin/python3 ENV_PY=/home/nx/venvs/hailo10/bin/python3 RUN_PY=/home/nx/venvs/hailo10/bin/python3 | SYS_EPS= | ENV_EPS=TensorrtExecutionProvider|CUDAExecutionProvider|CPUExecutionProvider | HAILO_PY=/home/nx/venvs/hailo10/bin/python3 | DEEPX_PY= | EXTRA_SITES=/home/nx/venvs/hailo10/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages:/home/nx/.local/lib/python3.10/site-packages:/home/nx/venvs/hailo10/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages:/home/nx/.local/lib/python3.10/site-packages
+[plan] selected run ids: ort_tensorrt,hailo10,hailo10_to_tensorrt
+[quality-first] setup=orin_nx_hailo10_01 model=yolo26m source_run=ort_tensorrt engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/full/d1c6a922dd92f896c69e2f6767ea3ca23fac0e53e5ac69681965eb8a74cda897/fp16/full_fp16.engine
+[viz] b038/native_full_tensorrt_quality: visual sample=/home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/resources/validation/detection/val2017_n500_s20260710/000000252776.jpg
+[info] manifest: /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b038/split_manifest.json
+[info] full : yolo26m.onnx
+[info] part1: yolo26m_part1_b38.onnx
+[info] part2: yolo26m_part2_b38.onnx
+[info] labels: 80 classes (from ONNX metadata)
+[inputs] using image '000000252776.jpg' for input 'images' shape=[1, 3, 640, 640] scale=norm
+ORT available providers: ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
+Using mixed backends: default=tensorrt, full=tensorrt, stage1=cpu, stage2=cpu (ORT baseline: ['CPUExecutionProvider'])
+[init] session 'full' ready in 0.3s | providers in use: ['CPUExecutionProvider']
+[init] session 'part1' ready in 0.2s | providers in use: ['CPUExecutionProvider']
+[init] session 'part2' ready in 0.3s | providers in use: ['CPUExecutionProvider']
+[auto] image_scale=auto -> defaulting to norm (unknown outputs).
+[trt-cache] HIT role=full model=source reason=receipt_verified identity=d1c6a922dd92f896c69e2f6767ea3ca23fac0e53e5ac69681965eb8a74cda897 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/full/d1c6a922dd92f896c69e2f6767ea3ca23fac0e53e5ac69681965eb8a74cda897/fp16/full_fp16.engine
+[native-trt] loaded full: engine=full_fp16.engine inputs=[('images', (1, 3, 640, 640), 'float32')] outputs=[('output0', (1, 300, 6), 'float32')]
+[native-trt] using native TensorRT for full (yolo26m.onnx)
+[full] warmup: 0 runs (not measured)
+[full] measured: 1 runs
+Benchmark results (mean ± std, ms):
+  full    : 51.501 ± 0.000
+  part1   : - ± -
+  part2   : - ± -
+  composed: - ± -
+[baseline] wrote baseline cache: baseline_full_cpu_outputs.npz
+[validation][backend-drift] full@tensorrt vs cpu_full (full_vs_cpu_full): max_abs=625.2887573242188 mean_abs=116.60494995117188 proxy_ratio=1.0 proxy_mean_iou=0.9983695262342653
+[validation][cardinality] requested=500 evaluated=500 pass=True
+[validation][dataset] semantic proxy validation on 500 image(s)
+[quality-gate] full: tier=screening decision=pending_central_evaluation metric=coco_ap_50_95 delta=None lcb=None margin=0.01
+[validation][dataset] full: ref_mode=annotations semantic_pass=False fidelity_pass=True images=500 image_pass_ratio=0.614 global_match_ratio=0.6343015214384509 global_mean_iou=0.8730642367152082 errors=0 inferred=False
+==== Output validation ====
+reference policy: requested=auto same_backend_ready=False cpu_full_outputs=1 output_format=bn6_detections
+  full   : status=ok provider=tensorrt mode=proxy_detections ref=cpu_full/cpu_full_proxy fidelity_pass=True semantic_pass=False max_abs=625.2887573242188 mean_abs=116.60494995117188
+           proxy: n_ref=5 n_out=5 matched=5 ratio=1.0 mean_iou=0.9983695262342653
+[validation] mode=auto ref_mode=auto used(primary=full)=proxy_detections final_pass=False final_pass_all=False semantic_gate=True semantic_primary_pass=False semantic_pass_all=False semantic_gate=True
+Wrote quality-only evidence /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/native_full_quality/quality_inputs/orin_nx_hailo10_01/results_native_full_tensorrt/quality_evidence_report.json
+[quality-first] ort_tensorrt: emitted 500 records without performance claims
+[quality-first] ort_tensorrt: quality-only dispatch complete; performance execution intentionally skipped
+[hailo10] [1/1] Running b038 (provider=hailo10)
+[warn] missing report: /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b038/results_hailo10/validation_report.json
+[viz] b038/hailo10: visual sample=/home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/resources/validation/detection/val2017_n500_s20260710/000000543300.jpg
+[info] manifest: /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b038/split_manifest.json
+[info] full : yolo26m.onnx
+[info] part1: yolo26m_part1_b38.onnx
+[info] part2: yolo26m_part2_b38.onnx
+[info] labels: 80 classes (from ONNX metadata)
+[inputs] using image '000000543300.jpg' for input 'images' shape=[1, 3, 640, 640] scale=norm
+ORT available providers: ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
+Using mixed backends: default=hailo10h, full=hailo10h, stage1=hailo10h, stage2=hailo10h (ORT baseline: ['CPUExecutionProvider'])
+[init] session 'full' ready in 0.3s | providers in use: ['CPUExecutionProvider']
+[init] session 'part1' ready in 0.2s | providers in use: ['CPUExecutionProvider']
+[init] session 'part2' ready in 0.3s | providers in use: ['CPUExecutionProvider']
+[auto] image_scale=auto -> defaulting to norm (unknown outputs).
+[hailo][activation] mode=auto persistent=True estimated_sessions=1
+[hailo][hef] resolved alias hailo10h/full -> /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/hailo/hailo10/full/compiled.hef
+[hailo][runtime] hw_arch=hailo10h api=infer_model hotloop=True
+[hailo][io] full hef_inputs=['yolo26m_full/input_layer1'] canonical_inputs=['images']
+[hailo][io] full hef_outputs=['yolo26m_full/conv71', 'yolo26m_full/conv74', 'yolo26m_full/conv87', 'yolo26m_full/conv90', 'yolo26m_full/conv101', 'yolo26m_full/conv104'] canonical_outputs=['yolo26m_full/conv71', 'yolo26m_full/conv74', 'yolo26m_full/conv87', 'yolo26m_full/conv90', 'yolo26m_full/conv101', 'yolo26m_full/conv104']
+[hailo][io] full input_aliases={'yolo26m_full/input_layer1': 'images'}
+[hailo][io] full runtime_input_format=float32 outputs_dequantized=True
+[hailo][io] full endpoint_mode=raw_detection_head raw_detection_head=True
+[hailo][endpoint-attestation] format=ultralytics_regcls raw=True source=runtime_probe_plus_manifest
+[full_rawhead_plus_frozen_decode_nms] warmup: 3 runs (not measured)
+[full_rawhead_plus_frozen_decode_nms] measured: 5 runs
+Benchmark results (mean ± std, ms):
+  full    : 112.409 ± 0.121
+  part1   : - ± -
+  part2   : - ± -
+  composed: - ± -
+  full e2e(raw-head+host-tail): 112.409 ± 0.121
+[baseline] cache mismatch/invalid; recomputing CPU baseline: baseline_full_cpu_outputs.npz
+[baseline] wrote baseline cache: baseline_full_cpu_outputs.npz
+[validation][backend-drift] full@hailo10h vs cpu_full (full_vs_cpu_full): max_abs=None mean_abs=None proxy_ratio=0.0 proxy_mean_iou=0.0
+[validation][cardinality] requested=500 evaluated=500 pass=True
+[validation][dataset] semantic proxy validation on 500 image(s)
+[validation][mini-coco-ap50] full: ap50=0.5499090463697616 images=500 classes=80 gt=3615 preds=2945
+[quality-gate] full: tier=screening decision=pending_central_evaluation metric=coco_ap_50_95 delta=None lcb=None margin=0.01
+[validation][dataset] full: ref_mode=annotations semantic_pass=False fidelity_pass=True images=500 image_pass_ratio=0.586 global_match_ratio=0.6201936376210235 global_mean_iou=0.8576202923784052 errors=0 inferred=False
+==== Output validation ====
+reference policy: requested=auto same_backend_ready=True cpu_full_outputs=1 output_format=bn6_detections
+  full   : status=ok provider=hailo10h mode=proxy_detections ref=cpu_full/cpu_full_proxy fidelity_pass=True semantic_pass=False max_abs=None mean_abs=None
+           elementwise: no shape-matched outputs
+           proxy: n_ref=1 n_out=3 matched=1 ratio=1.0 mean_iou=0.9676608129020932
+[validation] mode=auto ref_mode=auto used(primary=full)=proxy_detections final_pass=False final_pass_all=False semantic_gate=True semantic_primary_pass=False semantic_pass_all=False semantic_gate=True
+Wrote /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b038/results_hailo10/validation_report.json
+Wrote /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b038/results_hailo10/validation_report.png and .pdf
+[warn] validation failed (mode=proxy_detections, output_format=bn6_detections) — continuing (soft-fail).
+Wrote benchmark_results_hailo10_auto.json
+Wrote benchmark_results_hailo10_auto.csv
+[hailo10_to_tensorrt] [1/4] Running b038 (stage1=hailo10, stage2=tensorrt)
+[quality-first][split] setup=orin_nx_hailo10_01 model=yolo26m case=b038 run=hailo10_to_tensorrt precision=uint8_dequant_fp16 binding=4a0e8fabfb5f934ebc5538779205aee40a91c7db07bdf837376fb9b042d26032
+[warn] missing report: /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b038/results_hailo10_to_tensorrt/validation_report.json
+[viz] b038/hailo10_to_tensorrt: visual sample=/home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/resources/validation/detection/val2017_n500_s20260710/000000381360.jpg
+[quality-first][split] exact local binding verified sha256=4a0e8fabfb5f934ebc5538779205aee40a91c7db07bdf837376fb9b042d26032 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b038/hailo10h_to_trt/470b256e278f2329bed2e3bdb4894ed2a6d171df18a2e842ebd6f436315bb00b/engine_cache/b038/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine no_build=true fallback=false
+[info] manifest: /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b038/split_manifest.json
+[info] full : yolo26m.onnx
+[info] part1: yolo26m_part1_b38.onnx
+[info] part2: yolo26m_part2_b38.onnx
+[info] labels: 80 classes (from ONNX metadata)
+[inputs] using image '000000381360.jpg' for input 'images' shape=[1, 3, 640, 640] scale=norm
+ORT available providers: ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
+Using mixed backends: default=tensorrt, full=tensorrt, stage1=hailo10h, stage2=tensorrt (ORT baseline: ['CPUExecutionProvider'])
+[init] session 'full' ready in 0.3s | providers in use: ['CPUExecutionProvider']
+[init] session 'part1' ready in 0.2s | providers in use: ['CPUExecutionProvider']
+[init] session 'part2' ready in 0.3s | providers in use: ['CPUExecutionProvider']
+[auto] image_scale=auto -> defaulting to norm (unknown outputs).
+[hailo][activation] mode=auto persistent=True estimated_sessions=1
+[hailo][runtime] hw_arch=hailo10h api=infer_model hotloop=True
+[hailo][io] part1 hef_inputs=['yolo26m_part1_b38/input_layer1'] canonical_inputs=['images']
+[hailo][io] part1 hef_outputs=['yolo26m_part1_b38/conv12'] canonical_outputs=['/model.3/conv/Conv_output_0']
+[hailo][io] part1 input_aliases={'yolo26m_part1_b38/input_layer1': 'images'}
+[hailo][io] part1 runtime_input_format=uint8 outputs_dequantized=False boundary_mode=raw_uint8_hailo
+[trt-cache] HIT role=part2 model=source_part2_uint8_dequant_bridge reason=receipt_verified identity=755b8c456ad13dd9cdac5eb43665ddc94e777edd3c0a2902b307e5cec581c14b engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b038/hailo10h_to_trt/470b256e278f2329bed2e3bdb4894ed2a6d171df18a2e842ebd6f436315bb00b/engine_cache/b038/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine
+[native-trt] loaded part2: engine=part2_uint8_dequant_fp16.engine inputs=[('/model.3/conv/Conv_output_0', (1, 256, 80, 80), 'uint8')] outputs=[('output0', (1, 300, 6), 'float32')]
+[native-trt] using native TensorRT for part2 (yolo26m_part2_b38.onnx)
+[interface][p2-map][native-trt] {'/model.3/conv/Conv_output_0': '/model.3/conv/Conv_output_0'}
+[interface][stage1] pass=False status=ok compared=1 max_abs=191.7544708251953
+[part1] warmup: 3 runs (not measured)
+[part1] measured: 5 runs
+[part2] warmup: 3 runs (not measured)
+[part2] measured: 5 runs
+[composed] warmup: 3 runs (not measured)
+[composed] measured: 5 runs
+[streaming] streaming warmup frames: 6
+[streaming] streaming measured frames: 24 (queue_depth=2, impl=native_fifo, clone_payload=False)
+[streaming] streaming throughput: fps(makespan)=51.219 fps(cycle)=52.274 paper_fps=52.316 latency p50=28.416 ms p95=28.602 ms
+[streaming] pipeline threads: p1=19.115 ms p2_total=9.217 ms handoff=0.296 ms p2_run=8.921 ms
+Benchmark results (mean ± std, ms):
+  full    : - ± -
+  part1   : 18.908 ± 0.104
+  part2   : 8.588 ± 0.006
+  composed: 28.396 ± 0.075
+  composed phases: wall=28.386 stage1=19.041 stage2_prefix=8.973 host_tail=0.000
+  overhead: 0.901  (composed - (part1+part2))
+Streaming throughput (heterogeneous pipeline):
+  fps_makespan : 51.219
+  fps_cycle    : 52.274
+  lat p50/p95  : 28.416 / 28.602 ms
+  impl         : native_fifo  p1_thread=19.115 ms p2_thread=9.217 ms handoff=0.296 ms
+  paper model  : cycle=19.115 ms fps=52.316
+Pipeline model: latency=28.396 ms, cycle=19.130 ms, fps=51.219 mode=measured_streaming
+[baseline] cache mismatch/invalid; recomputing CPU baseline: baseline_full_cpu_outputs.npz
+[baseline] wrote baseline cache: baseline_full_cpu_outputs.npz
+[validation][backend-drift] composed@tensorrt vs cpu_full (primary_vs_cpu_full): max_abs=633.6298217773438 mean_abs=71.85545349121094 proxy_ratio=1.0 proxy_mean_iou=0.994746699516635
+[validation][cardinality] requested=500 evaluated=500 pass=True
+[validation][dataset] semantic proxy validation on 500 image(s)
+[validation][mini-coco-ap50] composed: ap50=0.5662839134030119 images=500 classes=80 gt=3615 preds=2975
+[quality-gate] composed: tier=screening decision=pending_central_evaluation metric=coco_ap_50_95 delta=None lcb=None margin=0.01
+[validation][dataset] composed: ref_mode=annotations semantic_pass=False fidelity_pass=True images=500 image_pass_ratio=0.596 global_match_ratio=0.6251728907330567 global_mean_iou=0.8700742203323704 errors=0 inferred=False
+==== Output validation ====
+reference policy: requested=auto same_backend_ready=False cpu_full_outputs=1 output_format=bn6_detections
+  part1  : status=ok provider=hailo10h mode=proxy_detections ref=cpu_full/cpu_full_proxy pass=False max_abs=640.6913452148438 mean_abs=260.44219970703125
+           proxy: n_ref=2 n_out=135 matched=0 ratio=0.0 mean_iou=0.0
+  part2  : status=ok provider=tensorrt mode=proxy_detections ref=cpu_full/cpu_full_proxy pass=True max_abs=633.0048217773438 mean_abs=61.57645034790039
+           proxy: n_ref=2 n_out=2 matched=2 ratio=1.0 mean_iou=0.9970356980202408
+  composed: status=ok provider=tensorrt mode=proxy_detections ref=cpu_full/cpu_full_proxy fidelity_pass=True semantic_pass=False max_abs=633.6298217773438 mean_abs=71.85545349121094
+           proxy: n_ref=2 n_out=2 matched=2 ratio=1.0 mean_iou=0.994746699516635
+[validation] mode=auto ref_mode=auto used(primary=composed)=proxy_detections final_pass=False final_pass_all=False semantic_gate=True semantic_primary_pass=False semantic_pass_all=False semantic_gate=True
+Wrote /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b038/results_hailo10_to_tensorrt/validation_report.json
+Wrote /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b038/results_hailo10_to_tensorrt/validation_report.png and .pdf
+[warn] validation failed (mode=proxy_detections, output_format=bn6_detections) — continuing (soft-fail).
+[hailo10_to_tensorrt] [2/4] Running b040 (stage1=hailo10, stage2=tensorrt)
+[quality-first][split] setup=orin_nx_hailo10_01 model=yolo26m case=b040 run=hailo10_to_tensorrt precision=uint8_dequant_fp16 binding=26defa2f4bfe52ef366a6f8c3e93f42f681c45c537aee198e19c0afceb4182b6
+[warn] missing report: /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b040/results_hailo10_to_tensorrt/validation_report.json
+[viz] b040/hailo10_to_tensorrt: visual sample=/home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/resources/validation/detection/val2017_n500_s20260710/000000375015.jpg
+[quality-first][split] exact local binding verified sha256=26defa2f4bfe52ef366a6f8c3e93f42f681c45c537aee198e19c0afceb4182b6 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b040/hailo10h_to_trt/a1bf028e680edbb87fe349cc4c5b7f343ebb6e76d5df708495fdf8aa31adc136/engine_cache/b040/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine no_build=true fallback=false
+[info] manifest: /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b040/split_manifest.json
+[info] full : yolo26m.onnx
+[info] part1: yolo26m_part1_b40.onnx
+[info] part2: yolo26m_part2_b40.onnx
+[info] labels: 80 classes (from ONNX metadata)
+[inputs] using image '000000375015.jpg' for input 'images' shape=[1, 3, 640, 640] scale=norm
+ORT available providers: ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
+Using mixed backends: default=tensorrt, full=tensorrt, stage1=hailo10h, stage2=tensorrt (ORT baseline: ['CPUExecutionProvider'])
+[init] session 'full' ready in 0.3s | providers in use: ['CPUExecutionProvider']
+[init] session 'part1' ready in 0.2s | providers in use: ['CPUExecutionProvider']
+[init] session 'part2' ready in 0.3s | providers in use: ['CPUExecutionProvider']
+[auto] image_scale=auto -> defaulting to norm (unknown outputs).
+[hailo][activation] mode=auto persistent=True estimated_sessions=1
+[hailo][runtime] hw_arch=hailo10h api=infer_model hotloop=True
+[hailo][io] part1 hef_inputs=['yolo26m_part1_b40/input_layer1'] canonical_inputs=['images']
+[hailo][io] part1 hef_outputs=['yolo26m_part1_b40/conv12'] canonical_outputs=['/model.3/act/Mul_output_0']
+[hailo][io] part1 input_aliases={'yolo26m_part1_b40/input_layer1': 'images'}
+[hailo][io] part1 runtime_input_format=uint8 outputs_dequantized=False boundary_mode=raw_uint8_hailo
+[trt-cache] HIT role=part2 model=source_part2_uint8_dequant_bridge reason=receipt_verified identity=76d8850d559cbf219d4f0031090283ef6afb7581552e5425f895d4adcc82105a engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b040/hailo10h_to_trt/a1bf028e680edbb87fe349cc4c5b7f343ebb6e76d5df708495fdf8aa31adc136/engine_cache/b040/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine
+[native-trt] loaded part2: engine=part2_uint8_dequant_fp16.engine inputs=[('/model.3/act/Mul_output_0', (1, 256, 80, 80), 'uint8')] outputs=[('output0', (1, 300, 6), 'float32')]
+[native-trt] using native TensorRT for part2 (yolo26m_part2_b40.onnx)
+[interface][p2-map][native-trt] {'/model.3/act/Mul_output_0': '/model.3/act/Mul_output_0'}
+[interface][stage1] pass=False status=ok compared=1 max_abs=124.08269500732422
+[part1] warmup: 3 runs (not measured)
+[part1] measured: 5 runs
+[part2] warmup: 3 runs (not measured)
+[part2] measured: 5 runs
+[composed] warmup: 3 runs (not measured)
+[composed] measured: 5 runs
+[streaming] streaming warmup frames: 6
+[streaming] streaming measured frames: 24 (queue_depth=2, impl=native_fifo, clone_payload=False)
+[streaming] streaming throughput: fps(makespan)=50.916 fps(cycle)=51.983 paper_fps=52.015 latency p50=28.584 ms p95=28.886 ms
+[streaming] pipeline threads: p1=19.225 ms p2_total=9.280 ms handoff=0.345 ms p2_run=8.935 ms
+Benchmark results (mean ± std, ms):
+  full    : - ± -
+  part1   : 18.801 ± 0.151
+  part2   : 8.593 ± 0.009
+  composed: 28.171 ± 0.082
+  composed phases: wall=28.276 stage1=18.958 stage2_prefix=8.966 host_tail=0.000
+  overhead: 0.777  (composed - (part1+part2))
+Streaming throughput (heterogeneous pipeline):
+  fps_makespan : 50.916
+  fps_cycle    : 51.983
+  lat p50/p95  : 28.584 / 28.886 ms
+  impl         : native_fifo  p1_thread=19.225 ms p2_thread=9.280 ms handoff=0.345 ms
+  paper model  : cycle=19.225 ms fps=52.015
+Pipeline model: latency=28.171 ms, cycle=19.237 ms, fps=50.916 mode=measured_streaming
+[baseline] wrote baseline cache: baseline_full_cpu_outputs.npz
+[validation][backend-drift] composed@tensorrt vs cpu_full (primary_vs_cpu_full): max_abs=632.9957885742188 mean_abs=150.49278259277344 proxy_ratio=1.0 proxy_mean_iou=0.9938677077284065
+[validation][cardinality] requested=500 evaluated=500 pass=True
+[validation][dataset] semantic proxy validation on 500 image(s)
+[validation][mini-coco-ap50] composed: ap50=0.5684267872114582 images=500 classes=80 gt=3615 preds=2975
+[quality-gate] composed: tier=screening decision=pending_central_evaluation metric=coco_ap_50_95 delta=None lcb=None margin=0.01
+[validation][dataset] composed: ref_mode=annotations semantic_pass=False fidelity_pass=True images=500 image_pass_ratio=0.598 global_match_ratio=0.6262793914246196 global_mean_iou=0.870672819552029 errors=0 inferred=False
+==== Output validation ====
+reference policy: requested=auto same_backend_ready=False cpu_full_outputs=1 output_format=bn6_detections
+  part1  : status=ok provider=hailo10h mode=proxy_detections ref=cpu_full/cpu_full_proxy pass=False max_abs=622.4127197265625 mean_abs=183.9313507080078
+           proxy: n_ref=1 n_out=280 matched=0 ratio=0.0 mean_iou=0.0
+  part2  : status=ok provider=tensorrt mode=proxy_detections ref=cpu_full/cpu_full_proxy pass=True max_abs=631.8892822265625 mean_abs=138.2974853515625
+           proxy: n_ref=1 n_out=1 matched=1 ratio=1.0 mean_iou=0.9996084807387665
+  composed: status=ok provider=tensorrt mode=proxy_detections ref=cpu_full/cpu_full_proxy fidelity_pass=True semantic_pass=False max_abs=632.9957885742188 mean_abs=150.49278259277344
+           proxy: n_ref=1 n_out=1 matched=1 ratio=1.0 mean_iou=0.9938677077284065
+[validation] mode=auto ref_mode=auto used(primary=composed)=proxy_detections final_pass=False final_pass_all=False semantic_gate=True semantic_primary_pass=False semantic_pass_all=False semantic_gate=True
+Wrote /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b040/results_hailo10_to_tensorrt/validation_report.json
+Wrote /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b040/results_hailo10_to_tensorrt/validation_report.png and .pdf
+[warn] validation failed (mode=proxy_detections, output_format=bn6_detections) — continuing (soft-fail).
+[hailo10_to_tensorrt] [3/4] Running b398 (stage1=hailo10, stage2=tensorrt)
+[quality-first][split] setup=orin_nx_hailo10_01 model=yolo26m case=b398 run=hailo10_to_tensorrt precision=uint8_dequant_fp16 binding=aaeedb7f31d68a10727fd8f6848cf41321cc5578fefd5bc56a5945e272fd388c
+[warn] missing report: /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b398/results_hailo10_to_tensorrt/validation_report.json
+[viz] b398/hailo10_to_tensorrt: visual sample=/home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/resources/validation/detection/val2017_n500_s20260710/000000403584.jpg
+[quality-first][split] exact local binding verified sha256=aaeedb7f31d68a10727fd8f6848cf41321cc5578fefd5bc56a5945e272fd388c engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b398/hailo10h_to_trt/b3aa10a5df8555c03bb5f68bfcc3c1e36b2c0b4b6d73292f93e36b89a1492541/engine_cache/b398/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine no_build=true fallback=false
+[info] manifest: /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b398/split_manifest.json
+[info] full : yolo26m.onnx
+[info] part1: yolo26m_part1_b398.onnx
+[info] part2: yolo26m_part2_b398.onnx
+[info] labels: 80 classes (from ONNX metadata)
+[inputs] using image '000000403584.jpg' for input 'images' shape=[1, 3, 640, 640] scale=norm
+ORT available providers: ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
+Using mixed backends: default=tensorrt, full=tensorrt, stage1=hailo10h, stage2=tensorrt (ORT baseline: ['CPUExecutionProvider'])
+[init] session 'full' ready in 0.3s | providers in use: ['CPUExecutionProvider']
+[init] session 'part1' ready in 0.3s | providers in use: ['CPUExecutionProvider']
+[init] session 'part2' ready in 0.2s | providers in use: ['CPUExecutionProvider']
+[auto] image_scale=auto -> defaulting to norm (unknown outputs).
+[hailo][activation] mode=auto persistent=True estimated_sessions=1
+[hailo][runtime] hw_arch=hailo10h api=infer_model hotloop=True
+[hailo][io] part1 hef_inputs=['yolo26m_part1_b398/input_layer1'] canonical_inputs=['images']
+[hailo][io] part1 hef_outputs=['yolo26m_part1_b398/concat25'] canonical_outputs=['/model.23/Concat_3_output_0']
+[hailo][io] part1 input_aliases={'yolo26m_part1_b398/input_layer1': 'images'}
+[hailo][io] part1 runtime_input_format=uint8 outputs_dequantized=False boundary_mode=raw_uint8_hailo
+[trt-cache] HIT role=part2 model=source_part2_uint8_dequant_bridge reason=receipt_verified identity=95e1e467d2daa6d67327d2df759e8f08e555595ef6b62731770250985e5c3bd8 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/native_split_quality/orin_nx_hailo10_01/yolo26m/b398/hailo10h_to_trt/b3aa10a5df8555c03bb5f68bfcc3c1e36b2c0b4b6d73292f93e36b89a1492541/engine_cache/b398/part2/uint8_dequant_fp16/part2_uint8_dequant_fp16.engine
+[native-trt] loaded part2: engine=part2_uint8_dequant_fp16.engine inputs=[('/model.23/Concat_3_output_0', (1, 84, 8400), 'uint8')] outputs=[('output0', (1, 300, 6), 'float32')]
+[native-trt] using native TensorRT for part2 (yolo26m_part2_b398.onnx)
+[interface][p2-map][native-trt] {'/model.23/Concat_3_output_0': '/model.23/Concat_3_output_0'}
+[interface][stage1] pass=False status=ok compared=1 max_abs=622.1212158203125
+[part1] warmup: 3 runs (not measured)
+[part1] measured: 5 runs
+[part2] warmup: 3 runs (not measured)
+[part2] measured: 5 runs
+[composed] warmup: 3 runs (not measured)
+[composed] measured: 5 runs
+[streaming] streaming warmup frames: 6
+[streaming] streaming measured frames: 24 (queue_depth=2, impl=native_fifo, clone_payload=False)
+[streaming] streaming throughput: fps(makespan)=31.618 fps(cycle)=31.691 paper_fps=31.706 latency p50=33.173 ms p95=33.424 ms
+[streaming] pipeline threads: p1=31.540 ms p2_total=1.586 ms handoff=0.872 ms p2_run=0.714 ms
+Benchmark results (mean ± std, ms):
+  full    : - ± -
+  part1   : 31.337 ± 0.105
+  part2   : 0.356 ± 0.011
+  composed: 33.078 ± 0.266
+  composed phases: wall=33.130 stage1=31.655 stage2_prefix=0.742 host_tail=0.000
+  overhead: 1.385  (composed - (part1+part2))
+Streaming throughput (heterogeneous pipeline):
+  fps_makespan : 31.618
+  fps_cycle    : 31.691
+  lat p50/p95  : 33.173 / 33.424 ms
+  impl         : native_fifo  p1_thread=31.540 ms p2_thread=1.586 ms handoff=0.872 ms
+  paper model  : cycle=31.540 ms fps=31.706
+Pipeline model: latency=33.078 ms, cycle=31.555 ms, fps=31.618 mode=measured_streaming
+[baseline] wrote baseline cache: baseline_full_cpu_outputs.npz
+[validation][backend-drift] composed@tensorrt vs cpu_full (primary_vs_cpu_full): max_abs=652.8536376953125 mean_abs=258.8824157714844 proxy_ratio=0.0 proxy_mean_iou=0.0
+[validation][cardinality] requested=500 evaluated=500 pass=True
+[validation][dataset] semantic proxy validation on 500 image(s)
+[validation][mini-coco-ap50] composed: ap50=2.3211709121103847e-06 images=500 classes=80 gt=3615 preds=21423
+[central-quality-export][blocked] variant=composed task=detection diagnostics={"declaration": {"executed_full_model": "/home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/models/yolo26m.onnx", "full_model_sha256": "d1c6a922dd92f896c69e2f6767ea3ca23fac0e53e5ac69681965eb8a74cda897", "manifest_full_model": "/home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/models/yolo26m.onnx", "reason": "authoritative_contract_plus_onnx_bytes_and_runtime_signature", "stage": "decoded_nms", "status": "attested", "terminal_model": "/home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b398/yolo26m_part2_b398.onnx", "terminal_model_sha256": "179287d1cefdc2b41dfe9de028fca8afb79e1702cf6b6c10521c1b3cfdf051a5", "variant": "composed"}, "export": {"endpoint_attestation_reason": "score_column_not_probability_like;coordinates_not_ordered_xyxy", "endpoint_contract_complete": false, "endpoint_contract_hash": "", "endpoint_stage": "unknown", "reason": "endpoint_contract_incomplete", "runtime_precision_identity": "uint8_dequant_fp16", "status": "failed_closed"}, "runtime_endpoint": {"attestation": {"attested": false, "contract_source": "explicit_endpoint_declaration_plus_runtime_values:v3", "endpoint": "decoded_nms", "finite_fraction": 1.0, "fraction_threshold": 0.995, "integer_epsilon": 0.001, "integer_nonnegative_class_fraction": 1.0, "ordered_xyxy_fraction": 0.73, "output_count": 1, "output_dtype": "float32", "output_name": "output0", "output_shape": [1, 300, 6], "range_epsilon": 0.0001, "reason": "score_column_not_probability_like;coordinates_not_ordered_xyxy", "row_count": 300, "schema": "onnx-splitpoint/runtime-output-endpoint-attestation", "schema_version": 3, "score_range_fraction": 0.0, "stage": "unknown", "status": "failed", "tensor_signature": {"tensor_count": 1, "tensors": [{"dtype": "float32", "index": 0, "name": "output0", "rank": 3, "shape": [1, 300, 6]}]}}, "detected_output_format": "bn6_detections", "reason": "score_column_not_probability_like;coordinates_not_ordered_xyxy", "recorded_stage": "decoded_nms", "resolved_stage": "unknown", "status": "failed"}}
+[quality-gate] composed: tier=screening decision=unavailable metric=coco_ap_50_95 delta=None lcb=None margin=0.01
+[validation][dataset] composed: ref_mode=annotations semantic_pass=False fidelity_pass=False images=500 image_pass_ratio=0.0 global_match_ratio=0.0005532503457814661 global_mean_iou=0.6747689870864996 errors=0 inferred=False
+==== Output validation ====
+reference policy: requested=auto same_backend_ready=False cpu_full_outputs=1 output_format=bn6_detections
+  part1  : status=ok provider=hailo10h mode=proxy_detections ref=cpu_full/cpu_full_proxy pass=False max_abs=591.4384765625 mean_abs=158.7781524658203
+           proxy: n_ref=7 n_out=58 matched=0 ratio=0.0 mean_iou=0.0
+  part2  : status=ok provider=tensorrt mode=proxy_detections ref=cpu_full/cpu_full_proxy pass=False max_abs=597.5322265625 mean_abs=167.34176635742188
+           proxy: n_ref=7 n_out=0 matched=0 ratio=0.0 mean_iou=0.0
+  composed: status=ok provider=tensorrt mode=proxy_detections ref=cpu_full/cpu_full_proxy fidelity_pass=False semantic_pass=False max_abs=652.8536376953125 mean_abs=258.8824157714844
+           proxy: n_ref=7 n_out=58 matched=0 ratio=0.0 mean_iou=0.0
+[validation] mode=auto ref_mode=auto used(primary=composed)=proxy_detections final_pass=False final_pass_all=False semantic_gate=True semantic_primary_pass=False semantic_pass_all=False semantic_gate=True
+Wrote /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b398/results_hailo10_to_tensorrt/validation_report.json
+Wrote /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b398/results_hailo10_to_tensorrt/validation_report.png and .pdf
+[warn] validation failed (mode=proxy_detections, output_format=bn6_detections) — continuing (soft-fail).
+[hailo10_to_tensorrt] [4/4] Running b399 (stage1=hailo10, stage2=tensorrt)
+[warn] missing report: /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b399/results_hailo10_to_tensorrt/validation_report.json
+[viz] b399/hailo10_to_tensorrt: visual sample=/home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/resources/validation/detection/val2017_n500_s20260710/000000404479.jpg
+[info] manifest: /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b399/split_manifest.json
+[info] full : yolo26m.onnx
+[info] part1: yolo26m_part1_b399.onnx
+[info] part2: yolo26m_part2_b399.onnx
+[info] labels: 80 classes (from ONNX metadata)
+[inputs] using image '000000404479.jpg' for input 'images' shape=[1, 3, 640, 640] scale=norm
+ORT available providers: ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
+Using mixed backends: default=tensorrt, full=tensorrt, stage1=hailo10h, stage2=tensorrt (ORT baseline: ['CPUExecutionProvider'])
+[init] session 'full' ready in 0.3s | providers in use: ['CPUExecutionProvider']
+[init] session 'part1' ready in 0.3s | providers in use: ['CPUExecutionProvider']
+[init] session 'part2' ready in 0.2s | providers in use: ['CPUExecutionProvider']
+[auto] image_scale=auto -> defaulting to norm (unknown outputs).
+[trt-cache] HIT role=part2 model=yolo26m_part2_b399 reason=receipt_verified identity=b02bbd18817f4fc33f3b2fa1a3a2055f9f20e76c23ce23afdd9f890f585d64c4 engine=/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo26m-8f895feae71fe4d4/splits/b399/part2/b02bbd18817f4fc33f3b2fa1a3a2055f9f20e76c23ce23afdd9f890f585d64c4/fp16/part2_fp16.engine
+[native-trt] loaded part2: engine=part2_fp16.engine inputs=[('/model.23/Transpose_output_0', (1, 8400, 84), 'float32')] outputs=[('output0', (1, 300, 6), 'float32')]
+[native-trt] using native TensorRT for part2 (yolo26m_part2_b399.onnx)
+[interface][p2-map][native-trt] {'/model.23/Transpose_output_0': '/model.23/Transpose_output_0'}
+[part2] warmup: 3 runs (not measured)
+[part2] measured: 5 runs
+Benchmark results (mean ± std, ms):
+  full    : - ± -
+  part1   : - ± -
+  part2   : 0.940 ± 0.007
+  composed: - ± -
+[baseline] wrote baseline cache: baseline_full_cpu_outputs.npz
+[validation][backend-drift] part2@tensorrt vs cpu_full (primary_vs_cpu_full): max_abs=466.34197998046875 mean_abs=2.7305750846862793 proxy_ratio=1.0 proxy_mean_iou=0.9912243927345129
+[validation][cardinality] requested=500 evaluated=500 pass=True
+[validation][dataset] semantic proxy validation on 500 image(s)
+==== Output validation ====
+reference policy: requested=auto same_backend_ready=False cpu_full_outputs=1 output_format=bn6_detections
+  part2  : status=ok provider=tensorrt mode=proxy_detections ref=cpu_full/cpu_full_proxy pass=True max_abs=466.34197998046875 mean_abs=2.7305750846862793
+           proxy: n_ref=2 n_out=2 matched=2 ratio=1.0 mean_iou=0.9912243927345129
+[validation] mode=auto ref_mode=auto used(primary=part2)=proxy_detections final_pass=True final_pass_all=True semantic_gate=False
+Wrote /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b399/results_hailo10_to_tensorrt/validation_report.json
+Wrote /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1/suite/b399/results_hailo10_to_tensorrt/validation_report.png and .pdf
+Wrote benchmark_results_hailo10_to_tensorrt_auto.json
+Wrote benchmark_results_hailo10_to_tensorrt_auto.csv
+Wrote scientific_report/ (canonical task-quality, eligibility, frozen Cut Bytes workflow selector plus four alternative ranking baselines, TeX and figures)
+Wrote benchmark_suite_status_matrix.md/csv/json
+Done.
+Collecting results on remote (best effort)
+Packaging results on remote
+Downloading results (scp)
+Extracting results locally
+[extract] /home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/results_bundle.tar.gz -> /home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01 (r:gz)
+[info] wrote lean results bundle: /home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/results_bundle_lean.tar.gz
+DONE in 446.8s. Results in: /home/kmika/Models/EvaluationRuns/RemoteBenchmarkRuns/Results/legacy_suite/1/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01
+[cleanup] removed remote run dir: /home/nx/splitpoint_runs/legacy_suite/completsetdev_20260913_123411_yolo26m_orin_nx_hailo10_01/1

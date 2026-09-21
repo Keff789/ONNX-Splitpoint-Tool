@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 import csv
 import json
+from .accuracy_reporting import assessment_fields
 import math
 import re
 import statistics
@@ -13,6 +14,7 @@ from statistics import NormalDist
 
 from .energy.config import ENERGY_PRIMARY_METHOD, ENERGY_SHADOW_METHOD
 from .energy.comparison import resolve_energy_comparison
+from .preprocessing_contract import preprocessing_contract_sha256
 from .native_energy_quality_admission import (
     verify_sealed_energy_quality_admission,
 )
@@ -819,6 +821,39 @@ def _identity_value(
     return (next(iter(values)) if values else ""), False
 
 
+def _project_bound_preprocessing_pad(
+    plan: dict[str, Any], validation: Mapping[str, Any], join_status: str,
+) -> None:
+    """Fill an absent reporting field only from the exact bound input contract."""
+    if plan.get("prepared_feed_letterbox_pad_value") not in (None, ""):
+        return
+    if join_status != "exact_unique":
+        return
+    contract = validation.get("preprocessing_contract")
+    if not isinstance(contract, Mapping):
+        return
+    contract_sha = preprocessing_contract_sha256(contract)
+    for field in ("preprocessing_contract_sha256", "source_request_sha256", "model_sha256"):
+        left = _strict_sha256_token(plan.get(field))
+        if not left or left != _strict_sha256_token(validation.get(field)):
+            return
+    if contract_sha != plan["preprocessing_contract_sha256"]:
+        return
+    image_sha = _strict_sha256_token(plan.get("prepared_feed_source_image_sha256"))
+    if not image_sha or image_sha != _strict_sha256_token(validation.get("input_image_sha256")):
+        return
+    if (contract.get("task") != plan.get("prepared_feed_task")
+            or contract.get("preprocess_mode") != plan.get("prepared_feed_preprocess_mode")):
+        return
+    pad = contract.get("letterbox_pad_value", contract.get("pad_value"))
+    if type(pad) not in (int, float) or not math.isfinite(pad) or not 0 <= pad <= 255:
+        return
+    if contract.get("pad_value", pad) != pad:
+        return
+    plan["prepared_feed_letterbox_pad_value"] = str(int(pad)) if int(pad) == pad else str(pad)
+    plan["prepared_feed_identity_source"] = "exact_bound_validation_preprocessing_contract"
+
+
 def _endpoint_id_from_validation(
     plan: Mapping[str, Any], validation: Mapping[str, Any], task: str,
 ) -> str:
@@ -1014,6 +1049,8 @@ def _completed_detection_energy_endpoint(
     validation: Mapping[str, Any],
     *,
     physical_match: bool,
+    fresh_completions: Sequence[Mapping[str, Any]] = (),
+    energy_repeats: Sequence[Mapping[str, Any]] = (),
 ) -> tuple[str, str, str, str]:
     """Resolve V2 only when plan and Validation independently attest it."""
     if (
@@ -1022,7 +1059,7 @@ def _completed_detection_energy_endpoint(
         or plan.get("output_endpoint_match") is not True
         or not physical_match
         or str(plan.get("completion_pairing_status") or "").strip()
-        != "strict_completed_detection_endpoint_verified"
+        not in {"strict_completed_detection_endpoint_verified", "strict_fast_postflight_completion_verified"}
     ):
         return "", "", "", "plan_completion_not_strictly_eligible"
 
@@ -1047,6 +1084,42 @@ def _completed_detection_energy_endpoint(
         != plan_stage
     ):
         return "", "", "", "plan_canonical_endpoint_alias_mismatch"
+
+    if plan.get("completion_pairing_status") == "strict_fast_postflight_completion_verified":
+        from .native_detection_postprocess import FrozenPostprocessError, verify_detection_completion_execution_contract
+        from .native_three_stage import NativeThreeStageError, verify_fast_completion_attestation
+        try:
+            execution = verify_detection_completion_execution_contract(validation.get("completion_execution_contract"))
+            verify_fast_completion_attestation(validation.get("completed_task_endpoint_attestation"), execution_contract=execution)
+            source = execution["source_endpoint"]
+            comparison = execution["comparison_endpoint_contract"]
+            if (source.get("endpoint_contract_hash") != plan.get("physical_endpoint_contract_hash")
+                or source.get("output_endpoint_id") != plan.get("physical_output_endpoint_id")
+                or comparison.get("endpoint_contract_hash") != plan_hash
+                or comparison.get("output_endpoint_id") != plan_id):
+                raise ValueError("fast_completion_source_mismatch")
+            repeats = {r.get("logical_repeat_index", r.get("run_index")): r for r in energy_repeats}
+            if not repeats or len(repeats) != len(energy_repeats) or len(fresh_completions) != len(repeats):
+                raise ValueError("fast_completion_repeats_missing")
+            seen = set()
+            for proof in fresh_completions:
+                index = proof.get("logical_repeat_index", proof.get("run_index"))
+                att = verify_fast_completion_attestation(proof.get("completion_execution_attestation"), execution_contract=execution)
+                timing = proof.get("workload_timing") or {}
+                if (index in seen or index not in repeats
+                    or proof.get("status") != "fresh_energy_completion_nonce_count_and_window_verified"
+                    or not proof.get("preflight_nonce") or not _strict_sha256_token(proof.get("stdout_sha256"))
+                    or proof.get("comparison_output_endpoint_id") != plan_id
+                    or proof.get("completed_work_units") != repeats[index].get("energy_work_units_used")
+                    or att.get("completed_work_units") != proof.get("completed_work_units")
+                    or timing.get("status") != "ok" or timing.get("rc") != 0
+                    or not isinstance(timing.get("start_ns"), int) or not isinstance(timing.get("end_ns"), int)
+                    or timing["end_ns"] <= timing["start_ns"]):
+                    raise ValueError("fast_completion_repeat_binding_mismatch")
+                seen.add(index)
+        except (FrozenPostprocessError, NativeThreeStageError, ValueError, TypeError, KeyError):
+            return "", "", "", "validation_fast_completion_evidence_invalid"
+        return plan_id, plan_hash, plan_stage, "strict_plan_validation_fresh_energy_completion_match"
 
     validation_hash = _strict_sha256_token(
         validation.get(
@@ -1091,7 +1164,31 @@ def _completed_detection_energy_endpoint(
     supported_modes = {
         "frozen_host_tail",
         "integrated_accelerator_plus_frozen_normalization",
+        "detection_completion_execution_v1",
     }
+    if completion_mode == "detection_completion_execution_v1":
+        from .native_detection_postprocess import (
+            FrozenPostprocessError,
+            verify_detection_completion_execution_contract,
+            verify_detection_completion_execution_attestation,
+        )
+        try:
+            execution = verify_detection_completion_execution_contract(
+                validation.get("completion_execution_contract")
+            )
+            verified = verify_detection_completion_execution_attestation(
+                attestation, execution_contract=execution,
+                expected_observation_relation="same_hotloop_sentinel",
+            )
+            source = execution.get("source_endpoint") or {}
+            if (
+                verified.get("exact_result_claim_bound") is not True
+                or source.get("endpoint_contract_hash") != plan.get("physical_endpoint_contract_hash")
+                or source.get("output_endpoint_id") != plan.get("physical_output_endpoint_id")
+            ):
+                return "", "", "", "validation_completion_source_mismatch"
+        except (FrozenPostprocessError, TypeError, ValueError):
+            return "", "", "", "validation_completion_attestation_invalid"
     comparison_contract = validation.get(
         "completed_task_comparison_endpoint_contract"
     )
@@ -1151,6 +1248,8 @@ def _resolved_energy_endpoint_identity(
     plan: Mapping[str, Any],
     validation: Mapping[str, Any],
     task: str,
+    *, fresh_completions: Sequence[Mapping[str, Any]] = (),
+    energy_repeats: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Resolve physical provenance and the endpoint admitted for pairing."""
     physical = _physical_energy_endpoint(plan, validation, task)
@@ -1216,6 +1315,8 @@ def _resolved_energy_endpoint_identity(
             physical_match=bool(
                 physical.get("physical_output_endpoint_match")
             ),
+            fresh_completions=fresh_completions,
+            energy_repeats=energy_repeats,
         )
     )
     eligible = bool(endpoint_id and endpoint_hash and endpoint_stage)
@@ -1290,6 +1391,7 @@ def collect_native_energy(run_dir: str | Path) -> list[dict[str, Any]]:
         validation, validation_join_status = _validation_evidence_for_plan(
             plan, validations,
         )
+        _project_bound_preprocessing_pad(plan, validation, validation_join_status)
         identity_conflicts: list[str] = []
 
         def identity(field: str, *aliases: str) -> str:
@@ -1699,6 +1801,8 @@ def collect_native_energy(run_dir: str | Path) -> list[dict[str, Any]]:
         )
         endpoint_identity = _resolved_energy_endpoint_identity(
             plan, validation, task,
+            fresh_completions=run_info.get("fresh_energy_completion_evidence") or [],
+            energy_repeats=aggregate.get("runs") or [],
         )
         endpoint_contract_complete = bool(
             endpoint_identity.get("endpoint_contract_complete") is True
@@ -2038,6 +2142,8 @@ def collect_native_energy(run_dir: str | Path) -> list[dict[str, Any]]:
                 task_quality_observation_valid
             ),
             "accuracy_gate_pass": accuracy_gate_pass,
+            **assessment_fields(
+                validation.get("accuracy_assessment") if validation_join_status == "exact_unique" else admission.get("accuracy_assessment")),
             "quality_claim_result_verified": (
                 quality_claim_result_verified
             ),
@@ -2220,6 +2326,17 @@ def collect_native_energy(run_dir: str | Path) -> list[dict[str, Any]]:
             "energy_per_work_screening_estimate_j": screening_energy_per_work,
             "energy_dynamic_j": _num(_first(payload.get("avg_energy_dynamic_j"), payload.get("energy_dynamic_j"))),
             "host_normalized_energy_est_j": _num(_first(payload.get("avg_host_normalized_energy_est_j"), payload.get("host_normalized_energy_est_j"))),
+            "energy_normalization_repeats": [
+                {key: record.get(key) for key in (
+                    "run_index", "energy_total_j", "active_duration_s", "avg_power_w",
+                    "energy_work_units_used", "energy_per_work_unit_j",
+                    "host_normalized_energy_est_j", "host_normalized_energy_per_work_unit_est_j",
+                    "host_normalized_average_power_est_w", "accelerator_idle_w_applied",
+                    "postprocess_status", "accelerator_idle_correction_applied",
+                )}
+                for record in aggregate.get("runs", []) if isinstance(record, Mapping)
+                and record.get("postprocess_status") == "ok"
+            ],
             "host_normalized_energy_per_work_est_j": _num(_first(payload.get("avg_host_normalized_energy_per_work_unit_est_j"), payload.get("host_normalized_energy_per_work_unit_est_j"))),
             "host_normalized_energy_per_work_est_j_sample_stddev": _num(payload.get("host_normalized_energy_per_work_unit_est_j_sample_stddev")),
             "host_normalized_energy_per_work_est_j_ci_low": _num(payload.get("host_normalized_energy_per_work_unit_est_j_ci_low")),
@@ -2397,7 +2514,7 @@ def collect_native_energy(run_dir: str | Path) -> list[dict[str, Any]]:
                 or "required_tensorrt_full_normalization_unavailable"
             )
             reasons = list(out[-1].get("claim_exclusion_reasons") or [])
-            if reason not in reasons:
+            if reason != "host_normalized_verified" and reason not in reasons:
                 reasons.append(reason)
             out[-1]["claim_exclusion_reasons"] = reasons
             out[-1]["claim_exclusion_reason"] = ";".join(reasons)
@@ -2567,6 +2684,7 @@ def scientific_energy_rows(
                 "task_quality_observation_valid"
             ),
             "accuracy_gate_pass": item.get("accuracy_gate_pass"),
+            **assessment_fields(item.get("accuracy_assessment")),
             "quality_claim_result_verified": item.get(
                 "quality_claim_result_verified"
             ),
@@ -2872,7 +2990,7 @@ def build_native_energy_pairs(rows: Sequence[Mapping[str, Any]]) -> list[dict[st
                 or (
                     baseline_comparison.get("energy_comparison_basis")
                     == "host_normalized_accelerator_idle_subtracted"
-                    and baseline_comparison.get("energy_comparison_claim_ready") is True
+                    and baseline_comparison.get("energy_comparison_status") == "host_normalized_verified"
                 )
             )
             split_precision = str(

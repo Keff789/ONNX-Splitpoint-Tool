@@ -328,7 +328,8 @@ def selection_preflight_builder(
         boundary = f"b{int(match.group(1)):03d}" if match else "full"
         arch = str(kwargs.get("hw_arch") or "")
         role = "hailo10_hef" if "hailo10" in arch else "hailo8_hef"
-        expectation = _expectation_for(policy, model_id=model_id, role=role, item_id=f"{boundary}:part1")
+        stage = str((kwargs.get('build_evidence_context') or {}).get('stage') or 'part1')
+        expectation = _expectation_for(policy, model_id=model_id, role=role, item_id=f"{boundary}:{stage}")
         blocked = bool(
             (cache_verify_guard(profile_payload) and status not in {"HIT", "KNOWN_INFEASIBLE"})
             or policy.get("block_on_unexpected_cold_builds")
@@ -337,7 +338,7 @@ def selection_preflight_builder(
         report = {
             "schema": "onnx-splitpoint/selection-probe-cache-preflight/v1",
             "scope": "selection_probe", "model_id": model_id,
-            "boundary": boundary, "backend": arch, "stage": "part1",
+            "boundary": boundary, "backend": arch, "stage": stage,
             "status": status, "expectation": expectation,
             "reason": reason,
             "expected_cold_build": status == "MISS",
@@ -369,6 +370,8 @@ def defer_deepx_part1_build(**kwargs: Any) -> dict[str, Any]:
     selected = []
     for case in suite.get("cases", []):
         folder = str(case.get("case_dir") or case.get("folder") or "")
+        if 'selected_case_dirs' in kwargs and folder not in kwargs['selected_case_dirs']:
+            continue
         selected.append(folder)
         manifest = _read(output / folder / str(case.get("manifest") or "split_manifest.json"))
         source = Path(str(manifest.get("part1_model") or manifest.get("part1") or manifest.get("part1_path") or ""))
@@ -379,6 +382,41 @@ def defer_deepx_part1_build(**kwargs: Any) -> dict[str, Any]:
     saved["selected_case_dirs"] = selected
     write_json(output / DEEPX_PART1_REQUEST, {"status": "pending", "kwargs": saved, "source_onnx_sha256": sources})
     return {"status": "deferred_until_cache_preflight", "compiler_dispatched": False}
+
+
+def probe_deferred_deepx_part1_cache(suite: Path, *, log: Any = None) -> dict[str, Any]:
+    """Resolve the selected Part1 receipt before dependent TRT cache probes.
+
+    Use the generator's saved exact request and leave its build continuation
+    pending. No compiler/SDK probe is needed for a verified reuse hit.
+    """
+    path = suite / DEEPX_PART1_REQUEST
+    if not path.is_file():
+        return {}
+    request = _read(path)
+    args = dict(request['kwargs'])
+    selected = {str(c.get('case_dir') or c.get('folder') or '')
+                for c in _read(suite / 'benchmark_set.json').get('cases', [])}
+    args['selected_case_dirs'] = sorted(selected.intersection(args.get('selected_case_dirs', selected)))
+    try:
+        if Path(args['out_dir']).resolve() != suite.resolve():
+            raise RuntimeError('Deferred DeepX Part1 suite identity mismatch')
+        for source_path, digest in request.get('source_onnx_sha256', {}).items():
+            source = Path(source_path)
+            if not source.is_file() or sha256_file(source) != digest:
+                raise RuntimeError(f'Selected DeepX ONNX changed before cache preflight: {source}')
+    except Exception as exc:
+        for folder in args['selected_case_dirs']:
+            write_json(suite / folder / 'deepx/deepx_m1/part1/deepx_part1_artifact_status.json', {
+                'ok': False, 'status': 'failed', 'error': str(exc),
+                'cache_lookup': {'outcome': 'UNKNOWN', 'reason': 'native_part1_identity_unavailable'},
+            })
+        raise
+    args.update(out_dir=suite, force_build=False, cache_only=True)
+    if callable(log):
+        args['log'] = lambda msg, **_kw: log(str(msg))
+    from ..gui.benchmark_workflow import _materialize_manual_deepx_part1_artifacts
+    return _materialize_manual_deepx_part1_artifacts(**args)
 
 
 def _finalize_deepx(suite: Path, selected: set[str], log: Any, cancel_event: Any) -> list[dict[str, Any]]:
@@ -392,7 +430,7 @@ def _finalize_deepx(suite: Path, selected: set[str], log: Any, cancel_event: Any
             from ..gui.benchmark_workflow import _materialize_manual_deepx_part1_artifacts
             args = dict(request["kwargs"])
             args["out_dir"] = Path(args["out_dir"])
-            args["selected_case_dirs"] = sorted(selected)
+            args["selected_case_dirs"] = sorted(selected.intersection(args.get("selected_case_dirs", selected)))
             if request.get("status") == "completed":
                 args["force_build"] = False
             for source_path, digest in request.get("source_onnx_sha256", {}).items():
@@ -401,7 +439,9 @@ def _finalize_deepx(suite: Path, selected: set[str], log: Any, cancel_event: Any
                     raise RuntimeError(f"Selected DeepX ONNX changed after cache preflight: {source}")
             if callable(log):
                 args["log"] = lambda msg, **_kw: log(str(msg))
-            result = _materialize_manual_deepx_part1_artifacts(**args)
+            from ..backend_backfill import call_with_build_budget
+            result = call_with_build_budget(_materialize_manual_deepx_part1_artifacts,
+                state_path=suite / 'generation_state.json', stage='part1', **args)
             request["status"] = "completed" if result.get("status") in {"ok", "not_selected"} and not result.get("failed_count") else "failed"
             request["result"] = result
             write_json(p1_request, request)
@@ -427,7 +467,9 @@ def _finalize_deepx(suite: Path, selected: set[str], log: Any, cancel_event: Any
         if not source.is_file() or sha256_file(source) != request["source_onnx_sha256"]:
             raise RuntimeError(f"Selected DeepX ONNX changed after cache preflight: {source}")
         from ..deepx.activation_proxy import compile_deepx_stage2_from_activation_proxy
-        result = compile_deepx_stage2_from_activation_proxy(**args)
+        from ..backend_backfill import call_with_build_budget
+        result = call_with_build_budget(compile_deepx_stage2_from_activation_proxy,
+            state_path=suite / 'generation_state.json', stage='part2', **args)
         manifest_path = path.parent / "split_manifest.json"
         manifest = _read(manifest_path)
         deepx = manifest.setdefault("deepx", {})
@@ -550,12 +592,25 @@ def _refresh_suite_mirrors(suite: Path, formal: Path) -> None:
         state["cases"] = payload.get("cases", [])
         state["suite_hailo_hefs"] = suite_hefs
         write_json(state_path, state)
+        if state.get('backend_backfill'):
+            from ..backend_backfill import bind_plan_cases
+            payload['backend_backfill'] = state['backend_backfill']
+            write_json(suite / 'benchmark_set.json', payload)
+            write_json(formal / 'backend_selection.json', state['backend_backfill'])
+            for directory in (suite, formal):
+                plan_path = directory / 'benchmark_plan.json'
+                if plan_path.is_file():
+                    plan = _read(plan_path)
+                    bind_plan_cases(plan, state['backend_backfill'])
+                    write_json(plan_path, plan)
     for name in ("benchmark_set.json", "generation_decisions.json"):
         path = formal / name
         if path.is_file():
             mirror = _read(path)
             key = "accepted_cases" if name == "generation_decisions.json" else "cases"
             mirror[key] = payload.get("cases", [])
+            if payload.get('backend_backfill'):
+                mirror['backend_backfill'] = payload['backend_backfill']
             mirror["hailo_build_continuation_completed"] = True
             write_json(path, mirror)
 

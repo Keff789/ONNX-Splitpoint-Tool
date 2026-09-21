@@ -615,6 +615,8 @@ struct PostWorkItem {
 };
 
 struct FrameMetrics {
+    int64_t request_start_ns = -1;
+    int64_t request_end_ns = -1;
     double preprocess_ms = 0.0;
     double p1_ms = 0.0;
     double handoff_ms = 0.0;
@@ -627,6 +629,7 @@ struct FrameMetrics {
 };
 
 struct PhaseResult {
+    std::exception_ptr thread_error;
     int frames_requested = 0;
     int raw_frames_completed = 0;
     int completed_frames = 0;
@@ -684,29 +687,29 @@ static PhaseResult run_phase(
     std::thread p1_thread([&] {
         try {
             for (int sequence = 0; sequence < frame_count; ++sequence) {
-                const auto wait_start = Clock::now();
-                int slot_index = -1;
-                if (!free_boundary.pop(slot_index)) break;
-                const auto wait_end = Clock::now();
-                auto &metrics = result.frames.at(static_cast<size_t>(sequence));
-                metrics.boundary_wait_ms = ms_between(wait_start, wait_end);
-
-                auto &slot = boundary_slots.at(static_cast<size_t>(slot_index));
-                slot.sequence = sequence;
-                slot.image_index = sequence % static_cast<int>(images.size());
+                const int image_index = sequence % static_cast<int>(images.size());
                 const auto stage_start = Clock::now();
                 if (measured && sequence == 0) measurement_start = stage_start;
-                cv::Mat bgr = cv::imread(images.at(static_cast<size_t>(slot.image_index)));
+                cv::Mat bgr = cv::imread(images.at(static_cast<size_t>(image_index)));
                 if (bgr.empty()) throw std::runtime_error("failed to read image");
-                slot.original_width = bgr.cols;
-                slot.original_height = bgr.rows;
                 cv::Mat rgb = letterbox_rgb_uint8(
                     bgr, hailo.input_width(), hailo.input_height(), pad_value);
                 const auto preprocess_end = Clock::now();
+                auto &metrics = result.frames.at(static_cast<size_t>(sequence));
+                metrics.request_start_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(preprocess_end.time_since_epoch()).count();
+                int slot_index = -1;
+                if (!free_boundary.pop(slot_index)) break;
+                const auto wait_end = Clock::now();
+                metrics.boundary_wait_ms = ms_between(preprocess_end, wait_end);
+                auto &slot = boundary_slots.at(static_cast<size_t>(slot_index));
+                slot.sequence = sequence;
+                slot.image_index = image_index;
+                slot.original_width = bgr.cols;
+                slot.original_height = bgr.rows;
                 hailo.infer(rgb, slot.boundary);
                 const auto p1_end = Clock::now();
                 slot.preprocess_ms = ms_between(stage_start, preprocess_end);
-                slot.p1_ms = ms_between(preprocess_end, p1_end);
+                slot.p1_ms = ms_between(wait_end, p1_end);
                 p1_to_p2.push(slot_index);
             }
             p1_to_p2.close();
@@ -783,7 +786,10 @@ static PhaseResult run_phase(
                 metrics.detection_count = detection_count;
                 metrics.callback_status = status;
                 if (status != 0) callback_failures.fetch_add(1);
-                else completed_count.fetch_add(1);
+                else {
+                    metrics.request_end_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(post_end.time_since_epoch()).count();
+                    completed_count.fetch_add(1);
+                }
                 if (measured) completed_end = post_end;
                 free_post.push(work.post_slot);
             }
@@ -796,7 +802,7 @@ static PhaseResult run_phase(
     p2_thread.join();
     post_thread.join();
 
-    if (thread_error) std::rethrow_exception(thread_error);
+    result.thread_error = thread_error;
 
     result.raw_frames_completed = raw_count.load();
     result.completed_frames = completed_count.load();
@@ -885,10 +891,21 @@ static void write_report(
     out << "{\n";
     out << "  \"schema\": \"onnx-splitpoint/yolov7-native-three-stage-runtime\",\n";
     out << "  \"schema_version\": 1,\n";
-    out << "  \"ok\": " << ((measurement.callback_failures == 0 &&
+    out << "  \"ok\": " << ((!measurement.thread_error && measurement.callback_failures == 0 &&
                                       measurement.raw_frames_completed == config.frames &&
                                       measurement.completed_frames == config.frames) ? "true" : "false") << ",\n";
     out << "  \"mode\": \"hailo8_cpp_fifo_trt_ctypes_fast_numpy_three_stage\",\n";
+    out << "  \"request_latency\": {\"schema\":\"onnx-splitpoint/request-latency\",\"schema_version\":1,\"timestamp_unit\":\"ns\",\"clock\":\"steady_clock_ns\",\"clock_domain\":\"steady_clock_ns:runtime_report_local\",\"task_complete\":true,\"start_endpoint\":\"prepared_input_before_first_admission\",\"end_endpoint\":\"host_result_after_required_transfer_sync_and_task_postprocess\",\"start_anchor\":\"three_stage:after_preprocessing_before_free_boundary_pop\",\"end_anchor\":\"three_stage:after_successful_decode_nms_callback\",\"admission_wait_included\":true,\"warmup_included\":false,\"expected_count\":" << measurement.frames_requested << ",\"errors\":{\"callback_failures\":" << measurement.callback_failures << ",\"worker_failures\":" << (measurement.thread_error ? 1 : 0) << "},\"pairs\":[";
+    for (size_t i = 0; i < measurement.frames.size(); ++i) {
+        const auto &frame = measurement.frames[i];
+        if (i) out << ",";
+        out << "[" << i << ",";
+        if (frame.request_start_ns < 0) out << "null"; else out << frame.request_start_ns;
+        out << ",";
+        if (frame.request_end_ns < 0) out << "null"; else out << frame.request_end_ns;
+        out << "]";
+    }
+    out << "]},\n";
     out << "  \"measurement_endpoint_raw\": \"raw_model_outputs\",\n";
     out << "  \"measurement_endpoint_completed\": \"completed_detection\",\n";
     out << "  \"frames\": " << config.frames << ",\n";
@@ -976,6 +993,7 @@ extern "C" int onnx_splitpoint_run_three_stage_v1(
             config->warmup, false, images, config->p1_queue_depth,
             config->post_queue_depth, config->letterbox_pad_value,
             hailo, trt, callback, user_data);
+        if (warmup.thread_error) std::rethrow_exception(warmup.thread_error);
         if (warmup.callback_failures != 0 || warmup.completed_frames != config->warmup) {
             throw std::runtime_error("warmup phase did not complete cleanly");
         }
@@ -985,6 +1003,7 @@ extern "C" int onnx_splitpoint_run_three_stage_v1(
             hailo, trt, callback, user_data);
 
         write_report(*config, images, trt, warmup, measurement, config->out_json);
+        if (measurement.thread_error) std::rethrow_exception(measurement.thread_error);
         set_error(error_buffer, error_buffer_size, "");
         return (measurement.callback_failures == 0 &&
                 measurement.raw_frames_completed == config->frames &&

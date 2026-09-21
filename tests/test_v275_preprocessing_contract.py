@@ -78,6 +78,7 @@ def test_hailo_320x320_requires_explicit_task_and_never_uses_size_heuristic(
     )
     refused = hailo_backend.hailo_build_hef_auto(
         model,
+        outdir=tmp_path,
         backend="venv",
         net_input_shapes=[1, 3, 320, 320],
     )
@@ -151,7 +152,7 @@ def test_every_production_hailo_build_call_site_supplies_task_keyword():
             "hailo_build_hef_auto": 1
         },
         ROOT / "onnx_splitpoint_tool/benchmark/services.py": {
-            "hailo_build_hef_fn": 4
+            "hailo_build_hef_fn": 5
         },
         ROOT / "onnx_splitpoint_tool/gui_app.py": {"hailo_build_hef_auto": 3},
     }

@@ -48,6 +48,7 @@ BACKEND_ARTIFACT_DIAGNOSTIC_MAX_TOTAL_BYTES = STRUCTURED_RESULT_MAX_TOTAL_BYTES
 BACKEND_ARTIFACT_BENCHMARK_FILES = frozenset({
     "artifact_reuse_manifest.json",
     "backend_artifact_decisions.json",
+    "backend_selection.json",
     "hailo_artifact_service_plan.json",
     "hailo_build_service_status.json",
     "deepx_prefetch_v60s.json",

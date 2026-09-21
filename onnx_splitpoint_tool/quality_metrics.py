@@ -368,7 +368,92 @@ def detection_quality_evaluator(
     annotations: Any,
     config: Mapping[str, Any],
 ) -> _DetectionCOCOProxyEvaluator:
+    from .accuracy_reporting import active_policy
+    if active_policy(_gate_config(config)):
+        return _CanonicalCOCOEvaluator(reference_records, candidate_records, annotations, config)
     return _DetectionCOCOProxyEvaluator(reference_records, candidate_records, annotations, config)
 
 
 __all__ = ["classification_quality_evaluator", "detection_quality_evaluator"]
+
+
+class _CanonicalCOCOEvaluator:
+    """Official COCO matching once, population accumulation for every paired draw.
+
+    Repeated images duplicate complete evalImgs records, including crowd/ignore,
+    maxDets, area ranges and score ties. Never average per-image AP.
+    """
+    def __init__(self, reference_records, candidate_records, annotations, config):
+        import contextlib
+        import io
+        from copy import deepcopy
+        from pycocotools.coco import COCO
+        from pycocotools.cocoeval import COCOeval
+        self.n = len(reference_records)
+        gt_rows = [a["ground_truth"] for a in annotations]
+        categories = sorted({int(d["class_id"]) for row in gt_rows for d in row})
+        images = [{"id": i} for i in range(self.n)]
+        ground = []
+        def box(d):
+            coords = np.asarray([d[k] for k in ("x1", "y1", "x2", "y2")], dtype=float)
+            if not np.isfinite(coords).all() or coords[2] < coords[0] or coords[3] < coords[1]:
+                raise ValueError("invalid final XYXY quality record")
+            return [float(coords[0]), float(coords[1]), float(coords[2]-coords[0]), float(coords[3]-coords[1])]
+        for i, row in enumerate(gt_rows):
+            for d in row:
+                b = box(d)
+                ground.append(dict(id=len(ground)+1, image_id=i, category_id=int(d["class_id"]), bbox=b,
+                    area=float(d.get("area", b[2]*b[3])), iscrowd=int(d.get("iscrowd", 0)), ignore=int(d.get("ignore", 0))))
+        self.evaluators = []
+        with contextlib.redirect_stdout(io.StringIO()):
+            gt = COCO()
+            gt.dataset = dict(images=images, categories=[{"id": k} for k in categories], annotations=ground)
+            gt.createIndex()
+            for records, field in [(reference_records, "reference"), (candidate_records, "candidate")]:
+                detections = []
+                for i, record in enumerate(records):
+                    for d in record[field]:
+                        score = float(d["score"])
+                        if not np.isfinite(score) or not 0 <= score <= 1:
+                            raise ValueError("invalid detection score")
+                        detections.append(dict(image_id=i, category_id=int(d["class_id"]), bbox=box(d), score=score))
+                if detections:
+                    dt = gt.loadRes(detections)
+                else:
+                    dt = COCO()
+                    dt.dataset = dict(images=images, categories=gt.dataset["categories"], annotations=[])
+                    dt.createIndex()
+                evaluator = COCOeval(gt, dt, "bbox")
+                evaluator.evaluate()
+                self.evaluators.append((evaluator, list(evaluator.evalImgs), deepcopy(evaluator._paramsEval)))
+        self.config = config
+
+    def evaluate(self, multiplicities):
+        import contextlib
+        import io
+        from copy import deepcopy
+        counts = np.asarray(multiplicities)
+        if counts.shape != (self.n,) or not np.isfinite(counts).all() or np.any(counts < 0) or not np.array_equal(counts, np.rint(counts)):
+            raise ValueError("invalid COCO image multiplicities")
+        indices = np.repeat(np.arange(self.n), counts.astype(int))
+        if not len(indices):
+            raise ValueError("empty COCO population")
+        metrics = []
+        with contextlib.redirect_stdout(io.StringIO()):
+            for evaluator, original, params in self.evaluators:
+                evaluator.params = deepcopy(params)
+                evaluator.params.imgIds = list(range(len(indices)))
+                evaluator._paramsEval = deepcopy(evaluator.params)
+                evaluator.evalImgs = [original[base+i] for base in range(0, len(original), self.n) for i in indices]
+                evaluator.accumulate()
+                precision = evaluator.eval["precision"][:, :, :, 0, -1]
+                def mean_valid(a):
+                    a = a[a > -1]
+                    return float(np.mean(a)) if a.size else 0.0
+                metrics.append([mean_valid(precision), mean_valid(precision[0]), mean_valid(precision[5])])
+        reference, candidate = metrics
+        names = ["coco_ap_50_95", "ap50", "ap75"]
+        parts = [dict(metric=name, reference=r, candidate=c, delta=c-r,
+                 margin=_margin(self.config, "non_inferiority_margin" if idx == 0 else f"guardrails.{name}_margin"))
+                 for idx, (name, r, c) in enumerate(zip(names, reference, candidate))]
+        return {"primary": parts[0], "guardrails": {"ap50": parts[1], "ap75": parts[2]}}

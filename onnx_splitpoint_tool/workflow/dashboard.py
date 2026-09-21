@@ -961,16 +961,17 @@ def _write_latex_table(path: Path, *, caption: str, label: str, headers: Sequenc
     lines = [
         r"\begin{table}[ht]",
         r"\centering",
+        r"\small",
         f"\\caption{{{_latex_escape(caption)}}}",
         f"\\label{{tab:{_latex_escape(label)}}}",
         f"\\begin{{tabular}}{{{cols}}}",
-        r"\hline",
+        r"\toprule",
         " & ".join(_latex_escape(h) for h in headers) + ' \\\\',
-        r"\hline",
+        r"\midrule",
     ]
     for row in rows:
         lines.append(" & ".join(_latex_escape(_paper_cell(v)) for v in row) + ' \\\\')
-    lines.extend([r"\hline", r"\end{tabular}", r"\end{table}", ""])
+    lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table}", ""])
     return write_text(path, "\n".join(lines))
 
 def _try_write_figures(reports: Path, model_cards: Sequence[Mapping[str, Any]], thesis_rows: Sequence[Mapping[str, Any]], backend_rows: Sequence[Mapping[str, Any]], pred_rows: Sequence[Mapping[str, Any]]) -> List[Path]:
@@ -978,44 +979,42 @@ def _try_write_figures(reports: Path, model_cards: Sequence[Mapping[str, Any]], 
     figs.mkdir(parents=True, exist_ok=True)
     created: List[Path] = []
     try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
+        from ..reporting_figures import export_subplots
     except Exception:
         write_text(figs / "FIGURES_NOT_GENERATED.md", "Matplotlib was not available. CSV/JSON/LaTeX reports were still generated.\n")
         return []
 
-    def _save(fig_path: Path) -> None:
+    def _save(fig_path: Path, figure) -> None:
         try:
-            plt.tight_layout()
+            figure.tight_layout()
         except Exception:
             pass
-        plt.savefig(fig_path, dpi=150)
-        plt.close()
+        figure.savefig(fig_path, dpi=150)
+
         created.append(fig_path)
 
     # 1. Best complete split latency by model.
     xs = [str(m.get("model_id") or "") for m in model_cards]
     ys = [_float(m.get("best_complete_split_latency_ms")) for m in model_cards]
     if xs and any(y is not None for y in ys):
-        plt.figure(figsize=(max(6, len(xs) * 1.4), 4))
-        plt.bar(xs, [y if y is not None else 0 for y in ys])
-        plt.ylabel("Latency [ms]")
-        plt.title("Best measured complete split latency by model")
-        plt.xticks(rotation=25, ha="right")
-        _save(figs / "latency_by_model.png")
+        figure, axis = export_subplots(figsize=(max(6, len(xs) * 1.4), 4))
+        axis.bar(xs, [y if y is not None else float("nan") for y in ys])
+        axis.set_ylabel("Latency [ms]")
+        axis.set_title("Best measured complete split latency by model")
+        axis.tick_params(axis="x", labelrotation=25)
+        _save(figs / "latency_by_model.png", figure)
 
     # 1b. Best pipeline FPS by model. This is the key throughput view for
     # interleaved split execution: lower single-frame latency is not the same as
     # better steady-state throughput.
     pfs = [_float(m.get("best_pipeline_fps")) for m in model_cards]
     if xs and any(y is not None for y in pfs):
-        plt.figure(figsize=(max(6, len(xs) * 1.4), 4))
-        plt.bar(xs, [y if y is not None else 0 for y in pfs])
-        plt.ylabel("Pipeline throughput [FPS]")
-        plt.title("Best interleaved pipeline throughput by model")
-        plt.xticks(rotation=25, ha="right")
-        _save(figs / "pipeline_fps_by_model.png")
+        figure, axis = export_subplots(figsize=(max(6, len(xs) * 1.4), 4))
+        axis.bar(xs, [y if y is not None else float("nan") for y in pfs])
+        axis.set_ylabel("Pipeline throughput [FPS]")
+        axis.set_title("Best interleaved pipeline throughput by model")
+        axis.tick_params(axis="x", labelrotation=25)
+        _save(figs / "pipeline_fps_by_model.png", figure)
 
     # 1c. Latency-vs-cycle scatter: shows the distinction between single-sample
     # latency and steady-state pipeline cycle time.
@@ -1027,15 +1026,15 @@ def _try_write_figures(reports: Path, model_cards: Sequence[Mapping[str, Any]], 
         if l is not None and c is not None:
             lx.append(l); cy.append(c)
     if lx:
-        plt.figure(figsize=(5, 5))
-        plt.scatter(lx, cy)
+        figure, axis = export_subplots(figsize=(5, 5))
+        axis.scatter(lx, cy)
         lo = min(lx + cy)
         hi = max(lx + cy)
-        plt.plot([lo, hi], [lo, hi], linestyle="--")
-        plt.xlabel("Single-frame split latency [ms]")
-        plt.ylabel("Pipeline cycle [ms]")
-        plt.title("Split latency vs streaming cycle")
-        _save(figs / "latency_vs_pipeline_cycle.png")
+        axis.plot([lo, hi], [lo, hi], linestyle="--")
+        axis.set_xlabel("Single-frame split latency [ms]")
+        axis.set_ylabel("Pipeline cycle [ms]")
+        axis.set_title("Split latency vs streaming cycle")
+        _save(figs / "latency_vs_pipeline_cycle.png", figure)
 
     # 2. Predicted vs measured for rows where both exist.
     pairs = []
@@ -1047,17 +1046,17 @@ def _try_write_figures(reports: Path, model_cards: Sequence[Mapping[str, Any]], 
             pairs.append((p, m))
             labels.append(str(row.get("model_id") or ""))
     if pairs:
-        plt.figure(figsize=(5, 5))
+        figure, axis = export_subplots(figsize=(5, 5))
         px = [p for p, _ in pairs]
         my = [m for _, m in pairs]
-        plt.scatter(px, my)
+        axis.scatter(px, my)
         lo = min(px + my)
         hi = max(px + my)
-        plt.plot([lo, hi], [lo, hi], linestyle="--")
-        plt.xlabel("Predicted latency [ms]")
-        plt.ylabel("Measured latency [ms]")
-        plt.title("Predicted vs measured complete split latency")
-        _save(figs / "predicted_vs_measured.png")
+        axis.plot([lo, hi], [lo, hi], linestyle="--")
+        axis.set_xlabel("Predicted latency [ms]")
+        axis.set_ylabel("Measured latency [ms]")
+        axis.set_title("Predicted vs measured complete split latency")
+        _save(figs / "predicted_vs_measured.png", figure)
 
     # 3. Mean speedup by backend over CPU full.
     agg: Dict[str, List[float]] = {}
@@ -1069,12 +1068,12 @@ def _try_write_figures(reports: Path, model_cards: Sequence[Mapping[str, Any]], 
     if agg:
         labels_b = sorted(agg)
         vals = [_mean(agg[b]) or 0.0 for b in labels_b]
-        plt.figure(figsize=(max(6, len(labels_b) * 1.2), 4))
-        plt.bar([_backend_display(b) for b in labels_b], vals)
-        plt.ylabel("Speedup vs CPU full")
-        plt.title("Backend speedup summary")
-        plt.xticks(rotation=25, ha="right")
-        _save(figs / "speedup_by_backend.png")
+        figure, axis = export_subplots(figsize=(max(6, len(labels_b) * 1.2), 4))
+        axis.bar([_backend_display(b) for b in labels_b], vals)
+        axis.set_ylabel("Speedup vs CPU full")
+        axis.set_title("Backend speedup summary")
+        axis.tick_params(axis="x", labelrotation=25)
+        _save(figs / "speedup_by_backend.png", figure)
 
     # 4. Median regret by model.
     reg_by_model: Dict[str, List[float]] = {}
@@ -1086,13 +1085,14 @@ def _try_write_figures(reports: Path, model_cards: Sequence[Mapping[str, Any]], 
     if reg_by_model:
         labels_m = sorted(reg_by_model)
         vals = [_median(reg_by_model[m]) or 0.0 for m in labels_m]
-        plt.figure(figsize=(max(6, len(labels_m) * 1.4), 4))
-        plt.bar(labels_m, vals)
-        plt.ylabel("Median regret [%]")
-        plt.title("Regret by model")
-        plt.xticks(rotation=25, ha="right")
-        _save(figs / "regret_by_model.png")
+        figure, axis = export_subplots(figsize=(max(6, len(labels_m) * 1.4), 4))
+        axis.bar(labels_m, vals)
+        axis.set_ylabel("Median regret [%]")
+        axis.set_title("Regret by model")
+        axis.tick_params(axis="x", labelrotation=25)
+        _save(figs / "regret_by_model.png", figure)
     return created
+
 
 
 def _try_write_claim_figures(reports: Path, claim_rows: Sequence[Mapping[str, Any]]) -> List[Path]:
@@ -1110,41 +1110,40 @@ def _try_write_claim_figures(reports: Path, claim_rows: Sequence[Mapping[str, An
     figs.mkdir(parents=True, exist_ok=True)
     created: List[Path] = []
     try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
+        from ..reporting_figures import export_subplots
     except Exception:
         return []
     xs = [float(_float(r.get("pipeline_speedup_vs_tensorrt_full")) or 0.0) for r in rows]
     ys = [float(_float(r.get("energy_ratio_vs_tensorrt_command_window")) or 0.0) for r in rows]
     labels = [f"{r.get('model_id','')} {r.get('best_hetero_case','')}" for r in rows]
-    plt.figure(figsize=(6.4, 4.6))
-    plt.scatter(xs, ys)
+    figure, axis = export_subplots(figsize=(6.4, 4.6))
+    axis.scatter(xs, ys)
     x_min = min([0.8] + xs); x_max = max([1.2] + xs)
     y_min = min([0.8] + ys); y_max = max([1.2] + ys)
-    plt.axvline(1.0, linestyle="--", linewidth=1)
-    plt.axhline(1.0, linestyle="--", linewidth=1)
+    axis.axvline(1.0, linestyle="--", linewidth=1)
+    axis.axhline(1.0, linestyle="--", linewidth=1)
     for x, y, label in zip(xs, ys, labels):
         try:
-            plt.annotate(label, (x, y), textcoords="offset points", xytext=(4, 4), fontsize=8)
+            axis.annotate(label, (x, y), textcoords="offset points", xytext=(4, 4), fontsize=8)
         except Exception:
             pass
     pad_x = max(0.05, (x_max - x_min) * 0.12)
     pad_y = max(0.05, (y_max - y_min) * 0.12)
-    plt.xlim(x_min - pad_x, x_max + pad_x)
-    plt.ylim(max(0.0, y_min - pad_y), y_max + pad_y)
-    plt.xlabel("Pipeline throughput speedup vs TensorRT full [×]")
-    plt.ylabel("Measured energy/frame ratio vs TensorRT full [×]")
-    plt.title("Heterogeneous split throughput-energy trade-off")
+    axis.set_xlim(x_min - pad_x, x_max + pad_x)
+    axis.set_ylim(max(0.0, y_min - pad_y), y_max + pad_y)
+    axis.set_xlabel("Pipeline throughput speedup vs TensorRT full [×]")
+    axis.set_ylabel("Measured energy/frame ratio vs TensorRT full [×]")
+    axis.set_title("Heterogeneous split throughput-energy trade-off")
     try:
-        plt.tight_layout()
+        figure.tight_layout()
     except Exception:
         pass
     out = figs / "speedup_vs_energy_ratio.png"
-    plt.savefig(out, dpi=180)
-    plt.close()
+    figure.savefig(out, dpi=180)
+
     created.append(out)
     return created
+
 
 
 
@@ -1193,19 +1192,17 @@ def _write_claim_analysis_figures(reports: Path, rows: Sequence[Mapping[str, Any
     figs.mkdir(parents=True, exist_ok=True)
     created: List[Path] = []
     try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
+        from ..reporting_figures import export_subplots
     except Exception:
         return []
 
-    def _save(fig_path: Path) -> None:
+    def _save(fig_path: Path, figure) -> None:
         try:
-            plt.tight_layout()
+            figure.tight_layout()
         except Exception:
             pass
-        plt.savefig(fig_path, dpi=180)
-        plt.close()
+        figure.savefig(fig_path, dpi=180)
+
         created.append(fig_path)
 
     def _bar(name: str, title: str, y_label: str, key: str, *, lower_better: bool = False) -> None:
@@ -1217,12 +1214,12 @@ def _write_claim_analysis_figures(reports: Path, rows: Sequence[Mapping[str, Any
         labels = [_claim_analysis_row_label(r) for r, _ in data]
         vals = [float(v) for _, v in data]
         width = max(7.0, min(22.0, len(vals) * 0.85))
-        plt.figure(figsize=(width, 4.8))
-        plt.bar(list(range(len(vals))), vals)
-        plt.ylabel(y_label)
-        plt.title(title + (" (lower is better)" if lower_better else ""))
-        plt.xticks(list(range(len(vals))), labels, rotation=40, ha="right", fontsize=8)
-        _save(figs / name)
+        figure, axis = export_subplots(figsize=(width, 4.8))
+        axis.bar(list(range(len(vals))), vals)
+        axis.set_ylabel(y_label)
+        axis.set_title(title + (" (lower is better)" if lower_better else ""))
+        axis.set_xticks(list(range(len(vals))), labels, rotation=40, ha="right", fontsize=8)
+        _save(figs / name, figure)
 
     _bar("claim_pipeline_latency_ms_bar.png", "Single-detection latency: full models and best splits", "Latency [ms]", "single_detection_latency_ms", lower_better=True)
     _bar("claim_pipeline_fps_bar.png", "Pipeline/streaming throughput: full models and best splits", "FPS", "pipeline_fps")
@@ -1233,25 +1230,25 @@ def _write_claim_analysis_figures(reports: Path, rows: Sequence[Mapping[str, Any
         xs = [float(_float(r.get("throughput_speedup_vs_fastest_full")) or 0.0) for r in split_rows]
         ys = [float(_float(r.get("fps_per_watt_ratio_vs_most_efficient_full")) or 0.0) for r in split_rows]
         labels = [_claim_analysis_row_label(r) for r in split_rows]
-        plt.figure(figsize=(7.0, 5.0))
-        plt.scatter(xs, ys)
-        plt.axvline(1.0, linestyle="--", linewidth=1)
-        plt.axhline(1.0, linestyle="--", linewidth=1)
+        figure, axis = export_subplots(figsize=(7.0, 5.0))
+        axis.scatter(xs, ys)
+        axis.axvline(1.0, linestyle="--", linewidth=1)
+        axis.axhline(1.0, linestyle="--", linewidth=1)
         for x, y, label in zip(xs, ys, labels):
             try:
-                plt.annotate(label, (x, y), textcoords="offset points", xytext=(5, 5), fontsize=8)
+                axis.annotate(label, (x, y), textcoords="offset points", xytext=(5, 5), fontsize=8)
             except Exception:
                 pass
         x_min = min([0.8] + xs); x_max = max([1.2] + xs)
         y_min = min([0.8] + ys); y_max = max([1.2] + ys)
         pad_x = max(0.05, (x_max - x_min) * 0.15)
         pad_y = max(0.05, (y_max - y_min) * 0.15)
-        plt.xlim(x_min - pad_x, x_max + pad_x)
-        plt.ylim(max(0.0, y_min - pad_y), y_max + pad_y)
-        plt.xlabel("Pipeline throughput vs fastest full backend [×]")
-        plt.ylabel("FPS/W vs most efficient full backend [×]")
-        plt.title("Best split trade-off vs best full baselines")
-        _save(figs / "claim_speedup_efficiency_vs_best_full.png")
+        axis.set_xlim(x_min - pad_x, x_max + pad_x)
+        axis.set_ylim(max(0.0, y_min - pad_y), y_max + pad_y)
+        axis.set_xlabel("Pipeline throughput vs fastest full backend [×]")
+        axis.set_ylabel("FPS/W vs most efficient full backend [×]")
+        axis.set_title("Best split trade-off vs best full baselines")
+        _save(figs / "claim_speedup_efficiency_vs_best_full.png", figure)
 
     # Model-level compact view: one best split per model compared to its best full baselines.
     best_split_by_model: Dict[str, Mapping[str, Any]] = {}
@@ -1268,20 +1265,21 @@ def _write_claim_analysis_figures(reports: Path, rows: Sequence[Mapping[str, Any
         effs = [float(_float(best_split_by_model[m].get("fps_per_watt_ratio_vs_most_efficient_full")) or 0.0) for m in labels]
         x = list(range(len(labels)))
         width = max(6.5, len(labels) * 1.0)
-        plt.figure(figsize=(width, 4.8))
+        figure, axis = export_subplots(figsize=(width, 4.8))
         # Offset bars without specifying colors; matplotlib defaults are fine.
-        plt.bar([i - 0.18 for i in x], speedups, width=0.36, label="Throughput vs fastest full")
-        plt.bar([i + 0.18 for i in x], effs, width=0.36, label="FPS/W vs most efficient full")
-        plt.axhline(1.0, linestyle="--", linewidth=1)
-        plt.ylabel("Ratio [×]")
-        plt.title("Best split ratios against best full baselines")
-        plt.xticks(x, labels, rotation=25, ha="right")
+        axis.bar([i - 0.18 for i in x], speedups, width=0.36, label="Throughput vs fastest full")
+        axis.bar([i + 0.18 for i in x], effs, width=0.36, label="FPS/W vs most efficient full", hatch="//")
+        axis.axhline(1.0, linestyle="--", linewidth=1)
+        axis.set_ylabel("Ratio [×]")
+        axis.set_title("Best split ratios against best full baselines")
+        axis.set_xticks(x, labels, rotation=25, ha="right")
         try:
-            plt.legend(fontsize=8)
+            axis.legend(fontsize=8)
         except Exception:
             pass
-        _save(figs / "claim_best_split_ratios_by_model.png")
+        _save(figs / "claim_best_split_ratios_by_model.png", figure)
     return created
+
 
 
 def _write_claim_analysis_reports(
@@ -1792,9 +1790,8 @@ def _select_visual_sample(report: Mapping[str, Any], report_path: Path, image_in
 
 
 def _draw_visual_snapshot(*, report: Mapping[str, Any], report_path: Path, out_png: Path, image_index: Mapping[str, Path]) -> Dict[str, Any]:
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    from ..reporting_figures import export_subplots
+    from matplotlib.image import imread
     import matplotlib.patches as patches
 
     sample = _select_visual_sample(report, report_path, image_index=image_index)
@@ -1823,10 +1820,10 @@ def _draw_visual_snapshot(*, report: Mapping[str, Any], report_path: Path, out_p
             image_name = fallback.name
             dataset_fallback_used = True
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = export_subplots(figsize=(8, 5))
     if image_path and Path(image_path).is_file():
         try:
-            img = plt.imread(str(image_path))
+            img = imread(str(image_path))
             ax.imshow(img)
             ax.set_axis_off()
         except Exception:
@@ -1920,7 +1917,7 @@ def _draw_visual_snapshot(*, report: Mapping[str, Any], report_path: Path, out_p
         pass
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, dpi=140)
-    plt.close(fig)
+
     return {
         "image_name": image_name,
         "image_found": bool(image_path and Path(image_path).is_file()),
@@ -1937,6 +1934,7 @@ def _draw_visual_snapshot(*, report: Mapping[str, Any], report_path: Path, out_p
         "classification_top5": aggregate_metrics.get("top5_accuracy"),
         "png": out_png.name,
     }
+
 
 
 def _write_visual_verification_report(run_dir: Path, reports: Path) -> Dict[str, Any]:

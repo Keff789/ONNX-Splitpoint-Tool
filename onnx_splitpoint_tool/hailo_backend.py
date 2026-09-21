@@ -1496,7 +1496,7 @@ def _resolve_hef_timeout_policy(requested_timeout_s: Any) -> Tuple[int, Optional
     hard_timeout_s = parse_hailo_timeout_seconds(
         selected_hard,
         default=3600,
-        minimum_enabled_s=60,
+        minimum_enabled_s=1,
         label="Hailo hard timeout",
     )
     # Preserve the historic backend default expansion, but only for the
@@ -2960,6 +2960,150 @@ class HailoHefBuildResult:
 
 
 _HAILO_HEF_RESULT_FIELDS = {f.name for f in fields(HailoHefBuildResult)}
+
+
+def _hailo_har_file_identity(path: Path) -> Dict[str, int]:
+    """Identify the saved file generation without introducing a HAR cache."""
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("missing_or_symlink")
+    st = path.stat()
+    return {key: int(getattr(st, key)) for key in
+            ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")}
+
+
+def _inspect_saved_hailo_har(path: Path, *, kind: str, net_name: str,
+                             hw_arch: str) -> Dict[str, Any]:
+    """Check the saved container, never import the SDK or authorize resume.
+
+    Container metadata is evidence of parsed/quantized state, not proof of SDK
+    loadability, a complete build contract, compilation or numerical quality.
+    """
+    import tarfile
+    import zipfile
+    import zlib
+
+    try:
+        if path.stat().st_size == 0:
+            return {"status": "empty"}
+        with tarfile.open(path, "r:") as archive:
+            members = archive.getmembers()
+            names = {member.name: member for member in members}
+            if len(names) != len(members) or any(
+                not member.isfile() or member.size < 0
+                or member.offset_data + member.size > path.stat().st_size
+                for member in members
+            ):
+                raise ValueError("invalid_or_truncated_members")
+            metadata = [member for member in members if member.name.endswith(".metadata.json")]
+            if len(metadata) != 1 or metadata[0].size > 1024 * 1024:
+                raise ValueError("metadata_missing_or_invalid")
+            with archive.extractfile(metadata[0]) as stream:
+                meta = json.load(stream)
+            if (meta.get("model_name") != net_name
+                    or _normalize_hailo_hw_arch(meta.get("hw_arch")) != _normalize_hailo_hw_arch(hw_arch)):
+                return {"status": "foreign", "reason": "model_or_arch_mismatch"}
+            state = "quantized_model" if kind == "quantized" else "hailo_model"
+            if meta.get("state") != state:
+                return {"status": "wrong_state", "state": meta.get("state")}
+            for key in ("hn", "params"):
+                if meta.get(key) not in names or names[meta[key]].size <= 0:
+                    raise ValueError("missing_" + key)
+            hn = names[meta["hn"]]
+            if hn.size > 64 * 1024 * 1024:
+                raise ValueError("hn_metadata_too_large")
+            with archive.extractfile(hn) as stream:
+                if not isinstance(json.load(stream), dict):
+                    raise ValueError("invalid_hn")
+            for member in members:
+                if member.name.endswith(".npz"):
+                    with archive.extractfile(member) as stream, zipfile.ZipFile(stream) as arrays:
+                        if arrays.testzip() is not None:
+                            raise ValueError("damaged_parameter_archive")
+            return {"status": "retained", "state": state,
+                    "sdk_version": meta.get("sdk_version"),
+                    "sdk_loadability": "not_checked", "resume_contract": "not_validated"}
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, EOFError,
+            tarfile.TarError, zipfile.BadZipFile, zlib.error, RuntimeError) as exc:
+        return {"status": "invalid", "reason": str(exc)}
+
+
+def _retain_hailo_build_progress(result: HailoHefBuildResult, bound: Mapping[str, Any],
+                                 *, started_at: float, expected_pid: Optional[int]) -> HailoHefBuildResult:
+    """Recover only this invocation's saved HARs and actual phase evidence.
+
+    An old file with the right basename is insufficient. The current phase
+    generation, source identity, SDK process and completed save must agree.
+    Historical phase files without this evidence remain diagnostic-only.
+    """
+    source = Path(str(bound.get("onnx_path") or ""))
+    outdir = Path(str(bound.get("outdir") or source.parent))
+    try:
+        progress = json.loads((outdir / "hailo_build_phases.json").read_text(encoding="utf-8"))
+        events = progress["events"]
+        identity = progress["identity"]
+        if not isinstance(events, list) or not isinstance(identity, dict):
+            return result
+        first = events[0]
+        if (not expected_pid or first["pid"] != expected_pid
+                or first["phase"] != "sdk_initialization" or first["state"] != "started"
+                or first["timestamp"] < started_at
+                or any(event["pid"] != expected_pid for event in events)
+                or identity["source_onnx_sha256"] != _bare_file_sha256(source)
+                or identity["net_name"] != result.net_name
+                or identity["hw_arch"] != _normalize_hailo_hw_arch(result.hw_arch)
+                or not identity["cache_key"]):
+            return result
+    except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError):
+        return result
+
+    details = dict(result.details or {})
+    details.update(phase_events=events, phase_source="hailo_build_phases.json",
+                   build_identity=identity)
+    artifacts: Dict[str, Any] = {}
+    for kind, field, phase in (("parsed", "parsed_har_path", "translate"),
+                                ("quantized", "quant_har_path", "optimize")):
+        path = outdir / (kind + ".har")
+        records = progress.get("har_artifacts")
+        saved = records.get(kind) if isinstance(records, dict) else None
+        saved = saved if isinstance(saved, dict) else {}
+        completed = any(event["phase"] == phase and event["state"] == "completed" for event in events)
+        evidence: Dict[str, Any] = {"status": "not_saved"}
+        setattr(result, field, None)
+        if saved.get("status") == "saved" and completed:
+            try:
+                observed = _hailo_har_file_identity(path)
+                if saved.get("path") != str(path.resolve()) or saved.get("file_identity") != observed:
+                    evidence = {"status": "changed_or_foreign"}
+                else:
+                    evidence = _inspect_saved_hailo_har(path, kind=kind,
+                                                       net_name=result.net_name, hw_arch=result.hw_arch)
+                    if _hailo_har_file_identity(path) != observed:
+                        evidence = {"status": "changed_or_foreign"}
+                    elif evidence["status"] == "retained":
+                        setattr(result, field, str(path.resolve()))
+            except (OSError, ValueError) as exc:
+                evidence = {"status": "missing_or_foreign", "reason": str(exc)}
+        elif saved:
+            evidence = {"status": "save_failed" if saved.get("status") == "failed" else "phase_unproven",
+                        "reason": saved.get("error")}
+        artifacts[kind] = evidence
+    details["har_artifacts"] = artifacts
+    if not result.ok:
+        previous_stage = result.last_stage
+        result.last_stage = str(events[-1]["phase"])
+        if result.error and previous_stage:
+            result.error = result.error.replace("Last active stage: " + previous_stage + ".",
+                                                "Last active stage: " + result.last_stage + ".")
+        # Retained HARs must never turn this failed invocation into a HEF HIT.
+        result.hef_path = None
+        details["cache_hit"] = False
+    result.details = details
+    if not result.ok:
+        try:
+            _atomic_write_json(outdir / "hailo_hef_build_result.json", asdict(result))
+        except OSError as exc:
+            log.warning("[hailo][result] could not persist failed build evidence: %s", exc)
+    return result
 
 
 def _make_hef_result(**kwargs: Any) -> HailoHefBuildResult:
@@ -7556,14 +7700,50 @@ def _hailo_build_hef_legacy(
         )
 
     phase_events: List[Dict[str, Any]] = []
+    har_artifacts: Dict[str, Any] = {}
+    phase_identity = {"source_onnx_sha256": source_onnx_sha256,
+                      "net_name": str(net_name), "hw_arch": str(hw_arch_eff),
+                      "cache_key": cache_key}
     phase_started = time.monotonic()
+    def persist_progress() -> None:
+        _atomic_write_json(out_dir / "hailo_build_phases.json", {
+            "events": phase_events, "identity": phase_identity,
+            "har_artifacts": har_artifacts,
+        })
+
+    def save_har(kind: str) -> None:
+        if not keep_artifacts:
+            return
+        path = out_dir / (kind + ".har")
+        try:
+            # A failed/partial save must not masquerade as a previous HAR with
+            # the same name. Keep the old file until this save has returned.
+            with tempfile.TemporaryDirectory(prefix=".hailo-har-", dir=out_dir) as staging:
+                staged = Path(staging) / path.name
+                runner.save_har(str(staged))
+                if not staged.is_file():
+                    raise ValueError("missing_saved_har")
+                if staged.is_symlink():
+                    raise ValueError("symlink_saved_har")
+                if staged.stat().st_size == 0:
+                    raise ValueError("empty_saved_har")
+                os.replace(staged, path)
+            har_artifacts[kind] = {"status": "saved", "path": str(path.resolve()),
+                                   "file_identity": _hailo_har_file_identity(path)}
+        except Exception as exc:
+            har_artifacts[kind] = {"status": "failed", "error": str(exc)}
+        try:
+            persist_progress()
+        except OSError as exc:
+            log.warning("[hailo][phases] could not persist saved HAR evidence: %s", exc)
+
     def phase_start(name: str) -> None:
         nonlocal phase_started
         phase_started = time.monotonic()
         phase_events.append({"phase": name, "state": "started", "event": "started", "timestamp": time.time(),
                              "monotonic_s": phase_started, "monotonic": phase_started, "pid": os.getpid()})
         try:
-            _atomic_write_json(out_dir / "hailo_build_phases.json", {"events": phase_events})
+            persist_progress()
         except OSError as exc:
             log.warning("[hailo][phases] could not persist phase evidence: %s", exc)
     def phase_finish(name: str, state: str = "completed") -> None:
@@ -7571,7 +7751,7 @@ def _hailo_build_hef_legacy(
                              "monotonic_s": time.monotonic(), "monotonic": time.monotonic(), "elapsed_s": max(0.0, time.monotonic()-phase_started),
                              "pid": os.getpid()})
         try:
-            _atomic_write_json(out_dir / "hailo_build_phases.json", {"events": phase_events})
+            persist_progress()
         except OSError as exc:
             log.warning("[hailo][phases] could not persist phase evidence: %s", exc)
     active_dfc_stage = "sdk_initialization"
@@ -7593,11 +7773,7 @@ def _hailo_build_hef_legacy(
         phase_finish(active_dfc_stage)
 
         parsed_har = out_dir / "parsed.har"
-        if keep_artifacts:
-            try:
-                runner.save_har(str(parsed_har))
-            except Exception:
-                pass
+        save_har("parsed")
 
         # Build calibration dataset
         active_dfc_stage = "calibration_materialization"
@@ -7932,11 +8108,7 @@ def _hailo_build_hef_legacy(
                     pass
 
         quant_har = out_dir / "quantized.har"
-        if keep_artifacts:
-            try:
-                runner.save_har(str(quant_har))
-            except Exception:
-                pass
+        save_har("quantized")
 
         active_dfc_stage = "compile"
         phase_start(active_dfc_stage)
@@ -9681,7 +9853,9 @@ def hailo_build_hef(*args, **kwargs):
     bound = _v60s_hailo_bound(args, kwargs)
     contract = _v60s_hailo_contract(bound)
     with build_evidence_scope(context, bound):
+        started_at = time.time()
         result = _hailo_build_hef_legacy(*args, **kwargs)
+        result = _retain_hailo_build_progress(result, bound, started_at=started_at, expected_pid=os.getpid())
         result = attach_and_record(result, bound) if bound.get("publish_artifacts", True) else result
         _v60s_hailo_register(result, bound, contract)
     return result
@@ -9795,7 +9969,11 @@ def _with_hailo_evidence_context(function):
         call.apply_defaults()
         bound = dict(call.arguments)
         with build_evidence_scope(context, bound):
+            started_at = time.time()
             result = function(*args, **kwargs)
+            cleanup = (result.details or {}).get("process_cleanup") or {}
+            result = _retain_hailo_build_progress(result, bound, started_at=started_at,
+                                                  expected_pid=cleanup.get("root_pid"))
             return attach_and_record(result, bound) if bound.get("publish_artifacts", True) else result
     return wrapped
 

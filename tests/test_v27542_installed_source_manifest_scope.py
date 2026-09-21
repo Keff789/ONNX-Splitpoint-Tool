@@ -8,6 +8,9 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import re
+
+from onnx_splitpoint_tool.release_identity import VERSION, BUILD_ID
 
 import pytest
 
@@ -363,7 +366,7 @@ def test_current_updater_offline_refresh_is_fail_closed_and_ordered() -> None:
     for marker in (
         "--checksum",
         "scripts/refresh_editable_install.py",
-        "--expected-version 2.79.13",
+        f"--expected-version {VERSION}",
         "--require-entrypoint",
         "onnx-splitpoint-smoke-v2796=",
         "onnx-splitpoint-smoke-v2-79-6=",
@@ -392,7 +395,7 @@ def test_current_updater_offline_refresh_is_fail_closed_and_ordered() -> None:
         "onnx-splitpoint-smoke-v2-75-44=",
         "onnx-splitpoint-smoke-v27543=",
         "onnx-splitpoint-smoke-v2-75-43=",
-        "--run-entrypoint onnx-splitpoint-smoke-v27913",
+        "--run-entrypoint onnx-splitpoint-smoke-v282",
     ):
         assert marker in updater
     for forbidden in ("-m pip", "PIP_NO_INDEX", "setuptools.build_meta"):
@@ -401,7 +404,11 @@ def test_current_updater_offline_refresh_is_fail_closed_and_ordered() -> None:
     required_contracts = tuple(
         re.findall(r"'([^']+=[^']+:main)'", updater)
     )
-    assert required_contracts == CURRENT_UPDATER_REQUIRED_ENTRY_POINTS
+    assert set(CURRENT_UPDATER_REQUIRED_ENTRY_POINTS) <= set(required_contracts)
+    import tomllib
+    project_entries = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())["project"]["scripts"]
+    assert all(project_entries.get(name) == target for name, target in
+               (item.split("=", 1) for item in required_contracts))
 
     backup_sync = updater.index("rsync -a")
     change_directory = updater.index('cd -- "$TOOL_DIR"', backup_sync)
@@ -464,10 +471,14 @@ def test_updater_repairs_same_size_same_mtime_content_and_preserves_user_state(
     (release_root / "scripts").mkdir()
     (release_root / "profiles").mkdir()
 
-    current_entries = dict(
-        item.split("=", 1)
-        for item in CURRENT_UPDATER_REQUIRED_ENTRY_POINTS
-    )
+    updater = (project_root / "scripts/update_source_release.sh").read_text()
+    current_entries = dict(re.findall(
+        r"'(onnx-splitpoint-[^'=]+)=(onnx_splitpoint_tool\.[^']+:main)'", updater))
+    import tomllib
+    project_entries = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())["project"]["scripts"]
+    assert current_entries
+    assert all(project_entries.get(name) == target for name, target in current_entries.items())
+    assert dict(item.split("=", 1) for item in CURRENT_UPDATER_REQUIRED_ENTRY_POINTS).items() <= current_entries.items()
     # The real current project retains this older launcher even though the
     # updater's required-current subset starts at v2.75.43.
     current_entries[
@@ -484,7 +495,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "onnx-splitpoint-tool"
-version = "2.79.13"
+version = "{VERSION}"
 
 [project.scripts]
 {project_scripts}
@@ -495,17 +506,17 @@ include = ["onnx_splitpoint_tool*"]
         encoding="utf-8",
     )
     (release_root / "onnx_splitpoint_tool/__init__.py").write_text(
-        '__version__ = "2.79.13"\n',
+        f'__version__ = "{VERSION}"\n',
         encoding="utf-8",
     )
     (release_root / "onnx_splitpoint_tool/workflow/runner.py").write_text(
-        'WORKFLOW_VERSION = "v2.79.13-platform-power-calibration-operational-repair"\n',
+        f'WORKFLOW_VERSION = "{BUILD_ID}"\n',
         encoding="utf-8",
     )
     _write_release_identity(
         release_root,
-        "2.79.13",
-        "v2.79.13-platform-power-calibration-operational-repair",
+        VERSION,
+        BUILD_ID,
     )
     for target in sorted(set(current_entries.values())):
         module_name, attribute = target.split(":", 1)
@@ -544,7 +555,7 @@ include = ["onnx_splitpoint_tool*"]
     (release_root / between_pass_relative).write_bytes(between_pass_original)
 
     build_source_manifest.build(release_root)
-    archive = tmp_path / "ONNX-Splitpoint-Tool_v2.79.13_source.zip"
+    archive = tmp_path / f"ONNX-Splitpoint-Tool_v{VERSION}_source.zip"
     release_result = build_source_release.build_release(release_root, archive)
     assert release_result["ok"] is True
 
@@ -846,7 +857,7 @@ fi
         }[fault_mode],
     })
     update_command = [
-        "bash",
+        "bash", "-x",
         str(extracted / "scripts/update_source_release.sh"),
         str(archive),
         str(installed),
@@ -868,13 +879,16 @@ fi
     assert "läuft bereits ein Update" in blocked.stderr
     assert not rsync_log.exists()
 
-    completed = subprocess.run(
-        update_command,
-        check=False,
-        capture_output=True,
-        text=True,
-        env=environment,
-    )
+    trace_path = tmp_path / "updater_execution_trace.log"
+    with trace_path.open("w") as trace:
+        completed = subprocess.run(
+            update_command, check=False, capture_output=True, text=True,
+            env={**environment, "BASH_XTRACEFD": str(trace.fileno())},
+            pass_fds=(trace.fileno(),),
+        )
+    (tmp_path / "updater_stdout.log").write_text(completed.stdout)
+    (tmp_path / "updater_stderr.log").write_text(completed.stderr)
+    assert rsync_log.exists(), completed.stdout + completed.stderr
     rsync_calls = rsync_log.read_text(encoding="utf-8").split("CALL=")[1:]
     expected_calls = {
         "recover_first_verifier": 3,
@@ -886,6 +900,27 @@ fi
         "final_dry_run_failure": 3,
     }
     assert len(rsync_calls) == expected_calls[fault_mode]
+    assert int(rsync_counter.read_text()) == expected_calls[fault_mode]
+    observed_order = re.findall(
+        r"^\+ (verify_installed_release|converge_installed_release|installed_source_stable)(?: (\w+))?$",
+        trace_path.read_text(), re.M)
+    first = [("verify_installed_release", "initial")]
+    converge = [("converge_installed_release", ""), ("verify_installed_release", "convergence")]
+    stability = [("installed_source_stable", "initial")]
+    expected_order = {
+        "recover_first_verifier": first + converge + stability,
+        "repeat_first_verifier": first + converge,
+        "convergence_rsync_failure": first + converge[:1],
+        "recover_post_verifier_drift": first + stability + converge + [("installed_source_stable", "convergence")],
+        "repeat_post_verifier_drift": first + stability + converge + [("installed_source_stable", "convergence")],
+        "initial_dry_run_failure": first + stability,
+        "final_dry_run_failure": first + converge + stability,
+    }
+    assert observed_order == expected_order[fault_mode], completed.stderr
+    (tmp_path / "fault_path_evidence.json").write_text(json.dumps({
+        "fault_mode": fault_mode, "rsync_calls": len(rsync_calls),
+        "verification_order": observed_order, "returncode": completed.returncode,
+    }, indent=2))
 
     failing = {
         "repeat_first_verifier",
@@ -925,7 +960,7 @@ fi
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "PASS source release synchronized" in completed.stdout
     assert '"installer": "stdlib-only-pep376-editable"' in completed.stdout
-    assert "Distribution aktualisiert: onnx-splitpoint-tool==2.79.13" in (
+    assert f"Distribution aktualisiert: onnx-splitpoint-tool=={VERSION}" in (
         completed.stdout
     )
     assert "Eigene Profile erhalten: 1" in completed.stdout
@@ -942,7 +977,7 @@ fi
 
     after_update = distribution_snapshot()
     assert after_update == {
-        "version": "2.79.13",
+        "version": VERSION,
         "entries": sorted(current_entries),
         "helper": "9.1.0",
     }

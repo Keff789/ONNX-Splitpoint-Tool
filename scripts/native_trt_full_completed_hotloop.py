@@ -27,6 +27,8 @@ SCRIPTS = Path(__file__).resolve().parent
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
+from onnx_splitpoint_tool.runners.request_latency import RequestLatency
+from onnx_splitpoint_tool.runners.harness.classification import ClassificationCompletion
 from onnx_splitpoint_tool.native_detection_postprocess import (  # noqa: E402
     FrozenDecodedNmsPostprocessor,
     FrozenDetectionPostprocessor,
@@ -278,6 +280,7 @@ def _percentile(values: list[float], q: float) -> float | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--classification", action="store_true")
     parser.add_argument("--engine", required=True)
     parser.add_argument("--input-manifest", required=True)
     parser.add_argument("--frozen-postprocess-contract-json", default="")
@@ -355,12 +358,15 @@ def main() -> int:
         direct_contract_json = str(
             ns.frozen_decoded_nms_normalization_contract_json or ""
         ).strip()
-        if bool(raw_contract_json) == bool(direct_contract_json):
+        if sum((bool(raw_contract_json), bool(direct_contract_json), ns.classification)) != 1:
             raise RuntimeError(
                 "completed_hotloop_exactly_one_completion_contract_required"
             )
         completion_kind = "raw_host_tail"
-        if raw_contract_json:
+        if ns.classification:
+            completion_kind = "classification_top1_top5"
+            completion_contract = {}
+        elif raw_contract_json:
             completion_contract = verify_frozen_postprocess_contract(
                 json.loads(raw_contract_json)
             )
@@ -424,7 +430,9 @@ def main() -> int:
         # The untimed probe binds the completion implementation to the exact
         # physical engine output structure.
         structural_outputs = runtime.run_prepared()
-        if completion_kind == "raw_host_tail":
+        if ns.classification:
+            processor = ClassificationCompletion()
+        elif completion_kind == "raw_host_tail":
             verify_frozen_postprocess_contract(
                 completion_contract, outputs=structural_outputs,
             )
@@ -471,20 +479,24 @@ def main() -> int:
             outputs = runtime.run_prepared()
             processor.process(outputs, original_wh=original_wh)
 
+        request_latency = RequestLatency(frames, task_complete=True,
+            start_anchor="trt_full:before_run_prepared", end_anchor="trt_full:after_processor_process",
+            enabled=not duration_s)
         timings_ms: list[float] = []
         started = time.perf_counter()
         while (
             len(timings_ms) < frames
             or time.perf_counter() - started < duration_s
         ):
+            request_latency.start(len(timings_ms))
             iteration_started = time.perf_counter()
             outputs = runtime.run_prepared()
             completion_result = processor.process(
                 outputs, original_wh=original_wh,
             )
-            timings_ms.append(
-                (time.perf_counter() - iteration_started) * 1000.0
-            )
+            iteration_ended = time.perf_counter()
+            request_latency.complete(len(timings_ms))
+            timings_ms.append((iteration_ended - iteration_started) * 1000.0)
         makespan_s = max(0.0, time.perf_counter() - started)
         completed = len(timings_ms)
         postprocess_completed = int(processor.completed_count) - warmup
@@ -495,27 +507,33 @@ def main() -> int:
             completed >= frames
             and postprocess_completed == completed
         )
-        completed_result_artifact = _completed_detection_artifact(
-            completion_result
-        )
-        completed_result_artifact_sha256 = str(
-            completion_result.get("completed_result_artifact_sha256") or ""
-        ).strip().lower()
-        if not completed_result_artifact_sha256:
-            completed_result_artifact_sha256 = _canonical_json_sha256(
-                completed_result_artifact
+        if ns.classification:
+            completed_result_artifact = {}
+            completed_result_artifact_sha256 = ""
+            completed_result_persistence = {"saved": False, "path": "", "file_sha256": ""}
+            completed_result_artifact_saved = False
+        else:
+            completed_result_artifact = _completed_detection_artifact(
+                completion_result
             )
-        completed_result_persistence = _persist_completed_result_artifact(
-            completed_result_artifact,
-            completed_result_artifact_sha256,
-            report.with_name(
-                f"{report.stem}.completed_task_result_artifact.json"
-            ),
-        )
-        completed_result_artifact_saved = bool(
-            completed_result_persistence["saved"]
-        )
-        count_ok = bool(count_ok and completed_result_artifact_saved)
+            completed_result_artifact_sha256 = str(
+                completion_result.get("completed_result_artifact_sha256") or ""
+            ).strip().lower()
+            if not completed_result_artifact_sha256:
+                completed_result_artifact_sha256 = _canonical_json_sha256(
+                    completed_result_artifact
+                )
+            completed_result_persistence = _persist_completed_result_artifact(
+                completed_result_artifact,
+                completed_result_artifact_sha256,
+                report.with_name(
+                    f"{report.stem}.completed_task_result_artifact.json"
+                ),
+            )
+            completed_result_artifact_saved = bool(
+                completed_result_persistence["saved"]
+            )
+            count_ok = bool(count_ok and completed_result_artifact_saved)
         if count_ok and completion_kind == "raw_host_tail":
             completed_attestation = (
                 build_completed_detection_endpoint_attestation(
@@ -528,7 +546,7 @@ def main() -> int:
                     ),
                 )
             )
-        elif count_ok:
+        elif count_ok and not ns.classification:
             completed_attestation = (
                 build_normalized_detection_endpoint_attestation(
                     completion_contract,
@@ -539,7 +557,7 @@ def main() -> int:
             )
         else:
             completed_attestation = {}
-        ok = bool(count_ok and duration_ok and completed_attestation)
+        ok = bool(count_ok and duration_ok and (ns.classification or completed_attestation))
         mean_ms = (
             float(sum(timings_ms) / completed) if completed else None
         )
@@ -570,6 +588,7 @@ def main() -> int:
                 float(completed / makespan_s)
                 if makespan_s > 0.0 else None
             ),
+            "request_latency": request_latency.report(),
             "latency_mean_ms": mean_ms,
             "latency_p50_ms": _percentile(timings_ms, 50.0),
             "latency_p95_ms": _percentile(timings_ms, 95.0),
@@ -693,6 +712,9 @@ def main() -> int:
             ),
             "preflight_verified": preflight_verified,
         }
+        if ns.classification:
+            result.update(processor.report(postprocess_completed))
+            result["latency_semantics"] = "prepared_input_h2d_engine_d2h_sync_top1_top5"
         _write_report(report, result)
         print(json.dumps(result), flush=True)
         return 0 if ok else 5
@@ -700,6 +722,7 @@ def main() -> int:
         return _fail(
             report,
             "tensorrt_full_completed_hotloop_failed",
+            request_latency=request_latency.report() if "request_latency" in locals() else {},
             error=f"{type(exc).__name__}: {exc}",
         )
     finally:

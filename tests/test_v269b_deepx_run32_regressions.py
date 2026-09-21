@@ -190,6 +190,11 @@ def test_run32_deepx_outer_makespan_uses_canonical_json_not_newer_csv(
     assert result["fps_makespan"] == pytest.approx(27.45516276109055)
     assert result["result_source_kind"] == "json"
     assert Path(result["result_source"]) == json_path
+    assert result["measured_duration_s"] == result["measured_makespan_s"]
+    from onnx_splitpoint_tool.native_rate_endpoints import rate_endpoint_fields
+    projected = rate_endpoint_fields(module._aggregate_full_repetitions([result], requested=1))
+    assert projected["completed_task_fps"] is None  # Run32 lacks completed detection attestation
+    assert projected["historical_fps"] == result["fps_makespan"]
 
 
 def test_deepx_json_csv_true_scalar_disagreement_fails_closed(tmp_path: Path) -> None:

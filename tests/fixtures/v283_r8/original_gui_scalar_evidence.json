@@ -1,0 +1,43 @@
+{
+  "source_run_id": "completsetdev_20260915_124548",
+  "profile_sha256": "e0890668a13906feecc0ba13d76e9f835005f2b54bf2bb2dd6c640d2a085c694",
+  "preset": {
+    "id": "standard",
+    "follow_tool_config": true,
+    "snapshot": {
+      "runtime": {
+        "native": {
+          "frames": 1000,
+          "warmup": 100,
+          "repetitions": 3
+        }
+      }
+    },
+    "effective": {
+      "native_performance_repetitions": 1
+    }
+  },
+  "native_producers": {
+    "enabled": true,
+    "frames": 1000,
+    "warmup": 100,
+    "energy": {
+      "enabled": true,
+      "mode": "measure"
+    }
+  },
+  "energy_original_counts": {
+    "native_energy_rows": 61,
+    "logical_repetitions": 183,
+    "actual_collector_attempts": 342,
+    "status_counts": {
+      "collector_failed": 318,
+      "collector_finished": 24
+    },
+    "complete_rows": 0,
+    "row_valid_repeat_counts": {
+      "1": 24,
+      "0": 37
+    }
+  }
+}

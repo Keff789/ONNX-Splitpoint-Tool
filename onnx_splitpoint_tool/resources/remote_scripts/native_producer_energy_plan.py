@@ -2203,9 +2203,12 @@ def _prepair_energy_quality_admission(
     local_validation = validation if isinstance(validation, Mapping) else {}
     local_decision = next((str(local_validation.get(key)).strip().lower()
         for key in ("task_quality_gate_decision", "accuracy_gate_decision", "task_quality_status", "task_quality_decision")
-        if str(local_validation.get(key) or "").strip().lower() in {"pass", "fail", "inconclusive", "reference"}), "")
+        if str(local_validation.get(key) or "").strip().lower() in {"pass", "fail", "inconclusive", "reference", "reference_close", "accuracy_loss", "not_estimable"}), "")
     if local_decision:
         admission["local_task_quality_decision"] = local_decision
+    if local_validation.get("accuracy_assessment"):
+        admission["accuracy_assessment"] = local_validation["accuracy_assessment"]
+        admission["accuracy_gate_semantics"] = local_validation.get("accuracy_gate_semantics")
     if row.get("scientific_claim_exclusion_reason"):
         admission["scientific_claim_exclusion_reason"] = str(row["scientific_claim_exclusion_reason"])
     check_row = {
@@ -2441,6 +2444,8 @@ def _energy_preprocess_identity(contract: Mapping[str, Any]) -> dict[str, str]:
         if prepared.get("letterbox_pad_value") is not None
         else preprocess.get("pad_value")
         if preprocess.get("pad_value") is not None
+        else preprocess.get("letterbox_pad_value")
+        if preprocess.get("letterbox_pad_value") is not None
         else workload.get("letterbox_pad_value")
     )
     try:
@@ -2888,12 +2893,13 @@ def _completed_tensorrt_task_contract_valid(
         if successful_postprocess_frames is not None
         else reported_postprocess_frames
     )
+    stage = "classification_top1_top5" if workload.get("task") == "classification" else "decoded_nms"
     measurement_concurrency = workload.get("measurement_concurrency")
     if (
         str(workload.get("e2e_scope") or "") != "full_task_pipeline"
-        or str(workload.get("completed_task_stage") or "") != "decoded_nms"
+        or str(workload.get("completed_task_stage") or "") != stage
         or str(workload.get("completed_task_contract_family") or "")
-        != "decoded_nms"
+        != stage
         or workload.get("postprocess_required") is not True
         or workload.get("postprocess_included") is not True
         or isinstance(measurement_concurrency, bool)
@@ -2913,6 +2919,12 @@ def _completed_tensorrt_task_contract_valid(
         )
     ):
         return False
+    if workload.get("task") == "classification":
+        return bool(
+            workload.get("postprocess_completion_verified") is True
+            and not workload.get("host_postprocess_frozen")
+            and not workload.get("normalization_frozen")
+        )
     raw_mode = isinstance(workload.get("frozen_postprocess_contract"), Mapping)
     direct_mode = isinstance(
         workload.get("frozen_decoded_nms_normalization_contract"), Mapping,
@@ -3599,8 +3611,12 @@ def _prospective_detection_exclusion(
     return dict(entry) if isinstance(entry, Mapping) else None
 
 
+from onnx_splitpoint_tool.energy.task_budget import add_campaign_budget_arguments, campaign_budget_forward_args
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    add_campaign_budget_arguments(parser)
     parser.add_argument("--summary", required=True)
     parser.add_argument("--validation-summary", default="")
     parser.add_argument("--out-dir", required=True)
@@ -5294,6 +5310,11 @@ def main() -> int:
             "--physical-scope", shlex.quote(str(ns.physical_scope or "")),
             "--window-label", shlex.quote(str(ns.window_label or "command")),
         ]
+        if ns.campaign_budget_file:
+            measure_parts += [shlex.quote(value) for value in campaign_budget_forward_args(ns)]
+            measure_parts += ["--campaign-row-id", shlex.quote(json.dumps([backend, model, case, setup], separators=(",", ":"))),
+                              "--campaign-repeats", str(energy_runs_per_row),
+                              "--invalid-repeat-max-retries", str(ns.campaign_max_retries)]
         if str(ns.hardware_setups_file or "").strip():
             measure_parts += [
                 "--hardware-setups-file",

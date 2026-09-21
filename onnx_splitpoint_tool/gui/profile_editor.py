@@ -395,6 +395,12 @@ class EvaluationProfileEditor(tk.Toplevel):
         self.var_min_gap = tk.IntVar(self, value=2)
         self.var_pool = tk.StringVar(self, value="auto")
         self.var_selection_strategy = tk.StringVar(self, value="stratified_windows")
+        from ..backend_backfill import DEFAULT_BACKFILL
+        self.var_backend_backfill = tk.BooleanVar(self, value=True)
+        self.var_backfill_limits = {key: tk.IntVar(self, value=value)
+            for key, value in DEFAULT_BACKFILL.items() if key not in {'enabled', 'technical_output_contract_version'}}
+        self.backend_output_contract_version = DEFAULT_BACKFILL['technical_output_contract_version']
+
         self.var_audit_size = tk.IntVar(self, value=20)
         self.var_audit_min_valid = tk.IntVar(self, value=10)
         self.var_audit_seed = tk.IntVar(self, value=20260710)
@@ -552,8 +558,9 @@ class EvaluationProfileEditor(tk.Toplevel):
         self.var_native_backends = tk.StringVar(self, value="hailo8, hailo10h, deepx")
         self.var_native_case_policy = tk.StringVar(self, value="all_accepted")
         self.var_native_precision = tk.StringVar(self, value="uint8_cast_fp16")
-        self.var_native_frames = tk.IntVar(self, value=1000)
-        self.var_native_warmup = tk.IntVar(self, value=100)
+        self.var_native_frames = tk.IntVar(self, value=100)
+        self.var_native_warmup = tk.IntVar(self, value=10)
+        self.var_native_repetitions = tk.IntVar(self, value=1)
         self.var_native_queue_depth = tk.IntVar(self, value=3)
         self.var_native_inflight = tk.IntVar(self, value=8)
         self.var_native_full_baselines = tk.BooleanVar(self, value=True)
@@ -660,6 +667,9 @@ class EvaluationProfileEditor(tk.Toplevel):
             self.var_run_mode_id.trace_add("write", self._on_run_mode_changed)
             self.var_native_enabled.trace_add("write", self._update_run_summary)
             self.var_energy_enabled.trace_add("write", self._update_run_summary)
+            self.var_backend_backfill.trace_add('write', self._update_run_summary)
+            for variable in self.var_backfill_limits.values():
+                variable.trace_add('write', self._update_run_summary)
         except Exception:
             pass
         for _var in [
@@ -1034,6 +1044,17 @@ class EvaluationProfileEditor(tk.Toplevel):
             foreground="#666",
         ).grid(row=3, column=0, columnspan=6, sticky="w", padx=(8, 8), pady=(0, 8))
 
+        ttk.Checkbutton(candidates, text="Backendweise nachrücken gemäß angezeigter Policy",
+            variable=self.var_backend_backfill, command=self._update_run_summary).grid(row=4, column=0, columnspan=6, sticky="w", padx=8)
+        labels = {'max_candidates_per_backend': 'Kandidaten je Backend', 'max_cold_builds': 'Kaltbuilds je Modell',
+                  'max_hailo_part1_builds': 'Hailo Part1 Starts', 'max_trt_part2_builds': 'TRT Part2 Starts',
+                  'hailo_build_timeout_s': 'Hailo Sekunden', 'trt_build_timeout_s': 'TRT Sekunden'}
+        for index, (key, variable) in enumerate(self.var_backfill_limits.items()):
+            row, column = 5 + index // 3, (index % 3) * 2
+            ttk.Label(candidates, text=labels[key]).grid(row=row, column=column, sticky="e", padx=8)
+            ttk.Spinbox(candidates, textvariable=variable, from_=0, to=99999, width=8,
+                command=self._update_run_summary).grid(row=row, column=column+1, sticky="w")
+
         targets = ttk.LabelFrame(tab, text="Hardware run profiles")
         targets.grid(row=1, column=0, sticky="ew", padx=8, pady=6)
         checks = [
@@ -1128,6 +1149,14 @@ class EvaluationProfileEditor(tk.Toplevel):
                 mode = get_run_mode(mode_id, config)
                 self.var_run_mode_summary.set(mode_summary(mode_id, config))
             if not self._loading_profile:
+                previous = getattr(self, "_native_budget_widget_baseline", {})
+                current_mode = (mode.get("runtime") or {}).get("native") or {}
+                for field in ("frames", "warmup", "repetitions"):
+                    var = getattr(self, "var_native_" + field, None)
+                    if var is not None and (field not in previous or int(var.get()) == previous[field]):
+                        var.set(int(current_mode.get(field, 1)))
+                self._native_budget_widget_baseline = {
+                    k: int(current_mode.get(k, 1)) for k in ("frames", "warmup", "repetitions")}
                 quality_defaults = mode.get("quality") if isinstance(mode.get("quality"), Mapping) else {}
                 hold_cfg = mode.get("holdout") if isinstance(mode.get("holdout"), Mapping) else {}
                 quality_location = str(
@@ -1196,6 +1225,7 @@ class EvaluationProfileEditor(tk.Toplevel):
             f"MODELS ({len(self.models)})\n"
             + ("\n".join(model_lines) if model_lines else "  - none")
             + "\n\n"
+            + f"BACKEND-NACHRÜCKEN: {self.var_backend_backfill.get()} · {'Build + bewiesener Scorekollaps' if self.backend_output_contract_version == 1 else 'nur Buildausschlüsse'} · Outputvertrag v{self.backend_output_contract_version} · { {key: value.get() for key, value in self.var_backfill_limits.items()} }\n\n"
             + f"CANDIDATES\n  cases/model={self.var_cases.get()} · shortlist={self.var_shortlist.get()} · strategy={self.var_selection_strategy.get()} · audit={self.var_audit_size.get()}/{self.var_audit_min_valid.get()} · Part-2 inputs=1={'on' if self.var_require_single_part2_input.get() else 'off'}\n\n"
             + f"RUN PROFILES ({len(targets)})\n  "
             + (", ".join(targets) if targets else "none")
@@ -1745,12 +1775,13 @@ class EvaluationProfileEditor(tk.Toplevel):
         self._label(native, "Precision:", "Native TensorRT Boundary-Bridge. uint8_cast_fp16 nutzt uint8 Boundary und Cast innerhalb TensorRT.").grid(row=1, column=2, sticky="w", padx=(0, 6), pady=(0, 6))
         self._combo(native, self.var_native_precision, ["uint8_cast_fp16", "fp16", "fp32"], "Native TensorRT Precision/Boundary-Bridge.", state="normal", width=18).grid(row=1, column=3, sticky="w", padx=(0, 8), pady=(0, 6))
 
-        self._label(native, "Frames / warmup:", "Frames und Warmup für Native-Producer-Performance-Runs. Für finale Runs z. B. 5000/200.").grid(row=2, column=0, sticky="w", padx=(8, 6), pady=(0, 6))
+        self._label(native, "Frames / Warmup / Wiederholungen:", "Standard 100/10/1; Final Quality 1000/100/3. Energie-Replikate werden separat aufgelöst.").grid(row=2, column=0, sticky="w", padx=(8, 6), pady=(0, 6))
         nrun = ttk.Frame(native)
         nrun.grid(row=2, column=1, sticky="w", padx=(0, 12), pady=(0, 6))
         self._spin(nrun, self.var_native_frames, "Native-Producer Frames.", from_=1, to=9999999, width=8).pack(side=tk.LEFT)
         ttk.Label(nrun, text=" / ").pack(side=tk.LEFT)
         self._spin(nrun, self.var_native_warmup, "Native-Producer Warmup Frames.", from_=0, to=9999999, width=8).pack(side=tk.LEFT)
+        self._spin(nrun, self.var_native_repetitions, "Unabhängige Performancewiederholungen; bei n=1 kein Wiederholungs-CI.", from_=1, to=999, width=5).pack(side=tk.LEFT)
         self._label(native, "Queue / inflight:", "Queue depth für FIFO und Hailo10-InferModel inflight-Jobs.").grid(row=2, column=2, sticky="w", padx=(0, 6), pady=(0, 6))
         nq = ttk.Frame(native)
         nq.grid(row=2, column=3, sticky="w", padx=(0, 8), pady=(0, 6))
@@ -2877,6 +2908,9 @@ class EvaluationProfileEditor(tk.Toplevel):
             "name": name,
             "purpose": str(self.var_purpose.get() or "").strip(),
             "selection_policy": {
+                "backend_backfill": {"enabled": bool(self.var_backend_backfill.get()),
+                    "technical_output_contract_version": self.backend_output_contract_version,
+                    **{key: int(value.get()) for key, value in self.var_backfill_limits.items()}},
                 "max_accepted_cases_per_model": max(1, int(self.var_cases.get() or 1)),
                 "preferred_shortlist": max(1, int(self.var_shortlist.get() or 1)),
                 "min_gap": max(0, int(self.var_min_gap.get() or 0)),
@@ -3081,14 +3115,15 @@ class EvaluationProfileEditor(tk.Toplevel):
                 "backends": _split_csv(self.var_native_backends.get()) or ["hailo8", "hailo10h", "deepx"],
                 "case_policy": str(self.var_native_case_policy.get() or "all_accepted"),
                 "precision": str(self.var_native_precision.get() or "uint8_cast_fp16"),
-                "frames": max(1, int(self.var_native_frames.get() or 1000)),
-                "warmup": max(0, int(self.var_native_warmup.get() or 100)),
+                "frames": max(1, int(self.var_native_frames.get() or 100)),
+                "warmup": max(0, int(self.var_native_warmup.get())),
+                "repetitions": max(1, int(self.var_native_repetitions.get())),
                 "queue_depth": max(1, int(self.var_native_queue_depth.get() or 3)),
                 "inflight": max(1, int(self.var_native_inflight.get() or 8)),
                 "hailo_format": "uint8",
                 "remote_root": "/home/nx/native_fifo_evalsets",
                 "remote_tool_dir": "/home/nx/ONNX-Splitpoint-Tool",
-                "build_missing_engines": True,
+                "build_missing_engines": getattr(self, "_loaded_native_build_missing_engines", True),
                 "copy_benchmarksets": True,
                 "strict_supported_only": True,
                 "full_baselines": {
@@ -3269,6 +3304,25 @@ class EvaluationProfileEditor(tk.Toplevel):
             },
         }
         previous_preset = getattr(self, "_loaded_run_mode_preset", {})
+        for key in ("snapshot", "native_budget_sources"):
+            if key in previous_preset:
+                payload["execution_preset"][key] = copy.deepcopy(previous_preset[key])
+        baseline = getattr(self, "_native_budget_widget_baseline", {})
+        explicit = dict((previous_preset.get("overrides") or {}).get("native_performance") or {})
+        for field in ("frames", "warmup", "repetitions"):
+            value = payload["native_producers"][field]
+            if field in baseline and value != baseline[field]:
+                explicit[field] = value
+            elif field in baseline:
+                explicit.pop(field, None)
+                # The widgets just followed a different mode; mark their
+                # baseline as that mode so the resolver does not infer an override.
+                payload["execution_preset"].setdefault("snapshot", {}).setdefault("runtime", {}).setdefault("native", {})[field] = value
+                payload["execution_preset"].setdefault("native_budget_sources", {})[field] = "tool_config"
+        if explicit:
+            payload["execution_preset"]["overrides"]["native_performance"] = explicit
+        for key, value in getattr(self, "_native_energy_budget_passthrough", {}).items():
+            payload["native_producers"]["energy"][key] = copy.deepcopy(value)
         loaded_compute = getattr(self, "_loaded_hailo_compute_by_family", None)
         if loaded_compute is not None:
             # This field is edited in Tool Config (or explicitly in YAML).
@@ -3277,6 +3331,11 @@ class EvaluationProfileEditor(tk.Toplevel):
             payload["execution_preset"]["build_provenance"] = copy.deepcopy(previous_preset.get("build_provenance") or {})
         if getattr(self, "_loaded_workflow_stop_after", None):
             payload.setdefault("workflow", {})["stop_after"] = self._loaded_workflow_stop_after
+        # Cache/build admission is an explicit profile contract, not a mode
+        # effort default. An editor roundtrip must retain a warm-only scope.
+        for location, value in getattr(self, "_loaded_cache_admission", {}).items():
+            target = payload if location == "profile" else payload["workflow"]
+            target["artifact_cache_preflight"] = copy.deepcopy(value)
         if normalize_mode_id(previous_preset.get("id")) == payload["execution_preset"]["id"]:
             # An unchanged archived choice is still that bound snapshot. A
             # preview/save must not resolve it through today's registry.
@@ -3341,6 +3400,11 @@ class EvaluationProfileEditor(tk.Toplevel):
         validate_profile_config_booleans(payload)
         self._loading_profile = True
         data = dict(payload or {})
+        self._loaded_cache_admission = {
+            location: copy.deepcopy(value["artifact_cache_preflight"])
+            for location, value in (("profile", data), ("workflow", data.get("workflow") or {}))
+            if isinstance(value.get("artifact_cache_preflight"), Mapping)
+        }
         preset = data.get("execution_preset") if isinstance(data.get("execution_preset"), Mapping) else {}
         self._loaded_run_mode_preset = copy.deepcopy(preset)
         self.var_run_mode_id.set(normalize_mode_id((preset or {}).get("id") or infer_run_mode(data)))
@@ -3352,6 +3416,13 @@ class EvaluationProfileEditor(tk.Toplevel):
         self.var_purpose.set(str(data.get("purpose") or ""))
         self.var_models_root_hint.set(str(data.get("models_root_hint") or ""))
         sel = dict(data.get("selection_policy") or {})
+        from ..backend_backfill import DEFAULT_BACKFILL
+        backfill = sel.get('backend_backfill') or {'enabled': False}
+        self.backend_output_contract_version = backfill.get('technical_output_contract_version', 0)
+        self.var_backend_backfill.set(bool(backfill.get('enabled', False)))
+        for key, variable in self.var_backfill_limits.items():
+            variable.set(backfill.get(key, DEFAULT_BACKFILL[key]))
+
         self.var_cases.set(int(sel.get("max_accepted_cases_per_model") or 5))
         self.var_shortlist.set(int(sel.get("preferred_shortlist") or 10))
         self.var_min_gap.set(
@@ -3669,12 +3740,22 @@ class EvaluationProfileEditor(tk.Toplevel):
             self._update_energy_estimate()
 
         native = dict(data.get("native_producers") or {})
+        from ..native_execution_contract import resolve_native_execution_contract
+        contract = resolve_native_execution_contract(data)
+        self._native_budget_widget_baseline = {
+            k: int(((preset.get("snapshot") or {}).get("runtime") or {}).get("native", {}).get(k, contract[k]))
+            for k in ("frames", "warmup", "repetitions")}
+        self._native_energy_budget_passthrough = {
+            k: copy.deepcopy(v) for k, v in (native.get("energy") or {}).items()
+            if k in {"task_budget", "task_budget_source"}}
         self.var_native_enabled.set(bool(native.get("enabled", False)))
+        self._loaded_native_build_missing_engines = native.get("build_missing_engines", True)
         self.var_native_backends.set(_csv_value(native.get("backends") or ["hailo8", "hailo10h", "deepx"]))
         self.var_native_case_policy.set(str(native.get("case_policy") or "all_accepted"))
         self.var_native_precision.set(str(native.get("precision") or "uint8_cast_fp16"))
-        self.var_native_frames.set(int(native.get("frames") or 1000))
-        self.var_native_warmup.set(int(native.get("warmup") or 100))
+        self.var_native_frames.set(contract["frames"])
+        self.var_native_warmup.set(contract["warmup"])
+        self.var_native_repetitions.set(contract["repetitions"])
         self.var_native_queue_depth.set(int(native.get("queue_depth") or 3))
         self.var_native_inflight.set(int(native.get("inflight") or 8))
         fcfg = native.get("full_baselines") if isinstance(native.get("full_baselines"), Mapping) else {}
