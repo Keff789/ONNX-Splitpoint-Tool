@@ -1002,3 +1002,50 @@ Sicherung und bestehender Zielimport-/Quellprüfung; endgültiger Gitstand und
 Zieltests im externen ABSCHLUSS_UEBERNAHME_v2.md. Kein Hardware-Nachtest,
 keine Quellsperre entfernt, kein Commit/Push und keine wissenschaftliche
 Freigabe aus diesen Softwaretests.
+
+Fortsetzung nach korrigiertem Folgeauftrag v3.1 (23.09.2026): Der vorhandene
+Entwicklungsstand ist als WIP auf codex/review-ap00-ap08-v3-1-20260923 gesichert
+und erfolgreich ins vorhandene Source-Remote gepusht. Sicherungscommit
+f52cf5ccb0d2c4172a0c3536eac8b67cc55e3d0c umfasst die vorgesehenen 92 Dateien,
+einschließlich aller 33 neuen Source-/Testdateien. Die ausdrückliche Freigabe
+dieses Reviewpushs ersetzt nur die frühere Commit-/Push-Bedingung; Hardware-,
+Release- und Thesisabnahme bleiben offen. Private Runtimebelege bleiben lokal.
+
+Die frühere gezielte Energie176-Nachabnahme ist anhand der Originale erhalten:
+YOLO26s und YOLOv7-Paper TRT Full auf H10 je 3/3 gültig, sechs Collectorstarts,
+null Retries, sechs bestätigte Quellenenden. 27 s angeforderte Geräteaufnahme
+bei innerem Lastsoll 1 s und Commandfenstern etwa 3,07–3,17 s. Das ist kein
+60-s-Nachweis. Keine Wiederholung, allgemeine Hardwarediagnose oder Resetpflicht.
+
+Enger lesender G2-Vergleich: gleicher gespeicherter Collectorpfad, relevante
+Konfiguration und GO-/Vorlaufreihenfolge; anderer Workload und 86 statt 27 s
+angeforderte Geräteaufnahme. Empfangsabbruch nach etwa 5,099 s Stille, kein
+Ablauf des äußeren 900-s-CLI-Limits. Die 233 anderen registrierten AP06-Aktivitäten
+waren vor dem einzigen Capture freigegeben. Kein konkreter reproduzierter
+Aufruf-/AP06-Übergangsfehler und keine daraus begründete Produktkorrektur;
+unregistrierte Fremdlast und die Empfangsursache bleiben durch diese Belege offen.
+
+Aktuelle lesende Belegungsprüfung über normalen Produkttransport: auf Controller
+und H10 keine bekannten aktiven Produktprozesse, Leases oder gehaltenen Locks.
+Die vier dauerhaften G2-Quarantänen bestehen unverändert. Installiert fehlt der
+dokumentierte, auf genau diese physischen Ressourcen begrenzte Freigabeübergang
+unter Lock/Ownership nach campaign_source_completion_unresolved. Der vorhandene
+Workflow-Resume-Callback schließt physische Collector-/Source-Locks aus; beide
+physischen Zulassungspfade verwenden acquire ohne Recoverycallback. Prozessende
+und historische Erfolge geben die Ressourcen deshalb nicht frei. Dies ist eine
+Software-Freigabelücke, kein nachgewiesener Hardwaredefekt oder Resetbedarf.
+
+G1-/G2-Restabnahme vor Start blockiert; keine neuen Run-IDs oder Messungen.
+Bestehendes Abnahmejournal ausschließlich von drei auf fünf erlaubte Workflows
+erweitert, Einträge unverändert; vorhandener externer GUI-Operator auf dieselbe
+Grenze angepasst und nicht gestartet. Verbrauch 3/5 Workflows und 1/36
+Collectorstarts, verbleibend zwei bzw. 35. Keine Ressourcenfreigabe oder
+Sperrenänderung, keine Umdeklaration des alten finished=false-Versuchs.
+
+In v3.1 keine neuen Produkt-/Testimplementierungen oder Testläufe; vorhandene
+lokale Full-Fix-Belege gelten weiter, reale Full-/Detectionabnahme bleibt offen,
+G2-Energie unvollständig. R1 bleibt partiell: harter Controllerabbruch vor
+dauerhaft belegtem lokalem Cleanup weiterhin nicht abgedeckt. Kein Thesisstart
+oder Resume alter Runs. Details und Originalbezüge im bestehenden Aufgabenroot
+unter evidence/restabnahme_v3_1; nächster notwendiger Schritt ist die begrenzte
+Klärung des fehlenden physischen Ressourcen-Freigabeübergangs.
