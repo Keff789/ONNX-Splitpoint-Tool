@@ -262,6 +262,23 @@ class EvaluationRunLock:
         *,
         recover_quarantine: Callable[[Mapping[str, Any]], bool] | None = None,
     ) -> "EvaluationRunLock":
+        return self._acquire(recover_quarantine=recover_quarantine)
+
+    def acquire_for_recovery(self) -> "EvaluationRunLock":
+        """Hold an existing inode without admitting work or changing its fence.
+
+        The explicit physical-resource recovery operator uses this to inspect
+        the complete resource group before changing any member. Ordinary
+        acquire(), including workflow Resume, keeps its existing behaviour.
+        """
+        return self._acquire(inspect_only=True)
+
+    def _acquire(
+        self,
+        *,
+        recover_quarantine: Callable[[Mapping[str, Any]], bool] | None = None,
+        inspect_only: bool = False,
+    ) -> "EvaluationRunLock":
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         with _THREAD_GUARD:
             local_owner = _THREAD_OWNERS.get(self._thread_key)
@@ -295,7 +312,18 @@ class EvaluationRunLock:
                     ) from exc
                 self._platform_interlock_fh = interlock_fh
 
-            self._fh = self.lock_path.open("a+b")
+            if inspect_only:
+                import stat
+                descriptor = os.open(
+                    self.lock_path, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+                )
+                self._fh = os.fdopen(descriptor, "r+b")
+                if not stat.S_ISREG(os.fstat(self._fh.fileno()).st_mode):
+                    raise WorkflowRunCleanupQuarantineError(
+                        "Recovery requires an existing regular resource lock"
+                    )
+            else:
+                self._fh = self.lock_path.open("a+b")
             try:
                 if os.name == "nt":  # pragma: no cover - Windows installation
                     import msvcrt
@@ -324,6 +352,11 @@ class EvaluationRunLock:
             # checked only after exclusive flock acquisition, before this
             # writer can replace owner metadata or touch the EvaluationRun.
             self.previous_owner = self._read_owner()
+            if inspect_only:
+                # Even an accidental default release must not rewrite the
+                # predecessor while the group is still being inspected.
+                self._quarantined = True
+                return self
             quarantined_owner: dict[str, Any] | None = None
             if os.path.lexists(self.quarantine_path):
                 try:
@@ -394,6 +427,22 @@ class EvaluationRunLock:
         except BaseException:
             self.release(write_released_state=False)
             raise
+
+    def write_recovery_owner(self, owner: Mapping[str, Any]) -> None:
+        """Strict durable owner write while an explicit recovery holds flock.
+
+        Unlike diagnostic release(), failures propagate before any group lock
+        is dropped. A surviving running owner fences an interrupted recovery.
+        """
+        if self._fh is None or not self._thread_acquired:
+            raise RuntimeError("resource recovery requires exclusive ownership")
+        encoded = (json.dumps(dict(owner), indent=2, ensure_ascii=False,
+                              sort_keys=True) + "\n").encode("utf-8")
+        self._fh.seek(0)
+        self._fh.truncate(0)
+        self._fh.write(encoded)
+        self._fh.flush()
+        os.fsync(self._fh.fileno())
 
     def commit_quarantine_fence(
         self, payload: Mapping[str, Any]

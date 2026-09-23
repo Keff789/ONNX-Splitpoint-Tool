@@ -39,6 +39,58 @@ an ambiguous observation require an explicit target and a fresh preflight.
 
 ## UDP control contract
 
+### Explicit recovery after an unconfirmed capture end
+
+An interrupted capture with `campaign_source_completion_unresolved` fences
+its source, DUT, controller capture and controller NIC. Ending the processes
+or observing an unheld kernel lock does not release these durable fences.
+Historical successful captures do not confirm the failed attempt's source end.
+
+The normal product provides an explicit operator command for this exact case:
+
+```bash
+python -m onnx_splitpoint_tool.remote.process_lease_cli recover-capture \
+  --run-dir /absolute/path/to/failed-run \
+  --session-id ORIGINAL_SESSION --operation-id ORIGINAL_CAPTURE \
+  --setup-id REGISTRY_SETUP --source source:REGISTRY_SOURCE \
+  --operator OPERATOR_NAME \
+  --action 'Actual documented intervention already performed' \
+  --performed-at 'ISO8601 timestamp with timezone after the STOP' \
+  --supply-effect 'Actual effect on measurement controller and DUT supply' \
+  --ready-observation 'Observed new readiness after the intervention' \
+  --confirm-action-performed
+```
+
+These are placeholders, not evidence or a device-reset recipe. First establish
+the actual device/operator procedure and its supply effects. The Tool does not
+invent an Idle-ACK, reset the measurement controller, toggle rails, reboot a DUT,
+or take a probe measurement. A desired release is not an intervention already
+performed. If the procedure is not documented locally, obtain it from the
+operator before acting. The `jetson`/`m.2` rail toggles below are not source-reset
+commands. `--registry PATH` optionally selects the normal hardware registry.
+
+The command binds the original capture request/reply and all four resource
+identities to that registry. It holds every existing exclusive resource lock,
+requires exact durable collector cleanup, a terminal parent and no unresolved
+remote lease descriptors, then checks current local/remote ownership using the
+existing read-only SSH transport. Active, foreign or unobservable predecessors,
+wrong operations/resources, incomplete action evidence and changed metadata
+remain blocked. No process is killed by this recovery command.
+
+The original error and fence/owner evidence, actual operator action and current
+ownership observations are retained in a `recovery` field of the existing
+capture `resource-reply.json`. Its STOP/reason remain unchanged, as do the old
+measurement, `finished=false`, retry/source budgets and acceptance counters.
+No new journal or hash identity is created. All resource locks stay held until
+the group transition is durably recorded; exceptions restore the original
+fences, and an interrupted recovery writer remains fail-closed. Normal
+admission never automatically clears a fence. Repeating the same successful
+operator call returns `already_released` without starting work; a later foreign
+quarantine cannot be cleared by replaying an earlier release.
+
+This operator is limited to the physical capture STOP. It does not broaden
+workflow Resume or establish general recovery from arbitrary controller crashes.
+
 The default controller port is `3000`. The commands are configurable but
 normally remain:
 

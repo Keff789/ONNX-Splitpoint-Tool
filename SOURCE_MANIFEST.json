@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.90.1",
   "workflow_version": "v2.90.1",
-  "file_count": 2075,
+  "file_count": 2079,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 158758,
-      "sha256": "68670cb08d6ce806b21d09e524b0c631289be4bcf5748b0a94faf10979e06f9a"
+      "size": 162149,
+      "sha256": "ab143aab330a2eaaa4f2781f30c5c88e12438338a45ae0e8ff1ba126ecb631ee"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -441,8 +441,8 @@
     },
     {
       "path": "docs/PLATFORM_POWER_CONTROL.md",
-      "size": 16737,
-      "sha256": "de57a365726c6b46959b1f98b17263ca2398bef43c6470fc39192b71c586a751"
+      "size": 19768,
+      "sha256": "3922c8934863bca12a052731a9c2ccc1b590b0143b7d24b14d05455299698dbe"
     },
     {
       "path": "docs/QUICKSTART.md",
@@ -1446,13 +1446,23 @@
     },
     {
       "path": "onnx_splitpoint_tool/remote/process_lease.py",
-      "size": 92472,
-      "sha256": "74842cad2c14cc7c145fae9c9945816acbd88f8b58da23fc7d46d8e50cfdc067"
+      "size": 94541,
+      "sha256": "ab83c2b3febc7a07475bc2d9be81ba81cd06f284c99a568b27416b7f3262ea23"
     },
     {
       "path": "onnx_splitpoint_tool/remote/process_lease_cli.py",
       "size": 230,
       "sha256": "75a27ed7a0317319ec846d71476161fb10015841ec584b8c1a6aab3aab4a197c"
+    },
+    {
+      "path": "onnx_splitpoint_tool/remote/resource_recovery.py",
+      "size": 16473,
+      "sha256": "0690617ed33f05293d113121ebd0a7a1f08d1c38e08013141d69bf16623bb09d"
+    },
+    {
+      "path": "onnx_splitpoint_tool/remote/resource_recovery_observation.py",
+      "size": 13550,
+      "sha256": "3414459c710955adc54279cda04c4337ed45f38b83e07d4c9d91409f6d193793"
     },
     {
       "path": "onnx_splitpoint_tool/remote/ssh_transport.py",
@@ -3026,8 +3036,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/run_control.py",
-      "size": 21363,
-      "sha256": "e181e0b44caa43b35395dbe1f2484c5075af2bab3c9188fcc7002895ddcf2ae6"
+      "size": 23542,
+      "sha256": "91265062d28dc3c2bf44edb397c640c8d377a348c61628b62f3c5b0ea714a9ac"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/run_discovery.py",
@@ -6930,6 +6940,11 @@
       "sha256": "20390e4469b1be6560e0468324f2476a00916152849999472df13f1143e8119f"
     },
     {
+      "path": "tests/test_physical_resource_recovery.py",
+      "size": 23282,
+      "sha256": "c8fe0bdc6ab9acfd94537e16c639e9a8e361f676f85c84fca2d568b05112ac70"
+    },
+    {
       "path": "tests/test_profile_editor_campaign_roundtrip_v261e.py",
       "size": 26926,
       "sha256": "93037adde701ec638be51952e6185960f8312cf287cd01aeb0809d5e4cf2156a"
@@ -7023,6 +7038,11 @@
       "path": "tests/test_ranking_model_fitting_v60.py",
       "size": 6023,
       "sha256": "97ddec10139200e18c2f6dee79ce585869078b939862d9db99a37f3715204657"
+    },
+    {
+      "path": "tests/test_resource_recovery_observation.py",
+      "size": 11836,
+      "sha256": "b6bdd34e03d1ac536971f1614396d19b5cd16f1b81548c93e905804381580ef8"
     },
     {
       "path": "tests/test_resume_missing_full_quality_wrapper_hardening.py",

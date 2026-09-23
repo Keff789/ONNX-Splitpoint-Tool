@@ -1049,3 +1049,52 @@ dauerhaft belegtem lokalem Cleanup weiterhin nicht abgedeckt. Kein Thesisstart
 oder Resume alter Runs. Details und Originalbezüge im bestehenden Aufgabenroot
 unter evidence/restabnahme_v3_1; nächster notwendiger Schritt ist die begrenzte
 Klärung des fehlenden physischen Ressourcen-Freigabeübergangs.
+
+Abendfortsetzung v3.2 (23.09.2026): Der konkret fehlende physische
+Freigabehandler ist jetzt im normalen Produktpfad implementiert. Ausdrücklicher
+Einstieg: python -m onnx_splitpoint_tool.remote.process_lease_cli recover-capture.
+Er verbindet bestehende Ressourcenlocks und die ursprüngliche Captureoperation;
+keine automatische Recovery bei normalem acquire, kein Collector-/Firmwareumbau.
+Alle vier EX-Locks werden vor einer Änderung gehalten. Exakte Originalowner,
+Request/STOP, Registrybindung, dauerhafter Collector-Cleanup, terminaler Parent,
+offene Remote-Leasedeskriptoren und aktuelle Prozesssicht werden geprüft.
+Ein tatsächlich ausgeführter, zeitlich gebundener Betreibereingriff mit Quelle,
+Versorgungswirkung und beobachteter Bereitschaft ist ausdrücklich erforderlich.
+
+Originalquarantänen, Besitzer, Betreibereingriff und Beobachtung bleiben im
+recovery-Feld der vorhandenen Captureantwort erhalten; ursprünglicher STOP und
+alte Mess-/Retry-/Quellenbudgets werden nicht umgeschrieben. Strikte persistente
+Ownerwrites erfolgen noch unter allen Originalquarantänen; controller:capture
+wird zuletzt freigegeben. Fehler rollen auf die ursprünglichen Fences zurück.
+Wiederholung derselben erfolgreichen Recovery ist ohne Messung idempotent;
+spätere fremde Quarantänen bleiben gesperrt. Dokumentierter Bedienaufruf und
+Grenzen in docs/PLATFORM_POWER_CONTROL.md. Kein neuer Hash-/Journalmechanismus.
+
+Fokussierte lokale Softwareprüfung: 34 Recoverytests PASS (3,46 s),
+23 Besitzer-/Transporttests PASS (0,48 s), dazu 44 bestehende AP06-/Remotelease-
+und Lock-Fallback-Regressionen PASS. Die Tests enthalten echte temporäre flocks,
+kontrollierte lokale Prozesse, konkurrierende Recovery, fehlende/falsche Belege,
+Schreib-/fsync-Fehler und Prozessabbruch während des letzten Owner-Schreibens.
+Keine Produktivhardware aus diesen Tests. Im kombinierten Zwischenlauf waren
+zwei neue parametrisierte Test-Erwartungen noch auf einen festen Programmnamen
+gesetzt (98 PASS/2 FAIL); Test-Erwartung korrigiert und ganze betroffene
+Besitzerprüfungsdatei danach erfolgreich. Eine vorhandene Protobufwarnung.
+
+Aktuelle lesende Produkttransportprüfung auf Controller/H10: bekannte exakte
+G2-Vorgänger abwesend, keine bekannten konkurrierenden Produktprozesse oder
+aktiven Remoteleases, keine Sichtfehler. Das bestätigt keine Quellenbereitschaft.
+Die Betreiberklärung wurde gleich zu Beginn angefordert: lokal ist für den
+Quellencontroller kein dokumentierter Status-/STOP-/Resetweg mit geklärter
+Versorgungswirkung vorhanden. Die Jetson-/M.2-Railtoggles sind kein belegter
+Quellenreset. Eine konkrete tatsächliche Bedienhandlung ist bislang nicht
+belegt; kein pauschaler Resetbedarf wird daraus abgeleitet.
+
+Daher produktive Recovery noch nicht angewendet, alle vier G2-Quarantänen
+erhalten. G1/G2 und der ausdrücklich autorisierte anschließende Final-7x1-Lauf
+noch nicht gestartet. Abnahmejournal unverändert 3/5 Workflows, 1/36
+Collectorstarts. Statische Prüfung der vorhandenen Ein-Split-Kopie bestätigt
+den vereinbarten Finalumfang; der tatsächliche Startsnapshot/Preflight folgt
+erst innerhalb der freigegebenen Abfolge. Final erhält einen eigenen normalen
+Kampagnenscope, keinen erweiterten 5/36-Testetat. R1 bleibt partiell; keine
+allgemeine Crash-Recovery oder wissenschaftliche Freigabe. Belege im bestehenden
+Aufgabenroot unter evidence/abendstart_v3_2.

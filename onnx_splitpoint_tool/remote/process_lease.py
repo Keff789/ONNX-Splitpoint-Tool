@@ -1027,21 +1027,25 @@ class RemoteProcessLeaseJournal:
         return self.directory / (value + self._DESCRIPTOR_SUFFIX)
 
     @staticmethod
-    def _fsync_directory(directory: Path) -> None:
+    def _fsync_directory(directory: Path, *, strict: bool = False) -> None:
         if os.name != "posix":
             return
         try:
             descriptor = os.open(str(directory), os.O_RDONLY)
         except OSError:
+            if strict:
+                raise
             return
         try:
             os.fsync(descriptor)
         except OSError:
-            pass
+            if strict:
+                raise
         finally:
             os.close(descriptor)
 
-    def _write_json_atomic(self, destination: Path, payload: Mapping[str, Any]) -> None:
+    def _write_json_atomic(self, destination: Path, payload: Mapping[str, Any],
+                           *, strict_directory_sync: bool = False) -> None:
         temporary = destination.with_name(
             f".{destination.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
         )
@@ -1059,7 +1063,10 @@ class RemoteProcessLeaseJournal:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(str(temporary), str(destination))
-            self._fsync_directory(self.directory)
+            if strict_directory_sync:
+                self._fsync_directory(self.directory, strict=True)
+            else:
+                self._fsync_directory(self.directory)
         finally:
             if descriptor >= 0:
                 os.close(descriptor)
@@ -1951,7 +1958,37 @@ def process_lease_cli_main(argv: Optional[Sequence[str]] = None) -> int:
     execute.add_argument("--label", required=True)
     execute.add_argument("--timeout-s", type=float, default=None)
     execute.add_argument("ssh_argv", nargs=argparse.REMAINDER)
+    recover = subparsers.add_parser(
+        "recover-capture", help="explicitly reconcile one stopped physical capture resource group"
+    )
+    for name in ("run-dir", "session-id", "operation-id", "setup-id", "source",
+                 "operator", "action", "performed-at", "supply-effect", "ready-observation"):
+        recover.add_argument("--" + name, required=True)
+    recover.add_argument("--registry", default=None)
+    recover.add_argument("--confirm-action-performed", action="store_true", required=True,
+                         help="attest that the described operator action actually occurred")
     arguments = parser.parse_args(list(argv) if argv is not None else None)
+    if arguments.command == "recover-capture":
+        from .resource_recovery import recover_capture_resources
+        from ..workflow.run_control import WorkflowRunControlError
+        try:
+            result = recover_capture_resources(
+                run_dir=arguments.run_dir, session_id=arguments.session_id,
+                operation_id=arguments.operation_id, setup_id=arguments.setup_id,
+                registry_path=arguments.registry,
+                operator_evidence={
+                    "source": arguments.source, "operator": arguments.operator,
+                    "action": arguments.action, "performed_at": arguments.performed_at,
+                    "supply_effect": arguments.supply_effect,
+                    "ready_observation": arguments.ready_observation,
+                    "action_performed": arguments.confirm_action_performed,
+                },
+            )
+            print(json.dumps(result, indent=2))
+            return 0
+        except (WorkflowRunControlError, RemoteProcessLeaseJournalError, ValueError, OSError) as exc:
+            print(f"physical resource recovery blocked: {exc}", file=sys.stderr)
+            return 70
     raw = list(arguments.ssh_argv)
     if raw and raw[0] == "--":
         raw = raw[1:]
