@@ -12,6 +12,8 @@ This module is used by the remote benchmarking flow.
 
 from __future__ import annotations
 
+from onnx_splitpoint_tool.process_control import budget_controller_work
+
 import os
 import json
 import re
@@ -715,6 +717,7 @@ class SSHTransport:
             return 70
         return final_rc
 
+    @budget_controller_work("transfer")
     def scp_upload(
         self,
         local_path: str,
@@ -743,6 +746,7 @@ class SSHTransport:
         except Exception as e:
             return 1, f"scp failed: {e}"
 
+    @budget_controller_work("transfer")
     def scp_download(
         self,
         remote_path: str,

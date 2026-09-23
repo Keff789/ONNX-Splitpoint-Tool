@@ -390,12 +390,16 @@ def test_workflow_variant_coordinator_crash_without_state_fails_closed(
     assert imported.get("complete") is not True
 
 
+@pytest.mark.parametrize("resume,checkpoint", [(False, False), (True, False), (True, True), (False, True)])
 def test_standard_final_native_energy_exception_fails_closed(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path, monkeypatch, resume: bool, checkpoint: bool,
 ) -> None:
     runner = EvaluationWorkflowRunner(WorkflowOptions(profile="", out=str(tmp_path)))
     runner.run_id = "eval-native-split-001"
     runner.run_dir = tmp_path / runner.run_id
+    runner.options.resume = resume
+    if checkpoint:
+        _write_json(runner.run_dir / "reports/native_energy_measurements/stages/native_energy/stage_result.json", {"state": "cancelled", "complete": False})
     runner.profile_payload = {
         "campaign": {"mode": "final"},
         "measurement_campaign": {"system_power": {"scope": "system", "window": "command"}},
@@ -432,6 +436,8 @@ def test_standard_final_native_energy_exception_fails_closed(
         _assert_journal_environment(runner, kwargs)
         label = kwargs["label"]; calls.append(label)
         if label == "energy:measure":
+            assert ("--resume-checkpoint" in cmd) is (resume and checkpoint)
+            assert "--resume-existing" not in cmd
             raise RuntimeError("r6 controlled energy child failure")
         if label == "final_report":
             _write_json(runner.run_dir / "reports/native_producer_combined_summary.json", {"rows": [{

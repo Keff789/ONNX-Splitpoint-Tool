@@ -265,6 +265,9 @@ def validate_evaluation_profile_payload(
     source_label = str(source_path or source)
     data = dict(payload or {}) if isinstance(payload, Mapping) else {}
     validate_profile_config_booleans(data)
+    from ..quality_statistics_config import statistics_options, reference_threads
+    statistics_options(data)
+    reference_threads(data)
     errors = sorted(_profile_validator().iter_errors(data), key=lambda e: list(e.path))
     if errors:
         head = '; '.join(_format_schema_error(e) for e in errors[:6])

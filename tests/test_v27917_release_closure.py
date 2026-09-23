@@ -53,8 +53,6 @@ def test_missing_case_map_entry_blocks_only_that_model() -> None:
 @pytest.mark.parametrize(
     ("case_map", "expected_reason"),
     [
-        ({"resnet50": ["b001"], "yolo26s": []},
-         "case_map_cases_empty:yolo26s"),
         ({"resnet50": ["b001"], "yolo26s": ["b002", "b002"]},
          "case_map_cases_duplicate:yolo26s"),
         ({"resnet50": ["b001"], "yolo26s": ["b999"]},
@@ -154,11 +152,10 @@ def test_preflight_rows_project_the_actual_model_local_reason_to_energy() -> Non
 
 
 def test_stage_integrates_model_local_case_exclusions_before_remote_launch() -> None:
-    source = inspect.getsource(EvaluationWorkflowRunner._stage_run_native_producers)
+    source = inspect.getsource(EvaluationWorkflowRunner._stage_run_native_producers_steps)
     assert "_native_case_selection_decision(" in source
     assert "excluded_models[model] = exclusion" in source
     assert "models = case_runnable_models" in source
-    assert "native_supported_cases_empty:" in source
     assert '"configured_models": configured_models' in source
 
 

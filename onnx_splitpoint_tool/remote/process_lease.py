@@ -418,10 +418,10 @@ try:
 finally:
     try:
         current = json.loads(lease.read_text(encoding="utf-8"))
-        # The guardian's fsynced drained token is independent proof that every
-        # adopted descendant exited.  It is safe for either the launcher or a
-        # concurrent cleanup controller to remove the lease after that point;
-        # before it, rc=70 retains the retryable identity record.
+        # The guardian's fsynced token proves every adopted descendant exited.
+        # A concurrent cleanup controller may already have read this lease;
+        # retain the terminal token for every concurrent cleanup controller.
+        # Before proof, rc=70 retains the retryable identity record.
         drained_ok = False
         try:
             drained_ok = drained.read_text(encoding="ascii").strip() == token
@@ -429,10 +429,6 @@ finally:
             pass
         if current.get("token") == token and drained_ok:
             lease.unlink()
-            try:
-                drained.unlink()
-            except OSError:
-                pass
     except (OSError, ValueError):
         pass
     try:
@@ -489,6 +485,18 @@ if not lease.exists():
     raise SystemExit(0)
 try:
     record = json.loads(lease.read_text(encoding="utf-8"))
+except FileNotFoundError:
+    # A sibling exact controller/launcher may retire the lease after our
+    # existence check. Only the matching guardian proof closes that race.
+    try:
+        proven = drained.read_text(encoding="ascii").strip() == token
+    except OSError:
+        proven = False
+    if proven:
+        print("__SPLITPOINT_REMOTE_LEASE_CLEANUP__=already_exited_drained")
+        raise SystemExit(0)
+    print("__SPLITPOINT_REMOTE_LEASE_CLEANUP__=lease_disappeared_without_drain")
+    raise SystemExit(70)
 except Exception as exc:
     print("__SPLITPOINT_REMOTE_LEASE_CLEANUP__=invalid_lease:%s" % type(exc).__name__)
     raise SystemExit(65)
@@ -538,7 +546,6 @@ if root_identity is None or root_identity["state"] == "Z":
     try:
         if json.loads(lease.read_text()).get("token") == token:
             lease.unlink()
-            drained.unlink()
     except Exception:
         pass
     raise SystemExit(0)
@@ -710,10 +717,6 @@ if remaining == 0 and drained_ok:
     try:
         if json.loads(lease.read_text()).get("token") == token:
             lease.unlink()
-            try:
-                drained.unlink()
-            except OSError:
-                pass
     except Exception:
         pass
 success = remaining == 0 and drained_ok
@@ -1964,3 +1967,284 @@ def process_lease_cli_main(argv: Optional[Sequence[str]] = None) -> int:
     except OSError as exc:
         print(f"remote lease execution error: {exc}", file=sys.stderr)
         return 71
+
+
+class ControllerResourceClaim:
+    """Child side of the existing journal's controller capture handoff."""
+
+    def __init__(self, journal, *, setup_id, attempt_dir, cancel_event=None, purpose="capture", continuation=None):
+        from onnx_splitpoint_tool.process_control import _proc_start_time
+        self.journal = journal
+        self.cancel_event = cancel_event
+        self.config = journal._read_json_exact(journal.directory / "controller.resources.json")
+        self.operation = "capture-" + uuid.uuid4().hex
+        self.token = uuid.uuid4().hex
+        self.payload = {"operation_id": self.operation, "token": self.token,
+            "run_id": journal.scope.run_id, "session_id": journal.scope.session_id,
+            "owner_pid": os.getpid(), "owner_start_ticks": _proc_start_time(os.getpid()),
+            "setup_id": str(setup_id), "attempt_dir": str(Path(attempt_dir).resolve()),
+            "sequence": 0, "phase": "RESERVING", "purpose": purpose, "continuation": continuation}
+        self.acquired = False
+        self.process_started = False
+
+    @classmethod
+    def from_environment(cls, *, setup_id, attempt_dir, cancel_event=None, env=None, purpose="capture", continuation=None):
+        values = {**os.environ, **(env or {})}
+        if values.get("ONNX_SPLITPOINT_CONTROLLER_RESOURCES") != "required":
+            return None
+        journal = RemoteProcessLeaseJournal.from_environment(values, required=True)
+        return cls(journal, setup_id=setup_id, attempt_dir=attempt_dir, cancel_event=cancel_event, purpose=purpose, continuation=continuation)
+
+    def _parent_alive(self):
+        from onnx_splitpoint_tool.process_control import _proc_start_time
+        return _proc_start_time(int(self.config["parent_pid"])) == self.config["parent_start_ticks"]
+
+    def _publish(self, phase, **fields):
+        self.payload.update(fields, phase=phase, sequence=self.payload["sequence"] + 1)
+        self.journal._write_json_atomic(self.journal.directory / (self.operation + ".resource-request.json"), self.payload)
+
+    def _wait(self, expected, *, allow_cancel=False):
+        path = self.journal.directory / (self.operation + ".resource-reply.json")
+        while True:
+            if not self._parent_alive():
+                raise RemoteProcessLeaseJournalError("controller_resource_owner_lost")
+            if not allow_cancel and self.cancel_event is not None and self.cancel_event.is_set():
+                raise RemoteProcessLeaseJournalError("controller_resource_cancelled_before_dispatch")
+            if path.exists():
+                row = self.journal._read_json_exact(path)
+                if any(row.get(key) != self.payload[key] for key in ("operation_id", "token", "run_id", "session_id")):
+                    raise RemoteProcessLeaseJournalError("controller_resource_reply_binding_mismatch")
+                if row.get("state") == "STOP":
+                    raise RemoteProcessLeaseJournalError(str(row.get("reason") or "controller_resource_stopped"))
+                if row.get("state") == expected:
+                    return row
+            time.sleep(0.025)
+
+    def acquire(self):
+        self._publish("RESERVING")
+        try:
+            row = self._wait("QUIET_CONFIRMED" if self.payload["purpose"] == "capture" else "ACTIVE")
+        except BaseException:
+            self._publish("UNUSED")
+            raise
+        self.acquired = True
+        return row
+
+    def started(self, proc):
+        from onnx_splitpoint_tool.process_control import _proc_start_time
+        self.process_started = True
+        self._publish("ACQUIRING", collector_pid=int(proc.pid), collector_start_ticks=_proc_start_time(proc.pid))
+
+    def finish(self, result):
+        self._publish("FINALIZING", process_started=bool(result.get("process_started", self.process_started)))
+        return self._wait("RELEASED", allow_cancel=True)
+
+
+class ControllerResourceBroker:
+    """Parent admission over one ResourcePauseGate and existing physical leases.
+
+    tick never waits for work, SSH or a child. Journal replies are the dispatch
+    gate; a failed or lost collector owner leaves the source's durable fence.
+    """
+
+    def __init__(self, journal, gate, *, run_dir, setups, parent_pid=None):
+        from onnx_splitpoint_tool.process_control import _proc_start_time
+        self.journal, self.gate = journal, gate
+        self.run_dir = Path(run_dir).resolve()
+        self.setups = {str(key): tuple(sorted(set(value))) for key, value in setups.items()}
+        self.operations = {}
+        self.stopped_sources = set()
+        self.parent_pid = int(parent_pid or os.getpid())
+        self.config = {"run_id": journal.scope.run_id, "session_id": journal.scope.session_id,
+            "parent_pid": self.parent_pid, "parent_start_ticks": _proc_start_time(self.parent_pid),
+            "run_dir": str(self.run_dir), "setups": {key: list(value) for key, value in self.setups.items()}}
+        path = journal.directory / "controller.resources.json"
+        if path.exists():
+            previous = journal._read_json_exact(path)
+            if previous != self.config:
+                raise RemoteProcessLeaseJournalError("controller_resource_owner_changed")
+        journal._write_json_atomic(path, self.config)
+
+    def _reply(self, row, state, **details):
+        result = {key: row[key] for key in ("operation_id", "token", "run_id", "session_id")}
+        result.update(state=state, observed_monotonic=time.monotonic(), **details)
+        self.journal._write_json_atomic(self.journal.directory / (row["operation_id"] + ".resource-reply.json"), result)
+        return result
+
+    def _validate(self, path, row):
+        if (row.get("run_id") != self.journal.scope.run_id
+                or row.get("session_id") != self.journal.scope.session_id
+                or not _SAFE_OPERATION_RE.fullmatch(str(row.get("operation_id") or ""))
+                or path.name != row["operation_id"] + ".resource-request.json"
+                or not re.fullmatch(r"[0-9a-f]{32}", str(row.get("token") or ""))
+                or row.get("setup_id") not in self.setups
+                or row.get("purpose", "capture") not in {"capture", "dut_job", "transfer", "prepare", "postcalc"}):
+            raise RemoteProcessLeaseJournalError("controller_resource_request_binding_invalid")
+        attempt = Path(str(row.get("attempt_dir") or ""))
+        if not attempt.is_absolute() or not attempt.resolve().is_relative_to(self.run_dir) or attempt.is_symlink():
+            raise RemoteProcessLeaseJournalError("controller_resource_attempt_outside_run")
+        return attempt
+
+    def _close(self, operation, *, stopped=False, reason=""):
+        from onnx_splitpoint_tool.process_control import _proc_start_time
+        row = operation["row"]
+        if operation.get("activity") is not None:
+            self.gate.release_activity(operation.pop("activity"))
+        if not stopped:
+            for key in ("reservation", "dut_reservation"):
+                if operation.get(key) is not None:
+                    self.gate.end_quiet(operation.pop(key))
+        for resource, lease in reversed(operation.get("leases", [])):
+            if stopped and resource.startswith(("dut:", "source:", "controller:capture", "controller:nic")):
+                lease.commit_quarantine_fence({"reason": reason, "resource_request": row,
+                    "source_completion_unproven": True})
+                self.stopped_sources.add(resource)
+            lease.release()
+        operation["leases"] = []
+        operation["terminal"] = True
+        self._reply(row, "STOP" if stopped else "RELEASED", reason=reason)
+
+    def tick(self):
+        from onnx_splitpoint_tool.process_control import _proc_start_time
+        from onnx_splitpoint_tool.workflow.run_control import EvaluationRunLock, WorkflowRunControlError
+        from onnx_splitpoint_tool.energy.task_budget import source_completion
+        for path in sorted(self.journal.directory.glob("*.resource-request.json")):
+            row = self.journal._read_json_exact(path)
+            attempt = self._validate(path, row)
+            key = row["operation_id"]
+            operation = self.operations.get(key)
+            if operation is not None:
+                identity_fields = ("token", "owner_pid", "owner_start_ticks", "setup_id", "attempt_dir", "purpose", "continuation")
+                if any(operation["row"].get(field) != row.get(field) for field in identity_fields):
+                    raise RemoteProcessLeaseJournalError("controller_resource_owner_changed")
+                if int(row.get("sequence") or 0) < int(operation["row"].get("sequence") or 0):
+                    raise RemoteProcessLeaseJournalError("controller_resource_sequence_regressed")
+                if operation.get("terminal"):
+                    continue
+                operation["row"] = row
+            else:
+                if row["phase"] not in {"RESERVING", "UNUSED"}:
+                    raise RemoteProcessLeaseJournalError("controller_resource_missing_reservation")
+                from onnx_splitpoint_tool.process_control import _capture_process_tree
+                owned = {identity.pid: identity.start_time_ticks for identity in _capture_process_tree(self.parent_pid)}
+                if owned.get(int(row["owner_pid"])) != row["owner_start_ticks"]:
+                    raise RemoteProcessLeaseJournalError("controller_resource_unowned_request_process")
+                resources = set(self.setups[row["setup_id"]])
+                purpose = row.get("purpose", "capture")
+                if purpose == "dut_job":
+                    resources = {key for key in resources if key.startswith("dut:")}
+                elif purpose in {"transfer", "prepare", "postcalc"}:
+                    resources = {key for key in resources if key in {"controller:cpu", "controller:io"}
+                                 or (purpose == "transfer" and key.startswith("controller:nic"))}
+                if purpose in {"transfer", "postcalc"}:
+                    resources.add("controller:" + purpose)
+                continuation = self.operations.get(row.get("continuation"))
+                if row.get("continuation"):
+                    if (continuation is None or not continuation.get("granted") or continuation.get("terminal")
+                            or any(continuation["row"].get(k) != row.get(k) for k in ("owner_pid", "owner_start_ticks", "setup_id"))
+                            or continuation["row"].get("purpose") not in {"prepare", "transfer", "postcalc"}):
+                        raise RemoteProcessLeaseJournalError("controller_activity_continuation_invalid")
+                    resources -= continuation["resources"]
+                operation = {"row": row, "resources": resources, "leases": [], "terminal": False,
+                             "continuation_token": continuation.get("activity") if continuation else None}
+                self.operations[key] = operation
+                if resources.intersection(self.stopped_sources):
+                    operation["terminal"] = True
+                    self._reply(row, "STOP", reason="campaign_source_completion_unresolved")
+                    continue
+            alive = _proc_start_time(int(row["owner_pid"])) == row["owner_start_ticks"]
+            if not alive:
+                self._close(operation, stopped=operation.get("granted", False), reason="controller_resource_owner_lost")
+                continue
+            if row["phase"] == "UNUSED":
+                self._close(operation, stopped=operation.get("started", False), reason="cancelled_before_dispatch")
+                continue
+            if row["phase"] == "RESERVING":
+                purpose = row.get("purpose", "capture")
+                if purpose != "capture":
+                    if "activity" not in operation:
+                        operation["activity"] = self.gate.begin_activity(key, resources=operation["resources"],
+                            cpu=0 if purpose == "dut_job" or operation["continuation_token"] else 1,
+                            memory_bytes=0 if purpose == "dut_job" or operation["continuation_token"] else 256 * 1024**2,
+                            ignore_pause_reasons=("urecs_energy_acquisition",), continuation_token=operation["continuation_token"])
+                    if operation.get("granted") or not self.gate.poll_activity(operation["activity"]):
+                        continue
+                    quiet = {"state": "ACTIVE"}
+                else:
+                    quiet = None
+                if purpose == "capture":
+                    # Close DUT admission first. An already running job must
+                    # finish its uploads/downloads before controller quietness
+                    # can block these nested activities without a wait cycle.
+                    if "dut_reservation" not in operation:
+                        operation["dut_reservation"] = self.gate.begin_quiet(key + ":dut",
+                            resources={r for r in operation["resources"] if r.startswith("dut:")}, owner=key)
+                    if self.gate.poll_quiet(operation["dut_reservation"])["state"] != "QUIET_CONFIRMED":
+                        continue
+                    if "reservation" not in operation:
+                        operation["reservation"] = self.gate.begin_quiet(key,
+                            resources={r for r in operation["resources"] if not r.startswith("dut:")}, owner=key)
+                    quiet = self.gate.poll_quiet(operation["reservation"])
+                    if quiet["state"] != "QUIET_CONFIRMED" or operation.get("granted"):
+                        continue
+                try:
+                    for resource in sorted(operation["resources"]):
+                        if not resource.startswith(("dut:", "source:", "controller:capture", "controller:nic")):
+                            continue
+                        if purpose != "capture" and not resource.startswith("dut:"):
+                            continue
+                        lease = EvaluationRunLock.for_resource(resource, owner={
+                            "run_id": self.journal.scope.run_id, "session_id": self.journal.scope.session_id,
+                            "operation_id": key, "owner_pid": row["owner_pid"]})
+                        lease.acquire()
+                        operation["leases"].append((resource, lease))
+                except WorkflowRunControlError as exc:
+                    self._close(operation, reason="physical_resource_conflict:" + str(exc))
+                    self._reply(row, "STOP", reason="physical_resource_conflict:" + str(exc))
+                    continue
+                operation["granted"] = True
+                self._reply(row, "QUIET_CONFIRMED" if purpose == "capture" else "ACTIVE", reservation=quiet)
+            elif row["phase"] == "ACQUIRING":
+                if not operation.get("granted"):
+                    raise RemoteProcessLeaseJournalError("collector_started_without_quiet_grant")
+                operation["started"] = True
+            elif row["phase"] == "FINALIZING":
+                if row.get("purpose", "capture") != "capture":
+                    if not operation.get("granted"):
+                        raise RemoteProcessLeaseJournalError("activity_finished_without_admission")
+                    self._close(operation)
+                    continue
+                started = bool(row.get("process_started") or operation.get("started"))
+                cleanup_path = attempt / "collector_stdout.log.cleanup.json"
+                cleanup = self.journal._read_json_exact(cleanup_path) if cleanup_path.is_file() else {}
+                if not operation.get("granted"):
+                    raise RemoteProcessLeaseJournalError("collector_finished_without_quiet_grant")
+                cleanup_ok = (cleanup.get("owned_tree_quiescent") is True
+                    and cleanup.get("collector_pid") == row.get("collector_pid")
+                    and cleanup.get("collector_start_ticks") == row.get("collector_start_ticks")
+                    and (not started or (cleanup.get("process_started") is True and bool(row.get("collector_start_ticks")))))
+                verified = source_completion(attempt)["verified"] if started else True
+                self._close(operation, stopped=not (verified and (cleanup_ok or not started)),
+                            reason="" if verified and (cleanup_ok or not started) else "campaign_source_completion_unresolved")
+            else:
+                raise RemoteProcessLeaseJournalError("controller_resource_unknown_phase")
+
+    def close(self):
+        self.tick()
+        for operation in self.operations.values():
+            if not operation.get("terminal"):
+                self._close(operation, stopped=operation.get("granted", False), reason="controller_resource_shutdown_unresolved")
+
+
+@contextmanager
+def controller_activity(*, setup_id, attempt_dir, purpose, cancel_event=None, env=None, continuation=None):
+    claim = ControllerResourceClaim.from_environment(setup_id=setup_id, attempt_dir=attempt_dir,
+        purpose=purpose, cancel_event=cancel_event, env=env, continuation=continuation)
+    if claim is None:
+        yield None
+        return
+    claim.acquire()
+    try:
+        yield claim
+    finally:
+        claim.finish({"process_started": False})

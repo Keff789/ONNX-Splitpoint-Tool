@@ -288,7 +288,7 @@ class RunnerOwnershipGuardTests(unittest.TestCase):
         runner._restore_signal_handlers = lambda: None  # type: ignore[method-assign]
         runner._start_cancellation_watcher = lambda: None  # type: ignore[method-assign]
         runner._stop_cancellation_watcher = lambda: None  # type: ignore[method-assign]
-        runner._shutdown_management_services = lambda: None  # type: ignore[method-assign]
+        # Use real shutdown so AP00 records its final idle-management proof.
         return runner
 
     @staticmethod

@@ -21,6 +21,7 @@ def _bare_runner() -> EvaluationWorkflowRunner:
     runner = object.__new__(EvaluationWorkflowRunner)
     runner._stop_requested = False
     runner.jobs = None
+    runner.profile_payload = {}
     return runner
 
 
@@ -626,7 +627,7 @@ def test_one_model_probe_setup_failure_does_not_skip_later_model(
                 },
             },
             [
-                {"id": "hailo8_to_trt", "accelerator": "hailo8"},
+                {"id": "hailo8_to_trt", "stage1": "hailo8", "stage2": "tensorrt"},
                 {"id": "ort_tensorrt", "provider": "tensorrt"},
             ],
             ["hailo8_to_trt", "ort_tensorrt"],
@@ -639,7 +640,7 @@ def test_one_model_probe_setup_failure_does_not_skip_later_model(
                 "execution_role": "full_quality_only",
                 "performance_claims_emitted": False,
             }],
-            ["ort_tensorrt"],
+            [],  # Incomplete Full-only contract also blocks in real dispatch.
         ),
     ],
 )
@@ -661,6 +662,7 @@ def test_remote_preflight_run_ids_mirror_quality_dispatch(
     runner._emit_log = lambda _message: None
     runner._profile_with_cli_hardware_overrides = lambda: profile
     runner._task_for = lambda _row: "detection"
+    runner._materialize_local_cache_preflight_inputs = lambda *_args: []
     suite = tmp_path / "models/yolo/benchmark_set"
     suite.mkdir(parents=True)
     (suite / "benchmark_set.json").write_text(json.dumps({
@@ -688,9 +690,62 @@ def test_remote_preflight_run_ids_mirror_quality_dispatch(
 
     monkeypatch.setattr(remote_run, "probe_remote_trt_artifact_cache", probe)
 
-    _artifacts, _metrics, _message, status = (
+    _artifacts, metrics, _message, status = (
         runner._stage_artifact_cache_preflight([{"id": "yolo"}])
     )
 
     assert status == "ok"
-    assert captured == [expected_run_ids]
+    assert captured == ([expected_run_ids] if expected_run_ids else [])
+    assert metrics["collection_error_count"] == (0 if expected_run_ids else 1)
+
+
+def test_parent_preflight_uses_same_h8_owner_h10_quality_companion_scope(tmp_path, monkeypatch):
+    from onnx_splitpoint_tool.benchmark import remote_run
+    from onnx_splitpoint_tool.workflow import execution_binding
+    from tests.test_v2803_fix4_trt_dispatch_scope import _generic, _matrix, _real_suite
+
+    targets = [
+        {"id": "h8", "accelerator": "hailo8", "runtime": {}},
+        {"id": "h10", "accelerator": "hailo10h", "runtime": {
+            "add_args": "--quality-only-run-ids stale --run-ids wrong",
+        }},
+    ]
+    vendor8 = dict(_matrix(), id="hailo8_to_tensorrt", stage1={"hw_arch": "hailo8"})
+    plan_rows = [_generic(expected_setup_id="h8"), vendor8, _matrix()]
+    generated = _real_suite(tmp_path, plan_rows)
+    suite = tmp_path / "models/model/benchmark_set"
+    suite.parent.mkdir(parents=True)
+    generated.rename(suite)
+    profile = {"quality_gate": {"statistics": {"execution_location": "central_management"}}}
+    runner = _bare_runner()
+    runner.run_dir = tmp_path
+    runner.profile_payload = profile
+    runner.options = SimpleNamespace(benchmark_execution_backend="remote")
+    runner.outputs, runner.report_paths = {}, []
+    runner._targets = lambda: ["tensorrt"]
+    runner._emit_log = lambda _message: None
+    runner._profile_with_cli_hardware_overrides = lambda: profile
+    runner._task_for = lambda _row: "classification"
+    runner._materialize_local_cache_preflight_inputs = lambda *_args: []
+    monkeypatch.setattr(execution_binding, "_hardware_targets_for_plan", lambda *_args: targets)
+    original_probe = remote_run.probe_remote_trt_artifact_cache
+    captured = {}
+
+    def probe(**kwargs):
+        assert kwargs["transport"] is None  # No SSH or hardware in this fixture.
+        report = original_probe(**kwargs)
+        captured[kwargs["setup_id"]] = report
+        return report
+
+    monkeypatch.setattr(remote_run, "probe_remote_trt_artifact_cache", probe)
+    _artifacts, metrics, _message, status = runner._stage_artifact_cache_preflight([{"id": "model"}])
+    assert status == "ok" and metrics["collection_error_count"] == 0
+    assert set(captured) == {"h8", "h10"}
+    owner, companion = (captured[key]["requirement_plan"] for key in ("h8", "h10"))
+    assert captured["h8"]["active_run_ids"] == ["hailo8_to_tensorrt", "ort_tensorrt"]
+    assert captured["h10"]["active_run_ids"] == ["hailo10_to_tensorrt", "ort_tensorrt"]
+    assert owner["full_required"] and companion["full_required"]
+    assert owner["p1_cases"] == owner["generic_p2_cases"] == ["b024"]
+    assert companion["p1_cases"] == companion["generic_p2_cases"] == []
+    assert owner["p2_run_ids_by_case"] == {"b024": ["hailo8_to_tensorrt"]}
+    assert companion["p2_run_ids_by_case"] == {"b024": ["hailo10_to_tensorrt"]}

@@ -697,7 +697,11 @@ time.sleep(.08)
                     heartbeat_s=0,
                     line_callback=lambda _line: None,
                 )
-                self.assertEqual(inherited_result.returncode, 0)
+                self.assertEqual(inherited_result.returncode, 70)
+                self.assertIn(
+                    "pipe_drain_incomplete: inherited output pipe remained open",
+                    inherited_result.stdout,
+                )
                 self.assertLess(time.monotonic() - inherited_started, 1.0)
                 time.sleep(0.7)
                 self.assertFalse(inherited_marker.exists())

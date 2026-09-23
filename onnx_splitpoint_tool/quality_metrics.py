@@ -46,12 +46,26 @@ class _ClassificationAccuracyEvaluator:
                 out.append(1.0 if bool(nested.get(metric)) else 0.0)
             return np.asarray(out, dtype=np.float64)
 
-        self.reference_top1 = values(reference_records, "reference", "top1_hit")
-        self.reference_top5 = values(reference_records, "reference", "top5_hit")
-        self.candidate_top1 = values(candidate_records, "candidate", "top1_hit")
-        self.candidate_top5 = values(candidate_records, "candidate", "top5_hit")
+        self.n = len(reference_records)
+        for side, records in (("reference", reference_records), ("candidate", candidate_records)):
+            if side in config.get("metric_sides", ("reference", "candidate")):
+                setattr(self, side + "_top1", values(records, side, "top1_hit"))
+                setattr(self, side + "_top5", values(records, side, "top5_hit"))
         self.top1_margin = _margin(config, "non_inferiority_margin")
         self.top5_margin = _margin(config, "guardrails.top5_accuracy_margin")
+
+    def evaluate_absolute(self, multiplicities, side):
+        """One side of the same integral paired classification calculation."""
+        weights = np.asarray(multiplicities, dtype=np.float64).reshape(-1)
+        denominator = float(np.sum(weights))
+        if len(weights) != self.n or denominator <= 0 or not np.array_equal(weights, np.rint(weights)):
+            raise ValueError("classification component requires integral image multiplicities")
+        result = {}
+        for name, suffix in (("primary", "top1"), ("guardrails.top5_accuracy", "top5")):
+            total = float(np.dot(weights, getattr(self, side + "_" + suffix)))
+            result[name] = {"value": float(total / denominator),
+                            "hits": int(round(total)), "sample_count": int(round(denominator))}
+        return result
 
     @staticmethod
     def _component(
@@ -386,9 +400,12 @@ class _CanonicalCOCOEvaluator:
     def __init__(self, reference_records, candidate_records, annotations, config):
         import contextlib
         import io
+        import time
         from copy import deepcopy
         from pycocotools.coco import COCO
         from pycocotools.cocoeval import COCOeval
+        preparation_started = time.perf_counter()
+        self.preparation_observation = {"matching_s": 0.0, "matched_sides": 0}
         self.n = len(reference_records)
         gt_rows = [a["ground_truth"] for a in annotations]
         categories = sorted({int(d["class_id"]) for row in gt_rows for d in row})
@@ -410,6 +427,8 @@ class _CanonicalCOCOEvaluator:
             gt.dataset = dict(images=images, categories=[{"id": k} for k in categories], annotations=ground)
             gt.createIndex()
             for records, field in [(reference_records, "reference"), (candidate_records, "candidate")]:
+                if field not in config.get("coco_sides", ("reference", "candidate")):
+                    continue
                 detections = []
                 for i, record in enumerate(records):
                     for d in record[field]:
@@ -424,11 +443,22 @@ class _CanonicalCOCOEvaluator:
                     dt.dataset = dict(images=images, categories=gt.dataset["categories"], annotations=[])
                     dt.createIndex()
                 evaluator = COCOeval(gt, dt, "bbox")
+                if config.get("statistics_engine") == "optimized_coco_v1":
+                    # Preserve the library's exact all-area bounds, grid and maxDets.
+                    # The separate official report retains all twelve standard metrics.
+                    evaluator.params.areaRng = [evaluator.params.areaRng[0]]
+                    evaluator.params.areaRngLbl = [evaluator.params.areaRngLbl[0]]
+                    evaluator.params.maxDets = [evaluator.params.maxDets[-1]]
+                matching_started = time.perf_counter()
                 evaluator.evaluate()
+                self.preparation_observation["matching_s"] += time.perf_counter() - matching_started
+                self.preparation_observation["matched_sides"] += 1
                 self.evaluators.append((evaluator, list(evaluator.evalImgs), deepcopy(evaluator._paramsEval)))
         self.config = config
+        self.preparation_observation["data_preparation_s"] = (
+            time.perf_counter() - preparation_started - self.preparation_observation["matching_s"])
 
-    def evaluate(self, multiplicities):
+    def evaluate_sides(self, multiplicities):
         import contextlib
         import io
         from copy import deepcopy
@@ -451,7 +481,12 @@ class _CanonicalCOCOEvaluator:
                     a = a[a > -1]
                     return float(np.mean(a)) if a.size else 0.0
                 metrics.append([mean_valid(precision), mean_valid(precision[0]), mean_valid(precision[5])])
-        reference, candidate = metrics
+        return metrics
+
+    def evaluate(self, multiplicities):
+        return self.pair_components(*self.evaluate_sides(multiplicities))
+
+    def pair_components(self, reference, candidate):
         names = ["coco_ap_50_95", "ap50", "ap75"]
         parts = [dict(metric=name, reference=r, candidate=c, delta=c-r,
                  margin=_margin(self.config, "non_inferiority_margin" if idx == 0 else f"guardrails.{name}_margin"))

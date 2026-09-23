@@ -570,7 +570,7 @@ def _case(case_id: str, *, rank: int) -> dict:
     }
 
 
-def test_generator_backfill_reconciles_authoritative_candidate_plan_and_mirrors(tmp_path: Path) -> None:
+def test_generator_rejections_keep_authoritative_candidate_plan_and_mirrors(tmp_path: Path) -> None:
     original = {
         "schema": "onnx-splitpoint/final-candidate-plan",
         "schema_version": 3,
@@ -600,7 +600,6 @@ def test_generator_backfill_reconciles_authoritative_candidate_plan_and_mirrors(
     accepted = [
         {"boundary": 38, "folder": "b038"},
         {"boundary": 142, "folder": "b142"},
-        {"boundary": 36, "folder": "b036"},
     ]
     rejected = [{
         "boundary": 268,
@@ -617,21 +616,11 @@ def test_generator_backfill_reconciles_authoritative_candidate_plan_and_mirrors(
         generation_summary={"backfilled_cases_count": 1},
     )
 
-    assert [row["case_id"] for row in final["selected_candidates"]] == ["b038", "b142", "b036"]
-    assert final["pre_generation_artifact_id"] == "candidate_plan_yolo26s_before"
-    assert final["artifact_id"] != original["artifact_id"]
-    assert len(final["policy_backfills"]) == 1
-    assert final["policy_backfills"][0]["case_id"] == "b036"
-    assert final["policy_backfills"][0]["replaced_case_id"] == "b268"
-    assert any(
-        row["case_id"] == "b268"
-        and row["generation_status"] == "rejected_by_benchmark_generator"
-        for row in final["excluded_candidates"]
-    )
-    assert not any(row.get("case_id") == "b036" for row in final["excluded_candidates"])
-    assert trace["pre_generation_case_ids"] == ["b038", "b142", "b268"]
-    assert trace["final_case_ids"] == ["b038", "b142", "b036"]
-    assert trace["backfill_count"] == 1
+    assert final == original
+    assert trace["pre_generation_case_ids"] == trace["final_case_ids"] == ["b038", "b142", "b268"]
+    assert trace["accepted_case_ids"] == ["b038", "b142"]
+    assert trace["rejected_case_ids"] == ["b268"]
+    assert trace["backfilled_case_ids"] == []
 
     paths = write_reconciled_candidate_plan_mirrors(tmp_path / "models" / "yolo26s", final)
     analysis = json.loads(paths["final_candidate_plan_json"].read_text(encoding="utf-8"))
@@ -713,7 +702,7 @@ def test_generator_reconciliation_rejects_backfill_outside_prediction_pool() -> 
         "requested_cases": 1,
         "selected_candidates": [_case("b038", rank=1)],
     }
-    with pytest.raises(ValueError, match="outside prediction.candidates"):
+    with pytest.raises(ValueError, match="fully materialized|explicitly rejected"):
         reconcile_candidate_plan_after_generation(
             original,
             prediction={"candidates": [_case("b038", rank=1)]},
@@ -761,26 +750,9 @@ def test_multiple_backfills_do_not_invent_positional_replacement_pairs() -> None
             _case("b040", rank=4),
         ]
     }
-    final, _trace = reconcile_candidate_plan_after_generation(
-        original,
-        prediction=prediction,
-        accepted_cases=[
-            {"folder": "b036", "boundary": 36},
-            {"folder": "b040", "boundary": 40},
-        ],
-        rejected_cases=[
-            {"folder": "b038", "boundary": 38},
-            {"folder": "b142", "boundary": 142},
-        ],
-    )
-    assert len(final["policy_backfills"]) == 2
-    assert all(not row["replaced_case_id"] for row in final["policy_backfills"])
-    assert all(
-        row["replacement_mapping_status"]
-        == "unpaired_multiple_backfill_without_generator_causality"
-        for row in final["policy_backfills"]
-    )
-    assert all(
-        row["removed_case_ids"] == ["b038", "b142"]
-        for row in final["policy_backfills"]
-    )
+    with pytest.raises(ValueError, match="fully materialized|explicitly rejected"):
+        reconcile_candidate_plan_after_generation(
+            original, prediction=prediction,
+            accepted_cases=[{"folder": "b036", "boundary": 36}, {"folder": "b040", "boundary": 40}],
+            rejected_cases=[{"folder": "b038", "boundary": 38}, {"folder": "b142", "boundary": 142}],
+        )

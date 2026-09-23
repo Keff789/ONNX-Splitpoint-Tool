@@ -339,11 +339,17 @@ def _mode(
             # paired uncertainty calculation runs in the central service.  The
             # Smoke budget remains small through its 25 resamples and tiny
             # validation subset, not by moving this work back to an accelerator
-            # host.  Four workers configure both ORT inference threads and the
-            # deterministic bootstrap service; the reference is never a
+            # host. Legacy profiles inherit reference threads from workers;
+            # an explicit reference setting decouples statistics. Reference is never a
             # latency/FPS/energy result.
             "execution_location": "central_management",
             "workers": 4,
+            "statistics_engine": "legacy",
+            "statistics_max_active_requests": 1,
+            "statistics_block_repetitions": 256,
+            "statistics_checkpoint_blocks": False,
+            "statistics_prepared_cache_limit_mib": 512,
+            "reference_intra_op_threads": None,
             "cache_task_quality": True,
             "cadence": "once_per_artifact",
             "official_coco_enabled": bool(official_coco),
@@ -860,6 +866,23 @@ def validate_run_modes_config(payload: Mapping[str, Any]) -> Dict[str, Any]:
             )
         if int(q.get("workers") or 0) > 64:
             raise ValueError(f"Invalid {mode_id}.quality.workers: {q.get('workers')!r}")
+        from .quality_statistics_config import statistics_options, reference_threads
+        if q.get("statistics_engine") == "optimized_coco_v1":
+            known_statistics = {"statistics_max_active_requests", "statistics_engine", "statistics_block_repetitions",
+                                "statistics_checkpoint_blocks", "statistics_prepared_cache_limit_mib"}
+            unknown = {key for key in q if key.startswith("statistics_")} - known_statistics
+            if unknown:
+                raise ValueError("unknown optimized statistics settings: " + ", ".join(sorted(unknown)))
+        execution_profile = {"quality_gate": {
+            "statistics": {"workers": q.get("workers",4),
+                "engine": q.get("statistics_engine","legacy"),
+                "max_active_requests": q.get("statistics_max_active_requests",1),
+                "block_repetitions": q.get("statistics_block_repetitions",256),
+                "checkpoint_blocks": q.get("statistics_checkpoint_blocks",False),
+                "prepared_cache_limit_mib": q.get("statistics_prepared_cache_limit_mib",512)},
+            "management_reference": {"intra_op_threads": q.get("reference_intra_op_threads")}}}
+        statistics_options(execution_profile)
+        reference_threads(execution_profile)
         full_cache_policy = str(h.get("full_baseline_cold_build_policy") or "build_missing").strip().lower()
         if full_cache_policy not in {"cache_or_defer", "build_missing"}:
             raise ValueError(f"Invalid {mode_id}.build.hailo.full_baseline_cold_build_policy: {full_cache_policy!r}")
@@ -1314,10 +1337,18 @@ def _materialized_blocks(mode_id: str, mode: Mapping[str, Any], *, profile_name:
                 "execution_location": str(
                     quality_cfg.get("execution_location") or "central_management"
                 ),
+                "engine": quality_cfg.get("statistics_engine", "legacy"),
+                "max_active_requests": quality_cfg.get("statistics_max_active_requests", 1),
+                "block_repetitions": quality_cfg.get("statistics_block_repetitions", 256),
+                "checkpoint_blocks": quality_cfg.get("statistics_checkpoint_blocks", False),
+                "prepared_cache_limit_mib": quality_cfg.get("statistics_prepared_cache_limit_mib", 512),
                 "workers": max(
                     1,
                     int(quality_cfg.get("workers") or 4),
                 ),
+            },
+            "management_reference": {
+                "intra_op_threads": quality_cfg.get("reference_intra_op_threads"),
             },
             "native_contract": {
                 "detection_self_reference_min_match_ratio": 0.80,
@@ -1606,6 +1637,7 @@ def apply_run_mode(
             "model_suite",
             "run_profiles",
             "measurement_campaign",
+            "workflow_execution",
             "execution_guard",
             # Artifact-cache acceptance is orthogonal to run effort.  A
             # profile-level strict/expected-cold declaration must survive
@@ -1620,6 +1652,19 @@ def apply_run_mode(
         if key in original
     }
     resolved: Dict[str, Any] = _deep_merge(blocks, preserved)
+    # Statistics execution controls are orthogonal to n/B and run effort.
+    from .quality_statistics_config import DEFAULTS, statistics_options, reference_threads
+    old_quality = original.get("quality_gate") or {}
+    old_statistics = old_quality.get("statistics") or {}
+    statistics_options(original)
+    reference_threads(original)
+    for key in (*DEFAULTS, "workers", "execution_location"):
+        if key in old_statistics:
+            resolved["quality_gate"]["statistics"][key] = copy.deepcopy(old_statistics[key])
+    if "management_reference" in old_quality:
+        resolved["quality_gate"]["management_reference"] = copy.deepcopy(old_quality["management_reference"])
+    statistics_options(resolved)
+    reference_threads(resolved)
     if follow:
         selection = resolved.setdefault('selection_policy', {})
         if 'backend_backfill' not in selection:
@@ -1648,6 +1693,10 @@ def apply_run_mode(
         resolved.setdefault("workflow", {})["artifact_cache_preflight"] = (
             copy.deepcopy(dict(old_workflow["artifact_cache_preflight"]))
         )
+    if (original.get("workflow_execution") or {}).get("setup_queue_mode") == "per_setup":
+        for key in ("parallel_remote_setups", "max_parallel_setups", "max_parallel_uploads", "powercalc_workers"):
+            if key in old_workflow:
+                resolved.setdefault("workflow", {})[key] = copy.deepcopy(old_workflow[key])
     if "stop_after" in old_workflow:
         stop_after = old_workflow["stop_after"]
         if stop_after is not None and not isinstance(stop_after, str):

@@ -238,7 +238,7 @@ def test_counts_and_scientific_projection_keep_negative_observations():
     assert counts["request_count"] == counts["terminal_count"] == 123
     assert counts["completed_count"] == counts["evaluated_count"] == 63
     assert counts["cancelled_count"] == 60 and counts["technical_failed_count"] == 0
-    assert counts["quality_decision_counts"] == {"pass": 43, "fail": 18, "inconclusive": 2}
+    assert counts["quality_decision_counts"] == {"pass": 43, "fail": 18, "inconclusive": 2, "reference_close": 0, "accuracy_loss": 0, "not_estimable": 0}
     report = project_central_quality_status({"status": "cancelled", "results": rows, **counts})
     for name in ("terminal_count", "evaluated_count", "cancelled_count", "technical_failed_count", "quality_decision_counts"):
         assert report[name] == counts[name]
@@ -280,7 +280,7 @@ def test_normal_stage_json_csv_and_log_share_counts(tmp_path, monkeypatch):
     assert summary["cancelled_count"] == 2
     assert summary["failed_count"] == summary["technical_failed_count"] == 1
     assert summary["quality_decision"] == "fail"
-    assert metrics["quality_decision_counts"] == {"pass": 0, "fail": 1, "inconclusive": 0}
+    assert metrics["quality_decision_counts"] == {"pass": 0, "fail": 1, "inconclusive": 0, "reference_close": 0, "accuracy_loss": 0, "not_estimable": 0}
     with artifacts["central_quality_summary_csv"].open() as stream:
         rows = list(csv.DictReader(stream))
     assert [row["technical_status"] for row in rows].count("cancelled") == 2

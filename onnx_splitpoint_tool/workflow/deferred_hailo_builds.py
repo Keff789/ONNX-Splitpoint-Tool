@@ -747,6 +747,8 @@ def finalize_deferred_hailo_builds(
     if not requests and not (suite / DEEPX_PART1_REQUEST).is_file() and not list(suite.glob(f"*/{DEEPX_PART2_REQUEST}")):
         return {"status": "not_applicable", "jobs": []}
     cache_verify = bool(cache_verify_guard(profile_payload))
+    from .artifact_cache_preflight import resolve_artifact_cache_preflight_policy, _expectation_for
+    cache_policy = resolve_artifact_cache_preflight_policy(profile_payload)
     payload = _read(suite / "benchmark_set.json")
     selected = {
         str(case.get("case_dir") or case.get("folder") or "")
@@ -779,6 +781,14 @@ def finalize_deferred_hailo_builds(
         if output.parent.parent.parent != suite and case_manifest is None:
             raise ValueError(f"deferred_request_stage_scope_invalid:{request_path}")
         context = _request_context(request, request_path, model_id=Path(model_dir).name)
+        cache_role = "hailo10_hef" if "hailo10" in context["backend"] else "hailo8_hef"
+        strict_warm = bool(cache_policy.get("enabled", True) and cache_policy.get("block_on_unexpected_cold_builds") and
+            _expectation_for(cache_policy, model_id=context["model_id"], role=cache_role,
+                item_id=f"{context['boundary']}:{context['stage']}") == "warm")
+        if strict_warm:
+            # The barrier's HIT may disappear before continuation. Preserve
+            # the frozen warm contract at the actual builder boundary too.
+            args.update(cache_only=True, force=False)
         binding = args.get("build_evidence_context") or {}
         # A logical suite ID is authoritative; legacy suites may not declare
         # one and need not share their directory basename with the model name.

@@ -133,8 +133,8 @@ def _frozen_audit_plan(tmp_path: Path) -> dict:
         "requested_cases": 4,
         "min_gap": 0,
         "selection_strategy": "score_independent_audit",
-        "require_single_part2_input": False,
-        "requested_require_single_part2_input": False,
+        "require_single_part2_input": True,
+        "requested_require_single_part2_input": True,
         "native_split_requires_single_part2_input": True,
         "effective_require_single_part2_input": True,
         "artifact_id": _prediction_artifact_id(prediction_candidates),
@@ -211,8 +211,8 @@ def _frozen_audit_plan(tmp_path: Path) -> dict:
         "requested_cases": 4,
         "min_gap": 0,
         "selection_strategy": "score_independent_audit",
-        "require_single_part2_input": False,
-        "requested_require_single_part2_input": False,
+        "require_single_part2_input": True,
+        "requested_require_single_part2_input": True,
         "native_split_requires_single_part2_input": True,
         "effective_require_single_part2_input": True,
         "candidate_universe_mode": universe["mode"],
@@ -228,6 +228,7 @@ def _frozen_audit_plan(tmp_path: Path) -> dict:
     }
     plan["artifact_id"] = _candidate_plan_artifact_id(selected)
     selection_policy = {
+        "require_single_part2_input": True,
         "selection_strategy": "score_independent_audit",
         "max_accepted_cases_per_model": 4,
         "min_gap": 0,
@@ -243,8 +244,8 @@ def _frozen_audit_plan(tmp_path: Path) -> dict:
         "selection_strategy": "score_independent_audit",
         "deployment_shortlist_count": 4,
         "eligible_candidate_count": len(prediction_candidates),
-        "require_single_part2_input": False,
-        "requested_require_single_part2_input": False,
+        "require_single_part2_input": True,
+        "requested_require_single_part2_input": True,
         "native_split_requires_single_part2_input": True,
         "effective_require_single_part2_input": True,
         "profile_selection_policy": selection_policy,
@@ -1234,7 +1235,7 @@ def test_frozen_audit_accepts_normalized_authoritative_analysis_strategy(
         ("min_gap", 99),
         ("min_gap", "0.9"),
         ("selection_strategy", "attacker_rebound"),
-        ("require_single_part2_input", True),
+        ("require_single_part2_input", False),
         ("native_split_requires_single_part2_input", False),
         ("effective_require_single_part2_input", False),
     ],
@@ -1393,41 +1394,14 @@ def test_frozen_audit_rejects_coherently_rebuilt_21_case_union_after_multi_input
         )
 
 
-def test_ordinary_non_audit_generation_keeps_requested_limit_and_backfill_pool() -> None:
+def test_ordinary_selection_is_exact_and_rejects_backend_replacement() -> None:
     selected = [_candidate(boundary) for boundary in range(1, 5)]
     prediction = {"candidates": [*selected, _candidate(5)]}
-    plan = {
-        "requested_cases": 4,
-        "selection_strategy": "stratified_windows",
-        "selected_candidates": selected,
-        "policy_backfills": [],
-    }
-
-    ranked, pool, requested, frozen = _resolve_generation_candidate_scope(
-        plan,
-        prediction,
-    )
-    assert frozen is False
-    assert requested == 4
-    assert ranked == [1, 2, 3, 4]
-    assert pool == [1, 2, 3, 4, 5]
-
-    final, trace = reconcile_candidate_plan_after_generation(
-        plan,
-        prediction=prediction,
-        accepted_cases=[
-            {"folder": "b001", "boundary": 1},
-            {"folder": "b002", "boundary": 2},
-            {"folder": "b003", "boundary": 3},
-            {"folder": "b005", "boundary": 5},
-        ],
-        rejected_cases=[{"folder": "b004", "boundary": 4}],
-    )
-    assert trace["changed"] is True
-    assert trace["backfilled_case_ids"] == ["b005"]
-    assert [row["case_id"] for row in final["selected_candidates"]] == [
-        "b001",
-        "b002",
-        "b003",
-        "b005",
-    ]
+    plan = {"requested_cases": 4, "selection_strategy": "stratified_windows",
+            "selected_candidates": selected, "policy_backfills": []}
+    ranked, pool, requested, exact = _resolve_generation_candidate_scope(plan, prediction)
+    assert exact is True and requested == 4 and ranked == pool == [1, 2, 3, 4]
+    with pytest.raises(ValueError, match="fully materialized|explicitly rejected"):
+        reconcile_candidate_plan_after_generation(plan, prediction=prediction,
+            accepted_cases=[{"folder": f"b{b:03d}", "boundary": b} for b in [1, 2, 3, 5]],
+            rejected_cases=[{"folder": "b004", "boundary": 4}])

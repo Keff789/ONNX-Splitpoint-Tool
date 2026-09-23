@@ -460,6 +460,7 @@ def _setup_to_target(setup: Mapping[str, Any], *, build_envs: Sequence[Mapping[s
     merged_remote = {
         "enabled": bool(setup.get("enabled", remote.get("enabled", runtime.get("enabled", True)))),
         "host_id": str(setup.get("host_id") or setup.get("id") or ""),
+        "physical_host_id": str(setup.get("physical_host_id") or host.get("physical_host_id") or remote.get("physical_host_id") or runtime.get("physical_host_id") or ""),
         "host": str(host.get("address") or host.get("host") or remote.get("host") or runtime.get("host") or flat_host or ""),
         "user": str(host.get("user") or remote.get("user") or runtime.get("user") or flat_user or ""),
         "port": int(host.get("port") or remote.get("port") or runtime.get("port") or flat_port or 22),

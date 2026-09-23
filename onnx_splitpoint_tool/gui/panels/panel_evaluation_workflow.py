@@ -405,6 +405,7 @@ def _profile_summary_payload(
     lines = [
         f"Profile: {profile_id}",
         f"Run mode: {run_mode_profile_brief(raw).splitlines()[0]}",
+        f"Native-Freigabe: {(raw.get('workflow_execution') or {}).get('native_release_mode', 'global_barrier')} · Setup-Queue: {(raw.get('workflow_execution') or {}).get('setup_queue_mode', 'model_barrier')}",
         f"Buildpolitik: {build_summary['build_policy']}",
         f"Hailo Force: {build_summary['hailo_force_text']}",
         f"DeepX Force: {build_summary['deepx_force_text']}",

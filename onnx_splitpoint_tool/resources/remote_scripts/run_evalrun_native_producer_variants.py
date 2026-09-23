@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import concurrent.futures
 import copy
 import hashlib
 import json
@@ -1024,6 +1025,13 @@ def _native_performance_required_campaign_rows(
     if campaign_modes.intersection({"standard", "final"}):
         if explicit_count in {None, 63}:
             return 63
+        bounded_gui = (str(contract.get("scope") or "") == "bounded_gui_acceptance"
+            and str(campaign.get("mode") or "").lower() == "development"
+            and "final" not in campaign_modes and expected_row_count is not None and expected_row_count > 0)
+        if bounded_gui:
+            if explicit_count != expected_row_count:
+                raise ValueError("bounded GUI acceptance row count differs from the frozen matrix")
+            return explicit_count
         # A targeted Native supplement deliberately measures a frozen subset
         # of already generated Single-Tensor cases.  Admit that bounded plan
         # only when its explicit denominator agrees with the independently
@@ -1355,7 +1363,13 @@ def _run_window_method_probe(
 
 def _run(cmd: list[str], *, timeout: int | float | None = None, cwd: Path | None = None, label: str = "native-child") -> dict[str, Any]:
     journal=NativeProgressJournal.from_env()
-    cp=run_streaming(cmd,timeout=timeout,cwd=cwd,label=label,journal=journal,heartbeat_s=30.0)
+    from onnx_splitpoint_tool.process_control import workflow_resource_options
+    options = workflow_resource_options()
+    env = dict(os.environ)
+    if options.get("controller_setup_id"):
+        env["ONNX_SPLITPOINT_RESOURCE_SETUP"] = str(options["controller_setup_id"])
+        env["ONNX_SPLITPOINT_RESOURCE_ATTEMPT"] = str(options["controller_attempt_dir"])
+    cp=run_streaming(cmd,timeout=timeout,cwd=cwd,label=label,journal=journal,heartbeat_s=30.0,env=env)
     return {"cmd":cmd,"rc":cp.returncode,"elapsed_s":cp.elapsed_s,"stdout_tail":cp.stdout[-8000:],"stderr_tail":cp.stderr[-8000:]}
 
 
@@ -1407,7 +1421,8 @@ def _case_map_from_variant(v: Mapping[str, Any]) -> dict[str, list[str]]:
         cases = _as_list(v.get("cases") or v.get("case") or v.get("case_id"))
         for m in models:
             out[m] = cases or []
-    return {k: [c for c in vals if c] for k, vals in out.items() if k and vals}
+    full_only = "split_backends" in v and not v["split_backends"]
+    return {k: [c for c in vals if c] for k, vals in out.items() if k and (vals or full_only)}
 
 
 def _select_report_python(tool_root: Path, requested: str = "auto") -> tuple[str, dict[str, Any]]:
@@ -1436,7 +1451,7 @@ def _variant_label(i: int, v: Mapping[str, Any]) -> str:
 def _variant_namespace(i: int, v: Mapping[str, Any]) -> str:
     """Return one collision-free filesystem token for a variant invocation."""
 
-    return f"v{i:03d}_{_safe_component(_variant_label(i, v))}"
+    return str(v.get("artifact_namespace") or f"v{i:03d}_{_safe_component(_variant_label(i, v))}")
 
 
 def _merged_variant(base: Mapping[str, Any], variant: Mapping[str, Any]) -> dict[str, Any]:
@@ -1548,6 +1563,8 @@ def _final_report_remote_context_args(
         namespace = str(merged.get("artifact_namespace") or "").strip()
         if namespace:
             remote_root += "/variants/" + namespace
+            if namespace.startswith("case"):
+                remote_root += "/" + run_dir.name
         remote_tool_dir = str(
             merged.get("remote_tool_dir")
             or "/home/nx/ONNX-Splitpoint-Tool"
@@ -1707,6 +1724,9 @@ def _effective_variant_case_map(
             )
         out: dict[str, list[str]] = {}
         for model_id, cases in explicit.items():
+            if "split_backends" in merged and not merged["split_backends"] and not cases:
+                out[model_id] = []
+                continue
             available = set(_all_evalrun_cases(run_dir, model_id))
             selected = [str(case).strip().lower() for case in cases]
             if not selected or any(case not in available for case in selected):
@@ -1730,7 +1750,8 @@ def _effective_variant_case_map(
             )
         model_ids = requested_models
     return {
-        model_id: _all_evalrun_cases(run_dir, model_id)
+        model_id: ([] if "split_backends" in merged and not merged["split_backends"]
+                   else _all_evalrun_cases(run_dir, model_id))
         for model_id in model_ids
     }
 
@@ -2156,7 +2177,8 @@ def _materialize_trt_quality_producer_sets(
     run_dir: Path,
     cfg: Mapping[str, Any],
     variants: list[Mapping[str, Any]],
-    *, allow_missing: bool = False,
+    *, allow_missing: bool = False, model_ids: list[str] | None = None,
+    artifact_namespace: str = "",
 ) -> tuple[dict[str, str], dict[str, Any]]:
     """Create exactly one immutable multi-model producer set per setup."""
 
@@ -2204,7 +2226,9 @@ def _materialize_trt_quality_producer_sets(
     if not setup_requirements:
         return {}, {"required_setups": [], "owners": [], "models": []}
 
-    model_ids = _evalrun_models(run_dir)
+    model_ids = list(model_ids) if model_ids is not None else _evalrun_models(run_dir)
+    if not model_ids or set(model_ids).difference(_evalrun_models(run_dir)):
+        raise TensorRTQualityChainError("Native producer set model scope invalid")
 
     context = _workflow_context(cfg)
     supplied_raw = cfg.get("trt_quality_producer_sets_by_setup")
@@ -2234,6 +2258,8 @@ def _materialize_trt_quality_producer_sets(
         )
 
     output_dir = run_dir / "reports" / "trt_quality_producer_sets"
+    if artifact_namespace:
+        output_dir = output_dir / _safe_component(artifact_namespace)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_paths: dict[str, str] = {}
     errors_by_setup: dict[str, str] = {}
@@ -2407,6 +2433,91 @@ def _quality_first_variant_plan(
     return prepared
 
 
+def _per_case_variants(run_dir, cfg, variants):
+    """Freeze exact Split leaves and unique setup-local Full owners once."""
+    leaves, full_owners = [], {}
+    for index, variant in enumerate(variants):
+        merged = _merged_variant(cfg, variant)
+        case_map = _effective_variant_case_map(run_dir, merged)
+        for physical in _variant_backend_bindings(cfg, variant):
+            backend, setup = physical["backend"], physical["setup_id"]
+            for model, cases in case_map.items():
+                base = {**copy.deepcopy(dict(variant)), "models": [model], "backends": [backend],
+                        "case_policy": "case_map_only", "source_variant_id": _variant_label(index, variant)}
+                if _split_selected_for_physical(merged, backend):
+                    for case in cases:
+                        leaves.append({**base, "id": f"{_variant_label(index, variant)}_{setup}_{model}_{case}",
+                            "case_map": {model: [case]}, "split_backends": [backend],
+                            "full_baselines": {"enabled": False, "backends_by_producer": {backend: []}},
+                            "release_kind": "split"})
+                for full_backend in _full_backends_for_variant(merged, backend):
+                    key = setup, model, full_backend
+                    # Match the existing TRT ownership rule; vendor Full uses
+                    # its first frozen occurrence. A completion event never creates a leaf.
+                    if key not in full_owners or full_backend == "tensorrt":
+                        full_owners[key] = {**base, "id": f"{_variant_label(index, variant)}_{setup}_{model}_full_{full_backend}",
+                            "case_map": {model: []}, "split_backends": [],
+                            "full_baselines": {"enabled": True, "backends_by_producer": {backend: [full_backend]}},
+                            "release_kind": "full", "release_full_backend": full_backend}
+    leaves.extend(full_owners[key] for key in sorted(full_owners))
+    for index, leaf in enumerate(leaves):
+        leaf["artifact_namespace"] = f"case{index:04d}_{_safe_component(leaf['id'])}"
+        leaf["frozen_leaf_index"] = index
+    return leaves
+
+
+def _prepare_case_release(run_dir, cfg, leaf, summary):
+    namespace = _variant_namespace(0, leaf)
+    directory = run_dir / "reports" / "native_producer_variants" / namespace
+    path = directory / "central_quality_summary.json"
+    checkpoint = _read_json(directory / "performance_stage_result.json", {}) or {}
+    claimed = dict((checkpoint.get("details") or {}).get("variant") or {})
+    if checkpoint:
+        keys = ("id", "models", "backends", "case_map", "release_kind", "artifact_namespace")
+        if not claimed or any(claimed.get(key) != leaf.get(key) for key in keys):
+            raise TensorRTQualityChainError("claimed native leaf identity changed")
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if digest != claimed.get("quality_snapshot_sha256"):
+            raise TensorRTQualityChainError("claimed native leaf quality snapshot changed")
+        summary = _read_json(path, {})
+    else:
+        _write_json(path, summary)
+    if leaf.get("release_kind") == "split":
+        for cases in (leaf.get("case_map") or {}).values():
+            for case in cases:
+                reason = (leaf.get("native_capability_exclusions") or {}).get(case)
+                if reason:
+                    raise TensorRTQualityChainError("native_capability_unsupported:" + str(reason))
+    scoped = copy.deepcopy(dict(cfg))
+    scoped["central_quality_summary"] = str(path)
+    physical = _variant_backend_bindings(scoped, leaf)[0]
+    vendor_sets = {}
+    if leaf.get("release_kind") == "full" and leaf.get("release_full_backend") != "tensorrt":
+        from onnx_splitpoint_tool.workflow.runner import _native_full_quality_binding_set_v275
+        binding_set, errors = _native_full_quality_binding_set_v275(path,
+            eval_run_id=run_dir.name, setup_id=physical["setup_id"], producer=physical["backend"],
+            full_backends=[leaf["release_full_backend"]], model_ids=list(leaf["models"]),
+            case_release_run_root=run_dir)
+        if errors or binding_set.get("complete") is not True:
+            raise TensorRTQualityChainError("vendor_full_quality_unavailable:" + ";".join(errors))
+        binding_path = directory / "vendor_full_quality_request_binding_set.json"
+        _write_json(binding_path, binding_set)
+        vendor_sets[physical["setup_id"]] = str(binding_path)
+    split_paths, split_plan = _materialize_native_split_quality_binding_sets(run_dir, scoped, [leaf])
+    producers, full_plan = _materialize_trt_quality_producer_sets(run_dir, scoped, [leaf],
+        model_ids=list(leaf["models"]), artifact_namespace=namespace)
+    prepared = _quality_first_variant_plan(scoped, [leaf], producers, full_plan, split_paths, split_plan)[0]
+    prepared["central_quality_summary"] = str(path)
+    prepared["vendor_full_quality_binding_sets_by_setup"] = vendor_sets
+    prepared["quality_snapshot_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    prepared["quality_global_complete_at_release"] = summary.get("complete") is True
+    if claimed:
+        if prepared != claimed:
+            raise TensorRTQualityChainError("claimed native leaf release contract changed")
+        prepared = claimed
+    return prepared, split_paths, split_plan, producers, full_plan
+
+
 def _performance_repetitions(cfg: Mapping[str, Any]) -> int:
     """Resolve independent performance repeats; Native Energy is separate."""
     try:
@@ -2571,6 +2682,10 @@ def _build_update_cmd(run_dir: Path, cfg: Mapping[str, Any], variant: Mapping[st
     artifact_namespace = str(merged.get("artifact_namespace") or "").strip()
     if artifact_namespace:
         cmd += ["--artifact-namespace", artifact_namespace]
+    if merged.get("central_quality_summary"):
+        cmd += ["--central-quality-summary", str(merged["central_quality_summary"])]
+    if merged.get("vendor_full_quality_binding_sets_by_setup"):
+        cmd += ["--vendor-full-quality-binding-sets", json.dumps(merged["vendor_full_quality_binding_sets_by_setup"], sort_keys=True)]
     if _as_bool(merged.get("smoke_diagnostic_quality_continue"), False):
         cmd.append("--smoke-diagnostic-quality-continue")
     for physical in _variant_backend_bindings(cfg, variant):
@@ -2845,61 +2960,69 @@ def main() -> int:
     variants_input = [dict(value) for value in raw_variants]
     smoke_diagnostic = _smoke_diagnostic_policy(cfg)
     standard_quality_enforced = _standard_quality_enforced_policy(cfg)
+    per_case = cfg.get("native_release_mode") == "per_case"
     try:
-        generated_sets_exist = any(
-            path.is_dir() and (path / "benchmark_set").is_dir()
-            for path in (run_dir / "models").iterdir()
-        ) if (run_dir / "models").is_dir() else False
-        if generated_sets_exist and not cache_verify_only:
-            split_paths_by_variant, split_quality_plan = (
-                _materialize_native_split_quality_binding_sets(
-                    run_dir, cfg, variants_input,
-                    allow_missing=smoke_diagnostic,
-                )
-            )
-        elif generated_sets_exist:
-            # This diagnostic canary proves cache-bound runtime dispatch only.
-            # Dataset semantics and Central Quality are deliberately disabled
-            # in its frozen profile and must not be re-enabled by the general
-            # Quality-FIRST authority resolver.
-            split_paths_by_variant = {}
-            split_quality_plan = {
-                "required": False,
-                "applicable": False,
-                "status": "not_applicable_cache_verify_only",
-                "quality_before_performance": False,
-                "engine_rebuild_allowed": False,
-                "diagnostic_continue": False,
-                "errors_by_variant_setup": {},
-                "variants": [],
-            }
+        if per_case:
+            variants = _per_case_variants(run_dir, cfg, variants_input)
+            generated_sets_exist = True
+            split_paths_by_variant, producer_paths = {}, {}
+            split_quality_plan = {"status": "waiting_per_case", "variants": [], "errors_by_variant_setup": {}}
+            quality_first_plan = {"status": "waiting_per_case", "owners": [], "errors_by_setup": {}}
         else:
-            # Compatibility for report/probe-only reprocessing of an already
-            # collected native_producers tree. No remote split execution is
-            # possible without generated BenchmarkSets.
-            split_paths_by_variant = {}
-            split_quality_plan = {
-                "required": False,
-                "applicable": False,
-                "status": "report_only_no_generated_benchmark_sets",
-                "quality_before_performance": True,
-                "engine_rebuild_allowed": False,
-                "variants": [],
-            }
-        producer_paths, quality_first_plan = _materialize_trt_quality_producer_sets(
-            run_dir, cfg, variants_input,
-            allow_missing=smoke_diagnostic,
-        )
-        variants = _quality_first_variant_plan(
-            cfg, variants_input, producer_paths, quality_first_plan,
-            (
-                split_paths_by_variant
-                if generated_sets_exist and not cache_verify_only
-                else None
-            ),
-            split_quality_plan,
-            allow_missing=smoke_diagnostic,
-        )
+            generated_sets_exist = any(
+                path.is_dir() and (path / "benchmark_set").is_dir()
+                for path in (run_dir / "models").iterdir()
+            ) if (run_dir / "models").is_dir() else False
+            if generated_sets_exist and not cache_verify_only:
+                split_paths_by_variant, split_quality_plan = (
+                    _materialize_native_split_quality_binding_sets(
+                        run_dir, cfg, variants_input,
+                        allow_missing=smoke_diagnostic,
+                    )
+                )
+            elif generated_sets_exist:
+                # This diagnostic canary proves cache-bound runtime dispatch only.
+                # Dataset semantics and Central Quality are deliberately disabled
+                # in its frozen profile and must not be re-enabled by the general
+                # Quality-FIRST authority resolver.
+                split_paths_by_variant = {}
+                split_quality_plan = {
+                    "required": False,
+                    "applicable": False,
+                    "status": "not_applicable_cache_verify_only",
+                    "quality_before_performance": False,
+                    "engine_rebuild_allowed": False,
+                    "diagnostic_continue": False,
+                    "errors_by_variant_setup": {},
+                    "variants": [],
+                }
+            else:
+                # Compatibility for report/probe-only reprocessing of an already
+                # collected native_producers tree. No remote split execution is
+                # possible without generated BenchmarkSets.
+                split_paths_by_variant = {}
+                split_quality_plan = {
+                    "required": False,
+                    "applicable": False,
+                    "status": "report_only_no_generated_benchmark_sets",
+                    "quality_before_performance": True,
+                    "engine_rebuild_allowed": False,
+                    "variants": [],
+                }
+            producer_paths, quality_first_plan = _materialize_trt_quality_producer_sets(
+                run_dir, cfg, variants_input,
+                allow_missing=smoke_diagnostic,
+            )
+            variants = _quality_first_variant_plan(
+                cfg, variants_input, producer_paths, quality_first_plan,
+                (
+                    split_paths_by_variant
+                    if generated_sets_exist and not cache_verify_only
+                    else None
+                ),
+                split_quality_plan,
+                allow_missing=smoke_diagnostic,
+            )
     except Exception as exc:
         failure = {
             "schema": "onnx-splitpoint/native-producer-variant-stage",
@@ -3341,24 +3464,172 @@ def main() -> int:
             },
         )
 
-    for i, v0 in enumerate([] if performance_reused else variants):
-        if not isinstance(v0, Mapping):
-            continue
-        label = _variant_label(i, v0)
-        merged = _merged_variant(cfg, v0)
-        repetitions = _performance_repetitions(merged)
-        cmd = _build_update_cmd(run_dir, cfg, v0, refresh_suites=bool(ns.refresh_suites and i == 0), timeout_s=int(ns.timeout))
-        rec = {"id": label, "case_map": _effective_variant_case_map(run_dir, merged), "performance_repetitions": repetitions, "native_execution_contract": dict(merged["_native_execution_contract"]), "native_execution_contract_sha256": str(merged["_native_execution_contract"]["contract_sha256"]), "cmd": cmd, "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
-        rr = _run(cmd, timeout=max(300, int(ns.timeout) * repetitions + 120), cwd=ROOT, label=f"variant:{label}")
+    def release_cancelled(summary=None):
+        control = _read_json(run_dir / "jobs" / "workflow_control.json", {}) or {}
+        if control.get("cancel_requested") is True and control.get("run_id") == run_dir.name:
+            return True
+        return bool((summary or {}).get("cancel_requested") or (summary or {}).get("status") == "cancelled")
+
+    parallel_native = per_case and (_workflow_context(cfg).get("workflow_execution") or {}).get("setup_queue_mode") == "per_setup"
+    setup_dispatch = None
+    ready_signals, leaf_futures, leaf_jobs, running_leaves = {}, {}, {}, {}
+
+    def execute_leaf(v0, cmd, checkpoint, label, repetitions):
+        from onnx_splitpoint_tool.remote.process_lease import controller_activity
+        from onnx_splitpoint_tool.process_control import bind_workflow_resource_options
+        from contextlib import nullcontext
+        physical = _variant_backend_bindings(cfg, v0)[0]
+        admission = controller_activity(setup_id=physical["setup_id"], attempt_dir=checkpoint.parent,
+            purpose="dut_job") if per_case else nullcontext()
+        with bind_workflow_resource_options(controller_setup_id=physical["setup_id"],
+                controller_attempt_dir=str(checkpoint.parent)), admission:
+            if per_case and release_cancelled():
+                return {"rc": 130, "status": "cancelled", "physical_dispatch_started": False}
+            return _run(cmd, timeout=max(300, int(ns.timeout) * repetitions + 120), cwd=ROOT, label=f"variant:{label}")
+
+    def publish_leaf(rec, v0, rr, checkpoint=None, input_hash=None):
+        if checkpoint is not None:
+            write_stage_checkpoint(checkpoint, stage="native_case_performance",
+                state="completed" if rr.get("rc") == 0 else "failed", complete=True,
+                input_hash=input_hash, run_root=run_dir, details={"execution": rr, "variant": dict(v0)})
+        if per_case:
+            rec.update(artifact_namespace=v0["artifact_namespace"], quality_global_complete_at_release=v0.get("quality_global_complete_at_release"),
+                       quality_snapshot=v0.get("central_quality_summary"), release_kind=v0.get("release_kind"))
         rec.update(rr)
         rec["ok"] = rr.get("rc") == 0
         rec["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         stage["variant_results"].append(rec)
         _write_json(reports / "native_producer_variant_stage.partial.json", stage)
         _write_json(canonical_stage_path, stage)
-        # A terminal child failure is row-local.  Every remaining variant must
-        # still reach its own terminal record so successful rows and Full
-        # baselines are preserved for partial Energy observation.
+
+    def drain_leaves():
+        for index, (rec, leaf, checkpoint, input_hash) in list(running_leaves.items()):
+            future = leaf_futures[index]
+            if release_cancelled():
+                future.cancel()
+            if not future.done():
+                continue
+            try:
+                result = future.result()
+            except concurrent.futures.CancelledError:
+                result = {"rc": 130, "status": "cancelled", "physical_dispatch_started": False}
+            except BaseException as exc:
+                result = {"rc": 70, "status": "failed", "stderr_tail": str(exc)}
+            publish_leaf(rec, leaf, result, checkpoint, input_hash)
+            del running_leaves[index]
+
+    if parallel_native and not performance_reused:
+        from onnx_splitpoint_tool.workflow.execution_binding import PhysicalSetupDispatchManager, physical_dut_key
+        models = list(dict.fromkeys(str(leaf["models"][0]) for leaf in variants))
+        setup_dispatch = PhysicalSetupDispatchManager(max_workers=int(_workflow_context(cfg).get("max_parallel_setups") or 3), model_ids=models)
+        physical_keys = _workflow_context(cfg).get("physical_dut_keys") or {}
+        for index, leaf in enumerate(variants):
+            physical = _variant_backend_bindings(cfg, leaf)[0]
+            key = physical_keys.get(physical["setup_id"]) or physical_dut_key({"host": physical["ssh"].rsplit("@", 1)[-1]})
+            ready_signals[index] = concurrent.futures.Future()
+            leaf_futures[index] = setup_dispatch.submit_group(leaf["models"][0], key,
+                lambda leaf_index=index: leaf_jobs[leaf_index](), readiness=ready_signals[index])
+        for model in models:
+            setup_dispatch.finish_registration(model)
+
+    def ready_variants():
+        if performance_reused:
+            return
+        if not per_case:
+            yield from enumerate(variants)
+            return
+        progress_path = Path(str(_workflow_context(cfg).get("central_quality_summary") or ""))
+        pending = list(enumerate(variants))
+        stage["case_release_plan"] = {"complete": False, "leaves": copy.deepcopy(variants), "expected_rows": phase1_expected_rows}
+        _write_json(canonical_stage_path, stage)
+        while pending:
+            drain_leaves()
+            summary = _read_json(progress_path, {}) or {}
+            progress = False
+            for i, leaf in list(pending):
+                try:
+                    if release_cancelled(summary):
+                        raise TensorRTQualityChainError("workflow_cancelled_before_native_case_dispatch")
+                    prepared, split_paths, split_plan, producers, full_plan = _prepare_case_release(run_dir, cfg, leaf, summary)
+                except (TensorRTQualityChainError, ValueError, OSError, KeyError) as exc:
+                    if not summary.get("complete") and not release_cancelled(summary):
+                        continue
+                    stage["variant_results"].append({"id": _variant_label(i, leaf), "artifact_namespace": leaf["artifact_namespace"],
+                        "ok": False, "rc": 2, "status": "not_started", "failure_reason": str(exc),
+                        "upstream_stage": "central_quality", "physical_dispatch_started": False})
+                    pending.remove((i, leaf))
+                    if i in ready_signals:
+                        ready_signals[i].cancel()
+                    progress = True
+                    _write_json(canonical_stage_path, stage)
+                    continue
+                variants[i] = prepared
+                split_paths_by_variant.update(split_paths)
+                split_quality_plan["variants"].extend(split_plan.get("variants") or [])
+                stage["native_split_quality_binding_sets_by_variant"] = split_paths_by_variant
+                stage["native_split_quality_first"] = split_quality_plan
+                pending.remove((i, leaf))
+                progress = True
+                _write_json(canonical_stage_path, stage)
+                yield i, prepared
+            if not progress:
+                time.sleep(0.1)
+        # Final reports may only commit after the complete quality denominator.
+        while not (_read_json(progress_path, {}) or {}).get("complete"):
+            drain_leaves()
+            time.sleep(0.1)
+        stage["case_release_plan"]["complete"] = True
+
+    try:
+        for i, v0 in ready_variants():
+            if not isinstance(v0, Mapping):
+                continue
+            label = _variant_label(i, v0)
+            merged = _merged_variant(cfg, v0)
+            repetitions = _performance_repetitions(merged)
+            cmd = _build_update_cmd(run_dir, cfg, v0, refresh_suites=bool(ns.refresh_suites and i == 0), timeout_s=int(ns.timeout))
+            rec = {"id": label, "case_map": _effective_variant_case_map(run_dir, merged), "performance_repetitions": repetitions, "native_execution_contract": dict(merged["_native_execution_contract"]), "native_execution_contract_sha256": str(merged["_native_execution_contract"]["contract_sha256"]), "cmd": cmd, "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+            leaf_checkpoint = reports / "native_producer_variants" / str(v0.get("artifact_namespace") or _variant_namespace(i, v0)) / "performance_stage_result.json"
+            leaf_input = checkpoint_json_sha256({"coordinator_input_hash": coordinator_input_hash, "variant": dict(v0), "cmd": cmd})
+            if per_case and release_cancelled():
+                rr = {"rc": 130, "status": "cancelled", "physical_dispatch_started": False,
+                      "stderr_tail": "workflow_cancelled_before_native_case_dispatch"}
+            elif per_case and leaf_checkpoint.is_file():
+                previous, reason = load_stage_checkpoint(leaf_checkpoint, stage="native_case_performance", input_hash=leaf_input, run_root=run_dir)
+                if previous is not None and previous.get("complete") is True:
+                    rr = dict((previous.get("details") or {}).get("execution") or {})
+                    rec["reused"] = True
+                else:
+                    rr = {"rc": 70, "status": "reconciliation_required", "stderr_tail": reason or "unfinished physical dispatch; reconcile owned remote lease before retry"}
+            else:
+                if per_case:
+                    write_stage_checkpoint(leaf_checkpoint, stage="native_case_performance", state="running", complete=False,
+                        input_hash=leaf_input, run_root=run_dir, details={"physical_dispatch_started": False, "variant": dict(v0)})
+                if parallel_native:
+                    leaf_jobs[i] = lambda leaf=v0, command=cmd, checkpoint=leaf_checkpoint, name=label, repeats=repetitions: execute_leaf(leaf, command, checkpoint, name, repeats)
+                    running_leaves[i] = (rec, v0, leaf_checkpoint, leaf_input)
+                    ready_signals[i].set_result(True)
+                    drain_leaves()
+                    continue
+                rr = execute_leaf(v0, cmd, leaf_checkpoint, label, repetitions)
+                if per_case:
+                    write_stage_checkpoint(leaf_checkpoint, stage="native_case_performance", state="completed" if rr.get("rc") == 0 else "failed",
+                        complete=True, input_hash=leaf_input, run_root=run_dir, details={"execution": rr, "variant": dict(v0)})
+            if i in ready_signals:
+                ready_signals[i].cancel()
+            publish_leaf(rec, v0, rr)
+            # A terminal child failure is row-local.  Every remaining variant must
+            # still reach its own terminal record so successful rows and Full
+            # baselines are preserved for partial Energy observation.
+
+        while running_leaves:
+            drain_leaves()
+            if running_leaves:
+                concurrent.futures.wait([leaf_futures[i] for i in running_leaves], timeout=0.1,
+                                        return_when=concurrent.futures.FIRST_COMPLETED)
+    finally:
+        if setup_dispatch is not None:
+            setup_dispatch.shutdown(wait=True, cancel_futures=True)
 
     # Build final recursive report over all collected backend roots.
     _write_json(canonical_stage_path, stage)
@@ -3798,7 +4069,9 @@ def main() -> int:
             energy_cmd.append("--final-all-split-energy")
         if mode == "measure" and energy_limit > 0:
             energy_cmd += ["--limit", str(energy_limit)]
-        if mode == "measure" and ns.resume:
+        if mode == "measure" and ns.resume and (
+            eout / "stages" / "native_energy" / "stage_result.json"
+        ).exists():
             energy_cmd.append("--resume-checkpoint")
         energy_result = _run(energy_cmd, timeout=(max(1800, timeout_s * max(1, len(variants)) + 900) if mode == "measure" else 300), cwd=ROOT, label=f"native-energy:{mode}")
         energy_transport_rc = int(energy_result.get("rc") or 0)

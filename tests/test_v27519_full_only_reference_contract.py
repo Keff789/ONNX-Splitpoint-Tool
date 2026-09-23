@@ -246,10 +246,10 @@ def test_effective_plan_requires_single_part2_input_only_for_selected_splits() -
     )
     assert mixed["native_split_backends"] == list(PRODUCERS)
     assert mixed["native_split_requires_single_part2_input"] is True
-    assert mixed["effective_require_single_part2_input"] is True
+    assert mixed["effective_require_single_part2_input"] is False
     assert (
         mixed["native_multi_input_policy"]
-        == "reject_and_backfill_from_frozen_prediction"
+        == "supported_subset_of_selected_generic_cases"
     )
 
 

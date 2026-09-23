@@ -69,7 +69,9 @@ def test_t08_1_computed_bootstrap_matches_v30_plan_shards_and_components():
     shards = [_evaluate_payload_shard(payload, plan[:19], shard_index=0, repetition_offset=0),
               _evaluate_payload_shard(payload, plan[19:], shard_index=1, repetition_offset=19)]
     for shard, expected in zip(shards, golden["shards"]):
-        assert {key: value for key, value in shard.items() if key != "worker_elapsed_s"} == expected
+        # v30 predates the optional reporting draw vector. Its legacy request
+        # must still expose no ratio draws, while every original value matches.
+        assert {key: value for key, value in shard.items() if key != "worker_elapsed_s"} == {"relative_loss_draws": [], **expected}
     result = _combine_evaluation_shards(payload, shards, elapsed_s=0.0, workers_requested=2)
     assert result["seed_schema"] == golden["result"]["seed_schema"]
     assert result["algorithm_version"] == golden["result"]["algorithm_version"]

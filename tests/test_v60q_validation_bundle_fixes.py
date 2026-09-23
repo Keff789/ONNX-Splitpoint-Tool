@@ -7,6 +7,7 @@ import tarfile
 import tempfile
 import threading
 import unittest
+import pytest
 from pathlib import Path
 from unittest import mock
 
@@ -27,6 +28,109 @@ from onnx_splitpoint_tool.remote.bundle import (
     build_suite_bundle,
     remote_minimal_bundle_patterns,
 )
+
+
+@pytest.mark.parametrize("task", ["classification", "detection"])
+def test_finalized_authoritative_remote_bundle_keeps_frozen_data_and_cli_empty(tmp_path, monkeypatch, task):
+    from onnx_splitpoint_tool.benchmark import remote_run
+    from onnx_splitpoint_tool.remote.process_lease import RemoteProcessLeaseRegistry
+    from onnx_splitpoint_tool.remote.ssh_transport import HostConfig
+
+    suite = tmp_path / "suite"
+    suite.mkdir()
+    expected = set()
+    roots = []
+    for subset in ("chosen_a", "chosen_b"):
+        root = suite / "resources/validation" / task / subset
+        root.mkdir(parents=True)
+        samples = []
+        for index in range(3):
+            name = f"images/n00000001/{index}.JPEG" if task == "classification" else f"{index:012d}.jpg"
+            image = root / name
+            image.parent.mkdir(parents=True, exist_ok=True)
+            image.write_bytes(b"controlled local image fixture")
+            samples.append({"image": name, "label_id": 0})
+            if task == "detection":
+                image.with_suffix(".json").write_text(json.dumps({"annotations": [{"category_id": 1, "bbox": [1, 2, 3, 4]}]}))
+        (root / "manifest.json").write_text(json.dumps({"samples": samples}))
+        if task == "detection":
+            (root / "instances_subset.json").write_text(json.dumps({"images": samples, "annotations": []}))
+        expected.update(p.relative_to(suite).as_posix() for p in root.rglob("*") if p.is_file())
+        roots.append(root.relative_to(suite).as_posix())
+    neighbor = suite / "resources/validation" / task / "full_dataset"
+    neighbor.mkdir()
+    (neighbor / "must_not_be_bundled.jpg").write_bytes(b"unselected full dataset")
+    plan = {"runs": [
+        {"id": "setup_a", "type": "onnxruntime", "provider": "cpu", "benchmark_task": task,
+         "validation_images": roots[0], "validation_max_images": 3},
+        {"id": "setup_b", "type": "onnxruntime", "provider": "cpu", "benchmark_task": task,
+         "validation_images": roots[1] + "/manifest.json", "validation_max_images": 3},
+        {"id": "duplicate", "type": "onnxruntime", "provider": "cpu",
+         "validation_images": roots[0], "validation_max_images": 3},
+        {"id": "disabled", "enabled": False, "validation_images": str(neighbor), "validation_max_images": 3},
+    ]}
+    (suite / "benchmark_plan.json").write_text(json.dumps(plan))
+    (suite / "benchmark_set.json").write_text(json.dumps({"model_name": "fixture", "cases": [], "plan": plan}))
+    (suite / "benchmark_suite.py").write_text("# Bundled fixture entrypoint is never executed.\n")
+    original_plan = (suite / "benchmark_plan.json").read_bytes()
+    commands = []
+
+    class StopAtDispatch(BaseException):
+        pass
+
+    class ControlledTransport:
+        def __init__(self, host, **kwargs):
+            self.host = host
+        def resolve_path_read_only(self, *_args, **_kwargs):
+            return "/controlled-local-double"
+        def run_read_only(self, *_args, **_kwargs):
+            return 0, ""
+        def run(self, *_args, **_kwargs):
+            return 0, ""
+        def scp_upload(self, *_args, **_kwargs):
+            return 0, ""
+        def run_streaming(self, command, **kwargs):
+            commands.append(command)
+            raise StopAtDispatch()
+
+    def no_refresh(*_args, **_kwargs):
+        raise AssertionError("finalized plan must not be refreshed or reselected")
+
+    monkeypatch.setattr(remote_run, "SSHTransport", ControlledTransport)
+    monkeypatch.setattr(remote_run, "refresh_suite_harness", no_refresh)
+    monkeypatch.setattr(remote_run, "_remote_storage_preflight", lambda *_a, **_k: {"ok": True, "free_bytes": 10**12, "free_inodes": 10**6})
+    patterns = []
+    for selected in ("setup_a", "setup_b"):
+        args = remote_run.RemoteBenchmarkArgs(
+            resume=False, validation_budget_authoritative=True,
+            validation_images=str(neighbor), validation_max_images=3, benchmark_task=task,
+            add_args="--run-ids " + selected, timeout_s=30,
+        )
+        args.runtime_suite_finalized = True
+        with pytest.raises(StopAtDispatch):
+            remote_run.run_remote_benchmark(
+                host=HostConfig(id=selected, label=selected, host="127.0.0.1", user="fixture"),
+                benchmark_set_json=suite / "benchmark_set.json", local_working_dir=tmp_path / "work",
+                run_id=selected, args=args, log=lambda *_a: None, progress=lambda *_a: None,
+                cancel_event=threading.Event(), remote_process_registry=RemoteProcessLeaseRegistry(),
+            )
+        bundle = suite / "dist/suite_bundle.tar.gz"
+        with tarfile.open(bundle) as archive:
+            names = {member.name for member in archive.getmembers() if member.isfile()}
+            assert expected <= names
+            assert not any("full_dataset" in name for name in names)
+            extracted = tmp_path / ("extracted_" + selected)
+            archive.extractall(extracted, filter="data")
+        for rel in expected:
+            assert (extracted / rel).read_bytes() == (suite / rel).read_bytes()
+        manifests = json.loads(bundle.with_name(bundle.name + ".manifest.json").read_text())
+        patterns.append(manifests["include_patterns"])
+    assert patterns[0] == patterns[1]
+    assert all(patterns[0].count(root + "/**") == 1 for root in roots)
+    assert "resources/validation/**" not in patterns[0]
+    assert (suite / "benchmark_plan.json").read_bytes() == original_plan
+    assert len(commands) == 2
+    assert all("--validation-images" not in command and "--validation-max-images" not in command for command in commands)
 
 
 class V60QValidationBundleFixTests(unittest.TestCase):

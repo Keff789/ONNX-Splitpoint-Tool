@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from onnx_splitpoint_tool.process_control import budget_controller_work
+
 import fnmatch
 import hashlib
 import json
@@ -68,6 +70,7 @@ class NativeTransferEntry:
     size_bytes: int
 
 
+@budget_controller_work("prepare")
 def build_native_transfer_inventory(root: str | Path) -> dict[str, Any]:
     """Build a deterministic, lean Native Runner transfer inventory.
 

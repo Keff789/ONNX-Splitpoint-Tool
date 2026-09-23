@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from onnx_splitpoint_tool.process_control import budget_controller_work
+
 import json
 import hashlib
 import math
@@ -304,7 +306,8 @@ def _powercalc_semaphore() -> threading.Semaphore | None:
     ONNX_SPLITPOINT_POWER_CALC_WORKERS=0 to disable the limiter.
     """
     try:
-        limit = int(float(str(os.environ.get("ONNX_SPLITPOINT_POWER_CALC_WORKERS", "1") or "1")))
+        from onnx_splitpoint_tool.process_control import workflow_resource_options
+        limit = int(workflow_resource_options().get("powercalc_workers", os.environ.get("ONNX_SPLITPOINT_POWER_CALC_WORKERS", "1")) or 1)
     except Exception:
         limit = 1
     if limit <= 0:
@@ -335,6 +338,7 @@ def _terminate_process_group(proc: subprocess.Popen, *, grace_s: float = 2.0) ->
     terminate_process_tree(proc, grace_s=grace_s)
 
 
+@budget_controller_work("postcalc")
 def _run_powercalc_limited(
     cmd: list[str],
     *,
@@ -3226,7 +3230,16 @@ def _power_command(defaults: EnergyDefaults, storage_dir: Path, output_dir: Path
     ]
 
 
-def _run_one(
+def _run_one(cmd, **kwargs):
+    cleanup = {}
+    result = _run_one_owned(cmd, _cleanup_record=cleanup, **kwargs)
+    result.update(cleanup)
+    if cleanup:
+        _write_json(Path(kwargs["stdout_path"]).with_name(Path(kwargs["stdout_path"]).name + ".cleanup.json"), cleanup)
+    return result
+
+
+def _run_one_owned(
     cmd: list[str],
     *,
     cwd: Path | None,
@@ -3239,6 +3252,7 @@ def _run_one(
     cancel_event: Any = None,
     subprocess_env: Mapping[str, str] | None = None,
     on_process_started: Any = None,
+    _cleanup_record=None,
 ) -> dict[str, Any]:
     """Run a command while writing periodic status.
 
@@ -3327,6 +3341,9 @@ def _run_one(
                         "duration_s": time.time() - start, "cancelled": True,
                         "process_started": False, "process_started_at_unix_ns": 0}
             proc = subprocess.Popen(cmd, **popen_kwargs)
+            if _cleanup_record is not None:
+                from ..process_control import _proc_start_time
+                _cleanup_record["collector_start_ticks"] = _proc_start_time(proc.pid)
             process_started_at_unix_ns = time.time_ns()
             registry.register(proc, label="energy-collector-command")
             if callable(on_process_started):
@@ -3403,6 +3420,9 @@ def _run_one(
     finally:
         if proc is not None:
             registry.unregister(proc)
+        if _cleanup_record is not None:
+            _cleanup_record.update(owned_tree_quiescent=(proc is None or registry.registered_tree_quiescent(proc)),
+                                   process_started=proc is not None, collector_pid=int(proc.pid) if proc is not None else None)
 
 
 def _tail_text(path: Path, limit: int = 4000) -> str:
@@ -4594,7 +4614,20 @@ def _reload_claim_hardware_registry(
     return registry, report
 
 
+def _with_energy_resources(function):
+    from functools import wraps
+    @wraps(function)
+    def run(command, out_dir, **kwargs):
+        from ..process_control import bind_workflow_resource_options
+        setup = kwargs.get("setup")
+        setup_id = kwargs.get("setup_id") or getattr(setup, "setup_id", None)
+        with bind_workflow_resource_options(controller_setup_id=setup_id, controller_attempt_dir=str(out_dir)):
+            return function(command, out_dir, **kwargs)
+    return run
+
+
 @bounded_energy_task
+@_with_energy_resources
 def run_fast_firmware_measurement(
     command: str,
     out_dir: str | Path,
@@ -5218,33 +5251,39 @@ def run_fast_firmware_measurement(
         repeat_command = command
         preflight_evidence: dict[str, Any] | None = None
         prepare_result = None
-        if preflight_prepare_command:
-            prepare_argv = journaled_ssh_wrapper_argv(
-                shlex.split(preflight_prepare_command), label="window-probe-command",
-                env={**os.environ, **dict(subprocess_env or {})},
-                timeout_s=max(0.1, preflight_timeout_s - min(REMOTE_LEASE_OUTER_CLEANUP_MARGIN_S, max(1.0, preflight_timeout_s * 0.10))),
-            )
-            prepare_result = _run_one(
-                prepare_argv, cwd=None,
-                stdout_path=run_dir / "preflight_prepare_stdout.log",
-                stderr_path=run_dir / "preflight_prepare_stderr.log",
-                timeout=preflight_timeout_s, cancel_event=cancel_event,
-                subprocess_env=subprocess_env,
-            )
-        prepare_failed = prepare_result is not None and prepare_result.get("rc") != 0
-        if preflight_requested and not prepare_failed:
-            preflight_evidence, repeat_command = _run_energy_preflight(
-                preflight_command,
-                workload_command_template=command,
-                evidence_dir=run_dir / "preflight",
-                repeat_index=i,
-                timeout_s=preflight_timeout_s,
-                max_age_s=preflight_attestation_max_age_s,
-                runtime_attestation_path_template=preflight_runtime_attestation_path,
-                expected_command_contract_sha256=preflight_expected_command_contract_sha256,
-                cancel_event=cancel_event,
-                subprocess_env=subprocess_env,
-            )
+        from ..remote.process_lease import controller_activity
+        from contextlib import nullcontext
+        preflight_resources = (controller_activity(setup_id=setup_id or setup.setup_id,
+            attempt_dir=run_dir, purpose="dut_job", cancel_event=cancel_event, env=subprocess_env)
+            if preflight_prepare_command or preflight_requested else nullcontext())
+        with preflight_resources:
+            if preflight_prepare_command:
+                prepare_argv = journaled_ssh_wrapper_argv(
+                    shlex.split(preflight_prepare_command), label="window-probe-command",
+                    env={**os.environ, **dict(subprocess_env or {})},
+                    timeout_s=max(0.1, preflight_timeout_s - min(REMOTE_LEASE_OUTER_CLEANUP_MARGIN_S, max(1.0, preflight_timeout_s * 0.10))),
+                )
+                prepare_result = _run_one(
+                    prepare_argv, cwd=None,
+                    stdout_path=run_dir / "preflight_prepare_stdout.log",
+                    stderr_path=run_dir / "preflight_prepare_stderr.log",
+                    timeout=preflight_timeout_s, cancel_event=cancel_event,
+                    subprocess_env=subprocess_env,
+                )
+            prepare_failed = prepare_result is not None and prepare_result.get("rc") != 0
+            if preflight_requested and not prepare_failed:
+                preflight_evidence, repeat_command = _run_energy_preflight(
+                    preflight_command,
+                    workload_command_template=command,
+                    evidence_dir=run_dir / "preflight",
+                    repeat_index=i,
+                    timeout_s=preflight_timeout_s,
+                    max_age_s=preflight_attestation_max_age_s,
+                    runtime_attestation_path_template=preflight_runtime_attestation_path,
+                    expected_command_contract_sha256=preflight_expected_command_contract_sha256,
+                    cancel_event=cancel_event,
+                    subprocess_env=subprocess_env,
+                )
         workload_script = write_command_script(run_dir / "workload_command.sh", repeat_command, cwd=cwd)
         command_script = _write_captured_workload_script(
             run_dir / "energy_command.sh",
@@ -5379,10 +5418,26 @@ def run_fast_firmware_measurement(
             "collector_started": False,
         })
 
+        from ..remote.process_lease import ControllerResourceClaim
+        capture_claim = ControllerResourceClaim.from_environment(
+            setup_id=setup_id or setup.setup_id, attempt_dir=run_dir,
+            cancel_event=cancel_event, env=subprocess_env)
+        if capture_claim is not None:
+            capture_claim.acquire()
+        from .task_budget import reserve_controlled_test_start
+        try:
+            reserve_controlled_test_start("collector", run_dir.resolve())
+        except BaseException:
+            if capture_claim is not None:
+                capture_claim.finish({"process_started": False})
+            raise
+
         def _record_collector_start(
             proc: subprocess.Popen[Any], started_at_unix_ns: int,
         ) -> None:
             entry["collector_started"] = True
+            if capture_claim is not None:
+                capture_claim.started(proc)
             if _task_budget is not None:
                 _task_budget.collector_started(task_chain)
             entry["collector_started_at_unix_ns"] = int(
@@ -5438,6 +5493,8 @@ def run_fast_firmware_measurement(
             subprocess_env=subprocess_env,
             on_process_started=_record_collector_start,
         )
+        if capture_claim is not None:
+            capture_claim.finish(res)
         entry["collector_started"] = res.get("process_started") is True
         entry["collector_started_at_unix_ns"] = int(
             res.get("process_started_at_unix_ns") or 0

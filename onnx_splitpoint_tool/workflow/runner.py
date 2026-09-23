@@ -11,6 +11,9 @@ from onnx_splitpoint_tool.native_command_contract import (
 )
 import math
 import concurrent.futures
+import contextvars
+import queue
+import inspect
 import copy
 import hashlib
 import re
@@ -153,6 +156,10 @@ from .generator_binding import import_existing_suite, materialize_suite_from_can
 from .legacy_benchmarkset_binding import materialize_legacy_benchmark_set
 from .execution_binding import (
     execute_benchmark_suite_if_requested,
+    PhysicalSetupDispatchManager,
+    _parallel_remote_max_setups,
+    _parallel_remote_max_uploads,
+    _parallel_powercalc_workers,
     finalize_suite_for_runtime,
 )
 from .missing_full_quality_attestation import (
@@ -475,6 +482,19 @@ def _native_model_selection_decision(
     return runnable, blocking
 
 
+def _native_selected_case_order(run_dir: Path, model: str, available: Sequence[str]) -> List[str]:
+    """Read the existing Generic plan; Native never adds or reorders its cases."""
+    plan = read_json(run_dir / "models" / model / "analysis" / "final_candidate_plan.json", default={}) or {}
+    if "selected_candidates" not in plan:
+        return list(available)
+    return [
+        case for row in plan["selected_candidates"]
+        if isinstance(row, Mapping)
+        for case in [str(row.get("case_id") or row.get("case") or "")]
+        if case in available
+    ]
+
+
 def _native_case_selection_decision(
     models: Sequence[str],
     *,
@@ -547,15 +567,6 @@ def _native_case_selection_decision(
                 for value in list(case_map.get(model) or [])
                 if str(value).strip()
             ]
-            if not selected:
-                _exclude(
-                    model,
-                    f"case_map_cases_empty:{model}",
-                    category="model_case_selection",
-                    requested=selected,
-                    available=available,
-                )
-                continue
             if len(selected) != len(set(selected)):
                 _exclude(
                     model,
@@ -575,7 +586,7 @@ def _native_case_selection_decision(
                     available=available,
                 )
                 continue
-            effective_map[model] = selected
+            effective_map[model] = [case for case in available if case in selected]
     else:
         for model in requested_models:
             available = [
@@ -1130,6 +1141,16 @@ def _quality_execution_location_v263(profile: Mapping[str, Any] | None) -> str:
     if value in {"management", "management_node", "central", "central_cpu"}:
         return "central_management"
     return value if value in {"local", "central_management"} else "local"
+
+
+def _quality_reference_threads(profile):
+    from onnx_splitpoint_tool.quality_statistics_config import reference_threads
+    return reference_threads(profile)
+
+
+def _quality_statistics_options(profile):
+    from onnx_splitpoint_tool.quality_statistics_config import statistics_options
+    return statistics_options(profile)
 
 
 def _quality_workers_v263(profile: Mapping[str, Any] | None) -> int:
@@ -3422,6 +3443,7 @@ def _native_full_quality_binding_set_v275(
     producer: str,
     full_backends: Sequence[str],
     model_ids: Sequence[str],
+    case_release_run_root: Path | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Seal exact Central-Quality request provenance for vendor Full rows.
 
@@ -3448,10 +3470,16 @@ def _native_full_quality_binding_set_v275(
     summary_path = _absolute_without_resolving(
         Path(central_summary_path)
     )
-    run_root = summary_path.parent.parent
-    expected_summary = (
-        run_root / "quality_management" / "central_quality_summary.json"
-    )
+    run_root = (_absolute_without_resolving(Path(case_release_run_root))
+                if case_release_run_root is not None else summary_path.parent.parent)
+    expected_summary = run_root / "quality_management" / "central_quality_summary.json"
+    if case_release_run_root is not None:
+        # Only a normal per-case publication may use a scoped summary. Request
+        # provenance remains confined to the original EvalRun below.
+        if (summary_path.parent.parent == run_root / "reports" / "native_producer_variants"
+                and summary_path.parent.name.startswith("case")
+                and summary_path.name == "central_quality_summary.json"):
+            expected_summary = summary_path
     summary_path_error = ""
     try:
         normalized_summary = Path(os.path.normpath(str(summary_path)))
@@ -3467,7 +3495,7 @@ def _native_full_quality_binding_set_v275(
             or not run_root.is_dir()
             or not summary_path.is_file()
             or resolved_summary
-            != resolved_root / "quality_management" / "central_quality_summary.json"
+            != resolved_root / expected_summary.relative_to(run_root)
         ):
             summary_path_error = (
                 "central_quality_summary_role_path_mismatch"
@@ -6015,6 +6043,79 @@ class EvaluationWorkflowRunner:
         fence_payload["lock_quarantine_fence"] = str(fence_path)
         return fence_payload
 
+    def _recover_cleanup_quarantine_under_lock(
+        self, owner: Mapping[str, Any],
+    ) -> bool:
+        """Retry only a remote cleanup whose local quiescence is durable.
+
+        Ordinary hard crashes have no durable local descendant proof in the
+        existing process registry and remain quarantined. This transition does
+        not clear physical collector/source locks or infer cleanup from PID age.
+        """
+        if not self.options.resume or self._run_lock is None:
+            return False
+        from .run_control import recoverable_cleanup_evidence
+
+        evidence = recoverable_cleanup_evidence(self.run_dir)
+        previous = owner.get("owner", owner)
+        if not isinstance(previous, Mapping):
+            return False
+        previous = previous.get("previous_owner", previous)
+        if (not evidence or not isinstance(previous, Mapping)
+                or str(previous.get("session_id") or "")
+                != str(evidence.get("session_id") or "")):
+            return False
+        journals_root = self.run_dir / "jobs" / "remote_process_leases"
+        details = evidence.get("details") or {}
+        recorded = details.get("journals") or []
+        # Deleted/corrupt ownership records are not a successful recovery.
+        if (details.get("invalid_entries") or not recorded
+                or journals_root.is_symlink() or not journals_root.is_dir()):
+            return False
+        for journal in recorded:
+            if not isinstance(journal, Mapping):
+                return False
+            session_id = str(journal.get("session_id") or "")
+            directory = journals_root / session_id
+            if (not session_id or Path(session_id).name != session_id
+                    or directory.is_symlink() or not directory.is_dir()
+                    or str(journal.get("journal_dir") or "") != str(directory)):
+                return False
+        # These guards are read-only and precede every recovery mutation. The
+        # normal run sequence repeats them after acquire has installed ownership.
+        self._validate_explicit_resume_target_before_lock()
+        self._validate_resume_profile_snapshot()
+        self._validate_resume_contract()
+        self._recover_prior_remote_lease_journals()
+        manifest = read_json(self.manifest_path, default={}) or {}
+        sessions = list(manifest.get("execution_sessions") or [])
+        if not sessions or not isinstance(sessions[-1], Mapping):
+            raise WorkflowRunCleanupQuarantineError(
+                "Resume cleanup is resolved but the execution journal is missing."
+            )
+        session = dict(sessions[-1])
+        recovery = {
+            "recovered_at": now_iso(),
+            "recovered_by_session_id": self.session_id,
+            "previous_cleanup_session_id": evidence["session_id"],
+            "local_process_quiescence_proven": True,
+            "remote_process_quiescence_proven": True,
+            "reason": "prior_remote_lease_cleanup_resolved",
+        }
+        session["cleanup_recovery"] = recovery
+        if str(session.get("status") or "") == "running":
+            session["status"] = "cancelled"
+            session["finished_at"] = recovery["recovered_at"]
+        sessions[-1] = session
+        manifest["execution_sessions"] = sessions
+        if manifest.get("status") == "running":
+            manifest["status"] = "cancelled"
+        # Commit recovery in the existing execution journal before removing the
+        # existing workflow fence. A crash between these steps stays closed.
+        atomic_write_json(self.manifest_path, manifest)
+        self._cleanup_quarantine_path.unlink()
+        return True
+
     def _block_quarantined_resume(self) -> None:
         """Never reuse a run whose previous writer left unproven survivors."""
 
@@ -6022,6 +6123,10 @@ class EvaluationWorkflowRunner:
             return
         path = self._cleanup_quarantine_path
         if not os.path.lexists(path):
+            return
+        if self._run_lock is not None and self._recover_cleanup_quarantine_under_lock(
+            self._run_lock.previous_owner,
+        ):
             return
         owner: Dict[str, Any] = {}
         try:
@@ -6306,6 +6411,18 @@ class EvaluationWorkflowRunner:
             context["persistence_error"] = f"{type(exc).__name__}: {exc}"
             self._quality_cancel_context = context
 
+    def _run_budgeted_management_reference(self, reference_function, **kwargs):
+        # Preserve the configured ORT session. Admission accounts for that
+        # whole session rather than silently changing its intra-op threads.
+        service = self._ensure_central_quality_service()
+        def check_cancelled():
+            if self._management_cancel_event.is_set():
+                raise concurrent.futures.CancelledError("reference admission cancelled")
+        with service.pause_gate.activity("ort_reference:" + str(kwargs["model_id"]),
+                cpu=kwargs["workers"], memory_bytes=4 * 1024**3,
+                check_cancelled=check_cancelled):
+            return reference_function(**kwargs)
+
     def _schedule_management_cpu_reference(self, model_id: str, suite_dir: Path) -> None:
         if cache_verify_guard(self.profile_payload):
             # The cache canary measures one already-built Native row.  A
@@ -6346,11 +6463,11 @@ class EvaluationWorkflowRunner:
                 )
             output_dir = self.run_dir / "quality_management" / "references" / model_id
             future = self._management_reference_executor.submit(
-                generate_management_cpu_reference,
+                self._run_budgeted_management_reference, reference_function=generate_management_cpu_reference,
                 suite_dir=suite,
                 output_dir=output_dir,
                 model_id=model_id,
-                workers=_quality_workers_v263(self.profile_payload),
+                workers=_quality_reference_threads(self.profile_payload),
                 cancel_event=self._management_cancel_event,
                 process_registry=self._process_registry,
                 log=self.log,
@@ -6361,7 +6478,7 @@ class EvaluationWorkflowRunner:
             )
         self._emit_log(
             f"[quality][management] queued one ORT-CPU semantic reference for {model_id}; "
-            f"it runs with {_quality_workers_v263(self.profile_payload)} CPU threads in parallel with remote benchmarks"
+            f"it runs with {_quality_reference_threads(self.profile_payload)} CPU threads in parallel with remote benchmarks"
         )
 
     def _ensure_central_quality_service(self) -> Any:
@@ -6379,11 +6496,15 @@ class EvaluationWorkflowRunner:
                 from onnx_splitpoint_tool.quality_service import (
                     CPUQualityReferenceStore,
                     ManagementQualityService,
+                    ResourcePauseGate,
                 )
 
                 self._central_quality_service = ManagementQualityService(
                     self.run_dir / "quality_management" / "evaluation_cache",
                     workers=_quality_workers_v263(self.profile_payload),
+                    pause_gate=ResourcePauseGate(transfer_slots=_parallel_remote_max_uploads(getattr(self, "options", None), self.profile_payload, default=1),
+                        postcalc_slots=_parallel_powercalc_workers(getattr(self, "options", None), self.profile_payload, default=1)),
+                    statistics=_quality_statistics_options(self.profile_payload),
                 )
                 # One shared instance avoids redundant per-request coordination;
                 # the store itself additionally protects independent processes.
@@ -6392,7 +6513,8 @@ class EvaluationWorkflowRunner:
                 )
             if self._central_quality_coord_executor is None:
                 self._central_quality_coord_executor = concurrent.futures.ThreadPoolExecutor(
-                    max_workers=_quality_workers_v263(self.profile_payload),
+                    max_workers=(_quality_statistics_options(self.profile_payload)["max_active_requests"] if _quality_statistics_options(self.profile_payload)["engine"] == "optimized_coco_v1"
+                                 else _quality_workers_v263(self.profile_payload)),
                     thread_name_prefix="osp-central-quality-coordinator",
                 )
             return self._central_quality_service
@@ -8514,101 +8636,109 @@ class EvaluationWorkflowRunner:
         result_path = request_path.with_name(request_path.stem.replace("_request", "") + "_central_result.json")
         loaded_request_identity: Optional[dict[str, Any]] = None
         try:
-            manifest = read_json(request_path, default={}) or {}
-            if not isinstance(manifest, Mapping):
-                raise ValueError("central quality request root is not an object")
-            self._validate_quality_request_model_binding(model_id, manifest)
             service = self._ensure_central_quality_service()
-            (
-                reference_records,
-                reference_status,
-                reference_bytes,
-            ) = self._management_reference_records(model_id)
-            reference_descriptor = {
-                "path": str(reference_status.get("reference_path") or ""),
-                "sha256": str(reference_status.get("reference_sha256") or ""),
-                "size_bytes": reference_status.get("reference_size_bytes"),
-            }
-            if not isinstance(reference_bytes, bytes):
-                raise ValueError(
-                    "management CPU reference has no sealed in-process byte handoff"
+            reference_future = self._management_reference_futures.get(model_id)
+            if reference_future is not None:
+                reference_future.result()
+            def check_loader_cancelled():
+                if self._management_cancel_event.is_set():
+                    raise concurrent.futures.CancelledError("quality request loader cancelled")
+            with service.pause_gate.activity("quality_request_loader:" + model_id,
+                    memory_bytes=min(1024**3, service.pause_gate.available_memory_bytes), check_cancelled=check_loader_cancelled):
+                manifest = read_json(request_path, default={}) or {}
+                if not isinstance(manifest, Mapping):
+                    raise ValueError("central quality request root is not an object")
+                self._validate_quality_request_model_binding(model_id, manifest)
+                (
+                    reference_records,
+                    reference_status,
+                    reference_bytes,
+                ) = self._management_reference_records(model_id)
+                reference_descriptor = {
+                    "path": str(reference_status.get("reference_path") or ""),
+                    "sha256": str(reference_status.get("reference_sha256") or ""),
+                    "size_bytes": reference_status.get("reference_size_bytes"),
+                }
+                if not isinstance(reference_bytes, bytes):
+                    raise ValueError(
+                        "management CPU reference has no sealed in-process byte handoff"
+                    )
+                request = quality_request_from_manifest(
+                    request_path,
+                    reference_artifact=reference_descriptor,
+                    reference_artifact_bytes=reference_bytes,
                 )
-            request = quality_request_from_manifest(
-                request_path,
-                reference_artifact=reference_descriptor,
-                reference_artifact_bytes=reference_bytes,
-            )
-            case_id, run_id = self._quality_request_scope(request_path)
-            request_identity = self._quality_request_identity(
-                request_path,
-                model_id=model_id,
-                variant=str(manifest.get("variant") or ""),
-                manifest=manifest,
-            )
-            if request_identity.get("identity_valid") is not True:
-                raise ValueError(
-                    "central quality request identity is inconsistent: "
-                    + ", ".join(str(item) for item in list(request_identity.get("identity_errors") or []))
-                )
-            full_only_plan_identity, full_only_plan_errors = (
-                self._bind_full_only_quality_request_to_effective_plan(
+                case_id, run_id = self._quality_request_scope(request_path)
+                request_identity = self._quality_request_identity(
+                    request_path,
                     model_id=model_id,
-                    request_identity=request_identity,
+                    variant=str(manifest.get("variant") or ""),
+                    manifest=manifest,
                 )
-            )
-            if full_only_plan_errors:
-                raise ValueError(
-                    "central quality request is not an exact Full-only plan "
-                    "identity: " + ", ".join(full_only_plan_errors)
+                if request_identity.get("identity_valid") is not True:
+                    raise ValueError(
+                        "central quality request identity is inconsistent: "
+                        + ", ".join(str(item) for item in list(request_identity.get("identity_errors") or []))
+                    )
+                full_only_plan_identity, full_only_plan_errors = (
+                    self._bind_full_only_quality_request_to_effective_plan(
+                        model_id=model_id,
+                        request_identity=request_identity,
+                    )
                 )
-            if full_only_plan_identity:
-                request_identity.update({
-                    "full_only_plan_identity_validated": True,
-                    "quality_canary_id": str(
-                        full_only_plan_identity.get("quality_canary_id") or ""
-                    ),
-                    "eval_run_id": str(
-                        full_only_plan_identity.get("eval_run_id") or ""
-                    ),
-                    "full_only_plan_identity_required": True,
-                    "full_only_plan_identity": copy.deepcopy(
-                        full_only_plan_identity.get(
-                            "full_only_plan_identity"
-                        ) or {}
-                    ),
-                    "full_only_plan_identity_sha256": str(
-                        full_only_plan_identity.get(
-                            "full_only_plan_identity_sha256"
-                        ) or ""
-                    ),
-                    "dispatch_run_id": str(
-                        full_only_plan_identity.get("dispatch_run_id") or ""
-                    ),
-                    "backend": str(
-                        full_only_plan_identity.get("backend") or ""
-                    ),
-                    "execution_role": "full_quality_only",
-                    "performance_claims_emitted": False,
-                })
-            # From this point onward the portable request/candidate pair has
-            # passed the quality-service loader.  Preserve the signed producer
-            # for the central summary, but do not make it bindable until the
-            # paired evaluation itself has completed.
-            loaded_request_identity = copy.deepcopy(request_identity)
-            identity, stored = self._central_reference_contract(
-                model_id,
-                reference_records,
-                reference_status,
-            )
-            # The loader already replaced the remote reference with the exact
-            # management artifact.  The store verifies that the same identity
-            # cannot silently map to different predictions.
-            from dataclasses import replace
-            request = replace(
-                request,
-                reference_identity=identity.fingerprint(),
-                request_id=f"{model_id}:{request.request_id}:{sha256_file(request_path)}",
-            )
+                if full_only_plan_errors:
+                    raise ValueError(
+                        "central quality request is not an exact Full-only plan "
+                        "identity: " + ", ".join(full_only_plan_errors)
+                    )
+                if full_only_plan_identity:
+                    request_identity.update({
+                        "full_only_plan_identity_validated": True,
+                        "quality_canary_id": str(
+                            full_only_plan_identity.get("quality_canary_id") or ""
+                        ),
+                        "eval_run_id": str(
+                            full_only_plan_identity.get("eval_run_id") or ""
+                        ),
+                        "full_only_plan_identity_required": True,
+                        "full_only_plan_identity": copy.deepcopy(
+                            full_only_plan_identity.get(
+                                "full_only_plan_identity"
+                            ) or {}
+                        ),
+                        "full_only_plan_identity_sha256": str(
+                            full_only_plan_identity.get(
+                                "full_only_plan_identity_sha256"
+                            ) or ""
+                        ),
+                        "dispatch_run_id": str(
+                            full_only_plan_identity.get("dispatch_run_id") or ""
+                        ),
+                        "backend": str(
+                            full_only_plan_identity.get("backend") or ""
+                        ),
+                        "execution_role": "full_quality_only",
+                        "performance_claims_emitted": False,
+                    })
+                # From this point onward the portable request/candidate pair has
+                # passed the quality-service loader.  Preserve the signed producer
+                # for the central summary, but do not make it bindable until the
+                # paired evaluation itself has completed.
+                loaded_request_identity = copy.deepcopy(request_identity)
+                identity, stored = self._central_reference_contract(
+                    model_id,
+                    reference_records,
+                    reference_status,
+                )
+                # The loader already replaced the remote reference with the exact
+                # management artifact.  The store verifies that the same identity
+                # cannot silently map to different predictions.
+                from dataclasses import replace
+                request = replace(
+                    request,
+                    reference_identity=identity.fingerprint(),
+                    request_id=f"{model_id}:{request.request_id}:{sha256_file(request_path)}",
+                )
             result = completed_outcome(service.evaluate(request))
             result_completed = (
                 str(result.get("status") or "completed") == "completed"
@@ -9314,7 +9444,9 @@ class EvaluationWorkflowRunner:
             return
         low = str(message or "").strip().lower()
         try:
-            energy_line = "[energy" in low or "[urecs" in low or "u.recs" in low
+            execution = self.profile_payload.get("workflow_execution") or {}
+            broker_owned = execution.get("native_release_mode") == "per_case" or execution.get("setup_queue_mode") == "per_setup"
+            energy_line = not broker_owned and ("[energy" in low or "[urecs" in low or "u.recs" in low)
             if energy_line and any(token in low for token in (" start", "starting", "collector", "acquisition", "window open")):
                 service.pause_for_urecs()
             if energy_line and any(token in low for token in (" end", "completed", "finished", "window closed", "collector stopped")):
@@ -11145,12 +11277,20 @@ class EvaluationWorkflowRunner:
             )
         from .run_discovery import inspect_evaluation_run
 
-        inspection = inspect_evaluation_run(self.run_dir)
+        inspection = inspect_evaluation_run(self.run_dir, allow_cleanup_recovery=True)
         abandoned_recovery = (
             self._abandoned_v2779_resume_recovery_candidate()
             if not inspection.resumable else {}
         )
         if not inspection.resumable and not abandoned_recovery:
+            if inspection.lifecycle_status == "running":
+                raise WorkflowRunTargetError(
+                    f"Cannot resume {self.run_id!r}: execution is still running "
+                    "or interrupted without durable local-process cleanup proof. "
+                    "A missing controller PID does not prove that owned local "
+                    "descendants stopped; existing process ownership remains unresolved.",
+                    error_code="resume_target_not_admitted",
+                )
             raise WorkflowRunTargetError(
                 f"Cannot resume {self.run_id!r}: target is not structurally "
                 "complete and writable ("
@@ -11680,7 +11820,12 @@ class EvaluationWorkflowRunner:
             },
         )
         try:
-            self._run_lock.acquire()
+            if self.options.resume:
+                self._run_lock.acquire(
+                    recover_quarantine=self._recover_cleanup_quarantine_under_lock,
+                )
+            else:
+                self._run_lock.acquire()
         except BaseException:
             # acquire() already releases its descriptor/thread guard on every
             # failure, including a durable quarantine fence.  Do not retain a
@@ -11978,12 +12123,15 @@ class EvaluationWorkflowRunner:
 
         self._run_model_pipeline_with_cache_preflight(rows)
 
-        if not self._stop_requested:
-            self._run_stage(None, "evaluate_quality", self._stage_evaluate_quality)
-        if not self._stop_requested:
-            self._run_stage(None, "aggregate_results", self._stage_aggregate_results)
-        if not self._stop_requested:
-            self._run_stage(None, "run_native_producers", self._stage_run_native_producers)
+        if not self._stop_requested and (self.profile_payload.get("workflow_execution") or {}).get("native_release_mode") == "per_case":
+            self._run_quality_native_pipeline()
+        else:
+            if not self._stop_requested:
+                self._run_stage(None, "evaluate_quality", self._stage_evaluate_quality)
+            if not self._stop_requested:
+                self._run_stage(None, "aggregate_results", self._stage_aggregate_results)
+            if not self._stop_requested:
+                self._run_stage(None, "run_native_producers", self._stage_run_native_producers)
         if not self._stop_requested:
             self._run_stage(None, "generate_report", self._stage_generate_report)
 
@@ -13299,7 +13447,28 @@ class EvaluationWorkflowRunner:
         except Exception as exc:
             self.warnings.append(f"resume summary failed: {type(exc).__name__}: {exc}")
 
+    def _advance_stage(self, steps, model_id, stage, *, value=None, error=None):
+        previous = self._active_model_id, self._active_stage
+        self._active_model_id, self._active_stage = model_id, stage
+        try:
+            return steps.throw(error) if error is not None else steps.send(value)
+        finally:
+            self._active_model_id, self._active_stage = previous
+
     def _run_stage(self, model_id: Optional[str], stage: str, fn: StageFn) -> StageResult:
+        steps = self._run_stage_steps(model_id, stage, fn)
+        value, error = None, None
+        while True:
+            try:
+                dispatch = self._advance_stage(steps, model_id, stage, value=value, error=error)
+            except StopIteration as completed:
+                return completed.value
+            try:
+                value, error = dispatch(), None
+            except BaseException as exc:
+                value, error = None, exc
+
+    def _run_stage_steps(self, model_id: Optional[str], stage: str, fn: StageFn):
         stage_dir = (self.run_dir / "models" / model_id / "stages" / stage) if model_id else (self.run_dir / "stages" / stage)
         result_path = stage_dir / "stage_result.json"
         previous = read_json(result_path, default=None)
@@ -13386,8 +13555,6 @@ class EvaluationWorkflowRunner:
         status = "ok"
         error_class = ""
         error_detail = ""
-        old_active_model, old_active_stage = self._active_model_id, self._active_stage
-        self._active_model_id, self._active_stage = model_id, stage
         # Publish an incomplete lifecycle record before starting the child.
         # If this process is interrupted, Resume sees an explicit running stage
         # instead of either a stale terminal result or no state at all.
@@ -13412,7 +13579,10 @@ class EvaluationWorkflowRunner:
         )
         atomic_write_json(result_path, running_result.to_dict())
         try:
-            artifacts, metrics, message, status = fn()
+            outcome = fn()
+            if inspect.isgenerator(outcome):
+                outcome = yield from outcome
+            artifacts, metrics, message, status = outcome
         except (
             WorkflowRunCancelledError,
             ProcessTreeCancellationError,
@@ -13440,8 +13610,6 @@ class EvaluationWorkflowRunner:
                     "runtime_dispatch_allowed": False,
                     "stop_workflow": True,
                 }
-        finally:
-            self._active_model_id, self._active_stage = old_active_model, old_active_stage
         if self._cancel_event.is_set():
             status = "cancelled"
             self._stop_requested = True
@@ -14479,20 +14647,30 @@ class EvaluationWorkflowRunner:
             # preflight has completed. A strict MISS or broken required
             # compiler context leaves _stop_requested set.
             self._artifact_cache_preflight_pending = False
-            for row in rows:
-                if self._stop_requested:
-                    break
-                model_id = slugify(
-                    row.get("id") or row.get("model_id") or "model",
-                    fallback="model",
-                )
-                self._run_model(
-                    row,
-                    stage_names=post_barrier_model_stages,
-                    start_job=False,
-                    finish_job=True,
-                )
-                finished_models.add(model_id)
+            execution = self.profile_payload.get("workflow_execution") or {}
+            if execution.get("setup_queue_mode", "model_barrier") == "per_setup":
+                for row in preparation_rows:
+                    if self._stop_requested:
+                        break
+                    self._run_model(row, stage_names=MODEL_POST_BARRIER_STAGES,
+                                    start_job=False, finish_job=False)
+                if not self._stop_requested:
+                    finished_models.update(self._run_prepared_setup_queues(preparation_rows))
+            else:
+                for row in rows:
+                    if self._stop_requested:
+                        break
+                    model_id = slugify(
+                        row.get("id") or row.get("model_id") or "model",
+                        fallback="model",
+                    )
+                    self._run_model(
+                        row,
+                        stage_names=post_barrier_model_stages,
+                        start_job=False,
+                        finish_job=True,
+                    )
+                    finished_models.add(model_id)
         finally:
             self._artifact_cache_preflight_pending = False
             # A stop-after/cancel/strict-preflight exit must not leave model
@@ -14591,6 +14769,87 @@ class EvaluationWorkflowRunner:
         hailo_build["defer_until_cache_preflight"] = True
         payload["hailo_build"] = hailo_build
         return payload
+
+    def _run_prepared_setup_queues(self, rows):
+        ordered = [(slugify(row.get("id") or row.get("model_id") or "model", fallback="model"), row)
+                   for row in rows]
+        manager = PhysicalSetupDispatchManager(
+            max_workers=_parallel_remote_max_setups(self.options, self.profile_payload, default=3),
+            model_ids=[model for model, _ in ordered])
+        coordinators = concurrent.futures.ThreadPoolExecutor(
+            max_workers=max(1, len(ordered)), thread_name_prefix="osp-model-dispatch")
+        prepared, pending, finished = [], {}, set()
+        events = queue.SimpleQueue()
+        try:
+            # No dispatch before every shared suite has been finalized once.
+            for model_id, row in ordered:
+                failure = next((stage for stage in ("generate_benchmark_set", "build_backend_artifacts")
+                                if self._stage_status(model_id, stage).lower() == "failed"), "")
+                if failure or self._stop_requested:
+                    manager.finish_registration(model_id)
+                    if not self._stop_requested:
+                        self._run_model(row, stage_names=MODEL_EXECUTION_STAGES,
+                                        start_job=False, finish_job=True)
+                        finished.add(model_id)
+                    continue
+                steps = self._run_stage_steps(model_id, "run_benchmarks",
+                    lambda mid=model_id, item=row: self._stage_run_benchmarks_steps(mid, item, dispatch_manager=manager,
+                        dispatch_log=lambda message, owner=mid: events.put((owner, message))))
+                try:
+                    dispatch = self._advance_stage(steps, model_id, "run_benchmarks")
+                except StopIteration:
+                    manager.finish_registration(model_id)
+                    self._run_model(row, stage_names=MODEL_EXECUTION_STAGES[1:], start_job=False, finish_job=True)
+                    finished.add(model_id)
+                else:
+                    prepared.append((model_id, row, steps, dispatch))
+            for model_id, row, steps, dispatch in prepared:
+                future = coordinators.submit(contextvars.copy_context().run, dispatch)
+                pending[future] = (model_id, row, steps)
+            while pending or not events.empty():
+                while not events.empty():
+                    owner, message = events.get()
+                    previous = self._active_model_id, self._active_stage
+                    self._active_model_id, self._active_stage = owner, "run_benchmarks"
+                    try:
+                        self.log(message)
+                    finally:
+                        self._active_model_id, self._active_stage = previous
+                if not pending:
+                    break
+                done, _ = concurrent.futures.wait(pending, timeout=0.1,
+                                                return_when=concurrent.futures.FIRST_COMPLETED)
+                if self._cancel_event.is_set():
+                    manager.shutdown(wait=False, cancel_futures=True)
+                while not events.empty():
+                    owner, message = events.get()
+                    previous = self._active_model_id, self._active_stage
+                    self._active_model_id, self._active_stage = owner, "run_benchmarks"
+                    try:
+                        self.log(message)
+                    finally:
+                        self._active_model_id, self._active_stage = previous
+                for future in sorted(done, key=lambda item: [m for m, _ in ordered].index(pending[item][0])):
+                    model_id, row, steps = pending.pop(future)
+                    try:
+                        value, error = future.result(), None
+                    except BaseException as exc:
+                        value, error = None, exc
+                    try:
+                        self._advance_stage(steps, model_id, "run_benchmarks", value=value, error=error)
+                    except StopIteration:
+                        pass
+                    else:
+                        raise RuntimeError("benchmark_stage_unexpected_second_dispatch")
+                    if not self._stop_requested:
+                        self._run_model(row, stage_names=MODEL_EXECUTION_STAGES[1:], start_job=False, finish_job=True)
+                    elif self.jobs:
+                        self.jobs.finish_model(model_id)
+                    finished.add(model_id)
+            return finished
+        finally:
+            manager.shutdown(wait=not self._cancel_event.is_set(), cancel_futures=True)
+            coordinators.shutdown(wait=not self._cancel_event.is_set(), cancel_futures=True)
 
     def _run_model(
         self,
@@ -14813,6 +15072,9 @@ class EvaluationWorkflowRunner:
                 _remote_args_from_options,
                 _run_id,
                 _run_ids_for_hardware_target,
+                _scheduler_owned_remote_add_args,
+                build_setup_local_tensorrt_quality_dispatch,
+                canon_accelerator,
             )
         except Exception as exc:
             collection_errors.append({
@@ -14898,7 +15160,28 @@ class EvaluationWorkflowRunner:
                             == "ort_tensorrt"
                             for plan_row in plan_rows
                         )
+                        and any(
+                            canon_accelerator(target.get("accelerator"))
+                            in {"hailo8", "hailo10", "hailo10h", "hailo10n", "deepx_m1"}
+                            for target in hardware_targets if isinstance(target, Mapping)
+                        )
                     )
+                    setup_local_by_id = {}
+                    if setup_local_full:
+                        dispatch = build_setup_local_tensorrt_quality_dispatch(
+                            frozen_profile, hardware_targets=hardware_targets,
+                            plan_rows=plan_rows,
+                        )
+                        if dispatch.get("ok") is not True:
+                            raise RuntimeError(
+                                "setup_local_tensorrt_dispatch_preflight_failed:"
+                                + ",".join(str(value) for value in dispatch.get("errors") or [])
+                            )
+                        setup_local_by_id = {
+                            str(row.get("setup_id") or ""): dict(row)
+                            for row in dispatch.get("setup_dispatches") or []
+                            if isinstance(row, Mapping)
+                        }
                 except Exception as exc:
                     collection_errors.append({
                         "model_id": model_id,
@@ -14917,42 +15200,26 @@ class EvaluationWorkflowRunner:
                     run_ids: list[str] = []
                     remote_args = None
                     try:
-                        run_ids = _run_ids_for_hardware_target(target, plan)
-                        if full_only_quality_plan:
-                            # Mirror execution_binding exactly: a full-only
-                            # quality plan dispatches only its setup-local
-                            # TensorRT reference.  Normal target rows must not
-                            # leak into the cache matrix and invent split-role
-                            # requirements that runtime will never execute.
-                            run_ids = [
-                                _run_id(plan_row)
-                                for plan_row in plan_rows
-                                if _run_id(plan_row).lower().replace("-", "_")
-                                == "ort_tensorrt"
-                            ]
-                        elif setup_local_full:
-                            # A normal centrally-managed Quality-FIRST plan
-                            # runs both the setup vendor row and its setup-local
-                            # TensorRT Full companion.  Keep the target rows so
-                            # Part2 readiness is probed as well.
-                            for plan_row in plan_rows:
-                                run_id = _run_id(plan_row)
-                                if (
-                                    run_id.lower().replace("-", "_")
-                                    == "ort_tensorrt"
-                                    and run_id not in run_ids
-                                ):
-                                    run_ids.append(run_id)
-                        elif setup_id == reference_target_id:
+                        setup_dispatch = setup_local_by_id.get(setup_id, {})
+                        run_ids = (
+                            list(setup_dispatch.get("run_ids") or [])
+                            if setup_dispatch else [] if full_only_quality_plan
+                            else _run_ids_for_hardware_target(target, plan)
+                        )
+                        if not full_only_quality_plan and not setup_dispatch and setup_id == reference_target_id:
                             for run_id in reference_run_ids:
                                 if run_id not in run_ids:
                                     run_ids.append(run_id)
-                        runtime = (
+                        runtime = dict(
                             target.get("remote")
                             if isinstance(target.get("remote"), Mapping)
                             else target.get("runtime")
                             if isinstance(target.get("runtime"), Mapping)
                             else {}
+                        )
+                        runtime["add_args"] = _scheduler_owned_remote_add_args(
+                            runtime.get("add_args"), run_ids=run_ids,
+                            quality_only_run_ids=setup_dispatch.get("quality_only_run_ids") or [],
                         )
                         host_name = str(
                             (runtime or {}).get("host") or ""
@@ -17163,6 +17430,23 @@ class EvaluationWorkflowRunner:
         if not isinstance(gate, Mapping) and str(row.get("quality_source_variant") or "").strip().lower() == variant_l:
             gate = row.get("task_quality_gate") if isinstance(row.get("task_quality_gate"), Mapping) else None
         quality_request = gate.get("quality_input_request") if isinstance(gate, Mapping) and isinstance(gate.get("quality_input_request"), Mapping) else {}
+        if not quality_request:
+            retained = ((row.get("quality_request_identities_by_variant") or {}).get(variant_l)
+                        or (gate.get("quality_request_identity") if isinstance(gate, Mapping) else None))
+            if isinstance(retained, Mapping) and cls._quality_sha256_token(retained.get("source_request_sha256")):
+                retained = dict(retained)
+                if (str(retained.get("model_id") or "").lower() == str(row.get("model_id") or "").lower()
+                        and str(retained.get("variant") or "").lower() == variant_l):
+                    completed_hash = cls._quality_sha256_token(retained.get("completed_task_endpoint_contract_hash"))
+                    completed_id = str(retained.get("completed_task_output_endpoint_id") or "")
+                    endpoint = str(retained.get("quality_join_endpoint") or "")
+                    retained.update(schema_version=int(retained.get("identity_schema_version") or retained.get("schema_version") or 2),
+                        request_descriptor_present=True,
+                        setup_ids=[retained["setup_id"]] if retained.get("setup_id") else [],
+                        completed_task_endpoint_identity_present=bool(completed_hash or completed_id or endpoint),
+                        completed_task_endpoint_identity_valid=bool(not (completed_hash or completed_id or endpoint)
+                            or (completed_hash and completed_id and endpoint == "completed_task_decoded_nms")))
+                    return retained
         request_record = quality_request.get("request") if isinstance(quality_request.get("request"), Mapping) else {}
         producer = quality_request.get("producer_identity") if isinstance(quality_request.get("producer_identity"), Mapping) else {}
         contract = quality_request.get("quality_contract") if isinstance(quality_request.get("quality_contract"), Mapping) else {}
@@ -17548,10 +17832,20 @@ class EvaluationWorkflowRunner:
         smoke_quality = str(preset_cfg.get("id") or "").strip().lower() == "smoke"
         from onnx_splitpoint_tool.validation.accuracy_gates import apply_accuracy_gate_to_row
 
+        from .central_quality_join import (cancelled_request_identity,
+            cancelled_row_identity, cancelled_contract_matches)
+        def cancellation_identity(result):
+            return cancelled_request_identity(result, run_id=self.run_id, run_dir=self.run_dir,
+                cancellation=getattr(self, "_quality_cancel_context", {}))
+        def cancel_row_identity(row, variant):
+            return (cancelled_row_identity(row, variant)
+                    or self._quality_request_identity_for_row_variant(row, variant))
+
         updated_models: set[str] = set()
         updated_rows = 0
         matched_completed = 0
         matched_failed = 0
+        matched_cancelled = 0
         matched_primary = 0
         matched_supplemental = 0
         exact_request_sha_fallback_matches = 0
@@ -17654,6 +17948,7 @@ class EvaluationWorkflowRunner:
         summary_only_processed: set[int] = set()
         summary_only_completed = 0
         summary_only_failed = 0
+        summary_only_cancelled = 0
         summary_only_duplicates = 0
         summary_only_conflicts = 0
         summary_only_unique = 0
@@ -17676,6 +17971,9 @@ class EvaluationWorkflowRunner:
         summary_groups: dict[tuple[str, ...], list[tuple[int, dict[str, Any], dict[str, Any]]]] = {}
         for result_index, result in enumerate(result_rows):
             result_identity, identity_errors = self._central_quality_result_identity(result)
+            cancelled_identity = cancellation_identity(result)
+            if cancelled_identity is not None:
+                result_identity, identity_errors = cancelled_identity, []
             contract_key = (
                 str(result_identity.get("model_id") or "").strip().lower(),
                 self._quality_source_run_token(
@@ -17858,6 +18156,13 @@ class EvaluationWorkflowRunner:
                     exact_errors.append("summary_only_producer_not_validated")
                 if int(result_identity.get("identity_schema_version") or 0) < 4:
                     exact_errors.append("summary_only_request_identity_not_schema_v4")
+            if cancelled_identity is not None:
+                # Terminal abandoned work is bound to its requested case and
+                # run; it cannot claim any successful producer attestation.
+                exact_errors = [error for error in exact_errors if error in {
+                    "summary_only_identity_not_in_effective_plan", "invalid_summary_only_backend",
+                    "invalid_summary_only_variant", "invalid_summary_only_execution_role",
+                    "invalid_summary_only_source_run_id", "invalid_summary_only_case_id"}]
             all_errors = sorted(set(identity_errors + exact_errors))
             if all_errors:
                 unmatched.append({
@@ -17959,7 +18264,10 @@ class EvaluationWorkflowRunner:
                     ) is True
                 )
             )
-            if completed:
+            if cancellation_identity(representative) is not None:
+                summary_only_cancelled += 1
+                _summary_count(model_id, "cancelled")
+            elif completed:
                 summary_only_completed += 1
                 _summary_count(model_id, "completed")
             else:
@@ -18014,6 +18322,10 @@ class EvaluationWorkflowRunner:
             for index, result in enumerate(row_join_results):
                 variant = str(result.get("variant") or "").strip().lower()
                 result_identity, result_identity_errors = self._central_quality_result_identity(result)
+                cancelled_identity = cancellation_identity(result)
+                result_cancelled = cancelled_identity is not None
+                if result_cancelled:
+                    result_identity, result_identity_errors = cancelled_identity, []
                 if result_identity_errors:
                     unmatched.append({
                         **result,
@@ -18035,10 +18347,10 @@ class EvaluationWorkflowRunner:
                         result_identity=result_identity,
                         variant=variant,
                         row_identity_getter=(
-                            self._quality_request_identity_for_row_variant
+                            cancel_row_identity if result_cancelled else self._quality_request_identity_for_row_variant
                         ),
                         contract_matcher=(
-                            self._central_quality_contract_identity_matches
+                            cancelled_contract_matches if result_cancelled else self._central_quality_contract_identity_matches
                         ),
                         primary_variant=True,
                     )
@@ -18122,12 +18434,15 @@ class EvaluationWorkflowRunner:
                         "status": "unavailable",
                         "n": 0,
                         "execution_location": "central_management",
-                        "technical_status": "failed",
+                        "technical_status": "cancelled" if result_cancelled else "failed",
                         "scientific_status": "unavailable",
-                        "reason": "central_quality_evaluation_failed",
+                        "reason": str(result.get("completion_reason")) if result_cancelled else "central_quality_evaluation_failed",
                         "error": str(result.get("error") or "central quality evaluation failed"),
                     }
-                    matched_failed += 1
+                    if result_cancelled:
+                        matched_cancelled += 1
+                    else:
+                        matched_failed += 1
                 canonical_request_identity = {
                     "schema": "onnx-splitpoint/central-quality-request-identity",
                     "schema_version": 2,
@@ -18198,7 +18513,7 @@ class EvaluationWorkflowRunner:
                 else:
                     supplemental = dict(row.get("central_quality_supplemental_results") or {})
                     supplemental[variant] = {
-                        "status": "completed" if result_completed else "failed",
+                        "status": "completed" if result_completed else "cancelled" if result_cancelled else "failed",
                         "source_request": str(result.get("source_request") or ""),
                         "source_request_sha256": str(result_identity.get("source_request_sha256") or ""),
                         "request_identity": canonical_request_identity,
@@ -18251,6 +18566,7 @@ class EvaluationWorkflowRunner:
             "updated_row_count": updated_rows,
             "matched_completed_count": matched_completed,
             "matched_failed_count": matched_failed,
+            "matched_cancelled_count": matched_cancelled,
             "matched_primary_result_count": matched_primary,
             "matched_supplemental_result_count": matched_supplemental,
             "exact_request_sha_fallback_match_count": exact_request_sha_fallback_matches,
@@ -18258,6 +18574,7 @@ class EvaluationWorkflowRunner:
             "summary_only_native_full_quality_unique_count": summary_only_unique,
             "summary_only_native_full_quality_completed_count": summary_only_completed,
             "summary_only_native_full_quality_failed_count": summary_only_failed,
+            "summary_only_native_full_quality_cancelled_count": summary_only_cancelled,
             "summary_only_native_full_quality_duplicate_count": summary_only_duplicates,
             "summary_only_native_full_quality_conflict_count": summary_only_conflicts,
             "summary_only_full_quality_contract_enabled": (
@@ -18334,7 +18651,90 @@ class EvaluationWorkflowRunner:
             refreshed.append({"model_id": model_id, "status": status, "metrics": dict(result.get("metrics") or {})})
         return refreshed
 
+    def _drive_stage_body(self, steps):
+        value, error = None, None
+        while True:
+            try:
+                dispatch = steps.throw(error) if error is not None else steps.send(value)
+            except StopIteration as completed:
+                return completed.value
+            try:
+                value, error = dispatch() if callable(dispatch) else None, None
+            except BaseException as exc:
+                value, error = None, exc
+
+    def _publish_case_quality(self, results, *, complete=False, cancelled=False):
+        cancelled = cancelled or self._cancel_event.is_set()
+        merge = self._merge_central_quality_results(results)
+        payload = {"cancel_requested": bool(cancelled), "schema": "onnx-splitpoint/central-quality-summary", "schema_version": 1,
+            "run_id": self.run_id, "status": "cancelled" if cancelled else "completed" if complete else "running",
+            "complete": bool(complete), "created_at": now_iso(), "results": list(results), "merge": merge,
+            "scientific_pass": False, "publication_scope": "case_release"}
+        path = self.run_dir / "quality_management" / "case_quality_progress.json"
+        atomic_write_json(path, payload)
+        return path
+
+    def _run_quality_native_pipeline(self):
+        """Advance both stage lifecycles on the parent; only run the child off-thread."""
+        quality_steps = self._run_stage_steps(None, "evaluate_quality", self._stage_evaluate_quality_steps)
+        native_steps = None
+        native_future = None
+        events = queue.SimpleQueue()
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="osp-native-child")
+        quality_complete = False
+        try:
+            try:
+                self._advance_stage(quality_steps, None, "evaluate_quality")
+            except StopIteration:
+                quality_complete = True
+            if not self._stop_requested:
+                native_steps = self._run_stage_steps(None, "run_native_producers",
+                    lambda: self._stage_run_native_producers_steps(dispatch_log=events.put))
+                try:
+                    dispatch = self._advance_stage(native_steps, None, "run_native_producers")
+                except StopIteration:
+                    native_steps = None
+                else:
+                    native_future = executor.submit(contextvars.copy_context().run, dispatch)
+            while not quality_complete:
+                while not events.empty():
+                    self.log(events.get())
+                try:
+                    self._advance_stage(quality_steps, None, "evaluate_quality")
+                except StopIteration:
+                    quality_complete = True
+            if not self._stop_requested:
+                self._run_stage(None, "aggregate_results", self._stage_aggregate_results)
+            if native_future is not None:
+                while not native_future.done():
+                    while not events.empty():
+                        self.log(events.get())
+                    concurrent.futures.wait([native_future], timeout=0.1)
+                try:
+                    value, error = native_future.result(), None
+                except BaseException as exc:
+                    value, error = None, exc
+                try:
+                    self._advance_stage(native_steps, None, "run_native_producers", value=value, error=error)
+                except StopIteration:
+                    pass
+                else:
+                    raise RuntimeError("native_stage_unexpected_second_dispatch")
+            while not events.empty():
+                self.log(events.get())
+        finally:
+            progress = self.run_dir / "quality_management" / "case_quality_progress.json"
+            if progress.is_file():
+                row = read_json(progress, default={}) or {}
+                if not row.get("complete"):
+                    atomic_write_json(progress, {**row, "complete": True, "status": "cancelled",
+                                                "scientific_pass": False})
+            executor.shutdown(wait=True, cancel_futures=True)
+
     def _stage_evaluate_quality(self) -> Tuple[Mapping[str, Path], Mapping[str, Any], str, str]:
+        return self._drive_stage_body(self._stage_evaluate_quality_steps())
+
+    def _stage_evaluate_quality_steps(self):
         quality_dir = self.run_dir / "quality_management"
         quality_dir.mkdir(parents=True, exist_ok=True)
         if _quality_execution_location_v263(self.profile_payload) != "central_management":
@@ -18438,6 +18838,10 @@ class EvaluationWorkflowRunner:
                 "these results are excluded from ETA samples"
             )
 
+        per_case = (self.profile_payload.get("workflow_execution") or {}).get("native_release_mode") == "per_case"
+        if per_case:
+            self._publish_case_quality(results)
+            yield None
         quality_eta = PhaseEtaEstimator(
             phase="central_quality",
             warmup_completions=3,
@@ -18448,16 +18852,20 @@ class EvaluationWorkflowRunner:
         while pending:
             done, _ = concurrent.futures.wait(
                 set(pending),
-                timeout=30.0,
+                timeout=0.1 if per_case else 30.0,
                 return_when=concurrent.futures.FIRST_COMPLETED,
             )
+            if not done and per_case:
+                yield None
+                continue
             if not done:
                 elapsed = max(0.0, time.monotonic() - quality_started)
                 self._emit_log(
                     f"[quality][management] paired evaluation running: "
                     f"{progress_text(summarize_requests(results, queued=sum(not f.running() for f in pending), running=sum(f.running() for f in pending)))}; "
                     f"{len(pending)} active/queued, "
-                    f"current={','.join(str(key) for key in list(pending.values())[:quality_workers])}; "
+                    f"workers={self._central_quality_service.progress_snapshot() if self._central_quality_service else []}; "
+                    f"admission={self._central_quality_service.admission_snapshot() if self._central_quality_service else {}}; "
                     f"elapsed={elapsed:.0f}s; ETA=UNAVAILABLE between comparable completions"
                 )
                 continue
@@ -18480,11 +18888,16 @@ class EvaluationWorkflowRunner:
             eta = quality_eta.estimate(
                 remaining_by_cohort=remaining_by_cohort,
             )
+            if self._cancel_event.is_set():
+                eta = {"display": "Cancel: Abwicklung; keine Bootstrap-ETA"}
             self._emit_log(
                 f"[quality][management] paired evaluation progress: "
                 f"{progress_text(summarize_requests(results, queued=sum(not f.running() for f in pending), running=sum(f.running() for f in pending)))}; {eta['display']}; "
                 f"elapsed={elapsed:.0f}s; ETA is advisory"
             )
+            if per_case:
+                self._publish_case_quality(results)
+                yield None
         results = self._finalize_missing_full_quality_results(results)
         preset_cfg = (
             self.profile_payload.get("execution_preset")
@@ -18771,6 +19184,9 @@ class EvaluationWorkflowRunner:
             "quality_result_count": quality_reporting["result_count"],
         })
         p_json = write_json(quality_dir / "central_quality_summary.json", payload)
+        if per_case:
+            atomic_write_json(quality_dir / "case_quality_progress.json", {**payload, "complete": True,
+                              "cancel_requested": self._cancel_event.is_set(), "publication_scope": "case_release"})
         p_csv = write_csv(quality_dir / "central_quality_summary.csv", [
             {
                 "model_id": result.get("model_id"),
@@ -19667,6 +20083,70 @@ class EvaluationWorkflowRunner:
         )
         return cfg
 
+    def _normal_native_release_variants(self, cfg):
+        from ..backend_backfill import selected_cases_for_backend
+        plan = _native_stage_backend_plan_v27519(self.profile_payload, cfg)
+        raw = cfg.get("case_map") or cfg.get("model_case_map") or {}
+        requested = json.loads(raw) if isinstance(raw, str) else dict(raw)
+        models = list(cfg.get("models") or requested or sorted(self.manifest.get("models") or {}))
+        paths, available = {}, {}
+        for model in models:
+            root = self.run_dir / "models" / model / "benchmark_set"
+            report = benchmark_set_postcondition_v60v(root)
+            path = Path(str(report.get("selected_suite_dir") or root))
+            if not report.get("valid") and plan["split_backends"]:
+                raise ValueError("native_benchmark_set_invalid:" + model)
+            paths[model] = path
+            available[model] = _native_selected_case_order(
+                self.run_dir, model, sorted(item.name for item in path.glob("b*") if item.is_dir()),
+            )
+        if plan["split_backends"]:
+            selected_models, case_map, exclusions, errors = _native_case_selection_decision(
+                models, case_policy=str(cfg.get("case_policy") or "all_accepted"),
+                case_map=requested, available_case_map=available)
+            if errors:
+                raise ValueError("native_selection_invalid:" + ";".join(errors))
+            case_map = {model: list(case_map.get(model, available[model])) for model in selected_models}
+            support = _native_split_case_support_v270e(paths, case_map)
+            supported = {
+                model: [row["case"] for row in support
+                        if row["model"] == model and row["native_supported"]]
+                for model in selected_models
+            }
+            models = selected_models
+            unsupported = {(row["model"], row["case"]): str(row.get("reason") or "native_capability_unsupported")
+                           for row in support if not row["native_supported"]}
+        else:
+            supported = {model: [] for model in models}
+            unsupported = {}
+        cfg_with_remotes = dict(cfg)
+        cfg_with_remotes["variants"] = [{"id": "selection", "backends": plan["execution_backends"]}]
+        remotes = self._materialize_variant_native_remotes(cfg_with_remotes)
+        variants = []
+        for backend in plan["execution_backends"]:
+            selected = {}
+            for model in models:
+                contract = read_json(paths[model] / "benchmark_set.json", default={}) or {}
+                cases = selected_cases_for_backend(contract.get("backend_backfill") or {}, backend, supported[model],
+                    setup_id=str((remotes.get(backend) or {}).get("setup_id") or ""),
+                    run_id={"hailo8": "hailo8_to_trt", "hailo10h": "hailo10_to_tensorrt", "deepx": "deepx_m1_to_tensorrt"}.get(backend, ""))
+                cases = [case for case in supported[model] if case in cases]
+                if cases or backend not in plan["split_backends"] or plan["full_enabled"]:
+                    selected[model] = cases
+            known = _native_selection_contract_runs_v270e(backend, selected)
+            use_known = bool((cfg.get("validation") or {}).get("enabled") or cfg.get("native_validation_enabled")) and not bool(
+                cfg.get("disable_known_contract_overrides") or cfg.get("no_known_contract_overrides"))
+            contracts = {item["models"][0]: item for item in known} if use_known else {}
+            for model, cases in selected.items():
+                item = dict(contracts.get(model) or {"id": backend + "_" + model, "models": [model], "case_map": {model: cases}})
+                item.update(backends=[backend], split_backends=[backend] if cases and backend in plan["split_backends"] else [],
+                    case_policy="case_map_only", full_baselines={"enabled": bool(plan["full_enabled"]),
+                    "backends_by_producer": {backend: list(plan["full_backends_by_producer"].get(backend) or [])}})
+                item["native_capability_exclusions"] = {case: reason
+                    for (excluded_model, case), reason in unsupported.items() if excluded_model == model}
+                variants.append(item)
+        return variants
+
     def _native_energy_registry_file(self) -> str:
         """Use the reviewed start snapshot for every Native energy entry."""
         from .hardware_matrix import default_hardware_setups_file
@@ -19751,6 +20231,9 @@ class EvaluationWorkflowRunner:
         )
 
     def _stage_run_native_producers(self) -> Tuple[Mapping[str, Path], Mapping[str, Any], str, str]:
+        return self._drive_stage_body(self._stage_run_native_producers_steps())
+
+    def _stage_run_native_producers_steps(self, *, dispatch_log=None):
         """Run optional strict native-producer fastpaths as part of an EvalRun.
 
         This stage intentionally treats native producers as an additional execution mode,
@@ -19866,6 +20349,35 @@ class EvaluationWorkflowRunner:
         existing_pythonpath = native_env.get("PYTHONPATH", "")
         native_env["PYTHONPATH"] = str(project_root) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
 
+        controller_resources = None
+        workflow_execution = self.profile_payload.get("workflow_execution") or {}
+        if enabled and (workflow_execution.get("native_release_mode") == "per_case"
+                        or workflow_execution.get("setup_queue_mode") == "per_setup"):
+            from ..remote.process_lease import ControllerResourceBroker, RemoteProcessLeaseJournal
+            from ..energy.config import load_hardware_registry, energy_setup_from_registry
+            from .execution_binding import physical_dut_key
+            service = self._ensure_central_quality_service()
+            registry_path = self._native_energy_registry_file()
+            registry = load_hardware_registry(registry_path)
+            resources = {}
+            for target in normalize_hardware_targets(self._profile_with_cli_hardware_overrides()):
+                setup_id = str(target["id"])
+                setup = energy_setup_from_registry(registry, setup_id, registry_path=registry_path)
+                resources[setup_id] = [physical_dut_key(target),
+                    "source:" + str(setup.urecs_address).strip().lower(),
+                    "controller:cpu", "controller:io", "controller:nic", "controller:capture"]
+            controller_resources = ControllerResourceBroker(
+                RemoteProcessLeaseJournal.from_environment(native_env, required=True),
+                service.pause_gate, run_dir=self.run_dir, setups=resources)
+            native_env["ONNX_SPLITPOINT_CONTROLLER_RESOURCES"] = "required"
+
+        def controller_resource_tick():
+            if controller_resources is not None:
+                controller_resources.tick()
+                if controller_resources.stopped_sources:
+                    self._remote_process_registry.poison()
+                    raise RuntimeError("campaign_source_completion_unresolved: controller capture source STOP")
+
         def _stream_native(
             cmd: Sequence[str], *, label: str, timeout_s: float | None,
             cwd: Path | None = None, env: Mapping[str, str] | None = None,
@@ -19880,7 +20392,7 @@ class EvaluationWorkflowRunner:
             import uuid
             _forward = NativeDisplayLog(
                 reports / "diagnostics" / f"native_{slugify(label)}_{uuid.uuid4().hex[:10]}.log",
-                self.log, label=label, command=command)
+                dispatch_log or self.log, label=label, command=command)
             lease_operation = None
             if command and os.path.basename(command[0]).lower() in {"ssh", "ssh.exe"}:
                 try:
@@ -19926,6 +20438,7 @@ class EvaluationWorkflowRunner:
                     command, timeout=timeout_s, cwd=cwd, env=merged_env, label=label,
                     heartbeat_s=float(os.environ.get("ONNX_SPLITPOINT_NATIVE_HEARTBEAT_S", "15")),
                     journal=progress_journal, line_callback=_forward,
+                    tick_callback=controller_resource_tick,
                     cancel_event=self._cancel_event,
                     should_cancel=lambda: self._remote_process_registry.cancelled,
                     process_registry=self._process_registry,
@@ -19937,6 +20450,8 @@ class EvaluationWorkflowRunner:
                 _forward.finish(returncode=completed.returncode, elapsed_s=time.monotonic() - native_call_started)
                 return completed
             finally:
+                if controller_resources is not None and any(str(part).endswith("run_evalrun_native_producer_variants.py") for part in command):
+                    controller_resources.close()
                 if lease_operation is not None:
                     self._finish_native_direct_remote_lease(
                         lease_operation, completed
@@ -19999,6 +20514,11 @@ class EvaluationWorkflowRunner:
         # Instead of forcing a single precision globally, delegate variant
         # execution to a small coordinator script and then import its standard
         # reports back into the EvalRun artifact set.
+        if (self.profile_payload.get("workflow_execution") or {}).get("native_release_mode") == "per_case":
+            cfg["native_release_mode"] = "per_case"
+            if not cfg.get("variants"):
+                cfg["variants"] = self._normal_native_release_variants(cfg)
+                cfg["remotes"] = self._materialize_variant_native_remotes(cfg)
         raw_variants = cfg.get("variants") if isinstance(cfg.get("variants"), list) else []
         if raw_variants:
             cfg_path = reports / "native_producer_stage_config.json"
@@ -20013,11 +20533,17 @@ class EvaluationWorkflowRunner:
             cfg_for_variants["native_execution_contract_sha256"] = str(
                 native_execution_contract["contract_sha256"]
             )
+            from .execution_binding import physical_dut_key
             cfg_for_variants["_workflow_context"] = {
+                "workflow_execution": dict(self.profile_payload.get("workflow_execution") or {}),
+                "max_parallel_setups": _parallel_remote_max_setups(self.options, self.profile_payload, default=3),
+                "physical_dut_keys": {str(target["id"]): physical_dut_key(target)
+                    for target in normalize_hardware_targets(self._profile_with_cli_hardware_overrides())},
                 "hardware_setups_file": self._native_energy_registry_file(),
                 "profile_path": self.profile_path,
                 "central_quality_summary": str(
-                    self.run_dir / "quality_management" / "central_quality_summary.json"
+                    self.run_dir / "quality_management" / ("case_quality_progress.json"
+                        if cfg.get("native_release_mode") == "per_case" else "central_quality_summary.json")
                 ),
                 "native_energy_final_contract_requested": _native_energy_final_contract_requested_v61d(
                     self.profile_payload,
@@ -20129,9 +20655,9 @@ class EvaluationWorkflowRunner:
                         # Performance checkpoint and continue only pending
                         # Native Energy rows.
                         coordinator_child_started = True
-                        pr = _stream_native(
+                        pr = yield lambda: _stream_native(
                             cmd, label="variant-coordinator",
-                            timeout_s=max(
+                            timeout_s=None if cfg.get("native_release_mode") == "per_case" else max(
                                 600,
                                 timeout_s * max(1, len(raw_variants))
                                 + 900 + _probe_extra_timeout,
@@ -20164,9 +20690,9 @@ class EvaluationWorkflowRunner:
                     )
             else:
                 coordinator_child_started = True
-                pr = _stream_native(
+                pr = yield lambda: _stream_native(
                     cmd, label="variant-coordinator",
-                    timeout_s=max(
+                    timeout_s=None if cfg.get("native_release_mode") == "per_case" else max(
                         600,
                         timeout_s * max(1, len(raw_variants))
                         + 900 + _probe_extra_timeout,
@@ -20836,9 +21362,11 @@ class EvaluationWorkflowRunner:
                 status,
             )
 
-        def _native_case_dirs(bs: Path) -> List[str]:
+        def _native_case_dirs(bs: Path, model: str) -> List[str]:
             try:
-                return sorted([x.name for x in bs.glob("b*") if x.is_dir()])
+                return _native_selected_case_order(
+                    self.run_dir, model, sorted([x.name for x in bs.glob("b*") if x.is_dir()]),
+                )
             except Exception:
                 return []
 
@@ -20900,7 +21428,7 @@ class EvaluationWorkflowRunner:
         case_selection: Dict[str, Any] = {}
         for m in models:
             bs = _native_runnable_benchmark_set(m)
-            available = _native_case_dirs(bs)
+            available = _native_case_dirs(bs, m)
             requested = [str(x) for x in case_map.get(m, []) if str(x)]
             requested_existing = [x for x in requested if x in available]
             missing_requested = [x for x in requested if x not in available]
@@ -21000,42 +21528,29 @@ class EvaluationWorkflowRunner:
             for row in native_split_case_support
             if row.get("native_supported") is not True
         ]
-        unsupported_only_models = [
-            model for model in list(models)
-            if native_split_selected
-            and selected_native_case_map.get(model)
-            and not native_supported_case_map.get(model)
-        ]
-        for model in unsupported_only_models:
-            failure_reason = f"native_supported_cases_empty:{model}"
-            excluded_models[model] = {
-                "valid": False,
-                "preflight_scope": "model",
-                "category": "model_native_capability",
-                "failure_reason": failure_reason,
-                "benchmark_set_validation": dict(
-                    native_set_validation.get(model) or {}
-                ),
-                "case_selection": dict(case_selection.get(model) or {}),
-                "native_split_case_support": [
-                    dict(row) for row in native_split_case_support
-                    if str(row.get("model") or "") == model
-                ],
+        # An empty supported Split subset is valid. Keep models and their
+        # requested Full baselines; backend dispatch below skips empty Split
+        # maps without interpreting them as all cases.
+        if not native_supported_case_map and not native_full_enabled:
+            technical_failures = [row for row in native_unsupported_cases
+                                  if row.get("reason") != "part2_input_count_not_one"]
+            status = "failed" if technical_failures else "skipped"
+            payload = {
+                "schema": "onnx-splitpoint/native-producer-stage", "schema_version": 4,
+                "enabled": True, "status": status, "orchestration_status": status,
+                "evidence_status": "empty", "models": models,
+                "failure_reason": ("native_split_input_unavailable" if technical_failures
+                                   else "no_supported_native_split_cases"),
+                "native_split_selected_case_map": selected_native_case_map,
+                "native_split_supported_case_map": native_supported_case_map,
+                "native_split_case_support": native_split_case_support,
+                "native_split_capability_exclusions": native_unsupported_cases,
+                "transfer_attempted": False, "started_remote_count": 0,
+                "started_performance_count": 0, "started_measurement_count": 0,
+                "claim_eligible": False, "finished_at": now_iso(),
             }
-            models.remove(model)
-            selected_native_case_map.pop(model, None)
-            case_map_for_remote.pop(model, None)
-        if native_split_selected and not models:
-            blocking = [
-                str((excluded_models.get(model) or {}).get("failure_reason") or "")
-                for model in unsupported_only_models
-            ]
-            return _native_selection_failure(
-                [reason for reason in blocking if reason]
-                or ["native_supported_case_selection_empty"],
-                excluded=excluded_models,
-                available=available_case_map,
-            )
+            path = write_json(reports / "native_producer_stage.json", payload)
+            return {"native_producer_stage_json": path}, payload, payload["failure_reason"], status
         # Remote Native adapters receive only their executable single-boundary
         # subset.  Every excluded selected case remains explicit stage
         # metadata; Generic execution is unaffected and remains multi-I/O.
@@ -21060,7 +21575,7 @@ class EvaluationWorkflowRunner:
                             'deepx': 'deepx_m1_to_tensorrt'}.get(backend, ''),
                 )
                 if selected:
-                    result[model] = selected
+                    result[model] = [case for case in cases if case in selected]
             return result
 
         native_runnable_case_maps: Dict[str, Dict[str, List[str]]] = {}
@@ -21313,13 +21828,12 @@ class EvaluationWorkflowRunner:
                 native_split_selected
             ),
             "effective_require_single_part2_input": bool(
-                native_split_selected
-                or self._selection_policy_payload().get(
+                self._selection_policy_payload().get(
                     "require_single_part2_input", False,
                 )
             ),
             "native_multi_input_policy": (
-                "reject_and_backfill_from_frozen_prediction"
+                "supported_subset_of_selected_generic_cases"
                 if native_split_selected
                 else "not_applicable_full_only"
             ),
@@ -21338,7 +21852,7 @@ class EvaluationWorkflowRunner:
                 "configured_selected_deployment_cohort"
             ),
             "native_split_plan_source": (
-                "effective_single_input_selection_with_deterministic_backfill"
+                "supported_subset_of_selected_generic_cases"
                 if native_split_selected
                 else "logical_run_profiles_full_only"
             ),
@@ -24436,6 +24950,10 @@ class EvaluationWorkflowRunner:
                         cmd.append("--final-all-split-energy")
                     if native_energy_limit > 0:
                         cmd += ["--limit", str(native_energy_limit)]
+                    if self.options.resume and (
+                        eout / "stages" / "native_energy" / "stage_result.json"
+                    ).exists():
+                        cmd.append("--resume-checkpoint")
                     pr = _stream_native(cmd, label="energy:measure", timeout_s=parent_timeout)
                 else:
                     eout = reports / "native_energy_plan"
@@ -26037,10 +26555,9 @@ class EvaluationWorkflowRunner:
                 self._native_producer_config(),
             )
         )
-        effective_single_part2_input = bool(
-            requested_single_part2_input
-            or native_single_part2_input_required
-        )
+        # Generic selection follows the explicit checkbox. Native capability
+        # is evaluated later on the same selected cases.
+        effective_single_part2_input = requested_single_part2_input
         # v59s: Evaluation profiles can request windowed/stratified candidate
         # coverage.  For that strategy the prediction artifact must expose the
         # full boundary landscape, not only the top-N ranked candidates, because
@@ -26125,7 +26642,7 @@ class EvaluationWorkflowRunner:
                 effective_single_part2_input
             ),
             "native_multi_input_policy": (
-                "reject_and_backfill_from_frozen_prediction"
+                "supported_subset_of_selected_generic_cases"
                 if native_single_part2_input_required
                 else "not_applicable"
             ),
@@ -26165,7 +26682,7 @@ class EvaluationWorkflowRunner:
                 effective_single_part2_input
             ),
             "native_multi_input_policy": (
-                "reject_and_backfill_from_frozen_prediction"
+                "supported_subset_of_selected_generic_cases"
                 if native_single_part2_input_required
                 else "not_applicable"
             ),
@@ -26508,10 +27025,9 @@ class EvaluationWorkflowRunner:
                 self._native_producer_config(),
             )
         )
-        effective_single_part2_input = bool(
-            requested_single_part2_input
-            or native_single_part2_input_required
-        )
+        # Generic selection follows the explicit checkbox. Native capability
+        # is evaluated later on the same selected cases.
+        effective_single_part2_input = requested_single_part2_input
         if effective_single_part2_input:
             eligible_candidates: List[Dict[str, Any]] = []
             for candidate in candidates:
@@ -26741,172 +27257,6 @@ class EvaluationWorkflowRunner:
             == "native_split_capability"
         ]
         native_capability_backfills: List[Dict[str, Any]] = []
-        if (
-            native_single_part2_input_required
-            and not requested_single_part2_input
-            and native_capability_excluded
-        ):
-            counterfactual_candidates = [
-                dict(candidate)
-                for candidate in candidates + native_capability_excluded
-            ]
-            counterfactual_selected: List[Dict[str, Any]] = []
-            if forced_cases:
-                counterfactual_by_case = {
-                    str(candidate.get("case_id") or candidate.get("case") or ""):
-                    candidate
-                    for candidate in counterfactual_candidates
-                }
-                counterfactual_selected = [
-                    dict(counterfactual_by_case[case_id])
-                    for case_id in forced_cases
-                    if case_id in counterfactual_by_case
-                ][:requested]
-                # A forced multi-input case is replaced deterministically from
-                # the eligible frozen prediction pool.
-                selected_ids_now = {
-                    str(candidate.get("case_id") or candidate.get("case") or "")
-                    for candidate in selected
-                }
-                selected_splits = {
-                    int(split)
-                    for candidate in selected
-                    for split in [self._int_or_none(
-                        candidate.get("split_index", candidate.get("boundary"))
-                    )]
-                    if split is not None
-                }
-                for candidate in sorted(
-                    candidates,
-                    key=lambda item: (
-                        self._candidate_rank_value(item),
-                        self._int_value(
-                            item.get("split_index", item.get("boundary")),
-                            default=10**9,
-                        ),
-                    ),
-                ):
-                    if len(selected) >= requested:
-                        break
-                    case_id = str(
-                        candidate.get("case_id")
-                        or candidate.get("case")
-                        or ""
-                    )
-                    split = self._int_or_none(
-                        candidate.get(
-                            "split_index", candidate.get("boundary")
-                        )
-                    )
-                    if (
-                        not case_id
-                        or case_id in selected_ids_now
-                        or split is None
-                        or (
-                            min_gap
-                            and any(
-                                abs(split - previous) < min_gap
-                                for previous in selected_splits
-                            )
-                        )
-                    ):
-                        continue
-                    selected.append({
-                        **dict(candidate),
-                        "origin": "native_capability_backfill",
-                        "selection_reason": (
-                            "deterministic replacement for a forced "
-                            "multi-input Native-ineligible candidate"
-                        ),
-                    })
-                    selected_ids_now.add(case_id)
-                    selected_splits.add(split)
-            elif strategy in {
-                "stratified", "stratified_windows", "windowed",
-                "coverage_windows",
-            }:
-                counterfactual_selected, _, _ = (
-                    self._select_stratified_split_candidates(
-                        counterfactual_candidates,
-                        requested=requested,
-                        min_gap=min_gap,
-                        node_count=self._int_value(
-                            pred.get("node_count"), default=0,
-                        ),
-                    )
-                )
-            else:
-                last_counterfactual_split: Optional[int] = None
-                for candidate in sorted(
-                    counterfactual_candidates,
-                    key=lambda item: (
-                        self._candidate_rank_value(item),
-                        self._int_value(
-                            item.get("split_index", item.get("boundary")),
-                            default=10**9,
-                        ),
-                    ),
-                ):
-                    if len(counterfactual_selected) >= requested:
-                        break
-                    split = self._int_or_none(
-                        candidate.get(
-                            "split_index", candidate.get("boundary")
-                        )
-                    )
-                    if (
-                        last_counterfactual_split is not None
-                        and split is not None
-                        and abs(split - last_counterfactual_split) < min_gap
-                    ):
-                        continue
-                    counterfactual_selected.append(dict(candidate))
-                    if split is not None:
-                        last_counterfactual_split = split
-
-            def _candidate_case_id(candidate: Mapping[str, Any]) -> str:
-                return str(
-                    candidate.get("case_id")
-                    or candidate.get("case")
-                    or (
-                        f"b{int(candidate.get('split_index')):03d}"
-                        if self._int_or_none(
-                            candidate.get("split_index")
-                        ) is not None
-                        else ""
-                    )
-                )
-
-            counterfactual_ids = {
-                _candidate_case_id(candidate)
-                for candidate in counterfactual_selected
-            }
-            displaced = [
-                candidate
-                for candidate in counterfactual_selected
-                if self._int_or_none(candidate.get("part2_input_count")) != 1
-            ]
-            replacements = [
-                candidate
-                for candidate in selected
-                if _candidate_case_id(candidate) not in counterfactual_ids
-            ]
-            for index, replacement in enumerate(replacements):
-                displaced_case = (
-                    _candidate_case_id(displaced[index])
-                    if index < len(displaced)
-                    else ""
-                )
-                replacement["origin"] = "native_capability_backfill"
-                replacement["selection_reason"] = (
-                    "deterministic single-input replacement for Native "
-                    f"capability exclusion{':' + displaced_case if displaced_case else ''}"
-                )
-                replacement["native_backfill_replaces_case"] = displaced_case
-                replacement["native_backfill_scope"] = (
-                    "same_stratified_window_or_global_rank_fallback"
-                )
-                native_capability_backfills.append(dict(replacement))
         excluded = policy_excluded + excluded
         selection_input = {
             "schema": "onnx-splitpoint/candidate-selection-input",
@@ -26929,7 +27279,7 @@ class EvaluationWorkflowRunner:
                 effective_single_part2_input
             ),
             "native_multi_input_policy": (
-                "reject_and_backfill_from_frozen_prediction"
+                "supported_subset_of_selected_generic_cases"
                 if native_single_part2_input_required
                 else "not_applicable"
             ),
@@ -27003,7 +27353,7 @@ class EvaluationWorkflowRunner:
                 effective_single_part2_input
             ),
             "native_multi_input_policy": (
-                "reject_and_backfill_from_frozen_prediction"
+                "supported_subset_of_selected_generic_cases"
                 if native_single_part2_input_required
                 else "not_applicable"
             ),
@@ -27068,9 +27418,10 @@ class EvaluationWorkflowRunner:
             len(deployment_shortlist) if audit_universe else len(selected)
         )
         selection_shortfall = max(0, requested - deployment_selected_count)
-        if selection_shortfall and effective_single_part2_input:
+        if selection_shortfall:
+            scope_label = "Part-2 single-input policy" if effective_single_part2_input else "Generic candidate universe"
             msg = (
-                f"{msg} Part-2 single-input policy retained "
+                f"{msg} {scope_label} retained "
                 f"{deployment_selected_count}/{requested} requested deployment cases; "
                 f"shortfall={selection_shortfall}."
             )
@@ -28527,6 +28878,19 @@ class EvaluationWorkflowRunner:
         return artifacts
 
     def _stage_run_benchmarks(self, model_id: str, row: Mapping[str, Any]) -> Tuple[Mapping[str, Path], Mapping[str, Any], str, str]:
+        steps = self._stage_run_benchmarks_steps(model_id, row)
+        value, error = None, None
+        while True:
+            try:
+                dispatch = steps.throw(error) if error is not None else steps.send(value)
+            except StopIteration as completed:
+                return completed.value
+            try:
+                value, error = dispatch(), None
+            except BaseException as exc:
+                value, error = None, exc
+
+    def _stage_run_benchmarks_steps(self, model_id, row, *, dispatch_manager=None, on_setup_complete=None, dispatch_log=None):
         model_dir = self.run_dir / "models" / model_id
         bdir = model_dir / "benchmark_set"
         bench_results_dir = model_dir / "benchmark_results"
@@ -28590,6 +28954,21 @@ class EvaluationWorkflowRunner:
             and isinstance(self.profile_payload.get("quality_gate"), Mapping)
             else {}
         )
+        if (self.profile_payload.get("workflow_execution") or {}).get("setup_queue_mode") == "per_setup":
+            from ..benchmark.suite_refresh import refresh_suite_harness
+            from .execution_binding import _remote_args_from_options
+            refresh_args = _remote_args_from_options(self.options, self.profile_payload,
+                                                     model_task=model_task, model_id=model_id)
+            authoritative = bool(getattr(refresh_args, "validation_budget_authoritative", False))
+            refresh_suite_harness(
+                selected_suite_dir, benchmark_set_json=selected_suite_dir / "benchmark_set.json",
+                validation_images=None if authoritative else getattr(refresh_args, "validation_images", None),
+                validation_max_images=None if authoritative else getattr(refresh_args, "validation_max_images", None),
+                validation_reference_mode=getattr(refresh_args, "validation_reference_mode", "auto"),
+                mini_coco_ap50=bool(getattr(refresh_args, "mini_coco_ap50", False)),
+                benchmark_task=model_task,
+                mini_classification_eval=bool(getattr(refresh_args, "mini_classification_eval", False)),
+                log=self.log)
         runtime_plan_finalization = finalize_suite_for_runtime(
             suite_dir=selected_suite_dir,
             run_root=self.run_dir,
@@ -28646,7 +29025,9 @@ class EvaluationWorkflowRunner:
             benchmark_plan, self.profile_payload,
         )
         self._schedule_management_cpu_reference(model_id, selected_suite_dir)
-        exec_result = execute_benchmark_suite_if_requested(
+        dispatch_arguments = dict(
+            dispatch_manager=dispatch_manager,
+            on_setup_complete=on_setup_complete,
             run_dir=self.run_dir,
             model_id=model_id,
             options=self.options,
@@ -28654,7 +29035,7 @@ class EvaluationWorkflowRunner:
             benchmark_plan=benchmark_plan,
             profile_payload=self.profile_payload,
             model_entry=row,
-            log=self.log,
+            log=dispatch_log or self.log,
             cancel_event=self._cancel_event,
             process_registry=self._process_registry,
             remote_process_registry=self._remote_process_registry,
@@ -28668,6 +29049,16 @@ class EvaluationWorkflowRunner:
                 else None
             ),
         )
+        service = self._ensure_central_quality_service()
+        workflow_execution = self.profile_payload.get("workflow_execution") or {}
+        protect = (workflow_execution.get("native_release_mode") == "per_case"
+                   or workflow_execution.get("setup_queue_mode") == "per_setup")
+        def dispatch_benchmarks():
+            from ..process_control import bind_workflow_resource_options
+            with bind_workflow_resource_options(controller_gate=service.pause_gate,
+                    controller_physical_protection=protect, controller_run_id=self.run_id):
+                return execute_benchmark_suite_if_requested(**dispatch_arguments)
+        exec_result = yield dispatch_benchmarks
         terminal_remote_failure = (
             _terminal_remote_failure_from_execution_artifacts_v27516(
                 exec_result.artifacts,

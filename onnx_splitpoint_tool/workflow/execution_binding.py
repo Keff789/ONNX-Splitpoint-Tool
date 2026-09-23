@@ -22,6 +22,8 @@ The implementation is intentionally conservative:
 
 import concurrent.futures
 import contextvars
+import ipaddress
+import socket
 import json
 import os
 import re
@@ -67,6 +69,143 @@ from onnx_splitpoint_tool.process_control import (
     terminate_process_tree,
 )
 from onnx_splitpoint_tool.remote.process_lease import RemoteProcessLeaseRegistry
+
+
+def physical_dut_key(target: Mapping[str, Any]) -> str:
+    """Resolve a bound registry target to its physical host, ignoring aliases."""
+    runtime = target.get("remote") or target.get("runtime") or target
+    host = str(runtime.get("host") or runtime.get("hostname") or "").strip().lower()
+    explicit = str(target.get("physical_host_id") or runtime.get("physical_host_id") or "").strip()
+    if explicit:
+        return "dut:" + explicit
+    if not host:
+        raise ValueError("physical_dut_host_missing")
+    try:
+        addresses = [str(ipaddress.ip_address(host.strip("[]")))]
+    except ValueError:
+        addresses = sorted({str(ipaddress.ip_address(row[4][0]))
+                            for row in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)})
+    if len(addresses) != 1:
+        raise ValueError("physical_dut_host_ambiguous:" + host)
+    return "dut:" + addresses[0]
+
+
+class _SetupDispatchFuture(concurrent.futures.Future):
+    def __init__(self):
+        super().__init__()
+        self._cancel_notification_lock = threading.RLock()
+        self._cancel_notified = False
+
+    def cancel(self):
+        with self._cancel_notification_lock:
+            cancelled = super().cancel()
+            if cancelled and not self._cancel_notified:
+                self._cancel_notified = True
+                self.set_running_or_notify_cancel()
+            return cancelled
+
+
+class PhysicalSetupDispatchManager:
+    """One workflow pool; only free physical queue heads consume a worker.
+
+    All model registrations close before dispatch. This preserves the frozen
+    model order even if their isolated preparation threads finish differently.
+    Existing remote process leases remain responsible for physical ownership.
+    """
+
+    def __init__(self, *, max_workers: int, model_ids: Sequence[str]):
+        if int(max_workers) < 1 or len(set(model_ids)) != len(model_ids):
+            raise ValueError("invalid_physical_setup_dispatch_plan")
+        self._models = {str(model): index for index, model in enumerate(model_ids)}
+        self._registered: set[str] = set()
+        self._lock = threading.RLock()
+        self._pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=int(max_workers), thread_name_prefix="osp-physical-setup")
+        self._limit = int(max_workers)
+        self._pending: list[tuple[Any, ...]] = []
+        self._active: set[str] = set()
+        self._serial = 0
+        self._closed = False
+        self._futures = []
+
+    def submit_group(self, model_id, physical_dut_key, function, *args, readiness=None, **kwargs):
+        with self._lock:
+            if self._closed or model_id not in self._models or model_id in self._registered:
+                raise RuntimeError("physical_setup_registration_closed:" + str(model_id))
+            if not physical_dut_key:
+                raise ValueError("physical_dut_key_missing")
+            result = _SetupDispatchFuture()
+            self._futures.append(result)
+            self._serial += 1
+            self._pending.append((self._models[model_id], str(physical_dut_key), self._serial,
+                                  result, contextvars.copy_context(), function, args, kwargs, readiness))
+            if readiness is not None:
+                readiness.add_done_callback(lambda _: self._wake_dispatch())
+            return result
+
+    def _wake_dispatch(self):
+        with self._lock:
+            self._dispatch_ready()
+
+    def finish_registration(self, model_id):
+        with self._lock:
+            if model_id not in self._models:
+                raise ValueError("unknown_physical_setup_model:" + str(model_id))
+            self._registered.add(model_id)
+            self._dispatch_ready()
+
+    def _dispatch_ready(self):
+        if self._closed or len(self._registered) != len(self._models):
+            return
+        self._pending.sort(key=lambda row: row[:3])
+        for row in list(self._pending):
+            if len(self._active) >= self._limit:
+                break
+            _, key, _, result, context, function, args, kwargs, readiness = row
+            if result.cancelled():
+                self._pending.remove(row)
+                continue
+            if key in self._active or (readiness is not None and not readiness.done()):
+                continue
+            if readiness is not None:
+                if readiness.cancelled():
+                    self._pending.remove(row)
+                    result.cancel()
+                    continue
+                if readiness.exception() is not None:
+                    self._pending.remove(row)
+                    result.set_exception(readiness.exception())
+                    continue
+            self._pending.remove(row)
+            if not result.set_running_or_notify_cancel():
+                continue
+            self._active.add(key)
+            worker = self._pool.submit(context.run, function, *args, **kwargs)
+            def complete(future, owned_key=key, destination=result):
+                try:
+                    destination.set_result(future.result())
+                except BaseException as exc:
+                    destination.set_exception(exc)
+                finally:
+                    with self._lock:
+                        self._active.remove(owned_key)
+                        self._dispatch_ready()
+            worker.add_done_callback(complete)
+
+    def shutdown(self, wait=True, *, cancel_futures=False):
+        # Normal callers join their public futures before shutdown. Closing an
+        # incomplete plan must not leave unstarted futures permanently pending.
+        with self._lock:
+            if cancel_futures or len(self._registered) != len(self._models):
+                for row in self._pending:
+                    row[3].cancel()
+                self._pending.clear()
+            futures = list(self._futures)
+        if wait and not cancel_futures:
+            concurrent.futures.wait(futures)
+        with self._lock:
+            self._closed = True
+        self._pool.shutdown(wait=wait, cancel_futures=cancel_futures)
 
 
 def _as_list(value: Any) -> List[Any]:
@@ -3491,6 +3630,7 @@ def _run_remote_dispatch_once(
 
     host = _make_ssh_host_config(host_payload)
     args = _remote_args_from_options(options, profile_payload, runtime_override=runtime_override, model_task=model_task, model_id=model_id)
+    args.runtime_suite_finalized = ((profile_payload or {}).get("workflow_execution") or {}).get("setup_queue_mode") == "per_setup"
     # Keep the remote signed producer and the management-side collector scope
     # on the same physical setup identity.  Logical run IDs are deliberately
     # not accepted as a fallback here.
@@ -3663,18 +3803,21 @@ def _run_remote_dispatch_once(
     try:
         from ..benchmark.services import RemoteBenchmarkService
         service = RemoteBenchmarkService()
-        out = service.run(
-            host=host,
-            benchmark_set_json=benchmark_set_json,
-            local_working_dir=local_working_dir,
-            run_id=remote_run_id,
-            args=args,
-            log=lambda msg: (remote_stdout.append(str(msg)), callable(log) and log(f"[workflow][remote] {msg}")),
-            progress=lambda pct, msg: callable(log) and log(f"[workflow][remote] {int(round(float(pct) * 100.0))}% {msg}"),
-            cancel_event=cancel_event,
-            remote_process_registry=remote_process_registry,
-            workflow_session_id=workflow_session_id,
-        )
+        from onnx_splitpoint_tool.process_control import bind_workflow_resource_options
+        bound_target = gates.get("hardware_target") or {"remote": {"host": host.host}}
+        with bind_workflow_resource_options(controller_physical_dut_key=physical_dut_key(bound_target)):
+            out = service.run(
+                host=host,
+                benchmark_set_json=benchmark_set_json,
+                local_working_dir=local_working_dir,
+                run_id=remote_run_id,
+                args=args,
+                log=lambda msg: (remote_stdout.append(str(msg)), callable(log) and log(f"[workflow][remote] {msg}")),
+                progress=lambda pct, msg: callable(log) and log(f"[workflow][remote] {int(round(float(pct) * 100.0))}% {msg}"),
+                cancel_event=cancel_event,
+                remote_process_registry=remote_process_registry,
+                workflow_session_id=workflow_session_id,
+            )
         remote_output = dict(out) if isinstance(out, Mapping) else {}
         remote_was_dispatched = bool(
             remote_output.get("remote_dispatched") is True
@@ -3970,6 +4113,8 @@ def _remote_execution_if_requested(
     benchmark_set_json: Path,
     result_dir: Path,
     contains_hailo: bool,
+    dispatch_manager: PhysicalSetupDispatchManager | None = None,
+    on_setup_complete: Callable[..., None] | None = None,
     gates: Mapping[str, Any],
     log: Optional[Callable[[str], None]],
     model_task: str = "",
@@ -4278,10 +4423,7 @@ def _remote_execution_if_requested(
         max_workers = min(unique_setup_count, _parallel_remote_max_setups(options, profile_payload, default=3)) if parallel_enabled else 1
         max_uploads = _parallel_remote_max_uploads(options, profile_payload, default=1)
         power_workers = _parallel_powercalc_workers(options, profile_payload, default=1)
-        old_upload_env = os.environ.get("ONNX_SPLITPOINT_MAX_PARALLEL_UPLOADS")
-        old_power_env = os.environ.get("ONNX_SPLITPOINT_POWER_CALC_WORKERS")
-        os.environ["ONNX_SPLITPOINT_MAX_PARALLEL_UPLOADS"] = str(max_uploads)
-        os.environ["ONNX_SPLITPOINT_POWER_CALC_WORKERS"] = str(power_workers)
+        from onnx_splitpoint_tool.process_control import bind_workflow_resource_options
         log_lock = threading.Lock()
 
         def _safe_log(msg: str) -> None:
@@ -4404,11 +4546,13 @@ def _remote_execution_if_requested(
                     _safe_log(f"[workflow][remote][{gid}] {status} run_id={rid or '(all)'}: {err}")
                     group_statuses.append(status)
                     group_records.append({"hardware_target_id": gid, "run_id": rid, "status": status, "message": err, "metrics": {"remote_exception": err, "cancelled": was_cancelled}})
+            if on_setup_complete is not None:
+                on_setup_complete(model_id, gid, dict(group_artifacts))
             return {"target_id": gid, "artifacts": group_artifacts, "statuses": group_statuses, "copied": group_copied, "records": group_records}
 
-        try:
-            if parallel_enabled:
-                pool = concurrent.futures.ThreadPoolExecutor(
+        with bind_workflow_resource_options(max_parallel_uploads=max_uploads, powercalc_workers=power_workers):
+            if parallel_enabled or dispatch_manager is not None:
+                pool = dispatch_manager or concurrent.futures.ThreadPoolExecutor(
                     max_workers=max_workers,
                     thread_name_prefix="osp-eval-remote-setup",
                 )
@@ -4421,15 +4565,17 @@ def _remote_execution_if_requested(
                         # ThreadPoolExecutor does not propagate ContextVars.
                         # Use a distinct snapshot per worker so the workflow's
                         # bound local/remote ownership registries remain active.
-                        future = _submit_with_context(
-                            pool,
-                            _run_group,
-                            group,
-                        )
+                        if dispatch_manager is not None:
+                            target = group["tasks"][0]["hw"]
+                            future = dispatch_manager.submit_group(model_id, physical_dut_key(target), _run_group, group)
+                        else:
+                            future = _submit_with_context(pool, _run_group, group)
                         futures[future] = str(
                             group.get("target_id") or "hardware"
                         )
                         pending.add(future)
+                    if dispatch_manager is not None:
+                        dispatch_manager.finish_registration(model_id)
                     cancel_deadline: float | None = None
                     while pending:
                         if _cancel_requested(cancel_event):
@@ -4508,10 +4654,11 @@ def _remote_execution_if_requested(
                         )
                     raise
                 finally:
-                    pool.shutdown(
-                        wait=not (cancellation_seen or abnormal_exit or pending),
-                        cancel_futures=True,
-                    )
+                    if dispatch_manager is None:
+                        pool.shutdown(
+                            wait=not (cancellation_seen or abnormal_exit or pending),
+                            cancel_futures=True,
+                        )
             else:
                 for g in task_groups:
                     out = _run_group(g)
@@ -4519,15 +4666,6 @@ def _remote_execution_if_requested(
                     statuses.extend(list(out.get("statuses") or []))
                     total_copied += int(out.get("copied") or 0)
                     dispatch_records.extend(list(out.get("records") or []))
-        finally:
-            if old_upload_env is None:
-                os.environ.pop("ONNX_SPLITPOINT_MAX_PARALLEL_UPLOADS", None)
-            else:
-                os.environ["ONNX_SPLITPOINT_MAX_PARALLEL_UPLOADS"] = old_upload_env
-            if old_power_env is None:
-                os.environ.pop("ONNX_SPLITPOINT_POWER_CALC_WORKERS", None)
-            else:
-                os.environ["ONNX_SPLITPOINT_POWER_CALC_WORKERS"] = old_power_env
 
         quality_evidence_count = sum(
             int((row.get("metrics") or {}).get("quality_evidence_count") or 0)
@@ -5001,6 +5139,36 @@ def execute_benchmark_suite_if_requested(
     process_registry: ProcessTreeRegistry | None = None,
     remote_process_registry: RemoteProcessLeaseRegistry | None = None,
     workflow_session_id: str = "",
+    dispatch_manager: PhysicalSetupDispatchManager | None = None,
+    on_setup_complete: Callable[..., None] | None = None,
+    runtime_plan_finalization: Optional[Mapping[str, Any]] = None,
+    targeted_full_quality_identities: Optional[
+        Sequence[Mapping[str, Any]]
+    ] = None,
+) -> ExecutionBindingResult:
+    try:
+        return _execute_benchmark_suite_if_requested(**locals())
+    finally:
+        if dispatch_manager is not None:
+            dispatch_manager.finish_registration(model_id)
+
+
+def _execute_benchmark_suite_if_requested(
+    *,
+    run_dir: str | Path,
+    model_id: str,
+    options: Any,
+    benchmark_set_contract: Mapping[str, Any],
+    benchmark_plan: Mapping[str, Any],
+    profile_payload: Optional[Mapping[str, Any]] = None,
+    model_entry: Optional[Mapping[str, Any]] = None,
+    log: Optional[Callable[[str], None]] = None,
+    cancel_event: Any = None,
+    process_registry: ProcessTreeRegistry | None = None,
+    remote_process_registry: RemoteProcessLeaseRegistry | None = None,
+    workflow_session_id: str = "",
+    dispatch_manager: PhysicalSetupDispatchManager | None = None,
+    on_setup_complete: Callable[..., None] | None = None,
     runtime_plan_finalization: Optional[Mapping[str, Any]] = None,
     targeted_full_quality_identities: Optional[
         Sequence[Mapping[str, Any]]
@@ -5222,6 +5390,8 @@ def execute_benchmark_suite_if_requested(
         benchmark_set_json=benchmark_set_json,
         result_dir=result_dir,
         contains_hailo=contains_hailo,
+        dispatch_manager=dispatch_manager,
+        on_setup_complete=on_setup_complete,
         gates=gates,
         log=log,
         model_task=model_task,

@@ -92,7 +92,7 @@ def _reference_store_thread_lock(root: Path, identity_fingerprint: str) -> threa
 
 
 @contextmanager
-def _reference_store_file_lock(root: Path, identity_fingerprint: str):
+def _reference_store_file_lock(root: Path, identity_fingerprint: str, *, check_cancelled=None):
     """Serialize one immutable reference identity across Linux processes.
 
     The benchmark campaign runs on Linux.  On platforms without ``fcntl`` the
@@ -111,7 +111,16 @@ def _reference_store_file_lock(root: Path, identity_fingerprint: str):
         except ImportError:
             fcntl = None  # type: ignore[assignment]
         if fcntl is not None:
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            if check_cancelled is None:
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+            else:
+                while True:
+                    check_cancelled()
+                    try:
+                        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        time.sleep(0.05)
         yield
     finally:
         if fcntl is not None:
@@ -3938,12 +3947,21 @@ def _reporting(payload):
     return active_policy(payload.get("metric_gate_config") or {})
 
 
-def _evaluate_payload_shard(
+def _evaluate_payload_shard(payload, plan, *, shard_index, repetition_offset):
+    from .quality_statistics import WorkerProgress
+    with WorkerProgress(payload, repetition_offset, repetition_offset + len(plan)) as progress:
+        return _evaluate_payload_shard_impl(payload, plan, shard_index=shard_index,
+            repetition_offset=repetition_offset, progress=progress)
+
+
+def _evaluate_payload_shard_impl(
     payload: Mapping[str, Any],
     plan: np.ndarray,
     *,
     shard_index: int,
     repetition_offset: int,
+    progress: Any,
+    prepared: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
     """Evaluate one deterministic, contiguous slice of a paired bootstrap.
 
@@ -3954,6 +3972,8 @@ def _evaluate_payload_shard(
     """
 
     started = time.perf_counter()
+    statistics = dict(payload.get("_statistics") or {})
+    progress.emit("preparing")
     reference = list(payload["reference_records"])
     candidate = list(payload["candidate_records"])
     n = len(reference)
@@ -3961,62 +3981,105 @@ def _evaluate_payload_shard(
         "metric_gate_config": dict(payload.get("metric_gate_config") or {}),
         "value_field": str(payload.get("value_field") or "value"),
         "image_ids": list(payload.get("image_ids") or []),
+        "statistics_engine": statistics.get("engine", "legacy"),
     }
     factory = _load_evaluator_factory(str(payload.get("evaluator_factory") or "paired_mean"))
-    evaluator = factory(reference, candidate, payload.get("annotations"), config)
-    ones = np.ones((n,), dtype=np.float64)
-    point = _evaluate_metric(evaluator, ones)
-    configured_guardrails = require_configured_guardrails(
-        dict(payload.get("metric_gate_config") or {}), point
-    )
-    primary_point = dict(point["primary"])
-    default_margin = float(payload["non_inferiority_margin"])
-    component_points: dict[str, dict[str, Any]] = {"primary": primary_point}
-    for name, component in dict(point.get("guardrails") or {}).items():
-        component_points[f"guardrails.{name}"] = dict(component)
-    bootstrap: dict[str, list[float]] = {name: [] for name in component_points}
-    ratio_draws = []
-    reporting = _reporting(payload)
-    skipped_reason = ""
-    if not reporting and _prediction_identity_is_bound(payload):
-        if any(float(component["delta"]) != 0.0 for component in component_points.values()):
-            raise ValueError("identical prediction payloads produced nonzero metric differences")
-        skipped_reason = "candidate_reference_identical"
-    elif not reporting and any(
-        _point_estimate_below_margin(component, default_margin)
-        for component in component_points.values()
-    ):
-        skipped_reason = "point_estimate_below_non_inferiority_margin"
+    reusable = (statistics.get("engine") == "optimized_coco_v1"
+                and statistics.get("reference_dir") and _reporting(payload)
+                and str(payload.get("evaluator_factory", "")) in {
+                    "onnx_splitpoint_tool.quality_metrics:detection_quality_evaluator",
+                    "onnx_splitpoint_tool.quality_metrics.detection_quality_evaluator"})
+    if prepared is not None:
+        reusable = False
+        evaluator = prepared["evaluator"]
+    elif reusable:
+        from .quality_statistics import ReferenceReuseEvaluator
+        evaluator = ReferenceReuseEvaluator(payload, plan, repetition_offset, config)
     else:
-        plan_array = np.asarray(plan, dtype=np.int64)
-        if plan_array.ndim != 2 or plan_array.shape[1] != n:
-            raise ValueError("bootstrap shard does not match the paired image count")
-        for indices in plan_array:
-            multiplicities = np.bincount(indices, minlength=n).astype(np.float64, copy=False)
-            sampled = _evaluate_metric(evaluator, multiplicities)
-            sampled_components: dict[str, Mapping[str, Any]] = {"primary": sampled["primary"]}
-            sampled_components.update(
-                {f"guardrails.{name}": component for name, component in sampled.get("guardrails", {}).items()}
-            )
-            if set(sampled_components) != set(component_points):
-                raise ValueError("quality evaluator returned a different metric set during resampling")
-            for name, component in sampled_components.items():
-                bootstrap[name].append(float(component["delta"]))
-            if reporting:
-                from .accuracy_reporting import assess_accuracy
-                assessment = assess_accuracy(sampled["primary"]["reference"], sampled["primary"]["candidate"], policy=reporting)
-                ratio_draws.append(assessment["relative_loss"])
-    return {
-        "shard_index": int(shard_index),
-        "repetition_offset": int(repetition_offset),
-        "repetitions": int(len(next(iter(bootstrap.values()), []))),
-        "component_points": component_points,
-        "configured_guardrails": list(configured_guardrails),
-        "bootstrap": bootstrap,
-        "relative_loss_draws": ratio_draws,
-        "skipped_reason": skipped_reason,
-        "worker_elapsed_s": float(time.perf_counter() - started),
-    }
+        evaluator = factory(reference, candidate, payload.get("annotations"), config)
+    prepared_at = time.perf_counter()
+    progress.emit("point", cache_state="reference_hit" if getattr(evaluator, "hit", False) else "cold")
+    try:
+        ones = np.ones((n,), dtype=np.float64)
+        point = prepared["point"] if prepared is not None else _evaluate_metric(evaluator, ones)
+        configured_guardrails = require_configured_guardrails(
+            dict(payload.get("metric_gate_config") or {}), point
+        )
+        primary_point = dict(point["primary"])
+        default_margin = float(payload["non_inferiority_margin"])
+        component_points: dict[str, dict[str, Any]] = {"primary": primary_point}
+        for name, component in dict(point.get("guardrails") or {}).items():
+            component_points[f"guardrails.{name}"] = dict(component)
+        bootstrap: dict[str, list[float]] = {name: [] for name in component_points}
+        absolute = {name: {"reference": [], "candidate": []} for name in component_points}
+        ratio_draws = []
+        point_at = time.perf_counter()
+        progress.emit("accumulating")
+        reporting = _reporting(payload)
+        skipped_reason = ""
+        if not reporting and _prediction_identity_is_bound(payload):
+            if any(float(component["delta"]) != 0.0 for component in component_points.values()):
+                raise ValueError("identical prediction payloads produced nonzero metric differences")
+            skipped_reason = "candidate_reference_identical"
+        elif not reporting and any(
+            _point_estimate_below_margin(component, default_margin)
+            for component in component_points.values()
+        ):
+            skipped_reason = "point_estimate_below_non_inferiority_margin"
+        else:
+            plan_array = np.asarray(plan, dtype=np.int64)
+            if plan_array.ndim != 2 or plan_array.shape[1] != n:
+                raise ValueError("bootstrap shard does not match the paired image count")
+            for indices in plan_array:
+                multiplicities = np.bincount(indices, minlength=n).astype(np.float64, copy=False)
+                sampled = _evaluate_metric(evaluator, multiplicities)
+                sampled_components: dict[str, Mapping[str, Any]] = {"primary": sampled["primary"]}
+                sampled_components.update(
+                    {f"guardrails.{name}": component for name, component in sampled.get("guardrails", {}).items()}
+                )
+                if set(sampled_components) != set(component_points):
+                    raise ValueError("quality evaluator returned a different metric set during resampling")
+                for name, component in sampled_components.items():
+                    bootstrap[name].append(float(component["delta"]))
+                    if statistics.get("capture_draws"):
+                        for side in ("reference", "candidate"):
+                            absolute[name][side].append(component.get(side))
+                progress.emit("accumulating", len(bootstrap["primary"]))
+                if reporting:
+                    from .accuracy_reporting import assess_accuracy
+                    assessment = assess_accuracy(sampled["primary"]["reference"], sampled["primary"]["candidate"], policy=reporting)
+                    ratio_draws.append(assessment["relative_loss"])
+        if reusable:
+            evaluator.finish()
+            evaluator.close()
+        progress.emit("completed", len(bootstrap["primary"]))
+        extra = {}
+        if statistics:
+            preparation = getattr(getattr(evaluator, "evaluator", evaluator), "preparation_observation", {})
+            extra["statistics_observation"] = {"worker_pid": os.getpid(),
+                "engine": statistics.get("engine", "legacy"),
+                "prepare_s": prepared_at-started, "point_s": point_at-prepared_at,
+                "ipc_wait_s": max(0.0, started-float(payload.get("_submitted_monotonic", started))),
+                "accumulation_s": time.perf_counter()-point_at,
+                "reference_cache_hit": bool(getattr(evaluator, "hit", False)),
+                "prepare_count": 1, **preparation}
+        if statistics.get("capture_draws"):
+            extra["absolute_bootstrap"] = absolute
+        return {
+            **extra,
+            "shard_index": int(shard_index),
+            "repetition_offset": int(repetition_offset),
+            "repetitions": int(len(next(iter(bootstrap.values()), []))),
+            "component_points": component_points,
+            "configured_guardrails": list(configured_guardrails),
+            "bootstrap": bootstrap,
+            "relative_loss_draws": ratio_draws,
+            "skipped_reason": skipped_reason,
+            "worker_elapsed_s": float(time.perf_counter() - started),
+        }
+    finally:
+        if reusable:
+            evaluator.close()
 
 
 def _combine_evaluation_shards(
@@ -4028,9 +4091,29 @@ def _combine_evaluation_shards(
 ) -> dict[str, Any]:
     """Combine ordered shard distributions into the canonical result shape."""
 
-    ordered = sorted(list(shard_results), key=lambda row: int(row.get("repetition_offset") or 0))
+    rows = list(shard_results)
+    repetitions_requested = int(payload["repetitions"])
+    for row in rows:
+        if (not isinstance(row, Mapping)
+                or type(row.get("repetition_offset")) is not int
+                or type(row.get("repetitions")) is not int
+                or not 0 <= row["repetition_offset"] <= repetitions_requested
+                or row["repetitions"] < 0):
+            raise ValueError("paired bootstrap shard has an invalid typed draw range")
+    ordered = sorted(rows, key=lambda row: row["repetition_offset"])
     if not ordered:
         raise ValueError("paired bootstrap produced no worker result")
+    if any("block_identity" in row for row in ordered):
+        identity = ordered[0].get("block_identity")
+        if (not isinstance(identity, Mapping)
+                or identity.get("schema") != "paired-statistics-block-v1"
+                or identity.get("evaluation") != payload["evaluation_fingerprint"]
+                or identity.get("phase") != "candidate"
+                or identity.get("B") != repetitions_requested
+                or identity.get("n") != len(payload["reference_records"])
+                or not re.fullmatch(r"[0-9a-f]{64}", str(identity.get("plan", "")))
+                or any(row.get("block_identity") != identity for row in ordered)):
+            raise ValueError("paired bootstrap blocks have incompatible scientific/plan identities")
     component_points = {
         str(name): dict(component)
         for name, component in dict(ordered[0].get("component_points") or {}).items()
@@ -4040,6 +4123,8 @@ def _combine_evaluation_shards(
     for shard in ordered[1:]:
         if set(dict(shard.get("component_points") or {})) != set(component_points):
             raise ValueError("paired bootstrap shards returned different metric sets")
+        if canonical_json(shard["component_points"]) != canonical_json(component_points):
+            raise ValueError("paired bootstrap shards returned different point components")
         if tuple(shard.get("configured_guardrails") or ()) != tuple(
             ordered[0].get("configured_guardrails") or ()
         ):
@@ -4048,7 +4133,6 @@ def _combine_evaluation_shards(
     if len(skip_reasons) != 1:
         raise ValueError("paired bootstrap shards disagreed about early termination")
     skipped_reason = next(iter(skip_reasons))
-    repetitions_requested = int(payload["repetitions"])
     default_margin = float(payload["non_inferiority_margin"])
     if skipped_reason == "candidate_reference_identical":
         if not _prediction_identity_is_bound(payload) or any(float(component["delta"]) != 0.0 for component in component_points.values()):
@@ -4062,12 +4146,43 @@ def _combine_evaluation_shards(
         raise ValueError(f"unsupported paired bootstrap skip reason: {skipped_reason}")
     else:
         bootstrap: dict[str, list[float]] = {name: [] for name in component_points}
+        cursor = 0
+        require_absolute = bool((payload.get("_statistics") or {}).get("capture_draws")) or any(
+            "absolute_bootstrap" in shard for shard in ordered)
         for shard in ordered:
+            count = shard["repetitions"]
+            if (count <= 0 or shard["repetition_offset"] != cursor
+                    or cursor + count > repetitions_requested):
+                raise ValueError("paired bootstrap draw ranges overlap, have gaps, or exceed the plan")
             shard_values = dict(shard.get("bootstrap") or {})
             if set(shard_values) != set(component_points):
                 raise ValueError("paired bootstrap shard returned a different metric set")
             for name in component_points:
+                if len(shard_values[name]) != count:
+                    raise ValueError("paired bootstrap delta length does not match its draw range")
+                if not all(type(value) in (int, float) and math.isfinite(value)
+                           for value in shard_values[name]):
+                    raise ValueError("paired bootstrap contains an invalid delta")
                 bootstrap[name].extend(float(value) for value in list(shard_values[name]))
+            if _reporting(payload):
+                ratios = shard.get("relative_loss_draws", [])
+                if len(ratios) != count or not all(value is None or (
+                    type(value) in (int, float) and math.isfinite(value)) for value in ratios):
+                    raise ValueError("paired bootstrap ratio values do not match their draw range")
+            if require_absolute:
+                absolute = shard.get("absolute_bootstrap")
+                if not isinstance(absolute, Mapping) or set(absolute) != set(component_points):
+                    raise ValueError("paired bootstrap absolute metric set is incomplete")
+                for values in absolute.values():
+                    if not isinstance(values, Mapping) or set(values) != {"reference", "candidate"}:
+                        raise ValueError("paired bootstrap absolute sides are incomplete")
+                    for side in values.values():
+                        if len(side) != count or not all(type(value) in (int, float)
+                            and math.isfinite(value) for value in side):
+                            raise ValueError("paired bootstrap absolute values do not match their draw range")
+            cursor += count
+        if cursor != repetitions_requested:
+            raise ValueError("paired bootstrap draw ranges do not cover the entire plan")
         if any(len(values) != repetitions_requested for values in bootstrap.values()):
             raise ValueError("paired bootstrap shards did not cover the registered repetition plan exactly")
         alpha = max(0.0, min(0.5, 1.0 - float(payload["confidence_level"])))
@@ -4265,9 +4380,181 @@ class ResourcePauseGate:
     Hailo compilation free from newly admitted management CPU load.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, available_cpu=None, available_memory_bytes=None, transfer_slots=1, postcalc_slots=1) -> None:
+        from .quality_statistics_config import resource_budget
+        budget = resource_budget()
+        self.available_cpu = int(budget["statistics_cpu_slots"] if available_cpu is None else available_cpu)
+        self.available_memory_bytes = int(budget["available_memory_bytes"] if available_memory_bytes is None else available_memory_bytes)
+        if self.available_cpu <= 0 or self.available_memory_bytes < 0:
+            raise ValueError("controller CPU capacity must be positive and RAM capacity nonnegative")
+        self.transfer_slots = max(1, int(transfer_slots))
+        self.postcalc_slots = max(1, int(postcalc_slots))
         self._condition = threading.Condition()
         self._reasons: set[str] = set()
+        self._activities = {}
+        self._reservations = {}
+        self._tickets = []
+        self._serial = 0
+
+    def snapshot(self):
+        with self._condition:
+            return {
+                "cpu_capacity": self.available_cpu,
+                "transfer_capacity": self.transfer_slots,
+                "postcalc_capacity": self.postcalc_slots,
+                "cpu_active": sum(a["cpu"] for a in self._activities.values()),
+                "memory_bytes_active": sum(a["memory_bytes"] for a in self._activities.values()),
+                "activities": [dict(a) for a in self._activities.values()],
+                "reservations": [dict(r) for r in self._reservations.values()],
+                "waiting": len(self._tickets),
+            }
+
+    def begin_activity(self, reason, *, cpu=1, memory_bytes=0, resources=None, honor_pause=True, ignore_pause_reasons=(), continuation_token=None):
+        resources = frozenset(resources if resources is not None else ("controller:cpu", "controller:io"))
+        if cpu < 0 or memory_bytes < 0 or cpu > self.available_cpu or memory_bytes > self.available_memory_bytes:
+            raise ValueError("controller activity exceeds available CPU/RAM budget")
+        with self._condition:
+            self._serial += 1
+            ticket = {"id": self._serial, "cpu": cpu, "memory_bytes": memory_bytes, "resources": resources,
+                      "honor_pause": honor_pause, "ignore_pause_reasons": tuple(ignore_pause_reasons), "continuation_token": continuation_token, "reason": reason, "owner_thread": threading.get_ident()}
+            self._tickets.append(ticket)
+            return ticket["id"]
+
+    def _activity_conflict(self, ticket):
+        resources = ticket["resources"]
+        continuation = self._activities.get(ticket["continuation_token"])
+        return ((ticket["honor_pause"] and bool(self._reasons.difference(ticket["ignore_pause_reasons"])) and bool(resources))
+            or any(resources.intersection(r["resources"]) and (r["state"] != "DRAINING" or r["id"] < ticket["id"])
+                   and not (r["state"] == "DRAINING" and continuation
+                            and set(continuation["resources"]).intersection(r["resources"]))
+                   for r in self._reservations.values())
+            or any(tag in resources and sum(tag in a["resources"] for a in self._activities.values()) >= limit
+                   for tag, limit in (("controller:transfer", self.transfer_slots), ("controller:postcalc", self.postcalc_slots)))
+            or any(any(key.startswith(("dut:", "source:")) for key in resources.intersection(a["resources"]))
+                   for a in self._activities.values()))
+
+    def poll_activity(self, token):
+        with self._condition:
+            if token in self._activities:
+                return True
+            ticket = next(t for t in self._tickets if t["id"] == token)
+            cpu_used = sum(a["cpu"] for a in self._activities.values())
+            memory_used = sum(a["memory_bytes"] for a in self._activities.values())
+            earlier = self._tickets[:self._tickets.index(ticket)]
+            priority = not any(t["memory_bytes"] + memory_used <= self.available_memory_bytes
+                and not self._activity_conflict(t)
+                and (ticket["cpu"] > 0 or t["cpu"] + cpu_used <= self.available_cpu) for t in earlier)
+            if (self._activity_conflict(ticket) or not priority
+                    or cpu_used + ticket["cpu"] > self.available_cpu
+                    or memory_used + ticket["memory_bytes"] > self.available_memory_bytes):
+                return False
+            self._tickets.remove(ticket)
+            self._activities[token] = {**ticket, "resources": sorted(ticket["resources"]), "started_monotonic": time.monotonic()}
+            self._condition.notify_all()
+            return True
+
+    def acquire_activity(self, reason, *, cpu=1, memory_bytes=0, resources=None,
+                         check_cancelled=lambda: None, timeout=None, honor_pause=True, ignore_pause_reasons=(), continuation_token=None):
+        token = self.begin_activity(reason, cpu=cpu, memory_bytes=memory_bytes, resources=resources,
+                                    honor_pause=honor_pause, ignore_pause_reasons=ignore_pause_reasons, continuation_token=continuation_token)
+        deadline = None if timeout is None else time.monotonic() + timeout
+        acquired = False
+        try:
+            with self._condition:
+                while True:
+                    check_cancelled()
+                    if self.poll_activity(token):
+                        acquired = True
+                        return token
+                    if deadline is not None and time.monotonic() >= deadline:
+                        return None
+                    self._condition.wait(0.05)
+        finally:
+            if not acquired:
+                self.release_activity(token)
+
+    def release_activity(self, token):
+        with self._condition:
+            if token in self._activities:
+                self._activities.pop(token)
+            else:
+                ticket = next((t for t in self._tickets if t["id"] == token), None)
+                if ticket is None:
+                    raise RuntimeError("controller activity owner already released or unknown")
+                self._tickets.remove(ticket)
+            self._condition.notify_all()
+
+    @contextmanager
+    def activity(self, reason, **kwargs):
+        token = self.acquire_activity(reason, **kwargs)
+        if token is None:
+            raise TimeoutError("controller activity admission timed out")
+        try:
+            yield token
+        finally:
+            self.release_activity(token)
+
+    def begin_quiet(self, reason, *, resources=None, owner=None):
+        resources = frozenset(resources if resources is not None else ("controller:cpu", "controller:io"))
+        owner = threading.get_ident() if owner is None else owner
+        with self._condition:
+            if any(a["owner_thread"] == owner and resources.intersection(a["resources"])
+                   for a in self._activities.values()):
+                raise RuntimeError("quiet reservation conflicts with its own active work")
+            self._serial += 1
+            token = self._serial
+            self._reservations[token] = {"id": token, "reason": reason, "resources": sorted(resources),
+                "owner_thread": owner, "state": "DRAINING", "reserved_monotonic": time.monotonic()}
+            self._condition.notify_all()
+            return token
+
+    def poll_quiet(self, token):
+        with self._condition:
+            row = self._reservations[token]
+            resources = set(row["resources"])
+            previous = False
+            for other in self._reservations.values():
+                conflict = resources.intersection(other["resources"])
+                if other["owner_thread"] == row["owner_thread"] or not conflict:
+                    continue
+                first_owned = min(owned["id"] for owned in self._reservations.values()
+                                  if owned["owner_thread"] == row["owner_thread"]
+                                  and conflict.intersection(owned["resources"]))
+                if other["state"] != "DRAINING" or other["id"] < first_owned:
+                    previous = True
+                    break
+            cpu_used = sum(a["cpu"] for a in self._activities.values())
+            memory_used = sum(a["memory_bytes"] for a in self._activities.values())
+            older_ready = any(t["id"] < row["id"] and resources.intersection(t["resources"])
+                and t["cpu"] + cpu_used <= self.available_cpu
+                and t["memory_bytes"] + memory_used <= self.available_memory_bytes
+                and not self._activity_conflict(t) for t in self._tickets)
+            active = older_ready or any(resources.intersection(activity["resources"]) for activity in self._activities.values())
+            if not previous and not active and row["state"] == "DRAINING":
+                row["state"] = "QUIET_CONFIRMED"
+                row["quiet_monotonic"] = time.monotonic()
+            return dict(row)
+
+    def end_quiet(self, token):
+        with self._condition:
+            row = self._reservations.pop(token)
+            row["state"] = "RELEASED"
+            self._condition.notify_all()
+            return dict(row)
+
+    @contextmanager
+    def reserve_quiet(self, reason, *, resources=None, check_cancelled=lambda: None):
+        token = self.begin_quiet(reason, resources=resources)
+        try:
+            with self._condition:
+                while self.poll_quiet(token)["state"] != "QUIET_CONFIRMED":
+                    check_cancelled()
+                    self._condition.wait(0.05)
+                check_cancelled()
+                row = self._reservations[token]
+            yield row
+        finally:
+            self.end_quiet(token)
 
     def pause(self, reason: str) -> None:
         value = str(reason).strip()
@@ -4310,11 +4597,15 @@ class ResourcePauseGate:
 
     @contextmanager
     def hold(self, reason: str):
-        self.pause(reason)
+        # Separate owners keep nested holds from releasing each other.
+        with self._condition:
+            self._serial += 1
+            owned_reason = f"{reason}:{self._serial}"
+        self.pause(owned_reason)
         try:
             yield self
         finally:
-            self.resume(reason)
+            self.resume(owned_reason)
 
 
 @dataclass
@@ -4378,13 +4669,43 @@ class ManagementQualityService:
         *,
         workers: int = 4,
         pause_gate: Optional[ResourcePauseGate] = None,
+        statistics: Optional[Mapping[str, Any]] = None,
     ) -> None:
+        self.statistics = dict(statistics or {})
+        if statistics is not None:
+            from .quality_statistics_config import DEFAULTS, statistics_options
+            unknown = set(self.statistics) - set(DEFAULTS) - {"capture_draws"}
+            if unknown:
+                raise ValueError("unknown statistics options: " + ", ".join(sorted(unknown)))
+            capture = self.statistics.get("capture_draws", False)
+            if type(capture) is not bool:
+                raise ValueError("capture_draws must be boolean")
+            self.statistics = {**statistics_options({"quality_gate": {"statistics": {
+                key: value for key, value in self.statistics.items() if key in DEFAULTS}}}),
+                "capture_draws": capture}
+        self._started_at = time.time()
+        if self.statistics.get("engine") == "optimized_coco_v1" and (
+            type(workers) is not int or not 1 <= workers <= 64
+        ):
+            raise ValueError("optimized statistics workers must be an integer in [1, 64]")
         count = int(workers)
         if count < 1:
             raise ValueError("workers must be at least 1")
+        self.workers_requested = count
+        self._bounded_blocks = self.statistics.get("engine") == "optimized_coco_v1"
+        from .quality_statistics_config import resource_budget
+        count = min(count, (pause_gate.available_cpu if pause_gate is not None else resource_budget()["statistics_cpu_slots"]))
         self.workers = count
         self.cache = PersistentQualityCache(cache_dir)
+        self._submission_lock = threading.Lock()
+        self._scratch_cleanup_errors = []
+        if self._bounded_blocks:
+            import tempfile
+            self._payload_scratch = Path(tempfile.mkdtemp(prefix="session-", dir=self.cache.root))
         self.pause_gate = pause_gate or ResourcePauseGate()
+        self._worker_memory_token = None
+        self._worker_memory_lock = threading.Lock()
+        self._private_worker_bytes = count * (self.statistics.get("prepared_cache_limit_mib", 512) + 64) * 1024**2
         # The GUI/workflow is intentionally multi-threaded.  Explicit ``spawn``
         # avoids forking that live process, which can inherit locked runtime or
         # BLAS state and deadlock during long campaigns.
@@ -4400,6 +4721,9 @@ class ManagementQualityService:
         self._lock = threading.RLock()
         self._inflight: dict[str, list[_EvaluationWaiter]] = {}
         self._groups: dict[str, _ShardEvaluation] = {}
+        self._admission_state = {"phase": "idle"}
+        self._admission_contexts = {}
+        self._context_local = threading.local()
         self._cancel_context: dict[str, Any] = {}
         self._closed = False
         self._shutdown_lock = threading.RLock()
@@ -4418,8 +4742,45 @@ class ManagementQualityService:
     def __exit__(self, exc_type, exc, traceback) -> None:
         self.shutdown(wait=True)
 
+    def progress_snapshot(self) -> list[dict[str, Any]]:
+        with self._lock:
+            active = set(self._inflight)
+            processes = list((getattr(self._executor, "_processes", None) or {}).values())
+        owned = {process.pid for process in processes if process.is_alive()}
+        rows = []
+        for path in (self.cache.root / "progress").glob("*.json"):
+            try:
+                row = json.loads(path.read_text())
+                if (isinstance(row, dict) and type(row.get("worker_pid")) is int
+                        and row["worker_pid"] in owned
+                        and path.stem == str(row["worker_pid"])
+                        and row.get("evaluation_fingerprint") in active
+                        and row.get("phase") in {"loading", "preparing", "matching", "point", "accumulating"}
+                        and type(row.get("last_heartbeat_at")) in (int, float)
+                        and math.isfinite(row["last_heartbeat_at"])
+                        and row["last_heartbeat_at"] >= self._started_at):
+                    rows.append(row)
+            except (OSError, ValueError, TypeError):
+                continue
+        return sorted(rows, key=lambda row: row["worker_pid"])
+
     def pause(self, reason: str) -> None:
         self.pause_gate.pause(reason)
+
+    def admission_snapshot(self):
+        """Coordinator state, distinct from actually executing worker ranges."""
+        with self._lock:
+            return {**self._admission_state, "contexts": {k: dict(v) for k, v in self._admission_contexts.items()},
+                    "resources": self.pause_gate.snapshot(), "queued_descriptors": self._queue.qsize(),
+                    "pause_reasons": list(self.pause_gate.reasons)}
+
+    def _statistics_phase(self, phase, **fields):
+        with self._lock:
+            key = fields.get("evaluation_fingerprint") or getattr(self._context_local, "key", None)
+            state = {**self._admission_contexts.get(key, {}), "phase": phase, **fields}
+            if key:
+                self._admission_contexts[key] = state
+            self._admission_state = state if len(self._admission_contexts) <= 1 else {"phase": "multiple_contexts"}
 
     def resume(self, reason: str) -> None:
         self.pause_gate.resume(reason)
@@ -4442,7 +4803,40 @@ class ManagementQualityService:
             yield self
 
     def submit(self, request: QualityEvaluationRequest) -> Future:
+        # Serialize preparation before it can materialize another large paired
+        # payload. Queued requests retain only disk-bound JSON descriptors.
+        if self._bounded_blocks:
+            with self._submission_lock:
+                from .quality_statistics_blocks import reachable_bytes
+                required = 4 * reachable_bytes(request)
+                if required + self._private_worker_bytes > self.pause_gate.available_memory_bytes:
+                    client = Future()
+                    client.set_exception(MemoryError(f"statistics admission needs {required + self._private_worker_bytes} bytes; available {self.pause_gate.available_memory_bytes}"))
+                    return client
+                with self.pause_gate.activity("quality_input_prepare",
+                        memory_bytes=required, honor_pause=False):
+                    return self._submit(request)
+        from .quality_statistics_blocks import reachable_bytes
+        with self.pause_gate.activity("quality_legacy_input_prepare", honor_pause=False,
+                memory_bytes=4 * reachable_bytes(request)):
+            return self._submit(request)
+
+    def _submit(self, request: QualityEvaluationRequest) -> Future:
         key, payload = prepare_evaluation(request)
+        if self.statistics.get("engine") == "optimized_coco_v1":
+            from .quality_statistics import (numerical_environment, validate_bound_order,
+                                             validate_canonical_prediction_fields)
+            validate_bound_order(payload)
+            validate_canonical_prediction_fields(payload)
+            payload["legacy_evaluation_fingerprint"] = key
+            key = json_fingerprint({"schema": "optimized-quality-pair-v1", "legacy": key,
+                "image_ids": payload["image_ids"], "annotations": payload["annotations"],
+                "environment": numerical_environment()})
+            payload["evaluation_fingerprint"] = key
+        if self.statistics:
+            payload["_statistics"] = {**self.statistics,
+                "progress_dir": str(self.cache.root / "progress"),
+                "reference_dir": str(self.cache.root / "reference_components")}
         cached = self.cache.get(key)
         if cached is not None and not _cached_guardrail_contract_matches_request(
             request.metric_gate_config, cached,
@@ -4450,6 +4844,11 @@ class ManagementQualityService:
             cached = None
         client: Future = Future()
         if cached is not None:
+            if self.statistics:
+                cached["statistics_observation"] = {
+                    **cached.get("statistics_observation", {}),
+                    "cache_state": "complete_result_reused", "draws_recomputed": 0,
+                    "engine_requested": self.statistics.get("engine", "legacy")}
             client.set_result(_rebind_request_scoped_result(cached, payload))
             return client
         waiter = _EvaluationWaiter(
@@ -4463,8 +4862,28 @@ class ManagementQualityService:
             if waiters is not None:
                 waiters.append(waiter)
                 return client
+        if self._bounded_blocks:
+            from .quality_statistics_blocks import spool_payload
+            queued_payload = spool_payload(self._payload_scratch, key, payload)
+        else:
+            queued_payload = payload
+        with self._lock:
+            if self._closed:
+                if self._bounded_blocks:
+                    self._remove_spooled_payload(queued_payload)
+                raise self._closed_error()
+            waiters = self._inflight.get(key)
+            if waiters is not None:
+                waiters.append(waiter)
+                return client
             self._inflight[key] = [waiter]
-            self._queue.put(_QueuedEvaluation(key=key, payload=payload))
+            try:
+                self._queue.put(_QueuedEvaluation(key=key, payload=queued_payload))
+            except BaseException:
+                self._inflight.pop(key, None)
+                if self._bounded_blocks:
+                    self._remove_spooled_payload(queued_payload)
+                raise
         return client
 
     def evaluate(self, request: QualityEvaluationRequest, timeout: Optional[float] = None) -> dict[str, Any]:
@@ -4485,10 +4904,22 @@ class ManagementQualityService:
         requests: Sequence[QualityEvaluationRequest],
         timeout: Optional[float] = None,
     ) -> list[dict[str, Any]]:
+        if self._bounded_blocks:
+            # Keep caller payload loading bounded as well as the worker pool.
+            width = self.statistics["max_active_requests"]
+            pending, results = [], []
+            for request in requests:
+                if len(pending) == width:
+                    results.append(pending.pop(0).result(timeout=timeout))
+                pending.append(self.submit(request))
+            return results + [future.result(timeout=timeout) for future in pending]
         futures = [self.submit(request) for request in requests]
         return [future.result(timeout=timeout) for future in futures]
 
     def _dispatch_loop(self) -> None:
+        if self._bounded_blocks:
+            self._dispatch_blocks()
+            return
         while True:
             item = self._queue.get()
             if item is None:
@@ -4498,35 +4929,52 @@ class ManagementQualityService:
             repetitions = int(payload.get("repetitions") or 1)
             identical = not _reporting(payload) and _prediction_identity_is_bound(payload)
             shard_count = 1 if identical else max(1, min(self.workers, repetitions))
+            def check():
+                if self._closed:
+                    raise self._closed_error()
+            from .quality_statistics_blocks import reachable_bytes
+            try:
+                activity_token = self.pause_gate.acquire_activity("quality_legacy:" + item.key,
+                    cpu=shard_count, memory_bytes=4 * reachable_bytes(payload) + 16 * repetitions * len(payload.get("reference_records") or []),
+                    check_cancelled=check)
+            except BaseException as exc:
+                self._finish_exception(item.key, exc)
+                continue
             acquired = 0
             for _ in range(shard_count):
                 self._worker_slots.acquire()
                 acquired += 1
-                # A resource may have become active while worker capacity was
-                # unavailable.  Hold all newly claimed slots until it ends.
-                self.pause_gate.wait_until_resumed()
             with self._lock:
                 if self._closed:
                     for _ in range(acquired):
                         self._worker_slots.release()
+                    self.pause_gate.release_activity(activity_token)
                     self._finish_exception(item.key, self._closed_error())
                     continue
-            n = len(list(payload.get("reference_records") or []))
-            if identical:
-                plan = np.empty((0, n), dtype=np.int64)
-            else:
-                plan = deterministic_resample_plan(
-                    image_count=n,
-                    repetitions=repetitions,
-                    seed=int(payload.get("seed") or 0),
+            try:
+                n = len(list(payload.get("reference_records") or []))
+                if identical:
+                    plan = np.empty((0, n), dtype=np.int64)
+                else:
+                    plan = deterministic_resample_plan(
+                        image_count=n,
+                        repetitions=repetitions,
+                        seed=int(payload.get("seed") or 0),
+                    )
+                boundaries = np.linspace(0, len(plan), shard_count + 1, dtype=np.int64)
+                group = _ShardEvaluation(
+                    key=item.key,
+                    payload=payload,
+                    pending=shard_count,
+                    workers_requested=self.workers,
                 )
-            boundaries = np.linspace(0, len(plan), shard_count + 1, dtype=np.int64)
-            group = _ShardEvaluation(
-                key=item.key,
-                payload=payload,
-                pending=shard_count,
-                workers_requested=self.workers,
-            )
+            except BaseException as exc:
+                for _ in range(acquired):
+                    self._worker_slots.release()
+                self.pause_gate.release_activity(activity_token)
+                self._finish_exception(item.key, exc)
+                continue
+            group.activity_token = activity_token
             with self._lock:
                 self._groups[item.key] = group
             submitted = 0
@@ -4541,7 +4989,7 @@ class ManagementQualityService:
                             raise self._closed_error()
                         worker = self._executor.submit(
                             _evaluate_payload_shard,
-                            payload,
+                            {**payload, "_submitted_monotonic": time.perf_counter()},
                             plan[start:stop],
                             shard_index=shard_index,
                             repetition_offset=start,
@@ -4567,6 +5015,145 @@ class ManagementQualityService:
                     error = group.first_error
                 if complete:
                     self._finish_exception(item.key, error)
+                    self._release_legacy_activity(group)
+
+    def _check_block_cancelled(self, group):
+        with group.lock:
+            if group.first_error is not None:
+                raise group.first_error
+            if group.cancelled or self._closed:
+                raise self._closed_error()
+
+    def _block_worker_done(self, group, worker):
+        # Callback only records terminal errors and releases its owned slot.
+        # The dispatcher alone admits ranges, validates and publishes results.
+        with group.lock:
+            if worker in group.seen_workers:
+                return
+            group.seen_workers.add(worker)
+            try:
+                worker.result()
+            except BaseException as exc:
+                if group.first_error is None:
+                    group.first_error = stamp_exception(exc)
+            group.pending -= 1
+        self._worker_slots.release()
+
+    def _dispatch_blocks(self):
+        threads = [threading.Thread(target=self._dispatch_block_context,
+                    name=f"management-quality-context-{index}", daemon=True)
+                   for index in range(self.statistics["max_active_requests"])]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self._queue.get_nowait()  # consume the shared terminal marker
+
+    def _dispatch_block_context(self):
+        from .quality_statistics_blocks import load_payload, execute_request
+        while True:
+            item = self._queue.get()
+            if item is None:
+                # Each context consumes one terminal marker without changing
+                # the existing dispatcher/shutdown ownership contract.
+                self._queue.put(None)
+                return
+            group = None
+            memory_token = None
+            self._context_local.key = item.key
+            try:
+                self._statistics_phase("waiting_resource" if self.pause_gate.paused else "loading_payload",
+                                       evaluation_fingerprint=item.key, request_id=item.payload.get("request_id"))
+                with self._lock:
+                    if self._closed:
+                        raise self._closed_error()
+                def check():
+                    if self._closed:
+                        raise self._closed_error()
+                with self._worker_memory_lock:
+                    if self._worker_memory_token is None:
+                        self._worker_memory_token = self.pause_gate.acquire_activity(
+                            "statistics_worker_preparation", cpu=0, resources=(),
+                            memory_bytes=self._private_worker_bytes, check_cancelled=check)
+                memory_token = self.pause_gate.acquire_activity("quality_context:" + item.key,
+                    cpu=0, resources=(), check_cancelled=check,
+                    memory_bytes=item.payload.get("admission_memory_bytes", 12 * item.payload["size_bytes"]))
+                with self.pause_gate.activity("quality_payload_load:" + item.key, check_cancelled=check):
+                    payload = load_payload(item.payload)
+                group = _ShardEvaluation(key=item.key, payload=payload, pending=0,
+                                         workers_requested=self.workers_requested)
+                with self._lock:
+                    if self._closed:
+                        raise self._closed_error()
+                    self._groups[item.key] = group
+                execute_request(self, group, item.payload)
+            except BaseException as exc:
+                if group is not None:
+                    with group.lock:
+                        if group.first_error is None:
+                            group.first_error = stamp_exception(exc)
+                        exc = group.first_error
+                    # Drain only this service's admitted tasks before admitting
+                    # another request after an I/O or evaluator failure.
+                    for future in group.workers:
+                        try:
+                            future.result()
+                        except BaseException:
+                            pass
+                self._finish_exception(item.key, exc)
+            finally:
+                cleanup_token = None
+                try:
+                    def cleanup_check():
+                        if self._closed:
+                            raise self._closed_error()
+                    try:
+                        cleanup_token = self.pause_gate.acquire_activity(
+                            "quality_payload_cleanup:" + item.key,
+                            check_cancelled=cleanup_check)
+                    except BaseException:
+                        if not self._closed:
+                            raise
+                        # Closing forbids more calculations, not safe cleanup.
+                        # Never wait for or cross an unresolved capture fence.
+                        cleanup_token = self.pause_gate.acquire_activity(
+                            "quality_payload_cleanup:" + item.key, timeout=0)
+                    if cleanup_token is not None:
+                        self._remove_spooled_payload(item.payload)
+                finally:
+                    if cleanup_token is not None:
+                        self.pause_gate.release_activity(cleanup_token)
+                    if memory_token is not None:
+                        self.pause_gate.release_activity(memory_token)
+                with self._lock:
+                    self._admission_contexts.pop(item.key, None)
+                    self._admission_state = next(iter(self._admission_contexts.values()), {"phase": "idle"})
+
+    def _remove_spooled_payload(self, descriptor):
+        """Release only the JSON payload created by this service session."""
+        path = Path(descriptor["path"])
+        expected = self._payload_scratch / "payloads" / (descriptor["key"] + ".json")
+        if path != expected:
+            raise ValueError("refusing to remove a foreign statistics payload")
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            self._scratch_cleanup_errors.append(str(exc))
+
+    def _complete_block_result(self, group, result):
+        # Caller holds self._lock from merge through cache and waiter publish.
+        waiters = self._inflight.pop(group.key, [])
+        self._groups.pop(group.key, None)
+        for waiter in waiters:
+            if not waiter.client.done():
+                waiter.client.set_result(_rebind_request_scoped_result(result, waiter.request_fields))
+
+    def _release_legacy_activity(self, group):
+        with group.lock:
+            token = getattr(group, "activity_token", None)
+            group.activity_token = None
+        if token is not None:
+            self.pause_gate.release_activity(token)
 
     def _shard_worker_done(self, group: _ShardEvaluation, worker: Future) -> None:
         with group.lock:
@@ -4593,39 +5180,52 @@ class ManagementQualityService:
         self._worker_slots.release()
         if not complete:
             return
-        if cancelled:
+        try:
+            if cancelled:
+                with self._lock:
+                    self._groups.pop(group.key, None)
+                return
+            if group.first_error is not None:
+                self._finish_exception(group.key, group.first_error)
+                return
+            # Serialize complete-result publication with cancellation. Once every
+            # shard is available, either its validated result publishes atomically
+            # or shutdown wins first; an incomplete group never populates cache.
             with self._lock:
-                self._groups.pop(group.key, None)
-            return
-        if group.first_error is not None:
-            self._finish_exception(group.key, group.first_error)
-            return
-        # Serialize complete-result publication with cancellation. Once every
-        # shard is available, either its validated result publishes atomically
-        # or shutdown wins first; an incomplete group never populates cache.
-        with self._lock:
-            if group.cancelled:
-                self._groups.pop(group.key, None)
-                return
-            try:
-                result = _combine_evaluation_shards(
-                    group.payload,
-                    group.results,
-                    elapsed_s=float(time.perf_counter() - group.started),
-                    workers_requested=group.workers_requested,
-                )
-                self.cache.put(group.key, result)
-            except BaseException as exc:
-                self._finish_exception(group.key, exc)
-                return
-            waiters = self._inflight.pop(group.key, [])
-            self._groups.pop(group.key, None)
-            for waiter in waiters:
-                client = waiter.client
-                if not client.done():
-                    client.set_result(
-                        _rebind_request_scoped_result(result, waiter.request_fields)
+                if group.cancelled:
+                    self._groups.pop(group.key, None)
+                    return
+                try:
+                    merge_started = time.perf_counter()
+                    result = _combine_evaluation_shards(
+                        group.payload,
+                        group.results,
+                        elapsed_s=float(time.perf_counter() - group.started),
+                        workers_requested=group.workers_requested,
                     )
+                    if self.statistics.get("capture_draws"):
+                        _atomic_write_json(self.cache.root / "draws" / (group.key + ".json"),
+                            {"payload_identity": group.key, "shards": group.results})
+                    if self.statistics:
+                        result["statistics_observation"] = {"engine": self.statistics.get("engine", "legacy"),
+                            "merge_s": time.perf_counter()-merge_started,
+                            "shards": [r.get("statistics_observation", {}) for r in group.results]}
+                    self.cache.put(group.key, result)
+                except BaseException as exc:
+                    self._finish_exception(group.key, exc)
+                    return
+                waiters = self._inflight.pop(group.key, [])
+                self._groups.pop(group.key, None)
+                for waiter in waiters:
+                    client = waiter.client
+                    if not client.done():
+                        client.set_result(
+                            _rebind_request_scoped_result(result, waiter.request_fields)
+                        )
+        finally:
+            # Only the callback whose own decrement reached zero may release
+            # admission, and only after it has published/checkpointed results.
+            self._release_legacy_activity(group)
 
     def _finish_exception(self, key: str, exc: BaseException) -> None:
         stamp_exception(exc)
@@ -4646,7 +5246,8 @@ class ManagementQualityService:
                  "dispatcher_alive": self._dispatcher.is_alive(),
                  "manager_alive": bool(manager and manager.is_alive()),
                  "workers": workers, "inflight_keys": list(self._inflight),
-                 "group_keys": list(self._groups), "queue_size": self._queue.qsize()}
+                 "group_keys": list(self._groups), "queue_size": self._queue.qsize(),
+                 "scratch_cleanup_errors": list(self._scratch_cleanup_errors)}
         state["finished"] = bool(self._closed and not state["dispatcher_alive"]
                                  and not state["manager_alive"] and not state["inflight_keys"]
                                  and not state["group_keys"] and state["queue_size"] == 0
@@ -4669,6 +5270,19 @@ class ManagementQualityService:
                 state = self.shutdown_state()
                 if not state["finished"]:
                     raise RuntimeError("management_quality_shutdown_unresolved: " + str(state))
+                if self._worker_memory_token is not None:
+                    self.pause_gate.release_activity(self._worker_memory_token)
+                    self._worker_memory_token = None
+                if self._bounded_blocks:
+                    # Empty directories from this session only. Persistent
+                    # plans, checkpoints and completed results stay reusable.
+                    for directory in (self._payload_scratch / "payloads", self._payload_scratch):
+                        try:
+                            directory.rmdir()
+                        except FileNotFoundError:
+                            pass
+                        except OSError:
+                            pass
 
     def _shutdown_impl(
         self,

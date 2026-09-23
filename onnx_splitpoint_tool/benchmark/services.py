@@ -5923,45 +5923,27 @@ class BenchmarkGenerationExecutionService:
                     continue
                 cfg.hef_targets = [target for target in original_hef_targets
                     if any(c['backend'] == backend_key(target) for c in active_backfill)]
-            cluster_skip = None
+            # Keep exclusions local to their accelerator and direction. The
+            # shared ONNX export is also consumed by Generic/other backends.
+            hailo_local_exclusions: List[Dict[str, Any]] = []
             if not feasibility_enabled and not backfill:
-                cluster_skip = should_skip_from_failure_cluster(
-                    b,
-                    hailo_failure_records,
-                    candidate_policy=candidate_policy_index.get(int(b)) or {},
-                    stage="part1",
-                    hw_archs=cfg.hef_targets,
-                    radius=12,
-                    min_failures=2,
-                )
-                if (not cluster_skip.skip) and bool(cfg.hef_part2):
-                    cluster_skip = should_skip_from_failure_cluster(
-                        b,
-                        hailo_failure_records,
-                        candidate_policy=candidate_policy_index.get(int(b)) or {},
-                        stage="part2",
-                        hw_archs=cfg.hef_targets,
-                        radius=12,
-                        min_failures=2,
-                    )
-            if cluster_skip is not None and cluster_skip.skip:
-                detail = str(cluster_skip.detail or "nearby Hailo allocator/layout failures")
-                log(f"b{b}: skip (adaptive Hailo neighborhood filter) - {detail}")
-                discarded_cases.append(
-                    build_benchmark_case_rejection(
-                        boundary=int(b),
-                        folder=f"b{int(b):0{cfg.pad}d}",
-                        reason="hailo_failure_cluster_skip",
-                        stage="part1",
-                        hw_arch=target_label,
-                        detail=detail,
-                    )
-                )
-                discarded_boundaries.add(int(b))
-                completed_boundaries.add(int(b))
-                _persist(status='running', current_boundary=int(b))
-                qput(("prog", made, f"b{b} (skip: Hailo fail-cluster)"))
-                continue
+                for hw_arch in cfg.hef_targets:
+                    for stage, enabled in (("part1", cfg.hef_part1), ("part2", cfg.hef_part2)):
+                        if not enabled:
+                            continue
+                        cluster_skip = should_skip_from_failure_cluster(
+                            b, hailo_failure_records,
+                            candidate_policy=candidate_policy_index.get(int(b)) or {},
+                            stage=stage, hw_archs=[hw_arch], radius=12, min_failures=2,
+                        )
+                        if cluster_skip.skip:
+                            detail = str(cluster_skip.detail or "nearby Hailo allocator/layout failures")
+                            log(f"b{b}: Hailo {hw_arch}/{stage} excluded by failure cluster: {detail}")
+                            hailo_local_exclusions.append(build_benchmark_case_rejection(
+                                boundary=b, folder=f"b{b:0{cfg.pad}d}",
+                                reason="hailo_failure_cluster_skip", stage=stage,
+                                hw_arch=str(hw_arch), detail=detail,
+                            ))
 
             qput(("prog", made, f"Splitting b{b} ({made+1}/{cfg.target_cases})..."))
             log(f"--- [{made+1}/{cfg.target_cases}] Split boundary b{b} ---")
@@ -6035,26 +6017,12 @@ class BenchmarkGenerationExecutionService:
 
             static_part1_skip = "" if backfill else self._yolo26_part1_static_skip_reason(cfg, cut_tensors)
             if static_part1_skip:
-                log(f"b{b}: skip (YOLO26 static Hailo Part1 guard) - {static_part1_skip}")
-                discarded_cases.append(
-                    build_benchmark_case_rejection(
-                        boundary=int(b),
-                        folder=f"b{int(b):0{cfg.pad}d}",
-                        reason="hailo_yolo26_static_part1_guard",
-                        stage="part1",
-                        hw_arch=target_label,
-                        detail=static_part1_skip,
-                    )
-                )
-                discarded_boundaries.add(int(b))
-                completed_boundaries.add(int(b))
-                _persist(status='running', current_boundary=int(b))
-                try:
-                    shutil.rmtree(case_dir, ignore_errors=True)
-                except Exception:
-                    pass
-                qput(("prog", made, f"b{b} (skip: YOLO26 static Part1 guard)"))
-                continue
+                log(f"b{b}: Hailo Part1 excluded by YOLO26 static guard: {static_part1_skip}")
+                for hw_arch in cfg.hef_targets:
+                    hailo_local_exclusions.append(build_benchmark_case_rejection(
+                        boundary=b, folder=folder, reason="hailo_yolo26_static_part1_guard",
+                        stage="part1", hw_arch=str(hw_arch), detail=static_part1_skip,
+                    ))
 
             p1_path = os.path.join(case_dir, f"{cfg.base}_part1_b{b}.onnx")
             p2_path = os.path.join(case_dir, f"{cfg.base}_part2_b{b}.onnx")
@@ -6108,18 +6076,12 @@ class BenchmarkGenerationExecutionService:
                             reason=reason_key,
                             info=(info_payload if isinstance(info_payload, dict) else None),
                         )
-                        if probe.get('effective_part2_outputs'):
-                            rec['effective_part2_outputs'] = list(probe.get('effective_part2_outputs') or [])
-                        discarded_cases.append(rec)
-                        discarded_boundaries.add(int(b))
-                        completed_boundaries.add(int(b))
-                        _persist(status='running', current_boundary=int(b))
-                        try:
-                            shutil.rmtree(case_dir, ignore_errors=True)
-                        except Exception:
-                            pass
-                        qput(("prog", made, progress_label))
-                        continue
+                        if probe_reason in {"empty_cut", "split_failed"}:
+                            raise RuntimeError(detail)
+                        for hw_arch in cfg.hef_targets:
+                            hailo_local_exclusions.append({**rec, "hw_arch": str(hw_arch)})
+                        # Keep the original valid split models returned by the
+                        # precheck; only the Hailo Part2 build is excluded.
                     p1 = probe.get('p1_model')
                     p2 = probe.get('p2_model')
                     split_manifest = dict(probe.get('split_manifest') or {})
@@ -6418,7 +6380,9 @@ class BenchmarkGenerationExecutionService:
                 errors.append(f"b{b}: runner skeleton failed: {exc}")
 
             case_rejection = None
-            case_first_rejection = None
+            case_first_rejection = hailo_local_exclusions[0] if hailo_local_exclusions else None
+            if hailo_local_exclusions:
+                manifest_out.setdefault('hailo', {})['backend_exclusions'] = list(hailo_local_exclusions)
             case_variant_availability: Dict[str, Dict[str, Any]] = {}
             case_suite_full_available = any(
                 bool(
@@ -6525,6 +6489,14 @@ class BenchmarkGenerationExecutionService:
                                     pass
 
                             tgt_out: Dict[str, Any] = {}
+                            excluded_stages = {
+                                str(row.get('stage')): row for row in hailo_local_exclusions
+                                if backend_key(row.get('hw_arch')) == backend_key(hw_arch)
+                            }
+                            for excluded_stage, exclusion in excluded_stages.items():
+                                tgt_out[excluded_stage + '_skipped_by_policy'] = True
+                                tgt_out[excluded_stage + '_error'] = str(exclusion.get('detail') or exclusion.get('reason'))
+                                tgt_out[excluded_stage + '_policy_detail'] = dict(exclusion)
                             suite_tgt = _merged_hailo_evidence_meta(
                                 runtime.suite_hailo_hefs, hw_arch,
                             )
@@ -6553,7 +6525,7 @@ class BenchmarkGenerationExecutionService:
                                 if suite_tgt.get('full_error'):
                                     tgt_out['full_error'] = suite_tgt.get('full_error')
 
-                            if cfg.hef_part1 and (not backfill or any(c['backend'] == backend_key(hw_arch) and c['stage'] == 'part1' for c in active_backfill)):
+                            if cfg.hef_part1 and 'part1' not in excluded_stages and (not backfill or any(c['backend'] == backend_key(hw_arch) and c['stage'] == 'part1' for c in active_backfill)):
                                 out_p1 = os.path.join(case_dir, 'hailo', hw_arch, 'part1')
                                 os.makedirs(out_p1, exist_ok=True)
                                 p1_build_path = p1_hailo_accel_path or p1_path
@@ -6778,7 +6750,7 @@ class BenchmarkGenerationExecutionService:
                                         )
                                 target_diagnostics.append((f"benchmark b{b} part1 @ {hw_arch}", r1))
 
-                            if cfg.hef_part2 and not bool(part1_only) and (not backfill or any(c['backend'] == backend_key(hw_arch) and c['stage'] == 'part2' for c in active_backfill)):
+                            if cfg.hef_part2 and 'part2' not in excluded_stages and not bool(part1_only) and (not backfill or any(c['backend'] == backend_key(hw_arch) and c['stage'] == 'part2' for c in active_backfill)):
                                 out_p2 = os.path.join(case_dir, 'hailo', hw_arch, 'part2')
                                 os.makedirs(out_p2, exist_ok=True)
                                 if part2_output_strategy != 'original' or effective_part2_outputs or part2_output_contract:
@@ -7876,7 +7848,9 @@ class BenchmarkGenerationOrchestrationService:
         return False
 
     def _selected_plan_requires_hailo_part2_prefilter(self, cfg: BenchmarkGenerationOrchestrationConfig) -> bool:
-        """Gate global Hailo Part2 candidate/probe work by selected run semantics."""
+        """Workflow cohorts are fixed; their Part2 checks stay case-local."""
+        if (cfg.evaluation_profile_meta or {}).get("source") == "evaluation_workflow":
+            return False
         return bool(cfg.hef_targets and cfg.hef_part2 and self._selected_plan_requires_hailo_stage2_part2(cfg))
 
 
@@ -7885,7 +7859,9 @@ class BenchmarkGenerationOrchestrationService:
         candidate_search_pool = list(cfg.candidate_search_pool)
         shortlist_prefiltered_boundaries: Set[int] = set()
         if not ranked_candidates or not self._selected_plan_requires_hailo_part2_prefilter(cfg):
-            if bool(cfg.hef_targets and cfg.hef_part2):
+            if (cfg.evaluation_profile_meta or {}).get("source") == "evaluation_workflow":
+                log('Selected Generic cohort preserved; Hailo Part2 exclusions are evaluated per case/backend.')
+            elif bool(cfg.hef_targets and cfg.hef_part2):
                 log('Hailo Part2 prefilter skipped: selected benchmark plan does not include a Hailo Stage2 run; Hailo→TensorRT needs Part1 only.')
             return ranked_candidates, candidate_search_pool, shortlist_prefiltered_boundaries
 

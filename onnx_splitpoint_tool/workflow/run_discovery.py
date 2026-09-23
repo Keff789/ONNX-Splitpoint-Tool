@@ -592,7 +592,9 @@ class EvaluationRunInspection:
         }
 
 
-def inspect_evaluation_run(path: Path | str) -> EvaluationRunInspection:
+def inspect_evaluation_run(
+    path: Path | str, *, allow_cleanup_recovery: bool = False,
+) -> EvaluationRunInspection:
     """Classify one EvaluationRun without creating, touching or deleting files."""
 
     run_dir = Path(path).expanduser()
@@ -801,9 +803,16 @@ def inspect_evaluation_run(path: Path | str) -> EvaluationRunInspection:
         and any(_nonempty_regular_file(path) for path in debug_evidence_paths)
     )
     writable = _path_mode_allows_write(run_dir)
+    # Explicit Resume may reach the existing locked cleanup recovery. Normal
+    # discovery never includes arbitrary running or quarantined runs.
+    recoverable_running = False
+    if allow_cleanup_recovery and status == "running":
+        from .run_control import recoverable_cleanup_evidence
+
+        recoverable_running = bool(recoverable_cleanup_evidence(run_dir))
     resumable = bool(
         identified
-        and status in _RESUMABLE_STATUSES
+        and (status in _RESUMABLE_STATUSES or recoverable_running)
         and writable
         and (run_dir / "profile.yaml").is_file()
         and not (run_dir / "profile.yaml").is_symlink()

@@ -180,6 +180,10 @@ def profile_selection_view(profile: Mapping[str, Any], *, explicit_request: bool
         "energy_enabled": execution.get("energy_enabled"),
         "models": _row_ids(_enabled_rows(suite.get("primary"))),
         "run_profiles": _row_ids(_enabled_rows(profile.get("run_profiles"))),
+        "workflow_execution": {
+            "native_release_mode": (profile.get("workflow_execution") or {}).get("native_release_mode", "global_barrier"),
+            "setup_queue_mode": (profile.get("workflow_execution") or {}).get("setup_queue_mode", "model_barrier"),
+        },
         "selection_policy": {
             key: copy.deepcopy(selection.get(key))
             for key in selection_keys
@@ -263,6 +267,7 @@ def build_profile_start_snapshot(
         "models",
         "run_profiles",
         "selection_policy",
+        "workflow_execution",
         "execution_guard",
     ):
         requested_value = requested.get(field)

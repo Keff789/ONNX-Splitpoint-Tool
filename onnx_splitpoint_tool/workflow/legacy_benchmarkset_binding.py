@@ -1678,8 +1678,8 @@ def _is_frozen_predeclared_execution_union(candidate_plan: Mapping[str, Any]) ->
 def _require_complete_hailo_matrix_for_candidate_plan(
     candidate_plan: Mapping[str, Any],
 ) -> bool:
-    """Use case-wide Hailo rejection only outside the formal frozen audit."""
-    return not _is_frozen_predeclared_execution_union(candidate_plan)
+    """Backend exclusions never discard another executable path of a case."""
+    return False
 
 
 def _deduplicated_generation_identities(
@@ -2436,9 +2436,7 @@ def _verify_frozen_predeclared_candidate_bindings(
         resolved_policy.get("require_single_part2_input", False)
     )
     native_single_part2_input = bool(expected_native_single_part2_input)
-    effective_single_part2_input = bool(
-        requested_single_part2_input or native_single_part2_input
-    )
+    effective_single_part2_input = requested_single_part2_input
     expected_capability_flags = {
         "require_single_part2_input": requested_single_part2_input,
         "requested_require_single_part2_input": (
@@ -2632,220 +2630,53 @@ def _resolve_generation_candidate_scope(
 
     frozen_union = _is_frozen_predeclared_execution_union(candidate_plan)
     if not frozen_union:
-        policy = (
-            dict(expected_selection_policy)
-            if isinstance(expected_selection_policy, Mapping)
-            else {}
+        identities = _deduplicated_generation_identities(
+            list(candidate_plan.get("selected_candidates") or []),
+            label="selected_candidates", allow_exact_duplicates=False,
         )
-        forced_raw = (
-            policy.get("forced_cases")
-            or policy.get("fixed_cases")
-            or policy.get("case_map")
-            or {}
-        )
-        model_id = str(candidate_plan.get("model_id") or "").strip()
-        forced_values: Any = []
-        if isinstance(forced_raw, Mapping):
-            if model_id:
-                forced_values = forced_raw.get(model_id) or []
-            elif len(forced_raw) == 1:
-                forced_values = next(iter(forced_raw.values())) or []
-        elif isinstance(forced_raw, str) and forced_raw.strip():
+        prediction_ids = set(_deduplicated_generation_identities(
+            list(prediction.get("candidates") or []), label="prediction.candidates",
+        ))
+        if any(identity not in prediction_ids for identity in identities):
+            raise ValueError("Selected Generic case is missing from prediction.candidates.")
+        if any(case != f"b{boundary:03d}" for case, boundary in identities):
+            raise ValueError("Selected Generic scope contains a non-canonical case identity.")
+        policy = dict(expected_selection_policy or {})
+        forced = policy.get("forced_cases") or policy.get("fixed_cases") or policy.get("case_map") or {}
+        if isinstance(forced, str):
             try:
-                parsed_forced = json.loads(forced_raw)
+                forced = json.loads(forced)
             except Exception as exc:
-                raise ValueError(
-                    "Forced candidate scope is not valid JSON."
-                ) from exc
-            if isinstance(parsed_forced, Mapping):
-                if model_id:
-                    forced_values = parsed_forced.get(model_id) or []
-                elif len(parsed_forced) == 1:
-                    forced_values = next(iter(parsed_forced.values())) or []
-
-        if isinstance(forced_values, str):
-            forced_declared = [
-                value.strip()
-                for value in forced_values.replace(";", ",").split(",")
-                if value.strip()
-            ]
-        elif isinstance(forced_values, Sequence) and not isinstance(
-            forced_values,
-            (str, bytes, bytearray),
-        ):
-            forced_declared = [
-                str(value).strip()
-                for value in forced_values
-                if str(value or "").strip()
-            ]
-        else:
-            forced_declared = []
-
-        if forced_declared:
-            # ``forced_cases`` is a scope contract, not merely a preferred
-            # shortlist.  Consume the already policy/capability-resolved plan
-            # rows as the exact generator attempt set.  A deterministic
-            # pre-generation native-capability replacement remains valid only
-            # when the candidate plan records the replaced forced identity and
-            # its exclusion explicitly.  The legacy generator itself may never
-            # search the remaining prediction pool after a forced case fails.
-            declared_case_ids: List[str] = []
-            for raw_value in forced_declared:
-                token = str(raw_value or "").strip().lower()
-                if not re.fullmatch(r"b\d+", token):
-                    raise ValueError(
-                        "Forced candidate scope contains a non-canonical "
-                        f"declared case identity: {raw_value!r}."
-                    )
-                case_id = f"b{int(token[1:]):03d}"
-                if case_id in declared_case_ids:
-                    raise ValueError(
-                        "Forced candidate scope contains a duplicate declared "
-                        f"case identity: {case_id!r}."
-                    )
-                declared_case_ids.append(case_id)
-
-            exact_boundaries: List[int] = []
-            exact_case_ids: List[str] = []
-            for index, row in enumerate(
-                list(candidate_plan.get("selected_candidates") or []),
-                start=1,
-            ):
-                if not isinstance(row, Mapping):
-                    raise ValueError(
-                        "Forced candidate scope contains a non-object plan row."
-                    )
-                case_id, boundary = _generation_case_identity(row, index)
-                if (
-                    not re.fullmatch(r"b\d+", case_id)
-                    or boundary is None
-                    or case_id != f"b{int(boundary):03d}"
-                ):
-                    raise ValueError(
-                        "Forced candidate scope contains a non-canonical "
-                        f"case identity: case_id={case_id!r} "
-                        f"boundary={boundary!r}."
-                    )
-                if case_id in exact_case_ids or int(boundary) in exact_boundaries:
-                    raise ValueError(
-                        "Forced candidate scope contains duplicate case "
-                        f"identity: case_id={case_id!r} boundary={boundary!r}."
-                    )
-                exact_case_ids.append(case_id)
-                exact_boundaries.append(int(boundary))
-            if not exact_boundaries:
-                raise ValueError(
-                    "Forced candidate scope resolved to no executable "
-                    "selected_candidates."
-                )
-
-            excluded_forced_ids: set[str] = set()
-            for index, row in enumerate(
-                list(
-                    candidate_plan.get(
-                        "native_capability_excluded_candidates"
-                    )
-                    or []
-                ),
-                start=1,
-            ):
-                if not isinstance(row, Mapping):
-                    raise ValueError(
-                        "Forced candidate scope contains a non-object native "
-                        "capability exclusion."
-                    )
-                excluded_id, excluded_boundary = (
-                    _generation_case_identity(row, index)
-                )
-                if excluded_id not in declared_case_ids:
-                    continue
-                observed_count = _safe_int(
-                    row.get("observed_part2_input_count"),
-                    _safe_int(row.get("part2_input_count"), -1),
-                )
-                if (
-                    excluded_boundary is None
-                    or excluded_id in excluded_forced_ids
-                    or str(row.get("exclude_source") or "").strip()
-                    != "native_split_capability"
-                    or str(row.get("exclude_reason") or "").strip()
-                    != "part2_input_count_not_one"
-                    or str(
-                        row.get("native_capability_contract") or ""
-                    ).strip()
-                    != "exactly_one_part2_external_input"
-                    or observed_count == 1
-                    or observed_count < 0
-                ):
-                    raise ValueError(
-                        "Forced candidate scope contains an unattested native "
-                        f"capability exclusion for {excluded_id!r}."
-                    )
-                excluded_forced_ids.add(excluded_id)
-            capability_replacements: Dict[str, str] = {}
-            for index, row in enumerate(
-                list(candidate_plan.get("native_capability_backfills") or []),
-                start=1,
-            ):
-                if not isinstance(row, Mapping):
-                    raise ValueError(
-                        "Forced candidate scope contains a non-object native "
-                        "capability replacement."
-                    )
-                replacement_id, replacement_boundary = (
-                    _generation_case_identity(row, index)
-                )
-                replaced_token = str(
-                    row.get("native_backfill_replaces_case") or ""
-                ).strip().lower()
-                if not re.fullmatch(r"b\d+", replaced_token):
-                    raise ValueError(
-                        "Forced candidate scope native capability replacement "
-                        "is missing a canonical replaced case identity."
-                    )
-                replaced_id = f"b{int(replaced_token[1:]):03d}"
-                if (
-                    replacement_boundary is None
-                    or not re.fullmatch(r"b\d+", replacement_id)
-                    or replacement_id in declared_case_ids
-                    or replaced_id not in declared_case_ids
-                    or replaced_id not in excluded_forced_ids
-                    or replacement_id in capability_replacements
-                    or replaced_id in capability_replacements.values()
-                    or str(row.get("origin") or "").strip()
-                    != "native_capability_backfill"
-                    or str(row.get("native_backfill_scope") or "").strip()
-                    != "same_stratified_window_or_global_rank_fallback"
-                ):
-                    raise ValueError(
-                        "Forced candidate scope native capability replacement "
-                        f"is not bound to one excluded forced case: "
-                        f"replacement={replacement_id!r} "
-                        f"replaced={replaced_id!r}."
-                    )
-                capability_replacements[replacement_id] = replaced_id
-
-            expected_case_ids = (
-                set(declared_case_ids) - set(excluded_forced_ids)
-            ) | set(capability_replacements)
-            if set(exact_case_ids) != expected_case_ids:
-                raise ValueError(
-                    "Forced candidate scope selected_candidates do not match "
-                    "the declared forced cases plus attested native capability "
-                    "replacements: "
-                    f"declared={declared_case_ids!r} "
-                    f"selected={exact_case_ids!r} "
-                    f"excluded={sorted(excluded_forced_ids)!r} "
-                    f"replacements={sorted(capability_replacements)!r}."
-                )
-            return (
-                list(exact_boundaries),
-                list(exact_boundaries),
-                len(declared_case_ids),
-                True,
-            )
-
-        return ranked_candidates, candidate_search_pool, requested, False
+                raise ValueError("Forced candidate scope is not valid JSON.") from exc
+        model = str(candidate_plan.get("model_id") or "")
+        declared = (forced.get(model) or []) if isinstance(forced, Mapping) else []
+        if not model and isinstance(forced, Mapping) and len(forced) == 1:
+            declared = next(iter(forced.values())) or []
+        if isinstance(declared, str):
+            declared = [value.strip() for value in declared.replace(";", ",").split(",") if value.strip()]
+        if declared:
+            if any(not re.fullmatch(r"b\d+", str(value).strip().lower()) for value in declared):
+                raise ValueError("Forced candidate scope contains a non-canonical declared case identity.")
+            declared = [f"b{int(str(value).strip()[1:]):03d}" for value in declared]
+            if len(set(declared)) != len(declared):
+                raise ValueError("Forced candidate scope contains a duplicate declared case identity.")
+            # Only the user's explicit Single-Tensor constraint can remove a
+            # declared forced case, with its existing prediction evidence.
+            excluded = set()
+            if policy.get("require_single_part2_input") is True:
+                for row in prediction.get("policy_excluded_candidates") or []:
+                    if (isinstance(row, Mapping)
+                            and row.get("exclude_source") == "requested_selection_policy"
+                            and row.get("exclude_reason") == "part2_input_count_not_one"
+                            and _runner_int_or_none(row.get("part2_input_count")) != 1):
+                        excluded.add(_generation_case_identity(row)[0])
+            expected = [case for case in declared if case not in excluded]
+            if [case for case, _boundary in identities] != expected:
+                raise ValueError("Forced candidate scope selected_candidates do not match the declared cases/order.")
+        # The existing plan is the selected cohort, even when fewer than the
+        # requested number are suitable. Backend results cannot add cases.
+        boundaries = [boundary for _case, boundary in identities]
+        return list(boundaries), list(boundaries), len(boundaries), True
 
     identities = _verify_frozen_predeclared_candidate_bindings(
         candidate_plan,
@@ -2989,18 +2820,11 @@ def reconcile_candidate_plan_after_generation(
     expected_selection_strategy: str | None = None,
     expected_native_single_part2_input: bool | None = None,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    """Make the final candidate plan describe the cases actually generated.
+    """Keep selected cases fixed and record the generated accepted/rejected subset.
 
-    The legacy generator may reject a preferred boundary and backfill from the
-    larger ranked pool.  Before this reconciliation the runtime matrix used the
-    backfill while both copies of ``final_candidate_plan.json`` continued to
-    claim the rejected candidate and exposed an empty ``policy_backfills``
-    list.  The returned plan preserves the pre-generation selection as lineage,
-    but its authoritative ``selected_candidates`` matches the generated suite.
-    A prospectively frozen audit union is the deliberate exception: the plan
-    remains immutable, while the returned reconciliation trace records the
-    exact accepted/rejected attempt partition consumed by downstream runtime
-    materialization.
+    The existing plan remains authoritative for IDs and order. Backend or
+    Native exclusions cannot replace cases; the existing reconciliation trace
+    describes which selected cases were materialized.
     """
 
     original = copy.deepcopy(dict(candidate_plan or {}))
@@ -3029,40 +2853,17 @@ def reconcile_candidate_plan_after_generation(
             ),
         )
         if frozen_union
-        else []
+        else _deduplicated_generation_identities(
+            original_selected, label="selected_candidates", allow_exact_duplicates=False,
+        )
     )
-    requested_cases = (
-        len(frozen_identities)
-        if frozen_union
-        else _safe_int(original.get("requested_cases"), len(original_selected))
-    )
-    backend_union = False
+    requested_cases = len(frozen_identities)
     if not frozen_union and backend_selection_state and backend_selection_state.get('enabled'):
-        state = backend_selection_state
-        contracts = list(state.get('contracts') or [])
-        definitions = {row['id'] for row in state.get('contract_definitions', [])}
-        if (state.get('quota') != requested_cases or not contracts
-                or {row['id'] for row in contracts} != definitions
-                or len(contracts) != len(definitions)):
-            raise ValueError('Generator backend selection contract/quota mismatch.')
-        memberships = {}
-        for contract in contracts:
-            cases = list(contract.get('selected_case_ids') or [])
-            if len(cases) > requested_cases or len(cases) != len(set(cases)):
-                raise ValueError('Generator returned more accepted cases than a backend requested.')
-            for case in cases:
-                memberships.setdefault(case, set()).add(contract['id'])
-        actual = {}
-        for idx, row in enumerate(accepted, start=1):
-            cid, _ = _generation_case_identity(row, idx)
-            actual[cid] = set(row.get('backend_selection_contracts') or [])
-        if actual != memberships:
-            raise ValueError('Generator accepted cases disagree with backend selection membership.')
-        backend_union = True
-    if requested_cases > 0 and len(accepted) > requested_cases and not backend_union:
+        raise ValueError("Selected Generic cohort cannot enable backend backfill.")
+    if len(accepted) > requested_cases:
         raise ValueError(
             "Generator returned more accepted cases than the authoritative "
-            f"candidate plan requested ({len(accepted)} > {requested_cases})."
+            f"candidate plan selected ({len(accepted)} > {requested_cases})."
         )
     accepted_identity_rows: List[tuple[str, int]] = []
     seen_case_ids: set[str] = set()
@@ -3082,7 +2883,7 @@ def reconcile_candidate_plan_after_generation(
         seen_boundaries.add(int(boundary))
         accepted_identity_rows.append((case_id, int(boundary)))
 
-    if frozen_union:
+    if frozen_union or original_selected:
         # Do not return before this attempt ledger has proved that every
         # planned candidate was explicitly classified.  In particular,
         # accepted=0 is a valid precursor to the backend-agnostic direct
@@ -3186,6 +2987,23 @@ def reconcile_candidate_plan_after_generation(
             }
             for case_id, boundary in frozen_identities
         ]
+        if not frozen_union:
+            return original, {
+                "status": ("no_accepted_cases_pending_direct_fallback" if not accepted
+                           else "selected_generic_cases_materialized" if not rejected
+                           else "selected_generic_cases_with_rejections"),
+                "changed": False,
+                "pre_generation_case_ids": expected_ids,
+                "final_case_ids": expected_ids,
+                "accepted_case_ids": accepted_ids_exact,
+                "rejected_case_ids": rejected_ids_exact,
+                "attempted_case_ids": expected_ids,
+                "attempt_ledger": attempt_ledger,
+                "removed_case_ids": [], "backfilled_case_ids": [],
+                "materialized_count": len(accepted_ids_exact),
+                "rejected_count": len(rejected_ids_exact),
+                "claim_eligible": not rejected,
+            }
         if not accepted:
             trace = {
                 "status": "frozen_union_no_accepted_cases_pending_direct_fallback",
@@ -3242,228 +3060,11 @@ def reconcile_candidate_plan_after_generation(
             trace["claim_eligible"] = False
         return original, trace
 
-    # Zero accepted cases are not a final generator decision in this adapter:
-    # the caller intentionally attempts backend-agnostic direct materialisation
-    # next.  Rewriting selected_candidates to [] here would disable that fallback.
-    if not accepted:
-        original_ids = [
-            _generation_case_identity(row, idx)[0]
-            for idx, row in enumerate(original_selected, start=1)
-        ]
-        return original, {
-            "status": "no_accepted_cases_pending_direct_fallback",
-            "changed": False,
-            "pre_generation_case_ids": original_ids,
-            "final_case_ids": [],
-            "removed_case_ids": [],
-            "backfilled_case_ids": [],
-        }
-
-    def _indexed(rows: Sequence[Mapping[str, Any]]) -> Dict[str, Dict[str, Any]]:
-        out: Dict[str, Dict[str, Any]] = {}
-        for idx, row in enumerate(rows, start=1):
-            cid, boundary = _generation_case_identity(row, idx)
-            if cid:
-                out[cid] = copy.deepcopy(dict(row))
-            if boundary is not None:
-                out[f"boundary:{int(boundary)}"] = copy.deepcopy(dict(row))
-        return out
-
-    original_index = _indexed(original_selected)
-    prediction_rows = [
-        dict(row) for row in list(prediction.get("candidates") or [])
-        if isinstance(row, Mapping)
-    ]
-    pool_index = _indexed(prediction_rows)
-    rejected_index = _indexed(rejected)
-    original_ids = [_generation_case_identity(row, idx)[0] for idx, row in enumerate(original_selected, start=1)]
-    accepted_ids = [_generation_case_identity(row, idx)[0] for idx, row in enumerate(accepted, start=1)]
-    original_id_set = set(original_ids)
-    accepted_id_set = set(accepted_ids)
-    removed_ids = [cid for cid in original_ids if cid not in accepted_id_set]
-    added_ids = [cid for cid in accepted_ids if cid not in original_id_set]
-    changed = original_ids != accepted_ids
-
-    prediction_pool_boundaries = {
-        int(boundary)
-        for _case_id, boundary in (
-            _generation_case_identity(row, idx)
-            for idx, row in enumerate(prediction_rows, start=1)
-        )
-        if boundary is not None
+    return original, {
+        "status": "empty_selected_generic_cohort", "changed": False,
+        "pre_generation_case_ids": [], "final_case_ids": [],
+        "removed_case_ids": [], "backfilled_case_ids": [],
     }
-    added_boundaries = {
-        int(boundary)
-        for case_id, boundary in accepted_identity_rows
-        if case_id in set(added_ids)
-    }
-    outside_prediction_pool = sorted(
-        added_boundaries - prediction_pool_boundaries
-    )
-    if outside_prediction_pool:
-        raise ValueError(
-            "Generator backfill is outside prediction.candidates: "
-            + ", ".join(f"b{boundary:03d}" for boundary in outside_prediction_pool)
-        )
-
-    if not changed:
-        return original, {
-            "status": "matches_pre_generation_plan",
-            "changed": False,
-            "pre_generation_case_ids": original_ids,
-            "final_case_ids": accepted_ids,
-            "removed_case_ids": [],
-            "backfilled_case_ids": [],
-        }
-
-    # Never invent causal pairings for multiple backfills from list order.  A
-    # single replacement is unambiguous; otherwise preserve the removed set and
-    # require an explicit generator-provided replaced_case_id for a one-to-one
-    # claim.
-    replacement_for: Dict[str, str] = {}
-    if len(added_ids) == 1 and len(removed_ids) == 1:
-        replacement_for[added_ids[0]] = removed_ids[0]
-
-    final_selected: List[Dict[str, Any]] = []
-    generated_backfills: List[Dict[str, Any]] = []
-    for rank, accepted_row in enumerate(accepted, start=1):
-        cid, boundary = _generation_case_identity(accepted_row, rank)
-        base = original_index.get(cid) or (
-            pool_index.get(f"boundary:{int(boundary)}") if boundary is not None else None
-        ) or pool_index.get(cid) or {}
-        row = {**copy.deepcopy(dict(base)), **copy.deepcopy(accepted_row)}
-        row["case_id"] = cid
-        if boundary is not None:
-            row["boundary"] = int(boundary)
-            row["split_index"] = int(boundary)
-        row["selection_rank"] = rank
-        row["generation_status"] = "accepted_by_benchmark_generator"
-        if cid in added_ids:
-            explicit_replaced = str(
-                accepted_row.get("replaced_case_id") or ""
-            ).strip()
-            if explicit_replaced:
-                explicit_replaced, _ = _generation_case_identity(
-                    {"case_id": explicit_replaced}
-                )
-                if explicit_replaced not in removed_ids:
-                    raise ValueError(
-                        "Generator backfill names a replaced_case_id that was "
-                        "not removed from the authoritative plan."
-                    )
-            replaced = explicit_replaced or replacement_for.get(cid, "")
-            rejected_row = rejected_index.get(replaced) or {}
-            reason = str(
-                rejected_row.get("detail")
-                or rejected_row.get("reason")
-                or "benchmark generator replaced an infeasible preferred candidate"
-            )
-            row["origin"] = "generator_policy_backfill"
-            row["selection_reason"] = reason
-            if replaced:
-                row["replaced_case_id"] = replaced
-            else:
-                row["replacement_mapping_status"] = (
-                    "unpaired_multiple_backfill_without_generator_causality"
-                )
-                row["removed_case_ids"] = list(removed_ids)
-            generated_backfills.append({
-                "case_id": cid,
-                "boundary": int(boundary) if boundary is not None else None,
-                "origin": "generator_policy_backfill",
-                "reason": reason,
-                "replaced_case_id": replaced,
-                "replacement_mapping_status": (
-                    "explicit_or_single_unambiguous"
-                    if replaced
-                    else "unpaired_multiple_backfill_without_generator_causality"
-                ),
-                "removed_case_ids": list(removed_ids) if not replaced else [],
-                "source_rank": row.get("source_rank", row.get("rank", "")),
-                "generation_status": "accepted_by_benchmark_generator",
-            })
-        final_selected.append(row)
-
-    final_excluded: List[Dict[str, Any]] = []
-    excluded_seen: set[str] = set()
-    for idx, excluded_row in enumerate(list(original.get("excluded_candidates") or []), start=1):
-        if not isinstance(excluded_row, Mapping):
-            continue
-        cid, _ = _generation_case_identity(excluded_row, idx)
-        if cid in accepted_id_set or cid in removed_ids:
-            continue
-        final_excluded.append(copy.deepcopy(dict(excluded_row)))
-        excluded_seen.add(cid)
-    for idx, removed_id in enumerate(removed_ids, start=1):
-        original_row = original_index.get(removed_id) or {}
-        rejected_row = rejected_index.get(removed_id) or {}
-        merged = {**copy.deepcopy(dict(original_row)), **copy.deepcopy(dict(rejected_row))}
-        cid, boundary = _generation_case_identity(merged, idx)
-        cid = removed_id or cid
-        merged["case_id"] = cid
-        if boundary is not None:
-            merged["boundary"] = int(boundary)
-            merged["split_index"] = int(boundary)
-        merged["origin"] = "generator_rejected_preferred_candidate"
-        merged["exclude_reason"] = str(
-            rejected_row.get("reason")
-            or rejected_row.get("detail")
-            or "rejected_by_benchmark_generator"
-        )
-        merged["generation_status"] = "rejected_by_benchmark_generator"
-        final_excluded.append(merged)
-        excluded_seen.add(cid)
-
-    retained_backfills: List[Dict[str, Any]] = []
-    for idx, row in enumerate(list(original.get("policy_backfills") or []), start=1):
-        if not isinstance(row, Mapping):
-            continue
-        cid, _ = _generation_case_identity(row, idx)
-        if cid in accepted_id_set:
-            retained_backfills.append(copy.deepcopy(dict(row)))
-    all_backfills = retained_backfills + generated_backfills
-
-    pre_generation_artifact_id = str(original.get("artifact_id") or "")
-    reconciled = copy.deepcopy(original)
-    reconciled["schema_version"] = max(4, _safe_int(original.get("schema_version"), 0))
-    reconciled["pre_generation_artifact_id"] = pre_generation_artifact_id
-    reconciled["pre_generation_selected_candidates"] = original_selected
-    reconciled["selected_candidates"] = final_selected
-    reconciled["excluded_candidates"] = final_excluded
-    reconciled["policy_backfills"] = all_backfills
-    reconciliation = {
-        "status": "reconciled_after_generator_backfill",
-        "changed": True,
-        "pre_generation_artifact_id": pre_generation_artifact_id,
-        "pre_generation_case_ids": original_ids,
-        "final_case_ids": accepted_ids,
-        "removed_case_ids": removed_ids,
-        "backfilled_case_ids": added_ids,
-        "backfill_count": len(generated_backfills),
-        "generator_reported_backfill_count": _safe_int(
-            (generation_summary or {}).get("backfilled_cases_count"),
-            len(generated_backfills),
-        ),
-        "claim_eligible": not bool(
-            str(original.get("candidate_universe_mode") or "").strip()
-            and added_ids
-        ),
-    }
-    reconciled["generation_reconciliation"] = reconciliation
-    if reconciliation["claim_eligible"] is False:
-        reconciled["audit_plan_status"] = "generation_changed_predeclared_candidate_universe"
-    artifact_identity = {
-        "model_id": reconciled.get("model_id"),
-        "source_prediction_artifact_id": reconciled.get("source_prediction_artifact_id"),
-        "pre_generation_artifact_id": pre_generation_artifact_id,
-        "selected_candidates": final_selected,
-        "policy_backfills": all_backfills,
-    }
-    reconciled["artifact_id"] = (
-        f"candidate_plan_{str(reconciled.get('model_id') or 'model')}_"
-        f"{sha256_payload(artifact_identity)[:12]}"
-    )
-    return reconciled, reconciliation
 
 
 def write_reconciled_candidate_plan_mirrors(
@@ -3968,11 +3569,8 @@ def materialize_legacy_benchmark_set(
         elif physical_scope.get('identity_mode') == 'physical_strict_v3':
             raise ValueError('backend_backfill_physical_descriptors_missing')
 
-    # A prospectively frozen score-independent audit observes the declared
-    # case on every backend that can materialize it.  One missing Hailo backend
-    # is therefore a backend-terminal observation, not permission to discard
-    # the whole case (and with it successful Hailo/non-Hailo artefacts).  Normal
-    # non-audit generation retains its complete-matrix/backfill policy.
+    # One missing Hailo backend is a backend-local result. Every selected
+    # Generic case retains its independently executable paths.
     require_complete_hailo_matrix_per_case = (
         _require_complete_hailo_matrix_for_candidate_plan(candidate_plan)
     )
@@ -4000,7 +3598,7 @@ def materialize_legacy_benchmark_set(
                 scope_label = (
                     "frozen predeclared execution union"
                     if frozen_predeclared_union
-                    else "forced candidate scope"
+                    else "selected Generic candidate scope"
                 )
                 _log(
                     f"{scope_label}: preserving exact candidate order/scope; "

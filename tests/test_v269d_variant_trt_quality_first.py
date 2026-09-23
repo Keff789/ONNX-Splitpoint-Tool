@@ -10,13 +10,22 @@ import pytest
 
 from onnx_splitpoint_tool.trt_quality_chain import TensorRTQualityChainError
 from tests.test_v269d_trt_quality_chain import _result, _strict_producer, _summary
+from tests.test_v269d_trt_quality_first_runtime import (
+    _load_runner,
+    _namespace,
+    _write_quality_producer_set,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _load_script(name: str):
-    path = ROOT / "scripts" / name
+def _load_script(name: str, *, packaged: bool = False):
+    directory = (
+        ROOT / "onnx_splitpoint_tool" / "resources" / "remote_scripts"
+        if packaged else ROOT / "scripts"
+    )
+    path = directory / name
     spec = importlib.util.spec_from_file_location(f"test_quality_first_{path.stem}", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -265,13 +274,61 @@ def test_update_path_stages_one_set_and_forwards_exact_remote_path(
     }
     full_shell = labelled["full:deepx"][-1]
     expected_remote = (
-        f"/home/nx/native_fifo_evalsets/{run.name}/.quality_first/"
+        f"/home/nx/native_fifo_evalsets/{run.name}/quality_first/"
         "tensorrt_quality_producer_set.json"
     )
     assert f"--trt-quality-producer-json {expected_remote}" in full_shell
     backend = stage["backend_results"][0]
     assert backend["trt_quality_producer_set"]["remote_path"] == expected_remote
     assert backend["native_full_baseline_available"] is True
+
+
+@pytest.mark.parametrize("packaged", [False, True], ids=["source", "packaged"])
+def test_staged_trt_producer_path_satisfies_runtime_role_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, packaged: bool,
+) -> None:
+    module = _load_script("update_evalset_native_producers.py", packaged=packaged)
+    runner = _load_runner()
+    suite, producer_file, expected = _write_quality_producer_set(tmp_path)
+    ns = _namespace(producer_file)
+    transport_calls: list[list[str]] = []
+
+    def fake_transport(cmd: list[str], **_kwargs: Any) -> dict[str, Any]:
+        transport_calls.append(list(cmd))
+        return {"rc": 0, "stdout_tail": "", "stderr_tail": ""}
+
+    def no_runtime(*_args: Any, **_kwargs: Any) -> None:
+        pytest.fail("producer role validation must not launch a runtime or build")
+
+    monkeypatch.setattr(module, "_run", fake_transport)
+    monkeypatch.setattr(runner, "_run", no_runtime)
+    staged_path, _steps = module._stage_remote_trt_quality_producer_set(
+        local_path=producer_file,
+        ssh="fixture-only",
+        remote_root=ns.root,
+        timeout=10,
+    )
+    ns.trt_quality_producer_json = staged_path
+    loaded, status, verified_path = runner._quality_first_trt_producer_identity(
+        suite, "resnet50", ns,
+    )
+    assert status == "quality_first_identity_verified_exact"
+    assert loaded == expected
+    assert verified_path == producer_file
+    assert staged_path == str(producer_file)
+    assert any(cmd[0] == "rsync" for cmd in transport_calls)
+
+    # Identical valid bytes at the former dot-directory path must remain invalid.
+    wrong_role = Path(ns.root) / ".quality_first" / producer_file.name
+    wrong_role.parent.mkdir()
+    wrong_role.write_bytes(producer_file.read_bytes())
+    ns.trt_quality_producer_json = str(wrong_role)
+    loaded, status, rejected_path = runner._quality_first_trt_producer_identity(
+        suite, "resnet50", ns,
+    )
+    assert loaded is None
+    assert status == "quality_first_producer_set_role_path_mismatch"
+    assert rejected_path == wrong_role
 
 
 def test_update_cli_preserves_producer_set_mapping() -> None:

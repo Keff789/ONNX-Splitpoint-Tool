@@ -253,7 +253,7 @@ def test_frozen_contract_still_rejects_changed_implementation_sha() -> None:
     tampered["contract_sha256"] = canonical_json_sha256(tampered)
     with pytest.raises(
         FrozenPostprocessError,
-        match="frozen_postprocess_implementation_sha256_mismatch",
+        match="yolov7_sigmoid_arithmetic_implementation_mismatch",
     ):
         verify_frozen_postprocess_contract(tampered)
 

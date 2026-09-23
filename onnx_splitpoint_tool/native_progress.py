@@ -72,6 +72,7 @@ def run_streaming(
     should_cancel: Callable[[], bool] | None = None,
     process_registry: ProcessTreeRegistry | None = None,
     before_terminate: Callable[[], Any] | None = None,
+    tick_callback: Callable[[], Any] | None = None,
 ) -> StreamingCompletedProcess:
     """Run a process while forwarding every output line and emitting heartbeats."""
     merged_env=dict(os.environ)
@@ -148,6 +149,8 @@ def run_streaming(
     pipe_drain_incomplete = False
     try:
         while True:
+            if tick_callback is not None:
+                tick_callback()
             now=time.time()
             try:
                 item=q.get(timeout=0.25)

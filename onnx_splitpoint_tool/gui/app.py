@@ -6843,6 +6843,37 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         return {}
 
     def _eval_workflow_snapshot_options(self, *, resume_override: Optional[bool] = None) -> WorkflowOptions:
+        if resume_override is True:
+            # Resume is an action on the selected Run, whose saved request may
+            # differ from today's edited profile or the newest matching Run.
+            raw = str(getattr(getattr(self, "var_eval_workflow_last_run_dir", None), "get", lambda: "")() or "").strip()
+            raw = raw or str(getattr(self, "_last_evaluation_workflow_run_dir", "") or "").strip()
+            selected = Path(raw).expanduser() if raw else self._evaluation_workflow_last_run_dir(purpose="resume")
+            manifest_path = selected / "run_manifest.json"
+            if selected.is_symlink() or manifest_path.is_symlink():
+                raise ValueError("Resume blocked: selected Run is not a regular archived Run.")
+            try:
+                saved = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise ValueError("Resume requires an existing selected EvaluationRun.") from exc
+            if (not isinstance(saved, Mapping)
+                    or saved.get("schema") != "onnx-splitpoint/evaluation-run-manifest"
+                    or saved.get("run_id") != selected.name
+                    or not isinstance(saved.get("options"), Mapping)):
+                raise ValueError("Resume blocked: selected Run has no saved workflow request.")
+            options = WorkflowOptions(**dict(saved["options"]))
+            options.resume = True
+            options.run_id = selected.name
+            options.out = str(selected.resolve().parent)
+            # These are one-invocation actions, never archived permissions.
+            options.force_build_confirmed_backends = ()
+            options.force_build_confirmation_source = ""
+            options.require_fresh_run = False
+            options.force_stage = []
+            options.stop_after = None
+            options.rerun_generated_only = False
+            options.resume_missing_full_quality_only = False
+            return options
         profile = str(getattr(getattr(self, "var_eval_workflow_profile", None), "get", lambda: "")() or "").strip()
         if not profile:
             raise ValueError("Please select an Evaluation Profile or YAML file.")

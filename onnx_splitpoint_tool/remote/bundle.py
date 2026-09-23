@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from onnx_splitpoint_tool.process_control import budget_controller_work
+
 import fnmatch
 import gzip
 import hashlib
@@ -386,6 +388,7 @@ def _raw_content_digest(path: Path) -> str:
     return h.hexdigest()
 
 
+@budget_controller_work("prepare")
 def build_suite_bundle(
     suite_dir: Path,
     out_path: Path,

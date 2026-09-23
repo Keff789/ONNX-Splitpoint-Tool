@@ -705,3 +705,300 @@ PCAP, normale Qualitätsverluste, 95%-Unsicherheit und Screening-/Stationarität
 bleiben getrennt offen. Qualitätsforschung und neue Final-/Nachtläufe sind
 zurückgestellt. Commit-/Tag-/Pushnachweis wird nach Ausführung ausschließlich im
 privaten FINAL.json ergänzt, ohne zirkuläre Commitidentität in Sourceindizes.
+
+
+## 2026-09-22 – Quality-Speed AP00–AP05, isolierter Kandidat
+
+Präzisierter Auftrag und Reviews vollständig gelesen; Basis f36dd9ad/v2.90.1.
+Originalworkflow regulär abgebrochen/terminal, Produktlocks freigegeben; 34 fertige
+von 77 zentralen Zeilen erhalten, übrige cancelled. Lokale Cleanupbelege geprüft,
+kein neuer SSH-/Hardwarestart. Hauptbaum/Installation unverändert. Sitzung
+nachweisbar gpt-6-astra, lokale Einstellung xhigh; Ultra nicht attestiert.
+Externe Belege: `/home/kmika/quality_speed_ap00_ap05_20260922_quoqh0fv/evidence`.
+
+**AP00:** Produktloader und tatsächliche Importbindung geprüft. 20 geschützte
+Originaldateien unverändert; n=B=5000, Seed20260710, Python3.12.3, NumPy1.26.4,
+pycocotools2.0.11. YOLOv7 besitzt vollständige Producerrecords, keine fertige
+historische zentrale CI. Klassifikation/YOLO26/YOLOv7 zusätzlich an Punkten und
+sechs expliziten Originalziehungen geprüft; diese Diagnose ist kein vollständiges CI.
+
+**AP01/AP02/AP03:** Normale Profile, Runmodes, Schema, beide GUIeditoren und
+Service führen dieselben Ausführungsflags. Referenzthreads separat einstellbar;
+Legacy-default und bisherige Profile erhalten. Echter Worker-/Phasen-/Drawstatus,
+Wartezustände, gedrosselte Heartbeats und getrennte Laufzeiten. Kompakter
+All-area/maxDets100-COCO-Kern, unveränderte Raster/Ties/Multiplizitäten/Dtypes;
+offizieller Vollreport separat. Runlokale absolute Referenzvektoren binden reale
+Payloads, geordnete IDs, sämtliche GT-Felder, Plan und numerische Versionen.
+Identität nur bei echter Payloadgleichheit; Nullreferenzpositionen bleiben erhalten.
+M1-Voraussetzung vor Schedulerarbeit: vollständige exakte Originalparität,
+Legacy4997,068s versus kompakt561,270s, jeweils vier Worker und eine kalte Messung.
+
+**AP04:** Ein aktiver schwerer Request, begrenzter Loader-Koordinator, Queue nur
+mit gebundenen JSONdescriptoren. CPUbudget aus Affinität/Quota, RAMvorprüfung
+inklusive Payloads, privater Daten, Plan und Arbeitsreserve. PCG64/int64-Plan einmal
+200000000Byte, read-only mmap und Wiederverwendung. Pro Worker/Phase einmalige
+Vorbereitung, Folgeblöcke mit nachgewiesenen Cachehits. Referenzphase vor Kandidat,
+keine wartenden Kandidaten in belegten Referenzslots. Atomare vollständige,
+identitätsgebundene Checkpoints; Merge prüft Plan/Punkte/Metriksets und [0,B)
+exakt einmal. Kein fertiger Paarcache vor Gesamtmerge. Crash/Cancel/Resume,
+Teilwrites, korrupte Pläne, geänderte Blockgröße und Slotfreigabe lokal geprüft.
+Nur eigene terminale Payloadkopien werden entfernt, gültige Ergebnisse bleiben.
+Delta-only-Customfactories behalten ihre Auswertung, melden fehlende absolute
+Checkpointfähigkeit ausdrücklich; normale Classification/Detection vollständig.
+
+**AP05:** Normaler Replay-CLI mit Profil/Snapshot, expliziten zentralen Zeilen und
+sequenziellem Laden; gespeicherte Wissenschaftsbudgets unverändert. Historische
+Completed- und explizite Producer-only-Admission getrennt. Moderne Accuracyklassen,
+Ratiointervalle und Warnungen durch normale JSON/CSV/Markdown/LaTeX-Projektion bis
+zur normalen GUIanzeige. Wissenschaftlicher Hash ohne Laufzeit-/Cacheidentität.
+Softwarematrix443 eindeutige Fälle abgedeckt: breiter Lauf440PASS/3FAIL, betroffene
+94 nach Korrektur PASS; abschließende Beobachtbarkeitsänderung62PASS +Timing1PASS.
+Replay69PASS einschließlich normaler Profil→Spawn→Writer→GUI-Kette und negativer
+Startgrenzen. Tatsächliche neue Originaladmission70/3/33 ohne Numerikstart bestanden.
+
+**Finaler Originalnachweis:** eingefrorene Source `m2_final_frozen_source_v2`,
+vier Worker, Block256, Checkpoints an, n=B=5000/Seed20260710 unverändert.
+YOLO11l/Hailo8 Zeile30: kalt604,977s, exakt alle absoluten Komponenten/Deltas/
+Ratios/Undefinedmasken/Punkte/Quantile/wissenschaftlichen Felder wie Legacy.
+Beobachtet8,260-fach, eine Messung pro Bedingung, keine generelle Faktor-Zusage.
+Paarwarm3,860s mit null neuen Draws. Anderer Originalkandidat Zeile25 mit derselben
+Referenz315,219s; keine neue Referenzberechnung, alle5000 Referenzwerte identisch.
+Historische Berichte beider Zeilen exakt erhalten: Accuracy-Loss/Reference-Close.
+Prozesssummen alle5s: kalter RSS4482964→3446688KiB, PSS4402315→3323296KiB.
+Nur Stichprobenpeaks. Normaler Loader/Service/Writer, unveränderte Inputs/Source
+und null Aufrufe der gesperrten Parent-Startgrenzen belegt; Spawn-Kinder separat
+an reinen CPU-Statistikcode gebunden, keine behauptete allgemeine Prozesssandbox.
+
+**Abnahme getrennt:** Software/Offline-Statistik PASS. Neue reale normale GUI-/
+Hardware-/Quellen-/60-s-Energieabnahme NICHT AUSGEFÜHRT. Originalrun bleibt
+abgebrochen. AP06–AP11, Qualitätsforschung und Nacht-/Finalkampagnen zurückgestellt.
+Keine Installation, Builds, Budgetkürzung, Commits, Tags oder Pushes.
+Nach separater Freigabe normal aktivierbar: statistics.engine=optimized_coco_v1,
+workers=4, block_repetitions=256, checkpoint_blocks=true,
+prepared_cache_limit_mib=512; management_reference.intra_op_threads=4 explizit.
+Rollback engine=legacy; gültige Altresultate bleiben, alte Teilresultate werden
+nicht als Checkpoints interpretiert. Vollständiger Patch und Abschlussbericht
+liegen im externen Arbeitsordner; keine automatische Produktionsaktivierung.
+
+### AP06–AP08: Cancel-Übergang, lokale Teilabnahme (2026-09-22)
+
+Arbeitsbasis ist der geprüfte AP00–AP05-Kandidat, nicht der unveränderte HEAD.
+Der Originalrun enthält 34 Completed und 43 tatsächliche Cancels (31 primäre,
+12 TRT-Full-Begleiter). Der normale Join behandelte fehlende Erfolgsattestierungen
+dieser Cancels als technische Fehler. Der enge Übergang prüft jetzt tatsächlichen
+Run-Cancel, Requestidentität, Manifestbindung und Reihenfolge der Cancelzeiten.
+Frühere technische Fehler und ServiceClosed ohne Run-Cancel bleiben Fehler.
+Erhaltene Completed-Identitäten können erneut strikt zusammengeführt werden.
+Cancel zeigt Abwicklung statt Bootstrap-ETA; keine Draws werden ergänzt.
+
+Software: 27 neue Cancel-Regressionen PASS (33,29 s), einschließlich Original-
+Replay, normalem Writer, GUIprojektion und negativen Bindungsfällen. Original-
+dateien unverändert; sämtliche Ausgaben liegen im externen AP06–AP08-Arbeitsroot.
+Reale normale GUI-/Hardwareabnahme: noch NICHT ausgeführt. AP06-Captureanbindung,
+AP07-Fallfreigabe und AP08-Integration sind noch in Arbeit; keine Übernahme.
+
+
+## AP06–AP08 – Softwareintegration, GUI-Abnahme noch offen (22.09.2026)
+
+Auf dem geprüften AP00–AP05-Kandidaten: gemeinsamer Statistikpool mit bis zu zwei aktiven Kontexten; CPU/RAM-Zulassung für Referenz, Loader, Draws und Flush. Der einmalige Vergleich mit n=B=5000 für 6 Worker/2 Kontexte (768 MiB private Vorbereitung) ist für beide Originalfälle bitgenau zu Draws und wissenschaftlichen Ergebnisfeldern einschließlich CI; Batch872,35s, kein Swap. `accuracy_loss` und `reference_close` bleiben unverändert. Die kleinen Skalierungsvergleiche liefern keinen stabilen Vorteil für6/2; neue normale Abnahmekopien behalten4/1. Kein universeller Speedup behauptet.
+
+AP06 erweitert vorhandene Ressourcen-, Prozessbaum- und Leasemechanismen: zuerst DUT-Neuzulassung sperren und laufende Transfers fertigstellen, dann Controller-/Empfangspfad drainen. GO/END/CLOSE und tatsächliches Cleanup binden die Freigabe; verlorene Besitzer bzw. unbekanntes Quellenende bleiben gesperrt. Energie-Checkpointlocks schützen kurze Transaktionen; geteilte Transfer-/Postcalcslots gelten auch für Kindprozesse. Lokale Regressionen decken Aliase, Cancel, Ownerverlust, verschachtelte Arbeit, Fairness und Wiederverwendung derselben Poolprozesse ab.
+
+AP07 publiziert vollständige gebundene Fälle vor dem globalen Quality-Abschluss. Strikte Vendor-/TRT-/Splitbindungen, Full-Owner, unveränderliche Leaf-Snapshots und laufende Checkpoints vor Dispatch bleiben verbindlich. AP08 verwendet dieselbe physische Setupqueue für Generic und Native, auch über Modellgrenzen. Kontrollierte normale Stage-/Coordinatorprüfungen zeigen Modell2 auf SetupA während Modell1 aufSetupB und verhindern offene Starts nach Cancel. Die normale Profilauflösung, Summary und Startsnapshots tragen die neuen getrennten Schalter.
+
+Softwarebelege und reale Abnahme bleiben getrennt: gemeinsame Schlussauswahl und echte G1/G2-Host-GUI noch ausstehend; bisher0 Workflow-/Collectorstarts, keine Übernahme in die Hauptinstallation. Die bestehende globale Single-Input-Filtergrenze ist weiterhin offen; die lokale20er-Auswahl/Native-Subset-Regression beweist keine End-to-End-Aufhebung. AP09–AP11 und Qualitätsforschung bleiben vertagt.
+
+### AP06–AP08: Abschlussintegration und echte Profilbedienung (22.09.2026)
+
+- Isolierter Kandidat auf geprüftem AP00–AP05-Stand; Hauptinstallation weiterhin unverändert. Keine Commit-/Push-/Versionsaktion.
+- Echte Tk-Editorprüfung: Save/Reload → sichtbare Summary → normaler Startsnapshot bewahrt feste Fälle, begrenzten Native-Checkpoint und 60-s-Nativeenergie. Drei konkrete Editorverluste korrigiert; neue Regression 2 PASS.
+- Gemeinsame erste Auswahl: 749 PASS, 10 FAIL, 11 Setupfehler. Decorator-Import, fehlender optionaler Runner-Optionszugriff und Cancel-Spool-Bereinigung korrigiert; gezielte Nachprüfungen 51 bzw. 95 PASS. Abschließende gemeinsame Auswahl folgt.
+- Drei zusätzliche Cleanup-Fehler auf unveränderter AP00–AP05-Basis reproduziert. Bestehender Guardian-Endbeleg bleibt für konkurrierende exakte Cleanup-Leser erhalten; 6 Regressionen PASS. Eine veraltete Testannahme auf schon vorhandenen technischen Fehler `pipe_drain_incomplete` präzisiert; kein Erfolg aus abgebrochener Pipe.
+- Strenge Warm-Policy gilt auch direkt an späterer Hailo-Continuation: ein zwischenzeitlich verlorener HIT darf keinen Kaltbau auslösen. Native-Engine-Builds bleiben im separaten Abnahmeprofil aus.
+- Normale Profile G1/G2: per_case/per_setup, Statistik 4 Worker/1 Request, Upload1; funktionale Optionen 2 Requests/Upload2 lokal geprüft. Messvergleich rechtfertigt keinen stabilen größeren Default. Vollständige n=B=5000-Parität mit 6/2 und 768 MiB Vorbereitung exakt (872,35 s); kein universeller Speedup behauptet.
+- Reale normale GUI-/Hardwareabnahme noch ausstehend; Startjournal weiterhin 0/3 Workflows und 0/36 Collector. Softwarebelege sind keine Hardwarefreigabe. Kein Final-/Nachtlauf, keine geänderte Messdauergrenze; Qualityforschung/AP09–AP11 und bestehende globale 20er-Filtergrenze bleiben getrennt.
+
+### AP06–AP08: Softwareabschluss, Hardwareabnahme vor Start blockiert (22.09.2026)
+
+- Gemeinsame finale lokale Auswahl: **793 PASS, 0 FAIL, 0 ERROR**, 242,33 s; 24 Warnungen (Deprecation/JUnit-Metadaten), keine übersprungenen Tests. Normale echte Host-GUI-Vorprüfung G1/G2 bis Summary/Startsnapshot/Startbutton erfolgreich; Button nicht betätigt, keine Worker gestartet.
+- Lesende aktuelle Registry-/TRT-Receipt-/ABI-Prüfung auf H8/H10: keine bekannten konkurrierenden Produktprozesse, aktiven Produktleases oder gehaltenen Produktlocks. Vorhandene Full- und Native-Part2-Engines passen.
+- Konkreter gemeinsamer G1/G2-Blocker: normale Generic-TRT-Performancepflicht auf H8 für MobileNetV3Large b135. `trt_p1`: MISS/not_found; `trt_p2 b135:generic`: MISS/source_onnx_mismatch. Der echte normale Generator-/Owner-/Requirement-Resolver bestätigt beide Pflichtbindungen; H10-Übermengen der lesenden Vorprobe separat ausgeschlossen. Exakte Hashes/Shapes/Receipt-Prüfung im Aufgabenroot `evidence/gui_preparation/blocked_artifact_bindings.json`.
+- Gemäß Auftrag keine Kaltbauten, kein Scopeaustausch zum Umgehen fehlender Artefakte, kein G1/G2-Workflow-/Collectorstart. Teststartjournal **0/3 Workflows, 0/36 Collectors**. Damit keine reale Native-/Energieabnahme und **keine produktive Übernahme**; Hauptinstallation unverändert und eigene Quellintegritätsprüfung PASS.
+- Implementierung und separate aktivierte Testprofile bleiben im isolierten Kandidaten. Erst nach Verfügbarkeit der exakt benötigten warmen Artefakte kann die genehmigte kleine normale GUI-Abnahme unter demselben Root/Zähler fortgesetzt werden. Kein automatischer Build oder Final-/Nachtlauf. AP09–AP11 und die bestehende globale 20er-Auswahlfiltergrenze bleiben offen.
+
+- Abschlussnachträge: 5 instrumentierte lokale Schedulerfälle PASS (4,84 s) mit monotonic-Zeitbelegen; zusätzlicher explizit deaktivierter Warm-Policy-Kompatibilitätsfall, 13 fokussierte Continuation-Tests PASS (1,69 s). Deaktivierte Altpolicy bleibt unverändert. Keine Hardwarestarts.
+
+
+## AP00–AP08 Übernahme v2 – lokale Ergänzungen (23.09.2026)
+
+Der vollständig ersetzende Übernahmeauftrag v2 wird im bisherigen Aufgabenroot
+fortgeführt. Ursprünglicher AP00–AP08-Abschlussstand einschließlich Cancel und
+WarmPolicy erhalten; die abgebrochene zusätzliche supported_subset-Architektur
+wird nicht übernommen. Kein neuer Hash-/Journal-/Buildermechanismus.
+Der alte Thesisrun vom 23.09.2026 wurde durch GUI-Cancel beendet:
+Artefaktabschluss PASS, Run-Lock released, keine aktiven lokalen/Remotejobs.
+Kein Resume dieses Runs und kein neuer Thesisstart.
+
+R2: Direkter Native-Workflow reicht --resume-checkpoint genau bei explizitem
+Resume und vorhandenem Energiephasencheckpoint weiter. Coordinator verwendet
+denselben Übergang; erstmals erreichte Energie startet frisch. Software:
+8 echte Eltern-Argumentprüfungen PASS; 19 vorhandene Checkpoint-/Recoverytests
+PASS (zwei alte P02-Runnerfixtures an normalen Konstruktor angepasst); sechs
+Retry-/Quellen-/Budgetgegenproben PASS. Keine Hardwaremessungen daraus.
+Fertige Zeilen und vollständig verifizierte Kinder vor Parentimport bleiben
+erhalten. Ohne fertigen Zeilencheckpoint kann die unterbrochene Energiezeile
+innerhalb derselben persistenten Versuchs-/Quellenbudgets wiederholt werden;
+der bestehende Collector hat keinen Resume-Einstieg für einzelne Replikate.
+Keine neue Replikatcheckpointarchitektur ergänzt.
+
+G-N1–G-N3 und begrenztes R1 sind in lokaler Prüfung. R1 kann nur vorhandene
+dauerhafte lokale Cleanupbelege mit nachfolgender exakter Remote-Leaseklärung
+unter exklusivem Run-Lock verbinden. Ein harter Controllerabbruch ohne solche
+lokalen Besitzbelege bleibt gesperrt; die bestehende lokale Prozessbaumregistry
+ist flüchtig. Fehlende PID oder Zeitablauf geben keine Wiederaufnahme frei.
+
+Private normale Ein-Split- und ungestartete 20er-Profilkopien aus dem
+Original-Thesisprofil normal aufgelöst: 4 Statistikworker/1 Request/1 Upload,
+per_case/per_setup; wissenschaftliche Werte unverändert. 20er: stratified_windows,
+Single-Tensor aus, kein Native-Backfill. Hauptinstallation vor Integration noch
+f36dd9ad; G1/G2 noch offen, Zähler 0/3 Workflows und 0/36 Collectorstarts.
+Bestehende 793/13/5-Softwarebelege und 5000/5000-Parität bleiben historische,
+überlappende Evidenz; keine erneute Skalierungs- oder Legacybaseline.
+
+Abgeschlossener lokaler Resume-Arbeitsteil: R1 bindet die explizite GUI-Aktion
+an Run-ID und gespeicherten Auftrag. Die enge Recovery verwendet ausschließlich
+bestehende lokale Cleanupbelege und Remote-Leasejournale unter exklusivem Lock;
+Abschluss im vorhandenen Ausführungsjournal. 92 PASS / 4 abgewählt / 2 Warnungen
+(23,76 s). Die vier vorbestehenden Report-Fixturefehler wurden separat auf dem
+unveränderten Abschlussstand reproduziert; wissenschaftliche Produktlogik nicht
+angepasst. Kontrollierter SIGKILL betrifft ausschließlich einen eigenen lokalen
+Testcontroller nach belegtem lokalem Cleanup; Remotezustände sind Testdoubles,
+die nachfolgende Arbeitsstufe ist eine kontrollierte Fixture. Das belegt keine
+universelle Crash-Recovery oder Hardwarefortsetzung. Reguläres Cancel/gleiche
+Run-ID, aktive Writer, Auftragsdrift und Quellsperrarten eingeschlossen.
+
+Zusätzliche betroffene AP07/AP08-, Cancel- und WarmPolicy-Regressionen:
+88 PASS / 2 Warnungen (68,46 s). Kein Ersatz für G1/G2-Hardwareabnahme.
+
+G-N1–G-N3 abgeschlossen: Ausschließlich der bestehende Single-Tensor-Haken
+begrenzt Generic. Der normale Resolver/Generator erhält IDs und Reihenfolge aus
+der vorhandenen Auswahl; kein Native-Backfill. Hailo-/Native-Ausschlüsse bleiben
+pfadbezogen, gemeinsame ONNX-Exporte erhalten. Im normalen Workflow keine
+globale Part2-Vorfilterung oder YOLO26-Promotion nach der Auswahl. Native läuft
+nur für die unterstützte Teilmenge, einschließlich leerer Teilmenge; Full bleibt
+einmal je Identität. Ohne Split und ohne Full ist Native nachvollziehbar skipped.
+Vorhandene Forced-Scope-/Duplikat-/Reihenfolgeprüfungen erhalten.
+Software: 118 PASS / 2 Warnungen (70,19 s), zusätzliche gezielte Randfälle
+15 PASS / 23 abgewählt (4,30 s), nach Review tatsächliche Orchestrierung plus
+leere Teilmenge und Workflowkonfiguration 15 PASS / 2 Warnungen (6,54 s).
+Die Mengen überlappen. Echte ONNX-Single-/Multi-Fixture und Tk Save/Reload;
+Backend-Compiler lokal gedoppelt, keine Hardwareinferenz oder Artefaktbuilds.
+Zwei konkrete Vorfilter-/Umordnungsfehler aus unabhängigem Review behoben.
+
+Übernahme in Hauptinstallation erfolgt: 88 gezielte Dateien mit externer
+Sicherung unter bestehendem Plattform-/Verzeichnislock, GUI-Guard vor Ersatz.
+11 relevante Zielmodule aus der Hauptinstallation; vier normale Profilresolver
+PASS; vorhandene Quellintegrität verified. Dortige fokussierte Auswahl-/Resume-
+Abnahme: 39 PASS / 2 Warnungen (82,41 s), git diff --check ohne Befund.
+
+Hardwarevorbereitung: exakt freigegebene H8/MobileNet-b135 Generic-TRT-P1/P2
+über unveränderten Produktbuilder gebaut (138,09 s / 18,32 s); anschließender
+normaler Cachelookup alle vier Rollen HIT, keine eigenen aktiven Remoteleases.
+Ein erster Vorbereitungsaufruf scheiterte vor Builderbeginn an falscher Python-
+Auswahl des externen Aufrufs; mit vorhandener normaler Runtimeauswahl behoben,
+keine Paketänderung und kein wiederholter Enginebau.
+
+Erster normaler G1-Start (ap06_ap08_g1_20260923_154356) technisch FAILED vor
+Runtime-Dispatch, Quality nicht ausgewertet; GUI/Worker beendet, Quellintegrität
+vor/nach PASS, Abschlussindex PASS, keine offenen Remoteleasejournale. Grund:
+Cachevorprüfung behandelt H10-ort_tensorrt trotz Full-only-Qualitätsrolle als
+Generic-Split und fordert drei dort nicht geplante P1/Generic-P2-Bindungen.
+Benötigte H10-Vendor-Part2-Bindungen HIT. Enge Korrektur gleicht die Vorprüfung
+an den bestehenden Setup-Dispatch und dessen Quality-only-Argumente an; keine
+zusätzlichen Builds. Journal jetzt 1/3 Workflows, 0/36 Collectorstarts. G1/G2
+noch nicht abgenommen; ein begründeter G1-Nachtest bleibt im vorhandenen Budget.
+
+Vorprüfungsfehler lokal korrigiert: derselbe vorhandene Setup-Dispatch wie beim
+Runtime-Start liefert jetzt die Quality-only-Run-IDs. Der bestehende Cacheprobe
+interpretiert diese vorhandenen Argumente bei Generic-TRT-Rollen als Full-only;
+Vendor-Part2 und Generic-Splits des Performance-Owners bleiben erforderlich.
+Keine neue Identität, kein zusätzlicher Build. 60 fokussierte Tests PASS
+(8,53 s), unabhängiges Quellreview ohne offenen Befund. Zwei alte Minimalfixtures
+an vorhandene Profil-/Prediction-Verträge angepasst. Hardware-Nachtest offen.
+
+G1-Nachtest ap06_ap08_g1_20260923_160011: Cachekorrektur im normalen GUI-Pfad
+bestätigt (20 HIT, keine MISS/UNKNOWN, keine Compilerstarts). Neuer technischer
+Abbruch vor gültiger Quality-/Native-Ausführung: lokal vollständige gefrorene
+32er-Validierung fehlt vollständig im übertragenen Minimalbundle (0 Dateien).
+Bei validation_budget_authoritative bleibt die globale CLI-Angabe absichtlich
+leer; per_setup überspringt die bereits abgeschlossene Suiteaktualisierung.
+Die Bundleauswahl übersieht dadurch die vorhandenen per-run Planpfade. Kein
+Datensatz-/Erkennungs-/Compilerqualitätsfehler. Beide unveränderten lokalen
+32er-Quellen bestehen die tatsächlich verwendete Templateerkennung.
+
+Alle 12 Nativevarianten not_started/physical_dispatch_started=false wegen
+fehlender vorgelagerter zentraler Quality; keine unabhängige Native-Runtime-
+Fehlfunktion belegt. GUI/Worker/Jobs beendet, Closure und Quellprüfung PASS,
+keine offenen Remoteleases oder Quarantäne. Journal 2/3 Workflows, 0/36
+Collectorstarts. G1 nicht hardwareseitig abgenommen; Commit/Push-Bedingung
+nicht erfüllt. Der verbleibende Start ist für das beauftragte G2 vorgesehen,
+sofern die enge Bundlekorrektur lokal geprüft und übernommen werden kann.
+
+Bundlekorrektur abgeschlossen: verbindliche Planpfade bestimmen jetzt die
+exakten, deduplizierten suite-lokalen Transportwurzeln des gemeinsamen Bundles.
+Globale Validierungs-CLI bleibt leer, Plan/Daten/Seed/Budgets unverändert;
+bisherige Grenze budget>0 bleibt auch für Final unverändert. 15 fokussierte
+Tests PASS (1,87 s), darunter zwei echte Remote-Einstiegs-/Archivtests mit
+lokalem Transportdouble, zwei Setupselektionen, Bytevergleich aller Bilder und
+Labels/Annotationen, Nachbarbestand ausgeschlossen, keine erneute Suiteauswahl.
+Ein zusätzlicher älterer Generated-Suite-Test scheitert an einem Fake-SDK-
+HEF-Dtype-Mismatch; auf unverändertem final_ap00_ap08 ebenfalls reproduziert.
+Keine wissenschaftliche Produktlogik dafür angepasst.
+
+Bundlefix in Hauptinstallation bestätigt: zwei neue Regressionstests PASS
+(1,54 s), 11 Zielimporte/vier Resolver/Quellintegrität verified. Danach G2 als
+dritter und letzter Workflowstart: ap06_ap08_g2_20260923_162251. Warmvorprüfung
+ohne Kaltbuild, echtes übertragenes Bundle mit 32 Bildern plus Manifest.
+Alle acht zentralen Qualityanfragen technisch vollständig: vier referenznah,
+vier Genauigkeitsverlust, davon zwei statistisch unsicher. Keine Änderung
+wissenschaftlicher Kriterien und keine Umwertung negativer Ergebnisse.
+
+G2 reale normale GUI-Abnahme technisch FAILED. Beide H8/H10-Native-Splits
+mit 100 Frames/10 Warmup/einer Wiederholung erfolgreich. Beide Hailo-Full-
+Blätter scheitern vor Transfer an _read_json(path, {}) bei Einargumentsignatur.
+Beide TensorRT-Full-Blätter scheitern vor Engineausführung an falscher
+Producer-Set-Pfadbindung (.quality_first statt kanonisch quality_first).
+Beide Implementierungsfehler bereits im ursprünglichen AP00–AP08-Export;
+enge Aufrufkorrekturen und reale lokale Übergangsregressionen folgen, ohne
+Validatorlockerung oder neue Hardwarestarts.
+
+Energie: erster H10-Split-Collector empfängt Daten, dann WouldBlock/EAGAIN
+und Empfangsstille ohne bestätigtes Protocol-END. Nach etwa 51 s Quellenende
+ausdrücklich unbestätigt; ControllerResourceBroker stoppt bestimmungsgemäß
+mit campaign_source_completion_unresolved. Null gültige Energiereplikate,
+keine 60-s-mal-drei-Abnahme. Bestehende Dauer und Capturehülle unverändert.
+Journal endgültig 3/3 Workflowstarts und 1/36 Collectorstarts; keine weitere
+Ausführung innerhalb dieses Auftrags. Keine neue Thesis/kein alter Run-Resume.
+
+GUI/Worker/Collector beendet, Artefaktabschluss PASS, Quellintegrität vor/nach
+PASS, Originalsettings unverändert. Lesende Produkt-SSH-Nachprüfung zeigt auf
+Controller/H8/H10 keine bekannten aktiven Produktprozesse/Leases/gehaltenen
+Locks. Vier dauerhafte Ressourcenquarantänen (Controller capture/NIC, H10-DUT,
+Quelle 192.168.0.176) bleiben erhalten: Prozessende ist keine Quellenfreigabe.
+G1/G2-Gesamtabnahme und Commit/Push-Bedingung offen. Qualitätsforschung bleibt
+vertagt. Details im bestehenden Aufgabenroot evidence/uebernahme_v2/G2_REVIEW.md
+und selection/G2_SOURCE_STOP_FINDING.md.
+
+Nach G2 beide Full-Aufruffehler eng korrigiert: je zwei Produktzeilen in
+Updater und identischem Paketspiegel. _read_json erhält ein Argument; nur
+TRT-Full-Staging verwendet quality_first, Native-Split behält .quality_first.
+Consumer-Validatoren, Identitäten und Buildschutz unverändert. Software:
+fünf Vendor-Full-Übergangs-/Transporttests PASS, acht abgewählt, eine Warnung
+(2,34 s); 15 TRT-Stager-/Runtime-Bindungstests PASS (2,04 s). Echte lokale
+Parent/CLI/Child- und Stager/Validator-Übergänge, Transport gedoppelt; geänderte
+und unvollständige Bindungen sowie falsche Rollenpfade bleiben blockiert.
+Unabhängiges Review ohne offenen Befund. Gezielte Übernahme mit externer
+Sicherung und bestehender Zielimport-/Quellprüfung; endgültiger Gitstand und
+Zieltests im externen ABSCHLUSS_UEBERNAHME_v2.md. Kein Hardware-Nachtest,
+keine Quellsperre entfernt, kein Commit/Push und keine wissenschaftliche
+Freigabe aus diesen Softwaretests.

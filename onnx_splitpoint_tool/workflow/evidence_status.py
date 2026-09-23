@@ -1898,6 +1898,8 @@ def workflow_completion_projection(
         "native_validation_total_technical_errors": count(evidence, "validation_technical_error_count"),
         "central_quality_started": count(quality, "request_count"),
         "central_quality_completed": count(quality, "completed_count"),
+        "central_quality_cancelled": count(quality, "cancelled_count"),
+        "central_quality_technical_failed": count(quality, "technical_failed_count"),
         "central_quality_accuracy_loss": _int(decisions.get("accuracy_loss")),
         "central_quality_reference_close": _int(decisions.get("reference_close")),
         "central_quality_failed": _int(decisions.get("fail")),
@@ -1943,6 +1945,8 @@ def workflow_completion_projection(
     if counts["central_quality_completed"] is not None:
         details.append(
             f"Zentrale Qualität: {counts['central_quality_completed']} Auswertungen abgeschlossen, "
+            f"{counts['central_quality_cancelled'] or 0} abgebrochen, "
+            f"{counts['central_quality_technical_failed'] or 0} technische Fehler; "
             f"{counts['central_quality_reference_close']} referenznah, {counts['central_quality_accuracy_loss']} mit Genauigkeitsverlust; "
             f"davon {counts['central_quality_uncertainty_inconclusive']} statistisch unsicher. "
             f"Legacy: {counts['central_quality_failed']} außerhalb der Grenzen, "

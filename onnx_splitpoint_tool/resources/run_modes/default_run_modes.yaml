@@ -158,6 +158,12 @@ modes:
       bootstrap_seed: 20260710
       execution_location: central_management
       workers: 4
+      statistics_max_active_requests: 1
+    statistics_engine: legacy
+      statistics_block_repetitions: 256
+      statistics_checkpoint_blocks: false
+      statistics_prepared_cache_limit_mib: 512
+      reference_intra_op_threads: null
       cache_task_quality: true
       cadence: once_per_artifact
       official_coco_enabled: false
@@ -377,6 +383,12 @@ modes:
       bootstrap_seed: 20260710
       execution_location: central_management
       workers: 4
+      statistics_max_active_requests: 1
+    statistics_engine: legacy
+      statistics_block_repetitions: 256
+      statistics_checkpoint_blocks: false
+      statistics_prepared_cache_limit_mib: 512
+      reference_intra_op_threads: null
       cache_task_quality: true
       cadence: once_per_artifact
       official_coco_enabled: true
@@ -596,6 +608,12 @@ modes:
       bootstrap_seed: 20260710
       execution_location: central_management
       workers: 4
+      statistics_max_active_requests: 1
+    statistics_engine: legacy
+      statistics_block_repetitions: 256
+      statistics_checkpoint_blocks: false
+      statistics_prepared_cache_limit_mib: 512
+      reference_intra_op_threads: null
       cache_task_quality: true
       cadence: once_per_artifact
       official_coco_enabled: true

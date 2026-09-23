@@ -173,6 +173,7 @@ def is_companion_result(result: Mapping[str, Any]) -> bool:
         or result.get("result_class")
         or result.get("source_kind")
     )
+
     run_id = canonical_run_id(
         result.get("source_run_id") or result.get("run_id")
     )
@@ -185,6 +186,99 @@ def is_companion_result(result: Mapping[str, Any]) -> bool:
         or result.get("performance_claims_emitted") is False
         and role == "full_quality_only"
     )
+
+
+def cancelled_request_identity(result, *, run_id, cancellation, run_dir=None):
+    """Bind a terminal cancellation without asserting successful execution.
+
+    An independently recorded run cancellation and its original observation
+    interval are required. Missing success-only producer fields do not turn
+    an abandoned calculation into a new runtime failure.
+    """
+    context = result.get("cancel_context") or {}
+    if not isinstance(context, Mapping) or not isinstance(cancellation, Mapping):
+        return None
+    if (result.get("status") != "cancelled" or result.get("technical_status") != "cancelled"
+            or context.get("run_id") != run_id or cancellation.get("run_id") != run_id
+            or not context.get("reason") or context.get("reason") != cancellation.get("reason")
+            or context.get("requested_at") != cancellation.get("requested_at")
+            or context.get("requested_monotonic") != cancellation.get("requested_monotonic")
+            or result.get("exception_type") not in {"CancelledError", "QualityServiceClosedError"}):
+        return None
+    try:
+        if not 0 < float(context["requested_monotonic"]) <= float(context["shutdown_monotonic"]) <= float(result["failure_observed_monotonic"]):
+            return None
+    except (KeyError, TypeError, ValueError):
+        return None
+    nested = result.get("request_identity") or {}
+    if not isinstance(nested, Mapping):
+        return None
+    if result.get("error") and str(result["error"]).split(":", 1)[0] != result["exception_type"]:
+        return None
+    identity = dict(nested)
+    for name in ("eval_run_id", "model_id", "setup_id", "source_run_id", "case_id", "variant", "task", "source_request_sha256"):
+        values = [result.get(name), nested.get(name)]
+        if name == "eval_run_id":
+            values.append(result.get("collection_eval_run_id"))
+        canonical = _sha if name == "source_request_sha256" else str
+        tokens = {canonical(value) for value in values if value not in (None, "")}
+        if len(tokens) != 1 or not next(iter(tokens)):
+            return None
+        identity[name] = next(iter(tokens))
+    if identity["eval_run_id"] != run_id:
+        return None
+    expected_reason = "user_cancelled" if result["exception_type"] == "CancelledError" else "service_closed_after_cancel"
+    if result.get("completion_reason") != expected_reason:
+        return None
+    for alias, field, canonical in (("source_setup_id", "setup_id", _token),
+                                     ("run_id", "source_run_id", canonical_run_id)):
+        if result.get(alias) and canonical(result[alias]) != canonical(identity[field]):
+            return None
+    if is_companion_result(result):
+        # Companions have no measured primary row to bind their SHA. Verify
+        # their registered local request manifest, without loading predictions
+        # or requiring successful execution/completion attestations.
+        import hashlib
+        import json
+        from pathlib import Path
+        if run_dir is None:
+            return None
+        root = Path(run_dir).resolve()
+        path = root / str(result.get("source_request") or "")
+        try:
+            if path.is_symlink() or not path.resolve().is_relative_to(root):
+                return None
+            encoded = path.read_bytes()
+            if hashlib.sha256(encoded).hexdigest() != identity["source_request_sha256"]:
+                return None
+            request = json.loads(encoded)
+        except (OSError, ValueError):
+            return None
+        if not isinstance(request, Mapping):
+            return None
+        for name in ("eval_run_id", "model_id", "setup_id", "source_run_id", "case_id", "variant", "task"):
+            canonical = canonical_run_id if name == "source_run_id" else str
+            if canonical(request.get(name) or "") != canonical(identity[name]):
+                return None
+    identity["producer_binding_eligible"] = False
+    identity["cancellation_only"] = True
+    return identity
+
+
+def cancelled_row_identity(row, variant):
+    """Retain the original request identity after an earlier normal join."""
+    identities = row.get("quality_request_identities_by_variant") or {}
+    identity = identities.get(variant) or {}
+    if not identity and selected_variant(row) == variant:
+        identity = row.get("central_quality_request_identity") or {}
+    return dict(identity)
+
+
+def cancelled_contract_matches(expected, observed):
+    # exact_request_sha_candidates also checks physical setup, model, case,
+    # run and variant. Success-only completion fields are intentionally absent.
+    return all(not expected.get(name) or str(expected[name]) == str(observed.get(name) or "")
+               for name in ("eval_run_id", "model_id", "setup_id", "source_run_id", "case_id", "variant", "task"))
 
 
 def join_quality_results_by_request_sha(

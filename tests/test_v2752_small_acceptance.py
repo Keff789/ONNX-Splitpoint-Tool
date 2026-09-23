@@ -617,6 +617,8 @@ def _run_variant_checkpoint_energy_gate(
     monkeypatch: pytest.MonkeyPatch,
     *,
     scenario: str,
+    resume: bool = False,
+    energy_checkpoint: bool = False,
 ) -> tuple[int, list[str], dict[str, Any], dict[str, Any]]:
     """Run the real variant coordinator around a controlled child boundary."""
 
@@ -625,6 +627,10 @@ def _run_variant_checkpoint_energy_gate(
     )
     run_dir = tmp_path / f"EvaluationRun-{scenario}"
     reports = run_dir / "reports"
+    if energy_checkpoint:
+        checkpoint = reports / "native_energy_measurements/stages/native_energy/stage_result.json"
+        checkpoint.parent.mkdir(parents=True)
+        checkpoint.write_text(json.dumps({"state": "cancelled", "complete": False}))
     (run_dir / "native_producers" / "hailo8").mkdir(
         parents=True,
     )
@@ -821,6 +827,8 @@ def _run_variant_checkpoint_energy_gate(
         if label == "quality_gated_final_report":
             return {"rc": 0, "stdout_tail": "", "stderr_tail": ""}
         if label == "native-energy:measure":
+            assert ("--resume-checkpoint" in cmd) is (resume and energy_checkpoint)
+            assert "--resume-existing" not in cmd
             checkpoint = json.loads(
                 (
                     run_dir / "stages" / "run_native_producers"
@@ -873,6 +881,7 @@ def _run_variant_checkpoint_energy_gate(
         "--eval-run-dir", str(run_dir),
         "--config", str(config_path),
         "--timeout", "1",
+        *(["--resume"] if resume else []),
     ])
 
     return_code = coordinator.main()
@@ -1194,3 +1203,11 @@ def test_hailo8_known_contract_failure_continues_and_seals_checkpoints(
         failure["variant"]
         for failure in hailo8["known_contract_failures"]
     ] == [variants[1]]
+
+
+@pytest.mark.parametrize("resume,checkpoint", [(False, False), (True, False), (True, True), (False, True)])
+def test_coordinator_energy_resume_only_after_phase_started(tmp_path, monkeypatch, resume, checkpoint):
+    _return_code, calls, _stage, _checkpoint = _run_variant_checkpoint_energy_gate(
+        tmp_path, monkeypatch, scenario="terminal_partial", resume=resume, energy_checkpoint=checkpoint,
+    )
+    assert calls.count("native-energy:measure") == 1

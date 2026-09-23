@@ -3,7 +3,7 @@ from __future__ import annotations
 """Fail-fast single-writer ownership for EvaluationRun directories."""
 
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 import hashlib
 import json
 import os
@@ -90,6 +90,37 @@ class WorkflowRunCleanupQuarantineError(WorkflowRunControlError):
     error_code = "run_cleanup_quarantined"
 
 
+
+def recoverable_cleanup_evidence(run_dir: Path) -> dict[str, Any]:
+    """Read only the existing, run-bound local-cleanup proof.
+
+    A vanished controller PID or released flock never proves that detached
+    descendants stopped. Only the existing remote-recovery quarantine records
+    local quiescence before a failed remote recovery. Other quarantines remain
+    closed, including collector/source fences.
+    """
+
+    path = Path(run_dir) / "jobs" / "p01_unresolved_cleanup_quarantine.json"
+    try:
+        if path.is_symlink() or not path.is_file():
+            return {}
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(value, dict)
+            or value.get("schema") != "onnx-splitpoint/p01-cleanup-quarantine"
+            or value.get("run_id") != Path(run_dir).name
+            or not str(value.get("session_id") or "").strip()
+            or value.get("phase") != "resume_prior_remote_recovery"
+            or value.get("local_process_quiescence_proven") is not True
+            or (value.get("details") or {}).get("reason")
+            != "prior_remote_lease_cleanup_unresolved"
+        ):
+            return {}
+        return value
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+
+
 def stable_resume_options(options: Any) -> dict[str, Any]:
     if isinstance(options, Mapping):
         payload = dict(options)
@@ -161,6 +192,14 @@ def build_resume_contract(
 class EvaluationRunLock:
     """Kernel-backed, nonblocking lease keyed by the resolved run directory."""
 
+    @classmethod
+    def for_resource(cls, resource: str, *, owner: Mapping[str, Any]):
+        """Use the existing owner/quarantine protocol for a physical resource."""
+        root = platform_workflow_interlock_path().parent
+        key = hashlib.sha256(str(resource).encode("utf-8")).hexdigest()
+        return cls(out_root=root, run_dir=root / ("resource-" + key),
+                   owner={**dict(owner), "physical_resource": str(resource)})
+
     def __init__(
         self,
         *,
@@ -191,6 +230,7 @@ class EvaluationRunLock:
         except Exception:
             pass
         self._fh: Any = None
+        self.previous_owner: dict[str, Any] = {}
         self._platform_interlock_fh: Any = None
         self._thread_key = str(self.lock_path)
         self._thread_acquired = False
@@ -217,7 +257,11 @@ class EvaluationRunLock:
                 parts.append(f"{key}={owner.get(key)}")
         return ", ".join(parts) or "owner metadata unavailable"
 
-    def acquire(self) -> "EvaluationRunLock":
+    def acquire(
+        self,
+        *,
+        recover_quarantine: Callable[[Mapping[str, Any]], bool] | None = None,
+    ) -> "EvaluationRunLock":
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         with _THREAD_GUARD:
             local_owner = _THREAD_OWNERS.get(self._thread_key)
@@ -279,6 +323,7 @@ class EvaluationRunLock:
             # A durable P0.1 cleanup fence survives kernel-lock release.  It is
             # checked only after exclusive flock acquisition, before this
             # writer can replace owner metadata or touch the EvaluationRun.
+            self.previous_owner = self._read_owner()
             quarantined_owner: dict[str, Any] | None = None
             if os.path.lexists(self.quarantine_path):
                 try:
@@ -315,6 +360,17 @@ class EvaluationRunLock:
                             owner=previous_owner,
                         ) from exc
                     quarantined_owner = previous_owner
+            if (
+                quarantined_owner is not None
+                and recover_quarantine is not None
+                and recover_quarantine(quarantined_owner) is True
+            ):
+                # The callback runs with exclusive flock and must prove the
+                # archived local and exact remote ownership before clearing the
+                # existing workflow quarantine. Never touch source/collector locks.
+                self.quarantine_path.unlink(missing_ok=True)
+                self._quarantined = False
+                quarantined_owner = None
             if quarantined_owner is not None:
                 raise WorkflowRunCleanupQuarantineError(
                     "Evaluation run is fenced by an unresolved P0.1 cleanup "

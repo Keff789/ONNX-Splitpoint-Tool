@@ -57,6 +57,35 @@ def test_disabled_and_inactive_generic_splits_are_not_required(tmp_path):
     assert required['p2_cases'] == ['b024']
 
 
+@pytest.mark.parametrize("quality_only", ["", "--quality-only-run-ids ort_tensorrt",
+                                        "--quality-only-run-ids=ort_tensorrt"])
+def test_setup_quality_only_probe_keeps_full_and_native_p2(tmp_path, quality_only):
+    suite = _real_suite(tmp_path, [_generic(), _matrix()])
+    result = remote_run.probe_remote_trt_artifact_cache(
+        transport=None, suite_dir=suite, setup_id="host", setup_accelerator="hailo10h",
+        active_run_ids=["ort_tensorrt", "hailo10_to_tensorrt"],
+        args=remote_run.RemoteBenchmarkArgs(add_args=quality_only),
+    )
+    required = result["requirement_plan"]
+    assert required["full_run_ids"] == ["ort_tensorrt"]
+    assert required["p2_cases"] == ["b024"]
+    assert required["p2_run_ids_by_case"] == {"b024": ["hailo10_to_tensorrt"]}
+    assert required["p1_cases"] == ([] if quality_only else ["b024"])
+    assert required["generic_p2_cases"] == ([] if quality_only else ["b024"])
+    assert {(row["role"], row["item_id"]) for row in result["requirements"]} == (
+        {("trt_full", "host/full"), ("trt_p2", "host/b024")}
+        | (set() if quality_only else {("trt_p1", "host/b024"), ("trt_p2", "host/b024:generic")})
+    )
+
+
+def test_quality_only_flag_does_not_remove_vendor_to_trt_requirement(tmp_path):
+    suite = _suite(tmp_path, [_generic(), _matrix()])
+    required = remote_run._trt_preflight_run_requirements(
+        suite, quality_only_run_ids=["hailo10_to_tensorrt"],
+    )
+    assert required["p1_cases"] == required["generic_p2_cases"] == required["p2_cases"] == ["b024"]
+
+
 def test_old_full_and_native_hits_do_not_conceal_unprobed_generic_engines(tmp_path):
     suite = _suite(tmp_path, [_generic(), _matrix()])
     policy = resolve_artifact_cache_preflight_policy({'artifact_cache_preflight': {
@@ -187,6 +216,9 @@ def test_actual_legacy_generator_carries_validated_reference_variants(tmp_path, 
         synthetic['run_profiles'].append(full_recipe)
         kwargs['profile_payload'] = synthetic
         kwargs['targets'] = ['cpu_ort', 'tensorrt']
+        kwargs['prediction']['candidates'] = [
+            {'case_id': 'b001', 'boundary': 1},
+        ]
         return materialize_legacy_benchmark_set(**kwargs)
     monkeypatch.setattr(real_generator, 'materialize_legacy_benchmark_set', invoke)
     suite = real_generator.make_generated_reference_suite(tmp_path / 'generated', 'classification')

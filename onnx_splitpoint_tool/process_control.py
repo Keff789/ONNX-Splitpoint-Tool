@@ -30,6 +30,114 @@ _ACTIVE_PROCESS_REGISTRY: ContextVar[Any] = ContextVar(
     default=None,
 )
 
+_WORKFLOW_RESOURCE_OPTIONS: ContextVar[dict[str, Any]] = ContextVar(
+    "onnx_splitpoint_workflow_resource_options", default={},
+)
+
+
+def workflow_resource_options() -> dict[str, Any]:
+    return dict(_WORKFLOW_RESOURCE_OPTIONS.get())
+
+
+@contextmanager
+def bind_workflow_resource_options(**options):
+    """Carry explicit controller limits through existing owned thread leaves."""
+    token = _WORKFLOW_RESOURCE_OPTIONS.set({**_WORKFLOW_RESOURCE_OPTIONS.get(), **options})
+    try:
+        yield
+    finally:
+        _WORKFLOW_RESOURCE_OPTIONS.reset(token)
+
+
+@contextmanager
+def controller_local_activity(purpose, *, setup_id=None, attempt_dir=None, cancel_event=None):
+    options = workflow_resource_options()
+    resources = {"controller:cpu", "controller:io"}
+    if purpose == "transfer":
+        resources.update({"controller:nic", "controller:transfer"})
+    if purpose == "postcalc":
+        resources.add("controller:postcalc")
+    held = set(options.get("controller_activity_resources") or ())
+    if held and resources.issubset(held):
+        yield
+        return
+    gate = options.get("controller_gate")
+    def check():
+        registry = current_process_registry()
+        if (cancel_event is not None and cancel_event.is_set()) or (registry is not None and registry.cancelled):
+            raise RuntimeError("controller activity cancelled before admission")
+    check()
+    if gate is not None:
+        with gate.activity(purpose, resources=resources - held, cpu=0 if held else 1,
+                memory_bytes=0 if held else 256 * 1024**2, check_cancelled=check,
+                ignore_pause_reasons=("urecs_energy_acquisition",),
+                continuation_token=options.get("controller_activity_token")) as token:
+            with bind_workflow_resource_options(controller_activity_token=token,
+                    controller_activity_resources=sorted(resources | held)):
+                yield
+    elif os.environ.get("ONNX_SPLITPOINT_CONTROLLER_RESOURCES") == "required":
+        from .remote.process_lease import controller_activity
+        setup = setup_id or options.get("controller_setup_id") or os.environ.get("ONNX_SPLITPOINT_RESOURCE_SETUP")
+        attempt = attempt_dir or options.get("controller_attempt_dir") or os.environ.get("ONNX_SPLITPOINT_RESOURCE_ATTEMPT")
+        if not setup or not attempt:
+            raise RuntimeError("controller activity lacks bound setup/output context")
+        with controller_activity(setup_id=setup, attempt_dir=attempt, purpose=purpose, cancel_event=cancel_event,
+                continuation=options.get("controller_activity_operation")) as claim:
+            with bind_workflow_resource_options(controller_activity_operation=claim.operation,
+                    controller_activity_resources=sorted(resources | held)):
+                yield
+    else:
+        yield
+
+
+def budget_controller_work(purpose):
+    from functools import wraps
+    def decorate(function):
+        @wraps(function)
+        def run(*args, **kwargs):
+            with controller_local_activity(purpose, cancel_event=kwargs.get("cancel_event") or (getattr(args[0], "_cancel_event", None) if args else None)):
+                return function(*args, **kwargs)
+        return run
+    return decorate
+
+
+def budget_remote_dut(function):
+    from functools import wraps
+    @wraps(function)
+    def run(*args, **kwargs):
+        options = workflow_resource_options()
+        gate = options.get("controller_gate")
+        if gate is None or not options.get("controller_physical_protection"):
+            return function(*args, **kwargs)
+        from .workflow.execution_binding import physical_dut_key
+        from .workflow.run_control import EvaluationRunLock
+        host = kwargs["host"]
+        resource = options.get("controller_physical_dut_key") or physical_dut_key({"remote": {"host": host.host}})
+        def check():
+            cancel = kwargs.get("cancel_event")
+            if cancel is not None and cancel.is_set():
+                raise RuntimeError("physical DUT admission cancelled")
+        with gate.activity("generic:" + resource, cpu=0, resources=(resource,), check_cancelled=check,
+                           ignore_pause_reasons=("urecs_energy_acquisition",)):
+            lease = EvaluationRunLock.for_resource(resource, owner={"run_id": options.get("controller_run_id"), "purpose": "generic"})
+            lease.acquire()
+            try:
+                return function(*args, **kwargs)
+            finally:
+                registry = kwargs.get("remote_process_registry")
+                if registry is not None and registry.cancelled:
+                    # Cancellation closes admission even after exact cleanup
+                    # succeeded. Only remaining/unreadable owned operations
+                    # make the physical resource unsafe to release.
+                    try:
+                        unresolved = registry.active_count() > 0
+                    except Exception:
+                        unresolved = True
+                    if unresolved:
+                        lease.commit_quarantine_fence({"reason": "generic_remote_cleanup_requires_reconciliation"})
+                lease.release()
+    return run
+
 
 @contextmanager
 def bind_process_registry(registry: Any):
@@ -634,6 +742,15 @@ class ProcessTreeRegistry:
                     entry.proc, entry.root_identity
                 )
             })
+
+    def registered_tree_quiescent(self, proc: subprocess.Popen[Any]) -> bool:
+        """Check one owned root and its captured descendants after cleanup."""
+        with self._lock:
+            entry = self._processes.get(id(proc))
+            if entry is None:
+                return proc.poll() is not None
+            return (not self._same_registered_process(proc, entry.root_identity)
+                    and not any(_identity_alive(item) for item in entry.known_identities.values()))
 
     @property
     def cancelled(self) -> bool:

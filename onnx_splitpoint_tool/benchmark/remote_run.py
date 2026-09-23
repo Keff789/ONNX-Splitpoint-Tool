@@ -382,7 +382,8 @@ def _remote_upload_semaphore() -> threading.Semaphore | None:
     to disable the limiter or >1 to allow more concurrent uploads.
     """
     try:
-        limit = int(float(str(os.environ.get("ONNX_SPLITPOINT_MAX_PARALLEL_UPLOADS", "1") or "1")))
+        from onnx_splitpoint_tool.process_control import workflow_resource_options
+        limit = int(workflow_resource_options().get("max_parallel_uploads", os.environ.get("ONNX_SPLITPOINT_MAX_PARALLEL_UPLOADS", "1")) or 1)
     except Exception:
         limit = 1
     if limit <= 0:
@@ -1853,6 +1854,7 @@ def _trt_preflight_run_requirements(
     suite_dir: Path,
     *,
     active_run_ids: Sequence[str] | None = None,
+    quality_only_run_ids: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Resolve only the TensorRT artifacts consumed by active plan rows.
 
@@ -1872,6 +1874,10 @@ def _trt_preflight_run_requirements(
     selected = {
         str(value or "").strip() for value in list(active_run_ids or [])
         if str(value or "").strip()
+    }
+    quality_only = {
+        str(value or "").strip().lower().replace("-", "_")
+        for value in quality_only_run_ids if str(value or "").strip()
     }
     if active_run_ids is not None:
         rows = [
@@ -1954,6 +1960,10 @@ def _trt_preflight_run_requirements(
             and (not stage1_declared or _trt_backend_token(row.get("stage1")) == "tensorrt")
             and (not stage2_declared or _trt_backend_token(row.get("stage2")) == "tensorrt")
         )
+        if generic_trt and run_id_token in quality_only:
+            # The scheduler's setup-local companion stops after Full quality
+            # evidence. Vendor->TRT rows still consume their Native Part2.
+            variants = {"full"}
         if generic_trt and (not variants or "full" in variants) and run_id not in full_run_ids:
             full_run_ids.append(run_id or "tensorrt_full")
         generic_part2 = generic_trt and (not variants or bool(variants & {"part2", "composed"}))
@@ -4034,6 +4044,11 @@ def probe_remote_trt_artifact_cache(
     }
     requirement_plan = _trt_preflight_run_requirements(
         suite, active_run_ids=active_run_ids,
+        quality_only_run_ids=[
+            value.strip() for value in _argument_value(
+                getattr(args, "add_args", ""), "--quality-only-run-ids", "",
+            ).split(",") if value.strip()
+        ],
     )
     runtime_contract = _trt_engine_runtime_contract(
         suite, args=args, active_run_ids=active_run_ids,
@@ -7541,6 +7556,10 @@ def preflight_remote_energy_dispatch(
     }
 
 
+from onnx_splitpoint_tool.process_control import budget_remote_dut
+
+
+@budget_remote_dut
 @_serialized_remote_storage_by_host
 def run_remote_benchmark(
     *,
@@ -7829,7 +7848,7 @@ def run_remote_benchmark(
         )
     if validation_use_embedded:
         log("[validation] Using prepared COCO-50 as the suite semantic validation source.")
-    elif benchmark_task_norm == "classification" and not str(validation_images_norm or "").strip():
+    elif not validation_budget_authoritative and benchmark_task_norm == "classification" and not str(validation_images_norm or "").strip():
         log("[validation] Classification benchmark task selected without a labeled dataset; dataset semantic validation stays disabled.")
 
     # Best-effort: refresh runner scripts inside an existing suite.
@@ -7840,18 +7859,21 @@ def run_remote_benchmark(
         # v60q: all setup workers operate on the same generated suite.  Refresh
         # and subset materialisation must complete once before any worker starts
         # scanning or packaging that suite.
-        with _exclusive_suite_refresh_guard(suite_dir, log=log, cancel_event=cancel_event):
-            refresh_stats = refresh_suite_harness(
-                suite_dir,
-                benchmark_set_json=benchmark_set_json,
-                validation_images=None if validation_budget_authoritative else validation_images_norm,
-                validation_max_images=None if validation_budget_authoritative else int(validation_max_images_norm or 0),
-                validation_reference_mode=str(getattr(args, "validation_reference_mode", "auto") or "auto"),
-                mini_coco_ap50=bool(getattr(args, "mini_coco_ap50", False)),
-                benchmark_task=benchmark_task_norm,
-                mini_classification_eval=mini_classification_eval_norm,
-                log=log,
-            )
+        if bool(getattr(args, "runtime_suite_finalized", False)):
+            refresh_stats = {"changed": False, "runtime_suite_finalized": True}
+        else:
+            with _exclusive_suite_refresh_guard(suite_dir, log=log, cancel_event=cancel_event):
+                refresh_stats = refresh_suite_harness(
+                    suite_dir,
+                    benchmark_set_json=benchmark_set_json,
+                    validation_images=None if validation_budget_authoritative else validation_images_norm,
+                    validation_max_images=None if validation_budget_authoritative else int(validation_max_images_norm or 0),
+                    validation_reference_mode=str(getattr(args, "validation_reference_mode", "auto") or "auto"),
+                    mini_coco_ap50=bool(getattr(args, "mini_coco_ap50", False)),
+                    benchmark_task=benchmark_task_norm,
+                    mini_classification_eval=mini_classification_eval_norm,
+                    log=log,
+                )
         if bool(refresh_stats.get("changed")):
             force_bundle_rebuild = True
         # v52i: suite refresh may convert a bare classification preset such as
@@ -9107,32 +9129,21 @@ def run_remote_benchmark(
                 except Exception:
                     return False
 
-            validation_is_suite_local = bool(
-                validation_images_norm and _validation_source_is_suite_local(validation_images_norm)
-            )
-            validation_embed_root: Optional[Path] = None
-            if validation_is_suite_local:
-                src = Path(str(validation_images_norm)).expanduser()
-                if not src.is_absolute():
-                    src = suite_dir / src
-                src = src.resolve()
-                validation_embed_root = src.parent if src.is_file() else src
-                rel_root = validation_embed_root.relative_to(suite_dir.resolve()).as_posix().strip("/")
-                budget = max(0, int(validation_max_images_norm or 0))
-                if budget > 0 and rel_root in {"", ".", "resources", "resources/validation"}:
-                    raise RuntimeError(
-                        "Refusing a broad suite-local validation root for a bounded run: "
-                        f"root={validation_embed_root}, budget={budget}. Regenerate the suite with v60q."
-                    )
-                exact_pattern = f"{rel_root}/**" if rel_root else "**"
-                if exact_pattern not in bundle_includes:
-                    bundle_includes.append(exact_pattern)
-                log(f"[package] Embedding only selected validation root: {rel_root or '.'}")
+            validation_sources: list[tuple[str, int]] = []
+            if validation_budget_authoritative:
+                # Every setup shares this model's bundle. Use the frozen plan
+                # union, not one worker's run-id filter or a global CLI override.
+                frozen_plan = _read_json_dict(suite_dir / "benchmark_plan.json") or {}
+                for row in frozen_plan.get("runs") or []:
+                    if not isinstance(row, Mapping) or row.get("enabled") is False or row.get("deferred"):
+                        continue
+                    if str(row.get("status") or row.get("build_status") or "").lower() in {"disabled", "deferred", "not_selected"}:
+                        continue
+                    source = str(row.get("validation_images") or "").strip()
+                    if source:
+                        validation_sources.append((source, max(0, int(row.get("validation_max_images") or 0))))
             elif validation_images_norm:
-                log(
-                    "[package] External validation source configured; no suite-local validation tree is embedded: "
-                    f"{validation_images_norm}"
-                )
+                validation_sources.append((str(validation_images_norm), max(0, int(validation_max_images_norm or 0))))
             elif validation_use_embedded:
                 # Compatibility fallback for old detection suites.  Current suites
                 # are normalised above and normally provide an exact effective path.
@@ -9142,26 +9153,47 @@ def run_remote_benchmark(
                 ]
                 for fallback_root in fallback_candidates:
                     if fallback_root.is_dir():
-                        validation_embed_root = fallback_root.resolve()
-                        validation_is_suite_local = True
-                        rel_root = validation_embed_root.relative_to(suite_dir.resolve()).as_posix()
-                        bundle_includes.append(f"{rel_root}/**")
+                        rel_root = fallback_root.resolve().relative_to(suite_dir.resolve()).as_posix()
                         validation_images_norm = rel_root
+                        validation_sources.append((rel_root, max(0, int(validation_max_images_norm or 0))))
                         log(f"[package] Embedded compatibility validation root: {rel_root}")
                         break
-                if not validation_is_suite_local:
+                if not validation_sources:
                     log("[package][warn] Embedded validation was requested, but no prepared suite-local root was found.")
+
+            validation_roots: dict[Path, tuple[Path, int]] = {}
+            for source, budget in validation_sources:
+                if not _validation_source_is_suite_local(source):
+                    log("[package] External validation source configured; no suite-local validation tree is embedded: " + source)
+                    continue
+                src = Path(source).expanduser()
+                if not src.is_absolute():
+                    src = suite_dir / src
+                src = src.resolve()
+                root = src.parent if src.is_file() else src
+                rel_root = root.relative_to(suite_dir.resolve()).as_posix().strip("/")
+                if budget > 0 and rel_root in {"", ".", "resources", "resources/validation"}:
+                    raise RuntimeError(
+                        "Refusing a broad suite-local validation root for a bounded run: "
+                        f"root={root}, budget={budget}. Regenerate the suite with v60q."
+                    )
+                if root in validation_roots:
+                    prior_budget = validation_roots[root][1]
+                    budget = max(prior_budget, budget) if prior_budget and budget else 0
+                validation_roots[root] = (src, budget)
+                exact_pattern = f"{rel_root}/**" if rel_root else "**"
+                if exact_pattern not in bundle_includes:
+                    bundle_includes.append(exact_pattern)
+                    log(f"[package] Embedding only selected validation root: {rel_root or '.'}")
+            validation_is_suite_local = bool(validation_roots)
 
             # v60q: a bounded Smoke/Standard run must transport only its
             # effective subset.  Detect an accidentally copied full dataset
             # before the expensive shared bundle scan begins.
             validation_footprint: dict[str, object] = {}
-            if validation_is_suite_local and validation_embed_root is not None:
+            validation_footprints: list[dict[str, object]] = []
+            for root, (src, budget) in validation_roots.items():
                 try:
-                    src = Path(str(validation_images_norm)).expanduser()
-                    if not src.is_absolute():
-                        src = (suite_dir / src).resolve()
-                    root = validation_embed_root
                     file_count = 0
                     total_validation_bytes = 0
                     largest: list[tuple[int, str]] = []
@@ -9177,7 +9209,6 @@ def run_remote_benchmark(
                             total_validation_bytes += size
                             largest.append((size, str(vp.relative_to(root))))
                     largest = sorted(largest, reverse=True)[:10]
-                    budget = max(0, int(validation_max_images_norm or 0))
                     max_files = max(100, budget * 4 + 50) if budget > 0 else 0
                     max_bytes = max(256 * 1024 * 1024, budget * 8 * 1024 * 1024) if budget > 0 else 0
                     validation_footprint = {
@@ -9190,6 +9221,7 @@ def run_remote_benchmark(
                         "max_files_guard": int(max_files),
                         "max_bytes_guard": int(max_bytes),
                     }
+                    validation_footprints.append(validation_footprint)
                     log(
                         f"[package] Validation footprint: items<= {budget or 'all'}, "
                         f"files={file_count}, size={total_validation_bytes / (1024*1024):.1f} MiB"
@@ -9206,6 +9238,12 @@ def run_remote_benchmark(
                     raise
                 except Exception as exc:
                     log(f"[package][warn] Could not inspect validation footprint: {type(exc).__name__}: {exc}")
+            if len(validation_footprints) > 1:
+                validation_footprint = {
+                    "roots": validation_footprints,
+                    "file_count": sum(int(row["file_count"]) for row in validation_footprints),
+                    "total_bytes": sum(int(row["total_bytes"]) for row in validation_footprints),
+                }
             stats = build_suite_bundle(
                 suite_dir=suite_dir,
                 out_path=bundle_path,

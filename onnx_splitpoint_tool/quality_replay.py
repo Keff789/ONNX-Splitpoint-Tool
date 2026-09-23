@@ -18,6 +18,7 @@ from pathlib import Path
 import tempfile
 from typing import Any, Mapping, Optional, Sequence
 
+from .accuracy_reporting import assessment_fields
 from .quality_result_contract import UNCERTAINTY_FIELDS, project_quality_result
 from .quality_cache import CACHE_SCHEMA_VERSION, json_fingerprint
 from .quality_service import (
@@ -25,8 +26,10 @@ from .quality_service import (
     ManagementQualityService,
     QualityArtifactIntegrityError,
     QualityEvaluationRequest,
+    prepare_evaluation,
     quality_request_from_manifest,
 )
+from .quality_statistics_config import DEFAULTS, reference_threads, statistics_options
 
 
 REPLAY_SCHEMA = "onnx-splitpoint/central-quality-offline-replay"
@@ -502,13 +505,22 @@ def _preflight_rows(
 def _stable_result(result: Mapping[str, Any]) -> dict[str, Any]:
     """Remove runtime/cache observations from the reproducible result bytes."""
 
+    from .quality_statistics import numerical_environment
     stable = copy.deepcopy(dict(result))
-    stable.pop("cache_hit", None)
+    for field in (
+        "cache_hit", "statistics_observation", "execution_observation",
+        "bootstrap_workers_requested", "bootstrap_workers_effective",
+        "bootstrap_sharding", "worker_model", "resource_budget",
+    ):
+        stable.pop(field, None)
     for component in [stable.get("primary"), *list((stable.get("guardrails") or {}).values())]:
         if isinstance(component, dict):
             component.pop("bootstrap_elapsed_s", None)
+            component.pop("bootstrap_engine", None)
     stable["execution_mode"] = "offline_prediction_replay"
     stable["hardware_executed"] = False
+    stable["numerical_environment"] = {key: value for key, value in numerical_environment().items()
+                                       if key != "kernel"}
     return stable
 
 
@@ -529,9 +541,31 @@ def _result_row(
         "historical_algorithm_version": str(source.get("algorithm_version") or ""),
         "historical_evaluation_fingerprint": str(source.get("evaluation_fingerprint") or ""),
         "historical_decision": str(source.get("decision") or ""),
+        "historical_technical_status": source.get("technical_status"),
+        "historical_ci_available": bool(
+            source.get("_replay_admission_kind") != "complete_producer_records_only"
+            and (source.get("primary") or {}).get("ci_computed")
+        ),
+        "admission_kind": source.get("_replay_admission_kind", "completed_central_result"),
+        "source_row_index": source.get("_replay_row_index"),
         **stable,
+        "technical_status": str(stable.get("technical_status") or stable.get("status") or "unavailable"),
     }
-    row["scientific_result_sha256"] = json_fingerprint(stable)
+    row["execution_observation"] = {
+        key: copy.deepcopy(result[key]) for key in (
+            "cache_hit", "statistics_observation", "bootstrap_workers_requested",
+            "bootstrap_workers_effective", "bootstrap_sharding", "worker_model",
+        ) if key in result
+    }
+    if source.get("_replay_reference_status"):
+        row["producer_reference_status"] = source["_replay_reference_status"]
+        row["producer_reference_status_sha256"] = source["_replay_reference_status_sha256"]
+    scientific = dict(stable)
+    # The optimized cache deliberately uses a stronger, separate namespace.
+    # Keep its actual fingerprint above, while comparing identical science
+    # through bound input hashes, request bytes and explicit numeric versions.
+    scientific.pop("evaluation_fingerprint", None)
+    row["scientific_result_sha256"] = json_fingerprint(scientific)
     return row
 
 
@@ -562,6 +596,13 @@ def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
     ]
     fields.extend(f"{scope}_{field}" for scope in ("primary", "ap50", "ap75") for field in UNCERTAINTY_FIELDS)
     fields.extend(("quality_result_contract_version", "quality_result_source_contract_version", "legacy_quality_result"))
+    accuracy_fields = (
+        "accuracy_class", "accuracy_relative_loss", "accuracy_absolute_loss_pp",
+        "accuracy_relative_loss_ci", "accuracy_confidence_level", "accuracy_uncertainty",
+        "accuracy_uncertainty_reason", "accuracy_policy_id", "accuracy_technical_fail",
+    )
+    fields.extend((*accuracy_fields, "accuracy_warnings", "technical_status", "admission_kind",
+                   "historical_technical_status", "historical_ci_available", "source_row_index"))
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
     try:
@@ -575,6 +616,10 @@ def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
                 ap50 = guardrails.get("ap50") if isinstance(guardrails.get("ap50"), Mapping) else {}
                 ap75 = guardrails.get("ap75") if isinstance(guardrails.get("ap75"), Mapping) else {}
                 writer.writerow({
+                    **{field: assessment_fields(row.get("accuracy_assessment")).get(field) for field in accuracy_fields},
+                    **{field: row.get(field) for field in (
+                        "accuracy_warnings", "technical_status", "admission_kind",
+                        "historical_technical_status", "historical_ci_available", "source_row_index")},
                     **{f"{scope}_{field}": component.get(field) for scope, component in (("primary", primary), ("ap50", ap50), ("ap75", ap75)) for field in UNCERTAINTY_FIELDS},
                     **{field: row.get(field) for field in ("quality_result_contract_version", "quality_result_source_contract_version", "legacy_quality_result")},
                     "model_id": row.get("model_id"),
@@ -619,11 +664,20 @@ def _decision_summary(rows: Sequence[Mapping[str, Any]]) -> tuple[dict[str, int]
     for row in rows:
         raw = str(row.get("decision") or "not_evaluated").strip().lower()
         decision = (
-            raw if raw in {"fail", "inconclusive", "pass", "not_evaluated"}
+            raw if raw in {"fail", "inconclusive", "pass", "not_evaluated",
+                          "reference_close", "accuracy_loss", "not_estimable"}
             else "not_evaluated"
         )
         counts[decision] = counts.get(decision, 0) + 1
         normalized.append(decision)
+    modern = {"reference_close", "accuracy_loss", "not_estimable"}
+    if normalized and set(normalized) <= modern:
+        aggregate = next(value for value in ("accuracy_loss", "not_estimable", "reference_close")
+                         if value in normalized)
+        return counts, aggregate
+    if set(normalized) & modern:
+        # Different historical policies have no single shared gate decision.
+        return counts, "not_evaluated"
     aggregate = next(
         (
             candidate for candidate in (
@@ -636,12 +690,166 @@ def _decision_summary(rows: Sequence[Mapping[str, Any]]) -> tuple[dict[str, int]
     return counts, aggregate
 
 
+def _execution_options(profile, statistics, workers):
+    """Resolve normal settings without replacing any recorded scientific budget."""
+    effective: dict[str, Any] = {}
+    provenance: dict[str, Any] = {}
+    snapshots = []
+    if profile is not None:
+        from .benchmark.evaluation_profiles import load_evaluation_profile
+        loaded = load_evaluation_profile(profile)
+        if loaded is None:
+            raise ValueError(f"replay execution profile not found: {profile}")
+        effective = copy.deepcopy(loaded.raw_profile)
+        snapshots.append(_input_snapshot(Path(loaded.profile_path), role="replay execution profile"))
+        provenance = {"profile_path": loaded.profile_path,
+                      "profile_start_snapshot": loaded.start_snapshot,
+                      "reference_threads_configured_but_not_executed": reference_threads(effective)}
+    raw = dict((effective.get("quality_gate") or {}).get("statistics") or {})
+    selected_workers = raw.get("workers", 4) if workers is None else workers
+    if type(selected_workers) is not int or not 1 <= selected_workers <= 64:
+        raise ValueError("replay workers must be an integer in [1, 64]")
+    if statistics is not None and not isinstance(statistics, Mapping):
+        raise ValueError("replay statistics must be a mapping")
+    overrides = dict(statistics or {})
+    unknown = set(overrides) - set(DEFAULTS) - {"capture_draws"}
+    if unknown:
+        raise ValueError("unknown replay execution options (scientific budgets cannot be overridden): "
+                         + ", ".join(sorted(unknown)))
+    capture = overrides.pop("capture_draws", False)
+    if type(capture) is not bool:
+        raise ValueError("capture_draws must be boolean")
+    raw.update(overrides)
+    raw["workers"] = selected_workers
+    options = statistics_options({"quality_gate": {"statistics": raw}})
+    options["capture_draws"] = capture
+    return selected_workers, options, provenance, snapshots
+
+
+def _preflight_producer_row(run_dir: Path, source: Mapping[str, Any], status_file):
+    """Admit complete producer inputs while retaining cancelled historical CI state."""
+    row = dict(source)
+    if str(row.get("technical_status") or "") != "cancelled":
+        raise OfflineQualityReplayError("producer-only admission requires an explicitly cancelled historical statistics row")
+    model_id = str(row.get("model_id") or "")
+    if not model_id or Path(model_id).name != model_id or model_id in {".", ".."}:
+        raise OfflineQualityReplayError("producer-only model_id is not a safe EvaluationRun member")
+    request_path = _run_member(run_dir, row.get("source_request"), label="producer source request")
+    status_path = _run_member(run_dir, status_file, label="producer reference status")
+    required_status_path = (run_dir / "quality_management/references" / model_id
+                            / "management_cpu_reference_status.json").resolve()
+    if status_path != required_status_path:
+        raise OfflineQualityReplayError("producer reference status must be the explicit model-bound management status member")
+    snapshots = [_input_snapshot(status_path, role="producer reference status"),
+                 _input_snapshot(request_path, role="producer source request")]
+    expected_request_sha = _normalise_sha256(row.get("source_request_sha256"))
+    if not _valid_sha256(expected_request_sha) or _sha256_file(request_path) != expected_request_sha:
+        raise OfflineQualityReplayError("producer-only source request SHA-256 binding mismatch")
+    status = _load_json(status_path)
+    if not isinstance(status, Mapping):
+        raise OfflineQualityReplayError("producer reference status must be an object")
+    required = {"schema": "onnx-splitpoint/management-cpu-reference-job",
+                "model_id": model_id, "provider": "onnxruntime_cpu",
+                "execution_location": "central_management", "semantic_reference_only": True,
+                "include_in_latency_fps_energy": False, "include_in_ranking": False,
+                "include_in_pareto": False, "reference_storage": "immutable_source_contract",
+                "reference_immutable": True}
+    if (status.get("status") not in {"completed", "cache_hit"}
+            or type(status.get("schema_version")) is not int or status["schema_version"] != 1
+            or any(status.get(key) != value or
+                   (isinstance(value, bool) and type(status.get(key)) is not bool)
+                   for key, value in required.items())):
+        raise OfflineQualityReplayError("producer reference status is not a completed, model-bound ORT-CPU semantic reference")
+    reference_path = _management_reference_member(status, run_dir, model_id, label="producer reference")
+    size = status.get("reference_size_bytes")
+    reference_sha = _normalise_sha256(status.get("reference_sha256"))
+    if type(size) is not int or size <= 0 or not _valid_sha256(reference_sha):
+        raise OfflineQualityReplayError("producer reference status lacks exact size/SHA binding")
+    if reference_path.stat().st_size != size or _sha256_file(reference_path) != reference_sha:
+        raise OfflineQualityReplayError("producer reference size/SHA-256 mismatch")
+    manifest = _load_json(request_path)
+    if not isinstance(manifest, Mapping):
+        raise OfflineQualityReplayError("producer source request must be an object")
+    candidate_path = _descriptor_member(manifest.get("candidate"), request_path, run_dir, label="producer candidate")
+    if candidate_path is None or not candidate_path.is_file():
+        raise OfflineQualityReplayError(f"producer candidate records missing: {candidate_path}")
+    snapshots.extend((_input_snapshot(candidate_path, role="candidate predictions"),
+                      _input_snapshot(reference_path, role="management CPU reference")))
+    row.update(_replay_admission_kind="complete_producer_records_only",
+               _replay_reference_status=status_path.relative_to(run_dir).as_posix(),
+               _replay_reference_status_sha256=_sha256_file(status_path),
+               _replay_reference_binding=dict(status))
+    return row, request_path, reference_path, tuple(snapshots)
+
+
+def _read_replay_reference(run_dir: Path, source, reference_path, snapshots):
+    """Use the existing no-follow reader and immutable byte handoff to the loader."""
+    from .workflow.runner import EvaluationWorkflowRunner
+    binding = source.get("_replay_reference_binding") or source.get("management_cpu_reference") or {}
+    snapshot = next(item for item in snapshots if item["role"] == "management CPU reference")
+    if binding.get("reference_storage") == "immutable_source_contract":
+        relative = Path("quality_management", "references", str(source["model_id"]),
+                        "by_source_contract", _normalise_sha256(binding.get("source_contract_sha256")),
+                        "canonical_cpu_reference.json")
+    else:
+        relative = Path("quality_management", "references", str(source["model_id"]),
+                        "canonical_cpu_reference.json")
+    encoded = EvaluationWorkflowRunner._read_management_reference_nofollow(
+        run_dir, relative, expected_size=snapshot["size_bytes"],
+        require_single_link=binding.get("reference_storage") == "immutable_source_contract")
+    return {"path": str(reference_path), "sha256": snapshot["sha256"],
+            "size_bytes": snapshot["size_bytes"]}, encoded
+
+
+def _write_scientific_projection(target: Path, rows):
+    """Normal quality/report projection only; no performance or energy rows."""
+    from .workflow.scientific_reporting import _central_quality_result_projection, _md_table, _write_tex_table
+    from .workflow.artifacts import write_csv, write_json, write_text
+    projected = []
+    for index, row in enumerate(rows):
+        value = _central_quality_result_projection(
+            row, source_index=int(row.get("source_row_index", index)), dataset_tier="")
+        value.update(execution_mode="offline_prediction_replay", hardware_executed=False,
+                     performance_claims_emitted=False, admission_kind=row.get("admission_kind"),
+                     historical_technical_status=row.get("historical_technical_status"),
+                     historical_ci_available=row.get("historical_ci_available"))
+        interval = value.get("accuracy_relative_loss_ci")
+        value["accuracy_ci_low"] = interval[0] if interval else None
+        value["accuracy_ci_high"] = interval[1] if interval else None
+        projected.append(value)
+    root = target / "reports/scientific"
+    artifacts = {
+        "json": write_json(root / "central_quality_results.json", projected),
+        "csv": write_csv(root / "central_quality_results.csv", projected),
+    }
+    columns = [("model_id", "Model", "text"), ("backend", "Backend", "text"),
+               ("technical_status", "Technical", "text"), ("accuracy_class", "Accuracy", "text"),
+               ("accuracy_relative_loss", "Relative loss", "number"),
+               ("accuracy_absolute_loss_pp", "Absolute loss (pp)", "number"),
+               ("accuracy_ci_low", "Relative loss CI low", "number"),
+               ("accuracy_ci_high", "Relative loss CI high", "number"),
+               ("accuracy_uncertainty", "Uncertainty", "text"),
+               ("accuracy_uncertainty_reason", "Reason", "text"),
+               ("accuracy_warnings", "Warnings", "text"),
+               ("task_quality_decision", "Decision", "text")]
+    artifacts["markdown"] = write_text(root / "task_quality.md",
+        "# Derived offline quality statistics\n\nNo new hardware, performance or energy measurements.\n\n"
+        + _md_table(projected, [(key, title) for key, title, _kind in columns], max_rows=len(projected)))
+    artifacts["latex"] = _write_tex_table(root / "thesis_tables/task_quality_gates.tex", projected, columns,
+        "Derived offline quality statistics; no new hardware measurements.", "tab:offline-quality")
+    return {name: str(path) for name, path in artifacts.items()}
+
+
 def replay_evaluation_run(
     eval_run_dir: str | Path,
     *,
     out_dir: Optional[str | Path] = None,
-    workers: int = 4,
+    workers: Optional[int] = None,
     full_only: bool = False,
+    row_indices: Optional[Sequence[int]] = None,
+    profile: Optional[str | Path] = None,
+    statistics: Optional[Mapping[str, Any]] = None,
+    producer_reference_statuses: Optional[Mapping[int, str | Path]] = None,
 ) -> dict[str, Any]:
     """Replay central quality requests from an existing EvaluationRun."""
 
@@ -687,9 +895,51 @@ def replay_evaluation_run(
             f"result array: declared={request_count!r} observed={len(source_rows)}"
         )
 
+    if row_indices is not None:
+        if full_only:
+            raise OfflineQualityReplayError("row_indices and full_only are mutually exclusive selection contracts")
+        if (not isinstance(row_indices, Sequence) or isinstance(row_indices, (str, bytes))
+                or not row_indices or any(type(index) is not int or not 0 <= index < len(source_rows)
+                                          for index in row_indices)
+                or len(set(row_indices)) != len(row_indices)):
+            raise OfflineQualityReplayError("row_indices must be nonempty, unique, in-range integer indices of the original central summary")
+        indices = list(row_indices)
+    else:
+        indices = list(range(len(source_rows)))
+    for index, source in enumerate(source_rows):
+        source["_replay_row_index"] = index
     canonical_rows, canonical_errors = _canonical_selection(source_rows, strict=full_only)
-    selected_rows = canonical_rows if full_only else source_rows
-    prepared = _preflight_rows(run_dir, selected_rows)
+    if row_indices is not None:
+        # A selected-row diagnostic does not claim the four-identity matrix.
+        canonical_rows, canonical_errors = [], []
+    if full_only:
+        indices = [row["_replay_row_index"] for row in canonical_rows]
+    if producer_reference_statuses is not None and not isinstance(producer_reference_statuses, Mapping):
+        raise OfflineQualityReplayError("producer_reference_statuses must map selected row indices to explicit status paths")
+    producer_statuses = dict(producer_reference_statuses or {})
+    if any(type(index) is not int or index not in indices for index in producer_statuses):
+        raise OfflineQualityReplayError("producer reference status keys must be explicitly selected row indices")
+    try:
+        effective_workers, options, execution_provenance, profile_snapshots = _execution_options(
+            profile, statistics, workers)
+    except (ValueError, TypeError, OSError) as exc:
+        raise OfflineQualityReplayError(f"invalid offline execution settings: {exc}") from exc
+    prepared = []
+    for index in indices:
+        row = source_rows[index]
+        if index in producer_statuses:
+            try:
+                prepared.append(_preflight_producer_row(run_dir, row, producer_statuses[index]))
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                raise OfflineQualityReplayError(f"producer-only input admission failed for row {index}: {exc}") from exc
+        else:
+            explicit_status = str(row.get("technical_status") or "")
+            if explicit_status and explicit_status not in {"completed", "ok", "success"}:
+                raise OfflineQualityReplayError(
+                    f"central row {index} has historical technical_status={explicit_status}; "
+                    "a cancelled statistics row requires explicit producer-only reference status admission")
+            row["_replay_admission_kind"] = "completed_central_result"
+            prepared.extend(_preflight_rows(run_dir, [row]))
 
     target = (
         Path(out_dir).expanduser().resolve()
@@ -701,39 +951,67 @@ def replay_evaluation_run(
             "offline replay output must be outside the historical EvaluationRun; "
             f"refusing in-run target: {target}"
         )
-
-    requests: list[QualityEvaluationRequest] = []
-    for source, request_path, reference_path, _snapshots in prepared:
-        try:
-            request = quality_request_from_manifest(
-                request_path,
-                verify_artifacts=True,
-                reference_artifact=reference_path,
-            )
-        except (QualityArtifactIntegrityError, ValueError, OSError) as exc:
-            raise OfflineQualityReplayError(
-                f"quality request integrity validation failed: {request_path}: {exc}"
-            ) from exc
-        if str(source.get("task") or request.metric_gate_config.get("task") or "") == "detection":
-            request = replace(request, algorithm_version=DETECTION_QUALITY_ALGORITHM_VERSION)
-        request = replace(
-            request,
-            reference_identity=(
-                str(source.get("reference_identity") or "") or request.reference_identity
-            ),
-            request_id=f"offline-replay:{_sha256_file(request_path)}",
-        )
-        requests.append(request)
+    source_root = Path(__file__).resolve().parents[1]
+    for member in (target, target / "evaluation_cache_v2", target / REPLAY_OUTPUT_NAME,
+                   target / REPLAY_CSV_NAME, target / "reports/scientific/central_quality_results.json",
+                   target / "reports/scientific/central_quality_results.csv",
+                   target / "reports/scientific/task_quality.md",
+                   target / "reports/scientific/thesis_tables/task_quality_gates.tex"):
+        if _below_root(member, run_dir) or _below_root(member, source_root):
+            raise OfflineQualityReplayError(f"offline output must stay outside original run and source tree: {member}")
 
     replay_results: list[dict[str, Any]] = []
     cache_dir = target / "evaluation_cache_v2"
-    with ManagementQualityService(cache_dir, workers=int(workers)) as service:
-        futures = [service.submit(request) for request in requests]
-        for (source, request_path, _, _snapshots), future in zip(
-            prepared, futures
-        ):
+    with ManagementQualityService(cache_dir, workers=effective_workers, statistics=options) as service:
+        def evaluate_source(item):
+            source, request_path, reference_path, snapshots = item
             try:
-                evaluated = future.result()
+                # At most the configured one/two coordinators load payloads.
+                with service.pause_gate.activity("offline_request_loader:" + str(request_path),
+                        memory_bytes=min(1024**3, service.pause_gate.available_memory_bytes)):
+                    descriptor, encoded = _read_replay_reference(run_dir, source, reference_path, snapshots)
+                    request = quality_request_from_manifest(
+                        request_path, verify_artifacts=True, reference_artifact=descriptor,
+                        reference_artifact_bytes=encoded)
+                    del encoded
+                    task = str(source.get("task") or request.metric_gate_config.get("task") or "")
+                    if task == "detection":
+                        request = replace(request, algorithm_version=DETECTION_QUALITY_ALGORITHM_VERSION)
+                    request = replace(request,
+                        reference_identity=str(source.get("reference_identity") or "") or request.reference_identity,
+                        request_id=f"offline-replay:{_sha256_file(request_path)}")
+                    expected_hashes = source
+                    if source.get("_replay_admission_kind") == "complete_producer_records_only":
+                        manifest = _load_json(request_path)
+                        if (request.artifact_provenance_binding_status != "verified"
+                                and not request.candidate_execution_completion_contract_sha256):
+                            raise QualityArtifactIntegrityError("producer-only replay lacks verified producer/completion binding")
+                        if request.artifact_provenance_binding_status != "verified":
+                            completion = manifest.get("candidate_execution_completion_contract") or {}
+                            if (completion.get("schema") != "onnx-splitpoint/hailo-full-host-tail-completion"
+                                    or type(completion.get("schema_version")) is not int
+                                    or completion["schema_version"] != 1
+                                    or completion.get("completed_endpoint") not in {
+                                        "decoded_xyxy_score_class_detection_records", "source_onnx_terminal_output"}):
+                                raise QualityArtifactIntegrityError("producer-only replay requires a completed task endpoint")
+                        if (type(manifest.get("record_count")) is not int
+                                or manifest["record_count"] != len(request.candidate_records)
+                                or not isinstance(manifest.get("expected_image_ids"), list)):
+                            raise QualityArtifactIntegrityError("producer-only replay requires exact complete record-count and image-ID bindings")
+                        if task == "detection" and any(
+                            not isinstance(record.get("candidate"), list) for record in request.candidate_records
+                        ):
+                            raise QualityArtifactIntegrityError("producer-only detection records are not completed decoded detections")
+                        _key, payload = prepare_evaluation(request)
+                        expected_hashes = {field: payload[field] for field in (
+                            "reference_predictions_sha256", "candidate_predictions_sha256", "annotations_sha256")}
+                        del payload
+                        source = {**source, "task": task,
+                                  "variant": source.get("variant") or manifest.get("variant"),
+                                  "source_run_id": source.get("source_run_id") or manifest.get("source_run_id"),
+                                  "setup_id": source.get("setup_id") or manifest.get("setup_id")}
+                evaluated = service.evaluate(request)
+                del request
             except Exception as exc:
                 raise OfflineQualityReplayError(
                     f"offline paired-quality evaluation failed: {request_path}: {exc}"
@@ -743,7 +1021,7 @@ def replay_evaluation_run(
                 "candidate_predictions_sha256",
                 "annotations_sha256",
             ):
-                expected = _normalise_sha256(source.get(field))
+                expected = _normalise_sha256(expected_hashes.get(field))
                 observed = _normalise_sha256(evaluated.get(field))
                 if expected != observed:
                     raise OfflineQualityReplayError(
@@ -751,7 +1029,15 @@ def replay_evaluation_run(
                         f"{request_path}: field={field} expected={expected} "
                         f"observed={observed}"
                     )
-            replay_results.append(_result_row(source, request_path, evaluated, run_dir))
+            return _result_row(source, request_path, evaluated, run_dir)
+
+        if options["max_active_requests"] == 1:
+            replay_results = [evaluate_source(item) for item in prepared]
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=options["max_active_requests"],
+                    thread_name_prefix="quality-replay-context") as coordinators:
+                replay_results = list(coordinators.map(evaluate_source, prepared))
 
     canonical_result_rows: list[dict[str, Any]] = []
     canonical_projection_errors: list[str] = []
@@ -795,18 +1081,21 @@ def replay_evaluation_run(
             f"expected={source_summary_sha256} observed={observed_summary_sha256}; "
             "refusing to publish results"
         )
-    _require_unchanged_inputs([
+    all_snapshots = [*profile_snapshots, *[
         snapshot
         for _source, _request, _reference, snapshots in prepared
         for snapshot in snapshots
-    ])
+    ]]
+    _require_unchanged_inputs(all_snapshots)
     output = {
         "schema": REPLAY_SCHEMA,
         "schema_version": REPLAY_SCHEMA_VERSION,
         "status": "completed",
         "technical_status": "ok",
         "scientific_status": quality_decision,
-        "scientific_pass": quality_decision == "pass",
+        "scientific_pass": (quality_decision == "pass"
+                            if set(decision_counts) <= {"pass", "fail", "inconclusive", "not_evaluated"}
+                            else None),
         "execution_mode": "offline_prediction_replay",
         "hardware_executed": False,
         "historical_summary_mutated": False,
@@ -817,6 +1106,11 @@ def replay_evaluation_run(
         "cache_schema_version": CACHE_SCHEMA_VERSION,
         "detection_algorithm_version": DETECTION_QUALITY_ALGORITHM_VERSION,
         "full_only": bool(full_only),
+        "selected_source_row_indices": indices,
+        "selection_scope": "selected_rows" if row_indices is not None else "canonical_full_only" if full_only else "all_rows",
+        "statistics_execution": {"workers_requested": effective_workers, "options": options,
+                                 **execution_provenance},
+        "input_snapshots": [{**snapshot, "path": str(snapshot["path"])} for snapshot in all_snapshots],
         "request_count": len(replay_results),
         "decision_counts": decision_counts,
         "quality_decision": quality_decision,
@@ -829,12 +1123,14 @@ def replay_evaluation_run(
             }
             for run_id, setup_id, variant in CANONICAL_FULL_ONLY_IDENTITIES
         ],
-        "canonical_full_only_status": "complete" if not canonical_errors else "unavailable",
+        "canonical_full_only_status": ("not_requested" if row_indices is not None
+                                       else "complete" if not canonical_errors else "unavailable"),
         "canonical_full_only_errors": canonical_errors,
         "canonical_full_only_results": canonical_result_rows,
         "canonical_full_only_decision_counts": canonical_decision_counts,
         "canonical_full_only_quality_decision": canonical_quality_decision,
     }
+    output["scientific_report_paths"] = _write_scientific_projection(target, replay_results)
     _write_json_atomic(target / REPLAY_OUTPUT_NAME, output)
     _write_csv(target / REPLAY_CSV_NAME, replay_results)
     return output

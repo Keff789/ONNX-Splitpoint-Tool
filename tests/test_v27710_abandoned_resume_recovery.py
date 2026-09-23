@@ -188,6 +188,7 @@ def test_manifest_initialisation_terminalises_only_the_attested_session(
     runner.profile_start_snapshot = {}
     runner._resume_contract = {}
     runner._tool_build_snapshot = {"build_id": "current"}
+    runner._force_build_start_provenance = {}
     runner.manifest = {}
     runner.artifact_index = {}
     runner.outputs = {}

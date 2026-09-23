@@ -1709,6 +1709,31 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 64
+            },
+            "engine": {
+              "type": "string",
+              "enum": [
+                "legacy",
+                "optimized_coco_v1"
+              ]
+            },
+            "max_active_requests": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2
+            },
+            "block_repetitions": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5000
+            },
+            "checkpoint_blocks": {
+              "type": "boolean"
+            },
+            "prepared_cache_limit_mib": {
+              "type": "integer",
+              "minimum": 16,
+              "maximum": 65536
             }
           }
         },
@@ -1778,6 +1803,20 @@
             }
           },
           "additionalProperties": false
+        },
+        "management_reference": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "intra_op_threads": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1,
+              "maximum": 64
+            }
+          }
         }
       }
     },
@@ -2504,6 +2543,28 @@
       "type": "object",
       "additionalProperties": true,
       "description": "Resolved resource-aware local compiler scheduler policy from the selected run mode."
+    },
+    "workflow_execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "native_release_mode": {
+          "type": "string",
+          "enum": [
+            "global_barrier",
+            "per_case"
+          ],
+          "default": "global_barrier"
+        },
+        "setup_queue_mode": {
+          "type": "string",
+          "enum": [
+            "model_barrier",
+            "per_setup"
+          ],
+          "default": "model_barrier"
+        }
+      }
     }
   },
   "$defs": {

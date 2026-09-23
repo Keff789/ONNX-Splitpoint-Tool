@@ -982,8 +982,8 @@ class AtomicCheckpointTests(unittest.TestCase):
             def journal_environment():
                 return {}
 
-        runner = RUNNER.EvaluationWorkflowRunner.__new__(
-            RUNNER.EvaluationWorkflowRunner
+        runner = RUNNER.EvaluationWorkflowRunner(
+            RUNNER.WorkflowOptions(profile="", out=str(run_dir.parent), resume=True)
         )
         runner._native_producer_config = lambda: config
         runner.profile_payload = {}
@@ -991,7 +991,6 @@ class AtomicCheckpointTests(unittest.TestCase):
         runner.run_dir = run_dir
         runner.run_id = run_dir.name
         runner.session_id = "fixture-session"
-        runner.options = types.SimpleNamespace(resume=True)
         runner._remote_process_registry = _RemoteRegistry()
         runner._process_registry = None
         runner._cancel_event = threading.Event()

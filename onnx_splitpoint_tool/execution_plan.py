@@ -578,10 +578,7 @@ def build_effective_execution_plan(profile: Mapping[str, Any]) -> Dict[str, Any]
     native_split_requires_single_part2_input = bool(
         native_enabled and native_split_plan.enabled
     )
-    effective_single_part2_input = bool(
-        requested_single_part2_input
-        or native_split_requires_single_part2_input
-    )
+    effective_single_part2_input = requested_single_part2_input
     model_count = len(models)
     cases_per_model = max(1, int(selection.get("max_accepted_cases_per_model") or 1))
     selection_strategy = str(
@@ -776,6 +773,10 @@ def build_effective_execution_plan(profile: Mapping[str, Any]) -> Dict[str, Any]
     return {
         "schema": "onnx-splitpoint/effective-execution-plan",
         "schema_version": 1,
+        "workflow_execution": {
+            "native_release_mode": (profile.get("workflow_execution") or {}).get("native_release_mode", "global_barrier"),
+            "setup_queue_mode": (profile.get("workflow_execution") or {}).get("setup_queue_mode", "model_barrier"),
+        },
         "artifact_policy": CACHE_VERIFY_ONLY if cache_guard else "normal",
         "cache_verify_expected_plan": (
             dict(cache_guard.get("expected_plan") or {}) if cache_guard else {}
@@ -826,7 +827,7 @@ def build_effective_execution_plan(profile: Mapping[str, Any]) -> Dict[str, Any]
             effective_single_part2_input
         ),
         "native_multi_input_policy": (
-            "reject_and_backfill_from_frozen_prediction"
+            "supported_subset_of_selected_generic_cases"
             if native_split_requires_single_part2_input
             else "not_applicable"
         ),
@@ -1080,8 +1081,8 @@ def execution_plan_text(plan: Mapping[str, Any]) -> str:
             f"requested={'on' if plan.get('requested_require_single_part2_input', plan.get('require_single_part2_input')) else 'off'} · "
             f"effective={'on' if plan.get('effective_require_single_part2_input', plan.get('require_single_part2_input')) else 'off'} "
             + (
-                "(Native capability: reject and deterministically backfill; "
-                "Generic remains technically multi-input/multi-output capable)"
+                "(Native executes the supported subset of these Generic cases; "
+                "no Native backfill)"
                 if plan.get('native_split_requires_single_part2_input')
                 else "(selection only; Generic remains multi-input/multi-output capable)"
             )

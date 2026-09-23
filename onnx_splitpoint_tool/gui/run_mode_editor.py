@@ -194,7 +194,13 @@ _SECTIONS: list[tuple[str, list[FieldSpec]]] = [
             ("Bootstrap repetitions", "quality.bootstrap_repetitions", "int", 50, None, "Smoke/Standard can be small; Final normally uses 5,000."),
             ("Bootstrap seed", "quality.bootstrap_seed", "int", 20260710, None, "Deterministic resampling seed."),
             ("Quality execution", "quality.execution_location", "choice", "central_management", ("local", "central_management"), "Smoke, Standard and Final run the semantic CPU reference and paired uncertainty on the management node."),
-            ("Quality process workers", "quality.workers", "int", 4, None, "Management-side CPU threads/process workers; all packaged modes default to four."),
+            ("Statistics processes", "quality.workers", "int", 4, None, "Management statistics workers; all packaged modes default to four."),
+            ("CPU reference threads", "quality.reference_intra_op_threads", "optional_int", None, None, "Blank retains historical inheritance; explicitly set to decouple reference inference from statistics processes."),
+            ("Active statistics requests", "quality.statistics_max_active_requests", "int", 1, None, "One or two active requests share one bounded worker pool."),
+            ("Statistics engine", "quality.statistics_engine", "choice", "legacy", ("legacy", "optimized_coco_v1"), "Exact compact COCO statistics; no change to image/draw budgets."),
+            ("Draws per block", "quality.statistics_block_repetitions", "int", 256, None, "Task size only, not total repetitions."),
+            ("Save completed statistics blocks", "quality.statistics_checkpoint_blocks", "bool", False, None, "Resume validated complete blocks in this run."),
+            ("Prepared data MiB / worker", "quality.statistics_prepared_cache_limit_mib", "int", 512, None, "Bounded prepared-data cache."),
             ("Classification margin (pp)", "quality.classification_margin_pp", "float", 1.0, None, "Absolute Top-1 percentage-point budget."),
             ("Top-5 guardrail (pp)", "quality.classification_top5_margin_pp", "float", 1.0, None, "Absolute Top-5 percentage-point budget."),
             ("Detection margin (AP points)", "quality.detection_margin_ap", "float", 1.0, None, "Absolute COCO AP@[.50:.95] budget."),
@@ -386,6 +392,9 @@ class RunModeEditDialog(tk.Toplevel):
                         widget.state(["disabled"])
                     else:
                         widget.configure(command=lambda w=widget, v=var: w.state(["disabled"]) if not v.get() else None)
+            elif kind == "optional_int":
+                var = tk.StringVar(self, value="" if value is None else str(value))
+                widget = ttk.Entry(inner, textvariable=var)
             elif kind == "int":
                 var = tk.StringVar(self, value=str(int(value or 0)))
                 widget = ttk.Entry(inner, textvariable=var)
@@ -434,6 +443,8 @@ class RunModeEditDialog(tk.Toplevel):
         value = var.get()
         if kind == "bool":
             return parse_config_bool(value, field=f"modes.{self.mode_id}.{path}")
+        if kind == "optional_int":
+            return int(str(value).strip()) if str(value).strip() else None
         if kind == "int":
             parsed = int(str(value).strip() or 0)
             if path == "runtime.native.repetitions" and parsed < 1:

@@ -89,11 +89,13 @@ def test_full_only_native_admits_suite_without_split_case_directories(
         runner._stage_run_native_producers()
     )
 
-    assert status == "partial"  # no SSH fixture; planning must still finish
+    assert status == "failed"  # planning finishes; absent SSH remains infrastructure failure
     stage = json.loads(
         paths["native_producer_stage_json"].read_text(encoding="utf-8")
     )
     assert "selection_errors" not in stage
+    assert stage["failure_class"] == "global_remote_infrastructure"
+    assert "remote_ssh_missing" in stage["failure_reason"]
     assert stage["native_split_requires_single_part2_input"] is False
     assert stage["native_split_selected_case_count"] == 0
     assert stage["native_split_supported_case_count"] == 0

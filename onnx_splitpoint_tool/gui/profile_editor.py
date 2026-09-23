@@ -497,6 +497,12 @@ class EvaluationProfileEditor(tk.Toplevel):
         self.var_quality_seed = tk.IntVar(self, value=20260710)
         self.var_quality_execution_location = tk.StringVar(self, value="central_management")
         self.var_quality_workers = tk.IntVar(self, value=4)
+        self.var_statistics_engine = tk.StringVar(self, value="legacy")
+        self.var_statistics_active_requests = tk.IntVar(self, value=1)
+        self.var_statistics_block = tk.IntVar(self, value=256)
+        self.var_statistics_checkpoint = tk.BooleanVar(self, value=False)
+        self.var_statistics_cache_mib = tk.IntVar(self, value=512)
+        self.var_reference_threads = tk.StringVar(self, value="")
 
         self.var_ranking_enabled = tk.BooleanVar(self, value=True)
         self.var_ranking_require_frozen = tk.BooleanVar(self, value=True)
@@ -526,6 +532,8 @@ class EvaluationProfileEditor(tk.Toplevel):
         self.var_workflow_no_model_hash = tk.BooleanVar(self, value=True)
         self.var_workflow_include_reserve = tk.BooleanVar(self, value=False)
         self.var_parallel_remote_setups = tk.BooleanVar(self, value=True)
+        self.var_native_release_mode = tk.StringVar(self, value="global_barrier")
+        self.var_setup_queue_mode = tk.StringVar(self, value="model_barrier")
         self.var_max_parallel_setups = tk.IntVar(self, value=3)
         self.var_max_parallel_uploads = tk.IntVar(self, value=1)
         self.var_powercalc_workers = tk.IntVar(self, value=1)
@@ -656,11 +664,15 @@ class EvaluationProfileEditor(tk.Toplevel):
             _run_modes_cfg = load_run_modes_config()
             _default_run_mode = normalize_mode_id(_run_modes_cfg.get("default_mode") or "standard")
         except Exception:
+            _run_modes_cfg = {}
             _default_run_mode = "standard"
         self.var_run_mode_id = tk.StringVar(self, value=_default_run_mode)
         self.var_run_mode_follow_tool_config = tk.BooleanVar(self, value=True)
         self.var_run_mode_summary = tk.StringVar(self, value="")
         self._loading_profile = False
+        initial_quality = ((_run_modes_cfg.get("modes") or {}).get(_default_run_mode) or {}).get("quality") or {}
+        self._apply_statistics_mode_controls(initial_quality)
+        self.var_quality_workers.set(int(initial_quality.get("workers") or 4))
 
         self._build_ui()
         try:
@@ -1129,6 +1141,27 @@ class EvaluationProfileEditor(tk.Toplevel):
         self.var_native_energy_mode.set("measure" if enabled and self.var_native_enabled.get() else "plan")
         self._update_run_summary()
 
+    def _apply_statistics_mode_controls(self, quality_defaults):
+        statistics_fields = {
+            "statistics_engine": ("var_statistics_engine", "legacy"),
+            "statistics_max_active_requests": ("var_statistics_active_requests", 1),
+            "statistics_block_repetitions": ("var_statistics_block", 256),
+            "statistics_checkpoint_blocks": ("var_statistics_checkpoint", False),
+            "statistics_prepared_cache_limit_mib": ("var_statistics_cache_mib", 512),
+            "reference_intra_op_threads": ("var_reference_threads", None),
+        }
+        baseline = getattr(self, "_statistics_widget_baseline", {})
+        next_baseline = {}
+        for key, (attribute, default) in statistics_fields.items():
+            var = getattr(self, attribute, None)
+            value = quality_defaults.get(key, default)
+            if key == "reference_intra_op_threads":
+                value = "" if value is None else str(value)
+            if var is not None and (key not in baseline or var.get() == baseline[key]):
+                var.set(value)
+            next_baseline[key] = value
+        self._statistics_widget_baseline = next_baseline
+
     def _on_run_mode_changed(self, *_args: Any) -> None:
         mode_id = normalize_mode_id(self.var_run_mode_id.get())
         if self.var_run_mode_id.get() != mode_id:
@@ -1170,6 +1203,7 @@ class EvaluationProfileEditor(tk.Toplevel):
                         int((quality_defaults or {}).get("workers") or 4),
                     )
                 )
+                self._apply_statistics_mode_controls(quality_defaults)
                 # Audit size, minimum-valid count and seed are explicit
                 # selection decisions in the Evaluation Profile.  A run-mode
                 # change may refresh execution/quality defaults, but must not
@@ -1576,7 +1610,7 @@ class EvaluationProfileEditor(tk.Toplevel):
             state="readonly",
             width=20,
         ).grid(row=1,column=1,columnspan=2,sticky="w",pady=(0,6))
-        ttk.Label(stats,text="Workers:").grid(row=1,column=3,sticky="e",padx=(12,6),pady=(0,6))
+        ttk.Label(stats,text="Statistics processes:").grid(row=1,column=3,sticky="e",padx=(12,6),pady=(0,6))
         self._spin(
             stats,
             self.var_quality_workers,
@@ -1585,6 +1619,21 @@ class EvaluationProfileEditor(tk.Toplevel):
             to=64,
             width=8,
         ).grid(row=1,column=4,sticky="w",pady=(0,6))
+
+        ttk.Label(stats, text="Statistics engine:").grid(row=2,column=0,sticky="e",padx=8,pady=6)
+        self._combo(stats, self.var_statistics_engine, ["legacy", "optimized_coco_v1"],
+            "Exact offline statistics; image and bootstrap budgets stay unchanged.",
+            state="readonly", width=22).grid(row=2,column=1,columnspan=2,sticky="w")
+        ttk.Label(stats,text="CPU reference threads:").grid(row=2,column=3,sticky="e",padx=8)
+        self._entry(stats,self.var_reference_threads,
+            "Blank inherits the historical worker setting. Set explicitly to keep reference inference unchanged when changing statistics processes.").grid(row=2,column=4,sticky="w")
+        ttk.Label(stats,text="Draws per block:").grid(row=3,column=0,sticky="e",padx=8)
+        self._spin(stats,self.var_statistics_block,"Portion size, not total bootstrap repetitions.",from_=1,to=5000,width=8).grid(row=3,column=1,sticky="w")
+        ttk.Checkbutton(stats,text="Save completed statistics blocks",variable=self.var_statistics_checkpoint).grid(row=3,column=2,columnspan=2,sticky="w")
+        ttk.Label(stats,text="Active statistics requests:").grid(row=5,column=0,columnspan=2,sticky="e",padx=8)
+        self._spin(stats,self.var_statistics_active_requests,"Up to two request contexts share the same process pool and controller budget.",from_=1,to=2,width=8).grid(row=5,column=2,sticky="w")
+        ttk.Label(stats,text="Prepared data MiB / worker:").grid(row=4,column=0,columnspan=2,sticky="e",padx=8)
+        self._spin(stats,self.var_statistics_cache_mib,"Bounded worker preparation memory; requests also require admission memory.",from_=16,to=65536,width=8).grid(row=4,column=2,sticky="w")
 
     def _build_holdout_reporting_tab(self, tab: ttk.Frame) -> None:
         tab.columnconfigure(0, weight=1); tab.rowconfigure(0, weight=1)
@@ -1689,6 +1738,11 @@ class EvaluationProfileEditor(tk.Toplevel):
         self._spin(pframe, self.var_max_parallel_uploads, "Maximale parallele Bundle-Uploads; 1 ist konservativ und vermeidet Netz-/I/O-Spitzen.", from_=0, to=16, width=5).pack(side=tk.LEFT)
         ttk.Label(pframe, text=" / ").pack(side=tk.LEFT)
         self._spin(pframe, self.var_powercalc_workers, "Maximale parallele power_calculations-Prozesse; 1 ist stabiler für I/O.", from_=0, to=16, width=5).pack(side=tk.LEFT)
+
+        self._label(workflow, "Native release:", "Fallweise Freigabe benötigt vollständig gebundene Quality-Ergebnisse.").grid(row=3, column=0, sticky="w", padx=8)
+        self._combo(workflow, self.var_native_release_mode, ["global_barrier", "per_case"], "Legacy-Gesamtbarriere oder frühe Freigabe je Fall.", state="readonly", width=24).grid(row=3, column=1, sticky="w")
+        self._label(workflow, "Setup queue:", "Physische Setups können nach dem Artefaktpräflight unabhängig zum nächsten Modell wechseln.").grid(row=3, column=2, sticky="w")
+        self._combo(workflow, self.var_setup_queue_mode, ["model_barrier", "per_setup"], "Legacy-Modellbarriere oder Queue je physischem DUT.", state="readonly", width=24).grid(row=3, column=3, sticky="w")
 
         bench = ttk.LabelFrame(runtime_tab, text="Benchmark runtime defaults")
         row += 1
@@ -3065,6 +3119,10 @@ class EvaluationProfileEditor(tk.Toplevel):
                 "generate_thesis_figures": bool(self.var_generate_thesis_figures.get()),
                 "include_campaign_readiness": bool(self.var_include_campaign_readiness.get()),
             },
+            "workflow_execution": {
+                "native_release_mode": str(self.var_native_release_mode.get()),
+                "setup_queue_mode": str(self.var_setup_queue_mode.get()),
+            },
             "workflow": {
                 "execution_mode": execution_mode,
                 "skip_runtime_benchmarks": skip_runtime,
@@ -3228,14 +3286,12 @@ class EvaluationProfileEditor(tk.Toplevel):
                 payload["native_producers"] = copy.deepcopy(
                     dict(self._cache_verify_native_passthrough)
                 )
-            if isinstance(
-                self._cache_verify_forced_cases_passthrough, Mapping
-            ):
-                payload.setdefault("selection_policy", {})["forced_cases"] = (
-                    copy.deepcopy(
-                        dict(self._cache_verify_forced_cases_passthrough)
-                    )
-                )
+        if isinstance(self._cache_verify_forced_cases_passthrough, Mapping):
+            payload.setdefault("selection_policy", {})["forced_cases"] = copy.deepcopy(
+                dict(self._cache_verify_forced_cases_passthrough))
+        checkpoint = getattr(self, "_native_checkpoint_passthrough", None)
+        if isinstance(checkpoint, Mapping):
+            payload["native_producers"]["native_performance_checkpoint"] = copy.deepcopy(dict(checkpoint))
         if isinstance(getattr(self, "_protocol_freeze_passthrough", None), Mapping):
             payload["campaign"]["protocol_freeze"] = copy.deepcopy(dict(self._protocol_freeze_passthrough))
             payload["campaign"]["require_protocol_freeze"] = bool(
@@ -3352,7 +3408,11 @@ class EvaluationProfileEditor(tk.Toplevel):
         quality_execution_location = str(
             self.var_quality_execution_location.get() or "central_management"
         ).strip() or "central_management"
-        quality_workers = max(1, int(self.var_quality_workers.get() or 4))
+        quality_workers = (
+            self.var_quality_workers.get()
+            if self.var_statistics_engine.get() == "optimized_coco_v1"
+            else max(1, int(self.var_quality_workers.get() or 4))
+        )
         deepx_classification_preprocessing = str(
             self.var_deepx_classification_preprocessing.get()
             or "imagenet_mean_std"
@@ -3381,6 +3441,16 @@ class EvaluationProfileEditor(tk.Toplevel):
         effective_statistics = dict(effective_quality.get("statistics") or {})
         effective_statistics["execution_location"] = quality_execution_location
         effective_statistics["workers"] = quality_workers
+        effective_statistics.update({
+            "engine": self.var_statistics_engine.get(),
+            "max_active_requests": int(self.var_statistics_active_requests.get()),
+            "block_repetitions": int(self.var_statistics_block.get()),
+            "checkpoint_blocks": bool(self.var_statistics_checkpoint.get()),
+            "prepared_cache_limit_mib": int(self.var_statistics_cache_mib.get()),
+        })
+        reference_text = str(self.var_reference_threads.get()).strip()
+        effective_quality["management_reference"] = {
+            "intra_op_threads": int(reference_text) if reference_text else None}
         effective_quality["statistics"] = effective_statistics
         payload["quality_gate"] = effective_quality
         # Run-mode projection intentionally owns execution defaults, not the
@@ -3526,8 +3596,7 @@ class EvaluationProfileEditor(tk.Toplevel):
         )
         self._cache_verify_forced_cases_passthrough = (
             copy.deepcopy(dict(sel.get("forced_cases") or {}))
-            if self._execution_guard_passthrough is not None
-            and isinstance(sel.get("forced_cases"), Mapping)
+            if isinstance(sel.get("forced_cases"), Mapping)
             else None
         )
         campaign_for_protocol = data.get("campaign") if isinstance(data.get("campaign"), Mapping) else {}
@@ -3652,6 +3721,21 @@ class EvaluationProfileEditor(tk.Toplevel):
         self.var_quality_execution_location.set(quality_location)
         default_quality_workers = 4 if quality_location == "central_management" else 1
         self.var_quality_workers.set(max(1, int((qstats or {}).get("workers") or default_quality_workers)))
+        self.var_statistics_engine.set(qstats.get("engine", "legacy"))
+        self.var_statistics_active_requests.set(qstats.get("max_active_requests", 1))
+        self.var_statistics_block.set(qstats.get("block_repetitions", 256))
+        self.var_statistics_checkpoint.set(qstats.get("checkpoint_blocks", False))
+        self.var_statistics_cache_mib.set(qstats.get("prepared_cache_limit_mib", 512))
+        reference_threads = (qgate.get("management_reference") or {}).get("intra_op_threads")
+        self.var_reference_threads.set("" if reference_threads is None else str(reference_threads))
+        self._statistics_widget_baseline = {
+            "statistics_engine": self.var_statistics_engine.get(),
+            "statistics_max_active_requests": self.var_statistics_active_requests.get(),
+            "statistics_block_repetitions": self.var_statistics_block.get(),
+            "statistics_checkpoint_blocks": self.var_statistics_checkpoint.get(),
+            "statistics_prepared_cache_limit_mib": self.var_statistics_cache_mib.get(),
+            "reference_intra_op_threads": self.var_reference_threads.get(),
+        }
 
         ranking = dict(data.get("ranking_validation") or {})
         self.var_ranking_enabled.set(bool(ranking.get("enabled", True)))
@@ -3682,6 +3766,9 @@ class EvaluationProfileEditor(tk.Toplevel):
         self.var_auto_bind_dataset_registry.set(bool(campaign.get("auto_bind_dataset_registry", True)))
 
         wf = dict(data.get("workflow") or data.get("evaluation_workflow") or {})
+        workflow_execution = data.get("workflow_execution") or {}
+        self.var_native_release_mode.set(str(workflow_execution.get("native_release_mode", "global_barrier")))
+        self.var_setup_queue_mode.set(str(workflow_execution.get("setup_queue_mode", "model_barrier")))
         self.var_workflow_execution_mode.set(str(wf.get("execution_mode") or "generate_and_run"))
         self.var_workflow_skip_runtime.set(bool(wf.get("skip_runtime_benchmarks", wf.get("skip_benchmarks", self.var_workflow_execution_mode.get() != "generate_and_run"))))
         self.var_workflow_no_model_hash.set(bool(wf.get("no_model_hash", True)))
@@ -3740,6 +3827,7 @@ class EvaluationProfileEditor(tk.Toplevel):
             self._update_energy_estimate()
 
         native = dict(data.get("native_producers") or {})
+        self._native_checkpoint_passthrough = copy.deepcopy(native.get("native_performance_checkpoint"))
         from ..native_execution_contract import resolve_native_execution_contract
         contract = resolve_native_execution_contract(data)
         self._native_budget_widget_baseline = {
@@ -4165,8 +4253,8 @@ def _v60z_install_profile_editor_wrappers():
                 def make_load(fn):
                     def wrapper(self, *args, **kwargs):
                         result = fn(self, *args, **kwargs)
-                        # Reflect the resolved Native Energy value into all
-                        # clearly named native-energy Tk variables.
+                        # Only switches reflect enabled state; duration and mode
+                        # retain the values loaded by the normal editor.
                         try:
                             p = _v60z_profile_path_from_editor(self, args, kwargs)
                             if p:
@@ -4174,7 +4262,7 @@ def _v60z_install_profile_editor_wrappers():
                                 state = resolve_native_energy_enabled(load_and_normalise_yaml(p))
                                 for attr, var in vars(self).items():
                                     low = attr.lower()
-                                    if "native" in low and "energy" in low and hasattr(var, "set"):
+                                    if "native" in low and "energy" in low and isinstance(var, tk.BooleanVar):
                                         var.set(state)
                         except Exception:
                             pass

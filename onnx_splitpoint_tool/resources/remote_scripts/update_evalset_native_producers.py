@@ -165,7 +165,11 @@ def _run(cmd: list[str], *, timeout: int | float | None = None, cwd: Path | None
     before_terminate = (
         lambda: cancel_journaled_remote_processes_from_environment(grace_s=3.0)
     ) if routed_cmd != list(cmd) else None
-    return stream_command(routed_cmd, timeout=stream_timeout, cwd=cwd, label=label, heartbeat_s=float(os.environ.get("ONNX_SPLITPOINT_NATIVE_HEARTBEAT_S", "15")), progress_jsonl=(progress_root / "native_progress.jsonl" if progress_root else None), progress_json=(progress_root / "native_progress.json" if progress_root else None), before_terminate=before_terminate)
+    from onnx_splitpoint_tool.process_control import controller_local_activity
+    from contextlib import nullcontext
+    admission = controller_local_activity("transfer") if cmd and Path(cmd[0]).name in {"rsync", "scp"} else nullcontext()
+    with admission:
+        return stream_command(routed_cmd, timeout=stream_timeout, cwd=cwd, label=label, heartbeat_s=float(os.environ.get("ONNX_SPLITPOINT_NATIVE_HEARTBEAT_S", "15")), progress_jsonl=(progress_root / "native_progress.jsonl" if progress_root else None), progress_json=(progress_root / "native_progress.json" if progress_root else None), before_terminate=before_terminate)
 
 
 def _q(s: str | Path) -> str:
@@ -746,7 +750,7 @@ def _stage_remote_trt_quality_producer_set(
 ) -> tuple[str, list[dict[str, Any]]]:
     """Copy one verified set and byte-verify it on the physical setup."""
 
-    remote_dir = f"{str(remote_root).rstrip('/')}/.quality_first"
+    remote_dir = f"{str(remote_root).rstrip('/')}/quality_first"
     remote_path = f"{remote_dir}/tensorrt_quality_producer_set.json"
     expected_sha = hashlib.sha256(local_path.read_bytes()).hexdigest()
     steps: list[dict[str, Any]] = []
@@ -805,6 +809,7 @@ def _stage_remote_native_split_quality_binding_set(
     ssh: str,
     remote_root: str,
     timeout: int,
+    remote_filename: str = "native_split_quality_binding_set.json",
 ) -> tuple[str, list[dict[str, Any]]]:
     """Transfer the locally preflighted set and verify identical remote bytes."""
 
@@ -814,7 +819,11 @@ def _stage_remote_native_split_quality_binding_set(
             "Native split binding set changed after local preflight"
         )
     remote_dir = f"{str(remote_root).rstrip('/')}/.quality_first"
-    remote_path = f"{remote_dir}/native_split_quality_binding_set.json"
+    if remote_filename not in {"native_split_quality_binding_set.json", "vendor_full_quality_request_binding_set.json"}:
+        raise ValueError("unrecognized quality binding role")
+    if remote_filename == "vendor_full_quality_request_binding_set.json":
+        remote_dir = f"{str(remote_root).rstrip('/')}/quality_first"
+    remote_path = f"{remote_dir}/{remote_filename}"
     steps: list[dict[str, Any]] = []
     mkdir = _run([
         "ssh", "-o", "BatchMode=yes", "-o",
@@ -1173,6 +1182,8 @@ def _native_cfg_from_args(args: argparse.Namespace) -> dict[str, Any]:
         "copy_benchmarksets": not bool(args.no_copy),
         "strict_supported_only": True,
         "telemetry_label": _telemetry_label(getattr(args, "native_telemetry_label", "manual")),
+        "central_quality_summary": str(getattr(args, "central_quality_summary", "") or ""),
+        "vendor_full_quality_binding_sets_by_setup": json.loads(getattr(args, "vendor_full_quality_binding_sets", "") or "{}"),
         "artifact_namespace": _artifact_namespace(
             getattr(args, "artifact_namespace", "")
         ),
@@ -1467,7 +1478,7 @@ def _run_native_producers(run_dir: Path, cfg: dict[str, Any], *, timeout: int) -
         for model_id, raw_cases in sorted(case_map.items()):
             cases = [str(case).strip() for case in list(raw_cases or []) if str(case).strip()]
             available = set(_local_cases(bsets[model_id]))
-            if not cases or len(cases) != len(set(cases)):
+            if (not cases and cfg.get("native_split_quality_applicable", True)) or len(cases) != len(set(cases)):
                 raise TensorRTQualityChainError(
                     f"case map contains empty/duplicate cases for model={model_id!r}"
                 )
@@ -1494,8 +1505,28 @@ def _run_native_producers(run_dir: Path, cfg: dict[str, Any], *, timeout: int) -
             raise TensorRTQualityChainError(
                 f"Native case discovery is empty for models: {empty_models!r}"
             )
+    # Discovery validates selection against the complete inventory; only the
+    # exact authorized leaf models may enter transfer or remote dispatch.
+    bsets = {model: bsets[model] for model in models}
     case_map_json = json.dumps(effective_case_map)
-    validation_image_map = _build_validation_image_map(run_dir, models, validation_case_map)
+    vendor_sets = {}
+    prepared_bindings = []
+    for setup, raw_path in dict(cfg.get("vendor_full_quality_binding_sets_by_setup") or {}).items():
+        from onnx_splitpoint_tool.workflow.runner import _native_full_quality_binding_set_v275
+        path = Path(raw_path)
+        supplied = _read_json(path) or {}
+        summary = Path(str(cfg.get("central_quality_summary") or ""))
+        expected, errors = _native_full_quality_binding_set_v275(summary, eval_run_id=run_id,
+            setup_id=setup, producer=str(supplied.get("comparison_backend") or ""),
+            full_backends=sorted({key.split("|")[0] for key in supplied.get("required_binding_keys") or []}),
+            model_ids=models, case_release_run_root=run_dir if cfg.get("artifact_namespace", "").startswith("case") else None)
+        if errors or expected != supplied or supplied.get("complete") is not True:
+            raise TensorRTQualityChainError("vendor Full binding changed or incomplete:" + ";".join(errors))
+        vendor_sets[setup] = path
+        prepared_bindings.extend(supplied["bindings_by_backend_model"].values())
+    from onnx_splitpoint_tool.workflow.native_transfer import build_native_validation_image_map
+    validation_image_map, _ = build_native_validation_image_map(run_dir, models, validation_case_map,
+        bsets, prepared_input_bindings=prepared_bindings)
     validation_image_map_json = json.dumps(validation_image_map)
     backends = _parse_list(cfg.get("backends") or ["hailo8"])
     remotes = cfg.get("remotes") if isinstance(cfg.get("remotes"), dict) else {}
@@ -1921,6 +1952,8 @@ def _run_native_producers(run_dir: Path, cfg: dict[str, Any], *, timeout: int) -
         ).rstrip("/")
         if artifact_namespace:
             rroot = f"{rroot}/variants/{artifact_namespace}"
+            if artifact_namespace.startswith("case"):
+                rroot += "/" + run_id
         setup_id = _resolved_setup_id(b, rcfg)
         full_backends = (
             _native_full_backends_for(
@@ -1994,6 +2027,8 @@ def _run_native_producers(run_dir: Path, cfg: dict[str, Any], *, timeout: int) -
             split_quality_set_remote = ""
             trt_quality_set_local: Path | None = None
             trt_quality_set_remote = ""
+            vendor_quality_set_remote = ""
+            vendor_quality_set_local = vendor_sets.get(setup_id)
             if "tensorrt" in full_backends:
                 trt_quality = (
                     preflight.get("trt_quality")
@@ -2132,7 +2167,7 @@ def _run_native_producers(run_dir: Path, cfg: dict[str, Any], *, timeout: int) -
                         timeout=min(timeout, 600),
                     ))
             if copy_sets:
-                transfer_dir = run_dir / 'reports' / 'native_transfer'
+                transfer_dir = reports / 'native_transfer'
                 transfer_dir.mkdir(parents=True, exist_ok=True)
                 for m, bs in bsets.items():
                     remote_bs = f"{rroot}/{m}/benchmark_set"
@@ -2175,6 +2210,12 @@ def _run_native_producers(run_dir: Path, cfg: dict[str, Any], *, timeout: int) -
                     if rr["rc"] != 0:
                         result['failure_reason'] = rr['failure_reason']
                         raise RuntimeError(f"{rr['failure_reason']}: rsync failed for {m}: {rr.get('stderr_tail')}")
+            if vendor_quality_set_local is not None:
+                vendor_quality_set_remote, vendor_steps = _stage_remote_native_split_quality_binding_set(
+                    local_path=vendor_quality_set_local, expected_sha256=_sha256_file(vendor_quality_set_local),
+                    ssh=ssh, remote_root=rroot, timeout=timeout,
+                    remote_filename="vendor_full_quality_request_binding_set.json")
+                result["steps"].extend(vendor_steps)
             if trt_quality_set_local is not None:
                 trt_quality_set_remote, quality_set_steps = _stage_remote_trt_quality_producer_set(
                     local_path=trt_quality_set_local,
@@ -2578,6 +2619,8 @@ sys.exit(0 if ok else 4)
                 fb_list = list(full_backends)
                 if fb_list:
                     fargs = ["python", "-u", "scripts/native_full_baseline_eval_runner.py", "--root", _q(rroot), "--models", _q(models_arg), "--backends", _q(",".join(fb_list)), "--frames", str(frames), "--warmup", str(warmup), "--repetitions", str(repetitions), "--inflight", str(inflight), "--setup-id", _q(setup_id), "--comparison-backend", _q(b), "--comparison-precision", _q(precision), "--engine-build-python", _q(engine_build_python or "auto")]
+                    if vendor_quality_set_remote:
+                        fargs += ["--quality-request-binding-set", _q(vendor_quality_set_remote)]
                     if "tensorrt" in fb_list:
                         if not trt_quality_set_remote:
                             raise TensorRTQualityChainError(
@@ -2776,9 +2819,8 @@ sys.exit(0 if ok else 4)
                 cmd = [sys.executable, str(_script("native_producer_validate_visualize.py")), "--summary", str(summary_json), "--out-dir", str(vout), "--topk", str(int(vcfg.get("topk") or 5))]
                 if isinstance(cfg.get("quality_gate_policy"), Mapping):
                     cmd += ["--quality-gate-json", json.dumps(dict(cfg.get("quality_gate_policy") or {}), sort_keys=True, separators=(",", ":"))]
-                central_quality_summary = (
-                    run_dir / "quality_management" / "central_quality_summary.json"
-                )
+                central_quality_summary = (Path(str(cfg["central_quality_summary"])) if cfg.get("central_quality_summary")
+                    else run_dir / "quality_management" / "central_quality_summary.json")
                 if central_quality_summary.is_file():
                     cmd += [
                         "--central-quality-summary",
@@ -2989,6 +3031,8 @@ def main() -> int:
     ap.add_argument("--deepx-remote-base-dir", default="")
     ap.add_argument("--remote-root", default="/home/nx/native_fifo_evalsets")
     ap.add_argument("--remote-tool-dir", default="/home/nx/ONNX-Splitpoint-Tool")
+    ap.add_argument("--central-quality-summary", default="")
+    ap.add_argument("--vendor-full-quality-binding-sets", default="")
     ap.add_argument(
         "--artifact-namespace", default="",
         help=(
