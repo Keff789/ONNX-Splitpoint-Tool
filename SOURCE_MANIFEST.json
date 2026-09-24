@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.90.1",
   "workflow_version": "v2.90.1",
-  "file_count": 2079,
+  "file_count": 2080,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 162149,
-      "sha256": "ab143aab330a2eaaa4f2781f30c5c88e12438338a45ae0e8ff1ba126ecb631ee"
+      "size": 167246,
+      "sha256": "da905e26a737a967304e7af44dd49f571916027185a785025a4b7c5e8f4e0e4f"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -686,8 +686,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/benchmark/remote_run.py",
-      "size": 544607,
-      "sha256": "28343a14d12b538d06d354d8f8b73d66e05862c995a626867dec6354a961d65c"
+      "size": 544680,
+      "sha256": "a59059e1c4cb99f5b262044323d3b51b551e4afbb4b040e57d563172a288ec70"
     },
     {
       "path": "onnx_splitpoint_tool/benchmark/results_bundle.py",
@@ -1401,8 +1401,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/quality_service.py",
-      "size": 257819,
-      "sha256": "1e07daf4f402347368202df7993b422fd9e867360fbdea306b546b7365a36bb4"
+      "size": 257796,
+      "sha256": "2aa8fcbecb0a04cfa66c9321c930a0b6261564c49061aed69a62759c3df216fd"
     },
     {
       "path": "onnx_splitpoint_tool/quality_statistics.py",
@@ -7018,6 +7018,11 @@
       "path": "tests/test_quality_speed_settings.py",
       "size": 16959,
       "sha256": "bf2f4861934d0db6549d807811b3901a28f7ff695a1a5f2f68c3dfa4eed72772"
+    },
+    {
+      "path": "tests/test_quality_transfer_admission.py",
+      "size": 9170,
+      "sha256": "2c2b94428e20609d28d362ccbc0660f139be676fdb3ae38e6910efd14f3a6738"
     },
     {
       "path": "tests/test_r1_explicit_resume_transitions.py",

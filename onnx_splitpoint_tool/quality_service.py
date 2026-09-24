@@ -4443,7 +4443,7 @@ class ResourcePauseGate:
             earlier = self._tickets[:self._tickets.index(ticket)]
             priority = not any(t["memory_bytes"] + memory_used <= self.available_memory_bytes
                 and not self._activity_conflict(t)
-                and (ticket["cpu"] > 0 or t["cpu"] + cpu_used <= self.available_cpu) for t in earlier)
+                and t["cpu"] + cpu_used <= self.available_cpu for t in earlier)
             if (self._activity_conflict(ticket) or not priority
                     or cpu_used + ticket["cpu"] > self.available_cpu
                     or memory_used + ticket["memory_bytes"] > self.available_memory_bytes):

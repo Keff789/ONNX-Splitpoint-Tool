@@ -8103,9 +8103,9 @@ def run_remote_benchmark(
     def scp_upload_checked(local_path: Path, remote_path: str, *, recursive: bool | None = None, stage: str = "scp_upload") -> None:
         nonlocal remote_mutation_started
         # scp can be very quiet for large suite bundles.  Acquire the shared
-        # upload slot *before* announcing "upload started"; older logs started
-        # the heartbeat while merely waiting for the slot, which made queued
-        # workers look like duplicate active transfers.
+        # upload slot before announcing the request. The transport still waits
+        # for controller admission, so this heartbeat covers waiting as well
+        # as the eventual transfer; only its SCP log proves transport entry.
         size_mb = None
         try:
             if Path(local_path).is_file():
@@ -8140,7 +8140,7 @@ def run_remote_benchmark(
                     started = time.monotonic()
                     size_txt = f"{size_mb:.1f} MiB" if isinstance(size_mb, (int, float)) else "unknown size"
                     log(
-                        f"[remote][scp] upload started stage={stage}: {Path(local_path).name} "
+                        f"[remote][scp] upload requested (admission may be pending) stage={stage}: {Path(local_path).name} "
                         f"({size_txt}) -> {remote_path}; this may take minutes"
                     )
 
@@ -8149,7 +8149,7 @@ def run_remote_benchmark(
                             try:
                                 elapsed = time.monotonic() - started
                                 log(
-                                    f"[remote][scp] still uploading stage={stage}: "
+                                    f"[remote][scp] upload pending (admission or transfer) stage={stage}: "
                                     f"elapsed={elapsed:.0f}s size={size_txt} target={remote_path}"
                                 )
                             except Exception:

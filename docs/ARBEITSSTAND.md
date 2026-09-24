@@ -1098,3 +1098,79 @@ erst innerhalb der freigegebenen Abfolge. Final erhält einen eigenen normalen
 Kampagnenscope, keinen erweiterten 5/36-Testetat. R1 bleibt partiell; keine
 allgemeine Crash-Recovery oder wissenschaftliche Freigabe. Belege im bestehenden
 Aufgabenroot unter evidence/abendstart_v3_2.
+
+### 2026-09-24 – gezielte Quality-/Transfer-Zulassungsregression
+
+Auftragsbasis ist der saubere Reviewstand 0bba448. Vor Produktänderungen den
+bereits durch den Nutzer angeforderten GUI-Cancel geprüft: keine lokalen
+GUI-/Qualityworker, keine offenen Remoteoperationen im Run-Leasejournal und
+keine bekannten Produktprozesse oder aktiven Leases auf allen drei DUTs bei
+fehlerfreier lesender Produktsicht. Der alte Jobbericht bleibt unvollständig
+(fünf gespeicherte running-Zeilen); kein nachträgliches Umschreiben und kein
+Resume. Originalruns, Profile und Caches bleiben erhalten.
+
+ResourcePauseGate.poll_activity berücksichtigt den Vorrang eines älteren
+Tickets jetzt nur, wenn auch dessen CPU-Bedarf aktuell ausführbar ist. Die
+isolierte Änderung behebt den Fall Kapazität 7, aktive Quality 4, älterer
+Wartender 4, späterer Transfer 1. Echte CPU-/RAM-Grenzen, Transferkapazität,
+Capture-DRAINING-/QUIET- sowie DUT-/Quellenfences bleiben unverändert. Zwei
+Uploadmeldungen kennzeichnen nun mögliche Admissionwartezeit ausdrücklich.
+
+Softwarebeleg: derselbe neue reale Service-/Gate-/SCP-Wrappertest vor Änderung
+für Legacy und optimized_coco_v1 jeweils gezielt FAIL, danach 11 neue Tests
+PASS (0,49 s). Vier kontrollierte Statistikworker bleiben während des
+Transporteintritts aktiv; nur die externe SCP-Prozessausführung ist gedoppelt.
+Ausführbarer älterer Auftrag, Weiterlauf des großen Wartenden, sämtliche
+Ressourcenfences und wartender Cancel ohne Ticket-/Slotverlust sind abgedeckt.
+Weitere 51 vorhandene Gate-/Ressourcen-/Canceltests PASS (13,26 s), 72
+Statistik-/Checkpoint-/Canceltests PASS (20,82 s; zehn Warnungen einschließlich
+ResourceTracker-Warnungen). Das ist keine Hardwareabnahme.
+
+Separate private Finalprofilkopie über den echten Tk-Editor gespeichert und
+neu geladen; normaler Startresolver und sichtbare GUI-Zusammenfassung stimmen
+überein. Effektiv optimized_coco_v1, vier Worker, ein aktiver Request,
+Block256, Checkpoints an, 512 MiB Vorbereitungscache; global_barrier und
+model_barrier ausdrücklich erhalten. Die wissenschaftlichen Felder bleiben
+gleich: sieben Modelle, drei Setups, ein Single-Tensor-Split, stratified_windows,
+5000 Bilder/5000 Bootstrap, Native1000/100/3, Native-Energie60s mal drei,
+FS/command, ein Uploadslot, Force/Generic-Energie/Windowprobe aus. Native bleibt
+auf die unterstützte Teilmenge ohne Nachrücken begrenzt. 47 fokussierte
+Profil-/Resolver-/GUItests PASS (55,72 s). 48 geschützte Originaldateien
+bytegleich, keine globalen Runmode- oder anderen Profiländerungen.
+
+Repräsentativer Offlinebeleg auf vorhandenen technisch validierten YOLO11l-
+Detectioninputs: 5000 Bilder, Referenz31931 und Kandidat28238 Detektionen,
+4949 unterschiedliche Bildrecords. Die ersten 16 identischen Ziehungen liefern
+zwischen Legacy und optimiert bitgleiche absolute Komponenten, Deltas, Ratios,
+Undefinedmasken, Punkte und wissenschaftliche Ergebnisfelder. Legacy62,909s,
+optimiert41,517s mit dominanter Vorbereitung; daraus kein allgemeiner Faktor.
+Während tatsächlich rechnender optimierter Statistik gelang der kleine
+Transfer durch reales Gate und SCP-Wrapper vor Ende der Qualityanfrage, ohne
+Hardwaretransport oder Messphase. Frühere vollständige 5000/5000-Paritätsbelege
+der unveränderten Statistik bleiben erhalten; kein erneuter Legacyvollvergleich.
+
+Danach genau ein vollständiger optimierter 5000/5000-Request mit vier echten
+Prozessworkern: 673,149s von Submit bis Ergebnis, Referenzphase351,613s,
+Kandidatenphase310,789s, Plan0,644s, Merge0,014s. Je20 vollständige Blöcke
+decken exakt alle5000 Ziehungen ab; die ersten16 bleiben bitgleich zum direkten
+Vergleich. Kalt: kein fertiger Ergebnis-, Referenz-, Plan- oder Checkpointhit.
+Warm innerhalb dieses Requests: je16/20 Blöcke mit Prepared-Cachehit, jevier
+Vorbereitungen pro Seite. Kein neuer Zeitfaktor gegenüber einem ungemessenen
+Legacyvollrequest. Gespeicherte Originalinputs unverändert, alle vier Worker
+mit Exit0 beendet, Dispatcher/Manager beendet, keine Cleanupfehler.
+
+Technisch completed, wissenschaftlich accuracy_loss/Legacy-FAIL: AP50:95
+Referenz0,466826742, Kandidat0,441505441, Delta-0,025321301 mit 95%-Intervall
+[-0,029735571;-0,021772647]. Relative Verlustschätzung5,424% mit Intervall
+[4,658%;6,288%], Berichtsunsicherheit borderline. Keine Qualitätsumwertung,
+keine neue Inferenz und keine Hardware-/Energie-/Releaseabnahme daraus.
+
+Die vier dauerhaften G2-Quarantänen bestehen weiterhin. Der normale physische
+Leasepfad verwirft quarantänisierte Ressourcen, wird im Runner jedoch nur bei
+per_case oder per_setup aktiviert. Bei den beauftragten beiden Barrieren ist
+dies deshalb kein belegter automatischer Startschutz. Der neue Finalstart wird
+vor Hardwarearbeit zurückgehalten, um die erhaltenen Sicherheitsquarantänen
+nicht zu umgehen. Keine automatische Recovery, Bedienbestätigung oder
+Quellenfreigabe; kein zusätzlicher Architekturfix in diesem engen Auftrag.
+Keine zusätzliche G1/G2-Runde und keine Neustartschleife. Private Detailbelege
+liegen im bestehenden Aufgabenroot unter evidence/quality_fix_20260924.
