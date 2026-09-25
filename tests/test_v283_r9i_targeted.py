@@ -180,7 +180,7 @@ def test_packet_gap_window_gate_stays_strict(tmp_path, drop):
     assert binding['verified'] is (drop == 0)
 
 
-@pytest.mark.parametrize('limit', [1,2,0,3,True])
+@pytest.mark.parametrize('limit', [1,2,0,-1,True])
 def test_remaining_budget_reaches_snapshot_and_normal_command(tmp_path, monkeypatch, limit):
     from onnx_splitpoint_tool.benchmark.evaluation_profiles import load_evaluation_profile, save_evaluation_profile_yaml
     from onnx_splitpoint_tool.energy.task_budget import campaign_budget_profile_args, campaign_budget_forward_args

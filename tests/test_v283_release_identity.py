@@ -5,7 +5,7 @@ from onnx_splitpoint_tool.release_identity import VERSION, BUILD_ID
 
 def test_current_source_release_identity_is_consistent():
     root = Path(__file__).resolve().parents[1]
-    assert VERSION == "2.90.1" and BUILD_ID == f"v{VERSION}"
+    assert VERSION == "2.91.0" and BUILD_ID == f"v{VERSION}"
     assert f'version = "{VERSION}"' in (root/'pyproject.toml').read_text()
     assert f'name = "onnx-splitpoint-tool"\nversion = "{VERSION}"' in (root/'uv.lock').read_text()
     updater = (root/'scripts/update_source_release.sh').read_text()

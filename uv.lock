@@ -2126,7 +2126,7 @@ wheels = [
 
 [[package]]
 name = "onnx-splitpoint-tool"
-version = "2.90.1"
+version = "2.91.0"
 source = { editable = "." }
 dependencies = [
     { name = "jsonschema", version = "4.23.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },

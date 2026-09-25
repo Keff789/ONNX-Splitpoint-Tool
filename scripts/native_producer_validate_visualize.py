@@ -9269,10 +9269,10 @@ def main() -> int:
                 else: rec['status']='artifact_generated_claim_warning'
             else:
                 rec['status']='failed'
-            # v59ek: split thesis eligibility gates after status/claim/ok are
-            # finalized. Native self-reference is a contract gate by default;
-            # --allow-contract-only-ranking explicitly upgrades it for exploration.
-            apply_accuracy_gate_to_row(rec, gate_policy)
+            # Bind central evidence before the single final accuracy gate.
+            # The reporting gate fails closed while that evidence is absent;
+            # an earlier pass would erase this provisional semantic claim and
+            # leave it false even after the exact central join succeeds.
         except Exception as e:
             rec.update({'status':'error','error':f'{type(e).__name__}: {e}','visual_ok':False,'artifact_generated':False,'tensor_ok':False,'strict_tensor_ok':False,'claim_ok':False,'ok':False,'semantic_validation_status':'unavailable','semantic_input_binding_status':'failed'})
             apply_accuracy_gate_to_row(rec, gate_policy)

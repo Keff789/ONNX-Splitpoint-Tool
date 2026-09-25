@@ -84,7 +84,9 @@ def test_workload_error_is_not_a_transient_marker_retry():
 def test_explicit_cli_policy_does_not_relax_profile_defaults():
     args = SimpleNamespace(campaign_budget_file='/tmp/new-explicit-task.json', campaign_max_retries=2, campaign_max_transport_failures=3)
     assert campaign_budget_forward_args(args)[-1] == '3'
-    with pytest.raises(ValueError):
-        campaign_budget_policy({'energy': {'task_budget': {'enabled': True, 'max_retries': 2, 'max_transport_failures': 3}}})
+    assert campaign_budget_policy({'energy': {'task_budget': {
+        'enabled': True, 'max_retries': 2, 'max_transport_failures': 3}}})['max_transport_failures'] == 3
+    from onnx_splitpoint_tool.energy.task_budget import DEFAULT_CAMPAIGN_BUDGET
+    assert DEFAULT_CAMPAIGN_BUDGET == {'enabled': True, 'max_retries': 1, 'max_transport_failures': 2}
     from onnx_splitpoint_tool.energy.config import EnergyDefaults
     assert EnergyDefaults().invalid_repeat_reconnect_backoff_s == 5

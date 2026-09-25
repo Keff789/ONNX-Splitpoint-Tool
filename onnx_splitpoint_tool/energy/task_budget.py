@@ -18,6 +18,13 @@ from pathlib import Path
 DEFAULT_CAMPAIGN_BUDGET = {"enabled": True, "max_retries": 1, "max_transport_failures": 2}
 
 
+def positive_transport_failure_limit(value):
+    """One contract for profile, CLI forwarding and bounded acquisition."""
+    if type(value) is not int or value < 1:
+        raise ValueError("max_transport_failures must be a positive integer")
+    return value
+
+
 def source_completion(run_dir):
     """The R5 lifecycle contract, evaluated against this physical attempt."""
     path = Path(run_dir) / "collector_stdout.log"
@@ -41,11 +48,10 @@ def campaign_budget_policy(native_config):
     if not policy.get("enabled"):
         return {}
     retries = policy.get("max_retries")
-    if (type(retries) is not int or retries < 0
-            or type(policy.get("max_transport_failures")) is not int
-            or policy["max_transport_failures"] not in (1, 2)):
-        raise ValueError("native energy task_budget requires nonnegative max_retries and max_transport_failures in {1,2}")
-    return {"enabled": True, "max_retries": retries, "max_transport_failures": policy["max_transport_failures"],
+    if type(retries) is not int or retries < 0:
+        raise ValueError("native energy task_budget requires nonnegative integer max_retries")
+    failures = positive_transport_failure_limit(policy.get("max_transport_failures"))
+    return {"enabled": True, "max_retries": retries, "max_transport_failures": failures,
             "max_chains_per_row": "repeats * (1 + max_retries)",
             "stop_on_unresolved_source": True, "includes_preflights": True}
 
@@ -62,7 +68,8 @@ def campaign_budget_profile_args(native_config, run_dir):
 def add_campaign_budget_arguments(parser, *, measurement=False):
     parser.add_argument("--campaign-budget-file", default=None)
     parser.add_argument("--campaign-max-retries", type=int, default=None)
-    parser.add_argument("--campaign-max-transport-failures", type=int, default=None)
+    parser.add_argument("--campaign-max-transport-failures",
+                        type=lambda text: positive_transport_failure_limit(int(text)), default=None)
     if measurement:
         parser.add_argument("--campaign-row-id", default=None)
         parser.add_argument("--campaign-repeats", type=int, default=None)
@@ -77,9 +84,9 @@ def campaign_budget_forward_args(args):
     if all(value is None for value in values):
         return []
     path, retries, failures = values
-    if (not path or type(retries) is not int or retries < 0
-            or type(failures) is not int or failures not in (1, 2, 3)):
+    if not path or type(retries) is not int or retries < 0:
         raise ValueError("incomplete campaign budget arguments")
+    failures = positive_transport_failure_limit(failures)
     return ["--campaign-budget-file", str(Path(path).expanduser().resolve()),
             "--campaign-max-retries", str(retries), "--campaign-max-transport-failures", str(failures)]
 
@@ -106,6 +113,7 @@ def _chain_owner_alive(chain):
 
 class EnergyTaskBudget:
     def __init__(self, handle, limits, cancel_event=None, *, campaign_row=None, source_id=None):
+        positive_transport_failure_limit(limits.get("max_transport_failures"))
         self.handle = handle
         self.cancel_event = cancel_event
         self.campaign_row = campaign_row
@@ -244,6 +252,15 @@ class EnergyTaskBudget:
                             self.source["stop_reason"] = "campaign_source_interrupted_chain_unresolved"
                         self.stop("campaign_source_interrupted_chain_unresolved" if self.source is not None else "task_interrupted_chain_unresolved")
                     return False
+        if self.source is not None and any(
+                c["logical_repeat"] == logical_repeat and c.get("finished") is True
+                and c.get("valid") is True for c in self.data["chains"]):
+            # Campaign row/repeat identities survive direct CLI re-entry. A
+            # fresh output directory must not reacquire an accepted repeat.
+            # Keep the original result and source usable; no recovery or replay
+            # of old result files is attempted by this admission check.
+            self.busy_reason = "energy_repeat_already_valid:" + str(logical_repeat)
+            return False
         limits = self.data["limits"]
         counts = self.counts()
         if counts["transport_failures"] >= limits["max_transport_failures"]:
@@ -386,12 +403,16 @@ def bounded_energy_task(function):
             if checkpoint or max_chains is not None or max_failures is not None:
                 raise ValueError("campaign and diagnostic task budgets cannot be combined")
             if (type(campaign_repeats) is not int or campaign_repeats < 1
-                    or type(campaign_retries) is not int or campaign_retries < 0
-                    or type(campaign_failures) is not int or campaign_failures not in (1, 2, 3) or not campaign_row):
-                raise ValueError("campaign requires repeats, retries, row identity and one to three source transport failures")
+                    or type(campaign_retries) is not int or campaign_retries < 0 or not campaign_row):
+                raise ValueError("campaign requires positive repeats, nonnegative retries and row identity")
             checkpoint = campaign
             max_chains = campaign_repeats * (1 + campaign_retries)
-            max_failures = campaign_failures
+            max_failures = positive_transport_failure_limit(campaign_failures)
+            # The explicit campaign policy also drives the existing outer
+            # invalid-repeat loop when the caller supplies no dedicated override.
+            # Recursive single-attempt calls pass zero and share this budget.
+            if kwargs.get("invalid_repeat_max_retries") is None:
+                kwargs["invalid_repeat_max_retries"] = campaign_retries
         elif any(v is not None for v in (campaign_row, campaign_repeats, campaign_retries, campaign_failures)):
             raise ValueError("campaign options require a campaign checkpoint")
         shared = kwargs.get("_task_budget")
@@ -404,7 +425,8 @@ def bounded_energy_task(function):
             retries = getattr(kwargs.get("defaults"), "invalid_repeat_max_retries", 1)
         if campaign and retries > campaign_retries:
             raise ValueError("collector retries exceed campaign retry contract")
-        if (not checkpoint or any(type(v) is not int or v < 1 for v in (max_chains, max_failures))
+        max_failures = positive_transport_failure_limit(max_failures)
+        if (not checkpoint or type(max_chains) is not int or max_chains < 1
                 or type(retries) is not int or retries < 0):
             raise ValueError("bounded energy task requires checkpoint, positive limits and nonnegative retries")
         import fcntl

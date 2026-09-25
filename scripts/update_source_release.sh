@@ -292,8 +292,8 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 
-EXPECTED_VERSION = "2.90.1"
-EXPECTED_BUILD_ID = "v2.90.1"
+EXPECTED_VERSION = "2.91.0"
+EXPECTED_BUILD_ID = "v2.91.0"
 EXPECTED_PREFIX = f"ONNX-Splitpoint-Tool_v{EXPECTED_VERSION}"
 MANIFEST_SCHEMA = "onnx-splitpoint/source-manifest-v1"
 MANIFEST_NAME = "SOURCE_MANIFEST.json"
@@ -401,6 +401,7 @@ ALLOWED_DOC_FILES = {
     "docs/RELEASE_2.83.md",
     "docs/RELEASE_2.90.0.md",
     "docs/RELEASE_2.90.1.md",
+    "docs/RELEASE_2.91.0.md",
     "docs/ARBEITSSTAND.md",
     "docs/V281_EVIDENCE_INDEX.json",
     "docs/ONNX_SPLITPOINT_KnowledgeBase_CANONICAL_v2.81_2026-09-13.md",
@@ -1152,7 +1153,7 @@ if [[ "$TRUSTED_ARCHIVE_REPORT" == *$'\n'* ]]; then
 fi
 IFS=$'\t' read -r -a TRUSTED_ARCHIVE_FIELDS <<<"$TRUSTED_ARCHIVE_REPORT"
 if [[ ${#TRUSTED_ARCHIVE_FIELDS[@]} -ne 3 || \
-      "${TRUSTED_ARCHIVE_FIELDS[0]}" != 'ONNX-Splitpoint-Tool_v2.90.1' || \
+      "${TRUSTED_ARCHIVE_FIELDS[0]}" != 'ONNX-Splitpoint-Tool_v2.91.0' || \
       ! "${TRUSTED_ARCHIVE_FIELDS[1]}" =~ ^[0-9a-f]{64}$ || \
       ! "${TRUSTED_ARCHIVE_FIELDS[2]}" =~ ^[0-9a-f]{64}$ ]]; then
   printf 'FEHLER: ungültige Ausgabe der vertrauenswürdigen Archivprüfung.\n' >&2
@@ -1382,7 +1383,7 @@ fi
 # install or fresh-process validation failure.
 PYTHONPATH= PYTHONHOME= "$PYTHON" -I -B scripts/refresh_editable_install.py \
   --root "$TOOL_DIR" \
-  --expected-version 2.90.1 \
+  --expected-version 2.91.0 \
   --require-entrypoint \
     'onnx-splitpoint-smoke-v279=onnx_splitpoint_tool.v279_smoke:main' \
   --require-entrypoint \
@@ -1634,7 +1635,7 @@ fi
 printf '%s\n' \
   "PASS source release synchronized" \
   "Venv erhalten: $TOOL_DIR/.venv" \
-  "Distribution aktualisiert: onnx-splitpoint-tool==2.90.1" \
+  "Distribution aktualisiert: onnx-splitpoint-tool==2.91.0" \
   "Release-Scope: Force AUS, Artefaktwiederverwendung, Hailo8-Compute-Umgebung und Runtime-Cleanup" \
   "Hardware-Kalibrierung: NOT_RUN (Updater führt keine Hardwareaktion aus)" \
   "YOLOv7-Probe-Abhängigkeiten: $YOLOV7_PROBE_DEPS_STATUS" \

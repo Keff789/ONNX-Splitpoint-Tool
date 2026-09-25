@@ -13,8 +13,8 @@ from scripts import build_source_manifest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "2.90.1"
-EXPECTED_BUILD = "v2.90.1"
+EXPECTED_VERSION = "2.91.0"
+EXPECTED_BUILD = "v2.91.0"
 HISTORICAL_V282_BUILD = "v2.82-selected-energy-generic-roles-workspace-product-evidence"
 
 
@@ -110,7 +110,7 @@ def test_updater_supplies_each_entrypoint_as_a_separate_cli_option():
 
 
 def test_release_docs_are_current_and_historical_docs_are_retained() -> None:
-    assert EXPECTED_BUILD in _read("docs/RELEASE_2.90.1.md")
+    assert EXPECTED_BUILD in _read("docs/RELEASE_2.91.0.md")
     for path in ("TESTANLEITUNG_2.82.md", "VERSION_2.82_BUILD_AND_TEST_REPORT.md"):
         contents = _read(path)
         assert HISTORICAL_V282_BUILD in contents
@@ -519,16 +519,52 @@ print(json.dumps({key: getattr(wrapper, key) for key in ("SOURCE_VERSION", "SOUR
     "terminal_closure_smoke", "deepx_full_workflow_smoke", "run_complete_set_replay",
     "hailo10_yolo26_boundary_probe", "classification_input_probe",
 ))
-def test_T32_R09_current_launchers_parse_in_fresh_isolated_process(name: str, tmp_path: Path) -> None:
+def test_T32_R09_retained_launchers_parse_with_their_bound_version(name: str, tmp_path: Path) -> None:
     import os
     import subprocess
     import sys
 
-    result = subprocess.run([sys.executable, "-I", "-B", str(ROOT / "scripts" / f"{name}_v282.py"), "--help"],
+    launcher = ROOT / "scripts" / f"{name}_v282.py"
+    command = [sys.executable, "-I", "-B", str(launcher), "--help"]
+    if name != "deepx_full_workflow_smoke":
+        # These historical diagnostics intentionally require 2.83, including
+        # before argument parsing. Exercise only their help branch under that
+        # version fixture; never open their hardware gate for a newer release.
+        code = """
+import runpy, sys
+import onnx_splitpoint_tool.release_identity as identity
+identity.VERSION = "2.83"
+sys.argv = [sys.argv[1], "--help"]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+        command = [sys.executable, "-I", "-B", "-c", code, str(launcher)]
+    result = subprocess.run(command,
                             cwd=tmp_path, text=True, capture_output=True, timeout=45,
                             env={k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME"}})
     assert result.returncode == 0, result.stdout + result.stderr
     assert "usage:" in result.stdout.lower()
+
+
+@pytest.mark.parametrize("name, code, reason", (
+    ("terminal_closure_smoke", 1, "STOP: installed v2.83 required"),
+    ("run_complete_set_replay", 1, "STOP: installed v2.83 required"),
+    ("classification_input_probe", 1, "STOP: installed v2.83 required"),
+    ("hailo10_yolo26_boundary_probe", 2, "STOP: installed_v283_required"),
+))
+def test_historical_diagnostics_keep_their_version_gate(name, code, reason, tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    assert VERSION != "2.83"
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", str(ROOT / "scripts" / f"{name}_v282.py"), "--help"],
+        cwd=tmp_path, text=True, capture_output=True, timeout=45,
+        env={k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME"}},
+    )
+    assert result.returncode == code
+    assert result.stderr.strip() == reason
+    assert not result.stdout.strip()
 
 
 @pytest.mark.parametrize('name', (

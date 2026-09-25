@@ -1961,14 +1961,44 @@ def process_lease_cli_main(argv: Optional[Sequence[str]] = None) -> int:
     recover = subparsers.add_parser(
         "recover-capture", help="explicitly reconcile one stopped physical capture resource group"
     )
-    for name in ("run-dir", "session-id", "operation-id", "setup-id", "source",
-                 "operator", "action", "performed-at", "supply-effect", "ready-observation"):
+    for name in ("run-dir", "session-id", "operation-id", "setup-id", "source", "operator"):
         recover.add_argument("--" + name, required=True)
+    action_fields = ("action", "performed-at", "supply-effect", "ready-observation")
+    authorization_fields = ("authorized-at", "authorization-reason", "new-workflow-profile")
+    for name in (*action_fields, *authorization_fields):
+        recover.add_argument("--" + name)
     recover.add_argument("--registry", default=None)
-    recover.add_argument("--confirm-action-performed", action="store_true", required=True,
-                         help="attest that the described operator action actually occurred")
+    release_ground = recover.add_mutually_exclusive_group(required=True)
+    release_ground.add_argument("--confirm-action-performed", action="store_true",
+                                help="attest that the described operator action actually occurred")
+    release_ground.add_argument("--authorize-new-attempt", action="store_true",
+                                help="authorize one new workflow despite the unproven old source end; no action or idle ACK is attested")
     arguments = parser.parse_args(list(argv) if argv is not None else None)
     if arguments.command == "recover-capture":
+        required_fields, forbidden_fields = ((authorization_fields, action_fields)
+            if arguments.authorize_new_attempt else (action_fields, authorization_fields))
+        for name in required_fields:
+            if getattr(arguments, name.replace("-", "_")) is None:
+                parser.error("the selected release ground requires --" + name)
+        for name in forbidden_fields:
+            if getattr(arguments, name.replace("-", "_")) is not None:
+                parser.error("the selected release ground cannot include --" + name)
+        if arguments.authorize_new_attempt:
+            evidence = {"retry_authorization": {
+                "source": arguments.source, "operator": arguments.operator,
+                "authorized_at": arguments.authorized_at, "reason": arguments.authorization_reason,
+                "new_workflow_profile": arguments.new_workflow_profile,
+                "authorize_new_attempt": True, "scope": "one_new_workflow",
+                "source_completion_unproven": True,
+            }}
+        else:
+            evidence = {"operator_evidence": {
+                "source": arguments.source, "operator": arguments.operator,
+                "action": arguments.action, "performed_at": arguments.performed_at,
+                "supply_effect": arguments.supply_effect,
+                "ready_observation": arguments.ready_observation,
+                "action_performed": arguments.confirm_action_performed,
+            }}
         from .resource_recovery import recover_capture_resources
         from ..workflow.run_control import WorkflowRunControlError
         try:
@@ -1976,13 +2006,7 @@ def process_lease_cli_main(argv: Optional[Sequence[str]] = None) -> int:
                 run_dir=arguments.run_dir, session_id=arguments.session_id,
                 operation_id=arguments.operation_id, setup_id=arguments.setup_id,
                 registry_path=arguments.registry,
-                operator_evidence={
-                    "source": arguments.source, "operator": arguments.operator,
-                    "action": arguments.action, "performed_at": arguments.performed_at,
-                    "supply_effect": arguments.supply_effect,
-                    "ready_observation": arguments.ready_observation,
-                    "action_performed": arguments.confirm_action_performed,
-                },
+                **evidence,
             )
             print(json.dumps(result, indent=2))
             return 0

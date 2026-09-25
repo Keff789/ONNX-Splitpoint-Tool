@@ -1174,3 +1174,204 @@ nicht zu umgehen. Keine automatische Recovery, Bedienbestätigung oder
 Quellenfreigabe; kein zusätzlicher Architekturfix in diesem engen Auftrag.
 Keine zusätzliche G1/G2-Runde und keine Neustartschleife. Private Detailbelege
 liegen im bestehenden Aufgabenroot unter evidence/quality_fix_20260924.
+
+### 2026-09-24 – ausdrückliche Neuversuchsfreigabe für Final 7×1
+
+Neuer Auftrag auf sauberem Stand 18ba7f3: frühere G1/G2-Startbedingungen sind
+abgelöst; alte Berichte und Zähler bleiben Historie. Die Quality-/Transferkorrektur
+wird nicht erneut implementiert und der vollständige Offline-Qualitytest nicht
+wiederholt. Beauftragt ist genau ein neuer normaler Workflow mit der bereits
+geprüften privaten Kopie Thesis_Final_7x1_QualityFix_20260924.yaml.
+
+Der bestehende recover-capture-Einstieg akzeptierte bislang nur eine tatsächlich
+ausgeführte physische Betreiberhandlung. Er erhält die enge Alternative
+authorize-new-attempt: ausdrückliche, zeitlich und an Quelle/Profil gebundene
+Freigabe eines neuen Workflows trotz unbestätigtem altem Quellenende. Kein Reset,
+Idle-ACK, Bereitschaftsnachweis oder Erfolg des alten Versuchs wird behauptet.
+Beide Freigabegründe sind exklusiv. Die vorhandenen vier flocks, Originalowner-,
+STOP-, Registry-, Cleanup- und aktuellen Ownershipprüfungen, Wiederholschutz
+gegen fremde Quarantänen sowie persistenter Rollback bleiben erhalten. Nur das
+recovery-Feld der alten Antwort ergänzt die Belege; alte Messung, STOP, Budget
+und Historie bleiben erhalten. Keine neue Recovery-, Registry- oder Hasharchitektur.
+
+Softwareprüfung: 81 Recoverytests PASS (7,12 s), einschließlich beider
+Freigabegründe bei Konkurrenz, unklarer Ownership, falschem Cleanup, Replay,
+Schreib-/fsync-Fehlern und kontrolliertem Prozessabbruch. Weitere 23 vorhandene
+Ownership-/Transporttests PASS (0,46 s). Read-only-Sicht auf Controller und
+H8/H10/DeepX: keine bekannten konkurrierenden Produktprozesse, aktiven Leases
+oder Sichtfehler. Alter G2-Parent failed, exakter dauerhafter Collector-Cleanup
+vorhanden, keine offenen Remote-Leasedeskriptoren. Dies ist keine Quellen- oder
+Hardware-PASS-Aussage.
+
+Der normale Resolver bestätigt optimized_coco_v1/Worker4/Request1,
+global_barrier/model_barrier, sieben Modelle, einen Single-Tensor-Split,
+Quality5000/5000, Native1000/100/3, Native-Energie60s×3 FS/command und die
+angeforderten Full-Baselines. Force bleibt aus, gültige Artefakte werden
+wiederverwendet, notwendige fehlende über die bestehenden Regeln gebaut.
+Neue Aufnahmen erhalten eigene Run-/Session-/Versuchsverzeichnisse, frische
+Collectorprozesse und Socket-/GO-Belege sowie Run-/Fensterbindung; kein
+rückwirkender Quellenabschluss wird daraus abgeleitet. Die bekannte fehlende
+AP06-Brokeraktivierung bei den Barrieremodi bleibt eine Grenze. Deshalb erfolgt
+der Start erst nach erfolgreicher expliziter Freigabe der konkreten alten Fences.
+Bei erneutem Quellenfehler gelten normaler Kampagnen-STOP und Cleanup, keine
+automatische Workflow-Neustartschleife. Reale normale GUI-Abnahme ist separat
+von den lokalen Tests zu bewerten, ohne vorweggenommenes Gesamtergebnis.
+
+Private Belege und tatsächlicher Startstatus:
+evidence/final_retry_20260924_axub7jja im bestehenden Aufgabenroot.
+
+Produktive Recovery erfolgreich: released für genau die vier alten G2-Ressourcen,
+0 Messungen durch Recovery. Acht geschützte Dateien bytegleich, die alte
+Captureantwort ausschließlich um recovery ergänzt; alle vier Originalquarantänen
+darin vollständig erhalten. Unmittelbar vor Start erneut fehlerfreie, freie
+Ownershipsicht auf allen drei DUTs. Installierte Source-Integrität verified
+(2080 Dateien), git diff --check ohne Befund.
+
+Danach den echten normalen GUI-Startbutton genau einmal betätigt. Tatsächliche
+neue Run-ID: thesis_final_7x1_qualityfix_20260924_20260924_105448.
+Start im Produktlog: 2026-09-24T10:54:48+02:00; Runverzeichnis unter
+/home/kmika/Models/EvaluationRuns, permanentes Log darin evaluation_workflow.log.
+Der mehrstündige Workflow bleibt in der GUI aktiv; Startbeleg ist keine
+abgeschlossene Hardwareabnahme oder wissenschaftliche Gesamtfreigabe.
+Keine zusätzlichen G1/G2- oder Offline-Qualityvolltests, kein Commit/Push.
+
+### 2026-09-25 – begrenzter Main-Release 2.91.0: Retries und zukünftige Claims
+
+Der neue Abschlussauftrag ersetzt frühere Abnahme-/Recovery-Startbedingungen.
+Der oben dokumentierte 7×1-Lauf ist inzwischen terminal partial; die damalige
+GUI arbeitet nicht mehr. Vor Produktänderungen waren keine aktiven alten
+Produktjobs sichtbar. Der komplette installierte Source samt zuvor lokalen
+Recoveryänderungen, Installationsmetadaten und privaten Konfigurationen wurde
+extern gesichert. Ausgangspunkt: Reviewbranch 18ba7f3; tatsächlich gelesenes
+origin/main ef44c9446bb90a837637746ef8651bae552d126f ist dessen Vorfahr.
+Version/Tag 2.91.0 waren lokal und remote frei. Normales Main-Merge/Push und
+Installation sind ausdrücklich beauftragt; keine Hardwarekampagne.
+
+Energie: Ein gemeinsamer positiver Ganzzahlvalidator ersetzt die voneinander
+abweichenden Wertemengen bei Profil, CLI-Weitergabe und Taskbudget. Null,
+Booleans, nichtpositive und nichtganzzahlige Werte bleiben Fehler. Explizite
+Kampagnen-Retries erreichen den vorhandenen äußeren Invalid-Repeat-Pfad auch
+bei direktem Mess-CLI-Einstieg; ausdrücklich interne Null-Retries bleiben null.
+Keine neue Retryschleife, unveränderte Standardwerte anderer Profile. Die neue
+Konfiguration 2/20 bedeutet drei logische Replikate, jeweils höchstens drei
+Versuche und höchstens neun reservierte Ketten je Zeile. Quellenfehler zählen
+kumulativ über Erfolge, Modellwechsel und Resume; Fehler20 stoppt die Quelle.
+Sauberer Quellenabschluss bleibt Voraussetzung für einen Retry. Cancel,
+aktive Owner und unbestätigtes END werden nicht durch verfügbares Budget
+überstimmt; keine erneute Freigabe alter Quarantänen in diesem Auftrag.
+
+Qualityzuordnung: Der Nativevalidator rief das abschließende Claim-Gate im
+Erfolgszweig zusätzlich vor der zentralen Bindung auf. Dieser erste Aufruf
+löschte einen gültigen vorläufigen semantischen Claim; ein späterer exakter
+Join konnte ihn nicht wiederherstellen. Entfernt wurde ausschließlich dieser
+vorzeitige Aufruf, identisch im Source und gepackten Remoteskript. Der echte
+Validator-, Energieplan- und Reporterpfad wurde mit unveränderten gespeicherten
+ResNet/H8-Full-Eingaben und kontrolliert ersetzter Neuberechnung verfolgt:
+quality_claim_result_verified ist künftig true. Der wissenschaftliche
+Energieclaim bleibt wegen screening_energy_policy_nonclaimable false.
+H10 YOLO26s/b364 bleibt semantisch ungültig; eine wirklich fehlende zentrale
+Bindung bleibt no_exact_identity_match. Keine pauschale Claimfreigabe, keine
+Reporteränderung, keine Entfernung von Matrix-/Rollen-/Strukturgrenzen.
+14 konsumierte Originaldateien sind nach der separaten Wiedergabe bytegleich.
+Der neue Positivtest scheitert mit ursprünglichem Code (1 FAIL/3 PASS); mit
+Korrektur bestehen alle vier Kontrollen und insgesamt46 fokussierte
+Claim-/Admission-/Provenienzregressionen (3,18s).
+
+### 2026-09-25 – private 20er-Profilkopie und lokale GUI-Abnahme
+
+Der echte Tk-Profil-Editor lädt die gelieferte Vorlage, speichert sie normal
+und lädt die endgültige private Kopie erneut. Datei-/Hinweisdialoge sind im
+lokalen Test kontrolliert beantwortet; Produktwidgets und Resolver bleiben
+unverändert. Der Startresolver materialisiert dasselbe Profil. Wechsel
+standard→smoke→final halten sämtliche Sollwerte. follow_tool_config=false
+bindet den normalen Snapshot; nur normale neue Resolvermetadaten entstehen.
+Die GUI-Normalisierung ersetzt die Native-Budgetherkunft durch frozen_resume
+und entfernt redundante Native-Performance-Overrides, nicht die Werte.
+Die Energie-Budgetherkunft bleibt profile_override. Alle46 anderen geschützten
+Profile/Konfigurationen einschließlich der Downloads-Vorlage sind bytegleich.
+
+Endkopie: profiles/Thesis_20Splits_N5000_B1000_20260925.yaml (maschinenlokal,
+nicht Teil der Veröffentlichung). Sieben Modelle/drei Setups/sieben Runprofile;
+20 stratified_windows-Grenzen, shortlist20, Single-Tensorfilter aus, kein
+zusätzlicher Auditsatz, keine Nativequote/kein Backfill. N5000/B1000/Seed20260710,
+optimized_coco_v1/Worker4/Request1/Block256/Checkpoints; Native1000/100/3,
+Queue3/Inflight8 und unveränderter Precisionvertrag. Energie60s×3 FS/command,
+Split und Full an, Generic-/CPU-/ORT-Energie und Windowprobe aus. Beide
+Barrieren/ein Uploadslot, Hailo balanced/Opt1/B500/Batch8, DeepX EMA/Opt0/B500,
+Force aus/keep_artifacts an, Rollen development/Claimscope evaluated_matrix.
+
+Die tatsächliche stratifizierte Produktselektion auf gespeicherten realen
+Graphanalysen erreicht für jedes Modell20 legale Grenzen, insgesamt140 ohne
+Shortfall. Die Single-Tensor-Nativekandidaten pro Setup sind MobileNet17,
+ResNet19, YOLO11l2, YOLO26m3, YOLO26s2, RegNet20 und YOLOv7 1 (zusammen64).
+Nur explizite alte Checkboxausschlüsse werden für die jetzt deaktivierte
+Checkbox rückgängig gemacht; kein Score-/Backendfilter ersetzt Kandidaten.
+Vier Kohortenfälle haben passende historische erfolgreiche Nativebelege auf
+allen drei Setups. Für136 Fälle fehlt im betrachteten 7×1-Cachebericht die
+genaue Splitbindung; aktuelle Vorbereitung/Cacheabdeckung bleibt unbekannt,
+keine136 behaupteten Cold Builds. Die konkreten H10-/H8-Negativgrenzen b398/b364
+liegen ohne Sonderfilter außerhalb der neu selektierten Kohorte. Keine
+globale H10-Sperre, kein Neubau zum Erzwingen von PASS, keine Laufbarkeits-,
+Builddauer- oder Energiezeilengarantie. Angeforderte Full-Baselines bleiben
+unabhängig von der Native-Split-Teilmenge erhalten.
+
+Gezielte G-N1/G-N2/G-N3-, Profilroundtrip- und Quality-Speed-Regressionsauswahl:
+69 PASS/0 FAIL/0 SKIP in109,30s (zwei Deprecationwarnungen). Recovery-,
+Ownershipbeobachtungs- und Transfer-Admissiontests:115 PASS in7,87s.
+Die bestehende Installation wurde mit dem vorhandenen stdlib-only Editable-
+Refresh auf2.91.0 aktualisiert;209 Entry-Points, Abhängigkeiten/Venv erhalten.
+CLI meldet2.91.0/Buildv2.91.0. Die tatsächlich gestartete vollständige normale
+GUI zeigt ONNX Split-Point Analyser v2.91.0 (core v2.91.0), löst die Profilkopie
+im Workflowpanel auf und schließt normal:0 Jobs,0 Starts,0 Hardwareaktionen.
+Logs/Save-on-close-Ausgabe bleiben in separater Testablage; alte Runmetadaten,
+Profile und globale Settings unverändert. Dies ist eine lokale GUI-Abnahme,
+keine normale GUI-Hardwareabnahme.
+
+Privater Aufgabenroot: retry_main_release_20260925_b6cgpl9a unter
+~/.local/share/onnx-splitpoint-codex. Er enthält vollständigen Startbackup,
+genaue Testaufrufe/-logs, Claimtrace, Kandidatenlisten und Profilbericht.
+Keine alte Messung, STOP-/Budgethistorie oder Ergebnisdatei wurde repariert
+oder nachgemessen. Der alte Lauf bleibt48/61 erfolgreiche Energiezeilen mit
+zwei ungültigen physischen Versuchen; R1-Hardcrash-Recovery bleibt partiell.
+Keine neue H10-Numerikdiagnose, G1/G2-Runde, Offline-Qualityvollprüfung oder
+7×1-/20er-Kampagne. Die historischen Hardwaregrenzen stehen getrennt in den
+Release Notes2.91.0 und sind keine zusätzliche Software-Releasebedingung.
+
+### 2026-09-25 – abschließende Retry-/Releaseprüfung
+
+Ein ergänzender enger Reentrytest belegt, dass ein direkter neuer Mess-CLI-
+Einstieg mit frischem Ausgabeverzeichnis bislang ein bereits gültiges
+Kampagnenreplikat erneut reservieren konnte. Die vorhandene Budget-Admission
+sperrt dies jetzt mit energy_repeat_already_valid, ohne alte Ergebnisse zu
+laden oder Source-/STOP-Zustände zu verändern. Normales Resume überspringt
+bereits vollständig verifizierte Zeilen weiterhin; partieller direkter
+Wiedereintritt ist fail-closed, keine neu implementierte Teilresume-Recovery.
+Andere Zeilen derselben Quelle und andere Quellen bleiben unabhängig.
+
+Finaler fokussierter Retry-/Lifecyclelauf:84 PASS in78,71s; zusätzliche
+Reentry-Isolationsprüfung:2 PASS in6,27s. Vorheriger Code scheitert nachweislich
+an beiden neuen Reentrykontrollen. Kontrollierte echte lokale Prozessketten
+prüfen zwei ungültige sauber abgeschlossene Versuche→dritter gültig, keine
+vierte Aufnahme bei drei Fehlversuchen, höchstens neun reservierte Ketten,
+kumulative20.Grenze, getrennte Quellen, Cancel, Owner, fehlendes END und
+Vertragsabweichung bei Reentry. Normaler Plan→Mess-CLI→Collectoraufbau übernimmt
+2/20 und invalid-repeat-max-retries2, drei Replikate/60s Last/FS/command.
+Das erzeugte76s-Collectorfenster mit5s Vor-/Nachlauf,2000Hz/Kanal0 bleibt
+unverändert. Physische Collectorstarts sind kontrolliert ersetzt. Die
+Softwareprüfung behauptet keine Reparatur des physikalischen Sampleverlusts.
+
+Release-/Versions-/Packagingregressionen:83 PASS in10,84s. Der erste Aufruf
+hatte75 PASS und vier Fehler einer veralteten Testerwartung: vier historische
+Diagnosewrapper verlangen weiterhin ausdrücklich Installation2.83, auch vor
+--help. Diese Produktguards bleiben unverändert. Der Test prüft jetzt sowohl
+den isolierten2.83-Hilfezweig als auch die exakte STOP-Ablehnung unter2.91.0;
+der unterstützte DeepX-Wrapper bleibt separat geprüft. Keine Diagnose wurde
+ausgeführt und kein historischer Hardwarepfad für2.91 geöffnet.
+
+Die vom Nutzer nachbenannte kanonische KB REV5 vom19.09. wurde in den
+maßgeblichen §§1.6–1.9,2.1, H10-Befunden und deren R9G-Fortschreibung abgeglichen.
+Repariertes Diagnosebinding bedeutet weiterhin keine reparierten späten HEFs;
+eine frühere Ersatzboundary ist ein anderer Fall. Der neue explizite
+B1000-/20er-Auftrag ersetzt keine historische B5000-/Hold-out-Abnahme.
+Die KB verbleibt privat; ihr historischer Arbeitsauftrag löst keine neue
+Diagnose-/Abnahme-/Hardwarearbeit aus.

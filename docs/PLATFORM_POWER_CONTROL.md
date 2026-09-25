@@ -69,15 +69,38 @@ performed. If the procedure is not documented locally, obtain it from the
 operator before acting. The `jetson`/`m.2` rail toggles below are not source-reset
 commands. `--registry PATH` optionally selects the normal hardware registry.
 
+An explicitly authorized new attempt is a separate alternative to a completed
+physical intervention. The same `recover-capture` entry accepts
+`--authorize-new-attempt`; this records permission for one new workflow despite
+the unresolved source end. It does not attest a reset, source readiness, an
+Idle-ACK, or validity of the old measurement. The authorization must identify
+the source, operator, timestamp, reason and intended new workflow profile.
+Do not supply physical-action evidence for an intervention that did not occur.
+This release starts no workflow itself; invoke the normal fresh workflow once
+after successful recovery, without replaying old acceptance campaigns.
+
+```bash
+python -m onnx_splitpoint_tool.remote.process_lease_cli recover-capture \
+  --run-dir /absolute/path/to/failed-run \
+  --session-id ORIGINAL_SESSION --operation-id ORIGINAL_CAPTURE \
+  --setup-id REGISTRY_SETUP --source source:REGISTRY_SOURCE \
+  --operator AUTHORIZING_OPERATOR \
+  --authorized-at 'ISO8601 authorization timestamp with timezone after STOP' \
+  --authorization-reason 'Actual explicit authorization despite unresolved source end' \
+  --new-workflow-profile /absolute/path/to/new-profile.yaml \
+  --authorize-new-attempt
+```
+
 The command binds the original capture request/reply and all four resource
 identities to that registry. It holds every existing exclusive resource lock,
 requires exact durable collector cleanup, a terminal parent and no unresolved
 remote lease descriptors, then checks current local/remote ownership using the
 existing read-only SSH transport. Active, foreign or unobservable predecessors,
-wrong operations/resources, incomplete action evidence and changed metadata
+wrong operations/resources, incomplete action or authorization evidence and changed metadata
 remain blocked. No process is killed by this recovery command.
 
-The original error and fence/owner evidence, actual operator action and current
+The original error and fence/owner evidence, actual operator action or explicit
+new-attempt authorization, and current
 ownership observations are retained in a `recovery` field of the existing
 capture `resource-reply.json`. Its STOP/reason remain unchanged, as do the old
 measurement, `finished=false`, retry/source budgets and acceptance counters.
@@ -90,6 +113,10 @@ quarantine cannot be cleared by replaying an earlier release.
 
 This operator is limited to the physical capture STOP. It does not broaden
 workflow Resume or establish general recovery from arbitrary controller crashes.
+The new capture uses normal fresh run/session and collector identities, its own
+attempt directory, run/window markers and a fresh socket with a logged GO.
+These identify the new acquisition; they do not retrospectively prove the old
+source end or constitute a firmware acknowledgement of a unique session epoch.
 
 The default controller port is `3000`. The commands are configurable but
 normally remain:

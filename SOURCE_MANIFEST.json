@@ -1,8 +1,8 @@
 {
   "schema": "onnx-splitpoint/source-manifest-v1",
-  "package_version": "2.90.1",
-  "workflow_version": "v2.90.1",
-  "file_count": 2080,
+  "package_version": "2.91.0",
+  "workflow_version": "v2.91.0",
+  "file_count": 2083,
   "files": [
     {
       "path": ".gitignore",
@@ -46,8 +46,8 @@
     },
     {
       "path": "README.md",
-      "size": 79777,
-      "sha256": "3596035b4ccf1ff6d62c4ff7504b6fe606d2559f0317d82d9b5cf774999dd6eb"
+      "size": 80220,
+      "sha256": "204622f3f0343ff53e69f5944cc6d64dd21a7c1485f68f11d83865ca1dbf25e2"
     },
     {
       "path": "TESTANLEITUNG_2.75.42.md",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 167246,
-      "sha256": "da905e26a737a967304e7af44dd49f571916027185a785025a4b7c5e8f4e0e4f"
+      "size": 180618,
+      "sha256": "87f96ebc6c56acb0131f4b7b7bcf456b732af8ef71e251d1a3cb797b8631906d"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -441,8 +441,8 @@
     },
     {
       "path": "docs/PLATFORM_POWER_CONTROL.md",
-      "size": 19768,
-      "sha256": "3922c8934863bca12a052731a9c2ccc1b590b0143b7d24b14d05455299698dbe"
+      "size": 21366,
+      "sha256": "601cca9a0f64fcdcc0c8d518b769ecc7a297f287976342788b22b84e4889abba"
     },
     {
       "path": "docs/QUICKSTART.md",
@@ -468,6 +468,11 @@
       "path": "docs/RELEASE_2.90.1.md",
       "size": 2911,
       "sha256": "a32f8ae18abf7542b38d7e1227c9a9522376cf54486de5651a9d0d816a94d355"
+    },
+    {
+      "path": "docs/RELEASE_2.91.0.md",
+      "size": 6756,
+      "sha256": "de016d280a83ceb5ebbad8e5a34bb3e248e005de8fc5656bc12f90a46c047ac8"
     },
     {
       "path": "docs/RELEASE_SCOPE_V2802.md",
@@ -871,8 +876,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/energy/task_budget.py",
-      "size": 24473,
-      "sha256": "72c8ff503cb68c8930709d9e95d2d8819ae4d69b7a31222fe73eb00de8888ef4"
+      "size": 25730,
+      "sha256": "ac3204169dd0ed5802900ecf6cad9b88f00bc092204870a5de287d1a84444c3a"
     },
     {
       "path": "onnx_splitpoint_tool/execution_plan.py",
@@ -1432,7 +1437,7 @@
     {
       "path": "onnx_splitpoint_tool/release_identity.py",
       "size": 713,
-      "sha256": "54c068f1eb9560eb9ea3cd8728d4ab0ef3e5e57f79eb7a09088d5dc520d8c40b"
+      "sha256": "750bc6b3c4b336ea047421b30f9f0fad9f016e629a1fd76587e5d778f069f500"
     },
     {
       "path": "onnx_splitpoint_tool/remote/__init__.py",
@@ -1446,8 +1451,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/remote/process_lease.py",
-      "size": 94541,
-      "sha256": "ab83c2b3febc7a07475bc2d9be81ba81cd06f284c99a568b27416b7f3262ea23"
+      "size": 96091,
+      "sha256": "1b5f918a3bf986ee04e60afa42b914f81a8096dcba9677a014e3297d000a520e"
     },
     {
       "path": "onnx_splitpoint_tool/remote/process_lease_cli.py",
@@ -1456,8 +1461,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/remote/resource_recovery.py",
-      "size": 16473,
-      "sha256": "0690617ed33f05293d113121ebd0a7a1f08d1c38e08013141d69bf16623bb09d"
+      "size": 18945,
+      "sha256": "e7e751c92c7bf7ae80b46c513f3f5e538dad12985176f2a5e9c0192ba4c4e3e9"
     },
     {
       "path": "onnx_splitpoint_tool/remote/resource_recovery_observation.py",
@@ -1826,8 +1831,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/resources/remote_scripts/native_producer_validate_visualize.py",
-      "size": 421888,
-      "sha256": "2831ed0080706cdc1cb3e35ffe8af40c9f45c4a198bb795bef0ac85ed9cdd803"
+      "size": 421894,
+      "sha256": "6369f327ab8e2e8e691235f3bd53dfdc73199df37470eb2b6ca3cbce6910726f"
     },
     {
       "path": "onnx_splitpoint_tool/resources/remote_scripts/native_progress.py",
@@ -2171,8 +2176,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/source_integrity.py",
-      "size": 29834,
-      "sha256": "0da0257ba463eb3a0f321f92d0e8c33b4be868a735f562e63be9356fb168fd97"
+      "size": 29864,
+      "sha256": "1a32cbaa70b0e6568829fd51c331de68e8943effd6bf5d31d7b8b9d3f1556211"
     },
     {
       "path": "onnx_splitpoint_tool/split_export.py",
@@ -3112,7 +3117,7 @@
     {
       "path": "pyproject.toml",
       "size": 16087,
-      "sha256": "ae458e6362f26a2e53d102d66a89219ae85898d59327ac0f3f8063112cbd61f2"
+      "sha256": "badfded17931976a50b3655d50eff9dc788e9acc0a5712cb98bb8ac3af98acf4"
     },
     {
       "path": "requirements.txt",
@@ -3146,8 +3151,8 @@
     },
     {
       "path": "scripts/build_source_manifest.py",
-      "size": 35040,
-      "sha256": "01fcb96a28e3ca9be24254140e716888fdbd29d84f272d325048c024a2a42f5c"
+      "size": 35070,
+      "sha256": "0ae1f844b347d4f6fbf1c3c5977115fdcf07e8561b0dae04714a4d7ef183f573"
     },
     {
       "path": "scripts/build_source_release.py",
@@ -3861,8 +3866,8 @@
     },
     {
       "path": "scripts/native_producer_validate_visualize.py",
-      "size": 421888,
-      "sha256": "2831ed0080706cdc1cb3e35ffe8af40c9f45c4a198bb795bef0ac85ed9cdd803"
+      "size": 421894,
+      "sha256": "6369f327ab8e2e8e691235f3bd53dfdc73199df37470eb2b6ca3cbce6910726f"
     },
     {
       "path": "scripts/native_producer_validation_index.py",
@@ -5091,8 +5096,8 @@
     },
     {
       "path": "scripts/update_source_release.sh",
-      "size": 62350,
-      "sha256": "a5dc20cc94d9178c342c2749355fd0741f9f99b994d0cea7796ead16d30832c4"
+      "size": 62380,
+      "sha256": "58d268290088d7e5083f2a69154a80b40aed72007565796629e5cf0fe593751b"
     },
     {
       "path": "scripts/v2803_fix2_revision.json",
@@ -6865,6 +6870,11 @@
       "sha256": "19ad4cf87bd9e733d3885073dfec42e373dd86ed27971ad886a429da40269742"
     },
     {
+      "path": "tests/test_energy_campaign_retry_policy.py",
+      "size": 17726,
+      "sha256": "d77ab8537749a893b477b33116c722fb99e731479870ac9bd04271893d20f183"
+    },
+    {
       "path": "tests/test_energy_command_window_binding_v2.py",
       "size": 36339,
       "sha256": "99c4371dacf2bfdcf6b8c99c1611b6dc86d0563ae7f8e26cafc6503abb850cd8"
@@ -6941,8 +6951,8 @@
     },
     {
       "path": "tests/test_physical_resource_recovery.py",
-      "size": 23282,
-      "sha256": "c8fe0bdc6ab9acfd94537e16c639e9a8e361f676f85c84fca2d568b05112ac70"
+      "size": 30030,
+      "sha256": "a4cef38b04f8a62015f9c50577d616f7cebc1f768cc9a00dcadbd0ef0f1b4081"
     },
     {
       "path": "tests/test_profile_editor_campaign_roundtrip_v261e.py",
@@ -9996,8 +10006,8 @@
     },
     {
       "path": "tests/test_v282_release_closure.py",
-      "size": 35333,
-      "sha256": "ed6dba1199ed135f11149b5d5ca63f3fd2a27fc6af0f97fd74f7cca8e609cac7"
+      "size": 36849,
+      "sha256": "765366856f76abce98c30181b429d0a0189d91e2c16c7ce6deeb8be089d5ae0e"
     },
     {
       "path": "tests/test_v282_status_quality.py",
@@ -10141,8 +10151,8 @@
     },
     {
       "path": "tests/test_v283_r9i_targeted.py",
-      "size": 31906,
-      "sha256": "95920ebe8d52d627e2b3d52f437c354a6782bb54672faae59893aa1357f59743"
+      "size": 31907,
+      "sha256": "e4fa7496d7c4c323deb908bc3a05eeb2f6f194050a1a3adb447eb58a36156756"
     },
     {
       "path": "tests/test_v283_r9j_continuation.py",
@@ -10177,7 +10187,7 @@
     {
       "path": "tests/test_v283_release_identity.py",
       "size": 1768,
-      "sha256": "278071b7aef117b378d67a8482a2fa0d285c1a146080fde129bfb8116e4e936b"
+      "sha256": "cc41c7e89d8a0b852cd3200b9ab01da7afe678989876f47a192cf1be9f421e2a"
     },
     {
       "path": "tests/test_v283_report_statistics.py",
@@ -10201,8 +10211,8 @@
     },
     {
       "path": "tests/test_v290_energy176_retry.py",
-      "size": 4233,
-      "sha256": "091722ebe2a7b68879bf9ff92349695faa9b31d92aa347269b0a821e4f01eca1"
+      "size": 4423,
+      "sha256": "47fa3a1ec344004af6e716f787c9931f709b6f186989b52d5841550628fb1bd4"
     },
     {
       "path": "tests/test_v290_r9l_completion.py",
@@ -10212,7 +10222,7 @@
     {
       "path": "tests/test_v290_r9l_exports.py",
       "size": 8503,
-      "sha256": "75ded379a15297d89e39af6fc5b236e391e07431e6ad5ac85ad6378974188c25"
+      "sha256": "f1454b3ff9b482c0e681bd9bc9f7c248cdf29b5e4ee719a9ef71892622681690"
     },
     {
       "path": "tests/test_v290_r9l_scope.py",
@@ -10228,6 +10238,11 @@
       "path": "tests/test_v290_r9l_source_closure_udp.py",
       "size": 8166,
       "sha256": "9272fad3a4b29a7d772d41406891258895aedf90a9f38a76f5a4ffed0d7168f4"
+    },
+    {
+      "path": "tests/test_v291_native_claim_order.py",
+      "size": 5625,
+      "sha256": "947ab171c39fd969fe2cfcd6c97c30845e9d661bdae3ca685d0b2e37edeacbf2"
     },
     {
       "path": "tests/test_v60d_results_fixes.py",
@@ -10402,7 +10417,7 @@
     {
       "path": "uv.lock",
       "size": 833961,
-      "sha256": "8deebf98e50be530b6ad0a13e8e989abd6028664d36fd675b14d21913632ddad"
+      "sha256": "6e266e5e8dc273663c2b6d0fa181c70c9b1219da8552f197935bbd78e1e05b32"
     }
   ]
 }

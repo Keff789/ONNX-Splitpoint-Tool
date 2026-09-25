@@ -148,8 +148,30 @@ def _assert_preserved(case):
     assert all(reply[key] == value for key, value in case.reply.items())
 
 
-def test_recovery_releases_exact_group_and_normal_admission_preserves_old_failure(recovery_case):
+def _retry_evidence(case):
+    profile = case.run_dir.parent / "new-workflow.yaml"
+    profile.write_text("name: new-integration-attempt\n", encoding="utf-8")
+    case.preserved[profile] = profile.read_bytes()
+    return {
+        "source": case.operator["source"], "operator": case.operator["operator"],
+        "authorized_at": datetime.now(timezone.utc).isoformat(),
+        "reason": "Explicitly authorized new integration attempt despite the old unconfirmed source end",
+        "new_workflow_profile": str(profile), "authorize_new_attempt": True,
+        "scope": "one_new_workflow", "source_completion_unproven": True,
+    }
+
+
+@pytest.fixture(params=["operator_action", "retry_authorization"])
+def release_case(recovery_case, request):
     case = recovery_case
+    if request.param == "retry_authorization":
+        case.kwargs.pop("operator_evidence")
+        case.kwargs["retry_authorization"] = _retry_evidence(case)
+    return case
+
+
+def test_recovery_releases_exact_group_and_normal_admission_preserves_old_failure(release_case):
+    case = release_case
     unrelated = run_control.EvaluationRunLock.for_resource(
         "source:192.0.2.199", owner={"run_id": "unrelated-run"},
     )
@@ -173,8 +195,8 @@ def test_recovery_releases_exact_group_and_normal_admission_preserves_old_failur
     _assert_preserved(case)
 
 
-def test_repeat_recovery_is_idempotent_without_new_mutation(recovery_case):
-    case = recovery_case
+def test_repeat_recovery_is_idempotent_without_new_mutation(release_case):
+    case = release_case
     resource_recovery.recover_capture_resources(**case.kwargs)
     before = {case.reply_path: case.reply_path.read_bytes()}
     before.update({lock.lock_path: lock.lock_path.read_bytes() for lock in case.locks.values()})
@@ -184,8 +206,8 @@ def test_repeat_recovery_is_idempotent_without_new_mutation(recovery_case):
     _assert_preserved(case)
 
 
-def test_old_recovery_cannot_clear_a_later_capture_quarantine(recovery_case):
-    case = recovery_case
+def test_old_recovery_cannot_clear_a_later_capture_quarantine(release_case):
+    case = release_case
     resource_recovery.recover_capture_resources(**case.kwargs)
     resource = "source:192.0.2.176"
     later = run_control.EvaluationRunLock.for_resource(resource, owner={
@@ -201,8 +223,8 @@ def test_old_recovery_cannot_clear_a_later_capture_quarantine(recovery_case):
     _assert_preserved(case)
 
 
-def test_held_resource_blocks_whole_recovery_group(recovery_case):
-    case = recovery_case
+def test_held_resource_blocks_whole_recovery_group(release_case):
+    case = release_case
     original = _fences(case)
     with case.locks["dut:192.0.2.145"].lock_path.open("r+b") as held:
         fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -213,8 +235,8 @@ def test_held_resource_blocks_whole_recovery_group(recovery_case):
 
 
 @pytest.mark.parametrize("reason", ["live_controller_owner", "live_remote_owner", "remote_visibility_unknown"])
-def test_live_or_unproven_owners_keep_all_fences(recovery_case, monkeypatch, reason):
-    case = recovery_case
+def test_live_or_unproven_owners_keep_all_fences(release_case, monkeypatch, reason):
+    case = release_case
     original = _fences(case)
     monkeypatch.setattr(resource_recovery, "observe_resource_owners", lambda *a, **k: {
         "ok": False, "reason": reason,
@@ -231,8 +253,8 @@ def test_live_or_unproven_owners_keep_all_fences(recovery_case, monkeypatch, rea
     "cleanup_missing", "cleanup_identity", "cleanup_unproven",
     "parent_running", "remote_descriptor",
 ])
-def test_unresolved_old_execution_cannot_release(recovery_case, change):
-    case = recovery_case
+def test_unresolved_old_execution_cannot_release(release_case, change):
+    case = release_case
     if change == "remote_descriptor":
         _write(case.journal / "unresolved.remote-lease.json", {"unproven": True})
     elif change == "parent_running":
@@ -261,8 +283,8 @@ def test_unresolved_old_execution_cannot_release(recovery_case, change):
     _assert_preserved(case)
 
 
-def test_changed_registry_during_observation_blocks_without_clearing_fences(recovery_case, monkeypatch):
-    case = recovery_case
+def test_changed_registry_during_observation_blocks_without_clearing_fences(release_case, monkeypatch):
+    case = release_case
     original = _fences(case)
     registry = case.kwargs["registry_path"]
     changed = registry.read_bytes() + b"\n# concurrent registry update\n"
@@ -281,8 +303,8 @@ def test_changed_registry_during_observation_blocks_without_clearing_fences(reco
 
 
 @pytest.mark.parametrize("change", ["operation", "resource_set", "foreign_fence", "foreign_lock_owner", "foreign_hostname"])
-def test_wrong_operation_resource_or_foreign_fence_is_not_released(recovery_case, change):
-    case = recovery_case
+def test_wrong_operation_resource_or_foreign_fence_is_not_released(release_case, change):
+    case = release_case
     kwargs = copy.deepcopy(case.kwargs)
     if change == "operation":
         kwargs["operation_id"] = "capture-" + "c" * 32
@@ -323,8 +345,8 @@ def test_missing_or_invalid_operator_evidence_cannot_release(recovery_case, fiel
     _assert_preserved(case)
 
 
-def test_concurrent_recovery_cannot_enter_same_group(recovery_case, monkeypatch):
-    case = recovery_case
+def test_concurrent_recovery_cannot_enter_same_group(release_case, monkeypatch):
+    case = release_case
     entered, finish = threading.Event(), threading.Event()
 
     def observe(*args, **kwargs):
@@ -345,8 +367,8 @@ def test_concurrent_recovery_cannot_enter_same_group(recovery_case, monkeypatch)
     _assert_preserved(case)
 
 
-def test_second_sidecar_failure_restores_all_original_fences(recovery_case, monkeypatch):
-    case = recovery_case
+def test_second_sidecar_failure_restores_all_original_fences(release_case, monkeypatch):
+    case = release_case
     originals = {r: json.loads(lock.quarantine_path.read_text())["owner"] for r, lock in case.locks.items()}
     paths = {str(lock.quarantine_path) for lock in case.locks.values()}
     original_unlink = os.unlink
@@ -377,8 +399,8 @@ def test_second_sidecar_failure_restores_all_original_fences(recovery_case, monk
     _assert_preserved(case)
 
 
-def test_second_released_owner_write_failure_keeps_normal_capture_blocked(recovery_case, monkeypatch):
-    case = recovery_case
+def test_second_released_owner_write_failure_keeps_normal_capture_blocked(release_case, monkeypatch):
+    case = release_case
     originals = {
         resource: json.loads(lock.quarantine_path.read_text())
         for resource, lock in case.locks.items()
@@ -407,8 +429,8 @@ def test_second_released_owner_write_failure_keeps_normal_capture_blocked(recove
 
 
 @pytest.mark.parametrize("stage", ["reply", "sidecar"])
-def test_strict_directory_sync_failure_restores_complete_group(recovery_case, monkeypatch, stage):
-    case = recovery_case
+def test_strict_directory_sync_failure_restores_complete_group(release_case, monkeypatch, stage):
+    case = release_case
     originals = {
         resource: json.loads(lock.quarantine_path.read_text())
         for resource, lock in case.locks.items()
@@ -437,8 +459,8 @@ def test_strict_directory_sync_failure_restores_complete_group(recovery_case, mo
     _assert_preserved(case)
 
 
-def test_local_crash_during_last_owner_truncate_retains_all_four_fences(recovery_case):
-    case = recovery_case
+def test_local_crash_during_last_owner_truncate_retains_all_four_fences(release_case):
+    case = release_case
     original_fences = _fences(case)
     script = """
 import json
@@ -526,4 +548,126 @@ def test_cli_recover_capture_requires_explicit_action_confirmation(recovery_case
     assert exc.value.code == 2
     assert "--confirm-action-performed" in capsys.readouterr().err
     assert calls == []
+    _assert_preserved(case)
+
+
+def test_retry_authorization_does_not_attest_action_or_validate_old_attempt(recovery_case):
+    case = recovery_case
+    authorization = _retry_evidence(case)
+    kwargs = {**case.kwargs, "operator_evidence": None, "retry_authorization": authorization}
+    assert resource_recovery.recover_capture_resources(**kwargs)["status"] == "released"
+    recovery = json.loads(case.reply_path.read_text())["recovery"]
+    assert recovery["retry_authorization"] == authorization
+    assert "operator_evidence" not in recovery
+    assert recovery["old_attempt_validated"] is False
+    assert recovery["measurements_started"] == 0
+    assert recovery["original_resources"]
+    assert "action_performed" not in json.dumps(recovery)
+    assert "ready_observation" not in json.dumps(recovery)
+    _assert_preserved(case)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("authorize_new_attempt", False), ("authorize_new_attempt", 1),
+    ("source_completion_unproven", False), ("scope", "unlimited_workflows"),
+    ("operator", ""), ("reason", ""), ("source", "source:192.0.2.199"),
+    ("authorized_at", "2099-01-01T00:00:00+00:00"),
+    ("authorized_at", "2000-01-01T00:00:00+00:00"),
+    ("authorized_at", "2026-09-23T12:00:00"),
+    ("new_workflow_profile", "relative.yaml"),
+    ("action_performed", True), ("ready_observation", "invented idle"),
+])
+def test_invalid_retry_authorization_keeps_original_fences(recovery_case, field, value):
+    case = recovery_case
+    authorization = _retry_evidence(case)
+    authorization[field] = value
+    original = _fences(case)
+    with pytest.raises(Exception):
+        resource_recovery.recover_capture_resources(
+            **{**case.kwargs, "operator_evidence": None, "retry_authorization": authorization})
+    assert _fences(case) == original
+    _assert_preserved(case)
+
+
+@pytest.mark.parametrize("kind", ["missing", "mixed", "malformed_profile"])
+def test_retry_release_ground_must_be_explicit_and_unambiguous(recovery_case, kind):
+    case = recovery_case
+    kwargs = dict(case.kwargs)
+    if kind == "missing":
+        kwargs.pop("operator_evidence")
+    else:
+        kwargs["retry_authorization"] = _retry_evidence(case)
+        if kind == "malformed_profile":
+            kwargs.pop("operator_evidence")
+            profile = Path(kwargs["retry_authorization"]["new_workflow_profile"])
+            profile.write_text("[unterminated", encoding="utf-8")
+            case.preserved[profile] = profile.read_bytes()
+    original = _fences(case)
+    with pytest.raises(Exception):
+        resource_recovery.recover_capture_resources(**kwargs)
+    assert _fences(case) == original
+    _assert_preserved(case)
+
+
+def test_retry_replay_cannot_change_profile_or_switch_release_ground(recovery_case):
+    case = recovery_case
+    authorization = _retry_evidence(case)
+    kwargs = {**case.kwargs, "operator_evidence": None, "retry_authorization": authorization}
+    resource_recovery.recover_capture_resources(**kwargs)
+    before = case.reply_path.read_bytes()
+    other = case.run_dir.parent / "other.yaml"
+    other.write_text("name: other\n", encoding="utf-8")
+    with pytest.raises(Exception, match="same recorded release evidence"):
+        resource_recovery.recover_capture_resources(**{**kwargs, "retry_authorization": {
+            **authorization, "new_workflow_profile": str(other)}})
+    with pytest.raises(Exception, match="same recorded release evidence"):
+        resource_recovery.recover_capture_resources(**case.kwargs)
+    assert case.reply_path.read_bytes() == before
+    _assert_preserved(case)
+
+
+def _retry_cli_argv(case, authorization):
+    argv = _recovery_cli_argv(case)
+    for key in ("action", "performed_at", "supply_effect", "ready_observation"):
+        index = argv.index("--" + key.replace("_", "-"))
+        del argv[index:index + 2]
+    for flag, key in (("authorized-at", "authorized_at"), ("authorization-reason", "reason"),
+                      ("new-workflow-profile", "new_workflow_profile")):
+        argv.extend(["--" + flag, authorization[key]])
+    return argv + ["--authorize-new-attempt"]
+
+
+def test_cli_retry_authorization_dispatches_without_operator_action(recovery_case, monkeypatch, capsys):
+    case = recovery_case
+    authorization = _retry_evidence(case)
+    calls = []
+    monkeypatch.setattr(resource_recovery, "recover_capture_resources",
+                        lambda **kwargs: calls.append(kwargs) or {"status": "released"})
+    assert process_lease.process_lease_cli_main(_retry_cli_argv(case, authorization)) == 0
+    assert calls == [{
+        "run_dir": str(case.run_dir), "session_id": case.kwargs["session_id"],
+        "operation_id": case.kwargs["operation_id"], "setup_id": case.kwargs["setup_id"],
+        "registry_path": str(case.kwargs["registry_path"]), "retry_authorization": authorization,
+    }]
+    assert json.loads(capsys.readouterr().out) == {"status": "released"}
+    _assert_preserved(case)
+
+
+@pytest.mark.parametrize("kind", ["both_flags", "action_fields", "missing_authorized_at", "missing_profile"])
+def test_cli_retry_authorization_rejects_mixed_or_incomplete_arguments(recovery_case, monkeypatch, kind):
+    case = recovery_case
+    argv = _retry_cli_argv(case, _retry_evidence(case))
+    if kind == "both_flags":
+        argv.append("--confirm-action-performed")
+    elif kind == "action_fields":
+        argv.extend(["--action", "invented action"])
+    else:
+        index = argv.index("--authorized-at" if kind == "missing_authorized_at" else "--new-workflow-profile")
+        del argv[index:index + 2]
+    calls = []
+    monkeypatch.setattr(resource_recovery, "recover_capture_resources", lambda **kwargs: calls.append(kwargs))
+    with pytest.raises(SystemExit) as exc:
+        process_lease.process_lease_cli_main(argv)
+    assert exc.value.code == 2
+    assert not calls
     _assert_preserved(case)

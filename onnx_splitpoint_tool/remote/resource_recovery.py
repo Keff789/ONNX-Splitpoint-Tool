@@ -1,8 +1,8 @@
 """Explicit recovery of one stopped capture's existing physical resource locks.
 
-No measurement or device command is sent. Operator evidence describes an
-actually completed intervention, not an authorization to invent one. The old
-STOP, collector result and energy budgets remain unchanged.
+No measurement or device command is sent. An actual operator intervention and
+authorization of one new workflow despite an unconfirmed source end are distinct
+release grounds. Neither changes the old STOP, result or energy budgets.
 """
 from __future__ import annotations
 
@@ -47,6 +47,35 @@ def _operator_evidence(value, source, stopped_at):
     return {**{k: value[k] for k in fields}, "action_performed": True}
 
 
+def _retry_authorization(value, source, stopped_at):
+    fields = ("source", "operator", "authorized_at", "reason", "new_workflow_profile")
+    _require(isinstance(value, Mapping) and value.get("authorize_new_attempt") is True
+             and value.get("scope") == "one_new_workflow"
+             and value.get("source_completion_unproven") is True,
+             "explicit authorization of one new workflow with unproven source end is required")
+    _require(set(value) == set(fields) | {
+        "authorize_new_attempt", "scope", "source_completion_unproven"},
+        "retry authorization cannot include operator action or protocol confirmations")
+    _require(all(isinstance(value.get(k), str) and value[k].strip() for k in fields),
+             "retry source, operator, time, reason and new workflow profile are required")
+    _require(value["source"] == source, "authorized source does not match capture")
+    authorized = _time(value["authorized_at"])
+    _require(_time(stopped_at) <= authorized <= datetime.now(timezone.utc),
+             "retry authorization must follow STOP and cannot be in the future")
+    profile = Path(value["new_workflow_profile"])
+    _require(profile.is_absolute() and not profile.is_symlink() and profile.is_file()
+             and profile.suffix.lower() in {".yaml", ".yml"},
+             "new workflow profile must be an existing absolute YAML file")
+    import yaml
+    try:
+        payload = yaml.safe_load(profile.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError):
+        payload = None
+    _require(isinstance(payload, Mapping) and bool(payload), "new workflow profile is not a YAML mapping")
+    return {**{k: value[k] for k in fields}, "authorize_new_attempt": True,
+            "scope": "one_new_workflow", "source_completion_unproven": True}
+
+
 def _write(path, value):
     # Use the existing atomic metadata writer without configuring/mutating a
     # historical RemoteProcessLeaseJournal session or creating another journal.
@@ -56,13 +85,16 @@ def _write(path, value):
 
 
 def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
-                              operator_evidence, registry_path=None):
+                              operator_evidence=None, retry_authorization=None, registry_path=None):
     """Recover exactly one four-resource capture STOP, under all four flocks.
 
-    Evidence and original fences are retained in the existing resource reply.
+    Exactly one explicit release ground is required. Evidence and original
+    fences are retained in the existing resource reply.
     A repeated identical call is a no-op; a new or foreign quarantine blocks.
     Normal acquire never calls this function and still rejects quarantines.
     """
+    _require((operator_evidence is None) != (retry_authorization is None),
+             "provide exactly one operator action or new-attempt authorization")
     supplied = Path(run_dir).expanduser()
     _require(not supplied.is_symlink() and supplied.is_dir(), "invalid run directory")
     run = supplied.resolve()
@@ -182,9 +214,15 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
             originals[resource] = copy.deepcopy(original)
 
         stopped_at = max((item["quarantine"]["quarantined_at"] for item in originals.values()), key=_time)
-        evidence = _operator_evidence(operator_evidence, source, stopped_at)
-        _require(not previous_recovery or previous_recovery.get("operator_evidence") == evidence,
-                 "repeat must refer to the same recorded operator action")
+        if retry_authorization is not None:
+            evidence_key, other_key = "retry_authorization", "operator_evidence"
+            evidence = _retry_authorization(retry_authorization, source, stopped_at)
+        else:
+            evidence_key, other_key = "operator_evidence", "retry_authorization"
+            evidence = _operator_evidence(operator_evidence, source, stopped_at)
+        _require(not previous_recovery or (previous_recovery.get(evidence_key) == evidence
+                                          and other_key not in previous_recovery),
+                 "repeat must refer to the same recorded release evidence")
         if previous_recovery.get("status") == "released" and all(
                 not lease.quarantine_path.exists() and lease.previous_owner.get("state") == "released"
                 for _, lease in leases):
@@ -214,11 +252,11 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
         _require(registry_file.read_bytes() == registry_before and read(request_path) == request
                  and read(reply_path) == reply and read(config_path) == config,
                  "registry or ownership changed during observation")
-        recovery = {**identity, "resources": resources, "operator_evidence": evidence,
+        recovery = {**identity, "resources": resources, evidence_key: evidence,
                     "original_resources": originals, "ownership_observation": observed,
                     "status": "releasing", "started_at": datetime.now(timezone.utc).isoformat(),
                     "measurements_started": 0, "old_attempt_validated": False}
-        # Commit original evidence and readiness to the existing STOP reply;
+        # Commit original evidence and the explicit release ground to the STOP reply;
         # never rewrite its state/reason, old attempt, result or budget.
         mutation_started = True
         _write(reply_path, {**reply, "recovery": recovery})

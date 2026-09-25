@@ -108,8 +108,8 @@ def test_current_release_and_gui_identity():
     import tomllib
     from onnx_splitpoint_tool import __version__, __build_id__
     root=Path(__file__).resolve().parents[1]
-    assert VERSION == __version__ == '2.90.1'
-    assert BUILD_ID == __build_id__ == 'v2.90.1'
+    assert VERSION == __version__ == '2.91.0'
+    assert BUILD_ID == __build_id__ == 'v2.91.0'
     assert tomllib.loads((root/'pyproject.toml').read_text())['project']['version'] == VERSION
     lock=tomllib.loads((root/'uv.lock').read_text())
     assert next(p for p in lock['package'] if p['name']=='onnx-splitpoint-tool')['version']==VERSION
