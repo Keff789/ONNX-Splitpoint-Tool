@@ -1,5 +1,71 @@
 # ONNX Splitpoint – fortlaufender Arbeitsstand
 
+## YOLO-Min3 – selektive Qualityquelle und erster H8-Anschluss (03.10.2026)
+
+Der erhaltene Fehlversuch übergab zwölf `quality_source=execute` neben zwölf
+`generic=preserve`. Beide Auswahlstellen der tatsächlichen Remote-Suite
+ignorierten die Qualitypflicht. Die Templatequelle lässt jetzt genau passende
+Modell-/Setup-/Casepflichten für `composed` zu. Der gebundene Qualityaufruf nutzt
+die vorhandene CPUreferenz und erzeugt Kandidatenrecords ohne Generic-Timing,
+Streaming oder Build. Vollständig erledigte und fremde Fälle bleiben gesperrt;
+die explizite Generic-Completion behält ihre ursprünglichen 100/1000/3.
+
+Der konkrete zweite Wiedereintritt erkennt die noch nie publizierte Nativebasis
+nur anhand des original gebundenen Fehlercheckpoints und derselben eingefrorenen
+Kohorte. Fehlende vorhandene Messbelege bleiben Fehler. Die bestehende physische
+Setupqueue hält weitere Qualityquellen bis zur normalen N5000/B1000-Auswertung,
+Publication und Native-Bindung von H8/YOLO11l/b120 zurück. Die Native-Startbarriere
+bleibt unverändert wirksam. Keine Reserveaktivierung oder neue Auswahl.
+
+Softwarebelege und inkrementeller Sourcecheckpoint liegen extern unter
+`$HOME/Reports/thesis20-yolo-min3-augmentation-20261002_222904/repairs/quality-selector-20261003_113308/`.
+Die unveränderte produktive Suite reproduzierte zunächst den Fehler. Die
+normale neu erzeugte Suite durchläuft beide Selektoren für alle zwölf Identitäten;
+nur SDK-/Inferenzblätter werden in der Softwareprüfung ersetzt. Runtime- und
+Schutzregressionen prüfen insbesondere null Generic-Zeitmessung und strikte
+Request-/Artefaktbindungen. Das ist keine Hardware- oder normale GUI-Abnahme.
+
+Ein einziger selektiver produktiver Anschluss ist nach abschließender Prüfung und
+Installation autorisiert. Tatsächliche Qualityabschlüsse, Nativebindungen,
+Messfortschritt und gegebenenfalls der konkrete neue Abbruch werden ausschließlich
+im neuen externen Attempt dokumentiert. Keine automatische Fix-/Neustartschleife,
+kein Commit/Push/Release; abgeschlossene Basis und 192er-Ergänzung bleiben erhalten.
+
+## THESIS20 – gezielte Generic-Completed-Task-Ergänzung (02.10.2026)
+
+Der ausdrücklich autorisierte Anschlussauftrag ergänzt exakt die 192 gebundenen
+F04-Identitäten außerhalb des abgeschlossenen Primärruns. Der selektive Einstieg
+`python -m onnx_splitpoint_tool.workflow.generic_completed_task` verwendet die
+bestehenden SSH-/Owner-/Ressourcenlocks und den generierten Generic-P1/P2-Runner.
+Je Fall drei frisch initialisierte Prozesse, je 100 vollständig abgeschlossene
+Warmups und 1000 gemessene Taskabschlüsse. Timer: bereite Worker freigeben bis
+letzter materialisierter Task; bestehende Handoff-/Queuepolitik bleibt erhalten.
+Die ursprüngliche vorbereitete Native-Eingabe wird wiederholt; H8 FLOAT32-/UINT8-
+und H10-Quantisierungsverträge werden unverändert berücksichtigt. Funktionale
+Kontrolle und Dump-I/O liegen außerhalb des Timers, erforderliche Completion darin.
+
+Plan, aktuelle Native-/Qualitybindung und kleine Originaloutputbelege sind für
+alle 192 Fälle geprüft. Historische Rohoutput-FPS, neue Completed-FPS und gemessene
+Native-FPS bleiben getrennt. Reporter erhält Accuracyverluste und Development-/
+Screeningrollen; Ranggruppen verwenden den vorhandenen Ranker und Mindestumfang.
+Kein neuer Qualitäts-, Native-, Energie- oder Compilerauftrag. Primärdaten und
+vorbestehende Auswertungskorrekturen bleiben erhalten; keine Release-/Gitfreigabe.
+
+Softwareabnahme: **108 PASS** in der abschließenden fokussierten Prüfung von Plan,
+echtem generiertem Runner, selektivem Dispatcher, Writer/Parser und Reporter.
+Zusätzlich zuvor **9 PASS** portable bestehende Completionregressionen. Ein früherer
+breiterer Legacy-Testversuch scheiterte an 13 fehlenden historischen Fixturedateien;
+diese wurden nicht erfunden. Doppelte/gesperrte Einstiege dürfen bestehende Reports
+nicht verändern, Runtimeidentität und Ausgabepfade werden vor Dispatch geprüft.
+
+Read-only-Geräteprüfung: alle drei Ownerprüfungen frei, je Setup 256 benötigte
+gebundene Remote-Dateien vorhanden; keine bekannten Widersprüche der verfügbaren
+historischen Power-/Clockkonfigurationen. Unbekannte historische Werte bleiben
+unbekannt. Dies ist keine reale Inferenzabnahme. Die autorisierten sechs Startfälle
+und der anschließende Rest laufen erst mit dem gesicherten Endstand; reale Belege,
+Restbilanz und automatischer Abschlussbericht werden ausschließlich extern unter
+`$HOME/Reports/thesis20-generic-completion-192-20261002/` fortgeschrieben.
+
 ## R9J – abschließende lokale Übergangsprüfung nach HOST-A5 (20.09.2026)
 
 A5 ist historisch vom HOST akzeptiert; B2 bleibt historisch negativ. Die bereits
@@ -1375,3 +1441,883 @@ eine frühere Ersatzboundary ist ein anderer Fall. Der neue explizite
 B1000-/20er-Auftrag ersetzt keine historische B5000-/Hold-out-Abnahme.
 Die KB verbleibt privat; ihr historischer Arbeitsauftrag löst keine neue
 Diagnose-/Abnahme-/Hardwarearbeit aus.
+
+### 2026-09-29 – THESIS20: begrenzte Produktkorrekturen und selektive Ergänzung
+
+Ausgangscommit `182092216dfaf4f3ad36460a883098548c83bd8f`, Gitstatus vor Beginn
+sauber. Maßgeblich ist der vollständig gelesene Vervollständigungsauftrag vom
+29.09.; der vorhandene Run bleibt die Kampagne. Die lokale Projektion der
+Originalpläne ergibt exakt 140 Grenzen, 399 vorhandene Genericresultate,
+37 gespeicherte negative Buildfälle und 152 weitere Generic-Kandidaten.
+414 abgeschlossene zentrale Qualityresultate einschließlich negativer
+Accuracyentscheidungen bleiben erhalten; sechs Full-Companions fehlen.
+Native umfasst 213 erhaltene Messungen, 228 technisch nicht unterstützte
+Multi-Input-Fälle und 15 Split- plus sechs TensorRT-Full-Lücken. Kein Backfill.
+
+**AP A/E – Software:** Manifestquellen lösen alle 280 regulären ONNX-Dateien
+der 140 Originalgrenzen korrekt auf; Baselinefehler b064/b136 reproduziert.
+Echte Konflikte und fehlende deklarierte Quellen bleiben Fehler. Die
+398.315.499-Byte-Native-Summary wurde vollständig streamend in eine
+53.509.218-Byte-ZIP-Datei exportiert, CRC/SHA geprüft; Python-Speichermaximum
+2.376.974 Bytes. Originaldatei unverändert. Das vorhandene Replay-Metadatenlimit
+steigt gezielt auf 512 MiB, ohne neuen Export-/Registrymechanismus.
+
+**AP B – Software:** Der normale Nativepfad filtert anhand der tatsächlichen
+Part2-Eingänge vor Voraussetzungen und Dispatch. Neue Projektionen trennen
+228 `not_supported` von 21 ausführbaren Lücken. Alte Messzeilen behalten ihre
+Version und Payloads. Kontrollierte Prozessblätter prüfen Wiederanwendung,
+Zusammenführung und Full-Untermenge. Die reguläre Restage-Vertragsableitung
+für TensorRT-Full-Hotloops verwendete irrtümlich Hailo-Rollen; der enge Fix
+verwendet deren gebundene Eingabedateien. Alle 213 alten Energiequellen lassen
+sich lokal ableiten, 563/563 benötigte lokale Artefaktpfade existieren. Das ist
+keine Remote-Cachevalidierung und keine Hardwareabnahme.
+
+**AP C – Software:** Der vollständige normale Energie-Plancheck auf den
+Originalbelegen besteht offline für 213 Zeilen. Die 177 identischen
+Provenienzfehler sind mit der Baseline reproduziert und durch konfliktgeprüfte
+Propagation vorhandener Duplikate behoben. Identitäts-, Command-, Modell- und
+Attestierungs-Negativkontrollen bleiben negativ. Der lokale Validator
+veröffentlicht nach 953,74 s mit rc=0 einen vollständigen 462-Zeilen-Bericht;
+sämtliche 213 vorhandenen Messoutputs bestehen Tensor-/Strukturprüfung und sind
+technisch ausführbar. 207 haben exakt zugeordnete zentrale Qualityevidenz;
+sechs vorhandenen Vendor-Full-YOLO26-Zeilen fehlt diese bis zur Genericergänzung.
+Zwei dieser sechs zeigen lokale semantische Fehler. Diese Befunde bleiben
+erhalten; daraus wird keine neue Performancemessung abgeleitet. Die ursprünglichen
+169 Teilberichte und alten Kennzeichnungen wurden nicht ersetzt.
+
+**AP D – Software integriert:** Neuer CLI-Einstieg
+`onnx-splitpoint-complete-evaluation` führt über den vorhandenen Workflow.
+Er übernimmt unveränderte archivierte Optionen und prüft den bisherigen
+Resumevertrag. Pläne und Status werden vor neuen Projektionen gezielt in
+Sitzungshistorie kopiert. Genericdispatches betreffen nur offene Identitäten;
+neue Raw-Ergebnisse erhalten eigene Attempts. Der reguläre Normalizer/Reporter
+führt alte und neue Zeilen samt ursprünglichen Quellen zusammen. Geprüfte
+kompatible Artefakte lösen keinen Compilerdispatch aus. Bereits normalisierte
+Messungen und anfragenlokale fertige Qualityresultate überleben einen Abbruch
+vor Veröffentlichung des Gesamtberichts. Die normale Zulassung akzeptiert die
+3728 bestehenden Hailo-Publikationslinks strukturell, ohne HEF-Inhalte erneut
+zu hashen; unsichere Links und veränderte Verträge bleiben abgelehnt.
+
+Energie verwendet die vorhandenen Rowjournale und Kampagnenbudgets für komplette
+Zeilen sowie verifizierte einzelne Replikate. Kontrollierte normale CLI-Prüfung:
+3→4 Planzeilen, eine wiederverwendet/drei ausgeführt; zweite Anwendung alle vier
+wiederverwendet/null Starts. Teilreplikate: eines erhalten/zwei ergänzt, danach
+null Starts. Der normale Wiederherstellungspfad umfasst auch den Ergänzungsmodus.
+Der zweite vollständige Offline-Energiecheck mit abgeschlossenem Validator und
+Original-`--previous-results` besteht: 213/213 Verträge, rc=0, 97,27 Sekunden,
+keine Wrapperstarts. Die vollständige normale Qualityqueue auf dem Originalrun
+plant exakt null neue Aufträge für die 414 abgeschlossenen Resultate.
+
+Konsolidierte lokale Integrationsprüfung: **104 PASS**, zwei Dependencywarnungen,
+12,26 Sekunden. Neue A–D-Regressionen, normaler Generic-/Native-/Energiepfad,
+Reentry-/Zulassungsnegativkontrollen und bestehende Restage-/DeepX-Regressionen.
+Separat Energie/Validator/Budgets: **187 PASS**, drei auf unveränderter Baseline
+reproduzierte alte v2727-Testfehler deselektiert. Native-Statusregressionen:
+78 PASS; Native-Voraussetzungen 102 PASS. Eine frühere breitere Nativegruppe
+hatte 107 PASS/2 alte Fehler (historische Versionsliste und Full-Imagemap-
+Testerwartung); diese wurden nicht durch Produktänderungen kaschiert.
+Die Testgruppen überlappen; ihre Zahlen sind keine additive Gesamtsuite.
+Ausführliche Befehle und Resultate liegen in den lokalen Paketberichten unter
+`/tmp/thesis20-local-validation`, `/tmp/thesis20-native-package-report.json`
+und `/tmp/thesis20-final-integration.xml`.
+
+Abschließende strikte Native-Energie-Reuseprüfung: 3 PASS; null neue Starts,
+vier wiederverwendete Zeilen und kein fälschlicher Strict-Fehler. Normale
+Editable-Installation auf 2.91.1 aktualisiert, 210 CLI-Einstiege, Abhängigkeiten
+unverändert. Versions-/Mirror-/lokale Smokeprüfung: 4 PASS in 1,56 Sekunden.
+Source-Release im getrennten `/tmp`-Quellstaging und Hauptinstallation geprüft:
+2091 Quelldateien, acht neue, keine entfernten; 43 Nutzerprofile bleiben lokal.
+Der Releasebuilder wurde nicht durch Entfernen lokaler Log-/Venv-Symlinks
+bedient: der erste direkte Release-Build im Installationsbaum lehnte diese
+korrekt ab; die normale Installed-Prüfung akzeptiert die geschützten Laufzeit-
+wurzeln. Source-Manifest und SHA256SUMS gehören zur bestehenden Releasepflege.
+
+**Hardware/GUI:** Null SSH-/Compiler-/Collector-/Workloadstarts. Kein kompletter
+Benchmarklauf, keine G1/G2-Runde, keine neue Energie- oder Qualitykampagne.
+Reale normale GUI-Hardwareabnahme ausdrücklich nicht durchgeführt. Alle lokalen
+Replay-/pytest-/Exportausgaben liegen unter `/tmp`, nicht im Quellbaum oder im
+Originalrun. Patchversion 2.91.1 wird lokal vorbereitet; bestehende Tags bleiben
+unverändert, keine Veröffentlichung. Verbleibend ist ausschließlich die spätere
+freigegebene Ergänzung: 152 Generic-Kandidaten, sechs Full-Quality-Companions,
+15 Native-Splits/sechs TensorRT-Full sowie bis zu 234 Energiequellen. Keine
+Garantie auf Qualitäts-PASS, keine neue G1/G2-Freigaberunde. Konkreter CLI-Befehl
+und lesbare Bilanz stehen in `docs/RELEASE_2.91.1.md`.
+
+### 2026-09-29 – THESIS20: Preflight-Vertragsfehler und zweiter Eintritt
+
+Auftrag `AUFTRAG_THESIS20_RESUME_PREFLIGHT_FIX_20260929.md` vollständig gelesen.
+Ausgangscommit weiterhin `182092216dfaf4f3ad36460a883098548c83bd8f`; alle
+vorhandenen uncommitteten 2.91.1-Änderungen bleiben erhalten. Der gescheiterte
+produktive Ergänzungsversuch bleibt als Historie bestehen.
+
+**Ursache und Fix:** Je YOLO26m/s 16 geänderte Metadatendateien, keine fehlende
+Indexbindung. Echte Writer im frischen Preflight ändern Zeitstempel und den
+DeepX-Probeoverride; die anschließende Build-Reuseprüfung verlangte trotzdem
+die alten Bytes. Für zwölf Dateien je Modell liegen gebundene Originalkopien
+vor, vier fehlten im alten Sicherungsglob. Für alle 32 Dateien ist die alte
+SHA256-/Größenbindung mit ausschließlich diesen Änderungen reproduzierbar.
+Die Ergänzung prüft jetzt genau diese Writerfelder gegen den ersten erhaltenen
+Originalindex. Alle übrigen Inhalte bleiben strikt gebunden; keine pauschale
+JSON-Freigabe, kein Neuschreiben von Receipts, keine Originalwiederherstellung.
+Neue Sicherungen erfassen die bisher ausgelassenen Metadaten; Sitzungen halten
+ihren ursprünglichen Quellenpfad fest. Fehlende frühere Belege dürfen nicht
+durch einen neueren Snapshot ersetzt werden.
+
+Zusätzliche Prüfungen erhalten ursprüngliche Resultatidentitäten und verhindern
+Nachmessungen aufgrund unvollständiger Ergebnisprojektionen. Neue gültige
+Ergebnisse bleiben ergänzbar. Die vorhandenen Logs erreichen die CLI sofort.
+Messzeiträume bleiben historisch, neue Reuse-/Attemptzeiten werden separat
+ausgewiesen; bereits vermischte Jobzeiten werden aus Original-StageResults
+korrekt dargestellt.
+
+**Verwaltungsprofil:** Wiederholte Registrierung kleiner Jobprojektionen
+prüfte jedes Mal sämtliche 257.313 Indexpfade. Tatsächliche Registrierung
+125,461 s ohne Profiler; derselbe normale isolierte Reuse nach Wegfall der
+redundanten Registrierung 0,691/0,624 s. Nachfolgende Quellenänderung wird
+weiterhin abgelehnt. Es gibt keinen neuen In-Memory-/Persistenzcache;
+Inhaltsprüfungen und normale terminale Inventarisierung bleiben erhalten.
+
+**Erhalt und Restplan:** Die fünf maßgeblichen Ergebnisaggregate stimmen mit
+der ersten Sicherung in SHA256 und Größe überein. Einzelidentitäten und
+Zeilenbelege bestätigen 399 Generic, 414 Quality einschließlich 27
+`accuracy_loss`, 213 Native und 37 negative Builds. Der aktuelle Restplan
+entspricht exakt dem ersten Supplementplan: 152 Generic, sechs
+Quality-Companions und 21 Native offen, 228 Native-Multi-Input nicht anwendbar.
+Die vorhandene Energiedatei ist eine blockierte Projektion mit null Starts.
+
+**Softwareprüfung:** Abschließender fokussierter Lauf 176 PASS in 16,57 s,
+zwei vorhandene Dependencywarnungen. Inklusive echter Stage-/Preflightwriter/
+Build-Reuse-/Dispatcherübergänge, Reentry und Negativkontrollen. Zusätzlich
+alle 83 tatsächlich gespeicherten Stufenentscheidungen lesend geprüft:
+73 Wiederverwendungen, zehn ausdrücklich vorgesehene Ergänzungs-/Projektions-
+stufen, kein Vertragsfehler. Vorher scheitern beide Originalmetadaten-Replays;
+nachher und nach Preflight-Abbruch werden jeweils exakt 158 offene Identitäten
+in sechs kontrollierten Dispatcheraufrufen ausgewählt. Zehn Negativkontrollen
+an echten Metadaten werden abgewiesen. Eine verkürzte Native-Summary bei
+unverändertem Matrixstatus sowie fehlende oder inhaltsveränderte Original-
+Messberichte werden vor erneuter Disposition gesperrt. Archivierte Original-
+Metadaten und benötigte Messberichte werden gegen ihre bestehenden Bindungen
+geprüft, einmal bei Eintritt; keine neue Vollbaumprüfung. Die Nativeprüfung
+benötigte lokal 35,889 s, die separate Genericprüfung mit Indexladen 19,802 s.
+Historische Remoteberichtlabels verwenden ausschließlich die vorhandene
+lokale Reporter-/Transferzuordnung. Die abschließenden Replay-, Installations- und
+Integritätsergebnisse stehen im dauerhaften privaten Abschlussbericht.
+
+**Hardware/GUI getrennt:** Keine produktive Ergänzung, kein SSH-, Compiler-,
+Collector- oder Workloadstart. Keine neue Hardwaremessung, Normal-GUI-
+Hardwareabnahme, vollständige Offline-Qualityrechnung oder G1/G2-Kampagne.
+Alle Prüfungen arbeiten lokal beziehungsweise mit kontrollierten äußeren
+Blättern. Fortgesetzt wird später derselbe Run mit dem vorhandenen
+`onnx-splitpoint-complete-evaluation --run-dir …`-Einstieg aus den Release Notes.
+
+### 2026-09-30 – THESIS20 Restabschluss, AP E: Restplan und Attemptanzeige
+
+Auftrag `AUFTRAG_THESIS20_RESTABSCHLUSS_20260930.md` vollständig gelesen;
+Ausgangscommit `182092216dfaf4f3ad36460a883098548c83bd8f`, bestehende uncommittete
+2.91.1-Arbeit erhalten. Dauerhafte Quellsicherung und Abnahmebelege unter
+`$HOME/Reports/thesis20-restabschluss-20260930`.
+
+Der normale lokale Plan liest die ursprünglichen Splitmanifest-Ausschlüsse:
+588 = 527 erhaltene Genericzeilen + 37 gespeicherte negative Builds + 24
+`hailo_yolo26_static_part1_guard`-Policyfälle. Keine Generic-Neudisposition,
+kein Backfill, Part2-only bleibt getrennt. 479 abgeschlossene Qualityresultate
+werden erhalten; die 69 fehlgeschlagenen Requests mit vorhandenen Vorhersagen
+sind lokale Statistikarbeit, auch die drei betroffenen Full-Companions.
+Native: 222 erhalten, 228 nicht unterstützt, zwölf unterstützte Lücken.
+
+CLI/Stufenbericht, Dashboard und wissenschaftlicher Bericht lesen den Fehler
+des maßgeblichen Workflowattempts: 222 geprüft, 142 PASS/80 FAIL, darunter
+59 CMake-Lücken, 14 Hailo-Receipt- und sieben DeepX-Manifestabweichungen.
+Evidenzpfad und Startzähler werden angezeigt; die historische 213er-Projektion
+wird weder überschrieben noch als aktueller Messversuch ausgegeben.
+
+Software: 15 vorhandene fokussierte Workflow-/Dispatchtests PASS und vier neue
+Restplan-/Dashboardregressionen PASS. Originaldaten-Plancheck zeigt die obigen
+Einzelidentitäten. Keine GUI-Hardwareabnahme oder Messung in diesem Paket.
+Weitere AP-Abnahmen und gezielte Installation folgen im selben Auftrag.
+
+**AP E, normaler Wiedereintritt:** Der echte CLI-Einstieg deckte zusätzlich
+auf, dass reguläre Hailo-Publikationslinks im neuen
+`native_producers/attempts/<session>/<backend>/<model>/benchmark_set`-Layout
+nicht zugelassen wurden. Der enge Pfadzweig verwendet unverändert den
+vorhandenen Bundleverifier; keine pauschale Symlinkfreigabe. Echter Publisher,
+Attemptkopie und manipulierter Zeiger sind geprüft. Ebenso geprüft ist der
+normale Native→Energie-Stufenübergang mit kontrollierter Prozessgrenze:
+aktueller Preflightfehler, null neue Performancearbeit, historische Ergebnis-
+bytes unverändert, alte Ergebnisse getrennt von aktuellem Fehlerpfad.
+Fokussiert acht Tests PASS; kombinierte neue Übergänge zunächst 24 PASS.
+
+**AP A – echte lokale Qualityabnahme:** Der Referenzjob wurde vor dem
+Harnessrefresh geplant, nach Budgetzulassung las er einen Mischstand mit
+sieben neuen und 13 alten Runnern. Rekonstruierte Schedulebindung
+`131fbf1ec68ed489f28bb4245d926d16cf144d606c3a0a17011a788249354fac`,
+gespeicherter Referenzstatus
+`84a335f9cedd7558169f8efa066031a233b587ebefe6bc3212fc81987a00a6f9`.
+Der historische RAMwert war nicht persistiert; die Schedulebindung ist aus
+Originalquellen rekonstruiert. Alter/neuer Runner unterscheiden sich nur in
+der Release-Identitätszeile; CPU verwendet b003, bereits im neuen Anteil.
+Der Generatorstatus bindet diesen b003-Runner und seine Referenzrecords.
+
+Refresh liegt jetzt vor Schedule in allen Setupmodi; Admission prüft die
+Quellenbindung erneut. Reentry stellt die Zuordnung nur aus exakt belegter
+Originalquelle her. Der wiederhergestellte Referenzworkspace ist symlinkfrei
+und besteht die normale Run-Pfadzulassung. Drei originale YOLO26s Vendor-Full-
+Requests wurden mit gespeichertem CPU-/Kandidatenbestand, N5000/B1000,
+Seed20260710, vier Workern und einem aktiven Request berechnet: H8 und H10
+`accuracy_loss`, DeepX `reference_close`; alle technisch `completed`.
+Laufzeiten nach Intake 193,69/87,85/96,57 Sekunden. Originalfehlresultate,
+Referenzstatus und Originalaggregate unverändert. Bestand jetzt 479 erhalten
+plus drei neue = 482 abgeschlossen, davon 34 Accuracyverluste; 66 Requests
+bleiben lokale Statistikarbeit. Abgeleitete Summary im bestehenden
+`reports/attempts/quality_local_20260930`-Reporterpfad.
+
+**Installation, Software:** Controller per vorhandenem stdlib-only PEP376-
+Editable-Refresh unter exklusivem Plattforminterlock auf 2.91.2 aktualisiert;
+210 Konsoleneinstiege, Abhängigkeiten erhalten. Erster Refreshaufruf wurde
+vor Änderung wegen fehlender `--require-entrypoint`-Deklaration des angeforderten
+Smoke-Einstiegs abgelehnt; korrigierter vollständiger Aufruf rc=0.
+Konsolidierte lokale Regression: 325 PASS, zwei vorhandene Dependencywarnungen,
+39,37 Sekunden. Keine produktive Messung oder normale GUI-Hardwareabnahme.
+
+**AP B/C – Native Full und lokale Nachbindung:** Kampagnen-ID und physischer
+Attemptroot werden getrennt aus den Dispatcherargumenten geprüft; Kampagnenroot
+bleibt kompatibel. Beide Runtimepfade (TRT/Vendor) und Ressourcenmirrors sind
+synchron. Der normale Writer→Transferpayload→Runtime-Verbraucher ist auch mit
+einem anderen fehlerhaften Modell geprüft. Ein neuer Fullrunner erhält beim
+späteren Dispatch einen eigenen Dateinamen pro Attempt im vorhandenen scripts-
+Verzeichnis; alte Energieverträge behalten ihre globale ursprüngliche Runnerdatei.
+Heute kein Remote-Runner-Update.
+
+Die Vendor-Metadatenarbeit hängt nicht mehr von neuen Performancejobs ab.
+Sechs echte Vendor-Full-Originalmessungen wurden durch den normalen lokalen
+Validator-main und bestehende zentrale Writer/Loader mit der abgeleiteten
+Qualitysummary nachgebunden: Erst- und Zweiteintritt jeweils rc=0, sechs
+`exact_identity_match`. YOLO26s H8/H10 bleiben `semantic_ok=false`.
+Ursprüngliche Native-Summary (222 Messungen), Fullcommands und Validierungs-
+belege bleiben unverändert. Die abgeleiteten Ergebnisse liegen im vorhandenen
+`reports/native_validation/attempts/local_binding_20260930`-Reporterpfad.
+Externe Inferenzblätter wurden gesperrt; ursprüngliche semantische Reports
+verwendet. 21 Negativkontrollen an echten Belegen bestehen (Run/Setup/Modell/
+Input/Source-Modell/kompiliertes Artefakt/Claimmirror, jeweils drei Backends).
+Final fokussiert 71 Tests PASS; ein alter Taskbudget-/FS-Testfehler wurde auf
+dem vollständigen Ausgangscheckpoint reproduziert und getrennt dokumentiert.
+
+**AP D – reale Artefakt-only-Energieabnahme, keine Messung:** Der bestehende
+Restagepfad wählte nur Mindestrollen aus, während Split-/Full-Verbraucher die
+vollständigen gebundenen Artefaktmengen prüfen. Er umfasst jetzt alle zusätzlich
+benötigten runlokalen Dateien sowie separat gebundene Boundarymetadaten;
+Installationscode, Interpreter und externe Geräte-Caches bleiben ausgeschlossen.
+Archivierte Native-Binaries erhalten beim vorhandenen atomaren Upload das
+erforderliche Ausführungsrecht. Kein neuer Restager und kein Compilerlauf.
+
+Je ein realer Originalfall der drei Fehlerklassen wurde vor Wiederbereitstellung
+mit dem normalen Gerätepreflight reproduziert. Die 14 Hailo-Receipt- und sieben
+DeepX-Manifestmeldungen `sha256_mismatch` waren tatsächlich fehlende Dateien:
+Der vorhandene Fullguard benutzt denselben Fehlertext für Abwesenheit und
+Byteabweichung. Alle Originalbytes lagen exakt im lokalen Nativearchiv vor;
+keine Sollprüfsumme wurde verändert, keine Serialisierung rekonstruiert.
+
+Auf .102/.104/.145 wurden nach read-only Eigentümerprüfung über den bestehenden
+konfliktgeprüften Pfad 216 fehlende Dateien ergänzt: 59 CMake-Dateien,
+59 erzeugte C++-Quellen, 56 erhaltene Native-Binaries, 14 Hailo-Receipts,
+sieben Benchmarkmanifeste und 21 Original-ONNX-Dateien. Insgesamt
+1.618.872.882 Bytes; null Ersetzungen vorhandener Dateien/Backups. Die tatsächliche
+Artefakt-only-Vorprüfung bestand danach mit **222 PASS / 0 FAIL**.
+
+Der zweite normale Eintritt bestätigt 608 exakte Remote-Dateibindungen,
+null erneute Übertragungen/Restages und nochmals **222 PASS / 0 FAIL**.
+Zusätzlich wurden die Ausführungsrechte aller 56 Native-Binaries real geprüft.
+Beide Eintritte erhalten fallgenau dieselben 222 ursprünglichen Vertrags-
+identitäten und unveränderten Command-Dateibytes; sämtliche wissenschaftlichen
+und Messparameter bleiben unverändert. Wrapper-, Collector-, Workload-,
+Compiler- und neue Geräteinferenzstarts: null. Die Messquelle .176 wurde nicht
+berührt; keine produktive Messung oder normale GUI-Hardwareabnahme.
+
+Software: konsolidiert 120 PASS, drei ausgeschlossene historische Tests,
+3,83 Sekunden. Die drei alten Quellrekonstruktionsfehler sind auf dem initialen
+Sourcecheckpoint reproduziert (15 PASS/3 FAIL in der ergänzenden Suite):
+erwartete alte CPP-SHA `99dfa223…`, aktueller Generator `bff08d6f…`.
+THESIS20 benötigt diesen Fallback nicht; seine exakten archivierten Bytes
+wurden verwendet. Die unabhängige fokussierte Restage-/Preflightgruppe besteht
+mit 105 PASS. Diese Gruppen überlappen.
+
+Dauerhafte Belege: `$HOME/Reports/thesis20-restabschluss-20260930/energy/`
+(`AP_D_report.json`, Originalfehler, Soll-/Istbelege, Tests, beide Eintritte).
+Der zweite Eintritt und die zugehörigen abgeleiteten Berichte liegen außerdem
+im ursprünglichen Run unter
+`reports/native_energy_measurements/attempts/thesis20_artifact_only_20260930_second`.
+Er ist ausdrücklich Artefakt-only-Abnahme und keine produktive Workflowexecution;
+der ursprüngliche gescheiterte Attempt und alte Energieberichte bleiben erhalten.
+Die 222 technisch geprüften Fälle sind eine künftige erste Energieaufnahme,
+keine Wiederholung bereits gemessener Energie. Nach den zwölf fehlenden
+Native-Performancefällen sind bis zu 234 Energiezeilen möglich; frische normale
+Vorprüfungen bleiben vor dem späteren Messstart erforderlich.
+
+**Gesamtabgleich und Lieferung 2.91.2:** Der installierte normale CLI-Einstieg
+`onnx-splitpoint-complete-evaluation --run-dir … --plan-only` besteht. Der
+fallgenaue Abschlussabgleich bestätigt 527 Genericidentitäten, 479 ursprüngliche
+Qualityresultate (447 reference_close/32 accuracy_loss) und 222 unveränderte
+Native-Messungen einschließlich der neun neuen YOLO26m-Splits. Sechs Original-
+aggregate beziehungsweise Fehlbelege sind byteunverändert. 482 Qualityresultate
+sind einschließlich der drei lokalen Ergänzungen fertig, 66 bleiben offen.
+Die drei offenen TensorRT-Full-Companions gehören zu diesen 66; sie sind andere
+Identitäten als die fertiggestellten Vendor Fulls. Keine Quellenänderung war
+für diesen abschließenden Identitätsabgleich nötig.
+
+Finale A-Generatorprüfung 12 PASS, B/C 71 PASS, D 120 PASS; die Gruppen
+überlappen mit der konsolidierten 325er-Regression. Ausführlicher Bericht,
+Restplan, Ausgangssicherung und finaler Sourcecheckpoint liegen dauerhaft unter
+`$HOME/Reports/thesis20-restabschluss-20260930`. Alle Test-/Reportausgaben
+außerhalb des Quellbaums. Kein Commit/Push; bestehende Nutzeränderungen erhalten.
+Software und echte Artefakt-only-Abnahme sind dokumentiert; produktive normale
+GUI-Abnahme und Messung bleiben ausdrücklich aus. STOP vor dem späteren
+bewussten Fortsetzungsstart desselben Runs.
+
+## THESIS20 2.91.2 – Generierungs-Reentry, 30.09.2026
+
+**Ursache und enger Produktfix:** Der neue Fehlversuch 8c017… scheiterte vor dem
+Cache-Preflight an fünf `content_changed` bei YOLO26m; YOLO26s hat denselben
+belegten Zustand. Die erste Sicherung 6411… ist korrekt ausgewählt. Vier
+Plan-/Suitealiase wurden jedoch im bereits ausgeführten Ergänzungsversuch
+36c943… durch physische Scopeprojektion und Runtimefinalisierung fortgeschrieben.
+Der ausführbare Python-Diff ergänzt den selektiven Dispatch und entspricht
+exakt dem installierten Template. Vollständige JSON-Felddiffs, Python-Diffs,
+Writerchronologie und exakt gebundene Originalkopien sind im Bericht gesichert.
+
+Der vorhandene Supplementguard erlaubt ausschließlich vollständig reproduzierte
+Writeroutputs: ursprüngliche JSONbytes und globaler Scope bleiben original
+gebunden; die bestehende Projektion muss die aktuellen Bytes exakt ergeben.
+Python muss den bestehenden aktuellen Index und den kanonischen Writeroutput
+erfüllen. Die erste Sicherungsbasis bleibt unverändert; keine Rücksetzung von
+Arbeitsdateien, keine Neuetikettierung alter Messquellen. Künftige normale
+Metadatensicherungen nehmen den Harness mit auf. Die bereits restaurierte
+YOLO26s-CPU-Referenz und ihr Workspace werden nicht verändert.
+
+**Zusätzlicher belegt notwendiger Reentryfix:** Zwei echte kleine
+YOLO26-Hardware-Smoke-Artefaktsätze reproduzieren nach erstem erfolgreichen
+Reuse und Abbruch einen zweiten Fehler: Die gebundene alte
+`resume_decision.json` wurde vom Reusewriter überschrieben, während ein
+abgebrochener Workflow keine terminale Indexfinalisierung ausführt. Neue
+Supplement-Reuseentscheidungen werden jetzt im bestehenden aktuellen
+Attemptverzeichnis geschrieben. Die frühere Entscheidung, ihr Indexeintrag
+und das abgeschlossene Stage-Ergebnis bleiben unverändert. Dies erfordert
+keine neue Freigabe oder nachträgliche Neuberechnung erwarteter Prüfsummen.
+
+**Software:** 26 gezielte neue Regressionen PASS, gesamte betroffene
+2.91.1-/2.91.2-Gruppe 190 PASS / zwei Dependencywarnungen; Gruppen
+überlappen. Echte Writer und normaler Stage-Wiedereintritt sind enthalten.
+Auch gemeinsam mit aktuellen Indexeinträgen veränderte Modelle, Auswahl,
+Precision, Datensätze, Endpunkte, Budgets und Pythoncode werden abgelehnt.
+
+**Zusammenhängende lokale Startkette:** Der normale installierte CLI-Einstieg
+wird in einem isolierten Dateisystem mit identischen Originalpfaden geprüft;
+große Originaldaten und historische Attempts sind nur lesend eingebunden.
+Guard, Basiswahl, Writer und Modellpipeline bleiben unverändert. Nur äußere
+Statistikausführung wird am Dispatch kontrolliert gestoppt; Netzwerk und
+Hardwarestarts sind gesperrt. Vorher-/Nachher-/Wiedereintrittsprotokolle und
+der endgültige Abnahmestatus werden nach der finalen Quellinstallation unter
+`$HOME/Reports/thesis20-generate-reentry-20260930/ABSCHLUSSBERICHT.txt`
+festgehalten. Ein Planaufruf oder die 190 Softwaretests ersetzen diese Abnahme
+nicht.
+
+**Produktionsgrenze:** 527 Genericzeilen, 482 abgeschlossene Qualityresultate,
+222 Native-Messungen erhalten; Rest 66 lokale Statistikrequests und zwölf
+Native-Performancefälle. Die kontrollierte lokale Abnahme führt keine neue
+Generic-Inferenz, Kompilierung, Native-/Energiemessung oder normale
+GUI-Hardwareabnahme aus. Die frühere zweimalige
+222er-Artefakt-only-Abnahme bleibt ein eigener Nachweis. Keine Änderung der
+43 Nutzerprofile, Venv, Geräteinstallation oder wissenschaftlichen Kriterien;
+kein Commit, Push oder Tagwechsel.
+
+**Autorisierter Produktionsstart:** Der ausdrückliche Nutzernachtrag vom 30.09.
+ersetzt den bisherigen Startstopp und ist im lokalen Arbeitsauftrag festgehalten.
+Nach erfolgreicher finaler Installation und zusammenhängender Startkettenprüfung
+einschließlich Wiedereintritt wird genau eine Fortsetzung desselben Runs mit dem
+installierten CLI gestartet. Vorher gelten die bestehenden Prozess-/Ownerprüfungen;
+eine vorhandene passende Fortsetzung darf nicht verdoppelt werden. Nur offene
+Statistikrequests, höchstens zwölf Nativefälle und danach die erstmalige
+Energieaufnahme der ausführbaren Planzeilen sind freigegeben. Zwischenzeitlich
+fertige Arbeit wird übernommen; Auswahl, Messumfang und Retrybudget bleiben
+unverändert. Sitzung/PID, neues Konsolenlog, späterer Exitcode und der lesend
+belegte Fortschritt werden im externen Abschlussbericht gesichert. Kein Warten
+auf Kampagnenende, keine Änderungen oder parallelen Gerätetests während des Laufs,
+keine automatische Fix-/Neustartschleife. Ein Prozessstart ist kein Mess-PASS.
+
+### 01.10.2026 — Energie-Previous-Results nach abgeschlossenem Ergänzungslauf
+
+Der vorherige produktive Lauf hat 548/548 Qualityresultate technisch beendet
+(509 reference_close,39 accuracy_loss) sowie 234 erfolgreiche Native-
+Performancefälle und 228 not_supported bilanziert; failed/missing jeweils0.
+527 Genericzeilen bleiben erhalten. Der aktuelle Energieplan umfasst234 Zeilen,
+vor diesem Reparaturpaket waren sämtliche Energiestartzähler0.
+
+Belegte Ursache: Der ausgewählte alte213er-Bericht aus dem Originalsnapshot
+des Attempts ee04… bindet kanonische lokale Contractpfade. Der Supplement-
+Publikationswriter hatte aber plan/* eines fehlgeschlagenen früheren Attempts
+36c943… auf diese Aliase kopiert; dessen Preflights behalten die ursprünglichen
+Attemptpfade. Die historischen Skriptbytes stimmen exakt mit der vorhandenen
+Originalindexbindung überein, die technischen Contractbytes bleiben identisch.
+Aktuelle Aliasbytes stammen bereits vom späteren ee04-Fehlversuch und wurden
+nicht als ursprüngliche Fehlerbytes ausgegeben.
+
+Enger Fix im vorhandenen Energie-Previous-Results-Pfad: Nur vollständig
+nachgewiesene, vor dem Start blockierte Kohorten benötigen keinen Vergleich
+mit den veränderlichen alten ausführbaren Planaliasen. Vier exakte Nullzähler,
+Ergebnis-/Ledgerkohorte, abwesende Ausgaben und fehlende Budgetketten werden
+geprüft. Vorhandene Rowjournale werden über ihre bestehenden Digest-/Vertrags-
+prüfungen gelesen, ohne das Manifest neu zu schreiben. Autoritative gestartete
+Rows, Messungen und Teilreplikate verhindern diese Ausnahme. Technische und
+Campaignverträge, Qualityprovenienz, Ausführungsumgebung, vollständige
+Energieidentitäten und aktuelle Commandbindungen bleiben strikt.
+
+Softwareabnahme: Der reale213→234-Übergang scheitert mit dem gesicherten
+Ausgangscode am gemeldeten lokalen Contractbinding und besteht mit dem Fix.
+Neue Schutzregressionen sowie bestehende Energie-Resume-/Provenienztests und
+Atomic-Checkpointtests PASS; exakte Ergebnisse im externen Bericht.
+Die finale integrierte Produktabnahme wird nach der letzten Installation am
+normalen CLI mit isolierter Originalpfadabbildung durchgeführt: vorhandene
+Stufen übernehmen,234er-Plan, Previous Results, echte Artefakt-/Owner-/Cohort-
+preflights und kontrollierter äußerer erster Energiemessstart. Sie ist von
+Softwaretests, normaler GUI-Abnahme und produktiver Aufnahme getrennt.
+
+Nutzerfreigabe: Nach erfolgreicher Installation/Abnahme einmalig denselben
+Run produktiv in tmux fortsetzen, neue Konsole und Exitcode unter Reports.
+Keine erneute Generic-/Quality-/Nativearbeit, keine Änderung von Auswahl,
+FS/command60s×3 oder Retrybudgets. Während Produktion keine Code-/Profil-/
+Cacheänderungen und keine parallelen Gerätetests. Kein automatischer Neustart.
+Erster tatsächlicher Energiefortschritt, Sitzung/PID, Erhaltungsbestand und
+etwaige Grenzen werden rein lesend dokumentiert unter
+$HOME/Reports/thesis20-energy-reentry-20261001/ABSCHLUSSBERICHT.txt.
+Kein Commit/Push, keine SDK-/Venv- oder Nutzerprofiländerungen.
+
+### 02.10.2026 — THESIS20: lokale Auswertungs- und Projektionskorrekturen
+
+Der produktive Lauf ist abgeschlossen. Maßgeblicher Anschlussauftrag und
+Einzelbelege: `$HOME/Reports/THESIS20_ERGEBNISAUDIT_20261002`.
+Die frühere Startfreigabe gilt nicht für diesen Anschlussauftrag: keine
+Workflowfortsetzung, Inferenz, Compiler-, Performance- oder Energieaufnahme.
+Originalmessungen und historische Fehlversuche bleiben unverändert; neue
+Berichte liegen ausschließlich unter
+`$HOME/Reports/thesis20-auswertung-20261002_110429`.
+
+F01: 47 Hailo10→TRT-Qualitätszeilen werden vor der TensorRT-Unterstringprüfung
+der richtigen Producerfamilie zugeordnet. 168 echte TRT-Zeilen des normalen
+Reporters einschließlich der 21 Full-Companions bleiben unverändert. F06:
+Die vorhandenen Entscheidungen
+reference_close/accuracy_loss werden regulär projiziert. Exakte ursprüngliche
+Compile-/Part1-Policybelege ergeben 588 Sollfälle = 527 Messfälle + 37 Buildfehler
+und 24 Policyausschlüsse, 0 offene Qualityfälle und 29 bisher fehlende H10-
+Terminalprojektionen. Keine künstlichen Messwerte oder erfolgreichen Qualityjobs.
+
+F02: Der Finalreport unterschied eine alte ungültige Authority nicht korrekt
+von einer echten Run-ID-Abweichung und behielt die alte negative Entscheidung
+nach Aktualisierung der Authority bei. Die neue Projektion prüft die bestehenden
+Command-/Consumer-/Request-/Manifest-/Payloadbindungen erneut; 186 alte
+Ablehnungen werden nachvollziehbar ersetzt, ihre vorherige Projektion bleibt
+sichtbar. F03: Die sechs vorhandenen TRT-Full-Outputs liegen im regulären
+Supplementverzeichnis außerhalb des alten literal benchmark_set-Pfads.
+Der lokale Validator kann sie jetzt über `--existing-outputs-only` gegen exakt
+gebundene gespeicherte Full-Referenzen prüfen, ohne ORT-/Probe-Fallback.
+Originalpolicy, Modell-, Input-, Completion- und Vergleichsverträge bleiben
+verbindlich. Beide YOLO26s-Vendor-Full-Negative bleiben negative Ergebnisse.
+
+F05: Energieexport aus den 234 aufgenommenen Native-Beobachtungen statt aus
+527 energielosen Genericzeilen. Kalibrierte FS-Eingangsenergie ohne Idleabzug
+bleibt primär; 21 TRT-Full-Zusatznormalisierungen stehen separat. Aufgenommen,
+gültig, deskriptiv paarbar, semantisch passend und wissenschaftlich freigegeben
+werden getrennt gezählt. 384 deskriptive Quotienten setzen passende physische
+und zeitliche Messbereiche voraus; kein bestehendes Claim-Gate wird gelockert.
+Development-/Unknown-/Screeningrollen werden mit Originalquellen ausgewiesen.
+Die acht DeepX-Vertragsunterschiede bleiben ausdrücklich dokumentiert.
+
+F04/W01–W03: Alle 527 ursprünglichen Generic-Per-Case-Berichte wurden gelesen.
+499 Splits messen Logits/P2, keine vollständige Taskzeit; 28 Fulls besitzen
+Completion. Ergänzende Gleichendpunktmessungen wären für die bestehende
+192er-Native-Schnittmenge erforderlich, sind lediglich als bedingte Fallliste
+benannt und nicht freigegeben. Keine Erweiterung der 20 stratifizierten Grenzen.
+YOLOv7 bleibt mit einer Grenze je Setup für Rangkorrelationen zu klein.
+MobileNet/DeepX b043 bleibt ein belegter Accuracyverlust. Alle Wiederholungen
+der fünf Native- und drei Energiewarnungen bleiben erhalten; 5 % CV ist keine
+neue Policy. Kein konkret belegter Fehler rechtfertigt hier einen automatischen
+Retry oder das Entfernen ungünstiger Wiederholungen.
+
+Softwareprüfung: F01/F06 abschließend 67 PASS; F02/F03 104 PASS und elf reale lokale
+Negativmutationen; F05 68 PASS; F04 drei PASS. Unabhängige Reviews bestanden.
+Neun historische Cross-Runner-Fixturefehler und ein alter Collectionfehler
+wurden mit dem gesicherten Ausgangscode identisch reproduziert und nicht
+außerhalb des Auftrags repariert. Die normalen Validator-/Finalreport-CLIs
+und die vorhandenen Metadatenbuilder laufen erfolgreich mit schreibgeschütztem
+Primärbestand. Abschließender normaler ScientificReplay in
+`scientific-corrected-v2`: Exitcode 0, alle integrierten Fallabnahmen PASS.
+Das Quality-Topfeld ist konsistent evaluated, die wissenschaftliche Freigabe
+bleibt blockiert. Energie: 234 aufgenommen/gültig, 702 gültige Replikate,
+384 deskriptive und 372 semantisch passende Paare, 0 Claims. Der Erhaltungs-
+vergleich bestätigt alle 437.974 Primärdateien; 527 Generic-, 548 Quality-,
+234/702 Native- und 234/702 Energieergebnisse einschließlich der drei ungültigen
+physischen Vorversuche bleiben erhalten. Der erste Replay bleibt separat
+als Beleg der zuletzt korrigierten Topfeldinkonsistenz bestehen. Einzelbefunde,
+Grenzen, genaue Tests, Gitstatus und bedingte nicht freigegebene Zusatzmessliste
+stehen im externen `ABSCHLUSSBERICHT.txt` und `korrigierte_falltabellen/`.
+Keine normale GUI-/Hardwareabnahme, keine Messfreigabe, kein Commit/Push.
+
+## 2026-10-02 – Separate THESIS20-YOLO-Min3-Augmentierung
+
+Neuer ausdrücklicher Auftrag nach dem abgeschlossenen 192er-Completionlauf
+(192 Fälle, 576 Replikate, 576.000 Taskabschlüsse; Exitcode 0). Dieser Bestand
+und die abgeschlossene Hauptkampagne sind ausschließlich Originalquellen.
+Quellcheckpoint und sämtliche neuen Arbeits-/Ergebnisdateien liegen unter
+`$HOME/Reports/thesis20-yolo-min3-augmentation-20261002_222904`.
+
+Die graphbasierte Zusatzwahl ergibt YOLO11l b120, YOLO26s b038 sowie
+YOLOv7 b044/cat_1 und b066/mul_20 auf H8, H10 und DeepX: zwölf Primärfälle.
+YOLO26m erhält keine neue Grenze. Die ursprünglichen Graphidentitäten und
+jeweils ein tatsächlicher P2-Eingang sind lokal belegt. B008/B008/B030 sind
+vorab ausgewiesene optionale Standbygrenzen, keine bereits zugelassenen
+Messaufträge. Eine nachträgliche Änderung versiegelter akzeptierter Scopes
+wird nicht als Reserveaktivierung verwendet.
+
+Neue begrenzte Planung und Workflowverknüpfung verwenden die vorhandenen
+Profil-, Generator-, Build-, Quality-, Native-, Completion- und Energiepfade.
+Explizite Mixed-composed-Profile behalten N5000/B1000 und erzeugen keine
+zusätzlichen Fullperformancefälle. Vorhandene CPU-Referenzen bleiben mit
+ihrer Original-Run-ID und ihren Originalbytes gebunden; der neue Generic-
+Writer kann daraus zentrale neue Kandidatenrequests erzeugen, ohne eine
+CPU-Full-Inferenz oder eine erfundene numerische Rohoutputprüfung auszuführen.
+Der vorhandene lokale Nativevalidator kann passende gespeicherte Split-
+CPUreferenzen gegen Modell-, Input-, Decoder- und Completionverträge prüfen.
+
+Die Native-Startbarriere führt höchstens einen festgelegten neuen Startfall
+je Setup aus und verbindet ihn mit dem vorhandenen Generic-Completionrunner.
+Fertige Replikate bleiben erhalten. Controller-Broker, Ressourcenlocks,
+Quarantänen, Command-/Qualitybindungen und das gemeinsame Energiefehlerbudget
+bleiben aktiv. Ein expliziter kontrollierter Native-Wiedereintritt kann streng
+gebundene fertige Leaves aus einem partiellen Augmentierungscheckpoint
+übernehmen; daraus entsteht keine automatische Reparatur-/Neustartschleife.
+
+Der Zusatzreporter trennt Basis, Zusatzkohorte und augmentierte Vereinigung
+einschließlich negativer Ergebnisse und tatsächlicher Gruppengrößen. Neue
+Energie wird nur mit passend gebundenen alten Fullreferenzen verglichen.
+Development/screening und post_planned bleiben sichtbar; kein Hold-out-Claim.
+Normale Native- und Buildterminals ohne Completion bleiben mit ihrem Originalbeleg in der Endbilanz sichtbar, ohne eine fertige Gesamtmessung zu behaupten.
+
+Softwareabnahme und tatsächliche Hardwareausführung werden getrennt im
+externen Lieferverzeichnis dokumentiert: `software/`, `selection/`, `quality/`,
+`reporter/` sowie die späteren Start-, Fortschritts- und Terminaldateien.
+Dieser Quellarbeitsstand ist vor dem produktiven Start erstellt; Softwaretests
+belegen keinen Hardware-PASS. Keine zusätzliche normale GUI-Abnahme, kein
+öffentlicher Release, Commit, Push oder Tag in diesem Arbeitspaket.
+
+## 2026-10-03 – begrenzte YOLO-Min3-Qualityfreigabe und expliziter Wiedereintritt
+
+Der erste Zusatzlauf endete vor Native-Endmessungen: Seine neun Remoteaufrufe
+hatten trotz N5000 in den eingefrorenen Plänen kein autoritatives Validation-
+Budget und keine mitverpackte Quelle. Die zwölf heruntergeladenen Fallberichte
+enthalten keine Kandidatenrecords. Die leere Queue wurde als skipped projiziert;
+die unveränderte Native-Startbarriere lehnte die fehlende neue Qualitybindung ab.
+Die drei lokalen Quellen und CPUreferenzen sind mit jeweils 5000 exakten
+Bildidentitäten und Originalannotation vorhanden und werden weiterverwendet.
+
+Der enge Reparaturweg verbindet das explizite Mixed-Profil mit den bestehenden
+Remote-/Paketparametern, prüft die gebundene Quelle vor Upload und beim Consumer
+und fordert für jede aktive neue Primäridentität einen regulär abgeschlossenen
+Request. Modell, neue Grenze, Setup, Precision, ursprüngliche Referenz und
+N5000/B1000/Seed bleiben geprüft. Negative Accuracyentscheidungen bleiben gültige
+negative Ergebnisse. Die Qualitymetadaten der neuen Requests ergänzen vorhandene
+Genericzeilen, ohne ihre alten Timing- oder strukturellen Aussagen umzuwerten.
+Die anschließende Completion bindet den neuen Kandidatenrohbericht für ihr
+Request-/Runtimerezept; die alte Proxyperformancequelle bleibt ausdrücklich
+separat. Der normale Completionbinder prüft weiterhin alle sieben Dimensionen,
+den exakten Request und den Nativecommand samt Artefakten.
+
+Der kleine Augmentierungseinstieg besitzt einen expliziten --resume mit neuem
+--attempt-dir. Er validiert den tatsächlichen fehlerhaften Quality-Nonstart,
+verwendet den bestehenden selektiven Ergänzungsweg und hält den alten
+Koordinatorcheckpoint unverändert. Neue Nativecheckpoints und die unveränderliche
+Invocationkonfiguration liegen im normalen Supplementattempt. Neue Download-,
+Konsolen- und Abschlussdateien sind getrennt; konkrete Koordinatorfehler gelangen
+auch ins Kindlog, den Hauptstufenbefund und den Abschlussbericht.
+
+Der bestehende Mixed-Runner kann die fehlenden Split-Qualityoutputs nicht über
+seinen Full-only-Qualitymodus erzeugen. Seine dabei unvermeidbaren kurzen
+Composed-/Streamingmessungen sind ausdrücklich Beifang des Kandidatenlaufs;
+die zwölf vorhandenen Genericmessungen bleiben erhalten. Keine Basis-, CPU-Full-
+oder 192er-Wiederholung, keine neue Auswahl, kein Force, keine Budgetänderung.
+
+Reparaturbelege, Softwareprüfungen, Sourcecheckpoint und der tatsächliche spätere
+Hardwarefortschritt werden getrennt unter
+`$HOME/Reports/thesis20-yolo-min3-augmentation-20261002_222904/repairs/quality-release-20261003_064548`
+und dem neuen produktiven `attempts/`-Verzeichnis dokumentiert. Die Softwareprüfung
+ersetzt ausdrücklich nur Hardware-/SDKblätter und ist kein Hardware-PASS.
+Keine zusätzliche allgemeine GUI-Abnahme, kein Commit/Push/öffentlicher Release.
+
+Die verbundene Softwareprüfung fand zusätzlich zwei tatsächlich ursächliche
+Verknüpfungen: Ein Native-P2-gebundener Composed-Request muss zugleich seine
+vorhandene Genericproducer-Identität tragen. Writer und zentraler Reader prüfen
+jetzt beide Belege einschließlich identischer Runtimebytes und Original-P2-Quelle.
+Der H10-Originalreferenzvergleich prüft beide Herkunftsattestationen unabhängig
+gegen ihre unveränderten Vertragsdateien, bevor er ihre fachlichen Inhalte
+vergleicht. Ein unterschiedlicher Suitepfad ist keine fachliche Decoderänderung;
+abweichende Primitive und beschädigte Provenienz bleiben ausdrücklich negativ.
+Beide Befunde stammen aus dem normalen verbundenen Writer-/Consumer-/Validatorweg,
+nicht aus einer nachträglichen Freigabe von Ergebnisflags.
+
+Der anschließende normale Paarimport deckte eine weitere konkrete
+Readerlücke auf: Das Backendfeld des Generic-Composed-Producervertrags ist
+eine Richtung (z. B. deepx_to_trt), kein einzelnes TensorRT-Gerät. Der
+Normalizer validiert diesen bestehenden Vertrag einschließlich Richtung und
+beider Stufen und projiziert danach den ersten Producer. Explizite
+Widersprüche bleiben negativ; reine TensorRT-Fulls und TRT→TRT bleiben
+TensorRT. Die strikten Cross-Runner-Konfliktprüfungen wurden nicht gelockert.
+
+Der gemeinsame Completionimport fand außerdem eine zyklische Startvoraussetzung:
+Das Native-Crossbackend-Gate verlangt zwei Backends je Modell/Grenze, während
+die drei eingefrorenen Starter jeweils zunächst nur einen besitzen. Die weiteren
+Nativefälle liegen absichtlich hinter der Startbarriere. Der Completionreporter
+prüft für das technische Generic-/Native-Paar deshalb dessen tatsächliche
+Command-, Input-, Output- und Completionverträge sowie die drei gültigen
+Genericreplikate über die vorhandenen Verifier. Der historische Crossbackendwert
+bleibt sichtbar; die Quality- und wissenschaftlichen Claimgates behalten ihn
+unverändert. Die Native-Startbarriere fordert weiterhin ein regulär belegtes
+technisches Paar. Falsche Identitäten, Vertragsprimitive, SHA-Bindungen oder
+fehlende Originaldateien dürfen diese Voraussetzung nicht erfüllen. Die gezielte
+Softwareabnahme und der erneute Wiedereintritt mit dem abschließend installierten
+Stand werden im oben verlinkten Reparaturbereich getrennt vom späteren echten
+Messfortschritt dokumentiert.
+
+## 2026-10-03 – Native-Cancel nach abgeschlossener Zusatzquality
+
+Die zwölf neuen N5000/B1000-Requests sind vollständig abgeschlossen
+(zwölf reference_close, keine technischen Fehler). Kandidaten, Requests,
+Ergebnisse und ursprüngliche CPUreferenzen werden unverändert übernommen.
+Der Native-Fehler um 13:15:03 entstand vor dem ersten Messstart: Der neue
+Workflow hatte seinen Controlzustand noch nicht veröffentlicht, sodass der
+Native-Consumer den historischen SIGINT-Marker der vorherigen Sitzung las.
+
+Der normale Workfloweintritt veröffentlicht nun unter seinem bestehenden
+Control-Lock den aktuellen Zustand, sobald exklusiver Runbesitz und sämtliche
+Resumeprüfungen erfolgreich sind. Der vorhandene Writer bleibt maßgeblich;
+Cancelereignisse, Consumerprüfungen und historische Abbruchbelege bleiben
+erhalten. Ein aktueller Cancel muss weiterhin jeden Native-Messstart sperren.
+Der explizite Wiedereintritt wird am tatsächlichen neuen Nonstartcheckpoint
+und seinen ursprünglichen Verträgen geprüft; der erste fehlgeschlagene
+Qualitycheckpoint bleibt ein eigener historischer Beleg.
+
+Softwareabnahme mit kontrolliert ersetzten Messblättern, installierter
+Sourcecheckpoint und tatsächliche produktive Nativeabschlüsse werden separat
+unter
+`$HOME/Reports/thesis20-yolo-min3-augmentation-20261002_222904/repairs/native-cancel-20261003_134048`
+dokumentiert. Keine erneute Qualityrechnung, Kandidateninferenz, Grenzauswahl
+oder Force-Rebuild; keine Wiederholung der Haupt- oder 192er-Kampagne.
+Nach erfolgreicher Abnahme ist genau eine dauerhafte selektive Fortsetzung
+der offenen Zusatzmessungen autorisiert. Keine automatische Reparatur- oder
+Neustartschleife, kein Commit/Push/Release und keine allgemeine GUI-Abnahme.
+
+## 2026-10-03 – Generic-Completion nach dem ersten Nativeabschluss
+
+Der vorige Attempt endete nach gültiger H8/YOLO11l/b120-Nativeperformance
+(drei Wiederholungen, Median 43.7662981538428 FPS) am Referenzloader der
+ersten Generic-Completion. Die zwölf N5000/B1000-Qualityresultate bleiben
+vollständig erhalten. Die originale CPUreferenz ist gültig; der Completionmodus
+hatte ihren ausschließlich für Dataset-Quality bestimmten Parameter aus dem
+früheren Quellenaufruf übernommen, obwohl Zentralmodus und Bildzahl bereits
+abgeschaltet waren. Nur dieser aktive Parameter wird beim Moduswechsel geleert.
+Originalkonfiguration und strenger Qualityloader bleiben unverändert; die
+Completion verwendet weiterhin ihre eigene gebundene Native-Outputreferenz.
+
+Die gespeicherten H8-Outputs bestehen die normale lokale Semantikprüfung,
+wenn der vorhandene zentrale Quality-Join die Modellbindung rechtzeitig vor
+dem Outputs-only-Validator bereitstellt. Genau diese Reihenfolge ist korrigiert.
+Messwerte, Outputs, Eingaben, Endpunkte, Toleranzen und Commands ändern sich
+nicht. Eine inzwischen erfolgreiche lokale Semantikprüfung ersetzt keine
+historischen Referenzannotationen oder Claimgates der bereits geplanten
+Completion. Alle zugrunde liegenden Referenzbindungen bleiben strikt gleich.
+
+Der Wiedereintritt muss den tatsächlich gemessenen Nativeleaf über dessen
+ursprünglichen Checkpoint und Command erhalten; er ist kein Nonstart mehr.
+Neue Coordinatorcheckpoints und der korrigierte Completionrunner erhalten
+eigene Attemptpfade. Alte Runner, fehlgeschlagene Attempts, gültige Replikate
+und der erste Genericfehler bleiben erhalten. Zuerst ist ausschließlich die
+fehlende H8-Completion freigegeben; die bestehende Startbarriere entscheidet
+danach regulär über die übrigen Startfälle und den Rest einschließlich Energie.
+Der normale Resume-Pfad erkennt dabei auch die vom Native-Writer erzeugten
+Hailo-Bundlelinks unter `native_producers/variants`; die bestehende strenge
+Bundleprüfung bleibt maßgeblich, Links und Zielartefakte bleiben unverändert.
+
+Gezielte Regressionen, endgültige lokale Installation, zusammenhängende
+Softwareabnahme und tatsächlicher produktiver Fortschritt werden getrennt
+unter
+`$HOME/Reports/thesis20-yolo-min3-augmentation-20261002_222904/repairs/generic-reference-20261003_151204`
+gesichert. Kein allgemeiner GUI-/Hardwaretest und kein erneuter Basis- oder
+192er-Lauf. Nach erfolgreicher Abnahme genau ein dauerhafter tmux-Start;
+keine automatische Reparatur-/Neustartschleife, kein Commit/Push/Release.
+
+## 2026-10-03 – Vorhandenes YOLO-Startpaar regulär projizieren
+
+H8/YOLO11l/b120 besitzt jetzt je drei gültige Native- und Generic-Completion-
+Wiederholungen. Beide Originalmessungen und alle zwölf N5000/B1000-
+Qualityresultate bleiben erhalten. Der normale lokale Paarreplay reproduzierte
+zunächst die fehlende Rohidentität am strengen Native-Qualityconsumer. Der
+Paaradapter ergänzt nur fehlende Identitätsfelder aus dem bereits gegen die
+vollständige Paaridentität geprüften Command; explizite Aliaswidersprüche
+bleiben Fehler. Für den tatsächlichen Fast-/Oracle-Nachweis verwendet er die
+vorhandenen strengen Attestierungs-, Output- und Persistenzprüfer. Fast- und
+Hotloop-Beobachtungsrelationen bleiben verschieden und werden nicht umetikettiert.
+
+Der zusätzliche Precisionkonflikt entstand aus einem beschreibenden
+Dispatcherlabel in einer erwarteten Matrixzeile ohne Precision. Der normale
+Reportadapter ergänzt diese fehlende Angabe aus den geprüften Command- und
+Consumerbindungen. Explizite Precision/Contract-Angaben, cast/dequant-
+Unterschiede sowie mehrdeutige unterschiedliche Plankontexte bleiben negativ.
+Die Originalreports und ihre alten negativen Projektionen bleiben erhalten.
+
+Der echte lokale Paarconsumer besteht mit 23/23 technischen Checks ohne neue
+Inferenz: Native 43.7662981538428 FPS, Generic 35.33776805174142 FPS. Quality-
+und wissenschaftliche Claimgates bleiben getrennt und werden nicht angehoben.
+Der bestehende enge Ergänzungseintritt schützt nun auch diesen genau belegten
+ersten vollständig gemessenen Paarzustand und seinen ursprünglichen Nativeleaf;
+keine allgemeine Resume- oder automatische Retryfreigabe.
+
+Gezielte Tests, endgültige Installation, normale Coordinator-Startbarriere auf
+geschützter Arbeitskopie, lokale Energieplanung und produktiver Restfortschritt
+stehen getrennt unter
+`$HOME/Reports/thesis20-yolo-min3-augmentation-20261002_222904/repairs/pair-projection-20261003_175306`.
+Nach bestandener installierter Barriere sind genau elf Nativefälle, elf
+Generic-Completionfälle und zwölf Energiezeilen einmalig freigegeben. Keine
+Neumessung des ersten Paars, keine neue Quality, Auswahl oder Force-Rebuild;
+keine allgemeine GUI-/Hardwareabnahme, kein Commit/Push/Release.
+
+## 2026-10-03 – Vertragliche Eingabeauflösung für vorhandene YOLO-Paare
+
+Nach dem ersten erfolgreichen H8-Paar sind auch H10/YOLO26s/b038 Native
+und Generic-Completion mit je drei gültigen Wiederholungen abgeschlossen.
+Der unveränderte lokale Consumer reproduzierte den H10-Fehler
+`reason="'prepared_input'"`: Der Paaradapter erwartete einen festen
+Artefaktnamen, obwohl der Originalvertrag seinen NPY-Eingang ausdrücklich
+über `entries[0].artifact_name=prepared_input_00` bindet.
+
+Der bestehende Planresolver rekonstruiert nun auch für die Paarprüfung die
+deklarierte Eingabezuordnung. Vollständige Original-/Runtimebindung, Format,
+Form, Datentyp, Slotfolge und deklarierte Speicherordnung werden geprüft.
+Der bisher im Runner enthaltene reine Arrayloader liegt im vorhandenen
+Completionmodul; Generator und Paaradapter rufen dieselbe Funktion auf.
+Keine Artefaktumbenennung, Änderung gebundener Bytes oder neue Registry.
+Der lokale vollständige Consumer akzeptiert beide vorhandenen Zusatzpaare
+mit jeweils 23/23 technischen Checks. DeepX wird anhand einer tatsächlichen
+Originalbeobachtung der abgeschlossenen 192er-Ergänzung geprüft; dadurch
+entsteht kein Ergebnis für einen noch ungemessenen Zusatzfall.
+
+Der vorhandene enge Wiedereintritt erhält jetzt den konkret belegten Zustand
+mit zwei abgeschlossenen festgelegten Startfällen und ihren verschiedenen
+ursprünglichen Coordinatorbindungen. Die bisherigen Vertrags-, Qualitäts-,
+Replikat- und Abbruchprüfer bleiben maßgeblich; keine allgemeine Resume- oder
+automatische Reparaturfreigabe. Die finale installierte Softwareabnahme muss
+beide normalen Startbarrieren ohne Messblätter passieren und unmittelbar vor
+dem nächsten DeepX/YOLOv7/b044-Dispatch kontrolliert enden.
+
+Belege, gezielte Regressionen, Installation und tatsächlicher Produktivstatus:
+`$HOME/Reports/thesis20-yolo-min3-augmentation-20261002_222904/repairs/pair-input-contract-20261003_191121`.
+Danach ist genau eine dauerhafte Fortsetzung mit zehn Nativefällen, zehn
+Generic-Completionfällen und zwölf Energiezeilen autorisiert. Beide fertigen
+Paare und zwölf Qualityresultate bleiben erhalten. Auswahl, Messparameter,
+Retrybudget und wissenschaftliche Rollen bleiben unverändert; Force aus,
+keine neue Quality, kein Commit/Push/Release oder allgemeiner Hardwaretest.
+
+
+## 2026-10-03 – H8-Dreistufen-Helper im bestehenden Native-Sync
+
+Der beendete YOLO-Min3-Attempt `pair_input_contract_20261003_192749` erhält elf erfolgreiche Nativefälle/33 Wiederholungen, drei Generic-Completionfälle/neun Wiederholungen und zwölf Qualityresultate. H8/YOLOv7/b066 endet vor Messausführung mit `concurrent_three_stage_helper_missing`; keine Energieaufnahme. Der tatsächliche H8-Runner löst den unveränderten Helper relativ als Skript-Sibling auf. Der vorhandene Updater übertrug diesen Helper und dessen Ressourcen nicht.
+
+Die einzige Produktänderung erweitert die H8-Transferliste in `scripts/update_evalset_native_producers.py` und ihrem Paketmirror um den vorhandenen Helper sowie zwölf unmittelbar benötigte Python-/C++-/JSON-Ressourcen. Alle Transfers benutzen die bestehenden SHA-/Capabilityprüfer. Keine Helper-, Oracle-, Referenz-, Precision-, Grenz-, Messparameter- oder Modellartefaktänderung. Die vorhandene Paketclosure enthält die benötigten Import- und Source-Snapshotmodule bereits.
+
+Software: tatsächlichen vorherigen Transferzweig bis zum Helperfehler reproduziert; korrigierten Transfer in Quell- und Paketpfad bis zum unveränderten Parent-Commandgenerator geprüft; fehlende/manipulierte Übertragungen bleiben negativ. Der reale H8-Pfad wurde zunächst rein lesend ebenfalls als fehlend bestätigt. Gezielte Ergebnisse, finale Installation und Remote-Nachweis stehen im Reparaturbericht unter `$HOME/Reports/thesis20-yolo-min3-augmentation-20261002_222904/repairs/h8-three-stage-helper-20261003_211543`. Keine normale GUI-/Hardwaremessabnahme behauptet.
+
+Startreife bleibt gesondert blockiert: der bestehende Wiedereintritt kennt den nun terminalen Native-Abschlussfehler nicht; gültige fehlgeschlagene Koordinator-/Leaf-Checkpoints werden regulär als Fehler übernommen. Außerdem bindet der mitgelieferte Dreistufen-Oracle zwei Prozessorquellen an historische SHA, die nicht dem aktuellen Toolbestand entsprechen. Kein Zurücksetzen dieser Checkpoints, kein Ändern der Sollhashes und keine Abschaltung der Prüfung. Der negative Originalversuch und alle fertigen Daten bleiben erhalten. Keine neue Resume-Architektur, kein Commit/Push/Release.
+
+## 2026-10-03 – H8/b066: Oraclebindung und konkrete Reststartgrenzen
+
+Der vorhandene Canary verwendet jetzt für den eingefrorenen Prozessorvertrag den bereits bestehenden `verify_frozen_postprocess_contract`. Die vorher doppelte reine Quellbyteprüfung lehnte dessen vorhandene, versionsgebundene Kompatibilität ab. Historische Sollhashes, Referenzen, Decoder/NMS, Fastcallback und C++ bleiben unverändert. Die ausgewählten Toolquellen müssen weiterhin mit den tatsächlich geladenen Implementierungen übereinstimmen. Zehn neue und neun betroffene vorhandene Softwaretests bestehen; die normale Canary-main passiert die echte Oracleprüfung bis zur kontrollierten Artefakt-/Runtimegrenze.
+
+Die originalen v2.78.2-Quellen und Sentinelheads wurden aus vorhandenen Archiven SHA-verifiziert. Alter und aktueller Oracle sowie Fastdecoder liefern daraus auf dem Controller exakt dieselben neun Detektionen. Die gespeicherten ARM-Floats weichen auf x86 auch mit Originalquellen um einzelne ULP ab; keine gelockerte Toleranz und keine neue ARM-/Hardwareabnahme werden daraus abgeleitet.
+
+Für den einzigen fehlgeschlagenen Fall wird der vorhandene Singlecase-Updater mit neuer Artefaktnamespaceidentität geprüft. Der bisherige terminale Workflow und seine historischen Fehler bleiben erhalten; kein neuer Resume- oder unvollständiger Produktions-CLI-Zweig wird eingeführt. Die tatsächliche installierte Eintrittsprüfung und deren kontrollierte Grenze werden separat dokumentiert.
+
+Der produktive Reststart bleibt durch konkrete unmittelbar anschließende Unvereinbarkeiten gesperrt: Der Helper prüft die aktuelle Engine e93f81da…, übergibt dem Canary aber dessen historische Engine ddf2e26a…. Sein früher Rücksprung umgeht die aktuellen Quality-/Command-/Preparedinput-/Ergebniswriter. Eine echte historische Hardwarefixture durch den normalen aktuellen Reporter liefert deshalb keine FPS-Replikate und keinen gültigen Nativecommandvertrag. Außerdem umfasst der unveränderte C++-Throughput Bildlesen und Letterbox, während die festgeschriebene Generic-Completion vorbereitete Eingaben ohne Vorverarbeitung verlangt. Diese Grenzen werden weder durch angepasste Sollhashes noch durch erfundene Ergebnisfelder oder Zeitkorrekturen übergangen.
+
+Belege, Installation und endgültiger Status: `$HOME/Reports/thesis20-yolo-min3-augmentation-20261002_222904/repairs/h8-restabschluss-20261003_214340`. Elf Nativefälle/33 Wiederholungen, drei Genericfälle/neun Wiederholungen, zwölf Qualityresultate und alle Originalkampagnen bleiben erhalten. Rest: ein Nativefall, neun Genericfälle, zwölf Energiezeilen. Kein produktiver Start, keine Messung oder Modellkompilierung, keine GUI-Abnahme, kein Commit/Push/Release.
+
+## 2026-10-04 – Autorisierter YOLO-Restabschluss in zwei Blöcken
+
+Der neue Auftrag `AUFTRAG_YOLO_RESTABSCHLUSS_20261004.md` autorisiert die drei zusammenhängenden b066-Korrekturen und den anschließenden Restlauf. Der begrenzte Einstieg `workflow.yolo_augmentation --finish-rest` verwendet bestehende Consumer, Einzelfall-Updater, Prozess-/Ressourcenschutz und Energie-CLI. Block 1 übernimmt elf Nativefälle und drei fertige Genericpaare; er wählt acht offene Genericfälle und elf Energiezeilen, unabhängig vom negativen H8/b066-Leaf. Block 2 erhält einen eigenen Native-Attempt und Toolpfad, danach genau seine Generic- und Energiezeile. Die Zwölfer-Sollkohorte und der historische Fehler bleiben unverändert sichtbar. Es gibt keinen automatischen Neustart und keine allgemeine Resumeänderung.
+
+Der neue b066-Kampagnenpfad bindet die aktuelle qualitätsgeprüfte HEF/Engine bis zum C++-Aufruf. Eine reguläre ungemessene Vertragsprobe bestimmt die tatsächliche Decodersemantik; sie ersetzt keine Qualityauswertung. Das gebundene HWC-UINT8-Eingabebeispiel wird vor Warmup und Messzeit geladen. Drei bereite Worker starten das echte monotone Performancefenster; jeweils 100 vollständig abgearbeitete Warmups liegen davor, jeweils 1000 abgeschlossene Tasks und der vollständige Drain werden erfasst. Der historische Canary behält seinen eigenen V1-Pfad und seine Originalmetadaten. Decoder/NMS, Precision, Grenze und Modellartefakte ändern sich nicht.
+
+Der Concurrentpfad bedient nun die normalen Command-, Eingabe-, Output-, Completion- und Replikatwriter. Der Finalreport liest drei unabhängige Wiederholungen; Energie verwendet die tatsächlich gebundene Laufzeitbibliothek nach normalem Preflight. Der neue Energie-Marker enthält den vollständigen erforderlichen Completionnachweis, während umfangreiche Latenz-/Replikatdiagnosen zusätzlich im vollständigen Roh-JSON bleiben. Kein Loglimit, Claim- oder Provenienzgatter wird gelockert. Die zusätzliche Referenzoption des Einzelfall-Updaters verwendet den bestehenden outputs-only-Validator und die vorhandenen Originalreferenzen, ohne Full-ORT- oder N5000-Neuberechnung.
+
+Softwareabnahme und echte Gerätebelege bleiben getrennt: normale Callbackprobe auf einer isolierten Arbeitskopie mit drei erhaltenen und acht ausgewählten Fällen; tatsächliche Updater-main bis zum kontrollierten äußeren Transportstopp; gekoppelte Parent-/C++-/Writer-/Finalreport-/Energieprüfung mit SDK-Doubles einschließlich eines echten zeitgesteuerten 60-Sekunden-Softwareloops. Falsche Artefakte/Eingaben, falsche Zeitumfänge, fehlende Wiederholungen und aktueller Cancel bleiben negativ. Der tatsächliche Remote-Artefaktpreflight besteht für alle elf Block-1-Zeilen ohne Workload oder Collector. Zwei zusätzliche ältere GUI-Testabweichungen betreffen unveränderte Quellen und sind gesondert belegt; eine normale GUI-Abnahme wird nicht behauptet.
+
+Finale Installation, Compile-only-Prüfung auf H8, genaue Testresultate, Quellsicherung und tatsächlicher Produktivfortschritt werden unter `$HOME/Reports/thesis20-yolo-min3-augmentation-20261002_222904/repairs/restabschluss-20261004_061539` dokumentiert. Eine SDK-Softwareprobe ist kein Hardware-PASS. Vor der produktiven Phase werden alle Quellen eingefroren; danach läuft genau ein dauerhafter sequenzieller Attempt mit normalen Gates und bestehenden Energie-Retries. Keine neuen Modellcompiles, kein Force, keine erneute fertige Messung, kein Commit/Push/Release.
+
+## 2026-10-04 – Restenergie: tatsächlicher Quellen-STOP und erhaltene Teilresultate
+
+Der Attempt `restabschluss_20261004_065600` endete um 08:09 CEST nach elf vollständigen Generic-/Nativepaaren (je 33 Wiederholungen), zwölf Qualityresultaten und sechs vollständigen Energiezeilen mit 18 gültigen Replikaten. Die originale Partialdatei und ihr Rowjournal sind maßgeblich. Der normale Energieconsumer kann diese Quelle jetzt ausdrücklich lesen; eine vorhandene finale Datei behält Vorrang. Der Augmentierungsreport übernimmt die vorhandenen gültigen Zeilen auch bei unterbrochenem oder vorzeitig blockiertem Folgeattempt. Originalberichte werden nicht überschrieben. Physisch: 23 Collectorstarts, davon 18 gültig, vier abgeschlossen ungültig und einer mit unbestätigtem Abschluss; wissenschaftliche Freigaben bleiben null.
+
+H10/YOLOv7/b044 enthält kein gültiges Teilreplikat. Die erste Aufnahme hat 7.872 verlorene Samples im Commandfenster; die zweite meldet `source closed verified=false` nach Socket-Silence/OS-Fehler 11 ohne Protokollende. Dauerhaft belegter lokaler Collector-Cleanup ist keine Quellenbestätigung. Der Quellenfehler `campaign_source_completion_unresolved` wird vor dem nachfolgenden `rest cleanup is not proven` gesondert erhalten. Vier physische Quarantänen und die zusätzliche Run-Quarantäne sind konkrete, weiterhin gültige Schutzbelege.
+
+Der vorhandene Recovery-Einstieg erhält ausschließlich einen expliziten Adapter für das tatsächlich geschriebene Restattempt-Journal und dessen Terminalbelege. Plan, Run, Session, Parent-PID, Exitcode und Cleanup werden gebunden; der historische Runstatus `partial` bleibt unangetastet. Betreiberhandlung beziehungsweise ausdrückliche Neuversuchsfreigabe, alle vier Ressourcenlocks und die bisherigen Owner-/STOP-Prüfungen bleiben verpflichtend. Der begrenzte Restanschluss verwendet den normalen Previous-Results-Consumer für sechs erhaltene und fünf offene Block-1-Energiezeilen, ohne die elf fertigen Performancepaare zu dispatchen. Eine Runquarantäne kann nur nach exakt belegter physischer Recovery über den bestehenden exklusiven Lockcallback übernommen werden.
+
+Software: 116 gezielte Recovery-/Ownershiptests, 79 Reporterregressionen und 58 Restanschlussprüfungen bestanden (getrennte, teilweise überlappende Gruppen). Die normale Projektion aus den tatsächlichen Originalen belegt 6/18 und elf technische Paare. Eine isolierte Kopie des tatsächlichen Kampagnenbudgets durch den normalen Budgetconstructor und Admissionpfad bestätigt weiterhin `campaign_source_interrupted_chain_unresolved`; keine Budgetgrenze ist erschöpft und kein Zähler wurde zurückgesetzt. Physische Recovery allein hebt diese zusätzliche Unterbrechung nicht auf. Ein allgemeiner Budget-Resumezustand wurde nicht eingeführt.
+
+Aktueller Produktivstart bleibt blockiert: tatsächliche Quellenwiederherstellung ist nicht belegt, die unterbrochene Budgetchain bleibt negativ. Keine Recoveryfreigabe, Messung, Kompilierung, Prozessbeendigung oder neue tmux-Sitzung durch diese Prüfung. Controller und drei DUTs wurden über den bestehenden Transport nur lesend auf Konkurrenz geprüft. Keine normale GUI-/Hardwaremessabnahme behauptet. Korrigierte Berichte, genaue Testergebnisse, Quellenabschluss, gesicherte Originale und lokaler Installationsstand: `$HOME/Reports/thesis20-yolo-min3-augmentation-20261002_222904/repairs/energy-source-rest-20261004_103311`. Kein Commit/Push/Release.
+
+## 2026-10-04 – Einmalige Quellenfreigabe, budgetierter Diagnosetest und Restenergie
+
+Der Nutzer autorisiert ausdrücklich einen neuen Versuch trotz des bekannten unbestätigten Quellenendes an der gebundenen H10-Quelle. Dies behauptet keinen Reset, Powercycle oder bestätigten historischen Abschluss und gilt nicht für zukünftige Quellenfehler. Der vorhandene ausdrückliche Recoveryweg bleibt maßgeblich. Unter dem bestehenden Runlock, den vier physischen Recoverylocks und dem Budgetflock wird dessen genaue alte Capturebindung zusätzlich an genau einen neuen lebenden Workflowparent gebunden. Alte Chains, Stopgründe, gültige Resultate, Zähler und Grenzen bleiben erhalten. Neue Abbrüche und Quellenfehler werden gesondert wirksam; eine fremde Sitzung erhält diese Freigabe nicht.
+
+Der vorhandene `energy_measurement_cli.py test-setup` nutzt den normalen GUI-Messpfad mit genau einer Aufnahme und ohne Diagnose-Retry. Er kann nun die vorhandenen Kampagnenbudgetargumente übernehmen und kennzeichnet den Test ausdrücklich als Diagnose. Der enge Restanschluss `--test-recovered-energy-source` verlangt den konkreten Vorgängerattempt, führt zuerst diesen Test aus und prüft normale Rohdaten-/Commandfensterbindung, tatsächliche Samples, Protokollende, Collectorcleanup und Ressourcenfreigabe. Erst danach folgt innerhalb desselben geschützten Parents die vorhandene Restfolge. Ein fehlgeschlagener Test startet keine Restmessung und keinen automatischen Neuversuch.
+
+Die Auswahl bleibt sechs erhaltene Energiezeilen/18 gültige Replikate und fünf offene Block-1-Energiezeilen, danach H8/YOLOv7/b066 Native, Generic-Completion und Energie. Elf fertige Performancepaare und zwölf Qualityresultate bleiben übernommen; keine neue Haupt- oder 192er-Kampagne, keine Modellkompilierung oder geänderten wissenschaftlichen Messparameter. Die Diagnose zählt separat im bestehenden Budget und ist kein 60-Sekunden-Replikat.
+
+Quellsicherung, gezielte Softwareprüfungen, installierter Eintritt mit tatsächlichen Plan-/Budgetbelegen sowie der davon getrennte echte Test und Produktivstatus stehen unter `$HOME/Reports/thesis20-yolo-min3-augmentation-20261002_222904/repairs/energy-authorized-reentry-20261004_135903`. Reale Test- oder Messerfolge werden ausschließlich aus den dortigen Aufnahmebelegen berichtet; keine allgemeine GUI-Abnahme. Alle Quellen werden vor der produktiven Messphase abgeschlossen. Kein Commit, Push oder Release.
+
+## 2026-10-04 – Autorisierter H8-Energierest mit begrenzten Wiederholungen
+
+Der Folgeauftrag autorisiert den regulären neuen Aufnahmeversuch für den konkret unterbrochenen H8/YOLO26s/b038-Capture an der gebundenen H8-Quelle, ohne Resetbehauptung und ohne zusätzlichen GUI-Diagnosetest. Der letzte Attempt erhält neun vollständige Energiezeilen/27 Replikate sowie eine weitere gültige b038-Wiederholung; die nächste b038-Aufnahme mit unbestätigtem Quellenende bleibt negativ. Elf fertige Native-/Genericpaare, zwölf Qualityresultate, Hauptkampagne und 192er-Ergänzung bleiben erhalten.
+
+Der vorhandene explizite Recovery-/Budgetweg erhält die tatsächliche H8-Bindung und eine historisierte Limitänderung ausschließlich für H8/yolo26s/b038 sowie H8/yolov7_paper/b044 und b066: fünf Retries, höchstens sechs Versuche je logischem Replikat und 18 Chains je Zeile, zehn Sekunden Pause vor erneutem Versuch; Quellenfehlerlimit 20 unverändert. Alte Chains und ihr Verbrauch zählen weiter. Die vorherige .176-Freigabe wird nicht umgebunden. Der historische reine Quellen-Nichtstart von b044 wird nur innerhalb derselben exakt gebundenen Freigabe berücksichtigt; neue Quellenfehler bleiben sperrend.
+
+Die eingefrorene normale Plan-/Previous-Results-Prüfung bleibt maßgeblich. Erst die normale tatsächliche Messaufrufvorbereitung übernimmt die autorisierten H8-Limits aus dem bestehenden Budget. Der Collector erhält dieselbe Policy; sein Retrykind hat keine eigenen Retries und verwendet dasselbe logische Budget. Vorhandene gültige Wiederholungen werden über den normalen Originalbelegloader übernommen. Ein neuer unbestätigter Quellenabschluss wird nicht automatisch durch höhere Retrygrenzen freigegeben.
+
+Nach gezielter Software- und installierter Eintrittsprüfung ist genau ein dauerhafter Restattempt freigegeben: fehlende b038-Energie, H8/b044-Energie, danach der bereits implementierte H8/b066-Native-/Generic-/Energiepfad. Keine Modellbuilds, neue Qualitykampagne, allgemeine Resumeentwicklung oder Code-Fixschleife. Quellenabschluss vor der Messung; währenddessen nur lesende Fortschrittskontrolle. Tatsächliche Software-, Budget-, Hardware- und Endbilanzbelege werden getrennt unter `$HOME/Reports/thesis20-yolo-min3-augmentation-20261002_222904/repairs/h8-energy-rest-20261004_170518` gesichert. Kein Commit, Push oder Release in diesem Arbeitspaket.
+
+## 2026-10-04 – Konsolidierte Quellenlieferung 2.92.0
+
+Der anschließende Abschlussauftrag veröffentlicht den zusammengehörigen Toolstand
+als `2.92.0` / `v2.92.0`. Vollständiger vorheriger Quellcheckpoint, Gitstatus,
+Diffs und 43 separat geschützte lokale Profile sind extern gesichert.
+Historische Messquellen und fehlgeschlagene Attempts werden nicht umbenannt oder
+dem neuen Release zugeschrieben. Die ursprüngliche Entwicklungs-/Screeningrolle,
+postgeplante Zusatzkohorte und Grenzen der Runtimevergleichbarkeit bleiben erhalten.
+
+Releaseidentität, Updater, README und Versionsregeln sind konsistent fortgeschrieben.
+Die enge H8-Recoveryprüfung bindet private Source-/DUT-Adressen nun aus den
+ursprünglichen vier Ressourcenbesitzern und dem exakten Captureauftrag.
+Modell-/Setupscope, maximale Versuche, Pause, Quellenlimit und neue STOP-Wirkung
+bleiben unverändert. Der echte gespeicherte H8-Fall besteht diese Prüfung rein
+lesend; fremde Setup-, Capture-, Source-, DUT- und Besitzerbindungen bleiben negativ.
+Neue Testquellen verwenden ausdrücklich `THESIS20_FIXTURE_HOME` oder relative
+Softwarefixtures. Bereits öffentliche historische Hashfixtures bleiben erhalten.
+
+Gezielte Softwareabnahme: 65 Budget-/Collector-/Retrytests, 304 Completion-/Paar-/
+Profil-/Reporter-/Recoverytests sowie alle 17 normalen Quellen-Selektorfälle
+bestanden. Die 17 zunächst wegen isoliertem pytest-HOME ausgelassenen Fälle wurden
+mit explizitem Originaldatenpfad tatsächlich ausgeführt. Zusätzliche Paket-/Mirror-,
+Bytecode-, Installer- und Archivbelege liegen im externen Releasebericht.
+Keine erneute Hardware-, Modellcompile-, Quality- oder Energiemessung und keine
+vollständige GUI-Jobabnahme gehört zu dieser Quellenlieferung. Normale CLI- und
+GUI-Versionsimporte sowie Profilauflösung sind getrennte Softwareprüfungen.
+
+Maßgeblich: [Release 2.92.0](RELEASE_2.92.0.md) und der externe Bereich
+`$HOME/Reports/thesis20-final-analysis-release-20261004/tool-release/` mit
+Prüfkommandos, SHA-Indizes, Archivlesbarkeit, Privacyinventar und genauer
+Veröffentlichungspfadliste. Gitfreigabe und Veröffentlichung erfolgen erst nach
+gemeinsamer Abschlussprüfung.

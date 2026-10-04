@@ -222,6 +222,8 @@ _ALLOWED_DOC_FILES = {
     "docs/RELEASE_2.90.0.md",
     "docs/RELEASE_2.90.1.md",
     "docs/RELEASE_2.91.0.md",
+    "docs/RELEASE_2.91.1.md",
+    "docs/RELEASE_2.91.2.md",
     "docs/ARBEITSSTAND.md",
     "docs/RELEASE_SCOPE_V281.md",
     "docs/V281_EVIDENCE_INDEX.json",

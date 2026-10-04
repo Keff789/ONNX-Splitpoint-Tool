@@ -982,7 +982,7 @@ def _hailo_state_run_profiles(
     out: List[str] = []
     for run_profile_id in run_profiles:
         canonical = _canonical_run_profile(run_profile_id)
-        if canonical == f"{hw}_to_trt":
+        if canonical == _canonical_run_profile(f"{hw}_to_trt"):
             out.append(canonical)
     return out
 

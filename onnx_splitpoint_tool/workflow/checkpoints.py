@@ -453,6 +453,7 @@ class AtomicRowJournal:
         plan_hash: str,
         identities: Sequence[str],
         row_contract_hashes: Sequence[str],
+        refresh_manifest: bool = True,
     ) -> "AtomicRowJournal":
         if not identities or len(identities) != len(row_contract_hashes):
             raise ValueError("energy row resume binding is empty or inconsistent")
@@ -561,7 +562,8 @@ class AtomicRowJournal:
             raise ValueError("energy row journal has more than one running row")
         # Row files are authoritative if the process stopped after committing a
         # row but before refreshing the derived manifest.
-        journal._write_manifest()
+        if refresh_manifest:
+            journal._write_manifest()
         return journal
 
     @property

@@ -700,6 +700,11 @@ expected_storage_device=$6
 expected_storage_inode=$7
 expected_root_device=$8
 expected_root_inode=$9
+artifact_mode=${10:-600}
+case "$artifact_mode" in
+  600|700) ;;
+  *) exit 64 ;;
+esac
 
 storage_root=$(dirname -- "$root")
 if [ -L "$storage_root" ] || [ ! -d "$storage_root" ]; then
@@ -798,6 +803,7 @@ if [ "$digest" != "$expected_sha" ] || [ "$size" != "$expected_size" ]; then
   printf 'OSPRUPLOAD1\ttemporary_identity_mismatch\t%s\t%s\n' "$digest" "$size"
   exit 0
 fi
+chmod "$artifact_mode" -- "$temporary"
 final_storage_real=$(realpath -e -- "$storage_root")
 final_storage_device=$(stat -c '%d' -- "$storage_root")
 final_storage_inode=$(stat -c '%i' -- "$storage_root")
@@ -1801,6 +1807,7 @@ def _upload_source_to_temporary(
                     str(expected_storage_identity[1]),
                     str(expected_root_identity[0]),
                     str(expected_root_identity[1]),
+                    "700" if "native_executable" in entry.roles else "600",
                 ],
             ),
             timeout_s=timeout_s,

@@ -4660,6 +4660,8 @@ def run_fast_firmware_measurement(
     preflight_runtime_attestation_path: str | None = None,
     preflight_expected_command_contract_sha256: str | None = None,
     invalid_repeat_max_retries: int | None = None,
+    invalid_repeat_reconnect_backoff_s: float | None = None,
+    reuse_campaign_repeats: bool = False,
     diagnostic_only: bool = False,
     claim_exclusion_reason: str = "",
     host_normalization_role: str | None = None,
@@ -4671,6 +4673,12 @@ def run_fast_firmware_measurement(
     _task_logical_repeat: str | None = None,
 ) -> dict[str, Any]:
     defaults = defaults or EnergyDefaults()
+    if invalid_repeat_reconnect_backoff_s is not None:
+        if (isinstance(invalid_repeat_reconnect_backoff_s, bool)
+                or not math.isfinite(float(invalid_repeat_reconnect_backoff_s))
+                or not 0.0 <= float(invalid_repeat_reconnect_backoff_s) <= 60.0):
+            raise ValueError("invalid repeat reconnect backoff must be finite and between 0 and 60 seconds")
+        defaults = replace(defaults, invalid_repeat_reconnect_backoff_s=float(invalid_repeat_reconnect_backoff_s))
     setup_id_supplied = setup_id is not None
     physical_scope_supplied = physical_scope is not None
     window_label_supplied = window_label is not None
@@ -4748,10 +4756,15 @@ def run_fast_firmware_measurement(
     claim_exclusion_reason = str(claim_exclusion_reason or "").strip()
     if diagnostic_only and not claim_exclusion_reason:
         claim_exclusion_reason = "diagnostic_only"
+    authorized_retry_limit = (
+        _task_budget.authorized_retry_limit() if _task_budget is not None else None
+    )
+    if authorized_retry_limit == 5 and defaults.invalid_repeat_reconnect_backoff_s != 10.0:
+        raise ValueError("authorized H8 retries require the bound 10 second reconnect pause")
     invalid_repeat_max_retries_requested = max(
         0,
         min(
-            3,
+            authorized_retry_limit if authorized_retry_limit is not None else 3,
             int(
                 getattr(defaults, "invalid_repeat_max_retries", 1)
                 if invalid_repeat_max_retries is None
@@ -5209,12 +5222,42 @@ def run_fast_firmware_measurement(
     runs: list[dict[str, Any]] = []
     for i in range(run_count):
         task_logical_repeat = _task_logical_repeat or f"repeat:{i}"
+        if reuse_campaign_repeats:
+            if _task_budget is None:
+                raise ValueError("repeat reuse requires a campaign budget")
+            previous = _task_budget.reusable_repeat(
+                task_logical_repeat, command=command,
+                command_contract_sha256=preflight_expected_command_contract_sha256,
+                duration_s=workload_duration_s, require_ab=bool(energy_ab.get("enabled")),
+            )
+            if previous is not None:
+                original, reference = previous
+                runs.append({**original, "run_index": i, "campaign_reused_repeat": reference})
+                continue
         if _task_budget is not None and not _task_budget.allowed(task_logical_repeat, cancel_event):
             break
         if _cancel_requested(cancel_event):
             break
         recovery_before_start: dict[str, Any] | None = None
-        if runs:
+        previous_chains = (
+            [chain for chain in _task_budget.data["chains"]
+             if chain["logical_repeat"] == task_logical_repeat]
+            if reuse_campaign_repeats and _task_budget is not None else []
+        )
+        if previous_chains:
+            # A fresh output directory is still a retry of the original
+            # campaign repeat. Reuse above consumes no pause or new capture.
+            recovery_before_start = _collector_reconnect_backoff(
+                defaults.invalid_repeat_reconnect_backoff_s, cancel_event=cancel_event,
+            )
+            recovery_before_start.update({
+                "trigger_reasons": ["campaign_repeat_reentry"],
+                "previous_run_directory": previous_chains[-1]["run_directory"],
+                "logical_repeat": task_logical_repeat,
+            })
+            if recovery_before_start.get("cancelled"):
+                break
+        elif runs:
             previous_storage = _resolve_artifact_path(
                 runs[-1].get("storage_dir"), relative_to=out_dir,
             )
@@ -6055,6 +6098,10 @@ def run_fast_firmware_measurement(
         invalid_repeat_max_retries=0,
     )
     for logical_index, initial_entry in enumerate(list(runs)):
+        if initial_entry.get("campaign_reused_repeat"):
+            # Its original physical attempt and accepted selection remain
+            # unchanged. It consumes no new retry or collector reservation.
+            continue
         initial_storage = _resolve_artifact_path(
             initial_entry.get("storage_dir"), relative_to=out_dir,
         )
@@ -6725,6 +6772,7 @@ def run_fast_firmware_measurement(
         "caller_managed_shadow_capture_complete": caller_managed_shadow_capture_complete,
         "invalid_repeat_max_retries": invalid_repeat_max_retries,
         "invalid_repeat_max_retries_requested": invalid_repeat_max_retries_requested,
+        "invalid_repeat_reconnect_backoff_s": defaults.invalid_repeat_reconnect_backoff_s,
         "invalid_repeat_retry_suppressed_by_exact_run_count": bool(
             exact_run_count and invalid_repeat_max_retries_requested > 0
         ),

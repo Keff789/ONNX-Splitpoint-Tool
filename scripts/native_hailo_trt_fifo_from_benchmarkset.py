@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -31,6 +32,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Mapping
 
 
@@ -98,6 +100,7 @@ from onnx_splitpoint_tool.native_three_stage import (
     adapter_id_for_contract_family,
     infer_p2_output_contract_family,
     project_three_stage_endpoints,
+    verify_fast_completion_attestation,
 )
 
 from onnx_splitpoint_tool.native_detection_postprocess import (
@@ -125,6 +128,7 @@ else:
 
 _REPLAY_CONTRACT_SCHEMA = "onnx-splitpoint/native-command-contract"
 _CONCURRENT_LOG_PREFIX = f"[native-fifo][v{TOOL_VERSION}][concurrent]"
+_CONCURRENT_PRODUCER = "hailo8_cpp_concurrent_three_stage"
 
 
 def _cache_verify_only() -> bool:
@@ -602,6 +606,16 @@ def _hailo8_completion_fields(
         if isinstance(completion_runtime, DetectionCompletionRuntime)
         else dict(raw)
     )
+    return _hailo8_completion_observation_fields(
+        attestation, getattr(completion_runtime, "execution_contract", None), completed_work_units,
+    )
+
+
+def _hailo8_completion_observation_fields(
+    attestation: Mapping[str, Any], execution_contract: Mapping[str, Any] | None,
+    completed_work_units: int,
+) -> dict[str, Any]:
+    """Project an actually verified completion observation into normal fields."""
     observation_relation = str(
         attestation.get("observation_relation") or ""
     )
@@ -624,9 +638,6 @@ def _hailo8_completion_fields(
     )
     comparison_endpoint = dict(
         attestation.get("comparison_endpoint_contract") or {}
-    )
-    execution_contract = getattr(
-        completion_runtime, "execution_contract", None
     )
     source_endpoint = (
         dict(execution_contract.get("source_endpoint") or {})
@@ -1073,7 +1084,11 @@ def _dump_hailo8_python_semantic_evidence(
             "schema_version": 2,
             "seq": -1,
             "image": str(image),
-            "dump_inference_scope": "separate_bound_probe_inference_before_measurement",
+            "dump_inference_scope": (
+                "last_measured_completion_source_boundary"
+                if output_scope == "last_measured_completion_source_outputs"
+                else "separate_bound_probe_inference_before_measurement"
+            ),
             "file": boundary_file.name,
             "dtype": str(boundary.dtype),
             "shape": [int(x) for x in boundary.shape],
@@ -2542,6 +2557,9 @@ def _native_command_contract(
 ) -> dict[str, Any]:
     """Archive every runtime-relevant input needed for a fail-closed replay."""
     boundary = _engine_boundary_contract(engine)
+    completed_producer = producer_impl in {
+        "hailo8_python_vstreams_fifo", _CONCURRENT_PRODUCER,
+    }
     contract: dict[str, Any] = {
         "schema": _REPLAY_CONTRACT_SCHEMA,
         "schema_version": 1,
@@ -2610,7 +2628,7 @@ def _native_command_contract(
             "preprocess": (
                 f"pillow_{args.preprocess_mode_effective}_rgb_"
                 f"{prepared_input_dtype}"
-                if producer_impl == "hailo8_python_vstreams_fifo"
+                if completed_producer
                 and not str(getattr(args, "prepared_input_rgb", "") or "")
                 else f"opencv_{args.preprocess_mode_effective}_rgb_uint8"
             ),
@@ -2636,7 +2654,7 @@ def _native_command_contract(
         } if prepared_input is not None and prepared_input.is_file() else {},
         "measurement_endpoint": (
             "completed_task"
-            if producer_impl == "hailo8_python_vstreams_fifo"
+            if completed_producer
             else "raw_model_outputs"
             if str(args.task) == "detection"
             else "completed_task"
@@ -2644,7 +2662,7 @@ def _native_command_contract(
         "runtime_options": {
             "measurement_endpoint": (
                 "completed_task"
-                if producer_impl == "hailo8_python_vstreams_fifo"
+                if completed_producer
                 else "raw_model_outputs"
                 if str(args.task) == "detection"
                 else "completed_task"
@@ -2711,6 +2729,27 @@ def _native_command_contract(
                 if consumer_source.is_file() else ""
             ),
         }
+    if producer_impl == _CONCURRENT_PRODUCER:
+        # These descriptors come from the runtime which actually loaded the
+        # shared library. They replace the unused legacy wrapper sources.
+        actual = dict(getattr(args, "concurrent_runtime_artifacts", {}) or {})
+        roles = ("native_executable", "generated_cpp", "cmake",
+                 "concurrent_helper", "concurrent_canary",
+                 "concurrent_fast_decode", "native_three_stage")
+        for role in roles:
+            spec = dict(actual.get(role) or {})
+            path = Path(str(spec.get("path") or ""))
+            if not path.is_file() or _sha256_file(path) != spec.get("sha256"):
+                raise RuntimeError(f"concurrent_runtime_artifact_mismatch:{role}")
+            contract["artifacts"][role] = spec
+        if str(executable) != actual["native_executable"]["path"]:
+            raise RuntimeError("concurrent_runtime_executable_mismatch")
+        contract["runtime_options"].update({
+            "post_queue_depth": int(getattr(args, "post_queue_depth", 4)),
+            "measurement_boundary": (semantic_payload or {}).get("measurement_boundary"),
+            "warmup_contract": (semantic_payload or {}).get("warmup_contract"),
+            "preprocessing_included": (semantic_payload or {}).get("preprocessing_included"),
+        })
     if quality_binding is not None:
         binding = dict(quality_binding)
         selection = dict(binding.get("preselection") or {})
@@ -2772,6 +2811,8 @@ def _native_command_contract(
                 )
             ],
         }
+        if producer_impl == _CONCURRENT_PRODUCER:
+            contract["runtime_boundary_evidence"]["trt_input_dtype"] = str(semantic_payload.get("trt_input_dtype") or "")
         for payload_name, artifact_name in (
             ("native_fifo_output_manifest", "semantic_output_manifest"),
             ("native_fifo_boundary_manifest", "semantic_boundary_manifest"),
@@ -2873,6 +2914,12 @@ def _verify_replay_expectations(
     return result
 
 
+def _concurrent_energy_marker(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Publish completion proof without the separately saved task latency log."""
+    return {key: value for key, value in payload.items()
+            if key not in {"request_latency", "repetition_records", "repetition_evidence"}}
+
+
 def _energy_workload_only(args: argparse.Namespace) -> int:
     """Run the already-built C++ FIFO executable from a fresh preflight seal.
 
@@ -2928,10 +2975,9 @@ def _energy_workload_only(args: argparse.Namespace) -> int:
             errors.append(
                 "split_energy_detection_completion_contract_invalid"
             )
-        if (
-            str(options.get("producer_impl") or "")
-            != "hailo8_python_vstreams_fifo"
-        ):
+        if str(options.get("producer_impl") or "") not in {
+            "hailo8_python_vstreams_fifo", _CONCURRENT_PRODUCER,
+        }:
             errors.append(
                 "split_energy_detection_python_vstreams_producer_missing"
             )
@@ -2996,6 +3042,32 @@ def _energy_workload_only(args: argparse.Namespace) -> int:
         return 8
     out_json = Path(args.result_json).expanduser().resolve()
     out_json.parent.mkdir(parents=True, exist_ok=True)
+    if task == "detection" and options.get("producer_impl") == _CONCURRENT_PRODUCER:
+        try:
+            payload = _run_concurrent_energy(binding, args=args, out_json=out_json)
+            count = int(payload.get("completed_work_units") or 0)
+            if count <= 0:
+                raise RuntimeError("exact completed detection count missing")
+            payload.update({
+                "energy_workload_only": True, "energy_preflight_status": reason,
+                "source_contract_sha256": str(args.source_contract_sha256 or ""),
+                "prepared_input_source": "preflight_verified_contract_artifact",
+                "measurement_endpoint": "completed_task",
+                "energy_preflight_nonce": str(args.energy_preflight_nonce),
+                "energy_completion_observation_scope": "fresh_energy_invocation",
+                "energy_completion_window_source": "collector_command_marker_window",
+                **{key: binding.get(key) for key in ("model", "case", "setup_id", "comparison_backend", "precision")},
+            })
+            out_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            print("__SPLITPOINT_ENERGY_COMPLETION__=" + json.dumps(
+                _concurrent_energy_marker(payload), separators=(",", ":")))
+            print(f"__SPLITPOINT_WORK_UNITS__={count}")
+            print("__SPLITPOINT_WORK_UNITS_SOURCE__=completed_work_units")
+            print("__SPLITPOINT_WORK_UNITS_EXACT__=1")
+            return 0
+        except Exception as exc:
+            print(f"split_energy_concurrent_detection_failed:{type(exc).__name__}:{exc}", file=sys.stderr)
+            return 9
     if task == "detection":
         try:
             shape = tuple(
@@ -3626,6 +3698,282 @@ def _v2791_use_concurrent_three_stage(args: argparse.Namespace) -> bool:
         and bool(str(getattr(args, "native_split_quality_binding", "") or ""))
         and bool(getattr(args, "run", True))
     )
+
+
+def _concurrent_file(path: Path) -> dict[str, Any]:
+    path = path.expanduser().resolve()
+    if not path.is_file():
+        raise RuntimeError(f"concurrent_artifact_missing:{path}")
+    return {"path": str(path), "sha256": _sha256_file(path),
+            "size_bytes": path.stat().st_size}
+
+
+def _concurrent_campaign_config(
+    *, bs: Path, case: str, hef: Path, engine: Path, image: Path,
+    work: Path, args: argparse.Namespace, quality_binding: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, np.ndarray], Path]:
+    """Use the normal single untimed P1/P2 probe to bind completion semantics."""
+    boundary = quality_binding["boundary_metadata_payload"]["boundary_tensor"]
+    backend, runtime_input, trt = _open_hailo8_python_runtime(
+        hef=hef, engine=engine, work=work, args=args, runtime_label="concurrent_contract_probe",
+    )
+    try:
+        inputs = _hailo8_python_input(
+            runtime_input, image, quantized=True,
+            preprocess_mode=str(args.preprocess_mode_effective),
+            letterbox_pad_value=int(args.letterbox_pad_value),
+            prepared_input_rgb=str(getattr(args, "prepared_input_rgb", "") or ""),
+            expected_prepared_input_sha256=str(getattr(args, "expected_prepared_input_sha256", "") or ""),
+        )
+        prepared_name, prepared_value = next(iter(inputs.items()))
+        shape = tuple(prepared_value.shape)
+        if shape != (640, 640, 3) or str(args.hailo_format) != "uint8" or prepared_value.dtype != np.uint8:
+            raise RuntimeError("concurrent_campaign_prepared_geometry_unsupported")
+        # The normal YOLOv7 builder binds activation semantics from real values.
+        # This existing single contract probe is outside warmup and measurement.
+        p1 = backend.run(runtime_input, dict(inputs)).outputs
+        trt_name, probe_boundary, boundary_meta = _hailo8_python_boundary(
+            p1, trt, expected_name=str(boundary["runtime_name"]),
+            expected_shape=list(boundary["shape"]), expected_dtype=str(boundary["dtype"]),
+        )
+        probe_outputs = trt.run({trt_name: probe_boundary})
+        meta = quality_binding["native_trt_meta"]
+        expected_outputs = [{"name": str(item["name"]), "shape": list(item["shape"]),
+                             "dtype": {"FLOAT": "float32", "FLOAT16": "float16"}.get(item["elem_type"])}
+                            for item in meta.get("outputs") or []]
+        output_specs = [{"name": name, "shape": list(np.asarray(value).shape), "dtype": str(np.asarray(value).dtype)}
+                        for name, value in probe_outputs.items()]
+        if output_specs != expected_outputs:
+            raise RuntimeError("concurrent_campaign_probe_output_signature_mismatch")
+        completion = _hailo8_detection_completion_contract(
+            benchmark_set=bs, model_id=str(args.model_id), outputs=probe_outputs,
+            inputs=inputs, image_path=image,
+            preprocess_mode=str(args.preprocess_mode_effective),
+            letterbox_pad_value=int(args.letterbox_pad_value),
+        )
+        probe_args = argparse.Namespace(**vars(args))
+        probe_args.output_dir = str(work / "contract_probe/outputs")
+        probe_args.boundary_dir = str(work / "contract_probe/boundary")
+        probe_evidence = _dump_hailo8_python_semantic_evidence(
+            work=work, inputs=inputs, boundary=probe_boundary, boundary_meta=boundary_meta,
+            trt_outputs=probe_outputs, image=image, args=probe_args,
+        )
+    finally:
+        _close_hailo8_python_runtime(backend, runtime_input, trt)
+    prepared_path = work / "contract_artifacts" / "hailo8_concurrent_prepared_input.bin"
+    prepared_path.parent.mkdir(parents=True, exist_ok=True)
+    prepared_path.write_bytes(prepared_value.tobytes(order="C"))
+    boundary = quality_binding["boundary_metadata_payload"]["boundary_tensor"]
+    trt_inputs = list(meta.get("inputs") or [])
+    if len(trt_inputs) != 1 or trt_inputs[0].get("elem_type") != "UINT8":
+        raise RuntimeError("concurrent_campaign_single_uint8_trt_input_required")
+    config = {
+        "identity": {"model_id": str(args.model_id), "case_id": case,
+                     "setup_id": str(args.setup_id), "precision": str(args.precision),
+                     "eval_run_id": str(args.eval_run_id), "source_run_id": str(args.source_run_id)},
+        "quality_binding_sha256": quality_binding["binding_sha256"],
+        "hef": _concurrent_file(hef), "engine": _concurrent_file(engine),
+        "input_image": _concurrent_file(image),
+        "input_image_sha256": _sha256_file(image),
+        "prepared_input": {**_concurrent_file(prepared_path), "name": str(prepared_name),
+                           "shape": list(shape), "dtype": "uint8", "format": "raw"},
+        "original_wh": list(completion["processor_contract"]["original_wh"]),
+        "input_hw": [640, 640], "outputs": output_specs,
+        "contract_probe": {"scope": "separate_bound_probe_before_warmup_and_measurement",
+                           "p1_inferences": 1, "p2_inferences": 1, **probe_evidence},
+        "processor_contract": completion["processor_contract"],
+        "completion_contract": completion,
+        "boundary_contract": {"name": str(boundary["runtime_name"]),
+                              "shape": list(boundary["shape"]), "dtype": str(boundary["dtype"]),
+                              "trt_input": {"name": str(trt_inputs[0]["name"]),
+                                            "shape": list(trt_inputs[0]["shape"]), "dtype": "uint8"}},
+        "frames": int(args.frames), "warmup": int(args.warmup),
+        "repetitions": int(args.repetitions), "duration_s": float(args.duration_s or 0),
+        "p1_queue_depth": int(args.queue_depth),
+        "post_queue_depth": int(getattr(args, "post_queue_depth", 4)),
+        "device_id": str(args.device_id or ""),
+    }
+    return config, inputs, prepared_path
+
+
+def _concurrent_saved_array(spec: Mapping[str, Any]) -> np.ndarray:
+    path = Path(str(spec.get("path") or ""))
+    if not path.is_file() or _sha256_file(path) != spec.get("sha256"):
+        raise RuntimeError("concurrent_saved_array_sha256_mismatch")
+    array = np.load(path, allow_pickle=False)
+    if list(array.shape) != list(spec.get("shape") or []) or str(array.dtype) != spec.get("dtype"):
+        raise RuntimeError("concurrent_saved_array_signature_mismatch")
+    return np.ascontiguousarray(array)
+
+
+def _concurrent_campaign_payload(
+    report: Mapping[str, Any], config: Mapping[str, Any], *,
+    work: Path, args: argparse.Namespace, inputs: Mapping[str, np.ndarray],
+) -> dict[str, Any]:
+    """Validate actual runtime observations before using normal Native writers."""
+    if report.get("ok") is not True or report.get("config") != config:
+        raise RuntimeError("concurrent_campaign_report_binding_invalid")
+    runs = list(report.get("repetitions") or [])
+    if len(runs) != int(config["repetitions"]):
+        raise RuntimeError("concurrent_campaign_repetitions_incomplete")
+    completion = verify_detection_completion_execution_contract(config["completion_contract"])
+    expected = config["boundary_contract"]
+    projected = []
+    for index, observation in enumerate(runs, 1):
+        row = dict(observation)
+        count = int(row.get("completed_work_units") or 0)
+        makespan = float(row.get("makespan_ms") or 0)
+        start = int(row.get("measurement_start_ns") or 0)
+        end = int(row.get("measurement_end_ns") or 0)
+        if (row.get("ok") is not True or count <= 0 or makespan <= 0
+                or int(row.get("produced_frames") or 0) != count
+                or int(row.get("warmup_completed_frames", -1)) != int(config["warmup"])
+                or (not config["duration_s"] and count != int(config["frames"]))
+                or start <= 0 or end <= start
+                or not math.isclose(makespan, (end-start)/1e6, rel_tol=1e-9)
+                or not math.isclose(float(row.get("fps_makespan") or 0), count*1000/makespan, rel_tol=1e-9)
+                or row.get("pipeline_drained") is not True
+                or row.get("measurement_boundary") != "workers_ready_to_last_completed_task_frame"
+                or row.get("warmup_contract") != "fully_drained_before_worker_start"
+                or row.get("preprocessing_included") is not False
+                or not row.get("runtime_instance_id") or not row.get("repetition_id")
+                or row.get("process_local_repetition_index") != index):
+            raise RuntimeError("concurrent_campaign_measurement_evidence_invalid")
+        runtime = dict(row.get("runtime_boundary") or {})
+        exact_runtime = {"output_name": expected["name"], "output_shape": expected["shape"],
+                         "output_dtype": expected["dtype"],
+                         "output_frame_bytes": int(np.prod(expected["shape"])),
+                         "trt_input_name": expected["trt_input"]["name"],
+                         "trt_input_shape": expected["trt_input"]["shape"],
+                         "trt_input_dtype": expected["trt_input"]["dtype"],
+                         "input_name": config["prepared_input"]["name"],
+                         "input_shape": config["prepared_input"]["shape"], "input_dtype": "uint8"}
+        if any(runtime.get(k) != v for k, v in exact_runtime.items()):
+            raise RuntimeError("concurrent_campaign_runtime_boundary_mismatch")
+        outputs = None
+        boundary = None
+        if not config.get("energy_workload_only"):
+            outputs = {name: _concurrent_saved_array(spec) for name, spec in row["output_arrays"].items()}
+            boundary = _concurrent_saved_array(row["boundary_array"])
+            if list(boundary.shape) != expected["trt_input"]["shape"] or str(boundary.dtype) != "uint8":
+                raise RuntimeError("concurrent_campaign_boundary_dump_mismatch")
+        attestation = verify_fast_completion_attestation(
+            row["completion_attestation"], execution_contract=completion, outputs=outputs,
+        )
+        row.update(_hailo8_completion_observation_fields(attestation, completion, count))
+        dump_args = argparse.Namespace(**vars(args))
+        if index != len(runs):
+            dump_args.output_dir = str((Path(args.output_dir) if args.output_dir else work / "native_fifo_outputs") / f"repetition_{index:03d}")
+            dump_args.boundary_dir = str((Path(args.boundary_dir) if args.boundary_dir else work / "native_fifo_boundary") / f"repetition_{index:03d}")
+        if outputs is not None and boundary is not None:
+            row.update(_dump_hailo8_python_semantic_evidence(
+                work=work, inputs=inputs, boundary=boundary,
+                boundary_meta={"trt_input_name": expected["trt_input"]["name"]},
+                trt_outputs=outputs, image=Path(config["input_image"]["path"]), args=dump_args,
+                output_scope="last_measured_completion_source_outputs", completion_attestation=attestation,
+            ))
+        row.update({
+            "prepared_input_shape": config["prepared_input"]["shape"],
+            "prepared_input_name": config["prepared_input"]["name"], "prepared_input_dtype": "uint8",
+            "native_split_quality_runtime_boundary_verified": True,
+            "hailo_runtime_output_count": 1, "hailo_runtime_output_name": runtime["output_name"],
+            "hailo_runtime_output_frame_bytes": runtime["output_frame_bytes"],
+            "strict_quality_boundary": {"shape": runtime["output_shape"], "dtype": runtime["output_dtype"],
+                                        "trt_input_name": runtime["trt_input_name"], "trt_input_shape": runtime["trt_input_shape"]},
+            "trt_input_dtype": "uint8", "trt_input_bytes": runtime["output_frame_bytes"],
+            "task": "detection", "producer_impl": _CONCURRENT_PRODUCER,
+            "mode": "hailo8_cpp_concurrent_three_stage_completed_detection_fifo",
+            "repetition_runtime_scope": "fresh_hailo_vstreams_trt_completion_runtime_per_repetition",
+            "completion_runtime_mode": "fast_oracle_outside_timing", "warmup": int(config["warmup"]),
+            "queue_depth": int(config["p1_queue_depth"]), "post_queue_depth": int(config["post_queue_depth"]),
+            "hef": config["hef"]["path"], "engine": config["engine"]["path"],
+            "prepared_feed_contract": "exact_prepared_feed_loaded_outside_counted_loop",
+        })
+        projected.append(row)
+    if len({row["runtime_instance_id"] for row in projected}) != len(projected):
+        raise RuntimeError("concurrent_campaign_runtime_identity_reused")
+    if len({row["repetition_id"] for row in projected}) != len(projected):
+        raise RuntimeError("concurrent_campaign_repetition_identity_reused")
+    return _aggregate_repetition_payloads(projected)
+
+
+def _run_concurrent_campaign(
+    *, bs: Path, case: str, hef: Path, engine: Path, image: Path,
+    work: Path, args: argparse.Namespace, quality_binding: Mapping[str, Any],
+) -> tuple[dict[str, Any], Path, dict[str, Any]]:
+    preflight_args = argparse.Namespace(**vars(args))
+    preflight_args.expected_executable_sha256 = ""
+    _verify_replay_expectations(preflight_args, hef=hef, engine=engine, image=image,
+                                executable=Path(sys.executable).resolve(),
+                                boundary=_engine_boundary_contract(engine))
+    config, inputs, prepared = _concurrent_campaign_config(
+        bs=bs, case=case, hef=hef, engine=engine, image=image, work=work,
+        args=args, quality_binding=quality_binding,
+    )
+    config["expected_library_sha256"] = str(getattr(args, "expected_executable_sha256", "") or "")
+    report = _invoke_concurrent_campaign(config, work=work, args=args)
+    args.concurrent_runtime_artifacts = dict(report.get("runtime_artifacts") or {})
+    payload = _concurrent_campaign_payload(report, config, work=work, args=args, inputs=inputs)
+    payload["contract_probe"] = dict(config["contract_probe"])
+    return payload, prepared, dict(config["completion_contract"])
+
+
+def _invoke_concurrent_campaign(config: Mapping[str, Any], *, work: Path,
+                                args: argparse.Namespace) -> dict[str, Any]:
+    config_path = work / "concurrent_campaign_config.json"
+    result_path = work / "concurrent_campaign_runtime.json"
+    work.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    cmd = _v2791_concurrent_three_stage_command(args=args, work=work, result_json=result_path)
+    cmd.extend(["--campaign-config", str(config_path)])
+    completed = subprocess.run(cmd, cwd=str(work), check=False)
+    if completed.returncode != 0 or not result_path.is_file():
+        raise RuntimeError(f"concurrent_campaign_runtime_failed:{completed.returncode}")
+    return _load_json(result_path)
+
+
+def _run_concurrent_energy(binding: Mapping[str, Any], *, args: argparse.Namespace,
+                           out_json: Path) -> dict[str, Any]:
+    """Replay only the artifact closure admitted by the normal energy preflight."""
+    options = binding["runtime_options"]
+    artifacts = binding["artifacts"]
+    prepared = binding["prepared_input_contract"]
+    completion = verify_detection_completion_execution_contract(options["completion_execution_contract"])
+    boundary = binding["runtime_boundary_evidence"]
+    config = {
+        "identity": {"model_id": binding["model"], "case_id": binding["case"],
+                     "setup_id": binding["setup_id"], "precision": binding["precision"],
+                     "eval_run_id": binding.get("eval_run_id"), "source_run_id": binding.get("source_run_id")},
+        "quality_binding_sha256": binding.get("native_split_quality_binding_sha256"),
+        "hef": dict(artifacts["hef"]), "engine": dict(artifacts["engine"]),
+        "input_image": {"path": binding["input_image"], "sha256": binding["input_image_sha256"]},
+        "input_image_sha256": binding["input_image_sha256"],
+        "prepared_input": {**artifacts["prepared_input"], "name": prepared["name"],
+                           "shape": list(prepared["shape"]), "dtype": prepared["dtype"], "format": "raw"},
+        "original_wh": list(completion["processor_contract"]["original_wh"]),
+        "input_hw": list(completion["processor_contract"]["input_hw"]),
+        "outputs": [{key: item[key] for key in ("name", "shape", "dtype")}
+                    for item in completion["source_endpoint"]["tensor_signature"]["tensors"]],
+        "processor_contract": completion["processor_contract"], "completion_contract": completion,
+        "boundary_contract": {"name": boundary["output_name"], "shape": list(boundary["output_shape"]),
+                              "dtype": boundary["output_dtype"],
+                              "trt_input": {"name": boundary["trt_input_name"],
+                                            "shape": list(boundary["trt_input_shape"]), "dtype": "uint8"}},
+        "frames": int(args.frames), "warmup": 0, "repetitions": 1,
+        "duration_s": float(args.duration_s), "p1_queue_depth": int(options["queue_depth"]),
+        "post_queue_depth": int(options["post_queue_depth"]),
+        "device_id": str(options.get("device_id") or ""), "energy_workload_only": True,
+    }
+    canary_path = Path(artifacts["concurrent_canary"]["path"])
+    sys.path.insert(0, str(canary_path.parent))
+    spec = importlib.util.spec_from_file_location("_native_energy_campaign_canary", canary_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("concurrent_energy_canary_unavailable")
+    canary = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(canary)
+    report = canary.run_energy_campaign(config, out_root=out_json.parent / "concurrent_energy",
+                                         verified_workload_binding=binding)
+    return _concurrent_campaign_payload(report, config, work=out_json.parent, args=args, inputs={})
 
 
 def _v2791_concurrent_three_stage_command(
@@ -4331,6 +4679,7 @@ def main() -> int:
         _require_hailo8_detection_runtime()
         if args.task == "detection"
         and args.detection_endpoints in {"dual", "completed_task"}
+        and not _v2791_use_concurrent_three_stage(args)
         else {}
     )
     case = args.case if args.case.startswith('b') else f'b{int(args.case):03d}'
@@ -4420,19 +4769,16 @@ def main() -> int:
     print('[native-fifo] engine:', engine)
     print('[native-fifo] image:', image)
 
-    if _v2791_use_concurrent_three_stage(args):
-        return _run_v2791_concurrent_three_stage(
-            bs=bs, case=case, work=work, args=args,
-        )
+    concurrent_detection = _v2791_use_concurrent_three_stage(args)
 
-    if args.task == "detection" and args.detection_endpoints == "dual":
+    if args.task == "detection" and args.detection_endpoints == "dual" and not concurrent_detection:
         return _run_detection_dual_endpoint(
             bs=bs, case=case, work=work, args=args,
         )
 
     python_detection = (
         args.task == "detection"
-        and args.detection_endpoints == "completed_task"
+        and (args.detection_endpoints == "completed_task" or concurrent_detection)
     )
     if not python_detection:
         args.wrapper_build = _prepare_cpp_wrapper(
@@ -4449,7 +4795,7 @@ def main() -> int:
     replay_verification = _verify_replay_expectations(
         args, hef=hef, engine=engine, image=image, executable=exe,
         boundary=boundary_contract,
-    )
+    ) if not concurrent_detection else {}
     command_contract = _native_command_contract(
         bs=bs, case=case, args=args, hef=hef, engine=engine, image=image,
         work=work, executable=exe, quality_binding=quality_binding,
@@ -4457,7 +4803,7 @@ def main() -> int:
             "hailo8_python_vstreams_fifo"
             if python_detection else "hailo8_cpp_vstreams_fifo"
         ),
-    )
+    ) if not concurrent_detection else {}
     cfg.update({
         'native_command_contract_status': 'pending_prepared_input_artifact',
         'native_command_contract': command_contract,
@@ -4473,7 +4819,7 @@ def main() -> int:
             out_json.parent.mkdir(parents=True, exist_ok=True)
             try:
                 payload, prepared_input_path, completion_contract = (
-                    _run_hailo8_python_detection(
+                    (_run_concurrent_campaign if concurrent_detection else _run_hailo8_python_detection)(
                         bs=bs,
                         case=case,
                         hef=hef,
@@ -4482,9 +4828,11 @@ def main() -> int:
                         work=work,
                         args=args,
                         quality_binding=quality_binding,
-                        expected_boundary_name=expected_boundary_name,
-                        expected_boundary_shape=expected_boundary_shape,
-                        expected_boundary_dtype=expected_boundary_dtype,
+                        **({} if concurrent_detection else {
+                            "expected_boundary_name": expected_boundary_name,
+                            "expected_boundary_shape": expected_boundary_shape,
+                            "expected_boundary_dtype": expected_boundary_dtype,
+                        }),
                     )
                 )
             except Exception as exc:
@@ -4493,6 +4841,12 @@ def main() -> int:
                     "error": f"{type(exc).__name__}: {exc}",
                     "request_latency": getattr(exc, "request_latency", {})}, indent=2))
                 raise
+            if concurrent_detection:
+                exe = Path(args.concurrent_runtime_artifacts["native_executable"]["path"])
+                replay_verification = _verify_replay_expectations(
+                    args, hef=hef, engine=engine, image=image, executable=exe,
+                    boundary=boundary_contract,
+                )
             command_contract = _native_command_contract(
                 bs=bs,
                 case=case,
@@ -4518,7 +4872,7 @@ def main() -> int:
                 quality_binding=quality_binding,
                 semantic_payload=payload,
                 completion_execution_contract=completion_contract,
-                producer_impl="hailo8_python_vstreams_fifo",
+                producer_impl=_CONCURRENT_PRODUCER if concurrent_detection else "hailo8_python_vstreams_fifo",
             )
             if command_contract.get("complete") is not True:
                 raise RuntimeError(

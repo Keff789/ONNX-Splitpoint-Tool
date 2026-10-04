@@ -1,6 +1,10 @@
-# ONNX Splitpoint Tool v2.91.0
+# ONNX Splitpoint Tool v2.92.0
 
-Aktueller Build: `v2.91.0`. Optimierte Statistik, reparierte Transferzulassung und begrenzte Energie-Retries mit durchgängiger Profilweitergabe. Enthält die geprüften Auswahl-, Full-, Resume- und expliziten Recoverykorrekturen. Das neue 20er-Profil ist vorbereitet; keine neue Hardware- oder wissenschaftliche Gesamtfreigabe. [Release 2.91.0](docs/RELEASE_2.91.0.md), [Arbeitsstand](docs/ARBEITSSTAND.md).
+Aktueller Build: `v2.92.0`. Konsolidierter Softwarestand für selektive Kampagnenergänzung, Generic-Completion, graphbasierte YOLO-Min3-Augmentierung und streng gebundene Energie-Fortsetzung. Die Veröffentlichung bewahrt die ursprünglichen Messquellen und wissenschaftlichen Einschränkungen. [Release 2.92.0](docs/RELEASE_2.92.0.md), [Arbeitsstand](docs/ARBEITSSTAND.md), [Versionsregeln](docs/VERSIONING.md).
+
+# ONNX Splitpoint Tool v2.91.2
+
+Vorheriger Build: `v2.91.2`. Selektiver THESIS20-Restabschluss: stabile CPU-Referenzbindung, getrennte Native-Run-/Attemptidentität, lokale Vendor-Full-Nachbindung und vollständige Energie-Artefaktvorprüfung. Vorhandene Messungen bleiben erhalten. [Release 2.91.2](docs/RELEASE_2.91.2.md), [Arbeitsstand](docs/ARBEITSSTAND.md).
 
 # ONNX Splitpoint Tool v2.90.1
 

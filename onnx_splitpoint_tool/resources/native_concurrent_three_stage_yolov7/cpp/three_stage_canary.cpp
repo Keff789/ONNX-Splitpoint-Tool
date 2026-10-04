@@ -231,6 +231,29 @@ struct ThreeStageConfigV1 {
     int32_t letterbox_pad_value;
 };
 
+// The historical image-corpus ABI remains unchanged. The campaign ABI binds
+// one already prepared RGB UINT8 tensor before either phase starts.
+struct ThreeStageConfigV2 {
+    ThreeStageConfigV1 base;
+    const char *prepared_input_path;
+    const char *runtime_instance_id;
+    int32_t input_width;
+    int32_t input_height;
+    int32_t original_width;
+    int32_t original_height;
+    double duration_s;
+    const char *output_name8;
+    const char *output_name16;
+    const char *output_name32;
+    const char *boundary_name;
+    const char *trt_input_name;
+    int32_t boundary_height;
+    int32_t boundary_width;
+    int32_t boundary_channels;
+    int32_t persist_sample;
+    const char *input_name;
+};
+
 typedef int (*ThreeStagePostCallbackV1)(
     int32_t measured,
     int32_t sequence,
@@ -350,6 +373,8 @@ public:
     int input_width() const { return input_width_; }
     int input_height() const { return input_height_; }
     size_t output_frame_size() const { return output_frame_size_; }
+    hailo_vstream_info_t input_info() const { return streams_.first.front().get_info(); }
+    hailo_vstream_info_t output_info() const { return streams_.second.front().get_info(); }
 
     void infer(const cv::Mat &rgb_uint8, std::vector<uint8_t> &output) {
         const size_t input_bytes = static_cast<size_t>(rgb_uint8.total() * rgb_uint8.elemSize());
@@ -480,6 +505,9 @@ public:
     size_t head8_elements() const { return bindings_.at(static_cast<size_t>(head8_index_)).elements; }
     size_t head16_elements() const { return bindings_.at(static_cast<size_t>(head16_index_)).elements; }
     size_t head32_elements() const { return bindings_.at(static_cast<size_t>(head32_index_)).elements; }
+    const TensorBinding &head_binding(int grid) const {
+        return bindings_.at(static_cast<size_t>(grid == 80 ? head8_index_ : grid == 40 ? head16_index_ : head32_index_));
+    }
 
     std::string output_description() const {
         std::ostringstream out;
@@ -596,24 +624,6 @@ private:
     cudaStream_t cuda_stream_ = nullptr;
 };
 
-struct BoundarySlot {
-    int sequence = 0;
-    int image_index = 0;
-    int original_width = 0;
-    int original_height = 0;
-    std::vector<uint8_t> boundary;
-    double preprocess_ms = 0.0;
-    double p1_ms = 0.0;
-};
-
-struct PostWorkItem {
-    int sequence = 0;
-    int image_index = 0;
-    int original_width = 0;
-    int original_height = 0;
-    int post_slot = 0;
-};
-
 struct FrameMetrics {
     int64_t request_start_ns = -1;
     int64_t request_end_ns = -1;
@@ -628,6 +638,26 @@ struct FrameMetrics {
     int callback_status = 0;
 };
 
+struct BoundarySlot {
+    int sequence = 0;
+    int image_index = 0;
+    int original_width = 0;
+    int original_height = 0;
+    std::vector<uint8_t> boundary;
+    double preprocess_ms = 0.0;
+    double p1_ms = 0.0;
+    FrameMetrics metrics;
+};
+
+struct PostWorkItem {
+    int sequence = 0;
+    int image_index = 0;
+    int original_width = 0;
+    int original_height = 0;
+    int post_slot = 0;
+    FrameMetrics metrics;
+};
+
 struct PhaseResult {
     std::exception_ptr thread_error;
     int frames_requested = 0;
@@ -636,6 +666,12 @@ struct PhaseResult {
     int callback_failures = 0;
     double raw_makespan_ms = 0.0;
     double completed_makespan_ms = 0.0;
+    int64_t measurement_start_ns = 0;
+    int64_t raw_end_ns = 0;
+    int64_t measurement_end_ns = 0;
+    int64_t drain_end_ns = 0;
+    std::vector<uint8_t> last_boundary;
+    std::vector<float> last_head8, last_head16, last_head32;
     std::vector<FrameMetrics> frames;
 };
 
@@ -649,11 +685,16 @@ static PhaseResult run_phase(
     HailoStage &hailo,
     TRTStage &trt,
     ThreeStagePostCallbackV1 callback,
-    void *user_data) {
+    void *user_data,
+    const cv::Mat *prepared_input = nullptr,
+    int original_width = 0,
+    int original_height = 0,
+    double duration_s = 0.0,
+    bool persist_sample = true) {
 
     PhaseResult result;
     result.frames_requested = frame_count;
-    result.frames.resize(static_cast<size_t>(frame_count));
+    result.frames.reserve(static_cast<size_t>(frame_count));
     if (frame_count <= 0) return result;
 
     std::vector<BoundarySlot> boundary_slots(static_cast<size_t>(p1_queue_depth));
@@ -683,19 +724,41 @@ static PhaseResult run_phase(
     std::atomic<int> raw_count{0};
     std::atomic<int> completed_count{0};
     std::atomic<int> callback_failures{0};
+    int admitted_count = 0;
+    int last_boundary_index = -1;
+    int last_post_index = -1;
+    std::mutex start_mutex;
+    std::condition_variable start_cv;
+    int workers_ready = 0;
+    bool released = false;
+    auto await_release = [&] {
+        if (!prepared_input) return;
+        std::unique_lock<std::mutex> lock(start_mutex);
+        ++workers_ready;
+        start_cv.notify_all();
+        start_cv.wait(lock, [&] { return released; });
+    };
 
     std::thread p1_thread([&] {
         try {
-            for (int sequence = 0; sequence < frame_count; ++sequence) {
+            await_release();
+            for (int sequence = 0; duration_s > 0.0 || sequence < frame_count; ++sequence) {
+                if (duration_s > 0.0 && sequence > 0 &&
+                    ms_between(measurement_start, Clock::now()) >= duration_s * 1000.0) break;
                 const int image_index = sequence % static_cast<int>(images.size());
                 const auto stage_start = Clock::now();
-                if (measured && sequence == 0) measurement_start = stage_start;
-                cv::Mat bgr = cv::imread(images.at(static_cast<size_t>(image_index)));
-                if (bgr.empty()) throw std::runtime_error("failed to read image");
-                cv::Mat rgb = letterbox_rgb_uint8(
-                    bgr, hailo.input_width(), hailo.input_height(), pad_value);
+                if (!prepared_input && measured && sequence == 0) measurement_start = stage_start;
+                cv::Mat bgr, rgb;
+                if (prepared_input) {
+                    rgb = *prepared_input; // shared immutable header; no payload copy
+                } else {
+                    bgr = cv::imread(images.at(static_cast<size_t>(image_index)));
+                    if (bgr.empty()) throw std::runtime_error("failed to read image");
+                    rgb = letterbox_rgb_uint8(
+                        bgr, hailo.input_width(), hailo.input_height(), pad_value);
+                }
                 const auto preprocess_end = Clock::now();
-                auto &metrics = result.frames.at(static_cast<size_t>(sequence));
+                FrameMetrics metrics;
                 metrics.request_start_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(preprocess_end.time_since_epoch()).count();
                 int slot_index = -1;
                 if (!free_boundary.pop(slot_index)) break;
@@ -704,13 +767,15 @@ static PhaseResult run_phase(
                 auto &slot = boundary_slots.at(static_cast<size_t>(slot_index));
                 slot.sequence = sequence;
                 slot.image_index = image_index;
-                slot.original_width = bgr.cols;
-                slot.original_height = bgr.rows;
+                slot.original_width = prepared_input ? original_width : bgr.cols;
+                slot.original_height = prepared_input ? original_height : bgr.rows;
                 hailo.infer(rgb, slot.boundary);
                 const auto p1_end = Clock::now();
-                slot.preprocess_ms = ms_between(stage_start, preprocess_end);
+                slot.preprocess_ms = prepared_input ? 0.0 : ms_between(stage_start, preprocess_end);
                 slot.p1_ms = ms_between(wait_end, p1_end);
+                slot.metrics = metrics;
                 p1_to_p2.push(slot_index);
+                ++admitted_count;
             }
             p1_to_p2.close();
         } catch (...) {
@@ -720,11 +785,12 @@ static PhaseResult run_phase(
 
     std::thread p2_thread([&] {
         try {
+            await_release();
             int boundary_index = -1;
             while (p1_to_p2.pop(boundary_index)) {
                 auto &slot = boundary_slots.at(static_cast<size_t>(boundary_index));
                 const int sequence = slot.sequence;
-                auto &metrics = result.frames.at(static_cast<size_t>(sequence));
+                auto metrics = slot.metrics;
                 metrics.preprocess_ms = slot.preprocess_ms;
                 metrics.p1_ms = slot.p1_ms;
 
@@ -742,6 +808,7 @@ static PhaseResult run_phase(
                 metrics.handoff_ms = ms_between(handoff_start, handoff_end);
                 metrics.p2_ms = ms_between(handoff_end, p2_end);
                 raw_count.fetch_add(1);
+                last_boundary_index = boundary_index;
                 if (measured) raw_end = p2_end;
 
                 PostWorkItem work;
@@ -750,6 +817,7 @@ static PhaseResult run_phase(
                 work.original_width = slot.original_width;
                 work.original_height = slot.original_height;
                 work.post_slot = post_slot_index;
+                work.metrics = metrics;
                 p2_to_post.push(work);
                 free_boundary.push(boundary_index);
             }
@@ -761,6 +829,7 @@ static PhaseResult run_phase(
 
     std::thread post_thread([&] {
         try {
+            await_release();
             PostWorkItem work;
             while (p2_to_post.pop(work)) {
                 const auto &slot = trt.post_slot(work.post_slot);
@@ -781,7 +850,7 @@ static PhaseResult run_phase(
                     &detection_count,
                     user_data);
                 const auto post_end = Clock::now();
-                auto &metrics = result.frames.at(static_cast<size_t>(work.sequence));
+                auto &metrics = work.metrics;
                 metrics.post_ms = ms_between(post_start, post_end);
                 metrics.detection_count = detection_count;
                 metrics.callback_status = status;
@@ -791,6 +860,8 @@ static PhaseResult run_phase(
                     completed_count.fetch_add(1);
                 }
                 if (measured) completed_end = post_end;
+                last_post_index = work.post_slot;
+                result.frames.push_back(metrics); // only this worker owns the result vector
                 free_post.push(work.post_slot);
             }
         } catch (...) {
@@ -798,18 +869,46 @@ static PhaseResult run_phase(
         }
     });
 
+    if (prepared_input) {
+        std::unique_lock<std::mutex> lock(start_mutex);
+        start_cv.wait(lock, [&] { return workers_ready == 3; });
+        // Coordinator starts the clock before releasing all ready workers;
+        // no per-frame synchronization or serialization is introduced.
+        measurement_start = Clock::now();
+        released = true;
+        start_cv.notify_all();
+    }
+
     p1_thread.join();
     p2_thread.join();
     post_thread.join();
+    const auto drain_end = Clock::now();
 
     result.thread_error = thread_error;
 
     result.raw_frames_completed = raw_count.load();
     result.completed_frames = completed_count.load();
     result.callback_failures = callback_failures.load();
+    if (duration_s > 0.0) result.frames_requested = admitted_count;
     if (measured) {
         result.raw_makespan_ms = ms_between(measurement_start, raw_end);
         result.completed_makespan_ms = ms_between(measurement_start, completed_end);
+        auto ns = [](const Clock::time_point &value) {
+            return std::chrono::duration_cast<std::chrono::nanoseconds>(value.time_since_epoch()).count();
+        };
+        result.measurement_start_ns = ns(measurement_start);
+        result.raw_end_ns = ns(raw_end);
+        result.measurement_end_ns = ns(completed_end);
+        result.drain_end_ns = ns(drain_end);
+        if (prepared_input && persist_sample && last_boundary_index >= 0 && last_post_index >= 0) {
+            // Persist the final completed sample only after all queues drain
+            // and the measured endpoint timestamp has been recorded.
+            result.last_boundary = boundary_slots.at(static_cast<size_t>(last_boundary_index)).boundary;
+            const auto &last = trt.post_slot(last_post_index);
+            result.last_head8.assign(last.head8, last.head8 + trt.head8_elements());
+            result.last_head16.assign(last.head16, last.head16 + trt.head16_elements());
+            result.last_head32.assign(last.head32, last.head32 + trt.head32_elements());
+        }
     }
     return result;
 }
@@ -820,7 +919,9 @@ static void write_report(
     const TRTStage &trt,
     const PhaseResult &warmup,
     const PhaseResult &measurement,
-    const std::string &out_path) {
+    const std::string &out_path,
+    const ThreeStageConfigV2 *campaign = nullptr,
+    const HailoStage *hailo = nullptr) {
 
     std::vector<double> preprocess;
     std::vector<double> p1;
@@ -892,9 +993,55 @@ static void write_report(
     out << "  \"schema\": \"onnx-splitpoint/yolov7-native-three-stage-runtime\",\n";
     out << "  \"schema_version\": 1,\n";
     out << "  \"ok\": " << ((!measurement.thread_error && measurement.callback_failures == 0 &&
-                                      measurement.raw_frames_completed == config.frames &&
-                                      measurement.completed_frames == config.frames) ? "true" : "false") << ",\n";
+                                      measurement.raw_frames_completed == measurement.frames_requested &&
+                                      measurement.completed_frames == measurement.frames_requested) ? "true" : "false") << ",\n";
     out << "  \"mode\": \"hailo8_cpp_fifo_trt_ctypes_fast_numpy_three_stage\",\n";
+    if (campaign) {
+        out << "  \"runtime_instance_id\": \"" << json_escape(campaign->runtime_instance_id) << "\",\n";
+        out << "  \"measurement_boundary\": \"prepared_input_before_p1_to_last_completed_task\",\n";
+        out << "  \"preprocessing_included\": false,\n";
+        out << "  \"duration_s_requested\": " << campaign->duration_s << ",\n";
+        out << "  \"measurement_start_ns\": " << measurement.measurement_start_ns << ",\n";
+        out << "  \"measurement_end_ns\": " << measurement.measurement_end_ns << ",\n";
+        out << "  \"raw_end_ns\": " << measurement.raw_end_ns << ",\n";
+        out << "  \"drain_end_ns\": " << measurement.drain_end_ns << ",\n";
+        out << "  \"measured_tasks_requested\": " << measurement.frames_requested << ",\n";
+        out << "  \"workers_ready_before_start\": 3,\n";
+        out << "  \"prepared_input\": {\"path\":\"" << json_escape(campaign->prepared_input_path)
+            << "\",\"dtype\":\"uint8\",\"shape\":[" << campaign->input_height << "," << campaign->input_width
+            << ",3],\"name\":\"" << json_escape(hailo->input_info().name) << "\"},\n";
+        const auto &trt_input = trt.input();
+        out << "  \"trt_input\": {\"name\":\"" << json_escape(trt_input.name)
+            << "\",\"dtype\":\"" << dtype_name(trt_input.dtype) << "\",\"shape\":[";
+        for (int dim = 0; dim < trt_input.dims.nbDims; ++dim) { if (dim) out << ","; out << trt_input.dims.d[dim]; }
+        out << "]},\n";
+        auto save = [&](const std::string &name, const void *data, size_t bytes) {
+            if (!campaign->persist_sample) return std::string();
+            const fs::path path = fs::path(out_path).parent_path() / name;
+            std::ofstream file(path, std::ios::binary);
+            file.write(static_cast<const char *>(data), static_cast<std::streamsize>(bytes));
+            if (!file) throw std::runtime_error("failed to persist measured sample: " + path.string());
+            return path.string();
+        };
+        const auto &boundary_info = hailo->output_info();
+        out << "  \"last_boundary\": {\"path\":\"" << json_escape(save("last_boundary.bin", measurement.last_boundary.data(), measurement.last_boundary.size()))
+            << "\",\"name\":\"" << json_escape(boundary_info.name) << "\",\"dtype\":\"uint8\",\"shape\":["
+            << boundary_info.shape.height << "," << boundary_info.shape.width << "," << boundary_info.shape.features << "]},\n";
+        out << "  \"last_raw_outputs\": [";
+        int index = 0;
+        for (const auto *values : {&measurement.last_head8, &measurement.last_head16, &measurement.last_head32}) {
+            const int grid = index == 0 ? 80 : index == 1 ? 40 : 20;
+            const auto &binding = trt.head_binding(grid);
+            if (index) out << ",";
+            out << "{\"path\":\"" << json_escape(save("last_output_" + std::to_string(index) + ".bin", values->data(), values->size() * sizeof(float)))
+                << "\",\"name\":\"" << json_escape(binding.name) << "\",\"dtype\":\"float32\",\"shape\":[";
+            for (int dim = 0; dim < binding.dims.nbDims; ++dim) { if (dim) out << ","; out << binding.dims.d[dim]; }
+            out << "]}";
+            ++index;
+        }
+        out << "],\n";
+        out << "  \"sample_saved_after_measurement_and_drain\": " << (campaign->persist_sample ? "true" : "false") << ",\n";
+    }
     out << "  \"request_latency\": {\"schema\":\"onnx-splitpoint/request-latency\",\"schema_version\":1,\"timestamp_unit\":\"ns\",\"clock\":\"steady_clock_ns\",\"clock_domain\":\"steady_clock_ns:runtime_report_local\",\"task_complete\":true,\"start_endpoint\":\"prepared_input_before_first_admission\",\"end_endpoint\":\"host_result_after_required_transfer_sync_and_task_postprocess\",\"start_anchor\":\"three_stage:after_preprocessing_before_free_boundary_pop\",\"end_anchor\":\"three_stage:after_successful_decode_nms_callback\",\"admission_wait_included\":true,\"warmup_included\":false,\"expected_count\":" << measurement.frames_requested << ",\"errors\":{\"callback_failures\":" << measurement.callback_failures << ",\"worker_failures\":" << (measurement.thread_error ? 1 : 0) << "},\"pairs\":[";
     for (size_t i = 0; i < measurement.frames.size(); ++i) {
         const auto &frame = measurement.frames[i];
@@ -1013,6 +1160,99 @@ extern "C" int onnx_splitpoint_run_three_stage_v1(
         return 1;
     } catch (...) {
         set_error(error_buffer, error_buffer_size, "unknown C++ exception");
+        return 1;
+    }
+}
+
+extern "C" size_t onnx_splitpoint_three_stage_config_size_v2() {
+    return sizeof(ThreeStageConfigV2);
+}
+
+extern "C" int onnx_splitpoint_run_three_stage_v2(
+    const ThreeStageConfigV2 *config,
+    ThreeStagePostCallbackV1 callback,
+    void *user_data,
+    char *error_buffer,
+    size_t error_buffer_size) {
+    try {
+        if (!config || config->base.abi_version != 2 ||
+            config->base.struct_size != sizeof(ThreeStageConfigV2))
+            throw std::runtime_error("campaign config ABI mismatch");
+        const auto &base = config->base;
+        if (!callback || !base.hef_path || !base.engine_path || !base.out_json ||
+            !config->prepared_input_path || !config->runtime_instance_id ||
+            std::strlen(config->runtime_instance_id) == 0)
+            throw std::runtime_error("campaign required binding missing");
+        if (base.frames <= 0 || base.warmup < 0 || base.p1_queue_depth <= 0 ||
+            base.post_queue_depth <= 0 || config->input_width != 640 ||
+            config->input_height != 640 || config->original_width <= 0 ||
+            config->original_height <= 0 || !std::isfinite(config->duration_s) ||
+            config->duration_s < 0.0)
+            throw std::runtime_error("campaign frame/input/queue settings invalid");
+
+        cv::Mat prepared(config->input_height, config->input_width, CV_8UC3);
+        const size_t bytes = prepared.total() * prepared.elemSize();
+        std::ifstream input(config->prepared_input_path, std::ios::binary);
+        if (!input || fs::file_size(config->prepared_input_path) != bytes)
+            throw std::runtime_error("campaign prepared input size mismatch");
+        input.read(reinterpret_cast<char *>(prepared.ptr<uint8_t>(0)), static_cast<std::streamsize>(bytes));
+        if (!input) throw std::runtime_error("campaign prepared input read failed");
+        const std::vector<std::string> inputs{config->prepared_input_path};
+        HailoStage hailo(base.hef_path, base.device_id ? base.device_id : "");
+        if (hailo.input_width() != config->input_width || hailo.input_height() != config->input_height ||
+            !config->input_name || hailo.input_info().name != std::string(config->input_name) ||
+            hailo.input_info().shape.features != 3)
+            throw std::runtime_error("campaign prepared input Hailo geometry mismatch");
+        TRTStage trt(base.engine_path, base.post_queue_depth);
+        const auto boundary_info = hailo.output_info();
+        const auto &trt_input = trt.input();
+        if (!config->boundary_name || !config->trt_input_name ||
+            boundary_info.name != std::string(config->boundary_name) ||
+            boundary_info.shape.height != config->boundary_height ||
+            boundary_info.shape.width != config->boundary_width ||
+            boundary_info.shape.features != config->boundary_channels ||
+            trt_input.name != config->trt_input_name ||
+            trt_input.dtype != nvinfer1::DataType::kUINT8 || trt_input.dims.nbDims != 4 ||
+            trt_input.dims.d[0] != 1 || trt_input.dims.d[1] != config->boundary_channels ||
+            trt_input.dims.d[2] != config->boundary_height || trt_input.dims.d[3] != config->boundary_width)
+            throw std::runtime_error("campaign bound runtime interface mismatch");
+        const char *names[] = {config->output_name8, config->output_name16, config->output_name32};
+        int output_index = 0;
+        for (int grid : {80, 40, 20}) {
+            if (!names[output_index] || trt.head_binding(grid).name != names[output_index])
+                throw std::runtime_error("campaign bound runtime output name mismatch");
+            ++output_index;
+        }
+        const PhaseResult warmup = run_phase(
+            base.warmup, false, inputs, base.p1_queue_depth, base.post_queue_depth,
+            base.letterbox_pad_value, hailo, trt, callback, user_data,
+            &prepared, config->original_width, config->original_height);
+        if (warmup.thread_error) std::rethrow_exception(warmup.thread_error);
+        if (warmup.callback_failures != 0 || warmup.raw_frames_completed != base.warmup ||
+            warmup.completed_frames != base.warmup)
+            throw std::runtime_error("campaign warmup did not drain cleanly");
+        const PhaseResult measurement = run_phase(
+            base.frames, true, inputs, base.p1_queue_depth, base.post_queue_depth,
+            base.letterbox_pad_value, hailo, trt, callback, user_data,
+            &prepared, config->original_width, config->original_height, config->duration_s, config->persist_sample != 0);
+        // Keep pinned source buffers alive until the existing completion
+        // runtime owns its postflight snapshot. This callback is untimed.
+        int32_t ignored = 0;
+        if (measurement.completed_frames > 0 && callback(-1, measurement.completed_frames - 1, 0,
+                config->original_width, config->original_height,
+                nullptr, 0, nullptr, 0, nullptr, 0, &ignored, user_data) != 0)
+            throw std::runtime_error("campaign postflight source snapshot failed");
+        write_report(base, inputs, trt, warmup, measurement, base.out_json, config, &hailo);
+        if (measurement.thread_error) std::rethrow_exception(measurement.thread_error);
+        set_error(error_buffer, error_buffer_size, "");
+        return measurement.callback_failures == 0 && measurement.completed_frames > 0 &&
+            measurement.raw_frames_completed == measurement.frames_requested &&
+            measurement.completed_frames == measurement.frames_requested ? 0 : 2;
+    } catch (const std::exception &error) {
+        set_error(error_buffer, error_buffer_size, error.what());
+        return 1;
+    } catch (...) {
+        set_error(error_buffer, error_buffer_size, "unknown campaign C++ exception");
         return 1;
     }
 }

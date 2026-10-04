@@ -33,6 +33,7 @@ def snapshot_hef(path: Path) -> Path:
 def resolve_published_bundle_member(
     path: Path, *, root: Path,
     hash_fn: Callable[[Path], str | None] | None = None,
+    validate_receipt: bool = True,
 ) -> Path | None:
     """Resolve only the local compatibility links made by ``publish_bundle``.
 
@@ -40,6 +41,8 @@ def resolve_published_bundle_member(
     Unrelated, redirected, incomplete or invalid bundles return None, so callers
     can retain their existing symlink rejection. This is a read-only admission
     check using the existing receipt and metadata contract, not a cache lookup.
+    Resume write-target admission may check only the publication structure;
+    artifact use and terminal evidence retain full receipt/content validation.
     """
     from .hailo_backend import _load_valid_hailo_receipt
 
@@ -88,7 +91,9 @@ def resolve_published_bundle_member(
                 return None
         if path.name != POINTER_NAME and path.name not in names:
             return None
-        if _load_valid_hailo_receipt(hefs[0], allow_legacy_v2=True, hash_fn=hash_fn) is None:
+        if validate_receipt and _load_valid_hailo_receipt(
+            hefs[0], allow_legacy_v2=True, hash_fn=hash_fn,
+        ) is None:
             return None
         return generation if path.name == POINTER_NAME else generation / path.name
     except (OSError, ValueError, RuntimeError):

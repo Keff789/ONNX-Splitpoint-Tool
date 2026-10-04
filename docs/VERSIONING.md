@@ -1,6 +1,12 @@
 # Versioning policy
 
-## Current release: 2.79.22 — Global Hailo negative build evidence
+## Current release: 2.92.0 — consolidated campaign and completion release
+
+Package/GUI: `2.92.0`; build/workflow: `v2.92.0`; development lineage: `v2.79`; build-contract version: `2`. The minor version identifies the integrated selective completion, YOLO augmentation and bounded energy recovery functionality documented in [RELEASE_2.92.0.md](RELEASE_2.92.0.md). Dependencies and scientific acceptance policies are unchanged.
+
+This release does not reattribute previously measured results to the new version. Original commands, source snapshots, attempts and negative outcomes retain their own identities. The release remains development/screening evidence; it does not satisfy or waive the separate 3.0.0 confirmatory campaign gates below.
+
+## Historical release: 2.79.22 — Global Hailo negative build evidence
 
 Build/workflow: `v2.79.22-global-negative-build-evidence`.
 

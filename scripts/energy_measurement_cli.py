@@ -245,6 +245,8 @@ def cmd_measure_native_fifo(args: argparse.Namespace) -> int:
         preflight_runtime_attestation_path=args.preflight_runtime_attestation_path,
         preflight_expected_command_contract_sha256=args.preflight_expected_command_contract_sha256,
         invalid_repeat_max_retries=getattr(args, "invalid_repeat_max_retries", None),
+        invalid_repeat_reconnect_backoff_s=getattr(args, "invalid_repeat_reconnect_backoff_s", None),
+        reuse_campaign_repeats=bool(getattr(args, "reuse_campaign_repeats", False)),
         **campaign_budget_measurement_kwargs(args),
         _task_logical_repeat=getattr(args, "task_logical_repeat", None),
         task_budget_file=getattr(args, "task_budget_file", None),
@@ -314,6 +316,11 @@ def cmd_test_setup(args: argparse.Namespace) -> int:
             exact_run_count=True,
             compare_legacy_window=False,
             timeout_s=float(args.sleep_s) + 120,
+            invalid_repeat_max_retries=0,
+            diagnostic_only=True,
+            claim_exclusion_reason="energy_setup_test",
+            **campaign_budget_measurement_kwargs(args),
+            _task_logical_repeat=getattr(args, "task_logical_repeat", None),
         )
         data["measurement"] = meas
         data["ok"] = bool(meas.get("ok"))
@@ -396,6 +403,8 @@ def cmd_measure(args: argparse.Namespace) -> int:
         preflight_runtime_attestation_path=args.preflight_runtime_attestation_path,
         preflight_expected_command_contract_sha256=args.preflight_expected_command_contract_sha256,
         invalid_repeat_max_retries=getattr(args, "invalid_repeat_max_retries", None),
+        invalid_repeat_reconnect_backoff_s=getattr(args, "invalid_repeat_reconnect_backoff_s", None),
+        reuse_campaign_repeats=bool(getattr(args, "reuse_campaign_repeats", False)),
         **campaign_budget_measurement_kwargs(args),
         _task_logical_repeat=getattr(args, "task_logical_repeat", None),
         task_budget_file=getattr(args, "task_budget_file", None),
@@ -424,6 +433,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--sleep-s", type=float, default=2.0)
     p.add_argument("--out", default="")
     p.add_argument("--workdir", default="", help="Optional working-directory root; default uses saved GUI Working Dir and writes under EnergyMeasurements/")
+    add_campaign_budget_arguments(p, measurement=True)
     p.set_defaults(func=cmd_test_setup)
     p = sub.add_parser("inspect")
     p.add_argument("path")
@@ -443,6 +453,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--preflight-runtime-attestation-path", default="", help="Attestation path as seen by the workload host. Required for SSH/remote workloads when using the ATTESTATION placeholder; may include NONCE/REPEAT tokens.")
     p.add_argument("--preflight-expected-command-contract-sha256", default="", help="Required with preflight; binds its sealed attestation to the exact successful workload contract.")
     p.add_argument("--invalid-repeat-max-retries", type=int, default=None, help="Bounded retries for a logical repeat invalidated by collector marker/first-sample transport (default from Energy Config; normally 1).")
+    p.add_argument("--invalid-repeat-reconnect-backoff-s", type=float, default=None, help="Task-local reconnect pause; defaults to the unchanged Energy Config value.")
+    p.add_argument("--reuse-campaign-repeats", action="store_true", help="Reuse only previously accepted repeats from this exact campaign row and command contract.")
     add_campaign_budget_arguments(p, measurement=True)
     p.add_argument("--task-budget-file", default=None, help="Persistent checkpoint shared by all entries of one bounded energy task; existing limits cannot be reset.")
     p.add_argument("--task-max-chains", type=int, default=None, help="Task-wide maximum including failed preflights; requires --task-budget-file and --task-max-transport-failures.")
@@ -505,6 +517,7 @@ def main(argv: list[str] | None = None) -> int:
         pnf.add_argument("--preflight-runtime-attestation-path", default="", help="Attestation path as seen by the workload host. Required for SSH/remote workloads when using the ATTESTATION placeholder; may include NONCE/REPEAT tokens.")
         pnf.add_argument("--preflight-expected-command-contract-sha256", default="", help="Required with preflight; binds its sealed attestation to the exact successful workload contract.")
         pnf.add_argument("--invalid-repeat-max-retries", type=int, default=None, help="Bounded retries for a logical repeat invalidated by collector marker/first-sample transport.")
+        pnf.add_argument("--invalid-repeat-reconnect-backoff-s", type=float, default=None, help="Task-local reconnect pause; defaults to the unchanged Energy Config value.")
         pnf.add_argument("--task-budget-file", default=None, help="Persistent checkpoint shared by all entries of one bounded energy task; existing limits cannot be reset.")
         pnf.add_argument("--task-max-chains", type=int, default=None, help="Task-wide maximum including failed preflights; requires --task-budget-file and --task-max-transport-failures.")
         pnf.add_argument("--task-max-transport-failures", type=int, default=None, help="Stop before any further chain after this many transport failures.")

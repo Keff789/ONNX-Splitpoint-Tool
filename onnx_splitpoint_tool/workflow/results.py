@@ -4044,16 +4044,45 @@ def _apply_quality_source_identity_v265(row: dict[str, Any]) -> None:
 
         direction = embedded_direction or canonical_direction(source_run)
         stage1, stage2 = direction_parts(direction)
+        producer_backend_values: list[Any] = []
+        for producer in producers:
+            producer_backend_values.append(producer.get("producer_backend"))
+            if producer.get("schema") != "onnx-splitpoint/generic-composed-quality-producer-identity":
+                producer_backend_values.append(producer.get("backend"))
+                continue
+            # This existing producer schema records the whole direction in
+            # `backend`. Passing hailo8_to_trt to the single-device normalizer
+            # would incorrectly project the terminal TensorRT device.
+            from ..quality_service import (
+                QualityArtifactIntegrityError,
+                _validate_generic_composed_candidate_execution_contract,
+            )
+            try:
+                verified_producer, _ = _validate_generic_composed_candidate_execution_contract(
+                    producer, role="normalized_request", task=task,
+                )
+            except QualityArtifactIntegrityError as exc:
+                errors.append("invalid_embedded_generic_composed_producer:" + str(exc))
+                continue
+            producer_direction = canonical_direction(verified_producer["backend"])
+            producer_stages = direction_parts(producer_direction)
+            if (
+                producer_direction != direction
+                or not all(producer_stages)
+                or producer_stages != (
+                    canonical_backend(verified_producer["stage1_backend"]),
+                    canonical_backend(verified_producer["stage2_backend"]),
+                )
+            ):
+                errors.append("embedded_generic_composed_producer_direction_conflict")
+                continue
+            producer_backend_values.append(producer_stages[0])
         producer_backend = _scalar(
             [
                 value
                 for block in blocks
                 for value in (block.get("producer_backend"),)
-            ] + [
-                value
-                for producer in producers
-                for value in (producer.get("producer_backend"), producer.get("backend"))
-            ],
+            ] + producer_backend_values,
             field="embedded_producer_backend", errors=errors,
             normalize=canonical_backend,
         ) or stage1

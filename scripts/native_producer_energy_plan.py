@@ -1996,6 +1996,42 @@ def _validated_quality_provenance(
     return identity, conflicts
 
 
+def _planned_quality_provenance(
+    row: dict[str, Any], validation: dict[str, Any] | None,
+) -> tuple[dict[str, str], list[str]]:
+    """Keep the already verified split source binding without granting a claim.
+
+    The aggregated semantic report is optional for raw/screening admission.
+    Its absence must not erase a duplicate that the selected Native contract
+    has already verified. A conflicting supplied duplicate still stops planning.
+    """
+    identity, conflicts = _validated_quality_provenance(validation)
+    evidence = row.get("_split_quality_energy_evidence")
+    if not isinstance(evidence, Mapping) or evidence.get("native_split_quality_required") is not True:
+        return identity, conflicts
+    if evidence.get("native_split_energy_binding_valid") is not True:
+        return identity, conflicts
+    if not any((
+        evidence.get("native_split_quality_source_request_sha256"),
+        row.get("source_request_sha256"),
+        row.get("native_split_quality_source_request_sha256"),
+    )):
+        # Legacy annotations have no selected split source to propagate. The
+        # execution admission still performs its ordinary binding checks.
+        return identity, conflicts
+    bound = _strict_sha256_token(evidence.get("native_split_quality_source_request_sha256"))
+    source = _strict_sha256_token(row.get("source_request_sha256"))
+    native = _strict_sha256_token(row.get("native_split_quality_source_request_sha256"))
+    if not bound or source != bound or native != bound:
+        raise ValueError("native_split_energy_generic_source_request_sha256_drift")
+    if "source_request_sha256" in conflicts or (
+        identity["source_request_sha256"] and identity["source_request_sha256"] != bound
+    ):
+        raise ValueError("native_split_energy_validation_source_request_sha256_drift")
+    identity["source_request_sha256"] = bound
+    return identity, conflicts
+
+
 def _prepair_energy_quality_admission(
     row: Mapping[str, Any],
     validation: dict[str, Any] | None,
@@ -3681,6 +3717,7 @@ def main() -> int:
             "command, preflight and (for Split) one static Part-2 input."
         ),
     )
+    parser.add_argument("--reuse-campaign-repeats", action="store_true", help="Reuse accepted repeats from the existing campaign budget during an explicit supplement.")
     parser.add_argument(
         "--smoke-diagnostic", action="store_true",
         help=(
@@ -5310,6 +5347,8 @@ def main() -> int:
             "--physical-scope", shlex.quote(str(ns.physical_scope or "")),
             "--window-label", shlex.quote(str(ns.window_label or "command")),
         ]
+        if ns.reuse_campaign_repeats:
+            measure_parts.append("--reuse-campaign-repeats")
         if ns.campaign_budget_file:
             measure_parts += [shlex.quote(value) for value in campaign_budget_forward_args(ns)]
             measure_parts += ["--campaign-row-id", shlex.quote(json.dumps([backend, model, case, setup], separators=(",", ":"))),
@@ -5404,7 +5443,7 @@ def main() -> int:
 
         contract_conflicts: list[str] = []
         quality_provenance, quality_provenance_conflicts = (
-            _validated_quality_provenance(validation)
+            _planned_quality_provenance(row, validation)
         )
         contract_conflicts.extend(
             f"central_quality_provenance:{field}"

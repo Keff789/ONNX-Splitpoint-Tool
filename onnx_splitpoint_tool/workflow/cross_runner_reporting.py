@@ -457,6 +457,30 @@ def _completed_task_measurement(row: Mapping[str, Any], *, native: bool = False)
             and (_f(row.get("postprocess_completed_frames")) or 0) > 0)
 
 
+def _group_evidence_limits(
+    rows: Sequence[Mapping[str, Any]], minimum_candidates: int,
+) -> dict[str, Any]:
+    """Separate a small selected sample from missing measurement evidence.
+
+    An adequate number of paired boundaries cannot repair an unmeasured
+    completion endpoint.  These diagnostics do not relax any transfer gate.
+    """
+    missing = Counter(
+        name
+        for row in rows
+        for name, passed in row.get("technical_transfer_eligibility_checks", {}).items()
+        if passed is not True
+    )
+    reasons = sorted(missing)
+    if len(rows) < minimum_candidates:
+        reasons.insert(0, "insufficient_paired_candidates")
+    return {
+        "paired_candidate_count_sufficient": len(rows) >= minimum_candidates,
+        "technical_transfer_exclusion_counts": dict(sorted(missing.items())),
+        "technical_transfer_limitations": reasons,
+    }
+
+
 def _measured_native_fps(row: Mapping[str, Any]) -> tuple[float | None, str]:
     if row.get('rate_endpoint_projection_version') == 1:
         value = row.get('completed_task_fps')
@@ -1448,6 +1472,12 @@ def compute_cross_runner_report(
             "generic_accuracy_assessment": generic.get("accuracy_assessment"),
             "native_accuracy_assessment": native_validation.get("accuracy_assessment"),
             "comparison_scope": "completed_task_only",
+            "observed_comparison_scope": (
+                "completed_task_to_completed_task"
+                if technical_checks["generic_completed_task_measured"]
+                and technical_checks["native_completed_task_measured"]
+                else "completion_endpoint_not_measured_on_both_sides"
+            ),
             "generic_task_quality_status": generic_quality,
             "native_task_quality_status": native_quality,
             "generic_contract_consistent": generic_contract,
@@ -1469,6 +1499,7 @@ def compute_cross_runner_report(
             "transfer_eligibility_checks": claim_checks,
             "transfer_exclusion_reasons": exclusion_reasons,
             "generic_backend": generic.get("backend"),
+            "generic_source_path": generic.get("source_path"),
             "native_backend": native.get("backend"),
         })
 
@@ -1545,6 +1576,7 @@ def compute_cross_runner_report(
             "claim_candidate_count": n,
             "eligible_candidate_count": n,
             "minimum_candidates": minimum_candidates,
+            **_group_evidence_limits(rows, minimum_candidates),
             "spearman_rho": _spearman(gx, ny) if n >= minimum_candidates else None,
             "kendall_tau_b": _kendall_tau_b(gx, ny) if n >= minimum_candidates else None,
             "pairwise_concordance": _pairwise_concordance(gx, ny) if n >= minimum_candidates else None,

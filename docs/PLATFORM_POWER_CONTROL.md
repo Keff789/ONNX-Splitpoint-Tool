@@ -113,6 +113,12 @@ quarantine cannot be cleared by replaying an earlier release.
 
 This operator is limited to the physical capture STOP. It does not broaden
 workflow Resume or establish general recovery from arbitrary controller crashes.
+For the separate YOLO remainder entry, `--rest-attempt-dir /absolute/attempt`
+selects its existing `remote-process-leases` directory. The recorded source plan,
+run, session, parent PID, terminal status, exitcode and local cleanup must agree.
+The historical run manifest is retained; the actual terminal attempt supplies
+the parent-completion evidence. This argument supplies no release authorization
+and does not reset the campaign task budget or its interrupted chains.
 The new capture uses normal fresh run/session and collector identities, its own
 attempt directory, run/window markers and a fresh socket with a logged GO.
 These identify the new acquisition; they do not retrospectively prove the old

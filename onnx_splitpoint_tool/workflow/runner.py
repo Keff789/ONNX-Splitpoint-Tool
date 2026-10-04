@@ -147,7 +147,7 @@ from .evidence_status import (
     workflow_completion_projection,
     derive_native_evidence_status,
 )
-from .status_reporting import deepx_full_primary_failure, energy_axis_description
+from .status_reporting import deepx_full_primary_failure, energy_axis_description, energy_attempt_failure
 from .native_energy_preflight import (
     build_native_energy_preflight,
     native_energy_preflight_blocks_streaming,
@@ -2504,12 +2504,12 @@ def _native_evidence_status_v60o(
     *,
     native_full_requested: bool = False,
 ) -> dict[str, Any]:
-    from ..native_job_identity import known_build_exclusion
+    from ..native_job_identity import known_build_exclusion, native_capability_exclusion
     payload = dict(summary or {})
     rows = [r for r in (payload.get("rows") or []) if isinstance(r, Mapping)]
     ok_rows = [r for r in rows if bool(r.get("ok"))]
     excluded_rows = [r for r in rows if known_build_exclusion(r)]
-    failed_rows = [r for r in rows if not bool(r.get("ok")) and not known_build_exclusion(r)]
+    failed_rows = [r for r in rows if not bool(r.get("ok")) and not known_build_exclusion(r) and not native_capability_exclusion(r)]
     full_rows = [
         r for r in rows
         if str(r.get("execution_mode") or "") == "native_full_baseline"
@@ -2528,6 +2528,7 @@ def _native_evidence_status_v60o(
         "ok_count": len(ok_rows),
         "failed_or_unsupported_row_count": len(failed_rows),
         "known_build_excluded_count": len(excluded_rows),
+        "not_supported_count": sum(bool(native_capability_exclusion(r)) for r in rows),
         "native_full_row_count": len(full_rows),
     }
 
@@ -3014,6 +3015,7 @@ def _native_expected_matrix_status_v60y(
                     "runtime_ok", "runtime_started", "execution_started",
                     "measurement_started", "compiler_dispatched", "identity_conflicts",
                     "timed_out", "cancelled", "returncode", "compiler_dispatch_count", "started",
+                    "native_capability_exclusion", "quality_applicability", "execution_terminal",
                 ) if field in actual},
             }
             present.append(observed)
@@ -3141,6 +3143,7 @@ def _persist_native_blocked_rows(
     artifact_paths: Dict[str, Path],
     collected_roots: List[Path],
     repetition_count_requested: int,
+    output_root: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Save this run's unstarted jobs in the existing role-specific formats.
 
@@ -3153,7 +3156,7 @@ def _persist_native_blocked_rows(
         known_build_exclusion, apply_known_build_disposition,
     )
 
-    root = Path(run_dir) / "native_producers" / "_blocked"
+    root = (Path(output_root) if output_root is not None else Path(run_dir) / "native_producers") / "_blocked"
     analysis = root / "analysis_tables"
     full_path = analysis / "native_full_baseline_eval.json"
     split_paths = {
@@ -3479,6 +3482,11 @@ def _native_full_quality_binding_set_v275(
         if (summary_path.parent.parent == run_root / "reports" / "native_producer_variants"
                 and summary_path.parent.name.startswith("case")
                 and summary_path.name == "central_quality_summary.json"):
+            expected_summary = summary_path
+        elif (summary_path.parent.parent == run_root / "reports" / "attempts"
+                and summary_path.name == "central_quality_summary.json"):
+            # Local statistics completion publishes an existing attempt report;
+            # its source requests remain confined to the explicitly supplied run.
             expected_summary = summary_path
     summary_path_error = ""
     try:
@@ -4520,6 +4528,7 @@ def _sync_remote_script_v60i(
     ssh: str,
     remote_tool_dir: str,
     script_name: str,
+    remote_script_name: str | None = None,
     required_tokens: Sequence[str] = (),
     timeout: int = 300,
     process_runner: Optional[Callable[..., Any]] = None,
@@ -4551,7 +4560,10 @@ def _sync_remote_script_v60i(
             f"missing={local_missing}"
         )
     remote_scripts = f"{str(remote_tool_dir).rstrip('/')}/scripts"
-    remote_script = f"{remote_scripts}/{local_script.name}"
+    remote_name = str(remote_script_name or local_script.name)
+    if Path(remote_name).name != remote_name or remote_name in {".", ".."}:
+        raise ValueError("remote script destination must be a filename")
+    remote_script = f"{remote_scripts}/{remote_name}"
     common_ssh = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", str(ssh)]
     steps: list[dict[str, Any]] = []
 
@@ -5936,6 +5948,8 @@ class EvaluationWorkflowRunner:
         self._missing_full_quality_queued_keys: set[tuple[Any, ...]] = set()
         self._preserved_central_quality_results: List[Dict[str, Any]] = []
         self._preserved_central_quality_requests: Dict[str, Dict[str, Any]] = {}
+        self._supplement_plan: Dict[str, Any] = {}
+        self._supplement_original_root: Optional[Path] = None
         self._missing_full_quality_reuse_attestation: Dict[str, Any] = {}
         self._missing_full_quality_artifact_index_snapshot: Dict[str, Any] = {}
         self._resume_invalidated_artifact_index_snapshot: Dict[str, Any] = {}
@@ -6421,7 +6435,70 @@ class EvaluationWorkflowRunner:
         with service.pause_gate.activity("ort_reference:" + str(kwargs["model_id"]),
                 cpu=kwargs["workers"], memory_bytes=4 * 1024**3,
                 check_cancelled=check_cancelled):
-            return reference_function(**kwargs)
+            # Admission can wait while another stage operates on the suite.
+            # Never let the generator silently bind a different source from
+            # the one scheduled by this workflow.
+            from onnx_splitpoint_tool.management_reference import _source_contract
+            suite = Path(kwargs["suite_dir"])
+            observed = self._quality_sha256_token(_source_contract(
+                suite, read_json(suite / "benchmark_plan.json", default={}) or {},
+                read_json(suite / "benchmark_set.json", default={}) or {},
+            ))
+            expected = self._management_reference_source_contracts.get(kwargs["model_id"])
+            if observed != expected:
+                raise RuntimeError(
+                    "management CPU reference source changed before admission for "
+                    f"{kwargs['model_id']}: expected={expected} observed={observed}"
+                )
+            return reference_function(expected_source_contract_sha256=expected, **kwargs)
+
+    def _restore_management_cpu_reference(self, model_id: str) -> None:
+        """Re-enter saved local statistics only from an exactly bound source.
+
+        Reference workspaces can retain/recover the original source when a
+        later runtime preparation changed the executable suite. Their source
+        contract must still equal the immutable reference's original contract.
+        No generator, device work or status rewrite occurs on this path.
+        """
+        if model_id in self._management_reference_futures:
+            return
+        from onnx_splitpoint_tool.management_reference import (
+            _read_diagnostic_status, _source_contract,
+            _verify_reference_reuse_model_binding,
+        )
+        reference_root = self.run_dir / "quality_management" / "references" / model_id
+        status = _read_diagnostic_status(reference_root / "management_cpu_reference_status.json")
+        declared = self._quality_sha256_token(status.get("source_contract_sha256"))
+        if not declared or status.get("status") not in {"completed", "cache_hit"}:
+            raise RuntimeError(f"management CPU reference has no completed saved source for {model_id}")
+        bdir = self.run_dir / "models" / model_id / "benchmark_set"
+        suites = [bdir / "legacy_suite", bdir]
+        suites.extend(sorted((reference_root / "workspaces").glob("*/suite")))
+        for suite in suites:
+            if not (suite / "benchmark_suite.py").is_file():
+                continue
+            plan = read_json(suite / "benchmark_plan.json", default={}) or {}
+            contract = read_json(suite / "benchmark_set.json", default={}) or {}
+            source_options = ({"validation_source": bdir / "legacy_suite"}
+                              if suite not in {bdir, bdir / "legacy_suite"} else {})
+            if self._quality_sha256_token(_source_contract(suite, plan, contract, **source_options)) != declared:
+                continue
+            _verify_reference_reuse_model_binding(
+                model_id=model_id, contract=contract, plan=plan,
+                previous_status=status, source_contract_sha256=declared,
+            )
+            with self._management_services_lock:
+                if self._management_admission_closed:
+                    return
+                future = concurrent.futures.Future()
+                future.set_result(status)
+                self._management_reference_source_contracts[model_id] = declared
+                self._management_reference_futures[model_id] = future
+            self._emit_log(f"[quality][management] restored original CPU reference for {model_id}; source={suite}")
+            return
+        raise RuntimeError(
+            f"management CPU reference original source unavailable for {model_id}: expected={declared}"
+        )
 
     def _schedule_management_cpu_reference(self, model_id: str, suite_dir: Path) -> None:
         if cache_verify_guard(self.profile_payload):
@@ -6462,6 +6539,7 @@ class EvaluationWorkflowRunner:
                     thread_name_prefix="osp-management-cpu-reference",
                 )
             output_dir = self.run_dir / "quality_management" / "references" / model_id
+            self._management_reference_source_contracts[model_id] = expected_source_contract
             future = self._management_reference_executor.submit(
                 self._run_budgeted_management_reference, reference_function=generate_management_cpu_reference,
                 suite_dir=suite,
@@ -6473,9 +6551,6 @@ class EvaluationWorkflowRunner:
                 log=self.log,
             )
             self._management_reference_futures[model_id] = future
-            self._management_reference_source_contracts[model_id] = (
-                expected_source_contract
-            )
         self._emit_log(
             f"[quality][management] queued one ORT-CPU semantic reference for {model_id}; "
             f"it runs with {_quality_reference_threads(self.profile_payload)} CPU threads in parallel with remote benchmarks"
@@ -8303,7 +8378,8 @@ class EvaluationWorkflowRunner:
         )
         if not expected_source_contract or source_contract != expected_source_contract:
             raise RuntimeError(
-                f"management CPU reference source contract is not bound to the active workflow for {model_id}"
+                f"management CPU reference source contract is not bound to the active workflow for {model_id}: "
+                f"expected={expected_source_contract or 'missing'} observed={source_contract}"
             )
         if type(reference_size) is not int or int(reference_size) <= 0:
             raise RuntimeError(
@@ -8634,6 +8710,13 @@ class EvaluationWorkflowRunner:
         from onnx_splitpoint_tool.quality_service import quality_request_from_manifest
 
         result_path = request_path.with_name(request_path.stem.replace("_request", "") + "_central_result.json")
+        if getattr(getattr(self, "options", None), "resume_missing", False):
+            # Keep the historical failed sidecar as evidence. The regular
+            # attempt tree carries the new derived result for the same request.
+            relative = request_path.relative_to(self.run_dir / "models" / model_id / "benchmark_results")
+            suffix = Path(*relative.parts[relative.parts.index("quality_inputs") + 1:])
+            result_path = (self.run_dir / "models" / model_id / "benchmark_results"
+                           / "attempts" / self.session_id / "quality_inputs" / suffix).with_name(result_path.name)
         loaded_request_identity: Optional[dict[str, Any]] = None
         try:
             service = self._ensure_central_quality_service()
@@ -9027,13 +9110,14 @@ class EvaluationWorkflowRunner:
                     write_json(result_path, failure)
             return failure
 
-    def _queue_central_quality_requests(self, model_id: str) -> int:
+    def _queue_central_quality_requests(self, model_id: str, *, results_root: Optional[Path] = None) -> int:
         if _quality_execution_location_v263(self.profile_payload) != "central_management":
             return 0
         self._ensure_central_quality_service()
-        root = self.run_dir / "models" / model_id / "benchmark_results"
+        root = results_root or self.run_dir / "models" / model_id / "benchmark_results"
         discovered = sorted(
-            root.rglob("task_quality_inputs/*_request.json")
+            path for path in root.rglob("task_quality_inputs/*_request.json")
+            if path.relative_to(root).parts[0] != "attempts"
         )
         canonical = [
             path for path in discovered
@@ -9208,7 +9292,11 @@ class EvaluationWorkflowRunner:
             key = str(path.resolve())
             if key in self._central_quality_futures:
                 continue
-            if targeted and key in self._preserved_central_quality_requests:
+            if (targeted or getattr(self.options, "resume_missing", False)) and key in self._preserved_central_quality_requests:
+                if getattr(self.options, "resume_missing", False):
+                    frozen = self._preserved_central_quality_requests[key]
+                    if str(sha256_file(path)).removeprefix("sha256:") != frozen["source_request_sha256"]:
+                        raise ValueError("supplement_completed_request_drift:" + str(path))
                 continue
             target_key: tuple[Any, ...] | None = None
             if targeted:
@@ -9256,6 +9344,9 @@ class EvaluationWorkflowRunner:
                 "missing_full_quality_queued_request_set_not_exact"
             )
 
+        if prepared and getattr(self.options, "resume_missing", False):
+            self._restore_management_cpu_reference(model_id)
+
         queued = 0
         with self._management_services_lock:
             if self._management_admission_closed:
@@ -9276,6 +9367,10 @@ class EvaluationWorkflowRunner:
                 f"[quality][management] queued {queued} paired quality request(s) for {model_id}; "
                 f"{workers} process(es) evaluate them while the next remote model can run"
             )
+        if results_root is None and getattr(self.options, "resume_missing", False):
+            for attempt in sorted((root / "attempts").glob("*")):
+                if attempt.is_dir():
+                    queued += self._queue_central_quality_requests(model_id, results_root=attempt)
         return queued
 
     def _close_management_admission(self) -> None:
@@ -9639,6 +9734,91 @@ class EvaluationWorkflowRunner:
         return bool(
             getattr(self.options, "resume_missing_full_quality_only", False)
         )
+
+    def _supplement_compatibility_reviewed(self, original) -> bool:
+        return str(original.get("tool_version") or "") in {"2.91.0", "2.91.1"}
+
+    def _prepare_selective_completion(self) -> None:
+        if not getattr(self.options, "resume_missing", False):
+            return
+        from .supplement import (build_supplement_plan, completed_quality,
+                                 prepare_source_evidence, preserve_metadata, write_plan)
+        if (not self.options.resume or not self.options.run_id
+                or self.options.force_stage or self.options.rerun_generated_only
+                or self._missing_full_quality_resume_enabled()
+                or self.options.only_model or self.options.max_models is not None):
+            raise ValueError("supplement_requires_unmodified_named_run")
+        original = read_json(self.manifest_path, default={}) or {}
+        if not self._supplement_compatibility_reviewed(original):
+            raise ValueError("supplement_patch_compatibility_not_reviewed")
+        # Profile/options/plan equality was checked immediately before this
+        # point. The patch changes dispatch/projections, not old measurements.
+        self._emit_log("[supplement] checking archived result identities and requests")
+        source_root, source_index = prepare_source_evidence(self.run_dir)
+        self._supplement_source_root = source_root
+        self._supplement_source_index = {
+            str(row.get("path") or ""): row
+            for row in source_index.get("artifacts", []) if isinstance(row, Mapping)
+        }
+        self._supplement_plan = build_supplement_plan(
+            self.run_dir, original_root=source_root, source_index=self._supplement_source_index,
+        )
+        (self._preserved_central_quality_results,
+         self._preserved_central_quality_requests) = completed_quality(self.run_dir)
+        self._supplement_original_root = preserve_metadata(self.run_dir, self.session_id)
+        if self._supplement_source_root is None:
+            self._supplement_source_root = self._supplement_original_root
+        write_plan(self._supplement_plan, self._supplement_original_root.parent)
+
+    def _supplement_dispatch_rows(self, model_id: str) -> Optional[List[Dict[str, Any]]]:
+        if not getattr(self.options, "resume_missing", False):
+            return None
+        if not self._supplement_plan:
+            raise ValueError("supplement_plan_not_prepared")
+        return [dict(row) for field in ("generic_rows", "quality_companion_rows")
+                for row in self._supplement_plan[field] if row.get("model_id") == model_id]
+
+    def _supplement_model_needs_dispatch(self, model_id: str) -> bool:
+        return any(row.get("action") == "execute"
+                   for row in self._supplement_dispatch_rows(model_id) or [])
+
+    def _supplement_stage_decision(self, decision, model_id, stage, previous):
+        if not self._supplement_plan:
+            raise ValueError("supplement_plan_not_prepared")
+        rebuild = (stage in {"evaluate_quality", "aggregate_results", "run_native_producers", "generate_report"}
+                   if model_id is None else stage in {"run_benchmarks", "validate_outputs", "hardware_smoke"}
+                   and self._supplement_model_needs_dispatch(model_id))
+        if rebuild:
+            decision.update(reason="supplement_missing_work_or_local_projection")
+            return decision
+        if (not isinstance(previous, Mapping) or previous.get("complete") is not True
+                or previous.get("state") != "completed"):
+            raise ValueError(f"supplement_required_stage_not_complete:{model_id}:{stage}")
+        probe_proofs = []
+        generation_proofs = []
+        complete, missing = self._stage_result_artifacts_complete(
+            previous,
+            source_index=(getattr(self, "_supplement_source_index", None)
+                          if stage not in {"run_benchmarks", "validate_outputs", "hardware_smoke"}
+                          else None),
+            probe_original_root=(getattr(self, "_supplement_source_root", None)
+                                 if stage == "build_backend_artifacts" else None),
+            probe_proofs=probe_proofs,
+            generation_original_root=(getattr(self, "_supplement_source_root", None)
+                                      if stage == "generate_benchmark_set" else None),
+            generation_proofs=generation_proofs,
+        )
+        if not complete:
+            raise ValueError(f"supplement_source_contract_changed:{model_id}:{stage}:" + ",".join(missing))
+        decision.update(reusable=True, artifacts_complete=True,
+                        reason="supplement_unchanged_contract_preserved_original_measurement",
+                        previous_measurement_provenance_preserved=True,
+                        original_input_hash=previous.get("input_hash"),
+                        historical_stage_source=str(getattr(self, "_supplement_source_root", None)
+                                                    or self._supplement_original_root or ""),
+                        verified_probe_metadata=probe_proofs,
+                        verified_generation_runtime_outputs=generation_proofs)
+        return decision
 
     @classmethod
     def _full_quality_identity_key(
@@ -11313,49 +11493,7 @@ class EvaluationWorkflowRunner:
                 error_code="resume_target_not_admitted",
             )
 
-        protected_files = (
-            "run_manifest.json",
-            "profile.yaml",
-            "profile_source.yaml",
-            "profile_start_snapshot.json",
-            "profile_resolution.json",
-            "effective_execution_plan.json",
-            "artifact_index.json",
-        )
-        protected_trees = (
-            "jobs",
-            "stages",
-            "models",
-            "reports",
-            "quality_management",
-            "native_producers",
-        )
-        unsafe: list[str] = []
-        for name in protected_files:
-            path = self.run_dir / name
-            if path.exists() and (path.is_symlink() or not path.is_file()):
-                unsafe.append(name)
-        for name in protected_trees:
-            tree = self.run_dir / name
-            if not tree.exists():
-                continue
-            if tree.is_symlink() or not tree.is_dir():
-                unsafe.append(name)
-                continue
-            try:
-                unsafe.extend(
-                    str(path.relative_to(self.run_dir))
-                    for path in tree.rglob("*")
-                    if path.is_symlink()
-                )
-            except OSError:
-                unsafe.append(name + ":unreadable")
-        if unsafe:
-            raise WorkflowRunTargetError(
-                f"Cannot resume {self.run_id!r}: symlink/non-regular writable "
-                "Run artefact(s): " + ",".join(sorted(set(unsafe))[:20]),
-                error_code="resume_target_not_admitted",
-            )
+        self._validate_resume_target_paths()
 
         payload = read_json(self.manifest_path, default={}) or {}
         archived_contract = payload.get("resume_contract") if isinstance(payload, Mapping) else None
@@ -11382,6 +11520,78 @@ class EvaluationWorkflowRunner:
             minimum_free_bytes=1024 * 1024,
             minimum_free_inodes=32,
         )
+
+    def _resume_read_only_hailo_bundle_alias(self, path: Path) -> bool:
+        """Admit published source artifacts, never mutable output/control links."""
+        parts = path.relative_to(self.run_dir).parts
+        if (len(parts) >= 4 and parts[0] == "models"
+                and parts[2:4] == ("benchmark_set", "legacy_suite")):
+            tail = parts[4:]
+        elif (len(parts) >= 4 and parts[0] == "native_producers"
+              and parts[3] == "benchmark_set"):
+            tail = parts[4:]
+        elif (len(parts) >= 6 and parts[0] == "native_producers" and parts[1] in {"attempts", "variants"}
+              and parts[5] == "benchmark_set"):
+            # The normal supplement collector preserves the same published
+            # bundles below attempts/<session> or variants/<namespace>, then
+            # <backend>/<model>. The existing bundle verifier checks structure.
+            tail = parts[6:]
+        else:
+            return False
+        # The optional first component is the archived case directory.
+        if len(tail) == 5:
+            tail = tail[1:]
+        if (len(tail) != 4 or tail[0] != "hailo"
+                or tail[1] not in {"hailo8", "hailo10", "hailo10h"}
+                or tail[2] not in {"part1", "part2", "full"}):
+            return False
+        return self._terminal_hailo_bundle_alias(path, validate_receipt=False) is not None
+
+    def _validate_resume_target_paths(self) -> None:
+        """Check write boundaries without hashing archived artifact payloads."""
+        protected_files = (
+            "run_manifest.json",
+            "profile.yaml",
+            "profile_source.yaml",
+            "profile_start_snapshot.json",
+            "profile_resolution.json",
+            "effective_execution_plan.json",
+            "artifact_index.json",
+        )
+        protected_trees = (
+            "jobs",
+            "stages",
+            "models",
+            "reports",
+            "quality_management",
+            "native_producers",
+        )
+        unsafe: list[str] = []
+        for name in protected_files:
+            path = self.run_dir / name
+            if path.is_symlink() or (path.exists() and not path.is_file()):
+                unsafe.append(name)
+        for name in protected_trees:
+            tree = self.run_dir / name
+            if tree.is_symlink() or (tree.exists() and not tree.is_dir()):
+                unsafe.append(name)
+                continue
+            if not tree.exists():
+                continue
+            try:
+                unsafe.extend(
+                    str(path.relative_to(self.run_dir))
+                    for path in tree.rglob("*")
+                    if path.is_symlink() and not self._resume_read_only_hailo_bundle_alias(path)
+                )
+            except OSError:
+                unsafe.append(name + ":unreadable")
+        if unsafe:
+            raise WorkflowRunTargetError(
+                f"Cannot resume {self.run_id!r}: symlink/non-regular writable "
+                "Run artefact(s): " + ",".join(sorted(set(unsafe))[:20]),
+                error_code="resume_target_not_admitted",
+            )
 
     def _validate_resume_contract(self) -> None:
         """Refuse profile/plan drift before logs or archived files are touched."""
@@ -11856,6 +12066,7 @@ class EvaluationWorkflowRunner:
                 self._emit_log("[build-context] " + json.dumps(self._effective_build_summary, sort_keys=True, ensure_ascii=False))
                 self._resume_contract = self._build_current_resume_contract()
                 self._validate_resume_contract()
+                self._prepare_selective_completion()
                 self._prepare_missing_full_quality_resume()
                 self._prepare_missing_full_quality_reuse_attestation()
                 # A former terminal PASS belongs to the archived execution
@@ -11907,6 +12118,9 @@ class EvaluationWorkflowRunner:
                     # Control markers become writable only after exclusive
                     # ownership and every Resume invariant have passed.
                     self._run_control_write_enabled = True
+                    # Publish this owner's state before any child can inspect
+                    # a preceding session's durable cancellation marker.
+                    self._write_workflow_control()
                 self._install_signal_handlers()
                 self._start_cancellation_watcher()
                 with bind_process_registry(
@@ -12122,6 +12336,12 @@ class EvaluationWorkflowRunner:
             self._run_stage(None, "campaign_preflight", self._stage_campaign_preflight)
 
         self._run_model_pipeline_with_cache_preflight(rows)
+
+        if getattr(self.options, "resume_missing", False) and not self._stop_requested:
+            # A downloaded request whose local evaluation was interrupted can
+            # be completed without starting the corresponding device again.
+            for row in rows:
+                self._queue_central_quality_requests(str(row.get("id") or row.get("model_id")))
 
         if not self._stop_requested and (self.profile_payload.get("workflow_execution") or {}).get("native_release_mode") == "per_case":
             self._run_quality_native_pipeline()
@@ -13014,6 +13234,9 @@ class EvaluationWorkflowRunner:
             "environment": current_environment,
             "force_build_start": dict(self._force_build_start_provenance),
         }
+        if getattr(self.options, "resume_missing", False):
+            session["supplement_source_root"] = relpath(self._supplement_source_root, self.run_dir)
+            session["supplement_original_root"] = relpath(self._supplement_original_root, self.run_dir)
         sessions.append(session)
         self._execution_session_index = len(sessions) - 1
         self.manifest["execution_sessions"] = sessions
@@ -13139,6 +13362,7 @@ class EvaluationWorkflowRunner:
         for key in (
             "resume", "force_stage", "stop_after", "run_id", "max_models",
             "rerun_generated_only", "resume_missing_full_quality_only",
+            "resume_missing",
             "force_build_confirmed_backends", "force_build_confirmation_source",
         ):
             payload.pop(key, None)
@@ -13168,6 +13392,11 @@ class EvaluationWorkflowRunner:
         previous: Mapping[str, Any],
         *,
         allowed_absent_artifacts: Sequence[str] = (),
+        source_index: Optional[Mapping[str, Any]] = None,
+        probe_original_root: Optional[Path] = None,
+        probe_proofs: Optional[List[Dict[str, Any]]] = None,
+        generation_original_root: Optional[Path] = None,
+        generation_proofs: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[bool, List[str]]:
         artifacts = [str(x or "").strip() for x in list(previous.get("artifacts") or []) if str(x or "").strip()]
         if not artifacts:
@@ -13178,10 +13407,14 @@ class EvaluationWorkflowRunner:
             if str(value or "").strip()
         }
         missing: List[str] = []
-        indexed = [
-            row for row in list(self.artifact_index.get("artifacts") or [])
-            if isinstance(row, Mapping)
-        ]
+        indexed = source_index if source_index is not None else {
+            str(row.get("path") or "").replace("\\", "/"): row
+            for row in self.artifact_index.get("artifacts", []) if isinstance(row, Mapping)
+        }
+        current_index = {
+            str(row.get("path") or ""): row
+            for row in self.artifact_index.get("artifacts", []) if isinstance(row, Mapping)
+        } if generation_original_root is not None else {}
         for raw in artifacts:
             try:
                 logical = Path(raw)
@@ -13209,17 +13442,34 @@ class EvaluationWorkflowRunner:
                 resolved.relative_to(self.run_dir.resolve(strict=True))
                 size = p.stat().st_size
                 digest = sha256_file(p)
-                bound = any(
-                    str(row.get("path") or "").replace("\\", "/")
-                    == logical.as_posix()
-                    and type(row.get("size_bytes")) is int
+                row = indexed.get(logical.as_posix(), {})
+                bound = (
+                    type(row.get("size_bytes")) is int
                     and row.get("size_bytes") == size
                     and str(row.get("sha256") or "").removeprefix("sha256:")
                     == digest.removeprefix("sha256:")
-                    for row in indexed
                 )
+                if not bound and row and probe_original_root is not None:
+                    from .supplement import probe_metadata_binding
+                    proof = probe_metadata_binding(
+                        self.run_dir, probe_original_root, raw, row, self.profile_payload,
+                    )
+                    if proof is not None:
+                        bound = True
+                        if probe_proofs is not None:
+                            probe_proofs.append(proof)
+                if not bound and row and generation_original_root is not None:
+                    from .supplement import generation_runtime_binding
+                    proof = generation_runtime_binding(
+                        self.run_dir, generation_original_root, raw, row, indexed, current_index,
+                    )
+                    if proof is not None:
+                        bound = True
+                        if generation_proofs is not None:
+                            generation_proofs.append(proof)
                 if not bound:
-                    missing.append(f"unbound_or_tampered:{raw}")
+                    reason = ("missing_binding" if not row else "content_changed") if source_index is not None else "unbound_or_tampered"
+                    missing.append(f"{reason}:{raw}")
             except Exception:
                 missing.append(f"invalid:{raw}")
         return (len(missing) == 0), missing
@@ -13307,6 +13557,8 @@ class EvaluationWorkflowRunner:
                 "artifact_cache_preflight_requires_fresh_probe"
             )
             return decision
+        if getattr(self.options, "resume_missing", False):
+            return self._supplement_stage_decision(decision, model_id, stage, previous)
         if self._is_missing_full_quality_targeted_rebuild_stage(
             model_id=model_id,
             stage=stage,
@@ -13424,7 +13676,15 @@ class EvaluationWorkflowRunner:
         return False
 
     def _write_resume_decision(self, stage_dir: Path, decision: Mapping[str, Any]) -> Path:
-        p = write_json(stage_dir / "resume_decision.json", dict(decision or {}))
+        destination = stage_dir / "resume_decision.json"
+        if getattr(self.options, "resume_missing", False) and decision.get("reusable"):
+            # A completed stage may bind its previous resume decision among
+            # the original artifacts. Keep those bytes on an interrupted
+            # supplement too: a failed attempt has no terminal index closure.
+            destination = (self.run_dir / "jobs" / "supplement_attempts" / self.session_id
+                           / "resume_decisions" / stage_dir.relative_to(self.run_dir)
+                           / "resume_decision.json")
+        p = write_json(destination, dict(decision or {}))
         self.resume_decisions.append(dict(decision or {}))
         if self.jobs is not None:
             try:
@@ -13469,6 +13729,8 @@ class EvaluationWorkflowRunner:
                 value, error = None, exc
 
     def _run_stage_steps(self, model_id: Optional[str], stage: str, fn: StageFn):
+        check_started_at = now_iso()
+        check_started = time.monotonic()
         stage_dir = (self.run_dir / "models" / model_id / "stages" / stage) if model_id else (self.run_dir / "stages" / stage)
         result_path = stage_dir / "stage_result.json"
         previous = read_json(result_path, default=None)
@@ -13513,12 +13775,15 @@ class EvaluationWorkflowRunner:
                 )
 
         if bool(resume_decision.get("reusable")):
+            supplement_reuse = bool(getattr(self.options, "resume_missing", False))
+            check_finished_at = now_iso()
+            check_duration = round(max(0.0, time.monotonic() - check_started), 6)
             sr = StageResult(
                 stage=stage,
                 model_id=model_id,
                 status=str(previous.get("status") or "ok") if str(previous.get("status") or "").lower() in {"ok", "warn"} else "ok",
-                started_at=now_iso(),
-                finished_at=now_iso(),
+                started_at=str(previous.get("started_at") or "") if supplement_reuse else check_started_at,
+                finished_at=str(previous.get("finished_at") or "") if supplement_reuse else check_finished_at,
                 job_id=stage_job_id,
                 parent_job_id=parent_job_id,
                 job_type=job_type,
@@ -13527,7 +13792,13 @@ class EvaluationWorkflowRunner:
                 artifacts=list(previous.get("artifacts") or []),
                 skip_reason="resume_reused_existing_stage_result",
                 notes=["Existing stage_result.json reused by job-aware resume."],
-                details={"resume_decision": dict(resume_decision), "resume_key_hash": expected_hash},
+                details={
+                    **(dict(previous.get("details") or {}) if getattr(self.options, "resume_missing", False) else {}),
+                    "resume_decision": dict(resume_decision), "resume_key_hash": expected_hash,
+                    "reuse_check_started_at": check_started_at,
+                    "reuse_check_finished_at": check_finished_at,
+                    "reuse_check_duration_s": check_duration,
+                },
             )
             if resume_decision_path and resume_decision_path.is_file():
                 art_rel = relpath(resume_decision_path, self.run_dir)
@@ -13536,11 +13807,18 @@ class EvaluationWorkflowRunner:
             self._record_stage(sr, result_path)
             if self.jobs:
                 self.jobs.finish_stage(model_id, stage, sr.to_dict(), reused=True)
-                try:
-                    self._register_artifacts(self.jobs.artifacts(), kind="job_artifact", producer_stage="workflow_job_queue")
-                except Exception:
-                    pass
+                if not supplement_reuse:
+                    try:
+                        self._register_artifacts(self.jobs.artifacts(), kind="job_artifact", producer_stage="workflow_job_queue")
+                    except Exception:
+                        pass
+                # Supplement reuse changes only the mutable job projections.
+                # Their files are already durable; register them together at
+                # workflow completion and include them in terminal closure.
+                # Re-admitting the entire original index here costs minutes
+                # per skip without checking any additional measurement bytes.
             self._progress_done += 1
+            self.log(f"[workflow][resume] reused {label}: {resume_decision.get('reason')} (check {check_duration:.3f}s)")
             try:
                 self.progress(self._progress_done, self._progress_total, f"reused {label}")
             except Exception:
@@ -13854,11 +14132,14 @@ class EvaluationWorkflowRunner:
         "stages",
     )
 
-    def _terminal_hailo_bundle_alias(self, path: Path) -> Optional[Path]:
+    def _terminal_hailo_bundle_alias(
+        self, path: Path, *, validate_receipt: bool = True,
+    ) -> Optional[Path]:
         from ..hailo_cache_bundle import resolve_published_bundle_member
 
         return resolve_published_bundle_member(
             path, root=self.run_dir, hash_fn=sha256_file_uncached,
+            validate_receipt=validate_receipt,
         )
 
     def _terminal_evidence_candidates(self) -> list[Path]:
@@ -14631,7 +14912,9 @@ class EvaluationWorkflowRunner:
                     None,
                     "artifact_cache_preflight",
                     lambda: self._stage_artifact_cache_preflight(
-                        preparation_rows,
+                        [row for row in preparation_rows if self._supplement_model_needs_dispatch(
+                            str(row.get("id") or row.get("model_id"))) ]
+                        if getattr(self.options, "resume_missing", False) else preparation_rows,
                     ),
                 )
                 preflight_details = getattr(preflight, "details", {}) or {}
@@ -14926,10 +15209,11 @@ class EvaluationWorkflowRunner:
                 upstream_failure = "build_backend_artifacts"
         if self.jobs and finish_job:
             self.jobs.finish_model(model_id)
-            try:
-                self._register_artifacts(self.jobs.artifacts(), kind="job_artifact", producer_stage="workflow_job_queue")
-            except Exception:
-                pass
+            if not getattr(self.options, "resume_missing", False):
+                try:
+                    self._register_artifacts(self.jobs.artifacts(), kind="job_artifact", producer_stage="workflow_job_queue")
+                except Exception:
+                    pass
 
     def _profile_with_cli_hardware_overrides(self) -> Dict[str, Any]:
         """Return profile payload with CLI-selected hardware setup/group overrides.
@@ -15210,6 +15494,16 @@ class EvaluationWorkflowRunner:
                             for run_id in reference_run_ids:
                                 if run_id not in run_ids:
                                     run_ids.append(run_id)
+                        completion_rows = None
+                        if getattr(self.options, "resume_missing", False):
+                            from .execution_binding import _completion_dispatch_run_id
+                            completion_rows = [entry for entry in self._supplement_dispatch_rows(model_id) or []
+                                               if entry.get("setup_id") == setup_id]
+                            wanted = {_completion_dispatch_run_id(entry) for entry in completion_rows
+                                      if entry.get("action") == "execute"}
+                            run_ids = [run_id for run_id in run_ids if _completion_dispatch_run_id({"run_id": run_id}) in wanted]
+                            if not run_ids:
+                                continue
                         runtime = dict(
                             target.get("remote")
                             if isinstance(target.get("remote"), Mapping)
@@ -15220,6 +15514,7 @@ class EvaluationWorkflowRunner:
                         runtime["add_args"] = _scheduler_owned_remote_add_args(
                             runtime.get("add_args"), run_ids=run_ids,
                             quality_only_run_ids=setup_dispatch.get("quality_only_run_ids") or [],
+                            selective_completion_rows=completion_rows,
                         )
                         host_name = str(
                             (runtime or {}).get("host") or ""
@@ -16731,6 +17026,8 @@ class EvaluationWorkflowRunner:
             generic_excluded_count=generic_excluded_count,
         )
         payload["completion"] = completion
+        attempt_failure = energy_attempt_failure(self.run_dir)
+        payload["energy_attempt_failure"] = attempt_failure
         p_json = write_json(reports / "run_status_summary.json", payload)
         md_lines = [
             f"# Run Status Summary — {self.run_id}",
@@ -16763,6 +17060,8 @@ class EvaluationWorkflowRunner:
             "",
             "## Stage counts",
         ]
+        if attempt_failure:
+            md_lines += ["", attempt_failure["energy_not_started_reason"], ""]
         for key in sorted(counts):
             md_lines.append(f"- {key}: {counts[key]}")
         md_lines.extend(["", "## Blocking partial / failure reasons"])
@@ -18962,8 +19261,11 @@ class EvaluationWorkflowRunner:
             and quality_identity_failed == 0
             and quality_identity_contract_errors == 0
         )
+        obligation_checker = getattr(self, "_quality_obligation_errors", None)
+        quality_obligation_errors = list(obligation_checker(results)) if callable(obligation_checker) else []
         technical_problem = bool(
             failed or int(merge.get("unmatched_result_count") or 0)
+            or quality_obligation_errors
             or (
                 quality_identity_contract_enabled
                 and not quality_identity_contract_verified
@@ -18975,7 +19277,7 @@ class EvaluationWorkflowRunner:
         ]
         reporting_active = bool((self.profile_payload.get("quality_gate") or {}).get("reporting_policy"))
         status = (
-            ("failed" if strict_quality else "partial")
+            ("failed" if strict_quality or quality_obligation_errors else "partial")
             if technical_problem else ("ok" if results else "skipped")
         )
         request_counts = summarize_requests(results)
@@ -18999,6 +19301,7 @@ class EvaluationWorkflowRunner:
             "completed_count": len(technically_completed),
             "technical_completed_count": len(technically_completed),
             "failed_count": len(failed),
+            "quality_obligation_errors": quality_obligation_errors,
             **request_counts,
             "cancel_context": dict(getattr(self, "_quality_cancel_context", {}) or {}),
             "run_mode_id": run_mode_id,
@@ -19248,6 +19551,8 @@ class EvaluationWorkflowRunner:
             if results else
             "No central quality input requests were produced by the executed benchmark rows."
         )
+        if quality_obligation_errors:
+            message += " Required new Quality bindings are incomplete: " + "; ".join(quality_obligation_errors)
         return {
             "central_quality_summary_json": p_json,
             "central_quality_summary_csv": p_csv,
@@ -19256,6 +19561,7 @@ class EvaluationWorkflowRunner:
             "completed_count": len(technically_completed),
             "technical_completed_count": len(technically_completed),
             "failed_count": len(failed),
+            "quality_obligation_errors": quality_obligation_errors,
             **request_counts,
             "technical_status": quality_reporting["technical_status"],
             "quality_decision": quality_reporting["quality_decision"],
@@ -20522,6 +20828,12 @@ class EvaluationWorkflowRunner:
         raw_variants = cfg.get("variants") if isinstance(cfg.get("variants"), list) else []
         if raw_variants:
             cfg_path = reports / "native_producer_stage_config.json"
+            from .yolo_augmentation_reentry import native_reentry_root
+            augmentation_native_attempt = native_reentry_root(self.run_dir, cfg)
+            if augmentation_native_attempt is not None:
+                if not self.options.resume or not getattr(self.options, "resume_missing", False):
+                    raise ValueError("augmentation_reentry_requires_explicit_selective_resume")
+                cfg_path = augmentation_native_attempt / "native_invocation_config.json"
             # The coordinator is a separate process.  Carry the top-level
             # campaign bindings required to build exactly the same Native
             # Energy/probe commands as the in-process non-variant path.
@@ -20558,7 +20870,11 @@ class EvaluationWorkflowRunner:
                 "execution_preset": dict(self.profile_payload.get("execution_preset") or {})
                 if isinstance(self.profile_payload.get("execution_preset"), Mapping) else {},
             }
-            atomic_write_json(cfg_path, cfg_for_variants)
+            if augmentation_native_attempt is not None and cfg_path.exists():
+                if read_json(cfg_path, default=None) != cfg_for_variants:
+                    raise ValueError("augmentation_native_invocation_config_changed")
+            else:
+                atomic_write_json(cfg_path, cfg_for_variants)
             scripts_root = Path(__file__).resolve().parents[2] / "scripts"
             coordinator_script = scripts_root / "run_evalrun_native_producer_variants.py"
             if not coordinator_script.is_file():
@@ -20603,6 +20919,8 @@ class EvaluationWorkflowRunner:
                 / "native_coordinator"
                 / "stage_result.json"
             )
+            if augmentation_native_attempt is not None:
+                coordinator_checkpoint_path = augmentation_native_attempt / "native_coordinator/stage_result.json"
             coordinator_input_hash = native_coordinator_input_hash(
                 self.run_dir, cfg_path,
                 quality_gate_policy_sha256=(
@@ -20744,9 +21062,14 @@ class EvaluationWorkflowRunner:
             stage_payload.setdefault("variant_coordinator_rc", pr.returncode)
             stage_payload.setdefault("variant_coordinator_stdout_tail", str(pr.stdout or "")[-4000:])
             stage_payload.setdefault("variant_coordinator_stderr_tail", str(pr.stderr or "")[-4000:])
+            coordinator_failure = str(
+                coordinator_checkpoint_payload.get("error")
+                or stage_payload.get("error") or stage_payload.get("failure_reason")
+                or (str(pr.stderr or "") if pr.returncode != 0 else "")
+            ).strip()
             if pr.returncode != 0:
                 stage_payload["status"] = stage_payload.get("status") or "partial"
-                self.warnings.append(f"native producer variant coordinator returned rc={pr.returncode}: {(pr.stderr or pr.stdout)[-500:]}")
+                self.warnings.append(f"native producer variant coordinator returned rc={pr.returncode}: {coordinator_failure or (pr.stderr or pr.stdout)[-500:]}")
             stage_payload["parent_import"] = {
                 "coordinator_checkpoint": relpath(
                     coordinator_checkpoint_path, self.run_dir,
@@ -21089,6 +21412,8 @@ class EvaluationWorkflowRunner:
                 f"Native producer variant orchestration={orchestration_status}; evidence={evidence_status}; "
                 f"rows={row_count}, ok={ok_count}, claim_ok={claim_ok}, semantic_ok={semantic_ok}."
             )
+            if coordinator_failure:
+                msg += " Failure: " + coordinator_failure
             details = {
                 "enabled": True, "variant_stage": True, "row_count": row_count, "ok_count": ok_count,
                 "claim_ok_count": claim_ok, "semantic_ok_count": semantic_ok,
@@ -21114,6 +21439,7 @@ class EvaluationWorkflowRunner:
                 ),
                 "strict_failure": strict_failure,
                 "terminal_child_failure": terminal_child_failure,
+                "failure_reason": coordinator_failure,
                 "coordinator_handoff_reused": coordinator_handoff_reused,
                 "coordinator_handoff_reason": coordinator_handoff_reason,
                 "coordinator_checkpoint_sha256": str(
@@ -21753,6 +22079,59 @@ class EvaluationWorkflowRunner:
             expected_native_rows.extend(
                 _native_expected_full_rows_v61b(models, native_full_by_producer, native_setup_ids)
             )
+        from ..native_job_identity import native_subset_projection, missing_native_rows, native_identity_key
+        native_not_supported_rows = native_subset_projection(expected_native_rows, native_split_case_support)
+        supplement_native = bool(getattr(self.options, "resume_missing", False))
+        previous_native_summary = None
+        previous_native_rows: List[Mapping[str, Any]] = []
+        historical_native_backend_results: List[Mapping[str, Any]] = []
+        native_attempt_root = self.run_dir / "native_producers"
+        if supplement_native:
+            previous_native_summary = self._supplement_original_root / "reports" / "native_producer_summary.json"
+            previous_payload = read_json(previous_native_summary, default=None)
+            if not isinstance(previous_payload, Mapping) or not isinstance(previous_payload.get("rows"), list):
+                raise ValueError("selective_native_previous_summary_missing")
+            previous_native_rows = previous_payload["rows"]
+            historical_stage = read_json(self._supplement_original_root / "reports/native_producer_stage.json", default={}) or {}
+            historical_native_backend_results = [*historical_stage.get("historical_backend_results", []),
+                                                  *historical_stage.get("backend_results", [])]
+            native_attempt_root = native_attempt_root / "attempts" / self.session_id
+            prior_attempts_root = self.run_dir / "native_producers" / "attempts"
+            if prior_attempts_root.is_dir() and any(prior_attempts_root.glob("**/analysis_tables/native_*.json")):
+                # Recover collected row results even when the earlier attempt
+                # stopped before publishing its final aggregate. This uses the
+                # normal local reporter; no remote prerequisites are restarted.
+                recovery_dir = reports / "native_completion_recovery" / self.session_id
+                recovery_script = project_root / "scripts/native_producer_final_report.py"
+                if not recovery_script.is_file():
+                    recovery_script = project_root / "onnx_splitpoint_tool/resources/remote_scripts/native_producer_final_report.py"
+                recovery_cmd = [
+                    sys.executable, "-u", str(recovery_script), "--root", str(prior_attempts_root),
+                    "--recursive", "--out-dir", str(recovery_dir),
+                    "--previous-summary", str(previous_native_summary),
+                ] + _native_final_report_remote_context_args(historical_native_backend_results)
+                recovered = _stream_native(recovery_cmd, label="native-completion-recovery", timeout_s=3600)
+                if recovered.returncode:
+                    raise ValueError("selective_native_attempt_recovery_failed:" + recovered.stderr[-1000:])
+                previous_native_summary = recovery_dir / "native_producer_combined_summary.json"
+                previous_payload = read_json(previous_native_summary, default=None)
+                if not isinstance(previous_payload, Mapping) or not isinstance(previous_payload.get("rows"), list):
+                    raise ValueError("selective_native_attempt_recovery_summary_missing")
+                previous_native_rows = previous_payload["rows"]
+        pending_native_rows = missing_native_rows(expected_native_rows, previous_native_rows, native_not_supported_rows)
+        pending_full_models = {
+            producer: {
+                backend: [str(row["model"]) for row in pending_native_rows
+                          if row.get("execution_mode") == "native_full_baseline"
+                          and row.get("comparison_backend") == producer
+                          and row.get("backend") == "native_full_" + backend]
+                for backend in native_full_by_producer.get(producer, [])
+            } for producer in active_native_producers
+        }
+        dispatch_full_by_producer = {
+            producer: [backend for backend, selected in mapping.items() if selected]
+            for producer, mapping in pending_full_models.items()
+        }
         progress_journal.emit(
             "PLAN", phase="native_stage",
             split_rows=sum(1 for row in expected_native_rows if row.get("execution_mode") == "native_split"),
@@ -21849,7 +22228,7 @@ class EvaluationWorkflowRunner:
                 native_unsupported_cases
             ),
             "native_split_expected_denominator_source": (
-                "configured_selected_deployment_cohort"
+                "supported_subset_of_selected_generic_cases"
             ),
             "native_split_plan_source": (
                 "supported_subset_of_selected_generic_cases"
@@ -21863,6 +22242,14 @@ class EvaluationWorkflowRunner:
             "validation_image_map": validation_image_map,
             "validation_image_sources": validation_image_sources,
             "expected_native_rows": expected_native_rows,
+            "historical_backend_results": historical_native_backend_results,
+            "native_not_supported_rows": native_not_supported_rows,
+            "selective_completion": {
+                "enabled": supplement_native, "previous_summary": str(previous_native_summary or ""),
+                "pending_rows": pending_native_rows, "pending_row_count": len(pending_native_rows),
+                "reused_row_count": sum(row.get("ok", row.get("result_ok")) is True for row in previous_native_rows),
+                "not_supported_row_count": len(native_not_supported_rows),
+            },
             "strict_supported_only": True,
             "native_execution_contract": dict(native_execution_contract),
             "native_execution_contract_sha256": str(
@@ -21926,7 +22313,7 @@ class EvaluationWorkflowRunner:
         # snapshot below with the observed row statuses.
         initial_expected_matrix = _native_expected_matrix_status_v60y(
             expected_native_rows,
-            [],
+            [*[row for row in previous_native_rows if row.get("ok", row.get("result_ok")) is True], *native_not_supported_rows],
             [],
         )
         stage["expected_matrix"] = initial_expected_matrix
@@ -21958,7 +22345,7 @@ class EvaluationWorkflowRunner:
                 load_producer_set_from_central_quality_summary,
             )
 
-            for producer_name, raw_full_backends in sorted(native_full_by_producer.items()):
+            for producer_name, raw_full_backends in sorted(dispatch_full_by_producer.items()):
                 full_backends = {
                     _canonical_native_full_backend_v61b(item)
                     for item in list(raw_full_backends or [])
@@ -21973,7 +22360,7 @@ class EvaluationWorkflowRunner:
                     continue
                 producer_contracts: List[Dict[str, Any]] = []
                 model_errors: Dict[str, str] = {}
-                for model in models:
+                for model in pending_full_models[producer_name].get("tensorrt", []):
                     try:
                         model_set = load_producer_set_from_central_quality_summary(
                             central_quality_summary_path,
@@ -22072,7 +22459,12 @@ class EvaluationWorkflowRunner:
                         setup_id=setup_id,
                         producer=producer_name,
                         full_backends=vendor_backends,
-                        model_ids=models,
+                        # Local binding/reporting work also belongs to already
+                        # measured rows. Performance demand must not suppress it.
+                        model_ids=sorted({str(row["model"]) for row in expected_native_rows
+                            if row.get("execution_mode") == "native_full_baseline"
+                            and row.get("comparison_backend") == producer_name
+                            and row.get("backend") in {"native_full_" + backend for backend in vendor_backends}}),
                     )
                 )
                 bindings = binding_set.get("bindings_by_backend_model")
@@ -22168,7 +22560,7 @@ class EvaluationWorkflowRunner:
                         row.get("model")
                     )[1],
                 }
-                for row in expected_native_rows
+                for row in pending_native_rows
                 if row.get("execution_mode") == "native_split"
                 and str(row.get("backend_key") or "") == producer_name
             ]
@@ -22309,14 +22701,19 @@ class EvaluationWorkflowRunner:
         )
         from ..native_job_identity import native_job_prerequisite, native_comparison
         blocked_native_rows = _native_tensorrt_full_quality_blocked_rows_v2802(
-            expected_native_rows, stage["tensorrt_quality_first"],
+            pending_native_rows, stage["tensorrt_quality_first"],
             repetition_count_requested=repetitions,
         )
         for producer in active_native_producers:
             runnable = _backend_case_map(producer, native_supported_case_map)
+            runnable = {model: [case for case in cases if any(
+                row.get("model") == model and row.get("case") == case
+                and row.get("comparison_backend") == producer
+                and row.get("execution_mode") == "native_split" for row in pending_native_rows)]
+                for model, cases in runnable.items()}
             setup = native_setup_ids.get(producer, "")
             row_errors = split_quality_row_errors_by_setup.get(setup) or {}
-            for planned_job in expected_native_rows:
+            for planned_job in pending_native_rows:
                 if planned_job.get("execution_mode") != "native_split" or native_comparison(planned_job.get("backend")) != producer:
                     continue
                 model = str(planned_job.get("model") or "")
@@ -22360,11 +22757,13 @@ class EvaluationWorkflowRunner:
                 expected_native_rows=expected_native_rows,
                 artifact_paths=artifact_paths, collected_roots=collected_roots,
                 repetition_count_requested=repetitions,
+                output_root=native_attempt_root,
             )
             # A later infrastructure/preflight exit must retain these already
             # resolved prerequisites instead of the initial all-missing matrix.
             stage["expected_matrix"] = _native_expected_matrix_status_v60y(
-                expected_native_rows, blocked_native_rows, [],
+                expected_native_rows, [*blocked_native_rows, *native_not_supported_rows,
+                    *[row for row in previous_native_rows if row.get("ok", row.get("result_ok")) is True]], [],
             )
             _persist_native_expected_matrix(stage["expected_matrix"])
         self.log(f"[native-prerequisites] ready={stage['native_prerequisite_ready_count']} blocked={len(blocked_native_rows)}; independent Full jobs remain selected")
@@ -22532,10 +22931,10 @@ class EvaluationWorkflowRunner:
                 row.get("execution_mode") == "native_split"
                 and _canonical_native_producer_v61b(row.get("backend_key"))
                 == preflight_backend
-                for row in expected_native_rows
+                for row in pending_native_rows
             )
             preflight_full = list(
-                native_full_by_producer.get(
+                dispatch_full_by_producer.get(
                     _canonical_native_producer_v61b(preflight_backend), []
                 )
             ) if native_full_enabled else []
@@ -22669,6 +23068,14 @@ class EvaluationWorkflowRunner:
             )
             backend_case_map = native_runnable_case_maps.get(b, native_supported_case_map)
             backend_has_native_split = backend_has_native_split and bool(backend_case_map)
+            backend_full_models = pending_full_models.get(b, {})
+            dispatch_models = sorted(set(backend_case_map) | {
+                model for selected in backend_full_models.values() for model in selected})
+            if not dispatch_models:
+                stage["backend_results"].append({"backend": b, "status": "reused",
+                    "ok": True, "transfer_attempted": False, "started_remote_count": 0,
+                    "started_performance_count": 0})
+                continue
             case_map_json = json.dumps(backend_case_map, separators=(",", ":"))
             rcfg = _remote_cfg(b)
             ssh = str(rcfg.get("ssh") or rcfg.get("host") or "").strip()
@@ -22683,6 +23090,8 @@ class EvaluationWorkflowRunner:
             env = str(rcfg.get("env") or "").strip()
             rtool = str(rcfg.get("remote_tool_dir") or remote_tool_dir)
             rroot = str(rcfg.get("remote_root") or (remote_root_base.rstrip("/") + "/" + self.run_id))
+            if supplement_native:
+                rroot = rroot.rstrip("/") + "/attempts/" + self.session_id
             result: Dict[str, Any] = {
                 "backend": b, "ssh": ssh, "remote_root": rroot,
                 "remote_tool_dir": rtool, "setup_id": setup_id,
@@ -22721,7 +23130,7 @@ class EvaluationWorkflowRunner:
                 continue
 
             configured_full_backends = list(
-                native_full_by_producer.get(
+                dispatch_full_by_producer.get(
                     _canonical_native_producer_v61b(b), []
                 )
             ) if native_full_enabled else []
@@ -22913,7 +23322,7 @@ class EvaluationWorkflowRunner:
                 # Prepare remote directories and copy benchmark sets.
                 if copy_sets:
                     marker_name = ".onnx_splitpoint_native_evalset"
-                    for m in models:
+                    for m in dispatch_models:
                         local_bs = _native_runnable_benchmark_set(m)
                         remote_bs = f"{rroot}/{m}/benchmark_set"
                         inventory = build_native_transfer_inventory(local_bs)
@@ -23153,14 +23562,14 @@ class EvaluationWorkflowRunner:
                         })
                         from ..native_job_identity import failed_native_result, native_identity_key
                         existing_blocked = {native_identity_key(row) for row in blocked_native_rows}
-                        for planned_job in expected_native_rows:
+                        for planned_job in pending_native_rows:
                             if planned_job.get("execution_mode") == "native_split" and native_comparison(planned_job.get("backend")) == b and native_identity_key(planned_job) not in existing_blocked:
                                 blocked_native_rows.append(failed_native_result(planned_job, failure_stage="binding_transfer", failure_reason="native_split_quality_binding_set_transfer_failed", execution_mode=planned_job["execution_mode"]))
                         backend_has_native_split = False
                         result.setdefault("warnings", []).append("Native split Quality binding transfer failed; affected jobs are blocked before repetitions")
 
                 # Run backend-specific native producer stage on remote host.
-                models_arg = ",".join(models)
+                models_arg = ",".join(dispatch_models)
                 split_models_arg = ",".join(sorted(backend_case_map))
                 base_cmd = [
                     "cd", _q(rtool), "&&",
@@ -23253,13 +23662,15 @@ class EvaluationWorkflowRunner:
                                 reports / "native_known_contract_checkpoints"
                                 / b
                             )
+                            if supplement_native:
+                                checkpoint_root = checkpoint_root / "attempts" / self.session_id
                             checkpoint_root.mkdir(parents=True, exist_ok=True)
                             checkpoint_path = checkpoint_root / (
                                 _analysis_tag(kr.get("id") or "contract")
                                 + ".json"
                             )
                             checkpoint_local_root = (
-                                self.run_dir / "native_producers" / b
+                                native_attempt_root / b
                             )
                             prior_checkpoint = (
                                 read_json(checkpoint_path, default={}) or {}
@@ -23643,7 +24054,7 @@ class EvaluationWorkflowRunner:
                 if native_full_enabled:
                     def _full_backend_list_for(native_backend: str) -> list[str]:
                         producer = _canonical_native_producer_v61b(native_backend)
-                        values = list(native_full_by_producer.get(producer, []))
+                        values = list(dispatch_full_by_producer.get(producer, []))
                         if result.get("skip_tensorrt_full_upstream_quality"):
                             values = [value for value in values if value != "tensorrt"]
                         return values
@@ -23878,19 +24289,28 @@ class EvaluationWorkflowRunner:
                                     "engine_rebuild_allowed": False,
                                 }
                     if fb_list:
+                        # Keep the historical Full runner bytes available to
+                        # the preserved Energy command contracts. A supplement
+                        # uses its existing attempt identity for the new leaf.
+                        full_runner_name = (
+                            f"native_full_baseline_eval_runner_{self.session_id}.py"
+                            if supplement_native else "native_full_baseline_eval_runner.py"
+                        )
                         # v61c: synchronise the full runner *and* every helper it
                         # may import before the remote preflight.  The runner also
                         # contains a standalone fallback, but syncing the helper
                         # keeps progress journaling available on normal remote
                         # checkouts.
                         for helper_name, helper_tokens in (
-                            ("native_full_baseline_eval_runner.py", ("--setup-id", "--comparison-backend", "--comparison-precision", "--duration-s", "--repetitions", "--quality-request-binding-set")),
+                            ("native_full_baseline_eval_runner.py", ("--setup-id", "--comparison-backend", "--comparison-precision", "--duration-s", "--repetitions", "--quality-request-binding-set", "--eval-run-id", "--attempt-id")),
                             ("native_progress.py", ("def stream_command", "class NativeProgressJournal")),
                         ):
                             result["steps"].extend(
                                 _sync_remote_script_v60i(
                                     ssh=ssh, remote_tool_dir=rtool,
                                     script_name=helper_name,
+                                    remote_script_name=(full_runner_name
+                                        if helper_name == "native_full_baseline_eval_runner.py" else None),
                                     required_tokens=helper_tokens,
                                     timeout=min(timeout, 600),
                                     process_runner=_stream_native,
@@ -23935,7 +24355,7 @@ class EvaluationWorkflowRunner:
                         remote_python_path = f"PYTHONPATH={_q(rtool)}:${{PYTHONPATH:-}}"
                         preflight_program = (
                             f"{remote_python_path} python -u "
-                            "scripts/native_full_baseline_eval_runner.py "
+                            f"scripts/{full_runner_name} "
                             "--root . --remote-contract-preflight && "
                             f"{remote_python_path} python -u "
                             "scripts/native_full_semantic_dump.py --help"
@@ -23974,8 +24394,9 @@ class EvaluationWorkflowRunner:
                             )
                         else:
                             fargs = [
-                                "python", "-u", "scripts/native_full_baseline_eval_runner.py",
+                                "python", "-u", f"scripts/{full_runner_name}",
                                 "--root", _q(rroot),
+                                "--eval-run-id", _q(self.run_id),
                                 "--models", _q(models_arg),
                                 "--backends", _q(",".join(fb_list)),
                                 "--frames", str(frames),
@@ -23990,6 +24411,8 @@ class EvaluationWorkflowRunner:
                                 "--letterbox-pad-value", "114",
                             ]
                             fargs += ["--deepx-classification-profile-json", _q(json.dumps({key:self.profile_payload[key] for key in ("deepx_build", "run_mode", "execution_preset", "purpose") if key in self.profile_payload},sort_keys=True,separators=(",",":")))]
+                            if supplement_native:
+                                fargs += ["--attempt-id", _q(self.session_id)]
                             if validation_image_map:
                                 fargs += ["--image-map", _q(validation_image_map_json)]
                             if "tensorrt" in fb_list:
@@ -24010,21 +24433,30 @@ class EvaluationWorkflowRunner:
                             # Full performance is an exact frame-count contract.
                             # Native Energy has a separate replay/hot-loop stage;
                             # never leak its duration into this timing command.
-                            shell_full = " ".join(
-                                ([env, "&&"] if env else [])
-                                + ["cd", _q(rtool), "&&", remote_python_path] + fargs
-                            )
-                            pr_full = _start_remote_performance(
-                                ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", ssh, shell_full],
-                                label=f"full:{b}:{','.join(fb_list)}", timeout_s=performance_timeout,
-                            )
-                            result["steps"].append({
-                                "name": "run_native_full_baselines",
-                                "rc": pr_full.returncode,
-                                "stdout_tail": pr_full.stdout[-4000:],
-                                "stderr_tail": pr_full.stderr[-4000:],
-                                "cmd": shell_full,
-                            })
+                            full_groups = [([backend], backend_full_models[backend]) for backend in fb_list] if supplement_native else [(fb_list, models)]
+                            full_processes = []
+                            for selected_backends, selected_models in full_groups:
+                                selected_args = list(fargs)
+                                selected_args[selected_args.index("--models") + 1] = _q(",".join(selected_models))
+                                selected_args[selected_args.index("--backends") + 1] = _q(",".join(selected_backends))
+                                if supplement_native:
+                                    selected_args += ["--out-dir", _q(rroot + "/full_attempts/" + selected_backends[0])]
+                                shell_full = " ".join(
+                                    ([env, "&&"] if env else [])
+                                    + ["cd", _q(rtool), "&&", remote_python_path] + selected_args
+                                )
+                                completed_full = _start_remote_performance(
+                                    ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", ssh, shell_full],
+                                    label=f"full:{b}:{','.join(selected_backends)}", timeout_s=performance_timeout,
+                                )
+                                full_processes.append(completed_full)
+                                result["steps"].append({
+                                    "name": "run_native_full_baselines", "models": selected_models,
+                                    "backends": selected_backends, "rc": completed_full.returncode,
+                                    "stdout_tail": completed_full.stdout[-4000:],
+                                    "stderr_tail": completed_full.stderr[-4000:], "cmd": shell_full,
+                                })
+                            pr_full = next((item for item in full_processes if item.returncode), full_processes[-1])
                             result["native_full_baseline_available"] = bool(
                                 pr_full.returncode == 0
                                 and not trt_quality_binding_failed
@@ -24046,7 +24478,7 @@ class EvaluationWorkflowRunner:
                 telemetry_post_captured = True
 
                 # Collect results back into the EvalRun.
-                local_root = self.run_dir / "native_producers" / b
+                local_root = native_attempt_root / b
                 local_root.mkdir(parents=True, exist_ok=True)
                 rsync = ["rsync", "-a", "--delete", f"{ssh}:{rroot}/", str(local_root) + "/"]
                 pr = _stream_native(rsync, label=f"collect:{b}", timeout_s=timeout)
@@ -24092,7 +24524,7 @@ class EvaluationWorkflowRunner:
                         )
                 if callable(telemetry_capture):
                     try:
-                        failure_local_root = self.run_dir / "native_producers" / b
+                        failure_local_root = native_attempt_root / b
                         failure_telemetry = failure_local_root / "host_telemetry"
                         failure_telemetry.mkdir(parents=True, exist_ok=True)
                         telemetry_rsync = _stream_native(
@@ -24114,7 +24546,7 @@ class EvaluationWorkflowRunner:
                 # itself succeeds.
                 try:
                     failure_local_root = (
-                        self.run_dir / "native_producers" / b
+                        native_attempt_root / b
                     )
                     failure_local_root.mkdir(parents=True, exist_ok=True)
                     failure_collect = _stream_native(
@@ -24189,7 +24621,7 @@ class EvaluationWorkflowRunner:
                                 and all(observed.get(field) and documented.get(field) for field in FIELDS[:5])
                                 and identity == planned_native_identity(documented)):
                             existing_results.add(native_identity_key(observed))
-                for planned_job in expected_native_rows:
+                for planned_job in pending_native_rows:
                     if native_comparison(planned_job.get("comparison_backend") or planned_job.get("backend")) == b and native_identity_key(planned_job) not in existing_results:
                         blocked_native_rows.append(failed_native_result(planned_job, failure_stage="native_transfer_or_dispatch",
                             failure_reason=str(result.get("failure_reason") or result.get("error") or "native_dispatch_failed"),
@@ -24251,8 +24683,13 @@ class EvaluationWorkflowRunner:
                 expected_native_rows=expected_native_rows,
                 artifact_paths=artifact_paths, collected_roots=collected_roots,
                 repetition_count_requested=repetitions,
+                output_root=native_attempt_root,
             )
             stage["native_prerequisite_blocked_count"] = len(blocked_native_rows)
+        if supplement_native and not collected_roots:
+            # Reporter may receive an empty attempt when every row is reused.
+            native_attempt_root.mkdir(parents=True, exist_ok=True)
+            collected_roots.append(native_attempt_root)
         p_stage = write_json(reports / "native_producer_stage.json", stage)
         artifact_paths["native_producer_stage_json"] = p_stage
         combined_paths: List[Path] = []
@@ -24266,8 +24703,10 @@ class EvaluationWorkflowRunner:
                 for r in collected_roots:
                     args += ["--root", str(r)]
                 args += ["--recursive", "--out-dir", str(reports)]
+                if previous_native_summary is not None:
+                    args += ["--previous-summary", str(previous_native_summary)]
                 args += _native_final_report_remote_context_args(
-                    stage["backend_results"]
+                    [*historical_native_backend_results, *stage["backend_results"]]
                 )
                 pr = _stream_native(args, label="final_report", timeout_s=120)
                 stage["final_report_cmd"] = args
@@ -24301,6 +24740,8 @@ class EvaluationWorkflowRunner:
         # native producer runs above so the validator has artifacts.
         try:
             vcfg = cfg.get("validation") if isinstance(cfg.get("validation"), Mapping) else {}
+            if supplement_native:
+                vcfg = {**vcfg, "timeout_s": max(3600, int(vcfg.get("timeout_s") or 0))}
             validation_enabled = bool(vcfg.get("enabled") or cfg.get("native_validation_enabled") or dump_outputs)
             if validation_enabled:
                 summary_json = reports / "native_producer_combined_summary.json"
@@ -24309,6 +24750,8 @@ class EvaluationWorkflowRunner:
                 if not summary_json.exists():
                     raise RuntimeError("native_producer_summary.json missing; cannot validate native outputs")
                 vout = reports / "native_validation"
+                if supplement_native:
+                    vout = vout / "attempts" / self.session_id
                 project_root = Path(__file__).resolve().parents[2]
                 scripts_root = project_root / "scripts"
                 if not scripts_root.is_dir():
@@ -24335,6 +24778,13 @@ class EvaluationWorkflowRunner:
                 if not collected_roots:
                     cmd += ["--root", str(self.run_dir / "native_producers")]
                 pr = _stream_native(cmd, label="validation", timeout_s=int(vcfg.get("timeout_s") or 600))
+                if supplement_native:
+                    # Keep historical row-level validation outputs untouched;
+                    # only publish the completed aggregate as the new alias.
+                    for suffix in ("json", "csv", "md"):
+                        source = vout / ("native_producer_validation_summary." + suffix)
+                        if source.is_file():
+                            shutil.copy2(source, reports / "native_validation" / source.name)
                 stage["native_validation"] = {
                     "enabled": True,
                     "cmd": cmd,
@@ -24368,8 +24818,10 @@ class EvaluationWorkflowRunner:
                         "--recursive", "--out-dir", str(reports),
                         "--quality-summary", str(quality_summary),
                     ]
+                    if previous_native_summary is not None:
+                        quality_args += ["--previous-summary", str(previous_native_summary)]
                     quality_args += _native_final_report_remote_context_args(
-                        stage["backend_results"]
+                        [*historical_native_backend_results, *stage["backend_results"]]
                     )
                     quality_pr = _stream_native(
                         quality_args, label="quality_gated_final_report", timeout_s=120,
@@ -24917,6 +25369,10 @@ class EvaluationWorkflowRunner:
                 parent_timeout = int(ecfg.get("stage_timeout_s") or ecfg.get("stage_timeout") or cfg.get("native_energy_stage_timeout_s") or max(1800, planned_measure_rows * (etimeout + 420) + 300))
                 if mode == "measure":
                     eout = reports / "native_energy_measurements"
+                    previous_energy_results = None
+                    if supplement_native:
+                        previous_energy_results = self._supplement_original_root / "reports/native_energy_measurements/native_producer_energy_results.json"
+                        eout = eout / "attempts" / self.session_id
                     cmd = [
                         sys.executable, "-u", str(scripts_root / "run_native_producer_energy_from_summary.py"),
                         "--summary", str(summary_json),
@@ -24950,11 +25406,21 @@ class EvaluationWorkflowRunner:
                         cmd.append("--final-all-split-energy")
                     if native_energy_limit > 0:
                         cmd += ["--limit", str(native_energy_limit)]
-                    if self.options.resume and (
+                    if previous_energy_results is not None and previous_energy_results.is_file():
+                        cmd += ["--previous-results", str(previous_energy_results)]
+                    elif self.options.resume and (
                         eout / "stages" / "native_energy" / "stage_result.json"
                     ).exists():
                         cmd.append("--resume-checkpoint")
                     pr = _stream_native(cmd, label="energy:measure", timeout_s=parent_timeout)
+                    if supplement_native:
+                        # Only projections move to canonical report aliases.
+                        # Captures and journals stay in their original attempts.
+                        for source in [*eout.glob("*.json"), *eout.glob("*.csv"), *eout.glob("*.md"), *eout.glob("plan/*")]:
+                            if source.is_file():
+                                destination = reports / "native_energy_measurements" / source.relative_to(eout)
+                                destination.parent.mkdir(parents=True, exist_ok=True)
+                                shutil.copy2(source, destination)
                 else:
                     eout = reports / "native_energy_plan"
                     cmd = [
@@ -24998,9 +25464,19 @@ class EvaluationWorkflowRunner:
                 energy_pair_missing = list(energy_plan_payload.get("paired_missing_rows") or []) if isinstance(energy_plan_payload, Mapping) else []
                 energy_results_path = eout / "native_producer_energy_results.json"
                 energy_results_payload = read_json(energy_results_path, default={}) or {}
+                current_attempt_failure = energy_attempt_failure(self.run_dir, eout) if pr.returncode != 0 else {}
+                if current_attempt_failure:
+                    # A preflight abort deliberately has no new results file.
+                    # Keep the earlier projection historical and report this attempt.
+                    energy_results_payload = current_attempt_failure
+                    self.log("[native-energy] " + current_attempt_failure["energy_not_started_reason"])
                 energy_measured_rows = list(energy_results_payload.get("rows") or []) if isinstance(energy_results_payload, Mapping) else []
                 energy_result_status = str(energy_results_payload.get("status") or "") if isinstance(energy_results_payload, Mapping) else ""
                 energy_started_measurements = int(energy_results_payload.get("started_measurement_count") or 0) if isinstance(energy_results_payload, Mapping) else 0
+                energy_reused_measurements = (
+                    int(energy_results_payload.get("resume_reused_row_count") or 0)
+                    + int(energy_results_payload.get("supplement_reused_row_count") or 0)
+                ) if isinstance(energy_results_payload, Mapping) else 0
                 energy_plan_preflight = (
                     dict(energy_plan_payload.get("preflight") or {})
                     if isinstance(energy_plan_payload, Mapping) else {}
@@ -25019,7 +25495,7 @@ class EvaluationWorkflowRunner:
                     native_energy_status = energy_plan_preflight_status
                 elif pr.returncode != 0:
                     native_energy_status = "failed"
-                elif mode == "measure" and energy_started_measurements == 0:
+                elif mode == "measure" and energy_started_measurements == 0 and energy_reused_measurements == 0:
                     native_energy_status = "blocked_zero_measurements_started"
                 else:
                     native_energy_status = "ok"
@@ -25028,7 +25504,7 @@ class EvaluationWorkflowRunner:
                     and native_energy_strict
                     and (
                         pr.returncode != 0
-                        or energy_started_measurements == 0
+                        or (energy_started_measurements == 0 and energy_reused_measurements == 0)
                         or energy_results_payload.get("complete") is not True
                         or energy_results_payload.get("ok") is not True
                     )
@@ -25057,10 +25533,13 @@ class EvaluationWorkflowRunner:
                     "row_timeout_s": etimeout,
                     "stage_timeout_s": parent_timeout if mode == "measure" else None,
                     "pre_pairing_candidate_rows": planned_measure_rows if mode == "measure" else None,
-                    "planned_rows": len(energy_plan_rows),
+                    "planned_rows": (current_attempt_failure.get("preflight_attempted_count", 0)
+                                     if current_attempt_failure else len(energy_plan_rows)),
                     "measured_or_attempted_rows": len(energy_measured_rows),
                     "started_measurement_count": energy_started_measurements,
+                    "reused_measurement_count": energy_reused_measurements,
                     "result_status": energy_result_status,
+                    "attempt_failure": current_attempt_failure,
                     "result_blocked_reason": str(
                         energy_results_payload.get("blocked_reason") or ""
                     ),
@@ -25112,7 +25591,8 @@ class EvaluationWorkflowRunner:
                     "missing_pair_count": len(energy_pair_missing),
                     "missing_pairs": energy_pair_missing,
                     "plan_json": str(energy_plan_path) if energy_plan_path.exists() else "",
-                    "results_json": str(energy_results_path) if energy_results_path.exists() else "",
+                    "results_json": str(energy_results_path) if energy_results_path.exists() and not current_attempt_failure else "",
+                    "previous_results_json": str(energy_results_path) if energy_results_path.exists() and current_attempt_failure else "",
                     "runs_per_row": native_energy_runs,
                     "final_energy_contract_enforced": native_energy_final,
                     "final_all_split_energy_required":
@@ -25310,8 +25790,9 @@ class EvaluationWorkflowRunner:
             backend_results,
         )
         full_rows = [r for r in summary_rows if str(r.get("execution_mode") or "") == "native_full_baseline" or str(r.get("backend") or "").startswith("native_full_")]
-        from ..native_job_identity import known_build_exclusion
-        failed_rows = [r for r in summary_rows if not bool(r.get("ok")) and not known_build_exclusion(r)]
+        from ..native_job_identity import known_build_exclusion, native_capability_exclusion
+        failed_rows = [r for r in summary_rows if not bool(r.get("ok"))
+                       and not known_build_exclusion(r) and not native_capability_exclusion(r)]
         missing_full_backends = [
             str(r.get("backend") or "") for r in backend_results
             if native_full_enabled and r.get("native_full_baseline_available") is False
@@ -25798,6 +26279,16 @@ class EvaluationWorkflowRunner:
         self.outputs["results_bundle_manifest"] = str(p_bundle)
         artifacts_out = {"thesis_section_md": p_thesis, "workflow_readme_md": p_readme, "results_bundle_manifest_json": p_bundle}
         artifacts_out.update(dashboard_artifacts)
+        if getattr(self.options, "resume_missing", False):
+            from .supplement import build_supplement_plan, write_plan
+            # A fresh projection of original scopes plus merged measurements,
+            # published alongside the normal scientific report. It never
+            # changes Accuracy or invents measurements for terminal exclusions.
+            completion_plan = build_supplement_plan(self.run_dir)
+            plan_json, plan_md = write_plan(completion_plan, reports / "supplement_completion")
+            artifacts_out.update(supplement_plan_json=plan_json, supplement_plan_md=plan_md)
+            self.report_paths.extend([plan_json, plan_md])
+            self.outputs.update(supplement_plan_json=str(plan_json), supplement_plan_md=str(plan_md))
         metrics = {
             "report_count": len(self.report_paths),
             "dashboard_models": int(dashboard_info.get("model_count") or 0) if isinstance(dashboard_info, Mapping) else 0,
@@ -28954,21 +29445,23 @@ class EvaluationWorkflowRunner:
             and isinstance(self.profile_payload.get("quality_gate"), Mapping)
             else {}
         )
-        if (self.profile_payload.get("workflow_execution") or {}).get("setup_queue_mode") == "per_setup":
-            from ..benchmark.suite_refresh import refresh_suite_harness
-            from .execution_binding import _remote_args_from_options
-            refresh_args = _remote_args_from_options(self.options, self.profile_payload,
-                                                     model_task=model_task, model_id=model_id)
-            authoritative = bool(getattr(refresh_args, "validation_budget_authoritative", False))
-            refresh_suite_harness(
-                selected_suite_dir, benchmark_set_json=selected_suite_dir / "benchmark_set.json",
-                validation_images=None if authoritative else getattr(refresh_args, "validation_images", None),
-                validation_max_images=None if authoritative else getattr(refresh_args, "validation_max_images", None),
-                validation_reference_mode=getattr(refresh_args, "validation_reference_mode", "auto"),
-                mini_coco_ap50=bool(getattr(refresh_args, "mini_coco_ap50", False)),
-                benchmark_task=model_task,
-                mini_classification_eval=bool(getattr(refresh_args, "mini_classification_eval", False)),
-                log=self.log)
+        # Refresh every setup mode before binding the asynchronous reference.
+        # Parallel dispatch used to refresh this same suite after scheduling,
+        # allowing the reference to fingerprint a partially refreshed source.
+        from ..benchmark.suite_refresh import refresh_suite_harness
+        from .execution_binding import _remote_args_from_options
+        refresh_args = _remote_args_from_options(self.options, self.profile_payload,
+                                                 model_task=model_task, model_id=model_id)
+        authoritative = bool(getattr(refresh_args, "validation_budget_authoritative", False))
+        refresh_suite_harness(
+            selected_suite_dir, benchmark_set_json=selected_suite_dir / "benchmark_set.json",
+            validation_images=None if authoritative else getattr(refresh_args, "validation_images", None),
+            validation_max_images=None if authoritative else getattr(refresh_args, "validation_max_images", None),
+            validation_reference_mode=getattr(refresh_args, "validation_reference_mode", "auto"),
+            mini_coco_ap50=bool(getattr(refresh_args, "mini_coco_ap50", False)),
+            benchmark_task=model_task,
+            mini_classification_eval=bool(getattr(refresh_args, "mini_classification_eval", False)),
+            log=self.log)
         runtime_plan_finalization = finalize_suite_for_runtime(
             suite_dir=selected_suite_dir,
             run_root=self.run_dir,
@@ -29011,6 +29504,7 @@ class EvaluationWorkflowRunner:
             self.run_dir, benchmark_plan, model_id=model_id,
         )
         runtime_plan_finalization = dict(runtime_plan_finalization)
+        runtime_plan_finalization["suite_harness_refreshed"] = True
         runtime_plan_finalization["benchmark_plan"] = benchmark_plan
         runtime_plan_finalization["authoritative_scope_projection"] = runtime_scope_projection
         write_json(selected_suite_dir / "benchmark_plan.json", benchmark_plan)
@@ -29041,6 +29535,7 @@ class EvaluationWorkflowRunner:
             remote_process_registry=self._remote_process_registry,
             workflow_session_id=self.session_id,
             runtime_plan_finalization=runtime_plan_finalization,
+            selective_completion_rows=self._supplement_dispatch_rows(model_id),
             targeted_full_quality_identities=(
                 self._missing_full_quality_by_model.get(
                     str(model_id).strip().lower(), []
@@ -29342,7 +29837,9 @@ class EvaluationWorkflowRunner:
             record_completion_errors=True,
             model_id=model_id, source_paths=sources,
             source_contexts=load_benchmark_source_contexts(
-                bench_results_dir, model_id=model_id,
+                (bench_results_dir / "attempts" / self.session_id)
+                if getattr(self.options, "resume_missing", False) else bench_results_dir,
+                model_id=model_id,
             ),
         )
         candidate_plan = read_json(model_dir / "analysis" / "final_candidate_plan.json", default={}) or {}
@@ -29388,6 +29885,20 @@ class EvaluationWorkflowRunner:
                 required_profile_rows, normalized_rows,
             )
         )
+        if getattr(self.options, "resume_missing", False):
+            from .supplement import merge_preserved_results, result_key
+            previous = read_json(self._supplement_original_root / "models" / model_id
+                                 / "benchmark_results/normalized_results.json", default={}) or {}
+            preserved_keys = {result_key(r) for r in self._supplement_dispatch_rows(model_id) or []
+                              if r.get("action") in {"preserve", "negative_completed"}}
+            kept = [r for r in previous.get("results", []) if result_key(r) in preserved_keys]
+            quality_metadata_merge = getattr(self, "_merge_supplement_quality_metadata", None)
+            if callable(quality_metadata_merge):
+                kept = quality_metadata_merge(kept, normalized_rows)
+            normalized_rows = merge_preserved_results(kept, normalized_rows)
+            records_by_path = {str(r.get("path")): r for r in previous.get("sources", [])}
+            records_by_path.update({str(r.get("path")): r for r in source_records})
+            source_records = list(records_by_path.values())
         normalized_rows = annotate_logical_measurements(normalized_rows)
         logical_rows, logical_group_errors = select_logical_primary_rows(
             normalized_rows
@@ -30506,6 +31017,12 @@ class EvaluationWorkflowRunner:
         return mode
 
     def _benchmark_result_sources(self, row: Mapping[str, Any], model_id: str) -> List[str]:
+        if getattr(self.options, "resume_missing", False):
+            # Old raw results are immutable; re-normalize only this attempt and
+            # merge retained normalized identities at the normal scope join.
+            attempt = self.run_dir / "models" / model_id / "benchmark_results" / "attempts" / self.session_id
+            return [str(attempt), str(attempt / "remote_diagnostics"),
+                    *[str(path) for path in sorted((attempt / "remote_diagnostics").glob("*")) if path.is_dir()]]
         sources: List[str] = []
         for key in ("benchmark_results", "benchmark_results_dir", "results_dir", "benchmark_run_dir", "remote_run_dir", "suite_dir"):
             value = row.get(key)

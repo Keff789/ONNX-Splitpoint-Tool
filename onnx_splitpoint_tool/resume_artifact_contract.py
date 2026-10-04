@@ -3,9 +3,10 @@ from __future__ import annotations
 """Load the narrow, contract-bound artifact set eligible for Energy resume.
 
 The old remote runners and their command contracts remain authoritative.  This
-module only selects data artifacts below the frozen EvaluationRun root that may
-be restored before a later preflight.  Tool code, interpreters, system
-executables, and cache paths outside that root are deliberately excluded.
+module selects the preflight's bound run artifacts, including saved generated
+sources and native binaries, below the frozen EvaluationRun root. Installed
+tool code, interpreters, system executables, and cache paths outside that root
+are deliberately excluded.
 """
 
 import hashlib
@@ -31,6 +32,14 @@ _COMMAND_CONTRACT_SCHEMA_VERSIONS = {
     FULL_COMMAND_CONTRACT_SCHEMA: 1,
 }
 _ROW_IDENTITY_FIELDS = ("backend", "model", "case", "setup_id")
+# These are installation identities, never restageable run artifacts.  A
+# generated native executable is deliberately absent: the successful H8 C++
+# command binds that run-local binary and the preflight consumes it as data.
+_INSTALLATION_ARTIFACT_ROLES = frozenset({
+    "runner", "hotloop_runner", "native_trt_consumer_source",
+    "python_executable", "command_python_executable", "runtime_python",
+    "trtexec",
+})
 _SPLIT_QUALITY_RESTAGE_ROLES = (
     "semantic_boundary_manifest",
     "semantic_output_manifest",
@@ -66,8 +75,8 @@ _SPLIT_RESTAGE_ROLES_BY_BACKEND = {
         "prepared_input",
         *_SPLIT_QUALITY_RESTAGE_ROLES,
     ),
-    # Preserve the already released v2.72.4 Hailo-10 Resume contract. Dynamic
-    # Hailo-10 slot handling is intentionally outside this Hailo-8 hotfix.
+    # Keep the released required roles; additional bound slots and run-local
+    # artifacts are included from the actual preflight consumption below.
     "hailo10h_to_trt": (
         "part1_onnx",
         "prepared_input_00",
@@ -471,7 +480,7 @@ def _hailo8_python_detection_source_closure_bound(
 
 
 def _split_restage_roles(contract: Mapping[str, Any]) -> tuple[str, ...]:
-    """Select immutable data roles from the sealed backend identity."""
+    """Select minimum required data roles from the sealed backend identity."""
     backend = str(contract.get("backend") or "").strip().lower()
     roles = _SPLIT_RESTAGE_ROLES_BY_BACKEND.get(backend)
     if roles is None:
@@ -543,6 +552,15 @@ def _restage_roles(
         return _split_restage_roles(contract)
     if schema == FULL_COMMAND_CONTRACT_SCHEMA:
         backend = str(contract.get("backend") or "").strip().lower()
+        workload = contract.get("energy_workload")
+        if (backend == "native_full_tensorrt" and isinstance(workload, Mapping)
+                and workload.get("kind") == "tensorrt_full_completed_task_hotloop"):
+            # Quality-FIRST Full TRT keeps the engine, build receipt and
+            # performance metadata in its managed device cache. Only these
+            # exact input artifacts lived in the cleaned temporary run root.
+            # The normal cohort preflight still verifies every cache artifact;
+            # restaging never grants permission to rebuild a missing engine.
+            return ("input_manifest", "runtime_input_tensor")
         roles = _FULL_RESTAGE_ROLES_BY_BACKEND.get(backend)
         if roles is None:
             raise ResumeArtifactContractError(
@@ -625,8 +643,25 @@ def resume_artifact_requirements(
         raise ResumeArtifactContractError(
             "command_contract_artifacts_missing"
         )
+    # Both real preflights read the command's artifact map, not just the
+    # minimum backend input roles above.  Restore every additional consumed
+    # run-local artifact, including generated sources/binaries, receipts and
+    # sealed source metadata.  Device caches and installation files stay under
+    # the ordinary preflight's read-only verification; they cannot be restored
+    # through this frozen-run scope.  Preserve required-role validation below.
+    consumed_roles = list(roles)
+    for role, value in artifacts.items():
+        if (
+            role in consumed_roles
+            or role in _INSTALLATION_ARTIFACT_ROLES
+            or role in omitted_downstream_annotation_roles
+            or not isinstance(value, Mapping)
+        ):
+            continue
+        if _strict_child_remote_path(value.get("path"), remote_root=remote_root):
+            consumed_roles.append(role)
     requirements: list[ArtifactRequirement] = []
-    for role in roles:
+    for role in consumed_roles:
         value = artifacts.get(role)
         if not isinstance(value, Mapping):
             raise ResumeArtifactContractError(
@@ -639,6 +674,18 @@ def resume_artifact_requirements(
             remote_root=remote_root,
         )
         requirements.append(requirement)
+
+    # Older split commands can bind the boundary metadata outside artifacts.
+    # The split preflight reads this independent binding too.
+    boundary = contract.get("boundary_contract")
+    if schema == SPLIT_COMMAND_CONTRACT_SCHEMA and isinstance(boundary, Mapping):
+        metadata_path = boundary.get("metadata_path")
+        if _strict_child_remote_path(metadata_path, remote_root=remote_root):
+            requirements.append(_artifact_requirement(
+                "boundary_contract_metadata",
+                {"path": metadata_path, "sha256": boundary.get("metadata_sha256")},
+                remote_root=remote_root,
+            ))
 
     raw_input_path = str(contract.get("input_image") or "").strip()
     if raw_input_path:

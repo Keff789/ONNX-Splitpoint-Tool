@@ -1850,11 +1850,23 @@ def _trt_backend_token(value: Any) -> str:
     return token
 
 
+def _selective_completion_rows_from_args(args: Any) -> list[dict[str, Any]] | None:
+    value = _argument_value(getattr(args, "add_args", ""), "--selective-completion-rows", "")
+    if not value:
+        return None
+    rows = json.loads(value)
+    if not isinstance(rows, list) or any(not isinstance(row, dict)
+            or row.get("action") not in {"execute", "preserve", "negative_completed"} for row in rows):
+        raise ValueError("selective_completion_rows_invalid")
+    return rows
+
+
 def _trt_preflight_run_requirements(
     suite_dir: Path,
     *,
     active_run_ids: Sequence[str] | None = None,
     quality_only_run_ids: Sequence[str] = (),
+    selective_completion_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Resolve only the TensorRT artifacts consumed by active plan rows.
 
@@ -1886,6 +1898,33 @@ def _trt_preflight_run_requirements(
                 row.get("id") or row.get("run_id") or row.get("name") or ""
             ).strip() in selected
         ]
+    if selective_completion_rows is not None:
+        projected = []
+        for row in rows:
+            run_id = str(row.get("id") or row.get("run_id") or row.get("name") or "")
+            for selected_row in selective_completion_rows:
+                selected_id = str(selected_row.get("dispatch_run_id") or selected_row.get("run_id")
+                                  or selected_row.get("source_run_id") or "")
+                if selected_id == "native_full_tensorrt":
+                    selected_id = "ort_tensorrt"
+                if selected_row.get("action") != "execute" or selected_id != run_id:
+                    continue
+                variant = str(selected_row.get("variant") or "")
+                variants = list(row.get("variants") or ["full", "part1", "part2", "composed"])
+                permitted = {"part1", "part2", "composed"} if variant == "split" else {variant}
+                variants = [value for value in variants if value in permitted]
+                if not variants:
+                    continue
+                selected_copy = dict(row, variants=variants)
+                if variant != "full":
+                    case = str(selected_row.get("case_id") or "")
+                    if not case:
+                        raise ValueError("selective_completion_split_case_missing")
+                    for key in ("case_id", "case", "cases", "case_ids", "selected_cases"):
+                        selected_copy.pop(key, None)
+                    selected_copy["case_ids"] = [case]
+                projected.append(selected_copy)
+        rows = projected
 
     case_ids = [path.name for path in _iter_suite_case_dirs(suite)]
     if not case_ids:
@@ -2782,6 +2821,41 @@ def _trt_preflight_split_source(suite_dir: Path, case_id: str, *, role: str) -> 
     if role not in {"part1", "part2"}:
         raise ValueError(f"unsupported TensorRT split role: {role}")
     case_dir = Path(suite_dir) / str(case_id)
+    manifest_path = case_dir / "split_manifest.json"
+    if manifest_path.exists():
+        # The runner consumes these regular split sources. Backend helpers
+        # (for example part1_hailo_identity) have separate manifest entries
+        # and must not compete with the declared TensorRT source.
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict):
+            raise RuntimeError(f"TensorRT split manifest invalid for {case_id}")
+        models = manifest.get("models") or {}
+        if not isinstance(models, Mapping):
+            raise RuntimeError(f"TensorRT split manifest models invalid for {case_id}")
+        nested = models.get(role)
+        if nested is not None and not isinstance(nested, Mapping):
+            raise RuntimeError(f"TensorRT {role} nested source declaration invalid for {case_id}")
+        declarations = [manifest.get(key) for key in (f"{role}_model", role, f"{role}_path")]
+        if isinstance(nested, Mapping):
+            declarations.append(nested.get("path"))
+        declared_paths: set[Path] = set()
+        for declaration in declarations:
+            if declaration in (None, ""):
+                continue
+            if not isinstance(declaration, str):
+                raise RuntimeError(f"TensorRT {role} source declaration invalid for {case_id}")
+            source = case_dir / declaration
+            if not source.is_file() or source.is_symlink() or source.suffix.lower() != ".onnx":
+                raise FileNotFoundError(
+                    f"TensorRT {role} declared source missing for {case_id}: {declaration}"
+                )
+            declared_paths.add(source.resolve(strict=True))
+        if len(declared_paths) > 1:
+            raise RuntimeError(f"TensorRT {role} source declarations conflict for {case_id}")
+        if declared_paths:
+            return next(iter(declared_paths))
+    # Retain legacy suites without source declarations. Their ambiguity is
+    # still an error; do not guess a regular source from helper filenames.
     candidates: list[Path] = []
     for pattern in (f"*_{role}_*.onnx", f"*{role}*.onnx"):
         candidates.extend(sorted(case_dir.glob(pattern)))
@@ -2865,6 +2939,7 @@ def _trt_preflight_shape_contract(source_onnx: Path) -> dict[str, Any]:
 
 def _trt_preflight_source_shape_contracts(
     suite_dir: Path, *, active_run_ids: Sequence[str] | None = None,
+    selective_completion_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Map active canonical source identities to their build shape contract."""
 
@@ -2872,6 +2947,7 @@ def _trt_preflight_source_shape_contracts(
     sources = list(_canonical_model_onnx_sources(suite))
     requirement_plan = _trt_preflight_run_requirements(
         suite, active_run_ids=active_run_ids,
+        selective_completion_rows=selective_completion_rows,
     )
     for case_id in dict.fromkeys(requirement_plan["p2_cases"] + requirement_plan.get("generic_p2_cases", [])):
         sources.append(_trt_preflight_part2_source(suite, case_id))
@@ -4049,6 +4125,7 @@ def probe_remote_trt_artifact_cache(
                 getattr(args, "add_args", ""), "--quality-only-run-ids", "",
             ).split(",") if value.strip()
         ],
+        selective_completion_rows=_selective_completion_rows_from_args(args),
     )
     runtime_contract = _trt_engine_runtime_contract(
         suite, args=args, active_run_ids=active_run_ids,
@@ -8358,6 +8435,7 @@ def run_remote_benchmark(
                     retention_active_run_ids
                     if retention_active_run_ids else None
                 ),
+                selective_completion_rows=_selective_completion_rows_from_args(args),
             )
             # Deliberately reserve the full conservative engine budget even if
             # current contains valid receipts.  A receipt count alone does not
@@ -9170,6 +9248,11 @@ def run_remote_benchmark(
                 if not src.is_absolute():
                     src = suite_dir / src
                 src = src.resolve()
+                if validation_budget_authoritative and not src.exists():
+                    raise RuntimeError(
+                        "Authoritative suite-local validation source is missing before upload: "
+                        f"source={src}, budget={budget}"
+                    )
                 root = src.parent if src.is_file() else src
                 rel_root = root.relative_to(suite_dir.resolve()).as_posix().strip("/")
                 if budget > 0 and rel_root in {"", ".", "resources", "resources/validation"}:

@@ -11,6 +11,7 @@ import onnx_splitpoint_tool.resume_preparation as preparation
 import onnx_splitpoint_tool.resume_hailo8_source_recovery as source_recovery
 from onnx_splitpoint_tool.resume_artifact_contract import (
     SPLIT_COMMAND_CONTRACT_SCHEMA,
+    _hailo8_python_detection_source_closure_bound,
     resume_artifact_requirements,
 )
 from onnx_splitpoint_tool.resume_artifact_rehydration import (
@@ -380,8 +381,8 @@ def test_hailo8_python_detection_resume_restores_preflight_build_sources(
         "cmake",
         "generated_cpp",
         "input_image",
+        "future_preflight_artifact",
     }
-    assert "future_preflight_artifact" not in roles
     assert "native_executable" not in roles
     assert "hef" not in roles
     assert "python_executable" not in roles
@@ -399,8 +400,10 @@ def test_hailo8_python_detection_requires_bound_interpreter_identity(
         for requirement in _bound_requirements(tmp_path, contract)
     }
 
-    assert "cmake" not in roles
-    assert "generated_cpp" not in roles
+    # Exact archived sources are restageable; reconstructing their bytes
+    # remains forbidden when the original interpreter contract is unbound.
+    assert {"cmake", "generated_cpp"} <= roles
+    assert not _hailo8_python_detection_source_closure_bound(contract)
     assert "native_executable" not in roles
 
 
@@ -426,11 +429,11 @@ def test_hailo8_source_recovery_profile_rejects_generator_drift(
         for requirement in _bound_requirements(tmp_path, contract)
     }
 
-    assert "cmake" not in roles
-    assert "generated_cpp" not in roles
+    assert {"cmake", "generated_cpp"} <= roles
+    assert not _hailo8_python_detection_source_closure_bound(contract)
 
 
-def test_archived_hailo8_cpp_contract_is_not_broadened_without_executable(
+def test_archived_hailo8_cpp_contract_includes_exact_sources_and_executable(
     tmp_path: Path,
 ) -> None:
     raw = REAL_FIXTURE.read_bytes()
@@ -462,6 +465,9 @@ def test_archived_hailo8_cpp_contract_is_not_broadened_without_executable(
     roles = {requirement.role for requirement in requirements}
 
     assert roles == {
+        "cmake",
+        "generated_cpp",
+        "native_executable",
         "prepared_input",
         "semantic_boundary_manifest",
         "semantic_output_manifest",
@@ -712,6 +718,7 @@ def test_observed_partial_remote_root_restores_only_two_preflight_sources(
             "cmake",
             "generated_cpp",
             "input_image",
+            "future_preflight_artifact",
         }
         return _probe_report(
             requirements,
@@ -720,6 +727,7 @@ def test_observed_partial_remote_root_restores_only_two_preflight_sources(
                 "semantic_boundary_manifest",
                 "semantic_output_manifest",
                 "input_image",
+                "future_preflight_artifact",
             },
         )
 
@@ -829,6 +837,7 @@ def test_source_recovery_failure_stops_before_remote_mutation(
                 "semantic_boundary_manifest",
                 "semantic_output_manifest",
                 "input_image",
+                "future_preflight_artifact",
             },
         ),
     )
@@ -888,11 +897,11 @@ def test_source_recovery_failure_stops_before_remote_mutation(
     assert report["workload_started_repeat_count"] == 0
 
 
-def test_fresh_remote_root_stages_full_nine_file_preflight_closure(
+def test_fresh_remote_root_stages_full_ten_file_preflight_closure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A deleted root restores six direct roles plus three payload files."""
+    """A deleted root restores seven direct roles plus three payload files."""
 
     attempt, plan, summary = _layout(tmp_path)
     mirror = summary.parent.parent / "mirror"
@@ -953,6 +962,7 @@ def test_fresh_remote_root_stages_full_nine_file_preflight_closure(
     row = _bound_row(plan, contract)
 
     _write_source(mirror, "prepared/prepared_input.bin", prepared)
+    _write_source(mirror, "extra/future_preflight_artifact", b"future_preflight_artifact")
     _write_source(
         mirror, "boundary/manifest.json", boundary_manifest,
     )
@@ -978,7 +988,7 @@ def test_fresh_remote_root_stages_full_nine_file_preflight_closure(
         stage_map: dict[str, Any],
         **_kwargs: Any,
     ) -> dict[str, Any]:
-        assert stage_map["artifact_count"] == 9
+        assert stage_map["artifact_count"] == 10
         roles = {
             role
             for entry in stage_map["entries"]
@@ -996,10 +1006,10 @@ def test_fresh_remote_root_stages_full_nine_file_preflight_closure(
         return {
             "ok": True,
             "status": "complete",
-            "entry_count": 9,
-            "completed_entry_count": 9,
+            "entry_count": 10,
+            "completed_entry_count": 10,
             "no_op_count": 0,
-            "rehydrated_count": 9,
+            "rehydrated_count": 10,
             "backup_count": 0,
             "transferred_bytes": stage_map["total_bytes"],
             "remote_run_root_created": True,
@@ -1030,14 +1040,14 @@ def test_fresh_remote_root_stages_full_nine_file_preflight_closure(
 
     assert report["ok"] is True
     group = report["remote_groups"][0]
-    assert group["probe"]["requirement_count"] == 6
+    assert group["probe"]["requirement_count"] == 7
     assert group["probe"]["exact_count"] == 0
     assert group["source_recovery"]["artifact_count"] == 2
     stage_map = json.loads(
         Path(group["stage_map_path"]).read_text(encoding="utf-8")
     )
-    assert stage_map["artifact_count"] == 9
-    assert group["rehydration"]["rehydrated_count"] == 9
+    assert stage_map["artifact_count"] == 10
+    assert group["rehydration"]["rehydrated_count"] == 10
     assert report["measurement_wrapper_started_count"] == 0
     assert report["started_measurement_count"] == 0
     assert report["collector_started_repeat_count"] == 0

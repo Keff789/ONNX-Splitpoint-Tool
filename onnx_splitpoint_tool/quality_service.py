@@ -2588,6 +2588,53 @@ def _validate_classification_quality_contract(
     return contract, declared
 
 
+def _validate_generic_native_split_link(
+    producer: Mapping[str, Any], binding: Mapping[str, Any],
+) -> None:
+    """Join independently verified Generic and Native proofs of one candidate.
+
+    A composed candidate using the selected Native P2 engine carries both
+    existing contracts. Neither contract can substitute for the other, and
+    separately valid contracts from different cases or artifacts cannot join.
+    """
+    from .native_split_quality import canonical_native_split_backend
+
+    selected = binding["preselection"]
+    expected = {
+        "eval_run_id": binding["eval_run_id"],
+        "model_id": selected["model_id"],
+        "case_id": selected["case_id"],
+        "setup_id": selected["setup_id"],
+        "runtime_precision_identity": selected["precision"],
+        "task": selected["task"],
+    }
+    for field, value in expected.items():
+        if producer.get(field) != value:
+            raise QualityArtifactIntegrityError(
+                "Generic/Native split producer identity differs: " + field
+            )
+    backend = canonical_native_split_backend(selected["backend"])
+    if any(canonical_native_split_backend(value) != backend for value in (
+        producer["backend"], producer["source_run_id"], binding["source_run_id"],
+    )):
+        raise QualityArtifactIntegrityError("Generic/Native split producer backend differs")
+    artifacts = binding["artifacts"]
+    model = producer["model"]
+    part2 = artifacts["source_part2_onnx"]
+    if (model["part2_onnx_sha256"] != part2["sha256"]
+            or model["part2_onnx_size_bytes"] != part2["size_bytes"]):
+        raise QualityArtifactIntegrityError("Generic/Native split original Part2 differs")
+    runtimes = {item["role"]: item for item in producer["runtime_artifacts"]}
+    for role, native_role in (("stage1_runtime", "part1_runtime"),
+                              ("stage2_runtime", "engine")):
+        observed = runtimes.get(role) or {}
+        if any(observed.get(field) != artifacts[native_role][field]
+               for field in ("sha256", "size_bytes")):
+            raise QualityArtifactIntegrityError(
+                "Generic/Native split runtime artifact differs: " + role
+            )
+
+
 def quality_request_from_manifest(
     request_file: str | Path,
     *,
@@ -3098,6 +3145,8 @@ def quality_request_from_manifest(
             producer_execution_schema
             == "onnx-splitpoint/generic-composed-quality-producer-identity"
         ):
+            if native_split_binding is not None:
+                _validate_generic_native_split_link(request_producer, native_split_binding)
             producer_model = request_producer.get("model")
             if not isinstance(producer_model, Mapping):
                 raise QualityArtifactIntegrityError(

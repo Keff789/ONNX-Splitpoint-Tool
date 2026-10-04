@@ -25,6 +25,10 @@ MAIN_WORKFLOW_TAIL = "evaluation_workflow_tail.log"
 # bounded both per file and for the complete audit evidence set.
 STRUCTURED_RESULT_MAX_FILE_BYTES = 256 * 1024 * 1024
 STRUCTURED_RESULT_MAX_TOTAL_BYTES = 512 * 1024 * 1024
+# The four exact replay-core JSON reports are streamed directly into ZIP;
+# large campaign summaries can exceed the ordinary structured-result cap.
+# This is not a parsing allowance or a directory-wide payload exception.
+OFFLINE_REPLAY_CORE_MAX_FILE_BYTES = 512 * 1024 * 1024
 CENTRAL_DESCRIPTOR_MAX_FILE_BYTES = 64 * 1024 * 1024
 CENTRAL_DESCRIPTOR_MAX_TOTAL_BYTES = 512 * 1024 * 1024
 RANKING_AUDIT_MAX_FILE_BYTES = STRUCTURED_RESULT_MAX_FILE_BYTES
@@ -586,6 +590,7 @@ __all__ = [
     "MODEL_VALIDATION_SUMMARY_MAX_FILE_BYTES",
     "MODEL_VALIDATION_SUMMARY_MAX_TOTAL_BYTES",
     "OFFLINE_REPLAY_CORE",
+    "OFFLINE_REPLAY_CORE_MAX_FILE_BYTES",
     "RANKING_AUDIT_ANALYSIS_FILES",
     "RANKING_AUDIT_BENCHMARK_FILES",
     "RANKING_AUDIT_MAX_FILE_BYTES",

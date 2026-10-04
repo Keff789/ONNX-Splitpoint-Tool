@@ -561,6 +561,12 @@ def test_full_only_collector_blocks_replayed_or_unsealed_identity(
 def test_remote_dispatch_deepx_full_only_skips_performance_materialization_and_collects_two_of_two(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # This is a controlled remote-service replay. Resolving the synthetic
+    # hostname is outside its scope and fails on offline controllers.
+    monkeypatch.setattr(
+        "onnx_splitpoint_tool.workflow.execution_binding.physical_dut_key",
+        lambda _target: "controlled-deepx-replay",
+    )
     module = _suite_module()
     remote_run, dxnn = _prepare_root(tmp_path)
     semantic, prepared = _classification_semantic(remote_run)

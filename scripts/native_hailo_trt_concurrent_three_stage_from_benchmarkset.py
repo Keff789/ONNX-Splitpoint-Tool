@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -29,6 +30,11 @@ import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 SCHEMA = "onnx-splitpoint/native-dual-endpoint-result"
@@ -1264,6 +1270,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--source-run-id", default="")
     p.add_argument("--model-id", default="")
     p.add_argument("--native-split-quality-binding", required=True)
+    p.add_argument("--campaign-config", default="", help="Bound prepared-input Native campaign; historical canary pins remain unchanged.")
     p.add_argument(
         "--three-stage-scope",
         choices=(DIAGNOSTIC_SCOPE, CLAIM_SCOPE),
@@ -1289,6 +1296,65 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _run_campaign_config(args: argparse.Namespace, *, result_json: Path,
+                         work_dir: Path) -> int:
+    """Forward the current Quality-bound artifacts to the prepared-input ABI."""
+    config, _ = _require_regular_json(Path(args.campaign_config), role="campaign_config")
+    binding, _ = _require_regular_json(Path(args.native_split_quality_binding), role="quality_binding")
+    _validate_quality_binding(binding=binding, model_id=_normalised_model_id(args.model_id),
+                              case_id=args.case, setup_id=args.setup_id,
+                              precision=args.precision, claim_mode=True)
+    identity = config.get("identity") or {}
+    expected = {"model_id": args.model_id, "case_id": args.case,
+                "setup_id": args.setup_id, "precision": args.precision,
+                "eval_run_id": args.eval_run_id, "source_run_id": args.source_run_id}
+    if identity != expected or config.get("quality_binding_sha256") != binding.get("binding_sha256"):
+        raise RuntimeError("concurrent_campaign_quality_identity_mismatch")
+    for config_name, binding_name in (("hef", "part1_runtime"), ("engine", "engine")):
+        path = _artifact_path(binding, binding_name)
+        spec = config.get(config_name) or {}
+        if (Path(str(spec.get("path") or "")).resolve() != path
+                or spec.get("sha256") != _sha256(path)
+                or spec.get("size_bytes") != path.stat().st_size):
+            raise RuntimeError(f"concurrent_campaign_quality_artifact_mismatch:{config_name}")
+    image = Path(args.image).resolve()
+    image_spec = config.get("input_image") or {}
+    if (image_spec.get("path") != str(image) or image_spec.get("sha256") != _sha256(image)):
+        raise RuntimeError("concurrent_campaign_image_mismatch")
+    for spec_name, expected_sha in (("input_image", args.expected_image_sha256),
+                                   ("hef", args.expected_hef_sha256),
+                                   ("engine", args.expected_engine_sha256)):
+        if expected_sha and config[spec_name]["sha256"] != str(expected_sha).removeprefix("sha256:"):
+            raise RuntimeError(f"concurrent_campaign_expected_sha_mismatch:{spec_name}")
+    if args.expected_boundary_layout and binding["preselection"].get("boundary_layout") != args.expected_boundary_layout:
+        raise RuntimeError("concurrent_campaign_expected_boundary_layout_mismatch")
+    for key, expected_value in (("frames", args.frames), ("warmup", args.warmup),
+                                ("repetitions", args.repetitions), ("duration_s", args.duration_s),
+                                ("p1_queue_depth", args.queue_depth), ("post_queue_depth", args.post_queue_depth)):
+        if config.get(key) != expected_value:
+            raise RuntimeError(f"concurrent_campaign_runtime_option_mismatch:{key}")
+    tool_root = Path(__file__).resolve().parents[1]
+    resource = tool_root / "onnx_splitpoint_tool/resources/native_concurrent_three_stage_yolov7"
+    sys.path.insert(0, str(resource))
+    spec = importlib.util.spec_from_file_location("_native_campaign_canary", resource / "three_stage_canary.py")
+    if spec is None or spec.loader is None:
+        raise RuntimeError("concurrent_campaign_canary_unavailable")
+    canary = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(canary)
+    report = canary.run_campaign(config, out_root=work_dir / "campaign")
+    artifacts = dict(report.get("runtime_artifacts") or {})
+    for role, path in (
+        ("concurrent_helper", Path(__file__).resolve()),
+        ("concurrent_canary", resource / "three_stage_canary.py"),
+        ("concurrent_fast_decode", resource / "fast_decode_runtime.py"),
+        ("native_three_stage", tool_root / "onnx_splitpoint_tool/native_three_stage.py"),
+    ):
+        artifacts[role] = {"path": str(path), "sha256": _sha256(path), "size_bytes": path.stat().st_size}
+    report["runtime_artifacts"] = artifacts
+    _write_json(result_json, report)
+    return 0 if report.get("ok") is True else 1
+
+
 def main() -> int:
     args = build_parser().parse_args()
     result_json = Path(args.result_json).expanduser().resolve()
@@ -1308,6 +1374,9 @@ def main() -> int:
             raise RuntimeError("concurrent_three_stage_yolov7_model_identity_mismatch")
         if args.precision != "uint8_dequant_fp16":
             raise RuntimeError("concurrent_three_stage_requires_uint8_dequant_fp16")
+
+        if args.campaign_config:
+            return _run_campaign_config(args, result_json=result_json, work_dir=work_dir)
 
         _add_extra_sites()
         import numpy as np  # noqa: F401

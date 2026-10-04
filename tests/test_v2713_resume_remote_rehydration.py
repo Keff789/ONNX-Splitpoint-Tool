@@ -502,6 +502,34 @@ def test_existing_run_root_with_missing_nested_parents_is_rehydrated(
     )
 
 
+def test_bound_native_binary_is_restored_executable_and_reentry_is_noop(tmp_path):
+    storage = tmp_path / "native_fifo_evalsets"
+    storage.mkdir()
+    root = storage / "run"
+    source = tmp_path / "original-native-binary"
+    data = b"saved native executable, never executed by this test"
+    source.write_bytes(data)
+    target = root / "model" / "build" / "native_fifo"
+    entry = _entry(source, str(target), data)
+    entry["roles"] = ["native_executable"]
+    stage = _stage_map([entry], allowed_roots=[str(root)])
+    runner = _LocalSshRunner()
+    first = remote.rehydrate_remote_stage_map(
+        stage, ssh_target=SSH, remote_run_root=str(root),
+        resume_attempt_id="native-first", runner=runner,
+    )
+    assert first["ok"] and first["rehydrated_count"] == 1
+    assert target.read_bytes() == data
+    assert target.stat().st_mode & 0o777 == 0o700
+    before = target.stat()
+    second = remote.rehydrate_remote_stage_map(
+        stage, ssh_target=SSH, remote_run_root=str(root),
+        resume_attempt_id="native-second", runner=runner,
+    )
+    assert second["ok"] and second["rehydrated_count"] == 0
+    assert target.stat() == before
+
+
 def test_storage_root_identity_drift_before_creation_fails_without_run_root(
     tmp_path: Path,
 ) -> None:

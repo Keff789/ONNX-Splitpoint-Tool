@@ -84,8 +84,64 @@ def _write(path, value):
     writer._write_json_atomic(path, value, strict_directory_sync=True)
 
 
+def _rest_capture_journal(run, session_id, attempt_dir):
+    """Read the existing explicit YOLO rest attempt, without relocating its journal."""
+    attempt = Path(attempt_dir).expanduser()
+    _require(attempt.is_absolute() and attempt.is_dir() and not attempt.is_symlink()
+             and attempt.name == session_id, "invalid rest attempt directory")
+    attempt = attempt.resolve()
+    read = RemoteProcessLeaseJournal._read_json_exact
+    evidence = {}
+    for name in ("production-start.json", "terminal-status.json", "cleanup-status.json"):
+        path = attempt / name
+        _require(path.is_file() and not path.is_symlink(), "missing exact rest evidence: " + name)
+        evidence[path] = read(path)
+    start, terminal, cleanup = (evidence[attempt / name] for name in (
+        "production-start.json", "terminal-status.json", "cleanup-status.json"))
+    plan_path = Path(str(start.get("plan") or ""))
+    _require(plan_path.is_absolute() and plan_path.is_file() and not plan_path.is_symlink(),
+             "rest source plan unavailable")
+    plan = read(plan_path)
+    _require(Path(str(plan.get("augmentation_run") or "")).resolve() == run
+             and Path(str(plan.get("output_root") or "")).resolve() / "attempts" / session_id == attempt,
+             "rest source plan/run/attempt binding mismatch")
+    _require(type(start.get("pid")) is int and start["pid"] > 0
+             and start.get("automatic_restart") is False
+             and terminal.get("status") in {"stopped", "completed"}
+             and type(terminal.get("exitcode")) is int
+             and terminal.get("automatic_restart") is False
+             and _time(start.get("started_at")) <= _time(terminal.get("finished_at")),
+             "rest parent is not exactly terminal")
+    exit_path = attempt / "exitcode.txt"
+    _require(exit_path.is_file() and not exit_path.is_symlink()
+             and exit_path.read_text().strip() == str(terminal["exitcode"]),
+             "rest exit status is not durable")
+    _require(type(cleanup.get("active_owned_remote_operations")) is int
+             and cleanup["active_owned_remote_operations"] == 0
+             and type(cleanup.get("owned_local_processes")) is int
+             and cleanup["owned_local_processes"] == 0
+             and cleanup.get("foreign_processes_stopped") is False
+             and _time(start.get("started_at")) <= _time(cleanup.get("at"))
+             <= _time(terminal.get("finished_at")),
+             "rest owned process cleanup incomplete")
+    directory = attempt / "remote-process-leases"
+    _require(directory.is_dir() and not directory.is_symlink()
+             and directory.resolve().parent == attempt, "invalid existing rest journal")
+    evidence[plan_path] = plan
+    evidence[exit_path] = terminal["exitcode"]
+    return directory, start, evidence
+
+
+def _rest_evidence_unchanged(evidence):
+    read = RemoteProcessLeaseJournal._read_json_exact
+    return all(not path.is_symlink() and path.is_file() and (
+        path.read_text().strip() == str(value) if path.name == "exitcode.txt" else read(path) == value
+    ) for path, value in evidence.items())
+
+
 def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
-                              operator_evidence=None, retry_authorization=None, registry_path=None):
+                              operator_evidence=None, retry_authorization=None, registry_path=None,
+                              rest_attempt_dir=None):
     """Recover exactly one four-resource capture STOP, under all four flocks.
 
     Exactly one explicit release ground is required. Evidence and original
@@ -101,9 +157,13 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
     for value in (session_id, operation_id):
         _require(isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,160}", value)
                  and value not in {".", ".."}, "invalid session/operation")
-    directory = run / "jobs" / "remote_process_leases" / session_id
-    _require(directory.is_dir() and not directory.is_symlink()
-             and directory.resolve().is_relative_to(run), "invalid existing session directory")
+    rest_evidence = {}
+    if rest_attempt_dir is None:
+        directory = run / "jobs" / "remote_process_leases" / session_id
+        _require(directory.is_dir() and not directory.is_symlink()
+                 and directory.resolve().is_relative_to(run), "invalid existing session directory")
+    else:
+        directory, rest_start, rest_evidence = _rest_capture_journal(run, session_id, rest_attempt_dir)
     read = RemoteProcessLeaseJournal._read_json_exact
     config_path = directory / "controller.resources.json"
     request_path = directory / (operation_id + ".resource-request.json")
@@ -112,6 +172,8 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
     identity = {"run_id": run.name, "session_id": session_id, "operation_id": operation_id}
     _require(_bound(config, identity, ("run_id", "session_id"))
              and config.get("run_dir") == str(run), "controller session binding mismatch")
+    if rest_evidence:
+        _require(config.get("parent_pid") == rest_start["pid"], "rest parent PID binding mismatch")
     _require(_bound(request, identity, identity) and request.get("setup_id") == setup_id
              and request.get("purpose", "capture") == "capture"
              and request.get("phase") == "FINALIZING" and request.get("process_started") is True
@@ -161,6 +223,7 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
         # Re-read every input once the complete exclusive group is held.
         _require(read(config_path) == config and read(request_path) == request and read(reply_path) == reply,
                  "capture metadata changed during lock acquisition")
+        _require(_rest_evidence_unchanged(rest_evidence), "rest terminal evidence changed")
         previous_recovery = reply.get("recovery") or {}
         _require(not previous_recovery or (
             _bound(previous_recovery, identity, identity)
@@ -234,8 +297,8 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
                  and _bound(cleanup, request, ("collector_pid", "collector_start_ticks")),
                  "exact durable collector cleanup is missing")
         manifest = read(run / "run_manifest.json")
-        _require(manifest.get("run_id") == run.name and manifest.get("status") in
-                 {"failed", "cancelled", "completed", "success", "done"}, "parent workflow is not terminal")
+        _require(manifest.get("run_id") == run.name and (rest_evidence or manifest.get("status") in
+                 {"failed", "cancelled", "completed", "success", "done"}), "parent workflow is not terminal")
         for path in directory.glob("*.remote-lease.json"):
             # Active or corrupt predecessor descriptors require their existing
             # exact cleanup path first. Recovery never kills an unknown owner.
@@ -250,7 +313,8 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
                                            diagnostics_dir=directory)
         _require(observed.get("ok") is True, "active or unobservable local/remote predecessor")
         _require(registry_file.read_bytes() == registry_before and read(request_path) == request
-                 and read(reply_path) == reply and read(config_path) == config,
+                 and read(reply_path) == reply and read(config_path) == config
+                 and _rest_evidence_unchanged(rest_evidence),
                  "registry or ownership changed during observation")
         recovery = {**identity, "resources": resources, evidence_key: evidence,
                     "original_resources": originals, "ownership_observation": observed,

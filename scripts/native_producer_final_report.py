@@ -1061,6 +1061,51 @@ def _native_identity_fields(*sources: dict[str, Any]) -> dict[str, Any]:
     return {'setup_id': setup_id, 'comparison_backend': comparison_backend}
 
 
+def _complete_bound_native_identity(row: dict[str, Any], contexts: list[dict[str, Any]]) -> dict[str, Any]:
+    """Resolve a dispatcher label's absent precision from the sealed observation."""
+    from onnx_splitpoint_tool.native_job_identity import (
+        FIELDS, complete_historical_identity, planned_native_identity,
+    )
+    original = complete_historical_identity(row, contexts)
+    if (original.get('identity_conflicts') != ['precision']
+            or row.get('identity_conflicts') or _bind_quality_to_native_split is None
+            or _strict_verify_native_command_contract is None):
+        return original
+    observed = planned_native_identity(row)
+    candidates = []
+    for index, context in enumerate(contexts):
+        variant = str(context.get('variant') or '').strip()
+        # A precision-bearing variant remains an assertion, including malformed
+        # precision-like tokens. Never replace cast with dequant (or vice versa).
+        if (any(context.get(field) not in (None, '') for field in (
+                    'precision', 'contract', 'runtime_precision_identity', 'execution_precision'))
+                or not variant
+                or _runtime_precision_identity({'backend': observed['backend'], 'precision': variant})
+                or re.match(r'^(?:u?int|float|b?fp)\d|^(?:deepx_dxnn|hailo_hef)_sha256:', variant.lower())):
+            continue
+        planned = planned_native_identity(context)
+        if all(observed[field] and planned[field] == observed[field] for field in FIELDS[:-1]):
+            candidates.append(index)
+    if not candidates:
+        return original
+    if any(contexts[index] != contexts[candidates[0]] for index in candidates[1:]):
+        # A command proves precision, not which of several distinct dispatcher
+        # variants was planned. Exact duplicate contexts add no ambiguity.
+        return original
+    command, _ = _strict_verify_native_command_contract(
+        row.get('native_command_contract'), expected_identity=observed,
+    )
+    selected, _ = _bind_quality_to_native_split(native_row=row,
+        quality_binding=row.get('native_split_quality_binding'), verification_mode='portable')
+    if (command is None or selected is None
+            or command.get('precision') != _runtime_precision_identity(row)):
+        return original
+    resolved = [dict(context) for context in contexts]
+    for index in candidates:
+        resolved[index]['precision'] = command['precision']
+    return complete_historical_identity(row, resolved)
+
+
 def _verified_native_producer_impl(*sources: dict[str, Any]) -> str:
     """Return only one producer implementation bound by verified row evidence."""
     if _strict_verify_native_command_contract is None:
@@ -1197,10 +1242,68 @@ def _native_split_authority(outdir: Path) -> dict[str, Any]:
     )
 
 
+def _augmentation_terminal_rows(stage: Mapping[str, Any], authority: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Re-read exact build evidence for this frozen augmentation only."""
+    terminals = stage.get('augmentation_technical_terminals', [])
+    if not terminals:
+        return []
+    from onnx_splitpoint_tool.workflow.checkpoints import canonical_json_sha256
+    from onnx_splitpoint_tool.yolo_augmentation_plan import collect_technical_terminals
+    if (not isinstance(terminals, list) or any(not isinstance(row, Mapping) for row in terminals)
+            or not authority.get('run_manifest')):
+        raise ValueError('augmentation_terminal_projection_source_invalid')
+    run = Path(authority['run_manifest']).resolve().parent
+    cfg = _load_strict_json_object(run / 'reports/native_producer_stage_config.json') or {}
+    barrier = cfg.get('augmentation_startcase_barrier') or {}
+    if not isinstance(barrier, Mapping) or not barrier.get('plan_path'):
+        raise ValueError('augmentation_terminal_projection_config_missing')
+    plan = _load_strict_json_object(Path(barrier['plan_path'])) or {}
+    if (plan.get('cohort_id') != 'yolo_min3_capability_augmentation'
+            or plan.get('frozen') is not True or not plan.get('augmentation_run')
+            or Path(plan['augmentation_run']).resolve() != run
+            or canonical_json_sha256(plan) != barrier.get('plan_sha256')
+            or barrier.get('technical_terminals') != terminals
+            or collect_technical_terminals(plan, run) != terminals):
+        raise ValueError('augmentation_terminal_projection_binding_invalid')
+    return [dict(row) for row in terminals]
+
+
+def _augmentation_has_runtime_observation(row: Mapping[str, Any]) -> bool:
+    """A failed/partial physical attempt is preserved just like a success."""
+    observations = [row, *(row.get('prerequisite_observations') or [])]
+    if row.get('child_observation'):
+        observations.append(row['child_observation'])
+    for source in observations:
+        if not isinstance(source, Mapping):
+            return True
+        if any(source.get(field) is True for field in (
+                'ok', 'result_ok', 'runtime_success', 'runtime_started', 'execution_started', 'measurement_started')):
+            return True
+        if any(field in source and source[field] is not None
+               and (type(source[field]) is not int or source[field] != 0) for field in (
+                'repetition_count_attempted', 'repetition_count_valid', 'performance_repeat_count_attempted',
+                'performance_repeat_count_valid', 'repetitions_completed', 'completed_frames', 'frames_completed',
+                'completed_work_units', 'postprocess_completed_frames', 'performance_repeat_n')):
+            return True
+        if any(source.get(field) for field in (
+                'repetition_records', 'repetition_evidence', 'performance_repetitions', 'fps_repetition_samples',
+                'latency_mean_repetition_samples_ms')):
+            return True
+        if any(source.get(field) not in (None, '') for field in (
+                'repetition_index', 'fps_makespan', 'fps_median', 'latency_mean_ms', 'latency_median_ms',
+                'latency_p50_ms', 'latency_p95_ms', 'completion_interval_mean_ms',
+                'handoff_ms', 'p1_ms', 'p2_run_ms', 'p1_thread_ms', 'p2_thread_ms')):
+            return True
+    return False
+
+
 def _apply_native_split_authority_to_rows(
     rows: Iterable[dict[str, Any]], authority: Mapping[str, Any],
 ) -> None:
     for row in rows:
+        from onnx_splitpoint_tool.native_job_identity import native_capability_exclusion
+        if native_capability_exclusion(row):
+            continue
         split_backend = (
             bool(_is_native_split_backend(row.get('backend')))
             if _is_native_split_backend is not None else
@@ -1209,6 +1312,18 @@ def _apply_native_split_authority_to_rows(
         )
         if not split_backend:
             continue
+        previous_projection = {
+            key: row[key] for key in (
+                'native_split_quality_authority',
+                'native_split_quality_authority_errors',
+                'native_split_quality_authority_previous_errors',
+                'native_split_semantic_binding_required',
+                'native_split_semantic_binding_valid',
+                'native_split_semantic_binding_status',
+                'native_split_final_portable_binding_valid',
+                'native_split_final_portable_binding_status',
+            ) if key in row
+        }
         if _apply_split_quality_authority is None:
             row['native_split_quality_required'] = True
             row['native_split_quality_binding_required'] = True
@@ -1237,13 +1352,59 @@ def _apply_native_split_authority_to_rows(
             ):
                 row['native_split_semantic_binding_required'] = True
                 row['native_split_semantic_binding_valid'] = False
-                row['native_split_semantic_binding_status'] = (
-                    'authority_eval_run_id_mismatch'
+                authority_status = (
+                    'authority_invalid' if authority.get('valid') is not True
+                    else 'authority_eval_run_id_mismatch'
                 )
+                row['native_split_semantic_binding_status'] = authority_status
                 row['native_split_final_portable_binding_valid'] = False
                 row['native_split_final_portable_binding_status'] = (
-                    'native_split_quality_authority_eval_run_id_mismatch'
+                    'native_split_quality_' + authority_status
                 )
+            elif previous_projection.get(
+                'native_split_final_portable_binding_status'
+            ) in {
+                'native_split_quality_authority_eval_run_id_mismatch',
+                'native_split_quality_authority_invalid',
+            }:
+                # A later report may reuse measurements collected before the
+                # native-stage metadata caught up with a supplement session.
+                # The new authority alone cannot repair that old decision:
+                # replay the existing command/consumer/payload verifier.
+                row.setdefault(
+                    'native_split_quality_previous_projection',
+                    previous_projection,
+                )
+                report = Path(str(row.get('report') or ''))
+                raw = _load_strict_json_object(report)
+                if raw is None:
+                    proof = {
+                        'native_split_semantic_binding_required': True,
+                        'native_split_semantic_binding_valid': False,
+                        'native_split_semantic_binding_status': 'native_result_missing_or_invalid',
+                        'native_split_final_portable_binding_valid': False,
+                        'native_split_final_portable_binding_status': 'native_result_missing_or_invalid',
+                    }
+                else:
+                    sources = [row, raw]
+                    manifest, resolution = _resolve_split_semantic_manifest(
+                        report, sources, kind='output',
+                    )
+                    proof = _verify_split_semantic_artifacts(
+                        result_path=report, manifest_path=manifest,
+                        manifest_sha256=_hash_file(manifest) if manifest else '',
+                        sources=sources,
+                    )
+                    if resolution['manifest_resolution_status'] not in (
+                        'manifest_verified', 'legacy_manifest_found',
+                    ):
+                        proof.update({
+                            'native_split_semantic_binding_valid': False,
+                            'native_split_semantic_binding_status': resolution['manifest_resolution_status'],
+                            'native_split_final_portable_binding_valid': False,
+                            'native_split_final_portable_binding_status': resolution['manifest_resolution_status'],
+                        })
+                row.update(proof)
         if row.get('native_split_quality_required') is True and (
             row.get('native_split_semantic_binding_required') is not True
         ):
@@ -5282,12 +5443,12 @@ def _evidence_summary(
     rows: list[dict[str, Any]],
     expected_matrix: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    from onnx_splitpoint_tool.native_job_identity import known_build_exclusion, project_known_build_exclusions
+    from onnx_splitpoint_tool.native_job_identity import known_build_exclusion, native_capability_exclusion, project_known_build_exclusions
     if isinstance(expected_matrix, Mapping):
         expected_matrix = project_known_build_exclusions(expected_matrix)
-    excluded_rows = [r for r in rows if known_build_exclusion(r)]
+    excluded_rows = [r for r in rows if known_build_exclusion(r) or native_capability_exclusion(r)]
     ok_rows = [r for r in rows if bool(r.get("ok"))]
-    failed_rows = [r for r in rows if not bool(r.get("ok")) and not known_build_exclusion(r)]
+    failed_rows = [r for r in rows if not bool(r.get("ok")) and not known_build_exclusion(r) and not native_capability_exclusion(r)]
     full_rows = [
         r for r in rows
         if str(r.get("execution_mode") or "") == "native_full_baseline"
@@ -5298,6 +5459,7 @@ def _evidence_summary(
         "row_count": len(rows),
         "ok_count": len(ok_rows),
         "failed_or_unsupported_count": len(failed_rows),
+        "not_supported_count": sum(bool(native_capability_exclusion(r)) for r in rows),
         "native_full_row_count": len(full_rows),
     }
     if not isinstance(expected_matrix, Mapping):
@@ -5423,7 +5585,7 @@ def _write_model_scoped_reports(
                 f"**{summary.get('successful_expected_row_count')}** "
                 "successful; "
                 f"**{summary.get('failed_expected_row_count')}** failed; "
-                f"**{summary.get('excluded_expected_row_count', 0)}** known build exclusions; "
+                f"**{summary.get('excluded_expected_row_count', 0)}** terminal exclusions; "
                 f"**{summary.get('missing_expected_row_count')}** missing"
                 if summary.get("matrix_bound") is True else ""
             ),
@@ -5453,6 +5615,7 @@ def main() -> int:
     ap.add_argument('--root', action='append', required=True, help='Staged native_fifo_evalsets root. Can be passed multiple times.')
     ap.add_argument('--recursive', action='store_true', help='Recursively collect nested backend roots that contain analysis_tables.')
     ap.add_argument('--out-dir', default='', help='Defaults to first <root>/analysis_tables')
+    ap.add_argument('--previous-summary', default='', help='Preserved completed rows from an earlier attempt of the same run.')
     ap.add_argument(
         '--expected-matrix', default='',
         help=(
@@ -5491,6 +5654,7 @@ def main() -> int:
             if _DEFAULT_DETECTION_EXCLUSIONS.is_file() else ''
         ),
     )
+    ap.add_argument('--eval-root', default='', help='Original evaluation root for read-only authority when writing external reports.')
     ns = ap.parse_args()
     expected_matrix: dict[str, Any] | None = None
     if ns.expected_matrix:
@@ -5525,7 +5689,7 @@ def main() -> int:
     base = Path(ns.root[0]).expanduser().resolve()
     outdir = Path(ns.out_dir).expanduser().resolve() if ns.out_dir else base / 'analysis_tables'
     outdir.mkdir(parents=True, exist_ok=True)
-    split_quality_authority = _native_split_authority(outdir)
+    split_quality_authority = _native_split_authority(Path(ns.eval_root).expanduser().resolve() if ns.eval_root else outdir)
     all_roots: list[Path] = []
     for r in ns.root:
         all_roots.extend(_find_eval_roots(Path(r), ns.recursive))
@@ -5553,7 +5717,6 @@ def main() -> int:
                 quality_status = 'loaded'
             else:
                 quality_status = 'invalid'
-    from onnx_splitpoint_tool.native_job_identity import complete_historical_identity
     planned_contexts = []
     if isinstance(expected_matrix, Mapping):
         planned_contexts = list(expected_matrix.get('expected_native_rows') or expected_matrix.get('expected_rows') or [])
@@ -5561,8 +5724,21 @@ def main() -> int:
         stage = _load_strict_json_object(outdir / 'native_producer_stage.json') or {}
         planned_contexts = list(stage.get('expected_native_rows') or [])
     if planned_contexts:
-        rows = [complete_historical_identity(row, planned_contexts) for row in rows]
+        rows = [_complete_bound_native_identity(row, planned_contexts) for row in rows]
     aggregated_rows = _aggregate_repetitions(rows)
+    stage = _load_strict_json_object(outdir / 'native_producer_stage.json') or {}
+    subset_rows = list(stage.get('native_not_supported_rows') or [])
+    augmentation_terminals = _augmentation_terminal_rows(stage, split_quality_authority)
+    if ns.previous_summary or subset_rows or augmentation_terminals:
+        from onnx_splitpoint_tool.native_job_identity import merge_native_result_rows, native_identity_key
+        previous = _load_strict_json_object(Path(ns.previous_summary)) if ns.previous_summary else {'rows': []}
+        if not isinstance(previous, dict) or not isinstance(previous.get('rows'), list):
+            ap.error('invalid --previous-summary: expected a readable Native summary')
+        terminal_keys = {native_identity_key(row) for row in augmentation_terminals}
+        if any(native_identity_key(row) in terminal_keys and _augmentation_has_runtime_observation(row)
+               for row in previous['rows'] + aggregated_rows):
+            raise ValueError('augmentation_terminal_conflicts_with_runtime_observation')
+        aggregated_rows = merge_native_result_rows(previous['rows'], aggregated_rows + augmentation_terminals, subset_rows)
     _apply_native_split_authority_to_rows(
         aggregated_rows, split_quality_authority,
     )
@@ -5648,7 +5824,7 @@ def main() -> int:
                 f"**{data.get('successful_expected_row_count')}** "
                 'successful; '
                 f"**{data.get('failed_expected_row_count')}** failed; "
-                f"**{data.get('excluded_expected_row_count', 0)}** known build exclusions; "
+                f"**{data.get('excluded_expected_row_count', 0)}** terminal exclusions; "
                 f"**{data.get('missing_expected_row_count')}** missing"
             ),
         ])

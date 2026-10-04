@@ -52,6 +52,18 @@ def _logical_profiles(profile: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return [r for r in (profile.get("run_profiles") or []) if isinstance(r, Mapping) and _truth(r.get("enabled", True))]
 
 
+def explicit_composed_only_run_ids(profile: Mapping[str, Any]) -> set[str]:
+    """Recognize the narrow explicit accelerator-to-TRT split-only contract."""
+    sources = {"hailo8_to_trt": "hailo8", "hailo10_to_tensorrt": "hailo10",
+               "deepx_m1_to_tensorrt": "deepx_m1"}
+    rows = _logical_profiles(profile)
+    if not rows or not all(row.get("id") in sources and row.get("type") == "mixed_backend"
+            and row.get("stage1") == sources[row["id"]] and row.get("stage2") == "tensorrt"
+            and row.get("variants") == ["composed"] for row in rows):
+        return set()
+    return {str(row["id"]) for row in rows}
+
+
 def _setup_class(run_id: str) -> str:
     rid = str(run_id or "").lower()
     if "hailo10" in rid:
@@ -390,6 +402,16 @@ def build_effective_execution_plan(profile: Mapping[str, Any]) -> Dict[str, Any]
     holdout = snapshot.get("holdout") if isinstance(snapshot.get("holdout"), Mapping) else {}
     top_level_ranking = profile.get("ranking_validation") if isinstance(profile.get("ranking_validation"), Mapping) else {}
     data = snapshot.get("data") if isinstance(snapshot.get("data"), Mapping) else {}
+    explicit_composed = explicit_composed_only_run_ids(profile)
+    if explicit_composed and not snapshot:
+        # An already resolved explicit profile keeps its own N/B/calibration
+        # contract without re-applying mutable global run-mode defaults.
+        data = {"validation_items": dict((profile.get("validation_execution") or {}).get("max_items") or {})}
+        quality = dict((profile.get("quality_gate") or {}).get("statistics") or {})
+        counts = {int(((profile.get("deepx_build") if rid.startswith("deepx") else profile.get("hailo_build")) or {}).get("calib_count") or 0)
+                  for rid in explicit_composed}
+        if len(counts) == 1 and next(iter(counts)) > 0:
+            data["calibration_items"] = {str(model.get("task")): next(iter(counts)) for model in models}
     build = snapshot.get("build") if isinstance(snapshot.get("build"), Mapping) else {}
     hailo = build.get("hailo") if isinstance(build.get("hailo"), Mapping) else {}
     snapshot_deepx = build.get("deepx") if isinstance(build.get("deepx"), Mapping) else {}
@@ -414,7 +436,8 @@ def build_effective_execution_plan(profile: Mapping[str, Any]) -> Dict[str, Any]
     automatic_refs: list[str] = []
     if "ort_cpu" not in ids:
         automatic_refs.append("ort_cpu")
-    if not any(x in ids for x in ("ort_tensorrt", "tensorrt_full", "trt_full")):
+    if (not explicit_composed_only_run_ids(profile)
+            and not any(x in ids for x in ("ort_tensorrt", "tensorrt_full", "trt_full"))):
         automatic_refs.append("ort_tensorrt")
     quality_execution_location, quality_workers = _quality_execution(profile, snapshot)
     management_reference_profiles = (
@@ -549,6 +572,12 @@ def build_effective_execution_plan(profile: Mapping[str, Any]) -> Dict[str, Any]
     defaults = snapshot.get("defaults") if isinstance(snapshot.get("defaults"), Mapping) else {}
     native_default = _truth(defaults.get("native_enabled"))
     energy_default = _truth(defaults.get("energy_enabled"))
+    if explicit_composed and not snapshot:
+        # A resolved composed-only profile can intentionally have no run-mode
+        # preset. Its operational Native configuration remains authoritative.
+        materialized_native = profile.get("native_producers") or {}
+        native_default = _truth(materialized_native.get("enabled"))
+        energy_default = _truth((materialized_native.get("energy") or {}).get("enabled"))
     native_override_present = "native_enabled" in overrides
     energy_override_present = "energy_enabled" in overrides
     native_enabled = _truth(overrides.get("native_enabled")) if native_override_present else native_default
@@ -694,12 +723,16 @@ def build_effective_execution_plan(profile: Mapping[str, Any]) -> Dict[str, Any]
             # ranking gates, not the (possibly larger) execution union.
             candidate_counts_by_model[model_id] = audit_count
         else:
-            candidate_counts_by_model[model_id] = cases_per_model
+            from .workflow.selection_request_counts import requested_cases_for_model
+            model_cases = (requested_cases_for_model(selection, model_id, default=cases_per_model)
+                           if explicit_composed else cases_per_model)
+            deployment_shortlist_upper_bound_by_model[model_id] = model_cases
+            candidate_counts_by_model[model_id] = model_cases
             execution_union_candidate_counts_min_by_model[model_id] = (
-                cases_per_model
+                model_cases
             )
             execution_union_candidate_counts_upper_bound_by_model[model_id] = (
-                cases_per_model
+                model_cases
             )
     shortfall_models = {
         model_id: max(0, ranking_min_candidates - count)

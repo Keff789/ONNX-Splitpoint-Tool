@@ -27,6 +27,7 @@ import statistics
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -48,6 +49,43 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _verified_oracle_sources(
+    tool_root: Path, processor_contract: Mapping[str, Any],
+) -> tuple[Any, Any, list[dict[str, Any]]]:
+    """Use the normal frozen-contract verifier, retaining original source pins.
+
+    The verifier already binds historical decoder versions to their original
+    arithmetic. A newer source file can implement that same sealed contract;
+    byte equality with the archived source is reported separately below.
+    """
+    sys.path.insert(0, str(tool_root))
+    import onnx_splitpoint_tool.native_detection_postprocess as ndp
+    from onnx_splitpoint_tool.runners.harness import yolo
+
+    verified = ndp.verify_frozen_postprocess_contract(processor_contract)
+    if verified != dict(processor_contract):
+        raise RuntimeError("frozen_oracle_contract_projection_mismatch")
+    current = ndp._implementation_artifacts()
+    source_checks: list[dict[str, Any]] = []
+    for role, artifact in verified["implementation_artifacts"].items():
+        path = tool_root / str(artifact["relative_path"])
+        actual_sha = sha256_file(path) if path.is_file() else ""
+        expected_sha = str(artifact["sha256"])
+        passed = bool(path.is_file() and actual_sha == current[role]["sha256"])
+        source_checks.append({
+            "role": role,
+            "path": str(path),
+            "expected_sha256": expected_sha,
+            "actual_sha256": actual_sha,
+            "byte_identical": actual_sha == expected_sha,
+            "verification": "verify_frozen_postprocess_contract",
+            "passed": passed,
+        })
+    if not all(row["passed"] for row in source_checks):
+        raise RuntimeError("frozen_oracle_source_mismatch")
+    return ndp, yolo, source_checks
 
 
 def percentile(values: Sequence[float], q: float) -> float | None:
@@ -184,6 +222,24 @@ class ThreeStageConfigV1(ctypes.Structure):
         ("p1_queue_depth", ctypes.c_int32),
         ("post_queue_depth", ctypes.c_int32),
         ("letterbox_pad_value", ctypes.c_int32),
+    ]
+
+
+class ThreeStageConfigV2(ctypes.Structure):
+    _fields_ = [
+        ("base", ThreeStageConfigV1),
+        ("prepared_input_path", ctypes.c_char_p),
+        ("runtime_instance_id", ctypes.c_char_p),
+        ("input_width", ctypes.c_int32), ("input_height", ctypes.c_int32),
+        ("original_width", ctypes.c_int32), ("original_height", ctypes.c_int32),
+        ("duration_s", ctypes.c_double),
+        ("output_name8", ctypes.c_char_p), ("output_name16", ctypes.c_char_p),
+        ("output_name32", ctypes.c_char_p), ("boundary_name", ctypes.c_char_p),
+        ("trt_input_name", ctypes.c_char_p),
+        ("boundary_height", ctypes.c_int32), ("boundary_width", ctypes.c_int32),
+        ("boundary_channels", ctypes.c_int32),
+        ("persist_sample", ctypes.c_int32),
+        ("input_name", ctypes.c_char_p),
     ]
 
 
@@ -455,6 +511,333 @@ class NativeLibrary:
         }
 
 
+    def run_campaign(
+        self, config: Mapping[str, Any], *, out_json: Path,
+        context: "CampaignCallbackContext", runtime_instance_id: str,
+        persist_sample: bool = True,
+    ) -> dict[str, Any]:
+        native = self.library.onnx_splitpoint_run_three_stage_v2
+        native.argtypes = [ctypes.POINTER(ThreeStageConfigV2), POST_CALLBACK,
+                           ctypes.c_void_p, ctypes.POINTER(ctypes.c_char), ctypes.c_size_t]
+        native.restype = ctypes.c_int
+        size = self.library.onnx_splitpoint_three_stage_config_size_v2
+        size.argtypes, size.restype = [], ctypes.c_size_t
+        if int(size()) != ctypes.sizeof(ThreeStageConfigV2):
+            raise RuntimeError("campaign_ctypes_config_size_mismatch")
+        boundary = config["boundary_contract"]
+        prepared = config["prepared_input"]
+        outputs = config["outputs"]
+        # The structure owns its bytes for the entire call; no historical
+        # expected-artifact lookup participates in the campaign path.
+        base = ThreeStageConfigV1(
+            abi_version=2, struct_size=ctypes.sizeof(ThreeStageConfigV2),
+            hef_path=os.fsencode(config["hef"]["path"]),
+            engine_path=os.fsencode(config["engine"]["path"]), images_dir=b"",
+            out_json=os.fsencode(out_json), device_id=str(config.get("device_id") or "").encode(),
+            frames=config["frames"], warmup=config["warmup"],
+            p1_queue_depth=config["p1_queue_depth"], post_queue_depth=config["post_queue_depth"],
+            letterbox_pad_value=114,
+        )
+        value = ThreeStageConfigV2(
+            base=base, prepared_input_path=os.fsencode(prepared["path"]),
+            runtime_instance_id=runtime_instance_id.encode(),
+            input_width=prepared["shape"][1], input_height=prepared["shape"][0],
+            original_width=config["original_wh"][0], original_height=config["original_wh"][1],
+            duration_s=float(config.get("duration_s", 0.0)),
+            output_name8=outputs[0]["name"].encode(), output_name16=outputs[1]["name"].encode(),
+            output_name32=outputs[2]["name"].encode(), boundary_name=boundary["name"].encode(),
+            trt_input_name=boundary["trt_input"]["name"].encode(),
+            boundary_height=boundary["shape"][0], boundary_width=boundary["shape"][1],
+            boundary_channels=boundary["shape"][2], persist_sample=int(persist_sample),
+            input_name=prepared["name"].encode(),
+        )
+        callback = POST_CALLBACK(context.callback)
+        error = ctypes.create_string_buffer(8192)
+        code = int(native(ctypes.byref(value), callback, None, error, ctypes.sizeof(error)))
+        report = json.loads(out_json.read_text()) if out_json.is_file() else {}
+        if code or context.errors or report.get("ok") is not True:
+            raise RuntimeError("campaign_runtime_failed:" + json.dumps({
+                "return_code": code, "error": error.value.decode(errors="replace"),
+                "callback_errors": context.errors, "runtime_report": str(out_json)}))
+        return report
+
+
+class CampaignCallbackContext:
+    """Existing measured decoder, separate warmup state and untimed sentinel."""
+
+    def __init__(self, config: Mapping[str, Any], sentinel: Mapping[str, Any]) -> None:
+        from onnx_splitpoint_tool.native_three_stage import FastDetectionCompletionRuntime
+        self.outputs = list(config["outputs"])
+        self.original_wh = list(config["original_wh"])
+        self.warmup = FastDetectionCompletionRuntime(config["completion_contract"])
+        self.measured = FastDetectionCompletionRuntime(config["completion_contract"])
+        self.measured.bind_sentinel_context(sentinel)
+        self.errors: list[dict[str, Any]] = []
+
+    def callback(self, measured, sequence, image_index, width, height,
+                 head8, count8, head16, count16, head32, count32, detections, _userdata):
+        try:
+            if measured == -1:
+                self.measured.snapshot_completed_source()
+                return 0
+            if measured not in (0, 1) or [width, height] != self.original_wh or image_index != 0:
+                raise RuntimeError("campaign_callback_context_mismatch")
+            runtime = self.measured if measured else self.warmup
+            if sequence != runtime.completed_count:
+                raise RuntimeError("campaign_callback_sequence_mismatch")
+            arrays = {}
+            for spec, ptr, count in zip(self.outputs, (head8, head16, head32), (count8, count16, count32)):
+                if count != math.prod(spec["shape"]):
+                    raise RuntimeError("campaign_callback_output_size_mismatch")
+                arrays[spec["name"]] = np.ctypeslib.as_array(ptr, shape=(count,)).reshape(spec["shape"])
+            result = runtime.process(arrays)
+            detections[0] = int(result["detection_count"])
+            return 0
+        except Exception as error:
+            self.errors.append({"measured": measured, "sequence": sequence, "error": str(error)})
+            return 1
+
+
+def _campaign_configuration(config: Mapping[str, Any]) -> dict[str, Any]:
+    from onnx_splitpoint_tool.native_detection_postprocess import verify_detection_completion_execution_contract
+    value = dict(config)
+    contract = verify_detection_completion_execution_contract(value["completion_contract"])
+    if contract != value["completion_contract"] or contract["processor_contract"] != value["processor_contract"]:
+        raise RuntimeError("campaign_completion_contract_mismatch")
+    if contract["model_family"] != "yolov7" or contract["completion_mode"] != "raw_head_frozen_decode_nms":
+        raise RuntimeError("campaign_completion_mode_unsupported")
+    for name in ("frames", "warmup", "repetitions", "p1_queue_depth", "post_queue_depth"):
+        if type(value.get(name)) is not int or value[name] < (0 if name == "warmup" else 1):
+            raise RuntimeError("campaign_budget_invalid:" + name)
+    duration = value.get("duration_s", 0.0)
+    if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not math.isfinite(duration) or duration < 0:
+        raise RuntimeError("campaign_duration_invalid")
+    if duration == 0 and (value["frames"], value["warmup"], value["repetitions"]) != (1000, 100, 3):
+        raise RuntimeError("campaign_performance_budget_mismatch")
+    if duration and (duration != 60.0 or value["warmup"] != 0 or value["repetitions"] != 1):
+        raise RuntimeError("campaign_energy_budget_mismatch")
+    prepared = value["prepared_input"]
+    if (not isinstance(prepared.get("name"), str) or not prepared["name"]
+            or prepared.get("shape") != [640, 640, 3] or prepared.get("dtype") != "uint8"
+            or prepared.get("format") not in {"raw", "raw_bin", "binary"}):
+        raise RuntimeError("campaign_prepared_input_contract_mismatch")
+    if value["original_wh"] != contract["processor_contract"]["original_wh"] or contract["processor_contract"]["input_hw"] != [640, 640]:
+        raise RuntimeError("campaign_input_geometry_mismatch")
+    signature = contract["source_endpoint"]["tensor_signature"]["tensors"]
+    expected = [{"name": item["name"], "shape": item["shape"], "dtype": item["dtype"]} for item in signature]
+    if value["outputs"] != expected or any(item["shape"] != [1, 3, grid, grid, 85] or item["dtype"] != "float32"
+                                            for item, grid in zip(expected, (80, 40, 20))) or len(expected) != 3:
+        raise RuntimeError("campaign_output_contract_mismatch")
+    boundary = value["boundary_contract"]
+    shape = boundary.get("shape")
+    trt = boundary.get("trt_input", {})
+    if (not isinstance(shape, list) or len(shape) != 3 or any(type(n) is not int or n <= 0 for n in shape)
+            or boundary.get("dtype") != "uint8" or not boundary.get("name")
+            or trt.get("dtype") != "uint8" or not trt.get("name")
+            or trt.get("shape") != [1, shape[2], shape[0], shape[1]]):
+        raise RuntimeError("campaign_boundary_contract_mismatch")
+    return value
+
+
+def _campaign_artifact(spec: Mapping[str, Any]) -> dict[str, Any]:
+    path = Path(spec["path"]).resolve(strict=True)
+    if not path.is_file() or not spec.get("sha256") or sha256_file(path) != spec["sha256"]:
+        raise RuntimeError("campaign_artifact_sha256_mismatch:" + str(path))
+    if type(spec.get("size_bytes")) is not int or path.stat().st_size != spec["size_bytes"]:
+        raise RuntimeError("campaign_artifact_size_mismatch:" + str(path))
+    return {"path": str(path), "sha256": spec["sha256"], "size_bytes": path.stat().st_size}
+
+
+def _campaign_repetition(config, runtime, context, *, index, runtime_id, repetition_id, out, energy=False):
+    completed = runtime["completed_detection"]
+    count = completed["completed_frames"]
+    start, end, drain = (runtime[key] for key in ("measurement_start_ns", "measurement_end_ns", "drain_end_ns"))
+    duration = float(config.get("duration_s", 0))
+    if (type(count) is not int or count <= 0 or (not duration and count != config["frames"])
+            or runtime["raw_model_outputs"]["completed_frames"] != count
+            or runtime["measured_tasks_requested"] != count
+            or context.measured.completed_count != count or context.warmup.completed_count != config["warmup"]
+            or runtime["warmup_result"] != {"requested": config["warmup"], "raw_completed": config["warmup"],
+                                           "completed": config["warmup"], "callback_failures": 0}
+            or not 0 < start < end <= drain or not start < runtime["raw_end_ns"] <= end
+            or runtime["workers_ready_before_start"] != 3 or runtime["preprocessing_included"] is not False
+            or runtime["warmup_fully_drained_before_measurement"] is not True
+            or runtime["runtime_instance_id"] != runtime_id
+            or runtime["runtime_artifacts"] != {"hef": config["hef"]["path"], "engine": config["engine"]["path"]}
+            or runtime["measurement_boundary"] != "prepared_input_before_p1_to_last_completed_task"):
+        raise RuntimeError("campaign_runtime_evidence_mismatch")
+    elapsed_ms = (end - start) / 1e6
+    if (not math.isclose(completed["makespan_ms"], elapsed_ms, rel_tol=1e-8, abs_tol=1e-6)
+            or not math.isclose(completed["throughput_fps"], count * 1000 / elapsed_ms, rel_tol=1e-8)
+            or (duration and elapsed_ms < duration * 1000)):
+        raise RuntimeError("campaign_runtime_time_mismatch")
+    boundary = runtime["last_boundary"]
+    trt = runtime["trt_input"]
+    expected_boundary = config["boundary_contract"]
+    if ({key: boundary[key] for key in ("name", "shape", "dtype")} != {key: expected_boundary[key] for key in ("name", "shape", "dtype")}
+            or trt != expected_boundary["trt_input"]
+            or {key: runtime["prepared_input"][key] for key in ("path", "shape", "dtype")} !=
+               {key: config["prepared_input"][key] for key in ("path", "shape", "dtype")}
+            or (config["prepared_input"].get("name") and runtime["prepared_input"]["name"] != config["prepared_input"]["name"])):
+        raise RuntimeError("campaign_actual_runtime_interface_mismatch")
+    specs = runtime["last_raw_outputs"]
+    if [{key: spec[key] for key in ("name", "shape", "dtype")} for spec in specs] != config["outputs"]:
+        raise RuntimeError("campaign_actual_runtime_outputs_mismatch")
+    output_specs = {}
+    boundary_spec = None
+    arrays = {}
+    for spec in ([] if energy else [boundary, *specs]):
+        raw = Path(spec["path"])
+        if raw.resolve().parent != out.resolve() or raw.stat().st_size != math.prod(spec["shape"]) * np.dtype(spec["dtype"]).itemsize:
+            raise RuntimeError("campaign_measured_sample_size_or_path_mismatch")
+        array = np.fromfile(raw, dtype=spec["dtype"]).reshape(spec["shape"])
+        if not np.isfinite(array).all():
+            raise RuntimeError("campaign_measured_sample_nonfinite")
+        if spec is boundary:
+            # The engine owns memory_nhwc_to_nchw. Its input receives the
+            # unchanged HWC storage through memcpy, viewed in the TRT shape.
+            array = array.reshape(trt["shape"])
+        path = raw.with_suffix(".npy")
+        np.save(path, array, allow_pickle=False)
+        item = {**spec, "shape": list(array.shape), "path": str(path), "format": "npy", "sha256": sha256_file(path), "size_bytes": path.stat().st_size}
+        if spec is boundary:
+            boundary_spec = item
+        else:
+            arrays[spec["name"]] = array
+            output_specs[spec["name"]] = item
+    from onnx_splitpoint_tool.native_three_stage import verify_fast_completion_attestation
+    attestation = context.measured.attestation(completed_work_units=count)
+    verify_fast_completion_attestation(attestation, execution_contract=config["completion_contract"], outputs=None if energy else arrays)
+    return {
+        "ok": True, "frames": count, "completed_work_units": count, "produced_frames": count,
+        "warmup_completed_frames": context.warmup.completed_count,
+        "makespan_ms": elapsed_ms, "fps_makespan": count * 1000 / elapsed_ms,
+        "measurement_start_ns": start, "measurement_end_ns": end, "drain_end_ns": drain,
+        "runtime_instance_id": runtime_id, "repetition_id": repetition_id,
+        "process_local_repetition_index": index, "process_id": os.getpid(),
+        "completion_attestation": attestation, "output_arrays": output_specs,
+        "boundary_array": boundary_spec,
+        "runtime_boundary": {"output_name": boundary["name"], "output_shape": boundary["shape"],
+            "output_dtype": boundary["dtype"], "output_frame_bytes": math.prod(boundary["shape"]),
+            "trt_input_name": trt["name"], "trt_input_shape": trt["shape"], "trt_input_dtype": trt["dtype"],
+            "input_name": runtime["prepared_input"]["name"], "input_shape": config["prepared_input"]["shape"],
+            "input_dtype": "uint8"},
+        "measurement_boundary": "workers_ready_to_last_completed_task_frame",
+        "warmup_contract": "fully_drained_before_worker_start", "pipeline_drained": True, "preprocessing_included": False,
+        "runtime_report": str(out / "runtime.json"), "request_latency": runtime["request_latency"],
+    }
+
+
+def run_campaign(config: Mapping[str, Any], *, out_root: Path) -> dict[str, Any]:
+    """Bound performance campaign; preparation, checks and dumps are untimed."""
+    value = _campaign_configuration(config)
+    if value.get("duration_s", 0):
+        raise RuntimeError("campaign_energy_requires_attested_replay_entry")
+    out = Path(out_root).resolve()
+    out.mkdir(parents=True, exist_ok=False)
+    bound = {name: _campaign_artifact(value[name]) for name in ("hef", "engine", "prepared_input", "input_image")}
+    if bound["prepared_input"]["size_bytes"] != math.prod(value["prepared_input"]["shape"]):
+        raise RuntimeError("campaign_prepared_input_size_mismatch")
+    for name in bound:
+        value[name] = {**value[name], **bound[name]}
+    tool_root = Path(config.get("tool_root") or HERE.parents[2])
+    _verified_oracle_sources(tool_root, value["processor_contract"])
+    library_path = build_cpp(out / "cpp_runtime")
+    artifacts = {name: {"path": str(path), "sha256": sha256_file(path), "size_bytes": path.stat().st_size}
+                 for name, path in {"native_executable": library_path, "generated_cpp": CPP_DIR / "three_stage_canary.cpp",
+                                    "cmake": CPP_DIR / "CMakeLists.txt"}.items()}
+    if config.get("expected_library_sha256") and artifacts["native_executable"]["sha256"] != config["expected_library_sha256"]:
+        raise RuntimeError("campaign_expected_library_sha256_mismatch")
+    library = NativeLibrary(library_path)
+    report = {"ok": False, "config": dict(config), "schema_version": 1, "mode": "bound_prepared_input_concurrent_three_stage",
+              "completion_contract": value["completion_contract"], "runtime_artifacts": artifacts,
+              "artifacts": bound, "repetitions": [], "status": "running"}
+    report_path = out / "campaign_report.json"
+    for index in range(1, value["repetitions"] + 1):
+        rep_dir = out / f"rep_{index:02d}"
+        rep_dir.mkdir()
+        runtime_id, repetition_id = uuid.uuid4().hex, uuid.uuid4().hex
+        context = CampaignCallbackContext(value, {"runtime_instance_id": runtime_id, "repetition_id": repetition_id,
+            "process_local_repetition_index": index, "input_image_sha256": value["input_image"]["sha256"]})
+        print(f"[three-stage campaign] repetition {index}/3 warmup=100 tasks=1000", flush=True)
+        runtime = library.run_campaign(value, out_json=rep_dir / "runtime.json", context=context, runtime_instance_id=runtime_id)
+        rep = _campaign_repetition(value, runtime, context, index=index, runtime_id=runtime_id,
+                                  repetition_id=repetition_id, out=rep_dir)
+        for name in bound:
+            if _campaign_artifact(value[name]) != bound[name]:
+                raise RuntimeError("campaign_artifact_changed_during_measurement:" + name)
+        report["repetitions"].append(rep)
+        report_path.write_text(json.dumps(report, indent=2) + "\n")
+        print(f"[three-stage campaign] repetition {index}/3 completed={rep['completed_work_units']}", flush=True)
+    report["status"] = "completed"
+    report["ok"] = True
+    report_path.write_text(json.dumps(report, indent=2) + "\n")
+    return report
+
+
+
+def run_energy_campaign(config: Mapping[str, Any], *, out_root: Path,
+                        verified_workload_binding: Mapping[str, Any]) -> dict[str, Any]:
+    """Replay the normal preflight binding using its already built library.
+
+    The Parent has checked nonce, freshness and command identity with
+    load_split_energy_workload_binding. Repeat its stat guard here, without
+    model hashing, model discovery, runtime compilation or tensor dump I/O.
+    The existing untimed completion sentinel remains required.
+    """
+    from onnx_splitpoint_tool.native_command_contract import verify_split_energy_artifact_stats
+    binding = verified_workload_binding
+    okay, reason = verify_split_energy_artifact_stats(binding)
+    if not okay:
+        raise RuntimeError("campaign_energy_preflight:" + reason)
+    value = _campaign_configuration(config)
+    artifacts = binding["artifacts"]
+    options = binding["runtime_options"]
+    prepared = binding["prepared_input_contract"]
+    boundary = binding["runtime_boundary_evidence"]
+    if (value.get("energy_workload_only") is not True or float(value["duration_s"]) != 60.0
+            or binding.get("backend") != "hailo8_to_trt" or binding.get("workload_supported") is not True
+            or value["identity"] != {"model_id": binding["model"], "case_id": binding["case"],
+                "setup_id": binding["setup_id"], "precision": binding["precision"],
+                "eval_run_id": binding.get("eval_run_id"), "source_run_id": binding.get("source_run_id")}
+            or value.get("quality_binding_sha256") != binding.get("native_split_quality_binding_sha256")
+            or value["completion_contract"] != options["completion_execution_contract"]
+            or value["p1_queue_depth"] != options["queue_depth"]
+            or value["post_queue_depth"] != options["post_queue_depth"]
+            or value.get("device_id", "") != str(options.get("device_id") or "")
+            or value["input_image"]["path"] != binding["input_image"]
+            or value["input_image"]["sha256"] != binding["input_image_sha256"]
+            or value["prepared_input"]["shape"] != prepared["shape"]
+            or value["prepared_input"]["dtype"] != prepared["dtype"]
+            or value["prepared_input"]["name"] != prepared["name"]
+            or value["boundary_contract"] != {"name": boundary["output_name"], "shape": boundary["output_shape"],
+                "dtype": boundary["output_dtype"], "trt_input": {"name": boundary["trt_input_name"],
+                    "shape": boundary["trt_input_shape"], "dtype": boundary["trt_input_dtype"]}}):
+        raise RuntimeError("campaign_energy_workload_binding_mismatch")
+    for role in ("hef", "engine", "prepared_input"):
+        if any(value[role].get(key) != artifacts[role].get(key) for key in ("path", "sha256", "size_bytes")):
+            raise RuntimeError("campaign_energy_artifact_binding_mismatch:" + role)
+    library_spec = artifacts["native_executable"]
+    stat_paths = {str(Path(item["path"]).resolve()) for item in binding["verified_files"]}
+    for role in ("hef", "engine", "prepared_input", "native_executable"):
+        if str(Path(artifacts[role]["path"]).resolve()) not in stat_paths:
+            raise RuntimeError("campaign_energy_artifact_stat_missing:" + role)
+    out = Path(out_root).resolve()
+    out.mkdir(parents=True, exist_ok=False)
+    runtime_id, repetition_id = uuid.uuid4().hex, uuid.uuid4().hex
+    context = CampaignCallbackContext(value, {"runtime_instance_id": runtime_id, "repetition_id": repetition_id,
+        "process_local_repetition_index": 1, "input_image_sha256": value["input_image"]["sha256"]})
+    library = NativeLibrary(Path(library_spec["path"]))
+    runtime = library.run_campaign(value, out_json=out / "runtime.json", context=context,
+                                   runtime_instance_id=runtime_id, persist_sample=False)
+    rep = _campaign_repetition(value, runtime, context, index=1, runtime_id=runtime_id,
+                              repetition_id=repetition_id, out=out, energy=True)
+    return {"ok": True, "config": dict(config), "schema_version": 1,
+            "mode": "bound_prepared_input_concurrent_three_stage", "status": "completed",
+            "completion_contract": value["completion_contract"], "repetitions": [rep],
+            "runtime_artifacts": {"native_executable": dict(library_spec)}}
+
+
 def exact_measurement_result_check(
     result: Mapping[str, Any],
     corpus_items: list[dict[str, Any]],
@@ -528,6 +911,7 @@ def extract_runtime_metrics(runtime: Mapping[str, Any]) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--campaign-config")
     parser.add_argument("--tool-root", default="/home/nx/ONNX-Splitpoint-Tool")
     parser.add_argument(
         "--corpus", default=str(HERE / "staged_inputs/corpus_manifest.json")
@@ -550,6 +934,11 @@ def main() -> int:
     parser.add_argument("--device-id", default="")
     parser.add_argument("--expected-corpus-count", type=int, default=32)
     args = parser.parse_args()
+
+    if args.campaign_config:
+        config = json.loads(Path(args.campaign_config).read_text())
+        run_campaign(config, out_root=Path(args.out_root))
+        return 0
 
     tool_root = Path(args.tool_root).expanduser().resolve()
     corpus_path = Path(args.corpus).expanduser().resolve()
@@ -642,35 +1031,11 @@ def main() -> int:
         if not isinstance(processor_contract, Mapping):
             raise RuntimeError("processor_contract_missing")
 
-        sys.path.insert(0, str(tool_root))
-        import onnx_splitpoint_tool.native_detection_postprocess as ndp
-        from onnx_splitpoint_tool.runners.harness import yolo
-
-        source_checks: list[dict[str, Any]] = []
-        source_ok = True
-        for artifact in (
-            processor_contract.get("implementation_artifacts") or {}
-        ).values():
-            if not isinstance(artifact, Mapping):
-                continue
-            relative = str(artifact.get("relative_path") or "")
-            path = tool_root / relative
-            expected_sha = str(artifact.get("sha256") or "")
-            actual_sha = sha256_file(path) if path.is_file() else ""
-            passed = bool(path.is_file() and actual_sha == expected_sha)
-            source_ok = source_ok and passed
-            source_checks.append(
-                {
-                    "path": str(path),
-                    "expected_sha256": expected_sha,
-                    "actual_sha256": actual_sha,
-                    "passed": passed,
-                }
-            )
+        ndp, yolo, source_checks = _verified_oracle_sources(
+            tool_root, processor_contract,
+        )
         report["source_checks"] = source_checks
-        report["source_ok"] = source_ok
-        if not source_ok:
-            raise RuntimeError("frozen_oracle_source_mismatch")
+        report["source_ok"] = all(row["passed"] for row in source_checks)
 
         runtime_artifacts = expected["runtime_artifacts"]
         hef, hef_audit = choose_exact_artifact(runtime_artifacts["hef"])

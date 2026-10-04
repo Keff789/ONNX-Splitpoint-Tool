@@ -37,6 +37,7 @@ from .debug_pack_policy import (
     MODEL_VALIDATION_SUMMARY_MAX_FILE_BYTES,
     MODEL_VALIDATION_SUMMARY_MAX_TOTAL_BYTES,
     OFFLINE_REPLAY_CORE,
+    OFFLINE_REPLAY_CORE_MAX_FILE_BYTES,
     RANKING_AUDIT_MAX_FILE_BYTES,
     discover_ranking_audit_evidence,
     is_backend_artifact_diagnostic,
@@ -964,6 +965,11 @@ def should_include_debug_file(
             (True, "") if size <= NATIVE_RAW_MAX_FILE_BYTES
             else (False, "native energy raw trace exceeds file limit")
         )
+    if is_offline_replay_core(relative):
+        return (
+            (True, "") if size <= OFFLINE_REPLAY_CORE_MAX_FILE_BYTES
+            else (False, "offline summary exceeds streaming exact limit")
+        )
     # Cancellation/outage diagnostics are control-plane evidence, not bulk
     # result rows.  Give them the bounded exact-metadata allowance so a tiny
     # caller ``max_bytes`` budget cannot evict the very status/lease records
@@ -1020,11 +1026,6 @@ def should_include_debug_file(
         return (
             (True, "") if size <= effective_limit
             else (False, "too large")
-        )
-    if is_offline_replay_core(relative):
-        return (
-            (True, "") if size <= EXACT_METADATA_MAX_FILE_BYTES
-            else (False, "offline summary exceeds exact limit")
         )
     if probe_parquet or probe_command or (
         probe_root and path.name in {
@@ -2062,7 +2063,8 @@ def create_evaluation_debug_pack(
                     cancelled_diagnostic=cancelled_diagnostic_mode,
                 )
                 if not include:
-                    effective_limit = (CENTRAL_DESCRIPTOR_MAX_FILE_BYTES if relative in central_present
+                    effective_limit = (OFFLINE_REPLAY_CORE_MAX_FILE_BYTES if is_offline_replay_core(relative)
+                                       else CENTRAL_DESCRIPTOR_MAX_FILE_BYTES if relative in central_present
                                        else STRUCTURED_RESULT_MAX_FILE_BYTES if (
                                            relative in quality_payload_members or (_is_runtime_diagnostic(relative) and source.suffix.lower() in {".json", ".csv"})
                                            or relative in INCLUDE or source.name in PROVENANCE_EVIDENCE_NAMES or is_offline_replay_core(relative)
@@ -2312,6 +2314,7 @@ def create_evaluation_debug_pack(
                     "purpose": "compact diagnostic and audit-evidence pack",
                     "max_small_file_bytes": int(max_small_file_bytes),
                     "structured_result_max_file_bytes": STRUCTURED_RESULT_MAX_FILE_BYTES,
+                    "offline_replay_core_max_file_bytes": OFFLINE_REPLAY_CORE_MAX_FILE_BYTES,
                     "structured_result_max_total_bytes_per_class": STRUCTURED_RESULT_MAX_TOTAL_BYTES,
                     "decoded_quality_prediction_max_total_bytes": QUALITY_PREDICTION_MAX_TOTAL_BYTES,
                     "budget_unit": "uncompressed_bytes",
@@ -2420,6 +2423,9 @@ def create_evaluation_debug_pack(
                     ),
                 },
                 "offline_replay_core": {
+                    "copy_mode": "streamed_zip_deflate_exact_bytes",
+                    "chunk_bytes": 1024 * 1024,
+                    "max_file_bytes": OFFLINE_REPLAY_CORE_MAX_FILE_BYTES,
                     "expected_members": sorted(OFFLINE_REPLAY_CORE),
                     "present_source_members": sorted(offline_present),
                     "archived_members": offline_archived,

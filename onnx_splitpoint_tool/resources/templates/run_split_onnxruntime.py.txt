@@ -5374,7 +5374,11 @@ np.savez_compressed(out_npz, **payload)
             runtime_order = list(self._input_names)
         for canonical_name in runtime_order:
             src = self._source_for_input(inputs, canonical_name, used=used_sources)
-            if self._is_image_runtime_input(canonical_name):
+            if getattr(self, "exact_prepared_input", False):
+                if set(inputs) != set(runtime_order):
+                    raise RuntimeError("DeepX exact prepared input names mismatch")
+                candidate_lists.append([np.ascontiguousarray(src)])
+            elif self._is_image_runtime_input(canonical_name):
                 cands = self._candidate_inputs(np.asarray(src), canonical_name)
                 if not cands:
                     cands = [np.ascontiguousarray(src)]
@@ -9575,6 +9579,37 @@ def _build_native_full_trt_quality_producer_identity(
     return {**producer, "producer_identity_sha256": producer_sha}
 
 
+def _existing_management_reference(value, *, model_sha256, variants, central, image_count):
+    """Admit an explicit old semantic reference, never a new CPU execution.
+
+    The management reader checks the actual original bytes. This remote side
+    checks their declared model/semantic contract before producing candidates;
+    the ordinary central loader subsequently checks the paired dataset as well.
+    """
+    if not value:
+        return None
+    descriptor = json.loads(value) if isinstance(value, str) else dict(value)
+    contract = dict(descriptor.get("quality_contract") or {})
+    declared = contract.pop("quality_contract_sha256", "")
+    if (not central or set(variants) != {"composed"}
+            or contract.get("task") != "detection"
+            or contract.get("model", {}).get("sha256") != model_sha256
+            or contract.get("dataset", {}).get("image_count") != image_count
+            or image_count != 5000
+            or not declared or _quality_contract_sha256(contract) != declared
+            or descriptor.get("quality_contract_sha256") != declared
+            or descriptor.get("reference_role") != "canonical_cpu_ort"
+            or not descriptor.get("source_evaluation_run_id")
+            or not descriptor.get("reference_path")
+            or not descriptor.get("reference_sha256")
+            or not descriptor.get("reference_size_bytes")):
+        raise ValueError("existing management CPU reference contract mismatch")
+    prep = contract.get("preprocessing") or {}
+    if _quality_contract_sha256(prep.get("identity")) != prep.get("sha256"):
+        raise ValueError("existing CPU reference preprocessing contract mismatch")
+    return descriptor
+
+
 def _export_central_quality_inputs(
     *,
     out_dir: Path,
@@ -10033,7 +10068,7 @@ def _export_central_quality_inputs(
         completion_contract["contract_sha256"] = completion_contract_sha
 
     generic_composed_duplicates: Dict[str, Any] = {}
-    if variant_l == "composed" and native_split_quality_binding is None:
+    if variant_l == "composed":
         if composed_producer_context is None:
             if diagnostics is not None:
                 diagnostics["producer_identity"] = {
@@ -10055,6 +10090,31 @@ def _export_central_quality_inputs(
                     candidate_completion_contract=completion_contract,
                 )
             )
+            if native_split_quality_binding is not None:
+                # Join the two existing evidence contracts to the exact live
+                # runtime bytes before publishing their duplicated identities.
+                from splitpoint_runners.native_split_quality import validate_native_split_quality_binding
+                checked_split, split_status = validate_native_split_quality_binding(
+                    native_split_quality_binding,
+                    expected_identity={
+                        "model": generic_producer["model_id"],
+                        "case": generic_producer["case_id"],
+                        "setup_id": generic_producer["setup_id"],
+                        "backend": generic_producer["source_run_id"],
+                        "precision": generic_producer["runtime_precision_identity"],
+                    },
+                )
+                if checked_split is None or checked_split.get("eval_run_id") != generic_producer["eval_run_id"]:
+                    raise RuntimeError("composed producer and Native split identity differ: " + str(split_status))
+                artifacts = checked_split["artifacts"]
+                actual_runtime = {item["role"]: item for item in generic_producer["runtime_artifacts"]}
+                for runtime_role, binding_role in (("stage1_runtime", "part1_runtime"), ("stage2_runtime", "engine")):
+                    if any(actual_runtime.get(runtime_role, {}).get(field) != artifacts[binding_role].get(field)
+                           for field in ("sha256", "size_bytes")):
+                        raise RuntimeError("composed producer and Native split runtime artifact differ: " + runtime_role)
+                if any(generic_producer["model"].get("part2_onnx_" + field) != artifacts["source_part2_onnx"].get(field)
+                       for field in ("sha256", "size_bytes")):
+                    raise RuntimeError("composed producer and Native split Part2 source differ")
             completion_contract_sha = str(
                 completion_contract.get("contract_sha256") or ""
             ).strip().lower()
@@ -10154,6 +10214,15 @@ def _export_central_quality_inputs(
         "record_count": int(len(expected_image_ids)),
         "quality_contract_sha256": str((quality_contract or {}).get("quality_contract_sha256") or ""),
     }
+    explicit_reference = policy.get("_existing_management_reference")
+    if explicit_reference:
+        if variant_l != "composed" or reference_only:
+            raise ValueError("existing CPU reference requires a new composed candidate")
+        # Candidate/producer identity stays current. The reference descriptor
+        # binds the real old contract, including its original decoder writer.
+        reference_descriptor.update({key: explicit_reference[key] for key in (
+            "quality_contract_sha256", "source_evaluation_run_id",
+            "reference_path", "reference_sha256", "reference_size_bytes")})
     stats = policy.get("statistics") if isinstance(policy.get("statistics"), dict) else {}
     metric_gate = dict(policy.get(task_l) or {})
     if policy.get("reporting_policy"):
@@ -14553,6 +14622,315 @@ def _deployment_contract_summary_for_variant(
 # ----------------------------
 # Main
 # ----------------------------
+class _CompletionMetadataSession:
+    """ONNX I/O metadata only; completion replay must never infer a reference."""
+    def __init__(self, model_path):
+        from types import SimpleNamespace
+        model = onnx.load(str(model_path), load_external_data=False)
+        self._inputs = [SimpleNamespace(name=v.name, shape=_shape_from_value_info(v))
+                        for v in _get_non_initializer_inputs(model)]
+        self._outputs = [SimpleNamespace(name=v.name, shape=_shape_from_value_info(v))
+                         for v in model.graph.output]
+
+    def get_inputs(self):
+        return self._inputs
+
+    def get_outputs(self):
+        return self._outputs
+
+    def run(self, *_args, **_kwargs):
+        raise RuntimeError("Generic completion forbids CPU/reference inference")
+
+
+def _completion_bound_array(spec):
+    from splitpoint_runners.task_completion import load_completion_bound_array
+    return load_completion_bound_array(spec, file_sha256=_sp_file_sha256)
+
+
+def _completion_hailo_quantized_inputs(config):
+    runtime_format = str(config["input_binding"].get("runtime_input_format") or "")
+    if runtime_format in {"uint8", "raw_uint8"}:
+        return True
+    if runtime_format in {"float32", "dequant_float32"}:
+        return False
+    raise ValueError("Generic completion Hailo input format lacks the bound Native runtime option")
+
+
+def _completion_hailo_inputs(config, backend, inputs):
+    """Match the paired producer's prepared-input boundary inside Generic P1."""
+    if _completion_hailo_quantized_inputs(config):
+        if any(np.asarray(value).dtype != np.uint8 for value in inputs.values()):
+            raise ValueError("Generic completion Hailo UINT8 input dtype mismatch")
+        return inputs
+    if str(backend).lower() == "hailo8":
+        # Native H8's classification C++ producer performs precisely this
+        # numeric conversion inside HailoStage::infer, after the start boundary.
+        if any(np.asarray(value).dtype != np.uint8 for value in inputs.values()):
+            raise ValueError("Generic completion Hailo8 FLOAT32 source must be bound RGB bytes")
+        return {name: np.asarray(value).astype(np.float32) / np.float32(255.0)
+                for name, value in inputs.items()}
+    if any(np.asarray(value).dtype != np.float32 for value in inputs.values()):
+        raise ValueError("Generic completion FLOAT32 prepared input dtype mismatch")
+    return inputs
+
+
+def _configure_quality_source_only(args, parser):
+    """Keep selective split Quality generation outside Generic timing work."""
+    if not args.quality_source_only:
+        return
+    incompatible = (
+        "generic_completion_config", "quality_evidence_only", "build_only",
+        "energy_measurement_only", "output_dump_only", "external_output_dump",
+        "full_only_quality_identity_json",
+    )
+    if any(getattr(args, name, None) for name in incompatible):
+        parser.error("--quality-source-only cannot enter another execution mode")
+    if [v.strip() for v in str(args.variants).split(",") if v.strip()] != ["composed"]:
+        parser.error("--quality-source-only requires exactly --variants composed")
+    if not str(args.native_split_quality_binding or "").strip():
+        parser.error("--quality-source-only requires --native-split-quality-binding")
+    if not str(args.existing_management_cpu_reference_json or "").strip():
+        parser.error("--quality-source-only requires the existing management CPU reference")
+    if not str(args.validation_images or "").strip() or int(args.validation_max_images or 0) < 1:
+        parser.error("--quality-source-only requires the frozen validation dataset")
+    policy = _load_task_quality_policy(args.quality_gate_json)
+    if _task_quality_execution_location(policy) != "central_management":
+        parser.error("--quality-source-only requires central_management Quality")
+    args.warmup = args.runs = args.phase_runs = 0
+    args.throughput_frames = args.throughput_warmup_frames = 0
+    args.native_trt_build = False
+    args.native_trt_no_fallback = True
+    args.viz = "none"
+    args.no_report_plots = True
+
+
+def _configure_generic_completion(args, parser):
+    if not args.generic_completion_config:
+        return None
+    if args.generic_completion_repetition not in (1, 2, 3):
+        parser.error("Generic completion requires one independent --generic-completion-repetition 1, 2 or 3")
+    config = _read_json(Path(args.generic_completion_config))
+    if any(type(config.get(key)) is not int or config[key] != value for key, value in
+           (("repetitions", 3), ("warmup_count", 100), ("task_count", 1000))):
+        parser.error("Generic completion requires exactly 3 repetitions, 100 warmups and 1000 tasks")
+    if config.get("task") not in {"classification", "detection"}:
+        parser.error("Generic completion requires an explicit task")
+    for key in ("identity", "execution_id", "original_run", "input_binding", "completion_contract",
+                "functional_reference", "expected_runtime_artifacts", "original_run_cfg", "case_dir"):
+        if not config.get(key):
+            parser.error(f"Generic completion lacks {key}")
+    if config.get("measurement_boundary") != "prepared_input_before_p1_to_last_completed_task":
+        parser.error("Generic completion measurement boundary mismatch")
+    original = config["original_run_cfg"]
+    if not isinstance(original, Mapping):
+        parser.error("Generic completion original run config malformed")
+    output_dir, config_path = args.out_dir, args.generic_completion_config
+    repetition_index = args.generic_completion_repetition
+    for key, value in original.items():
+        if key in vars(args) and not key.startswith("_"):
+            setattr(args, key, value)
+    args.out_dir, args.generic_completion_config = output_dir, config_path
+    args.generic_completion_repetition = repetition_index
+    # The originating request may be a selective Quality source. This explicit
+    # completion invocation owns its unchanged 100/1000/3 measurement contract.
+    args.quality_source_only = False
+    identity = config["identity"]
+    for field, actual in (("model_id", args.model_id or args.quality_evidence_model_id),
+                          ("case_id", Path(config["case_dir"]).name),
+                          ("setup_id", args.quality_evidence_setup_id),
+                          ("precision", args.native_trt_precision)):
+        if actual and identity.get(field) != actual:
+            parser.error(f"Generic completion {field} differs from original execution")
+    input_binding = config["input_binding"]
+    if input_binding.get("entries"):
+        entries = input_binding["entries"]
+        prepared = input_binding["prepared_input"]
+        if len(entries) != 1 or any(prepared.get(key) != entries[0].get(key) for key in ("sha256", "shape", "dtype")):
+            parser.error("Generic completion prepared input differs from bound Native input")
+    if not Path(output_dir).is_absolute() or Path(output_dir).resolve() == Path(config["case_dir"]).resolve():
+        parser.error("Generic completion requires a separate absolute output directory")
+    if args.quality_evidence_only or args.build_only:
+        parser.error("Generic completion cannot enter quality/build-only mode")
+    stage1 = _canonical_validation_backend_token(args.stage1_provider or args.provider)
+    stage2 = _canonical_validation_backend_token(args.stage2_provider or args.provider)
+    if stage1 not in {"hailo8", "hailo10h", "deepx_m1"} or stage2 != "tensorrt":
+        parser.error("Generic completion supports only the bound accelerator-to-TensorRT splits")
+    if stage1.startswith("hailo"):
+        _completion_hailo_quantized_inputs(config)
+    args.variants = "composed"
+    args.benchmark_task = config["task"]
+    args.native_trt_build = False
+    args.native_trt_no_fallback = True
+    args.trt_runtime = args.trt_runtime_mode = "native"
+    args.warmup, args.runs = 100, 1000
+    args.phase_runs = args.throughput_frames = args.throughput_warmup_frames = 0
+    args.validation_images = ""
+    args.validation_max_images = 0
+    args.quality_gate_json = ""
+    # This N5000 descriptor belongs to the originating Quality request. The
+    # completion control uses config.functional_reference (bound Native
+    # outputs); retain the descriptor only in the unchanged original_run_cfg.
+    args.existing_management_cpu_reference_json = ""
+    args.mini_coco_ap50 = args.mini_classification_eval = False
+    args.viz = "none"
+    args.no_report_plots = True
+    args.dump_interface = args.save_inputs_npz = None
+    args.inputs_npz = None
+    os.environ["ONNX_SPLITPOINT_ARTIFACT_POLICY"] = "cache_verify_only"
+    return config
+
+
+def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
+                                  runtime_artifacts, *, clone_payload, repetition_index=None):
+    from splitpoint_runners.task_completion import (
+        measure_split_completion, valid_split_completion_repetitions,
+    )
+    from splitpoint_runners.harness.classification import ClassificationCompletion
+    from splitpoint_runners.native_detection_postprocess import DetectionCompletionRuntime
+    import statistics
+    from datetime import datetime, timezone
+
+    def utc_now():
+        return datetime.now(timezone.utc).isoformat()
+
+    expected = config["expected_runtime_artifacts"]
+    if set(runtime_artifacts) != set(expected):
+        raise ValueError("Generic completion runtime artifact roles mismatch")
+    for role, path in runtime_artifacts.items():
+        descriptor = expected[role]
+        if (Path(path).resolve() != Path(descriptor["path"]).resolve()
+                or _sp_file_sha256(Path(path)) != descriptor["sha256"]):
+            raise ValueError(f"Generic completion runtime artifact mismatch: {role}")
+    reference_binding = config["functional_reference"]
+    if reference_binding.get("input_sha256") != config["input_binding"]["prepared_input"]["sha256"]:
+        raise ValueError("Generic completion functional reference input mismatch")
+    reference_outputs = {name: _completion_bound_array(spec)
+                         for name, spec in reference_binding["outputs"].items()}
+
+    def processor():
+        if config["task"] == "classification":
+            if config["completion_contract"] != {"task": "classification", "operation": "top1_top5", "label_offset": 0}:
+                raise ValueError("Generic completion classification contract mismatch")
+            return ClassificationCompletion()
+        return DetectionCompletionRuntime(config["completion_contract"])
+
+    reference_processor = processor()
+    reference_processor.process(reference_outputs)
+    result_path = Path(out_dir) / "generic_completion_results.json"
+    if result_path.exists():
+        result = _read_json(result_path)
+        previous = valid_split_completion_repetitions(result, config, result_root=out_dir)
+    else:
+        result = {key: config[key] for key in (
+            "identity", "input_binding", "completion_contract", "measurement_boundary",
+            "expected_runtime_artifacts", "functional_reference", "original_run")}
+        result.update(schema_version=1, execution_id=config["execution_id"], task=config["task"],
+                      measurement_mode="generic_completed_task", repetitions=[], status="started", created_at=utc_now())
+        previous = []
+    completed_indices = {row["repetition_index"] for row in previous}
+
+    def publish():
+        temp = result_path.with_suffix(".json.tmp")
+        _write_json(temp, result)
+        os.replace(temp, result_path)
+
+    publish()
+    for index in ([repetition_index] if repetition_index is not None else range(1, 4)):
+        if index in completed_indices:
+            continue
+        current_processor = processor()
+        latest_outputs = {}
+
+        def observe_stage2(inputs):
+            outputs = stage2(inputs)
+            if not latest_outputs:
+                # The first warmup validates the existing engine's physical
+                # endpoint before any measured work; no probe inference.
+                specs = reference_binding["outputs"]
+                if set(outputs) != set(specs) or any(
+                    list(np.asarray(outputs[name]).shape) != spec["shape"]
+                    or str(np.asarray(outputs[name]).dtype) != spec["dtype"]
+                    for name, spec in specs.items()
+                ):
+                    raise RuntimeError("Generic completion physical output endpoint mismatch")
+            latest_outputs.clear()
+            latest_outputs.update(outputs)
+            return outputs
+
+        started_at = utc_now()
+        attempt = {"repetition_index": index, "execution_id": config["execution_id"], "status": "started",
+                   "started_at": started_at, "pid": os.getpid(),
+                   "runtime_instance_id": f"{config['execution_id']}:{os.getpid()}:{started_at}"}
+        result["repetitions"].append(attempt)
+        publish()
+        print(f"[generic-completion] repetition={index}/3 warmup=100 tasks=1000 started", flush=True)
+        try:
+            measured = measure_split_completion(stage1, transfer, observe_stage2, current_processor,
+                warmup=100, tasks=1000, queue_depth=int(config.get("queue_depth", 2)),
+                clone_payload=clone_payload, timeout_s=float(config.get("timeout_s", 3600)),
+                progress=lambda phase, count: print(f"[generic-completion] repetition={index} {phase}={count}", flush=True))
+            # Persist only the last already completed task, outside the measured
+            # interval. These bound samples permit later offline verification.
+            sample_dir = Path(out_dir) / f"repetition_{index}_attempt_{len(result['repetitions']):03d}"
+            sample_dir.mkdir(exist_ok=False)
+            samples = {}
+            for ordinal, (name, value) in enumerate(latest_outputs.items()):
+                sample_path = sample_dir / f"output_{ordinal}.npy"
+                np.save(sample_path, np.asarray(value), allow_pickle=False)
+                samples[name] = {"path": str(sample_path.relative_to(out_dir)),
+                    "sha256": _sp_file_sha256(sample_path), "shape": list(value.shape), "dtype": str(value.dtype)}
+            completed_result = json.loads(json.dumps(current_processor.last_result,
+                default=lambda value: value.tolist() if isinstance(value, np.ndarray) else value.item()))
+            completed_path = sample_dir / "completed_task.json"
+            _write_json(completed_path, completed_result)
+            attempt.update(raw_output_samples=samples, output_sample_relation="last_measured_completed_task",
+                output_samples_written_outside_timer=True, last_completed_result=completed_result,
+                completed_result_artifact={"path": str(completed_path.relative_to(out_dir)),
+                                           "sha256": _sp_file_sha256(completed_path)})
+            if config["task"] == "classification":
+                names = list(reference_outputs)
+                ref_logits = _classification_logits_vector(names, [reference_outputs[name] for name in names])
+                new_names = list(latest_outputs)
+                new_logits = _classification_logits_vector(new_names, [latest_outputs[name] for name in new_names])
+                metrics, passed = _proxy_validate_classification(ref_logits, new_logits)
+            else:
+                thresholds = reference_binding["tolerances"]
+                metrics, passed = _proxy_validate_detections(
+                    reference_processor.last_detections, current_processor.last_detections,
+                    match_iou_thr=float(thresholds["match_iou_threshold"]),
+                    pass_match_ratio_thr=float(thresholds["min_match_ratio"]),
+                    pass_mean_iou_thr=float(thresholds["min_mean_iou"]))
+            control = {"status": "passed" if passed else "failed", "reference_binding": reference_binding,
+                       "checked_outside_timer": True, "metrics": metrics, "observed_task_count": 1}
+            attempt.update(measured, functional_control=control, runtime_artifacts=expected, completed_at=utc_now())
+            if not passed:
+                attempt["status"] = "functional_control_failed"
+                raise RuntimeError("Generic completion functional control failed")
+            result["status"] = "partial"
+            publish()
+            print(f"[generic-completion] repetition={index} fps={measured['completed_task_fps']:.6f} functional_control=passed", flush=True)
+        except BaseException as error:
+            attempt.update(getattr(error, "partial_report", {}))
+            attempt.update(status="failed", error=f"{type(error).__name__}: {error}", completed_at=utc_now())
+            result["status"] = "failed"
+            publish()
+            raise
+    valid = valid_split_completion_repetitions(result, config, result_root=out_dir)
+    rates = [row["completed_task_fps"] for row in valid]
+    if repetition_index is not None and len(rates) < 3:
+        result["status"] = "partial"
+        publish()
+        return 0
+    if len(rates) != 3:
+        raise RuntimeError("Generic completion finished without three valid repetitions")
+    result.update(status="ok", completed_task_fps=statistics.median(rates),
+                  completed_task_fps_median=statistics.median(rates),
+                  completed_task_fps_min=min(rates), completed_task_fps_max=max(rates),
+                  completed_task_fps_std=statistics.stdev(rates), aggregation="median_of_all_three_repetitions", completed_at=utc_now())
+    publish()
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Run ORT benchmark for a split ONNX model set.")
     ap.add_argument("--manifest", type=str, default=DEFAULT_MANIFEST, help="Split manifest JSON (default from export).")
@@ -14610,6 +14988,7 @@ def main() -> int:
     ap.add_argument("--native-trt-build-receipt", type=str, default="", help="Receipt path created/reused with --native-trt-engine-path and later required by Native Full --no-build.")
     ap.add_argument("--native-split-quality-binding", type=str, default="", help="Sealed setup/model/case split binding. Forces exact Part1 + Part2 engine/receipt/meta reuse with no build and no fallback.")
     ap.add_argument("--quality-evidence-only", action="store_true", help="Run dataset-wide Full quality evidence only. Creates/reuses one receipt-sealed engine, emits no latency/FPS/performance report, and forbids fallback.")
+    ap.add_argument("--quality-source-only", action="store_true", help="Produce only the bound composed central Quality request using its existing CPU reference; skip Generic timing, phase and throughput measurements.")
     ap.add_argument("--model-id", type=str, default="", help="Explicit BenchmarkSet model identity for normal and diagnostic execution.")
     ap.add_argument("--quality-evidence-eval-id", type=str, default="", help="Evaluation-run identity sealed into a quality-only producer contract.")
     ap.add_argument("--quality-evidence-model-id", type=str, default="", help="Model identity sealed into a quality-only producer contract.")
@@ -14623,6 +15002,8 @@ def main() -> int:
     ap.add_argument("--trt-native-precision", dest="trt_native_precision", choices=["fp32", "fp16", "int8", "uint8_cast_fp16", "uint8_dequant_fp16", "float32_layout_fp16"], default=None, help="Alias for --native-trt-precision.")
     ap.add_argument("--trt-native-workspace-mb", dest="trt_native_workspace_mb", type=int, default=None, help="Alias for --native-trt-workspace-mb.")
     ap.add_argument("--out-dir", type=str, default="results", help="Output dir for reports (default: results/)")
+    ap.add_argument("--generic-completion-config", default="", help="Exact Generic split completion supplement; existing artifacts and prepared input only, no build or quality inference.")
+    ap.add_argument("--generic-completion-repetition", type=int, choices=[1, 2, 3], default=None, help="Run one independently initialized Generic completion repetition; preserve valid prior repetitions.")
     ap.add_argument("--warmup", type=int, default=5, help="Warmup runs per benchmark")
     ap.add_argument("--runs", type=int, default=10, help="Measured runs per benchmark")
     ap.add_argument("--phase-runs", type=int, default=5, help="Measured runs for v42 diagnostic phase breakdowns (full host-tail, Part2 prefix/tail, composed stages). Use 0 to disable.")
@@ -14715,6 +15096,8 @@ def main() -> int:
         ),
     )
     ap.add_argument("--seed", type=int, default=0, help="RNG seed for random input generation")
+    ap.add_argument("--existing-management-cpu-reference-json", default="",
+                    help="Explicit original semantic reference descriptor; prohibits CPU Full inference")
     ap.add_argument("--batch", type=int, default=None, help="Batch dim for random input generation (if dim0 unknown)")
     ap.add_argument("--shape-override", type=str, default=None, help="Override input shapes for random generation, shorthand: name=1x128;other=1x3x640x640")
     ap.add_argument("--inputs-npz", type=str, default=None, help="Load model inputs from an .npz file (keys are input names). Missing inputs are generated.")
@@ -14808,6 +15191,8 @@ def main() -> int:
     ap.add_argument('--validation-max-items', type=int, default=int(os.environ.get('SPLITPOINT_VALIDATION_MAX_ITEMS','0') or 0), help='0=uncapped; v60m development profiles set a deterministic task-specific cap')
 
     args = ap.parse_args()
+    _configure_quality_source_only(args, ap)
+    generic_completion_config = _configure_generic_completion(args, ap)
     args._full_only_quality_identity_context = None
     if str(args.full_only_quality_identity_json or "").strip():
         try:
@@ -14966,7 +15351,8 @@ def main() -> int:
     # Keep it simple: just serialize the argparse namespace.
     run_cfg = dict(vars(args))
 
-    base_dir = Path(__file__).resolve().parent
+    base_dir = (Path(generic_completion_config["case_dir"]).resolve()
+                if generic_completion_config else Path(__file__).resolve().parent)
 
 
     # Suite-level benchmark plan (optional).
@@ -15083,7 +15469,16 @@ def main() -> int:
         or (plan or {}).get("model_id")
         or full_path.stem
     ).strip()
-    _decoder_model_sha256 = _native_trt_model_sha256(full_path)
+    _decoder_model_sha256 = "" if generic_completion_config else _native_trt_model_sha256(full_path)
+    existing_management_reference = _existing_management_reference(
+        args.existing_management_cpu_reference_json,
+        model_sha256=_decoder_model_sha256,
+        variants=[v.strip() for v in str(args.variants).split(",") if v.strip()],
+        central=central_quality_remote_mode, image_count=int(args.validation_max_images or 0))
+    if existing_management_reference:
+        task_quality_policy["_existing_management_reference"] = existing_management_reference
+    if args.quality_source_only and not existing_management_reference:
+        raise SystemExit("--quality-source-only requires a verified existing management CPU reference")
     if not p1_path.is_absolute():
         p1_path = base_dir / p1_path
     if not p2_path.is_absolute():
@@ -15368,7 +15763,9 @@ def main() -> int:
         print(f"[info] part2 host tail: {p2_host_tail_path.name}")
 
     # Load only the ONNX skeleton (avoid pulling huge external weights into RAM)
-    full_model = onnx.load(str(full_path), load_external_data=False)
+    # Completion consumes the bound prepared input and frozen decoder contract;
+    # only the Part1 input metadata is needed, never Full weights or inference.
+    full_model = onnx.load(str(p1_path if generic_completion_config else full_path), load_external_data=False)
     default_hw = _guess_default_image_hw_for_model(full_model)
 
     # Resolve image presets ("default"|"coco"|"imagenet") to an actual file path.
@@ -15449,6 +15846,11 @@ def main() -> int:
         print(f"[inputs] loaded {len(feeds_full)} tensor(s) from {args.inputs_npz}")
 
     required_inputs = [vi.name for vi in _get_non_initializer_inputs(full_model)]
+    if generic_completion_config:
+        prepared = _completion_bound_array(generic_completion_config["input_binding"]["prepared_input"])
+        if len(required_inputs) != 1:
+            raise RuntimeError("Generic completion requires the bound single image input")
+        feeds_full = {required_inputs[0]: prepared}
     missing = [n for n in required_inputs if n not in feeds_full]
 
     # Optional: use image for missing CV input(s)
@@ -15684,9 +16086,23 @@ def main() -> int:
         for p in providers:
             provider_options.append(trt_opts if p == "TensorrtExecutionProvider" else {})
 
-    sess_full, info_full = _create_session("full", full_path, providers, provider_options, sess_options)
-    sess_p1, info_p1 = _create_session("part1", p1_path, providers, provider_options, sess_options)
-    sess_p2, info_p2 = _create_session("part2", p2_path, providers, provider_options, sess_options)
+    if generic_completion_config:
+        def metadata_only_session(kind, path):
+            return _CompletionMetadataSession(path), SessionBuildInfo(
+                name=kind, model_path=str(path), build_seconds=0.0,
+                providers_requested=[], providers_in_use=[])
+        sess_full, info_full = metadata_only_session("full_outputs_metadata", p2_path)
+        sess_p1, info_p1 = metadata_only_session("part1", p1_path)
+        sess_p2, info_p2 = metadata_only_session("part2", p2_path)
+    else:
+        if existing_management_reference:
+            sess_full = _CompletionMetadataSession(full_path)
+            info_full = SessionBuildInfo(name="existing_cpu_reference_metadata", model_path=str(full_path),
+                                        build_seconds=0.0, providers_requested=[], providers_in_use=[])
+        else:
+            sess_full, info_full = _create_session("full", full_path, providers, provider_options, sess_options)
+        sess_p1, info_p1 = _create_session("part1", p1_path, providers, provider_options, sess_options)
+        sess_p2, info_p2 = _create_session("part2", p2_path, providers, provider_options, sess_options)
     sess_p2_host_tail: Optional[ort.InferenceSession] = None
     info_p2_host_tail: Optional[SessionBuildInfo] = None
     if p2_host_tail_path is not None and p2_host_tail_path.exists():
@@ -15818,7 +16234,8 @@ def main() -> int:
                 native_cache_root = Path(cache_arg)
                 if not native_cache_root.is_absolute():
                     native_cache_root = base_dir / native_cache_root
-                native_cache_root.mkdir(parents=True, exist_ok=True)
+                if not generic_completion_config:
+                    native_cache_root.mkdir(parents=True, exist_ok=True)
                 explicit_engine_path = None
                 explicit_build_receipt_path = None
                 verified_build_receipt = None
@@ -15967,7 +16384,20 @@ def main() -> int:
     # If this remains at "auto", validation images would be loaded without the
     # actually chosen normalization / letterbox path, which causes mismatches
     # against the annotation-derived reference boxes.
-    if img_candidates:
+    if img_candidates and existing_management_reference:
+        preprocessing = existing_management_reference["quality_contract"]["preprocessing"]["identity"]
+        actual_preprocessing, _ = _resolve_image_preprocessing_contract(
+            task="detection", target_hw=(int(img_hw[0]), int(img_hw[1])))
+        if actual_preprocessing != preprocessing:
+            raise ValueError("existing CPU reference preprocessing differs from current input")
+        resolved_image_scale = str(preprocessing["image_scale"])
+        if args.image_scale not in ("auto", resolved_image_scale):
+            raise ValueError("existing CPU reference image scale conflict")
+        feeds_full[img_candidates["name"]] = _load_image_as_nchw(
+            p_img, target_hw=img_hw, dtype=img_candidates["dtype"],
+            scale=resolved_image_scale, letterbox=bool(preprocessing["letterbox"]),
+            preprocessing_contract=preprocessing)
+    elif img_candidates:
         out_names = [o.name for o in sess_full.get_outputs()]
 
         def _run_full_with_scale(scale: str):
@@ -16146,12 +16576,12 @@ def main() -> int:
     if missing_p1:
         raise SystemExit(f"Missing inputs for part1: {missing_p1}")
 
-    p1_out0 = sess_p1.run(None, feeds_p1)
+    p1_out0 = [] if generic_completion_config else sess_p1.run(None, feeds_p1)
     p1_map0: Dict[str, np.ndarray] = {o.name: a for o, a in zip(sess_p1.get_outputs(), p1_out0)}
 
     p2_inputs = [i.name for i in sess_p2.get_inputs()]
     missing_p2 = [n for n in p2_inputs if (n not in p1_map0 and n not in feeds_full)]
-    if missing_p2:
+    if missing_p2 and not generic_completion_config:
         raise SystemExit(f"Missing inputs for part2 (neither cut tensor nor in full inputs): {missing_p2}")
 
     def build_feeds_p2(p1_map: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
@@ -16160,7 +16590,7 @@ def main() -> int:
             d[n] = p1_map[n] if n in p1_map else feeds_full[n]
         return d
 
-    feeds_p2_0 = build_feeds_p2(p1_map0)
+    feeds_p2_0 = {} if generic_completion_config else build_feeds_p2(p1_map0)
 
     # v57a: define image-input metadata before benchmark-input-policy is built.
     # The v57 prepared-feed patch originally assigned image_input_name later in
@@ -16724,7 +17154,8 @@ def main() -> int:
                         hailo_p1 = _new_hailo_session(
                             stage1_tok,
                             hef_p1,
-                            quantized_inputs=_hailo_image_quantized_inputs_default(stage1_tok),
+                            quantized_inputs=(_completion_hailo_quantized_inputs(generic_completion_config)
+                                              if generic_completion_config else _hailo_image_quantized_inputs_default(stage1_tok)),
                             quantized_outputs=bool(
                                 _boundary_requests_raw_hailo
                                 or _hailo10_native_io(stage1_tok)
@@ -16755,9 +17186,12 @@ def main() -> int:
                             src = feeds_full.get(name, first_input_val)
                             src_arr = np.asarray(src)
                             try:
-                                p1_inputs_hailo[name] = _prepare_hailo_image_input(hailo_p1, src_arr, name)
+                                if generic_completion_config:
+                                    p1_inputs_hailo[name] = src_arr
+                                else:
+                                    p1_inputs_hailo[name] = _prepare_hailo_image_input(hailo_p1, src_arr, name)
                             except Exception:
-                                if _hailo10_native_io(stage1_tok):
+                                if generic_completion_config or _hailo10_native_io(stage1_tok):
                                     raise
                                 tgt_shape = hailo_p1.runtime_input_shapes.get(name) or hailo_p1.input_shapes.get(name)
                                 p1_inputs_hailo[name] = _adapt_tensor(src_arr, tgt_shape) if tgt_shape is not None else src_arr
@@ -17078,12 +17512,10 @@ def main() -> int:
         live session artifact here, after session construction succeeded.
         """
 
-        if isinstance(
-            getattr(args, "_native_split_quality_binding", None), Mapping,
-        ):
-            # Native Quality-FIRST already carries the stronger, receipt-bound
-            # native_split_quality_binding and must not be relabelled generic.
-            return None
+        # The actual producer remains the Generic P1/P2 runner when its P2
+        # engine was selected through Native split quality receipts. Preserve
+        # both contracts: the receipt binding does not describe this runner's
+        # current dataset adapter and implementation provenance.
         runtime_artifacts: List[Dict[str, Any]] = []
         if hailo_p1 is not None:
             runtime_artifacts.append({
@@ -17184,6 +17616,8 @@ def main() -> int:
     def run_stage1_map(feeds_p1_override: Optional[Dict[str, np.ndarray]] = None) -> Dict[str, np.ndarray]:
         if hailo_p1 is not None:
             local_inputs = p1_inputs_hailo if feeds_p1_override is None and p1_inputs_hailo is not None else _build_hailo_input_map(hailo_p1, feeds_p1_override or feeds_p1)
+            if generic_completion_config:
+                local_inputs = _completion_hailo_inputs(generic_completion_config, stage1_tok, local_inputs)
             return hailo_p1.infer(local_inputs)
         if deepx_p1 is not None:
             return deepx_p1.infer(feeds_p1_override or feeds_p1)
@@ -18273,6 +18707,28 @@ def main() -> int:
         out = ort_p2_sess.run(None, inputs)
         return {o.name: a for o, a in zip(ort_p2_sess.get_outputs(), out)}
 
+    if generic_completion_config:
+        if variant_errors or native_p2_sess is None or (hailo_p1 is None and deepx_p1 is None):
+            raise RuntimeError(f"Generic completion exact runtime initialization failed: {variant_errors}")
+        if deepx_p1 is not None:
+            deepx_p1.exact_prepared_input = True
+        if int(generic_completion_config.get("queue_depth", 2)) != int(args.throughput_queue_depth):
+            raise RuntimeError("Generic completion must retain the existing Generic queue depth")
+        streaming_impl = str(args.streaming_impl or "auto").lower()
+        if streaming_impl == "auto":
+            streaming_impl = "native_fifo"  # Existing Generic auto choice for TensorRT P2.
+        if streaming_impl not in {"native_fifo", "generic"}:
+            raise RuntimeError("Generic completion streaming implementation unsupported")
+        artifacts = {
+            "part1_runtime": hailo_p1.hef_path if hailo_p1 is not None else deepx_p1.dxnn_path,
+            "engine": native_p2_sess.engine_path,
+        }
+        return _run_generic_split_completion(
+            generic_completion_config, out_dir, run_stage1_map,
+            _build_stage2_inputs, run_stage2_map, artifacts,
+            clone_payload=_clone_tensor_map if streaming_impl == "generic" else None,
+            repetition_index=args.generic_completion_repetition)
+
     # Precompute a fixed stage2 input for benchmarking part2 alone.
     # Use CPU-baseline cut tensors so part2 can be isolated and compared against
     # the CPU full reference output.
@@ -18880,7 +19336,7 @@ def main() -> int:
             timing_breakdown["part2_prefix_tail_timing_error"] = f"{type(e).__name__}: {e}"
             print(f"[warn] Part2 prefix/host-tail timing failed: {e}")
 
-    if "composed" in variants and not variant_errors.get("part1") and not variant_errors.get("part2"):
+    if not args.quality_source_only and "composed" in variants and not variant_errors.get("part1") and not variant_errors.get("part2"):
         try:
             comp_mean, comp_std, comp_runs_ms = _bench("composed", run_composed_map, args.warmup, args.runs, verbose_runs=args.verbose_runs, progress_every=args.progress_every)
             variant_status["composed"] = "ok"
@@ -19249,6 +19705,11 @@ def main() -> int:
     baseline_cache_hit = False
 
     ref_full_out: Optional[List[np.ndarray]] = None
+    if existing_management_reference:
+        # Raw single-image CPU tensors are not part of the saved N5000
+        # semantic artifact. Keep that optional diagnostic unavailable.
+        ref_full_out = []
+        baseline_cache_path = None
     if baseline_cache_path is not None and baseline_cache_path.exists():
         try:
             cached, meta = _load_inputs_npz(str(baseline_cache_path))
@@ -19290,6 +19751,8 @@ def main() -> int:
 
     # Try to detect output format based on the CPU reference.
     output_format = _detect_output_format(output_names, full_out_list)
+    if existing_management_reference:
+        output_format = existing_management_reference["quality_contract"]["decoder"]["identity"]["source_output_format"]
 
     requested_benchmark_task = _normalize_benchmark_task(getattr(args, "benchmark_task", "auto"))
     effective_benchmark_task = requested_benchmark_task
@@ -19437,10 +19900,16 @@ def main() -> int:
     if "composed" in variants and not variant_errors.get("composed") and not variant_errors.get("part1") and not variant_errors.get("part2"):
         try:
             _composed_map = run_composed_map()
+            if args.quality_source_only and not _composed_map:
+                raise RuntimeError("Quality source produced no composed outputs")
             variant_output_names["composed"] = _ordered_out_names(_composed_map)
             variant_outputs["composed"] = [_composed_map[n] for n in variant_output_names["composed"]]
+            if args.quality_source_only:
+                variant_status["composed"] = "ok"
         except Exception as e:
             variant_output_errors["composed"] = str(e)
+            if args.quality_source_only:
+                variant_status["composed"] = "error"
 
     # part1 (accuracy completion via CPU part2)
     if "part1" in variants and not variant_errors.get("part1"):
@@ -19670,6 +20139,13 @@ def main() -> int:
     warn_list: List[str] = []
 
     for v in variants:
+        if existing_management_reference and v in variant_outputs:
+            comparisons[v] = {"status": "unavailable", "passed": None,
+                "validation_mode_used": "proxy_detections", "elementwise": None, "proxy": None,
+                "reference_source": "explicit_original_management_cpu_reference",
+                "reason": "saved_semantic_reference_has_no_single_image_raw_tensors",
+                "warnings": ["single_image_raw_cpu_diagnostic_unavailable; bound_N5000_quality_required"]}
+            continue
         if v not in variant_outputs:
             err = variant_output_errors.get(v) or variant_errors.get(v)
             st = "missing"
@@ -19913,7 +20389,7 @@ def main() -> int:
         drift_variant = str(requested_primary_variant)
         drift_mode = "primary_vs_cpu_full"
 
-    if drift_variant:
+    if drift_variant and not existing_management_reference:
         drift_provider = _validation_provider_for_variant(drift_variant)
         drift_warnings: List[str] = []
         if drift_variant != "full":
@@ -20462,11 +20938,6 @@ def main() -> int:
                     _active_composed_quality_producer_context()
                     if str(v).strip().lower() == "composed"
                     and not cpu_reference_only_mode
-                    and not isinstance(
-                        getattr(
-                            args, "_native_split_quality_binding", None,
-                        ), Mapping,
-                    )
                     else None
                 ),
                 diagnostics=_quality_export_diagnostics,
@@ -20734,7 +21205,11 @@ def main() -> int:
             )
             if not quality_adapter_mode:
                 continue
-            if c.get("status") not in ("ok", "skipped_layout_mismatch"):
+            original_reference_candidate = bool(
+                existing_management_reference and central_quality_remote_mode
+                and v == "composed" and v in variant_outputs
+                and c.get("reason") == "saved_semantic_reference_has_no_single_image_raw_tensors")
+            if c.get("status") not in ("ok", "skipped_layout_mismatch") and not original_reference_candidate:
                 continue
             comparisons[v]["task_quality_semantic_adapter"] = {
                 "mode": str(quality_adapter_mode),
@@ -21414,11 +21889,6 @@ def main() -> int:
                     _active_composed_quality_producer_context()
                     if str(v).strip().lower() == "composed"
                     and not cpu_reference_only_mode
-                    and not isinstance(
-                        getattr(
-                            args, "_native_split_quality_binding", None,
-                        ), Mapping,
-                    )
                     else None
                 ),
                 candidate_completion_contract=runtime_completion_contract,
@@ -21731,6 +22201,13 @@ def main() -> int:
     final_pass_all = True
     for v in gating_variants:
         c = comparisons.get(v)
+        if (existing_management_reference and isinstance(c, dict)
+                and c.get("reason") == "saved_semantic_reference_has_no_single_image_raw_tensors"):
+            # No raw reference tensors means no raw numerical decision. The
+            # independently bound central dataset Quality remains mandatory.
+            if final_pass_all is not False:
+                final_pass_all = None
+            continue
         if not isinstance(c, dict):
             final_pass_all = False
             continue
@@ -22220,8 +22697,19 @@ def main() -> int:
         print(f"Wrote quality-only evidence {quality_report_path}")
         return 0
 
+    quality_source_request = task_quality_input_requests_by_variant.get("composed")
+    if args.quality_source_only and (
+        variant_status.get("composed") != "ok"
+        or not isinstance(quality_source_request, Mapping)
+        or int(quality_source_request.get("record_count") or 0) < 1
+    ):
+        raise RuntimeError(
+            "Quality source produced no composed central request: "
+            + json.dumps(task_quality_input_export_diagnostics_by_variant.get("composed") or {}, sort_keys=True)
+        )
     requested_variants = list(variants)
-    measured_variants_actual = [v for v in requested_variants if variant_status.get(v) != "skipped"]
+    runtime_variants_actual = [v for v in requested_variants if variant_status.get(v) != "skipped"]
+    measured_variants_actual = [] if args.quality_source_only else runtime_variants_actual
     skipped_variants = [v for v in requested_variants if variant_status.get(v) == "skipped"]
 
     # v55p: make deployment contracts explicit.  YOLO/Hailo raw-head and
@@ -22358,7 +22846,7 @@ def main() -> int:
         "schema": "onnx-splitpoint/row-eligibility",
         "schema_version": 2,
         "build_pass": True,
-        "runtime_pass": bool(measured_variants_actual),
+        "runtime_pass": bool(runtime_variants_actual),
         "io_contract_pass": _contract_pass,
         "runtime_contract_decision": runtime_contract_decision,
         "runtime_contract_reason_codes": list(runtime_contract_reason_codes),
@@ -22391,6 +22879,10 @@ def main() -> int:
 
     report = dict(
         schema_version=7,
+        quality_source_only=bool(args.quality_source_only),
+        performance_measurement_executed=any(bool(values) for values in (
+            full_runs_ms, p1_runs_ms, p2_runs_ms, comp_runs_ms,
+        )),
         setup_id=str(getattr(args, "quality_evidence_setup_id", "") or ""),
         measurement_endpoint=measurement_endpoints_by_variant.get(primary_variant, ""),
         full_measurement_endpoint=measurement_endpoints_by_variant.get("full", ""),

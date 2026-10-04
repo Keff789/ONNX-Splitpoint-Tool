@@ -218,6 +218,8 @@ class WorkflowOptions:
     # The runner derives the missing identities from the sealed execution plan
     # and the existing central summary; callers cannot choose endpoints.
     resume_missing_full_quality_only: bool = False
+    # Continue only missing identities under the archived scientific contract.
+    resume_missing: bool = False
 
     # v59bq Native Producer EvalRunner integration.  Native producers are a
     # strict additional execution mode: they only run supported IO contracts and

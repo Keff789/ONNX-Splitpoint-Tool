@@ -647,6 +647,66 @@ def _energy_aggregate(item: Mapping[str, Any]) -> dict[str, Any]:
     return max(candidates, key=_aggregate_score) if candidates else {}
 
 
+def _preserved_campaign_repeat_records(item: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Read original accepted partial repeats; never manufacture an aggregate."""
+    from .energy.task_budget import read_verified_campaign_repeat
+    from .native_job_identity import native_identity_key
+    import fcntl
+    import shlex
+    run = item.get("run") or {}
+    evidence = run.get("energy_task_budget") or {}
+    plan = item.get("row") or {}
+    if not evidence or _energy_aggregate(item).get("repeat_contract_complete") is True:
+        return []
+    try:
+        parts = shlex.split(plan["measure_command"])
+        def option(name):
+            values = [parts[i + 1] if value == name else value.split("=", 1)[1]
+                      for i, value in enumerate(parts) if value == name or value.startswith(name + "=")]
+            if len(values) != 1:
+                raise ValueError("ambiguous campaign repeat option")
+            return values[0]
+        checkpoint = Path(evidence["checkpoint"])
+        row_id = evidence["row_id"]
+        command_file = Path(plan["command_file"])
+        duration = float(plan["duration_s"])
+        contract_sha = plan["successful_command_contract_sha256"]
+        if (not checkpoint.is_absolute() or checkpoint.is_symlink()
+                or str(checkpoint) != option("--campaign-budget-file")
+                or row_id != option("--campaign-row-id")
+                or json.loads(row_id) != list(native_identity_key(plan)[:4])
+                or str(command_file) != option("--command-file")
+                or contract_sha != option("--preflight-expected-command-contract-sha256")
+                or duration != float(option("--duration"))):
+            return []
+        with checkpoint.open(encoding="utf-8") as stream:
+            fcntl.flock(stream, fcntl.LOCK_SH)
+            campaign = json.load(stream)
+        task = campaign["tasks"][row_id]
+        if campaign.get("campaign") is not True or task["source_id"] != evidence["source_id"]:
+            return []
+        command = command_file.read_text(encoding="utf-8").strip()
+        records = {}
+        count = int(plan["measurement_effective_repeats"])
+        for chain in task["chains"]:
+            if chain.get("valid") is not True:
+                continue
+            match = re.fullmatch(r"repeat:(0|[1-9][0-9]*)", str(chain.get("logical_repeat") or ""))
+            if not match or int(match[1]) >= count or int(match[1]) in records:
+                return []
+            index = int(match[1])
+            record = read_verified_campaign_repeat(chain, command=command,
+                command_contract_sha256=contract_sha, duration_s=duration,
+                require_ab=(plan.get("window_method_ab") or {}).get("enabled") is True)
+            records[index] = {**record, "run_index": index, "campaign_reused_repeat": {
+                "budget_file": str(checkpoint), "campaign_row": row_id,
+                "logical_repeat": chain["logical_repeat"], "run_directory": chain["run_directory"],
+            }}
+        return [records[index] for index in sorted(records)]
+    except (OSError, ValueError, TypeError, KeyError, IndexError):
+        return []
+
+
 def _energy_repeat_records(item: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Return complete per-repeat mappings still visible in bounded logs."""
     run = item.get("run") if isinstance(item.get("run"), Mapping) else {}
@@ -668,6 +728,8 @@ def _energy_repeat_records(item: Mapping[str, Any]) -> list[dict[str, Any]]:
             current = best.get(index)
             if current is None or len(row) > len(current):
                 best[index] = row
+    for record in _preserved_campaign_repeat_records(item):
+        best.setdefault(record["run_index"], record)
     return [best[index] for index in sorted(best)]
 
 
@@ -1378,13 +1440,23 @@ def _canonical_row_endpoint(row: Mapping[str, Any]) -> tuple[str, str]:
     return endpoint_id, endpoint_hash
 
 
-def collect_native_energy(run_dir: str | Path) -> list[dict[str, Any]]:
+def native_energy_results_path(run_dir: str | Path, *, include_partial: bool = False) -> Path:
+    """Prefer the terminal publication; explicitly admit its normal progress file."""
+    directory = Path(run_dir) / "reports" / "native_energy_measurements"
+    final = directory / "native_producer_energy_results.json"
+    partial = directory / "native_producer_energy_results.partial.json"
+    # Do not replace an existing terminal publication with a later progress
+    # file or treat an invalid terminal publication as permission to fall back.
+    return partial if include_partial and not final.exists() and partial.is_file() else final
+
+
+def collect_native_energy(run_dir: str | Path, *, include_partial: bool = False) -> list[dict[str, Any]]:
     run = Path(run_dir)
-    src = run / "reports" / "native_energy_measurements" / "native_producer_energy_results.json"
+    src = native_energy_results_path(run, include_partial=include_partial)
     data = _load(src)
     validations = _native_validation_map(run)
     out: list[dict[str, Any]] = []
-    for item in list(data.get("rows") or []):
+    for row_index, item in enumerate(list(data.get("rows") or [])):
         if not isinstance(item, Mapping):
             continue
         plan = dict(item.get("row") or {})
@@ -1552,6 +1624,12 @@ def collect_native_energy(run_dir: str | Path) -> list[dict[str, Any]]:
                 )
                 if requested_repeats:
                     break
+        if requested_repeats <= 0:
+            requested_repeats = int(
+                _num(plan.get("measurement_effective_repeats"))
+                or _num(plan.get("measurement_requested_repeats"))
+                or 0
+            )
         visible_valid_repeats = sum(
             1 for record in repeat_records
             if str(record.get("postprocess_status") or "") == "ok"
@@ -1575,6 +1653,7 @@ def collect_native_energy(run_dir: str | Path) -> list[dict[str, Any]]:
         observed_repeat_count = int(
             _num(payload.get("raw_postprocessed_run_count"))
             or len(repeat_records)
+            or _num((run_info.get("measurement_start_observation") or {}).get("collector_started_repeat_count"))
             or valid_repeats
         )
         if requested_repeats <= 0 and observed_repeat_count > 0:
@@ -2092,6 +2171,20 @@ def collect_native_energy(run_dir: str | Path) -> list[dict[str, Any]]:
             "task": task,
             "task_source": task_source,
             "evaluation_role": str(plan.get("evaluation_role") or "unknown").strip().lower() or "unknown",
+            "evaluation_role_raw": plan.get("evaluation_role"),
+            "evaluation_role_source": f"{src}#/rows/{row_index}/row/evaluation_role",
+            "energy_role_declarations": {
+                scope: {key: value[key] for key in (
+                    "evaluation_role", "screening_only", "diagnostic_only",
+                    "claim_eligible", "eligible_for_scientific_claim",
+                ) if key in value}
+                for scope, value in (
+                    ("result", data), ("row", item), ("plan", plan),
+                    ("run", run_info), ("aggregate", payload),
+                )
+            },
+            "screening_only": plan.get("screening_only") is True,
+            "command_contract_source": str(plan.get("command_contract_file") or ""),
             "runner_regime": _canonical_runner(plan.get("runner_regime"), backend),
             "direction": direction,
             "case": str(plan.get("case") or ("full" if backend.startswith("native_full_") else "")),
@@ -2388,6 +2481,13 @@ def collect_native_energy(run_dir: str | Path) -> list[dict[str, Any]]:
             "energy_repeat_requested_n": requested_repeats,
             "energy_repeat_observed_n": observed_repeat_count,
             "energy_repeat_status": repeat_status,
+            # Physical starts/retries remain distinct from successfully
+            # imported logical repeats, including an interrupted partial row.
+            "energy_physical_collector_attempt_count": run_info.get("energy_collector_attempt_count"),
+            "energy_failed_physical_collector_attempt_count": run_info.get("energy_failed_collector_attempt_count"),
+            "energy_measurement_start_observation": dict(run_info.get("measurement_start_observation") or {}),
+            "energy_execution_status": str(run_info.get("execution_status") or ""),
+            "energy_not_started_reason": str(run_info.get("energy_not_started_reason") or item.get("energy_not_started_reason") or ""),
             "screening_comparable": bool(
                 plan.get("screening_comparable") is True
                 if "screening_comparable" in plan
@@ -2493,6 +2593,8 @@ def collect_native_energy(run_dir: str | Path) -> list[dict[str, Any]]:
             ),
             "measurement_run_rc": measurement_run_rc,
             "source": str(src),
+            "source_result_kind": "partial" if src.name.endswith(".partial.json") else "final",
+            "source_result_complete": data.get("complete"),
             "observation_tier": "claim_eligible" if claim_eligible else "development_or_screening",
             "diagnostic_only": bool(
                 plan.get("diagnostic_only") is True
@@ -2586,6 +2688,10 @@ def scientific_energy_rows(
             "variant": item.get("execution_mode"),
             "setup_id": item.get("setup_id"),
             "evaluation_role": item.get("evaluation_role"),
+            "evaluation_role_raw": item.get("evaluation_role_raw"),
+            "evaluation_role_source": item.get("evaluation_role_source"),
+            "energy_role_declarations": item.get("energy_role_declarations"),
+            "screening_only": item.get("screening_only"),
             "runner_regime": item.get("runner_regime"),
             "direction": item.get("direction"),
             "contract_hash": item.get("contract_hash"),
@@ -2698,13 +2804,17 @@ def scientific_energy_rows(
             "active_duration_relative_tolerance": item.get("active_duration_relative_tolerance"),
             "active_duration_comparison_policy": item.get("active_duration_comparison_policy"),
             "active_duration_tolerance_source": item.get("active_duration_tolerance_source"),
-            "average_power_w": comparison.get("comparison_average_power_w"),
+            "average_power_w": comparison.get("raw_average_power_w"),
+            "comparison_average_power_w": comparison.get("comparison_average_power_w"),
             "raw_average_power_w": comparison.get("raw_average_power_w"),
             "host_normalized_average_power_est_w": comparison.get("host_normalized_average_power_est_w"),
-            "energy_per_work_j": comparison.get("comparison_energy_per_work_j"),
+            "energy_per_work_j": comparison.get("raw_energy_per_work_j"),
+            "comparison_energy_per_work_j": comparison.get("comparison_energy_per_work_j"),
             "raw_energy_per_work_j": comparison.get("raw_energy_per_work_j"),
             "host_normalized_energy_per_work_est_j": comparison.get("host_normalized_energy_per_work_est_j"),
-            "energy_total_j": comparison.get("comparison_energy_total_j"),
+            "energy_total_j": comparison.get("raw_energy_total_j"),
+            "comparison_energy_total_j": comparison.get("comparison_energy_total_j"),
+            "energy_primary_value_basis": "calibrated_input_unsubtracted",
             "raw_energy_total_j": comparison.get("raw_energy_total_j"),
             "energy_comparison_basis": comparison.get("energy_comparison_basis"),
             "energy_comparison_status": comparison.get("energy_comparison_status"),
@@ -2773,9 +2883,12 @@ def scientific_energy_rows(
                 "claim_comparable"
             ) is True,
             "energy_confidence_level": item.get("energy_confidence_level"),
-            "energy_per_work_sample_stddev_j": comparison.get("comparison_energy_per_work_sample_stddev_j"),
-            "energy_per_work_ci_low_j": comparison.get("comparison_energy_per_work_ci_low_j"),
-            "energy_per_work_ci_high_j": comparison.get("comparison_energy_per_work_ci_high_j"),
+            "energy_per_work_sample_stddev_j": item.get("energy_per_work_j_sample_stddev"),
+            "energy_per_work_ci_low_j": item.get("energy_per_work_j_ci_low"),
+            "energy_per_work_ci_high_j": item.get("energy_per_work_j_ci_high"),
+            "comparison_energy_per_work_sample_stddev_j": comparison.get("comparison_energy_per_work_sample_stddev_j"),
+            "comparison_energy_per_work_ci_low_j": comparison.get("comparison_energy_per_work_ci_low_j"),
+            "comparison_energy_per_work_ci_high_j": comparison.get("comparison_energy_per_work_ci_high_j"),
             "average_power_ci_low_w": item.get("average_power_w_ci_low"),
             "average_power_ci_high_w": item.get("average_power_w_ci_high"),
             "energy_ab_status": item.get("energy_ab_status"),
@@ -2892,6 +3005,128 @@ def build_native_energy_ab_aggregates(rows: Sequence[Mapping[str, Any]]) -> list
         row["window_method_comparison_statistics"] = source.get("window_method_comparison_statistics") or {}
         out.append(row)
     return out
+
+
+def _descriptive_energy_pair(
+    split: Mapping[str, Any], baseline: Mapping[str, Any] | None,
+    *, duration_match: bool, active_duration_match: bool,
+) -> dict[str, Any]:
+    """Describe recorded FS observations without changing any claim decision.
+
+    A ratio is an acquisition-level description, not proof of semantic
+    equivalence or scientific release.  Those dimensions remain separate.
+    """
+    reasons: list[str] = []
+    semantic_reasons: list[str] = []
+    baseline = baseline or {}
+    if not baseline:
+        reasons.append("unique_baseline_missing")
+    if split.get("energy_scope") != "full_system":
+        reasons.append("full_system_scope_not_declared")
+    if split.get("energy_window_effective") != "command_window":
+        reasons.append("command_window_not_declared")
+    for field in (
+        "model", "setup_id", "task", "direction", "model_sha256",
+        "validation_dataset_sha256", "validation_dataset_image_ids_sha256",
+        "validation_dataset_ground_truth_sha256", "validation_input_or_image_sha256",
+        "prepared_feed_task", "prepared_feed_preprocess_mode",
+        "prepared_feed_letterbox_pad_value", "prepared_feed_source_image_sha256",
+        "preprocessing_contract_sha256", "energy_scope", "energy_window_effective",
+        "energy_calibration_sha256",
+    ):
+        left, right = split.get(field), baseline.get(field)
+        if left in (None, "", "unknown", "mixed") or left != right:
+            reasons.append(f"{field}_mismatch_or_missing")
+    left_endpoint = _canonical_row_endpoint(split)
+    right_endpoint = _canonical_row_endpoint(baseline)
+    if not all(left_endpoint) or left_endpoint != right_endpoint:
+        reasons.append("comparison_endpoint_mismatch_or_missing")
+    for side, row in (("split", split), ("baseline", baseline)):
+        for field in (
+            "ok", "endpoint_contract_complete", "output_endpoint_match",
+            "runtime_work_units_exact", "energy_calibration_verified",
+        ):
+            if row.get(field) is not True:
+                reasons.append(f"{side}_{field}_not_verified")
+        if not _calibrated_unsubtracted_input_primary(row):
+            reasons.append(f"{side}_unsubtracted_primary_not_verified")
+        if row.get("semantic_claim_ok") is not True:
+            semantic_reasons.append(f"{side}_semantic_evidence_not_verified")
+        if row.get("completion_pairing_eligible") is not True:
+            semantic_reasons.append(f"{side}_completion_not_verified")
+    if not duration_match:
+        reasons.append("target_duration_mismatch_or_missing")
+    if not active_duration_match:
+        reasons.append("active_duration_not_comparable")
+    for field in ("decoder_contract_sha256", "nms_contract_sha256"):
+        if str(split.get("task") or "").lower() == "detection":
+            if not _strict_sha256_token(split.get(field)) or split.get(field) != baseline.get(field):
+                semantic_reasons.append(f"{field}_identity_differs_or_missing")
+    split_raw = _num(resolve_energy_comparison(split).get("raw_energy_per_work_j"))
+    full_raw = _num(resolve_energy_comparison(baseline).get("raw_energy_per_work_j"))
+    if split_raw is None or not math.isfinite(split_raw) or split_raw < 0:
+        reasons.append("split_primary_energy_invalid")
+    if full_raw is None or not math.isfinite(full_raw) or full_raw <= 0:
+        reasons.append("baseline_primary_energy_invalid")
+    descriptive = not reasons
+    semantic = bool(descriptive and not semantic_reasons)
+    return {
+        "descriptive_comparable": descriptive,
+        "descriptive_comparison_basis": "calibrated_full_system_input_unsubtracted",
+        "descriptive_comparison_reasons": reasons,
+        "descriptive_energy_ratio": split_raw / full_raw if descriptive else None,
+        "descriptive_energy_delta_j": split_raw - full_raw if descriptive else None,
+        "descriptive_energy_saving_fraction": 1.0 - split_raw / full_raw if descriptive else None,
+        "semantic_comparable": semantic,
+        "semantic_comparison_reasons": semantic_reasons,
+        "semantic_comparison_status": (
+            "matching_contract_and_completion_evidence" if semantic
+            else "semantic_equivalence_not_established"
+        ),
+        "descriptive_ratio_is_scientific_claim": False,
+        "split_evaluation_role_raw": split.get("evaluation_role_raw"),
+        "baseline_evaluation_role_raw": baseline.get("evaluation_role_raw"),
+        "split_evaluation_role_source": split.get("evaluation_role_source"),
+        "baseline_evaluation_role_source": baseline.get("evaluation_role_source"),
+        "split_command_contract_source": split.get("command_contract_source"),
+        "baseline_command_contract_source": baseline.get("command_contract_source"),
+        "baseline_decoder_contract_sha256": baseline.get("decoder_contract_sha256"),
+        "baseline_nms_contract_sha256": baseline.get("nms_contract_sha256"),
+    }
+
+
+def summarize_native_energy_reporting(
+    rows: Sequence[Mapping[str, Any]], pairs: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Keep measurement, descriptive pairing, semantics and release counts apart."""
+    def physical_count(field: str) -> int | None:
+        values = [row.get(field) for row in rows]
+        return sum(values) if all(type(value) is int and value >= 0 for value in values) else None
+
+    return {
+        "energy_recorded_row_count": len(rows),
+        "energy_valid_row_count": sum(row.get("ok") is True for row in rows),
+        "energy_valid_replicate_count": sum(int(row.get("energy_repeat_valid_n") or 0) for row in rows),
+        "energy_complete_row_count": sum(row.get("ok") is True and row.get("energy_repeat_status") == "complete" for row in rows),
+        "energy_incomplete_row_count": sum(row.get("energy_repeat_status") != "complete" for row in rows),
+        "energy_physical_collector_attempt_count": physical_count("energy_physical_collector_attempt_count"),
+        "energy_failed_physical_collector_attempt_count": physical_count("energy_failed_physical_collector_attempt_count"),
+        "energy_pair_count": len(pairs),
+        "energy_descriptive_pair_count": sum(row.get("descriptive_comparable") is True for row in pairs),
+        "energy_semantically_matching_pair_count": sum(row.get("semantic_comparable") is True for row in pairs),
+        "energy_scientifically_released_row_count": sum(row.get("claim_eligible") is True for row in rows),
+        "energy_scientifically_released_pair_count": sum(row.get("claim_comparable") is True for row in pairs),
+        "energy_additional_host_normalization_row_count": sum(
+            row.get("energy_comparison_status") == "host_normalized_verified" for row in rows
+        ),
+        "energy_count_semantics": {
+            "recorded": "canonical native measurement rows including failures",
+            "valid": "successful recorded acquisition; independent of claim eligibility",
+            "descriptive": "exact setup/model/input/completed endpoint/calibration/window and duration-compatible raw FS pair",
+            "semantic": "descriptively compatible pair with matching decoder/NMS contract identity and verified semantic completion",
+            "scientifically_released": "existing claim decisions, never inferred from descriptive ratios",
+        },
+    }
 
 
 def build_native_energy_pairs(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -3300,7 +3535,15 @@ def build_native_energy_pairs(rows: Sequence[Mapping[str, Any]]) -> list[dict[st
             screening_comparable = bool(
                 baseline is not None and not screening_reasons
             )
+            descriptive = _descriptive_energy_pair(
+                split, baseline, duration_match=target_duration_match,
+                active_duration_match=bool(
+                    split_active_valid and baseline_active_valid
+                    and active_duration_within_tolerance is True
+                ),
+            )
             pairs.append({
+                **descriptive,
                 "model": split.get("model"),
                 "task": split.get("task"),
                 "evaluation_role": split.get("evaluation_role"),
@@ -3342,6 +3585,8 @@ def build_native_energy_pairs(rows: Sequence[Mapping[str, Any]]) -> list[dict[st
                     if comparable
                     else "screening_comparable"
                     if screening_comparable
+                    else "descriptive_only"
+                    if descriptive["descriptive_comparable"]
                     else "ineligible_or_contract_mismatch"
                 ),
                 "screening_comparison_reasons": screening_reasons,
@@ -3498,6 +3743,7 @@ def write_native_energy_reports(run_dir: str | Path, report_dir: str | Path) -> 
         "schema_version": 1,
         "row_count": len(rows),
         "pair_count": len(pairs),
+        **summarize_native_energy_reporting(rows, pairs),
         "native_evidence_status": native_evidence,
         "native_evidence_summary": native_evidence_summary,
     }
@@ -3576,12 +3822,16 @@ def write_native_energy_reports(run_dir: str | Path, report_dir: str | Path) -> 
         "",
         f"Observations: **{len(rows)}**",
         f"Pairs: **{len(pairs)}**",
+        "Ratios are descriptive calibrated FS input energy without idle subtraction; "
+        "semantic evidence and scientific claim release remain separate.",
         "",
     ]
     for pair in pairs:
         md.append(
             f"- {pair.get('model')} / {pair.get('split_backend')} / {pair.get('case')} vs "
-            f"{pair.get('baseline_backend')} on {pair.get('setup_id')}: {pair.get('comparison_status')}"
+            f"{pair.get('baseline_backend')} on {pair.get('setup_id')}: {pair.get('comparison_status')}; "
+            f"descriptive raw-FS ratio={pair.get('descriptive_energy_ratio')}; "
+            f"semantic={pair.get('semantic_comparable')}; claim={pair.get('claim_comparable')}"
         )
     (out / "native_energy_pair_comparison.md").write_text("\n".join(md) + "\n", encoding="utf-8")
     return {

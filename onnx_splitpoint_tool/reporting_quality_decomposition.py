@@ -55,11 +55,13 @@ def _variant(row: Mapping[str, Any]) -> str:
 
 def _backend(row: Mapping[str, Any]) -> str:
     value = _norm(row.get("backend") or row.get("producer_backend") or row.get("backend_pair") or row.get("provider"))
+    # A composed Hailo10 -> TensorRT endpoint belongs to its producer family.
+    # The historical hailo10 spelling must be resolved before the consumer.
+    if "hailo10" in value:
+        return "hailo10h"
     for backend in ("hailo10h", "hailo8", "deepx", "tensorrt", "ort_cpu", "ort_cuda"):
         if backend in value:
             return backend
-    if "hailo10" in value:
-        return "hailo10h"
     return value or "unknown"
 
 

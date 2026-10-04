@@ -1053,10 +1053,39 @@ def _prepare_measurement_execution(
             "expected_command_contract_sha256": split_command_sha,
         }
 
+    retry_policy = None
+    if any(value == "--campaign-budget-file" or value.startswith("--campaign-budget-file=")
+           for value in parts):
+        from onnx_splitpoint_tool.energy.task_budget import authorized_campaign_row_policy
+        budget_path = _command_option(command, "--campaign-budget-file")
+        row_id = _command_option(command, "--campaign-row-id")
+        retry_policy = authorized_campaign_row_policy(budget_path, row_id)
+        if retry_policy is not None:
+            if json.loads(row_id) != list(_canonical_energy_identity(row)[:4]):
+                raise ValueError("authorized retry row differs from measurement identity")
+            before = retry_policy["before"] or {
+                "max_retries": 2, "max_chains": 9, "max_transport_failures": 20,
+            }
+            expected = {"--campaign-max-retries": before["max_retries"],
+                        "--invalid-repeat-max-retries": before["max_retries"],
+                        "--campaign-max-transport-failures": before["max_transport_failures"],
+                        "--campaign-repeats": command_runs}
+            if (before["max_chains"] != command_runs * (1 + before["max_retries"])
+                    or any(_command_option(command, option) != str(value)
+                           for option, value in expected.items())):
+                raise ValueError("authorized retry baseline differs from frozen measurement plan")
+            if any(value == "--invalid-repeat-reconnect-backoff-s"
+                   or value.startswith("--invalid-repeat-reconnect-backoff-s=") for value in parts):
+                raise ValueError("authorized retry plan already contains an explicit pause")
+
     actual_out, execution_attempt_id = _fresh_execution_output_dir(
         planned_out, allowed_root=allowed_root, attempt_id=attempt_id,
     )
     actual_parts = _replace_command_option(parts, "--out", str(actual_out))
+    if retry_policy is not None:
+        for option in ("--campaign-max-retries", "--invalid-repeat-max-retries"):
+            actual_parts = _replace_command_option(actual_parts, option, str(retry_policy["after"]["max_retries"]))
+        actual_parts += ["--invalid-repeat-reconnect-backoff-s", str(retry_policy["reconnect_backoff_s"])]
     actual_command = shlex.join(actual_parts)
     if _resolved_path(_command_option(actual_command, "--out")) != actual_out:
         raise RuntimeError("materialized command --out does not match execution attempt")
@@ -1070,6 +1099,8 @@ def _prepare_measurement_execution(
         "measure_command_planned": command,
         "measure_command": actual_command,
     })
+    if retry_policy is not None:
+        runtime_row["authorized_energy_retry_policy"] = retry_policy
     return {
         "argv": actual_parts,
         "command": actual_command,
@@ -1094,6 +1125,7 @@ def _prepare_measurement_execution(
 def _selected_energy_repeat_run_dir(
     run: Mapping[str, Any], *, measurement_root: Path, logical_index: int,
     declared_measurement_root: Path | None = None,
+    campaign_command: str = '',
 ) -> tuple[Path, dict[str, Any]]:
     """Verify the collector's existing choice; never search or select by value.
 
@@ -1115,6 +1147,41 @@ def _selected_energy_repeat_run_dir(
         fail('energy_repeat_index_invalid')
     if not integer(run.get('run_index')) or run['run_index'] != logical_index:
         fail('energy_repeat_logical_index_mismatch')
+    reference = run.get('campaign_reused_repeat')
+    if reference is not None:
+        if not isinstance(reference, Mapping) or not campaign_command:
+            fail('energy_repeat_campaign_reference_missing')
+        budget_file = _command_option(campaign_command, '--campaign-budget-file')
+        campaign_row = _command_option(campaign_command, '--campaign-row-id')
+        if (reference.get('budget_file') != str(Path(budget_file).resolve())
+            or reference.get('campaign_row') != campaign_row
+            or reference.get('logical_repeat') != f'repeat:{logical_index}'):
+            fail('energy_repeat_campaign_identity_drift')
+        from onnx_splitpoint_tool.energy.task_budget import read_verified_campaign_repeat
+        import fcntl
+        with Path(budget_file).open(encoding='utf-8') as handle:
+            fcntl.flock(handle, fcntl.LOCK_SH)
+            budget = json.load(handle)
+        task = (budget.get('tasks') or {}).get(campaign_row) or {}
+        chains = [c for c in task.get('chains', []) if c.get('logical_repeat') == f'repeat:{logical_index}'
+                  and c.get('finished') is True and c.get('valid') is True]
+        if len(chains) != 1 or chains[0].get('run_directory') != reference.get('run_directory'):
+            fail('energy_repeat_campaign_accepted_attempt_drift')
+        source = read_verified_campaign_repeat(
+            chains[0], command=Path(_command_option(campaign_command, '--command-file')).read_text(encoding='utf-8').strip(),
+            command_contract_sha256=_command_option(campaign_command, '--preflight-expected-command-contract-sha256'),
+            duration_s=float(_command_option(campaign_command, '--duration')), require_ab=bool(run.get('energy_window_method_ab', {}).get('enabled')),
+        )
+        projected = dict(run); projected.pop('campaign_reused_repeat'); projected['run_index'] = source.get('run_index')
+        if projected != source:
+            fail('energy_repeat_campaign_source_payload_drift')
+        original_root = Path(reference['run_directory']).parent
+        directory, evidence = _selected_energy_repeat_run_dir(
+            source, measurement_root=original_root, logical_index=source['run_index'],
+        )
+        return directory, {**evidence, 'logical_repeat_index': logical_index,
+                           'repeat_selection_provenance': 'verified_existing_campaign_repeat',
+                           'campaign_reused_repeat': dict(reference)}
     keys = (
         'logical_repeat_index', 'selected_repeat_attempt_index',
         'repeat_attempt_count', 'repeat_attempt_history',
@@ -1346,7 +1413,8 @@ def _campaign_budget_block_projection(command: str, output_dir: str | Path) -> d
     data = json.loads(Path(checkpoint).read_text(encoding='utf-8'))
     task = data['tasks'][row_id]
     source = data['sources'][task['source_id']]
-    reason = str(source.get('stop_reason') or task.get('stop_reason') or '')
+    from onnx_splitpoint_tool.energy.task_budget import campaign_budget_stop_reason
+    reason = campaign_budget_stop_reason(data, row_id)
     if not reason:
         return {}
     current_root = Path(output_dir).resolve()
@@ -1666,11 +1734,12 @@ def _attach_energy_aggregate(
                         key in run for key in ('logical_repeat_index', 'selected_repeat_attempt_index',
                                                'repeat_attempt_history', 'repeat_attempt_count',
                                                'repeat_retry_attempted', 'repeat_retry_recovered'))
-                    if fast_completion or has_selection:
+                    if fast_completion or has_selection or (isinstance(run, Mapping) and run.get('campaign_reused_repeat')):
                         try:
                             run_directory, selection = _selected_energy_repeat_run_dir(
                                 run, measurement_root=out_dir, logical_index=index,
                                 declared_measurement_root=declared_out_dir,
+                                campaign_command=command,
                             )
                         except ValueError as exc:
                             incomplete(f'energy_repeat_{index}_' + str(exc))
@@ -2849,6 +2918,163 @@ def _validate_resume_selection(
     }
 
 
+def _supplement_plan_never_started(
+    previous: dict[str, Any],
+    old_rows: dict[tuple[str, str, str, str], dict[str, Any]],
+    old_results: dict[tuple[str, str, str, str], dict[str, Any]],
+) -> bool:
+    """Recognize only a complete, explicitly blocked-before-start cohort.
+
+    Such a report has no executable measurement provenance to resume. Its
+    published plan scripts may be mutable aliases of a later attempt. Missing
+    or ambiguous evidence, physical outputs and campaign chains all retain the
+    ordinary strict remote-command comparison, including partial repeats.
+    """
+    if previous.get('status') not in {
+        'blocked_energy_plan_preflight', 'blocked_energy_plan_cohort_invalid',
+    } or not old_rows or set(old_results) != set(old_rows):
+        return False
+    for field in (
+        'measurement_wrapper_started_count', 'started_measurement_count',
+        'collector_started_repeat_count', 'workload_started_repeat_count',
+    ):
+        if type(previous.get(field)) is not int or previous[field] != 0:
+            return False
+    ledger = previous.get('result_ledger')
+    if (not isinstance(ledger, list)
+        or not _result_ledger_valid(ledger, list(old_rows.values()))
+        or any(entry.get('status') != 'blocked_before_measurement'
+               or entry.get('measurement_started') is not False
+               for entry in ledger)):
+        return False
+    plan_command = (previous.get('plan') or {}).get('cmd')
+    if not isinstance(plan_command, list):
+        return False
+    plan_dir = Path(_single_command_option_parts(plan_command, '--out-dir')[0])
+    if not plan_dir.is_absolute() or plan_dir.is_symlink():
+        return False
+    journal_root = plan_dir.parent / 'checkpoints' / 'native_energy'
+    if journal_root.is_symlink():
+        return False
+    if journal_root.exists():
+        plan_hash, identities, row_hashes = _managed_journal_contract(
+            list(old_rows.values()), previous['plan_payload'],
+        )
+        journal = AtomicRowJournal.open_for_resume(
+            journal_root, plan_hash=plan_hash, identities=identities,
+            row_contract_hashes=row_hashes, refresh_manifest=False,
+        )
+        if any(row['state'] != 'not_started' or row['attempt_count'] != 0
+               or row.get('execution') != {} or row.get('result') is not None
+               for row in journal.rows):
+            return False
+    for identity, row in old_rows.items():
+        item = old_results[identity]
+        if (item.get('ok') is not False
+            or item.get('skipped') != 'blocked_before_measurement'
+            or item.get('measurement_started') is not False
+            or 'run' in item):
+            return False
+        # Check both frozen row representations, not just report-level counters.
+        for bound_row in (row, item['row']):
+            for field in ('measurement_output_dir', 'measurement_output_base_dir'):
+                output = Path(str(bound_row.get(field) or ''))
+                if (not output.is_absolute() or output.is_symlink()
+                    or output.exists()):
+                    return False
+            command = str(bound_row.get('measure_command') or '')
+            budget_file = _command_option(command, '--campaign-budget-file')
+            row_id = _command_option(command, '--campaign-row-id')
+            if bool(budget_file) != bool(row_id):
+                return False
+            if budget_file:
+                budget_path = Path(budget_file)
+                if not budget_path.is_absolute() or budget_path.is_symlink():
+                    return False
+                if budget_path.exists():
+                    budget = _load_json(budget_path)
+                    if (not isinstance(budget, dict)
+                        or budget.get('campaign') is not True
+                        or not isinstance(budget.get('tasks'), dict)):
+                        return False
+                    task = budget['tasks'].get(row_id)
+                    if row_id in budget['tasks'] and (
+                        not isinstance(task, dict) or task.get('chains') != []
+                    ):
+                        return False
+    return True
+
+
+def _supplement_previous_results(
+    previous: dict[str, Any], plan: dict[str, Any],
+) -> dict[tuple[str, str, str, str], dict[str, Any]]:
+    """Explicit campaign extension: retain every old identity and its contract.
+
+    Ordinary checkpoint/resume equality remains unchanged. Only this explicit
+    path accepts additional identities. Every shared technical contract stays
+    frozen; old executable commands remain mandatory whenever execution cannot
+    be positively ruled out.
+    """
+    old_plan = previous.get('plan_payload')
+    if not isinstance(old_plan, dict):
+        raise ValueError('supplement previous results lack frozen plan_payload')
+    equal, field = _execution_contexts_equal(
+        _canonical_resume_execution_context(previous),
+        _validated_resume_execution_context(plan.get('execution_context'), label='supplement plan'),
+    )
+    if not equal:
+        raise ValueError(f'supplement execution context drift: {field}')
+    old_rows, _ = _index_resume_rows(list(old_plan.get('rows') or []), label='previous plan', result_rows=False)
+    new_rows, _ = _index_resume_rows(list(plan.get('rows') or []), label='supplement plan', result_rows=False)
+    old_results, _ = _index_resume_rows(list(previous.get('rows') or []), label='previous results', result_rows=True)
+    if not set(old_results).issubset(old_rows) or not set(old_rows).issubset(new_rows):
+        raise ValueError('supplement energy cohort must preserve every previous identity')
+    never_started = _supplement_plan_never_started(previous, old_rows, old_results)
+    reusable = {}
+    for identity, old_row in old_rows.items():
+        new_row = new_rows[identity]
+        if _canonical_energy_identity(old_row) != _canonical_energy_identity(new_row):
+            raise ValueError(f'supplement energy identity contract drift: {_resume_selector_text(identity)}')
+        if old_row.get('native_split_quality_required') is True:
+            bound_old_row = dict(old_row)
+            if not bound_old_row.get('source_request_sha256'):
+                bound_old_row['source_request_sha256'] = new_row.get('source_request_sha256')
+            _verify_split_energy_quality_binding(bound_old_row)
+            if bound_old_row['source_request_sha256'] != new_row.get('source_request_sha256'):
+                raise ValueError('supplement split source request contract drift')
+        if _resume_contract_sha256(old_row, old_plan) != _resume_contract_sha256(new_row, plan):
+            raise ValueError(f'supplement energy contract drift: {_resume_selector_text(identity)}')
+        _validate_resume_remote_commands(
+            new_row if never_started else old_row, new_row, identity,
+        )
+        for option in ('--campaign-budget-file', '--campaign-row-id', '--campaign-repeats',
+                       '--campaign-max-retries', '--campaign-max-transport-failures'):
+            if _command_option(str(old_row.get('measure_command') or ''), option) != _command_option(str(new_row.get('measure_command') or ''), option):
+                raise ValueError(f'supplement energy campaign contract drift: {option}')
+        item = old_results.get(identity)
+        if item is None:
+            continue
+        if _canonical_energy_identity(item['row']) != _canonical_energy_identity(old_row):
+            raise ValueError('supplement previous result/plan identity contract drift')
+        if _resume_contract_sha256(item['row'], old_plan) != _resume_contract_sha256(old_row, old_plan):
+            raise ValueError('supplement previous result/plan contract drift')
+        if _energy_result_reusable(item):
+            run = item['run']
+            path = Path(str(run.get('energy_aggregate_path') or ''))
+            if (not path.is_file() or path.is_symlink()
+                or hashlib.sha256(path.read_bytes()).hexdigest() != run.get('energy_aggregate_sha256')):
+                raise ValueError('supplement previous aggregate missing or changed')
+            reusable[identity] = item
+    if never_started:
+        print(
+            '[native-energy] PREVIOUS_RESULTS_UNSTARTED '
+            f'rows={len(old_rows)} current_rows={len(new_rows)} '
+            'measurement_provenance=none current_command_bindings=verified',
+            flush=True,
+        )
+    return reusable
+
+
 def _atomic_write_text(path: Path, text: str) -> None:
     _checkpoint_atomic_write_text(path, text)
 
@@ -2985,6 +3211,7 @@ def _main_impl() -> int:
         ),
     )
     ap.add_argument('--dry-run', action='store_true')
+    ap.add_argument('--previous-results', default='', help='Explicit same-campaign supplement: preserve the previous cohort and reuse its verified complete energy rows.')
     ap.add_argument(
         '--resume-existing', action='store_true',
         help=(
@@ -3014,6 +3241,8 @@ def _main_impl() -> int:
         help='Read-only listing of incomplete exact row selectors.',
     )
     ns=ap.parse_args()
+    if ns.previous_results and (ns.resume_existing or ns.resume_checkpoint or ns.list_resume_candidates):
+        ap.error('--previous-results is a separate supplement attempt, not an ordinary checkpoint resume')
     if str(ns.hardware_setups_file or '').strip():
         registry_input = Path(ns.hardware_setups_file).expanduser()
         if registry_input.is_symlink():
@@ -3103,6 +3332,14 @@ def _main_impl() -> int:
         **screening_claim_clamp,
     }
     out=Path(ns.out_dir).expanduser().resolve()
+    previous_results = None
+    if ns.previous_results:
+        previous_path = Path(ns.previous_results).expanduser().resolve()
+        if previous_path.parent == out or not previous_path.is_file():
+            ap.error('--previous-results requires a readable previous result and a fresh output directory')
+        previous_results = _load_json(previous_path)
+        if not isinstance(previous_results, dict):
+            ap.error('--previous-results is not a JSON object')
     canonical_result_path = out/'native_producer_energy_results.json'
     managed_journal_root = out/'checkpoints'/'native_energy'
     managed_stage_checkpoint_path = out/'stages'/'native_energy'/'stage_result.json'
@@ -3316,9 +3553,17 @@ def _main_impl() -> int:
         plan_cmd.append('--final-all-split-energy')
     if ns.validation_summary:
         plan_cmd += ['--validation-summary', ns.validation_summary]
+    if ns.previous_results:
+        plan_cmd.append('--reuse-campaign-repeats')
     print(f"[native-energy] PLAN_START summary={ns.summary}", flush=True)
     pr=_run(plan_cmd, timeout=120, label="energy_plan")
     plan_payload=_load_json(plan_dir/'native_producer_energy_plan.json') or {}
+    if ns.previous_results and isinstance(plan_payload, dict):
+        plan_payload['execution_context'] = {
+            'schema': _RESUME_EXECUTION_CONTEXT_SCHEMA, 'schema_version': 1,
+            **{field: str(getattr(ns, field)) for field, _option, _kind in _RESUME_EXECUTION_CONTEXT_OPTIONS},
+        }
+        _atomic_write_json(plan_dir/'native_producer_energy_plan.json', plan_payload)
     if ns.resume_existing:
         assert canonical_execution_context is not None
         plan_payload = dict(plan_payload)
@@ -3645,6 +3890,10 @@ def _main_impl() -> int:
         }, indent=2), flush=True)
         return 5
 
+    supplement_reused = (
+        _supplement_previous_results(previous_results, plan_payload)
+        if previous_results is not None else {}
+    )
     if not ns.resume_existing:
         if managed_journal is None:
             raise ValueError(
@@ -3710,6 +3959,15 @@ def _main_impl() -> int:
         None for _row in rows
     ]
     if managed_journal is not None:
+        for row_index, row in enumerate(rows):
+            identity = _resume_row_identity(row)
+            if identity not in supplement_reused:
+                continue
+            original = supplement_reused[identity]
+            preserved = {**original, 'reused_previous_result': True,
+                         'previous_results_source': str(ns.previous_results)}
+            managed_journal.transition(row_index, 'running', execution={'phase': 'reuse_previous_result', 'measurement_wrapper_started': False})
+            managed_journal.transition(row_index, 'completed', result=preserved, reason='verified_previous_campaign_result')
         for checkpoint in managed_journal.rows:
             index = int(checkpoint.get('index', -1))
             if str(checkpoint.get('state') or '') not in {'completed', 'failed'}:
@@ -3758,16 +4016,17 @@ def _main_impl() -> int:
             item for item in managed_results_by_index if item is not None
         ]
     resume_preparation: dict[str, Any] | None = None
-    if ns.resume_existing:
-        assert resume_attempt_root is not None
-        assert canonical_execution_context is not None
+    if ns.resume_existing or (ns.previous_results and not ns.dry_run and len(supplement_reused) < len(rows)):
+        preparation_root = resume_attempt_root if ns.resume_existing else out
+        preparation_context = canonical_execution_context if ns.resume_existing else _validated_resume_execution_context(plan_payload.get('execution_context'), label='supplement plan')
+        preparation_rows = [row for row in rows if _resume_row_identity(row) not in supplement_reused]
         resume_preparation = _prepare_resume_measurement_cohort(
-            rows,
-            attempt_dir=resume_attempt_root,
+            preparation_rows,
+            attempt_dir=preparation_root,
             plan_root=plan_dir,
             summary_path=ns.summary,
-            canonical_execution_context=canonical_execution_context,
-            resume_attempt_id=resume_attempt_id,
+            canonical_execution_context=preparation_context,
+            resume_attempt_id=resume_attempt_id or out.name,
             timeout_s=float(ns.timeout),
             preflight_max_age_s=300.0,
         )
@@ -3800,7 +4059,7 @@ def _main_impl() -> int:
                 'workload_started_repeat_count': 0,
             }
             _atomic_write_json(
-                resume_attempt_root/'resume_failure.json',
+                preparation_root/'resume_failure.json',
                 failure,
             )
             print(json.dumps({
@@ -3834,6 +4093,8 @@ def _main_impl() -> int:
             for checkpoint in managed_journal.rows
         )
         for item in results:
+            if item.get('reused_previous_result') is True:
+                continue
             run = item.get('run') if isinstance(item, Mapping) else {}
             observation = (
                 run.get('measurement_start_observation')
@@ -4019,6 +4280,8 @@ def _main_impl() -> int:
         workload_started_repeat_count = 0
         for checkpoint in managed_journal.rows:
             result = checkpoint.get('result')
+            if isinstance(result, Mapping) and result.get('reused_previous_result') is True:
+                continue
             run = result.get('run') if isinstance(result, Mapping) else {}
             observation = (
                 run.get('measurement_start_observation')
@@ -4651,7 +4914,7 @@ def _main_impl() -> int:
                 'managed energy row journal is incomplete after execution'
             )
         managed_journal.mark_run_state('completed')
-    zero_started = bool(not ns.dry_run and started_measurement_count == 0)
+    zero_started = bool(not ns.dry_run and started_measurement_count == 0 and not supplement_reused)
     if ns.screening_energy:
         if ns.resume_existing:
             for position in resume_positions.values():
@@ -4660,7 +4923,7 @@ def _main_impl() -> int:
             results = [_clamp_screening_result(item) for item in results]
     report_ok = (
         True if ns.dry_run
-        else bool(started_measurement_count) and all(bool(x.get('ok')) for x in results)
+        else bool(started_measurement_count or supplement_reused) and all(bool(x.get('ok')) for x in results)
     )
     resume_selected_ok = bool(
         ns.resume_existing
@@ -4674,6 +4937,8 @@ def _main_impl() -> int:
     report=dict(existing_report or {}) if ns.resume_existing else {}
     result_ledger = _result_ledger_from_results(results)
     report.update({
+        'previous_results_source': str(ns.previous_results),
+        'supplement_reused_row_count': len(supplement_reused),
         'ok': report_ok,
         'complete': False if zero_started else True,
         'state': 'completed' if report_ok or ns.dry_run else 'failed',

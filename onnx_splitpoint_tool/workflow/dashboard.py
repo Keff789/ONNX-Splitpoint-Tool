@@ -2247,6 +2247,8 @@ def build_result_dashboard_reports(
     val_rows = _read_csv(reports / "validation_summary.csv")
     hw_summary_rows = _read_csv(reports / "hardware_summary.csv")
     run_status = read_json(reports / "run_status_summary.json", default={}) or {}
+    from .status_reporting import energy_attempt_failure
+    attempt_failure = energy_attempt_failure(run_dir)
     job_summary = read_json(run_dir / "jobs" / "job_summary.json", default={}) or {}
     native_evidence = read_json(
         reports / "native_evidence_status.json", default={},
@@ -2695,6 +2697,7 @@ def build_result_dashboard_reports(
         "workflow_version": workflow_version,
         "run_status": reported_run_status,
         "source_run_status": source_run_status,
+        "energy_attempt_failure": attempt_failure,
         "model_count": len(model_cards),
         "model_health_counts": {status: sum(1 for m in model_cards if m.get("health") == status) for status in ["ok", "warn", "partial", "failed"]},
         "accepted_case_total": sum(int(m.get("accepted_case_count") or 0) for m in model_cards),
@@ -3621,6 +3624,7 @@ def build_result_dashboard_reports(
         f"Tool: `{tool_version}`",
         f"Workflow: `{workflow_version}`",
         f"Run status: **{overview['run_status']}**",
+        attempt_failure.get("energy_not_started_reason", ""),
         "",
         "## Overview",
         "",

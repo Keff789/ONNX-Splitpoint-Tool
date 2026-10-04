@@ -487,6 +487,10 @@ class WorkflowJobQueueRecorder:
             idem["resume_checked"] = bool(resume_checked)
             idem["forced"] = bool(forced)
             job["idempotence"] = idem
+            if resume_checked:
+                job["resume_attempt_started_at"] = now_iso()
+                job["resume_attempt_finished_at"] = ""
+                job["resume_attempt_duration_s"] = None
         self.mark(job_id, "running", message=f"stage started: {model_id + ' / ' if model_id else ''}{stage}")
         return job_id
 
@@ -508,7 +512,26 @@ class WorkflowJobQueueRecorder:
             idem["existing_stage_result_reused"] = bool(reused or stage_result.get("skip_reason") == "resume_reused_existing_stage_result")
             idem["artifact_completeness"] = "complete" if list(stage_result.get("artifacts") or []) else "unknown"
             job["idempotence"] = idem
-        self.mark(job_id, status, message=f"stage finished: {model_id + ' / ' if model_id else ''}{stage} ({stage_result.get('status')})")
+            if job.get("resume_attempt_started_at"):
+                job["resume_attempt_finished_at"] = now_iso()
+                job["resume_attempt_duration_s"] = _duration_between(
+                    job["resume_attempt_started_at"], job["resume_attempt_finished_at"],
+                )
+            if not reused and stage_result.get("started_at"):
+                # An executed stage owns a new execution interval. Reuse
+                # retains the original one and reports its check separately.
+                job["started_at"] = stage_result["started_at"]
+            details = stage_result.get("details") or {}
+            if reused and (details.get("resume_decision") or {}).get("previous_measurement_provenance_preserved"):
+                # A failed earlier supplement may already have combined the
+                # old start with its new end. The preserved StageResult is
+                # authoritative for the actual measurement interval.
+                job["started_at"] = str(stage_result.get("started_at") or "")
+                job["finished_at"] = str(stage_result.get("finished_at") or "")
+                job["duration_s"] = details.get("duration_s", _duration_between(
+                    job["started_at"], job["finished_at"],
+                ))
+        self.mark(job_id, status, message=f"stage finished: {model_id + ' / ' if model_id else ''}{stage} ({stage_result.get('status')})", preserve_timing=reused)
         return job_id
 
     def update_stage_activity(self, model_id: Optional[str], stage: str, message: str, *, details: Optional[Mapping[str, Any]] = None) -> None:
@@ -535,7 +558,7 @@ class WorkflowJobQueueRecorder:
         self._write_plan()
         self._write_summary()
 
-    def mark(self, job_id: str, status: str, *, message: str = "") -> None:
+    def mark(self, job_id: str, status: str, *, message: str = "", preserve_timing: bool = False) -> None:
         job = self.jobs.get(str(job_id))
         if job is None:
             return
@@ -544,7 +567,7 @@ class WorkflowJobQueueRecorder:
         status = self._job_status(status)
         if old == "queued" and status == "running":
             job["started_at"] = now
-        if status not in {"queued", "running"}:
+        if status not in {"queued", "running"} and not preserve_timing:
             if not job.get("started_at"):
                 job["started_at"] = now
             job["finished_at"] = now

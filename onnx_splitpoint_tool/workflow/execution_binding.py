@@ -1125,6 +1125,7 @@ _SCHEDULER_OWNED_REMOTE_FLAGS = {
     "--quality-evidence-model-id",
     "--quality-evidence-setup-id",
     "--quality-evidence-endpoint-id",
+    "--selective-completion-rows",
 }
 
 
@@ -1133,6 +1134,7 @@ def _scheduler_owned_remote_add_args(
     *,
     run_ids: Sequence[str],
     quality_only_run_ids: Sequence[str] = (),
+    selective_completion_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> str:
     """Bind scheduler-owned selection flags after removing stale overrides.
 
@@ -1172,7 +1174,22 @@ def _scheduler_owned_remote_add_args(
             "--quality-only-run-ids",
             ",".join(dict.fromkeys(quality_only)),
         ])
+    if selective_completion_rows is not None:
+        kept.extend(["--selective-completion-rows", json.dumps(
+            [{key: row[key] for key in (
+                "model_id", "setup_id", "run_id", "source_run_id", "dispatch_run_id",
+                "case_id", "variant", "stage", "action",
+            ) if key in row} for row in selective_completion_rows], separators=(",", ":"),
+        )])
     return shlex.join(kept)
+
+
+def _completion_dispatch_run_id(row: Mapping[str, Any]) -> str:
+    value = str(row.get("dispatch_run_id") or row.get("run_id")
+                or row.get("source_run_id") or "").strip()
+    if value == "native_full_tensorrt":
+        value = "ort_tensorrt"
+    return value
 
 
 def _targeted_full_quality_identity_key(
@@ -1236,6 +1253,10 @@ def _remote_transport_run_id(
         transport_id += (
             f"_missing_full_quality_resume_{workflow_session_id}"
         )
+    elif gates.get("selective_completion") is True:
+        if re.fullmatch(r"[0-9a-f]{32}", str(workflow_session_id or "")) is None:
+            raise ValueError("selective_completion_workflow_session_id_invalid")
+        transport_id += f"_completion_{workflow_session_id}"
     return transport_id
 
 
@@ -1928,9 +1949,11 @@ def _remote_args_from_options(
     )
     validation_execution = profile_payload.get("validation_execution") if isinstance(profile_payload, Mapping) and isinstance(profile_payload.get("validation_execution"), Mapping) else {}
     validation_limits = validation_execution.get("max_items") if isinstance(validation_execution.get("max_items"), Mapping) else {}
+    from ..execution_plan import explicit_composed_only_run_ids
     mode_budget_declared = bool(
         isinstance(profile_payload, Mapping)
-        and isinstance(profile_payload.get("execution_preset"), Mapping)
+        and (isinstance(profile_payload.get("execution_preset"), Mapping)
+             or bool(explicit_composed_only_run_ids(profile_payload)))
         and effective_task in validation_limits
     )
     mode_validation_max = _int(validation_limits.get(effective_task), 0) if effective_task in {"classification", "detection"} else 0
@@ -3630,7 +3653,22 @@ def _run_remote_dispatch_once(
 
     host = _make_ssh_host_config(host_payload)
     args = _remote_args_from_options(options, profile_payload, runtime_override=runtime_override, model_task=model_task, model_id=model_id)
-    args.runtime_suite_finalized = ((profile_payload or {}).get("workflow_execution") or {}).get("setup_queue_mode") == "per_setup"
+    if gates.get("selective_completion") is True:
+        rows = gates.get("selective_completion_rows")
+        if not isinstance(rows, list):
+            raise ValueError("selective_completion_dispatch_rows_missing")
+        args.add_args = _scheduler_owned_remote_add_args(
+            args.add_args, run_ids=list(gates.get("hardware_run_ids") or []),
+            quality_only_run_ids=list(gates.get("quality_only_run_ids") or []),
+            selective_completion_rows=rows,
+        )
+        # The completion planner already reuses result identities. A transport
+        # search for an older partial workspace must not replace this session's
+        # attempt path; persistent engine/artifact cache reuse remains enabled.
+        args.resume = False
+    args.runtime_suite_finalized = bool(gates.get("suite_harness_refreshed")) or (
+        ((profile_payload or {}).get("workflow_execution") or {}).get("setup_queue_mode") == "per_setup"
+    )
     # Keep the remote signed producer and the management-side collector scope
     # on the same physical setup identity.  Logical run IDs are deliberately
     # not accepted as a fallback here.
@@ -4124,6 +4162,7 @@ def _remote_execution_if_requested(
     targeted_full_quality_identities: Optional[
         Sequence[Mapping[str, Any]]
     ] = None,
+    selective_completion_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> Optional[ExecutionBindingResult]:
     no_remote = bool(getattr(options, "no_remote", False))
     profile_remote = _profile_remote_execution(profile_payload)
@@ -4185,6 +4224,8 @@ def _remote_execution_if_requested(
     # own run-ids/energy windows.  This keeps measurements independent: one
     # remote host + one u.RECS collector per setup.
     hardware_targets = hardware_targets_for_request
+    if selective_completion_rows is not None and not hardware_targets:
+        raise RuntimeError("selective_completion_requires_configured_remote_setup")
     if hardware_targets:
         all_artifacts: Dict[str, Path] = {}
         statuses: List[str] = []
@@ -4310,6 +4351,30 @@ def _remote_execution_if_requested(
                     rid for rid in run_ids
                     if str(rid).strip().lower().replace("-", "_") not in cpu_reference_ids
                 ]
+            completion_for_setup = None
+            if selective_completion_rows is not None:
+                completion_for_setup = [dict(row) for row in selective_completion_rows
+                                        if str(row.get("setup_id") or "") == target_id]
+                missing_ids = {_completion_dispatch_run_id(row) for row in completion_for_setup
+                               if row.get("action") == "execute"}
+                run_ids = [rid for rid in run_ids if rid in missing_ids]
+                setup_local_dispatch = dict(setup_local_dispatch)
+                missing_quality = [row for row in completion_for_setup
+                                   if row.get("action") == "execute"
+                                   and row.get("stage") == "quality_companion"]
+                quality_ids = {_completion_dispatch_run_id(row) for row in missing_quality}
+                generic_ids = {_completion_dispatch_run_id(row) for row in completion_for_setup
+                               if row.get("action") == "execute"
+                               and str(row.get("stage") or "generic") == "generic"}
+                setup_local_dispatch["quality_only_run_ids"] = [
+                    rid for rid in setup_local_dispatch.get("quality_only_run_ids", [])
+                    if rid in quality_ids]
+                setup_local_dispatch["quality_only_run_ids"] = sorted(set(
+                    setup_local_dispatch["quality_only_run_ids"]) | (quality_ids - generic_ids))
+                setup_local_dispatch["quality_companion_required"] = bool(missing_quality)
+                if missing_quality and not generic_ids:
+                    setup_local_dispatch["expected_full_quality_identities"] = missing_quality
+                    setup_local_dispatch["execution_scope"] = "full_only"
             if not run_ids and plan_has_runs:
                 p_skip = write_json(result_dir / f"remote_benchmark_status_{target_id}.json", {
                     "schema": "onnx-splitpoint/remote-benchmark-status",
@@ -4356,11 +4421,13 @@ def _remote_execution_if_requested(
                     quality_only_run_ids=list(
                         setup_local_dispatch.get("quality_only_run_ids") or []
                     ),
+                    selective_completion_rows=completion_for_setup,
                 )
             group_tasks = [{
                 "hw": dict(hw),
                 "rid": ",".join(selected_ids),
                 "run_ids": selected_ids,
+                "selective_completion_rows": completion_for_setup,
                 "runtime": runtime,
                 "target_id": target_id,
                 "base_target_id": target_id,
@@ -4380,7 +4447,8 @@ def _remote_execution_if_requested(
                     ) or ""
                 ),
                 "execution_scope": str(
-                    setup_local_trt_contract.get("execution_scope") or ""
+                    setup_local_dispatch.get("execution_scope")
+                    or setup_local_trt_contract.get("execution_scope") or ""
                 ),
                 "expected_full_quality_identities": [
                     dict(row) for row in list(
@@ -4477,6 +4545,7 @@ def _remote_execution_if_requested(
                             "hardware_target": dict(hw),
                             "hardware_run_id": rid,
                             "hardware_run_ids": list(task.get("run_ids") or []),
+                            "selective_completion_rows": task.get("selective_completion_rows"),
                             "tensorrt_execution_role": str(
                                 task.get("tensorrt_execution_role") or ""
                             ),
@@ -5145,6 +5214,7 @@ def execute_benchmark_suite_if_requested(
     targeted_full_quality_identities: Optional[
         Sequence[Mapping[str, Any]]
     ] = None,
+    selective_completion_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> ExecutionBindingResult:
     try:
         return _execute_benchmark_suite_if_requested(**locals())
@@ -5173,6 +5243,7 @@ def _execute_benchmark_suite_if_requested(
     targeted_full_quality_identities: Optional[
         Sequence[Mapping[str, Any]]
     ] = None,
+    selective_completion_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> ExecutionBindingResult:
     """Run a materialized benchmark suite in ``generate_and_run`` mode.
 
@@ -5183,6 +5254,10 @@ def _execute_benchmark_suite_if_requested(
     run_root = Path(run_dir)
     model_dir = run_root / "models" / str(model_id)
     result_dir = model_dir / "benchmark_results"
+    if selective_completion_rows is not None:
+        if re.fullmatch(r"[0-9a-f]{32}", str(workflow_session_id or "")) is None:
+            raise ValueError("selective_completion_workflow_session_id_invalid")
+        result_dir = result_dir / "attempts" / workflow_session_id
     result_dir.mkdir(parents=True, exist_ok=True)
     suite_dir = _resolve_suite_dir(run_root, model_dir, benchmark_set_contract)
     suite_payload = read_json(suite_dir / "benchmark_set.json", default={}) or {}
@@ -5217,6 +5292,7 @@ def _execute_benchmark_suite_if_requested(
         "targeted_missing_full_quality_only": (
             targeted_full_quality_identities is not None
         ),
+        "selective_completion": selective_completion_rows is not None,
     }
     model_task = str((model_entry or {}).get("task") or benchmark_plan.get("model_task") or benchmark_plan.get("task") or "").strip().lower()
     if model_task not in {"classification", "detection"}:
@@ -5278,6 +5354,7 @@ def _execute_benchmark_suite_if_requested(
     gates["runtime_plan_finalization_status"] = str(
         finalization.get("status") or ""
     )
+    gates["suite_harness_refreshed"] = finalization.get("suite_harness_refreshed") is True
     gates["runtime_preflight_status"] = str(runtime_preflight.get("status") or "") if isinstance(runtime_preflight, Mapping) else ""
     gates["runtime_preflight_path"] = str(runtime_preflight.get("path") or "") if isinstance(runtime_preflight, Mapping) else ""
     gates["model_task"] = model_task
@@ -5399,9 +5476,13 @@ def _execute_benchmark_suite_if_requested(
         remote_process_registry=remote_process_registry,
         workflow_session_id=workflow_session_id,
         targeted_full_quality_identities=targeted_full_quality_identities,
+        selective_completion_rows=selective_completion_rows,
     )
     if remote_result is not None:
         return remote_result
+
+    if selective_completion_rows is not None:
+        raise RuntimeError("selective_completion_requires_configured_remote_setup")
 
     if not script.is_file():
         p = _write_status({"status": "pending_service_execution", "reason": "benchmark_suite_py_missing", "execution_gates": gates, "has_materialized_split_cases": has_splits})

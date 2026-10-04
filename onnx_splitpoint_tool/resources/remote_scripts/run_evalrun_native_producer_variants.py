@@ -139,23 +139,27 @@ def _write_json(p: Path, data: Mapping[str, Any]) -> None:
 
 
 def _native_performance_checkpoint_paths(
-    run_dir: Path,
+    run_dir: Path, cfg: Mapping[str, Any] | None = None,
 ) -> tuple[Path, Path]:
-    root = (
+    from onnx_splitpoint_tool.workflow.yolo_augmentation_reentry import native_reentry_root
+    attempt = native_reentry_root(run_dir, cfg or {})
+    root = attempt / "native_performance" if attempt else (
         run_dir / "stages" / "run_native_producers" / "native_performance"
     )
     return root / "stage_result.json", root / "stage_snapshot.json"
 
 
-def _native_coordinator_checkpoint_path(run_dir: Path) -> Path:
-    return (
+def _native_coordinator_checkpoint_path(run_dir: Path, cfg: Mapping[str, Any] | None = None) -> Path:
+    from onnx_splitpoint_tool.workflow.yolo_augmentation_reentry import native_reentry_root
+    attempt = native_reentry_root(run_dir, cfg or {})
+    return attempt / "native_coordinator/stage_result.json" if attempt else (
         run_dir / "stages" / "run_native_producers"
         / "native_coordinator" / "stage_result.json"
     )
 
 
 def _native_coordinator_artifacts(
-    run_dir: Path, reports: Path,
+    run_dir: Path, reports: Path, performance_snapshot: Path | None = None,
 ) -> list[Path]:
     candidates = [
         reports / "native_producer_stage.json",
@@ -169,7 +173,7 @@ def _native_coordinator_artifacts(
         reports / "native_energy_measurements"
         / "stages" / "native_energy" / "stage_result.json",
         *_native_performance_artifacts(
-            _native_performance_checkpoint_paths(run_dir)[1]
+            performance_snapshot or _native_performance_checkpoint_paths(run_dir)[1]
         ),
     ]
     return [
@@ -185,16 +189,19 @@ def _write_native_coordinator_terminal(
     stage: Mapping[str, Any],
     input_hash: str,
     return_code: int,
+    checkpoint_path: Path | None = None,
 ) -> None:
     status = str(stage.get("status") or "failed").strip().lower()
+    checkpoint_path = checkpoint_path or _native_coordinator_checkpoint_path(run_dir)
     write_stage_checkpoint(
-        _native_coordinator_checkpoint_path(run_dir),
+        checkpoint_path,
         stage="native_coordinator",
         state="failed" if status == "failed" else "completed",
         complete=True,
         input_hash=input_hash,
         run_root=run_dir,
-        artifacts=_native_coordinator_artifacts(run_dir, reports),
+        artifacts=_native_coordinator_artifacts(run_dir, reports,
+            checkpoint_path.parent.parent / "native_performance/stage_snapshot.json"),
         details={
             "return_code": int(return_code),
             "stage_status": status,
@@ -207,6 +214,13 @@ def _write_native_coordinator_terminal(
         ),
         started_at=str(stage.get("started_at") or ""),
     )
+    if return_code:
+        print(json.dumps({
+            "status": status, "return_code": int(return_code),
+            "failure_class": str(stage.get("failure_class") or ""),
+            "error": str(stage.get("error") or stage.get("failure_reason") or ""),
+            "checkpoint": str(checkpoint_path),
+        }, ensure_ascii=False), file=sys.stderr, flush=True)
 
 
 def _native_performance_input_hash(
@@ -2812,6 +2826,225 @@ def _build_update_cmd(run_dir: Path, cfg: Mapping[str, Any], variant: Mapping[st
     return cmd
 
 
+class _AugmentationBarrierError(RuntimeError):
+    """A new-cohort start case did not establish its technical pair."""
+
+
+def _augmentation_barrier_config(cfg: Mapping[str, Any]) -> dict[str, Any] | None:
+    value = cfg.get("augmentation_startcase_barrier")
+    if value is None:
+        return None
+    if not isinstance(value, Mapping) or cfg.get("native_release_mode") != "per_case":
+        raise _AugmentationBarrierError("augmentation barrier requires normal per_case Native leaves")
+    barrier = dict(value)
+    plan = _read_json(Path(str(barrier.get("plan_path") or "")), {}) or {}
+    if (plan.get("cohort_id") != "yolo_min3_capability_augmentation"
+            or plan.get("frozen") is not True
+            or not barrier.get("plan_sha256")
+            or checkpoint_json_sha256(plan) != barrier["plan_sha256"]):
+        raise _AugmentationBarrierError("augmentation frozen full plan missing or changed")
+    reference = Path(str(barrier.get("original_reference_validation_summary") or ""))
+    if not reference.is_file():
+        raise _AugmentationBarrierError("augmentation original CPU reference validation summary missing")
+    starts = barrier.get("startcases")
+    if not isinstance(starts, list) or not 1 <= len(starts) <= 3:
+        raise _AugmentationBarrierError("augmentation requires one to three initial cases")
+    if any(not isinstance(row, Mapping) for row in starts):
+        raise _AugmentationBarrierError("augmentation startcase identity invalid")
+    setups = [str(row.get("setup_id") or "") for row in starts]
+    if not all(setups) or len(setups) != len(set(setups)):
+        raise _AugmentationBarrierError("augmentation startcases must use distinct physical setups")
+    terminals = barrier.get("technical_terminals", [])
+    if not isinstance(terminals, list):
+        raise _AugmentationBarrierError("augmentation technical terminal evidence must be a list")
+    if plan.get("augmentation_run"):
+        from onnx_splitpoint_tool.yolo_augmentation_plan import collect_technical_terminals
+        observed = collect_technical_terminals(plan, plan["augmentation_run"])
+        if terminals != observed:
+            raise _AugmentationBarrierError("augmentation technical terminal evidence changed or is unbound")
+    elif terminals:
+        raise _AugmentationBarrierError("augmentation technical terminal run binding missing")
+    return barrier
+
+
+def _augmentation_terminal_key(row: Mapping[str, Any]) -> str:
+    return "|".join(str(row.get(field) or row.get(alias) or "")
+                    for field, alias in (("model_id", "model"), ("case_id", "case"), ("setup_id", "setup_id")))
+
+
+def _augmentation_validation_blockers(cfg: Mapping[str, Any], payload: Mapping[str, Any]) -> tuple[int, int]:
+    """Keep a proven local compile failure out of unrelated runtime admission.
+
+    The validator's failed row, raw counters and all scientific gates remain
+    unchanged. Only the normal non-runtime projection of an exact, freshly
+    verified compile-terminal identity can be separated from blocking errors.
+    """
+    total = int(payload.get("technical_error_count") or 0)
+    barrier = _augmentation_barrier_config(cfg)
+    if barrier is None:
+        return total, 0
+    exact = {_native_performance_identity(row): row for row in barrier.get("technical_terminals", [])
+             if row.get("technical_terminal_kind") == "actual_compile_failed"
+             and row.get("runtime_started") is False and row.get("measurement_started") is False}
+    exact.pop(None, None)
+    rows = list(payload.get("rows") or [])
+    counts = Counter(_native_performance_identity(row) for row in rows)
+    local = sum(1 for row in rows
+                if _native_performance_identity(row) in exact
+                and row.get("precision") == exact[_native_performance_identity(row)].get("precision")
+                and counts[_native_performance_identity(row)] == 1
+                and row.get("technical_quality_error") is True
+                and row.get("status") == "native_row_not_ok"
+                and row.get("dump_status") == "skipped"
+                and row.get("ok") is False
+                and row.get("semantic_available") is not True)
+    return max(0, total - local), local
+
+
+def _augmentation_leaf_key(cfg: Mapping[str, Any], leaf: Mapping[str, Any]) -> str:
+    bindings = _variant_backend_bindings(cfg, leaf)
+    case_map = _case_map_from_variant(leaf)
+    if (len(bindings) != 1 or len(case_map) != 1
+            or leaf.get("release_kind") != "split"
+            or len(next(iter(case_map.values()))) != 1):
+        raise _AugmentationBarrierError("augmentation requires one exact Split identity per Native leaf")
+    model, cases = next(iter(case_map.items()))
+    return "|".join((model, cases[0], bindings[0]["setup_id"]))
+
+
+def _augmentation_dispatch_order(cfg: Mapping[str, Any], variants: list[Mapping[str, Any]],
+                                 barrier: Mapping[str, Any] | None) -> tuple[list[int], dict[int, str]]:
+    if barrier is None:
+        return list(range(len(variants))), {}
+    keys = [_augmentation_leaf_key(cfg, leaf) for leaf in variants]
+    if len(keys) != len(set(keys)):
+        raise _AugmentationBarrierError("duplicate augmentation Native leaf")
+    plan = _read_json(Path(barrier["plan_path"]), {}) or {}
+    planned = {"|".join(str(row.get(field) or "") for field in ("model_id", "case_id", "setup_id")): row
+               for row in plan.get("rows", [])}
+    for index, key in enumerate(keys):
+        row = planned.get(key)
+        if row is None or (row.get("selection_role") == "reserve" and row.get("activated") is not True):
+            raise _AugmentationBarrierError("Native leaf outside active frozen augmentation plan")
+        physical = _variant_backend_bindings(cfg, variants[index])[0]
+        if _canonical_native_backend(row.get("backend")) != physical["backend"]:
+            raise _AugmentationBarrierError("augmentation Native plan backend mismatch")
+    starts = {}
+    terminal_keys = {_augmentation_terminal_key(row) for row in barrier.get("technical_terminals", [])}
+    for record in barrier["startcases"]:
+        key = "|".join(str(record.get(field) or "") for field in ("model_id", "case_id", "setup_id"))
+        if key in terminal_keys:
+            # A sealed, exact deterministic build nonstart is a local terminal
+            # observation, not a measured pair or a trigger to select a reserve.
+            continue
+        if key not in keys:
+            raise _AugmentationBarrierError("augmentation startcase absent from full Native plan")
+        index = keys.index(key)
+        if _canonical_native_backend(record.get("backend")) != _variant_backend_bindings(cfg, variants[index])[0]["backend"]:
+            raise _AugmentationBarrierError("augmentation startcase backend mismatch")
+        starts[index] = key
+    return [*starts, *(i for i in range(len(variants)) if i not in starts)], starts
+
+
+def _existing_reference_validation_args(cfg: Mapping[str, Any]) -> list[str]:
+    barrier = cfg.get("augmentation_startcase_barrier")
+    if not isinstance(barrier, Mapping):
+        return []
+    return ["--existing-outputs-only", "--existing-reference-validation-summary",
+            str(barrier["original_reference_validation_summary"])]
+
+
+def _augmentation_completion_callback(run_dir: Path, cfg: Mapping[str, Any], *,
+                                      case_key: str) -> dict[str, Any]:
+    barrier = _augmentation_barrier_config(cfg)
+    if barrier is None:
+        return {"rc": 0, "status": "not_requested"}
+    reports = run_dir / "reports"
+    summary = reports / "native_producer_combined_summary.json"
+    validation = reports / "native_validation/native_producer_validation_summary.json"
+    if not summary.is_file() or not validation.is_file():
+        raise _AugmentationBarrierError("augmentation canonical Native/validation reports missing")
+    command = [sys.executable, "-u", "-m", "onnx_splitpoint_tool.workflow.yolo_augmentation",
+               "--completion-barrier", str(barrier["plan_path"]),
+               "--native-summary", str(summary), "--validation-summary", str(validation),
+               "--case-key", case_key]
+    if barrier.get("execution_output"):
+        command += ["--attempt-dir", str(barrier["execution_output"])]
+    result = _run(command, timeout=int(barrier.get("timeout_s") or 21600), cwd=ROOT,
+                  label="augmentation_completion:" + case_key)
+    if result.get("rc") != 0:
+        raise _AugmentationBarrierError("augmentation Generic/Native technical pair failed: " + case_key
+                                       + "; " + str(result.get("stderr_tail") or ""))
+    # The immutable plan also remains bound across the child process.
+    _augmentation_barrier_config(cfg)
+    return result
+
+
+def _augmentation_publish_startcase(run_dir: Path, cfg: Mapping[str, Any],
+                                   variants: list[Mapping[str, Any]], *,
+                                   case_key: str, report_python: str) -> dict[str, Any]:
+    """Use the ordinary reporter/validator chain before the next Native leaf."""
+    _augmentation_barrier_config(cfg)
+    reports = run_dir / "reports"
+    native_root = run_dir / "native_producers"
+    roots = sorted(path for path in native_root.iterdir() if path.is_dir()) if native_root.is_dir() else []
+    if not roots:
+        raise _AugmentationBarrierError("augmentation Native result roots missing")
+    report_cmd = [sys.executable, "-u", str(_script("native_producer_final_report.py"))]
+    for root in roots:
+        report_cmd += ["--root", str(root)]
+    report_cmd += ["--recursive", "--out-dir", str(reports)]
+    report_cmd += _final_report_remote_context_args(run_dir, cfg, variants)
+    stages = {}
+
+    def execute(name, command, timeout):
+        result = _run(command, timeout=timeout, cwd=ROOT, label="augmentation_startcase:" + name)
+        stages[name] = result
+        if result.get("rc") != 0:
+            raise _AugmentationBarrierError("augmentation startcase " + name + " failed: "
+                                           + str(result.get("stderr_tail") or ""))
+
+    execute("final_report", report_cmd, 300)
+    summary = reports / "native_producer_combined_summary.json"
+    validation = reports / "native_validation/native_producer_validation_summary.json"
+    if not summary.is_file():
+        raise _AugmentationBarrierError("augmentation Native summary was not published")
+    observed = _read_json(summary, {}) or {}
+    expected, *_ = _variant_expected_energy_rows(run_dir, cfg, variants)
+    # The early report uses the same immutable full denominator as the final
+    # report. At this point the aggregate performance commit does not exist yet.
+    _write_json(reports / "native_expected_matrix.json",
+                _native_performance_expected_matrix(expected, list(observed.get("rows") or [])))
+    validation_cfg = cfg.get("validation") or {}
+    report_py, _ = _select_report_python(ROOT, report_python)
+    val_cmd = [report_py, "-u", str(_script("native_producer_validate_visualize.py")),
+               "--summary", str(summary), "--out-dir", str(validation.parent),
+               "--topk", str(int(validation_cfg.get("topk") or 5)),
+               *_existing_reference_validation_args(cfg)]
+    if isinstance(cfg.get("quality_gate_policy"), Mapping):
+        val_cmd += ["--quality-gate-json", json.dumps(dict(cfg["quality_gate_policy"]), sort_keys=True, separators=(",", ":"))]
+    central = run_dir / "quality_management/central_quality_summary.json"
+    if central.is_file():
+        val_cmd += ["--central-quality-summary", str(central)]
+    for root in roots:
+        val_cmd += ["--root", str(root)]
+    execute("native_validation", val_cmd, int(validation_cfg.get("timeout_s") or 600))
+    payload = _read_json(validation, {}) or {}
+    blockers, local_terminals = _augmentation_validation_blockers(cfg, payload)
+    stages["native_validation"]["local_build_terminal_count"] = local_terminals
+    stages["native_validation"]["blocking_technical_error_count"] = blockers
+    if (not payload.get("rows") or payload.get("empty_output_error") is True or blockers > 0):
+        raise _AugmentationBarrierError("augmentation startcase Native validation technical failure or empty output")
+    execute("quality_gated_final_report", report_cmd + ["--quality-summary", str(validation),
+            "--expected-matrix", str(reports / "native_expected_matrix.json")], 300)
+    for ext in ("json", "csv", "md"):
+        source = reports / f"native_producer_combined_summary.{ext}"
+        if source.is_file():
+            (reports / f"native_producer_summary.{ext}").write_bytes(source.read_bytes())
+    stages["completion_callback"] = _augmentation_completion_callback(run_dir, cfg, case_key=case_key)
+    return stages
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--eval-run-dir", required=True)
@@ -2822,7 +3055,8 @@ def main() -> int:
         action="store_true",
         help=(
             "Reuse only an exact, completed Native-Performance checkpoint and "
-            "continue its managed Native-Energy row journal."
+            "continue its managed Native-Energy row journal; an augmentation "
+            "barrier may also resume exact completed per-case checkpoints."
         ),
     )
     ap.add_argument("--report-python", default="auto", help="Python for final native validation. auto prefers current interpreter if onnxruntime works, else .venv-report/bin/python.")
@@ -2873,9 +3107,17 @@ def main() -> int:
             validate_cache_verify_only_profile(profile_payload)
         except CacheVerifyPolicyError as exc:
             raise SystemExit(str(exc)) from exc
+    try:
+        augmentation_barrier = _augmentation_barrier_config(cfg)
+        if augmentation_barrier and augmentation_barrier.get("reentry") and not ns.resume:
+            raise _AugmentationBarrierError("augmentation reentry requires explicit --resume")
+    except _AugmentationBarrierError as exc:
+        print(json.dumps({"ok": False, "status": "augmentation_startcase_preflight_failed",
+                          "error": str(exc), "started_remote_count": 0}), file=sys.stderr)
+        return 2
     canonical_stage_path = reports / "native_producer_stage.json"
     coordinator_checkpoint_path = _native_coordinator_checkpoint_path(
-        run_dir
+        run_dir, cfg,
     )
     coordinator_input_hash = native_coordinator_input_hash(
         run_dir, cfg_path,
@@ -2905,6 +3147,8 @@ def main() -> int:
             and str(existing_coordinator.get("state") or "")
             in {"completed", "failed"}
         ):
+            if existing_coordinator.get("error"):
+                print(str(existing_coordinator["error"]), file=sys.stderr, flush=True)
             return int(
                 (existing_coordinator.get("details") or {}).get(
                     "return_code"
@@ -2948,7 +3192,7 @@ def main() -> int:
             "variant_results": [],
         }
         _write_json(canonical_stage_path, failure)
-        _write_native_coordinator_terminal(
+        _write_native_coordinator_terminal(checkpoint_path=coordinator_checkpoint_path,
             run_dir=run_dir,
             reports=reports,
             stage=failure,
@@ -3041,7 +3285,7 @@ def main() -> int:
             "variant_results": [],
         }
         _write_json(canonical_stage_path, failure)
-        _write_native_coordinator_terminal(
+        _write_native_coordinator_terminal(checkpoint_path=coordinator_checkpoint_path,
             run_dir=run_dir,
             reports=reports,
             stage=failure,
@@ -3049,6 +3293,15 @@ def main() -> int:
             return_code=2,
         )
         print(json.dumps(failure, indent=2), file=sys.stderr)
+        return 2
+    try:
+        augmentation_order, augmentation_startcases = _augmentation_dispatch_order(cfg, variants, augmentation_barrier)
+    except _AugmentationBarrierError as exc:
+        failure = {"status": "failed", "state": "failed", "complete": True,
+                   "failure_class": "augmentation_startcase_preflight", "error": str(exc), "variant_results": []}
+        _write_json(canonical_stage_path, failure)
+        _write_native_coordinator_terminal(checkpoint_path=coordinator_checkpoint_path, run_dir=run_dir, reports=reports, stage=failure,
+            input_hash=coordinator_input_hash, return_code=2)
         return 2
     cfg = copy.deepcopy(dict(cfg))
     cfg["trt_quality_producer_sets_by_setup"] = producer_paths
@@ -3109,6 +3362,14 @@ def main() -> int:
         },
         "variant_results": [],
     }
+    augmentation_terminals = {
+        _augmentation_terminal_key(row): dict(row)
+        for row in (augmentation_barrier or {}).get("technical_terminals", [])
+    }
+    if augmentation_terminals:
+        # Build terminals retain their typed evidence; the separate existing
+        # capability channel accepts only actual unsupported Part2 contracts.
+        stage["augmentation_technical_terminals"] = list(augmentation_terminals.values())
     _write_json(reports / "native_producer_stage_config.json", cfg)
     _write_json(canonical_stage_path, stage)
 
@@ -3242,7 +3503,7 @@ def main() -> int:
             "started_performance_count": 0,
         })
         _write_json(canonical_stage_path, stage)
-        _write_native_coordinator_terminal(
+        _write_native_coordinator_terminal(checkpoint_path=coordinator_checkpoint_path,
             run_dir=run_dir,
             reports=reports,
             stage=stage,
@@ -3308,7 +3569,7 @@ def main() -> int:
         })
         _write_json(canonical_stage_path, stage)
         phase1_return_code = 2 if phase1_failed else 0
-        _write_native_coordinator_terminal(
+        _write_native_coordinator_terminal(checkpoint_path=coordinator_checkpoint_path,
             run_dir=run_dir,
             reports=reports,
             stage=stage,
@@ -3355,7 +3616,7 @@ def main() -> int:
                 ) or "native_split_quality_authority_invalid",
             })
             _write_json(canonical_stage_path, stage)
-            _write_native_coordinator_terminal(
+            _write_native_coordinator_terminal(checkpoint_path=coordinator_checkpoint_path,
                 run_dir=run_dir,
                 reports=reports,
                 stage=stage,
@@ -3366,7 +3627,7 @@ def main() -> int:
             return 2
 
     performance_checkpoint_path, performance_snapshot_path = (
-        _native_performance_checkpoint_paths(run_dir)
+        _native_performance_checkpoint_paths(run_dir, cfg)
     )
     performance_input_hash = _native_performance_input_hash(
         run_dir=run_dir,
@@ -3377,6 +3638,7 @@ def main() -> int:
     )
     performance_reused = False
     performance_resume_reason = "fresh_execution"
+    augmentation_partial_resume = False
     if ns.resume and performance_checkpoint_path.is_file():
         reusable_checkpoint, performance_resume_reason = (
             load_reusable_stage_checkpoint(
@@ -3386,7 +3648,36 @@ def main() -> int:
                 run_root=run_dir,
             )
         )
-        if reusable_checkpoint is None:
+        if reusable_checkpoint is None and augmentation_barrier is not None:
+            partial_checkpoint, partial_reason = load_stage_checkpoint(
+                performance_checkpoint_path,
+                stage="native_performance",
+                input_hash=performance_input_hash,
+                run_root=run_dir,
+            )
+            # Only an explicit reentry of this immutable new cohort may use
+            # terminal per-case records before the aggregate commit point.
+            # Each leaf still verifies its original Quality snapshot and exact
+            # command; unfinished physical dispatches remain unretryable. The
+            # normal reporters, validator and completion callback revalidate
+            # actual measured outputs before releasing another startcase.
+            augmentation_partial_resume = bool(
+                partial_checkpoint is not None
+                and partial_checkpoint.get("state") == "running"
+                and partial_checkpoint.get("complete") is False
+            )
+            if augmentation_partial_resume:
+                performance_resume_reason = "augmentation_exact_leaf_resume"
+                stage["native_performance_checkpoint"] = {
+                    "reused": False,
+                    "partial_leaf_resume": True,
+                    "reason": performance_resume_reason,
+                    "path": str(performance_checkpoint_path),
+                    "input_hash": performance_input_hash,
+                }
+            elif partial_checkpoint is None:
+                performance_resume_reason = partial_reason
+        if reusable_checkpoint is None and not augmentation_partial_resume:
             stage.update({
                 "status": "failed",
                 "state": "failed",
@@ -3397,7 +3688,7 @@ def main() -> int:
                 "transfer_attempted": False,
             })
             _write_json(canonical_stage_path, stage)
-            _write_native_coordinator_terminal(
+            _write_native_coordinator_terminal(checkpoint_path=coordinator_checkpoint_path,
                 run_dir=run_dir,
                 reports=reports,
                 stage=stage,
@@ -3411,7 +3702,7 @@ def main() -> int:
             snapshot_payload.get("stage")
             if isinstance(snapshot_payload, Mapping) else {}
         )
-        if not isinstance(frozen_stage, Mapping):
+        if not augmentation_partial_resume and not isinstance(frozen_stage, Mapping):
             stage.update({
                 "status": "failed",
                 "state": "failed",
@@ -3422,7 +3713,7 @@ def main() -> int:
                 "transfer_attempted": False,
             })
             _write_json(canonical_stage_path, stage)
-            _write_native_coordinator_terminal(
+            _write_native_coordinator_terminal(checkpoint_path=coordinator_checkpoint_path,
                 run_dir=run_dir,
                 reports=reports,
                 stage=stage,
@@ -3430,21 +3721,22 @@ def main() -> int:
                 return_code=2,
             )
             return 2
-        stage = copy.deepcopy(dict(frozen_stage))
-        stage["status"] = "running"
-        stage["state"] = "running"
-        stage["complete"] = False
-        stage.pop("finished_at", None)
-        stage["native_performance_checkpoint"] = {
-            "reused": True,
-            "reason": performance_resume_reason,
-            "path": str(performance_checkpoint_path),
-            "input_hash": performance_input_hash,
-        }
-        performance_reused = True
-        _restore_native_performance_artifacts(
-            reports, performance_snapshot_path,
-        )
+        if not augmentation_partial_resume:
+            stage = copy.deepcopy(dict(frozen_stage))
+            stage["status"] = "running"
+            stage["state"] = "running"
+            stage["complete"] = False
+            stage.pop("finished_at", None)
+            stage["native_performance_checkpoint"] = {
+                "reused": True,
+                "reason": performance_resume_reason,
+                "path": str(performance_checkpoint_path),
+                "input_hash": performance_input_hash,
+            }
+            performance_reused = True
+            _restore_native_performance_artifacts(
+                reports, performance_snapshot_path,
+            )
         _write_json(canonical_stage_path, stage)
     else:
         write_stage_checkpoint(
@@ -3470,7 +3762,9 @@ def main() -> int:
             return True
         return bool((summary or {}).get("cancel_requested") or (summary or {}).get("status") == "cancelled")
 
-    parallel_native = per_case and (_workflow_context(cfg).get("workflow_execution") or {}).get("setup_queue_mode") == "per_setup"
+    # The bounded augmentation must validate each initial pair before releasing
+    # the next case. The general physical-setup scheduler remains unchanged.
+    parallel_native = augmentation_barrier is None and per_case and (_workflow_context(cfg).get("workflow_execution") or {}).get("setup_queue_mode") == "per_setup"
     setup_dispatch = None
     ready_signals, leaf_futures, leaf_jobs, running_leaves = {}, {}, {}, {}
 
@@ -3539,7 +3833,7 @@ def main() -> int:
             yield from enumerate(variants)
             return
         progress_path = Path(str(_workflow_context(cfg).get("central_quality_summary") or ""))
-        pending = list(enumerate(variants))
+        pending = [(i, variants[i]) for i in augmentation_order]
         stage["case_release_plan"] = {"complete": False, "leaves": copy.deepcopy(variants), "expected_rows": phase1_expected_rows}
         _write_json(canonical_stage_path, stage)
         while pending:
@@ -3547,6 +3841,24 @@ def main() -> int:
             summary = _read_json(progress_path, {}) or {}
             progress = False
             for i, leaf in list(pending):
+                terminal = augmentation_terminals.get(_augmentation_leaf_key(cfg, leaf)) if augmentation_barrier else None
+                if terminal is not None:
+                    stage["variant_results"].append({
+                        **copy.deepcopy(terminal),
+                        "id": _variant_label(i, leaf), "artifact_namespace": leaf["artifact_namespace"],
+                        "ok": False, "rc": 2,
+                        "physical_dispatch_started": False, "execution_attempted": False,
+                        "failure_reason": terminal.get("failure_reason") or terminal.get("reason"),
+                        "technical_terminal_source": terminal["technical_terminal_source"],
+                    })
+                    pending.remove((i, leaf))
+                    progress = True
+                    _write_json(canonical_stage_path, stage)
+                    continue
+                if augmentation_barrier is not None and i not in augmentation_startcases:
+                    completed_starts = stage.get("augmentation_startcase_barrier", {}).get("completed_startcases", {})
+                    if set(completed_starts) != set(augmentation_startcases.values()):
+                        continue
                 try:
                     if release_cancelled(summary):
                         raise TensorRTQualityChainError("workflow_cancelled_before_native_case_dispatch")
@@ -3554,6 +3866,8 @@ def main() -> int:
                 except (TensorRTQualityChainError, ValueError, OSError, KeyError) as exc:
                     if not summary.get("complete") and not release_cancelled(summary):
                         continue
+                    if i in augmentation_startcases:
+                        raise _AugmentationBarrierError("augmentation startcase quality release failed: " + str(exc)) from exc
                     stage["variant_results"].append({"id": _variant_label(i, leaf), "artifact_namespace": leaf["artifact_namespace"],
                         "ok": False, "rc": 2, "status": "not_started", "failure_reason": str(exc),
                         "upstream_stage": "central_quality", "physical_dispatch_started": False})
@@ -3584,6 +3898,12 @@ def main() -> int:
         for i, v0 in ready_variants():
             if not isinstance(v0, Mapping):
                 continue
+            if augmentation_barrier is not None:
+                _augmentation_barrier_config(cfg)
+            if augmentation_barrier is not None and i not in augmentation_startcases:
+                completed_starts = stage.get("augmentation_startcase_barrier", {}).get("completed_startcases", {})
+                if set(completed_starts) != set(augmentation_startcases.values()):
+                    raise _AugmentationBarrierError("remaining Native cases cannot pass incomplete startcase barrier")
             label = _variant_label(i, v0)
             merged = _merged_variant(cfg, v0)
             repetitions = _performance_repetitions(merged)
@@ -3591,6 +3911,12 @@ def main() -> int:
             rec = {"id": label, "case_map": _effective_variant_case_map(run_dir, merged), "performance_repetitions": repetitions, "native_execution_contract": dict(merged["_native_execution_contract"]), "native_execution_contract_sha256": str(merged["_native_execution_contract"]["contract_sha256"]), "cmd": cmd, "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
             leaf_checkpoint = reports / "native_producer_variants" / str(v0.get("artifact_namespace") or _variant_namespace(i, v0)) / "performance_stage_result.json"
             leaf_input = checkpoint_json_sha256({"coordinator_input_hash": coordinator_input_hash, "variant": dict(v0), "cmd": cmd})
+            if augmentation_barrier is not None and ns.resume and leaf_checkpoint.is_file():
+                from onnx_splitpoint_tool.workflow.yolo_augmentation_reentry import completed_native_leaf_input
+                try:
+                    leaf_input = completed_native_leaf_input(run_dir, cfg, leaf_checkpoint, v0, cmd, leaf_input)
+                except ValueError as exc:
+                    raise _AugmentationBarrierError(str(exc)) from exc
             if per_case and release_cancelled():
                 rr = {"rc": 130, "status": "cancelled", "physical_dispatch_started": False,
                       "stderr_tail": "workflow_cancelled_before_native_case_dispatch"}
@@ -3618,6 +3944,19 @@ def main() -> int:
             if i in ready_signals:
                 ready_signals[i].cancel()
             publish_leaf(rec, v0, rr)
+            if i in augmentation_startcases:
+                key = augmentation_startcases[i]
+                if rr.get("rc") != 0:
+                    raise _AugmentationBarrierError("augmentation initial Native case failed: " + key
+                        + "; " + str(rr.get("stderr_tail") or rr.get("stdout_tail") or rr.get("status") or ""))
+                evidence = _augmentation_publish_startcase(run_dir, cfg, variants, case_key=key,
+                                                          report_python=ns.report_python)
+                barrier_state = stage.setdefault("augmentation_startcase_barrier", {
+                    "plan_path": augmentation_barrier["plan_path"],
+                    "plan_sha256": augmentation_barrier["plan_sha256"], "completed_startcases": {}})
+                barrier_state["completed_startcases"][key] = evidence
+                barrier_state["complete"] = len(barrier_state["completed_startcases"]) == len(augmentation_startcases)
+                _write_json(canonical_stage_path, stage)
             # A terminal child failure is row-local.  Every remaining variant must
             # still reach its own terminal record so successful rows and Full
             # baselines are preserved for partial Energy observation.
@@ -3627,6 +3966,15 @@ def main() -> int:
             if running_leaves:
                 concurrent.futures.wait([leaf_futures[i] for i in running_leaves], timeout=0.1,
                                         return_when=concurrent.futures.FIRST_COMPLETED)
+    except _AugmentationBarrierError as exc:
+        stage.update(status="failed", state="failed", complete=True,
+                     finished_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                     failure_class="augmentation_startcase_barrier", failure_reason=str(exc),
+                     error=str(exc), native_energy={"enabled": False, "status": "not_started_startcase_barrier"})
+        _write_json(canonical_stage_path, stage)
+        _write_native_coordinator_terminal(checkpoint_path=coordinator_checkpoint_path, run_dir=run_dir, reports=reports, stage=stage,
+            input_hash=coordinator_input_hash, return_code=2)
+        return 2
     finally:
         if setup_dispatch is not None:
             setup_dispatch.shutdown(wait=True, cancel_futures=True)
@@ -3784,7 +4132,7 @@ def main() -> int:
                 "upstream_stage": "native_performance",
             })
             _write_json(canonical_stage_path, stage)
-            _write_native_coordinator_terminal(
+            _write_native_coordinator_terminal(checkpoint_path=coordinator_checkpoint_path,
                 run_dir=run_dir,
                 reports=reports,
                 stage=stage,
@@ -3838,6 +4186,7 @@ def main() -> int:
         stage["report_python"] = report_py_meta
         vout = reports / "native_validation"
         val_cmd = [report_py, "-u", str(_script("native_producer_validate_visualize.py")), "--summary", str(summary_json), "--out-dir", str(vout), "--topk", str(int(validation_cfg.get("topk") or 5))]
+        val_cmd += _existing_reference_validation_args(cfg)
         if isinstance(cfg.get("quality_gate_policy"), Mapping):
             val_cmd += ["--quality-gate-json", json.dumps(dict(cfg.get("quality_gate_policy") or {}), sort_keys=True, separators=(",", ":"))]
         central_quality_summary = (
@@ -3904,6 +4253,11 @@ def main() -> int:
     stage["native_validation"]["empty_output_error"] = (
         native_validation_empty_output
     )
+    if augmentation_barrier is not None:
+        blockers, local_terminals = _augmentation_validation_blockers(cfg, native_validation_payload)
+        stage["native_validation"]["local_build_terminal_count"] = local_terminals
+        stage["native_validation"]["blocking_technical_error_count"] = blockers
+        native_validation_technical_errors = max(1, blockers) if native_validation_empty_output else blockers
     if (
         native_validation_requested
         and roots
@@ -3944,6 +4298,22 @@ def main() -> int:
             ),
             "quality_summary": str(quality_summary),
         }
+
+    if augmentation_barrier is not None:
+        try:
+            if native_validation_failed or native_validation_technical_errors or (stage.get("quality_gated_final_report") or {}).get("rc") != 0:
+                raise _AugmentationBarrierError("augmentation final Native validation/report failed")
+            stage["augmentation_remaining_completion"] = _augmentation_completion_callback(run_dir, cfg, case_key="remaining")
+            _write_json(canonical_stage_path, stage)
+        except _AugmentationBarrierError as exc:
+            stage.update(status="failed", state="failed", complete=True,
+                         finished_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                         failure_class="augmentation_completion_barrier", failure_reason=str(exc),
+                         native_energy={"enabled": False, "status": "not_started_completion_barrier"})
+            _write_json(canonical_stage_path, stage)
+            _write_native_coordinator_terminal(checkpoint_path=coordinator_checkpoint_path, run_dir=run_dir, reports=reports, stage=stage,
+                input_hash=coordinator_input_hash, return_code=2)
+            return 2
 
     # v2.62: The marker-v2 versus historical-window A/B probe is deliberately
     # independent of semantic validation and Native Energy pairing.  Run it
@@ -4236,7 +4606,9 @@ def main() -> int:
         "variant_ok_count": ok_variants,
         "native_report_rc": fr.get("rc"),
         "native_validation_rc": (stage.get("native_validation") or {}).get("rc"),
-        "native_validation_technical_error_count": native_validation_technical_errors,
+        "native_validation_technical_error_count": stage["native_validation"].get("technical_error_count", native_validation_technical_errors),
+        "native_validation_blocking_technical_error_count": native_validation_technical_errors,
+        "native_validation_local_build_terminal_count": stage["native_validation"].get("local_build_terminal_count", 0),
         "claim_ok_count": validation_json.get("claim_ok_count"),
         "semantic_ok_count": validation_json.get("semantic_ok_count"),
         "window_method_validation_probe_status": (stage.get("window_method_validation_probe") or {}).get("status"),
@@ -4281,7 +4653,7 @@ def main() -> int:
         stage["claim_eligible"] = False
     final_return_code = 0 if stage["status"] == "ok" else 2
     _write_json(canonical_stage_path, stage)
-    _write_native_coordinator_terminal(
+    _write_native_coordinator_terminal(checkpoint_path=coordinator_checkpoint_path,
         run_dir=run_dir,
         reports=reports,
         stage=stage,

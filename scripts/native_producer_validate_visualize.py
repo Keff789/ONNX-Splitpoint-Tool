@@ -2457,10 +2457,146 @@ def _strict_split_central_result_identity(
     return exact, 'exact_current_split_identity_mirrors'
 
 
+def _reconcile_vendor_full_quality_binding(
+    row: dict[str, Any], binding_set: Mapping[str, Any], *, roots: list[Path],
+) -> tuple[bool, list[str]]:
+    """Attach late Central metadata to the original measured command in memory.
+
+    Reuse the runtime consumer's artifact/endpoint/preprocessing checks. The
+    command, measurements and semantic observations are never resealed or edited.
+    """
+    try:
+        from scripts.native_full_baseline_eval_runner import _attach_full_quality_request_binding
+    except ImportError:  # standalone copied scripts
+        from native_full_baseline_eval_runner import _attach_full_quality_request_binding
+
+    contract = row.get('full_command_contract')
+    if not isinstance(contract, Mapping) or _strict_verify_full_command_contract is None:
+        return False, ['original_full_command_contract_missing']
+    unhashed_set = dict(binding_set)
+    declared_set = unhashed_set.pop('binding_set_sha256', '')
+    if not declared_set or _canonical_json_sha256(unhashed_set) != declared_set:
+        return False, ['local_full_quality_binding_set_sha256_mismatch']
+    selected_binding = (binding_set.get('bindings_by_backend_model') or {}).get(
+        str(row.get('backend') or '') + '|' + str(row.get('model') or ''))
+    if not isinstance(selected_binding, Mapping):
+        return False, ['local_full_quality_binding_unavailable']
+    unhashed_binding = dict(selected_binding)
+    declared_binding = unhashed_binding.pop('binding_sha256', '')
+    if not declared_binding or _canonical_json_sha256(unhashed_binding) != declared_binding:
+        return False, ['local_full_quality_binding_sha256_mismatch']
+    if row.get('quality_request_binding') not in (None, {}, selected_binding):
+        return False, ['local_full_quality_binding_conflict']
+    for field in ('source_request_sha256', 'model_sha256', 'validation_dataset_sha256',
+                  'validation_dataset_image_ids_sha256', 'validation_dataset_ground_truth_sha256',
+                  'task_quality_policy_sha256', 'quality_contract_sha256',
+                  'preprocessing_contract_sha256', 'decoder_contract_sha256',
+                  'nms_contract_sha256', 'quality_record_endpoint_contract_sha256',
+                  'central_quality_result_sha256'):
+        observed = _normalize_sha256(row.get(field))
+        if row.get(field) not in (None, '') and (
+            not observed or observed != _normalize_sha256(selected_binding.get(field))
+        ):
+            return False, ['local_full_quality_claim_conflict:' + field]
+    original_root = Path(str(contract.get('root') or ''))
+    campaign_id = str(binding_set.get('eval_run_id') or '')
+    if not campaign_id or not (
+        original_root.name == campaign_id or (
+            original_root.parent.name == 'attempts' and original_root.parent.parent.name == campaign_id
+        )
+    ):
+        return False, ['original_full_campaign_identity_mismatch']
+    workload = contract.get('energy_workload') or {}
+    runner_artifact = (contract.get('artifacts') or {}).get(str(workload.get('runner_artifact') or ''), {})
+    verified, status = _strict_verify_full_command_contract(contract, expected_identity={
+        'backend': row.get('backend'), 'model': row.get('model'),
+        'case': row.get('case'), 'setup_id': row.get('setup_id'),
+        'comparison_backend': row.get('comparison_backend'),
+        'remote_root': str(original_root),
+        'remote_tool_dir': str(Path(str(runner_artifact.get('path') or contract.get('runner') or '')).parent.parent),
+    })
+    if verified is None or row.get('full_command_contract_sha256') != contract.get('contract_sha256'):
+        return False, ['original_full_command_contract_invalid:' + str(status)]
+    if any(contract.get(field) for field in ('quality_request_binding', 'quality_request_binding_sha256',
+                                            'quality_request_binding_set_sha256')):
+        return False, ['original_full_command_binding_already_present']
+    if (binding_set.get('setup_id') != row.get('setup_id')
+            or binding_set.get('comparison_backend') != row.get('comparison_backend')):
+        return False, ['local_full_quality_scope_mismatch']
+    candidate = copy.deepcopy(row)
+    artifacts = contract.get('artifacts') or {}
+    input_artifact = artifacts.get('input_manifest') or {}
+    report = Path(str(row.get('native_report') or row.get('report') or ''))
+    manifest, reason = _resolve_native_contract_artifact(
+        input_artifact.get('path'), report=report, roots=roots,
+        model=str(row.get('model') or ''),
+    )
+    if manifest is None or _sha256_file(manifest) != input_artifact.get('sha256'):
+        return False, ['original_full_input_manifest_invalid:' + reason]
+    input_data = _load_strict_json_object(manifest) or {}
+    if any(input_data.get(field) != row.get(field) for field in
+           ('model', 'backend', 'setup_id', 'comparison_backend', 'case')):
+        return False, ['original_full_input_scope_mismatch']
+    if (input_data.get('input_image_sha256') != contract.get('input_image_sha256')
+            or row.get('input_image_sha256') != contract.get('input_image_sha256')):
+        return False, ['original_full_input_image_mismatch']
+    # Validation rows historically projected the compound identities but
+    # omitted these primitive observations. Recover only from the exact
+    # command-bound input manifest; populated conflicting mirrors stay errors.
+    for field in ('runtime_input_shape', 'runtime_input_dtype', 'runtime_input_layout',
+                  'runtime_color_space', 'runtime_normalization', 'runtime_preprocess_mode'):
+        observed = input_data.get(field)
+        if candidate.get(field) not in (None, '', observed):
+            return False, ['original_full_input_observation_conflict:' + field]
+        candidate[field] = copy.deepcopy(observed)
+    if row.get('backend') == 'native_full_deepx':
+        tensor_artifact = artifacts.get('runtime_input_tensor') or {}
+        tensor, reason = _resolve_native_contract_artifact(
+            tensor_artifact.get('path'), report=manifest, roots=roots,
+            model=str(row.get('model') or ''),
+        )
+        if (tensor is None or _sha256_file(tensor) != tensor_artifact.get('sha256')
+                or input_data.get('runtime_input_sha256') != tensor_artifact.get('sha256')
+                or tensor.stat().st_size != input_data.get('runtime_input_bytes')):
+            return False, ['original_full_runtime_input_invalid:' + reason]
+        prepared = {
+            'prepared_input_source_image_id': Path(str(input_data.get('input_image') or '')).name,
+            'prepared_input_source_image_sha256': input_data.get('input_image_sha256'),
+            'prepared_input_sha256': input_data.get('runtime_input_sha256'),
+            'prepared_input_bytes': input_data.get('runtime_input_bytes'),
+            'prepared_input_name': input_data.get('runtime_input_name'),
+            'prepared_input_shape': input_data.get('runtime_input_shape'),
+            'prepared_input_dtype': input_data.get('runtime_input_dtype'),
+            'prepared_input_layout': input_data.get('runtime_input_layout'),
+        }
+        if any(candidate.get(key) not in (None, '', value) for key, value in prepared.items()):
+            return False, ['original_full_prepared_input_conflict']
+        candidate.update(prepared)
+    candidate, attach_status = _attach_full_quality_request_binding(
+        candidate, contract, model=str(row.get('model') or ''),
+        ns=argparse.Namespace(setup_id=row.get('setup_id'),
+            comparison_backend=row.get('comparison_backend'),
+            quality_request_binding_set_data=dict(binding_set)),
+    )
+    if attach_status != 'quality_request_binding_verified_exact':
+        return False, list(candidate.get('quality_request_binding_errors') or [attach_status])
+    row.update(candidate)
+    row['quality_binding_reconciliation'] = {
+        'status': 'verified_exact',
+        'original_full_command_contract_sha256': contract['contract_sha256'],
+        'original_input_manifest': str(manifest),
+        'performance_repeated': False,
+    }
+    return True, []
+
+
 def _bind_central_quality_evidence(
     row: dict[str, Any], central_results: list[dict[str, Any]],
     policy: AccuracyGatePolicy,
     *, split_quality_authority: Mapping[str, Any] | None = None,
+    central_result_sha256: Mapping[int, str] | None = None,
+    vendor_full_binding_set: Mapping[str, Any] | None = None,
+    artifact_roots: list[Path] | None = None,
 ) -> None:
     """Bind one central decision to one Native precision row, or fail closed."""
     row['central_quality_evidence_verified'] = False
@@ -2476,6 +2612,17 @@ def _bind_central_quality_evidence(
     }
     vendor_quality_binding: dict[str, Any] = {}
     vendor_central_result_sha = ''
+    reconciled_vendor_binding = False
+    if (strict_vendor_full_quality and vendor_full_binding_set is not None
+            and not (row.get('full_command_contract') or {}).get('quality_request_binding')):
+        reconciled_vendor_binding, reconciliation_errors = _reconcile_vendor_full_quality_binding(
+            row, vendor_full_binding_set, roots=artifact_roots or [],
+        )
+        if not reconciled_vendor_binding:
+            row['quality_binding_reconciliation'] = {
+                'status': 'unavailable', 'errors': reconciliation_errors,
+                'performance_repeated': False,
+            }
     if strict_vendor_full_quality:
         vendor_errors: list[str] = []
         raw_binding = row.get('quality_request_binding')
@@ -2521,7 +2668,7 @@ def _bind_central_quality_evidence(
             if isinstance(full_contract, Mapping) else {}
         )
         contract_binding = full_contract.get('quality_request_binding')
-        if (
+        if not reconciled_vendor_binding and (
             not isinstance(contract_binding, Mapping)
             or dict(contract_binding) != vendor_quality_binding
             or _normalize_sha256(
@@ -2908,12 +3055,13 @@ def _bind_central_quality_evidence(
             continue
         if (
             strict_vendor_full_quality
-            and _canonical_json_sha256(result)
+            and (central_result_sha256[id(result)] if central_result_sha256 is not None else _canonical_json_sha256(result))
             != vendor_central_result_sha
         ):
             continue
         if strict_split_quality_first:
-            if _canonical_json_sha256(result) != expected_split_result_sha:
+            result_sha256 = (central_result_sha256[id(result)] if central_result_sha256 is not None else _canonical_json_sha256(result))
+            if result_sha256 != expected_split_result_sha:
                 continue
             exact_split_result_seen = True
             exact_identity, exact_status = _strict_split_central_result_identity(
@@ -4155,7 +4303,7 @@ def _find_boundary_manifest_for_output(output_manifest: Path, roots: list[Path] 
 
 
 def _benchmark_set_relative_path(value: Any) -> Path | None:
-    """Return one traversal-free path below a recorded BenchmarkSet root."""
+    """Return the exact portable input path from an existing Full writer."""
     raw = str(value or '').strip()
     if not raw:
         return None
@@ -4164,9 +4312,28 @@ def _benchmark_set_relative_path(value: Any) -> Path | None:
     except (OSError, RuntimeError, ValueError):
         return None
     indexes = [index for index, part in enumerate(parts) if part == 'benchmark_set']
-    if len(indexes) != 1:
+    if len(indexes) == 1:
+        relative_parts = parts[indexes[0] + 1:]
+    elif not indexes:
+        # Native-Full supplement writers collect TRT outputs directly below
+        # full_attempts/tensorrt, outside the copied BenchmarkSet. Keep the
+        # complete model/backend/setup/comparison suffix for the exact join.
+        attempt_indexes = [i for i, part in enumerate(parts) if part == 'full_attempts']
+        if len(attempt_indexes) != 1 or '..' in parts:
+            return None
+        relative_parts = parts[attempt_indexes[0]:]
+        if (
+            len(relative_parts) != 8
+            or relative_parts[:3] != ['full_attempts', 'tensorrt', 'native_full_outputs']
+            or not relative_parts[3].startswith('model=')
+            or relative_parts[4] != 'backend=native_full_tensorrt'
+            or not relative_parts[5].startswith('setup=')
+            or not relative_parts[6].startswith('comparison=')
+            or relative_parts[7] != 'native_full_input_manifest.json'
+        ):
+            return None
+    else:
         return None
-    relative_parts = parts[indexes[0] + 1:]
     if (
         not relative_parts
         or any(part in {'', '.', '..'} for part in relative_parts)
@@ -6597,6 +6764,7 @@ def _auto_run_yolo_full_self_reference_probe(
     roots: list[Path] | None = None,
     native_report: Path | None = None,
     policy: AccuracyGatePolicy | None = None,
+    out_dir: Path | None = None,
 ) -> dict[str, Any] | None:
     """Run the canonical standalone YOLO self-reference probe if no cache exists."""
     try:
@@ -6637,7 +6805,8 @@ def _auto_run_yolo_full_self_reference_probe(
         script = Path(__file__).with_name('native_yolo_full_self_reference_probe.py')
         if not script.is_file():
             return None
-        work = Path(native_output_manifest).expanduser().resolve().parent.parent
+        work = out_dir if out_dir is not None else Path(native_output_manifest).expanduser().resolve().parent.parent
+        work.mkdir(parents=True, exist_ok=True)
         out = work / 'native_yolo_full_self_reference_probe.json'
         effective_policy = policy or AccuracyGatePolicy()
         cmd = [
@@ -6676,6 +6845,7 @@ def _full_onnx_self_reference_detection(
     roots: list[Path] | None = None,
     policy: AccuracyGatePolicy | None = None,
     endpoint_evidence: Mapping[str, Any] | None = None,
+    out_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Decode native output against Full-ONNX run on the same native input dump.
 
@@ -6746,6 +6916,7 @@ def _full_onnx_self_reference_detection(
             roots=roots,
             native_report=native_report,
             policy=effective_policy,
+            out_dir=out_dir,
         )
     )
     if autoprobe is not None:
@@ -7834,6 +8005,366 @@ def _decode_sweep(
     return {'schema':'onnx-splitpoint/detection-decode-sweep','schema_version':3,'expected_contract_family':expected_family,'sweep':rows}
 
 
+def _existing_split_reference_input(
+    manifest: Path, row: Mapping[str, Any], reference_feed: Mapping[str, Any],
+) -> tuple[Path, dict[str, Any]]:
+    """Reverify the existing Split proof before deriving its CPU input tensor."""
+    try:
+        from scripts.native_producer_final_report import _verify_split_semantic_artifacts
+    except ImportError:  # standalone, collected remote-script layout
+        from native_producer_final_report import _verify_split_semantic_artifacts
+    if any(not str(row.get(key) or '').strip() for key in (
+            'backend', 'model', 'case', 'precision', 'setup_id', 'comparison_backend')):
+        raise ValueError('existing_split_reference_identity_incomplete')
+    command, status = verify_native_command_contract(row.get('native_command_contract'), expected_identity=row)
+    if command is None:
+        raise ValueError(status)
+    binding = command.get('native_split_quality_binding') or {}
+    for field in ('eval_run_id', 'source_request_sha256'):
+        if not row.get(field) or row[field] != command.get(field) or row[field] != binding.get(field):
+            raise ValueError(f'existing_split_reference_{field}_mismatch')
+    from onnx_splitpoint_tool.native_split_quality import canonical_native_split_backend
+    source_runs = [canonical_native_split_backend(item.get('source_run_id')) for item in (row, command, binding)]
+    if not all(source_runs) or len(set(source_runs)) != 1:
+        raise ValueError('existing_split_reference_source_run_id_mismatch')
+    if row.get('native_command_contract_sha256') != command['contract_sha256']:
+        raise ValueError('existing_split_reference_command_sha256_mismatch')
+    proof = _verify_split_semantic_artifacts(
+        result_path=Path(str(row.get('native_report') or manifest)),
+        manifest_path=manifest, manifest_sha256=_sha256_file(manifest), sources=[dict(row)],
+    )
+    if proof.get('native_split_semantic_binding_valid') is not True:
+        raise ValueError('existing_split_reference_' + str(proof.get('native_split_semantic_binding_status')))
+    boundary = Path(proof['native_split_semantic_boundary_manifest'])
+    payload = _load_strict_json_object(boundary) or {}
+    if payload.get('schema') != 'onnx-splitpoint/native-boundary-dump':
+        raise ValueError('existing_split_reference_input_schema_invalid')
+    evidence: dict[str, Any] = {}
+    feed = _native_input_dump_feed(
+        boundary, list(reference_feed.get('target_shape') or []),
+        image_scale=str(reference_feed.get('ort_model_scale') or ''),
+        target_dtype=reference_feed.get('target_dtype'), evidence=evidence,
+    )
+    if feed is None or evidence != dict(reference_feed) or evidence.get('status') != 'passed':
+        raise ValueError('existing_split_reference_derived_tensor_mismatch')
+    return boundary, evidence
+
+
+def _stored_split_processor_compatibility(
+    current_manifest: Path, current_tensors: Mapping[str, Any], current_execution: Mapping[str, Any],
+    original_manifest: Path, original_tensors: Mapping[str, Any], original_execution: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Compare decoder primitives after independently replaying both attestations.
+
+    A decoded-NMS processor binds its own source attestation, whose provenance
+    names the run's output_contracts.json. That file and path legitimately
+    differ across runs; they must remain bound individually, not become part
+    of the cross-run decoder equality test.
+    """
+    from onnx_splitpoint_tool.native_output_endpoint import runtime_output_contract
+    from onnx_splitpoint_tool.native_detection_postprocess import _verified_completion_source_endpoint
+
+    def checked(manifest: Path, tensors: Mapping[str, Any], raw: Mapping[str, Any]):
+        execution = _verify_detection_completion_execution_contract(raw)
+        processor = dict(execution['processor_contract'])
+        if processor.get('schema') != 'onnx-splitpoint/attested-decoded-nms-materialization':
+            raise ValueError('existing_split_reference_processor_schema_mismatch')
+        saved = _load_strict_json_object(manifest) or {}
+        declaration = saved.get('authoritative_output_contract_resolution')
+        if not isinstance(declaration, Mapping):
+            raise ValueError('existing_split_reference_source_declaration_missing')
+        local_declaration = dict(declaration)
+        original_source = str(declaration.get('declaration_source') or '')
+        if not Path(original_source).is_file():
+            # Collected Native manifests retain their remote origin. Resolve
+            # only the existing local benchmark_set counterpart and require
+            # exactly the original sealed container bytes before reattesting.
+            suite = _benchmark_set_for_report(manifest)
+            local_source = suite / 'output_contracts.json' if suite is not None else None
+            if (local_source is None or not local_source.is_file()
+                    or _sha256_file(local_source) != declaration.get('source_contracts_sha256')):
+                raise ValueError('existing_split_reference_source_declaration_unavailable_or_changed')
+            local_declaration['declaration_source'] = str(local_source.resolve())
+        source = runtime_output_contract('detection', tensors, raw_fallback=False, declared_contract=local_declaration)
+        # Restore provenance in this in-memory verified projection only. The
+        # files and execution hashes continue to name their original origin.
+        if local_declaration != declaration:
+            attested = source.get('output_endpoint_attestation')
+            if isinstance(attested, dict):
+                attested['declaration_source'] = original_source
+                declared = attested.get('declared_contract')
+                if isinstance(declared, dict):
+                    declared['declaration_source'] = original_source
+        projected = _verified_completion_source_endpoint(source, outputs=tensors)
+        attestation = source['output_endpoint_attestation']
+        attestation_sha = _canonical_detection_json_sha256(attestation)
+        if (projected != execution['source_endpoint']
+                or saved.get('output_endpoint_attestation') != attestation
+                or processor.get('source_output_endpoint_attestation_sha256') != attestation_sha):
+            raise ValueError('existing_split_reference_source_attestation_mismatch')
+        provenance = {
+            'execution_contract_sha256': execution['contract_sha256'],
+            'processor_contract_sha256': processor['contract_sha256'],
+            'source_output_endpoint_attestation_sha256': attestation_sha,
+            'declaration_source': attestation.get('declaration_source'),
+            'verified_local_declaration_source': local_declaration.get('declaration_source'),
+            'source_contracts_sha256': (attestation.get('declared_contract') or {}).get('source_contracts_sha256'),
+        }
+        primitive_attestation = copy.deepcopy(attestation)
+        primitive_attestation.pop('declaration_source', None)
+        declared = primitive_attestation.get('declared_contract')
+        if isinstance(declared, dict):
+            declared.pop('declaration_source', None)
+            declared.pop('source_contracts_sha256', None)
+        processor.pop('contract_sha256')
+        processor.pop('source_output_endpoint_attestation_sha256')
+        return (processor, primitive_attestation), provenance
+
+    current, current_origin = checked(current_manifest, current_tensors, current_execution)
+    original, original_origin = checked(original_manifest, original_tensors, original_execution)
+    if json.dumps(current, sort_keys=True, separators=(',', ':')) != json.dumps(original, sort_keys=True, separators=(',', ':')):
+        raise ValueError('existing_split_reference_processor_primitives_mismatch')
+    return {'status': 'independently_verified_same_processor_primitives',
+            'current': current_origin, 'original': original_origin}
+
+
+def _existing_split_reference_detection(
+    manifest: Path, row: Mapping[str, Any], references: list[dict[str, Any]],
+    policy: AccuracyGatePolicy,
+) -> dict[str, Any]:
+    """Reuse a stored CPU detector result across verified Split boundaries.
+
+    Only the detector's model/input/completion contract is shared. Each Split
+    keeps its own Run, request, boundary, command and measured-result proof.
+    The first original boundary is selected without consulting its quality.
+    """
+    try:
+        if (row.get('backend') not in {'hailo8_to_trt', 'hailo10h_to_trt', 'deepx_to_trt'}
+                or row.get('case') == 'full'
+                or row.get('completed_task_completion_mode') not in {
+                    'detection_completion_execution_v1', 'native_three_stage_fast_oracle_outside_timing'}):
+            raise ValueError('existing_split_reference_backend_unsupported')
+        identity = ('backend', 'model', 'setup_id', 'comparison_backend', 'precision')
+        candidates = sorted(
+            (ref for ref in references if isinstance(ref, dict) and ref.get('case') != 'full'
+             and all(ref.get(key) == row.get(key) for key in identity)),
+            key=lambda ref: (str(ref.get('case') or ''), str(ref.get('task_validation') or '')),
+        )
+        if not candidates or sum(ref.get('case') == candidates[0].get('case') for ref in candidates) != 1:
+            raise ValueError('existing_split_reference_identity_missing_or_ambiguous')
+        source = candidates[0]
+        reference_path = Path(str(source.get('task_validation') or ''))
+        saved = _load_strict_json_object(reference_path) or {}
+        reference = saved.get('self_reference_report')
+        if (saved.get('schema') != 'onnx-splitpoint/native-detection-semantic-validation'
+                or not isinstance(reference, dict) or reference.get('completed_v2_verified') is not True
+                or reference.get('self_reference_input_manifest_kind') != 'split_boundary_manifest'):
+            raise ValueError('existing_split_reference_not_verified')
+        source_manifest = Path(str(source.get('dump_manifest') or ''))
+        if str(source_manifest) != saved.get('manifest'):
+            raise ValueError('existing_split_reference_manifest_mismatch')
+        model_sha = _normalize_sha256(row.get('model_sha256'))
+        if (not model_sha or source.get('model_sha256') != model_sha
+                or _sha256_file(Path(str(reference.get('full_onnx') or ''))) != model_sha):
+            raise ValueError('existing_split_reference_model_mismatch')
+        reference_feed = reference.get('reference_input_evidence') or {}
+        source_input, _ = _existing_split_reference_input(source_manifest, source, reference_feed)
+        native_input, current_feed = _existing_split_reference_input(manifest, row, reference_feed)
+        if str(source_input) != reference.get('boundary_manifest'):
+            raise ValueError('existing_split_reference_input_manifest_mismatch')
+        source_command = source['native_command_contract']
+        command = row['native_command_contract']
+        image_sha = _normalize_sha256(command.get('input_image_sha256'))
+        if (not image_sha or image_sha != source_command.get('input_image_sha256')
+                or any(item.get('input_image_sha256') != image_sha
+                       or (item['native_command_contract'].get('prepared_input_contract') or {}).get('source_image_sha256') != image_sha
+                       for item in (source, row))):
+            raise ValueError('existing_split_reference_image_mismatch')
+        source_payload = _load_strict_json_object(source_input) or {}
+        native_payload = _load_strict_json_object(native_input) or {}
+        if (not _normalize_sha256(source_payload.get('input_dump_sha256'))
+                or source_payload.get('input_dump_sha256') != native_payload.get('input_dump_sha256')
+                or source_payload.get('preprocess') != native_payload.get('preprocess')):
+            raise ValueError('existing_split_reference_preprocessing_mismatch')
+        tensors, _ = load_dump(str(manifest))
+        old_tensors, _ = load_dump(str(source_manifest))
+        execution, comparison = _verified_completed_v2_execution_contract(row, native_tensors=tensors)
+        old_execution, old_comparison = _verified_completed_v2_execution_contract(source, native_tensors=old_tensors)
+        processor_binding = {'status': 'exact_processor_contract'}
+        if execution['processor_contract'] != old_execution['processor_contract']:
+            processor_binding = _stored_split_processor_compatibility(
+                manifest, tensors, execution, source_manifest, old_tensors, old_execution)
+        if (comparison != old_comparison
+                or execution.get('completion_mode') != old_execution.get('completion_mode')
+                or any(execution['source_endpoint'].get(key) != old_execution['source_endpoint'].get(key)
+                       for key in ('task', 'stage', 'contract_family', 'endpoint_contract_hash', 'output_endpoint_id', 'tensor_signature'))
+                or reference.get('completed_task_comparison_endpoint_contract') != comparison
+                or reference.get('completed_task_comparison_endpoint_contract_hash') != comparison.get('endpoint_contract_hash')):
+            raise ValueError('existing_split_reference_completion_contract_mismatch')
+        expected_policy = {
+            'numerical_similarity_threshold': policy.native_self_reference_min_match,
+            'numerical_similarity_mean_iou_threshold': policy.native_self_reference_min_mean_iou,
+            'numerical_similarity_policy_id': policy.native_self_reference_policy_id,
+            'numerical_similarity_iou_threshold': policy.native_self_reference_iou_threshold,
+            'numerical_similarity_confidence_threshold': policy.native_self_reference_confidence_threshold,
+        }
+        if any(reference.get(key) != value for key, value in expected_policy.items()):
+            raise ValueError('existing_split_reference_policy_mismatch')
+        ref_detections = reference.get('reference_detections')
+        if (not isinstance(ref_detections, list) or not ref_detections
+                or _canonical_detection_json_sha256(ref_detections) != reference.get('full_reference_result_sha256')):
+            raise ValueError('existing_split_reference_result_mismatch')
+        # Recheck the original measured artifact too; its numerical outcome is
+        # deliberately not a prerequisite for reusing the CPU reference.
+        for item, item_manifest in ((source, source_manifest), (row, manifest)):
+            attestation = item['completed_task_endpoint_attestation']
+            native_detections = _verified_execution_completed_result_artifact(
+                attestation['last_result'], attestation, item, native_report=item_manifest,
+            )
+        match = _match_detections(ref_detections, native_detections, iou_thr=policy.native_self_reference_iou_threshold)
+        agnostic = _match_detections_class_agnostic(ref_detections, native_detections, iou_thr=policy.native_self_reference_iou_threshold)
+        similarity = evaluate_detection_similarity(match, agnostic, policy)
+        result_binding = (
+            'verified_postflight_oracle_matches_fast_sentinel'
+            if row.get('completed_task_completion_mode') == 'native_three_stage_fast_oracle_outside_timing'
+            else 'exact_same_hotloop_completed_artifact'
+        )
+        return {
+            'available': True, 'semantic_available': True,
+            'semantic_ok': similarity['numerical_similarity_pass'], 'ok': similarity['numerical_similarity_pass'],
+            'source': 'existing_split_full_onnx_reference_output',
+            'reference_report': str(reference_path), 'reference_eval_run_id': source['eval_run_id'],
+            'reference_source_request_sha256': source['source_request_sha256'],
+            'reference_case': source['case'], 'full_onnx': reference['full_onnx'],
+            'existing_reference_processor_binding': processor_binding,
+            'boundary_manifest': str(native_input), 'self_reference_input_manifest_kind': 'split_boundary_manifest',
+            'reference_input_evidence': current_feed, 'completed_v2_verified': True,
+            'completed_task_comparison_endpoint_contract': comparison,
+            'completed_task_comparison_endpoint_contract_hash': comparison['endpoint_contract_hash'],
+            'completed_task_comparison_output_endpoint_id': comparison['output_endpoint_id'],
+            'reference_detections': ref_detections, 'native_detections': native_detections,
+            'full_reference_result_sha256': reference['full_reference_result_sha256'],
+            'native_completed_result_sha256': attestation['content_sha256'],
+            'performance_hotloop_result_sha256': attestation['content_sha256'],
+            'semantic_result_binding_status': result_binding,
+            'exact_completed_result_identity_bound': True, 'completed_v2_exact_result_claim_binding': True,
+            'completed_v2_semantic_evidence_tier': result_binding,
+            'portable_result_hash_mismatch': False, 'decode_mode': 'completed_v2:existing_split_full_reference',
+            'match': match, 'class_agnostic_match': agnostic, **similarity,
+        }
+    except Exception as exc:
+        return {'available': False, 'reason': str(exc)}
+
+
+def _existing_full_reference_detection(
+    manifest: Path, row: Mapping[str, Any], references: list[dict[str, Any]],
+    policy: AccuracyGatePolicy,
+) -> dict[str, Any]:
+    """Compare persisted completion results with a bound, stored Full reference.
+
+    This path only reads existing bytes and runs the normal detection matcher.
+    Reference selection is by physical identity, independently of its outcome.
+    """
+    try:
+        if row.get('backend') != 'native_full_tensorrt' or row.get('case') != 'full':
+            raise ValueError('existing_full_reference_backend_unsupported')
+        vendor = {'hailo8': 'native_full_hailo8', 'hailo10h': 'native_full_hailo10h',
+                  'deepx': 'native_full_deepx'}.get(row.get('comparison_backend'))
+        candidates = [ref for ref in references if ref.get('backend') == vendor
+                      and ref.get('case') == 'full' and all(
+                          ref.get(key) == row.get(key)
+                          for key in ('model', 'setup_id', 'comparison_backend'))]
+        if len(candidates) != 1:
+            raise ValueError('existing_full_reference_identity_missing_or_ambiguous')
+        source = candidates[0]
+        reference_path = Path(str(source.get('task_validation') or ''))
+        saved = _load_strict_json_object(reference_path)
+        reference = (saved or {}).get('self_reference_report')
+        if not isinstance(reference, dict) or reference.get('completed_v2_verified') is not True:
+            raise ValueError('existing_full_reference_not_verified')
+        source_manifest = Path(str(source.get('dump_manifest') or ''))
+        if str(source_manifest) != str(saved.get('manifest') or ''):
+            raise ValueError('existing_full_reference_manifest_mismatch')
+        source_input = _find_native_full_input_manifest_for_output(
+            source_manifest, endpoint_evidence=source,
+        )
+        native_input = _find_native_full_input_manifest_for_output(
+            manifest, endpoint_evidence=row,
+        )
+        if source_input is None or native_input is None or str(source_input) != reference.get('boundary_manifest'):
+            raise ValueError('existing_full_reference_input_binding_invalid')
+        source_payload = _load_strict_json_object(source_input) or {}
+        native_payload = _load_strict_json_object(native_input) or {}
+        reference_feed = reference.get('reference_input_evidence') or {}
+        if (source_payload.get('input_image_sha256') != native_payload.get('input_image_sha256')
+                or source_payload.get('runtime_input_sha256') != reference_feed.get('source_runtime_input_sha256')
+                or native_payload.get('runtime_input_sha256') != reference_feed.get('derived_reference_tensor_sha256')
+                or native_payload.get('runtime_input_shape') != reference_feed.get('target_shape')
+                or native_payload.get('runtime_input_dtype') != reference_feed.get('target_dtype')):
+            raise ValueError('existing_full_reference_input_bytes_mismatch')
+        model_sha = _normalize_sha256(row.get('model_sha256'))
+        if (not model_sha or model_sha != source.get('model_sha256')
+                or model_sha != (row.get('full_command_contract') or {}).get('source_model_sha256')
+                or model_sha != (source.get('full_command_contract') or {}).get('source_model_sha256')
+                or _sha256_file(Path(str(reference.get('full_onnx') or ''))) != model_sha):
+            raise ValueError('existing_full_reference_model_mismatch')
+        tensors, _ = load_dump(str(manifest))
+        mode, _, comparison = _verified_completed_v2_contract(row, native_tensors=tensors)
+        _, _, source_comparison = _verified_completed_v2_contract(source)
+        if (mode != 'integrated_accelerator_plus_frozen_normalization'
+                or source_comparison != comparison
+                or reference.get('completed_task_comparison_endpoint_contract') != comparison
+                or reference.get('completed_task_comparison_endpoint_contract_hash') != comparison.get('endpoint_contract_hash')):
+            raise ValueError('existing_full_reference_comparison_contract_mismatch')
+        expected_policy = {
+            'numerical_similarity_threshold': policy.native_self_reference_min_match,
+            'numerical_similarity_mean_iou_threshold': policy.native_self_reference_min_mean_iou,
+            'numerical_similarity_policy_id': policy.native_self_reference_policy_id,
+            'numerical_similarity_iou_threshold': policy.native_self_reference_iou_threshold,
+            'numerical_similarity_confidence_threshold': policy.native_self_reference_confidence_threshold,
+        }
+        if any(reference.get(key) != value for key, value in expected_policy.items()):
+            raise ValueError('existing_full_reference_policy_mismatch')
+        ref_detections = reference.get('reference_detections')
+        if (not isinstance(ref_detections, list) or not ref_detections
+                or _canonical_detection_json_sha256(ref_detections) != reference.get('full_reference_result_sha256')):
+            raise ValueError('existing_full_reference_result_mismatch')
+        sealed = row['completed_task_endpoint_attestation']['frozen_decoded_nms_normalization_result']
+        native_detections = _verified_frozen_completed_result_artifact(
+            sealed, row, native_report=manifest,
+        )
+        if native_detections is None:
+            raise ValueError('existing_full_reference_native_result_missing')
+        match = _match_detections(ref_detections, native_detections, iou_thr=policy.native_self_reference_iou_threshold)
+        agnostic = _match_detections_class_agnostic(ref_detections, native_detections, iou_thr=policy.native_self_reference_iou_threshold)
+        similarity = evaluate_detection_similarity(match, agnostic, policy)
+        return {
+            'available': True, 'semantic_available': True,
+            'semantic_ok': similarity['numerical_similarity_pass'],
+            'ok': similarity['numerical_similarity_pass'],
+            'source': 'existing_full_onnx_reference_output',
+            'reference_report': str(reference_path), 'boundary_manifest': str(native_input),
+            'self_reference_input_manifest_kind': 'native_full_input_manifest',
+            'reference_input_evidence': reference_feed,
+            'completed_v2_verified': True,
+            'completed_task_comparison_endpoint_contract': comparison,
+            'completed_task_comparison_endpoint_contract_hash': comparison['endpoint_contract_hash'],
+            'reference_detections': ref_detections, 'native_detections': native_detections,
+            'full_reference_result_sha256': reference['full_reference_result_sha256'],
+            'native_completed_result_sha256': sealed['detections_sha256'],
+            'performance_hotloop_result_sha256': sealed['detections_sha256'],
+            'semantic_result_binding_status': 'exact_same_hotloop_completed_artifact',
+            'exact_completed_result_identity_bound': True,
+            'completed_v2_exact_result_claim_binding': True,
+            'completed_v2_semantic_evidence_tier': 'exact_same_hotloop_completed_artifact',
+            'portable_result_hash_mismatch': False,
+            'decode_mode': 'completed_v2:existing_full_reference',
+            'match': match, 'class_agnostic_match': agnostic, **similarity,
+        }
+    except Exception as exc:
+        return {'available': False, 'reason': str(exc)}
+
+
 def _visualize_detection(
     manifest: Path,
     out_dir: Path,
@@ -7844,6 +8375,8 @@ def _visualize_detection(
     roots: list[Path] | None = None,
     policy: AccuracyGatePolicy | None = None,
     endpoint_evidence: Mapping[str, Any] | None = None,
+    existing_outputs_only: bool = False,
+    existing_reference_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     effective_policy = policy or AccuracyGatePolicy()
     tensors, _ = load_dump(str(manifest))
@@ -7969,7 +8502,13 @@ def _visualize_detection(
     # false negatives where Full ONNX and ORT split-chain are correct but the
     # stored validation_report.json is in a different decoder/coordinate contract.
     try:
-        self_reference_report = _full_onnx_self_reference_detection(
+        existing_reference_check = (
+            _existing_full_reference_detection if (endpoint_evidence or {}).get('case') == 'full'
+            else _existing_split_reference_detection
+        )
+        self_reference_report = existing_reference_check(
+            manifest, endpoint_evidence or {}, existing_reference_rows or [], effective_policy,
+        ) if existing_outputs_only else _full_onnx_self_reference_detection(
             manifest,
             eval_root,
             conf=effective_policy.native_self_reference_confidence_threshold,
@@ -7977,6 +8516,7 @@ def _visualize_detection(
             roots=roots,
             policy=effective_policy,
             endpoint_evidence=endpoint_evidence,
+            out_dir=out_dir,
         )
         if bool((self_reference_report or {}).get('available')):
             match = dict((self_reference_report or {}).get('match') or match)
@@ -8615,6 +9155,11 @@ def _validated_split_screening_postprocess_gap(
 
 def _technical_quality_error(row: Mapping[str, Any]) -> bool:
     """Classify wiring/output failures independently from metric decisions."""
+    if (
+        row.get('status') == 'not_supported'
+        and row.get('quality_applicability') == 'not_applicable_unsupported_part2_inputs'
+    ):
+        return False
     from onnx_splitpoint_tool.native_job_identity import known_build_exclusion
     if known_build_exclusion(row):
         return False
@@ -8662,10 +9207,51 @@ def _technical_quality_error(row: Mapping[str, Any]) -> bool:
     )
 
 
+def _merge_previous_validation_rows(
+    previous: Any, rows: list[dict[str, Any]], authority: Mapping[str, Any],
+    policy: AccuracyGatePolicy, diagnostic_only: bool,
+) -> list[dict[str, Any]]:
+    """Preserve only the same run and validation policy while replacing a subset."""
+    if (not isinstance(previous, dict)
+            or previous.get('schema') != 'onnx-splitpoint/native-producer-validation-summary'
+            or not isinstance(previous.get('rows'), list)
+            or previous.get('accuracy_gate_policy_sha256') != policy.sha256()):
+        raise ValueError('previous_validation_summary_or_policy_invalid')
+    old_authority = previous.get('native_split_quality_authority') or {}
+    if (authority.get('valid') is not True
+            or previous.get('diagnostic_only') is not diagnostic_only
+            or any(not authority.get(field) or old_authority.get(field) != authority.get(field)
+                   for field in ('run_id', 'stage_run_id', 'profile_start_snapshot_sha256',
+                                 'profile_selection_fingerprint'))):
+        raise ValueError('previous_validation_run_or_diagnostic_context_mismatch')
+    from onnx_splitpoint_tool.native_job_identity import native_identity_key
+    prior = {native_identity_key(row): row for row in previous['rows']}
+    current = {native_identity_key(row): row for row in rows}
+    if len(prior) != len(previous['rows']) or len(current) != len(rows) or not set(current) <= set(prior):
+        raise ValueError('previous_validation_identity_missing_or_ambiguous')
+    for key, rec in current.items():
+        old = prior[key]
+        for field in ('native_command_contract_sha256', 'full_command_contract_sha256',
+                      'input_image_sha256', 'model_sha256', 'source_request_sha256',
+                      'validation_dataset_sha256', 'completed_task_comparison_endpoint_contract_hash'):
+            if str(rec.get(field) or '') != str(old.get(field) or ''):
+                raise ValueError('previous_validation_source_drift:' + field)
+        rec['row_index'] = old.get('row_index')
+        rec['previous_validation_projection'] = {
+            field: old.get(field) for field in ('semantic_ok', 'numerical_similarity_status',
+                'numerical_similarity_reason', 'quality_claim_result_verified', 'task_validation')
+        }
+    return [current.get(native_identity_key(row), row) for row in previous['rows']]
+
+
 def main() -> int:
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--summary', required=True, help='native_producer_summary.json')
     ap.add_argument('--out-dir', required=True)
+    ap.add_argument('--eval-root', default='', help='Original evaluation root for read-only authority and artifact discovery.')
+    ap.add_argument('--existing-outputs-only', action='store_true', help='Compare only persisted outputs; never run ORT or a self-reference probe.')
+    ap.add_argument('--existing-reference-validation-summary', default='', help='Original Native validation summary containing bound, stored CPU detector reference reports for Full or Split outputs.')
+    ap.add_argument('--previous-validation-summary', default='', help='Preserve untouched validation rows while replacing only an exactly bound revalidated subset.')
     ap.add_argument('--root', action='append', default=[], help='Additional root(s) to rebase/search for native dumps')
     ap.add_argument('--topk', type=int, default=5)
     ap.add_argument('--max-detection-outputs', type=int, default=6)
@@ -8687,7 +9273,13 @@ def main() -> int:
                     help='Allow Full-ONNX self-reference-only native contract checks to become eligible_for_ranking. Disabled by default.')
     ns=ap.parse_args()
     summary_path=Path(ns.summary).expanduser().resolve()
-    eval_root=_eval_root_from_summary(summary_path)
+    eval_root=Path(ns.eval_root).expanduser().resolve() if ns.eval_root else _eval_root_from_summary(summary_path)
+    existing_reference_rows = []
+    if ns.existing_reference_validation_summary:
+        existing_references = _load_strict_json_object(Path(ns.existing_reference_validation_summary))
+        if not isinstance(existing_references, dict) or not isinstance(existing_references.get('rows'), list):
+            ap.error('invalid --existing-reference-validation-summary')
+        existing_reference_rows = existing_references['rows']
     split_quality_authority = _native_split_authority(eval_root)
     data=_load_json(summary_path) or {}
     roots=[eval_root]
@@ -8735,8 +9327,42 @@ def main() -> int:
         dict(item) for item in list((central_payload or {}).get('results') or [])
         if isinstance(item, dict)
     ] if isinstance(central_payload, dict) else []
+    # A large central summary is immutable during this invocation. Compute its
+    # existing result digests once instead of serializing it again for every
+    # Native row (462 rows / 119 MiB in THESIS20). No on-disk identity is added.
+    central_result_sha256 = {
+        id(item): _canonical_json_sha256(item) for item in central_results
+    }
+    # Reconcile missing metadata independently of new Performance work, using
+    # the same confined request loader/writer as the workflow hand-off.
+    vendor_full_binding_sets = {}
+    if str(ns.central_quality_summary or '').strip():
+        from onnx_splitpoint_tool.workflow.runner import _native_full_quality_binding_set_v275
+        scopes = {}
+        for original in data.get('rows') or []:
+            if (original.get('backend') in _VENDOR_FULL_QUALITY_BACKENDS
+                    and _row_ok(original.get('ok')) and not original.get('quality_request_binding')):
+                scope = (str(original.get('setup_id') or ''), str(original.get('comparison_backend') or ''))
+                scopes.setdefault(scope, set()).add(str(original.get('model') or ''))
+        for (setup_id, producer), model_ids in sorted(scopes.items()):
+            binding_set, _errors = _native_full_quality_binding_set_v275(
+                Path(ns.central_quality_summary), eval_run_id=eval_root.name,
+                setup_id=setup_id, producer=producer, full_backends=[producer],
+                model_ids=sorted(model_ids),
+                case_release_run_root=eval_root,
+            )
+            vendor_full_binding_sets[(setup_id, producer)] = binding_set
+            binding_path = out / 'quality_bindings' / setup_id / 'vendor_full_quality_request_binding_set.json'
+            binding_path.parent.mkdir(parents=True, exist_ok=True)
+            binding_path.write_text(json.dumps(binding_set, indent=2, sort_keys=True) + '\n', encoding='utf-8')
     rows=[]
     for idx,row in enumerate(data.get('rows',[]) or []):
+        print(
+            f"native_validation row={idx + 1}/{len(data.get('rows') or [])} "
+            f"backend={row.get('backend', '')} model={row.get('model', '')} "
+            f"case={row.get('case') or row.get('case_id') or ''} "
+            f"setup={row.get('setup_id', '')}", flush=True,
+        )
         if not _row_ok(row.get('ok')):
             _model = str(row.get('model') or '')
             _failure = str(row.get('failure_reason') or row.get('reason') or row.get('error') or 'native_row_not_ok')
@@ -8768,6 +9394,16 @@ def main() -> int:
                 # validation cannot distinguish an exclusion from a failure.
                 _rec = {**copy.deepcopy(row), **_rec}
                 _rec.update(status='excluded_known_build', quality_applicability='not_applicable_build_excluded')
+            if (
+                row.get('status') == 'not_supported'
+                and row.get('quality_applicability') == 'not_applicable_unsupported_part2_inputs'
+            ):
+                _rec.update(
+                    status='not_supported', error='',
+                    quality_applicability='not_applicable_unsupported_part2_inputs',
+                    prerequisite_status='not_supported', execution_terminal=True,
+                    source_manifest=row.get('source_manifest', ''),
+                )
             if apply_native_split_quality_authority is not None:
                 apply_native_split_quality_authority(
                     _rec, split_quality_authority,
@@ -9126,14 +9762,15 @@ def main() -> int:
                 # Prefer Full-ONNX self-reference when a native boundary/input dump is available.
                 # This keeps ResNet-style classification rows thesis-claimable even when
                 # the stored external reference report is missing or in a stale contract.
-                srep=_full_onnx_self_reference_classification(
+                srep=({'available': False, 'reason': 'existing_classification_reference_unavailable'}
+                      if ns.existing_outputs_only else _full_onnx_self_reference_classification(
                     dump,
                     eval_root,
                     ns.topk,
                     native_report=report,
                     roots=roots,
                     endpoint_evidence=rec,
-                )
+                ))
                 if bool((srep or {}).get('available')):
                     trep['self_reference_report']=srep
                     trep['semantic_reference_source']='full_onnx_self_reference'
@@ -9172,6 +9809,18 @@ def main() -> int:
                 )
                 rec['validation_level']='classification_full_self_reference' if rec.get('semantic_reference_source') == 'full_onnx_self_reference' else ('classification_topk_reference' if rec['semantic_available'] else 'classification_topk_visual')
             else:
+                if (ns.existing_outputs_only
+                        and backend in {'hailo8_to_trt', 'hailo10h_to_trt', 'deepx_to_trt'}):
+                    # The first, ungated Native report has no model digest in
+                    # its raw timing payload. Bind the existing central source
+                    # before the stored-reference verifier needs that identity.
+                    # Final semantic/accuracy decisions still run below.
+                    _bind_central_quality_evidence(
+                        rec, central_results, gate_policy,
+                        split_quality_authority=split_quality_authority,
+                        central_result_sha256=central_result_sha256,
+                        artifact_roots=roots,
+                    )
                 trep = _visualize_detection(
                     dump,
                     row_dir,
@@ -9182,6 +9831,8 @@ def main() -> int:
                     roots=roots,
                     policy=gate_policy,
                     endpoint_evidence=rec,
+                    existing_outputs_only=ns.existing_outputs_only,
+                    existing_reference_rows=existing_reference_rows,
                 )
                 rec['task_validation']=str(row_dir/'detection_visual_validation.json')
                 rec['visual_artifact']=str(row_dir/'detection_visual_validation.md')
@@ -9279,6 +9930,10 @@ def main() -> int:
         _bind_central_quality_evidence(
             rec, central_results, gate_policy,
             split_quality_authority=split_quality_authority,
+            central_result_sha256=central_result_sha256,
+            vendor_full_binding_set=vendor_full_binding_sets.get((
+                str(rec.get('setup_id') or ''), str(rec.get('comparison_backend') or ''))),
+            artifact_roots=roots,
         )
         apply_accuracy_gate_to_row(rec, gate_policy)
         _apply_completed_v2_semantic_binding(rec, rec)
@@ -9312,6 +9967,14 @@ def main() -> int:
             and rec.get('accuracy_gate_pass') is True
             and rec.get('eligible_for_ranking') is True
         )
+    if ns.previous_validation_summary:
+        previous = _load_strict_json_object(Path(ns.previous_validation_summary))
+        try:
+            rows = _merge_previous_validation_rows(
+                previous, rows, split_quality_authority, gate_policy, diagnostic_only,
+            )
+        except ValueError as exc:
+            ap.error(str(exc))
     jsonp=out/'native_producer_validation_summary.json'; csvp=out/'native_producer_validation_summary.csv'; mdp=out/'native_producer_validation_summary.md'
     empty_output_error = not rows
     for rec in rows:

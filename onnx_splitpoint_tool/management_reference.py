@@ -613,8 +613,16 @@ def _validate_generated_reference(path: Path) -> dict[str, Any]:
     return metadata
 
 
-def _source_contract(source: Path, plan: Mapping[str, Any], contract: Mapping[str, Any]) -> str:
-    """Fingerprint prospective reference inputs without hashing every image."""
+def _source_contract(
+    source: Path, plan: Mapping[str, Any], contract: Mapping[str, Any], *,
+    validation_source: Path | None = None,
+) -> str:
+    """Fingerprint prospective reference inputs without hashing every image.
+
+    A restored source workspace keeps the original suite's dataset paths and
+    reads those original manifests. It need not create dataset symlinks or
+    duplicate images merely to verify the unchanged reference contract.
+    """
     validation_manifests: list[dict[str, str]] = []
     for raw in list(plan.get("runs") or plan.get("planned_runs") or []):
         if not isinstance(raw, Mapping):
@@ -625,7 +633,7 @@ def _source_contract(source: Path, plan: Mapping[str, Any], contract: Mapping[st
                 continue
             path = Path(value).expanduser()
             if not path.is_absolute():
-                path = source / path
+                path = (validation_source or source) / path
             candidates = [path]
             if path.is_dir():
                 candidates = [
@@ -1286,6 +1294,7 @@ def generate_management_cpu_reference(
     process_registry: ProcessTreeRegistry | None = None,
     log: Optional[Callable[[str], None]] = None,
     timeout_s: int = 10800,
+    expected_source_contract_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Generate/reuse one canonical ORT-CPU quality reference.
 
@@ -1305,6 +1314,13 @@ def generate_management_cpu_reference(
     plan = read_json(source / "benchmark_plan.json", default={}) or {}
     contract = read_json(source / "benchmark_set.json", default={}) or {}
     source_contract_sha256 = _source_contract(source, plan, contract)
+    if expected_source_contract_sha256 is not None and _sha256_token(
+        expected_source_contract_sha256, label="scheduled management CPU reference source contract",
+    ) != _sha256_token(source_contract_sha256, label="observed management CPU reference source contract"):
+        raise RuntimeError(
+            "management CPU reference source changed before generation for "
+            f"{model_id}: expected={expected_source_contract_sha256} observed={source_contract_sha256}"
+        )
     reference_out = _immutable_reference_path(out, source_contract_sha256)
     try:
         previous_status = _read_diagnostic_status(status_out)

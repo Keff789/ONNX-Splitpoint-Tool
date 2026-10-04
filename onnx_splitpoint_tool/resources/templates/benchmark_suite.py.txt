@@ -7313,6 +7313,40 @@ def _normalize_variants(values: Any) -> Optional[List[str]]:
     return out
 
 
+def _completion_run_rows(rows, run_id, *, stage="generic"):
+    if rows is None:
+        return None
+    return [row for row in rows if row.get("action") == "execute"
+            and str(row.get("stage") or "generic") == stage
+            and _canonical_plan_run_id(row.get("dispatch_run_id") or
+                ("ort_tensorrt" if row.get("run_id") == "native_full_tensorrt"
+                 else row.get("run_id") or row.get("source_run_id")))
+            == _canonical_plan_run_id(run_id)]
+
+
+def _completion_case_variants(rows, run_id, case_meta, variants, *, include_quality_source=True):
+    selected = _completion_run_rows(rows, run_id)
+    if selected is None:
+        return variants
+    if include_quality_source:
+        selected += _completion_run_rows(rows, run_id, stage="quality_source")
+    allowed = set()
+    identifiers = _case_identifiers(case_meta)
+    for row in selected:
+        variant = str(row.get("variant") or "").lower()
+        if row.get("stage") == "quality_source":
+            if str(row.get("case_id") or "") in identifiers and variant in {"split", "composed"}:
+                allowed.add("composed")
+            continue
+        if variant == "full":
+            allowed.add("full")
+        elif str(row.get("case_id") or "") in identifiers:
+            allowed.update(["part1", "part2", "composed"] if variant == "split" else [variant])
+    return [variant for variant in (variants if variants is not None
+                                    else ["full", "part1", "part2", "composed"])
+            if variant in allowed]
+
+
 def _canonical_full_backend(value: Any) -> str:
     token = str(value or "").strip().lower().replace("-", "_")
     aliases = {
@@ -9035,6 +9069,57 @@ def _resolve_semantic_validation_source(raw: Optional[str], root: Path, task: st
     return None
 
 
+def _bound_management_validation_source(
+    raw: Optional[str], root: Path, task: str, requested_count: int,
+    reference: Mapping[str, Any],
+) -> Path:
+    """Admit the exact prepared input of an existing detection reference.
+
+    This check precedes the child process and the compatibility COCO fallback.
+    The reference's existing manifest binding is reused; image contents are not
+    rehashed and no replacement dataset is selected.
+    """
+    contract = reference.get("quality_contract") or {}
+    dataset = contract.get("dataset") or {}
+    count = dataset.get("image_count")
+    if (task != "detection" or type(count) is not int or count <= 0
+            or int(requested_count) != count):
+        raise RuntimeError("bound_quality_validation_count_invalid")
+    source = _resolve_semantic_validation_source(raw, root, task)
+    if source is None:
+        raise RuntimeError("bound_quality_validation_source_missing:" + str(raw or ""))
+    manifest = source / "manifest.json" if source.is_dir() else source
+    expected_digest = str(dataset.get("manifest_sha256") or "")
+    if (not expected_digest or not manifest.is_file()
+            or _deepx_quality_file_sha256(manifest) != expected_digest):
+        raise RuntimeError("bound_quality_validation_manifest_mismatch:" + str(manifest))
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    samples = payload.get("samples") if isinstance(payload, Mapping) else None
+    if not isinstance(samples, list) or len(samples) != count:
+        raise RuntimeError("bound_quality_validation_sample_count_mismatch")
+    names: set[str] = set()
+    image_ids: set[str] = set()
+    for sample in samples:
+        if not isinstance(sample, Mapping):
+            raise RuntimeError("bound_quality_validation_sample_invalid")
+        name = str(sample.get("image") or "")
+        image_id = str(sample["image_id"]) if sample.get("image_id") is not None else ""
+        image = (manifest.parent / name).resolve()
+        if (not name or not image_id or name in names or image_id in image_ids
+                or manifest.parent.resolve() not in image.parents
+                or not image.is_file()
+                or not image.with_suffix(".json").is_file()
+                or (sample.get("source_size_bytes") is not None
+                    and image.stat().st_size != sample["source_size_bytes"])):
+            raise RuntimeError("bound_quality_validation_sample_missing_or_invalid:" + name)
+        names.add(name)
+        image_ids.add(image_id)
+    annotations = payload.get("filtered_coco_annotations")
+    if not annotations or not (manifest.parent / str(annotations)).is_file():
+        raise RuntimeError("bound_quality_validation_annotations_missing")
+    return source
+
+
 def _deterministic_pick(items: List[Path], seed_key: str) -> Optional[Path]:
     if not items:
         return None
@@ -9200,7 +9285,12 @@ def _management_cpu_reference_context(
     return True
 
 
-def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: str, image_scale: str, warmup: int, runs: int, timeout_s: Optional[int], stage1: Optional[str] = None, stage2: Optional[str] = None, variants: Optional[List[str]] = None, case_meta: Optional[Dict[str, Any]] = None, *, resume: bool = False, verbose_runs: bool = False, progress_every: int = 25, trt_cache_root: Optional[str] = None, trt_runtime: str = "native_preferred", native_trt_precision: str = "fp16", native_trt_workspace_mb: int = 4096, native_trt_build_timeout_s: int = 7200, native_trt_build: bool = True, boundary_mode: str = "canonical_float32", handoff_profile: str = "off", streaming_impl: str = "auto", throughput_frames: int = 24, throughput_warmup_frames: int = 6, throughput_queue_depth: int = 2, phase_runs: int = 5, validation_images: Optional[str] = None, validation_max_images: int = 0, validation_reference_mode: str = "auto", mini_coco_ap50: bool = False, benchmark_task: str = "auto", mini_classification_eval: bool = False, task_quality_gate: Optional[Dict[str, Any]] = None, measurement_only: bool = False, quality_evidence_only: bool = False, quality_evidence_eval_id: str = "", quality_evidence_model_id: str = "", quality_evidence_setup_id: str = "", quality_evidence_source_run_id: str = "", quality_evidence_originating_plan_run_id: str = "", full_only_quality_identity: Optional[Mapping[str, Any]] = None, native_trt_build_onnx_path: str = "", native_trt_engine_path: str = "", native_trt_build_receipt: str = "", native_split_quality_binding: str = "", native_split_quality_preparation_failure: Optional[Mapping[str, Any]] = None, out_dir_override: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: str, image_scale: str, warmup: int, runs: int, timeout_s: Optional[int], stage1: Optional[str] = None, stage2: Optional[str] = None, variants: Optional[List[str]] = None, case_meta: Optional[Dict[str, Any]] = None, *, resume: bool = False, verbose_runs: bool = False, progress_every: int = 25, trt_cache_root: Optional[str] = None, trt_runtime: str = "native_preferred", native_trt_precision: str = "fp16", native_trt_workspace_mb: int = 4096, native_trt_build_timeout_s: int = 7200, native_trt_build: bool = True, boundary_mode: str = "canonical_float32", handoff_profile: str = "off", streaming_impl: str = "auto", throughput_frames: int = 24, throughput_warmup_frames: int = 6, throughput_queue_depth: int = 2, phase_runs: int = 5, validation_images: Optional[str] = None, validation_max_images: int = 0, validation_reference_mode: str = "auto", mini_coco_ap50: bool = False, benchmark_task: str = "auto", mini_classification_eval: bool = False, task_quality_gate: Optional[Dict[str, Any]] = None, measurement_only: bool = False, quality_evidence_only: bool = False, quality_source_only: bool = False, quality_evidence_eval_id: str = "", quality_evidence_model_id: str = "", quality_evidence_setup_id: str = "", quality_evidence_source_run_id: str = "", quality_evidence_originating_plan_run_id: str = "", full_only_quality_identity: Optional[Mapping[str, Any]] = None, native_trt_build_onnx_path: str = "", native_trt_engine_path: str = "", native_trt_build_receipt: str = "", native_split_quality_binding: str = "", native_split_quality_preparation_failure: Optional[Mapping[str, Any]] = None, management_cpu_reference: Optional[Mapping[str, Any]] = None, out_dir_override: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    if management_cpu_reference and not measurement_only:
+        validation_images = str(_bound_management_validation_source(
+            validation_images, case_dir.parent, str(benchmark_task or "auto").lower(),
+            validation_max_images, management_cpu_reference,
+        ))
     management_reference_only = _management_cpu_reference_context(
         run_id=run_id, provider=provider, stage1=stage1, stage2=stage2,
         variants=variants, case_meta=case_meta, warmup=warmup, runs=runs,
@@ -9478,6 +9568,12 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
             "--native-trt-engine-path", str(native_trt_engine_path),
             "--native-trt-build-receipt", str(native_trt_build_receipt),
         ]
+    if quality_source_only:
+        if (variants != ["composed"] or measurement_only or quality_evidence_only
+                or not str(native_split_quality_binding or "").strip()
+                or quality_location != "central_management" or not management_cpu_reference):
+            raise RuntimeError("quality_source_only_requires_bound_composed_candidate")
+        cmd += ["--quality-source-only"]
     if str(native_split_quality_binding or "").strip():
         cmd += [
             "--native-split-quality-binding",
@@ -9549,6 +9645,12 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
         cmd += ["--mini-classification-eval"]
     if (not measurement_only) and isinstance(task_quality_gate, dict):
         cmd += ["--quality-gate-json", json.dumps(task_quality_gate, sort_keys=True, separators=(",", ":"))]
+
+    if management_cpu_reference:
+        if measurement_only or quality_evidence_only or set(variants or []) != {"composed"}:
+            raise ValueError("explicit original CPU reference requires composed central Quality")
+        cmd += ["--existing-management-cpu-reference-json",
+                json.dumps(management_cpu_reference, sort_keys=True, separators=(",", ":"))]
 
     def _uses_tensorrt_token(token: Optional[str]) -> bool:
         return str(token or "").strip().lower() in {"tensorrt", "trt"}
@@ -10905,6 +11007,7 @@ def main() -> int:
     parser.add_argument('--no-native-cold-builds', action='store_true', help='Reuse only: an earlier repetition owns the finite split-build allowance.')
     parser.add_argument("--run-ids", default=None, help="Comma-separated plan run ids. Used by EvalRun to upload a suite once per physical setup.")
     parser.add_argument("--quality-only-run-ids", default="", help="Scheduler-owned comma-separated run ids that stop after setup-local quality evidence and must not emit performance rows.")
+    parser.add_argument("--selective-completion-rows", default=None, help="Scheduler-owned exact missing result rows for this model/setup; completed rows remain untouched.")
     parser.add_argument("--quality-evidence-eval-id", default=os.environ.get("ONNX_SPLITPOINT_EVAL_RUN_ID", ""), help="Exact EvalRun ID sealed into setup-local TensorRT quality evidence.")
     parser.add_argument("--quality-evidence-setup-id", default=os.environ.get("ONNX_SPLITPOINT_SETUP_ID", ""), help="Exact physical hardware-target ID (remote flat_prefix) sealed into TensorRT quality evidence.")
     parser.add_argument("--quality-evidence-model-id", default=os.environ.get("ONNX_SPLITPOINT_MODEL_ID", ""), help="Optional explicit model ID; defaults to benchmark_set.json.")
@@ -10970,6 +11073,13 @@ def main() -> int:
         ),
     )
     args = parser.parse_args()
+    completion_rows = None
+    if args.selective_completion_rows is not None:
+        completion_rows = json.loads(args.selective_completion_rows)
+        if not isinstance(completion_rows, list) or any(not isinstance(row, dict)
+                or row.get("action") not in {"execute", "preserve", "negative_completed"}
+                for row in completion_rows):
+            raise ValueError("selective_completion_rows_invalid")
     if bool(getattr(args, "energy_measurement_only", False)):
         # u.RECS windows should measure inference loops only.  Keep the small
         # benchmark_results JSON/CSV files needed by the caller, but suppress
@@ -11212,6 +11322,25 @@ def main() -> int:
     for run in runs:
         rtype = str(run.get("type") or run.get("kind") or "onnxruntime").strip().lower()
         run_id = str(run.get("id") or run.get("name") or rtype).strip() or rtype
+        if completion_rows is not None:
+            generic_work = _completion_run_rows(completion_rows, run_id)
+            companion_work = _completion_run_rows(completion_rows, run_id, stage="quality_companion")
+            quality_source_work = _completion_run_rows(completion_rows, run_id, stage="quality_source")
+            if quality_source_work:
+                model_id = str(getattr(args, "quality_evidence_model_id", "") or "").strip()
+                suite_model_id = str(bench.get("model_id") or bench.get("model_name") or "").strip()
+                setup_id = str(getattr(args, "quality_evidence_setup_id", "") or "")
+                if (rtype not in {"matrix", "split"} or not model_id or not setup_id
+                        or model_id != suite_model_id
+                        or any(row.get("model_id") != model_id or row.get("setup_id") != setup_id
+                               or row.get("variant") not in {"split", "composed"}
+                               for row in quality_source_work)):
+                    raise ValueError("quality_source_selection_scope_mismatch")
+            if not generic_work and not companion_work and not quality_source_work:
+                print(f"[completion] {run_id}: no missing result identities")
+                continue
+            if not companion_work:
+                run = dict(run, _native_full_trt_quality_companion=False)
         cpu_reference_requested = str(os.environ.get("ONNX_SPLITPOINT_CPU_REFERENCE_ONLY", "")).strip().lower() in {"1", "true", "yes", "on"}
         if cpu_reference_requested and (run_id != "management_cpu_reference" or rtype != "onnxruntime"):
             raise RuntimeError("management_cpu_reference_context_invalid:selected_run_or_run_type")
@@ -11373,7 +11502,8 @@ def main() -> int:
                     continue
                 variants_eff = _apply_energy_target_variant(run_id, variants_eff)
                 variants_eff = _apply_full_owner_case_variant(run, variants_eff, i)
-                if (variants is not None or energy_target_variant) and not variants_eff:
+                variants_eff = _completion_case_variants(completion_rows, run_id, c, variants_eff)
+                if (completion_rows is not None or variants is not None or energy_target_variant) and not variants_eff:
                     print(f"\n[{run_id}] [{i+1}/{len(run_cases)}] Skipping {case_dir.name} (no usable variants after Hailo availability pruning)")
                     continue
 
@@ -11463,6 +11593,7 @@ def main() -> int:
                     benchmark_task=benchmark_task,
                     mini_classification_eval=mini_classification_eval,
                     task_quality_gate=(dict(run.get("task_quality_gate") or {}) if isinstance(run.get("task_quality_gate"), dict) else (dict((plan or {}).get("quality_gate") or {}) if isinstance((plan or {}).get("quality_gate"), dict) else {})),
+                    management_cpu_reference=(plan or {}).get("management_cpu_reference"),
                     trt_runtime=str(getattr(args, "trt_runtime", "native_preferred") or "native_preferred"),
                     native_trt_precision=str(
                         (split_quality or {}).get("precision")
@@ -11648,7 +11779,8 @@ def main() -> int:
                     continue
                 variants_eff = _apply_energy_target_variant(run_id, variants_eff)
                 variants_eff = _apply_full_owner_case_variant(run, variants_eff, i)
-                if (variants is not None or energy_target_variant) and not variants_eff:
+                variants_eff = _completion_case_variants(completion_rows, run_id, c, variants_eff)
+                if (completion_rows is not None or variants is not None or energy_target_variant) and not variants_eff:
                     print(
                         f"\n[{run_id}] [{i+1}/{len(run_cases)}] Skipping {case_dir.name} "
                         f"(no usable variants after Hailo availability pruning)"
@@ -11698,6 +11830,11 @@ def main() -> int:
                     mini_coco_ap50 = False
                     mini_classification_eval = False
 
+                quality_source_only = bool(
+                    _completion_run_rows(completion_rows, run_id, stage="quality_source")
+                ) and not _completion_case_variants(
+                    completion_rows, run_id, c, variants_eff, include_quality_source=False,
+                )
                 split_quality = _prepare_native_split_quality_for_case(
                     root=root, case_dir=case_dir, bench=bench, plan=plan,
                     run=run, args=args, run_id=run_id,
@@ -11711,6 +11848,7 @@ def main() -> int:
                     stage1=stage1_tok,
                     stage2=stage2_tok,
                     variants=variants_eff,
+                    quality_source_only=quality_source_only,
                     image=args.image,
                     preset=args.preset,
                     image_scale=image_scale,
@@ -11733,6 +11871,7 @@ def main() -> int:
                     benchmark_task=benchmark_task,
                     mini_classification_eval=mini_classification_eval,
                     task_quality_gate=(dict(run.get("task_quality_gate") or {}) if isinstance(run.get("task_quality_gate"), dict) else (dict((plan or {}).get("quality_gate") or {}) if isinstance((plan or {}).get("quality_gate"), dict) else {})),
+                    management_cpu_reference=(plan or {}).get("management_cpu_reference"),
                     trt_runtime=str(getattr(args, "trt_runtime", "native_preferred") or "native_preferred"),
                     native_trt_precision=str(
                         (split_quality or {}).get("precision")
@@ -11863,7 +12002,8 @@ def main() -> int:
                     continue
                 variants_eff = _apply_energy_target_variant(run_id, variants_eff)
                 variants_eff = _apply_full_owner_case_variant(run, variants_eff, i)
-                if (variants is not None or energy_target_variant) and not variants_eff:
+                variants_eff = _completion_case_variants(completion_rows, run_id, c, variants_eff)
+                if (completion_rows is not None or variants is not None or energy_target_variant) and not variants_eff:
                     print(f"\n[{run_id}] [{i+1}/{len(run_cases)}] Skipping {case_dir.name} (no usable variants after Hailo availability pruning)")
                     continue
 
@@ -11942,6 +12082,7 @@ def main() -> int:
                     benchmark_task=benchmark_task,
                     mini_classification_eval=mini_classification_eval,
                     task_quality_gate=(dict(run.get("task_quality_gate") or {}) if isinstance(run.get("task_quality_gate"), dict) else (dict((plan or {}).get("quality_gate") or {}) if isinstance((plan or {}).get("quality_gate"), dict) else {})),
+                    management_cpu_reference=(plan or {}).get("management_cpu_reference"),
                     trt_runtime=str(getattr(args, "trt_runtime", "native_preferred") or "native_preferred"),
                     native_trt_precision=str(
                         (split_quality or {}).get("precision")

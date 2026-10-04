@@ -141,6 +141,7 @@ def stable_resume_options(options: Any) -> dict[str, Any]:
         "stop_after",
         "rerun_generated_only",
         "resume_missing_full_quality_only",
+        "resume_missing",
         "remote_reuse_bundle",
         "remote_no_reuse_bundle",
         "remote_resume",

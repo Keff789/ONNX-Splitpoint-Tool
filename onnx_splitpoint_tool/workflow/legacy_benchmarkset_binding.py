@@ -422,6 +422,13 @@ def _mode_task_item_count(profile_payload: Mapping[str, Any], task: str, *, kind
             return max(1, value)
         return max(0, value)
     except Exception:
+        if kind == "validation_items" and _explicit_composed_run_ids(profile_payload):
+            limits = (profile_payload.get("validation_execution") or {}).get("max_items") or {}
+            if task_key in limits:
+                value = limits[task_key]
+                if type(value) is not int or value < 0:
+                    raise ValueError("Explicit composed profile validation budget is invalid")
+                return value
         return int(fallback)
 
 
@@ -1185,6 +1192,11 @@ def _apply_deferred_hailo_full_builds(
     return plan
 
 
+def _explicit_composed_run_ids(profile_payload: Mapping[str, Any]) -> set[str]:
+    from ..execution_plan import explicit_composed_only_run_ids
+    return explicit_composed_only_run_ids(profile_payload)
+
+
 def _apply_declared_run_variants(
     runs: Sequence[Mapping[str, Any]], profile_payload: Mapping[str, Any],
 ) -> List[Dict[str, Any]]:
@@ -1195,16 +1207,32 @@ def _apply_declared_run_variants(
     at that handoff. Unspecified variants retain the ordinary generator defaults.
     """
     from .required_run_scope import canonical_run_id
+    composed_sources = {
+        'hailo8_to_trt': 'hailo8', 'hailo10_to_tensorrt': 'hailo10',
+        'deepx_m1_to_tensorrt': 'deepx_m1',
+    }
+    def scoped_mixed(row):
+        return (row.get('type') == 'mixed_backend' and row.get('stage2') == 'tensorrt'
+                and row.get('stage1') == composed_sources.get(str(row.get('id')))
+                and row.get('id') in composed_sources and row.get('variants') == ['composed'])
     declared = {
         canonical_run_id(row.get('id')): list(row['variants'])
         for row in _profile_run_profiles(profile_payload)
         if isinstance(row.get('variants'), list)
-        and canonical_run_id(row.get('id')) == 'ort_tensorrt'
+        and (canonical_run_id(row.get('id')) == 'ort_tensorrt' or scoped_mixed(row))
     }
+    explicit_composed = _explicit_composed_run_ids(profile_payload)
     projected = []
     for row in runs:
+        run_id = canonical_run_id(row.get('id'))
+        # Accelerator switches describe runtime inventory. An explicitly
+        # composed-only profile must not acquire implicit TRT/vendor Full jobs.
+        # Preserve the internal CPU descriptor for the normal semantic-only
+        # management-reference binding immediately following this projection.
+        if explicit_composed and run_id not in explicit_composed | {'ort_cpu'}:
+            continue
         result = dict(row)
-        variants = declared.get(canonical_run_id(row.get('id')))
+        variants = declared.get(run_id)
         if variants is not None:
             result['variants'] = list(variants)
         projected.append(result)
@@ -1327,7 +1355,8 @@ def _validation_defaults(profile_payload: Mapping[str, Any], row: Mapping[str, A
     # The materialised run mode is authoritative even when its value is zero
     # (zero means the complete registered manifest in Final mode).
     budget_authoritative = bool(
-        isinstance(profile_payload.get("execution_preset"), Mapping)
+        (isinstance(profile_payload.get("execution_preset"), Mapping)
+         or bool(_explicit_composed_run_ids(profile_payload)))
         and task in validation_limits
     )
     # 0 means complete manifest.  Otherwise the run-mode budget is authoritative
@@ -3527,6 +3556,10 @@ def materialize_legacy_benchmark_set(
     run_plan.bench_plan_runs = _apply_declared_run_variants(
         run_plan.bench_plan_runs, profile_payload,
     )
+    if _explicit_composed_run_ids(profile_payload):
+        requirements = BenchmarkGenerationOrchestrationService()._recompute_hailo_plan_requirements(run_plan.bench_plan_runs)
+        for name, value in requirements.items():
+            setattr(run_plan, name, value)
     # v60q: carry the authoritative content-addressed validation manifest into
     # every executable run.  ``validation_images`` is the dataset root, while
     # the manifest lets suite generation select 16/12 Smoke items without

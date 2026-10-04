@@ -65,6 +65,30 @@ def _artifact(role: str, *, below_root: bool = True) -> dict:
     }
 
 
+def test_quality_first_full_tensorrt_restages_inputs_without_a_hailo_hef(tmp_path):
+    plan = tmp_path / "plan"
+    plan.mkdir()
+    contract = {
+        "schema": FULL_COMMAND_CONTRACT_SCHEMA,
+        "backend": "native_full_tensorrt", "case": "full",
+        "energy_workload": {"kind": "tensorrt_full_completed_task_hotloop"},
+        "artifacts": {
+            "input_manifest": _artifact("input_manifest"),
+            "runtime_input_tensor": _artifact("runtime_input_tensor"),
+            "engine": _artifact("engine", below_root=False),
+            "performance_report": _artifact("performance_report", below_root=False),
+        },
+    }
+    result = resume_artifact_requirements(_row(plan, contract), plan_root=plan, frozen_remote_root=REMOTE_ROOT)
+    assert {item.role for item in result["requirements"]} == {"input_manifest", "runtime_input_tensor"}
+    contract["artifacts"].pop("runtime_input_tensor")
+    with pytest.raises(ResumeArtifactContractError, match="command_contract_artifact_missing:runtime_input_tensor"):
+        resume_artifact_requirements(_row(plan, contract), plan_root=plan, frozen_remote_root=REMOTE_ROOT)
+    contract["artifacts"]["runtime_input_tensor"] = _artifact("runtime_input_tensor", below_root=False)
+    with pytest.raises(ResumeArtifactContractError, match="outside_frozen_root"):
+        resume_artifact_requirements(_row(plan, contract), plan_root=plan, frozen_remote_root=REMOTE_ROOT)
+
+
 def _payload_manifest(
     *,
     remote_path: str,
@@ -160,8 +184,8 @@ def test_hailo8_split_uses_prepared_input_without_part1_onnx(
             "semantic_output_manifest": _artifact(
                 "semantic_output_manifest"
             ),
-            # A foreign backend's roles must never become requirements merely
-            # because an old or extended contract happens to contain them.
+            # The real preflight verifies every bound artifact, including
+            # additional prepared-feed roles in an extended command.
             "part1_onnx": _artifact("part1_onnx"),
             "prepared_input_00": _artifact("prepared_input_00"),
         },
@@ -177,12 +201,14 @@ def test_hailo8_split_uses_prepared_input_without_part1_onnx(
         requirement.role for requirement in result["requirements"]
     } == {
         "prepared_input",
+        "part1_onnx",
+        "prepared_input_00",
         "semantic_boundary_manifest",
         "semantic_output_manifest",
     }
 
 
-def test_hailo10_resume_roles_preserve_v2724_contract(
+def test_hailo10_resume_roles_include_all_preflight_consumed_slots(
     tmp_path: Path,
 ) -> None:
     plan = tmp_path / "plan"
@@ -221,6 +247,7 @@ def test_hailo10_resume_roles_preserve_v2724_contract(
     } == {
         "part1_onnx",
         "prepared_input_00",
+        "prepared_input_01",
         "semantic_boundary_manifest",
         "semantic_output_manifest",
     }
@@ -629,6 +656,47 @@ def test_full_contract_includes_hef_and_runtime_inputs_but_not_tool_code(
         "input_image",
     }
     assert "hotloop_runner" not in roles
+
+
+@pytest.mark.parametrize("backend,extra_roles", [
+    ("hailo8_to_trt", ("cmake", "generated_cpp", "native_executable")),
+    ("native_full_hailo8", ("hailo_hef_build_receipt", "source_onnx")),
+    ("native_full_deepx", ("benchmark_set_manifest", "source_onnx")),
+])
+def test_resume_includes_the_actual_preflight_artifact_closure(
+    tmp_path, backend, extra_roles,
+):
+    plan = tmp_path / "plan"
+    plan.mkdir()
+    split = backend == "hailo8_to_trt"
+    required = (("prepared_input", "semantic_boundary_manifest", "semantic_output_manifest")
+                if split else ("dxnn" if "deepx" in backend else "hef",
+                               "input_manifest", "performance_report", "runtime_input_tensor"))
+    artifacts = {role: _artifact(role) for role in (*required, *extra_roles)}
+    # Even a run-local path cannot grant permission to replace installed code.
+    artifacts["hotloop_runner"] = _artifact("hotloop_runner")
+    artifacts["python_executable"] = _artifact("python_executable")
+    artifacts["engine"] = _artifact("engine", below_root=False)
+    contract = {
+        "schema": SPLIT_COMMAND_CONTRACT_SCHEMA if split else FULL_COMMAND_CONTRACT_SCHEMA,
+        "backend": backend, "artifacts": artifacts,
+    }
+    if split:
+        contract["boundary_contract"] = {
+            "metadata_path": f"{REMOTE_ROOT}/boundary.json",
+            "metadata_sha256": hashlib.sha256(b"boundary").hexdigest(),
+        }
+    row = _row(plan, contract)
+    result = resume_artifact_requirements(row, plan_root=plan, frozen_remote_root=REMOTE_ROOT)
+    by_role = {item.role: item for item in result["requirements"]}
+    assert set(by_role) == set(required + extra_roles) | ({"boundary_contract_metadata"} if split else set())
+    for role in extra_roles:
+        assert by_role[role].sha256 == artifacts[role]["sha256"]
+        assert by_role[role].remote_path == artifacts[role]["path"]
+    # Newly admitted roles keep their original byte contract too.
+    artifacts[extra_roles[0]]["sha256"] = "invalid"
+    with pytest.raises(ResumeArtifactContractError, match="artifact_sha256_invalid"):
+        resume_artifact_requirements(_row(plan, contract), plan_root=plan, frozen_remote_root=REMOTE_ROOT)
 
 
 def test_deepx_full_contract_requires_dxnn_without_hef(

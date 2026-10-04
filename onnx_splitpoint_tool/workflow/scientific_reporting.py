@@ -14,6 +14,7 @@ from onnx_splitpoint_tool.native_energy_reporting import (
     collect_native_energy,
     build_native_energy_pairs,
     build_native_energy_ab_aggregates,
+    summarize_native_energy_reporting,
 )
 from onnx_splitpoint_tool.native_performance_reporting import collect_native_performance_matrix
 from onnx_splitpoint_tool.energy.comparison import resolve_energy_comparison
@@ -253,7 +254,7 @@ def _performance_claim_eligible(row: Mapping[str, Any]) -> bool:
 
 
 def _energy_claim_eligible(row: Mapping[str, Any]) -> bool:
-    return _claim_eligible_axis(
+    return (_f(row.get("energy_per_work_j")) or 0.0) > 0 and _b(row.get("measurement_ok")) is not False and _claim_eligible_axis(
         row,
         explicit_key="energy_claim_eligible",
         legacy_key="energy_eligible",
@@ -4216,7 +4217,7 @@ def _refresh_scientific_summary(
             "energy_eligible_count": sum(
                 1
                 for row in scientific_rows
-                if _b(row.get("energy_eligible")) is True
+                if _energy_claim_eligible(row)
             ),
             "quality_failed_count": sum(
                 1
@@ -4428,7 +4429,10 @@ def _energy_figure_details(figure, axis, rows):
     from matplotlib.patches import Patch
     bases = set()
     for position, (bar, row) in enumerate(zip(axis.patches, rows)):
-        normalized = str(row.get("energy_comparison_basis") or "").startswith("host_normalized")
+        normalized = (
+            str(row.get("energy_comparison_basis") or "").startswith("host_normalized")
+            and row.get("energy_primary_value_basis") != "calibrated_input_unsubtracted"
+        )
         bar.set_hatch("//" if normalized else None)
         bases.add(normalized)
         low, high = _f(row.get("energy_per_work_ci_low_j")), _f(row.get("energy_per_work_ci_high_j"))
@@ -4448,7 +4452,7 @@ def _energy_figure_details(figure, axis, rows):
     figure.text(.5, -.025, f"Scope: {scopes}; {windows}; n={','.join(counts) or 'N/A'}; {window}.\n"
                 f"Bars: mean energy/image; lines: {ci} when n ≥ 2. Descriptive values; quality is a separate axis.",
                 ha="center", va="top", fontsize=9)
-    axis.set_xlabel("Comparison energy per completed image [mJ/image]")
+    axis.set_xlabel("Energy per completed image [mJ/image]")
 
 
 def _make_figures(
@@ -5137,6 +5141,10 @@ def _write_reports(
     cross_runner_macro = payload.get("cross_runner_ranking_macro") if isinstance(payload.get("cross_runner_ranking_macro"), Mapping) else {}
     native_energy_observations = list(payload.get("native_energy_observations") or [])
     native_energy_pairs = list(payload.get("native_energy_pair_comparison") or [])
+    payload["summary"] = {
+        **dict(payload.get("summary") or {}),
+        **summarize_native_energy_reporting(native_energy_observations, native_energy_pairs),
+    }
     native_energy_ab_aggregates = list(payload.get("native_energy_ab_aggregates") or [])
     native_performance_matrix = payload.get("native_performance_matrix") if isinstance(payload.get("native_performance_matrix"), Mapping) else {}
     native_performance_observations = [
@@ -5523,6 +5531,10 @@ def _write_reports(
         if _performance_claim_eligible(row)
     ]
     energy = [row for row in rows if _energy_claim_eligible(row)]
+    energy_observations = [
+        row for row in rows
+        if _is_native_energy_attempt(row) or _energy_observation(row)
+    ]
     performance_cohorts, performance_cohort_summary = (
         _performance_cohort_projection(performance_rows)
     )
@@ -5804,7 +5816,12 @@ def _write_reports(
         report_root / "performance_cohort_summary.json",
         performance_cohort_summary,
     )
-    artifacts["energy_results_csv"] = write_csv(report_root / "energy_results.csv", energy)
+    artifacts["energy_results_csv"] = write_csv(
+        report_root / "energy_results.csv", energy_observations,
+        fieldnames=sorted(set(CLAIM_ENERGY_CSV_FIELDS) | {
+            key for row in energy_observations for key in row
+        }),
+    )
     artifacts["screening_performance_observations_csv"] = write_csv(report_root / "screening_performance_observations.csv", screening_performance)
     artifacts["screening_performance_observations_json"] = write_json(report_root / "screening_performance_observations.json", screening_performance)
     artifacts["native_comparison_eligible_observations_csv"] = write_csv(
@@ -5948,11 +5965,16 @@ def _write_reports(
     native_energy_md = [
         "# Native energy pair comparison", "",
         f"Observations: **{len(native_energy_observations)}**", f"Pairs: **{len(native_energy_pairs)}**", "",
+        "Descriptive ratios use calibrated full-system input energy without idle subtraction. "
+        "Semantic compatibility and scientific claim release are separate decisions; "
+        "host-normalized TensorRT estimates remain supplementary fields.", "",
     ]
     for pair in native_energy_pairs:
         native_energy_md.append(
             f"- {pair.get('model')} / {pair.get('split_backend')} / {pair.get('case')} vs "
-            f"{pair.get('baseline_backend')} on {pair.get('setup_id')}: {pair.get('comparison_status')}"
+            f"{pair.get('baseline_backend')} on {pair.get('setup_id')}: {pair.get('comparison_status')}; "
+            f"descriptive raw-FS ratio={pair.get('descriptive_energy_ratio')}; "
+            f"semantic={pair.get('semantic_comparable')}; claim={pair.get('claim_comparable')}"
         )
     artifacts["native_energy_pair_comparison_md"] = write_text(
         report_root / "native_energy_pair_comparison.md", "\n".join(native_energy_md) + "\n"
@@ -6067,7 +6089,15 @@ def _write_reports(
         ),
         f"- Ranking eligible: **{summary.get('ranking_eligible_count', 0)}**",
         f"- Performance eligible: **{summary.get('performance_eligible_count', 0)}**",
-        f"- Energy eligible: **{summary.get('energy_eligible_count', 0)}**",
+        f"- Energy recorded / valid: **{summary.get('energy_recorded_row_count', 0)} / {summary.get('energy_valid_row_count', 0)}** "
+        f"(**{summary.get('energy_valid_replicate_count', 0)}** valid replicates)",
+        f"- Energy pairs descriptive / semantically matching / scientifically released: "
+        f"**{summary.get('energy_descriptive_pair_count', 0)} / {summary.get('energy_semantically_matching_pair_count', 0)} / {summary.get('energy_scientifically_released_pair_count', 0)}** "
+        f"of **{summary.get('energy_pair_count', 0)}** pairs",
+        f"- Energy claim-eligible numeric rows: **{summary.get('energy_eligible_count', 0)}**",
+        "- Energy primary values: calibrated FS input energy without idle subtraction. "
+        f"Separately labelled host-normalized estimates: **{summary.get('energy_additional_host_normalization_row_count', 0)}** rows. "
+        "Descriptive ratios do not release scientific claims; recorded roles and their sources remain unchanged.",
         f"- Development/screening performance observations: **{summary.get('screening_performance_observation_count', 0)}**",
         f"- Native setup-specific performance observations: **{summary.get('native_performance_observation_count', 0)}** "
         f"(matrix: **{summary.get('native_performance_matrix_status', 'unavailable')}**)",
@@ -6083,6 +6113,7 @@ def _write_reports(
         f"- Native semantic evidence: **{native_evidence_projection['semantic_status']}**",
         f"- Native claim evidence: **{native_evidence_projection['claim_status']}**",
         f"- Native energy evidence: **{native_evidence_projection['energy_status']}**",
+        str((payload.get("energy_attempt_failure") or {}).get("energy_not_started_reason") or ""),
         f"- Technical status: **{native_evidence_projection['technical_status']}**",
         "- Claim decisions complete: "
         f"**{evidence_text(native_evidence_projection['claim_decisions_complete'])}**",
@@ -6558,12 +6589,14 @@ def _write_reports(
             ("case", "Boundary", "text"),
             ("setup_id", "Setup", "text"),
             ("baseline_kind", "Baseline", "text"),
-            ("split_energy_per_work_j", "Split J/work", "number"),
-            ("baseline_energy_per_work_j", "Baseline J/work", "number"),
-            ("energy_ratio", "Ratio", "number"),
+            ("split_raw_energy_per_work_j", "Split FS J/work", "number"),
+            ("baseline_raw_energy_per_work_j", "Baseline FS J/work", "number"),
+            ("descriptive_energy_ratio", "Descriptive FS ratio", "number"),
+            ("semantic_comparable", "Semantic", "text"),
+            ("claim_comparable", "Claim", "text"),
             ("comparison_status", "Status", "text"),
         ],
-        "Setup-local Native Split versus Native Full energy comparison.",
+        "Setup-local Native Split versus Native Full calibrated, unsubtracted FS energy. Ratios are descriptive; semantic compatibility and scientific release remain separate.",
         "tab:native-energy-pair-comparison",
     )
     artifacts["native_energy_ab_aggregates_tex"] = _write_tex_table(
@@ -6676,7 +6709,10 @@ def _scientific_decision_axes(
     if quality_technical in {"ok", "not_applicable"}:
         quality_evaluation_status = (
             "evaluated"
-            if aggregate_quality in {"pass", "fail", "inconclusive"}
+            if aggregate_quality in {
+                "pass", "fail", "inconclusive", "reference_close",
+                "accuracy_loss", "not_estimable",
+            }
             else "not_evaluated"
         )
     else:
@@ -7287,7 +7323,7 @@ def build_scientific_reports(
     payload["summary"] = summary
 
     native_observations = collect_native_energy(run_dir)
-    native_scientific_rows = scientific_energy_rows(run_dir)
+    native_scientific_rows = scientific_energy_rows(observations=native_observations)
     if native_scientific_rows:
         payload_rows = list(payload.get("rows") or [])
         payload_rows.extend(native_scientific_rows)
@@ -7299,6 +7335,8 @@ def build_scientific_reports(
         list(payload.get("rows") or []),
     )
     payload["native_energy_observations"] = native_observations
+    from .status_reporting import energy_attempt_failure
+    payload["energy_attempt_failure"] = energy_attempt_failure(run_dir)
     payload["native_energy_pair_comparison"] = build_native_energy_pairs(native_observations)
     payload["native_energy_ab_aggregates"] = build_native_energy_ab_aggregates(native_observations)
     native_evidence = read_json(

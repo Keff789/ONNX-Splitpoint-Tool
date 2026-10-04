@@ -3240,14 +3240,27 @@
             ]
           },
           "then": {
-            "properties": {
-              "id": {
-                "const": "ort_tensorrt"
+            "anyOf": [
+              {
+                "properties": {
+                  "id": {"const": "ort_tensorrt"},
+                  "type": {"const": "same_backend_reference"}
+                }
               },
-              "type": {
-                "const": "same_backend_reference"
+              {
+                "required": ["stage1", "stage2"],
+                "properties": {
+                  "type": {"const": "mixed_backend"},
+                  "stage2": {"const": "tensorrt"},
+                  "variants": {"const": ["composed"]}
+                },
+                "oneOf": [
+                  {"properties": {"id": {"const": "hailo8_to_trt"}, "stage1": {"const": "hailo8"}}},
+                  {"properties": {"id": {"const": "hailo10_to_tensorrt"}, "stage1": {"const": "hailo10"}}},
+                  {"properties": {"id": {"const": "deepx_m1_to_tensorrt"}, "stage1": {"const": "deepx_m1"}}}
+                ]
               }
-            }
+            ]
           }
         }
       ],

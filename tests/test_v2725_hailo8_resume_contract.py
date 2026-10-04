@@ -440,6 +440,9 @@ def test_archived_real_hailo8_contract_reaches_actual_cohort_without_ssh(
         "hailo8_to_trt|resnet50|b052|orin_nx_hailo8_01"
     ]
     assert set(observed_roles) == {
+        "cmake",
+        "generated_cpp",
+        "native_executable",
         "prepared_input",
         "semantic_boundary_manifest",
         "semantic_output_manifest",

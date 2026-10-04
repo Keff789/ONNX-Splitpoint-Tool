@@ -1296,6 +1296,9 @@ def _native_cfg_from_args(args: argparse.Namespace) -> dict[str, Any]:
         # via the boundary dump; request it automatically for validation runs
         # unless the user already set --native-boundary-debug explicitly.
         cfg["dump_boundary"] = True
+    cfg["existing_outputs_only"] = bool(getattr(args, "existing_outputs_only", False))
+    cfg["existing_reference_validation_summary"] = str(getattr(args, "existing_reference_validation_summary", "") or "")
+    _existing_reference_validation_args(cfg)
     cm = _parse_case_map(args.case_map)
     if cm:
         cfg["case_map"] = cm
@@ -1425,6 +1428,22 @@ def _local_backend_root(
     return run_dir / "native_producers" / backend
 
 
+def _existing_reference_validation_args(cfg: Mapping[str, Any]) -> list[str]:
+    reference = str(cfg.get("existing_reference_validation_summary") or "")
+    if not cfg.get("existing_outputs_only"):
+        if reference:
+            raise TensorRTQualityChainError("stored reference requires existing-outputs-only")
+        return []
+    path = Path(reference)
+    value = _read_json(path) if reference and path.is_file() and not path.is_symlink() else {}
+    if (not (cfg.get("validation") or {}).get("enabled")
+            or not isinstance(value, Mapping)
+            or value.get("schema") != "onnx-splitpoint/native-producer-validation-summary"
+            or not value.get("rows")):
+        raise TensorRTQualityChainError("existing-outputs-only requires normal validation and a stored reference summary")
+    return ["--existing-outputs-only", "--existing-reference-validation-summary", str(path.resolve())]
+
+
 def _run_native_producers(run_dir: Path, cfg: dict[str, Any], *, timeout: int) -> dict[str, Any]:
     # Direct API users receive the same policy as the CLI, before directories,
     # remote transfers or compiler processes are created.
@@ -1432,6 +1451,7 @@ def _run_native_producers(run_dir: Path, cfg: dict[str, Any], *, timeout: int) -
         value = cfg.get(force_key, False)
         if type(value) is not bool or value:
             raise TensorRTQualityChainError("productive_force_build_disabled:" + force_key)
+    existing_reference_args = _existing_reference_validation_args(cfg)
     cache_verify_only = bool(cfg.get("cache_verify_only"))
     if cache_verify_only:
         if bool(cfg.get("build_missing_engines", True)):
@@ -2078,6 +2098,7 @@ def _run_native_producers(run_dir: Path, cfg: dict[str, Any], *, timeout: int) -
                     ("native_fifo_capability_report.py", ("--benchmark-set", "native_fifo_capability_report.json")),
                     ("validate_output_dumps.py", ("--candidate", "output_dump_validation.json")),
                     ("native_hailo_trt_fifo_from_benchmarkset.py", ("--result-json", "--native-split-quality-binding", "--expected-runner-sha256", "native_command_contract", "--repetitions")),
+                    ("native_hailo_trt_concurrent_three_stage_from_benchmarkset.py", ("def build_three_stage_command", "--native-split-quality-binding", "--repetitions")),
                     ("native_hailo10_trt_e2e_from_benchmarkset.py", ("class NativeTRT", "--expected-runner-sha256")),
                     ("native_trt_from_benchmarkset.py", ("--benchmark-set", "--precision", "--duration")),
                     (
@@ -2091,6 +2112,26 @@ def _run_native_producers(run_dir: Path, cfg: dict[str, Any], *, timeout: int) -
                 ):
                     result["steps"].extend(_sync_remote_script_v60i(
                         ssh, rtool, dependency_name, dependency_tokens,
+                        timeout=min(timeout, 600),
+                    ))
+                # The parent resolves the concurrent helper as a sibling; that
+                # helper reads these exact source/reference assets below the
+                # same tool root. Stage them through the existing byte-verified
+                # transfer, without copying model artifacts or build outputs.
+                for relative in (
+                    "three_stage_canary.py", "fast_decode_runtime.py", "stage_corpus.py",
+                    "cpp/CMakeLists.txt", "cpp/three_stage_canary.cpp",
+                    "expected_artifacts.json",
+                    "reference/current_completed_task_result.json",
+                    "reference/native_split_quality_binding.json",
+                    "reference/native_fifo_boundary_manifest.json",
+                    "reference/native_fifo_output_manifest.json",
+                    "reference/dataset_detection_validation.json",
+                    "reference/multi_image_fast_decode_canary_report.json",
+                ):
+                    result["steps"].extend(_sync_remote_package_asset_v263(
+                        ssh, rtool,
+                        "onnx_splitpoint_tool/resources/native_concurrent_three_stage_yolov7/" + relative,
                         timeout=min(timeout, 600),
                     ))
             elif b == "hailo10h":
@@ -2126,6 +2167,11 @@ def _run_native_producers(run_dir: Path, cfg: dict[str, Any], *, timeout: int) -
                     timeout=min(timeout, 180),
                 ))
             result["steps"].extend(_sync_remote_script_v60i(ssh, rtool, "run_and_report_work_units.py", ("__SPLITPOINT_WORK_UNITS__",), timeout=min(timeout, 600)))
+            result["steps"].extend(_sync_remote_script_v60i(
+                ssh, rtool, "native_split_energy_preflight.py",
+                ("verify_native_split_part2_input_contract", "seal_split_energy_preflight_attestation"),
+                timeout=min(timeout, 600),
+            ))
             result["steps"].extend(_sync_remote_script_v60i(
                 ssh, rtool, "native_yolo_full_self_reference_probe.py",
                 ("--benchmark-set", "_input_dump_feed_from_manifest", "native_fifo_boundary"),
@@ -2484,7 +2530,7 @@ def _run_native_producers(run_dir: Path, cfg: dict[str, Any], *, timeout: int) -
                     and bool(cases)
                     for model, cases in (probe_case_map or {}).items()
                 )
-                if backend_split_execution_allowed and b in {"hailo8", "hailo10h", "deepx"} and bool(vcfg_probe.get("enabled") or cfg.get("dump_outputs")) and dump_boundary and probe_yolo_requested:
+                if not existing_reference_args and backend_split_execution_allowed and b in {"hailo8", "hailo10h", "deepx"} and bool(vcfg_probe.get("enabled") or cfg.get("dump_outputs")) and dump_boundary and probe_yolo_requested:
                     py = """
 import json, subprocess, sys
 from pathlib import Path
@@ -2817,6 +2863,7 @@ sys.exit(0 if ok else 4)
                 vout = reports / "native_validation"
                 roots = list(collected)
                 cmd = [sys.executable, str(_script("native_producer_validate_visualize.py")), "--summary", str(summary_json), "--out-dir", str(vout), "--topk", str(int(vcfg.get("topk") or 5))]
+                cmd += existing_reference_args
                 if isinstance(cfg.get("quality_gate_policy"), Mapping):
                     cmd += ["--quality-gate-json", json.dumps(dict(cfg.get("quality_gate_policy") or {}), sort_keys=True, separators=(",", ":"))]
                 central_quality_summary = (Path(str(cfg["central_quality_summary"])) if cfg.get("central_quality_summary")
@@ -3121,6 +3168,8 @@ def main() -> int:
     ap.add_argument("--native-energy-runs", type=int, default=1)
     ap.add_argument("--native-energy-allow-unpaired", action="store_true")
     ap.add_argument("--native-validation", action="store_true", help="Enable native output dump validation / visual artifacts for update/debug runs.")
+    ap.add_argument("--existing-outputs-only", action="store_true", help="Validate against existing reference outputs; never generate a remote Full-ORT sidecar.")
+    ap.add_argument("--existing-reference-validation-summary", default="", help="Original normal validation summary containing the stored CPU references.")
     ap.add_argument("--native-boundary-debug", action="store_true", help="For Hailo8 native FIFO, also dump raw Part1 boundary payloads for interface/dequant diagnostics.")
     ap.add_argument("--native-letterbox-pad-value", type=int, default=0, help="Native Hailo8 input letterbox pad value. Use 114 to align YOLO native preprocessing with the generic harness.")
     ap.add_argument("--native-force-rebuild-engines", action="store_true", help="Force rebuild native TensorRT engines, needed when changing dequant/layout bridge parameters.")

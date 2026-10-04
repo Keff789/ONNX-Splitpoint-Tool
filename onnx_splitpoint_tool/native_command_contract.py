@@ -703,6 +703,53 @@ def _verify_hailo8_mixed_runtime_contract(
     producer_impl = str(
         options.get("producer_impl") or ""
     ).strip().lower()
+    if producer_impl == "hailo8_cpp_concurrent_three_stage":
+        # The bounded YOLOv7 campaign uses a real Hailo/TRT shared library,
+        # not the Python VStreams runtime whose closure is checked below.
+        # File bytes are still checked by the normal remote preflight.
+        if (
+            task != "detection"
+            or str(contract.get("model") or "") not in {"yolov7", "yolov7_paper"}
+            or contract.get("case") != "b066"
+            or contract.get("precision") != "uint8_dequant_fp16"
+        ):
+            return "native_command_contract_hailo8_concurrent_identity_invalid"
+        required = (
+            "concurrent_helper", "concurrent_canary", "concurrent_fast_decode",
+            "native_three_stage", "prepared_input",
+        )
+        missing = [name for name in required if not isinstance(artifacts.get(name), Mapping)]
+        if missing:
+            return "native_command_contract_required_artifact_missing:" + ",".join(missing)
+        if not str((artifacts.get("native_executable") or {}).get("path") or "").endswith(".so"):
+            return "native_command_contract_hailo8_concurrent_library_invalid"
+        if (
+            not isinstance(prepared, Mapping)
+            or prepared.get("dtype") != "uint8"
+            or prepared.get("layout") != "HWC"
+            or list(prepared.get("shape") or []) != [640, 640, 3]
+            or prepared.get("source_image_sha256") != contract.get("input_image_sha256")
+            or not hailo8_preprocess_binding(options, prepared)
+            or options.get("prepared_input_bound") is not True
+            or options.get("energy_prepared_feed_capable") is not True
+        ):
+            return "native_command_contract_hailo8_concurrent_prepared_input_invalid"
+        if (
+            options.get("measurement_endpoint") != "completed_task"
+            or options.get("completion_runtime_mode") != "fast_oracle_outside_timing"
+            or options.get("measurement_boundary") != "workers_ready_to_last_completed_task_frame"
+            or options.get("warmup_contract") != "fully_drained_before_worker_start"
+            or options.get("preprocessing_included") is not False
+            or type(options.get("post_queue_depth")) is not int
+            or options["post_queue_depth"] <= 0
+        ):
+            return "native_command_contract_hailo8_concurrent_measurement_boundary_invalid"
+        for field, expected in (("frames", 1000), ("warmup", 100), ("repetitions", 3)):
+            if type(options.get(field)) is not int or options[field] != expected:
+                return "native_command_contract_hailo8_concurrent_" + field + "_invalid"
+        if not isinstance(options.get("completion_execution_contract"), Mapping):
+            return "native_command_contract_hailo8_concurrent_completion_contract_missing"
+        return "verified"
     mixed_raw = contract.get("mixed_runtime_contract")
     completion_contract = options.get(
         "completion_execution_contract"

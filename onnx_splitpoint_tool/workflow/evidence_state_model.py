@@ -59,8 +59,8 @@ def _actual_endpoint(row: Mapping[str, Any]) -> str:
 def _quality_applicability(
     row: Mapping[str, Any], scope: Mapping[str, Any],
 ) -> str:
-    from ..native_job_identity import known_build_exclusion
-    if known_build_exclusion(row):
+    from ..native_job_identity import known_build_exclusion, native_capability_exclusion
+    if known_build_exclusion(row) or native_capability_exclusion(row):
         return "not_applicable"
     # Actual runtime evidence takes precedence over a pre-dispatch
     # ``conditional`` scope declaration.
@@ -163,7 +163,7 @@ def project_evidence_state(
         or row.get("timeout_kind")
         or status in {"timeout", "timed_out", "hard_timeout", "idle_timeout"}
     )
-    unsupported = bool(row.get("unsupported_reason")) or status == "unsupported"
+    unsupported = bool(row.get("unsupported_reason")) or status in {"unsupported", "not_supported"}
     runtime_ok = _boolean(
         row.get("runtime_ok")
         if row.get("runtime_ok") is not None
@@ -206,7 +206,10 @@ def project_evidence_state(
             row.get("scientific_status"), row.get("quality_decision"),
         ):
             token = _token(value)
-            if token in {"pass", "fail", "inconclusive", "unavailable", "not_evaluated"}:
+            if token in {
+                "pass", "fail", "inconclusive", "unavailable", "not_evaluated",
+                "reference_close", "accuracy_loss", "not_estimable",
+            }:
                 gate_decision = token
                 break
         if technical == "completed" or gate_decision in {"pass", "fail", "inconclusive"}:
@@ -346,6 +349,66 @@ def _select_scope_representation(
     return dict(eligible[0]), False, len(candidates)
 
 
+def _original_terminal_exclusion(
+    model_dir: Path, entry: Mapping[str, Any], suite: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Read the original negative proof for an unmeasured requested endpoint.
+
+    These are the same deterministic Part1 failures and historical policy
+    exclusions retained by the supplement planner. They do not represent a
+    measurement or a scientific compiler-quality decision.
+    """
+    import json
+    from .supplement import _stored_compile_failure, run_token
+
+    model_id = str(entry.get("model_id") or "")
+    case_id = str(entry.get("case_id") or "")
+    backend = {"hailo8_to_trt": "hailo8", "hailo10_to_trt": "hailo10"}.get(
+        run_token(entry.get("run_id"))
+    )
+    if (
+        not backend or entry.get("variant") != "split"
+        or entry.get("requested") is not True
+        or entry.get("terminal_outcome_required") is not True
+        or entry.get("success_required") is not False
+        or model_id != model_dir.name or suite.get("model_name") != model_id
+        or not case_id or Path(case_id).name != case_id
+        or canonical_backend(entry.get("backend")) != canonical_backend(f"{backend}_to_trt")
+    ):
+        return {}
+    cases = [case for case in suite.get("cases", []) if isinstance(case, Mapping)
+             and str(case.get("folder") or case.get("case_dir") or "") == case_id]
+    if len(cases) != 1:
+        return {}
+    suite_path = model_dir / "benchmark_set/legacy_suite/benchmark_set.json"
+    manifest_path = suite_path.parent / case_id / "split_manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        manifest = {}
+    policies = [item for item in (manifest.get("hailo") or {}).get("backend_exclusions", [])
+                if isinstance(item, Mapping) and item.get("hw_arch") == backend
+                and item.get("folder") == case_id and item.get("stage") == "part1"
+                and item.get("status") == "rejected"
+                and item.get("reason") == "hailo_yolo26_static_part1_guard"]
+    negative = _stored_compile_failure(suite, entry)
+    if len(policies) == 1:
+        kind, evidence, source = "policy_excluded", policies[0], manifest_path
+    elif not policies and negative:
+        kind, evidence, source = "build_failed", negative, suite_path
+    else:
+        return {}
+    return {
+        "build_runtime_state": kind,
+        "quality_applicability": "not_applicable",
+        "quality_completion": "not_applicable",
+        "quality_decision": "not_applicable",
+        "claim_eligible": False,
+        "terminal_evidence": dict(evidence),
+        "upstream_evidence_path": str(source),
+    }
+
+
 def summarize_run_scope(run_dir: Any) -> dict[str, Any]:
     """Project sealed per-model scope identities onto normalized result rows."""
 
@@ -392,6 +455,12 @@ def summarize_run_scope(run_dir: Any) -> dict[str, Any]:
             required_matrix = json.loads((normalized_path.parent / "required_profile_matrix.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             required_matrix = {}
+        try:
+            original_suite = json.loads((
+                normalized_path.parents[1] / "benchmark_set/legacy_suite/benchmark_set.json"
+            ).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            original_suite = {}
         for entry in list(scope_payload.get("identities") or []):
             if not isinstance(entry, Mapping):
                 continue
@@ -412,6 +481,10 @@ def summarize_run_scope(run_dir: Any) -> dict[str, Any]:
                 if len(excluded) == 1:
                     selected = excluded[0]
             state = project_evidence_state(selected, scope=entry)
+            if not selected and not ambiguous:
+                state.update(_original_terminal_exclusion(
+                    normalized_path.parents[1], entry, original_suite,
+                ))
             state.update({
                 "model_id": _token(entry.get("model_id") or model_id),
                 "case_id": _token(entry.get("case_id") or "full"),

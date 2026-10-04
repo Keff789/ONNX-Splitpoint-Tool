@@ -2218,6 +2218,28 @@ def _verified_trt_engine_build_receipt(
     return receipt, "engine_build_receipt_verified"
 
 
+def _native_full_logical_run_id(ns: argparse.Namespace, root: Path) -> str:
+    """Bind dispatcher-owned campaign/attempt identity to the physical root.
+
+    Never infer the campaign from a producer payload. Legacy standalone callers
+    remain campaign-root only; an attempt requires both explicit identities.
+    """
+    run_id = str(getattr(ns, "eval_run_id", "") or "").strip()
+    attempt_id = str(getattr(ns, "attempt_id", "") or "").strip()
+    if any(token and (token in {".", ".."} or "/" in token or "\\" in token)
+           for token in (run_id, attempt_id)):
+        return ""
+    if attempt_id:
+        if (not run_id or root.name != attempt_id
+                or root.parent.name != "attempts"
+                or root.parent.parent.name != run_id):
+            return ""
+        return run_id
+    if root.parent.name == "attempts":
+        return ""
+    return (run_id or root.name) if not run_id or root.name == run_id else ""
+
+
 def _quality_first_trt_producer_identity(
     benchmark_set: Path, model: str, ns: argparse.Namespace,
 ) -> tuple[dict[str, Any] | None, str, Path]:
@@ -2263,7 +2285,7 @@ def _quality_first_trt_producer_identity(
         or int(producer_set.get("schema_version") or 0)
         != TRT_QUALITY_PRODUCER_SET_VERSION
         or not eval_run_id
-        or eval_run_id != root.name
+        or eval_run_id != _native_full_logical_run_id(ns, root)
         or str(producer_set.get("setup_id") or "").strip() != setup_id
         or not setup_id
         or not isinstance(producers, Mapping)
@@ -2585,7 +2607,9 @@ def _load_full_quality_binding_set(
         or isinstance(schema_version, bool)
         or not isinstance(schema_version, int)
         or schema_version not in FULL_QUALITY_BINDING_SET_VERSIONS
-        or str(payload.get("eval_run_id") or "").strip() != root.name
+        or not _native_full_logical_run_id(ns, root)
+        or str(payload.get("eval_run_id") or "").strip()
+        != _native_full_logical_run_id(ns, root)
         or str(payload.get("setup_id") or "").strip()
         != str(getattr(ns, "setup_id", "") or "").strip()
         or str(payload.get("comparison_backend") or "").strip().lower()
@@ -4747,7 +4771,7 @@ def _full_command_contract(
         "execution_precision": str(row.get("execution_precision") or ""),
         "full_runtime_precision": str(row.get("full_runtime_precision") or ""),
         "python_executable": str(sys.executable),
-        "runner": "scripts/native_full_baseline_eval_runner.py",
+        "runner": "scripts/" + Path(__file__).name,
         "runner_sha256": _sha256_file(runner_path),
         "root": str(root),
         "benchmark_set": str(benchmark_set),
@@ -10986,6 +11010,8 @@ def _row_for_backend(benchmark_set: Path, model: str, backend: str, ns: argparse
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, help="Staged native_fifo_evalsets root")
+    parser.add_argument("--eval-run-id", default="", help="Dispatcher-owned logical campaign identity, independent of the physical attempt root.")
+    parser.add_argument("--attempt-id", default="", help="Dispatcher-owned attempt identity; root must be <eval-run-id>/attempts/<attempt-id>.")
     parser.add_argument(
         "--remote-contract-preflight",
         action="store_true",

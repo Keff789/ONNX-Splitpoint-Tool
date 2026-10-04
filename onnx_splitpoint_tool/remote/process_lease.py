@@ -1968,6 +1968,8 @@ def process_lease_cli_main(argv: Optional[Sequence[str]] = None) -> int:
     for name in (*action_fields, *authorization_fields):
         recover.add_argument("--" + name)
     recover.add_argument("--registry", default=None)
+    recover.add_argument("--rest-attempt-dir", default=None,
+                         help="existing explicit YOLO rest attempt with its bound journal and terminal evidence")
     release_ground = recover.add_mutually_exclusive_group(required=True)
     release_ground.add_argument("--confirm-action-performed", action="store_true",
                                 help="attest that the described operator action actually occurred")
@@ -2006,6 +2008,7 @@ def process_lease_cli_main(argv: Optional[Sequence[str]] = None) -> int:
                 run_dir=arguments.run_dir, session_id=arguments.session_id,
                 operation_id=arguments.operation_id, setup_id=arguments.setup_id,
                 registry_path=arguments.registry,
+                **({"rest_attempt_dir": arguments.rest_attempt_dir} if arguments.rest_attempt_dir else {}),
                 **evidence,
             )
             print(json.dumps(result, indent=2))

@@ -194,6 +194,111 @@ def apply_known_build_disposition(row: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+def native_capability_exclusion(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Verify a nonstart against the original manifest's actual Part2 inputs."""
+    import json
+    from pathlib import Path
+    proof = row.get('native_capability_exclusion')
+    if not isinstance(proof, Mapping) or row.get('status', row.get('actual_status')) != 'not_supported':
+        return {}
+    identity = planned_native_identity(row)
+    if (identity['backend'].startswith('native_full_') or not all(identity.values())
+            or row.get('identity_conflicts')
+            or any(row.get(key) is True for key in ('ok', 'result_ok', 'actual_ok', 'runtime_success', 'measurement_started'))
+            or row.get('repetition_count_attempted', 0) != 0
+            or row.get('repetition_count_valid', 0) != 0):
+        return {}
+    try:
+        path = Path(str(proof['split_manifest']))
+        manifest = json.loads(path.read_text(encoding='utf-8'))
+        names = manifest['part2_external_inputs']
+        if (not isinstance(names, list) or len(names) <= 1
+                or any(not isinstance(name, str) or not name for name in names)
+                or names != proof.get('part2_input_names')
+                or len(names) != proof.get('part2_input_count')
+                or path.parent.name != identity['case']
+                or str(proof.get('model')) != identity['model']):
+            return {}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+    return dict(proof)
+
+
+def native_subset_projection(expected_rows: Sequence[Mapping[str, Any]],
+                             support_rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Keep selected Generic cases visible as terminal Native non-applicability."""
+    support = {(str(row.get('model')), str(row.get('case'))): row for row in support_rows}
+    excluded = []
+    for expected in expected_rows:
+        identity = planned_native_identity(expected)
+        source = support.get((identity['model'], identity['case'])) or {}
+        if (identity['backend'].startswith('native_full_')
+                or source.get('reason') != 'part2_input_count_not_one'
+                or not isinstance(source.get('part2_input_count'), int)
+                or source['part2_input_count'] <= 1):
+            continue
+        row = failed_native_result(expected, failure_stage='native_capability',
+            failure_reason='part2_input_count_not_one', status='not_supported',
+            execution_mode='native_split', runtime_success=False, measurement_started=False,
+            execution_terminal=True, quality_applicability='not_applicable_unsupported_part2_inputs',
+            native_capability_exclusion=dict(source), upstream_evidence_path=source.get('split_manifest'))
+        row['prerequisite_status'] = 'not_supported'
+        if not native_capability_exclusion(row):
+            raise ValueError('native_capability_projection_source_invalid:' + '|'.join(native_identity_key(expected)))
+        excluded.append(row)
+    return excluded
+
+
+def missing_native_rows(expected_rows: Sequence[Mapping[str, Any]],
+                        existing_rows: Sequence[Mapping[str, Any]],
+                        not_supported_rows: Sequence[Mapping[str, Any]] = ()) -> list[dict[str, Any]]:
+    """Select actual missing identities; stored successful measurements win."""
+    excluded = {native_identity_key(row) for row in not_supported_rows if native_capability_exclusion(row)}
+    completed = set()
+    expected = {native_identity_key(row): row for row in expected_rows}
+    for raw in existing_rows:
+        if raw.get('ok', raw.get('result_ok')) is not True:
+            continue
+        row = complete_historical_identity(raw, expected_rows)
+        key = native_identity_key(row)
+        if row.get('identity_conflicts') or key not in expected or key in completed:
+            raise ValueError('native_completed_identity_conflict:' + '|'.join(key))
+        completed.add(key)
+    return [dict(row) for row in expected_rows if native_identity_key(row) not in completed | excluded]
+
+
+def merge_native_result_rows(previous: Sequence[Mapping[str, Any]],
+                             current: Sequence[Mapping[str, Any]],
+                             not_supported: Sequence[Mapping[str, Any]] = ()) -> list[dict[str, Any]]:
+    """Merge attempt projections without relabelling any old measurement."""
+    rows = {native_identity_key(row): dict(row) for row in previous}
+    for source in current:
+        key = native_identity_key(source)
+        old = rows.get(key)
+        if old is not None and old.get('ok', old.get('result_ok')) is True:
+            if source.get('ok', source.get('result_ok')) is True and source != old:
+                # A recovered attempt may present the same immutable result
+                # again with newer report annotations. Keep the saved row and
+                # require its original report and command identity to agree.
+                report = str(old.get('report') or '')
+                commands = ('native_command_contract_sha256', 'full_command_contract_sha256')
+                same_source = bool(report and report == str(source.get('report') or '')
+                    and any(old.get(field) for field in commands)
+                    and all(old.get(field) == source.get(field) for field in commands))
+                if not same_source:
+                    raise ValueError('native_completed_measurement_would_be_replaced:' + '|'.join(key))
+            continue
+        rows[key] = dict(source)
+    for source in not_supported:
+        if not native_capability_exclusion(source):
+            raise ValueError('native_capability_projection_source_invalid')
+        key = native_identity_key(source)
+        if key in rows and rows[key].get('ok', rows[key].get('result_ok')) is True:
+            raise ValueError('native_capability_success_conflict:' + '|'.join(key))
+        rows[key] = dict(source)
+    return list(rows.values())
+
+
 def project_known_build_exclusions(matrix: Mapping[str, Any]) -> dict[str, Any]:
     """Keep full coverage honest while making exact exclusions terminal.
 
@@ -217,12 +322,13 @@ def project_known_build_exclusions(matrix: Mapping[str, Any]) -> dict[str, Any]:
     excluded = {}
     conflicts = set()
     for key, observations in groups.items():
-        proofs = [known_build_exclusion(row) for row in observations]
+        proofs = [known_build_exclusion(row) or native_capability_exclusion(row) for row in observations]
         if not any(proofs):
             continue
         signatures = {
-            (proof['build_evidence']['key_sha256'],
-             proof['build_evidence']['record']['record_sha256'])
+            ((proof['build_evidence']['key_sha256'],
+             proof['build_evidence']['record']['record_sha256']) if 'build_evidence' in proof
+             else ('native_capability', proof['split_manifest'], tuple(proof['part2_input_names'])))
             for proof in proofs if proof
         }
         if not all(proofs) or len(signatures) != 1:
@@ -267,6 +373,7 @@ def project_known_build_exclusions(matrix: Mapping[str, Any]) -> dict[str, Any]:
         failed_expected_rows=failed, failed_expected_row_count=failed_count,
         excluded_expected_rows=list(excluded.values()),
         excluded_expected_row_count=len(excluded), present_expected_rows=present,
+        not_supported_expected_row_count=sum(bool(native_capability_exclusion(row)) for row in excluded.values()),
     )
     expected = int(matrix.get('expected_row_count') or 0)
     success = int(matrix.get('successful_expected_row_count') or 0)
@@ -620,6 +727,17 @@ def native_job_prerequisite(job: Mapping[str, Any], *, suite_dir: Any,
     def blocked(reason, stage, path):
         return failed_native_result(identity, failure_stage=stage, failure_reason=reason,
                                     upstream_evidence_path=str(path))
+    if not backend.startswith('native_full_'):
+        manifest_path = suite / case / 'split_manifest.json'
+        names = read(manifest_path).get('part2_external_inputs')
+        if isinstance(names, list) and len(names) > 1:
+            projection = native_subset_projection([job], [{
+                'model': identity['model'], 'case': case, 'split_manifest': str(manifest_path),
+                'part2_input_names': names, 'part2_input_count': len(names),
+                'reason': 'part2_input_count_not_one', 'native_supported': False,
+            }])
+            if projection:
+                return projection[0]
     # Only the current model's actual build stage may supersede its later
     # missing quality mirror. No neighbouring model/case/setup search is used.
     stage_path = model / 'stages/build_backend_artifacts/stage_result.json'
