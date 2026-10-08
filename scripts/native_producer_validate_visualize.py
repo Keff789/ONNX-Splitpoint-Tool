@@ -4658,6 +4658,108 @@ def _ort_input_dtype(inp: Any):
     return None
 
 
+def _hailo8_classifier_reference_rgb(
+    manifest: Path, payload: Mapping[str, Any],
+    runtime_shape: list[int],
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Use bound pre-encoding pixels, never HEF codes, for the CPU reference."""
+    from onnx_splitpoint_tool.preprocessing_contract import (
+        canonical_image_preprocessing_contract,
+        runtime_numeric_input_identity_errors,
+    )
+
+    if _load_strict_json_object(manifest) != dict(payload):
+        raise ValueError('manifest_invalid_or_duplicate_keys')
+    model = str(payload.get('model') or '').strip()
+    runtime_name = str(payload.get('runtime_input_name') or '').strip()
+    preprocess = payload.get('preprocess') or {}
+    numeric = payload.get('runtime_numeric_input_identity') or {}
+    timing = payload.get('timing_input_binding') or {}
+    if not all(isinstance(value, Mapping) for value in (preprocess, numeric, timing)):
+        raise ValueError('input_contract_components_missing')
+    if (
+        payload.get('schema_version') != 2
+        or payload.get('backend') != 'native_full_hailo8'
+        or payload.get('comparison_backend') != 'hailo8'
+        or payload.get('case') != 'full'
+        or payload.get('task') != 'classification'
+        or not str(payload.get('setup_id') or '').strip()
+        or not model or not runtime_name.startswith(model + '_full/')
+        or len(runtime_shape) != 3 or runtime_shape[-1] != 3
+        or payload.get('input_shape_hwc') != runtime_shape
+        or payload.get('runtime_input_dtype') != 'uint8'
+        or payload.get('runtime_input_layout') != 'HWC'
+        or preprocess.get('layout') != 'HWC'
+        or preprocess.get('source_domain') != 'float_imagenet_mean_std'
+        or preprocess.get('quantized_inputs') is not True
+        or any(value != 'hef_quant_info_from_imagenet_mean_std' for value in (
+            payload.get('runtime_normalization'), preprocess.get('normalization'),
+            numeric.get('runtime_normalization'),
+        ))
+    ):
+        raise ValueError('input_scope_or_numeric_domain_mismatch')
+    canonical = canonical_image_preprocessing_contract('classification', runtime_shape[:2])
+    canonical_sha = _canonical_json_sha256(canonical)
+    if (
+        any(value != canonical for value in (
+            payload.get('preprocessing_contract'),
+            payload.get('runtime_preprocessing_identity'),
+            preprocess.get('preprocessing_contract'),
+        ))
+        or any(_normalize_sha256(value) != canonical_sha for value in (
+            payload.get('preprocessing_contract_sha256'),
+            payload.get('runtime_preprocessing_sha256'),
+            preprocess.get('preprocessing_contract_sha256'),
+            timing.get('preprocessing_contract_sha256'),
+        ))
+        or _normalize_sha256(payload.get('runtime_numeric_input_sha256'))
+        != _canonical_json_sha256(numeric)
+        or runtime_numeric_input_identity_errors(numeric, canonical)
+        or any(numeric.get(field) != payload.get(field) for field in (
+            'backend', 'task', 'runtime_input_name', 'runtime_input_shape',
+            'runtime_input_dtype', 'runtime_input_layout', 'runtime_color_space',
+        ))
+    ):
+        raise ValueError('preprocessing_or_numeric_identity_mismatch')
+    image = str(payload.get('input_image') or '').strip()
+    image_sha = _normalize_sha256(payload.get('input_image_sha256'))
+    if (
+        not image or image != str(payload.get('image') or '').strip()
+        or not image_sha
+        or any(_normalize_sha256(value) != image_sha for value in (
+            payload.get('image_sha256'), timing.get('input_image_sha256'),
+        ))
+    ):
+        raise ValueError('source_image_binding_mismatch')
+    dump = str(payload.get('input_dump') or '').strip()
+    rgb_sha = _normalize_sha256(payload.get('input_dump_sha256'))
+    if (
+        not dump or Path(dump).name != 'input_rgb_uint8.bin' or not rgb_sha
+        or any(_normalize_sha256(value) != rgb_sha for value in (
+            payload.get('canonical_rgb_sha256'), timing.get('canonical_rgb_sha256'),
+        ))
+    ):
+        raise ValueError('canonical_rgb_binding_missing_or_conflicting')
+    # Collected manifests retain their original DUT path. Resolve only the
+    # declared basename beside this exact manifest, as the Full reader does.
+    rgb_path = Path(manifest).parent / Path(dump).name
+    expected_bytes = int(np.prod(runtime_shape, dtype=np.int64))
+    if (
+        not rgb_path.is_file()
+        or rgb_path.is_symlink()
+        or _sha256_file(rgb_path) != rgb_sha
+        or payload.get('input_dump_bytes') != expected_bytes
+        or rgb_path.stat().st_size != expected_bytes
+    ):
+        raise ValueError('canonical_rgb_tensor_binding_invalid')
+    pixels = np.fromfile(str(rgb_path), dtype=np.uint8).reshape(runtime_shape)
+    return pixels, {
+        'canonical_rgb_sha256': rgb_sha,
+        'source_image_sha256': image_sha,
+        'preprocessing_contract_sha256': canonical_sha,
+    }
+
+
 def _native_input_dump_feed(
     boundary_manifest: Path,
     input_shape: list[int],
@@ -4758,6 +4860,31 @@ def _native_input_dump_feed(
             if requested_scale == 'native':
                 requested_scale = manifest_scale
 
+            encoded_classifier = 'hef_quant_info_from_imagenet_mean_std' in {
+                man.get('runtime_normalization'), preprocess.get('normalization'),
+                (man.get('runtime_numeric_input_identity') or {}).get('runtime_normalization')
+                if isinstance(man.get('runtime_numeric_input_identity'), Mapping) else None,
+            }
+            encoded_classifier = encoded_classifier or (
+                man.get('backend') == 'native_full_hailo8'
+                and man.get('task') == 'classification'
+                and runtime_dtype == np.dtype(np.uint8)
+            )
+            reference_pixels = None
+            canonical_rgb_evidence: dict[str, Any] = {}
+            if encoded_classifier:
+                try:
+                    if (len(input_shape) != 4
+                            or target not in {np.dtype(np.float16), np.dtype(np.float32)}
+                            or requested_scale != 'imagenet' or manifest_scale != 'imagenet'):
+                        raise ValueError('reference_shape_dtype_or_scale_mismatch')
+                    reference_pixels, canonical_rgb_evidence = _hailo8_classifier_reference_rgb(
+                        Path(boundary_manifest), man, runtime_shape,
+                    )
+                except (TypeError, ValueError, OSError) as exc:
+                    _reject('hailo8_classifier_reference_' + str(exc))
+                    return None
+
             if len(runtime_shape) == len(input_shape):
                 if not _shape_matches(input_shape, runtime_shape):
                     _reject('sealed_runtime_onnx_shape_mismatch')
@@ -4811,7 +4938,7 @@ def _native_input_dump_feed(
                     if int(runtime_shape[-1]) not in (1, 3):
                         _reject('sealed_runtime_hwc_channel_invalid')
                         return None
-                    work = runtime.astype(np.float32)
+                    work = (reference_pixels if reference_pixels is not None else runtime).astype(np.float32)
                 elif source_layout == 'CHW':
                     if int(runtime_shape[0]) not in (1, 3):
                         _reject('sealed_runtime_chw_channel_invalid')
@@ -4849,6 +4976,8 @@ def _native_input_dump_feed(
                     else work[None]
                 ).astype(target)
                 transformation = 'sealed_runtime_to_onnx_reference_v1'
+                if reference_pixels is not None:
+                    transformation = 'bound_canonical_rgb_to_onnx_reference_v1'
             else:
                 _reject('sealed_runtime_rank_conversion_unsupported')
                 return None
@@ -4881,6 +5010,7 @@ def _native_input_dump_feed(
                         feed.tobytes(order='C'),
                     ).hexdigest(),
                     'c_contiguous': bool(feed.flags.c_contiguous),
+                    **canonical_rgb_evidence,
                 })
             return feed
         except Exception as exc:
