@@ -152,10 +152,10 @@ def test_quality_mismatch_preserves_fresh_completion_evidence(tmp_path):
     assert row['quality_evidence_verified'] is False
 
 
-def _bn6_repeat(base, root, index, *, original_wh=(640, 480)):
+def _bn6_repeat(base, root, index, *, original_wh=(640, 480), source_sample=None):
     row = _repeat(base, root, index)
     folder = root / f'rep{index:02}'
-    source_path, tensors, execution = _bn6_sample(folder / 'benchmark_set', original_wh=original_wh)
+    source_path, tensors, execution = source_sample or _bn6_sample(folder / 'benchmark_set', original_wh=original_wh)
     manifest_path = Path(row['native_fifo_output_manifest'])
     manifest = json.loads(manifest_path.read_text())
     manifest.update(json.loads(source_path.read_text()))
@@ -258,11 +258,12 @@ def test_bn6_original_declaration_primitives_and_dependent_seals_fail_closed(tmp
     assert not actual or actual['operating_point_sha256'] != expected['operating_point_sha256']
 
 
-def _bn6_rate_aggregate(tmp_path):
+def _bn6_rate_aggregate(tmp_path, *, shared_declaration=False):
     base, _, _ = _quality_first_row(tmp_path / 'base')
     records = []
+    shared_source = _bn6_sample(tmp_path / 'shared/benchmark_set') if shared_declaration else None
     for index, fps in enumerate((20., 25., 30.), 1):
-        row = _bn6_repeat(base, tmp_path, index)
+        row = _bn6_repeat(base, tmp_path, index, source_sample=shared_source)
         row.update(ok=True, status='ok', runtime_success=True, task='detection',
                    measurement_boundary='workers_ready_to_last_completed_task_frame',
                    completed_work_units=1000, completed_frames=1000,
@@ -316,3 +317,18 @@ def test_bn6_rate_projection_rejects_changed_original_single_rate(tmp_path, fiel
     aggregate = _bn6_rate_aggregate(tmp_path)
     aggregate['repetition_records'][1][field] = value
     assert final._final_rate_fields(aggregate)['completed_task_fps'] is None
+
+
+def test_bn6_shared_declaration_retains_original_verbatim_operating_point_path(tmp_path):
+    aggregate = _bn6_rate_aggregate(tmp_path, shared_declaration=True)
+    original = copy.deepcopy(aggregate['repetition_records'])
+    proofs = [final._verified_repetition_operating_point(r, require_observation=True) for r in original]
+    assert all(proofs) and len({p['operating_point_sha256'] for p in proofs}) == 1
+    assert all(p['completion_contract_provenance_normalized'] is False for p in proofs)
+    assert len({r['completion_execution_contract_sha256'] for r in original}) == 1
+    fields = final._final_rate_fields(aggregate)
+    assert fields['completed_task_fps_median'] == 25.
+    assert fields['fps_repetition_samples'] == [20., 25., 30.]
+    assert aggregate['repetition_records'] == original
+    aggregate.update(fields)
+    assert final._final_rate_fields(aggregate)['completed_task_rate'] == fields['completed_task_rate']

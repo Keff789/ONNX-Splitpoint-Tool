@@ -2983,7 +2983,13 @@ def _verified_repetition_operating_point(
     options = command.get('runtime_options') or {}
     execution = options.get('completion_execution_contract') or {}
     processor = execution.get('processor_contract') or {}
-    if processor.get('schema') == 'onnx-splitpoint/attested-decoded-nms-materialization':
+    source_attestation = proof.get('output_endpoint_attestation') or {}
+    declared_source = source_attestation.get('declared_contract') or {}
+    declaration_locations = [source_attestation.get('declaration_source')]
+    if isinstance(declared_source, Mapping):
+        declaration_locations.append(declared_source.get('declaration_source'))
+    if (processor.get('schema') == 'onnx-splitpoint/attested-decoded-nms-materialization'
+            and any(location(value) != value for value in declaration_locations)):
         # Each BN6 declaration and every dependent seal remains individually
         # verified. Only this existing report projection substitutes repNN in
         # declaration provenance; the product builder derives its dependencies.
