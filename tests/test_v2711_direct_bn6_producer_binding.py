@@ -1213,6 +1213,7 @@ def test_deepx_yolov7_template_projects_portable_completed_v2_screening(
     portable_hash = "c" * 64
     legacy_result = completion["frozen_postprocess_result"]
     for field in (
+        "postflight_oracle",  # Archived hash-only V1 rows had no postflight proof.
         "coordinate_space",
         "record_schema",
         "canonical_sort_policy",

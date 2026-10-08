@@ -305,6 +305,19 @@ def test_partial_declared_universe_has_diagnostic_correlation_only() -> None:
     assert _summary["development_diagnostic_leader_method_id"] == ""
 
 
+def _completed_fixture(fps: float) -> dict:
+    return {
+        "fps_makespan": fps, "completed_work_units": 1000,
+        "makespan_ms": 1_000_000.0 / fps,
+        "measurement_endpoint": "completed_task",
+        "measurement_boundary": "first_task_start_to_last_task_completion",
+        "postprocess_completion_verified": True, "postprocess_completed_frames": 1000,
+        "timing_input_binding": {
+            "input_image_sha256": "1" * 64, "canonical_rgb_sha256": "2" * 64,
+        },
+    }
+
+
 def test_cross_runner_retains_screening_pairs_by_eligibility_tier(
     tmp_path: Path,
 ) -> None:
@@ -332,6 +345,7 @@ def test_cross_runner_retains_screening_pairs_by_eligibility_tier(
             "variant": "split",
             "runner_regime": "generic",
             "cycle_ms": float(index * 10),
+            **_completed_fixture(1000.0 / float(index * 10)),
             "task_quality_decision": "pass",
             "contract_consistent": False,
             "ranking_eligible": False,
@@ -363,6 +377,7 @@ def test_cross_runner_retains_screening_pairs_by_eligibility_tier(
             "backend": "hailo10h_to_trt",
             "ok": True,
             "fps_makespan": 1000.0 / float(index * 5),
+            **_completed_fixture(1000.0 / float(index * 5)),
             "output_endpoint_match": True,
             "comparison_stratum_explicit": True,
             "quality_evidence_verified": True,
@@ -376,6 +391,7 @@ def test_cross_runner_retains_screening_pairs_by_eligibility_tier(
             "semantic_ok": True,
             "task_valid": True,
             "accuracy_gate_pass": True,
+            "task_quality_decision": "pass",
             "contract_consistent": False,
         })
     (reports / "native_producer_combined_summary.json").write_text(
@@ -424,6 +440,7 @@ def test_general_gate_status_alone_does_not_pass_cross_runner_quality(
             "variant": "split",
             "runner_regime": "generic",
             "cycle_ms": float(index),
+            **_completed_fixture(1000.0 / float(index)),
             "gate_status": "pass",
         })
         native_rows.append({
@@ -433,6 +450,7 @@ def test_general_gate_status_alone_does_not_pass_cross_runner_quality(
             "backend": "hailo8_to_tensorrt",
             "ok": True,
             "fps_makespan": 1000.0 / float(index),
+            **_completed_fixture(1000.0 / float(index)),
             "output_endpoint_match": True,
             "comparison_stratum_explicit": True,
             "quality_evidence_verified": True,
@@ -481,6 +499,7 @@ def test_cross_runner_preserves_reverse_direction(tmp_path: Path) -> None:
         "variant": "split",
         "runner_regime": "generic",
         "cycle_ms": 10.0,
+        **_completed_fixture(100.0),
     }
     native = {
         **exact,
@@ -489,6 +508,7 @@ def test_cross_runner_preserves_reverse_direction(tmp_path: Path) -> None:
         "backend": "tensorrt_to_hailo10h",
         "ok": True,
         "fps_makespan": 200.0,
+        **_completed_fixture(200.0),
         "output_endpoint_match": True,
         "comparison_stratum_explicit": True,
     }

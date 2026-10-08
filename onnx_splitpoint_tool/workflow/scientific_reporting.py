@@ -53,7 +53,9 @@ from ..quality_result_contract import (UNCERTAINTY_FIELDS, project_quality_resul
 from ..accuracy_reporting import assessment_fields
 from ..validation.accuracy_gates import AccuracyGatePolicy, apply_accuracy_gate_to_row
 from .artifacts import now_iso, read_json, relpath, sha256_file, sha256_json, write_csv, write_json, write_text
-from .cross_runner_reporting import compute_cross_runner_report, markdown_for_cross_runner
+from .cross_runner_reporting import (
+    compute_cross_runner_report, markdown_for_cross_runner, _measured_generic_fps,
+)
 from .evidence_status import (project_native_evidence_status, workflow_completion_projection, project_historical_workflow_status)
 
 REPORT_SCHEMA = "onnx-splitpoint/scientific-report"
@@ -498,6 +500,8 @@ def _archived_scientific_performance_rows(
             "runtime_numeric_input_identity",
             "runtime_input_encoding_identity",
             "output_endpoint_attestation",
+            "timing_input_binding", "input_binding", "generic_runtime_source_binding",
+            "implementation_artifacts_before",
         ):
             value = row.get(field)
             if not isinstance(value, str) or not value.strip().startswith("{"):
@@ -3796,6 +3800,15 @@ def _scientific_row(row: Mapping[str, Any]) -> dict[str, Any]:
         # Preserve the measured endpoint and its existing completion evidence
         # through Scientific JSON/CSV; never infer completion from a rate.
         "measurement_endpoint": row.get("measurement_endpoint"),
+        **{key: row.get(key) for key in (
+            "timing_input_binding", "input_binding", "input_image_sha256", "measurement_boundary",
+            "canonical_rgb_sha256", "preprocessing_contract_sha256",
+            "generic_runtime_source_binding", "implementation_artifacts_before",
+            "runtime_input_reuse_mode", "input_copy_mode", "streaming_impl",
+            "inflight", "queue_depth", "completion_mode", "measurement_mode",
+            "throughput_mode", "throughput_fps_makespan", "fps_makespan",
+            "completed_task_fps", "completed_task_fps_median",
+        )},
         "postprocess_included": row.get("postprocess_included"),
         "postprocess_completion_verified": row.get("postprocess_completion_verified"),
         "postprocess_completed_frames": row.get("postprocess_completed_frames"),
@@ -3964,6 +3977,18 @@ def _scientific_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "predicted_fps": row.get("predicted_fps"),
         "prediction_score": row.get("prediction_score"),
     }
+    measured_fps, measured_source = _measured_generic_fps(row)
+    scientific_row["measured_throughput_fps"] = measured_fps
+    scientific_row["measured_throughput_source"] = measured_source
+    scientific_row["diagnostic_cycle_ms"] = scientific_row["cycle_ms"]
+    scientific_row["diagnostic_cycle_rate_fps"] = scientific_row["throughput_fps"]
+    scientific_row["throughput_observation_semantics"] = (
+        "measured_count_time" if measured_fps is not None
+        else "legacy_rate_or_latency_diagnostic_only"
+    )
+    if measured_fps is not None:
+        scientific_row["throughput_fps"] = measured_fps
+        scientific_row["cycle_ms"] = 1000.0 / measured_fps
     scientific_row["row_status"] = str(
         row.get("row_status")
         or (

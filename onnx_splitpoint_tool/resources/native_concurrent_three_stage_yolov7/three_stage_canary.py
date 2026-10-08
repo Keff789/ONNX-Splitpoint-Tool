@@ -612,7 +612,7 @@ def _campaign_configuration(config: Mapping[str, Any]) -> dict[str, Any]:
     duration = value.get("duration_s", 0.0)
     if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not math.isfinite(duration) or duration < 0:
         raise RuntimeError("campaign_duration_invalid")
-    if duration == 0 and (value["frames"], value["warmup"], value["repetitions"]) != (1000, 100, 3):
+    if duration == 0 and ((value["frames"], value["warmup"]) != (1000, 100) or value["repetitions"] not in (1, 3)):
         raise RuntimeError("campaign_performance_budget_mismatch")
     if duration and (duration != 60.0 or value["warmup"] != 0 or value["repetitions"] != 1):
         raise RuntimeError("campaign_energy_budget_mismatch")
@@ -742,7 +742,14 @@ def run_campaign(config: Mapping[str, Any], *, out_root: Path) -> dict[str, Any]
         value[name] = {**value[name], **bound[name]}
     tool_root = Path(config.get("tool_root") or HERE.parents[2])
     _verified_oracle_sources(tool_root, value["processor_contract"])
-    library_path = build_cpp(out / "cpp_runtime")
+    if value.get("native_executable"):
+        existing_library = _campaign_artifact(value["native_executable"])
+        library_path = Path(existing_library["path"])
+    elif value.get("build", True):
+        existing_library = None
+        library_path = build_cpp(out / "cpp_runtime")
+    else:
+        raise RuntimeError("campaign_no_build_requires_bound_native_executable")
     artifacts = {name: {"path": str(path), "sha256": sha256_file(path), "size_bytes": path.stat().st_size}
                  for name, path in {"native_executable": library_path, "generated_cpp": CPP_DIR / "three_stage_canary.cpp",
                                     "cmake": CPP_DIR / "CMakeLists.txt"}.items()}
@@ -759,16 +766,18 @@ def run_campaign(config: Mapping[str, Any], *, out_root: Path) -> dict[str, Any]
         runtime_id, repetition_id = uuid.uuid4().hex, uuid.uuid4().hex
         context = CampaignCallbackContext(value, {"runtime_instance_id": runtime_id, "repetition_id": repetition_id,
             "process_local_repetition_index": index, "input_image_sha256": value["input_image"]["sha256"]})
-        print(f"[three-stage campaign] repetition {index}/3 warmup=100 tasks=1000", flush=True)
+        print(f"[three-stage campaign] repetition {index}/{value['repetitions']} warmup=100 tasks=1000", flush=True)
         runtime = library.run_campaign(value, out_json=rep_dir / "runtime.json", context=context, runtime_instance_id=runtime_id)
         rep = _campaign_repetition(value, runtime, context, index=index, runtime_id=runtime_id,
                                   repetition_id=repetition_id, out=rep_dir)
         for name in bound:
             if _campaign_artifact(value[name]) != bound[name]:
                 raise RuntimeError("campaign_artifact_changed_during_measurement:" + name)
+        if existing_library is not None and _campaign_artifact(value["native_executable"]) != existing_library:
+            raise RuntimeError("campaign_native_executable_changed_during_measurement")
         report["repetitions"].append(rep)
         report_path.write_text(json.dumps(report, indent=2) + "\n")
-        print(f"[three-stage campaign] repetition {index}/3 completed={rep['completed_work_units']}", flush=True)
+        print(f"[three-stage campaign] repetition {index}/{value['repetitions']} completed={rep['completed_work_units']}", flush=True)
     report["status"] = "completed"
     report["ok"] = True
     report_path.write_text(json.dumps(report, indent=2) + "\n")

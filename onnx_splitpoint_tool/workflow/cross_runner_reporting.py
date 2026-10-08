@@ -51,6 +51,8 @@ def _quality_decision(row: Mapping[str, Any]) -> str:
         "task_quality_status", "quality_gate_status",
     ):
         text = str(row.get(key) or "").strip().lower().replace("-", "_")
+        if text in {"reference_close", "accuracy_loss", "not_estimable"}:
+            return text
         if text in {"pass", "passed", "quality_pass", "quality_passed", "eligible"}:
             decisions.append("pass")
         elif text in {"fail", "failed", "quality_fail", "quality_failed"}:
@@ -63,10 +65,7 @@ def _quality_decision(row: Mapping[str, Any]) -> str:
         return "inconclusive"
     if "pass" in decisions:
         return "pass"
-    if _b(row.get("accuracy_gate_pass")) is True:
-        return "pass"
-    if _b(row.get("accuracy_gate_pass")) is False:
-        return "fail"
+    # The technical accuracy gate alone does not classify the observed loss.
     return "unavailable"
 
 
@@ -507,6 +506,80 @@ def _measured_native_fps(row: Mapping[str, Any]) -> tuple[float | None, str]:
     return None, ""
 
 
+def _measured_generic_fps(row: Mapping[str, Any]) -> tuple[float | None, str]:
+    """Keep observed count/time rates separate from pipeline cycle estimates."""
+    throughput = row.get("throughput")
+    throughput = throughput if isinstance(throughput, Mapping) else {}
+    modes = (row.get("throughput_mode"), row.get("measurement_mode"), throughput.get("mode"))
+    if any("estimated" in str(mode).lower() or "modeled" in str(mode).lower()
+           or "modelled" in str(mode).lower() for mode in modes):
+        return None, "estimated_rate_only"
+    for key in ("completed_task_fps", "completed_task_fps_median", "fps_makespan",
+                "throughput_fps_makespan", "pipeline_fps_measured"):
+        value = _f(row.get(key))
+        if value is not None and value > 0:
+            return value, key
+    value = _f(throughput.get("fps_makespan"))
+    if value is not None and value > 0:
+        return value, "throughput.fps_makespan"
+    return None, "measured_count_time_rate_unavailable"
+
+
+def _timing_input_match(left: Mapping[str, Any], right: Mapping[str, Any]) -> tuple[bool, str]:
+    """Compare task pixels, allowing different valid backend encodings.
+
+    Historical paired runs may prove the stronger exact-prepared-input identity
+    instead. An image hash by itself cannot establish equal preprocessing.
+    """
+    if left.get("execution_metadata_conflicts") or right.get("execution_metadata_conflicts"):
+        return False, "mixed_repetition_execution_metadata"
+
+    def binding(row: Mapping[str, Any]) -> Mapping[str, Any]:
+        for key in ("timing_input_binding", "input_binding"):
+            value = row.get(key)
+            if isinstance(value, Mapping) and value:
+                return value
+        return row
+
+    a, b = binding(left), binding(right)
+    def image_hash(value: Mapping[str, Any]) -> str:
+        return str(value.get("input_image_sha256") or value.get("source_image_sha256") or "")
+    if not image_hash(a) or not image_hash(b):
+        return False, "source_image_binding_missing"
+    if image_hash(a) != image_hash(b):
+        return False, "source_image_mismatch"
+    if a.get("image_sequence") and b.get("image_sequence") and a["image_sequence"] != b["image_sequence"]:
+        return False, "image_sequence_mismatch"
+    raster_a, raster_b = a.get("canonical_rgb_sha256"), b.get("canonical_rgb_sha256")
+    if raster_a and raster_b:
+        return (True, "canonical_rgb_match") if raster_a == raster_b else (False, "canonical_rgb_mismatch")
+    def prepared(value: Mapping[str, Any]) -> list[tuple[Any, ...]]:
+        entries = value.get("entries")
+        if not isinstance(entries, list) or not entries:
+            return []
+        if not all(isinstance(e, Mapping) and e.get("sha256") and e.get("shape") and e.get("dtype") for e in entries):
+            return []
+        return sorted((str(e.get("name") or ""), str(e["sha256"]), tuple(e["shape"]), str(e["dtype"])) for e in entries)
+    pa, pb = prepared(a), prepared(b)
+    if pa and pb:
+        return (True, "historical_exact_prepared_input_match") if pa == pb else (False, "prepared_input_mismatch")
+    return False, "canonical_or_exact_prepared_binding_missing"
+
+
+def _measurement_windows_comparable(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    """Admit documented prepared-input windows with completed-task endpoints."""
+    accepted = {
+        "prepared_input_before_p1_to_last_completed_task",
+        "prepared_input_to_completed_task",
+        "workers_ready_to_last_completed_task_frame",
+        # Legacy label retained by classification runners; separate completion
+        # gates must still prove the required Top1/Top5 work in this window.
+        "workers_ready_to_last_completed_trt_frame",
+        "first_task_start_to_last_task_completion",
+    }
+    return all(str(row.get("measurement_boundary") or "") in accepted for row in (left, right))
+
+
 def _native_theoretical_cycle(row: Mapping[str, Any]) -> tuple[float | None, str]:
     """Return a separately-labelled Native timing-model cycle, if present."""
     for key in (
@@ -548,7 +621,10 @@ def _cycle_ms(row: Mapping[str, Any], *, native: bool = False) -> float | None:
             if value is not None and value > 0:
                 return value
         return None
-    # Keep this priority aligned with the Generic scientific-row projection.
+    measured_fps, _ = _measured_generic_fps(row)
+    if measured_fps is not None:
+        return 1000.0 / measured_fps
+    # Historical diagnostic ordering remains readable when count/time is absent.
     # Full EvaluationRuns feed the reporter normalized benchmark rows, whose
     # canonical values still use the long field names below.  Compact debug
     # packs can instead fall back to archived scientific rows that already
@@ -1359,6 +1435,8 @@ def compute_cross_runner_report(
             )
         )
         generic_cycle = float(generic["_cycle_ms"])
+        generic_measured_fps, generic_measured_source = _measured_generic_fps(generic)
+        timing_input_matches, timing_input_status = _timing_input_match(generic, native)
         native_cycle = float(native["_cycle_ms"])
         native_measured_fps = _f(native.get("_measured_fps"))
         native_measured_cycle = (
@@ -1372,6 +1450,9 @@ def compute_cross_runner_report(
             "generic_completed_task_measured": _completed_task_measurement(generic),
             "native_completed_task_measured": _completed_task_measurement(native, native=True),
             "generic_runtime_measurement_present": generic_cycle > 0,
+            "generic_measured_makespan_present": generic_measured_fps is not None,
+            "timing_input_matches": timing_input_matches,
+            "measurement_windows_comparable": _measurement_windows_comparable(generic, native),
             "generic_measurement_not_explicitly_invalid": (
                 _b(generic.get("measurement_valid")) is not False
             ),
@@ -1449,7 +1530,20 @@ def compute_cross_runner_report(
             "generic_cycle_ms": generic_cycle,
             "native_cycle_ms": native_cycle,
             "generic_to_native_ratio": generic_cycle / native_cycle if native_cycle > 0 else None,
-            "generic_throughput_fps": 1000.0 / generic_cycle,
+            "generic_throughput_fps": generic_measured_fps,
+            "generic_measured_throughput_fps": generic_measured_fps,
+            "generic_measured_fps_source": generic_measured_source,
+            "generic_ranking_cycle_ms": generic_cycle,
+            "generic_ranking_cycle_semantics": (
+                "measured_makespan_inverse" if generic_measured_fps is not None
+                else "legacy_generic_cycle_ordering_only"
+            ),
+            "generic_diagnostic_cycle_rate_fps": 1000.0 / generic_cycle,
+            "timing_input_comparison_status": timing_input_status,
+            "generic_measurement_boundary": generic.get("measurement_boundary"),
+            "native_measurement_boundary": native.get("measurement_boundary"),
+            "generic_timing_input_binding": generic.get("timing_input_binding") or generic.get("input_binding"),
+            "native_timing_input_binding": native.get("timing_input_binding") or native.get("input_binding"),
             # Compatibility name now carries the measured makespan/row FPS,
             # never a rate inferred from a stage-cycle model.
             "native_throughput_fps": native_measured_fps,

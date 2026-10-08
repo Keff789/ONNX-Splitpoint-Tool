@@ -31,6 +31,7 @@ from onnx_splitpoint_tool.native_output_endpoint import (
 from onnx_splitpoint_tool.native_detection_postprocess import (
     FrozenDecodedNmsPostprocessor,
     FrozenDetectionPostprocessor,
+    native_full_postprocess_runtime_mode,
     FrozenPostprocessError,
     build_completed_detection_endpoint_attestation,
     build_frozen_decoded_nms_normalization_contract,
@@ -540,6 +541,38 @@ def _image_tensor(
     return tensor, np.ascontiguousarray(hwc), prep
 
 
+def _quantize_hailo8_classifier_input(
+    hef_path: Path, source: np.ndarray, *, input_names: list[str],
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Encode canonical ImageNet floats using the exact loaded HEF QuantInfo."""
+    import hailo_platform as hpf  # type: ignore
+    from onnx_splitpoint_tool.runners.backends.hailo_backend import (
+        _hailort_transform_utils, _single_hailo_quant_info,
+    )
+    infos = list(hpf.HEF(str(hef_path)).get_input_vstream_infos())
+    if len(infos) != 1 or len(input_names) != 1:
+        raise RuntimeError("Hailo-8 classifier quantization requires one exact HEF input")
+    info = infos[0]
+    if not str(info.format.type).upper().endswith("UINT8"):
+        raise RuntimeError("Hailo-8 classifier quantization requires HEF-native UINT8")
+    quant = _single_hailo_quant_info(None, info, label="Hailo-8 classifier input")
+    real_input = np.ascontiguousarray(source, dtype=np.float32)
+    destination = np.empty(real_input.shape, dtype=np.uint8)
+    _hailort_transform_utils(hpf).quantize_input_buffer(
+        real_input, destination, int(real_input.size), quant,
+    )
+    return destination, {
+        "normalization": "hef_quant_info_from_imagenet_mean_std",
+        "source_domain": "float_imagenet_mean_std",
+        "quant_info": {
+            "name": str(info.name),
+            "qp_scale": float(quant.qp_scale),
+            "qp_zp": float(quant.qp_zp),
+            "source": "exact_loaded_hef_quant_info",
+        },
+    }
+
+
 def _verified_preprocessing_evidence(
     preprocess: Mapping[str, Any] | None,
     *,
@@ -834,7 +867,7 @@ def _write_output_dump(
     runtime_input_array = np.ascontiguousarray(input_tensor)
     runtime_input_file.write_bytes(runtime_input_array.tobytes())
     input_manifest = out_dir / "native_full_input_manifest.json"
-    runtime_normalization = (
+    runtime_normalization = str(preprocess.get("normalization") or "") or (
         "embedded_hailo_quantization"
         if preprocess.get("quantized_inputs") is True
         else "imagenet_mean_std"
@@ -859,6 +892,14 @@ def _write_output_dump(
         "input_image": str(image), "input_image_sha256": _file_sha256(image),
         "input_dump": str(input_file),
         "input_dump_sha256": _file_sha256(input_file),
+        "canonical_rgb_sha256": _file_sha256(input_file),
+        "timing_input_binding": {
+            "input_image_sha256": _file_sha256(image),
+            "canonical_rgb_sha256": _file_sha256(input_file),
+            "preprocessing_contract_sha256": str(preprocess.get("preprocessing_contract_sha256") or ""),
+            "sequence": "single_exact_prepared_feed_repeated",
+            "preprocessing_timed": False,
+        },
         "input_dump_bytes": int(input_file.stat().st_size),
         "input_shape_hwc": [int(x) for x in input_hwc.shape],
         "runtime_input_name": input_name, "runtime_input_shape": [int(x) for x in input_tensor.shape],
@@ -1117,6 +1158,11 @@ def main() -> int:
     parser.add_argument("--declared-output-contract-json", default="", help="Optional producer/export endpoint declaration JSON used for fail-closed endpoint attestation.")
     parser.add_argument("--frozen-postprocess-contract-json", default="", help="Sealed raw-head decoder/NMS contract for an energy replay.")
     parser.add_argument(
+        "--postprocess-runtime-mode", default="auto",
+        choices=("auto", "strict", "bound_dense", "bound_exact_sparse"),
+        help="Explicit completion mode; auto selects the bound YOLOv7 raw-head path without fallback.",
+    )
+    parser.add_argument(
         "--frozen-decoded-nms-normalization-contract-json",
         default="",
         help=(
@@ -1255,10 +1301,21 @@ def main() -> int:
             for idx, name in enumerate(prepared.input_names):
                 shape = tuple(input_shapes.get(name, ()))
                 if idx == 0 and exact_image is not None:
+                    encode_hailo8_classifier = bool(
+                        str(args.hw_arch).lower().startswith("hailo8")
+                        and str(args.task or "") == "classification"
+                        and bool(args.quantized_inputs)
+                    )
                     tensor, input_hwc, input_preprocess = _image_tensor(
-                        exact_image, shape, quantized=bool(args.quantized_inputs), task=str(args.task or ""),
+                        exact_image, shape, quantized=bool(args.quantized_inputs) and not encode_hailo8_classifier, task=str(args.task or ""),
                         preprocess_mode=str(args.preprocess_mode), letterbox_pad=int(args.letterbox_pad_value),
                     )
+                    if encode_hailo8_classifier:
+                        tensor, encoding = _quantize_hailo8_classifier_input(
+                            hef_path, tensor, input_names=list(prepared.input_names),
+                        )
+                        input_preprocess.update(encoding)
+                        input_preprocess["quantized_inputs"] = True
                     inputs[name] = tensor
                 else:
                     inputs[name] = _input_tensor(shape, quantized=bool(args.quantized_inputs), seed=args.seed + idx)
@@ -1334,7 +1391,12 @@ def main() -> int:
         if frozen_raw_json:
             raw_contract = json.loads(str(args.frozen_postprocess_contract_json))
             frozen_postprocess_contract = verify_frozen_postprocess_contract(raw_contract)
-            frozen_postprocessor = FrozenDetectionPostprocessor(frozen_postprocess_contract)
+            frozen_postprocessor = FrozenDetectionPostprocessor(
+                frozen_postprocess_contract,
+                runtime_mode=(native_full_postprocess_runtime_mode(frozen_postprocess_contract)
+                              if args.postprocess_runtime_mode == "auto"
+                              else args.postprocess_runtime_mode),
+            )
         elif frozen_direct_json:
             raw_contract = json.loads(frozen_direct_json)
             frozen_decoded_nms_normalization_contract = (
@@ -1388,7 +1450,12 @@ def main() -> int:
                     input_hw=input_hw,
                     original_wh=original_wh,
                 )
-                frozen_postprocessor = FrozenDetectionPostprocessor(frozen_postprocess_contract)
+                frozen_postprocessor = FrozenDetectionPostprocessor(
+                    frozen_postprocess_contract,
+                    runtime_mode=(native_full_postprocess_runtime_mode(frozen_postprocess_contract)
+                                  if args.postprocess_runtime_mode == "auto"
+                                  else args.postprocess_runtime_mode),
+                )
             elif probe_family == "decoded_nms":
                 if original_wh is None:
                     raise RuntimeError(
@@ -1449,15 +1516,19 @@ def main() -> int:
                 canonical_outputs = _canonicalize_frozen_postprocess_outputs(
                     outputs, frozen_postprocess_contract,
                 )
-                return frozen_postprocessor.process(
+                return (frozen_postprocessor.process_task if frozen_postprocessor.runtime_mode != "strict" else frozen_postprocessor.process)(
                     canonical_outputs, original_wh=original_wh,
                 )
             if decoded_nms_normalizer is not None:
-                return decoded_nms_normalizer.process(
+                return decoded_nms_normalizer.process_task(
                     outputs, original_wh=original_wh,
                 )
             raise RuntimeError("Native Full completion processor is missing")
 
+        implementation_before = (
+            frozen_postprocessor.assert_implementation_unchanged()
+            if frozen_postprocessor is not None else {}
+        )
         last_outputs: dict[str, Any] = {}
         timings_ms: list[float] = []
         request_latency = RequestLatency(
@@ -1618,12 +1689,18 @@ def main() -> int:
             else:
                 print("[hailo10-smoke] no timed runs requested")
 
+        implementation_after = (
+            frozen_postprocessor.assert_implementation_unchanged()
+            if frozen_postprocessor is not None else {}
+        )
         if (
             bool(args.dump_outputs)
             and not last_outputs
             and frozen_postprocess_probe_outputs
         ):
             last_outputs = dict(frozen_postprocess_probe_outputs)
+        if hasattr(completion_processor, "finalize_evidence"):
+            completion_processor.finalize_evidence()
         output_summary = _summarize_outputs(last_outputs)
         print("[hailo10-smoke] output_summary:", json.dumps(output_summary, sort_keys=True))
         output_manifest = ""
@@ -1704,7 +1781,7 @@ def main() -> int:
                     or "preflight_bound_preprocessed_tensor"
                 )
             else:
-                runtime_normalization = (
+                runtime_normalization = str((input_preprocess or {}).get("normalization") or "") or (
                     "embedded_hailo_quantization" if bool(args.quantized_inputs)
                     else "imagenet_mean_std" if str(args.task or "") == "classification"
                     else "divide_255"
@@ -1944,6 +2021,10 @@ def main() -> int:
                     if frozen_postprocessor is not None else {}
                 ),
                 "host_postprocess_frozen": frozen_postprocessor is not None,
+                "postprocess_runtime_mode": getattr(frozen_postprocessor, "runtime_mode", "not_applicable"),
+                "implementation_artifacts_before": implementation_before,
+                "implementation_artifacts_after": implementation_after,
+                "implementation_source_drift_checked": True,
                 "normalization_frozen": decoded_nms_normalizer is not None,
                 "frozen_decoded_nms_normalization_contract": (
                     frozen_decoded_nms_normalization_contract

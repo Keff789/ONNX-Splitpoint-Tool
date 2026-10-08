@@ -2557,6 +2557,16 @@ def normalize_benchmark_row(row: Mapping[str, Any], *, model_id: str, source_pat
         "runtime_numeric_input_sha256": str(
             row.get("runtime_numeric_input_sha256") or ""
         ).strip().lower().removeprefix("sha256:"),
+        **{key: row.get(key) for key in (
+            "timing_input_binding", "input_binding", "input_image_sha256", "measurement_boundary",
+            "canonical_rgb_sha256", "preprocessing_contract_sha256",
+            "generic_runtime_source_binding", "implementation_artifacts_before",
+            "runtime_input_reuse_mode", "input_copy_mode", "streaming_impl",
+            "inflight", "queue_depth", "completion_mode", "measurement_mode",
+            "throughput_mode", "throughput_fps_makespan", "fps_makespan",
+            "completed_task_fps", "completed_task_fps_median",
+            "postprocess_completion_verified", "postprocess_completed_frames",
+        )},
         "repetition_index": _first(
             row,
             ("repetition_index", "process_local_repetition_index", "repeat_idx", "repeat_index"),
@@ -3282,6 +3292,13 @@ def _validation_report_to_row(report: Mapping[str, Any], path: Path) -> dict[str
         "setup_id", "source_setup_id", "measurement_setup_id", "hardware_setup_id",
         "measurement_endpoint", "full_measurement_endpoint", "quality_endpoint",
         "measurement_endpoints_by_variant", "task_quality_input_requests_by_variant",
+        "timing_input_binding", "input_binding", "input_image_sha256", "measurement_boundary",
+        "canonical_rgb_sha256", "preprocessing_contract_sha256",
+        "generic_runtime_source_binding", "implementation_artifacts_before",
+        "runtime_input_reuse_mode", "input_copy_mode", "streaming_impl",
+        "inflight", "queue_depth", "completion_mode", "measurement_mode",
+        "completed_task_fps", "completed_task_fps_median",
+        "postprocess_completion_verified", "postprocess_completed_frames",
     ):
         if report.get(key) not in (None, ""):
             row[key] = report[key]

@@ -6609,6 +6609,8 @@ def _energy_workload_only(ns: argparse.Namespace) -> int:
         **{key: payload_map.get(key) for key in (
             "task_complete", "completed_task_stage", "postprocess_included",
             "postprocess_completed_frames", "postprocess_completion_verified",
+            "postprocess_runtime_mode", "implementation_artifacts_before",
+            "implementation_artifacts_after", "implementation_source_drift_checked",
         )},
         "completed_work_units_source": "verified_full_energy_hotloop",
         "requested_work_units": frames,
@@ -7772,6 +7774,10 @@ def _attach_trt_completed_task_hotloop(
             payload.get("latency_semantics") or ""
         ),
         "fps_source": "native_trt_full_completed_hotloop",
+        **{key: payload.get(key) for key in (
+            "postprocess_runtime_mode", "implementation_artifacts_before",
+            "implementation_artifacts_after", "implementation_source_drift_checked",
+        )},
         "measured_duration_s": _num(payload.get("measured_duration_s")),
         "measurement_endpoint": "completed_task",
         "measurement_boundary": "first_task_start_to_last_task_completion",
@@ -9491,7 +9497,7 @@ def _native_hailo_full(
         "--runtime-api", "vstreams" if is_hailo8 else "infer_model",
         "--frames", str(max(1, int(ns.frames))),
         "--warmup", str(max(0, int(ns.warmup))),
-        "--inflight", "1",
+        "--inflight", str(1 if is_hailo8 else max(1, int(ns.inflight))),
         "--task", task,
         "--preprocess-mode", preprocess_mode,
         "--letterbox-pad-value", str(letterbox_pad_value),
@@ -9805,7 +9811,7 @@ def _native_hailo_full(
             "decoded_nms" if postprocess_required
             else str(manifest_payload.get("contract_family") or "")
         ),
-        "measurement_concurrency": 1,
+        "measurement_concurrency": int(throughput.get("inflight") or 1),
         "configured_inflight": max(1, int(ns.inflight)),
         "host_postprocess_frozen": bool(
             host_postprocess_required and frozen_contract
@@ -9822,6 +9828,10 @@ def _native_hailo_full(
         ),
         "postprocess_completed_frames": postprocess_completed_frames,
         "postprocess_completion_verified": postprocess_completion_verified,
+        **{key: report.get(key) for key in (
+            "postprocess_runtime_mode", "implementation_artifacts_before",
+            "implementation_artifacts_after", "implementation_source_drift_checked",
+        )},
         "frozen_host_postprocess_contract": frozen_contract,
         "frozen_host_postprocess_contract_sha256": str(
             frozen_contract.get("contract_sha256") or ""
@@ -10161,6 +10171,7 @@ def _generic_full_via_suite(
         cmd.extend(["--prepared-feed-image", str(expected_prepared_image)])
     if backend == "native_full_deepx":
         cmd.extend([
+            "--native-full-postprocess-runtime-mode", "auto",
             "--prepared-input-manifest",
             str(prepared_input_manifest.resolve()),
             "--quality-evidence-model-id",
@@ -10654,6 +10665,10 @@ def _generic_full_via_suite(
         "postprocess_included": deepx_postprocess_required,
         "postprocess_completed_frames": deepx_postprocess_completed,
         "postprocess_completion_verified": deepx_postprocess_completion_verified,
+        **{key: prepared_feed.get(key) for key in (
+            "postprocess_runtime_mode", "implementation_artifacts_before",
+            "implementation_artifacts_after", "implementation_source_drift_checked",
+        )},
         "frozen_host_postprocess_contract": deepx_frozen_contract,
         "frozen_host_postprocess_contract_sha256": str(
             deepx_frozen_contract.get("contract_sha256") or ""
@@ -11036,7 +11051,7 @@ def main() -> int:
     parser.add_argument("--setup-id", default="")
     parser.add_argument("--comparison-backend", default="")
     parser.add_argument("--comparison-precision", default="", help="Legacy Split-boundary comparison stratum. This is not the Full runtime precision.")
-    parser.add_argument("--inflight", type=int, default=8)
+    parser.add_argument("--inflight", type=int, default=1)
     parser.add_argument("--trt-precision", default="fp16")
     parser.add_argument(
         "--trt-quality-producer-json", default="",

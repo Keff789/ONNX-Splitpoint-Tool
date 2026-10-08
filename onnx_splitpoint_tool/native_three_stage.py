@@ -290,152 +290,20 @@ def _exact_sigmoid(value: np.ndarray) -> np.ndarray:
 
 
 class _ExactSparseYoloV7Decoder:
-    """Prebound sparse YOLOv7 decoder preserving frozen clipped-sigmoid semantics."""
+    """Existing Fast-runtime adapter over the shared exact YOLOv7 decoder."""
 
     def __init__(self, processor_contract: Mapping[str, Any]) -> None:
+        from .runners.harness.yolo import ExactSparseYoloV7Decoder
         self.contract = dict(processor_contract)
-        self.input_hw = tuple(int(value) for value in self.contract["input_hw"])
-        self.confidence_threshold = np.float32(
-            self.contract["confidence_threshold"]
-        )
-        model_bound = self.contract.get("model_bound_decoder_contract")
-        if not isinstance(model_bound, Mapping):
-            raise NativeThreeStageError("model_bound_decoder_contract_missing")
-        if str(model_bound.get("activation_mode") or "") != "logits":
-            raise NativeThreeStageError(
-                "yolov7_sparse_requires_logits_contract"
-            )
-        from .runners.harness.yolo import YOLOV7_SIGMOID_ARITHMETIC, _yolov7_sigmoid_float64_to_float32
-        self._sigmoid = (
-            _yolov7_sigmoid_float64_to_float32
-            if model_bound.get("sigmoid_arithmetic") == YOLOV7_SIGMOID_ARITHMETIC
-            else _exact_sigmoid
-        )
-        plans: list[_YoloV7HeadPlan] = []
-        for record in model_bound["anchors_by_stride"]:
-            stride = int(record["stride"])
-            grid_h, grid_w = (int(value) for value in record["grid_hw"])
-            anchors = np.asarray(record["anchors_wh"], dtype=np.float32)
-            if anchors.shape != (3, 2):
-                raise NativeThreeStageError("yolov7_anchor_shape_invalid")
-            ys, xs = np.meshgrid(
-                np.arange(grid_h), np.arange(grid_w), indexing="ij"
-            )
-            anchor_count = int(anchors.shape[0])
-            plans.append(_YoloV7HeadPlan(
-                stride=stride,
-                grid_h=grid_h,
-                grid_w=grid_w,
-                channels=85,
-                grid_x_flat=np.broadcast_to(
-                    xs, (anchor_count, grid_h, grid_w)
-                ).reshape(-1).astype(np.float32),
-                grid_y_flat=np.broadcast_to(
-                    ys, (anchor_count, grid_h, grid_w)
-                ).reshape(-1).astype(np.float32),
-                anchor_index_flat=np.broadcast_to(
-                    np.arange(anchor_count)[:, None, None],
-                    (anchor_count, grid_h, grid_w),
-                ).reshape(-1),
-                anchors_wh=anchors,
-            ))
-        self.plans = sorted(plans, key=lambda item: item.stride)
-
-    def ordered_heads(self, outputs: Mapping[str, Any]) -> list[np.ndarray]:
-        # The execution contract already canonicalizes YOLOv7 physical names.
-        values = list(outputs.values())
-        by_grid: dict[int, np.ndarray] = {}
-        for value in values:
-            array = np.asarray(value)
-            if array.ndim != 5 or array.shape[0] != 1 or array.shape[1] != 3:
-                raise NativeThreeStageError(
-                    "yolov7_sparse_head_shape_invalid"
-                )
-            if int(array.shape[-1]) != 85 or int(array.shape[2]) != int(array.shape[3]):
-                raise NativeThreeStageError(
-                    "yolov7_sparse_head_geometry_invalid"
-                )
-            grid = int(array.shape[2])
-            if grid in by_grid:
-                raise NativeThreeStageError(
-                    "yolov7_sparse_duplicate_head_geometry"
-                )
-            by_grid[grid] = array.astype(np.float32, copy=False)
-        heads: list[np.ndarray] = []
-        for plan in self.plans:
-            try:
-                heads.append(by_grid[plan.grid_h])
-            except KeyError as exc:
-                raise NativeThreeStageError(
-                    f"yolov7_sparse_missing_head:{plan.grid_h}"
-                ) from exc
-        if len(by_grid) != len(self.plans):
-            raise NativeThreeStageError("yolov7_sparse_extra_head")
-        return heads
+        self._decoder = ExactSparseYoloV7Decoder(self.contract["model_bound_decoder_contract"])
 
     def decode(self, outputs: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        all_boxes: list[np.ndarray] = []
-        all_scores: list[np.ndarray] = []
-        all_classes: list[np.ndarray] = []
-        for plan, tensor in zip(self.plans, self.ordered_heads(outputs)):
-            flat = tensor[0].reshape(-1, plan.channels)
-            objectness = self._sigmoid(flat[:, 4]).astype(
-                np.float32, copy=False
-            )
-            objectness_indices = np.flatnonzero(
-                objectness >= self.confidence_threshold
-            )
-            if objectness_indices.size == 0:
-                continue
-            selected = flat[objectness_indices]
-            # Preserve clipping, sigmoid dtype and tie behaviour, but only for
-            # candidates that can still pass the final score threshold.
-            class_probabilities = self._sigmoid(selected[:, 5:]).astype(
-                np.float32, copy=False
-            )
-            class_ids = np.argmax(class_probabilities, axis=1)
-            class_scores = class_probabilities[
-                np.arange(class_probabilities.shape[0]), class_ids
-            ]
-            scores = (
-                objectness[objectness_indices] * class_scores
-            ).astype(np.float32, copy=False)
-            score_keep = scores >= self.confidence_threshold
-            final_indices = objectness_indices[score_keep]
-            if final_indices.size == 0:
-                continue
-            raw = flat[final_indices]
-            txy = self._sigmoid(raw[:, 0:2]).astype(np.float32, copy=False)
-            twh = self._sigmoid(raw[:, 2:4]).astype(np.float32, copy=False)
-            grid = np.stack([
-                plan.grid_x_flat[final_indices],
-                plan.grid_y_flat[final_indices],
-            ], axis=1)
-            xy = (txy * 2.0 - 0.5 + grid) * float(plan.stride)
-            wh = (
-                (twh * 2.0) ** 2
-                * plan.anchors_wh[plan.anchor_index_flat[final_indices]]
-            )
-            boxes = np.stack([
-                xy[:, 0] - wh[:, 0] / 2.0,
-                xy[:, 1] - wh[:, 1] / 2.0,
-                xy[:, 0] + wh[:, 0] / 2.0,
-                xy[:, 1] + wh[:, 1] / 2.0,
-            ], axis=1)
-            all_boxes.append(boxes.astype(np.float32, copy=False))
-            all_scores.append(scores[score_keep])
-            all_classes.append(class_ids[score_keep].astype(np.int64))
-        if not all_boxes:
-            return (
-                np.zeros((0, 4), dtype=np.float32),
-                np.zeros((0,), dtype=np.float32),
-                np.zeros((0,), dtype=np.int64),
-            )
-        return (
-            np.concatenate(all_boxes, axis=0).astype(np.float32, copy=False),
-            np.concatenate(all_scores, axis=0).astype(np.float32, copy=False),
-            np.concatenate(all_classes, axis=0).astype(np.int64, copy=False),
-        )
+        from .native_detection_postprocess import _layout_yolov7_heads
+        canonical = _layout_yolov7_heads(outputs, input_hw=self.contract["input_hw"])
+        # The decoder validates every value, including rejected candidates, on
+        # these same views in this call. No mutable-buffer validation is cached.
+        decoded = self._decoder.decode([canonical[stride] for stride in (8, 16, 32)])
+        return decoded.boxes_xyxy, decoded.scores, decoded.class_ids
 
 
 class FastDetectionCompletionRuntime:
@@ -454,11 +322,13 @@ class FastDetectionCompletionRuntime:
             verify_detection_completion_execution_contract,
         )
 
+        import json
+        from .native_detection_postprocess import canonical_json_bytes
+        self.completion_runtime_mode = "fast_oracle_outside_timing"
         self._error_type = FrozenPostprocessError
         self._canonical_records = _canonical_detection_records
-        self.execution_contract = verify_detection_completion_execution_contract(
-            execution_contract
-        )
+        self.execution_contract = json.loads(canonical_json_bytes(
+            verify_detection_completion_execution_contract(execution_contract)))
         self._lock = threading.Lock()
         self.completed_count = 0
         self.last_result: dict[str, Any] = {}
@@ -501,10 +371,20 @@ class FastDetectionCompletionRuntime:
             self.adapter_id = ADAPTER_YOLO26_DECODED
             self._sparse = None
             self._harness = None
+            from .native_detection_postprocess import _AttestedDecodedNmsMaterializer
+            # Keep source-attested NMS and graph top-k BN6 semantics distinct.
+            # The shared materializer enforces the bound candidate-selection
+            # rules and never applies a second NMS or hashes per task.
+            self._materializer = _AttestedDecodedNmsMaterializer(
+                processor_contract, hash_detections=False,
+            )
         else:
             raise NativeThreeStageError(
                 f"native_three_stage_completion_mode_unsupported:{mode}"
             )
+
+        from .native_detection_postprocess import bind_detection_completion_runtime_sources
+        bind_detection_completion_runtime_sources(self, __file__)
 
     def _deletterbox_records(
         self,
@@ -569,61 +449,8 @@ class FastDetectionCompletionRuntime:
         )
 
     def _decoded_nms_records(self, outputs: Mapping[str, Any]) -> list[dict[str, Any]]:
-        array = np.asarray(next(iter(outputs.values())))
-        rows = np.asarray(array, dtype=np.float64).reshape(-1, 6)
-        if not bool(np.isfinite(rows).all()):
-            raise NativeThreeStageError(
-                "decoded_nms_materialization_nonfinite_values"
-            )
-        scores = rows[:, 4]
-        classes = rows[:, 5]
-        if (
-            bool(np.any(scores < 0.0))
-            or bool(np.any(scores > 1.0))
-            or bool(np.any(classes < 0.0))
-            or not bool(np.equal(classes, np.rint(classes)).all())
-            or bool(np.any(rows[:, 2] < rows[:, 0]))
-            or bool(np.any(rows[:, 3] < rows[:, 1]))
-        ):
-            raise NativeThreeStageError(
-                "decoded_nms_materialization_source_values_invalid"
-            )
-        kept = rows[
-            scores >= float(self.processor_contract["confidence_threshold"])
-        ]
-        if len(kept) > int(self.processor_contract["max_detections"]):
-            raise NativeThreeStageError(
-                "decoded_nms_materialization_count_exceeds_source_contract"
-            )
-        geometry = self.processor_contract["letterbox_geometry_contract"]
-        gain = float(geometry["gain"])
-        pad_left = float(geometry["pad_left"])
-        pad_top = float(geometry["pad_top"])
-        original_width, original_height = (
-            int(value) for value in geometry["original_wh"]
-        )
-        records: list[dict[str, Any]] = []
-        for row in kept:
-            x1 = min(original_width, max(0.0, (float(row[0]) - pad_left) / gain))
-            y1 = min(original_height, max(0.0, (float(row[1]) - pad_top) / gain))
-            x2 = min(original_width, max(0.0, (float(row[2]) - pad_left) / gain))
-            y2 = min(original_height, max(0.0, (float(row[3]) - pad_top) / gain))
-            if x2 < x1 or y2 < y1:
-                raise NativeThreeStageError(
-                    "decoded_nms_materialization_inverse_geometry_invalid"
-                )
-            records.append({
-                "class_id": int(row[5]),
-                "score": float(row[4]),
-                "x1": x1,
-                "y1": y1,
-                "x2": x2,
-                "y2": y2,
-            })
-        return self._canonical_records(
-            records,
-            max_detections=int(self.processor_contract["max_detections"]),
-        )
+        self._materializer.process(outputs)
+        return self._materializer.last_detections
 
     def process(self, outputs: Mapping[str, Any]) -> dict[str, Any]:
         with self._lock:
@@ -738,6 +565,9 @@ class FastDetectionCompletionRuntime:
             DetectionCompletionRuntime,
             canonical_json_sha256,
         )
+
+        from .native_detection_postprocess import detection_completion_runtime_source_check
+        detection_completion_runtime_source_check(self)
 
         count = self.completed_count if completed_work_units is None else int(
             completed_work_units

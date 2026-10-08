@@ -10,7 +10,6 @@ from .accuracy_reporting import assessment_fields
 import math
 import re
 import statistics
-from statistics import NormalDist
 
 from .energy.config import ENERGY_PRIMARY_METHOD, ENERGY_SHADOW_METHOD
 from .energy.comparison import resolve_energy_comparison
@@ -603,6 +602,18 @@ def _energy_payload(item: Mapping[str, Any]) -> dict[str, Any]:
         # stdout fragments so means/CIs cannot be overwritten by the last
         # individual repeat seen in the bounded log tail.
         _project_authoritative_aggregate(aggregate, out)
+        # A/B shadow windows and per-repeat comparison objects carry their
+        # own diagnostic policy. They must not label the primary collection.
+        # Keep explicit collection-level exclusions binding, including an
+        # exclusion on the result item or run when the aggregate omits it.
+        diagnostic_values = [
+            source.get("diagnostic_only")
+            for source in (item, run, aggregate)
+            if isinstance(source.get("diagnostic_only"), bool)
+        ]
+        out.pop("diagnostic_only", None)
+        if diagnostic_values:
+            out["diagnostic_only"] = any(diagnostic_values)
         out["_native_energy_aggregate"] = aggregate
     return out
 
@@ -710,6 +721,8 @@ def _preserved_campaign_repeat_records(item: Mapping[str, Any]) -> list[dict[str
 def _energy_repeat_records(item: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Return complete per-repeat mappings still visible in bounded logs."""
     run = item.get("run") if isinstance(item.get("run"), Mapping) else {}
+    if run.get("caller_managed_capture_import_status") == "verified":
+        return [dict(record) for record in _energy_aggregate(item).get("runs", [])]
     best: dict[int, dict[str, Any]] = {}
     for field in ("stdout", "stdout_tail", "stderr", "stderr_tail"):
         for value in _parse_json_fragments(str(run.get(field) or "")):
@@ -734,7 +747,9 @@ def _energy_repeat_records(item: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 def _repeat_statistics(values: Sequence[float], confidence_level: float = 0.95) -> dict[str, Any]:
-    vals = [float(value) for value in values if _num(value) is not None]
+    if not math.isfinite(float(confidence_level)) or not 0.0 < float(confidence_level) < 1.0:
+        raise ValueError("confidence_level must be finite and strictly between 0 and 1")
+    vals = [float(value) for value in values if _num(value) is not None and math.isfinite(float(value))]
     n = len(vals)
     result: dict[str, Any] = {
         "n": n,
@@ -751,11 +766,10 @@ def _repeat_statistics(values: Sequence[float], confidence_level: float = 0.95) 
         return result
     stddev = statistics.stdev(vals)
     standard_error = stddev / math.sqrt(n)
-    # Match the collector's dependency-free Student-t approximation closely
-    # enough for an offline fallback when only repeat records remain.
-    z = NormalDist().inv_cdf(0.5 + min(0.999, max(0.50, confidence_level)) / 2.0)
-    df = float(max(1, n - 1))
-    critical = z + (z**3 + z) / (4.0 * df) + (5.0 * z**5 + 16.0 * z**3 + 3.0 * z) / (96.0 * df**2)
+    # Reuse the collector's finite-sample quantile, including its checked
+    # dependency-free implementation when SciPy is unavailable.
+    from .energy.collector import _student_t_critical
+    critical = _student_t_critical(confidence_level, n - 1)
     half_width = critical * standard_error
     result.update({
         "sample_stddev": stddev,
@@ -1459,6 +1473,8 @@ def collect_native_energy(run_dir: str | Path, *, include_partial: bool = False)
     for row_index, item in enumerate(list(data.get("rows") or [])):
         if not isinstance(item, Mapping):
             continue
+        from .energy.caller_managed_reporting import import_caller_managed_energy_item
+        item = import_caller_managed_energy_item(item)
         plan = dict(item.get("row") or {})
         validation, validation_join_status = _validation_evidence_for_plan(
             plan, validations,
@@ -2421,7 +2437,8 @@ def collect_native_energy(run_dir: str | Path, *, include_partial: bool = False)
             "host_normalized_energy_est_j": _num(_first(payload.get("avg_host_normalized_energy_est_j"), payload.get("host_normalized_energy_est_j"))),
             "energy_normalization_repeats": [
                 {key: record.get(key) for key in (
-                    "run_index", "energy_total_j", "active_duration_s", "avg_power_w",
+                    "run_index", "logical_repeat_index", "caller_managed_source_aggregate_sha256",
+                    "energy_total_j", "active_duration_s", "avg_power_w",
                     "energy_work_units_used", "energy_per_work_unit_j",
                     "host_normalized_energy_est_j", "host_normalized_energy_per_work_unit_est_j",
                     "host_normalized_average_power_est_w", "accelerator_idle_w_applied",
@@ -2555,6 +2572,9 @@ def collect_native_energy(run_dir: str | Path, *, include_partial: bool = False)
             "chapter4_legacy_shadow_statistics": chapter4_shadow_statistics,
             "candidate_v263_shadow_statistics": candidate_statistics,
             "window_method_comparison_statistics": ab_statistics,
+            "caller_managed_capture_import_status": run_info.get("caller_managed_capture_import_status"),
+            "caller_managed_capture_import_error": run_info.get("caller_managed_capture_import_error"),
+            "caller_managed_capture_source_bindings": run_info.get("caller_managed_capture_source_bindings"),
             "energy_aggregate_status": str(aggregate.get("status") or "unavailable"),
             "energy_aggregate_embedded": bool(run_info.get("energy_aggregate_embedded") or aggregate),
             "energy_aggregate_bound": bool(

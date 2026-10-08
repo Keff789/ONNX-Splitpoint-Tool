@@ -19,6 +19,7 @@ import math
 import os
 import re
 import stat
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -2731,11 +2732,101 @@ def build_normalized_detection_endpoint_attestation(
     }
 
 
+def native_full_postprocess_runtime_mode(contract: Mapping[str, Any]) -> str:
+    """Select only the explicitly supported Full optimization; no error fallback."""
+    return (
+        "bound_exact_sparse"
+        if contract.get("model_family") == "yolov7"
+        and contract.get("source_contract_family") == "raw_head"
+        and isinstance(contract.get("model_bound_decoder_contract"), Mapping)
+        else "bound_dense"
+    )
+
+
+def native_full_runtime_source_hashes(
+    *paths: str | Path,
+    bound_paths: Mapping[str, Any] | Sequence[str] | None = None,
+) -> dict[str, str]:
+    """Read runner and imported product source bytes outside the measured loop.
+
+    The first call binds the loaded Python product modules and explicit runtime
+    helpers. Pass its mapping as ``bound_paths`` after timing to check exactly
+    that set; later unrelated imports must not change the binding. Callers
+    reject a changed mapping. Missing source is an error, never a skipped hash.
+    """
+    source_paths = {str(Path(path).absolute()) for path in paths}
+    if bound_paths is None:
+        for name, module in list(sys.modules.items()):
+            if name in {"onnx_splitpoint_tool", "splitpoint_runners"} or name.startswith(
+                ("onnx_splitpoint_tool.", "splitpoint_runners.")
+            ):
+                source = getattr(module, "__file__", None)
+                if source and str(source).endswith(".py"):
+                    source_paths.add(str(Path(source).absolute()))
+    else:
+        source_paths.update(str(Path(path).absolute()) for path in bound_paths)
+    hashes = {}
+    for path in sorted(source_paths):
+        try:
+            hashes[path] = file_sha256(Path(path))
+        except OSError as exc:
+            raise FrozenPostprocessError(
+                f"native_full_runtime_source_unreadable: {path}"
+            ) from exc
+    return hashes
+
+
+def _finalize_full_detection_evidence(processor: Any) -> dict[str, Any]:
+    """Bind the last materialized task after drain; never claims per-frame hashes."""
+    if not processor.completed_count:
+        raise FrozenPostprocessError("full_completion_evidence_requires_completed_task")
+    artifact = {
+        "schema": FROZEN_COMPLETED_RESULT_ARTIFACT_SCHEMA,
+        "schema_version": FROZEN_COMPLETED_RESULT_ARTIFACT_VERSION,
+        "record_schema": CANONICAL_DETECTION_RECORD_SCHEMA,
+        "coordinate_space": "original_image_xyxy_pixels",
+        "sort_policy": CANONICAL_DETECTION_SORT_POLICY,
+        "detections": processor.last_detections,
+    }
+    processor.last_result.update({
+        "detections_sha256": canonical_json_sha256(processor.last_detections),
+        "completed_result_artifact": artifact,
+        "completed_result_artifact_sha256": canonical_json_sha256(artifact),
+    })
+    return dict(processor.last_result)
+
+
+def _verify_full_postflight_oracle(processor: Any, oracle: Any) -> None:
+    if not processor.completed_count:
+        raise FrozenPostprocessError("full_completion_evidence_requires_completed_task")
+    snapshot = {name: np.array(value, copy=True) for name, value in processor._last_source_outputs.items()}
+    oracle_result = oracle.process(snapshot)
+    if oracle_result["detections"] != processor.last_detections:
+        raise FrozenPostprocessError("full_completion_postflight_oracle_mismatch")
+    processor.last_result["postflight_oracle"] = {
+        "status": "passed", "observation_relation": "last_completed_task_after_drain",
+        "compared_tasks": 1, "per_frame_parity_claimed": False,
+    }
+
+
 class FrozenDetectionPostprocessor:
     """Thread-safe single-worker decoder used inside measured hotloops."""
 
-    def __init__(self, contract: Mapping[str, Any]) -> None:
-        self.contract = verify_frozen_postprocess_contract(contract)
+    def __init__(
+        self, contract: Mapping[str, Any], *, runtime_mode: str = "strict",
+    ) -> None:
+        if runtime_mode not in {"strict", "bound_dense", "bound_exact_sparse"}:
+            raise FrozenPostprocessError("frozen_postprocess_runtime_mode_invalid")
+        self.runtime_mode = runtime_mode
+        self._bound_runtime_mode = runtime_mode
+        # Instance-local content binding, never a path/mtime cache. Reading
+        # again after verification also rejects source drift during binding.
+        self._bound_implementation_artifacts = (
+            _implementation_artifacts() if runtime_mode != "strict" else None
+        )
+        verified = verify_frozen_postprocess_contract(contract)
+        self.contract = json.loads(canonical_json_bytes(verified))
+        self._bound_contract_bytes = canonical_json_bytes(self.contract)
         if self.contract.get(
             "legacy_activation_strategy_unbound"
         ) is True:
@@ -2747,6 +2838,12 @@ class FrozenDetectionPostprocessor:
                 "legacy_unbound_yolov7_decoder_contract_nonruntime"
             )
         model_bound = self.contract.get("model_bound_decoder_contract")
+        if runtime_mode == "bound_exact_sparse" and (
+            self.contract.get("model_family") != "yolov7"
+            or self.contract.get("source_contract_family") != "raw_head"
+            or not isinstance(model_bound, Mapping)
+        ):
+            raise FrozenPostprocessError("frozen_postprocess_sparse_contract_required")
         self._harness = YoloHarness(
             conf_thresh=float(self.contract["confidence_threshold"]),
             iou_thresh=float(self.contract["iou_threshold"]),
@@ -2758,20 +2855,66 @@ class FrozenDetectionPostprocessor:
             multiscale_decoder_contract=(
                 model_bound if isinstance(model_bound, Mapping) else None
             ),
+            multiscale_decode_mode=(
+                "exact_sparse" if runtime_mode == "bound_exact_sparse" else "dense"
+            ),
         )
+        if self._bound_implementation_artifacts is not None:
+            self.assert_implementation_unchanged()
         self._lock = threading.Lock()
         self.completed_count = 0
         self.last_result: dict[str, Any] = {}
         self.last_detections: list[dict[str, Any]] = []
 
-    def process(
+    def _assert_bound_contract_unchanged(self) -> None:
+        try:
+            unchanged = canonical_json_bytes(self.contract) == self._bound_contract_bytes
+        except (TypeError, ValueError, OverflowError):
+            unchanged = False
+        if not unchanged or self.runtime_mode != self._bound_runtime_mode:
+            raise FrozenPostprocessError("frozen_postprocess_bound_contract_mutated")
+
+    def assert_implementation_unchanged(self) -> dict[str, dict[str, Any]]:
+        """Fresh source-byte check before/after timing; a failure invalidates the run.
+
+        No file access occurs in ``process`` for the explicitly bound modes.
+        Callers retain both returned bindings as evidence around their timer.
+        """
+        self._assert_bound_contract_unchanged()
+        current = _implementation_artifacts()
+        if self._bound_implementation_artifacts is None:
+            verify_frozen_postprocess_contract(self.contract)
+        elif current != self._bound_implementation_artifacts:
+            raise FrozenPostprocessError("frozen_postprocess_implementation_changed_during_run")
+        return json.loads(canonical_json_bytes(current))
+
+    def process_task(self, outputs: Mapping[str, Any], *, original_wh: Sequence[int] | None = None) -> dict[str, Any]:
+        """Complete task work; source/contract checks and evidence are postflight."""
+        if self._bound_runtime_mode == "strict":
+            raise FrozenPostprocessError("task_only_full_requires_bound_runtime")
+        return self._process(outputs, original_wh=original_wh, evidence=False)
+
+    def process(self, outputs: Mapping[str, Any], *, original_wh: Sequence[int] | None = None) -> dict[str, Any]:
+        return self._process(outputs, original_wh=original_wh, evidence=True)
+
+    def finalize_evidence(self) -> dict[str, Any]:
+        with self._lock:
+            self.assert_implementation_unchanged()
+            _verify_full_postflight_oracle(self, FrozenDetectionPostprocessor(self.contract))
+            return _finalize_full_detection_evidence(self)
+
+    def _process(
         self, outputs: Mapping[str, Any], *, original_wh: Sequence[int] | None = None,
+        evidence: bool,
     ) -> dict[str, Any]:
         """Decode one output and count it only after decode and NMS succeed."""
         with self._lock:
             # Verify code/contract and tensor identity; the declared decoded
             # values are checked once by preparation below, not twice.
-            verify_frozen_postprocess_contract(self.contract)
+            if self._bound_runtime_mode == "strict":
+                verify_frozen_postprocess_contract(self.contract)
+            elif evidence:
+                self._assert_bound_contract_unchanged()
             if tensor_signature(outputs) != self.contract["raw_output_tensor_signature"]:
                 raise FrozenPostprocessError("frozen_postprocess_tensor_signature_mismatch")
             processing_outputs = dict(outputs)
@@ -2804,15 +2947,10 @@ class FrozenDetectionPostprocessor:
                 detections,
                 max_detections=int(self.contract["max_detections"]),
             )
-            completed_result_artifact = {
-                "schema": FROZEN_COMPLETED_RESULT_ARTIFACT_SCHEMA,
-                "schema_version": FROZEN_COMPLETED_RESULT_ARTIFACT_VERSION,
-                "record_schema": CANONICAL_DETECTION_RECORD_SCHEMA,
-                "coordinate_space": "original_image_xyxy_pixels",
-                "sort_policy": CANONICAL_DETECTION_SORT_POLICY,
-                "detections": canonical,
-            }
             self.completed_count += 1
+            # Synchronized backend views remain borrowed until drain/finalize.
+            # The owning runner must not close or overwrite them beforehand.
+            self._last_source_outputs = dict(outputs)
             self.last_detections = canonical
             self.last_result = {
                 "task": "detection",
@@ -2822,12 +2960,7 @@ class FrozenDetectionPostprocessor:
                 "record_schema": CANONICAL_DETECTION_RECORD_SCHEMA,
                 "canonical_sort_policy": CANONICAL_DETECTION_SORT_POLICY,
                 "detection_count": len(self.last_detections),
-                "detections_sha256": canonical_json_sha256(self.last_detections),
                 "detections": self.last_detections,
-                "completed_result_artifact": completed_result_artifact,
-                "completed_result_artifact_sha256": canonical_json_sha256(
-                    completed_result_artifact
-                ),
                 "postprocess_contract_sha256": str(self.contract["contract_sha256"]),
             }
             if numeric_observation is not None:
@@ -2850,7 +2983,7 @@ class FrozenDetectionPostprocessor:
                         self.contract["anchors_by_stride"]
                     ),
                 })
-            return dict(self.last_result)
+            return (_finalize_full_detection_evidence(self) if evidence else dict(self.last_result))
 
 
 class FrozenDecodedNmsPostprocessor:
@@ -2874,11 +3007,21 @@ class FrozenDecodedNmsPostprocessor:
         self.last_result: dict[str, Any] = {}
         self.last_detections: list[dict[str, Any]] = []
 
-    def process(
-        self,
-        outputs: Mapping[str, Any],
-        *,
-        original_wh: Sequence[int] | None = None,
+    def process_task(self, outputs: Mapping[str, Any], *, original_wh: Sequence[int] | None = None) -> dict[str, Any]:
+        return self._process(outputs, original_wh=original_wh, evidence=False)
+
+    def process(self, outputs: Mapping[str, Any], *, original_wh: Sequence[int] | None = None) -> dict[str, Any]:
+        return self._process(outputs, original_wh=original_wh, evidence=True)
+
+    def finalize_evidence(self) -> dict[str, Any]:
+        with self._lock:
+            verify_frozen_decoded_nms_normalization_contract(self.contract)
+            _verify_full_postflight_oracle(self, FrozenDecodedNmsPostprocessor(self.contract))
+            return _finalize_full_detection_evidence(self)
+
+    def _process(
+        self, outputs: Mapping[str, Any], *, original_wh: Sequence[int] | None = None,
+        evidence: bool,
     ) -> dict[str, Any]:
         with self._lock:
             if tensor_signature(outputs) != dict(
@@ -2921,15 +3064,10 @@ class FrozenDecodedNmsPostprocessor:
                 detections,
                 max_detections=int(self.contract["max_detections"]),
             )
-            completed_result_artifact = {
-                "schema": FROZEN_COMPLETED_RESULT_ARTIFACT_SCHEMA,
-                "schema_version": FROZEN_COMPLETED_RESULT_ARTIFACT_VERSION,
-                "record_schema": CANONICAL_DETECTION_RECORD_SCHEMA,
-                "coordinate_space": "original_image_xyxy_pixels",
-                "sort_policy": CANONICAL_DETECTION_SORT_POLICY,
-                "detections": canonical,
-            }
             self.completed_count += 1
+            # Synchronized backend views remain borrowed until drain/finalize.
+            # The owning runner must not close or overwrite them beforehand.
+            self._last_source_outputs = dict(outputs)
             self.last_detections = canonical
             self.last_result = {
                 "task": "detection",
@@ -2939,14 +3077,7 @@ class FrozenDecodedNmsPostprocessor:
                 "record_schema": CANONICAL_DETECTION_RECORD_SCHEMA,
                 "canonical_sort_policy": CANONICAL_DETECTION_SORT_POLICY,
                 "detection_count": len(self.last_detections),
-                "detections_sha256": canonical_json_sha256(
-                    self.last_detections
-                ),
                 "detections": self.last_detections,
-                "completed_result_artifact": completed_result_artifact,
-                "completed_result_artifact_sha256": canonical_json_sha256(
-                    completed_result_artifact
-                ),
                 "normalization_contract_sha256": str(
                     self.contract["contract_sha256"]
                 ),
@@ -2955,7 +3086,7 @@ class FrozenDecodedNmsPostprocessor:
                 for key in ("source_nms_attested", "host_nms_applied", "candidate_selection_observation"):
                     if key in self._materializer.last_result:
                         self.last_result[key] = self._materializer.last_result[key]
-            return dict(self.last_result)
+            return (_finalize_full_detection_evidence(self) if evidence else dict(self.last_result))
 
 
 def _yolov7_head_layout_candidates(
@@ -3045,12 +3176,16 @@ def _yolov7_head_layout_candidates(
     return matched
 
 
-def _canonicalize_yolov7_heads(
+def _layout_yolov7_heads(
     outputs: Mapping[str, Any],
     *,
     input_hw: Sequence[int],
-    activation_mode: str | None = None,
-) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+) -> dict[int, np.ndarray]:
+    """Validate layout only; a consuming decoder must validate all values.
+
+    This private helper carries no reusable finite-validation capability.
+    The fast decoder immediately scans these exact views before selection.
+    """
     if not isinstance(outputs, Mapping) or len(outputs) != 3:
         raise FrozenPostprocessError(
             "yolov7_head_mapping_exactly_three_outputs_required"
@@ -3092,15 +3227,31 @@ def _canonicalize_yolov7_heads(
             raise FrozenPostprocessError(
                 f"yolov7_head_mapping_duplicate_stride:{stride}"
             )
-        if not bool(np.isfinite(canonical).all()):
-            raise FrozenPostprocessError(
-                "yolov7_head_mapping_nonfinite_tensor"
-            )
         by_stride[stride] = canonical
     if set(by_stride) != set(YOLOV7_EXPECTED_STRIDES):
         raise FrozenPostprocessError(
             "yolov7_head_mapping_missing_required_stride"
         )
+
+    return by_stride
+
+
+def _canonicalize_yolov7_heads(
+    outputs: Mapping[str, Any],
+    *,
+    input_hw: Sequence[int],
+    activation_mode: str | None = None,
+) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    by_stride = _layout_yolov7_heads(outputs, input_hw=input_hw)
+    for canonical in by_stride.values():
+        if not bool(np.isfinite(canonical).all()):
+            raise FrozenPostprocessError("yolov7_head_mapping_nonfinite_tensor")
+    input_values = [int(value) for value in input_hw]
+    input_height, input_width = input_values
+    expected_grids = {
+        stride: (input_height // stride, input_width // stride)
+        for stride in YOLOV7_EXPECTED_STRIDES
+    }
 
     harness_anchors = getattr(
         _yolo_module, "YOLOV7_STANDARD_ANCHORS_640", {},
@@ -4956,7 +5107,11 @@ class DetectionCompletionRuntime:
         execution_contract: Mapping[str, Any],
         *,
         observation_relation: str = "same_hotloop_sentinel",
+        runtime_mode: str = "strict",
     ) -> None:
+        if runtime_mode not in {"strict", "bound_dense"}:
+            raise FrozenPostprocessError("completion_runtime_mode_invalid")
+        self.completion_runtime_mode = runtime_mode
         self.execution_contract = (
             verify_detection_completion_execution_contract(
                 execution_contract
@@ -4975,7 +5130,7 @@ class DetectionCompletionRuntime:
         mode = self.execution_contract["completion_mode"]
         if mode in {"raw_head_frozen_decode_nms", "decoded_pre_nms_frozen_nms"}:
             self._processor: Any = FrozenDetectionPostprocessor(
-                self.execution_contract["processor_contract"]
+                self.execution_contract["processor_contract"], runtime_mode=runtime_mode,
             )
         else:
             self._processor = _AttestedDecodedNmsMaterializer(
@@ -5160,6 +5315,68 @@ class DetectionCompletionRuntime:
             invocation_chain_sha256=self.invocation_chain_sha256,
             observation_relation=self.observation_relation,
         )
+
+
+
+def bind_detection_completion_runtime_sources(runtime: Any, *source_paths: str | Path) -> None:
+    """Bind the actual completion implementation before any measured task."""
+    if runtime.completed_count:
+        raise FrozenPostprocessError("completion_source_binding_after_start")
+    runtime._completion_contract_bytes = canonical_json_bytes(runtime.execution_contract)
+    runtime._completion_bound_mode = runtime.completion_runtime_mode
+    runtime._completion_sources_before = native_full_runtime_source_hashes(__file__, *source_paths)
+
+
+def detection_completion_runtime_source_check(runtime: Any) -> dict[str, Any]:
+    """Check the fixed source set and contract after timing, without frame I/O."""
+    before = getattr(runtime, "_completion_sources_before", None)
+    if before is None:
+        return {}  # Strict legacy callers retain their per-frame verifier.
+    if (canonical_json_bytes(runtime.execution_contract) != runtime._completion_contract_bytes
+            or runtime.completion_runtime_mode != runtime._completion_bound_mode):
+        raise FrozenPostprocessError("completion_bound_contract_or_mode_changed")
+    after = native_full_runtime_source_hashes(bound_paths=before)
+    if after != before:
+        raise FrozenPostprocessError("completion_implementation_changed_during_run")
+    return {"before": dict(before), "after": after, "unchanged": True}
+
+
+def create_detection_completion_runtime(
+    execution_contract: Mapping[str, Any], *, runtime_mode: str = "auto",
+    observation_relation: str = "same_hotloop_sentinel",
+    source_paths: Sequence[str | Path] = (),
+    sentinel_context: Mapping[str, Any] | None = None,
+) -> Any:
+    """Select existing, format-specific task adapters with a strict postflight oracle."""
+    from .native_three_stage import FastDetectionCompletionRuntime
+    contract = json.loads(canonical_json_bytes(
+        verify_detection_completion_execution_contract(execution_contract)))
+    family = contract.get("model_family")
+    completion_mode = contract.get("completion_mode")
+    eligible = (
+        (family == "yolov7" and completion_mode == "raw_head_frozen_decode_nms"
+         and isinstance(contract["processor_contract"].get("model_bound_decoder_contract"), Mapping))
+        or (family == "yolo11" and completion_mode in {
+            "raw_head_frozen_decode_nms", "decoded_pre_nms_frozen_nms"})
+        or (family in {"yolo26", "bn6_topk"}
+            and _model_family(str(contract.get("model_id") or "")) == "yolo26"
+            and completion_mode == "decoded_nms_attested_materialization_no_second_nms")
+    )
+    mode = str(runtime_mode)
+    if mode == "auto":
+        mode = "fast_oracle_outside_timing" if eligible else "strict"
+    if mode not in {"strict", "bound_dense", "fast_oracle_outside_timing"}:
+        raise FrozenPostprocessError("completion_runtime_mode_invalid")
+    if mode != "strict" and (not eligible or observation_relation != "same_hotloop_sentinel"):
+        raise FrozenPostprocessError("completion_optimized_supported_contract_required")
+    runtime = (FastDetectionCompletionRuntime(contract)
+               if mode == "fast_oracle_outside_timing" else
+               DetectionCompletionRuntime(contract, observation_relation=observation_relation,
+                                          runtime_mode=mode))
+    bind_detection_completion_runtime_sources(runtime, *source_paths)
+    if isinstance(runtime, FastDetectionCompletionRuntime) and sentinel_context is not None:
+        runtime.bind_sentinel_context(sentinel_context)
+    return runtime
 
 
 def build_detection_completion_runtime(

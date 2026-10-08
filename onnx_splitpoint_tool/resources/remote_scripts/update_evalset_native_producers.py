@@ -51,6 +51,7 @@ from onnx_splitpoint_tool.native_split_quality_authority import (  # noqa: E402
 )
 from onnx_splitpoint_tool.remote_runtime_closure import (  # noqa: E402
     native_remote_package_closure,
+    native_remote_resource_closure,
 )
 from onnx_splitpoint_tool.native_execution_contract import (  # noqa: E402
     NATIVE_EXECUTION_FIELDS,
@@ -2118,20 +2119,9 @@ def _run_native_producers(run_dir: Path, cfg: dict[str, Any], *, timeout: int) -
                 # helper reads these exact source/reference assets below the
                 # same tool root. Stage them through the existing byte-verified
                 # transfer, without copying model artifacts or build outputs.
-                for relative in (
-                    "three_stage_canary.py", "fast_decode_runtime.py", "stage_corpus.py",
-                    "cpp/CMakeLists.txt", "cpp/three_stage_canary.cpp",
-                    "expected_artifacts.json",
-                    "reference/current_completed_task_result.json",
-                    "reference/native_split_quality_binding.json",
-                    "reference/native_fifo_boundary_manifest.json",
-                    "reference/native_fifo_output_manifest.json",
-                    "reference/dataset_detection_validation.json",
-                    "reference/multi_image_fast_decode_canary_report.json",
-                ):
+                for relative, resource_tokens in native_remote_resource_closure():
                     result["steps"].extend(_sync_remote_package_asset_v263(
-                        ssh, rtool,
-                        "onnx_splitpoint_tool/resources/native_concurrent_three_stage_yolov7/" + relative,
+                        ssh, rtool, relative, resource_tokens,
                         timeout=min(timeout, 600),
                     ))
             elif b == "hailo10h":

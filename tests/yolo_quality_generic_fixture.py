@@ -295,7 +295,11 @@ def make_generic_fixture(tmp_path, monkeypatch, row, artifact_inputs=None):
         dxnn = case / 'deepx/deepx_m1/part1/model.dxnn'
         dxnn.parent.mkdir(parents=True)
         shutil.copyfile(bound['artifacts']['part1_runtime']['path'],dxnn)
+        deepx_adapter = runner.DeepXSession
         class DeepXSession:
+            _candidate_inputs = deepx_adapter._candidate_inputs
+            prepare_image_inputs = deepx_adapter.prepare_image_inputs
+            bind_prepared_inputs = deepx_adapter.bind_prepared_inputs
             def __init__(self, path, **kwargs):
                 self.dxnn_path = path
                 self.input_names = ['images']

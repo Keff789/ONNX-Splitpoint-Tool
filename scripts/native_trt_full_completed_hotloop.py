@@ -32,6 +32,7 @@ from onnx_splitpoint_tool.runners.harness.classification import ClassificationCo
 from onnx_splitpoint_tool.native_detection_postprocess import (  # noqa: E402
     FrozenDecodedNmsPostprocessor,
     FrozenDetectionPostprocessor,
+    native_full_postprocess_runtime_mode,
     build_completed_detection_endpoint_attestation,
     build_normalized_detection_endpoint_attestation,
     persist_completed_result_artifact as _persist_shared_completed_result_artifact,
@@ -285,6 +286,11 @@ def main() -> int:
     parser.add_argument("--input-manifest", required=True)
     parser.add_argument("--frozen-postprocess-contract-json", default="")
     parser.add_argument(
+        "--postprocess-runtime-mode", default="auto",
+        choices=("auto", "strict", "bound_dense", "bound_exact_sparse"),
+        help="Explicit completion mode; auto selects the bound YOLOv7 raw-head path without fallback.",
+    )
+    parser.add_argument(
         "--frozen-decoded-nms-normalization-contract-json", default="",
     )
     parser.add_argument("--source-endpoint-contract-hash", default="")
@@ -439,7 +445,12 @@ def main() -> int:
             processor: (
                 FrozenDetectionPostprocessor
                 | FrozenDecodedNmsPostprocessor
-            ) = FrozenDetectionPostprocessor(completion_contract)
+            ) = FrozenDetectionPostprocessor(
+                completion_contract,
+                runtime_mode=(native_full_postprocess_runtime_mode(completion_contract)
+                              if ns.postprocess_runtime_mode == "auto"
+                              else ns.postprocess_runtime_mode),
+            )
         else:
             if (
                 dict(
@@ -475,9 +486,13 @@ def main() -> int:
         warmup = max(0, int(ns.warmup))
         frames = max(1, int(ns.frames))
         duration_s = max(0.0, float(ns.duration_s or 0.0))
+        implementation_before = (
+            processor.assert_implementation_unchanged()
+            if isinstance(processor, FrozenDetectionPostprocessor) else {}
+        )
         for _ in range(warmup):
             outputs = runtime.run_prepared()
-            processor.process(outputs, original_wh=original_wh)
+            (processor.process_task if hasattr(processor, "process_task") and getattr(processor, "runtime_mode", "bound_dense") != "strict" else processor.process)(outputs, original_wh=original_wh)
 
         request_latency = RequestLatency(frames, task_complete=True,
             start_anchor="trt_full:before_run_prepared", end_anchor="trt_full:after_processor_process",
@@ -491,13 +506,21 @@ def main() -> int:
             request_latency.start(len(timings_ms))
             iteration_started = time.perf_counter()
             outputs = runtime.run_prepared()
-            completion_result = processor.process(
+            completion_result = (processor.process_task if hasattr(processor, "process_task") and getattr(processor, "runtime_mode", "bound_dense") != "strict" else processor.process)(
                 outputs, original_wh=original_wh,
             )
             iteration_ended = time.perf_counter()
             request_latency.complete(len(timings_ms))
             timings_ms.append((iteration_ended - iteration_started) * 1000.0)
         makespan_s = max(0.0, time.perf_counter() - started)
+        implementation_after = (
+            processor.assert_implementation_unchanged()
+            if isinstance(processor, FrozenDetectionPostprocessor) else {}
+        )
+        if hasattr(processor, "finalize_evidence"):
+            completion_result = processor.finalize_evidence()
+        if _sha256_file(runner) != expected["runner"]:
+            raise RuntimeError("native_full_runner_source_drift")
         completed = len(timings_ms)
         postprocess_completed = int(processor.completed_count) - warmup
         duration_ok = bool(
@@ -615,6 +638,10 @@ def main() -> int:
             "runtime_input_binding_verified": True,
             "preprocessing_timed": False,
             "disk_io_timed": False,
+            "postprocess_runtime_mode": getattr(processor, "runtime_mode", completion_kind),
+            "implementation_artifacts_before": implementation_before,
+            "implementation_artifacts_after": implementation_after,
+            "implementation_source_drift_checked": True,
             "host_postprocess_frozen": (
                 completion_kind == "raw_host_tail"
             ),

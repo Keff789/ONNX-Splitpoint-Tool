@@ -5,7 +5,7 @@ import pytest
 
 from onnx_splitpoint_tool.native_command_contract import (
     seal_native_command_contract, verify_native_energy_command_contract,
-    split_energy_runtime_argv,
+    split_energy_runtime_argv, verify_native_command_contract,
 )
 from tests.test_v272_hailo8_completed_detection_hotloop import _sealed_hailo8_command_contract
 
@@ -46,6 +46,18 @@ def test_cpp_closure_is_distinct_from_python_runtime_and_replays_prepared_energy
     assert '--energy-workload-only' in argv and '--no-build' in argv
     assert argv[argv.index('--warmup') + 1] == '0'
     assert argv[argv.index('--duration-s') + 1] == '60.0'
+
+
+@pytest.mark.parametrize('repetitions', [1, 3, 0, 2, 4, True, '1'])
+def test_normal_concurrent_command_retains_strict_separate_process_budget(repetitions):
+    value = copy.deepcopy(contract())
+    value['runtime_options']['repetitions'] = repetitions
+    value = seal_native_command_contract(value)
+    verified, reason = verify_native_command_contract(value)
+    if type(repetitions) is int and repetitions in {1, 3}:
+        assert verified == value, reason
+    else:
+        assert verified is None and 'concurrent_repetitions_invalid' in reason
 
 
 @pytest.mark.parametrize('mutation, expected', [

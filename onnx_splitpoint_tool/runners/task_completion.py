@@ -4,6 +4,7 @@ import time
 import math
 import queue
 import threading
+import itertools
 from typing import Mapping
 
 PRODUCERS = {"generic_deepx_full", "generic_hailo_full", "generic_ort_full"}
@@ -103,7 +104,8 @@ def completion_projection(evidence, *, task, producer=None):
 
 def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
                              tasks=1000, queue_depth=2, clone_payload=None,
-                             timeout_s=3600.0, clock=time.perf_counter_ns, progress=None):
+                             timeout_s=3600.0, clock=time.perf_counter_ns, progress=None,
+                             duration_s=None):
     """Time the existing two-worker Generic pipeline through actual completion.
 
     Backend adapters return materialized host tensors (including their existing
@@ -112,10 +114,15 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
     interval includes pipeline fill and drain, handoff and task materialization;
     worker creation, input preparation and subsequent validation are outside it.
     """
-    if any(type(value) is not int or value < minimum for value, minimum in
-           ((warmup, 0), (tasks, 1), (queue_depth, 1))):
+    duration_mode = duration_s is not None
+    if duration_mode and (type(duration_s) not in (int, float)
+            or not math.isfinite(duration_s) or duration_s <= 0
+            or warmup != 0 or tasks is not None):
+        raise ValueError("generic completion duration requires finite positive seconds, zero warmup and no fixed task budget")
+    budgets = ((warmup, 0), (queue_depth, 1)) + (() if duration_mode else ((tasks, 1),))
+    if any(type(value) is not int or value < minimum for value, minimum in budgets):
         raise ValueError("generic completion invalid work budget")
-    if not math.isfinite(timeout_s) or timeout_s <= 0:
+    if not math.isfinite(timeout_s) or timeout_s <= 0 or (duration_mode and timeout_s <= duration_s):
         raise ValueError("generic completion invalid timeout")
     if not callable(getattr(processor, "process", None)):
         raise ValueError("generic completion processor missing")
@@ -132,7 +139,9 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
     errors = []
     stamps = {}
     observed = {"warmup": 0, "measured": 0}
-    total = warmup + tasks
+    total = None if duration_mode else warmup + tasks
+    admitted = {"measured": 0}
+    end_of_input = object()
 
     def concrete_outputs(outputs):
         # A queued future/handle is not an observed task or a tensor map. The
@@ -147,7 +156,7 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
     def producer():
         try:
             ready.wait(timeout=timeout_s)
-            for index in range(total):
+            for index in (itertools.count() if duration_mode else range(total)):
                 if index == warmup:
                     while not warm_done.wait(0.05):
                         if stop.is_set():
@@ -158,11 +167,22 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
                             return
                 if stop.is_set():
                     return
+                if duration_mode and clock() >= stamps["admission_deadline_ns"]:
+                    stamps["admission_stopped_ns"] = clock()
+                    while not stop.is_set():
+                        try:
+                            fifo.put(end_of_input, timeout=0.05)
+                            return
+                        except queue.Full:
+                            continue
+                    return
                 outputs = concrete_outputs(stage1())
                 payload = clone_payload(outputs) if clone_payload is not None else outputs
                 while not stop.is_set():
                     try:
                         fifo.put((index, payload), timeout=0.05)
+                        if duration_mode:
+                            admitted["measured"] += 1
                         break
                     except queue.Full:
                         continue
@@ -176,7 +196,7 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
             if warmup == 0:
                 stamps["warmup_end_ns"] = clock()
                 warm_done.set()
-            for expected_index in range(total):
+            for expected_index in (itertools.count() if duration_mode else range(total)):
                 if expected_index == warmup:
                     consumer_measure_ready.set()
                     while not measurement_start_gate.wait(0.05):
@@ -184,12 +204,19 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
                             return
                 while not stop.is_set():
                     try:
-                        index, payload = fifo.get(timeout=0.05)
+                        item = fifo.get(timeout=0.05)
                         break
                     except queue.Empty:
                         continue
                 else:
                     return
+                if item is end_of_input:
+                    stamps["measurement_end_ns"] = clock()
+                    fifo.task_done()
+                    if progress is not None:
+                        progress("measured_completed", observed["measured"])
+                    return
+                index, payload = item
                 if index != expected_index:
                     raise RuntimeError("generic completion task order mismatch")
                 outputs = concrete_outputs(stage2(transfer(payload)))
@@ -231,6 +258,8 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
             # Match the Native FIFO boundary: both workers are ready after the
             # complete warmup drain; include their release and pipeline fill.
             stamps["measurement_start_ns"] = clock()
+            if duration_mode:
+                stamps["admission_deadline_ns"] = stamps["measurement_start_ns"] + int(duration_s * 1e9)
             measurement_start_gate.set()
         while any(thread.is_alive() for thread in threads):
             if errors or time.monotonic() >= deadline:
@@ -243,7 +272,7 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
             stop.set()
             for thread in threads:
                 thread.join(timeout=1.0)
-    if errors or any(thread.is_alive() for thread in threads):
+    if errors or any(thread.is_alive() for thread in threads) or stop.is_set():
         reason = str(errors[0]) if errors else "workers unfinished"
         failure = RuntimeError(f"generic completion failed after {observed}: {reason}")
         failure.partial_report = {
@@ -255,7 +284,8 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
         raise failure from (errors[0] if errors else None)
     report = {
         "producer": "generic_split", "status": "ok",
-        "measurement_boundary": "prepared_input_before_p1_to_last_completed_task",
+        "measurement_boundary": ("prepared_input_before_p1_to_completed_pipeline_drain" if duration_mode
+                                 else "prepared_input_before_p1_to_last_completed_task"),
         "clock": "perf_counter_ns", "fill_and_drain_included": True,
         "preprocessing_timed": False, "handoff_timed": True,
         "preprocessing_scope": "image_decode_resize_letterbox_before_prepared_input",
@@ -270,9 +300,48 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
     }
     elapsed_ns = stamps.get("measurement_end_ns", 0) - stamps.get("measurement_start_ns", 0)
     report["measured_makespan_seconds"] = elapsed_ns / 1e9
-    report["completed_task_fps"] = tasks * 1e9 / elapsed_ns if elapsed_ns > 0 else None
-    validate_split_completion(report, warmup=warmup, tasks=tasks)
+    report["completed_task_fps"] = observed["measured"] * 1e9 / elapsed_ns if elapsed_ns > 0 else None
+    if duration_mode:
+        report.update(measurement_mode="generic_completed_task_energy", requested_duration_s=float(duration_s),
+                      admitted_task_count=admitted["measured"], completed_work_units=observed["measured"],
+                      energy_work_units_source="completed_work_units", energy_work_units_exact=True,
+                      admission_stopped_at_deadline=True, accepted_work_drained=True)
+        validate_split_completion_duration(report, duration_s=duration_s)
+    else:
+        validate_split_completion(report, warmup=warmup, tasks=tasks)
     return report
+
+
+def validate_split_completion_duration(report, *, duration_s):
+    """A duration capture counts every admitted task only after successful drain."""
+    if (not isinstance(report, Mapping) or report.get("producer") != "generic_split"
+            or report.get("status") != "ok" or report.get("measurement_mode") != "generic_completed_task_energy"
+            or report.get("measurement_boundary") != "prepared_input_before_p1_to_completed_pipeline_drain"
+            or report.get("requested_task_count") is not None
+            or report.get("requested_duration_s") != duration_s):
+        raise ValueError("generic duration completion scope mismatch")
+    count = report.get("completed_work_units")
+    if type(count) is not int or count <= 0 or any(report.get(key) != count or type(report.get(key)) is not int
+            for key in ("completed_task_count", "admitted_task_count", "processor_count_delta")):
+        raise ValueError("generic duration completion count mismatch")
+    if any(type(report.get(k)) is not int or report[k] != 0 for k in ("requested_warmup_count", "warmup_completed_count")):
+        raise ValueError("generic duration warmup must be zero")
+    stamps = [report.get(k) for k in ("warmup_end_ns", "measurement_start_ns", "admission_deadline_ns",
+                                    "admission_stopped_ns", "measurement_end_ns")]
+    if (any(type(x) is not int or x <= 0 for x in stamps) or stamps != sorted(stamps)
+            or stamps[2] != stamps[1] + int(duration_s * 1e9)):
+        raise ValueError("generic duration deadline/drain boundary mismatch")
+    seconds = (stamps[-1] - stamps[1]) / 1e9
+    for key, value in (("measured_makespan_seconds", seconds), ("completed_task_fps", count / seconds)):
+        if type(report.get(key)) not in (int, float) or not math.isfinite(report[key]) or not math.isclose(report[key], value, rel_tol=1e-12):
+            raise ValueError("generic duration count/time rate mismatch")
+    if (report.get("clock") != "perf_counter_ns" or report.get("worker_count") != 2
+            or report.get("preprocessing_timed") is not False
+            or report.get("energy_work_units_source") != "completed_work_units"
+            or any(report.get(k) is not True for k in ("fill_and_drain_included", "handoff_timed", "postprocess_timed",
+                "output_materialization_timed", "energy_work_units_exact", "accepted_work_drained", "admission_stopped_at_deadline"))):
+        raise ValueError("generic duration operation contract mismatch")
+    return True
 
 
 def validate_split_completion(report, *, warmup=100, tasks=1000):
@@ -344,6 +413,15 @@ def valid_split_completion_repetitions(result, config, *, result_root=None):
         if index in valid and valid[index] != repetition:
             raise ValueError("generic split conflicting duplicate repetition")
         valid[index] = dict(repetition)
+    if result.get("process_repetition_policy") == "separate_processes":
+        identities = []
+        for row in valid.values():
+            ticks, boot = row.get("process_start_ticks"), row.get("boot_id")
+            if type(ticks) is not int or ticks <= 0 or not isinstance(boot, str) or not boot:
+                raise ValueError("generic split process start identity missing")
+            identities.append((boot, row["pid"], ticks))
+        if len(set(identities)) != len(identities):
+            raise ValueError("generic split repetitions share a process")
     if len({row["runtime_instance_id"] for row in valid.values()}) != len(valid):
         raise ValueError("generic split repetitions share a runtime instance")
     return [valid[index] for index in sorted(valid)]

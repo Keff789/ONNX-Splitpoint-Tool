@@ -388,6 +388,8 @@ def _hailo8_python_input(
     letterbox_pad_value: int,
     prepared_input_rgb: str | Path = "",
     expected_prepared_input_sha256: str = "",
+    timing_input_binding: dict[str, Any] | None = None,
+    task: str = "detection",
 ) -> dict[str, np.ndarray]:
     """Load the shared RGB bytes, or prepare a standalone input, before timing.
 
@@ -415,29 +417,74 @@ def _hailo8_python_input(
             raise RuntimeError("shared_prepared_rgb_missing")
         if Image is None:
             raise RuntimeError("Pillow is required for Hailo-8 detection input")
+        from onnx_splitpoint_tool.preprocessing_contract import prepare_rgb_uint8_for_declared_mode
         with Image.open(image_path) as source:
-            image = source.convert("RGB")
-            if preprocess_mode == "letterbox":
-                scale = min(float(width) / float(image.width), float(height) / float(image.height))
-                resized_width = max(1, int(round(image.width * scale)))
-                resized_height = max(1, int(round(image.height * scale)))
-                resized = image.resize((resized_width, resized_height))
-                canvas = Image.new("RGB", (width, height), (int(letterbox_pad_value),) * 3)
-                canvas.paste(resized, ((width - resized_width) // 2, (height - resized_height) // 2))
-                array = np.asarray(canvas)
-            else:
-                array = np.asarray(image.resize((width, height)))
+            array, _geometry = prepare_rgb_uint8_for_declared_mode(
+                np.asarray(source.convert("RGB")), target_hw=(height, width),
+                preprocess_mode=preprocess_mode, pad_value=letterbox_pad_value,
+            )
         if channels == 1:
             array = array[..., :1]
+    if timing_input_binding is not None:
+        from onnx_splitpoint_tool.preprocessing_contract import prepared_rgb_timing_binding, prepare_rgb_uint8_for_declared_mode
+        with Image.open(image_path) as source:
+            reference_rgb, geometry = prepare_rgb_uint8_for_declared_mode(
+                np.asarray(source.convert("RGB")), target_hw=(height, width),
+                preprocess_mode=preprocess_mode, pad_value=letterbox_pad_value,
+            )
+        binding = prepared_rgb_timing_binding(
+            image_path=image_path, rgb=array, task=str(task),
+            preprocess_mode=preprocess_mode, pad_value=letterbox_pad_value,
+            geometry=geometry,
+        )
+        binding["executed_rgb_matches_common_preprocessing"] = bool(np.array_equal(array, reference_rgb))
+        if not binding["executed_rgb_matches_common_preprocessing"]:
+            binding["canonical_rgb_sha256"] = ""
+            binding["preprocessing_contract_sha256"] = ""
+        timing_input_binding.update(binding)
     if channels_first:
         array = np.transpose(array, (2, 0, 1))
     if len(shape) == 4:
         array = array[None, ...]
     result = array.astype(np.uint8, copy=False) if quantized else array.astype(np.float32) / np.float32(255.0)
+    if str(task) == "classification" and not quantized:
+        channel_axis = -3 if channels_first else -1
+        affine_shape = [1] * result.ndim
+        affine_shape[channel_axis] = 3
+        mean = np.asarray([0.485, 0.456, 0.406], np.float32).reshape(affine_shape)
+        std = np.asarray([0.229, 0.224, 0.225], np.float32).reshape(affine_shape)
+        result = (result - mean) / std
     result = np.ascontiguousarray(result)
     if tuple(result.shape) != shape:
         raise RuntimeError(f"Hailo-8 prepared input shape drift: {result.shape} != {shape}")
     return {name: result}
+
+
+def _prepare_hailo8_cpp_rgb_input(*, hef: Path, image: Path, work: Path, args: argparse.Namespace) -> None:
+    """Feed shared Pillow pixels to the existing C++ binary before its timer."""
+    from hailo_platform import HEF
+    from onnx_splitpoint_tool.preprocessing_contract import prepare_rgb_uint8_for_declared_mode, prepared_rgb_timing_binding
+    infos = list(HEF(str(hef)).get_input_vstream_infos())
+    if len(infos) != 1:
+        raise RuntimeError("canonical_prepared_rgb_requires_single_hef_input")
+    input_shape = tuple(int(value) for value in infos[0].shape)
+    if len(input_shape) != 3 or input_shape[-1] != 3:
+        raise RuntimeError("canonical_prepared_rgb_requires_hwc_three_channel_hef")
+    with Image.open(image) as source:
+        shared_rgb, geometry = prepare_rgb_uint8_for_declared_mode(
+            np.asarray(source.convert("RGB")), target_hw=input_shape[:2],
+            preprocess_mode=args.preprocess_mode_effective, pad_value=args.letterbox_pad_value,
+        )
+    canonical_path = work / "contract_artifacts" / "canonical_input_rgb_uint8.bin"
+    canonical_path.parent.mkdir(parents=True, exist_ok=True)
+    canonical_path.write_bytes(shared_rgb.tobytes())
+    args.prepared_input_rgb = str(canonical_path)
+    args.expected_prepared_input_sha256 = _sha256_file(canonical_path)
+    args.timing_input_binding = prepared_rgb_timing_binding(
+        image_path=image, rgb=shared_rgb, task=args.task,
+        preprocess_mode=args.preprocess_mode_effective, pad_value=args.letterbox_pad_value,
+        geometry=geometry,
+    )
 
 
 def _hailo8_reuse_python_input(prepared: Any, inputs: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
@@ -1152,6 +1199,8 @@ def _run_hailo8_python_detection(
             letterbox_pad_value=int(args.letterbox_pad_value),
             prepared_input_rgb=str(getattr(args, "prepared_input_rgb", "") or ""),
             expected_prepared_input_sha256=str(getattr(args, "expected_prepared_input_sha256", "") or ""),
+            timing_input_binding=vars(args).setdefault("timing_input_binding", {}),
+            task=str(args.task),
         )
         hailo_outputs = probe_backend.run(
             probe_prepared, dict(inputs)
@@ -1296,6 +1345,7 @@ def _run_hailo8_python_detection(
                     "fast_oracle_outside_timing",
                 )
             ),
+            "timing_input_binding": dict(getattr(args, "timing_input_binding", {}) or {}),
             "prepared_input_shape": [
                 int(x) for x in prepared_value.shape
             ],
@@ -1590,9 +1640,18 @@ static cv::Mat preprocess_rgb_uint8(const cv::Mat &bgr, int w, int h, const Opti
     throw std::runtime_error("unresolved preprocess mode");
 }
 
+static float hailo_rgb_float_input(uint8_t pixel, size_t channel, bool classification) {
+    const float unit = static_cast<float>(pixel) / 255.0f;
+    if (!classification) return unit;
+    static const float mean[3] = {0.485f, 0.456f, 0.406f};
+    static const float stddev[3] = {0.229f, 0.224f, 0.225f};
+    return (unit - mean[channel]) / stddev[channel];
+}
+
 class HailoStage {
 public:
     explicit HailoStage(const Options &o) {
+        classification_input_ = o.task == "classification";
         // HailoRT treats an explicit empty device vector as device_count=0.
         // For auto-discovery we must call the no-argument overload instead.
         hailort::Expected<std::unique_ptr<hailort::VDevice>> vdev_exp =
@@ -1650,7 +1709,7 @@ public:
         } else if (input_frame_size_ == uint8_size * sizeof(float)) {
             input_f32.resize(uint8_size);
             const uint8_t *src = rgb_uint8.ptr<uint8_t>(0);
-            for (size_t i = 0; i < uint8_size; ++i) input_f32[i] = static_cast<float>(src[i]) / 255.0f;
+            for (size_t i = 0; i < uint8_size; ++i) input_f32[i] = hailo_rgb_float_input(src[i], i % 3, classification_input_);
             auto status = vstreams_.first.front().write(hailort::MemoryView(input_f32.data(), input_f32.size() * sizeof(float)));
             if (status != HAILO_SUCCESS) throw std::runtime_error("Hailo input write(float32) failed");
         } else {
@@ -1663,6 +1722,7 @@ public:
     }
 private:
     std::unique_ptr<hailort::VDevice> vdev_;
+    bool classification_input_ = false;
     std::shared_ptr<hailort::ConfiguredNetworkGroup> network_group_;
     std::pair<std::vector<hailort::InputVStream>, std::vector<hailort::OutputVStream>> vstreams_;
     int input_w_ = 0, input_h_ = 0, input_features_ = 0;
@@ -2536,6 +2596,30 @@ def _engine_boundary_contract(engine: Path) -> dict[str, Any]:
     }
 
 
+def _hailo8_input_domain(
+    *, storage_dtype: str, hailo_format: str, completed_producer: bool, task: str,
+) -> dict[str, str]:
+    """Describe the existing RGB loader branch, without changing its bytes.
+
+    C++ stores uint8 RGB and encodes FLOAT32 in the declared task domain;
+    the Python loader persists the array after that uint8/float32 conversion.
+    AUTO in C++ depends on the actual vstream and is deliberately unspecified.
+    """
+    storage_domain = {"uint8": "uint8_0_255", "float32": "unit_float32"}.get(storage_dtype)
+    runtime_domain = {"uint8": "uint8_0_255", "float32": "unit_float32"}.get(hailo_format)
+    if hailo_format == "auto" and completed_producer:
+        runtime_domain = "uint8_0_255"
+    if task == "classification":
+        if hailo_format != "float32":
+            return {}
+        runtime_domain = "imagenet_mean_std"
+        if storage_dtype == "float32":
+            storage_domain = "imagenet_mean_std"
+    if not storage_domain or not runtime_domain:
+        return {}
+    return {"source_domain": storage_domain, "normalization": runtime_domain}
+
+
 def _native_command_contract(
     *,
     bs: Path,
@@ -2557,6 +2641,7 @@ def _native_command_contract(
 ) -> dict[str, Any]:
     """Archive every runtime-relevant input needed for a fail-closed replay."""
     boundary = _engine_boundary_contract(engine)
+    wrapper_source_work = Path(str(getattr(args, "wrapper_source_work", "") or work))
     completed_producer = producer_impl in {
         "hailo8_python_vstreams_fifo", _CONCURRENT_PRODUCER,
     }
@@ -2593,6 +2678,7 @@ def _native_command_contract(
         "input_image": str(image),
         "input_image_source": "exact_file",
         "input_image_sha256": _sha256_file(image),
+        "timing_input_binding": dict(getattr(args, "timing_input_binding", {}) or {}),
         "hef": str(hef),
         "hef_sha256": _sha256_file(hef),
         "engine": str(engine),
@@ -2605,14 +2691,20 @@ def _native_command_contract(
             "hef": {"path": str(hef), "sha256": _sha256_file(hef)},
             "engine": {"path": str(engine), "sha256": _sha256_file(engine)},
             "native_executable": {"path": str(executable), "sha256": _sha256_file(executable)},
-            "generated_cpp": {"path": str(work / "main.cpp"), "sha256": _sha256_file(work / "main.cpp")},
-            "cmake": {"path": str(work / "CMakeLists.txt"), "sha256": _sha256_file(work / "CMakeLists.txt")},
+            "generated_cpp": {"path": str(wrapper_source_work / "main.cpp"), "sha256": _sha256_file(wrapper_source_work / "main.cpp")},
+            "cmake": {"path": str(wrapper_source_work / "CMakeLists.txt"), "sha256": _sha256_file(wrapper_source_work / "CMakeLists.txt")},
         },
         "prepared_input_contract": {
             "format": "raw_runtime_tensor",
             "name": str(prepared_input_name or ""),
             "shape": [int(x) for x in (prepared_input_shape or [])],
             "dtype": str(prepared_input_dtype or ""),
+            **_hailo8_input_domain(
+                storage_dtype=str(prepared_input_dtype or ""),
+                hailo_format=str(args.hailo_format),
+                completed_producer=completed_producer,
+                task=str(args.task),
+            ),
             "layout": (
                 "NHWC"
                 if len(prepared_input_shape or []) == 4
@@ -2630,6 +2722,8 @@ def _native_command_contract(
                 f"{prepared_input_dtype}"
                 if completed_producer
                 and not str(getattr(args, "prepared_input_rgb", "") or "")
+                else "shared_prepared_rgb_uint8"
+                if str(getattr(args, "prepared_input_rgb", "") or "")
                 else f"opencv_{args.preprocess_mode_effective}_rgb_uint8"
             ),
             "shared_rgb_source": str(getattr(args, "prepared_input_rgb", "") or ""),
@@ -3724,6 +3818,7 @@ def _concurrent_campaign_config(
             letterbox_pad_value=int(args.letterbox_pad_value),
             prepared_input_rgb=str(getattr(args, "prepared_input_rgb", "") or ""),
             expected_prepared_input_sha256=str(getattr(args, "expected_prepared_input_sha256", "") or ""),
+            timing_input_binding=vars(args).setdefault("timing_input_binding", {}),
         )
         prepared_name, prepared_value = next(iter(inputs.items()))
         shape = tuple(prepared_value.shape)
@@ -3775,6 +3870,7 @@ def _concurrent_campaign_config(
         "hef": _concurrent_file(hef), "engine": _concurrent_file(engine),
         "input_image": _concurrent_file(image),
         "input_image_sha256": _sha256_file(image),
+        "timing_input_binding": dict(getattr(args, "timing_input_binding", {}) or {}),
         "prepared_input": {**_concurrent_file(prepared_path), "name": str(prepared_name),
                            "shape": list(shape), "dtype": "uint8", "format": "raw"},
         "original_wh": list(completion["processor_contract"]["original_wh"]),
@@ -3911,6 +4007,16 @@ def _run_concurrent_campaign(
         args=args, quality_binding=quality_binding,
     )
     config["expected_library_sha256"] = str(getattr(args, "expected_executable_sha256", "") or "")
+    config["build"] = bool(args.build)
+    native_path = str(getattr(args, "native_executable", "") or "")
+    if native_path:
+        if not config["expected_library_sha256"]:
+            raise RuntimeError("concurrent_reuse_requires_expected_executable_sha256")
+        config["native_executable"] = _concurrent_file(Path(native_path).expanduser().resolve())
+        if config["native_executable"]["sha256"] != config["expected_library_sha256"]:
+            raise RuntimeError("concurrent_reuse_executable_sha256_mismatch")
+    elif not config["build"]:
+        raise RuntimeError("concurrent_no_build_requires_native_executable")
     report = _invoke_concurrent_campaign(config, work=work, args=args)
     args.concurrent_runtime_artifacts = dict(report.get("runtime_artifacts") or {})
     payload = _concurrent_campaign_payload(report, config, work=work, args=args, inputs=inputs)
@@ -4534,6 +4640,41 @@ def _run_detection_dual_endpoint(
     return 0
 
 
+def _reuse_cpp_wrapper(
+    executable: Path, *, expected_sha256: str, config_json: Path, cfg: dict,
+) -> tuple[dict[str, Any], Path]:
+    """Reuse a normal wrapper build receipt without touching its build tree."""
+    executable = executable.expanduser().resolve()
+    if executable.name != "split_native_hailo_trt_fifo" or executable.parent.name != "build":
+        raise RuntimeError("native_wrapper_reuse_requires_normal_build_path")
+    source_work = executable.parent.parent
+    source_config = source_work / "native_fifo_config.json"
+    identity = {
+        'generated_cpp_sha256': hashlib.sha256(CPP_SOURCE.encode()).hexdigest(),
+        'cmake_sha256': hashlib.sha256(CMAKE_TXT.encode()).hexdigest(),
+        'target_architecture': platform.machine(),
+        'configure_options': ['-DCMAKE_BUILD_TYPE=Release'],
+    }
+    saved = dict((_load_json(source_config) if source_config.is_file() else {}).get('wrapper_build') or {})
+    if (
+        not expected_sha256
+        or not executable.is_file()
+        or not (source_work / 'build' / 'CMakeCache.txt').is_file()
+        or saved.get('status') != 'ready'
+        or saved.get('identity') != identity
+        or _sha256_file(executable) != expected_sha256
+        or saved.get('native_executable_sha256') != expected_sha256
+        or _sha256_file(source_work / 'main.cpp') != identity['generated_cpp_sha256']
+        or _sha256_file(source_work / 'CMakeLists.txt') != identity['cmake_sha256']
+        or _sha256_file(source_work / 'build' / 'CMakeCache.txt') != saved.get('cmake_cache_sha256')
+    ):
+        raise RuntimeError('native_wrapper_reuse_binding_missing_or_mismatched')
+    receipt = dict(saved, reused=True, compiler_dispatch_count=0, source_work_dir=str(source_work))
+    cfg['wrapper_build'] = receipt
+    config_json.write_text(json.dumps(cfg, indent=2), encoding='utf-8')
+    return receipt, source_work
+
+
 def _prepare_cpp_wrapper(work: Path, config_json: Path, cfg: dict, previous: Mapping[str, Any], *, allow_build: bool) -> dict:
     """Reuse the existing config receipt, binding generated sources to the binary.
 
@@ -4627,6 +4768,7 @@ def main() -> int:
     ap.add_argument('--boundary-dir', default='', help='Boundary dump directory. Defaults to <work-dir>/native_fifo_boundary.')
     ap.add_argument('--build', action='store_true', default=True)
     ap.add_argument('--no-build', dest='build', action='store_false')
+    ap.add_argument('--native-executable', default='', help='Reuse this exact prebuilt native wrapper or concurrent library; combine with --expected-executable-sha256 and --no-build.')
     ap.add_argument('--run', action='store_true', default=True)
     ap.add_argument('--no-run', dest='run', action='store_false')
     ap.add_argument('--work-dir', default='', help='Output work dir. Defaults to <BS>/native_pipeline/<case>/hailo_to_trt/<precision>.')
@@ -4781,13 +4923,24 @@ def main() -> int:
         and (args.detection_endpoints == "completed_task" or concurrent_detection)
     )
     if not python_detection:
-        args.wrapper_build = _prepare_cpp_wrapper(
-            work, config_json, cfg, previous_config, allow_build=bool(args.build),
-        )
+        if str(args.native_executable or ""):
+            if args.build:
+                raise RuntimeError("native_wrapper_external_reuse_requires_no_build")
+            args.wrapper_build, source_work = _reuse_cpp_wrapper(
+                Path(args.native_executable), expected_sha256=str(args.expected_executable_sha256 or ""),
+                config_json=config_json, cfg=cfg,
+            )
+            args.wrapper_source_work = str(source_work)
+        else:
+            args.wrapper_build = _prepare_cpp_wrapper(
+                work, config_json, cfg, previous_config, allow_build=bool(args.build),
+            )
 
     exe = (
         Path(sys.executable).resolve()
         if python_detection
+        else Path(args.native_executable).expanduser().resolve()
+        if str(args.native_executable or "")
         else work / 'build' / 'split_native_hailo_trt_fifo'
     )
     if not exe.is_file():
@@ -4907,6 +5060,7 @@ def main() -> int:
                 "input_image": str(image),
                 "input_image_source": "exact_file",
                 "input_image_sha256": _sha256_file(image),
+        "timing_input_binding": dict(getattr(args, "timing_input_binding", {}) or {}),
                 "native_command_contract": command_contract,
                 "native_command_contract_sha256": str(
                     command_contract.get("contract_sha256") or ""
@@ -5115,6 +5269,8 @@ def main() -> int:
                 else '0'
             ),
         ]
+        if not args.prepared_input_rgb and args.raw_preprocess_scope == "shared_prepared_input":
+            _prepare_hailo8_cpp_rgb_input(hef=hef, image=image, work=work, args=args)
         if args.prepared_input_rgb:
             shared_path = Path(args.prepared_input_rgb).expanduser().resolve()
             shared_sha = _sha256_file(shared_path)

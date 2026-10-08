@@ -2927,6 +2927,114 @@ def _measurement_identity(row: dict[str, Any]) -> tuple[str, ...]:
     )
 
 
+def _verified_repetition_operating_point(
+    row: Mapping[str, Any], *, require_observation: bool = False,
+) -> dict[str, Any]:
+    """Re-prove a Split operating point while preserving every original seal.
+
+    Independent processes may place identical prepared inputs and semantic
+    dumps in ``repNN`` directories. Only enumerated location/observation fields
+    may vary; code, models, preprocessing, runtime policy and tensor bytes stay
+    exact. This derived identity never replaces an original command hash.
+    """
+    report = Path(str(row.get('operating_point_source_report') or row.get('report') or ''))
+    raw = _load_strict_json_object(report)
+    if not isinstance(raw, dict) or _strict_verify_native_command_contract is None:
+        return {}
+    if require_observation:
+        for field in ('completed_work_units', 'completed_frames', 'postprocess_completed_frames',
+                      'fps_makespan', 'makespan_ms', 'measurement_boundary',
+                      'completed_task_endpoint_contract_hash', 'completion_execution_contract_sha256'):
+            if field in row and row.get(field) not in (None, '') and row.get(field) != raw.get(field):
+                return {}
+        expected_sha = row.get('report_sha256')
+        if expected_sha and expected_sha != _hash_file(report):
+            return {}
+    command = raw.get('native_command_contract')
+    if not isinstance(command, Mapping):
+        return {}
+    verified, _reason = _strict_verify_native_command_contract(command)
+    if verified is None or command.get('backend') not in {
+        'hailo8_to_trt', 'hailo10h_to_trt', 'deepx_to_trt',
+    }:
+        return {}
+    declared = row.get('native_command_contract')
+    if isinstance(declared, Mapping) and dict(declared) != dict(command):
+        return {}
+    for field in ('native_command_contract_sha256', 'workload_contract_sha256'):
+        if row.get(field) not in (None, '', raw.get(field)):
+            return {}
+    for field, aliases in (
+        ('model', ('model', 'model_id')), ('case', ('case', 'case_id')),
+        ('setup_id', ('setup_id',)), ('precision', ('precision',)),
+    ):
+        if any(row.get(alias) not in (None, '', command.get(field)) for alias in aliases):
+            return {}
+    proof = _split_output_contract(report, raw, fallback_relpaths=(
+        'native_outputs/native_outputs_manifest.json',
+        'native_fifo_outputs/native_fifo_output_manifest.json',
+    ))
+    if proof.get('native_split_semantic_binding_valid') is not True:
+        return {}
+    def location(value: Any) -> Any:
+        # Preserve every other path component, including the campaign/case.
+        return re.sub(r'/rep[0-9]{2,}/', '/__repetition__/', value) if isinstance(value, str) else value
+    body = json.loads(json.dumps(command))
+    body.pop('contract_sha256', None)
+    for field in ('benchmark_set', 'input_image'):
+        body[field] = location(body.get(field))
+    prepared = body.get('prepared_input_contract')
+    if isinstance(prepared, dict):
+        for field in ('source_image', 'shared_rgb_source'):
+            if field in prepared:
+                prepared[field] = location(prepared[field])
+    artifacts = body.get('artifacts') or {}
+    allowed_artifact_paths = {
+        'prepared_input', 'part1_onnx', 'cmake', 'generated_cpp',
+        'semantic_output_manifest', 'semantic_boundary_manifest',
+    }
+    for name, artifact in artifacts.items():
+        if isinstance(artifact, dict) and (name in allowed_artifact_paths or re.fullmatch(r'prepared_input_[0-9]+', name)):
+            artifact['path'] = location(artifact.get('path'))
+    for role in ('output', 'boundary'):
+        path = Path(proof['native_split_semantic_' + role + '_manifest'])
+        manifest = _load_strict_json_object(path)
+        if not isinstance(manifest, dict):
+            return {}
+        # The portable join already verifies the original manifest seal and
+        # all payload hashes. Normalize only per-process observation metadata.
+        for field in ('file', 'input_dump', 'selected_input_dump', 'image', 'input_image'):
+            if field in manifest:
+                manifest[field] = location(manifest[field])
+        provenance = manifest.get('provenance')
+        if isinstance(provenance, dict) and 'image' in provenance:
+            provenance['image'] = location(provenance['image'])
+        resolution = manifest.get('authoritative_output_contract_resolution')
+        if isinstance(resolution, dict) and 'declaration_source' in resolution:
+            resolution['declaration_source'] = location(resolution['declaration_source'])
+        sentinel = manifest.get('completion_sentinel_identity')
+        if isinstance(sentinel, dict):
+            for field in ('repetition_id', 'runtime_instance_id'):
+                sentinel.pop(field, None)
+        manifest.pop('completion_attestation_sha256', None)
+        for payload in manifest.get('payload_artifacts') or []:
+            if isinstance(payload, dict) and 'path' in payload:
+                payload['path'] = location(payload['path'])
+        if 'payload_artifacts_sha256' in manifest:
+            manifest['payload_artifacts_sha256'] = _canonical_json_sha256(manifest['payload_artifacts'])
+        artifact = artifacts['semantic_' + role + '_manifest']
+        artifact['sha256'] = _canonical_json_sha256(manifest)
+    return {
+        'schema': 'onnx-splitpoint/verified-repetition-operating-point',
+        'schema_version': 1,
+        'operating_point_sha256': _canonical_json_sha256(body),
+        'report': str(report), 'report_sha256': _hash_file(report),
+        'native_command_contract_sha256': command['contract_sha256'],
+        'source_workload_contract_sha256': raw.get('workload_contract_sha256'),
+        'semantic_binding_status': proof['native_split_semantic_binding_status'],
+    }
+
+
 def _repetition_claim_identity(row: Mapping[str, Any]) -> tuple[str, ...]:
     """Identity which must remain byte-for-byte stable across repetitions."""
     command_sha = _strict_sha256_token(
@@ -3126,7 +3234,15 @@ def _aggregate_repetitions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for key, group in groups.items():
         claim_identities = [_repetition_claim_identity(row) for row in group]
-        claim_identity_drift = len(set(claim_identities)) != 1
+        operating_points = [_verified_repetition_operating_point(row) for row in group]
+        verified_common_operating_point = bool(
+            operating_points and all(operating_points)
+            and len({item['operating_point_sha256'] for item in operating_points}) == 1
+            and len({identity[1:] for identity in claim_identities}) == 1
+        )
+        claim_identity_drift = bool(
+            len(set(claim_identities)) != 1 and not verified_common_operating_point
+        )
         is_full_group = any(_is_full_row(row) for row in group)
         is_trt_full_group = any(
             str(row.get('backend') or '').strip().lower()
@@ -3194,7 +3310,10 @@ def _aggregate_repetitions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             )
             embedded_records = row.get('repetition_records')
             if isinstance(embedded_records, list):
-                raw_records.extend(dict(record) for record in embedded_records if isinstance(record, dict))
+                raw_records.extend(
+                    dict(record, operating_point_source_report=str(row.get('report') or ''))
+                    for record in embedded_records if isinstance(record, dict)
+                )
             elif row.get('repetition_index') not in (None, ''):
                 raw_records.append({
                     'request_latency': row.get('request_latency'),
@@ -3315,6 +3434,8 @@ def _aggregate_repetitions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             'repetition_claim_identity_drift': claim_identity_drift,
             'repetition_claim_identity_incomplete': claim_identity_incomplete,
             'repetition_claim_identities': [list(identity) for identity in claim_identities],
+            'repetition_operating_point_evidence': operating_points if verified_common_operating_point else [],
+            'repetition_operating_point_verified': verified_common_operating_point,
             'source_reports': list(dict.fromkeys(
                 str(row.get('report') or '') for row in group
                 if str(row.get('report') or '')
@@ -4337,6 +4458,13 @@ _PHYSICAL_EXECUTION_ATTESTATION_FIELDS = (
     'output_endpoint_attestation',
     'output_endpoint_id',
     'physical_output_endpoint_id',
+    # A Quality observation must not replace a freshly measured completion
+    # contract or its attestation when implementation bindings differ.
+    *tuple(field for field in _QUALITY_REPORT_FIELDS if field.startswith((
+        'completed_task_', 'frozen_host_postprocess_',
+    ))),
+    'postprocess_completed_frames', 'postprocess_completion_verified',
+    'postprocess_included',
 )
 
 _QUALITY_BINDING_ALIASES: dict[str, tuple[str, ...]] = {
@@ -4468,7 +4596,28 @@ def _quality_binding_evidence(
     """
     values: dict[str, str] = {}
     errors: list[str] = []
+    # Full runners use runtime_input_sha256 for the consumed tensor bytes.
+    # Older summaries used that name as an image alias.  The sealed artifact
+    # identifies the tensor interpretation without rewriting either digest.
+    tensor_input_bound = False
+    if _is_full_row(row) and row.get('runtime_input_sha256') not in (None, ''):
+        command = row.get('full_command_contract')
+        artifacts = command.get('artifacts') if isinstance(command, Mapping) else None
+        artifact = artifacts.get('runtime_input_tensor') if isinstance(artifacts, Mapping) else None
+        if isinstance(artifact, Mapping):
+            tensor_input_bound = True
+            observed_tensor = _strict_sha256_token(row.get('runtime_input_sha256'))
+            declared_tensor = _strict_sha256_token(artifact.get('sha256'))
+            if not observed_tensor or not declared_tensor:
+                errors.append('runtime_prepared_tensor_sha256:malformed')
+            elif observed_tensor != declared_tensor:
+                errors.append('runtime_prepared_tensor_sha256:contract_mismatch')
+            values['runtime_prepared_tensor_sha256'] = (
+                observed_tensor if observed_tensor == declared_tensor else ''
+            )
     for canonical, aliases in _QUALITY_BINDING_ALIASES.items():
+        if canonical == 'runtime_input_sha256' and tensor_input_bound:
+            aliases = tuple(alias for alias in aliases if alias != 'runtime_input_sha256')
         observed: set[str] = set()
         invalid = False
         for alias in aliases:
@@ -5084,7 +5233,16 @@ def _validate_repeat_claim_evidence(row: dict[str, Any]) -> tuple[bool, list[str
     if work_units and len(work_units) == len(records) and len(set(work_units)) != 1:
         reasons.append('repetition_completed_work_units_mismatch')
     if workload_hashes and len(workload_hashes) == len(records) and len(set(workload_hashes)) != 1:
-        reasons.append('repetition_workload_contract_mismatch')
+        operating_points = [_verified_repetition_operating_point(record, require_observation=True) for record in records]
+        representative = _verified_repetition_operating_point(row)
+        common = bool(
+            representative and all(operating_points)
+            and len({item['operating_point_sha256'] for item in [representative, *operating_points]}) == 1
+        )
+        row['repetition_operating_point_evidence'] = operating_points if common else []
+        row['repetition_operating_point_verified'] = common
+        if not common:
+            reasons.append('repetition_workload_contract_mismatch')
 
     fps_values: list[float] = []
     for record in records:
@@ -5269,6 +5427,31 @@ def _apply_comparison_claim_gates(rows: list[dict[str, Any]]) -> list[dict[str, 
             row['performance_claim_exclusion_reasons'] = reasons
     return rows
 
+
+
+def _final_rate_fields(row: dict[str, Any]) -> dict[str, Any]:
+    """Project verified separate-process records through the standard rate gate.
+
+    The representative command's leaf report contains one repetition, so it
+    cannot replace the aggregate. Re-prove the full cohort before consuming
+    its original count/time records; otherwise retain the legacy strict path.
+    """
+    from onnx_splitpoint_tool.native_rate_endpoints import (
+        report_rate_fields, rate_endpoint_fields, _execution_metadata_fields,
+    )
+    records = row.get('repetition_records') or []
+    if isinstance(records, list) and len(records) >= 3:
+        valid, _reasons = _validate_repeat_claim_evidence(row)
+        proofs = [_verified_repetition_operating_point(record, require_observation=True) for record in records]
+        representative = _verified_repetition_operating_point(row)
+        if (valid and representative and all(proofs)
+                and len({item['operating_point_sha256'] for item in [representative, *proofs]}) == 1):
+            fields = rate_endpoint_fields(row)
+            fields.update(_execution_metadata_fields(row))
+            fields['rate_endpoint_source'] = 'verified_separate_process_repetition_evidence'
+            fields['rate_endpoint_operating_point_evidence'] = proofs
+            return fields
+    return report_rate_fields(row)
 
 
 def _safe_component(value: Any) -> str:
@@ -5758,7 +5941,7 @@ def main() -> int:
     )
     from onnx_splitpoint_tool.native_rate_endpoints import report_rate_fields
     for row in rows:
-        row.update(report_rate_fields(row))
+        row.update(_final_rate_fields(row))
         if row.get('completed_task_fps') is None:
             row['performance_claim_eligible'] = False
             row.setdefault('performance_claim_exclusion_reasons', []).append(row['completed_task_fps_unavailable_reason'])

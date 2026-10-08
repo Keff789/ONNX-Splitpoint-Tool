@@ -744,9 +744,11 @@ def _verify_hailo8_mixed_runtime_contract(
             or options["post_queue_depth"] <= 0
         ):
             return "native_command_contract_hailo8_concurrent_measurement_boundary_invalid"
-        for field, expected in (("frames", 1000), ("warmup", 100), ("repetitions", 3)):
+        for field, expected in (("frames", 1000), ("warmup", 100)):
             if type(options.get(field)) is not int or options[field] != expected:
                 return "native_command_contract_hailo8_concurrent_" + field + "_invalid"
+        if type(options.get("repetitions")) is not int or options["repetitions"] not in {1, 3}:
+            return "native_command_contract_hailo8_concurrent_repetitions_invalid"
         if not isinstance(options.get("completion_execution_contract"), Mapping):
             return "native_command_contract_hailo8_concurrent_completion_contract_missing"
         return "verified"
@@ -1641,6 +1643,19 @@ def successful_runtime_argv(
     raise ValueError(f"unsupported native replay backend: {backend or '<missing>'}")
 
 
+def split_energy_detection_completion_mode(contract: Mapping[str, Any]) -> str:
+    """Require the resolved mode of the successful detection measurement.
+
+    Energy replay may not resolve a new default or substitute a different
+    completion implementation for the one sealed by the performance run.
+    """
+    options = dict(contract.get("runtime_options") or {})
+    mode = str(options.get("completion_runtime_mode") or "")
+    if mode not in {"strict", "bound_dense", "fast_oracle_outside_timing"}:
+        raise ValueError("split_energy_detection_completion_runtime_mode_unbound")
+    return mode
+
+
 def split_energy_runtime_argv(
     contract: Mapping[str, Any],
     *,
@@ -1682,6 +1697,8 @@ def split_energy_runtime_argv(
         "--energy-preflight-attestation", str(preflight_attestation_path),
         "--energy-preflight-nonce", str(preflight_nonce),
     ]
+    if backend in {"deepx_to_trt", "hailo10h_to_trt"} and options.get("task") == "detection":
+        common += ["--completion-runtime-mode", split_energy_detection_completion_mode(contract)]
     if backend == "hailo8_to_trt":
         if not isinstance(artifacts.get("native_executable"), Mapping):
             raise ValueError("hailo8 split energy requires a bound native executable")

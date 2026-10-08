@@ -240,21 +240,62 @@ def validate_plan(plan: dict, scope_csv: Path, primary: Path) -> list[dict]:
     with Path(scope_csv).open(newline="", encoding="utf-8") as stream:
         source = list(csv.DictReader(stream))
     rows = plan.get("rows")
-    if not isinstance(rows, list) or len(rows) != 192 or len(source) != 192:
-        raise ValueError("authorized Generic completion scope requires exactly 192 rows")
+    selective = plan.get("scope_mode") == "audited_selective_remeasurement"
+    expected_count = plan.get("authorized_row_count") if selective else 192
+    if type(expected_count) is not int or not 1 <= expected_count <= 246:
+        raise ValueError("selective completion requires an explicit bounded authorized row count")
+    if not isinstance(rows, list) or len(rows) != expected_count or len(source) != expected_count:
+        raise ValueError(f"authorized Generic completion scope requires exactly {expected_count} rows")
+    if selective:
+        if file_sha256(scope_csv) != plan.get("scope_source_sha256"):
+            raise ValueError("selective completion scope CSV hash mismatch")
+        provenance = plan.get("source_execution_plans")
+        if not isinstance(provenance, list) or not provenance:
+            raise ValueError("selective completion needs preserved source plan provenance")
+        permitted = set()
+        historical_roots = {}
+        for descriptor in provenance:
+            path = Path(descriptor["path"])
+            if file_sha256(path) != descriptor.get("sha256"):
+                raise ValueError("selective completion source plan hash mismatch")
+            historical = read_json(path)
+            permitted.update(completion_identity(r.get("identity", r)) for r in historical["rows"])
+            historical_roots.update({completion_identity(r.get("identity", r)): str(r.get("original_run") or historical.get("original_run") or "")
+                                     for r in historical["rows"]})
+        if not {completion_identity(r.get("identity", r)) for r in rows} <= permitted:
+            raise ValueError("selective completion contains an identity absent from audited source plans")
+        run_bindings = {}
+        for binding in plan.get("source_run_bindings", []):
+            original = str(binding["historical_root"])
+            archive = Path(binding["archive_root"]).resolve()
+            if not original or original in run_bindings:
+                raise ValueError("selective completion source run mapping duplicated or missing")
+            if file_sha256(archive / "run_manifest.json") != binding.get("run_manifest_sha256"):
+                raise ValueError("selective completion archive run manifest hash mismatch")
+            run_bindings[original] = archive
+        for row in rows:
+            identity = completion_identity(row.get("identity", row))
+            historical_root = historical_roots[identity]
+            if run_bindings:
+                if (row.get("historical_original_run") != historical_root
+                        or run_bindings.get(historical_root) != Path(row["original_run"]).resolve()):
+                    raise ValueError("selective completion row differs from explicit historical/archive run mapping")
+            elif Path(row["original_run"]).resolve() != primary.resolve():
+                raise ValueError("selective completion mixed original runs require explicit archive mappings")
     def key(row):
         identity = row.get("identity", row)
         return completion_identity(identity)
     expected, actual = [key(r) for r in source], [key(r) for r in rows]
-    if len(set(expected)) != 192 or len(set(actual)) != 192 or set(expected) != set(actual):
-        raise ValueError("completion plan differs from the authorized 192 identities")
+    if len(set(expected)) != expected_count or len(set(actual)) != expected_count or set(expected) != set(actual):
+        raise ValueError(f"completion plan differs from the authorized {expected_count} identities")
     for row in rows:
         config = row.get("runtime_config", row)
         if key(config) != key(row) or (row.get("identity") and key(row) != completion_identity(row)):
             raise ValueError("completion runtime identity differs from its authorized row")
         if any(config.get(k) != v for k, v in (("repetitions", 3), ("warmup_count", 100), ("task_count", 1000))):
             raise ValueError("completion plan work budget changed")
-        if Path(config.get("original_run", "")).resolve() != primary.resolve():
+        expected_original = Path(row["original_run"]).resolve() if selective else primary.resolve()
+        if Path(config.get("original_run", "")).resolve() != expected_original:
             raise ValueError("completion plan original run binding changed")
         relative = PurePosixPath(row["case_output_relative"])
         if relative.is_absolute() or ".." in relative.parts or str(relative) != "/".join(
@@ -523,9 +564,12 @@ def configuration_comparison(row: dict, current: dict, current_path: Path) -> di
             "note": "No tuning. Runtime/engine identity is independently checked by original command and artifact receipts."}
 
 
-def download_case(transport: SSHTransport, remote_output: str, local_output: Path, attempt: int) -> dict:
+def download_case(transport: SSHTransport, remote_output: str, local_output: Path, attempt: int,
+                  *, result_filename: str = "generic_completion_results.json") -> dict:
     """Keep all attempt downloads, including evidence after a failed process."""
     from ..generic_completion_reporting import _read_result
+    if result_filename not in {"generic_completion_results.json", "generic_energy_results.json"}:
+        raise ValueError("unsupported Generic result publication")
     destination = local_output / "downloads" / f"attempt_{attempt:03d}"
     destination.mkdir(parents=True, exist_ok=False)
     rc, stdout = transport.scp_download(remote_output, str(destination), recursive=True, timeout=600)
@@ -533,7 +577,7 @@ def download_case(transport: SSHTransport, remote_output: str, local_output: Pat
     if rc:
         return record
     source_dir = destination / PurePosixPath(remote_output).name
-    source = source_dir / "generic_completion_results.json"
+    source = source_dir / result_filename
     if source.is_file():
         payload = _read_result(source)
         # Keep the declared, immutable functional samples next to the imported
@@ -562,7 +606,16 @@ def download_case(transport: SSHTransport, remote_output: str, local_output: Pat
                 else:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(sample, target)
-        write_json(local_output / "generic_completion_results.json", payload)
+        # Energy completion markers bind the exact published bytes. Preserve
+        # those bytes through transport; a JSON reserialization changes SHA.
+        if result_filename == "generic_energy_results.json":
+            target = local_output / result_filename
+            if target.exists() and target.read_bytes() != source.read_bytes():
+                raise ValueError("existing Generic energy publication differs")
+            if not target.exists():
+                shutil.copy2(source, target)
+        else:
+            write_json(local_output / result_filename, payload)
         record["result_collected"] = True
         record["remote_output_mirror"] = str(source_dir)
     else:
@@ -696,11 +749,14 @@ def execute_plan(plan_path: Path) -> int:
         raise FileNotFoundError("prepare the final tested session runner bundle before production")
     targets = bound_targets(primary, rows)
     starts = plan["start_case_keys"]
-    if len(starts) != 6 or len(set(starts)) != 6 or not set(starts) <= {r["case_key"] for r in rows}:
-        raise ValueError("six authorized start cases missing")
+    selected_groups = {(r["setup_id"], r["task"]) for r in rows}
+    required_groups = (selected_groups if plan.get("scope_mode") == "audited_selective_remeasurement"
+                       else {(setup, task) for setup in targets for task in ("classification", "detection")})
+    if len(starts) != len(required_groups) or len(set(starts)) != len(starts) or not set(starts) <= {r["case_key"] for r in rows}:
+        raise ValueError("authorized start cases missing for selected setup/task groups")
     start_rows = [next(r for r in rows if r["case_key"] == key) for key in starts]
-    if {(r["setup_id"], r["task"]) for r in start_rows} != {(setup, task) for setup in targets for task in ("classification", "detection")}:
-        raise ValueError("start cases must cover one classification and detection case per setup")
+    if {(r["setup_id"], r["task"]) for r in start_rows} != required_groups:
+        raise ValueError("start cases must cover each selected setup/task group")
     ordered = start_rows + [r for r in rows if r["case_key"] not in starts]
     session = plan["execution_id"]
     cancel = threading.Event()
@@ -763,7 +819,7 @@ def execute_plan(plan_path: Path) -> int:
             if cancel.is_set():
                 raise RuntimeError("completion cancelled before next case")
             entered = time.monotonic()
-            run_case(row, transports[row["setup_id"]], output, index)
+            run_case(row, transports[row["setup_id"]], output, index, total=len(rows))
             row["completion_observed_at"] = now()
             row["dispatch_wall_seconds"] = time.monotonic() - entered
             observed = validate_completion_case(read_json(Path(row["result_path"])), row,
@@ -774,11 +830,11 @@ def execute_plan(plan_path: Path) -> int:
                 raise RuntimeError("start case has no valid completed-task pair: " + row["case_key"])
             write_json(plan_path, plan)
             summary = write_completion_reports(plan, output / "results", output / "reports")
-            if index == 6:
+            if index == len(starts):
                 write_json(output / "start-cases-accepted.json", {"accepted_at": now(),
-                    "case_keys": starts, "valid_repetitions": 18, "remaining_cases": 186,
+                    "case_keys": starts, "valid_repetitions": 3 * len(starts), "remaining_cases": len(rows) - len(starts),
                     "original_start_results_reused": True, "summary": summary})
-                print("[completion] START CASES ACCEPTED 6/6, 18/18 repetitions; continuing remaining 186", flush=True)
+                print(f"[completion] START CASES ACCEPTED {len(starts)}/{len(starts)}; continuing remaining {len(rows)-len(starts)}", flush=True)
                 status = "remainder_running"
             durations = {(r["model_id"], r["setup_id"]): r["dispatch_wall_seconds"] for r in rows if r.get("dispatch_wall_seconds")}
             unresolved_groups = []
@@ -790,8 +846,8 @@ def execute_plan(plan_path: Path) -> int:
                 else:
                     estimate += measured
             write_json(output / "progress.json", {"updated_at": now(), "status": status,
-                "last_completed_case": row["case_key"], "case_index": index, "total": 192,
-                "remaining": 192-index, "measured_group_remaining_seconds": estimate,
+                "last_completed_case": row["case_key"], "case_index": index, "total": len(rows),
+                "remaining": len(rows)-index, "measured_group_remaining_seconds": estimate,
                 "groups_without_observed_duration": sorted(set(unresolved_groups)), "summary": summary})
             write_status_report(plan, summary, output, status=status)
         status, rc = "complete", 0
@@ -843,3 +899,280 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def bind_runtime_source_closure(row: dict, bundle_root: Path, *, runner_root: str | None = None) -> dict:
+    """Bind the normal generated suite before either performance or energy runs."""
+    from ..runners.generic_energy import file_hash
+    root = Path(bundle_root).resolve()
+    remote = runner_root or row['remote_root']
+    runner = root / 'runner' / 'run_split_onnxruntime.py'
+    if not runner.is_file() or not (root / 'splitpoint_runners' / 'generic_energy.py').is_file():
+        raise ValueError('Generic energy requires the current generated suite closure')
+    paths = [runner, *sorted((root / 'splitpoint_runners').rglob('*.py'))]
+    sources = sorted([{'path': remote + '/' + str(p.relative_to(root)), 'sha256': file_hash(p)} for p in paths], key=lambda x: x['path'])
+    # Bind the already prepared model metadata and sealed split binding too:
+    # those files select tensor mappings even though they are not Python code.
+    from ..benchmark.schema import dumps_json_safe
+    for item in row.get('staging_files') or []:
+        digest = (hashlib.sha256(dumps_json_safe(dict(item['payload']), indent=2).encode('utf-8')).hexdigest()
+                  if 'payload' in item else item['sha256'])
+        sources.append({'path': item['remote'], 'sha256': digest})
+    sources.sort(key=lambda x: x['path'])
+    if row.get('runtime_config', {}).get('runtime_source_files') not in (None, sources):
+        raise ValueError('Existing Generic runtime source closure differs')
+    row['runtime_config']['runtime_source_files'] = sources
+    from ..runners.generic_energy import execution_environment
+    row['runtime_config']['execution_environment'] = execution_environment(row['remote_python_executable'], row.get('remote_environment') or {})
+    return row
+
+
+def prepare_energy_case(row: dict, *, performance_result: Path, output: Path,
+                        collector_python: str, collector_script: Path,
+                        hardware_setups_file: Path, remote_command_prefix: list[str],
+                        campaign_budget_file: Path,
+                        duration_s: float = 60.0) -> dict:
+    """Prepare ordinary collector commands; perform no device or sensor action.
+
+    The caller supplies the existing resource-owned remote command prefix.
+    This function neither adds an SSH transport nor schedules a capture.
+    """
+    import copy
+    campaign_budget_file = Path(campaign_budget_file).resolve(strict=True)
+    if not campaign_budget_file.is_file():
+        raise ValueError('Existing shared campaign budget required')
+    from ..runners.generic_energy import (build_contract, file_hash, canonical_hash,
+        NONCE_TOKEN, REPEAT_TOKEN, ATTESTATION_TOKEN)
+    from ..runners.task_completion import valid_split_completion_repetitions
+    config = copy.deepcopy(row['runtime_config'])
+    identity = config['identity']
+    campaign_row_id = json.dumps(['generic_completed:' + identity['comparison_backend'],
+        identity['model_id'], identity['case_id'], identity['setup_id']], separators=(',', ':'))
+    from ..energy.config import energy_setup_from_registry, load_hardware_registry
+    setup = energy_setup_from_registry(load_hardware_registry(hardware_setups_file), identity['setup_id'], registry_path=hardware_setups_file)
+    source_id = str(setup.urecs_address).strip().lower()
+    if not source_id:
+        raise ValueError('Generic energy requires the declared physical campaign source')
+    performance = read_json(performance_result)
+    repeats = valid_split_completion_repetitions(performance, config, result_root=performance_result.parent)
+    if len(repeats) != 3 or performance.get('process_repetition_policy') != 'separate_processes':
+        raise ValueError('Generic energy requires three actual current performance processes')
+    sources = config.get('runtime_source_files') or []
+    wanted = {r['path']: r['sha256'] for r in sources}
+    modes = {r.get('completion_runtime_mode', 'classification_top1_top5') for r in repeats}
+    if not wanted or len(modes) != 1 or any(r.get('runtime_source_binding') != {'before': wanted, 'after': wanted, 'unchanged': True} for r in repeats):
+        raise ValueError('Generic energy performance source/mode binding missing or changed')
+    execution_identity = repeats[0].get('execution_identity')
+    from ..runners.generic_energy import execution_environment
+    declared = execution_environment(row['remote_python_executable'], row.get('remote_environment') or {})
+    if (not execution_identity or any(r.get('execution_identity') != execution_identity for r in repeats)
+            or config.get('execution_environment') != declared):
+        raise ValueError('Generic energy performance Python/environment binding missing or changed')
+    runner_paths = [r['path'] for r in sources if r['path'].endswith('/runner/run_split_onnxruntime.py')]
+    if len(runner_paths) != 1:
+        raise ValueError('Unique bound Generic runner required')
+    contract = build_contract(config, source_files=sources, runner_path=runner_paths[0],
+                              completion_runtime_mode=next(iter(modes)), duration_s=duration_s,
+                              execution_identity=execution_identity)
+    config['energy_capture'] = {'contract': contract, 'performance_result_sha256': file_hash(performance_result)}
+    output = outside_primary(output, Path(row['original_run']))
+    output.mkdir(parents=True, exist_ok=False)
+    config_path = output / 'generic_energy_config.json'; write_json(config_path, config)
+    capture_id = uuid.uuid4().hex
+    remote_root = str(PurePosixPath(runner_paths[0]).parent.parent)
+    remote_base = remote_root + '/energy/' + case_name(row) + '/' + capture_id
+    remote_config = remote_base + '/generic_energy_config.json'
+    runtime_attestation = remote_base + '/preflight_' + NONCE_TOKEN + '.json'
+    calls = []
+    for repetition in (1, 2, 3):
+        remote_output = remote_base + f'/repetition_{repetition}/' + NONCE_TOKEN
+        workload = [row['remote_python_executable'], '-B', '-u', runner_paths[0],
+            '--generic-completion-config', remote_config, '--generic-completion-repetition', str(repetition),
+            '--generic-completion-energy', '--energy-preflight-nonce', NONCE_TOKEN,
+            '--energy-preflight-attestation', ATTESTATION_TOKEN,
+            '--energy-command-contract-sha256', contract['command_contract_sha256'], '--out-dir', remote_output]
+        preflight = [row['remote_python_executable'], '-B', '-m', 'splitpoint_runners.generic_energy',
+            '--config', remote_config, '--nonce', NONCE_TOKEN, '--attestation-path', ATTESTATION_TOKEN,
+            '--expected-command-contract-sha256', contract['command_contract_sha256']]
+        def command(argv):
+            environment = dict(row.get('remote_environment') or {}, PYTHONDONTWRITEBYTECODE='1', ONNX_SPLITPOINT_ARTIFACT_POLICY='cache_verify_only')
+            shell = 'cd -- ' + shlex.quote(remote_root) + ' && ' + shlex.join(['env', *[k+'='+v for k,v in sorted(environment.items())], *argv])
+            return shlex.join([*remote_command_prefix, shell]) if remote_command_prefix else shell
+        command_file = output / f'workload_{repetition}.txt'; command_file.write_text(command(workload)+'\n')
+        preflight_file = output / f'preflight_{repetition}.txt'; preflight_file.write_text(command(preflight)+'\n')
+        argv = [collector_python, '-B', str(collector_script), 'measure', '--setup-id', row['setup_id'],
+            '--hardware-setups-file', str(hardware_setups_file), '--out', str(output / f'capture_{repetition}'),
+            '--command-file', str(command_file), '--preflight-command-file', str(preflight_file),
+            '--preflight-runtime-attestation-path', runtime_attestation,
+            '--preflight-expected-command-contract-sha256', contract['command_contract_sha256'],
+            '--duration', str(duration_s), '--runs', '1', '--exact-run-count', '--invalid-repeat-max-retries', '0',
+            '--campaign-budget-file', str(campaign_budget_file), '--campaign-row-id', campaign_row_id,
+            '--campaign-repeats', '3', '--campaign-max-retries', '2', '--campaign-max-transport-failures', '20',
+            '--task-logical-repeat', f'repeat:{repetition - 1}',
+            '--run-id', config['execution_id'] + f'-generic-energy-{capture_id}-{repetition}',
+            '--require-runtime-work-units', '--require-command-window-alignment']
+        calls.append({'repetition_index': repetition, 'argv': argv, 'command_sha256': canonical_hash(argv),
+            'workload_command_file': str(command_file), 'workload_command_sha256': file_hash(command_file),
+            'preflight_command_file': str(preflight_file), 'preflight_command_sha256': file_hash(preflight_file),
+            'remote_result_directory_template': remote_output})
+    plan = {'schema': 'onnx-splitpoint/generic-completed-task-energy-plan/v1', 'identity': row['identity'],
+        'config': config, 'config_path': str(config_path), 'config_sha256': file_hash(config_path),
+        'remote_config_path': remote_config, 'calls': calls, 'automatic_retry': False,
+        'campaign_budget_file': str(campaign_budget_file), 'campaign_row_id': campaign_row_id,
+        'campaign_source_id': source_id,
+        'campaign_limits': {'max_chains': 9, 'max_retries': 2, 'max_transport_failures': 20},
+        'performance_result': str(performance_result), 'performance_result_sha256': file_hash(performance_result),
+        'collector_script': str(collector_script), 'collector_script_sha256': file_hash(collector_script),
+        'hardware_setups_file': str(hardware_setups_file), 'hardware_setups_file_sha256': file_hash(hardware_setups_file),
+        'resource_ownership': 'normal_capture_controller_and_DUT_lease_required', 'hardware_executed': False}
+    write_json(output / 'generic_energy_plan.json', plan)
+    return plan
+
+
+def check_energy_campaign(plan: dict, *, logical_repeat: str | None = None) -> dict:
+    """Read the shared normal budget before transport; never reset its history."""
+    import copy
+    import fcntl
+    from ..energy.config import energy_setup_from_registry, load_hardware_registry
+    from ..energy.task_budget import campaign_budget_stop_reason
+    identity = plan['identity']
+    expected_key = json.dumps(['generic_completed:' + identity['comparison_backend'],
+        identity['model_id'], identity['case_id'], identity['setup_id']], separators=(',', ':'))
+    limits = {'max_chains': 9, 'max_retries': 2, 'max_transport_failures': 20}
+    if plan.get('campaign_row_id') != expected_key or plan.get('campaign_limits') != limits:
+        raise ValueError('Generic energy shared campaign identity/limits changed')
+    path = Path(plan['campaign_budget_file'])
+    if not path.is_file() or path.is_symlink():
+        raise ValueError('Existing regular shared campaign budget required')
+    with path.open() as stream:
+        fcntl.flock(stream, fcntl.LOCK_SH)
+        budget = json.load(stream)
+    if budget.get('campaign') is not True or budget.get('max_transport_failures') != 20:
+        raise ValueError('Generic energy shared campaign policy differs')
+    registry_path = Path(plan['hardware_setups_file'])
+    setup = energy_setup_from_registry(load_hardware_registry(registry_path), identity['setup_id'], registry_path=registry_path)
+    source_id = str(setup.urecs_address).strip().lower()
+    if not source_id or source_id != plan.get('campaign_source_id') or source_id not in budget['sources']:
+        raise ValueError('Generic energy requires the existing campaign physical source')
+    task = budget['tasks'].get(expected_key)
+    if task is not None and (task['source_id'] != source_id or task['limits'] != limits):
+        raise ValueError('Generic energy existing case budget differs')
+    # Add only to this in-memory projection so the existing normal STOP resolver
+    # can also evaluate a Generic case that has never acquired a chain.
+    budget = copy.deepcopy(budget)
+    task = budget['tasks'].setdefault(expected_key, {'limits': limits, 'chains': [], 'stop_reason': '', 'source_id': source_id})
+    reason = campaign_budget_stop_reason(budget, expected_key)
+    if reason:
+        raise RuntimeError('Generic energy shared campaign STOP: ' + reason)
+    if len(task['chains']) >= limits['max_chains']:
+        raise RuntimeError('Generic energy shared case chain limit reached')
+    if logical_repeat is not None:
+        if logical_repeat not in {'repeat:0', 'repeat:1', 'repeat:2'}:
+            raise ValueError('Generic energy logical repeat differs')
+        chains = [c for c in task['chains'] if c['logical_repeat'] == logical_repeat]
+        if any(c.get('finished') and c.get('valid') for c in chains) or len(chains) >= 3:
+            raise RuntimeError('Generic energy logical repeat already valid or retry limit reached')
+    return {'campaign_row_id': expected_key, 'source_id': source_id, 'begun_chains': len(task['chains'])}
+
+
+def stage_energy_case(plan: dict, transport: SSHTransport) -> dict:
+    """Stage only the fresh energy config through the existing checked transport."""
+    from ..runners.generic_energy import file_hash
+    config_path = Path(plan['config_path'])
+    if file_hash(config_path) != plan['config_sha256']:
+        raise ValueError('Generic energy staged configuration changed')
+    return upload_new_file(transport, config_path, plan['remote_config_path'], expected_sha=plan['config_sha256'])
+
+
+def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport) -> dict:
+    """Run prepared ordinary collector commands under the caller's ownership.
+
+    This is the same transport/process/collector stack as normal measurements.
+    A durable attempted capture is never implicitly repeated by reentry.
+    """
+    from ..native_progress import run_streaming
+    from ..process_control import ProcessTreeRegistry
+    from ..remote.process_lease import RemoteProcessLeaseJournal
+    from ..runners.generic_energy import canonical_hash, file_hash, validate_config
+    from ..generic_energy_reporting import import_generic_energy_capture
+    from ..generic_completion_reporting import write_generic_energy_report
+    RemoteProcessLeaseJournal.from_environment(required=True)
+    if os.environ.get('ONNX_SPLITPOINT_CONTROLLER_RESOURCES') != 'required':
+        raise RuntimeError('Generic energy requires the normal resource-owned capture parent')
+    plan = read_json(plan_path); root = plan_path.parent
+    config = plan['config']; validate_config(config)
+    if case['identity'] != plan['identity']:
+        raise ValueError('Generic energy case differs from prepared identity')
+    for path_key in ('config', 'performance_result', 'collector_script', 'hardware_setups_file'):
+        path = plan[path_key + '_path'] if path_key == 'config' else plan[path_key]
+        if file_hash(path) != plan[path_key + '_sha256']:
+            raise ValueError('Generic energy prepared source changed: ' + path_key)
+    if sorted(c['repetition_index'] for c in plan['calls']) != [1, 2, 3]:
+        raise ValueError('Generic energy requires exactly three prepared collector calls')
+    if (root / 'capture_sources.json').exists() or any((root / f'capture_{i}_started.json').exists() for i in (1, 2, 3)):
+        raise FileExistsError('Generic energy already attempted; preserve evidence and require explicit reviewed recovery')
+    check_energy_campaign(plan)
+    stage_energy_case(plan, transport)
+    registry = ProcessTreeRegistry(); descriptors = []
+    try:
+        for call in plan['calls']:
+            index = call['repetition_index']; argv = call['argv']
+            if canonical_hash(argv) != call['command_sha256']:
+                raise ValueError('Generic energy command changed')
+            expected_budget = {'--campaign-budget-file': plan['campaign_budget_file'],
+                '--campaign-row-id': plan['campaign_row_id'], '--campaign-repeats': '3',
+                '--campaign-max-retries': '2', '--campaign-max-transport-failures': '20',
+                '--task-logical-repeat': f'repeat:{index - 1}', '--invalid-repeat-max-retries': '0'}
+            if any(argv.count(k) != 1 or argv[argv.index(k)+1] != v for k, v in expected_budget.items()) or '--task-budget-file' in argv:
+                raise ValueError('Generic energy shared campaign command changed')
+            check_energy_campaign(plan, logical_repeat=f'repeat:{index - 1}')
+            for kind in ('workload_command', 'preflight_command'):
+                if file_hash(call[kind + '_file']) != call[kind + '_sha256']:
+                    raise ValueError('Generic energy command file changed')
+            capture_output = Path(argv[argv.index('--out') + 1])
+            if capture_output.exists():
+                raise FileExistsError('Generic energy collector output must be fresh')
+            receipt = {'argv': argv, 'command_sha256': call['command_sha256'], 'started_ns': time.time_ns(),
+                       'aggregate_absent_before_execution': True, 'plan_sha256': file_hash(plan_path)}
+            write_json(root / f'capture_{index}_started.json', receipt)
+            with (root / f'capture_{index}.log').open('x') as stream:
+                def line(text):
+                    stream.write(text+'\n'); stream.flush(); print(text, flush=True)
+                try:
+                    result = run_streaming(argv, cwd=Path(plan['collector_script']).parent.parent,
+                        env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}, timeout=900,
+                        label=f'generic-completed-energy-{index}', line_callback=line, process_registry=registry)
+                    receipt['returncode'] = result.returncode
+                finally:
+                    receipt['finished_ns'] = time.time_ns()
+                    write_json(root / f'capture_{index}_process_receipt.json', receipt)
+            if receipt.get('returncode') != 0:
+                raise RuntimeError('Generic energy collector failed; no automatic retry')
+            raw_path = capture_output / 'energy_aggregate.json'; raw = read_json(raw_path)
+            if len(raw.get('runs') or []) != 1:
+                raise RuntimeError('Generic energy single capture did not publish exactly one record')
+            nonce = raw['runs'][0].get('preflight_evidence', {}).get('nonce')
+            if not isinstance(nonce, str) or re.fullmatch(r'[0-9a-f]{64}', nonce) is None:
+                raise ValueError('Generic energy collector nonce invalid')
+            remote_dir = call['remote_result_directory_template'].replace('__ONNX_SPLITPOINT_PREFLIGHT_NONCE__', nonce)
+            local_dir = root / f'runtime_result_{index}'; local_dir.mkdir()
+            downloaded = download_case(transport, remote_dir, local_dir, 1, result_filename='generic_energy_results.json')
+            write_json(root / f'capture_{index}_download.json', downloaded)
+            if downloaded.get('result_collected') is not True:
+                raise RuntimeError('Generic energy runtime publication download failed')
+            descriptor = {'repetition_index': index, 'command': argv, 'command_sha256': call['command_sha256'],
+                'output_dir': str(capture_output), 'raw_aggregate_path': str(raw_path), 'raw_aggregate_sha256': file_hash(raw_path),
+                'process_receipt': receipt, 'runtime_result_path': str(local_dir / 'generic_energy_results.json'),
+                'runtime_remote_result_path': remote_dir + '/generic_energy_results.json'}
+            imported = import_generic_energy_capture(descriptor, config, expected_setup_id=case['setup_id'], expected_campaign=plan)
+            write_json(root / f'capture_{index}_normal_import.json', imported)
+            descriptors.append(descriptor)
+        manifest = root / 'capture_sources.json'
+        write_json(manifest, {'schema': 'onnx-splitpoint/generic-energy-capture-sources/v1',
+            'plan_sha256': file_hash(plan_path), 'sources': descriptors})
+        return write_generic_energy_report(plan_path, manifest, case, root / 'reports')
+    finally:
+        if registry.remaining_owned_count():
+            registry.terminate_all(grace_s=3)
+        write_json(root / 'controller_cleanup.json', {'owned_local_remaining': registry.remaining_owned_count(),
+            'remote_cleanup_owner': 'normal enclosing energy parent'})

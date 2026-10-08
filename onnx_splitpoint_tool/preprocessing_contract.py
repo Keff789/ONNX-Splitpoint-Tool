@@ -356,6 +356,8 @@ def runtime_numeric_input_identity_errors(
         "none", "raw", "none_uint8", "identity_uint8_0_255",
         "embedded_hailo_quantization", "embedded_dxcom_preprocessing",
     }
+    if task == "classification":
+        allowed_uint8.add("hef_quant_info_from_imagenet_mean_std")
     allowed_float = (
         {"imagenet_mean_std", "mean_std"}
         if task == "classification"
@@ -480,3 +482,62 @@ def prepare_rgb_uint8_image(
         "pad_value": int(expected["pad_value"]),
     }
     return np.ascontiguousarray(prepared), geometry
+
+
+def prepare_rgb_uint8_for_declared_mode(
+    image: np.ndarray, *, target_hw: Sequence[Any], preprocess_mode: str,
+    pad_value: int = 114,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Execute an existing runner's explicit spatial contract with shared pixels.
+
+    This does not choose a model policy: callers retain their quality-bound
+    resize/letterbox selection and pad. Legacy noncanonical pads stay explicit;
+    they must not be represented as the canonical task contract.
+    """
+    mode = str(preprocess_mode).strip().lower()
+    if mode not in {"resize", "letterbox"}:
+        raise ValueError(f"unsupported_preprocess_mode:{preprocess_mode}")
+    if not 0 <= int(pad_value) <= 255:
+        raise ValueError("letterbox_pad_value_out_of_range")
+    contract = canonical_image_preprocessing_contract(
+        "detection" if mode == "letterbox" else "classification", target_hw,
+    )
+    rgb, geometry = prepare_rgb_uint8_image(image, contract)
+    if mode == "letterbox" and int(pad_value) != int(contract["pad_value"]):
+        left, top, right, bottom = geometry["pad_ltrb"]
+        if top: rgb[:top] = int(pad_value)
+        if bottom: rgb[-bottom:] = int(pad_value)
+        if left: rgb[:, :left] = int(pad_value)
+        if right: rgb[:, -right:] = int(pad_value)
+        geometry["pad_value"] = int(pad_value)
+    return rgb, geometry
+
+
+def prepared_rgb_timing_binding(
+    *, image_path: Any, rgb: np.ndarray, task: str,
+    preprocess_mode: str, pad_value: int, geometry: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Bind the executed pre-encoding raster outside every measured loop."""
+    from pathlib import Path
+    source = Path(image_path)
+    value = np.asarray(rgb)
+    if value.dtype != np.uint8 or value.ndim != 3 or value.shape[-1] != 3:
+        raise ValueError("timing_input_binding_requires_hwc_rgb_uint8")
+    mode = str(preprocess_mode).removesuffix("_rgb_uint8")
+    identity, digest = observed_runtime_preprocessing_identity(
+        task=task, target_hw=value.shape[:2], preprocess_mode=mode,
+        color_space="RGB", input_domain="uint8_0_255",
+        resize_interpolation="bilinear", resize_rounding="python_round_ties_to_even",
+        placement="floor_top_left_remainder_bottom_right" if mode == "letterbox" else "not_applicable",
+        pad_value=int(pad_value) if mode == "letterbox" else 0,
+        image_scale="norm" if normalize_image_task(task) == "detection" else "imagenet",
+    )
+    return {
+        "input_image_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "canonical_rgb_sha256": hashlib.sha256(np.ascontiguousarray(value).tobytes()).hexdigest(),
+        "preprocessing_contract_sha256": digest,
+        "preprocessing_contract": identity,
+        "geometry": dict(geometry or {}),
+        "sequence": "single_exact_prepared_feed_repeated",
+        "preprocessing_timed": False,
+    }

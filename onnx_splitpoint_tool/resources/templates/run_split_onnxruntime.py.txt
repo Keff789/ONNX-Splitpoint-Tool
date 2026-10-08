@@ -5028,6 +5028,33 @@ class _DeepXFeatureWorker:
         raise TimeoutError(f"DeepX feature worker timed out after {timeout_s}s")
 
 
+def _resolve_deepx_stage2_mapping(expected, outputs, explicit_mapping, target_shapes, passthrough):
+    """Resolve names/declared slots without using validation predictions."""
+    result = {}
+    used = set()
+    for name in expected:
+        declared = str(explicit_mapping.get(name) or "")
+        if declared:
+            if declared not in outputs:
+                raise ValueError(f"DeepX explicit input mapping missing output: {name} -> {declared}")
+            candidates = [declared]
+        elif name in outputs:
+            candidates = [name]
+        elif name in passthrough:
+            continue
+        else:
+            candidates = [key for key, value in outputs.items() if key not in used
+                          and _try_adapt_tensor(np.asarray(value), target_shapes.get(name))[0]]
+        if len(candidates) != 1 or candidates[0] in used:
+            raise ValueError(f"DeepX ambiguous input mapping for {name}: {candidates}; supply explicit manifest cut slots")
+        source = candidates[0]
+        if not _try_adapt_tensor(np.asarray(outputs[source]), target_shapes.get(name))[0]:
+            raise ValueError(f"DeepX explicit input mapping shape mismatch: {name} -> {source}")
+        result[name] = source
+        used.add(source)
+    return result
+
+
 class DeepXSession:
     """Reusable DeepX runtime wrapper for split Part1 DXNN artifacts.
 
@@ -5177,73 +5204,60 @@ class DeepXSession:
         }
 
     def _candidate_inputs(self, src: np.ndarray, canonical_name: str) -> List[np.ndarray]:
+        # Image domains are resolved before timing.  In particular raw float
+        # 128 is a pixel value, never evidence of ImageNet normalization.
+        contract = getattr(self, "image_input_contract", None)
+        if not isinstance(contract, Mapping):
+            raise RuntimeError("DeepX image input requires an explicit domain/layout contract or exact prepared input")
+        domain = str(contract.get("source_domain") or "")
+        layout = str(contract.get("source_layout") or "")
+        runtime_layout = str(contract.get("runtime_layout") or "")
+        if domain not in {"raw", "norm", "imagenet", "clip"}:
+            raise ValueError(f"DeepX unsupported input domain: {domain!r}")
         arr = np.asarray(src)
-        candidates: List[np.ndarray] = []
-        # If the shared runner selected ImageNet normalization for the ORT/TensorRT
-        # reference path, reconstruct an approximate raw uint8 image for DeepX
-        # DXNNs that were compiled with div-by-255 preprocessing.
-        try:
-            a = np.asarray(arr, dtype=np.float32)
-            if a.ndim == 4 and a.shape[0] == 1 and a.shape[1] == 3:
-                chw = a[0]
-                if float(np.nanmin(chw)) < -0.05 or float(np.nanmax(chw)) > 1.5:
-                    mean = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)[:, None, None]
-                    std = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)[:, None, None]
-                    raw = np.clip((chw * std + mean) * 255.0, 0.0, 255.0).astype(np.uint8)
-                    hwc0 = np.transpose(raw, (1, 2, 0))
-                    candidates.append(np.ascontiguousarray(hwc0))
-                    candidates.append(np.ascontiguousarray(hwc0[None, ...]))
-        except Exception:
-            pass
-        # Main image-input path: canonical NCHW/NHWC -> HWC uint8.
-        try:
-            hwc = _nchw_to_hwc_u8(arr)
-            candidates.append(np.ascontiguousarray(hwc))
-            candidates.append(np.ascontiguousarray(hwc[None, ...]))
-        except Exception:
-            pass
-        # Feature-start / exact-shape fallback.
-        candidates.append(np.ascontiguousarray(arr))
-        if arr.ndim >= 1 and arr.shape[0] == 1:
-            try:
-                candidates.append(np.ascontiguousarray(arr[0]))
-            except Exception:
-                pass
-        # Try adapting to guessed runtime shape.
-        rt_shape = self.runtime_input_shapes.get(canonical_name)
-        if rt_shape:
-            try:
-                adapted = _adapt_tensor(arr, rt_shape)
-                # v52ac: For image-start DeepX DXNNs the runtime contract is
-                # usually uint8 NHWC with preprocessing embedded in the DXNN.
-                # A generic NCHW->NHWC adaptation of the shared ImageNet-normalized
-                # ORT tensor produces *float normalized NHWC*, which dx_engine may
-                # accept but yields nonsense.  Prefer the reconstructed/raw uint8
-                # candidates above and only use the generic adapted tensor later as a
-                # fallback.  For feature-start future DXNNs, keep the adapted tensor
-                # first because no image reconstruction is expected.
-                image_runtime = (
-                    len(tuple(rt_shape)) == 4
-                    and int(rt_shape[0]) == 1
-                    and int(rt_shape[-1]) in (1, 3, 4)
-                )
-                adapted_arr = np.ascontiguousarray(adapted)
-                if image_runtime and not np.issubdtype(adapted_arr.dtype, np.integer):
-                    candidates.append(adapted_arr)
-                else:
-                    candidates.insert(0, adapted_arr)
-            except Exception:
-                pass
-        # Deduplicate by shape/dtype.
-        out: List[np.ndarray] = []
-        seen = set()
-        for c in candidates:
-            key = (tuple(c.shape), str(c.dtype))
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(c)
-        return out
+        if arr.dtype.kind not in "uif" or not np.isfinite(arr).all():
+            raise ValueError("DeepX image input must contain finite numeric values")
+        if layout == "NCHW" and arr.ndim == 4 and arr.shape[0] == 1 and arr.shape[1] == 3:
+            chw = arr[0].astype(np.float32, copy=False)
+        elif layout == "NHWC" and arr.ndim == 4 and arr.shape[0] == 1 and arr.shape[-1] == 3:
+            chw = arr[0].transpose(2, 0, 1).astype(np.float32, copy=False)
+        elif layout == "HWC" and arr.ndim == 3 and arr.shape[-1] == 3:
+            chw = arr.transpose(2, 0, 1).astype(np.float32, copy=False)
+        else:
+            raise ValueError(f"DeepX image source layout mismatch: {layout!r}, shape={arr.shape}")
+        if domain in {"raw", "norm"}:
+            upper = 255.0 if domain == "raw" else 1.0
+            if float(chw.min()) < 0.0 or float(chw.max()) > upper:
+                raise ValueError(f"DeepX image values violate explicit {domain} domain")
+            raw = chw if domain == "raw" else chw * 255.0
+        else:
+            mean, std = (([.485, .456, .406], [.229, .224, .225]) if domain == "imagenet" else
+                         ([.48145466, .4578275, .40821073], [.26862954, .26130258, .27577711]))
+            raw = (chw * np.asarray(std, np.float32)[:, None, None] + np.asarray(mean, np.float32)[:, None, None]) * 255.0
+        hwc = np.clip(raw, 0.0, 255.0).astype(np.uint8).transpose(1, 2, 0)
+        if runtime_layout == "HWC":
+            result = hwc
+        elif runtime_layout == "NHWC":
+            result = hwc[None]
+        else:
+            raise ValueError(f"DeepX unsupported runtime layout: {runtime_layout!r}")
+        return [np.ascontiguousarray(result)]
+
+    def prepare_image_inputs(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        if set(inputs) != set(self.input_names):
+            raise ValueError("DeepX prepared input names mismatch")
+        return {name: self._candidate_inputs(inputs[name], name)[0] for name in self.input_names}
+
+    def bind_prepared_inputs(self, inputs: Dict[str, np.ndarray]) -> None:
+        if set(inputs) != set(self.input_names):
+            raise ValueError("DeepX prepared input names mismatch")
+        signature = {name: (tuple(np.asarray(value).shape), str(np.asarray(value).dtype))
+                     for name, value in inputs.items()}
+        previous = getattr(self, "prepared_input_signature", None)
+        if previous is not None and signature != previous:
+            raise RuntimeError("DeepX exact prepared input shape/dtype mismatch")
+        self.prepared_input_signature = signature
+        self.exact_prepared_input = True
 
     def _source_for_input(self, inputs: Dict[str, np.ndarray], canonical_name: str, used: Optional[set[str]] = None) -> np.ndarray:
         if canonical_name in inputs:
@@ -5360,6 +5374,19 @@ np.savez_compressed(out_npz, **payload)
             return [np.asarray(out_data[k]) for k in sorted(out_data.files, key=lambda x: int(x.split('_')[-1]))]
 
     def infer(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        if getattr(self, "exact_prepared_input", False):
+            signature = getattr(self, "prepared_input_signature", None)
+            if signature is None:
+                raise RuntimeError("DeepX exact prepared input requires a bound shape/dtype signature")
+            if set(inputs) != set(signature):
+                raise RuntimeError("DeepX exact prepared input names mismatch")
+            for name, (shape, dtype) in signature.items():
+                value = np.asarray(inputs[name])
+                if tuple(value.shape) != shape or str(value.dtype) != dtype:
+                    raise RuntimeError(
+                        f"DeepX exact prepared input shape/dtype mismatch for '{name}': "
+                        f"expected {shape}/{dtype}, received {tuple(value.shape)}/{value.dtype}"
+                    )
         if not inputs:
             raise KeyError("DeepXSession received no inputs")
 
@@ -5375,8 +5402,6 @@ np.savez_compressed(out_npz, **payload)
         for canonical_name in runtime_order:
             src = self._source_for_input(inputs, canonical_name, used=used_sources)
             if getattr(self, "exact_prepared_input", False):
-                if set(inputs) != set(runtime_order):
-                    raise RuntimeError("DeepX exact prepared input names mismatch")
                 candidate_lists.append([np.ascontiguousarray(src)])
             elif self._is_image_runtime_input(canonical_name):
                 cands = self._candidate_inputs(np.asarray(src), canonical_name)
@@ -5927,6 +5952,7 @@ def _load_image_as_nchw(
     scale: str,
     letterbox: Optional[bool] = None,
     preprocessing_contract: Optional[Mapping[str, Any]] = None,
+    binding_out: Optional[Dict[str, Any]] = None,
 ) -> Optional[np.ndarray]:
     if Image is None:
         print("[warn] PIL not available -> cannot load image input; using random inputs.")
@@ -5961,24 +5987,17 @@ def _load_image_as_nchw(
 
     # For classification-like preprocessing, prefer resize-short-side + center-crop
     # to avoid aspect-ratio distortion.
+    geometry = {}
+    executed_contract = contract_eff
     try:
-        if letterbox:
-            # Letterbox resize (preserve aspect ratio with padding). Used for
-            # YOLO-family detectors to keep box scaling correct on non-square
-            # images.
-            ow, oh = img.size
-            if ow <= 0 or oh <= 0:
-                img_rs = img.resize((w, h))
-            else:
-                gain = min(w / float(ow), h / float(oh))
-                new_w = int(round(ow * gain))
-                new_h = int(round(oh * gain))
-                img_resized = img.resize((new_w, new_h), resample=Image.BILINEAR)
-                canvas = Image.new("RGB", (w, h), (114, 114, 114))
-                pad_left = (w - new_w) // 2
-                pad_top = (h - new_h) // 2
-                canvas.paste(img_resized, (pad_left, pad_top))
-                img_rs = canvas
+        if contract_eff is not None or letterbox:
+            try:
+                from splitpoint_runners.preprocessing_contract import prepare_rgb_uint8_image
+            except ImportError:
+                from onnx_splitpoint_tool.preprocessing_contract import prepare_rgb_uint8_image
+            executed_contract = contract_eff or _resolve_image_preprocessing_contract(task="detection", target_hw=target_hw)[0]
+            rgb, geometry = prepare_rgb_uint8_image(np.asarray(img), executed_contract)
+            img_rs = Image.fromarray(rgb)
         elif contract_eff is None and scale in ("imagenet", "clip"):
             ow, oh = img.size
             # Standard ImageNet-style: resize short side to 256 for 224x224 crops.
@@ -6001,7 +6020,26 @@ def _load_image_as_nchw(
         else:
             img_rs = img.resize((w, h), resample=Image.BILINEAR)
     except Exception:
+        if executed_contract is not None:
+            raise
         img_rs = img
+
+    if binding_out is not None:
+        raster = np.ascontiguousarray(np.asarray(img_rs, dtype=np.uint8))
+        actual = executed_contract or {
+            "schema": "onnx-splitpoint/executed-image-preprocessing",
+            "task": "classification" if scale in ("imagenet", "clip") else "unspecified",
+            "target_hw": list(target_hw), "color_space": "RGB",
+            "spatial_transform": "resize_short_side_center_crop" if scale in ("imagenet", "clip") else "direct_resize",
+            "resize_interpolation": "pillow_bicubic_default" if scale in ("imagenet", "clip") else "bilinear",
+            "image_scale": scale,
+        }
+        binding_out.update({"input_image": str(img_path), "input_image_sha256": _sp_file_sha256(img_path),
+            "image_sequence": [str(img_path.name)], "prepared_rgb_sha256": hashlib.sha256(raster.tobytes()).hexdigest(),
+            "canonical_rgb_sha256": hashlib.sha256(raster.tobytes()).hexdigest() if executed_contract else "",
+            "preprocessing_contract": actual, "preprocessing_contract_sha256": _image_preprocessing_contract_sha256(actual),
+            "canonical_preprocessing_executed": executed_contract is not None,
+            "geometry": geometry, "source_domain": scale})
 
     arr = np.array(img_rs, dtype=np.float32)  # HWC, 0..255
     arr = np.transpose(arr, (2, 0, 1))  # CHW
@@ -6571,6 +6609,11 @@ def _bench_streaming_pipeline(
     sentinel = object()
     err: Dict[str, BaseException] = {}
     stop_event = threading.Event()
+    warmup_drained = threading.Event()
+    if warm == 0:
+        warmup_drained.set()
+    counts = {"warmup_enqueued": 0, "warmup_completed": 0,
+              "measured_enqueued": 0, "measured_completed": 0}
     latency_ms: List[float] = []
     stage1_ms: List[float] = []
     stage2_ms: List[float] = []
@@ -6598,6 +6641,10 @@ def _bench_streaming_pipeline(
             for idx in range(total_frames):
                 if stop_event.is_set():
                     break
+                if idx == warm:
+                    while not warmup_drained.wait(timeout=0.25):
+                        if stop_event.is_set():
+                            return
                 frame_start_ts = time.perf_counter()
                 if idx == warm:
                     measured_start_ts = frame_start_ts
@@ -6607,21 +6654,15 @@ def _bench_streaming_pipeline(
                 payload = _clone_tensor_map(out1) if clone_payload else out1
                 if not _put_with_cancel((idx, frame_start_ts, s1_ms, payload)):
                     break
+                counts["warmup_enqueued" if idx < warm else "measured_enqueued"] += 1
         except BaseException as e:  # noqa: BLE001
             err["producer"] = e
             stop_event.set()
         finally:
-            # Best effort: wake consumer without blocking forever.
-            for _ in range(4):
-                try:
-                    qobj.put_nowait(sentinel)
-                    break
-                except queue.Full:
-                    try:
-                        _ = qobj.get_nowait()
-                        qobj.task_done()
-                    except Exception:
-                        time.sleep(0.05)
+            # A successful producer must drain every queued item.  Cancellation
+            # wakes the consumer through its timeout; never evict a real frame.
+            if not stop_event.is_set():
+                _put_with_cancel(sentinel)
 
     def consumer() -> None:
         nonlocal measured_end_ts
@@ -6646,6 +6687,9 @@ def _bench_streaming_pipeline(
                     build_ms = (t1 - t0) * 1000.0
                     run_ms = (done_ts - t1) * 1000.0
                     s2_ms = (done_ts - t0) * 1000.0
+                    counts["warmup_completed" if int(idx) < warm else "measured_completed"] += 1
+                    if int(idx) == warm - 1:
+                        warmup_drained.set()
                     if int(idx) >= warm:
                         stage1_ms.append(float(s1_ms))
                         stage2_ms.append(float(s2_ms))
@@ -6686,6 +6730,9 @@ def _bench_streaming_pipeline(
     if err:
         first = next(iter(err.values()))
         raise RuntimeError(f"streaming pipeline failed: {type(first).__name__}: {first}")
+    if counts != {"warmup_enqueued": warm, "warmup_completed": warm,
+                  "measured_enqueued": meas, "measured_completed": meas}:
+        raise RuntimeError(f"streaming pipeline incomplete: requested warmup={warm}, measured={meas}; counts={counts}")
     if not latency_ms or measured_start_ts is None or measured_end_ts is None:
         raise RuntimeError("streaming pipeline produced no measured samples")
 
@@ -6695,7 +6742,7 @@ def _bench_streaming_pipeline(
         deltas = [(completion_ts[i] - completion_ts[i - 1]) * 1000.0 for i in range(1, len(completion_ts))]
         if deltas:
             cycle_est_ms = float(np.mean(np.asarray(deltas, dtype=np.float64)))
-    fps_makespan = (float(meas) * 1000.0 / makespan_ms) if makespan_ms > 0 else None
+    fps_makespan = (float(counts["measured_completed"]) * 1000.0 / makespan_ms) if makespan_ms > 0 else None
     fps_cycle = (1000.0 / float(cycle_est_ms)) if cycle_est_ms and cycle_est_ms > 0 else None
     p1_mean_stream = float(np.mean(np.asarray(stage1_ms, dtype=np.float64))) if stage1_ms else None
     p2_thread_mean = float(np.mean(np.asarray(stage2_ms, dtype=np.float64))) if stage2_ms else None
@@ -6710,6 +6757,15 @@ def _bench_streaming_pipeline(
         "warmup_frames": int(warm),
         "measured_frames": int(meas),
         "frame_count_total": int(total_frames),
+        "requested_frames": int(meas),
+        "enqueued_frames": counts["measured_enqueued"],
+        "completed_frames": counts["measured_completed"],
+        "warmup_enqueued_frames": counts["warmup_enqueued"],
+        "warmup_completed_frames": counts["warmup_completed"],
+        "warmup_contract": "fully_drained_before_first_measured_stage1",
+        "measurement_boundary": "prepared_input_before_p1_to_last_stage2_raw_output",
+        "measurement_scope": "raw_backend_outputs",
+        "postprocess_included": False,
         "makespan_ms": makespan_ms,
         "cycle_est_ms": cycle_est_ms,
         "fps_makespan": fps_makespan,
@@ -14647,6 +14703,79 @@ def _completion_bound_array(spec):
     return load_completion_bound_array(spec, file_sha256=_sp_file_sha256)
 
 
+def _completion_validate_prepared_input_contract(config, backend):
+    """Validate the declared exact input before initializing any SDK session."""
+    binding = config["input_binding"]
+    prepared = binding.get("prepared_input") or {}
+    contract = binding.get("prepared_input_contract") or {}
+    if not isinstance(contract, Mapping):
+        raise ValueError("Generic completion prepared input contract malformed")
+    source = contract.get("source_input_contract") or {}
+    if not isinstance(source, Mapping):
+        raise ValueError("Generic completion prepared input contract malformed")
+    shape, dtype = prepared.get("shape"), prepared.get("dtype")
+    if not prepared.get("input_name") or not shape or not dtype:
+        raise ValueError("Generic completion prepared input requires name, shape and dtype")
+    declarations = [prepared, contract, source, *contract.get("entries", [])]
+    for declaration in declarations:
+        for key in ("shape", "dtype"):
+            if key in declaration and declaration[key] != prepared.get(key):
+                raise ValueError(f"Generic completion prepared input {key} contract conflict")
+    layout = prepared.get("layout") or contract.get("layout") or source.get("layout")
+    if not layout:
+        entry_layouts = {entry.get("layout") for entry in contract.get("entries", [])}
+        if len(entry_layouts) == 1:
+            layout = entry_layouts.pop()
+    if layout not in {"HWC", "CHW", "NHWC", "NCHW"}:
+        raise ValueError("Generic completion prepared input requires an explicit supported layout")
+    channel_axis = {"HWC": 2, "CHW": 0, "NHWC": 3, "NCHW": 1}[layout]
+    if len(shape) != len(layout) or shape[channel_axis] != 3:
+        raise ValueError("Generic completion prepared input shape/layout conflict")
+    for declaration in declarations:
+        if declaration.get("layout") and declaration["layout"] != layout:
+            raise ValueError("Generic completion prepared input layout contract conflict")
+    if not any(declaration.get(key) for declaration in declarations
+               for key in ("normalization", "source_domain")):
+        raise ValueError("Generic completion prepared input requires an explicit numeric domain/normalization")
+    for key in ("normalization", "source_domain"):
+        values = {declaration[key] for declaration in declarations if declaration.get(key)}
+        if len(values) > 1:
+            raise ValueError(f"Generic completion prepared input {key} contract conflict")
+    if contract.get("task") != config["task"] or (source.get("task") and source["task"] != config["task"]):
+        raise ValueError("Generic completion prepared input task contract conflict")
+    for key in ("source_image", "source_image_sha256"):
+        if not binding.get(key) or contract.get(key) != binding[key]:
+            raise ValueError(f"Generic completion prepared input {key} binding missing or conflicting")
+    mode = contract.get("preprocess_mode_effective") or contract.get("preprocess_mode")
+    if mode not in {"resize", "letterbox"}:
+        raise ValueError("Generic completion prepared input requires an effective preprocessing mode")
+    for declaration in declarations:
+        declared_mode = declaration.get("preprocess_mode_effective") or declaration.get("preprocess_mode")
+        if declared_mode and declared_mode != mode:
+            raise ValueError("Generic completion prepared input preprocessing contract conflict")
+    runtime_format = str(binding.get("runtime_input_format") or "")
+    expected_dtype = {"uint8": "uint8", "raw_uint8": "uint8",
+                      "float32": "float32", "dequant_float32": "float32"}.get(runtime_format)
+    if str(backend).lower() == "hailo8" and expected_dtype == "float32":
+        expected_dtype = "uint8"  # Existing paired H8 RGB/255 conversion occurs inside P1.
+    if expected_dtype is None or dtype != expected_dtype:
+        raise ValueError("Generic completion prepared input dtype/backend encoding conflict")
+    if str(backend).lower() == "hailo8" and config["task"] == "classification" and runtime_format in {"float32", "dequant_float32"}:
+        normalization = prepared.get("normalization") or contract.get("normalization") or source.get("normalization")
+        if normalization != "imagenet_mean_std":
+            raise ValueError("Generic completion Hailo8 classification requires the bound ImageNet numeric contract")
+    if str(backend).lower() == "hailo10h":
+        # These are the four encodings actually emitted by the paired H10 loader.
+        normalization = prepared.get("normalization") or contract.get("normalization") or source.get("normalization")
+        expected_normalization = (
+            "hef_quant_info_from_imagenet_float32" if expected_dtype == "uint8" and config["task"] == "classification"
+            else "hef_quant_info_from_unit_float32" if expected_dtype == "uint8"
+            else "imagenet_float32" if config["task"] == "classification" else "divide_255_float32"
+        )
+        if normalization != expected_normalization:
+            raise ValueError("Generic completion prepared input normalization/backend encoding conflict")
+
+
 def _completion_hailo_quantized_inputs(config):
     runtime_format = str(config["input_binding"].get("runtime_input_format") or "")
     if runtime_format in {"uint8", "raw_uint8"}:
@@ -14667,8 +14796,24 @@ def _completion_hailo_inputs(config, backend, inputs):
         # numeric conversion inside HailoStage::infer, after the start boundary.
         if any(np.asarray(value).dtype != np.uint8 for value in inputs.values()):
             raise ValueError("Generic completion Hailo8 FLOAT32 source must be bound RGB bytes")
-        return {name: np.asarray(value).astype(np.float32) / np.float32(255.0)
-                for name, value in inputs.items()}
+        converted = {name: np.asarray(value).astype(np.float32) / np.float32(255.0)
+                     for name, value in inputs.items()}
+        if config["task"] == "classification":
+            binding = config["input_binding"]
+            prepared = binding.get("prepared_input") or {}
+            contract = binding.get("prepared_input_contract") or {}
+            source = contract.get("source_input_contract") or {}
+            normalization = prepared.get("normalization") or contract.get("normalization") or source.get("normalization")
+            layout = prepared.get("layout") or contract.get("layout") or source.get("layout")
+            if normalization != "imagenet_mean_std" or layout not in {"HWC", "CHW", "NHWC", "NCHW"}:
+                raise ValueError("Generic completion Hailo8 classification lacks the bound ImageNet layout/domain")
+            mean = np.asarray([.485, .456, .406], dtype=np.float32)
+            std = np.asarray([.229, .224, .225], dtype=np.float32)
+            for name, value in converted.items():
+                parameter_shape = [1] * value.ndim
+                parameter_shape[-1 if layout in {"HWC", "NHWC"} else -3] = 3
+                converted[name] = (value - mean.reshape(parameter_shape)) / std.reshape(parameter_shape)
+        return converted
     if any(np.asarray(value).dtype != np.float32 for value in inputs.values()):
         raise ValueError("Generic completion FLOAT32 prepared input dtype mismatch")
     return inputs
@@ -14706,10 +14851,26 @@ def _configure_quality_source_only(args, parser):
 
 def _configure_generic_completion(args, parser):
     if not args.generic_completion_config:
+        if getattr(args, "generic_completion_energy", False):
+            parser.error("Generic energy requires --generic-completion-config")
         return None
     if args.generic_completion_repetition not in (1, 2, 3):
         parser.error("Generic completion requires one independent --generic-completion-repetition 1, 2 or 3")
     config = _read_json(Path(args.generic_completion_config))
+    energy_mode = getattr(args, "generic_completion_energy", False)
+    energy_cli = {key: getattr(args, key, "") for key in
+                  ("energy_preflight_nonce", "energy_preflight_attestation", "energy_command_contract_sha256")}
+    if bool(config.get("energy_capture")) != bool(energy_mode):
+        parser.error("Generic energy config and explicit execution mode must agree")
+    if energy_mode:
+        from splitpoint_runners.generic_energy import verify_runtime_preflight
+        try:
+            verify_runtime_preflight(config, nonce=energy_cli["energy_preflight_nonce"],
+                attestation_path=energy_cli["energy_preflight_attestation"],
+                expected_sha256=energy_cli["energy_command_contract_sha256"])
+        except (ValueError, OSError, KeyError) as error:
+            parser.error(str(error))
+        config["_runtime_energy"] = energy_cli
     if any(type(config.get(key)) is not int or config[key] != value for key, value in
            (("repetitions", 3), ("warmup_count", 100), ("task_count", 1000))):
         parser.error("Generic completion requires exactly 3 repetitions, 100 warmups and 1000 tasks")
@@ -14731,6 +14892,9 @@ def _configure_generic_completion(args, parser):
             setattr(args, key, value)
     args.out_dir, args.generic_completion_config = output_dir, config_path
     args.generic_completion_repetition = repetition_index
+    args.generic_completion_energy = energy_mode
+    for key, value in energy_cli.items():
+        setattr(args, key, value)
     # The originating request may be a selective Quality source. This explicit
     # completion invocation owns its unchanged 100/1000/3 measurement contract.
     args.quality_source_only = False
@@ -14755,6 +14919,10 @@ def _configure_generic_completion(args, parser):
     stage2 = _canonical_validation_backend_token(args.stage2_provider or args.provider)
     if stage1 not in {"hailo8", "hailo10h", "deepx_m1"} or stage2 != "tensorrt":
         parser.error("Generic completion supports only the bound accelerator-to-TensorRT splits")
+    try:
+        _completion_validate_prepared_input_contract(config, stage1)
+    except ValueError as error:
+        parser.error(str(error))
     if stage1.startswith("hailo"):
         _completion_hailo_quantized_inputs(config)
     args.variants = "composed"
@@ -14762,7 +14930,7 @@ def _configure_generic_completion(args, parser):
     args.native_trt_build = False
     args.native_trt_no_fallback = True
     args.trt_runtime = args.trt_runtime_mode = "native"
-    args.warmup, args.runs = 100, 1000
+    args.warmup, args.runs = (0, 0) if energy_mode else (100, 1000)
     args.phase_runs = args.throughput_frames = args.throughput_warmup_frames = 0
     args.validation_images = ""
     args.validation_max_images = 0
@@ -14780,15 +14948,56 @@ def _configure_generic_completion(args, parser):
     return config
 
 
+def _generic_process_identity():
+    identity = {"pid": os.getpid()}
+    try:
+        # Field 22 follows the parenthesized comm, which may contain spaces.
+        stat = Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()
+        identity["process_start_ticks"] = int(stat[19])
+        identity["boot_id"] = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    except (OSError, ValueError, IndexError):
+        identity["process_start_ticks"] = None
+        identity["boot_id"] = ""
+    return identity
+
+
 def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
                                   runtime_artifacts, *, clone_payload, repetition_index=None):
     from splitpoint_runners.task_completion import (
         measure_split_completion, valid_split_completion_repetitions,
     )
     from splitpoint_runners.harness.classification import ClassificationCompletion
-    from splitpoint_runners.native_detection_postprocess import DetectionCompletionRuntime
+    from splitpoint_runners.native_detection_postprocess import (
+        DetectionCompletionRuntime, create_detection_completion_runtime,
+        detection_completion_runtime_source_check, verify_detection_completion_execution_attestation,
+    )
     import statistics
     from datetime import datetime, timezone
+    energy = config.get("energy_capture")
+    energy_contract = None
+    runtime_sources = config.get("runtime_source_files") or []
+    execution_identity = None
+    if runtime_sources:
+        from splitpoint_runners.generic_energy import runtime_execution_identity
+        execution_identity = runtime_execution_identity(config)
+    runtime_source_before = {}
+    for source in runtime_sources:
+        actual = _sp_file_sha256(Path(source["path"]))
+        if actual != source["sha256"]:
+            raise ValueError("Generic runtime source differs from frozen bundle")
+        runtime_source_before[source["path"]] = actual
+    if energy:
+        from splitpoint_runners.generic_energy import (
+            validate_config, validate_energy_result, completion_marker, COMPLETION_MARKER, verify_runtime_preflight,
+        )
+        energy_contract = validate_config(config, check_files=True)
+        if runtime_sources != energy_contract["source_files"]:
+            raise ValueError("Generic energy and performance source closures differ")
+        if repetition_index not in (1, 2, 3) or not config.get("_runtime_energy"):
+            raise ValueError("Generic energy requires one fresh nonce-bound process")
+        verify_runtime_preflight(config, nonce=config["_runtime_energy"]["energy_preflight_nonce"],
+            attestation_path=config["_runtime_energy"]["energy_preflight_attestation"],
+            expected_sha256=config["_runtime_energy"]["energy_command_contract_sha256"])
 
     def utc_now():
         return datetime.now(timezone.utc).isoformat()
@@ -14807,16 +15016,21 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
     reference_outputs = {name: _completion_bound_array(spec)
                          for name, spec in reference_binding["outputs"].items()}
 
-    def processor():
+    def processor(*, reference=False):
         if config["task"] == "classification":
             if config["completion_contract"] != {"task": "classification", "operation": "top1_top5", "label_offset": 0}:
                 raise ValueError("Generic completion classification contract mismatch")
             return ClassificationCompletion()
-        return DetectionCompletionRuntime(config["completion_contract"])
+        if reference:
+            return DetectionCompletionRuntime(config["completion_contract"])
+        return create_detection_completion_runtime(config["completion_contract"], source_paths=(__file__,),
+            sentinel_context={"prepared_input_sha256": config["input_binding"]["prepared_input"]["sha256"]})
 
-    reference_processor = processor()
+    reference_processor = processor(reference=True)
     reference_processor.process(reference_outputs)
-    result_path = Path(out_dir) / "generic_completion_results.json"
+    result_path = Path(out_dir) / ("generic_energy_results.json" if energy else "generic_completion_results.json")
+    if energy and result_path.exists():
+        raise ValueError("Generic energy capture output already exists; no implicit reuse")
     if result_path.exists():
         result = _read_json(result_path)
         previous = valid_split_completion_repetitions(result, config, result_root=out_dir)
@@ -14826,8 +15040,14 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
             "expected_runtime_artifacts", "functional_reference", "original_run")}
         result.update(schema_version=1, execution_id=config["execution_id"], task=config["task"],
                       measurement_mode="generic_completed_task", repetitions=[], status="started", created_at=utc_now())
+        if energy:
+            result.update(schema_version=2, measurement_mode="generic_completed_task_energy", energy_contract=energy_contract,
+                          measurement_boundary="prepared_input_before_p1_to_completed_pipeline_drain")
         previous = []
+        if repetition_index is not None:
+            result["process_repetition_policy"] = "separate_processes"
     completed_indices = {row["repetition_index"] for row in previous}
+    process_identity = _generic_process_identity()
 
     def publish():
         temp = result_path.with_suffix(".json.tmp")
@@ -14839,6 +15059,8 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
         if index in completed_indices:
             continue
         current_processor = processor()
+        if energy and getattr(current_processor, "completion_runtime_mode", "classification_top1_top5") != energy_contract["completion_runtime_mode"]:
+            raise ValueError("Generic energy completion mode differs from bound performance operation")
         latest_outputs = {}
 
         def observe_stage2(inputs):
@@ -14859,16 +15081,41 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
 
         started_at = utc_now()
         attempt = {"repetition_index": index, "execution_id": config["execution_id"], "status": "started",
-                   "started_at": started_at, "pid": os.getpid(),
-                   "runtime_instance_id": f"{config['execution_id']}:{os.getpid()}:{started_at}"}
+                   "started_at": started_at, **process_identity,
+                   "runtime_instance_id": f"{config['execution_id']}:{process_identity['pid']}:{started_at}"}
+        if energy:
+            attempt.update(preflight_nonce=config["_runtime_energy"]["energy_preflight_nonce"],
+                energy_command_contract_sha256=energy_contract["command_contract_sha256"],
+                completion_runtime_mode=getattr(current_processor, "completion_runtime_mode", "classification_top1_top5"))
         result["repetitions"].append(attempt)
         publish()
-        print(f"[generic-completion] repetition={index}/3 warmup=100 tasks=1000 started", flush=True)
+        print(f"[generic-completion] repetition={index}/3 " +
+              (f"warmup=0 duration_s={energy_contract['duration_s']}" if energy else "warmup=100 tasks=1000") + " started", flush=True)
         try:
             measured = measure_split_completion(stage1, transfer, observe_stage2, current_processor,
-                warmup=100, tasks=1000, queue_depth=int(config.get("queue_depth", 2)),
+                warmup=0 if energy else 100, tasks=None if energy else 1000,
+                duration_s=energy_contract["duration_s"] if energy else None,
+                queue_depth=int(config.get("queue_depth", 2)),
                 clone_payload=clone_payload, timeout_s=float(config.get("timeout_s", 3600)),
                 progress=lambda phase, count: print(f"[generic-completion] repetition={index} {phase}={count}", flush=True))
+            if config["task"] == "detection":
+                source_check = detection_completion_runtime_source_check(current_processor)
+                attestation = current_processor.attestation(completed_work_units=current_processor.completed_count)
+                if hasattr(current_processor, "snapshot_completed_source"):
+                    try:
+                        from splitpoint_runners.native_three_stage import verify_fast_completion_attestation
+                    except ImportError:
+                        from onnx_splitpoint_tool.native_three_stage import verify_fast_completion_attestation
+                    attestation = verify_fast_completion_attestation(attestation,
+                        execution_contract=current_processor.execution_contract,
+                        outputs=current_processor.snapshot_completed_source())
+                else:
+                    attestation = verify_detection_completion_execution_attestation(attestation,
+                        execution_contract=current_processor.execution_contract,
+                        expected_observation_relation="same_hotloop_sentinel")
+                attempt.update(completion_runtime_mode=current_processor.completion_runtime_mode,
+                    completion_execution_attestation=attestation, completion_source_check=source_check,
+                    completion_attestation_scope="last_completed_task_postflight_including_warmup_count")
             # Persist only the last already completed task, outside the measured
             # interval. These bound samples permit later offline verification.
             sample_dir = Path(out_dir) / f"repetition_{index}_attempt_{len(result['repetitions']):03d}"
@@ -14881,6 +15128,9 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
                     "sha256": _sp_file_sha256(sample_path), "shape": list(value.shape), "dtype": str(value.dtype)}
             completed_result = json.loads(json.dumps(current_processor.last_result,
                 default=lambda value: value.tolist() if isinstance(value, np.ndarray) else value.item()))
+            if config["task"] == "detection":
+                completed_result.setdefault("host_nms_applied",
+                    config["completion_contract"].get("completion_mode") != "decoded_nms_attested_materialization_no_second_nms")
             completed_path = sample_dir / "completed_task.json"
             _write_json(completed_path, completed_result)
             attempt.update(raw_output_samples=samples, output_sample_relation="last_measured_completed_task",
@@ -14903,6 +15153,13 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
             control = {"status": "passed" if passed else "failed", "reference_binding": reference_binding,
                        "checked_outside_timer": True, "metrics": metrics, "observed_task_count": 1}
             attempt.update(measured, functional_control=control, runtime_artifacts=expected, completed_at=utc_now())
+            if runtime_sources:
+                runtime_source_after = {source["path"]: _sp_file_sha256(Path(source["path"])) for source in runtime_sources}
+                if runtime_source_after != runtime_source_before:
+                    raise RuntimeError("Generic runtime source changed during execution")
+                attempt["runtime_source_binding"] = {"before": runtime_source_before,
+                    "after": runtime_source_after, "unchanged": True}
+                attempt["execution_identity"] = execution_identity
             if not passed:
                 attempt["status"] = "functional_control_failed"
                 raise RuntimeError("Generic completion functional control failed")
@@ -14915,6 +15172,17 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
             result["status"] = "failed"
             publish()
             raise
+    if energy:
+        result.update(status="ok", completed_at=utc_now())
+        validate_energy_result(result, config, result_root=out_dir)
+        publish()
+        marker = completion_marker(config, result["repetitions"][0], report_path=result_path,
+                                   nonce=config["_runtime_energy"]["energy_preflight_nonce"])
+        print("__SPLITPOINT_WORK_UNITS__=" + str(marker["completed_work_units"]), flush=True)
+        print("__SPLITPOINT_WORK_UNITS_SOURCE__=completed_work_units", flush=True)
+        print("__SPLITPOINT_WORK_UNITS_EXACT__=1", flush=True)
+        print(COMPLETION_MARKER + json.dumps(marker, sort_keys=True), flush=True)
+        return 0
     valid = valid_split_completion_repetitions(result, config, result_root=out_dir)
     rates = [row["completed_task_fps"] for row in valid]
     if repetition_index is not None and len(rates) < 3:
@@ -15004,6 +15272,10 @@ def main() -> int:
     ap.add_argument("--out-dir", type=str, default="results", help="Output dir for reports (default: results/)")
     ap.add_argument("--generic-completion-config", default="", help="Exact Generic split completion supplement; existing artifacts and prepared input only, no build or quality inference.")
     ap.add_argument("--generic-completion-repetition", type=int, choices=[1, 2, 3], default=None, help="Run one independently initialized Generic completion repetition; preserve valid prior repetitions.")
+    ap.add_argument("--generic-completion-energy", action="store_true", help="Run one nonce-bound duration capture through the same completed-task pipeline.")
+    ap.add_argument("--energy-preflight-nonce", default="")
+    ap.add_argument("--energy-preflight-attestation", default="")
+    ap.add_argument("--energy-command-contract-sha256", default="")
     ap.add_argument("--warmup", type=int, default=5, help="Warmup runs per benchmark")
     ap.add_argument("--runs", type=int, default=10, help="Measured runs per benchmark")
     ap.add_argument("--phase-runs", type=int, default=5, help="Measured runs for v42 diagnostic phase breakdowns (full host-tail, Part2 prefix/tail, composed stages). Use 0 to disable.")
@@ -15847,9 +16119,12 @@ def main() -> int:
 
     required_inputs = [vi.name for vi in _get_non_initializer_inputs(full_model)]
     if generic_completion_config:
-        prepared = _completion_bound_array(generic_completion_config["input_binding"]["prepared_input"])
+        prepared_spec = generic_completion_config["input_binding"]["prepared_input"]
+        prepared = _completion_bound_array(prepared_spec)
         if len(required_inputs) != 1:
             raise RuntimeError("Generic completion requires the bound single image input")
+        if prepared_spec["input_name"] != required_inputs[0]:
+            raise RuntimeError("Generic completion prepared input name differs from model contract")
         feeds_full = {required_inputs[0]: prepared}
     missing = [n for n in required_inputs if n not in feeds_full]
 
@@ -17613,6 +17888,41 @@ def main() -> int:
         return _make_tensor_map_contiguous(in_map)
 
 
+    timing_input_binding = {}
+    if img_candidates and p_img is not None and Path(p_img).is_file():
+        timing_feed = feeds_full[img_candidates["name"]]
+        for geometry_flag in ((False,) if str(args.benchmark_task) == "classification" else (True, False)):
+            observed = {}
+            candidate = _load_image_as_nchw(Path(p_img), target_hw=img_hw,
+                dtype=img_candidates["dtype"], scale=resolved_image_scale,
+                letterbox=geometry_flag, binding_out=observed)
+            if candidate is not None and np.array_equal(candidate, timing_feed):
+                timing_input_binding = observed
+                break
+        if not timing_input_binding:
+            timing_input_binding = {"input_image": str(p_img), "input_image_sha256": _sp_file_sha256(Path(p_img)),
+                "canonical_preprocessing_executed": False, "status": "executed_preparation_not_reconstructed"}
+        timing_input_binding["generic_prepared_input_sha256"] = hashlib.sha256(np.ascontiguousarray(timing_feed).tobytes()).hexdigest()
+
+    p1_inputs_deepx = None
+    if deepx_p1 is not None:
+        if generic_completion_config:
+            p1_inputs_deepx = feeds_p1
+        else:
+            deepx_p1.image_input_contract = {"source_domain": resolved_image_scale,
+                "source_layout": "NCHW", "runtime_layout": "HWC"}
+            p1_inputs_deepx = deepx_p1.prepare_image_inputs(feeds_p1)
+        deepx_p1.bind_prepared_inputs(p1_inputs_deepx)
+
+    if timing_input_binding:
+        timing_prepared = p1_inputs_deepx or p1_inputs_hailo or feeds_p1
+        timing_input_binding["backend_prepared_inputs"] = {name: {
+            "shape": list(np.asarray(value).shape), "dtype": str(np.asarray(value).dtype),
+            "sha256": hashlib.sha256(np.ascontiguousarray(value).tobytes()).hexdigest()}
+            for name, value in timing_prepared.items()}
+        timing_input_binding["preparation_outside_timer"] = True
+        (out_dir / "timing_input_binding.json").write_text(json.dumps(timing_input_binding, indent=2) + "\n", encoding="utf-8")
+
     def run_stage1_map(feeds_p1_override: Optional[Dict[str, np.ndarray]] = None) -> Dict[str, np.ndarray]:
         if hailo_p1 is not None:
             local_inputs = p1_inputs_hailo if feeds_p1_override is None and p1_inputs_hailo is not None else _build_hailo_input_map(hailo_p1, feeds_p1_override or feeds_p1)
@@ -17620,7 +17930,9 @@ def main() -> int:
                 local_inputs = _completion_hailo_inputs(generic_completion_config, stage1_tok, local_inputs)
             return hailo_p1.infer(local_inputs)
         if deepx_p1 is not None:
-            return deepx_p1.infer(feeds_p1_override or feeds_p1)
+            local_inputs = (p1_inputs_deepx if feeds_p1_override is None else
+                            deepx_p1.prepare_image_inputs(feeds_p1_override))
+            return deepx_p1.infer(local_inputs)
         if ort_p1_sess is None:
             raise RuntimeError("stage1 backend not initialized")
         local_feeds = feeds_p1_override or feeds_p1
@@ -17679,27 +17991,6 @@ def main() -> int:
             ort_p2_reference_sess = None
         return ort_p2_reference_sess
 
-    def _deepx_mapping_candidates(expected: Sequence[str], produced: Sequence[str], initial_map: Mapping[str, str]) -> List[Dict[str, str]]:
-        expected_l = [str(x) for x in expected]
-        produced_l = [str(x) for x in produced]
-        out: List[Dict[str, str]] = []
-        seen: set[Tuple[Tuple[str, str], ...]] = set()
-
-        def add(m: Mapping[str, str]):
-            mm = {str(k): str(v) for k, v in m.items() if str(k) in expected_l and str(v) in produced_l}
-            if len(mm) != len(expected_l):
-                return
-            key = tuple(sorted(mm.items()))
-            if key not in seen:
-                seen.add(key)
-                out.append(mm)
-
-        add(initial_map)
-        if len(expected_l) == len(produced_l) and 1 < len(expected_l) <= 4:
-            import itertools as _itertools
-            for perm in _itertools.permutations(produced_l):
-                add({e: p for e, p in zip(expected_l, perm)})
-        return out[:24]
 
     def _deepx_stage2_contract_max_samples() -> int:
         raw = os.environ.get("ONNX_SPLITPOINT_DEEPX_STAGE2_CONTRACT_SAMPLES", "12")
@@ -17709,21 +18000,7 @@ def main() -> int:
             n = 12
         return max(1, min(64, n))
 
-    def _deepx_stage2_contract_reject_threshold() -> float:
-        raw = os.environ.get("ONNX_SPLITPOINT_DEEPX_STAGE2_CONTRACT_MIN_PASS_RATIO", "0.50")
-        try:
-            v = float(str(raw).strip())
-        except Exception:
-            v = 0.50
-        return max(0.0, min(1.0, v))
 
-    def _deepx_stage2_contract_score_threshold() -> float:
-        raw = os.environ.get("ONNX_SPLITPOINT_DEEPX_STAGE2_CONTRACT_MIN_MEAN_SCORE", "0.35")
-        try:
-            v = float(str(raw).strip())
-        except Exception:
-            v = 0.35
-        return max(-1.0, min(1.0, v))
 
     def _deepx_stage2_native_crash_error_text(text: Any) -> bool:
         """Return True for native DeepX Stage2 worker/runtime crashes.
@@ -17885,322 +18162,23 @@ def main() -> int:
         nonlocal deepx_p2_tuned_map, deepx_p2_tuned_input_order, deepx_p2_contract_report
         if deepx_p2 is None:
             return dict(initial_map)
-        if deepx_p2_tuned_map is not None:
-            try:
-                deepx_p2.set_input_order_override(deepx_p2_tuned_input_order)
-            except Exception:
-                pass
-            return dict(deepx_p2_tuned_map)
-        expected_l = [str(x) for x in expected]
-        produced_l = [str(x) for x in out1_map.keys()]
-        report: Dict[str, Any] = {
-            "schema_version": 1,
-            "backend": "deepx_m1",
-            "stage": "part2",
-            "check": "stage2_input_mapping",
-            "expected_inputs": list(expected_l),
-            "produced_outputs": {str(k): list(np.asarray(v).shape) for k, v in out1_map.items()},
-            "initial_mapping": dict(initial_map),
-            "dxnn_runtime_input_shapes": {str(k): list(v) for k, v in (deepx_p2.runtime_input_shapes or {}).items()},
-            "onnx_input_shapes": {str(k): list(v) for k, v in (deepx_p2.input_shapes or {}).items()},
-            "candidates": [],
-            "status": "not_run",
-        }
-        # Candidate tuning is useful only for feature-start multi-input DeepX Part2.
-        if not expected_l or len(expected_l) < 2:
-            deepx_p2_tuned_map = dict(initial_map)
-            deepx_p2_tuned_input_order = list(expected_l)
-            try:
-                deepx_p2.set_input_order_override(deepx_p2_tuned_input_order)
-            except Exception:
-                pass
-            report.update({"status": "single_or_no_input", "selected_mapping": dict(deepx_p2_tuned_map), "selected_input_order": list(deepx_p2_tuned_input_order)})
-            deepx_p2_contract_report = report
-            return dict(deepx_p2_tuned_map)
-        # v54g: Native DeepX stage2 order probing is disabled by default.
-        # dx_engine may segfault on experimental feature-start Part2 DXNNs;
-        # a crash cannot be caught by Python. Keep deterministic ONNX/name order
-        # unless the user explicitly opts into native order probing.
-        if os.environ.get("ONNX_SPLITPOINT_DEEPX_STAGE2_ORDER_PROBE", "1").strip().lower() not in {"1", "true", "yes", "on"}:
-            deepx_p2_tuned_map = dict(initial_map)
-            deepx_p2_tuned_input_order = list(expected_l)
-            try:
-                deepx_p2.set_input_order_override(deepx_p2_tuned_input_order)
-            except Exception:
-                pass
-            report.update({
-                "status": "skipped_order_probe_disabled",
-                "selected_mapping": dict(deepx_p2_tuned_map),
-                "selected_input_order": list(deepx_p2_tuned_input_order),
-                "reason": "DeepX Stage2 order probing disabled by ONNX_SPLITPOINT_DEEPX_STAGE2_ORDER_PROBE=0",
-            })
-            deepx_p2_contract_report = report
-            return dict(deepx_p2_tuned_map)
-
-        ref_sess = _ensure_ort_part2_reference_sess()
-        if ref_sess is None:
-            deepx_p2_tuned_map = dict(initial_map)
-            deepx_p2_tuned_input_order = list(expected_l)
-            try:
-                deepx_p2.set_input_order_override(deepx_p2_tuned_input_order)
-            except Exception:
-                pass
-            report.update({"status": "reference_session_unavailable", "selected_mapping": dict(deepx_p2_tuned_map), "selected_input_order": list(deepx_p2_tuned_input_order)})
-            deepx_p2_contract_report = report
-            return dict(deepx_p2_tuned_map)
-        candidates = _deepx_mapping_candidates(expected_l, produced_l, initial_map)
-        best_map = dict(initial_map)
-        best_order = list(expected_l)
-        best_score = float("-inf")
-        best_report: Dict[str, Any] = {}
-        try:
-            ref_input_meta = list(ref_sess.get_inputs())
-            ref_output_names = [o.name for o in ref_sess.get_outputs()]
-        except Exception:
-            ref_input_meta = []
-            ref_output_names = []
-        # v54f: dx_engine receives inputs as a positional list, but unsafe cross-shape permutations are skipped.  For multi-input
-        # Stage2 DXNNs the runtime input order can differ from the ONNX input
-        # order even when tensor names and shapes match.  Probe both the tensor
-        # mapping and the positional DeepX input order against the ONNX Part2
-        # reference on one sample.
-        input_order_candidates: List[List[str]] = [list(expected_l)]
-        if 1 < len(expected_l) <= 4:
-            # Do not try arbitrary cross-shape permutations.  dx_engine is native
-            # code and can segfault when a tensor with an incompatible shape is
-            # placed into a runtime slot.  Only permute names within identical
-            # runtime-shape groups; this still catches ambiguous same-shape input
-            # ordering while keeping the probe safe.
-            import itertools as _itertools
-            shape_by_name: Dict[str, Tuple[int, ...]] = {}
-            for nm in expected_l:
-                shp = tuple(deepx_p2.runtime_input_shapes.get(str(nm)) or deepx_p2.input_shapes.get(str(nm)) or ())
-                shape_by_name[str(nm)] = tuple(int(x) for x in shp)
-            groups: Dict[Tuple[int, ...], List[int]] = {}
-            for pos, nm in enumerate(expected_l):
-                groups.setdefault(shape_by_name.get(str(nm), ()), []).append(pos)
-            # Cartesian product over same-shape group permutations.  Different
-            # shape groups keep their original positional slots.
-            group_perms: List[List[Tuple[int, ...]]] = []
-            for positions in groups.values():
-                if len(positions) <= 1:
-                    group_perms.append([tuple(positions)])
-                else:
-                    group_perms.append(list(_itertools.permutations(positions)))
-            for combo in _itertools.product(*group_perms):
-                pp = list(expected_l)
-                for positions, perm_positions in zip(groups.values(), combo):
-                    if len(positions) <= 1:
-                        continue
-                    # Assign names from permuted positions into the fixed slots of this shape group.
-                    for dst_pos, src_pos in zip(positions, perm_positions):
-                        pp[dst_pos] = expected_l[src_pos]
-                if pp not in input_order_candidates:
-                    input_order_candidates.append(pp)
-        input_order_candidates = input_order_candidates[:24]
-
-        probe_samples = _deepx_stage2_contract_probe_samples(feeds_full_local, out1_map)
-        report["probe_sample_count"] = int(len(probe_samples))
-        report["probe_sample_sources"] = [str(x.get("source")) for x in probe_samples[:32] if isinstance(x, dict)]
-        reject_pass_ratio_thr = _deepx_stage2_contract_reject_threshold()
-        reject_score_thr = _deepx_stage2_contract_score_threshold()
-        report["reject_thresholds"] = {
-            "min_pass_ratio": float(reject_pass_ratio_thr),
-            "min_mean_score": float(reject_score_thr),
-            "sample_count": int(len(probe_samples)),
-        }
-
-        for idx, cand in enumerate(candidates):
-            for order_idx, order in enumerate(input_order_candidates):
-                cand_report: Dict[str, Any] = {
-                    "index": int(idx),
-                    "order_index": int(order_idx),
-                    "mapping": dict(cand),
-                    "input_order": list(order),
-                    "sample_scores": [],
-                }
-                scores: List[float] = []
-                pass_count = 0
-                error_count = 0
-                native_crash_count = 0
-                top1_match_count = 0
-                top1_match_seen = 0
-                top5_overlap_vals: List[float] = []
-                cos_vals: List[float] = []
-                for smp in probe_samples:
-                    sample_idx = int(smp.get("index") or 0) if isinstance(smp, dict) else 0
-                    sample_source = str(smp.get("source") or "") if isinstance(smp, dict) else ""
-                    try:
-                        smp_full = smp.get("feeds_full") if isinstance(smp, dict) else feeds_full_local
-                        smp_out1 = smp.get("out1_map") if isinstance(smp, dict) else out1_map
-                        if not isinstance(smp_full, dict) or not isinstance(smp_out1, dict):
-                            raise ValueError("invalid probe sample payload")
-                        dx_inputs = _build_deepx_stage2_inputs_with_mapping(expected_l, smp_out1, cand, smp_full)
-                        # ORT Part2 reference uses the same canonical input tensors.
-                        ort_inputs: Dict[str, np.ndarray] = {}
-                        for meta in ref_input_meta:
-                            name = str(getattr(meta, "name", ""))
-                            if not name:
-                                continue
-                            if name in dx_inputs:
-                                arr = dx_inputs[name]
-                            else:
-                                arr = next(iter(dx_inputs.values()))
-                            try:
-                                shp = _shape_from_ort_input(meta)
-                                if shp:
-                                    ok, arr2 = _try_adapt_tensor(arr, shp)
-                                    if ok:
-                                        arr = arr2
-                            except Exception:
-                                pass
-                            ort_inputs[name] = _maybe_cast_for_onnx_input(np.asarray(arr), getattr(meta, "type", None))
-                        ref_vals = ref_sess.run(None, ort_inputs)
-                        try:
-                            deepx_p2.set_input_order_override(order)
-                        except Exception:
-                            pass
-                        dx_map = deepx_p2.infer(dx_inputs)
-                        score_info = _score_output_maps_for_contract(ref_names=ref_output_names, ref_values=ref_vals, cand_names=deepx_p2.output_names, cand_map=dx_map)
-                        score = float(score_info.get("score", float("-inf")))
-                        if np.isfinite(score):
-                            scores.append(score)
-                        if bool(score_info.get("pass")):
-                            pass_count += 1
-                        if score_info.get("top1_match") is not None:
-                            top1_match_seen += 1
-                            if bool(score_info.get("top1_match")):
-                                top1_match_count += 1
-                        if score_info.get("top5_overlap") is not None:
-                            try:
-                                top5_overlap_vals.append(float(score_info.get("top5_overlap")))
-                            except Exception:
-                                pass
-                        if score_info.get("cosine_similarity") is not None:
-                            try:
-                                cos_vals.append(float(score_info.get("cosine_similarity")))
-                            except Exception:
-                                pass
-                        cand_report["sample_scores"].append({
-                            "sample_index": int(sample_idx),
-                            "source": sample_source,
-                            "score": score if np.isfinite(score) else None,
-                            "pass": bool(score_info.get("pass")),
-                            "top1_match": bool(score_info.get("top1_match")) if score_info.get("top1_match") is not None else None,
-                            "top5_overlap": score_info.get("top5_overlap"),
-                            "cosine_similarity": score_info.get("cosine_similarity"),
-                            "mode": score_info.get("mode"),
-                        })
-                    except Exception as exc:
-                        error_count += 1
-                        _err_text = f"{type(exc).__name__}: {exc}"
-                        _native_crash = _deepx_stage2_native_crash_error_text(_err_text)
-                        if _native_crash:
-                            native_crash_count += 1
-                        cand_report["sample_scores"].append({
-                            "sample_index": int(sample_idx),
-                            "source": sample_source,
-                            "score": None,
-                            "pass": False,
-                            "status": "native_crash" if _native_crash else "error",
-                            "error_class": "deepx_stage2_native_crash" if _native_crash else "stage2_contract_probe_error",
-                            "native_crash": bool(_native_crash),
-                            "error": _err_text,
-                        })
-                        # A native worker crash usually poisons the dx_engine
-                        # subprocess for this DXNN.  Stop probing this mapping
-                        # early to avoid repeated rc=-11 events on every sample.
-                        if _native_crash and str(os.environ.get("ONNX_SPLITPOINT_DEEPX_STAGE2_ABORT_ON_NATIVE_CRASH", "1")).strip().lower() not in {"0", "false", "no", "off"}:
-                            break
-                        continue
-                n_samples = int(len(probe_samples))
-                mean_score = float(np.mean(np.asarray(scores, dtype=np.float64))) if scores else float("-inf")
-                median_score = float(np.median(np.asarray(scores, dtype=np.float64))) if scores else None
-                min_score = float(np.min(np.asarray(scores, dtype=np.float64))) if scores else None
-                pass_ratio = float(pass_count) / float(max(1, n_samples))
-                top1_ratio = (float(top1_match_count) / float(max(1, top1_match_seen))) if top1_match_seen else None
-                mean_top5_overlap = (float(np.mean(np.asarray(top5_overlap_vals, dtype=np.float64))) if top5_overlap_vals else None)
-                mean_cosine = (float(np.mean(np.asarray(cos_vals, dtype=np.float64))) if cos_vals else None)
-                status = "native_crash" if native_crash_count > 0 else ("ok" if n_samples > 0 and error_count < n_samples else "all_samples_failed")
-                rejected = bool((pass_ratio < reject_pass_ratio_thr) or (np.isfinite(mean_score) and mean_score < reject_score_thr) or not np.isfinite(mean_score))
-                _reject_reason = (
-                    "deepx_stage2_native_crash" if native_crash_count > 0 else
-                    "pass_ratio_below_threshold" if pass_ratio < reject_pass_ratio_thr else
-                    "mean_score_below_threshold" if (not np.isfinite(mean_score) or mean_score < reject_score_thr) else ""
-                )
-                cand_report.update({
-                    "status": status,
-                    "score": mean_score if np.isfinite(mean_score) else None,
-                    "mean_score": mean_score if np.isfinite(mean_score) else None,
-                    "median_score": median_score,
-                    "min_score": min_score,
-                    "pass_count": int(pass_count),
-                    "error_count": int(error_count),
-                    "native_crash_count": int(native_crash_count),
-                    "native_crash": bool(native_crash_count > 0),
-                    "error_class": "deepx_stage2_native_crash" if native_crash_count > 0 else None,
-                    "sample_count": int(n_samples),
-                    "pass_ratio": float(pass_ratio),
-                    "top1_match_ratio": (float(top1_ratio) if top1_ratio is not None else None),
-                    "mean_top5_overlap": mean_top5_overlap,
-                    "mean_cosine_similarity": mean_cosine,
-                    "rejected": rejected,
-                    "reject_reason": _reject_reason,
-                })
-                # Use a conservative composite score: mean score dominates, but
-                # stable pass/top1 ratios break ties and avoid selecting a mapping
-                # that only works on one image.
-                composite = (mean_score if np.isfinite(mean_score) else -1e9) + 0.25 * pass_ratio + 0.10 * (top1_ratio if top1_ratio is not None else 0.0)
-                if (not rejected) and composite > best_score:
-                    best_score = float(composite)
-                    best_map = dict(cand)
-                    best_order = list(order)
-                    best_report = dict(cand_report)
-                report["candidates"].append(cand_report)
-        selected_valid = bool(best_report) and np.isfinite(best_score)
-        _native_crash_candidates = [c for c in (report.get("candidates") or []) if isinstance(c, dict) and c.get("native_crash")]
-        _native_crash_count_total = int(sum(int(c.get("native_crash_count") or 0) for c in _native_crash_candidates if isinstance(c, dict)))
-        _status_final = (
-            "selected" if selected_valid else
-            "native_unstable" if _native_crash_count_total > 0 else
-            ("all_candidates_rejected" if candidates else "no_candidates")
-        )
-        report.update({
-            "status": _status_final,
-            "pass": bool(selected_valid),
-            "selected_mapping": dict(best_map),
-            "selected_input_order": list(best_order),
-            "selected_score": best_score if np.isfinite(best_score) else None,
-            "selected_candidate": best_report,
-            "selected_pass_ratio": (best_report.get("pass_ratio") if isinstance(best_report, dict) else None),
-            "selected_mean_score": (best_report.get("mean_score") if isinstance(best_report, dict) else None),
-            "selected_top1_match_ratio": (best_report.get("top1_match_ratio") if isinstance(best_report, dict) else None),
-            "selected_mean_cosine_similarity": (best_report.get("mean_cosine_similarity") if isinstance(best_report, dict) else None),
-            "candidate_count": int(len(candidates)),
-            "input_order_candidate_count": int(len(input_order_candidates)),
-            "candidate_evaluations": int(len(report.get("candidates") or [])),
-            "rejected_candidate_count": int(sum(1 for c in (report.get("candidates") or []) if isinstance(c, dict) and c.get("rejected"))),
-            "native_crash_candidate_count": int(len(_native_crash_candidates)),
-            "native_crash_sample_count": int(_native_crash_count_total),
-            "error_class": "deepx_stage2_native_unstable" if _native_crash_count_total > 0 and not selected_valid else None,
-            "rejection_reason": ("deepx_stage2_native_unstable" if _native_crash_count_total > 0 and not selected_valid else ("all_candidates_rejected" if candidates and not selected_valid else "")),
-            "recommendation": (
-                "DeepX Part2 DXNN crashes natively for this TensorRT->DeepX feature-start split. Treat as unsupported/unstable and prefer DeepX->TensorRT or DeepX Full for this model/cut."
-                if _native_crash_count_total > 0 and not selected_valid else ""
-            ),
-        })
-        deepx_p2_tuned_map = dict(best_map)
-        deepx_p2_tuned_input_order = list(best_order)
-        try:
+        if os.environ.get("ONNX_SPLITPOINT_DEEPX_STAGE2_ORDER_PROBE", "0").strip().lower() in {"1", "true", "yes", "on"}:
+            raise RuntimeError("DeepX validation-score mapping selection is disabled in evaluation; freeze an explicit manifest mapping using separate calibration diagnostics")
+        if deepx_p2_tuned_map is None:
+            deepx_p2_tuned_map = _resolve_deepx_stage2_mapping(
+                expected, out1_map, manifest_cut_name_map_p2_to_p1,
+                deepx_p2.input_shapes, feeds_full_local)
+            deepx_p2_tuned_input_order = list(expected)
             deepx_p2.set_input_order_override(deepx_p2_tuned_input_order)
-        except Exception:
-            pass
-        deepx_p2_contract_report = report
-        try:
-            print(f"[deepx][contract] part2 selected mapping={best_map} input_order={best_order} score={report.get('selected_score')} mode={(best_report or {}).get('mode')}")
-        except Exception:
-            pass
-        return dict(best_map)
+            deepx_p2_contract_report = {
+                "schema_version": 2, "backend": "deepx_m1", "stage": "part2",
+                "check": "stage2_input_mapping", "status": "predeclared_mapping",
+                "pass": True, "selected_mapping": dict(deepx_p2_tuned_map),
+                "selected_input_order": list(deepx_p2_tuned_input_order),
+                "selection_uses_validation_scores": False,
+                "mapping_policy": "manifest_exact_names_or_unique_shape_only",
+            }
+        return dict(deepx_p2_tuned_map)
 
     def _build_stage2_inputs(out1_map: Dict[str, np.ndarray], feeds_full_override: Optional[Dict[str, np.ndarray]] = None) -> Dict[str, np.ndarray]:
         # Build stage2 feed dict from stage1 outputs + passthrough full inputs.
@@ -18276,13 +18254,9 @@ def main() -> int:
                 # accidentally swapped between TensorRT Part1 and DeepX Part2.
                 p2_in_map = _maybe_tune_deepx_stage2_mapping(expected, out1_map, p2_in_map or {}, feeds_full_local)
             except Exception as _dx_contract_exc:
-                try:
-                    deepx_p2_contract_report.setdefault("warnings", []).append(
-                        f"mapping_tune_failed:{type(_dx_contract_exc).__name__}:{_dx_contract_exc}"
-                    )
-                    print(f"[deepx][contract] mapping tune failed: {_dx_contract_exc}")
-                except Exception:
-                    pass
+                deepx_p2_contract_report.update({"status": "mapping_contract_error", "pass": False,
+                    "error": str(_dx_contract_exc)})
+                raise RuntimeError(f"DeepX stage2 mapping contract rejected: {_dx_contract_exc}") from _dx_contract_exc
             try:
                 _dx_status = str((deepx_p2_contract_report or {}).get("status") or "").strip().lower()
                 _dx_pass = (deepx_p2_contract_report or {}).get("pass")
@@ -18319,205 +18293,8 @@ def main() -> int:
                 d[inp] = np.asarray(src, dtype=np.float32) if np.issubdtype(np.asarray(src).dtype, np.floating) else np.asarray(src)
             return _make_tensor_map_contiguous(d)
 
-        if deepx_p2 is not None:
-            expected = deepx_p2.input_names
-            if p2_in_map is None or p2_in_map_src_keys != src_keys:
-                p2_in_map = _map_inputs_to_outputs(expected, list(out1_map.keys()))
-                for p2_name, p1_name in manifest_cut_name_map_p2_to_p1.items():
-                    if p2_name in expected and p1_name in out1_map:
-                        p2_in_map[p2_name] = p1_name
-                p2_in_map = _overlay_boundary_slot_mapping(
-                    p2_in_map,
-                    expected_inputs=expected,
-                    produced_outputs=list(out1_map.keys()),
-                    part1_cut_names_manifest=part1_cut_names_manifest,
-                    part2_cut_names_manifest=part2_cut_names_manifest,
-                )
-                p2_in_map_src_keys = src_keys
-                try:
-                    print(f"[interface][p2-map][deepx] {p2_in_map}")
-                except Exception:
-                    pass
-            try:
-                # v54d: validate/tune DeepX Part2 input order/layout using a one-sample
-                # ORT-Part2 reference.  This catches same-shape cut tensors that are
-                # accidentally swapped between TensorRT Part1 and DeepX Part2.
-                p2_in_map = _maybe_tune_deepx_stage2_mapping(expected, out1_map, p2_in_map or {}, feeds_full_local)
-            except Exception as _dx_contract_exc:
-                try:
-                    deepx_p2_contract_report.setdefault("warnings", []).append(
-                        f"mapping_tune_failed:{type(_dx_contract_exc).__name__}:{_dx_contract_exc}"
-                    )
-                    print(f"[deepx][contract] mapping tune failed: {_dx_contract_exc}")
-                except Exception:
-                    pass
-            try:
-                _dx_status = str((deepx_p2_contract_report or {}).get("status") or "").strip().lower()
-                _dx_pass = (deepx_p2_contract_report or {}).get("pass")
-                if _dx_status in {"all_candidates_rejected", "no_candidates"} or _dx_pass is False:
-                    raise RuntimeError(
-                        "DeepX stage2 contract rejected all safe input mappings; skipping unsafe Part2 execution "
-                        f"(status={_dx_status or 'failed'}, probe_samples={(deepx_p2_contract_report or {}).get('probe_sample_count')})"
-                    )
-            except RuntimeError:
-                raise
-            except Exception:
-                pass
-            d: Dict[str, np.ndarray] = {}
-            used_stage1_sources: set[str] = set()
-            for inp in expected:
-                tgt_shape = deepx_p2.input_shapes.get(inp) or deepx_p2.runtime_input_shapes.get(inp)
-                hit = _select_source_tensor(inp, tgt_shape, out1_map, p2_in_map, used_names=used_stage1_sources)
-                if hit is not None:
-                    src_name, src = hit
-                    p2_in_map[inp] = src_name
-                    used_stage1_sources.add(src_name)
-                elif inp in feeds_full_local:
-                    src = feeds_full_local[inp]
-                    ok, src = _try_adapt_tensor(src, tgt_shape)
-                    if not ok:
-                        raise ValueError(f"Cannot adapt passthrough full input '{inp}' from shape {tuple(np.asarray(feeds_full_local[inp]).shape)} to target shape {tgt_shape}")
-                else:
-                    raise KeyError(
-                        f"Cannot build DeepX stage2 input '{inp}': no compatible stage1 output and not in full inputs. "
-                        f"stage1 outputs={{ {', '.join(f'{k}:{tuple(np.asarray(v).shape)}' for k,v in out1_map.items())} }} full inputs={list(feeds_full_local.keys())} mapping={p2_in_map}"
-                    )
-                d[inp] = np.asarray(src, dtype=np.float32)
-            return d
 
-        if deepx_p2 is not None:
-            expected = list(deepx_p2.input_names)
-            if p2_in_map is None or p2_in_map_src_keys != src_keys:
-                p2_in_map = _map_inputs_to_outputs(expected, list(out1_map.keys()))
-                for p2_name, p1_name in manifest_cut_name_map_p2_to_p1.items():
-                    if p2_name in expected and p1_name in out1_map:
-                        p2_in_map[p2_name] = p1_name
-                p2_in_map = _overlay_boundary_slot_mapping(
-                    p2_in_map,
-                    expected_inputs=expected,
-                    produced_outputs=list(out1_map.keys()),
-                    part1_cut_names_manifest=part1_cut_names_manifest,
-                    part2_cut_names_manifest=part2_cut_names_manifest,
-                )
-                p2_in_map_src_keys = src_keys
-                try:
-                    print(f"[interface][p2-map][deepx] {p2_in_map}")
-                except Exception:
-                    pass
-            try:
-                # v54d: validate/tune DeepX Part2 input order/layout using a one-sample
-                # ORT-Part2 reference.  This catches same-shape cut tensors that are
-                # accidentally swapped between TensorRT Part1 and DeepX Part2.
-                p2_in_map = _maybe_tune_deepx_stage2_mapping(expected, out1_map, p2_in_map or {}, feeds_full_local)
-            except Exception as _dx_contract_exc:
-                try:
-                    deepx_p2_contract_report.setdefault("warnings", []).append(
-                        f"mapping_tune_failed:{type(_dx_contract_exc).__name__}:{_dx_contract_exc}"
-                    )
-                    print(f"[deepx][contract] mapping tune failed: {_dx_contract_exc}")
-                except Exception:
-                    pass
-            try:
-                _dx_status = str((deepx_p2_contract_report or {}).get("status") or "").strip().lower()
-                _dx_pass = (deepx_p2_contract_report or {}).get("pass")
-                if _dx_status in {"all_candidates_rejected", "no_candidates"} or _dx_pass is False:
-                    raise RuntimeError(
-                        "DeepX stage2 contract rejected all safe input mappings; skipping unsafe Part2 execution "
-                        f"(status={_dx_status or 'failed'}, probe_samples={(deepx_p2_contract_report or {}).get('probe_sample_count')})"
-                    )
-            except RuntimeError:
-                raise
-            except Exception:
-                pass
-            d: Dict[str, np.ndarray] = {}
-            used_stage1_sources: set[str] = set()
-            for inp in expected:
-                tgt_shape = deepx_p2.input_shapes.get(inp) or deepx_p2.runtime_input_shapes.get(inp)
-                hit = _select_source_tensor(inp, tgt_shape, out1_map, p2_in_map, used_names=used_stage1_sources)
-                if hit is not None:
-                    src_name, src = hit
-                    p2_in_map[inp] = src_name
-                    used_stage1_sources.add(src_name)
-                elif inp in feeds_full_local:
-                    src = feeds_full_local[inp]
-                    ok, src = _try_adapt_tensor(src, tgt_shape)
-                    if not ok:
-                        raise ValueError(f"Cannot adapt passthrough full input '{inp}' from shape {tuple(np.asarray(feeds_full_local[inp]).shape)} to target shape {tgt_shape}")
-                else:
-                    raise KeyError(
-                        f"Cannot build DeepX stage2 input '{inp}': no compatible stage1 output and not in full inputs. "
-                        f"stage1 outputs={{ {', '.join(f'{k}:{tuple(np.asarray(v).shape)}' for k,v in out1_map.items())} }} full inputs={list(feeds_full_local.keys())} mapping={p2_in_map}"
-                    )
-                d[inp] = np.ascontiguousarray(src)
-            return d
 
-        if deepx_p2 is not None:
-            expected = deepx_p2.input_names
-            if p2_in_map is None or p2_in_map_src_keys != src_keys:
-                p2_in_map = _map_inputs_to_outputs(expected, list(out1_map.keys()))
-                for p2_name, p1_name in manifest_cut_name_map_p2_to_p1.items():
-                    if p2_name in expected and p1_name in out1_map:
-                        p2_in_map[p2_name] = p1_name
-                p2_in_map = _overlay_boundary_slot_mapping(
-                    p2_in_map,
-                    expected_inputs=expected,
-                    produced_outputs=list(out1_map.keys()),
-                    part1_cut_names_manifest=part1_cut_names_manifest,
-                    part2_cut_names_manifest=part2_cut_names_manifest,
-                )
-                p2_in_map_src_keys = src_keys
-                try:
-                    print(f"[interface][p2-map][deepx] {p2_in_map}")
-                except Exception:
-                    pass
-            try:
-                # v54d: validate/tune DeepX Part2 input order/layout using a one-sample
-                # ORT-Part2 reference.  This catches same-shape cut tensors that are
-                # accidentally swapped between TensorRT Part1 and DeepX Part2.
-                p2_in_map = _maybe_tune_deepx_stage2_mapping(expected, out1_map, p2_in_map or {}, feeds_full_local)
-            except Exception as _dx_contract_exc:
-                try:
-                    deepx_p2_contract_report.setdefault("warnings", []).append(
-                        f"mapping_tune_failed:{type(_dx_contract_exc).__name__}:{_dx_contract_exc}"
-                    )
-                    print(f"[deepx][contract] mapping tune failed: {_dx_contract_exc}")
-                except Exception:
-                    pass
-            try:
-                _dx_status = str((deepx_p2_contract_report or {}).get("status") or "").strip().lower()
-                _dx_pass = (deepx_p2_contract_report or {}).get("pass")
-                if _dx_status in {"all_candidates_rejected", "no_candidates"} or _dx_pass is False:
-                    raise RuntimeError(
-                        "DeepX stage2 contract rejected all safe input mappings; skipping unsafe Part2 execution "
-                        f"(status={_dx_status or 'failed'}, probe_samples={(deepx_p2_contract_report or {}).get('probe_sample_count')})"
-                    )
-            except RuntimeError:
-                raise
-            except Exception:
-                pass
-            d: Dict[str, np.ndarray] = {}
-            used_stage1_sources: set[str] = set()
-            for inp in expected:
-                tgt_shape = deepx_p2.input_shapes.get(inp) or deepx_p2.runtime_input_shapes.get(inp)
-                hit = _select_source_tensor(inp, tgt_shape, out1_map, p2_in_map, used_names=used_stage1_sources)
-                if hit is not None:
-                    src_name, src = hit
-                    p2_in_map[inp] = src_name
-                    used_stage1_sources.add(src_name)
-                elif inp in feeds_full_local:
-                    src = feeds_full_local[inp]
-                    ok, src = _try_adapt_tensor(src, tgt_shape)
-                    if not ok:
-                        raise ValueError(
-                            f"Cannot adapt passthrough full input '{inp}' from shape {tuple(np.asarray(feeds_full_local[inp]).shape)} to target shape {tgt_shape}"
-                        )
-                else:
-                    raise KeyError(
-                        f"Cannot build DeepX stage2 input '{inp}': no compatible stage1 output and not in full inputs. "
-                        f"stage1 outputs={{ {', '.join(f'{k}:{tuple(np.asarray(v).shape)}' for k,v in out1_map.items())} }} full inputs={list(feeds_full_local.keys())} mapping={p2_in_map}"
-                    )
-                d[inp] = src
-            return d
 
         if native_p2_sess is not None:
             expected = list(native_p2_sess.input_names)
@@ -19649,6 +19426,7 @@ def main() -> int:
             "measured_variants": [v for v, st in variant_status_min.items() if st == "ok"],
             "variant_status": variant_status_min,
             "timing_ms": timing_ms,
+            "timing_input_binding": dict(timing_input_binding),
             "benchmark_input_policy": dict(_benchmark_input_policy),
             "benchmark_input_mode": _benchmark_input_policy.get("mode"),
             "benchmark_loop_count": _benchmark_input_policy.get("loop_count"),
@@ -22897,6 +22675,7 @@ def main() -> int:
         case_dir=base_dir.name,
         run_cfg=run_cfg,
         plan=plan,
+        timing_input_binding=dict(timing_input_binding),
         benchmark_input_policy=dict(_benchmark_input_policy),
         benchmark_input_mode=_benchmark_input_policy.get("mode"),
         benchmark_loop_count=_benchmark_input_policy.get("loop_count"),

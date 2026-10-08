@@ -224,6 +224,7 @@ def test_t07_11_actual_deepx_session_reports_selected_candidate_without_retry():
     session._should_use_feature_subprocess=lambda:False
     calls=[];session._engine=SimpleNamespace(run=lambda feeds:(calls.append(feeds[0].copy()) or [np.zeros((1,1000),np.float32)]))
     observations=[];session._diagnostic_observer=observations.append
+    session.image_input_contract={'source_domain':'imagenet','source_layout':'NCHW','runtime_layout':'HWC'}
     normalized=classification_input_tensor(u,mode='imagenet_mean_std',layout='NCHW')
     session.infer({'input':normalized});assert len(calls)==1 and observations[0]['candidate_index']==0
     expected=np.ascontiguousarray(np.clip((normalized[0]*np.array([.229,.224,.225],np.float32)[:,None,None]+np.array([.485,.456,.406],np.float32)[:,None,None])*255,0,255).astype(np.uint8).transpose(1,2,0))

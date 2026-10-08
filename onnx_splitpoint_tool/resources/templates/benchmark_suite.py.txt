@@ -5124,6 +5124,7 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
         if raw_detection:
             from splitpoint_runners.native_detection_postprocess import (
                 FrozenDetectionPostprocessor,
+                native_full_postprocess_runtime_mode,
                 build_detection_completion_execution_contract,
                 build_frozen_postprocess_contract,
             )
@@ -5253,7 +5254,10 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
                 original_wh=[original_wh[0], original_wh[1]],
             )
             frozen_postprocessor = FrozenDetectionPostprocessor(
-                frozen_postprocess_contract
+                frozen_postprocess_contract,
+                runtime_mode=(native_full_postprocess_runtime_mode(frozen_postprocess_contract)
+                              if getattr(args, "native_full_postprocess_runtime_mode", "strict") == "auto"
+                              else getattr(args, "native_full_postprocess_runtime_mode", "strict")),
             )
             completion_kind = "raw_host_tail"
         elif direct_detection:
@@ -5379,12 +5383,24 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
             if diagnostic_only:
                 _capture_probe_outputs(_named_runtime_outputs(raw_outputs))
             if frozen_postprocessor is not None:
-                frozen_postprocess_result = frozen_postprocessor.process(
+                process = (
+                    frozen_postprocessor.process_task
+                    if not diagnostic_only
+                    and frozen_postprocessor.runtime_mode != "strict"
+                    else frozen_postprocessor.process
+                )
+                frozen_postprocess_result = process(
                     _named_runtime_outputs(raw_outputs),
                     original_wh=[original_wh[0], original_wh[1]],
                 )
             elif direct_normalizer is not None:
-                direct_normalization_result = direct_normalizer.process(
+                process = (
+                    direct_normalizer.process_task
+                    if not diagnostic_only
+                    and getattr(args, "native_full_postprocess_runtime_mode", "strict") != "strict"
+                    else direct_normalizer.process
+                )
+                direct_normalization_result = process(
                     _named_runtime_outputs(raw_outputs),
                     original_wh=[
                         original_wh[0], original_wh[1],
@@ -5439,6 +5455,11 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
             }
 
         diagnostic_phase = "warmup"
+        implementation_before = (
+            frozen_postprocessor.assert_implementation_unchanged()
+            if frozen_postprocessor is not None
+            and getattr(args, "native_full_postprocess_runtime_mode", "strict") != "strict" else {}
+        )
         for _ in range(warmup):
             _run_full_task_once()
         try:
@@ -5462,6 +5483,18 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
             request_latency.complete(request_id)
             times.append((t1 - t0) * 1000.0)
         makespan_end = perf()
+        # Task materialization remains timed. The finite postflight oracle,
+        # implementation binding and persisted evidence describe the completed
+        # sentinel after the last task, never per-frame evidence.
+        if frozen_postprocessor is not None:
+            frozen_postprocess_result = frozen_postprocessor.finalize_evidence()
+        elif direct_normalizer is not None:
+            direct_normalization_result = direct_normalizer.finalize_evidence()
+        implementation_after = (
+            frozen_postprocessor.assert_implementation_unchanged()
+            if frozen_postprocessor is not None
+            and getattr(args, "native_full_postprocess_runtime_mode", "strict") != "strict" else {}
+        )
     except Exception as exc:
         exception_diagnostics = dict(getattr(exc, "diagnostics", {}) or {})
         failure = {
@@ -5591,6 +5624,10 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
         "status": "ok",
         "request_latency": request_latency.report(),
         "benchmark_kind": "prepared_feed_dx_engine",
+        "postprocess_runtime_mode": getattr(frozen_postprocessor, "runtime_mode", completion_kind),
+        "implementation_artifacts_before": implementation_before,
+        "implementation_artifacts_after": implementation_after,
+        "implementation_source_drift_checked": bool(implementation_before and implementation_after),
         "task": task,
         "run_count": runs,
         "requested_frames": runs,
@@ -9180,6 +9217,26 @@ def _select_visual_sample_image(source: Optional[Path], root: Path, task: str, s
     return None
 
 
+def _select_timing_sample_image(source: Optional[Path], root: Path, task: str, image: str = "default") -> Tuple[Optional[Path], str]:
+    """Use the shared frozen-feed selector, independently of backend/cut/run.
+
+    A single selected source is repeated; this is not a sequence of independent
+    images. Explicit images remain authoritative in performance and energy.
+    """
+    explicit = str(image or "default").strip()
+    if explicit.lower() in {"default", "auto"}:
+        explicit = ""
+    elif explicit.lower() in {"coco", "imagenet"}:
+        explicit = str(root / "test_images" / ("test_image_" + explicit.lower() + ".png"))
+    selected, origin = _deepx_find_prepared_feed_image(
+        root, 224 if task == "classification" else 640, task, {},
+        argparse.Namespace(prepared_feed_image=explicit, validation_images=str(source or "")),
+    )
+    if explicit and selected is None:
+        raise ValueError("timing_input_image_missing:" + explicit)
+    return selected, origin
+
+
 def _management_cpu_reference_context(
     *, run_id: str, provider: str, stage1: Optional[str], stage2: Optional[str],
     variants: Optional[List[str]], case_meta: Optional[Mapping[str, Any]],
@@ -9683,26 +9740,27 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
         else:
             cmd += ["--no-native-trt-build"]
 
-    # Visual verification: if no explicit image was selected, use one
-    # deterministic sample from the semantic validation source.  The per-case
-    # runner then writes classification_*.png or detections_*.png overlays.
-    image_arg = str(image or "default")
-    if measurement_only:
-        # Keep default synthetic/auto input.  Do not spend energy-window time
-        # locating/copying visual verification images.
-        pass
-    elif image_arg.lower() != "default":
-        cmd += ["--image", image_arg]
-    else:
-        visual_sample = _select_visual_sample_image(
-            val_img,
-            case_dir.parent,
-            task_norm,
-            seed_key=f"{case_dir.name}:{run_id}:{provider}:{stage1 or ''}:{stage2 or ''}",
-        )
-        if visual_sample is not None:
-            cmd += ["--image", str(visual_sample)]
-            print(f"[viz] {case_dir.name}/{run_id}: visual sample={visual_sample}")
+    # --image is also the timing input. Visual selection must therefore never
+    # seed it with the backend, cut, or run ID. Selection/binding is preflight
+    # work, including for measurement-only children.
+    timing_sample, timing_origin = _select_timing_sample_image(
+        val_img, case_dir.parent, task_norm, str(image or "default"),
+    )
+    if timing_sample is not None:
+        cmd += ["--image", str(timing_sample)]
+        timing_out = Path(out_dir_name)
+        if not timing_out.is_absolute():
+            timing_out = case_dir / timing_out
+        timing_out.mkdir(parents=True, exist_ok=True)
+        (timing_out / "timing_image_selection.json").write_text(json.dumps({
+            "input_image": str(timing_sample),
+            "input_image_sha256": _deepx_quality_file_sha256(timing_sample),
+            "image_sequence": [str(timing_sample)],
+            "selection_source": timing_origin,
+            "selection_scope": "model_input_contract",
+            "repeated_single_image": True,
+        }, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        print(f"[timing] {case_dir.name}/{run_id}: input={timing_sample}")
     rc = 0
     try:
         env = os.environ.copy()
@@ -11064,6 +11122,9 @@ def main() -> int:
     )
     parser.add_argument("--energy-measurement-only", action="store_true", help="Measurement-only mode for u.RECS windows: run latency/streaming loops but skip semantic validation, visualizations and report plots.")
     parser.add_argument("--prepared-feed-image", default="", help="Exact single image used for prepared-feed performance and energy loops. Independent of dataset semantic validation.")
+    parser.add_argument("--native-full-postprocess-runtime-mode", default="strict",
+                        choices=("auto", "strict", "bound_dense", "bound_exact_sparse"),
+                        help="Native Full dispatcher completion mode; Generic retains strict by default.")
     parser.add_argument(
         "--prepared-input-manifest", default="",
         help=(

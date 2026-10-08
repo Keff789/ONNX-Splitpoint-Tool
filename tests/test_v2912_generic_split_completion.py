@@ -64,13 +64,21 @@ def _fixture(tmp_path):
     engine = tmp_path / 'existing.engine';engine.write_bytes(b'existing engine')
     prepared = np.arange(12, dtype=np.uint8).reshape(2, 2, 3)
     input_path = tmp_path / 'input.npy';np.save(input_path, prepared)
+    from PIL import Image
+    image_path = tmp_path / 'input.png'; Image.fromarray(prepared).save(image_path)
+    image_sha = _descriptor(image_path)['sha256']
     logits = np.array([[1, 6, 3, 4, 5, 2]], dtype=np.float32)
     reference = tmp_path / 'logits.npy';np.save(reference, logits)
     config = {'identity': {'model_id': 'fixture', 'case_id': 'b001', 'setup_id': 'fixture', 'precision': 'fp16'},
         'execution_id': 'new-session', 'original_run': 'original-run', 'task': 'classification',
         'measurement_boundary': 'prepared_input_before_p1_to_last_completed_task',
         'repetitions': 3, 'warmup_count': 100, 'task_count': 1000, 'queue_depth': 2,
-        'input_binding': {'prepared_input': _descriptor(input_path, prepared)},
+        'input_binding': {'prepared_input': {**_descriptor(input_path, prepared), 'input_name': 'images'},
+            'runtime_input_format': 'uint8', 'source_image': str(image_path), 'source_image_sha256': image_sha,
+            'prepared_input_contract': {'shape': list(prepared.shape), 'dtype': str(prepared.dtype),
+                'layout': 'HWC', 'normalization': 'none', 'task': 'classification',
+                'preprocess_mode_effective': 'resize', 'source_image': str(image_path),
+                'source_image_sha256': image_sha}},
         'completion_contract': {'task': 'classification', 'operation': 'top1_top5', 'label_offset': 0},
         'expected_runtime_artifacts': {'part1_runtime': _descriptor(dxnn), 'engine': _descriptor(engine)},
         'functional_reference': {'input_sha256': _descriptor(input_path)['sha256'],
@@ -161,6 +169,8 @@ def test_real_generated_main_uses_generic_pipeline_and_never_cpu_reference(tmp_p
             self.dxnn_path = path
         def describe_io(self):
             return {}
+        def bind_prepared_inputs(self, feeds):
+            self.exact_prepared_input = True
         def infer(self, feeds):
             assert self.exact_prepared_input is True
             assert list(feeds) == ['images']
@@ -185,6 +195,8 @@ def test_real_generated_main_uses_generic_pipeline_and_never_cpu_reference(tmp_p
     path=tmp_path/'config.json';path.write_text(json.dumps(config))
     output=tmp_path/'supplement'
     for index in (1, 2, 3):
+        monkeypatch.setattr(module, '_generic_process_identity', lambda index=index: {
+            'pid': 1000 + index, 'process_start_ticks': 2000 + index, 'boot_id': 'offline-fixture'})
         monkeypatch.setattr(sys, 'argv', ['runner', '--generic-completion-config', str(path), '--out-dir', str(output),
                                         '--generic-completion-repetition', str(index)])
         assert module.main() == 0
@@ -318,3 +330,44 @@ def test_hailo_rejects_missing_bound_runtime_format_before_inference(monkeypatch
     module=_module(monkeypatch)
     with pytest.raises(ValueError,match='bound Native runtime option'):
         module._completion_hailo_quantized_inputs({'input_binding':{}})
+
+
+def test_new_process_evidence_rejects_same_pid_start_but_keeps_legacy_readable(tmp_path, monkeypatch):
+    module = _module(monkeypatch); config, logits = _fixture(tmp_path)
+    output = tmp_path / 'process_output'; output.mkdir()
+    artifacts = {k: Path(v['path']) for k, v in config['expected_runtime_artifacts'].items()}
+    module._run_generic_split_completion(config, output, lambda: {'cut': logits}, lambda x: x,
+        lambda x: {'logits': x['cut']}, artifacts, clone_payload=None)
+    result = json.loads((output / 'generic_completion_results.json').read_text())
+    assert len(valid_split_completion_repetitions(result, config)) == 3  # legacy parser
+    result['process_repetition_policy'] = 'separate_processes'
+    for row in result['repetitions']:
+        row.update(pid=100, process_start_ticks=200, boot_id='fixture')
+    with pytest.raises(ValueError, match='share a process'):
+        valid_split_completion_repetitions(result, config)
+    for index, row in enumerate(result['repetitions']):
+        row['pid'] += index
+    assert len(valid_split_completion_repetitions(result, config)) == 3
+    result['repetitions'][0]['process_start_ticks'] = None
+    with pytest.raises(ValueError, match='start identity missing'):
+        valid_split_completion_repetitions(result, config)
+
+
+@pytest.mark.parametrize('task,target', [('detection', (32,32)), ('classification', (32,32))])
+def test_shared_raster_loader_asymmetric_pixels_and_actual_hashes(tmp_path, monkeypatch, task, target):
+    from PIL import Image
+    from onnx_splitpoint_tool.preprocessing_contract import canonical_image_preprocessing_contract, prepare_rgb_uint8_image
+    module = _module(monkeypatch)
+    pixels = np.arange(7*11*3, dtype=np.uint8).reshape(7,11,3)
+    path = tmp_path / 'asymmetric.png'; Image.fromarray(pixels).save(path)
+    contract = canonical_image_preprocessing_contract(task, target)
+    expected, geometry = prepare_rgb_uint8_image(pixels, contract)
+    binding = {}
+    feed = module._load_image_as_nchw(path, target_hw=target, dtype=np.float32,
+        scale=contract['image_scale'], preprocessing_contract=contract, binding_out=binding)
+    assert binding['canonical_rgb_sha256'] == hashlib.sha256(expected.tobytes()).hexdigest()
+    assert binding['input_image_sha256'] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert binding['geometry'] == geometry
+    if task == 'detection':
+        np.testing.assert_array_equal(feed, expected.transpose(2,0,1)[None].astype(np.float32)/255)
+    assert binding['canonical_preprocessing_executed'] is True

@@ -179,6 +179,23 @@ def _verified_pair_prepared_input(command: Mapping[str, Any], case: Mapping[str,
     expected.update(path=entry["remote_path"], format=storage_format)
     if any(prepared.get(key) != value for key, value in expected.items()):
         raise ValueError("native_generic_prepared_input_projection_mismatch")
+    source_contract = _mapping(contract.get("source_input_contract"))
+    from .native_performance_identity import canonical_native_backend
+    backend = canonical_native_backend(command["backend"])
+    for key in ("layout", "normalization", "source_domain"):
+        if key not in prepared:
+            continue
+        declarations = [item[key] for item in (contract, source_contract, entry) if item.get(key)]
+        if backend == "hailo8" and key != "layout":
+            # The existing Generic H8 adapter either preserves UINT8 or performs
+            # the paired C++ RGB/255 conversion. Derive this from the bound option.
+            runtime_format = str(command.get("runtime_options", {}).get("hailo_format") or "")
+            if entry["dtype"] != "uint8" or runtime_format not in {"uint8", "raw_uint8", "float32", "dequant_float32"}:
+                raise ValueError("native_generic_prepared_input_domain_binding_missing")
+            declarations.append("uint8_0_255" if key == "source_domain" or runtime_format in {"uint8", "raw_uint8"}
+                                else "imagenet_mean_std" if config["task"] == "classification" else "unit_float32")
+        if not declarations or any(value != prepared[key] for value in declarations):
+            raise ValueError("native_generic_prepared_input_descriptor_conflict:" + key)
     array_spec = {**prepared, "path": entry["local_path"]}
     orders = [item["c_contiguous"] for item in (contract, entry) if "c_contiguous" in item]
     if orders:
@@ -547,3 +564,22 @@ def write_completion_reports(plan: Mapping[str, Any], results_dir: str | Path, o
     _csv(out / "generic_completion_raw_repetitions.csv", raw_repetitions)
     atomic_write_json(out / "generic_completion_summary.json", summary)
     return summary
+
+
+def write_generic_energy_report(plan_path: str | Path, captures_path: str | Path,
+                                case: Mapping[str, Any], output_dir: str | Path) -> dict[str, Any]:
+    """Import explicit normal energy captures without changing FPS reports."""
+    from .generic_energy_reporting import collect_generic_energy_case
+    plan = json.loads(Path(plan_path).read_text(encoding='utf-8'))
+    captures = json.loads(Path(captures_path).read_text(encoding='utf-8'))
+    if captures.get('schema') != 'onnx-splitpoint/generic-energy-capture-sources/v1':
+        raise ValueError('Generic energy capture manifest schema mismatch')
+    if captures.get('plan_sha256') != __import__('hashlib').sha256(Path(plan_path).read_bytes()).hexdigest():
+        raise ValueError('Generic energy capture plan source changed')
+    observation = collect_generic_energy_case(plan, captures.get('sources') or [], case)
+    out = Path(output_dir); out.mkdir(parents=True, exist_ok=True)
+    path = out / 'generic_completed_task_energy.json'
+    if path.exists():
+        raise FileExistsError('Generic energy final report already exists; preserve it and write a new derivation')
+    path.write_text(json.dumps(observation, indent=2, sort_keys=True, allow_nan=False)+'\n', encoding='utf-8')
+    return observation

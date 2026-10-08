@@ -285,11 +285,44 @@ def _canonical_full_row(row: Mapping[str, Any], base: Path | None) -> tuple[Mapp
     return raw, str(path)
 
 
+def _execution_metadata_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Preserve admitted raw input/source bindings, rejecting mixed repeats."""
+    fields: dict[str, Any] = {}
+    records = payload.get('repetition_records') or payload.get('repetition_evidence') or []
+    conflicts = []
+    for key in (
+        'timing_input_binding', 'input_binding', 'input_image_sha256',
+        'canonical_rgb_sha256', 'preprocessing_contract_sha256',
+        'input_dump_sha256', 'runtime_preprocessing_sha256', 'runtime_input_tensor_sha256',
+        'measurement_boundary', 'implementation_artifacts_before',
+        'runtime_input_reuse_mode', 'input_copy_mode', 'streaming_impl',
+        'inflight', 'queue_depth', 'completion_mode',
+    ):
+        value = payload.get(key)
+        observed = [r.get(key) for r in records if isinstance(r, Mapping)]
+        if observed and any(v is not None for v in observed):
+            if any(v != observed[0] for v in observed) or value is not None and value != observed[0]:
+                conflicts.append(key)
+                fields[key] = None
+                continue
+            value = observed[0]
+        if value is not None:
+            fields[key] = value
+    fields['execution_metadata_conflicts'] = conflicts
+    if conflicts:
+        # A last-repeat binding cannot stand in for a mixed input/scheduling cohort.
+        fields['timing_input_binding'] = {}
+        fields['input_binding'] = {}
+        fields['canonical_rgb_sha256'] = ''
+    return fields
+
+
 def report_rate_fields(row: Mapping[str, Any], base: Path | None = None) -> dict[str, Any]:
     """Replay the saved raw report, or validate the retained summary series."""
     canonical, source = _canonical_full_row(row, base)
     if source:
         fields = rate_endpoint_fields(canonical)
+        fields.update(_execution_metadata_fields(canonical))
         fields['rate_endpoint_source'] = source
         if not canonical:
             fields['completed_task_rate']['reason'] = source
@@ -331,6 +364,7 @@ def report_rate_fields(row: Mapping[str, Any], base: Path | None = None) -> dict
                     full_summary and (row.get('repetition_records') or row.get('repetition_evidence'))):
                 payload = raw
     fields = rate_endpoint_fields(payload)
+    fields.update(_execution_metadata_fields(payload))
     fields['rate_endpoint_source'] = report if payload is not row else 'summary_repetition_evidence'
     return fields
 

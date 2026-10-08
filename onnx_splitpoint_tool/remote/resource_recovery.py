@@ -139,9 +139,54 @@ def _rest_evidence_unchanged(evidence):
     ) for path, value in evidence.items())
 
 
+def _bounded_energy_journal(run, session_id, attempt_dir):
+    """Bind an external bounded energy parent's existing terminal evidence.
+
+    The first adapter version stored its journal directly in the run. Resumes
+    keep separate attempt directories. Neither layout needs invented workflow
+    manifests or relocation of historical ownership records.
+    """
+    attempt = Path(attempt_dir).expanduser()
+    _require(attempt.is_absolute() and attempt.is_dir() and not attempt.is_symlink()
+             and attempt.resolve().is_relative_to(run), "invalid bounded energy attempt")
+    attempt = attempt.resolve()
+    read = RemoteProcessLeaseJournal._read_json_exact
+    evidence = {}
+    for name in ("production-start.json", "production-result.json", "cleanup-status.json"):
+        path = attempt / name
+        _require(path.is_file() and not path.is_symlink(), "missing bounded energy evidence: " + name)
+        evidence[path] = read(path)
+    start, result, cleanup = (evidence[attempt / name] for name in (
+        "production-start.json", "production-result.json", "cleanup-status.json"))
+    plan_path = run / "energy_parent_plan.json"
+    prepared_path = run / "PREPARED.json"
+    _require(all(p.is_file() and not p.is_symlink() for p in (plan_path, prepared_path)),
+             "bounded energy plan unavailable")
+    plan, prepared = read(plan_path), read(prepared_path)
+    import hashlib
+    _require(plan.get("schema") == "yolov7-full-fix/bounded-energy-parent-v1"
+             and plan.get("run_dir") == str(run) and prepared.get("ok") is True
+             and prepared.get("plan_sha256") == hashlib.sha256(plan_path.read_bytes()).hexdigest(),
+             "bounded energy prepared plan binding mismatch")
+    _require(start.get("run_id") == run.name and start.get("session_id") == session_id
+             and type(start.get("parent_pid")) is int and start["parent_pid"] > 0
+             and type(result.get("returncode")) is int
+             and _time(start.get("started_at")) <= _time(result.get("finished_at"))
+             <= _time(cleanup.get("at")), "bounded energy parent is not exactly terminal")
+    _require(type(cleanup.get("owned_remote_active")) is int and cleanup["owned_remote_active"] == 0
+             and type(cleanup.get("owned_local_active")) is int and cleanup["owned_local_active"] == 0
+             and cleanup.get("foreign_processes_stopped") is False,
+             "bounded energy owned process cleanup incomplete")
+    directory = attempt / "remote-process-leases"
+    _require(directory.is_dir() and not directory.is_symlink()
+             and directory.resolve().parent == attempt, "invalid bounded energy journal")
+    evidence.update({plan_path: plan, prepared_path: prepared})
+    return directory, {**start, "pid": start["parent_pid"]}, evidence
+
+
 def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
                               operator_evidence=None, retry_authorization=None, registry_path=None,
-                              rest_attempt_dir=None):
+                              rest_attempt_dir=None, bounded_energy_attempt_dir=None):
     """Recover exactly one four-resource capture STOP, under all four flocks.
 
     Exactly one explicit release ground is required. Evidence and original
@@ -158,7 +203,12 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
         _require(isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,160}", value)
                  and value not in {".", ".."}, "invalid session/operation")
     rest_evidence = {}
-    if rest_attempt_dir is None:
+    _require(rest_attempt_dir is None or bounded_energy_attempt_dir is None,
+             "only one external parent layout is allowed")
+    if bounded_energy_attempt_dir is not None:
+        directory, rest_start, rest_evidence = _bounded_energy_journal(
+            run, session_id, bounded_energy_attempt_dir)
+    elif rest_attempt_dir is None:
         directory = run / "jobs" / "remote_process_leases" / session_id
         _require(directory.is_dir() and not directory.is_symlink()
                  and directory.resolve().is_relative_to(run), "invalid existing session directory")
@@ -296,9 +346,10 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
         _require(cleanup.get("owned_tree_quiescent") is True and cleanup.get("process_started") is True
                  and _bound(cleanup, request, ("collector_pid", "collector_start_ticks")),
                  "exact durable collector cleanup is missing")
-        manifest = read(run / "run_manifest.json")
-        _require(manifest.get("run_id") == run.name and (rest_evidence or manifest.get("status") in
-                 {"failed", "cancelled", "completed", "success", "done"}), "parent workflow is not terminal")
+        if bounded_energy_attempt_dir is None:
+            manifest = read(run / "run_manifest.json")
+            _require(manifest.get("run_id") == run.name and (rest_evidence or manifest.get("status") in
+                     {"failed", "cancelled", "completed", "success", "done"}), "parent workflow is not terminal")
         for path in directory.glob("*.remote-lease.json"):
             # Active or corrupt predecessor descriptors require their existing
             # exact cleanup path first. Recovery never kills an unknown owner.

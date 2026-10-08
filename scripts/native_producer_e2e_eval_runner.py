@@ -171,6 +171,10 @@ _COMPLETION_PROJECTION_EXACT_FIELDS = {
     'measurement_boundary',
     'last_completion_source',
     'postprocess_ms',
+    'quality_oracle_location',
+    'semantic_evidence_repetition_index',
+    'semantic_evidence_repetition_id',
+    'semantic_evidence_runtime_instance_id',
 }
 
 
@@ -200,6 +204,16 @@ def _same_hotloop_completion_error(
     if not isinstance(result, dict):
         return 'detection_same_hotloop_completion_result_missing'
     attestation = result.get('completion_execution_attestation')
+    fast = result.get('completion_observation_relation') == 'postflight_oracle_sentinel'
+    relation = 'postflight_oracle_sentinel' if fast else 'same_hotloop_sentinel'
+    if fast:
+        from onnx_splitpoint_tool.native_three_stage import verify_fast_completion_attestation
+        try:
+            verify_fast_completion_attestation(
+                attestation, execution_contract=result.get('completion_execution_contract'),
+            )
+        except Exception as exc:
+            return f'detection_postflight_completion_invalid:{exc}'
     completed_endpoint = result.get('completed_task_endpoint_contract')
     comparison_endpoint = result.get('comparison_endpoint_contract')
     try:
@@ -226,7 +240,7 @@ def _same_hotloop_completion_error(
         or result.get('postprocess_included') is not True
         or result.get('postprocess_completion_verified') is not True
         or result.get('completion_observation_relation')
-        != 'same_hotloop_sentinel'
+        != relation
         or result.get('completion_exact_result_claim_bound') is not True
         or result.get('measurement_boundary')
         != 'workers_ready_to_last_completed_task_frame'
@@ -236,8 +250,8 @@ def _same_hotloop_completion_error(
         or attestation.get('attested') is not True
         or attestation.get('status') != 'passed'
         or attestation.get('observation_relation')
-        != 'same_hotloop_sentinel'
-        or attestation.get('same_hotloop_sentinel') is not True
+        != relation
+        or (not fast and attestation.get('same_hotloop_sentinel') is not True)
         or attestation.get('exact_result_claim_bound') is not True
         or attested_completed != completed
         or attested_count != completed
@@ -371,6 +385,7 @@ def main():
     ap=argparse.ArgumentParser(description='Run native producer E2E runners/scaffolds over staged BenchmarkSets')
     ap.add_argument('--root', required=True); ap.add_argument('--backend', choices=['hailo10h','deepx'], required=True)
     ap.add_argument('--models', default=''); ap.add_argument('--case-map', default=''); ap.add_argument('--precision', default='uint8_cast_fp16')
+    ap.add_argument('--completion-runtime-mode', default='auto', choices=['auto', 'strict', 'bound_dense', 'fast_oracle_outside_timing'])
     ap.add_argument('--frames', type=int, default=1000); ap.add_argument('--warmup', type=int, default=100); ap.add_argument('--repetitions', type=int, default=1, help='Independent performance repetitions; aggregate is median plus 95%% CI, never best-of.'); ap.add_argument('--duration-s', type=float, default=0.0, help='Run each native producer workload for a fixed duration (energy mode).'); ap.add_argument('--queue-depth', type=int, default=3); ap.add_argument('--inflight', type=int, default=8)
     ap.add_argument('--build-missing-engine', action='store_true')
     ap.add_argument('--force-rebuild-engine', action='store_true')
@@ -597,7 +612,7 @@ def main():
                 }))
                 continue
             if ns.backend=='hailo10h':
-                cmd=[sys.executable, str(ROOT/'scripts'/'native_hailo10_trt_e2e_from_benchmarkset.py'), '--benchmark-set', str(bs), '--case', c, '--precision', effective_precision, '--frames', str(ns.frames), '--warmup', str(ns.warmup), '--repetitions', str(ns.repetitions), '--queue-depth', str(ns.queue_depth), '--inflight', str(ns.inflight), '--preprocess-mode', str(ns.preprocess_mode), '--letterbox-pad-value', str(int(ns.letterbox_pad_value)), '--setup-id', str(ns.setup_id), '--model-id', m]
+                cmd=[sys.executable, str(ROOT/'scripts'/'native_hailo10_trt_e2e_from_benchmarkset.py'), '--benchmark-set', str(bs), '--case', c, '--precision', effective_precision, '--frames', str(ns.frames), '--warmup', str(ns.warmup), '--repetitions', str(ns.repetitions), '--queue-depth', str(ns.queue_depth), '--inflight', str(ns.inflight), '--preprocess-mode', str(ns.preprocess_mode), '--letterbox-pad-value', str(int(ns.letterbox_pad_value)), '--setup-id', str(ns.setup_id), '--model-id', m, '--completion-runtime-mode', ns.completion_runtime_mode]
                 cmd.append('--quantized-inputs')
                 if row_quality_first:
                     cmd += ['--eval-run-id', str(binding_set.get('eval_run_id') or ''), '--source-run-id', canonical_native_split_backend(binding.get('source_run_id') or source_backend, ns.setup_id), '--native-split-quality-binding', str(binding_path)]
@@ -626,7 +641,7 @@ def main():
                 if image_val:
                     cmd += ['--image', image_val]
             else:
-                cmd=[sys.executable, str(ROOT/'scripts'/'native_deepx_trt_e2e_from_benchmarkset.py'), '--benchmark-set', str(bs), '--case', c, '--precision', effective_precision, '--frames', str(ns.frames), '--warmup', str(ns.warmup), '--repetitions', str(ns.repetitions), '--queue-depth', str(ns.queue_depth), '--task', task, '--preprocess-mode', str(ns.preprocess_mode), '--letterbox-pad-value', str(int(ns.letterbox_pad_value)), '--setup-id', str(ns.setup_id), '--model-id', m]
+                cmd=[sys.executable, str(ROOT/'scripts'/'native_deepx_trt_e2e_from_benchmarkset.py'), '--benchmark-set', str(bs), '--case', c, '--precision', effective_precision, '--frames', str(ns.frames), '--warmup', str(ns.warmup), '--repetitions', str(ns.repetitions), '--queue-depth', str(ns.queue_depth), '--task', task, '--preprocess-mode', str(ns.preprocess_mode), '--letterbox-pad-value', str(int(ns.letterbox_pad_value)), '--setup-id', str(ns.setup_id), '--model-id', m, '--completion-runtime-mode', ns.completion_runtime_mode]
                 if row_quality_first:
                     cmd += ['--eval-run-id', str(binding_set.get('eval_run_id') or ''), '--source-run-id', canonical_native_split_backend(binding.get('source_run_id') or source_backend, ns.setup_id), '--native-split-quality-binding', str(binding_path)]
                 if ns.duration_s and float(ns.duration_s) > 0:

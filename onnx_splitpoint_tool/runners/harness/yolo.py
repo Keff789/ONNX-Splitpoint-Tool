@@ -1217,6 +1217,88 @@ def _decode_multiscale_head_once(
     return _Detections(boxes_xyxy=boxes_xyxy.astype(np.float32), scores=scores.astype(np.float32), class_ids=class_ids.astype(np.int64))
 
 
+class ExactSparseYoloV7Decoder:
+    """Prebound form of the existing three-stage objectness-first decoder.
+
+    The algorithm comes from ``native_concurrent_three_stage_yolov7``. Here it
+    uses the harness's exact activation/arithmetic contract and shares the
+    ordinary NMS/materialization below instead of introducing another tail.
+    """
+
+    def __init__(self, decoder_contract: Mapping[str, Any]) -> None:
+        contract = verify_yolov7_decoder_contract(decoder_contract)
+        self.activation_mode = str(contract["activation_mode"])
+        self.sigmoid = (
+            _yolov7_sigmoid_float64_to_float32
+            if contract.get("sigmoid_arithmetic") == YOLOV7_SIGMOID_ARITHMETIC
+            else _sigmoid
+        )
+        self.conf_thresh = float(contract["nms_identity"]["confidence_threshold"])
+        self.plans = []
+        for record in sorted(contract["anchors_by_stride"], key=lambda r: int(r["stride"])):
+            stride = int(record["stride"])
+            gh, gw = (int(v) for v in record["grid_hw"])
+            anchors = np.asarray(record["anchors_wh"], dtype=np.float32)
+            ys, xs = np.meshgrid(np.arange(gh), np.arange(gw), indexing="ij")
+            grid = np.stack([xs, ys], axis=-1).astype(np.float32)
+            grid = np.broadcast_to(grid, (3, gh, gw, 2)).reshape(-1, 2).copy()
+            anchor_index = np.repeat(np.arange(3), gh * gw)
+            anchors.setflags(write=False)
+            grid.setflags(write=False)
+            anchor_index.setflags(write=False)
+            self.plans.append((stride, gh, gw, anchors, grid, anchor_index))
+        self.plans = tuple(self.plans)
+
+    def decode(self, outputs: Sequence[np.ndarray]) -> _Detections:
+        if len(outputs) != len(self.plans):
+            raise ValueError("yolov7_decoder_contract_exactly_three_heads_required")
+        # Validate every value before any early rejection: NaN/Inf in a low
+        # objectness record must remain a failure, just as in the dense oracle.
+        for head, (_, gh, gw, _, _, _) in zip(outputs, self.plans):
+            if head.shape != (1, 3, gh, gw, 85):
+                raise ValueError("yolov7_decoder_contract_head_grid_mismatch")
+            if not bool(np.all(np.isfinite(head))):
+                raise ValueError("yolov7_decoder_contract_head_nonfinite")
+        all_boxes, all_scores, all_classes = [], [], []
+        for head, (stride, gh, gw, anchors, grid, anchor_index) in zip(outputs, self.plans):
+            flat = head[0].reshape(-1, 85)
+            probability = self.sigmoid if self.activation_mode == "logits" else _clip_unit_interval
+            objectness = probability(flat[:, 4])
+            indices = np.flatnonzero(objectness >= self.conf_thresh)
+            if not indices.size:
+                continue
+            selected = flat[indices]
+            classes = probability(selected[:, 5:])
+            class_ids = np.argmax(classes, axis=1)
+            class_scores = classes[np.arange(len(indices)), class_ids]
+            scores = (objectness[indices] * class_scores).astype(np.float32)
+            keep = scores >= self.conf_thresh
+            final_indices = indices[keep]
+            if not final_indices.size:
+                continue
+            raw = flat[final_indices]
+            box_activation = _clip_unit_interval if self.activation_mode == "activated" else self.sigmoid
+            txy = box_activation(raw[:, :2])
+            twh = box_activation(raw[:, 2:4])
+            xy = (txy * 2.0 - 0.5 + grid[final_indices]) * float(stride)
+            wh = (twh * 2.0) ** 2 * anchors[anchor_index[final_indices]]
+            boxes = _xywh_to_xyxy(np.concatenate([xy, wh], axis=-1))
+            all_boxes.append(boxes)
+            all_scores.append(scores[keep])
+            all_classes.append(class_ids[keep].astype(np.int64))
+        if not all_boxes:
+            return _Detections(
+                boxes_xyxy=np.zeros((0, 4), np.float32),
+                scores=np.zeros((0,), np.float32),
+                class_ids=np.zeros((0,), np.int64),
+            )
+        return _Detections(
+            boxes_xyxy=np.concatenate(all_boxes).astype(np.float32),
+            scores=np.concatenate(all_scores).astype(np.float32),
+            class_ids=np.concatenate(all_classes).astype(np.int64),
+        )
+
+
 def _multiscale_candidate_quality(det: _Detections) -> float:
     n = int(det.scores.size)
     if n <= 0:
@@ -1403,6 +1485,10 @@ def _decode_ultralytics_regcls(outputs: Sequence[np.ndarray], input_hw: Tuple[in
 
     if len(outputs) < 2:
         raise ValueError("ultralytics_regcls expects at least 2 outputs")
+    # Validate all raw values before confidence filtering or DFL softmax;
+    # otherwise NaN/Inf in a discarded candidate can disappear silently.
+    if any(not bool(np.isfinite(np.asarray(value)).all()) for value in outputs):
+        raise ValueError("ultralytics_regcls_head_nonfinite")
 
     def _to_nchw_any(t: np.ndarray, H_img: int, W_img: int, expected_hw: Optional[Tuple[int, int]] = None) -> Tuple[np.ndarray, int]:
         a = np.asarray(t)
@@ -1685,10 +1771,19 @@ class YoloHarness:
         model_id: Optional[str] = None,
         multiscale_decoder_contract: Optional[Mapping[str, Any]] = None,
         allow_diagnostic_yolov7_contract: bool = False,
+        multiscale_decode_mode: str = "dense",
     ) -> None:
         self.conf_thresh = float(conf_thresh)
         self.iou_thresh = float(iou_thresh)
         self.max_det = int(max_det)
+        if multiscale_decode_mode not in {"dense", "exact_sparse"}:
+            raise ValueError("multiscale_decode_mode_invalid")
+        if multiscale_decode_mode == "exact_sparse" and multiscale_decoder_contract is None:
+            raise ValueError("exact_sparse_requires_model_bound_decoder_contract")
+        self._exact_sparse_decoder = (
+            ExactSparseYoloV7Decoder(multiscale_decoder_contract)
+            if multiscale_decode_mode == "exact_sparse" else None
+        )
         if (
             multiscale_activation_mode is not None
             and str(multiscale_activation_mode).strip().lower()
@@ -1888,16 +1983,21 @@ class YoloHarness:
         elif fmt == "ultralytics_regcls":
             det = _decode_ultralytics_regcls(out_list, input_hw=input_hw, conf_thresh=self.conf_thresh, output_names=output_names)
         elif fmt == "multiscale_head":
-            det = _decode_multiscale_head(
-                out_list,
-                input_hw=input_hw,
-                conf_thresh=self.conf_thresh,
-                activation_mode=self.multiscale_activation_mode,
-                decoder_contract=self.multiscale_decoder_contract,
-                allow_diagnostic_contract=(
-                    self.allow_diagnostic_yolov7_contract
-                ),
-            )
+            if self._exact_sparse_decoder is not None:
+                if list(input_hw) != list(self.multiscale_decoder_contract["input_hw"]):
+                    raise ValueError("yolov7_decoder_contract_input_hw_mismatch")
+                det = self._exact_sparse_decoder.decode(out_list)
+            else:
+                det = _decode_multiscale_head(
+                    out_list,
+                    input_hw=input_hw,
+                    conf_thresh=self.conf_thresh,
+                    activation_mode=self.multiscale_activation_mode,
+                    decoder_contract=self.multiscale_decoder_contract,
+                    allow_diagnostic_contract=(
+                        self.allow_diagnostic_yolov7_contract
+                    ),
+                )
         else:
             # Unknown: don't crash; return empty.
             det = _Detections(

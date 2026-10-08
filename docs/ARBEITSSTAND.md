@@ -1,5 +1,90 @@
 # ONNX Splitpoint – fortlaufender Arbeitsstand
 
+## H8-Zusatzaufnahme mit Paketmitschnitt (06.10.2026)
+
+Genau eine Zusatzaufnahme für repeat:2 ausgeführt; die zwei gültigen Repeats
+wurden ohne neue Aufnahme verifiziert. Quellenende regulär bestätigt, aber
+7.936 Samples (124 Datagramme) fehlen im Commandfenster. Der Controller-pcap
+zeigt dieselbe 4,000052-s-Lücke von 16:16:00,142 bis 16:16:04,142 MESZ;
+2.566 Pakete, null Kernel-Drops, null Collector-Socketdrops. Alle empfangenen
+Samplepaket-Zähler und gespeicherten Indizes stimmen überein. Ursache vor bzw.
+am Controller-Mitschnittpunkt weiter offen; kein Firmwaredefekt behauptet.
+Die Messung bleibt nach unveränderten Regeln ungültig: 2/3 gültige Repeats,
+5/9 Starts, 3/20 Transportfehler, Ein-Start-Grenze 1/1 verbraucht.
+
+Ein lokaler Adapterfehler durch Python -u vor dem Skriptpfad trat vor jeglichem
+Collectorstart auf und wurde korrigiert. Reguläre saubere Parentübergabe auch
+für null Operationen, ausschließlich mit unverändertem Budget-Handoffbeleg.
+202 Softwaretests PASS; keine GUI-Abnahme. Vollständiges argv und env pro
+Subprozess dokumentiert, keine dauerhaften Umgebungsänderungen.
+Alle 202 ursprünglichen Remote-Runtimedateien, 112 alte Capturedateien und
+bestehende Performance erhalten. Kein Build/Rollout, keine längeren Timeouts.
+Aktuelle Ressourcen und Runlock regulär freigegeben, historische STOP-Belege
+erhalten, keine aktiven Messprozesse. Kein weiterer automatischer Versuch.
+Profiling, Full-Fix und finale Matrix offen, da der dritte Vorher-Repeat fehlt.
+Belege: Reportordner yolov7-full-fix-20261005/H8_ENERGIE_STATUS.md,
+energy/h8_before/targeted_20261006/packet_capture_analysis.json und
+validation/h8_targeted_resume/post-measurement.xml.
+Die folgenden Abschnitte dokumentieren frühere Zwischenstände.
+
+## Gezielte H8-STOP-Korrektur (06.10.2026, nachmittags)
+
+Software abgeschlossen: negativer Capture wird auch bei Broker-STOP dauerhaft
+verbucht und die STOP-Exception weitergegeben. Die beleggebundene idempotente
+Nachbuchung schließt beide historischen Fehler ab: vier verbrauchte Starts,
+zwei Transportfehler, zwei gültige Repeats; alle ursprünglichen Limits bleiben.
+Resume-Recovery bindet explizit den letzten fehlgeschlagenen Parent einschließlich
+Journal, Operation, Ressourcen, Runlock und Budget. Alte Grants bleiben erhalten.
+Die zusätzliche Freigabedatei nach einem maschinell gültigen Repeat entfällt.
+196 gezielte Tests PASS, einschließlich echtem lokalen Broker mit Fake-Collector
+und temporären Sperren sowie vollständiger Resume-Runlock-Übergabe. Keine GUI-Abnahme.
+
+Die vier physischen H8-Ressourcen wurden über die reguläre API freigegeben;
+der Runfence bleibt bis zur regulären Parentübergabe bestehen. Null neue
+Collectorstarts in diesem Folgeauftrag. 112 originale Capturedateien, gültige
+Performance und alle 202 ursprünglichen Remote-Runtimedateien erhalten.
+Hardware und Gesamtauftrag offen: Der erlaubte einzelne Zusatzversuch für
+repeat:2 wartet auf den angeforderten Controller-Paketmitschnitt. Lokal fehlen
+RAW-Socketrechte; SSH und Schreibzugriffe funktionieren. Keine Hardware-
+Nichterreichbarkeit behauptet. Nach gültigem dritten Repeat selbstständig zum
+ursprünglichen Profiling-, Full-Fix- und Matrixauftrag zurückkehren.
+Belege und genauer Folgebefehl: Reportordner yolov7-full-fix-20261005,
+H8_ENERGIE_STATUS.md und energy/h8_before/targeted_20261006/ready_command.json.
+Der folgende ältere Abschnitt dokumentiert den vorherigen Zwischenstand.
+
+## H8-Vorherenergie – Recovery und begrenztes Resume (06.10.2026)
+
+Bestehender Worktree und Reportordner sind im tatsächlichen Kontext schreibbar;
+SSH zu H8 funktioniert. Der externe Energieparent kann seinen ursprünglichen
+Journalpfad jetzt an die reguläre Vier-Ressourcen-Recovery anbinden. Ein expliziter
+Resume übernimmt das vorhandene Campaignbudget unter den bestehenden Sperren.
+Ein sauber beendeter Parent kann nach gebundener Terminal-/Cleanupprüfung an einen
+Nachfolger übergeben; historische STOPs, Versuche, gültige Repeats und Limits
+bleiben erhalten. Keine generelle Freigabe ungeklärter Quellenabschlüsse.
+
+Software: abschließend **170 PASS** für Recovery, Resume, Budget und Adapter;
+zusätzlich **5 PASS** mit dem unveränderten registrierten R6-Collector gegen
+Loopback. Das ist keine GUI-Abnahme. Ein initialer Testaufruf scheiterte am noch
+fehlenden lokalen pytest-Ausgabe-Elternordner; der korrigierte Aufruf bestand.
+Ein neuer Adapter-Nachcheck verwechselte zunächst Vertrags- und Datei-Hash;
+das wurde mit eigener Regression korrigiert, der gültige Repeat wiederverwendet.
+
+Hardware: drei neue Collectorstarts, davon zwei vollständige gültige 60-s-Repeats
+mit 1,677943913 und 1,602798440 J/Task. Der dritte Versuch endet nach 92.672
+lückenlosen Samples ohne Endpaket: letztes Datagramm 46,400 s nach GO, anschließend
+5,098 s Stille; null Socketdrops, kein lokaler Cancel, sauberer Writerabschluss.
+Quelle und DUT sind weiterhin erreichbar. Sender und Netzweg sind ursächlich
+noch nicht getrennt; lokaler Paketmitschnitt und Systemjournal sind mangels
+Berechtigung nicht verfügbar. Der dritte Repeat bleibt gesperrt. Kein Timeout-
+oder Budgetanstieg, kein weiterer Versuch, kein Runtime-Rollout, kein Build.
+
+Alle 202 gesicherten Remote-Runtimedateien sind nach den Messungen weiterhin
+bytegleich. Drei gültige Vorher-Performance-Repeats und alle alten Fehlerbelege
+bleiben erhalten. Belege: `/home/kmika/Reports/yolov7-full-fix-20261005/`, insbesondere
+`energy/h8_before/resume_control/udp_analysis.json`, `ENERGY_REPEATS.csv`,
+`validation/h8_energy_resume/final.xml` und `H8_ENERGIE_STATUS.md`.
+Der ursprüngliche Gesamtauftrag ist wegen der offenen Vorherenergie unvollständig.
+
 ## YOLO-Min3 – selektive Qualityquelle und erster H8-Anschluss (03.10.2026)
 
 Der erhaltene Fehlversuch übergab zwölf `quality_source=execute` neben zwölf
@@ -2321,3 +2406,99 @@ Maßgeblich: [Release 2.92.0](RELEASE_2.92.0.md) und der externe Bereich
 Prüfkommandos, SHA-Indizes, Archivlesbarkeit, Privacyinventar und genauer
 Veröffentlichungspfadliste. Gitfreigabe und Veröffentlichung erfolgen erst nach
 gemeinsamer Abschlussprüfung.
+
+
+## 2026-10-06 – YOLOv7: gemessener H8-Profilingmeilenstein
+
+Der ausdrücklich vorgezogene Performanceauftrag hat den unveränderten H8-TensorRT-Full-Endpunkt mit 100 fertigen Warmups und 100 fertigen Diagnosetasks profiliert. Erfolgreicher Hardwarelauf, null fehlgeschlagene Completions; 202 Originaldateien vor/nach unverändert, tatsächliche Importpfade und SHA256 gebunden. Keine Energieaufnahme und kein Modell-/Engine-Neubau.
+
+Mittelwerte je fertigem Task: synchronisierte Runtime 14,818 ms, ausschließlich CPU-Postprocessing 64,363 ms; disjunkte Summe 79,181 ms. Innerhalb der Runtime liegen H2D 0,243 ms, TensorRT 14,203 ms und D2H 0,276 ms. CPU-Decoding/Filterung dominiert mit 59,467 ms (75,10 % der disjunkten Hostintervalle), NMS benötigt 1,023 ms. Exklusive Vertrags-/Quellprüfungen plus JSON-Hashing ergeben 2,805 ms; inklusive Unterfunktionen werden nicht doppelt summiert. Das Runnerfenster umfasst 79,287951 ms/Task und damit zusätzlich 0,107432 ms/Task nicht weiter aufgeschlüsselten Rest. Aus dem instrumentierten Diagnoseprofil wird keine finale FPS-Zahl abgeleitet.
+
+Die Instrumentierung wurde eng korrigiert: keine zweite JSON-Serialisierung zur Bytezählung, Fehlerstatus und Sollzählung, getrennte erfolgreiche/fehlgeschlagene Completions, abgeglichene Warmups, Modulherkunft und keine unbelegten Tensorlayout-Kandidatenzahlen. Sieben gezielte lokale Regressionen bestanden. Die echten Profilbelege sind unter `$HOME/Reports/yolov7-full-fix-20261005/performance_first_20261006/PROFILE_MEASURED.md` und `profile_costs.json` ausgewertet. Der Profilbefund begründet die isolierte Prüfung des vorhandenen Decoderfixes; Parität und uninstrumentierte Kandidaten-FPS sind gesonderte nachfolgende Ergebnisse. Energie bleibt ein offener eigener Arbeitspunkt; keine neue allgemeine GUI-Abnahme.
+
+## 2026-10-06 – YOLOv7: isolierter H8-Fix gemessen
+
+Der vorhandene Fix mit gebundener Prüfung vor/nach dem Lauf und numerisch exaktem Sparse-Decoding wurde ohne weitere Produktcodeänderung isoliert eingesetzt. 67 einschlägige Tests bestanden; zwei erhaltene Canary-Rawdatensätze ergeben exakt gleiche Original-/Kandidatenergebnisse (9 bzw. 67 Detektionen). Das ist kein neuer vollständiger 32-Bild-Replay. Alle drei Originalrepeats, drei Kandidatenrepeats und das Originalprofil bewahren darüber hinaus dasselbe gespeicherte finale Full-Sentinelergebnis mit 23 Detektionen (Artefakt-SHA `a5f87b03861886fa6637b9d06abb05e61a101862445b77539f92982ebe59f0be`).
+
+Drei separate uninstrumentierte Prozesse mit je 100 Warmups und 1.000 vollständigen Tasks messen auf H8 51,781526 / 51,793755 / 51,723216 FPS. Median 51,781526 gegenüber dem gültigen Originalmedian 14,389955 FPS, Verhältnis 3,59845. Engine, vorbereiteter Input, numerische Verträge und Vergleichsendpunkt bleiben gleich. Originalruntime und isolierte Kandidatenruntime wurden vor/nach gegen ihre jeweils 202 Dateihashes geprüft. MAXN_SUPER, CPU-Governor und aufgezeichnete CPU-/GPU-Takte sind gleich; Temperaturmomentaufnahmen und deren Grenzen stehen im Vergleichsbericht. Keine Energieaufnahme, kein Commit/Push, kein Engine-Neubau. Die übrige Performance-Matrix wird seriell weitergeführt; maßgeblich ist `$HOME/Reports/yolov7-full-fix-20261005/performance_first_20261006/H8_ORIGINAL_CANDIDATE.md`.
+
+## 2026-10-06 – YOLOv7: Performance-Matrix abgeschlossen, Energie offen
+
+Alle 15 Performance-Konfigurationen sind mit je drei Wiederholungen und 100 Warmups/1.000 fertigen Tasks belegt: 18 neue Full-Repeats in getrennten Prozessen und 27 erhaltene Split-Repeats. TensorRT-Mediane H8/H10/DeepX: 51,781526 / 51,480597 / 47,319602 FPS; Accelerator-Full-Mediane: 31,477269 / 12,314299 / 22,945769 FPS. TensorRT ist jeweils die schnellste Full-Alternative. Alle 18 gespeicherten finalen Full-Ergebnisartefakte stimmen exakt mit den jeweiligen Originalen überein; dies ist kein neuer COCO-Replay.
+
+Fehlende historische Hailo-Vertragsdateien und das DeepX-Input-Sidecar samt fehlendem RGB-Inputdump wurden bytegleich ausschließlich in isolierten Report-/Suitepfaden wiederhergestellt. Fehlversuche bleiben dokumentiert. Die tatsächlichen DeepX-Produkt-/Suite-Inputloader bestanden vor der erfolgreichen Messreihe auf dem Zielsystem. Originalruntimes bleiben unverändert (202/191/191 Dateien), 48 Artefaktbindungen und Ressourcenfreigaben sind geprüft. Sieben Profilregressionen und 67 bestehende Decoder-/Bindungstests bestanden, vier Runner-Mirrors sind bytegleich. Kein Build, Commit, Push, gemeinsamer Runtime-Rollout oder Energiestart.
+
+Energie bleibt bei zwei von drei gültigen H8-Vorher-Repeats, fünf Starts und drei Transportfehlern; STOP und Budgets sind erhalten. Aktueller Bericht, vollständige Matrix, Rohresultate, Befehle und aktuelle Reviewpaketkennung stehen unter `$HOME/Reports/yolov7-full-fix-20261005/STATUS.md` und `performance_first_20261006/RESULT_REPORT.md`.
+
+
+### 2026-10-06: YOLOv7 Split-/Orin-Abgleich begonnen
+
+Neuer expliziter Auftrag vollständig gelesen; Report `/home/kmika/Reports/yolov7-full-fix-20261005/splits_orin_20261006_222316`. Vorhandener Worktree und Messungen gesichert. Reguläre exklusive SSH-Ressourcenprüfung und lokaler Schreibtest erfolgreich. Gebundene DeepX-Splitrunner und Quellen von beiden historischen Roots gesichert, vier zentrale historische SHA256 identisch. H10/DeepX wählen im gebundenen Stand strict/dense Completion; H8 Fast-Oracle. Neue Diagnose/Repair/Nachmessung noch in Arbeit. Alle drei L4T36.4.7/TRT10.3/NumPy1.26.4/MAXN_SUPER; Rootrechte für jetson_clocks --show fehlen, kein Verbindungsfehler. Keine Energiestarts, keine Parameter-/Budgetänderung.
+
+### 2026-10-06: Split-Completion repariert und gezielt abgenommen
+
+Der reguläre H10-/DeepX-Dispatcher und alle erforderlichen Runner-Mirrors wählen für den attestierten YOLOv7-Rawhead-Vertrag jetzt die vorhandene Fast-Completion. Sie verwendet den bereits exakten Sparse-Decoder; Decode, vollständige Finitprüfung und NMS bleiben vor dem Taskabschluss. Vertrag, Modus und tatsächliche importierte Quellen werden vor/nach gebunden. Der Oracle prüft den eigenen letzten gemessenen Output außerhalb des Timers; er wird als Postflight-Sentinel ausgewiesen. Andere Modellfamilien behalten strict; Klassifikation ist ein separater Pfad. Es gab keine Schedulingänderung und keinen gemeinsamen Geräte-Rollout.
+
+H10 b066 Vorher/Nachher auf demselben Orin: Completion 63,599 → 6,614 ms, synchronisierte TRT-Runtime 8,943 → 8,860 ms. Das ist instrumentierte Diagnose, keine finale FPS-Serie. Im ursprünglichen DeepX-Profil belegen 69,528 ms Completion ebenfalls den Hostengpass. H8 b066 zeigt bereits die schnelle, mit TRT überlappende Completion (3,386 ms). Gemessene Abschnitte und Overlap stehen in `SPLIT_STAGE_PROFILE.csv` des neuen Reports.
+
+142 gezielte Tests bestanden; drei bestehende Tests auf das private NumPy-2-Attribut `np._core` bleiben als lokale NumPy-1.26-Umgebungsgrenze offen. Fünf gespeicherte Rawsets (zwei bestehende Canarys und drei neue Originalprofile) ergeben exakte Strict-/Bound-/Fast-Parität. Die drei unveränderten TRT-Full-Kontrollen bestätigen die vorhandenen Full-Mediane innerhalb 0,3 %. Die abschließende neunfache Splitserie läuft seriell über einen Hardwareworker, je Fall drei unabhängige Prozesse mit 100 Warmups/1000 fertigen Tasks. Die jeweilige unabhängige Downstream-Abnahme wird dauerhaft im Report nachgeführt. Keine erneute Quality-Kampagne oder allgemeine GUI-Abnahme.
+
+### 2026-10-06: Split-/Orin-Abgleich abgeschlossen
+
+Alle neun Splitkonfigurationen sind mit 27 getrennten Prozessen, je 100 Warmups und 1000 fertigen Tasks, sowie unabhängigem Rawreplay und regulärer Downstream-Abnahme belegt. Mediane b009/b044/b066: H8 42,851710 / 47,800201 / 112,492794 FPS; H10 51,357901 / 64,500526 / 53,350448 FPS; DeepX 33,866133 / 48,790077 / 30,594221 FPS. Die gültigen 18 Full-Repeats bleiben nach drei separaten Kontrollen erhalten. Neu sind die neun Splitfälle; die sechs Fullfälle gehören zur wiederverwendeten Kohorte. Accuracy-loss von H8-/H10-Accelerator-Full bleibt sichtbar, Fullreferenz wird vor Qualitätsfilterung gewählt.
+
+Ein zusätzlicher enger H8-Commandvalidator-Fix erlaubt für den bekannten b066-Concurrent-Producer eine oder drei Wiederholungen bei unverändert 100/1000. 17 Commandtests und acht normale Qualityconsumer-Regressionen bestanden nach den vorherigen 142 Tests; zusätzlich acht lokale Roh-Latenzprüfungen und drei Instrumentierungsprüfungen. Testläufe sind getrennt dokumentiert, nicht als disjunkte Gesamtmenge addiert. Die separate H8-Runtime hat einen eigenen Quellenstand; erfolgreiche H10-/DeepX-Runtimes wurden nicht überschrieben.
+
+Fehlende historische b009-Eingangsmetadaten auf den Geräten wurden bytegleich aus dem Archiv ausschließlich in isolierten Pfaden bereitgestellt. Ein ausgelassener H8-Prozessparameter für die vorhandenen Hailo-Sites und der alte H8-Commandvalidator verursachten erhaltene Fehlstarts. Ein danach erfolgreicher H8-Prozess wurde nach Korrektur des lokalen Latenzformat-Readers ohne Hardwarewiederholung übernommen; seine ursprünglichen Quellen-, Prozess- und Telemetriebelege bleiben gebunden. Alle Fehlbelege bleiben erhalten.
+
+Die H8-Pythonfälle sind langsamer als historisch. b044 zeigt einen von rund 3,22 auf 5,34 ms verlängerten seriellen Completion-Tail bei nahezu gleicher TRT-Zeit. Eine separate 100/100-Diagnose misst die beiden vollständigen Finitprüfungen zusammen mit 1,842 ms pro Task innerhalb des instrumentierten Tails. Die jetzige Runtime erhält diese Prüfungen; eine spätere Zusammenführung wäre ein neuer zu validierender Stand. Für b066 überlappt der Tail mit der Pipeline. Profilzeiten ersetzen keine Final-FPS.
+
+Orin-NX16GB, L4T36.4.7, aktive MAXN_SUPER-Definition sowie erfasste CPU-/GPU-Takte stimmen überein. Lüfterprofile und geladene CUDART-Versionen unterscheiden sich; EMC bleibt wegen fehlender Rootrechte unbekannt. Die Full-Restdifferenz ist gemessen, aber keiner einzelnen Konfigurationsursache zugeordnet. Keine Clock-/Lüfter-/Paketänderung, kein Modell-/Engine-Build und kein gemeinsamer Rollout.
+
+Energie bleibt unverändert STOP: keine Starts, kein Budgetreset, keine Zuordnung alter Joulewerte zu neuen FPS. Die 15 optimierten Full-/aktuellen Splitvarianten stehen als konkrete Restliste auf not_measured/NA. Ergebnis, Paperexport, englischer Papertext, unveränderte historische Belege und das eigenständig prüfbare Reviewpaket sind unter `/home/kmika/Reports/yolov7-full-fix-20261005/splits_orin_20261006_222316` dokumentiert. Der reguläre Code im Worktree ist umgesetzt; außerhalb dieses Worktrees erfordert seine Nutzung die normale Versionsübernahme/Deployment. Keine allgemeine GUI-Abnahme, kein Commit/Push.
+
+
+### 2026-10-07: Revision 3 – Archiv und fokussierte Softwarekorrekturen
+
+Neuer Reportroot `$HOME/Reports/native-fairness-rev3-20261007`. Der Sprite-Altbestand bleibt ausschließlich lesend; keine Datenlöschung, Verschiebung oder Speicherbereinigung. Der vorhandene Reviewprüfer bestätigt 6.281 Payload-Dateihashes, 27 Splitrepeats, 18 Fullrepeats und drei getrennte Fullkontrollen. Das Native-Inventar enthält genau 204 Splits und 42 Fulls; alle 246 Commandbindungen und 204 historischen Generic-Completion-Ergebnisse sind zugeordnet. Die weitere Archivprüfung ist eine dokumentierte Metadaten-/Artefaktprüfung, keine Vollhashprüfung aller Modellpayloads.
+
+Erreichbarer Generic-Streamingpfad: verlustfreier Queueabschluss und tatsächlich fertige Counts; allgemeine Split-/Multi-Tensor-Funktion bleibt erhalten. Nur drei durch frühere unbedingte Rückgaben unerreichbare DeepX-P2-Duplikate entfernt. Explizite DeepX-Domänen und keine standardmäßige scorebasierte P2-Mappingwahl. Timingauswahl unabhängig von Backend/Cut; gemeinsame tatsächliche RGB-Vorbereitung. Native und Generic verwenden kompatible gebundene Completion mit nötigem Decode/NMS im Timer und strengem Postflight-Oracle. Die doppelte YOLOv7-Finitprüfung ist bei unveränderten Heads zusammengeführt; verworfene NaN/Inf bleiben Fehler. Der reguläre DeepX-Full-Suitepfad und erzeugte Runner-Bundles sind einbezogen. H10 Full bindet explizite inflight-Werte; Standard bleibt effektiv1, Kontrolle8 bekommt eigene Identität. H8 ist synchron.
+
+Reporting trennt Raw/geschätzt/gemessen/Completed sowie Eingaben, Quality und Energie-Betriebspunkte. Der Student-t-Fallback verwendet bestehende geprüfte Collectorquantile; alle 246 historischen A/B-Container hatten bereits korrekte Quantile, keine Intervallnachmessung erforderlich. Fokussierte Tests und tatsächliche gespeicherte Rawset-Paritäten sind getrennt im Report gebunden; keine GUI-Abnahme.
+
+Pixelprüfung: alle 36 Detektor-Splits an bestätigte gleiche vorbereitete Raster gebunden; alle 168 Klassifikations-Splits an von der gemeinsamen Vorbereitung abweichende Raster gebunden. Eine Dateihashänderung allein begründet keinen Neulauf. Nachmessungen und Deployment folgen mit einmalig eingefrorenen Quellen; bislang null neue Hardware-/Collectorstarts. Energie älterer Implementierungen wird nicht mit neuen FPS gepaart.
+
+
+### 2026-10-07: Revision 3 – aktuelle Nachmessungen und Energiepfadbefund
+
+15 priorisierte Native-Punkte und neun Generic-Completed-Paare sind mit je drei tatsächlichen Prozessen, 100 Warmups und 1000 fertigen Tasks erfasst. Ausgewählter H10-Accelerator-Full: acht Slots nach gebundener Diagnose und vorab festgelegter Auswahlregel; Ein-Slot-Werte bleiben getrennte Kontrolle. Quellen, Eingaben, Einzelwerte und normale technische Gates sind im aktuellen Reportroot erhalten.
+
+Die erste b009-Energiegruppe belegt neun sensorisch gültige Repeats aus zehn Starts. H8 besteht die normale frische Completionprüfung. Die normale wissenschaftliche Prüfung lehnt DX/H10 korrekt ab: der Energiezweig wählt noch strict statt der Performance-Fast-Completion und gibt keine passenden frischen Marker aus. Eng begrenzter Energiepfadfix in Abnahme; bis dahin keine Zuordnung dieser Joulewerte zu neuen FPS. Alle Budgets, Fehlversuche und alten Quellen bleiben erhalten. Keine allgemeine GUI-Abnahme, kein Build oder Systemupdate.
+
+Die Scopeprüfung ergibt237 tatsächlich betroffene Native-Punkte und neun Wiederverwendungskandidaten; fehlende aktuelle Messwerte bleiben not_measured. Die notwendigen weiteren Messungen, Qualitytransfers und finalen Ableitungen sind noch nicht abgeschlossen. Verbindlicher Zwischenstand: `$HOME/Reports/native-fairness-rev3-20261007/STATUS.md` und `RESULT_REPORT.md`. Neue Daten ausschließlich im datierten Schwesterarchiv, keine Archivänderung oder Speicherbereinigung.
+
+### 2026-10-07: Revision 3 – Generic-Completed-Energie, Softwareabnahme
+
+Der bestehende Generic-Completed-Executor unterstützt jetzt eine ausdrücklich gewählte Daueraufnahme ab 60 s mit Admissionstopp und verlustfreiem Drain. Die festen Performancevorgaben bleiben 100 Warmups/1000 Tasks. Energie verwendet tatsächlich fertiggestellte Tasks, frischen normalen Preflight, gebundene Marker und den bestehenden Collectorimport. Drei getrennte Prozesse bleiben drei physische Quellen mit unveränderten Rohindizes. Der Report berechnet mean(E/N) und mean(N/E) getrennt.
+
+Energie und zugehörige Performance binden identische Eingaben, Completion, Scheduling, Quellen sowie tatsächlich beobachteten Interpreter/venv, relevante Laufzeitumgebung und CPU-Affinität. Der gemeinsame Campaign-Checkpoint erhält stabile Generic-Completed-Fallidentitäten, drei logische Wiederholungen und die bestehenden Grenzen von 9 Messketten, 2 Wiederholungsversuchen und 20 Transportfehlern. Source-STOP und akzeptierte physische Messketten werden geprüft; keine impliziten Wiederholungen oder Budgetresets.
+
+Genau sechs Produktdateien nach Vorher-SHA-Prüfung integriert; sechs portable Regressionstestdateien ergänzt. Isolierte Abnahme: 182 Tests, zusätzliche unabhängige Reviewproben und 36 gezielte Tests gegen den integrierten Worktree einschließlich regulär erzeugtem Bundle bestanden. Belege und Quellbindungen liegen unter `$HOME/Reports/native-fairness-rev3-20261007/generic_energy_extension`. Die zusätzliche Schleifensteuerung ist keine behauptete AST-identische Performanceimplementierung: Die vorhandenen neun Generic-Messpunkte bleiben erhalten, neue Energiezuordnung erfordert neue Performanceprozesse desselben Bundles.
+
+Diese Abnahme ist ausschließlich Softwareprüfung. Kein Hardware-/Collectorstart, kein Modell-/Engine-Build, kein DUT-Deployment, keine GUI-Abnahme und keine Archivänderung. Der konkrete Generic-Captureparent wird getrennt vorbereitet; Hardware bleibt bis zur regulären Freigabe gesperrt.
+
+### 2026-10-08: Revision 3 – kleine Fairnesskorrekturen und konkrete STOP-Grenzen
+
+Der ergänzende Finalisierungsauftrag wird im bestehenden Worktree und Reportroot fortgesetzt. Die 80 bereits geänderten Quell-/Testdateien wurden gegen den Review-Snapshot vom 7. Oktober abgeglichen; vorhandene Änderungen bleiben erhalten. Der Exact-DeepX-Aufruf prüft jetzt bei jeder Verwendung die gebundenen Namen, Shapes und Dtypes vor dem SDK. Die wissenschaftliche Generic-Admission prüft explizite Layout-/Domänen-/Backendverträge vor dem Timer; kein Payloadhash oder Wertecache pro Task. H10 persistiert das tatsächlich gewählte Eingabelayout bereits während der Vorbereitung, ohne Änderung der Tensorbytes. Mirror- und Cold-Sync-Abnahme sowie unabhängiges Gegenreview sind dokumentiert; dies ist noch kein DUT-Deployment oder Hardware-PASS.
+
+Die 20 originalen historischen Raw-Zeilen und ihr exakt gebundener Runner wurden tatsächlich im Archiv geöffnet. Allgemeine Raw-/Multi-Tensor-Pfade bleiben erhalten; nur die bereits entfernten 197 nachweislich unerreichbaren DeepX-Zeilen bleiben entfernt. Die vorhandene LEGACY_GENERIC_USAGE-Tabelle wurde präzisiert. Originale wurden weder gelöscht noch umetikettiert.
+
+Die Offline-Energieprüfung führte das exakt ursprüngliche power_calculations-Binary 18-mal mit den ursprünglichen Argumenten und separaten Ausgabezielen aus: alle results.yaml bytegleich, neun Primärleistungsvektoren identisch, unabhängige Trapezintegration maximal 8,28e-11 J abweichend. Die drei zugelassenen Full-Energiegruppen und zwölf Student-t-Intervalle bleiben unverändert. Die rohe ADC-Konversion wurde nicht unabhängig reproduziert; vorhandene externe Sampleindexprüfungen bleiben als solche gekennzeichnet.
+
+Der präzise Ressourcenscope ist enger als eine allgemeine Hardwaresperre: H10-DUT und sämtliche Sensorcaptures bleiben durch den ursprünglichen STOP beziehungsweise NIC-/Capturequarantänen gesperrt. Normale H8-/DeepX-Performance und SourceSync sind nach finaler Quellenadmission und aktueller Besitzprüfung zulässig. Budgets, STOPs und die verlangte ausdrückliche Einzelfreigabe für H10 bleiben unverändert. Der finale gemeinsame Freeze, reale Deployments und tatsächlich neue Messungen werden gesondert in STATUS/RESUME im bestehenden Reportroot fortgeschrieben.
+
+Die begrenzte reguläre H8-SDK-Inspection hat inzwischen alle sechs repräsentativen Split-/Full-HEFs tatsächlich geöffnet und ihre vorhandenen Identitäten bestätigt. Input-QuantInfo, Originalcompiler und Qualityruntime belegen die standardisierte ImageNet-Domäne. Der bisherige Native-Classifier-Split konvertiert hingegen nur RGB/255; Full-H8 übergibt rohe UINT8-Werte statt des entsprechend quantisierten ImageNet-Eingangs. Die tatsächliche Vertragsinventur erfasst 56 H8-Classifier-Splits (17 MobileNet, 20 RegNet, 19 ResNet), ausschließlich C++-VStreams/FLOAT32, sowie drei Vendor-Fulls. Diese konkreten numerischen Adapter werden vor dem gemeinsamen Freeze korrigiert; kein HEF-/Engine-Neubau und keine Änderung der Detectionnumerik. Für die drei Fulls entfällt damit die bisherige Wiederverwendung als aktueller unveränderter Eingabepfad, während ihre Originalmessungen erhalten bleiben. Sechs andere Classifier-Full-Wiederverwendungen bleiben gültig. Die Nachmessmatrix weist daher vor weiteren Aufnahmen 225 neue Native-Punkte aus; zusätzliche begrenzte Quellenzulassungsbestätigungen werden getrennt gezählt.
+
+Die H8-Korrektur ist nun implementiert und mit 68 fokussierten Tests abgenommen: kanalrichtiges ImageNet-FLOAT32 im C++-/Generic-Splitadapter, einmalige SDK-Quantisierung anhand des konkreten HEF im Full-Vorbereitungspfad, explizite Metadaten und unveränderte Detection-/H10-Numerik. Die reale CPU-Quantisierungsprobe im installierten HailoRT 4.20.0 besteht für alle sechs HEFs; keine Geräteinferenz wurde daraus abgeleitet. Ein normaler C++-Wrapperbuild ist wegen der tatsächlich geänderten Hostoperation erforderlich, anschließend erlaubt die vorhandene native-executable-Option dessen gebundene Wiederverwendung mit jeweils eigenen Caseausgaben. HEFs und Engines werden nicht neu gebaut. Die normale H8-Energieadmission lehnt die neun alten Repeatverträge wegen des Runnerwechsels ab; damit sind zusätzlich zu den sechs DX/H10-Bestätigungen drei begrenzte H8-Kohorten erforderlich. Alle alten FPS bleiben Beobachtungen ihrer ursprünglichen Quellen, ohne Pooling oder nachträgliche Neuversiegelung.
+
+Die normalen aktuellen Consumer wurden mit dem vorhandenen Bestand erneut ausgeführt: 15 Native-Messpunkte, sechs weiterhin zulässige historische Full-Wiederverwendungen, 225 fehlende neue Native-Punkte, neun Generic-Punkte/technische Paare und 195 fehlende Generic-Punkte. Der zuvor verlorene Native-Qualityjoin im Genericexport ist korrigiert; Generic-Quality-/Claimgates bleiben mangels vollständiger numerischer Transferbindung offen. Drei aktuelle Full-Energiepunkte mit neun Repeats bestehen weiterhin die normalen exakten Zuordnungsprüfungen. Neue Hardware-Performance, SourceSync und Wrapperbuild stehen zum Zeitpunkt dieser Softwareintegration noch aus.

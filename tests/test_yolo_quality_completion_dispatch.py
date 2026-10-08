@@ -7,6 +7,7 @@ atomic result/sample writes, download and reentry admission stay real.
 from __future__ import annotations
 
 import json
+import multiprocessing
 import shlex
 from pathlib import Path
 
@@ -43,18 +44,36 @@ class SoftwareCompletionTransport(LocalTransport):
             counts['p2'] += 1
             return inputs
         self.calls.append((config['identity'],index))
+        context = multiprocessing.get_context('fork')
+        parent_pipe, child_pipe = context.Pipe(duplex=False)
+        def worker():
+            try:
+                rc = self.module._run_generic_split_completion(config, output, sdk_part1, lambda value:value,
+                    sdk_part2, {key:Path(spec['path']) for key,spec in config['expected_runtime_artifacts'].items()},
+                    clone_payload=(lambda values:{key:np.array(value,copy=True) for key,value in values.items()})
+                        if config.get('original_run_cfg', {}).get('streaming_impl') == 'generic' else None,
+                    repetition_index=index)
+                child_pipe.send((rc, counts, ''))
+            except BaseException as error:
+                child_pipe.send((1, counts, str(error)))
+            finally:
+                child_pipe.close()
+        process = context.Process(target=worker)
+        process.start(); child_pipe.close()
         try:
-            rc = self.module._run_generic_split_completion(config, output, sdk_part1, lambda value:value,
-                sdk_part2, {key:Path(spec['path']) for key,spec in config['expected_runtime_artifacts'].items()},
-                clone_payload=(lambda values:{key:np.array(value,copy=True) for key,value in values.items()})
-                    if config.get('original_run_cfg', {}).get('streaming_impl') == 'generic' else None,
-                repetition_index=index)
-        except RuntimeError as error:
-            if 'controlled SDK failure' not in str(error):
-                raise
-            on_line(str(error))
-            rc = 1
-        self.inference_counts.append(counts)
+            if not parent_pipe.poll(60):
+                raise RuntimeError('controlled completion subprocess timeout')
+            rc, observed_counts, error = parent_pipe.recv()
+        finally:
+            process.join(timeout=2)
+            if process.is_alive():
+                process.terminate(); process.join(timeout=2)
+            parent_pipe.close()
+        if error:
+            if 'controlled SDK failure' not in error:
+                raise RuntimeError(error)
+            on_line(error)
+        self.inference_counts.append(observed_counts)
         on_line(f'controlled SDK process completed {index}/3 with real completion timer')
         return rc
 
@@ -80,6 +99,7 @@ def test_real_software_runtime_through_dispatch_download_parser_and_selective_re
     assert transport.inference_counts == [{'p1':1100,'p2':1100}]*3
     valid = load_valid_repetitions(row['result_path'], row)
     assert len(valid) == 3
+    assert len({(value['boot_id'], value['pid'], value['process_start_ticks']) for value in valid}) == 3
     assert all(value['functional_control']['checked_outside_timer'] for value in valid)
     assert all(value['handoff_payload_copy'] == (streaming_impl == 'generic') for value in valid)
     output = tmp_path / 'reports'

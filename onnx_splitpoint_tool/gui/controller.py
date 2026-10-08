@@ -115,6 +115,21 @@ def write_benchmark_suite_script(dst_dir: str | Path, *, bench_json_name: str = 
 def _copy_runner_lib(suite_dir: Path) -> None:
     dst = suite_dir / "splitpoint_runners"
     copy_resource_tree("runners", dest=dst)
+    # Canonical Native helpers address ``runners.harness`` relative to the
+    # tool package. Generated suites place the same harness beside them.
+    # Preserve that namespace with aliases to the existing module instances;
+    # do not copy or modify the measured Native implementation.
+    compatibility = dst / "runners"
+    compatibility.mkdir(exist_ok=True)
+    (compatibility / "__init__.py").write_text(
+        '"""Canonical Native helper namespace in generated suites."""\n'
+        "import sys as _sys\n"
+        "from .. import harness as _harness\n"
+        "from ..harness import yolo as _yolo\n"
+        "_sys.modules[__name__ + '.harness'] = _harness\n"
+        "_sys.modules[__name__ + '.harness.yolo'] = _yolo\n",
+        encoding="utf-8",
+    )
     # The generated case runner executes from a self-contained suite archive.
     # It cannot rely on the full ``onnx_splitpoint_tool`` package being installed
     # on an accelerator host, but central-quality endpoint attestation must use
@@ -139,6 +154,10 @@ def _copy_runner_lib(suite_dir: Path) -> None:
     copy_resource_file(
         "native_detection_postprocess.py",
         dest=dst / "native_detection_postprocess.py",
+    )
+    copy_resource_file(
+        "native_three_stage.py",
+        dest=dst / "native_three_stage.py",
     )
     copy_resource_file(
         "preprocessing_contract.py",

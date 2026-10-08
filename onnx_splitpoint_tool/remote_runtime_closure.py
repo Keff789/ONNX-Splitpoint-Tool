@@ -15,6 +15,25 @@ from typing import Tuple
 
 
 RemotePackageAsset = Tuple[str, str, Tuple[str, ...]]
+RemoteResourceAsset = Tuple[str, Tuple[str, ...]]
+
+
+# The concurrent Hailo helper loads these files by path. They are byte-verified
+# resources, not importable package modules (in particular the C++/CMake files).
+NATIVE_CONCURRENT_RESOURCE_CLOSURE: Tuple[RemoteResourceAsset, ...] = tuple(
+    ("onnx_splitpoint_tool/resources/native_concurrent_three_stage_yolov7/" + relative, ())
+    for relative in (
+        "three_stage_canary.py", "fast_decode_runtime.py", "stage_corpus.py",
+        "cpp/CMakeLists.txt", "cpp/three_stage_canary.cpp",
+        "expected_artifacts.json",
+        "reference/current_completed_task_result.json",
+        "reference/native_split_quality_binding.json",
+        "reference/native_fifo_boundary_manifest.json",
+        "reference/native_fifo_output_manifest.json",
+        "reference/dataset_detection_validation.json",
+        "reference/multi_image_fast_decode_canary_report.json",
+    )
+)
 
 
 NATIVE_REMOTE_PACKAGE_CLOSURE: Tuple[RemotePackageAsset, ...] = (
@@ -220,3 +239,8 @@ def native_remote_package_closure() -> Tuple[RemotePackageAsset, ...]:
     """Return the immutable, ordered Native remote package inventory."""
 
     return NATIVE_REMOTE_PACKAGE_CLOSURE
+
+
+def native_remote_resource_closure() -> Tuple[RemoteResourceAsset, ...]:
+    """Hailo concurrent helper's path-loaded assets, without Python imports."""
+    return NATIVE_CONCURRENT_RESOURCE_CLOSURE

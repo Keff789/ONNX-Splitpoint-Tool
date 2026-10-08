@@ -52,13 +52,19 @@ from onnx_splitpoint_tool.runners.harness.classification import ClassificationCo
 from onnx_splitpoint_tool.native_command_contract import (
     load_split_energy_workload_binding,
     seal_native_command_contract,
+    split_energy_detection_completion_mode,
 )
 from onnx_splitpoint_tool.native_detection_postprocess import (
     DetectionCompletionRuntime,
+    create_detection_completion_runtime,
+    detection_completion_runtime_source_check,
     build_detection_completion_execution_contract,
     persist_detection_completion_execution_artifacts,
     verify_detection_completion_execution_attestation,
     verify_detection_completion_execution_contract,
+)
+from onnx_splitpoint_tool.native_three_stage import (
+    FastDetectionCompletionRuntime, verify_fast_completion_attestation,
 )
 from onnx_splitpoint_tool.native_split_quality import (
     bind_quality_to_native_split,
@@ -405,6 +411,7 @@ def _image_variants_for_shape(
     *,
     preprocess_mode: str,
     letterbox_pad_value: int,
+    task: str = '', timing_input_binding: dict[str, Any] | None = None,
 ) -> list[np.ndarray]:
     if Image is None:
         raise RuntimeError('PIL/Pillow is required for --image input preprocessing')
@@ -424,15 +431,18 @@ def _image_variants_for_shape(
         else: h,w,c = sh[0], sh[1], sh[2]
     else:
         h,w,c = 224,224,3
-    if str(preprocess_mode) == 'letterbox':
-        prepared_image = _letterbox_rgb_image(
-            im, int(w), int(h), int(letterbox_pad_value),
-        )
-    elif str(preprocess_mode) == 'resize':
-        prepared_image = im.resize((int(w), int(h)))
-    else:
-        raise ValueError(f'unsupported_preprocess_mode:{preprocess_mode}')
-    hwc = np.asarray(prepared_image, dtype=np.uint8)
+    from onnx_splitpoint_tool.preprocessing_contract import prepare_rgb_uint8_for_declared_mode
+    hwc, _geometry = prepare_rgb_uint8_for_declared_mode(
+        np.asarray(im), target_hw=(h, w), preprocess_mode=preprocess_mode,
+        pad_value=letterbox_pad_value,
+    )
+    if timing_input_binding is not None:
+        from onnx_splitpoint_tool.preprocessing_contract import prepared_rgb_timing_binding
+        timing_input_binding.update(prepared_rgb_timing_binding(
+            image_path=image_path, rgb=hwc, task=task,
+            preprocess_mode=preprocess_mode, pad_value=letterbox_pad_value,
+            geometry=_geometry,
+        ))
     if c == 1: hwc = hwc[..., :1]
     nhwc = hwc[None, ...]
     nchw_u8 = np.transpose(hwc, (2,0,1))[None, ...].astype(np.uint8, copy=False)
@@ -477,7 +487,7 @@ def _make_candidate_inputs(
 
 def _exact_input_from_quality_contract(
     contract_input: Mapping[str, Any], image: str, *, preprocess_mode: str,
-    letterbox_pad_value: int,
+    letterbox_pad_value: int, timing_input_binding: dict[str, Any] | None = None,
 ) -> np.ndarray:
     """Create one input fixed before performance; never probe alternatives."""
     expected_shape=tuple(int(x) for x in list(contract_input.get('shape') or []))
@@ -486,6 +496,7 @@ def _exact_input_from_quality_contract(
     candidates=_image_variants_for_shape(
         expected_shape,image,preprocess_mode=preprocess_mode,
         letterbox_pad_value=letterbox_pad_value,
+        task=str(contract_input.get('task') or ''), timing_input_binding=timing_input_binding,
     )
     matches=[
         value for value in candidates
@@ -851,6 +862,18 @@ def _bound_detection_completion_contract(
     return contract
 
 
+
+def _bind_fast_output_manifest(path: str, attestation: Mapping[str, Any]) -> None:
+    manifest_path = Path(path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    identity = dict(attestation["sentinel_identity"])
+    manifest.update({"dump_inference_scope": "last_measured_completion_source_outputs",
+                     "completion_sentinel_identity": identity,
+                     "completion_attestation_sha256": attestation["attestation_sha256"],
+                     "input_image_sha256": identity.get("input_image_sha256")})
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+
 def _completion_attestation_fields(
     completion_runtime: Any,
     *,
@@ -862,12 +885,18 @@ def _completion_attestation_fields(
         raise RuntimeError(
             'detection completion count does not match completed work units'
         )
+    source_binding = detection_completion_runtime_source_check(completion_runtime)
+    fast = isinstance(completion_runtime, FastDetectionCompletionRuntime)
     raw = completion_runtime.attestation(
         completed_work_units=int(completed_work_units)
     )
     if not isinstance(raw, Mapping):
         raise RuntimeError('detection completion attestation missing')
     attestation = (
+        verify_fast_completion_attestation(
+            raw, execution_contract=completion_runtime.execution_contract,
+            outputs=completion_runtime.snapshot_completed_source(),
+        ) if fast else
         verify_detection_completion_execution_attestation(
             raw,
             execution_contract=completion_runtime.execution_contract,
@@ -880,7 +909,7 @@ def _completion_attestation_fields(
         attestation.get('attested') is not True
         or attestation.get('status') != 'passed'
         or attestation.get('observation_relation')
-        != 'same_hotloop_sentinel'
+        != ('postflight_oracle_sentinel' if fast else 'same_hotloop_sentinel')
         or attestation.get('exact_result_claim_bound') is not True
         or int(attestation.get('completed_work_units') or 0)
         != int(completed_work_units)
@@ -895,6 +924,16 @@ def _completion_attestation_fields(
         attestation.get('comparison_endpoint_contract') or {}
     )
     return {
+        'completion_runtime_mode': getattr(completion_runtime, 'completion_runtime_mode', 'strict'),
+        **({'completion_runtime_source_binding': source_binding} if source_binding else {}),
+        **({'completion_execution_contract': dict(completion_runtime.execution_contract)}
+           if hasattr(completion_runtime, 'execution_contract') else {}),
+        **({'completion_sentinel_identity': dict(attestation['sentinel_identity']),
+            'semantic_evidence_repetition_index': attestation['sentinel_identity'].get('process_local_repetition_index'),
+            'semantic_evidence_repetition_id': attestation['sentinel_identity'].get('repetition_id'),
+            'semantic_evidence_runtime_instance_id': attestation['sentinel_identity'].get('runtime_instance_id')}
+           if fast else {}),
+        'quality_oracle_location': 'outside_performance_timing' if fast else 'same_hotloop',
         'completed_work_units': int(completed_work_units),
         'postprocess_included': True,
         'postprocess_completed_frames': int(completed_work_units),
@@ -903,7 +942,7 @@ def _completion_attestation_fields(
         'completion_execution_contract_sha256': str(
             attestation.get('execution_contract_sha256') or ''
         ),
-        'completion_observation_relation': 'same_hotloop_sentinel',
+        'completion_observation_relation': str(attestation['observation_relation']),
         'completion_exact_result_claim_bound': True,
         'completed_task_endpoint_contract': completed_endpoint,
         'completed_task_endpoint_contract_hash': str(
@@ -926,8 +965,9 @@ def _completion_attestation_fields(
         ),
         'completed_task_stage': 'decoded_nms',
         'completed_task_contract_family': 'decoded_nms',
-        'completed_task_completion_mode':
-            'detection_completion_execution_v1',
+        'completed_task_completion_mode': (
+            'native_three_stage_fast_oracle_outside_timing' if fast
+            else 'detection_completion_execution_v1'),
         'completed_task_endpoint_attested': True,
         'completed_task_endpoint_attestation': attestation,
         'completed_task_endpoint_attestation_status': 'passed',
@@ -1234,6 +1274,8 @@ def _deepx_energy_binding(ns: argparse.Namespace) -> tuple[dict[str, Any] | None
     if task == 'detection':
         try:
             _bound_detection_completion_contract(binding)
+            if str(ns.completion_runtime_mode) != split_energy_detection_completion_mode(binding):
+                errors.append('split_energy_cli_completion_runtime_mode_mismatch')
         except Exception as exc:
             errors.append(
                 'split_energy_detection_completion_contract_invalid:'
@@ -1278,6 +1320,7 @@ def main() -> int:
     ap.add_argument('--task', default='', choices=['', 'classification', 'detection'], help='Benchmark task. If omitted it is read from benchmark_set.json outside energy mode.')
     ap.add_argument('--preprocess-mode', default='auto', choices=['auto', 'resize', 'letterbox'], help='Task-specific image geometry; auto resolves classification to resize and detection to letterbox.')
     ap.add_argument('--letterbox-pad-value', type=int, default=114, help='RGB padding used when the effective preprocessing mode is letterbox (0..255).')
+    ap.add_argument('--completion-runtime-mode', default='auto', choices=['auto', 'strict', 'bound_dense', 'fast_oracle_outside_timing'], help='YOLOv7 completion selection; auto preserves strict processing for other model families.')
     ap.add_argument('--out-dir', default='', help='Fresh result/output root for energy replay; defaults to the canonical native_pipeline directory.')
     ap.add_argument('--expected-runner-sha256', default='', help='Replay guard for this staged runner.')
     ap.add_argument('--expected-image-sha256', default='', help='Replay guard for the exact input image.')
@@ -1473,6 +1516,7 @@ def main() -> int:
                     source_input_contract,str(ns.image),
                     preprocess_mode=preprocess_mode_effective,
                     letterbox_pad_value=letterbox_pad_value_effective,
+                    timing_input_binding=report.setdefault('timing_input_binding', {}),
                 )
                 first_outs=_run_deepx(dx_engine,selected_input)
                 select_meta={
@@ -1513,6 +1557,7 @@ def main() -> int:
             np.save(prepared_input_path, np.ascontiguousarray(selected_input), allow_pickle=False)
             prepared_input_contract = {
                 'format': 'numpy_npy_v1',
+                'timing_input_binding':dict(report.get('timing_input_binding') or {}),
                 'shape': [int(x) for x in selected_input.shape],
                 'dtype': str(selected_input.dtype),
                 'c_contiguous': bool(selected_input.flags.c_contiguous),
@@ -1635,18 +1680,30 @@ def main() -> int:
                 f"deepx-trt-runtime:{time.time_ns()}:{id(dx_engine)}:{id(trt)}".encode('utf-8')
             ).hexdigest()
             measured_completion_runtime = (
-                DetectionCompletionRuntime(
+                create_detection_completion_runtime(
                     completion_execution_contract,
                     observation_relation='same_hotloop_sentinel',
+                    runtime_mode=(split_energy_detection_completion_mode(energy_binding) if energy_binding is not None else ns.completion_runtime_mode),
+                    source_paths=(__file__, sys.modules[NativeTRT.__module__].__file__),
+                    sentinel_context={'runtime_instance_id': runtime_instance_id,
+                                      'repetition_id': runtime_instance_id,
+                                      'process_local_repetition_index': repetition_index + 1,
+                                      'input_image_sha256': _file_sha256(ns.image) if ns.image else ''},
                 )
                 if task == 'detection'
                 and completion_execution_contract is not None
                 else None
             )
             warmup_completion_runtime = (
-                DetectionCompletionRuntime(
+                create_detection_completion_runtime(
                     completion_execution_contract,
                     observation_relation='same_hotloop_sentinel',
+                    runtime_mode=(split_energy_detection_completion_mode(energy_binding) if energy_binding is not None else ns.completion_runtime_mode),
+                    source_paths=(__file__, sys.modules[NativeTRT.__module__].__file__),
+                    sentinel_context={'runtime_instance_id': runtime_instance_id,
+                                      'repetition_id': runtime_instance_id,
+                                      'process_local_repetition_index': repetition_index + 1,
+                                      'input_image_sha256': _file_sha256(ns.image) if ns.image else ''},
                 )
                 if task == 'detection'
                 and completion_execution_contract is not None
@@ -1677,10 +1734,16 @@ def main() -> int:
         ))
         if bool(ns.dump_outputs):
             try:
-                _outs = _run_deepx(dx_engine, selected_input)
-                _n, _arr, _ = _map_deepx_output_to_trt(_outs, trt)
-                _douts = trt.run({_n: _arr})
+                fast_dump = isinstance(measured_completion_runtime, FastDetectionCompletionRuntime)
+                if fast_dump:
+                    _douts = measured_completion_runtime.snapshot_completed_source()
+                else:
+                    _outs = _run_deepx(dx_engine, selected_input)
+                    _n, _arr, _ = _map_deepx_output_to_trt(_outs, trt)
+                    _douts = trt.run({_n: _arr})
                 _om = _dump_trt_outputs(_douts, out_dir / 'native_outputs', producer='deepx_python_dx_engine_fifo', case=case, backend='deepx_to_trt', benchmark_set=bs, input_image=(ns.image or ''), task=task)
+                if fast_dump:
+                    _bind_fast_output_manifest(_om, report['completion_execution_attestation'])
                 report['output_manifest'] = _om
                 report['native_output_manifest'] = _om
                 report.update(_endpoint_report_fields(_om))
@@ -1709,12 +1772,16 @@ def main() -> int:
             )
             if exact_count <= 0:
                 raise RuntimeError('split_energy_exact_completed_frames_missing')
+            if task == 'detection' and report.get('completion_runtime_mode') != split_energy_detection_completion_mode(energy_binding):
+                raise RuntimeError('split_energy_actual_completion_runtime_mode_mismatch')
             if task == 'detection' and (
                 report.get('postprocess_completion_verified') is not True
                 or int(report.get('postprocess_completed_frames') or 0)
                 != exact_count
                 or report.get('completion_observation_relation')
-                != 'same_hotloop_sentinel'
+                != ('postflight_oracle_sentinel'
+                    if split_energy_detection_completion_mode(energy_binding) == 'fast_oracle_outside_timing'
+                    else 'same_hotloop_sentinel')
                 or report.get('completion_exact_result_claim_bound')
                 is not True
             ):
@@ -1728,6 +1795,16 @@ def main() -> int:
                 'energy_workload_only': True,
                 'source_contract_sha256': str(ns.source_contract_sha256 or ''),
             })
+            if task == 'detection':
+                report.update({
+                    'measurement_endpoint': 'completed_task',
+                    'energy_preflight_nonce': str(ns.energy_preflight_nonce),
+                    'energy_completion_observation_scope': 'fresh_energy_invocation',
+                    'energy_completion_window_source': 'collector_command_marker_window',
+                    **{key: energy_binding.get(key) for key in (
+                        'model', 'case', 'setup_id', 'comparison_backend', 'precision',
+                    ) if energy_binding.get(key) not in (None, '')},
+                })
         else:
             _seal_manifest_payload_files(report.get('native_output_manifest'))
             _seal_manifest_payload_files(report.get('native_fifo_boundary_manifest'))
@@ -1777,6 +1854,8 @@ def main() -> int:
                     'letterbox_pad_value_requested': int(ns.letterbox_pad_value),
                     'letterbox_pad_value_effective': int(letterbox_pad_value_effective),
                     'letterbox_pad_value': int(letterbox_pad_value_effective),
+                    'completion_runtime_mode': str(report.get('completion_runtime_mode') or 'strict'),
+                    'completion_runtime_source_binding': dict(report.get('completion_runtime_source_binding') or {}),
                     'completion_execution_contract': (
                         completion_execution_contract
                         if task == 'detection' else None
@@ -1941,6 +2020,8 @@ def main() -> int:
     out_path.write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(json.dumps({'ok': bool(report.get('ok')), 'fps_makespan': report.get('fps_makespan'), 'paper_fps': report.get('paper_equivalent_fps'), 'report': str(out_path), 'error': report.get('error','')}, indent=2))
     if ns.energy_workload_only and report.get('ok'):
+        if task == 'detection':
+            print('__SPLITPOINT_ENERGY_COMPLETION__=' + json.dumps(report, separators=(',', ':')))
         print(json.dumps({key: report.get(key) for key in ("task", "task_complete", "completed_task_stage", "completed_work_units", "completed_frames", "postprocess_included", "postprocess_completed_frames", "postprocess_completion_verified", "source_contract_sha256",)}))
         print(f"__SPLITPOINT_WORK_UNITS__={int(report.get('completed_work_units') or 0)}")
         print("__SPLITPOINT_WORK_UNITS_SOURCE__=completed_work_units")

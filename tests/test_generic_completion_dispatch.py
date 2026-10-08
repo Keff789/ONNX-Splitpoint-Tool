@@ -230,3 +230,60 @@ def test_execution_plan_rejects_inner_identity_drift_and_result_path_escape(tmp_
         reason = "result path"
     with pytest.raises(ValueError, match=reason):
         entry.validate_plan(plan, scope, primary)
+
+
+def test_selective_scope_is_explicit_hash_bound_and_cannot_expand(tmp_path):
+    rows = [prepared_case(tmp_path, index=i) for i in (1, 2)]
+    scope = tmp_path / 'selected.csv'
+    with scope.open('w', newline='') as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]['identity']))
+        writer.writeheader(); writer.writerows(r['identity'] for r in rows)
+    source = tmp_path / 'historical-plan.json'
+    entry.write_json(source, {'rows': rows})
+    plan = {'scope_mode': 'audited_selective_remeasurement', 'authorized_row_count': 2,
+            'scope_source_sha256': entry.file_sha256(scope), 'rows': rows,
+            'execution_id': 'new-session', 'source_execution_plans': [
+                {'path': str(source), 'sha256': entry.file_sha256(source)}]}
+    assert entry.validate_plan(plan, scope, tmp_path / 'primary') == rows
+    legacy = dict(plan); legacy.pop('scope_mode')
+    with pytest.raises(ValueError, match='192'):
+        entry.validate_plan(legacy, scope, tmp_path / 'primary')
+    wrong = copy.deepcopy(plan); wrong['authorized_row_count'] = 3
+    with pytest.raises(ValueError, match='exactly 3'):
+        entry.validate_plan(wrong, scope, tmp_path / 'primary')
+    wrong = copy.deepcopy(plan); wrong['scope_source_sha256'] = '0' * 64
+    with pytest.raises(ValueError, match='CSV hash'):
+        entry.validate_plan(wrong, scope, tmp_path / 'primary')
+    wrong = copy.deepcopy(plan); wrong['source_execution_plans'][0]['sha256'] = '0' * 64
+    with pytest.raises(ValueError, match='source plan hash'):
+        entry.validate_plan(wrong, scope, tmp_path / 'primary')
+    entry.write_json(source, {'rows': [rows[0]]})
+    wrong = copy.deepcopy(plan); wrong['source_execution_plans'][0]['sha256'] = entry.file_sha256(source)
+    with pytest.raises(ValueError, match='absent from audited'):
+        entry.validate_plan(wrong, scope, tmp_path / 'primary')
+
+
+def test_selective_archived_roots_preserve_source_history(tmp_path):
+    rows = [prepared_case(tmp_path, index=1)]
+    historical_root = rows[0]['original_run']
+    scope = tmp_path / 'scope.csv'
+    with scope.open('w', newline='') as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]['identity']))
+        writer.writeheader(); writer.writerow(rows[0]['identity'])
+    source = tmp_path / 'source.json'; entry.write_json(source, {'rows': rows})
+    archive = tmp_path / 'archive'
+    entry.write_json(archive / 'run_manifest.json', {'run_id': 'preserved-history'})
+    rows[0].update(historical_original_run=historical_root, original_run=str(archive))
+    rows[0]['runtime_config']['original_run'] = str(archive)
+    plan = {'scope_mode': 'audited_selective_remeasurement', 'authorized_row_count': 1,
+            'scope_source_sha256': entry.file_sha256(scope), 'execution_id': 'new-session', 'rows': rows,
+            'source_execution_plans': [{'path': str(source), 'sha256': entry.file_sha256(source)}],
+            'source_run_bindings': [{'historical_root': historical_root, 'archive_root': str(archive),
+                                    'run_manifest_sha256': entry.file_sha256(archive / 'run_manifest.json')}]}
+    assert entry.validate_plan(plan, scope, tmp_path / 'primary') == rows
+    wrong = copy.deepcopy(plan); wrong['rows'][0]['historical_original_run'] = 'other-history'
+    with pytest.raises(ValueError, match='historical/archive'):
+        entry.validate_plan(wrong, scope, tmp_path / 'primary')
+    wrong = copy.deepcopy(plan); wrong['source_run_bindings'][0]['run_manifest_sha256'] = '0' * 64
+    with pytest.raises(ValueError, match='manifest hash'):
+        entry.validate_plan(wrong, scope, tmp_path / 'primary')

@@ -394,6 +394,11 @@ def main() -> int:
     )
     parser.add_argument("--frozen-postprocess-contract-json", default="")
     parser.add_argument(
+        "--postprocess-runtime-mode", default="auto",
+        choices=("auto", "strict", "bound_dense", "bound_exact_sparse"),
+        help="Explicit completion mode; auto selects the bound YOLOv7 raw-head path without fallback.",
+    )
+    parser.add_argument(
         "--frozen-decoded-nms-normalization-contract-json", default="",
     )
     parser.add_argument("--source-endpoint-contract-hash", default="")
@@ -512,6 +517,7 @@ def main() -> int:
         from onnx_splitpoint_tool.native_detection_postprocess import (
             FrozenDecodedNmsPostprocessor,
             FrozenDetectionPostprocessor,
+            native_full_postprocess_runtime_mode,
             build_completed_detection_endpoint_attestation,
             build_letterbox_geometry_contract,
             build_normalized_detection_endpoint_attestation,
@@ -579,7 +585,10 @@ def main() -> int:
             ):
                 raise ValueError("frozen_postprocess_output_names_invalid")
             completion_processor = FrozenDetectionPostprocessor(
-                completion_contract
+                completion_contract,
+                runtime_mode=(native_full_postprocess_runtime_mode(completion_contract)
+                              if ns.postprocess_runtime_mode == "auto"
+                              else ns.postprocess_runtime_mode),
             )
             completion_kind = "raw_host_tail"
         elif direct_contract_text:
@@ -646,7 +655,7 @@ def main() -> int:
                 }
             else:
                 outputs = _named_outputs(raw, output_names)
-            return completion_processor.process(outputs, original_wh=original_wh)
+            return (completion_processor.process_task if hasattr(completion_processor, "process_task") and getattr(completion_processor, "runtime_mode", "bound_dense") != "strict" else completion_processor.process)(outputs, original_wh=original_wh)
 
         # Engine import/initialization is deliberately after every sealed
         # input and metadata check above.  No failing binding can infer once.
@@ -671,6 +680,10 @@ def main() -> int:
         frames = max(1, int(ns.frames))
         requested_duration_s = max(0.0, float(ns.duration_s or 0.0))
         warmup = max(0, int(ns.warmup))
+        implementation_before = (
+            completion_processor.assert_implementation_unchanged()
+            if isinstance(completion_processor, FrozenDetectionPostprocessor) else {}
+        )
         for _ in range(warmup):
             raw = engine.run([feed])
             if completion_processor is not None:
@@ -698,6 +711,12 @@ def main() -> int:
             requested_duration_s <= 0.0
             or measured_duration_s >= requested_duration_s
         )
+        implementation_after = (
+            completion_processor.assert_implementation_unchanged()
+            if isinstance(completion_processor, FrozenDetectionPostprocessor) else {}
+        )
+        if hasattr(completion_processor, "finalize_evidence"):
+            completion_result = completion_processor.finalize_evidence()
         postprocess_required = str(ns.task) == "detection"
         postprocess_completed = (
             int(completion_processor.completed_count) - warmup
@@ -839,6 +858,10 @@ def main() -> int:
                 if completion_kind == "direct_bn6_normalization" else ""
             ),
             "postprocess_completed_frames": postprocess_completed,
+            "postprocess_runtime_mode": getattr(completion_processor, "runtime_mode", completion_kind),
+            "implementation_artifacts_before": implementation_before,
+            "implementation_artifacts_after": implementation_after,
+            "implementation_source_drift_checked": True,
             "postprocess_completion_verified": postprocess_count_ok,
             "postprocess_completed_frames_status": (
                 "exact_match" if postprocess_count_ok else "count_mismatch"

@@ -136,6 +136,15 @@ def _build_bounded_24_fixture(
                     "runner_regime": "generic",
                     "variant": "split",
                     "cycle_ms": generic_cycles[index],
+                    "fps_makespan": 1000.0 / generic_cycles[index],
+                    "measurement_boundary": "prepared_input_before_p1_to_last_completed_task",
+                    "measurement_endpoint": "completed_task",
+                    "postprocess_completion_verified": True,
+                    "postprocess_completed_frames": 1000,
+                    "timing_input_binding": {
+                        "input_image_sha256": "1" * 64,
+                        "canonical_rgb_sha256": "2" * 64,
+                    },
                     "task_quality_status": decision,
                     "contract_consistent": False,
                     "eligible_for_ranking": False,
@@ -163,6 +172,18 @@ def _build_bounded_24_fixture(
                     "ok": True,
                     "status": "ok",
                     "fps_makespan": 1000.0 / native_cycles[index],
+                    "completed_work_units": 1000,
+                    "makespan_ms": 1000.0 * native_cycles[index],
+                    "measurement_boundary": "first_task_start_to_last_task_completion",
+                    "completed_task_endpoint_attested": True,
+                    "completed_task_endpoint_contract_hash": endpoint_hash,
+                    "measurement_endpoint": "completed_task",
+                    "postprocess_completion_verified": True,
+                    "postprocess_completed_frames": 1000,
+                    "timing_input_binding": {
+                        "input_image_sha256": "1" * 64,
+                        "canonical_rgb_sha256": "2" * 64,
+                    },
                     "output_endpoint_match": True,
                     "comparison_stratum_explicit": True,
                     # The frozen performance projection predates the replayed
@@ -579,13 +600,12 @@ def test_explicit_endpoint_completeness_conflict_still_fails_closed(
     assert report["pair_count"] == 23
     assert report["planned_native_intersection_complete"] is False
     assert report["identity_exclusion_reason_counts"][
-        "archived_central_request_projection_conflict"
+        "variant_identity_conflict"
     ] == 1
     assert any(
-        "archived_central_projection_endpoint_contract_complete_conflict"
-        in error
-        for item in report["identity_exclusions"]
-        for error in item.get("identity_errors", [])
+        "explicit_embedded_endpoint_contract_complete_conflict"
+        in row.get("identity_errors", [])
+        for row in report["identity_exclusions"]
     )
 
 

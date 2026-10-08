@@ -150,14 +150,18 @@ def test_generated_suite_enters_current_runner_and_exports_n5000_without_cpu_ful
         dxnn = case / 'deepx/deepx_m1/part1/model.dxnn'
         dxnn.parent.mkdir(parents=True)
         dxnn.write_bytes(b'fake DeepX inference leaf, never executed')
+        deepx_adapter = runner.DeepXSession
         class DeepXSession:
+            _candidate_inputs = deepx_adapter._candidate_inputs
+            prepare_image_inputs = deepx_adapter.prepare_image_inputs
+            bind_prepared_inputs = deepx_adapter.bind_prepared_inputs
             def __init__(self, path, **kwargs):
                 self.dxnn_path = path
                 self.input_names = ['images']
             def infer(self, feeds):
                 calls['part1'] += 1
                 if not original_feeds: original_feeds.append(feeds['images'].copy())
-                return {'boundary':np.ascontiguousarray(feeds['images'])}
+                return {'boundary':np.ascontiguousarray(feeds['images'].transpose(2,0,1)[None].astype(np.float32)/255.)}
             def describe_io(self):
                 return {'canonical_inputs':['images'], 'canonical_outputs':['boundary'],
                         'runtime_input_shapes':{'images':(1,3,64,64)}}

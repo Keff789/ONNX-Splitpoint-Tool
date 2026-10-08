@@ -202,7 +202,7 @@ from ..process_control import (
     bind_process_registry,
     require_nested_session_cancellation,
 )
-from ..remote_runtime_closure import native_remote_package_closure
+from ..remote_runtime_closure import native_remote_package_closure, native_remote_resource_closure
 from ..validation.accuracy_gates import AccuracyGatePolicy
 from ..remote.process_lease import (
     RemoteProcessLeaseConfigurationError,
@@ -23235,6 +23235,10 @@ class EvaluationWorkflowRunner:
                                 ("--result-json", "--native-split-quality-binding", "native_command_contract", "--repetitions"),
                             ),
                             (
+                                "native_hailo_trt_concurrent_three_stage_from_benchmarkset.py",
+                                ("def build_three_stage_command", "--native-split-quality-binding", "--repetitions"),
+                            ),
+                            (
                                 "native_hailo10_trt_e2e_from_benchmarkset.py",
                                 ("class NativeTRT", "--expected-runner-sha256"),
                             ),
@@ -23278,6 +23282,13 @@ class EvaluationWorkflowRunner:
                             process_runner=_stream_native,
                         )
                     )
+                if b == "hailo8" and backend_has_native_split:
+                    for asset_relative, asset_tokens in native_remote_resource_closure():
+                        result["steps"].extend(_sync_remote_package_asset_v263(
+                            ssh=ssh, remote_tool_dir=rtool,
+                            relative_path=asset_relative, required_tokens=asset_tokens,
+                            timeout=min(timeout, 600), process_runner=_stream_native,
+                        ))
                 pending_module_checks = []
                 for asset_relative, module_name, asset_tokens in native_remote_package_closure():
                     module_steps = _sync_remote_package_asset_v263(

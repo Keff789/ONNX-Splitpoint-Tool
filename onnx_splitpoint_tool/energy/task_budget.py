@@ -157,7 +157,20 @@ def _source_reentry(root, source_id, environment=None):
                              and current["limits"] == change["after"]
                              and current["stop_reason"] == change["original_stop_reason"]),
                          "authorized row limits or original stop changed")
+    for covered in _reentry_history(grant):
+        previous_task = root["tasks"][covered["campaign_row"]]
+        _reentry_require(previous_task["source_id"] == source_id
+                         and covered["chain"] in previous_task["chains"],
+                         "previous recovered chain changed")
     return grant
+
+
+def _reentry_history(grant):
+    if grant is None:
+        return
+    yield grant
+    for previous in grant.get("previous_grants", []):
+        yield from _reentry_history(previous)
 
 
 def _historical_task_stop(task, row_id, grant):
@@ -289,13 +302,30 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
         _reentry_require(root.get("campaign") is True and source_id in root["sources"], "campaign source missing")
         state = root["sources"][source_id]
         previous = state.get("authorized_reentry")
-        if previous is not None:
+        if previous is not None and previous["capture_request"] == request:
             _reentry_require(previous["new_parent"] == new_parent
                              and previous["capture_request"] == request
                              and previous["recovery_reply"] == reply
                              and ({key: value["after"] for key, value in previous.get("limit_changes", {}).items()} or None)
                                  == authorized_limits, "authorization already consumed")
             return copy.deepcopy(previous)
+        if previous is not None:
+            old_parent = previous["new_parent"]
+            _reentry_require(request["session_id"] == old_parent["session_id"]
+                             and old_parent["run_id"] == request["run_id"]
+                             and _proc_start_time(old_parent["pid"]) != old_parent["start_ticks"]
+                             and previous["source_stop_reason"] == "campaign_source_completion_unresolved"
+                             and not previous.get("limit_changes") and authorized_limits is None
+                             and all(item["lock_owner"]["pid"] == old_parent["pid"]
+                                     for item in original_resources.values()),
+                             "new recovery must bind the failed authorized parent")
+            for covered in _reentry_history(previous):
+                old_task = root["tasks"][covered["campaign_row"]]
+                _reentry_require(old_task["source_id"] == source_id and covered["chain"] in old_task["chains"]
+                                 and old_task["limits"] == covered["limits"]
+                                 and old_task["stop_reason"] == covered["original_task_stop_reason"]
+                                 and state["stop_reason"] == covered["original_source_stop_reason"],
+                                 "previous recovery history changed")
         matches = [(key, task, chain) for key, task in root["tasks"].items()
                    if task["source_id"] == source_id for chain in task["chains"]
                    if chain.get("run_directory") == request.get("attempt_dir")]
@@ -306,14 +336,20 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
                          and row_identity[3] == request.get("setup_id")
                          and Path(chain["run_directory"]).is_absolute()
                          and all(chain.get(k) == request.get(k) for k in ("owner_pid", "owner_start_ticks"))
-                         and not _chain_owner_alive(chain) and chain.get("finished") is False
+                         and not _chain_owner_alive(chain)
+                         and (chain.get("finished") is False or
+                              (chain.get("finished") is True and chain.get("valid") is False
+                               and chain.get("source_completion_verified") is False
+                               and bool(chain.get("transport_reasons"))))
                          and chain.get("collector_started") is True and chain.get("valid") is not True
-                         and task["stop_reason"] in {"task_execution_interrupted", "task_interrupted_chain_unresolved"}
+                         and task["stop_reason"] in {"task_execution_interrupted", "task_interrupted_chain_unresolved",
+                                                    "campaign_source_completion_unresolved"}
                          and state["stop_reason"] in {"", "campaign_source_interrupted_chain_unresolved",
                                                       "campaign_source_completion_unresolved"},
                          "only the exact historical interrupted capture is admissible")
         unresolved = [c for t in root["tasks"].values() if t["source_id"] == source_id for c in t["chains"]
-                      if not c.get("finished") or (c.get("collector_started") and c.get("source_completion_verified") is not True)]
+                      if (not c.get("finished") or (c.get("collector_started") and c.get("source_completion_verified") is not True))
+                      and not any(c == old["chain"] for old in _reentry_history(previous))]
         _reentry_require(unresolved == [chain], "another unresolved source chain exists")
         _reentry_require(state.get("transport_failures", 0) < root["max_transport_failures"]
                          and len(task["chains"]) < task["limits"]["max_chains"]
@@ -324,6 +360,8 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
                  "limits": task["limits"], "max_transport_failures": root["max_transport_failures"],
                  "original_task_stop_reason": task["stop_reason"], "original_source_stop_reason": state["stop_reason"],
                  "task_stop_reasons": {}, "source_stop_reason": ""}
+        if previous is not None:
+            grant["previous_grants"] = [copy.deepcopy(previous)]
         if authorized_limits is not None:
             changes = _h8_limit_changes(root, source_id, row, authorized_limits, request, recovery)
             for changed_row, change in changes.items():
@@ -338,6 +376,134 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
         handle.flush()
         os.fsync(handle.fileno())
         return copy.deepcopy(grant)
+
+
+def continue_authorized_source_reentry(budget_path, *, previous_attempt_dir, new_parent):
+    """Continue a cleanly closed bounded parent without spending a new grant.
+
+    Caller holds the run lock and all four physical locks. A new source STOP,
+    unfinished acquisition, active predecessor or changed budget remains fatal.
+    Only the parent binding advances; every chain, limit and stop is retained.
+    """
+    from ..process_control import _proc_start_time
+    from ..remote.resource_recovery import _bounded_energy_journal, _rest_evidence_unchanged
+    from ..remote.process_lease import RemoteProcessLeaseJournal
+    read = RemoteProcessLeaseJournal._read_json_exact
+    path = Path(budget_path).resolve(strict=True)
+    run = path.parent
+    attempt = Path(previous_attempt_dir).resolve(strict=True)
+    start = read(attempt / "production-start.json")
+    directory, _, evidence = _bounded_energy_journal(run, start.get("session_id"), attempt)
+    config = read(directory / "controller.resources.json")
+    cleanup = read(attempt / "cleanup-status.json")
+    previous = {"run_id": start["run_id"], "session_id": start["session_id"],
+                "pid": config.get("parent_pid"), "start_ticks": config.get("parent_start_ticks")}
+    _reentry_require(config.get("run_id") == run.name and config.get("run_dir") == str(run)
+                     and config.get("session_id") == start["session_id"]
+                     and start["parent_pid"] == previous["pid"]
+                     and str(previous["start_ticks"] or "").isdigit()
+                     and _proc_start_time(previous["pid"]) != previous["start_ticks"]
+                     and cleanup.get("cleanup_proven") is True and cleanup.get("errors") == []
+                     and not list(directory.glob("*.remote-lease.json")),
+                     "previous bounded parent is not clean and quiescent")
+    _reentry_require(set(new_parent) == {"run_id", "session_id", "pid", "start_ticks"}
+                     and new_parent["run_id"] == run.name
+                     and re.fullmatch(r"[A-Za-z0-9_.-]{1,160}", str(new_parent["session_id"]))
+                     and new_parent["session_id"] != previous["session_id"]
+                     and new_parent["pid"] == os.getpid()
+                     and new_parent["start_ticks"] == _proc_start_time(os.getpid()),
+                     "one current continuation parent required")
+    requests = list(directory.glob("*.resource-request.json"))
+    for request_path in requests:
+        request = read(request_path)
+        reply_path = directory / (request_path.name.removesuffix(".resource-request.json") + ".resource-reply.json")
+        reply = read(reply_path)
+        _reentry_require(request.get("run_id") == run.name
+                         and request.get("session_id") == previous["session_id"]
+                         and reply.get("state") == "RELEASED"
+                         and all(reply.get(k) == request.get(k) for k in
+                                 ("run_id", "session_id", "operation_id", "token")),
+                         "previous bounded operation is not released")
+        evidence.update({request_path: request, reply_path: reply})
+    evidence[directory / "controller.resources.json"] = config
+    with path.open("r+", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        root = json.load(handle)
+        matches = [(source_id, state, state.get("authorized_reentry"))
+                   for source_id, state in root.get("sources", {}).items()
+                   if (state.get("authorized_reentry") or {}).get("new_parent") == previous]
+        _reentry_require(len(matches) == 1, "exact previous continuation grant missing")
+        source_id, state, grant = matches[0]
+        if not requests:
+            # A clean parent may fail before creating its first operation.
+            # Require its original handoff receipt to prove that even the
+            # effective grant has not changed since that zero-dispatch start.
+            receipt_path = attempt / "source-budget-handoff.json"
+            _reentry_require(receipt_path.is_file() and not receipt_path.is_symlink()
+                             and not list(directory.glob("*.resource-reply.json")),
+                             "zero-operation parent has no exact handoff receipt")
+            receipt = read(receipt_path)
+            _reentry_require(receipt == grant, "zero-operation parent grant changed")
+            evidence[receipt_path] = receipt
+        task = root["tasks"][grant["campaign_row"]]
+        _reentry_require(not grant["source_stop_reason"] and not any(grant["task_stop_reasons"].values())
+                         and task["limits"] == grant["limits"]
+                         and root["max_transport_failures"] == grant["max_transport_failures"]
+                         and task["stop_reason"] == grant["original_task_stop_reason"]
+                         and state["stop_reason"] == grant["original_source_stop_reason"]
+                         and [c for c in task["chains"] if c.get("run_directory") == grant["chain"]["run_directory"]]
+                             == [grant["chain"]], "continuation budget or stop changed")
+        for other in root["tasks"].values():
+            if other["source_id"] != source_id:
+                continue
+            for chain in other["chains"]:
+                if any(chain == old["chain"] for old in _reentry_history(grant)):
+                    continue
+                _reentry_require(chain.get("finished") is True
+                                 and (not chain.get("collector_started") or
+                                      (chain.get("source_completion_verified") is True
+                                       and source_completion(chain["run_directory"])["verified"])),
+                                 "another source acquisition is unresolved")
+        _reentry_require(_rest_evidence_unchanged(evidence), "clean continuation evidence changed")
+        grant.setdefault("parent_history", []).append({"parent": previous,
+            "attempt_dir": str(attempt), "terminal_evidence": {str(p): value for p, value in evidence.items()}})
+        grant["new_parent"] = copy.deepcopy(new_parent)
+        handle.seek(0)
+        json.dump(root, handle, indent=2)
+        handle.truncate()
+        handle.flush()
+        os.fsync(handle.fileno())
+        return copy.deepcopy(grant)
+
+
+def _finished_chain(chain, entry, run_dir, *, campaign):
+    """One classification for live completion and evidence-bound reconciliation."""
+    from .collector import (_energy_repeat_retry_reasons,
+                            _energy_repeat_failure_text,
+                            _energy_repeat_aggregation_eligible)
+    result = copy.deepcopy(chain)
+    reasons = _energy_repeat_retry_reasons(entry, run_dir)
+    transport = [r for r in reasons if r in {
+        "first_sample_barrier_invalid", "marker_dropped_samples_nonzero",
+        "marker_trace_does_not_cover_window",
+    }]
+    text = _energy_repeat_failure_text(entry, run_dir).lower()
+    if any(t in text for t in ("socket error", "connection reset",
+                               "sending half is closed", "urecs_transport_unavailable")):
+        transport.append("transport_log_error")
+    timing = entry.get("workload_timing") or {}
+    result.update(finished=True, status=entry.get("status"),
+                 collector_started=chain["collector_started"] or entry.get("collector_started") is True,
+                 workload_started=bool(timing.get("start_ns")),
+                 valid=_energy_repeat_aggregation_eligible(entry, require_ab=False),
+                 transport_reasons=transport)
+    if campaign:
+        completion = source_completion(run_dir)
+        result["source_completion"] = completion
+        result["source_completion_verified"] = completion["verified"] if result["collector_started"] else None
+        if result["collector_started"] and not completion["verified"]:
+            result["valid"] = False
+    return result
 
 
 class EnergyTaskBudget:
@@ -422,7 +588,7 @@ class EnergyTaskBudget:
             self.stop("task_interrupted_chain_unresolved")
 
     def _covered_chain(self, chain):
-        return self._reentry is not None and chain == self._reentry["chain"]
+        return any(chain == old["chain"] for old in _reentry_history(self._reentry))
 
     def _stop_reason(self):
         if self._reentry is None:
@@ -588,26 +754,9 @@ class EnergyTaskBudget:
     @_budget_transaction
     def finish(self, chain, entry, run_dir):
         chain = self._current_chain(chain)
-        from .collector import (_energy_repeat_retry_reasons,
-                                _energy_repeat_failure_text,
-                                _energy_repeat_aggregation_eligible)
         if chain["finished"]:
             return
-        reasons = _energy_repeat_retry_reasons(entry, run_dir)
-        transport = [r for r in reasons if r in {
-            "first_sample_barrier_invalid", "marker_dropped_samples_nonzero",
-            "marker_trace_does_not_cover_window",
-        }]
-        text = _energy_repeat_failure_text(entry, run_dir).lower()
-        if any(t in text for t in ("socket error", "connection reset",
-                                   "sending half is closed", "urecs_transport_unavailable")):
-            transport.append("transport_log_error")
-        timing = entry.get("workload_timing") or {}
-        chain.update(finished=True, status=entry.get("status"),
-                     collector_started=chain["collector_started"] or entry.get("collector_started") is True,
-                     workload_started=bool(timing.get("start_ns")),
-                     valid=_energy_repeat_aggregation_eligible(entry, require_ab=False),
-                     transport_reasons=transport)
+        chain.update(_finished_chain(chain, entry, run_dir, campaign=self.source is not None))
         if self.source is None:
             self.save()
         if self.source is not None:

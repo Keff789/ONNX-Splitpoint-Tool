@@ -5537,7 +5537,29 @@ def run_fast_firmware_measurement(
             on_process_started=_record_collector_start,
         )
         if capture_claim is not None:
-            capture_claim.finish(res)
+            try:
+                capture_claim.finish(res)
+            except BaseException as exc:
+                # Resource STOP and measurement accounting are independent.
+                # Persist the negative capture before propagating the original
+                # exception; never enter postprocessing or a retry from here.
+                entry.update(
+                    collector_started=res.get("process_started") is True,
+                    collector_rc=res.get("rc"),
+                    collector_duration_s=res.get("duration_s"),
+                    status="collector_failed", ended_at=time.time(),
+                    cancelled=bool(res.get("cancelled")),
+                    workload_timing=_read_workload_timing(run_dir / "workload_timing.txt"),
+                    postprocess_status="not_run_capture_release_failed",
+                    energy_efficiency_claim_eligible=False,
+                    final_energy_gate_status="fail",
+                    final_energy_gate_reasons=["capture_release_failed"],
+                    capture_release_error={"type": type(exc).__name__, "detail": str(exc)},
+                )
+                _write_json(run_dir / "energy_summary.json", entry)
+                if _task_budget is not None:
+                    _task_budget.finish(task_chain, entry, run_dir)
+                raise
         entry["collector_started"] = res.get("process_started") is True
         entry["collector_started_at_unix_ns"] = int(
             res.get("process_started_at_unix_ns") or 0

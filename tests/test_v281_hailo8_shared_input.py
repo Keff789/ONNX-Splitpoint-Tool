@@ -109,7 +109,7 @@ def test_runtime_repetition_rejects_changed_input_metadata():
 
 def test_parent_keeps_raw_evidence_when_shared_binding_fails(tmp_path,monkeypatch):
     payload, partial_args=raw_contract(tmp_path)
-    args=SimpleNamespace(**vars(partial_args),result_json='')
+    args=SimpleNamespace(**vars(partial_args),result_json='',run=True)
     calls=[]
     def command(**kw):
         calls.append(kw['endpoint'])
@@ -152,6 +152,17 @@ def test_actual_raw_launcher_returns_failure_when_later_process_changes_feed(tmp
     engine=tmp_path/'part2.engine';engine.write_bytes(b'existing engine')
     work=tmp_path/'work';(work/'build').mkdir(parents=True)
     (work/'build/split_native_hailo_trt_fifo').write_bytes(b'existing native executable')
+    cache=work/'build/CMakeCache.txt';cache.write_bytes(b'existing software runtime build cache')
+    (work/'native_fifo_config.json').write_text(json.dumps({'wrapper_build':{
+        'status':'ready','identity':{
+            'generated_cpp_sha256':hashlib.sha256(runner.CPP_SOURCE.encode()).hexdigest(),
+            'cmake_sha256':hashlib.sha256(runner.CMAKE_TXT.encode()).hexdigest(),
+            'target_architecture':runner.platform.machine(),
+            'configure_options':['-DCMAKE_BUILD_TYPE=Release'],
+        },
+        'native_executable_sha256':runner._sha256_file(work/'build/split_native_hailo_trt_fifo'),
+        'cmake_cache_sha256':runner._sha256_file(cache),
+    }}))
     target=work/'native_fifo_results.json'
     target.write_text('{"ok":true,"stale":"earlier run"}')
     monkeypatch.setattr(runner,'_find_hef',lambda *a:hef)
@@ -159,15 +170,21 @@ def test_actual_raw_launcher_returns_failure_when_later_process_changes_feed(tmp
     monkeypatch.setattr(runner,'_engine_boundary_contract',lambda *a:{})
     monkeypatch.setattr(runner,'_verify_replay_expectations',lambda *a,**kw:{})
     monkeypatch.setattr(runner,'_native_command_contract',lambda **kw:{'complete':True})
+    shared_source=work/'canonical.bin'
+    shared_source.write_bytes(b'first prepared RGB')
+    def prepare_shared(**kw):
+        kw['args'].prepared_input_rgb=str(shared_source)
+        kw['args'].expected_prepared_input_sha256=runner._sha256_file(shared_source)
+    monkeypatch.setattr(runner,'_prepare_hailo8_cpp_rgb_input',prepare_shared)
     commands=[]
     def child(command,cwd=None):
         commands.append(command)
         feed=Path(command[command.index('--prepared-input-out')+1]);feed.parent.mkdir(parents=True,exist_ok=True)
         if len(commands)==1:
-            assert '--prepared-input-rgb' not in command
+            assert Path(command[command.index('--prepared-input-rgb')+1])==shared_source
             feed.write_bytes(b'first prepared RGB')
         else:
-            assert Path(command[command.index('--prepared-input-rgb')+1])==feed
+            assert Path(command[command.index('--prepared-input-rgb')+1])==shared_source
             assert feed.read_bytes()==b'first prepared RGB'
             feed.write_bytes(b'changed prepared RGB')
         result=Path(command[command.index('--out')+1]);result.parent.mkdir(parents=True,exist_ok=True)
@@ -175,7 +192,7 @@ def test_actual_raw_launcher_returns_failure_when_later_process_changes_feed(tmp
         return SimpleNamespace(returncode=0)
     monkeypatch.setattr(runner.subprocess,'run',child)
     monkeypatch.setattr(runner.sys,'argv',[str(PATH),'--benchmark-set',str(bs),'--case','b067','--image',str(image),
-        '--work-dir',str(work),'--no-build','--detection-endpoints','raw_model_outputs','--repetitions','3'])
+        '--work-dir',str(work),'--no-build','--detection-endpoints','raw_model_outputs','--raw-preprocess-scope','shared_prepared_input','--repetitions','3'])
     assert runner.main()==8
     result=json.loads(target.read_text())
     assert len(commands)==2
