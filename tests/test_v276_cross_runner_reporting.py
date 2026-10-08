@@ -633,3 +633,62 @@ def test_planned_identity_request_drift_fails_closed(tmp_path: Path) -> None:
         for item in report["identity_exclusions"]
         for error in item.get("identity_errors", [])
     )
+
+
+def _current_reporting_fixture(generic_root: Path, native_root: Path, decision: str):
+    rows = _build_bounded_24_fixture(generic_root, native_root)
+    for row in rows[:-1]:
+        row.update(contract_consistent=True, eligible_for_ranking=True,
+                   task_valid=True, accuracy_gate_pass=True,
+                   task_quality_status=decision, task_quality_observation_valid=True)
+    native_path = native_root / "reports/native_producer_combined_summary.json"
+    native = json.loads(native_path.read_text())
+    for row in native["rows"]:
+        row["performance_claim_eligible"] = True
+    _write_json(native_path, native)
+    validation_path = native_root / "reports/native_validation/native_producer_validation_summary.json"
+    validation = json.loads(validation_path.read_text())
+    for row in validation["rows"]:
+        row.update(task_quality_status=decision, task_valid=True,
+                   accuracy_gate_pass=True, eligible_for_ranking=True,
+                   status="ok", gate_status="reported", task_quality_observation_valid=True)
+    _write_json(validation_path, validation)
+    return rows, validation, validation_path
+
+
+@pytest.mark.parametrize("decision", ["reference_close", "accuracy_loss", "not_estimable"])
+def test_current_quality_classes_use_explicit_admissions_without_relabelling(tmp_path, decision):
+    generic_root, native_root = tmp_path / "generic", tmp_path / "native"
+    rows, _validation, _path = _current_reporting_fixture(generic_root, native_root, decision)
+    report = compute_cross_runner_report(generic_root, rows, native_run_dir=native_root)
+    assert len(report["pairs"]) == 24
+    assert all(pair["eligible_for_claim_transfer"] for pair in report["pairs"])
+    assert {pair["generic_task_quality_status"] for pair in report["pairs"]} == {decision}
+    assert {pair["native_task_quality_status"] for pair in report["pairs"]} == {decision}
+
+
+@pytest.mark.parametrize("missing", ["task_valid", "accuracy_gate_pass", "eligible_for_ranking",
+                                     "claim_ok", "unknown_status", "unknown_gate_status"])
+def test_current_labels_do_not_release_missing_or_conflicting_explicit_gates(tmp_path, missing):
+    generic_root, native_root = tmp_path / "generic", tmp_path / "native"
+    rows, validation, path = _current_reporting_fixture(generic_root, native_root, "reference_close")
+    if missing in {"task_valid", "accuracy_gate_pass", "eligible_for_ranking"}:
+        rows[0].pop(missing)
+    elif missing == "unknown_status":
+        validation["rows"][0]["status"] = "failed"
+    elif missing == "unknown_gate_status":
+        validation["rows"][0]["gate_status"] = "screening_only"
+    else:
+        validation["rows"][0][missing] = False
+    _write_json(path, validation)
+    report = compute_cross_runner_report(generic_root, rows, native_run_dir=native_root)
+    assert sum(pair["eligible_for_claim_transfer"] for pair in report["pairs"]) == 23
+    assert all(pair["eligible_for_technical_transfer"] for pair in report["pairs"])
+
+
+def test_legacy_pass_does_not_override_an_explicit_current_quality_failure(tmp_path):
+    generic_root, native_root = tmp_path / "generic", tmp_path / "native"
+    rows, _validation, _path = _current_reporting_fixture(generic_root, native_root, "pass")
+    rows[0]["accuracy_gate_pass"] = False
+    report = compute_cross_runner_report(generic_root, rows, native_run_dir=native_root)
+    assert sum(pair["eligible_for_claim_transfer"] for pair in report["pairs"]) == 23

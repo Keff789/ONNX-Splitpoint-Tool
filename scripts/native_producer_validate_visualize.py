@@ -975,6 +975,7 @@ def _as_input_identity_singleton_contract_verified(
     boundary: Mapping[str, Any],
     bridge: Mapping[str, Any],
     contract: Mapping[str, Any],
+    verified_portable_binding: Mapping[str, Any] | None = None,
 ) -> bool:
     """Verify the narrow no-layout singleton-squeeze exception.
 
@@ -1040,6 +1041,36 @@ def _as_input_identity_singleton_contract_verified(
     boundary_metadata_sha = _normalize_sha256(
         quality_boundary.get('boundary_metadata_sha256')
     )
+    runtime_output_name = input_name
+    if verified_portable_binding is not None:
+        # The caller has already verified all portable bytes, hashes and
+        # command/Quality cross-links. Consume its declared two names rather
+        # than equating the Hailo runtime alias with the canonical TRT name.
+        payload = verified_portable_binding.get('boundary_metadata_payload')
+        payload = payload if isinstance(payload, Mapping) else {}
+        tensor = payload.get('boundary_tensor')
+        tensor = tensor if isinstance(tensor, Mapping) else {}
+        runtime_output_name = str(tensor.get('runtime_name') or '').strip()
+        if not (
+            str(payload.get('schema') or '')
+            == 'onnx-splitpoint/native-part1-boundary-metadata'
+            and payload.get('schema_version') == 1
+            and payload.get('boundary_tensor_count') == 1
+            and str(payload.get('backend') or '').strip().lower() == backend
+            and str(payload.get('boundary_layout') or '').strip().lower()
+            == 'as_input'
+            and str(payload.get('boundary_transform') or '').strip().lower()
+            == boundary_transform
+            and _normalize_sha256(payload.get('metadata_sha256'))
+            == boundary_metadata_sha
+            and str(tensor.get('name') or '').strip() == input_name
+            and bool(runtime_output_name)
+            and _static_tensor_shape(tensor.get('shape')) == manifest_shape
+            and _static_tensor_shape(tensor.get('canonical_part2_shape'))
+            == input_shape
+            and _native_tensor_dtype(tensor.get('dtype')) == input_dtype
+        ):
+            return False
     try:
         runtime_element_count = int(runtime.get('element_count'))
     except (TypeError, ValueError, OverflowError):
@@ -1078,7 +1109,8 @@ def _as_input_identity_singleton_contract_verified(
         and _static_tensor_shape(preselection.get('canonical_part2_shape'))
         == input_shape
         and str(boundary.get('backend') or '').strip().lower() == backend
-        and str(boundary.get('hailo_output_name') or '').strip() == input_name
+        and str(boundary.get('hailo_output_name') or '').strip()
+        == runtime_output_name
         and str(boundary.get('trt_input_name') or '').strip() == input_name
         and str(boundary.get('boundary_layout') or '').strip().lower()
         == 'as_input'
@@ -1091,7 +1123,7 @@ def _as_input_identity_singleton_contract_verified(
         and _static_tensor_shape(boundary.get('trt_input_shape')) == input_shape
         and str(runtime.get('status') or '').strip().lower()
         == 'exact_runtime_boundary_verified'
-        and str(runtime.get('runtime_name') or '').strip() == input_name
+        and str(runtime.get('runtime_name') or '').strip() == runtime_output_name
         and _static_tensor_shape(runtime.get('shape')) == manifest_shape
         and _native_tensor_dtype(runtime.get('dtype')) == input_dtype
         and runtime_element_count
@@ -1331,6 +1363,7 @@ def _validate_hailo_trt_interface_contract(
         ),
     )
     metadata_evidence_path = str(metadata_path or metadata_raw)
+    portable_binding = None
     if metadata_path is not None:
         actual_metadata_sha = _sha256_file(metadata_path)
         if actual_metadata_sha != metadata_sha:
@@ -1540,6 +1573,7 @@ def _validate_hailo_trt_interface_contract(
             boundary=boundary,
             bridge=shape_bridge,
             contract=contract,
+            verified_portable_binding=portable_binding,
         )
     )
     if (

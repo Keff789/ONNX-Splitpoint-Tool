@@ -374,6 +374,95 @@ def _endpoint_attested(row: Mapping[str, Any], contract_hash: str) -> bool:
     )
 
 
+def _completed_endpoint_attested(row: Mapping[str, Any], contract_hash: str) -> bool:
+    """Keep physical attestations separate from the measured completion endpoint."""
+    if _endpoint_attested(row, contract_hash):
+        return True
+    if str(row.get("task") or "").lower() != "detection":
+        return False
+    try:
+        from ..native_detection_postprocess import (
+            verify_detection_completion_execution_contract,
+            verify_detection_completion_execution_attestation,
+        )
+        from ..native_three_stage import verify_fast_completion_attestation
+
+        contract = verify_detection_completion_execution_contract(
+            row.get("completion_execution_contract")
+        )
+        source = contract["source_endpoint"]
+        comparison = contract["comparison_endpoint_contract"]
+        if (
+            comparison["endpoint_contract_hash"] != contract_hash
+            or row.get("completed_task_comparison_endpoint_contract_hash") != contract_hash
+            or row.get("physical_source_output_endpoint_id") != source["output_endpoint_id"]
+            or row.get("completion_execution_contract_sha256") != contract["contract_sha256"]
+        ):
+            return False
+        physical = dict(row)
+        physical["endpoint_contract_hash"] = source["endpoint_contract_hash"]
+        if not _endpoint_attested(physical, source["endpoint_contract_hash"]):
+            return False
+        records = row.get("repetition_records") or [row]
+        for record in records:
+            if not isinstance(record, Mapping):
+                return False
+            original_contract = verify_detection_completion_execution_contract(
+                record.get("completion_execution_contract") or contract
+            )
+            if (original_contract["comparison_endpoint_contract"] != comparison
+                    or original_contract["source_endpoint"]["output_endpoint_id"] != source["output_endpoint_id"]):
+                return False
+            if original_contract != contract:
+                proofs = row.get("repetition_operating_point_evidence") or []
+                sources = row.get("source_descriptors") or []
+                if (row.get("repetition_operating_point_verified") is not True
+                        or len(proofs) != len(records) or len(sources) != len(records)
+                        or not all(isinstance(proof, Mapping) and proof.get("completion_contract_provenance_normalized") is True
+                                   and isinstance(proof.get("operating_point_sha256"), str)
+                                   and len(proof["operating_point_sha256"]) == 64 for proof in proofs)
+                        or len({proof.get("operating_point_sha256") for proof in proofs}) != 1):
+                    return False
+                for proof, original in zip(proofs, sources):
+                    if any(proof.get(key) != original.get(source_key) for key, source_key in (
+                        ("report", "normalized_report"), ("report_sha256", "normalized_report_sha256"),
+                        ("native_command_contract_sha256", "native_command_contract_sha256"),
+                    )):
+                        return False
+            attestation = record.get("completed_task_endpoint_attestation") or record.get("completion_execution_attestation")
+            if not isinstance(attestation, Mapping):
+                return False
+            if attestation.get("observation_relation") == "postflight_oracle_sentinel":
+                verified = verify_fast_completion_attestation(attestation, execution_contract=original_contract)
+            else:
+                verified = verify_detection_completion_execution_attestation(
+                    attestation, execution_contract=original_contract,
+                    expected_observation_relation="same_hotloop_sentinel",
+                )
+            if (verified.get("exact_result_claim_bound") is not True
+                    or verified["comparison_endpoint_contract"] != comparison):
+                return False
+        return True
+    except (ValueError, TypeError, KeyError, RuntimeError):
+        return False
+
+
+def _explicit_quality_claim(row: Mapping[str, Any]) -> bool:
+    """Read current reporting admissions without changing the accuracy class."""
+    decision = _quality_decision(row)
+    if decision == "pass":
+        return all(_b(row.get(field)) is not False for field in (
+            "task_valid", "accuracy_gate_pass", "task_quality_observation_valid",
+        ))
+    return bool(
+        decision in {"reference_close", "accuracy_loss", "not_estimable"}
+        and all(_b(row.get(field)) is True for field in (
+            "task_valid", "accuracy_gate_pass", "eligible_for_ranking",
+        ))
+        and _b(row.get("task_quality_observation_valid")) is not False
+    )
+
+
 def _attested_endpoint_id(row: Mapping[str, Any]) -> str:
     """Return the exact endpoint identity; attestation is gated separately."""
     identity = _quality_identity(row)
@@ -1479,7 +1568,7 @@ def compute_cross_runner_report(
         }
         claim_checks = {
             "generic_contract_consistent": generic_contract is True,
-            "generic_quality_pass": generic_quality == "pass",
+            "generic_quality_pass": _explicit_quality_claim(generic),
             "generic_quality_eligible": _b(
                 generic.get("eligible_for_ranking")
                 if generic.get("eligible_for_ranking") not in (None, "")
@@ -1496,15 +1585,25 @@ def compute_cross_runner_report(
             "validation_task_valid": _b(native_validation.get("task_valid")) is True,
             "validation_accuracy_gate_pass": _b(native_validation.get("accuracy_gate_pass")) is True,
             "validation_eligible_for_ranking": _b(native_validation.get("eligible_for_ranking")) is True,
-            "validation_status_claim_ok": str(native_validation.get("status") or "").strip().lower() == "claim_ok",
-            "validation_gate_status_eligible": str(native_validation.get("gate_status") or "").strip().lower() == "eligible",
-            "generic_endpoint_contract_attested": _endpoint_attested(
+            "validation_status_claim_ok": (
+                str(native_validation.get("status") or "").strip().lower() == "claim_ok"
+                or (str(native_validation.get("status") or "").strip().lower() == "ok"
+                    and _explicit_quality_claim(native_validation)
+                    and _b(native_validation.get("claim_ok")) is True)
+            ),
+            "validation_gate_status_eligible": (
+                str(native_validation.get("gate_status") or "").strip().lower() == "eligible"
+                or (str(native_validation.get("gate_status") or "").strip().lower() == "reported"
+                    and _explicit_quality_claim(native_validation)
+                    and _b(native_validation.get("claim_ok")) is True)
+            ),
+            "generic_endpoint_contract_attested": _completed_endpoint_attested(
                 generic, _endpoint_contract_hash(generic),
             ),
-            "native_endpoint_contract_attested": _endpoint_attested(
+            "native_endpoint_contract_attested": _completed_endpoint_attested(
                 native, _endpoint_contract_hash(native),
             ),
-            "validation_endpoint_contract_attested": _endpoint_attested(
+            "validation_endpoint_contract_attested": _completed_endpoint_attested(
                 native_validation, _endpoint_contract_hash(native_validation),
             ),
         }

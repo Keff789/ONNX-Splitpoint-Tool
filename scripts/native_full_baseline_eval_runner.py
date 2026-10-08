@@ -2948,11 +2948,55 @@ def _attach_full_quality_request_binding(
             quality_comparison = verify_completed_detection_comparison_endpoint_contract(
                 binding.get("completed_task_endpoint_contract"), frozen_contract=frozen,
             )
+            completed_attestation = row.get("completed_task_endpoint_attestation")
+            completed_attestation = (
+                dict(completed_attestation)
+                if isinstance(completed_attestation, Mapping) else {}
+            )
+            completed_endpoint = completed_attestation.get("completed_endpoint_contract")
+            completed_endpoint = (
+                dict(completed_endpoint)
+                if isinstance(completed_endpoint, Mapping) else {}
+            )
+            source_hash = completed_endpoint.get("source_endpoint_contract_hash")
+            physical_hash = str(row.get("endpoint_contract_hash") or "")
+            if not isinstance(source_hash, str):
+                raise ValueError("completed_quality_original_source_hash_missing")
+            if re.fullmatch(r"[0-9a-f]{64}", physical_hash) is None:
+                raise ValueError("completed_quality_physical_raw_source_hash_invalid")
+            if source_hash != physical_hash:
+                # Hailo's original raw replay can legitimately declare an empty
+                # probe hash. Verify its separate physical identity and complete
+                # frozen signature; never backfill or relabel either raw hash.
+                physical = row.get("output_endpoint_attestation")
+                physical = dict(physical) if isinstance(physical, Mapping) else {}
+                signature = frozen.get("raw_output_tensor_signature")
+                if not (
+                    source_hash == ""
+                    and backend in {"native_full_hailo8", "native_full_hailo10h"}
+                    and frozen.get("source_contract_family") == "raw_head"
+                    and row.get("contract_family") == "raw_head"
+                    and row.get("stage") == "raw_head"
+                    and row.get("endpoint_contract_complete") is True
+                    and re.fullmatch(r"[0-9a-f]{64}", physical_hash) is not None
+                    and physical.get("attested") is True
+                    and physical.get("status") == "passed"
+                    and physical.get("stage") == "raw_head"
+                    and physical.get("endpoint") == "raw_head"
+                    and physical.get("endpoint_contract_hash") == physical_hash
+                    and isinstance(signature, Mapping)
+                    and signature.get("tensor_count", 0) > 0
+                    and physical.get("tensor_signature") == signature
+                    and completed_endpoint.get("raw_output_tensor_signature") == signature
+                    and row.get("frozen_host_postprocess_contract_sha256")
+                    == frozen.get("contract_sha256")
+                ):
+                    raise ValueError("completed_quality_physical_raw_source_binding_mismatch")
             attestation = build_completed_detection_endpoint_attestation(
                 frozen, row.get("frozen_host_postprocess_result"),
                 completed_frames=int(row.get("completed_frames") or row.get("completed_work_units") or 0),
                 postprocess_completed_frames=int(row.get("postprocess_completed_frames") or 0),
-                source_endpoint_contract_hash=str(row.get("endpoint_contract_hash") or ""),
+                source_endpoint_contract_hash=source_hash,
             )
             if (comparison != quality_comparison
                     or row.get("completed_task_endpoint_attestation") != attestation

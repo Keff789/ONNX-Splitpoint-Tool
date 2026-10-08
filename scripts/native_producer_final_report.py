@@ -2979,8 +2979,80 @@ def _verified_repetition_operating_point(
     def location(value: Any) -> Any:
         # Preserve every other path component, including the campaign/case.
         return re.sub(r'/rep[0-9]{2,}/', '/__repetition__/', value) if isinstance(value, str) else value
+    normalized_completion = None
+    options = command.get('runtime_options') or {}
+    execution = options.get('completion_execution_contract') or {}
+    processor = execution.get('processor_contract') or {}
+    if processor.get('schema') == 'onnx-splitpoint/attested-decoded-nms-materialization':
+        # Each BN6 declaration and every dependent seal remains individually
+        # verified. Only this existing report projection substitutes repNN in
+        # declaration provenance; the product builder derives its dependencies.
+        try:
+            from onnx_splitpoint_tool.native_output_endpoint import runtime_output_contract
+            from onnx_splitpoint_tool.native_detection_postprocess import (
+                FrozenPostprocessError, build_detection_completion_execution_contract,
+            )
+            from scripts.validate_output_dumps import load_dump
+            verified_execution = _verify_detection_completion_execution_contract(execution)
+            if options.get('completion_execution_contract_sha256') != verified_execution['contract_sha256']:
+                return {}
+            output_path = Path(proof['native_split_semantic_output_manifest'])
+            saved = _load_strict_json_object(output_path)
+            declaration = dict(saved['authoritative_output_contract_resolution'])
+            original_source = str(declaration['declaration_source'])
+            local_source = Path(original_source)
+            if not local_source.is_file():
+                # A collected report retains its remote origin. The original
+                # plan already binds the exact staged declaration's local bytes.
+                summary = _load_strict_json_object(report.parent.parent / 'summary.json') or {}
+                plan_path = Path(str(summary.get('plan') or ''))
+                if not plan_path.is_file() or _hash_file(plan_path) != summary.get('plan_sha256'):
+                    return {}
+                plan = _load_strict_json_object(plan_path) or {}
+                matches = [item for item in plan.get('stage_files', [])
+                           if item.get('remote') == original_source
+                           and item.get('sha256') == declaration.get('source_contracts_sha256')]
+                if len(matches) != 1:
+                    return {}
+                local_source = Path(matches[0]['local'])
+            if not local_source.is_file() or _hash_file(local_source) != declaration.get('source_contracts_sha256'):
+                return {}
+            declaration['declaration_source'] = str(local_source.resolve())
+            tensors, _ = load_dump(str(output_path))
+            source = runtime_output_contract('detection', tensors, raw_fallback=False, declared_contract=declaration)
+            attestation = source['output_endpoint_attestation']
+            attestation['declaration_source'] = original_source
+            attestation['declared_contract']['declaration_source'] = original_source
+            if attestation != saved['output_endpoint_attestation']:
+                return {}
+            geometry = processor['letterbox_geometry_contract']
+            arguments = dict(model_id=verified_execution['model_id'], outputs=tensors,
+                             input_hw=processor['input_hw'], original_wh=processor['original_wh'],
+                             source_endpoint_contract=source,
+                             preprocess={'mode': 'letterbox', 'rgb': geometry['color_space'] == 'RGB',
+                                         'pad_value': geometry['pad_value']},
+                             confidence_threshold=processor['confidence_threshold'],
+                             iou_threshold=processor['iou_threshold'], max_detections=processor['max_detections'])
+            if build_detection_completion_execution_contract(**arguments) != verified_execution:
+                return {}
+            for item in (raw, row):
+                for field, expected in (
+                    ('completed_task_endpoint_contract_hash', verified_execution['completed_endpoint_contract']['endpoint_contract_hash']),
+                    ('completed_task_output_endpoint_id', verified_execution['completed_endpoint_contract']['output_endpoint_id']),
+                    ('frozen_host_postprocess_contract_sha256', processor['contract_sha256']),
+                ):
+                    if item.get(field) not in (None, '', expected):
+                        return {}
+            attestation['declaration_source'] = location(original_source)
+            attestation['declared_contract']['declaration_source'] = location(original_source)
+            normalized_completion = build_detection_completion_execution_contract(**arguments)
+        except (ValueError, TypeError, KeyError, OSError, FrozenPostprocessError):
+            return {}
     body = json.loads(json.dumps(command))
     body.pop('contract_sha256', None)
+    if normalized_completion is not None:
+        body['runtime_options']['completion_execution_contract'] = normalized_completion
+        body['runtime_options']['completion_execution_contract_sha256'] = normalized_completion['contract_sha256']
     for field in ('benchmark_set', 'input_image'):
         body[field] = location(body.get(field))
     prepared = body.get('prepared_input_contract')
@@ -3012,8 +3084,14 @@ def _verified_repetition_operating_point(
         resolution = manifest.get('authoritative_output_contract_resolution')
         if isinstance(resolution, dict) and 'declaration_source' in resolution:
             resolution['declaration_source'] = location(resolution['declaration_source'])
+        if role == 'output' and normalized_completion is not None:
+            manifest['output_endpoint_attestation'] = source['output_endpoint_attestation']
         sentinel = manifest.get('completion_sentinel_identity')
         if isinstance(sentinel, dict):
+            if role == 'output' and normalized_completion is not None:
+                if sentinel.get('execution_contract_sha256') != execution['contract_sha256']:
+                    return {}
+                sentinel['execution_contract_sha256'] = normalized_completion['contract_sha256']
             for field in ('repetition_id', 'runtime_instance_id'):
                 sentinel.pop(field, None)
         manifest.pop('completion_attestation_sha256', None)
@@ -3032,6 +3110,7 @@ def _verified_repetition_operating_point(
         'native_command_contract_sha256': command['contract_sha256'],
         'source_workload_contract_sha256': raw.get('workload_contract_sha256'),
         'semantic_binding_status': proof['native_split_semantic_binding_status'],
+        'completion_contract_provenance_normalized': normalized_completion is not None,
     }
 
 
@@ -3235,10 +3314,18 @@ def _aggregate_repetitions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for key, group in groups.items():
         claim_identities = [_repetition_claim_identity(row) for row in group]
         operating_points = [_verified_repetition_operating_point(row) for row in group]
+        # These last three identity values are individually checked against
+        # each BN6 execution above and derived from declaration provenance.
+        # The common operating point still binds the complete rebuilt contract.
+        bn6_origins_verified = bool(operating_points and all(
+            item.get('completion_contract_provenance_normalized') is True
+            for item in operating_points))
+        shared_claim_identities = [identity[1:-3] if bn6_origins_verified else identity[1:]
+                                   for identity in claim_identities]
         verified_common_operating_point = bool(
             operating_points and all(operating_points)
             and len({item['operating_point_sha256'] for item in operating_points}) == 1
-            and len({identity[1:] for identity in claim_identities}) == 1
+            and len(set(shared_claim_identities)) == 1
         )
         claim_identity_drift = bool(
             len(set(claim_identities)) != 1 and not verified_common_operating_point
@@ -5437,7 +5524,7 @@ def _final_rate_fields(row: dict[str, Any]) -> dict[str, Any]:
     its original count/time records; otherwise retain the legacy strict path.
     """
     from onnx_splitpoint_tool.native_rate_endpoints import (
-        report_rate_fields, rate_endpoint_fields, _execution_metadata_fields,
+        report_rate_fields, rate_endpoint_fields, project_rate_endpoint, _execution_metadata_fields,
     )
     records = row.get('repetition_records') or []
     if isinstance(records, list) and len(records) >= 3:
@@ -5447,6 +5534,48 @@ def _final_rate_fields(row: dict[str, Any]) -> dict[str, Any]:
         if (valid and representative and all(proofs)
                 and len({item['operating_point_sha256'] for item in [representative, *proofs]}) == 1):
             fields = rate_endpoint_fields(row)
+            if (representative.get('completion_contract_provenance_normalized') is True
+                    and all(proof.get('completion_contract_provenance_normalized') is True
+                            for proof in proofs)):
+                # Each original BN6 endpoint is sealed with its own repNN
+                # declaration. Consume it with that original contract, then
+                # project only the individually admitted count/time series.
+                rates = []
+                for record in records:
+                    individual = dict(record)
+                    if not individual.get('task'):
+                        individual['task'] = row.get('task')
+                    if any(row.get(key) and individual.get(key) != row[key]
+                           for key in ('task', 'measurement_boundary')):
+                        return fields
+                    rate = project_rate_endpoint(individual, 'completed_task')
+                    if rate['status'] != 'available' or rate['repetition_count_valid'] != 1:
+                        return fields
+                    rates.append(rate)
+                completed = fields['completed_task_rate']
+                completed.update(
+                    status='available', reason='', fps=row['fps_median'],
+                    ci95_low=row['fps_ci95_low'], ci95_high=row['fps_ci95_high'],
+                    ci95_method=row['repetition_statistics_ci_method'],
+                    samples=[rate['samples'][0] for rate in rates],
+                    work_unit_counts=[rate['work_unit_counts'][0] for rate in rates],
+                    measurement_times_s=[rate['measurement_times_s'][0] for rate in rates],
+                    repetition_ids=[rate['repetition_ids'][0] for rate in rates],
+                    repetition_count_valid=len(rates),
+                )
+                fields.update(
+                    completed_task_fps=completed['fps'], completed_task_fps_median=completed['fps'],
+                    completed_task_fps_ci95_low=completed['ci95_low'],
+                    completed_task_fps_ci95_high=completed['ci95_high'],
+                    completed_task_fps_unavailable_reason='',
+                    fps_makespan=completed['fps'], fps_median=completed['fps'],
+                    fps_ci95_low=completed['ci95_low'], fps_ci95_high=completed['ci95_high'],
+                    fps_ci95_method=completed['ci95_method'], fps_repetition_samples=completed['samples'],
+                    throughput_primary_fps=completed['fps'], application_throughput_fps=completed['fps'],
+                    completed_detection_fps=completed['fps'],
+                    completed_task_work_unit_counts=completed['work_unit_counts'],
+                    completed_task_measurement_times_s=completed['measurement_times_s'],
+                )
             fields.update(_execution_metadata_fields(row))
             fields['rate_endpoint_source'] = 'verified_separate_process_repetition_evidence'
             fields['rate_endpoint_operating_point_evidence'] = proofs
