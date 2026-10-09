@@ -9,6 +9,7 @@ are interchangeable.
 """
 
 import json
+import hashlib
 import math
 import statistics
 from collections import Counter, defaultdict
@@ -839,6 +840,69 @@ def _quantile(values: Sequence[float], q: float) -> float | None:
     return vals[lo] * (hi - pos) + vals[hi] * (pos - lo)
 
 
+def _bound_native_cohort_rates(row: Mapping[str, Any], run_dir: Path) -> dict[str, Any]:
+    """Reuse the normal reporter for its already bound separate-process cohort.
+
+    BN6 repNN declarations intentionally differ. The compact Generic adapter
+    cannot re-prove that series from its reduced repetition fields alone.
+    Consume the existing normal report with its original repeat evidence;
+    never fall back to an unbound median or a modeled cycle.
+    """
+    if (row.get('projection_role') != 'derived_three_actual_native_processes_no_raw_mutation'
+            or row.get('task') != 'detection'
+            or row.get('repetition_operating_point_verified') is not True):
+        return {}
+    evidence = row.get('normal_quality_provenance') or {}
+    sources = row.get('source_descriptors') or []
+    if len(sources) != 3 or not all(isinstance(s, Mapping) for s in sources):
+        return {}
+    try:
+        path = Path(evidence['normal_report'])
+        if not path.is_absolute():
+            # This role belongs to Revision-3's existing current_results adapter.
+            if run_dir.name != 'generic_pairing_inputs' or run_dir.parent.name != 'current_results':
+                return {}
+            path = run_dir.parent.parent / path
+        data = path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != evidence['normal_report_sha256']:
+            return {}
+        normal = json.loads(data)['rows'][evidence['normal_row_index']]
+        digest = hashlib.sha256(json.dumps(normal, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+        if digest != evidence['normal_row_sha256']:
+            return {}
+        if (_exact_identity(normal)[:6] != _exact_identity(row)[:6]
+                or _attested_endpoint_id(normal) != row.get('physical_source_output_endpoint_id')
+                or normal.get('completed_task_comparison_endpoint_contract_hash') != _endpoint_contract_hash(row)
+                or normal.get('task') != row.get('task')
+                or normal.get('measurement_boundary') != row.get('measurement_boundary')
+                or normal.get('performance_endpoint') != 'completed_task'
+                or normal.get('source_reports') != [s['normalized_report'] for s in sources]
+                or _f(normal.get('fps_median')) != _f(row.get('fps_median'))
+                or not _completed_endpoint_attested(row, _endpoint_contract_hash(row))):
+            return {}
+        from scripts.native_producer_final_report import _final_rate_fields
+        from ..native_rate_endpoints import _execution_metadata_fields
+        fields = _final_rate_fields(normal)
+        rate = fields.get('completed_task_rate') or {}
+        proofs = fields.get('rate_endpoint_operating_point_evidence') or []
+        if (rate.get('status') != 'available' or rate.get('repetition_count_valid') != 3
+                or _f(rate.get('fps')) is None or rate['fps'] <= 0
+                or rate.get('samples') != [r.get('fps_makespan') for r in row['repetition_records']]
+                or len(proofs) != 3
+                or any(any(p.get(key) != s.get(source_key) for key, source_key in (
+                    ('report', 'normalized_report'), ('report_sha256', 'normalized_report_sha256'),
+                    ('native_command_contract_sha256', 'native_command_contract_sha256'),
+                )) for p, s in zip(proofs, sources))):
+            return {}
+        # The adapter's verified prepared-feed binding is the comparison input.
+        # A rate replay must not replace it with the report's dataset RGB view.
+        for key in _execution_metadata_fields(normal):
+            fields.pop(key, None)
+        return fields
+    except (OSError, ValueError, TypeError, KeyError, IndexError):
+        return {}
+
+
 def _load_native_rows(run_dir: Path) -> list[dict[str, Any]]:
     candidates = [
         run_dir / "reports" / "native_producer_combined_summary.json",
@@ -849,7 +913,15 @@ def _load_native_rows(run_dir: Path) -> list[dict[str, Any]]:
         rows = payload.get("rows") if isinstance(payload, Mapping) else None
         if isinstance(rows, list):
             from ..native_rate_endpoints import report_rate_fields
-            return [{**dict(row), **report_rate_fields(row, run_dir)} for row in rows if isinstance(row, Mapping)]
+            projected = []
+            for row in rows:
+                if not isinstance(row, Mapping):
+                    continue
+                fields = report_rate_fields(row, run_dir)
+                if fields.get('completed_task_fps') is None:
+                    fields.update(_bound_native_cohort_rates(row, run_dir))
+                projected.append({**dict(row), **fields})
+            return projected
     return []
 
 
