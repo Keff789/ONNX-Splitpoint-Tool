@@ -1293,6 +1293,43 @@ def _energy_endpoint_identity(
                 )
             )
             verified_source = verify_frozen_postprocess_contract(frozen)
+            original_endpoint = completion.get("completed_endpoint_contract")
+            if not isinstance(original_endpoint, Mapping):
+                raise FrozenPostprocessError("frozen_completion_original_endpoint_missing")
+            original_source_hash = original_endpoint.get("source_endpoint_contract_hash")
+            if not isinstance(original_source_hash, str):
+                raise FrozenPostprocessError("frozen_completion_original_source_hash_missing")
+            if not original_source_hash or original_source_hash != physical_hash:
+                physical = _endpoint_mapping(row, validation, "output_endpoint_attestation")
+                signature = verified_source.get("raw_output_tensor_signature")
+                expected_identity = {field: str(_evidence_value(dict(row),
+                    dict(validation) if isinstance(validation, Mapping) else None, field) or "")
+                    for field in ("backend", "model", "case", "setup_id", "comparison_backend")}
+                original_command, _ = _verify_full_command_contract(
+                    dict(command_contract), expected_identity=expected_identity)
+                if not (
+                    original_source_hash == ""
+                    and expected_identity["backend"] in {"native_full_hailo8", "native_full_hailo10h"}
+                    and original_command is not None
+                    and physical_complete and physical_stage == "raw_head"
+                    and physical_id == "detection:raw_head:" + physical_hash
+                    and verified_source.get("source_contract_family") == "raw_head"
+                    and original_endpoint.get("source_stage") == "raw_head"
+                    and physical.get("attested") is True
+                    and physical.get("status") == "passed"
+                    and physical.get("endpoint") == "raw_head"
+                    and physical.get("stage") == "raw_head"
+                    and physical.get("endpoint_contract_hash") == physical_hash
+                    and isinstance(signature, Mapping) and signature.get("tensor_count", 0) > 0
+                    and physical.get("tensor_signature") == signature
+                    and original_endpoint.get("raw_output_tensor_signature") == signature
+                    and _strict_sha256_token(_evidence_value(dict(row),
+                        dict(validation) if isinstance(validation, Mapping) else None,
+                        "frozen_host_postprocess_contract_sha256")) == verified_source["contract_sha256"]
+                    and workload.get("frozen_postprocess_contract") == verified_source
+                    and workload.get("frozen_postprocess_contract_sha256") == verified_source["contract_sha256"]
+                ):
+                    raise FrozenPostprocessError("frozen_completion_physical_raw_source_binding_mismatch")
             expected_completion = (
                 build_completed_detection_endpoint_attestation(
                     verified_source,
@@ -1301,7 +1338,7 @@ def _energy_endpoint_identity(
                     postprocess_completed_frames=completion.get(
                         "postprocess_completed_frames"
                     ),
-                    source_endpoint_contract_hash=physical_hash,
+                    source_endpoint_contract_hash=original_source_hash,
                 )
             )
             verified_comparison = (
@@ -2980,6 +3017,32 @@ def _completed_tensorrt_task_contract_valid(
     )
 
 
+def _full_row_remote_context(row: Mapping[str, Any], ns: argparse.Namespace) -> tuple[str, str]:
+    """Use an explicitly bound Full context after the normal contract verifier."""
+    root = str(ns.remote_root)
+    tool = str(ns.remote_tool_dir)
+    if not str(row.get("backend") or "").startswith("native_full_"):
+        return root, tool
+    if not row.get("remote_root"):
+        return root, tool
+    explicit_root = _canonical_remote_absolute_path(row.get("remote_root"))
+    explicit_tool = _canonical_remote_absolute_path(row.get("remote_tool_dir"))
+    if explicit_root is None or explicit_tool is None:
+        raise ValueError("Full row requires both canonical remote context paths")
+    expected = {field: row.get(field) for field in ("backend", "model", "case", "setup_id", "comparison_backend", "model_sha256")}
+    expected.update(remote_root=str(explicit_root), remote_tool_dir=str(explicit_tool))
+    contract, status = _verify_full_command_contract(row.get("full_command_contract"), expected_identity=expected)
+    if contract is None or str(contract.get("root")) != str(explicit_root):
+        raise ValueError("Full row remote context rejected: " + status)
+    workload = contract["energy_workload"]
+    runner = contract["artifacts"].get(str(workload.get("runner_artifact") or ""))
+    if (not isinstance(runner, Mapping)
+            or _canonical_remote_absolute_path(runner.get("path"))
+            != explicit_tool / "scripts" / Path(str(runner.get("path") or "")).name):
+        raise ValueError("Full row hotloop runner differs from remote tool root")
+    return str(explicit_root), str(explicit_tool)
+
+
 def _verify_full_command_contract(
     raw: Any, *, expected_identity: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, str]:
@@ -3363,6 +3426,14 @@ def _shell_join_with_fresh_output(argv: list[str]) -> str:
         else:
             rendered.append(shlex.quote(value))
     return " ".join(rendered)
+
+
+def _write_planned_command(path,text,*,cohort=None,encoding='utf-8'):
+    if cohort and path.exists():
+        if path.read_text(encoding=encoding)!=text:
+            raise ValueError('Authorized cohort command changed: '+str(path))
+        return
+    path.write_text(text,encoding=encoding)
 
 
 def _process_local_runtime_environment(
@@ -4092,6 +4163,7 @@ def main() -> int:
     for row in source_rows:
         backend = str(row.get("backend") or "")
         defaults = _backend_defaults(backend, row)
+        row_remote_root, row_remote_tool_dir = _full_row_remote_context(row, ns)
         identity = {
             "backend": backend,
             "model": row.get("model") or row.get("model_id"),
@@ -4107,8 +4179,8 @@ def main() -> int:
                 row.get("model_sha256") or row.get("source_model_sha256")
                 or row.get("source_onnx_sha256")
             ),
-            "remote_root": ns.remote_root,
-            "remote_tool_dir": ns.remote_tool_dir,
+            "remote_root": row_remote_root,
+            "remote_tool_dir": row_remote_tool_dir,
         }
         prospective_exclusion = _prospective_detection_exclusion(
             row, detection_exclusions,
@@ -5095,6 +5167,15 @@ def main() -> int:
 
     out = Path(ns.out_dir).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
+    commands_out=out
+    if ns.campaign_cohort:
+        with Path(ns.campaign_budget_file).open()as handle:
+            import fcntl
+            fcntl.flock(handle,fcntl.LOCK_SH);budget=json.load(handle)
+        from onnx_splitpoint_tool.energy.task_budget import final_cohort_authorization
+        grant=final_cohort_authorization(budget,ns.campaign_cohort)
+        if grant.get('cohort_id')!=ns.campaign_cohort or grant.get('purpose')!='final':
+            raise ValueError('Final planning requires its already authorized generation')
     markdown = [
         "# Native producer energy plan",
         "",
@@ -5112,6 +5193,7 @@ def main() -> int:
     plan: list[dict[str, Any]] = []
     for row, validation, setup, ssh_arg in selected_items:
         backend = str(row.get("backend") or "")
+        row_remote_root, row_remote_tool_dir = _full_row_remote_context(row, ns)
         model = str(row.get("model") or "")
         case = str(row.get("case") or "full")
         is_full = backend.startswith("native_full_")
@@ -5177,8 +5259,8 @@ def main() -> int:
             if backend.startswith("native_full_"):
                 child_argv = _full_runtime_argv(
                     command_contract, duration_s=duration_s, frames=fallback_frames,
-                    remote_tool_dir=ns.remote_tool_dir,
-                    authoritative_root=ns.remote_root,
+                    remote_tool_dir=row_remote_tool_dir,
+                    authoritative_root=row_remote_root,
                     preflight_nonce=_PREFLIGHT_NONCE_TOKEN,
                     preflight_attestation=_PREFLIGHT_ATTESTATION_TOKEN,
                     preflight_max_age_s=300.0,
@@ -5190,7 +5272,7 @@ def main() -> int:
                     command_contract,
                     duration_s=duration_s,
                     fresh_output_root=_FRESH_OUTPUT_TOKEN,
-                    remote_tool_dir=ns.remote_tool_dir,
+                    remote_tool_dir=row_remote_tool_dir,
                     preflight_attestation_path=_PREFLIGHT_ATTESTATION_TOKEN,
                     preflight_nonce=_PREFLIGHT_NONCE_TOKEN,
                 )
@@ -5227,7 +5309,7 @@ def main() -> int:
         )
         contract_sha = str(command_contract.get("contract_sha256") or "")
         safe_identity = f"{safe_identity}__{contract_sha[:12]}"
-        fresh_base = f"{ns.remote_root.rstrip('/')}/.energy_replays/{safe_identity}"
+        fresh_base = f"{row_remote_root.rstrip('/')}/.energy_replays/{safe_identity}"
         contract_payload = (
             json.dumps(
                 command_contract, sort_keys=True, separators=(",", ":"),
@@ -5235,8 +5317,8 @@ def main() -> int:
             )
             + "\n"
         )
-        local_contract_file = out / f"{safe_identity}.command_contract.json"
-        local_contract_file.write_text(contract_payload, encoding="utf-8")
+        local_contract_file = commands_out / f"{safe_identity}.command_contract.json"
+        _write_planned_command(local_contract_file,contract_payload,cohort=ns.campaign_cohort)
         contract_payload_sha = _sha256_file(local_contract_file)
         remote_contract_file = (
             f"{fresh_base}/command_contract_{contract_payload_sha}.json"
@@ -5252,8 +5334,8 @@ def main() -> int:
             if backend.startswith("native_full_"):
                 preflight_argv = _full_preflight_argv(
                     command_contract,
-                    remote_tool_dir=ns.remote_tool_dir,
-                    authoritative_root=ns.remote_root,
+                    remote_tool_dir=row_remote_tool_dir,
+                    authoritative_root=row_remote_root,
                     preflight_nonce=_PREFLIGHT_NONCE_TOKEN,
                     preflight_attestation=_PREFLIGHT_ATTESTATION_TOKEN,
                     max_age_s=300.0,
@@ -5261,7 +5343,7 @@ def main() -> int:
             else:
                 preflight_argv = _split_preflight_argv(
                     command_contract,
-                    remote_tool_dir=ns.remote_tool_dir,
+                    remote_tool_dir=row_remote_tool_dir,
                     preflight_nonce=_PREFLIGHT_NONCE_TOKEN,
                     preflight_attestation=_PREFLIGHT_ATTESTATION_TOKEN,
                     max_age_s=300.0,
@@ -5288,10 +5370,10 @@ def main() -> int:
                 f"test \"$actual_contract_sha\" = {shlex.quote(contract_payload_sha)} && "
                 f"chmod 600 \"$tmp_contract\" && mv \"$tmp_contract\" {shlex.quote(remote_contract_file)} && "
                 f"{env_prefix}"
-                f"cd {shlex.quote(ns.remote_tool_dir)} && {preflight_child}"
+                f"cd {shlex.quote(row_remote_tool_dir)} && {preflight_child}"
             )
-            preflight_shell = out / f"{safe_identity}.preflight.sh"
-            preflight_shell.write_text(
+            preflight_shell = commands_out / f"{safe_identity}.preflight.sh"
+            _write_planned_command(preflight_shell,
                 "#!/usr/bin/env bash\nset -euo pipefail\n"
                 + _lease_aware_ssh_script_body(
                     ssh_target=str(ssh),
@@ -5304,7 +5386,7 @@ def main() -> int:
                         - _REMOTE_LEASE_OUTER_CLEANUP_MARGIN_S,
                     ),
                 ),
-                encoding="utf-8",
+                encoding="utf-8",cohort=ns.campaign_cohort,
             )
             preflight_shell.chmod(0o755)
         report_relative = _fresh_report_relative_path(backend)
@@ -5312,14 +5394,14 @@ def main() -> int:
             f"{env_prefix}mkdir -p {shlex.quote(fresh_base)} && "
             f"fresh_output_root=$(mktemp -d {shlex.quote(fresh_base)}/replay.XXXXXX) && "
             'touch "$fresh_output_root/.started" && '
-            f"cd {shlex.quote(ns.remote_tool_dir)} && {child} && "
+            f"cd {shlex.quote(row_remote_tool_dir)} && {child} && "
             f'test -s "$fresh_output_root/{report_relative}" && '
             f'test "$fresh_output_root/{report_relative}" -nt "$fresh_output_root/.started" && '
             f'printf "[native-energy] FRESH_REPORT path=%s sha_contract={contract_sha}\\n" '
             f'"$fresh_output_root/{report_relative}"'
         )
-        shell = out / f"{safe_identity}.sh"
-        shell.write_text(
+        shell = commands_out / f"{safe_identity}.sh"
+        _write_planned_command(shell,
             "#!/usr/bin/env bash\nset -euo pipefail\n"
             + _lease_aware_ssh_script_body(
                 ssh_target=str(ssh),
@@ -5330,7 +5412,7 @@ def main() -> int:
                     float(ns.timeout) - _REMOTE_LEASE_OUTER_CLEANUP_MARGIN_S,
                 ),
             ),
-            encoding="utf-8",
+            encoding="utf-8",cohort=ns.campaign_cohort,
         )
         shell.chmod(0o755)
         energy_cli = _script_path("energy_measurement_cli.py")
@@ -6633,6 +6715,13 @@ def main() -> int:
         "model_hash_map_status": model_hash_map_status,
         "rows": plan,
     }
+    if ns.campaign_cohort:
+        payload["campaign_cohort"] = ns.campaign_cohort
+        for row in payload["rows"]: row["campaign_cohort"] = ns.campaign_cohort
+    if ns.require_environment_observation:
+        for row in payload["rows"]:
+            row["environment_observation_required"] = True
+            row["environment_observation_run_id"] = ns.environment_run_id
     (out / "native_producer_energy_plan.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     (out / "native_producer_energy_plan.md").write_text("\n".join(markdown), encoding="utf-8")
     print(json.dumps({"ok": True, "rows": len(plan), "excluded": len(excluded), "deduplicated": len(deduplicated), "json": str(out / "native_producer_energy_plan.json")}, indent=2))

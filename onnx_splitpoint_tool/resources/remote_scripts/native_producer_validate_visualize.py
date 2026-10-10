@@ -975,6 +975,7 @@ def _as_input_identity_singleton_contract_verified(
     boundary: Mapping[str, Any],
     bridge: Mapping[str, Any],
     contract: Mapping[str, Any],
+    verified_portable_binding: Mapping[str, Any] | None = None,
 ) -> bool:
     """Verify the narrow no-layout singleton-squeeze exception.
 
@@ -1040,6 +1041,36 @@ def _as_input_identity_singleton_contract_verified(
     boundary_metadata_sha = _normalize_sha256(
         quality_boundary.get('boundary_metadata_sha256')
     )
+    runtime_output_name = input_name
+    if verified_portable_binding is not None:
+        # The caller has already verified all portable bytes, hashes and
+        # command/Quality cross-links. Consume its declared two names rather
+        # than equating the Hailo runtime alias with the canonical TRT name.
+        payload = verified_portable_binding.get('boundary_metadata_payload')
+        payload = payload if isinstance(payload, Mapping) else {}
+        tensor = payload.get('boundary_tensor')
+        tensor = tensor if isinstance(tensor, Mapping) else {}
+        runtime_output_name = str(tensor.get('runtime_name') or '').strip()
+        if not (
+            str(payload.get('schema') or '')
+            == 'onnx-splitpoint/native-part1-boundary-metadata'
+            and payload.get('schema_version') == 1
+            and payload.get('boundary_tensor_count') == 1
+            and str(payload.get('backend') or '').strip().lower() == backend
+            and str(payload.get('boundary_layout') or '').strip().lower()
+            == 'as_input'
+            and str(payload.get('boundary_transform') or '').strip().lower()
+            == boundary_transform
+            and _normalize_sha256(payload.get('metadata_sha256'))
+            == boundary_metadata_sha
+            and str(tensor.get('name') or '').strip() == input_name
+            and bool(runtime_output_name)
+            and _static_tensor_shape(tensor.get('shape')) == manifest_shape
+            and _static_tensor_shape(tensor.get('canonical_part2_shape'))
+            == input_shape
+            and _native_tensor_dtype(tensor.get('dtype')) == input_dtype
+        ):
+            return False
     try:
         runtime_element_count = int(runtime.get('element_count'))
     except (TypeError, ValueError, OverflowError):
@@ -1078,7 +1109,8 @@ def _as_input_identity_singleton_contract_verified(
         and _static_tensor_shape(preselection.get('canonical_part2_shape'))
         == input_shape
         and str(boundary.get('backend') or '').strip().lower() == backend
-        and str(boundary.get('hailo_output_name') or '').strip() == input_name
+        and str(boundary.get('hailo_output_name') or '').strip()
+        == runtime_output_name
         and str(boundary.get('trt_input_name') or '').strip() == input_name
         and str(boundary.get('boundary_layout') or '').strip().lower()
         == 'as_input'
@@ -1091,7 +1123,7 @@ def _as_input_identity_singleton_contract_verified(
         and _static_tensor_shape(boundary.get('trt_input_shape')) == input_shape
         and str(runtime.get('status') or '').strip().lower()
         == 'exact_runtime_boundary_verified'
-        and str(runtime.get('runtime_name') or '').strip() == input_name
+        and str(runtime.get('runtime_name') or '').strip() == runtime_output_name
         and _static_tensor_shape(runtime.get('shape')) == manifest_shape
         and _native_tensor_dtype(runtime.get('dtype')) == input_dtype
         and runtime_element_count
@@ -1331,6 +1363,7 @@ def _validate_hailo_trt_interface_contract(
         ),
     )
     metadata_evidence_path = str(metadata_path or metadata_raw)
+    portable_binding = None
     if metadata_path is not None:
         actual_metadata_sha = _sha256_file(metadata_path)
         if actual_metadata_sha != metadata_sha:
@@ -1540,6 +1573,7 @@ def _validate_hailo_trt_interface_contract(
             boundary=boundary,
             bridge=shape_bridge,
             contract=contract,
+            verified_portable_binding=portable_binding,
         )
     )
     if (
@@ -2457,14 +2491,120 @@ def _strict_split_central_result_identity(
     return exact, 'exact_current_split_identity_mirrors'
 
 
+def _reconcile_direct_full_original_quality_context(
+    row: dict[str, Any], binding_set: Mapping[str, Any], *, roots: list[Path],
+    original_quality_context: Mapping[str, Any],
+) -> tuple[bool, list[str]]:
+    """Reconcile original Quality metadata with a verified fresh Direct Full.
+
+    Both physical commands remain intact. The original command owns its N5000
+    request; the fresh Direct contract independently proves the same model,
+    compiled artifact, prepared input and completed comparison semantics.
+    """
+    if (row.get('backend') != 'native_full_deepx'
+            or row.get('model') not in {'yolo26m', 'yolo26s'}
+            or row.get('case') != 'full' or row.get('normalization_frozen') is not True):
+        return False, ['original_quality_context_outside_direct_deepx_scope']
+    path = Path(str(original_quality_context.get('path') or ''))
+    if (not path.is_absolute() or not path.is_file()
+            or _sha256_file(path) != original_quality_context.get('sha256')):
+        return False, ['original_quality_context_source_changed']
+    payload = _load_strict_json_object(path) or {}
+    if (payload.get('schema') != 'onnx-splitpoint/native-producer-validation-summary'
+            or payload.get('schema_version') != 10):
+        return False, ['original_quality_context_schema_invalid']
+    fields = ('backend', 'model', 'case', 'setup_id', 'comparison_backend', 'task')
+    originals = [item for item in payload.get('rows', [])
+                 if isinstance(item, Mapping)
+                 and all(item.get(field) == row.get(field) for field in fields)]
+    if len(originals) != 1:
+        return False, ['original_quality_context_identity_missing_or_ambiguous']
+    original = copy.deepcopy(originals[0])
+    contract = row.get('full_command_contract') or {}
+    source_contract = original.get('full_command_contract') or {}
+    if (row.get('model_sha256') != original.get('model_sha256')
+            or row.get('input_image_sha256') != original.get('input_image_sha256')
+            or contract.get('contract_sha256') != row.get('full_command_contract_sha256')
+            or contract.get('runtime_preprocessing_binding')
+            != source_contract.get('runtime_preprocessing_binding')
+            or any(row.get(field) != original.get(field) for field in (
+                'runtime_preprocessing_identity', 'runtime_preprocessing_sha256',
+                'runtime_numeric_input_identity', 'runtime_numeric_input_sha256'))):
+        return False, ['original_quality_context_model_input_or_preprocessing_drift']
+    for field in ('source_onnx_sha256', 'compiled_artifact_sha256'):
+        if (not (source_contract.get('model_binding') or {}).get(field)
+                or (contract.get('model_binding') or {}).get(field)
+                != (source_contract.get('model_binding') or {}).get(field)):
+            return False, ['original_quality_context_model_binding_drift:' + field]
+    for role in ('dxnn', 'runtime_input_tensor', 'input_manifest'):
+        source = (source_contract.get('artifacts') or {}).get(role) or {}
+        actual = (contract.get('artifacts') or {}).get(role) or {}
+        if not source.get('sha256') or actual.get('sha256') != source.get('sha256'):
+            return False, ['original_quality_context_artifact_drift:' + role]
+    try:
+        _verified_completed_v2_direct_contract(row)
+    except Exception as exc:
+        return False, ['original_quality_context_direct_contract_invalid:' + str(exc)]
+    selected = (binding_set.get('bindings_by_backend_model') or {}).get(
+        str(row.get('backend')) + '|' + str(row.get('model'))) or {}
+    if (selected != original.get('quality_request_binding')
+            or binding_set.get('binding_set_sha256') != original.get('quality_request_binding_set_sha256')
+            or selected.get('completed_task_endpoint_contract')
+            != row.get('completed_task_comparison_endpoint_contract')):
+        return False, ['original_quality_context_request_or_comparison_drift']
+    reconciled, errors = _reconcile_vendor_full_quality_binding(original, binding_set, roots=roots)
+    if not reconciled:
+        return False, errors
+    # Transfer only metadata verified by the normal original-request consumer.
+    # Observed runtimes, endpoint attestations, Source/claim booleans and both
+    # complete original/fresh command objects are never projected from Quality.
+    metadata_fields = (
+        'quality_request_binding', 'quality_request_binding_sha256',
+        'quality_request_binding_set_sha256', 'quality_request_binding_status',
+        'quality_request_binding_errors', 'quality_source_run_id', 'quality_source_case_id',
+        'source_request_sha256', 'model_sha256', 'validation_dataset_sha256',
+        'validation_dataset_image_ids_sha256', 'validation_dataset_ground_truth_sha256',
+        'task_quality_policy_sha256', 'quality_contract_sha256',
+        'preprocessing_contract_sha256', 'decoder_contract_sha256', 'nms_contract_sha256',
+        'quality_record_endpoint_contract_sha256', 'central_quality_result_sha256',
+        'prepared_input_evidence_sha256',
+    )
+    original_status = row.get('quality_request_binding_status')
+    for field in metadata_fields:
+        observed = row.get(field)
+        if (field == 'quality_request_binding_status' and observed == 'unavailable'
+                and not row.get('quality_request_binding')):
+            continue
+        if observed not in (None, '', [], {}, original.get(field)):
+            return False, ['original_quality_context_populated_metadata_conflict:' + field]
+    for field in metadata_fields:
+        if field in original:
+            row[field] = copy.deepcopy(original[field])
+    row['quality_binding_reconciliation'] = {
+        'status': 'verified_exact', 'original_quality_context': str(path),
+        'original_quality_context_sha256': _sha256_file(path),
+        'original_full_command_contract_sha256': source_contract['contract_sha256'],
+        'fresh_full_command_contract_sha256': contract['contract_sha256'],
+        'original_quality_request_binding_status': original_status,
+        'original_input_manifest': original['quality_binding_reconciliation']['original_input_manifest'],
+        'performance_repeated': False,
+    }
+    return True, []
+
+
 def _reconcile_vendor_full_quality_binding(
     row: dict[str, Any], binding_set: Mapping[str, Any], *, roots: list[Path],
+    original_quality_context: Mapping[str, Any] | None = None,
 ) -> tuple[bool, list[str]]:
     """Attach late Central metadata to the original measured command in memory.
 
     Reuse the runtime consumer's artifact/endpoint/preprocessing checks. The
     command, measurements and semantic observations are never resealed or edited.
     """
+    if original_quality_context is not None:
+        return _reconcile_direct_full_original_quality_context(
+            row, binding_set, roots=roots, original_quality_context=original_quality_context,
+        )
     try:
         from scripts.native_full_baseline_eval_runner import _attach_full_quality_request_binding
     except ImportError:  # standalone copied scripts
@@ -2597,6 +2737,7 @@ def _bind_central_quality_evidence(
     central_result_sha256: Mapping[int, str] | None = None,
     vendor_full_binding_set: Mapping[str, Any] | None = None,
     artifact_roots: list[Path] | None = None,
+    vendor_full_original_quality_context: Mapping[str, Any] | None = None,
 ) -> None:
     """Bind one central decision to one Native precision row, or fail closed."""
     row['central_quality_evidence_verified'] = False
@@ -2617,6 +2758,7 @@ def _bind_central_quality_evidence(
             and not (row.get('full_command_contract') or {}).get('quality_request_binding')):
         reconciled_vendor_binding, reconciliation_errors = _reconcile_vendor_full_quality_binding(
             row, vendor_full_binding_set, roots=artifact_roots or [],
+            original_quality_context=vendor_full_original_quality_context,
         )
         if not reconciled_vendor_binding:
             row['quality_binding_reconciliation'] = {
@@ -3674,6 +3816,23 @@ def _native_full_e2e_contract_gate(
             'e2e_scope': str(payload.get('e2e_scope') or 'full_task_pipeline'),
             'e2e_contract_reason': 'native_full_non_detection_explicit_input_contract',
         }
+    if (row.get('normalization_frozen') is True
+            and row.get('model') in {'yolo26m', 'yolo26s'}
+            and row.get('backend') in {'native_full_tensorrt', 'native_full_deepx'}):
+        try:
+            _verified_completed_v2_direct_contract(row)
+        except Exception as exc:
+            return {
+                'e2e_claim_eligible': False,
+                'e2e_scope': 'accelerator_only',
+                'e2e_contract_reason': 'direct_bn6_full_completion_invalid:' + str(exc),
+                'contract_consistent': False,
+            }
+        return {
+            'e2e_claim_eligible': True,
+            'e2e_scope': 'full_task_pipeline',
+            'e2e_contract_reason': 'verified_measured_direct_bn6_normalization',
+        }
     if _completed_frozen_nms_attestation_passed(row):
         return {
             'e2e_claim_eligible': True,
@@ -4658,6 +4817,108 @@ def _ort_input_dtype(inp: Any):
     return None
 
 
+def _hailo8_classifier_reference_rgb(
+    manifest: Path, payload: Mapping[str, Any],
+    runtime_shape: list[int],
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Use bound pre-encoding pixels, never HEF codes, for the CPU reference."""
+    from onnx_splitpoint_tool.preprocessing_contract import (
+        canonical_image_preprocessing_contract,
+        runtime_numeric_input_identity_errors,
+    )
+
+    if _load_strict_json_object(manifest) != dict(payload):
+        raise ValueError('manifest_invalid_or_duplicate_keys')
+    model = str(payload.get('model') or '').strip()
+    runtime_name = str(payload.get('runtime_input_name') or '').strip()
+    preprocess = payload.get('preprocess') or {}
+    numeric = payload.get('runtime_numeric_input_identity') or {}
+    timing = payload.get('timing_input_binding') or {}
+    if not all(isinstance(value, Mapping) for value in (preprocess, numeric, timing)):
+        raise ValueError('input_contract_components_missing')
+    if (
+        payload.get('schema_version') != 2
+        or payload.get('backend') != 'native_full_hailo8'
+        or payload.get('comparison_backend') != 'hailo8'
+        or payload.get('case') != 'full'
+        or payload.get('task') != 'classification'
+        or not str(payload.get('setup_id') or '').strip()
+        or not model or not runtime_name.startswith(model + '_full/')
+        or len(runtime_shape) != 3 or runtime_shape[-1] != 3
+        or payload.get('input_shape_hwc') != runtime_shape
+        or payload.get('runtime_input_dtype') != 'uint8'
+        or payload.get('runtime_input_layout') != 'HWC'
+        or preprocess.get('layout') != 'HWC'
+        or preprocess.get('source_domain') != 'float_imagenet_mean_std'
+        or preprocess.get('quantized_inputs') is not True
+        or any(value != 'hef_quant_info_from_imagenet_mean_std' for value in (
+            payload.get('runtime_normalization'), preprocess.get('normalization'),
+            numeric.get('runtime_normalization'),
+        ))
+    ):
+        raise ValueError('input_scope_or_numeric_domain_mismatch')
+    canonical = canonical_image_preprocessing_contract('classification', runtime_shape[:2])
+    canonical_sha = _canonical_json_sha256(canonical)
+    if (
+        any(value != canonical for value in (
+            payload.get('preprocessing_contract'),
+            payload.get('runtime_preprocessing_identity'),
+            preprocess.get('preprocessing_contract'),
+        ))
+        or any(_normalize_sha256(value) != canonical_sha for value in (
+            payload.get('preprocessing_contract_sha256'),
+            payload.get('runtime_preprocessing_sha256'),
+            preprocess.get('preprocessing_contract_sha256'),
+            timing.get('preprocessing_contract_sha256'),
+        ))
+        or _normalize_sha256(payload.get('runtime_numeric_input_sha256'))
+        != _canonical_json_sha256(numeric)
+        or runtime_numeric_input_identity_errors(numeric, canonical)
+        or any(numeric.get(field) != payload.get(field) for field in (
+            'backend', 'task', 'runtime_input_name', 'runtime_input_shape',
+            'runtime_input_dtype', 'runtime_input_layout', 'runtime_color_space',
+        ))
+    ):
+        raise ValueError('preprocessing_or_numeric_identity_mismatch')
+    image = str(payload.get('input_image') or '').strip()
+    image_sha = _normalize_sha256(payload.get('input_image_sha256'))
+    if (
+        not image or image != str(payload.get('image') or '').strip()
+        or not image_sha
+        or any(_normalize_sha256(value) != image_sha for value in (
+            payload.get('image_sha256'), timing.get('input_image_sha256'),
+        ))
+    ):
+        raise ValueError('source_image_binding_mismatch')
+    dump = str(payload.get('input_dump') or '').strip()
+    rgb_sha = _normalize_sha256(payload.get('input_dump_sha256'))
+    if (
+        not dump or Path(dump).name != 'input_rgb_uint8.bin' or not rgb_sha
+        or any(_normalize_sha256(value) != rgb_sha for value in (
+            payload.get('canonical_rgb_sha256'), timing.get('canonical_rgb_sha256'),
+        ))
+    ):
+        raise ValueError('canonical_rgb_binding_missing_or_conflicting')
+    # Collected manifests retain their original DUT path. Resolve only the
+    # declared basename beside this exact manifest, as the Full reader does.
+    rgb_path = Path(manifest).parent / Path(dump).name
+    expected_bytes = int(np.prod(runtime_shape, dtype=np.int64))
+    if (
+        not rgb_path.is_file()
+        or rgb_path.is_symlink()
+        or _sha256_file(rgb_path) != rgb_sha
+        or payload.get('input_dump_bytes') != expected_bytes
+        or rgb_path.stat().st_size != expected_bytes
+    ):
+        raise ValueError('canonical_rgb_tensor_binding_invalid')
+    pixels = np.fromfile(str(rgb_path), dtype=np.uint8).reshape(runtime_shape)
+    return pixels, {
+        'canonical_rgb_sha256': rgb_sha,
+        'source_image_sha256': image_sha,
+        'preprocessing_contract_sha256': canonical_sha,
+    }
+
+
 def _native_input_dump_feed(
     boundary_manifest: Path,
     input_shape: list[int],
@@ -4758,6 +5019,31 @@ def _native_input_dump_feed(
             if requested_scale == 'native':
                 requested_scale = manifest_scale
 
+            encoded_classifier = 'hef_quant_info_from_imagenet_mean_std' in {
+                man.get('runtime_normalization'), preprocess.get('normalization'),
+                (man.get('runtime_numeric_input_identity') or {}).get('runtime_normalization')
+                if isinstance(man.get('runtime_numeric_input_identity'), Mapping) else None,
+            }
+            encoded_classifier = encoded_classifier or (
+                man.get('backend') == 'native_full_hailo8'
+                and man.get('task') == 'classification'
+                and runtime_dtype == np.dtype(np.uint8)
+            )
+            reference_pixels = None
+            canonical_rgb_evidence: dict[str, Any] = {}
+            if encoded_classifier:
+                try:
+                    if (len(input_shape) != 4
+                            or target not in {np.dtype(np.float16), np.dtype(np.float32)}
+                            or requested_scale != 'imagenet' or manifest_scale != 'imagenet'):
+                        raise ValueError('reference_shape_dtype_or_scale_mismatch')
+                    reference_pixels, canonical_rgb_evidence = _hailo8_classifier_reference_rgb(
+                        Path(boundary_manifest), man, runtime_shape,
+                    )
+                except (TypeError, ValueError, OSError) as exc:
+                    _reject('hailo8_classifier_reference_' + str(exc))
+                    return None
+
             if len(runtime_shape) == len(input_shape):
                 if not _shape_matches(input_shape, runtime_shape):
                     _reject('sealed_runtime_onnx_shape_mismatch')
@@ -4811,7 +5097,7 @@ def _native_input_dump_feed(
                     if int(runtime_shape[-1]) not in (1, 3):
                         _reject('sealed_runtime_hwc_channel_invalid')
                         return None
-                    work = runtime.astype(np.float32)
+                    work = (reference_pixels if reference_pixels is not None else runtime).astype(np.float32)
                 elif source_layout == 'CHW':
                     if int(runtime_shape[0]) not in (1, 3):
                         _reject('sealed_runtime_chw_channel_invalid')
@@ -4849,6 +5135,8 @@ def _native_input_dump_feed(
                     else work[None]
                 ).astype(target)
                 transformation = 'sealed_runtime_to_onnx_reference_v1'
+                if reference_pixels is not None:
+                    transformation = 'bound_canonical_rgb_to_onnx_reference_v1'
             else:
                 _reject('sealed_runtime_rank_conversion_unsupported')
                 return None
@@ -4881,6 +5169,7 @@ def _native_input_dump_feed(
                         feed.tobytes(order='C'),
                     ).hexdigest(),
                     'c_contiguous': bool(feed.flags.c_contiguous),
+                    **canonical_rgb_evidence,
                 })
             return feed
         except Exception as exc:

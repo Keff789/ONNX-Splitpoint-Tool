@@ -1163,7 +1163,12 @@ class NativeEnergyPlannerInvariantTests(unittest.TestCase):
             )
             self.assertEqual(
                 {requirement.role for requirement in frozen["requirements"]},
-                {"prepared_input", "input_image"},
+                {
+                    "prepared_input", "input_image", "hef", "boundary_metadata",
+                    "source_part2_onnx", "build_part2_onnx", "engine", "native_trt_meta",
+                    "engine_build_receipt", "generated_cpp", "cmake", "native_executable",
+                    "boundary_contract_metadata",
+                },
             )
 
             legacy_row = dict(resume_row)
@@ -1186,6 +1191,9 @@ class NativeEnergyPlannerInvariantTests(unittest.TestCase):
                     "semantic_boundary_manifest",
                     "semantic_output_manifest",
                     "input_image",
+                    "hef", "boundary_metadata", "source_part2_onnx", "build_part2_onnx",
+                    "engine", "native_trt_meta", "engine_build_receipt", "generated_cpp",
+                    "cmake", "native_executable", "boundary_contract_metadata",
                 },
             )
 

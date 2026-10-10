@@ -3017,6 +3017,32 @@ def _completed_tensorrt_task_contract_valid(
     )
 
 
+def _full_row_remote_context(row: Mapping[str, Any], ns: argparse.Namespace) -> tuple[str, str]:
+    """Use an explicitly bound Full context after the normal contract verifier."""
+    root = str(ns.remote_root)
+    tool = str(ns.remote_tool_dir)
+    if not str(row.get("backend") or "").startswith("native_full_"):
+        return root, tool
+    if not row.get("remote_root"):
+        return root, tool
+    explicit_root = _canonical_remote_absolute_path(row.get("remote_root"))
+    explicit_tool = _canonical_remote_absolute_path(row.get("remote_tool_dir"))
+    if explicit_root is None or explicit_tool is None:
+        raise ValueError("Full row requires both canonical remote context paths")
+    expected = {field: row.get(field) for field in ("backend", "model", "case", "setup_id", "comparison_backend", "model_sha256")}
+    expected.update(remote_root=str(explicit_root), remote_tool_dir=str(explicit_tool))
+    contract, status = _verify_full_command_contract(row.get("full_command_contract"), expected_identity=expected)
+    if contract is None or str(contract.get("root")) != str(explicit_root):
+        raise ValueError("Full row remote context rejected: " + status)
+    workload = contract["energy_workload"]
+    runner = contract["artifacts"].get(str(workload.get("runner_artifact") or ""))
+    if (not isinstance(runner, Mapping)
+            or _canonical_remote_absolute_path(runner.get("path"))
+            != explicit_tool / "scripts" / Path(str(runner.get("path") or "")).name):
+        raise ValueError("Full row hotloop runner differs from remote tool root")
+    return str(explicit_root), str(explicit_tool)
+
+
 def _verify_full_command_contract(
     raw: Any, *, expected_identity: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, str]:
@@ -4137,6 +4163,7 @@ def main() -> int:
     for row in source_rows:
         backend = str(row.get("backend") or "")
         defaults = _backend_defaults(backend, row)
+        row_remote_root, row_remote_tool_dir = _full_row_remote_context(row, ns)
         identity = {
             "backend": backend,
             "model": row.get("model") or row.get("model_id"),
@@ -4152,8 +4179,8 @@ def main() -> int:
                 row.get("model_sha256") or row.get("source_model_sha256")
                 or row.get("source_onnx_sha256")
             ),
-            "remote_root": ns.remote_root,
-            "remote_tool_dir": ns.remote_tool_dir,
+            "remote_root": row_remote_root,
+            "remote_tool_dir": row_remote_tool_dir,
         }
         prospective_exclusion = _prospective_detection_exclusion(
             row, detection_exclusions,
@@ -5166,6 +5193,7 @@ def main() -> int:
     plan: list[dict[str, Any]] = []
     for row, validation, setup, ssh_arg in selected_items:
         backend = str(row.get("backend") or "")
+        row_remote_root, row_remote_tool_dir = _full_row_remote_context(row, ns)
         model = str(row.get("model") or "")
         case = str(row.get("case") or "full")
         is_full = backend.startswith("native_full_")
@@ -5231,8 +5259,8 @@ def main() -> int:
             if backend.startswith("native_full_"):
                 child_argv = _full_runtime_argv(
                     command_contract, duration_s=duration_s, frames=fallback_frames,
-                    remote_tool_dir=ns.remote_tool_dir,
-                    authoritative_root=ns.remote_root,
+                    remote_tool_dir=row_remote_tool_dir,
+                    authoritative_root=row_remote_root,
                     preflight_nonce=_PREFLIGHT_NONCE_TOKEN,
                     preflight_attestation=_PREFLIGHT_ATTESTATION_TOKEN,
                     preflight_max_age_s=300.0,
@@ -5244,7 +5272,7 @@ def main() -> int:
                     command_contract,
                     duration_s=duration_s,
                     fresh_output_root=_FRESH_OUTPUT_TOKEN,
-                    remote_tool_dir=ns.remote_tool_dir,
+                    remote_tool_dir=row_remote_tool_dir,
                     preflight_attestation_path=_PREFLIGHT_ATTESTATION_TOKEN,
                     preflight_nonce=_PREFLIGHT_NONCE_TOKEN,
                 )
@@ -5281,7 +5309,7 @@ def main() -> int:
         )
         contract_sha = str(command_contract.get("contract_sha256") or "")
         safe_identity = f"{safe_identity}__{contract_sha[:12]}"
-        fresh_base = f"{ns.remote_root.rstrip('/')}/.energy_replays/{safe_identity}"
+        fresh_base = f"{row_remote_root.rstrip('/')}/.energy_replays/{safe_identity}"
         contract_payload = (
             json.dumps(
                 command_contract, sort_keys=True, separators=(",", ":"),
@@ -5306,8 +5334,8 @@ def main() -> int:
             if backend.startswith("native_full_"):
                 preflight_argv = _full_preflight_argv(
                     command_contract,
-                    remote_tool_dir=ns.remote_tool_dir,
-                    authoritative_root=ns.remote_root,
+                    remote_tool_dir=row_remote_tool_dir,
+                    authoritative_root=row_remote_root,
                     preflight_nonce=_PREFLIGHT_NONCE_TOKEN,
                     preflight_attestation=_PREFLIGHT_ATTESTATION_TOKEN,
                     max_age_s=300.0,
@@ -5315,7 +5343,7 @@ def main() -> int:
             else:
                 preflight_argv = _split_preflight_argv(
                     command_contract,
-                    remote_tool_dir=ns.remote_tool_dir,
+                    remote_tool_dir=row_remote_tool_dir,
                     preflight_nonce=_PREFLIGHT_NONCE_TOKEN,
                     preflight_attestation=_PREFLIGHT_ATTESTATION_TOKEN,
                     max_age_s=300.0,
@@ -5342,7 +5370,7 @@ def main() -> int:
                 f"test \"$actual_contract_sha\" = {shlex.quote(contract_payload_sha)} && "
                 f"chmod 600 \"$tmp_contract\" && mv \"$tmp_contract\" {shlex.quote(remote_contract_file)} && "
                 f"{env_prefix}"
-                f"cd {shlex.quote(ns.remote_tool_dir)} && {preflight_child}"
+                f"cd {shlex.quote(row_remote_tool_dir)} && {preflight_child}"
             )
             preflight_shell = commands_out / f"{safe_identity}.preflight.sh"
             _write_planned_command(preflight_shell,
@@ -5366,7 +5394,7 @@ def main() -> int:
             f"{env_prefix}mkdir -p {shlex.quote(fresh_base)} && "
             f"fresh_output_root=$(mktemp -d {shlex.quote(fresh_base)}/replay.XXXXXX) && "
             'touch "$fresh_output_root/.started" && '
-            f"cd {shlex.quote(ns.remote_tool_dir)} && {child} && "
+            f"cd {shlex.quote(row_remote_tool_dir)} && {child} && "
             f'test -s "$fresh_output_root/{report_relative}" && '
             f'test "$fresh_output_root/{report_relative}" -nt "$fresh_output_root/.started" && '
             f'printf "[native-energy] FRESH_REPORT path=%s sha_contract={contract_sha}\\n" '

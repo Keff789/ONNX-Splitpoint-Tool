@@ -2491,14 +2491,120 @@ def _strict_split_central_result_identity(
     return exact, 'exact_current_split_identity_mirrors'
 
 
+def _reconcile_direct_full_original_quality_context(
+    row: dict[str, Any], binding_set: Mapping[str, Any], *, roots: list[Path],
+    original_quality_context: Mapping[str, Any],
+) -> tuple[bool, list[str]]:
+    """Reconcile original Quality metadata with a verified fresh Direct Full.
+
+    Both physical commands remain intact. The original command owns its N5000
+    request; the fresh Direct contract independently proves the same model,
+    compiled artifact, prepared input and completed comparison semantics.
+    """
+    if (row.get('backend') != 'native_full_deepx'
+            or row.get('model') not in {'yolo26m', 'yolo26s'}
+            or row.get('case') != 'full' or row.get('normalization_frozen') is not True):
+        return False, ['original_quality_context_outside_direct_deepx_scope']
+    path = Path(str(original_quality_context.get('path') or ''))
+    if (not path.is_absolute() or not path.is_file()
+            or _sha256_file(path) != original_quality_context.get('sha256')):
+        return False, ['original_quality_context_source_changed']
+    payload = _load_strict_json_object(path) or {}
+    if (payload.get('schema') != 'onnx-splitpoint/native-producer-validation-summary'
+            or payload.get('schema_version') != 10):
+        return False, ['original_quality_context_schema_invalid']
+    fields = ('backend', 'model', 'case', 'setup_id', 'comparison_backend', 'task')
+    originals = [item for item in payload.get('rows', [])
+                 if isinstance(item, Mapping)
+                 and all(item.get(field) == row.get(field) for field in fields)]
+    if len(originals) != 1:
+        return False, ['original_quality_context_identity_missing_or_ambiguous']
+    original = copy.deepcopy(originals[0])
+    contract = row.get('full_command_contract') or {}
+    source_contract = original.get('full_command_contract') or {}
+    if (row.get('model_sha256') != original.get('model_sha256')
+            or row.get('input_image_sha256') != original.get('input_image_sha256')
+            or contract.get('contract_sha256') != row.get('full_command_contract_sha256')
+            or contract.get('runtime_preprocessing_binding')
+            != source_contract.get('runtime_preprocessing_binding')
+            or any(row.get(field) != original.get(field) for field in (
+                'runtime_preprocessing_identity', 'runtime_preprocessing_sha256',
+                'runtime_numeric_input_identity', 'runtime_numeric_input_sha256'))):
+        return False, ['original_quality_context_model_input_or_preprocessing_drift']
+    for field in ('source_onnx_sha256', 'compiled_artifact_sha256'):
+        if (not (source_contract.get('model_binding') or {}).get(field)
+                or (contract.get('model_binding') or {}).get(field)
+                != (source_contract.get('model_binding') or {}).get(field)):
+            return False, ['original_quality_context_model_binding_drift:' + field]
+    for role in ('dxnn', 'runtime_input_tensor', 'input_manifest'):
+        source = (source_contract.get('artifacts') or {}).get(role) or {}
+        actual = (contract.get('artifacts') or {}).get(role) or {}
+        if not source.get('sha256') or actual.get('sha256') != source.get('sha256'):
+            return False, ['original_quality_context_artifact_drift:' + role]
+    try:
+        _verified_completed_v2_direct_contract(row)
+    except Exception as exc:
+        return False, ['original_quality_context_direct_contract_invalid:' + str(exc)]
+    selected = (binding_set.get('bindings_by_backend_model') or {}).get(
+        str(row.get('backend')) + '|' + str(row.get('model'))) or {}
+    if (selected != original.get('quality_request_binding')
+            or binding_set.get('binding_set_sha256') != original.get('quality_request_binding_set_sha256')
+            or selected.get('completed_task_endpoint_contract')
+            != row.get('completed_task_comparison_endpoint_contract')):
+        return False, ['original_quality_context_request_or_comparison_drift']
+    reconciled, errors = _reconcile_vendor_full_quality_binding(original, binding_set, roots=roots)
+    if not reconciled:
+        return False, errors
+    # Transfer only metadata verified by the normal original-request consumer.
+    # Observed runtimes, endpoint attestations, Source/claim booleans and both
+    # complete original/fresh command objects are never projected from Quality.
+    metadata_fields = (
+        'quality_request_binding', 'quality_request_binding_sha256',
+        'quality_request_binding_set_sha256', 'quality_request_binding_status',
+        'quality_request_binding_errors', 'quality_source_run_id', 'quality_source_case_id',
+        'source_request_sha256', 'model_sha256', 'validation_dataset_sha256',
+        'validation_dataset_image_ids_sha256', 'validation_dataset_ground_truth_sha256',
+        'task_quality_policy_sha256', 'quality_contract_sha256',
+        'preprocessing_contract_sha256', 'decoder_contract_sha256', 'nms_contract_sha256',
+        'quality_record_endpoint_contract_sha256', 'central_quality_result_sha256',
+        'prepared_input_evidence_sha256',
+    )
+    original_status = row.get('quality_request_binding_status')
+    for field in metadata_fields:
+        observed = row.get(field)
+        if (field == 'quality_request_binding_status' and observed == 'unavailable'
+                and not row.get('quality_request_binding')):
+            continue
+        if observed not in (None, '', [], {}, original.get(field)):
+            return False, ['original_quality_context_populated_metadata_conflict:' + field]
+    for field in metadata_fields:
+        if field in original:
+            row[field] = copy.deepcopy(original[field])
+    row['quality_binding_reconciliation'] = {
+        'status': 'verified_exact', 'original_quality_context': str(path),
+        'original_quality_context_sha256': _sha256_file(path),
+        'original_full_command_contract_sha256': source_contract['contract_sha256'],
+        'fresh_full_command_contract_sha256': contract['contract_sha256'],
+        'original_quality_request_binding_status': original_status,
+        'original_input_manifest': original['quality_binding_reconciliation']['original_input_manifest'],
+        'performance_repeated': False,
+    }
+    return True, []
+
+
 def _reconcile_vendor_full_quality_binding(
     row: dict[str, Any], binding_set: Mapping[str, Any], *, roots: list[Path],
+    original_quality_context: Mapping[str, Any] | None = None,
 ) -> tuple[bool, list[str]]:
     """Attach late Central metadata to the original measured command in memory.
 
     Reuse the runtime consumer's artifact/endpoint/preprocessing checks. The
     command, measurements and semantic observations are never resealed or edited.
     """
+    if original_quality_context is not None:
+        return _reconcile_direct_full_original_quality_context(
+            row, binding_set, roots=roots, original_quality_context=original_quality_context,
+        )
     try:
         from scripts.native_full_baseline_eval_runner import _attach_full_quality_request_binding
     except ImportError:  # standalone copied scripts
@@ -2631,6 +2737,7 @@ def _bind_central_quality_evidence(
     central_result_sha256: Mapping[int, str] | None = None,
     vendor_full_binding_set: Mapping[str, Any] | None = None,
     artifact_roots: list[Path] | None = None,
+    vendor_full_original_quality_context: Mapping[str, Any] | None = None,
 ) -> None:
     """Bind one central decision to one Native precision row, or fail closed."""
     row['central_quality_evidence_verified'] = False
@@ -2651,6 +2758,7 @@ def _bind_central_quality_evidence(
             and not (row.get('full_command_contract') or {}).get('quality_request_binding')):
         reconciled_vendor_binding, reconciliation_errors = _reconcile_vendor_full_quality_binding(
             row, vendor_full_binding_set, roots=artifact_roots or [],
+            original_quality_context=vendor_full_original_quality_context,
         )
         if not reconciled_vendor_binding:
             row['quality_binding_reconciliation'] = {
@@ -3707,6 +3815,23 @@ def _native_full_e2e_contract_gate(
             'e2e_claim_eligible': True,
             'e2e_scope': str(payload.get('e2e_scope') or 'full_task_pipeline'),
             'e2e_contract_reason': 'native_full_non_detection_explicit_input_contract',
+        }
+    if (row.get('normalization_frozen') is True
+            and row.get('model') in {'yolo26m', 'yolo26s'}
+            and row.get('backend') in {'native_full_tensorrt', 'native_full_deepx'}):
+        try:
+            _verified_completed_v2_direct_contract(row)
+        except Exception as exc:
+            return {
+                'e2e_claim_eligible': False,
+                'e2e_scope': 'accelerator_only',
+                'e2e_contract_reason': 'direct_bn6_full_completion_invalid:' + str(exc),
+                'contract_consistent': False,
+            }
+        return {
+            'e2e_claim_eligible': True,
+            'e2e_scope': 'full_task_pipeline',
+            'e2e_contract_reason': 'verified_measured_direct_bn6_normalization',
         }
     if _completed_frozen_nms_attestation_passed(row):
         return {
