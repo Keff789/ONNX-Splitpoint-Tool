@@ -1293,6 +1293,43 @@ def _energy_endpoint_identity(
                 )
             )
             verified_source = verify_frozen_postprocess_contract(frozen)
+            original_endpoint = completion.get("completed_endpoint_contract")
+            if not isinstance(original_endpoint, Mapping):
+                raise FrozenPostprocessError("frozen_completion_original_endpoint_missing")
+            original_source_hash = original_endpoint.get("source_endpoint_contract_hash")
+            if not isinstance(original_source_hash, str):
+                raise FrozenPostprocessError("frozen_completion_original_source_hash_missing")
+            if not original_source_hash or original_source_hash != physical_hash:
+                physical = _endpoint_mapping(row, validation, "output_endpoint_attestation")
+                signature = verified_source.get("raw_output_tensor_signature")
+                expected_identity = {field: str(_evidence_value(dict(row),
+                    dict(validation) if isinstance(validation, Mapping) else None, field) or "")
+                    for field in ("backend", "model", "case", "setup_id", "comparison_backend")}
+                original_command, _ = _verify_full_command_contract(
+                    dict(command_contract), expected_identity=expected_identity)
+                if not (
+                    original_source_hash == ""
+                    and expected_identity["backend"] in {"native_full_hailo8", "native_full_hailo10h"}
+                    and original_command is not None
+                    and physical_complete and physical_stage == "raw_head"
+                    and physical_id == "detection:raw_head:" + physical_hash
+                    and verified_source.get("source_contract_family") == "raw_head"
+                    and original_endpoint.get("source_stage") == "raw_head"
+                    and physical.get("attested") is True
+                    and physical.get("status") == "passed"
+                    and physical.get("endpoint") == "raw_head"
+                    and physical.get("stage") == "raw_head"
+                    and physical.get("endpoint_contract_hash") == physical_hash
+                    and isinstance(signature, Mapping) and signature.get("tensor_count", 0) > 0
+                    and physical.get("tensor_signature") == signature
+                    and original_endpoint.get("raw_output_tensor_signature") == signature
+                    and _strict_sha256_token(_evidence_value(dict(row),
+                        dict(validation) if isinstance(validation, Mapping) else None,
+                        "frozen_host_postprocess_contract_sha256")) == verified_source["contract_sha256"]
+                    and workload.get("frozen_postprocess_contract") == verified_source
+                    and workload.get("frozen_postprocess_contract_sha256") == verified_source["contract_sha256"]
+                ):
+                    raise FrozenPostprocessError("frozen_completion_physical_raw_source_binding_mismatch")
             expected_completion = (
                 build_completed_detection_endpoint_attestation(
                     verified_source,
@@ -1301,7 +1338,7 @@ def _energy_endpoint_identity(
                     postprocess_completed_frames=completion.get(
                         "postprocess_completed_frames"
                     ),
-                    source_endpoint_contract_hash=physical_hash,
+                    source_endpoint_contract_hash=original_source_hash,
                 )
             )
             verified_comparison = (
@@ -5108,7 +5145,8 @@ def main() -> int:
         with Path(ns.campaign_budget_file).open()as handle:
             import fcntl
             fcntl.flock(handle,fcntl.LOCK_SH);budget=json.load(handle)
-        grant=budget.get('authorized_final_cohort')or{}
+        from onnx_splitpoint_tool.energy.task_budget import final_cohort_authorization
+        grant=final_cohort_authorization(budget,ns.campaign_cohort)
         if grant.get('cohort_id')!=ns.campaign_cohort or grant.get('purpose')!='final':
             raise ValueError('Final planning requires its already authorized generation')
     markdown = [

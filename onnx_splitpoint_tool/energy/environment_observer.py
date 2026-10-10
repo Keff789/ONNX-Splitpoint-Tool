@@ -14,7 +14,7 @@ def _workers():
     import json
     from pathlib import Path
     roots = {"native_deepx_trt_e2e_from_benchmarkset.py", "native_full_baseline_eval_runner.py",
-             "native_hailo_trt_fifo_from_benchmarkset.py"}
+             "native_hailo_trt_fifo_from_benchmarkset.py", "native_hailo10_trt_e2e_from_benchmarkset.py"}
     processes = {}
     for p in Path('/proc').iterdir():
         if not p.name.isdecimal(): continue
@@ -25,7 +25,9 @@ def _workers():
         except (OSError, ValueError, IndexError): continue
     selected = {}
     for pid, (ppid,ticks,args) in processes.items():
-        if not any(Path(a).name in roots for a in args) or '--energy-workload-only' not in args: continue
+        generic = (any(Path(a).name == 'run_split_onnxruntime.py' for a in args)
+                   and '--generic-completion-energy' in args)
+        if not generic and (not any(Path(a).name in roots for a in args) or '--energy-workload-only' not in args): continue
         def option(name):
             try:return args[args.index(name)+1]
             except (ValueError,IndexError):return ''
@@ -34,9 +36,11 @@ def _workers():
             report = option('--result-json')
             if report and Path(report).is_absolute():
                 output = str(Path(report).parent)
-        if '/replay.' not in output: continue
         nonce=option('--energy-preflight-nonce')or option('--preflight-nonce')
-        contract=option('--source-contract-sha256')
+        if generic:
+            if not Path(output).is_absolute() or '/energy/' not in output or not nonce or Path(output).name != nonce: continue
+        elif '/replay.' not in output: continue
+        contract=option('--source-contract-sha256')or (option('--energy-command-contract-sha256')if generic else '')
         if not contract and option('--energy-command-contract-file'):
             try:contract=json.loads(Path(option('--energy-command-contract-file')).read_text()).get('contract_sha256','')
             except (OSError,ValueError):pass

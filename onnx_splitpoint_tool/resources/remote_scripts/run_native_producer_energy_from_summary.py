@@ -1441,6 +1441,7 @@ def _attach_energy_aggregate(
     execution_started_ns: int | None = None,
     aggregate_absent_before_execution: bool | None = None,
     expected_native_row: Mapping[str, Any] | None = None,
+    caller_managed_single_capture: bool = False,
     measurement_path_mapping: tuple[str | Path, str | Path] | None = None,
     archived_aggregate_provenance: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -1597,7 +1598,20 @@ def _attach_energy_aggregate(
             if aggregate.get('scientific_primary_method') != 'command_marker_window':
                 reject('aggregate_scientific_primary_method_not_command_marker_window')
             if aggregate.get('scientific_primary_energy_status') != 'available':
-                incomplete('aggregate_scientific_primary_energy_status_not_available')
+                # A separately managed valid capture is input to a later
+                # three-repeat report, not a complete final aggregate itself.
+                single_capture = bool(
+                    caller_managed_single_capture is True
+                    and expected_runs == expected_effective_runs == 1
+                    and aggregate.get('scientific_primary_energy_status') == 'incomplete_or_unverified'
+                    and aggregate.get('caller_managed_repeat_capture_complete') is True
+                    and aggregate.get('scientific_primary_valid_run_count') == 1
+                    and len(aggregate.get('runs') or []) == 1
+                    and aggregate['runs'][0].get('scientific_primary_energy_status') == 'available'
+                    and aggregate['runs'][0].get('final_energy_gate_status') == 'pass'
+                )
+                if not single_capture:
+                    incomplete('aggregate_scientific_primary_energy_status_not_available')
             if str(aggregate.get('run_id') or '') != expected_run_id:
                 reject('aggregate_run_id_mismatch')
             if str(aggregate.get('setup_id') or '') != expected_setup_id:
@@ -4016,10 +4030,15 @@ def _main_impl() -> int:
             item for item in managed_results_by_index if item is not None
         ]
     resume_preparation: dict[str, Any] | None = None
-    if ns.resume_existing or (ns.previous_results and not ns.dry_run and len(supplement_reused) < len(rows)):
+    # Preserve the original capture prefix when earlier rows are reused. Rows
+    # outside --limit remain scientific context, never fresh workload preflights.
+    preparation_rows = [row for row_index, row in enumerate(rows)
+                        if (not ns.limit or row_index < ns.limit)
+                        and str(row.get('measure_command') or '') and not row.get('skipped')
+                        and _resume_row_identity(row) not in supplement_reused]
+    if ns.resume_existing or (ns.previous_results and not ns.dry_run and preparation_rows):
         preparation_root = resume_attempt_root if ns.resume_existing else out
         preparation_context = canonical_execution_context if ns.resume_existing else _validated_resume_execution_context(plan_payload.get('execution_context'), label='supplement plan')
-        preparation_rows = [row for row in rows if _resume_row_identity(row) not in supplement_reused]
         resume_preparation = _prepare_resume_measurement_cohort(
             preparation_rows,
             attempt_dir=preparation_root,
@@ -4474,7 +4493,7 @@ def _main_impl() -> int:
                 }, row_index=row_index if managed_journal is not None else None)
                 _write_partial()
                 continue
-            if ns.limit and count>ns.limit:
+            if ns.limit and row_index >= ns.limit:
                 observation = _zero_measurement_start_observation()
                 _record_result(
                     {

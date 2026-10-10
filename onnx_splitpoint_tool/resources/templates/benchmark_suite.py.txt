@@ -9110,7 +9110,7 @@ def _bound_management_validation_source(
     raw: Optional[str], root: Path, task: str, requested_count: int,
     reference: Mapping[str, Any],
 ) -> Path:
-    """Admit the exact prepared input of an existing detection reference.
+    """Admit the exact prepared dataset of an existing semantic reference.
 
     This check precedes the child process and the compatibility COCO fallback.
     The reference's existing manifest binding is reused; image contents are not
@@ -9119,7 +9119,8 @@ def _bound_management_validation_source(
     contract = reference.get("quality_contract") or {}
     dataset = contract.get("dataset") or {}
     count = dataset.get("image_count")
-    if (task != "detection" or type(count) is not int or count <= 0
+    if (task not in {"classification", "detection"} or contract.get("task") != task
+            or type(count) is not int or count <= 0
             or int(requested_count) != count):
         raise RuntimeError("bound_quality_validation_count_invalid")
     source = _resolve_semantic_validation_source(raw, root, task)
@@ -9128,7 +9129,8 @@ def _bound_management_validation_source(
     manifest = source / "manifest.json" if source.is_dir() else source
     expected_digest = str(dataset.get("manifest_sha256") or "")
     if (not expected_digest or not manifest.is_file()
-            or _deepx_quality_file_sha256(manifest) != expected_digest):
+            or (_deepx_portable_dataset_manifest_sha256(manifest)
+                if task == "classification" else _deepx_quality_file_sha256(manifest)) != expected_digest):
         raise RuntimeError("bound_quality_validation_manifest_mismatch:" + str(manifest))
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     samples = payload.get("samples") if isinstance(payload, Mapping) else None
@@ -9140,19 +9142,26 @@ def _bound_management_validation_source(
         if not isinstance(sample, Mapping):
             raise RuntimeError("bound_quality_validation_sample_invalid")
         name = str(sample.get("image") or "")
-        image_id = str(sample["image_id"]) if sample.get("image_id") is not None else ""
+        image_id = (Path(name).name if task == "classification" else
+                    str(sample["image_id"]) if sample.get("image_id") is not None else "")
         image = (manifest.parent / name).resolve()
         if (not name or not image_id or name in names or image_id in image_ids
                 or manifest.parent.resolve() not in image.parents
                 or not image.is_file()
-                or not image.with_suffix(".json").is_file()
+                or (task == "detection" and not image.with_suffix(".json").is_file())
+                or (task == "classification" and (type(sample.get("label_id")) is not int
+                                                  or sample["label_id"] < 0))
                 or (sample.get("source_size_bytes") is not None
                     and image.stat().st_size != sample["source_size_bytes"])):
             raise RuntimeError("bound_quality_validation_sample_missing_or_invalid:" + name)
         names.add(name)
         image_ids.add(image_id)
+        if task == "classification" and sample.get("source_sha256"):
+            expected_image_sha = str(sample["source_sha256"]).removeprefix("sha256:")
+            if _deepx_quality_file_sha256(image) != expected_image_sha:
+                raise RuntimeError("bound_quality_validation_image_sha256_mismatch:" + name)
     annotations = payload.get("filtered_coco_annotations")
-    if not annotations or not (manifest.parent / str(annotations)).is_file():
+    if task == "detection" and (not annotations or not (manifest.parent / str(annotations)).is_file()):
         raise RuntimeError("bound_quality_validation_annotations_missing")
     return source
 

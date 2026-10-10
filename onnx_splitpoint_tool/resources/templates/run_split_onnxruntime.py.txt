@@ -8797,6 +8797,7 @@ def _build_classification_quality_contract(
     rows: Sequence[Mapping[str, Any]], image_scale: str, letterbox: bool,
     input_hw: Tuple[int, int], input_dtype: Any, runner_path: Path,
     endpoint_attestor_sha256: str,
+    runtime_input_encoding_override=None,
 ) -> Dict[str, Any]:
     """Freeze label, preprocessing and Top-K record semantics."""
     model = Path(model_path)
@@ -8859,6 +8860,8 @@ def _build_classification_quality_contract(
         "image_scale": str(image_scale or ""),
         "input_dtype": str(input_dtype or ""),
     }
+    if runtime_input_encoding_override is not None:
+        runtime_input_encoding.update(dict(runtime_input_encoding_override))
     postprocessor_identity = {
         "schema": "onnx-splitpoint/classification-topk-postprocessor-contract",
         "schema_version": 1,
@@ -9635,7 +9638,8 @@ def _build_native_full_trt_quality_producer_identity(
     return {**producer, "producer_identity_sha256": producer_sha}
 
 
-def _existing_management_reference(value, *, model_sha256, variants, central, image_count):
+def _existing_management_reference(value, *, model_sha256, variants, central, image_count,
+                                   task=None):
     """Admit an explicit old semantic reference, never a new CPU execution.
 
     The management reader checks the actual original bytes. This remote side
@@ -9648,7 +9652,8 @@ def _existing_management_reference(value, *, model_sha256, variants, central, im
     contract = dict(descriptor.get("quality_contract") or {})
     declared = contract.pop("quality_contract_sha256", "")
     if (not central or set(variants) != {"composed"}
-            or contract.get("task") != "detection"
+            or contract.get("task") not in {"classification", "detection"}
+            or (task is not None and contract.get("task") != task)
             or contract.get("model", {}).get("sha256") != model_sha256
             or contract.get("dataset", {}).get("image_count") != image_count
             or image_count != 5000
@@ -14819,6 +14824,147 @@ def _completion_hailo_inputs(config, backend, inputs):
     return inputs
 
 
+def _direct_rgb_classification_quality_input(image_path, input_contract):
+    """Use the Native classifier's prepared HWC bytes without an inverse feed."""
+    from PIL import Image as _Image
+    try:
+        from splitpoint_runners.preprocessing_contract import prepare_rgb_uint8_for_declared_mode
+    except ImportError:
+        from onnx_splitpoint_tool.preprocessing_contract import prepare_rgb_uint8_for_declared_mode
+    contract = dict(input_contract or {})
+    shape = tuple(contract.get("shape") or ())
+    if (contract.get("task") != "classification" or contract.get("layout") != "HWC"
+            or contract.get("dtype") != "uint8" or contract.get("color_space") != "RGB"
+            or contract.get("preprocess_mode") != "resize"
+            or contract.get("classification_preprocessing") != "imagenet_mean_std"
+            or contract.get("embedded_numeric_path") != "dxcom_div255_then_build_onnx_imagenet_mean_std"
+            or len(shape) != 3 or shape[-1] != 3
+            or any(not isinstance(dim, int) or dim <= 0 for dim in shape)):
+        raise ValueError("direct Classification Quality requires the exact bound Native RGB contract")
+    with _Image.open(image_path) as image:
+        source = np.asarray(image.convert("RGB"))
+    prepared, _ = prepare_rgb_uint8_for_declared_mode(
+        source, target_hw=(shape[0], shape[1]), preprocess_mode="resize", pad_value=0)
+    prepared = np.ascontiguousarray(prepared)
+    if prepared.shape != shape or prepared.dtype != np.uint8:
+        raise ValueError("direct Classification Quality prepared shape/dtype mismatch")
+    return prepared
+
+
+def _persistent_classification_quality_source(*, samples, out_dir, identity,
+                                             prepare, infer, metrics):
+    """Append each real prediction durably; resume only the identical source."""
+    import fcntl as _fcntl
+    import os as _os
+    directory = Path(out_dir) / "task_quality_inputs"
+    directory.mkdir(parents=True, exist_ok=True)
+    journal = directory / "composed_classification_predictions.jsonl"
+    header = {"schema": "onnx-splitpoint/classification-quality-source-progress",
+              "schema_version": 1, "identity": identity,
+              "identity_sha256": _quality_contract_sha256(identity)}
+    expected = [{"image": str(sample["image"].name), "label_id": sample.get("label_id"),
+                 "label_name": sample.get("label_name")} for sample in samples]
+    if (not expected or len({row["image"] for row in expected}) != len(expected)
+            or any(row["label_id"] is None for row in expected)):
+        raise ValueError("Classification Quality requires unique labeled dataset records")
+    progress = directory / "composed_classification_progress.json"
+    rows = []
+    with journal.open("a+", encoding="utf-8") as handle:
+        try:
+            _fcntl.flock(handle.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError("Classification Quality source already owns this journal") from exc
+        handle.seek(0)
+        lines = handle.readlines()
+        if lines:
+            # A torn final write was never a complete durable prediction.
+            if not lines[-1].endswith("\n"):
+                handle.seek(0)
+                handle.truncate(sum(len(line.encode("utf-8")) for line in lines[:-1]))
+                handle.flush()
+                _os.fsync(handle.fileno())
+                lines = lines[:-1]
+            if not lines or json.loads(lines[0]) != header:
+                raise ValueError("Classification Quality resume source identity differs")
+            for index, line in enumerate(lines[1:]):
+                entry = json.loads(line)
+                row = entry.get("row")
+                if (not isinstance(row, dict) or index >= len(expected)
+                        or entry.get("row_sha256") != _quality_contract_sha256(row)
+                        or any(row.get(key) != value for key, value in expected[index].items())
+                        or not isinstance(row.get("gt"), dict)
+                        or not row.get("direct_rgb_input_sha256")
+                        or row.get("error")):
+                    raise ValueError("Classification Quality saved prediction is invalid")
+                rows.append(row)
+        else:
+            handle.write(json.dumps(header, sort_keys=True, ensure_ascii=False) + "\n")
+            handle.flush()
+            _os.fsync(handle.fileno())
+        for index in range(len(rows), len(samples)):
+            sample = samples[index]
+            prepared = prepare(sample["image"])
+            names, outputs = infer(sample["image"], prepared)
+            row = {**expected[index], "gt": metrics(names, outputs, sample["label_id"]),
+                   "reference_mode_used": "management_cpu_reference_pending",
+                   "task_quality_reference_source": "management_cpu_reference_pending",
+                   "direct_rgb_input_sha256": hashlib.sha256(prepared.tobytes()).hexdigest(),
+                   "direct_rgb_input_shape": list(prepared.shape),
+                   "direct_rgb_input_dtype": str(prepared.dtype)}
+            if (not isinstance(row["gt"], dict) or type(row["gt"].get("top1_hit")) is not bool
+                    or type(row["gt"].get("top5_hit")) is not bool):
+                raise ValueError("Classification Quality decoder did not emit top1/top5 hits")
+            handle.write(json.dumps({"row": row, "row_sha256": _quality_contract_sha256(row)},
+                                    sort_keys=True, ensure_ascii=False) + "\n")
+            handle.flush()
+            _os.fsync(handle.fileno())
+            rows.append(row)
+            if len(rows) == 1 or len(rows) % 25 == 0 or len(rows) == len(samples):
+                payload = {**header, "completed_images": len(rows), "requested_images": len(samples),
+                           "predictions_journal": str(journal),
+                           "status": "predictions_complete" if len(rows) == len(samples) else "running"}
+                temporary = progress.with_suffix(".tmp")
+                temporary.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+                _os.replace(temporary, progress)
+                print(f"[quality-source][classification] {len(rows)}/{len(samples)} predictions saved", flush=True)
+    # Reentry may contain the complete durable journal but an older progress
+    # file if the prior process stopped between the final two publications.
+    temporary = progress.with_suffix(".tmp")
+    temporary.write_text(json.dumps({**header, "completed_images": len(rows),
+        "requested_images": len(samples), "predictions_journal": str(journal),
+        "status": "predictions_complete"}, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    _os.replace(temporary, progress)
+    return rows
+
+
+def _classification_quality_dataset_preflight(samples, validation_source):
+    """Verify the declared prepared image bytes before entering N5000."""
+    source = Path(validation_source)
+    manifest = source / "manifest.json" if source.is_dir() else source
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    declared = payload.get("samples")
+    if not isinstance(declared, list) or len(declared) != len(samples):
+        raise ValueError("Classification Quality dataset sample cardinality differs")
+    by_name = {Path(str(row.get("image") or "")).name: row for row in declared}
+    if len(by_name) != len(declared):
+        raise ValueError("Classification Quality dataset image IDs are not unique")
+    verified = []
+    for sample in samples:
+        image = Path(sample["image"])
+        row = by_name.get(image.name) or {}
+        if (row.get("label_id") != sample.get("label_id") or not image.is_file()
+                or (row.get("source_size_bytes") is not None
+                    and image.stat().st_size != row["source_size_bytes"])):
+            raise ValueError("Classification Quality dataset sample binding differs: " + image.name)
+        expected = str(row.get("source_sha256") or "").removeprefix("sha256:")
+        if expected and (len(expected) != 64 or _quality_file_sha256(image) != expected):
+            raise ValueError("Classification Quality dataset image bytes differ: " + image.name)
+        verified.append({"image_id":image.name, "source_sha256":expected or None,
+                         "label_id":sample["label_id"]})
+    return {"sample_count":len(verified), "declared_images_sha256":_quality_contract_sha256(verified),
+            "source_hash_verified_images":sum(bool(row["source_sha256"]) for row in verified)}
+
+
 def _configure_quality_source_only(args, parser):
     """Keep selective split Quality generation outside Generic timing work."""
     if not args.quality_source_only:
@@ -15746,7 +15892,10 @@ def main() -> int:
         args.existing_management_cpu_reference_json,
         model_sha256=_decoder_model_sha256,
         variants=[v.strip() for v in str(args.variants).split(",") if v.strip()],
-        central=central_quality_remote_mode, image_count=int(args.validation_max_images or 0))
+        central=central_quality_remote_mode, image_count=int(args.validation_max_images or 0),
+        task=(str(args.benchmark_task).strip().lower()
+              if str(args.benchmark_task).strip().lower() != "auto" else None))
+    quality_source_direct_rgb_contract = None
     if existing_management_reference:
         task_quality_policy["_existing_management_reference"] = existing_management_reference
     if args.quality_source_only and not existing_management_reference:
@@ -15964,6 +16113,13 @@ def main() -> int:
         )
         args._native_split_quality_binding = verified_split_binding
         args._native_split_quality_binding_path = str(binding_path)
+        if (args.quality_source_only and existing_management_reference
+                and existing_management_reference["quality_contract"]["task"] == "classification"):
+            quality_source_direct_rgb_contract = verified_split_binding.get(
+                "boundary_metadata_payload", {}).get("boundary_tensor", {}).get("deepx_input_contract")
+            if (verified_split_binding["preselection"]["backend"] != "deepx_to_trt"
+                    or not isinstance(quality_source_direct_rgb_contract, Mapping)):
+                raise ValueError("Classification source-only requires the bound DeepX input contract")
         args._native_split_quality_paths = verified_split_paths
         args._verified_native_split_trt_build_receipt = verified_split_receipt
         args._native_split_part1_path = str(verified_split_paths["part1_runtime"])
@@ -16662,7 +16818,8 @@ def main() -> int:
     if img_candidates and existing_management_reference:
         preprocessing = existing_management_reference["quality_contract"]["preprocessing"]["identity"]
         actual_preprocessing, _ = _resolve_image_preprocessing_contract(
-            task="detection", target_hw=(int(img_hw[0]), int(img_hw[1])))
+            task=existing_management_reference["quality_contract"]["task"],
+            target_hw=(int(img_hw[0]), int(img_hw[1])))
         if actual_preprocessing != preprocessing:
             raise ValueError("existing CPU reference preprocessing differs from current input")
         resolved_image_scale = str(preprocessing["image_scale"])
@@ -17911,7 +18068,12 @@ def main() -> int:
         else:
             deepx_p1.image_input_contract = {"source_domain": resolved_image_scale,
                 "source_layout": "NCHW", "runtime_layout": "HWC"}
-            p1_inputs_deepx = deepx_p1.prepare_image_inputs(feeds_p1)
+            p1_inputs_deepx = (
+                {deepx_p1.input_names[0]: _direct_rgb_classification_quality_input(
+                    Path(args.image), quality_source_direct_rgb_contract)}
+                if quality_source_direct_rgb_contract is not None
+                else deepx_p1.prepare_image_inputs(feeds_p1)
+            )
         deepx_p1.bind_prepared_inputs(p1_inputs_deepx)
 
     if timing_input_binding:
@@ -17931,7 +18093,10 @@ def main() -> int:
             return hailo_p1.infer(local_inputs)
         if deepx_p1 is not None:
             local_inputs = (p1_inputs_deepx if feeds_p1_override is None else
+                            feeds_p1_override if quality_source_direct_rgb_contract is not None else
                             deepx_p1.prepare_image_inputs(feeds_p1_override))
+            if quality_source_direct_rgb_contract is not None:
+                deepx_p1.bind_prepared_inputs(local_inputs)
             return deepx_p1.infer(local_inputs)
         if ort_p1_sess is None:
             raise RuntimeError("stage1 backend not initialized")
@@ -19530,7 +19695,11 @@ def main() -> int:
     # Try to detect output format based on the CPU reference.
     output_format = _detect_output_format(output_names, full_out_list)
     if existing_management_reference:
-        output_format = existing_management_reference["quality_contract"]["decoder"]["identity"]["source_output_format"]
+        output_format = (
+            "classification_logits"
+            if existing_management_reference["quality_contract"]["task"] == "classification"
+            else existing_management_reference["quality_contract"]["decoder"]["identity"]["source_output_format"]
+        )
 
     requested_benchmark_task = _normalize_benchmark_task(getattr(args, "benchmark_task", "auto"))
     effective_benchmark_task = requested_benchmark_task
@@ -19919,7 +20088,9 @@ def main() -> int:
     for v in variants:
         if existing_management_reference and v in variant_outputs:
             comparisons[v] = {"status": "unavailable", "passed": None,
-                "validation_mode_used": "proxy_detections", "elementwise": None, "proxy": None,
+                "validation_mode_used": ("proxy_classification"
+                    if existing_management_reference["quality_contract"]["task"] == "classification"
+                    else "proxy_detections"), "elementwise": None, "proxy": None,
                 "reference_source": "explicit_original_management_cpu_reference",
                 "reason": "saved_semantic_reference_has_no_single_image_raw_tensors",
                 "warnings": ["single_image_raw_cpu_diagnostic_unavailable; bound_N5000_quality_required"]}
@@ -20454,7 +20625,8 @@ def main() -> int:
                 continue
             if str(c.get("validation_mode_used") or "off") != "proxy_classification":
                 continue
-            if c.get("status") not in ("ok", "skipped_layout_mismatch"):
+            if (c.get("status") not in ("ok", "skipped_layout_mismatch")
+                    and not (quality_source_direct_rgb_contract is not None and v in variant_outputs)):
                 continue
             if central_quality_remote_mode and str(v).strip().lower() not in {"full", "composed"}:
                 technical_gate = _classification_task_quality_gate([], v, task_quality_policy)
@@ -20469,7 +20641,65 @@ def main() -> int:
             if cpu_reference_only_mode and str(v).strip().lower() != "full":
                 continue
             per_image_rows: List[Dict[str, Any]] = []
-            for sample in classification_validation_samples:
+            if quality_source_direct_rgb_contract is not None:
+                source_dataset_preflight = _classification_quality_dataset_preflight(
+                    classification_validation_samples, _validation_source_path)
+                source_rows = [{"image": sample["image"].name,
+                                "label_id": sample.get("label_id")} for sample in classification_validation_samples]
+                source_encoding = {"image_scale": "raw", "input_dtype": "uint8", "layout": "HWC",
+                                   "numeric_path": "direct_HWC_RGB_uint8",
+                                   "normalization_location": "embedded_dxcom_preprocessing"}
+                source_quality_contract = _build_classification_quality_contract(
+                    model_path=full_path, validation_source=_validation_source_path,
+                    rows=source_rows, image_scale="raw", letterbox=False,
+                    input_hw=tuple(img_hw), input_dtype="uint8", runner_path=Path(__file__).resolve(),
+                    endpoint_attestor_sha256=_verified_suite_vendored_endpoint_attestor_sha256(),
+                    runtime_input_encoding_override=source_encoding)
+                reference_quality_contract = existing_management_reference["quality_contract"]
+                if (len(source_rows) != 5000
+                        or source_quality_contract["model"] != reference_quality_contract["model"]
+                        or source_quality_contract["dataset"] != reference_quality_contract["dataset"]
+                        or source_quality_contract["preprocessing"]["identity"]
+                        != reference_quality_contract["preprocessing"]["identity"]):
+                    raise ValueError("Classification Quality source dataset/model differs from existing CPU reference")
+                source_names = list(variant_output_names.get(v) or output_names)
+                source_outputs = list(variant_outputs.get(v) or [])
+                source_declaration = _recorded_suite_endpoint_declaration(
+                    base_dir=base_dir, full_model=full_path, terminal_model=p2_path,
+                    variant=str(v), provider=str(stage2_tok or ""), task="classification",
+                    output_names=source_names, outputs=source_outputs, diagnostics={})
+                source_endpoint = _central_quality_endpoint_contract(
+                    task="classification", output_names=source_names, outputs=source_outputs,
+                    detected_output_format=_detect_output_format(source_names, source_outputs),
+                    declared_endpoint_contract=source_declaration, diagnostics={})
+                source_precision = _central_quality_runtime_precision_identity(
+                    variant=v, full_provider=str(full_tok or ""), stage1_provider=str(stage1_tok or ""),
+                    stage2_provider=str(stage2_tok or ""), boundary_mode=str(_boundary_mode or "canonical_float32"),
+                    trt_precision=str(getattr(args, "native_trt_precision", "fp16") or "fp16"))
+                source_producer, _ = _build_generic_composed_quality_producer_binding(
+                    context=_active_composed_quality_producer_context(), task="classification",
+                    quality_contract=source_quality_contract, endpoint_contract=source_endpoint,
+                    runtime_precision_identity=source_precision)
+
+                def run_direct_candidate(image_file, prepared):
+                    local_full = {**base_static_full_inputs, image_input_name: prepared}
+                    if list(p1_inputs) != [image_input_name]:
+                        raise ValueError("Classification Quality source expects one bound RGB input")
+                    return _run_dataset_candidate_cls(v, local_full, {image_input_name: prepared})
+
+                per_image_rows = _persistent_classification_quality_source(
+                    samples=classification_validation_samples, out_dir=out_dir,
+                    identity={"producer_identity_sha256": source_producer["producer_identity_sha256"],
+                              "native_split_quality_binding_sha256": args._native_split_quality_binding["binding_sha256"],
+                              "reference_sha256": existing_management_reference["reference_sha256"],
+                              "quality_contract_sha256": source_quality_contract["quality_contract_sha256"],
+                              "dataset_preflight": source_dataset_preflight,
+                              "input_contract": dict(quality_source_direct_rgb_contract)},
+                    prepare=lambda path: _direct_rgb_classification_quality_input(path, quality_source_direct_rgb_contract),
+                    infer=run_direct_candidate,
+                    metrics=lambda names, outputs, label: _classification_gt_metrics(
+                        _classification_logits_vector(names, outputs), label, topk=5))
+            for sample in ([] if quality_source_direct_rgb_contract is not None else classification_validation_samples):
                 img_file = sample.get("image")
                 if not isinstance(img_file, Path):
                     continue
@@ -20693,6 +20923,8 @@ def main() -> int:
                     endpoint_attestor_sha256=(
                         _verified_suite_vendored_endpoint_attestor_sha256()
                     ),
+                    runtime_input_encoding_override=(
+                        source_encoding if quality_source_direct_rgb_contract is not None else None),
                 )
             quality_input_request = _export_central_quality_inputs(
                 out_dir=out_dir,

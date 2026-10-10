@@ -306,7 +306,7 @@ def test_hailo_uses_original_native_runtime_format_inside_p1(tmp_path,monkeypatc
     tree=ast.parse(TEMPLATE.read_text())
     node=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='run_stage1_map')
     raw=np.array([[[0,127,255]]],dtype=np.uint8)
-    config={'input_binding':{'runtime_input_format':runtime_format}}
+    config={'task':'detection','input_binding':{'runtime_input_format':runtime_format}}
     observed=[]
     class Hailo:
         def infer(self, inputs):

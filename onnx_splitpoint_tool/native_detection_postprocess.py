@@ -942,12 +942,23 @@ _V27922_NATIVE_DETECTION_POSTPROCESS_SHA256 = "e1d454faa35fa1a8d1299ce88a9ca1729
 _V27926_NATIVE_DETECTION_POSTPROCESS_SHA256 = "00f0ad986c8021b864ddff3f7697dfc50e93fda8e9adf4e243fcd2f6b2164eed"
 _V27927_NATIVE_DETECTION_POSTPROCESS_SHA256 = "696b2d657e69df1961a768a33d8f39359efd2f9e506d668657396c547c3d9fd5"
 _V281_NATIVE_DETECTION_POSTPROCESS_SHA256 = "4e65d8b63316d1241e868063d4cf223ca403dab38d292c223fc9ab27fc1e0f0c"
+_REV3_PRE_POSTFLIGHT_NATIVE_DETECTION_POSTPROCESS_SHA256 = "e4999c38f46ed4736c83899d01d2ef220a8fb41b32d19d117d6d8d67fde1995b"
+_REV3_BN6_POSTFLIGHT_NATIVE_DETECTION_POSTPROCESS_SHA256 = "4541be32145e8141820f37f919dfb178e3e5c02deabd0e64ee56885e7cf36c88"
+_REV3_REPORTING_COMPATIBLE_IMPLEMENTATIONS = {
+    _REV3_PRE_POSTFLIGHT_NATIVE_DETECTION_POSTPROCESS_SHA256,
+    _REV3_BN6_POSTFLIGHT_NATIVE_DETECTION_POSTPROCESS_SHA256,
+}
 _IMPLEMENTATION_SHA256_COMPATIBILITY = {
     # Run-39 executed this exact decoder implementation.  The 2.70c change to
     # this same file only teaches the verifier about vendored path aliases; it
     # does not change decode/NMS behavior.  Keep that already-sealed code hash
     # as an explicit, narrow compatibility identity.
     "native_detection_postprocess": {
+        # The frozen Revision-3 implementation already supports v2 sigmoid
+        # arithmetic. Its measured decode/NMS path is unchanged by the later
+        # BN6 postflight-attestation reporting correction.
+        _REV3_PRE_POSTFLIGHT_NATIVE_DETECTION_POSTPROCESS_SHA256,
+        _REV3_BN6_POSTFLIGHT_NATIVE_DETECTION_POSTPROCESS_SHA256,
         "b093bce5da80b3c42e3354358b7c0695300769993b1f4b1b72a8547f5eeb314e",
         # 2.70d differs from 2.70f only in the logical path emitted for
         # byte-identical vendored imports.  Preserve exact verification of
@@ -1444,6 +1455,11 @@ def verify_frozen_postprocess_contract(
                 declared_artifacts = contract.get("implementation_artifacts") or {}
                 if any(
                     (declared_artifacts.get(name) or {}).get("sha256") != current_artifacts[name]["sha256"]
+                    and not (
+                        name == "native_detection_postprocess"
+                        and (declared_artifacts.get(name) or {}).get("sha256")
+                        in _REV3_REPORTING_COMPATIBLE_IMPLEMENTATIONS
+                    )
                     for name in ("native_detection_postprocess", "yolo_harness")
                 ):
                     raise FrozenPostprocessError("yolov7_sigmoid_arithmetic_implementation_mismatch")
@@ -1503,16 +1519,19 @@ def verify_frozen_postprocess_contract(
             _V27926_NATIVE_DETECTION_POSTPROCESS_SHA256,
             _V27927_NATIVE_DETECTION_POSTPROCESS_SHA256,
             _V281_NATIVE_DETECTION_POSTPROCESS_SHA256,
+            *_REV3_REPORTING_COMPATIBLE_IMPLEMENTATIONS,
         }:
             raise FrozenPostprocessError("decoded_pre_nms_implementation_not_supported")
         _verify_decoded_pre_nms_signature(signature, input_hw=input_hw)
         score_policy = contract.get("decoded_pre_nms_score_policy")
         if "decoded_pre_nms_score_policy" in contract:
-            if (implementation not in {current_implementation, _V281_NATIVE_DETECTION_POSTPROCESS_SHA256}
+            if (implementation not in {current_implementation, _V281_NATIVE_DETECTION_POSTPROCESS_SHA256,
+                                       *_REV3_REPORTING_COMPATIBLE_IMPLEMENTATIONS}
                     or score_policy != decoded_pre_nms_score_policy()
                     or signature["tensors"][0]["dtype"] != "float32"):
                 raise FrozenPostprocessError("decoded_pre_nms_score_policy_invalid")
-        elif implementation in {current_implementation, _V281_NATIVE_DETECTION_POSTPROCESS_SHA256} and signature["tensors"][0]["dtype"] == "float32":
+        elif implementation in {current_implementation, _V281_NATIVE_DETECTION_POSTPROCESS_SHA256,
+                               *_REV3_REPORTING_COMPATIBLE_IMPLEMENTATIONS} and signature["tensors"][0]["dtype"] == "float32":
             raise FrozenPostprocessError("decoded_pre_nms_score_policy_missing")
         if outputs is not None:
             _verify_decoded_pre_nms_values(outputs, score_policy=score_policy)
@@ -2579,6 +2598,26 @@ def build_normalized_detection_endpoint_attestation(
         direct_normalization_contract
     )
     result = dict(normalized_result or {})
+    # Preserve the drained-task oracle as evidence outside normalization keys.
+    normalization_result = dict(result)
+    if "postflight_oracle" in normalization_result:
+        oracle = normalization_result.pop("postflight_oracle")
+        if (
+            not isinstance(oracle, Mapping)
+            or set(oracle) != {
+                "status", "observation_relation", "compared_tasks",
+                "per_frame_parity_claimed",
+            }
+            or oracle.get("status") != "passed"
+            or oracle.get("observation_relation")
+            != "last_completed_task_after_drain"
+            or type(oracle.get("compared_tasks")) is not int
+            or oracle.get("compared_tasks") != 1
+            or oracle.get("per_frame_parity_claimed") is not False
+        ):
+            raise FrozenPostprocessError(
+                "direct_normalization_postflight_oracle_invalid"
+            )
     if (
         isinstance(completed_frames, bool)
         or not isinstance(completed_frames, int)
@@ -2627,7 +2666,7 @@ def build_normalized_detection_endpoint_attestation(
     if (
         completed <= 0
         or postprocess_completed != completed
-        or set(result) != (
+        or set(normalization_result) != (
             {
                 "task", "contract_family", "decoder_format",
                 "coordinate_space", "detection_count",

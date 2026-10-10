@@ -117,6 +117,13 @@ def _budget_transaction(method):
     return call
 
 
+def final_cohort_authorization(root, cohort_id):
+    grants = [root.get("authorized_final_cohort"), *root.get("authorized_final_cohorts", [])]
+    matched = [g for g in grants if g and g.get("cohort_id") == cohort_id]
+    _reentry_require(len(matched) <= 1, "duplicate final cohort authorization")
+    return matched[0] if matched else {}
+
+
 def authorize_final_cohort(budget_path, *, cohort_id, parent_run_dir, row_ids, source_id, authorization):
     """Install one explicitly requested final selection in the existing budget.
 
@@ -138,24 +145,30 @@ def authorize_final_cohort(budget_path, *, cohort_id, parent_run_dir, row_ids, s
     with Path(budget_path).open("r+", encoding="utf-8") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         root = json.load(handle)
-        previous = root.get("authorized_final_cohort")
-        if previous is not None:
-            if previous != grant:
-                raise ValueError("a different final cohort is already authorized; no second grant")
+        previous = final_cohort_authorization(root, cohort_id)
+        if previous:
+            if previous != grant:raise ValueError("different authorization for existing final cohort")
             return copy.deepcopy(previous)
-        if not root.get("campaign") or root["sources"][source_id].get("stop_reason"):
+        continuous = root["sources"][source_id].get("continuous_admission")
+        if root.get("authorized_final_cohort") and continuous is None:
+            raise ValueError("a different final cohort is already authorized; no second grant")
+        if not root.get("campaign") or any(campaign_budget_stop_reason(root, r, source_id=source_id, parent_run_dir=parent) for r in rows):
             raise ValueError("final cohort cannot lift a campaign/source STOP")
         for row_id in rows:
-            task = root["tasks"][row_id]
-            if (task["source_id"] != source_id or task.get("stop_reason")
+            task = root["tasks"].setdefault(row_id, {
+                "source_id": source_id, "limits": {"max_chains": 9, "max_retries": 2,
+                "max_transport_failures": root["max_transport_failures"]}, "chains": [], "stop_reason": ""})
+            if (task["source_id"] != source_id
                     or len(task["chains"]) >= task["limits"]["max_chains"]):
                 raise ValueError("final cohort task source/STOP/physical budget is inadmissible")
-            if any(c.get("cohort_id") for c in task["chains"]):
+            if any(c.get("cohort_id") for c in task["chains"]) and continuous is None:
                 raise ValueError("existing final selection must not receive a second authorization")
         if any(not c.get("finished") or (c.get("collector_started") and c.get("source_completion_verified") is not True)
-               for task in root["tasks"].values() if task["source_id"] == source_id for c in task["chains"]):
+               for task in root["tasks"].values() if task["source_id"] == source_id for c in task["chains"]
+               if not any(c == covered["chain"] for covered in _reentry_history(continuous))):
             raise ValueError("final cohort requires resolved original source chains")
-        root["authorized_final_cohort"] = grant
+        if root.get("authorized_final_cohort") is None:root["authorized_final_cohort"] = grant
+        else:root.setdefault("authorized_final_cohorts", []).append(grant)
         handle.seek(0); json.dump(root, handle, indent=2); handle.truncate(); handle.flush(); os.fsync(handle.fileno())
         return copy.deepcopy(grant)
 
@@ -192,6 +205,25 @@ def _budget_parent(environment=None):
 
 def _source_reentry(root, source_id, environment=None):
     source = root["sources"][source_id]
+    continuous = source.get("continuous_admission")
+    if continuous is not None:
+        import hashlib
+        authorization = Path(continuous["authorization_file"])
+        _reentry_require(authorization.is_file() and not authorization.is_symlink()
+                         and hashlib.sha256(authorization.read_bytes()).hexdigest() == continuous["authorization_sha256"],
+                         "continuous campaign authorization changed")
+        _reentry_require(source["stop_reason"] == continuous["original_source_stop_reason"]
+                         and root["max_transport_failures"] == continuous["max_transport_failures"],
+                         "continuous admission changed original source policy")
+        for covered in _reentry_history(continuous):
+            task = root["tasks"][covered["campaign_row"]]
+            _reentry_require(task["source_id"] == source_id and covered["chain"] in task["chains"],
+                             "continuous admission changed historical chain")
+        # This is permission, not a resource lease or proof of the old source
+        # close. Every executing caller still requires its ordinary broker.
+        if (environment or os.environ).get("ONNX_SPLITPOINT_CONTROLLER_RESOURCES") == "required":
+            _budget_parent(environment)
+        return continuous
     grant = source.get("authorized_reentry")
     if grant is None:
         return None
@@ -228,6 +260,11 @@ def _reentry_history(grant):
 
 
 def _historical_task_stop(task, row_id, grant):
+    if grant.get("continuous_campaign"):
+        _reentry_require(row_id in grant["row_ids"], "row outside authorized campaign")
+        _reentry_require(task.get("stop_reason", "") == grant["original_task_stops"].get(row_id, ""),
+                         "original task STOP changed after campaign admission")
+        return ""
     if row_id == grant["campaign_row"] or row_id in grant.get("limit_changes", {}):
         return ""
     return task["stop_reason"]
@@ -257,8 +294,8 @@ def _unstarted_capture_task_stop(root, row_id):
     return task["post_unstarted_capture_stop_reason"]
 
 
-def _derived_unstarted_capture(root, source_id, row_id, environment=None, parent_run_dir=None):
-    """The one expressly scoped accounting release; never a physical reentry."""
+def _validate_unstarted_capture_evidence(root, source_id):
+    """Validate the existing zero-start reconciliation and its original bindings."""
     source = root["sources"][source_id]
     key = source.get("unstarted_capture_reconciliation")
     if not key:
@@ -289,6 +326,25 @@ def _derived_unstarted_capture(root, source_id, row_id, environment=None, parent
     _reentry_require(auth.get("authorized") is True and auth.get("operation_id") == receipt["operation_id"]
                      and auth.get("source_id") == source_id and auth.get("campaign_row") == receipt["campaign_row"],
                      "zero-start authorization scope changed")
+    _reentry_require(auth.get("allowed_parents") == projection["allowed_parents"], "authorized batch scope changed")
+    for evidence_file, digest in receipt["evidence_sha256"].items():
+        path = Path(evidence_file)
+        _reentry_require(path.is_file() and not path.is_symlink()
+                         and hashlib.sha256(path.read_bytes()).hexdigest() == digest,
+                         "bound zero-start original evidence changed")
+    storage = Path(receipt["original_chain"]["run_directory"]) / "collector_storage"
+    _reentry_require(storage.is_dir() and not storage.is_symlink() and not list(storage.iterdir()),
+                     "old zero-start storage changed")
+    return receipt
+
+
+def _derived_unstarted_capture(root, source_id, row_id, environment=None, parent_run_dir=None):
+    """The one expressly scoped accounting release; never a physical reentry."""
+    receipt = _validate_unstarted_capture_evidence(root, source_id)
+    if receipt is None:
+        return None
+    projection = receipt["derived_source_stop"]
+    from ..remote.process_lease import RemoteProcessLeaseJournal
     if not any(row_id in rows for rows in projection["allowed_parents"].values()):
         return None
     if parent_run_dir is None:
@@ -301,15 +357,6 @@ def _derived_unstarted_capture(root, source_id, row_id, environment=None, parent
     rows = projection["allowed_parents"].get(str(Path(parent_run_dir).resolve()), [])
     if row_id not in rows:
         return None
-    _reentry_require(auth.get("allowed_parents") == projection["allowed_parents"], "authorized batch scope changed")
-    for evidence_file, digest in receipt["evidence_sha256"].items():
-        path = Path(evidence_file)
-        _reentry_require(path.is_file() and not path.is_symlink()
-                         and hashlib.sha256(path.read_bytes()).hexdigest() == digest,
-                         "bound zero-start original evidence changed")
-    storage = Path(receipt["original_chain"]["run_directory"]) / "collector_storage"
-    _reentry_require(storage.is_dir() and not storage.is_symlink() and not list(storage.iterdir()),
-                     "old zero-start storage changed")
     for key, source_task in root["tasks"].items():
         if source_task["source_id"] != source_id:
             continue
@@ -362,11 +409,109 @@ def campaign_budget_stop_reason(root, row_id, environment=None, *, source_id=Non
     source_id = task["source_id"] if task else source_id
     _reentry_require(source_id in root["sources"], "campaign admission source missing")
     grant = _source_reentry(root, source_id, environment)
+    if grant is not None and grant.get("continuous_campaign"):
+        _reentry_require(row_id in grant["row_ids"], "row outside authorized campaign")
     if grant is None:
         return str(_campaign_source_stop(root, source_id, row_id, environment, parent_run_dir)
                    or _campaign_task_stop(root, row_id, source_id, environment, parent_run_dir))
     return str(grant["source_stop_reason"] or grant["task_stop_reasons"].get(row_id)
-               or _historical_task_stop(task, row_id, grant))
+               or (_historical_task_stop(task, row_id, grant) if task is not None else ""))
+
+
+def authorize_campaign_source_continuation(budget_path, *, source_id, authorization_file, row_ids):
+    """Extend the existing reconciled source permission for this campaign only.
+
+    Original STOPs, grants, chains, counters and limits remain untouched. This
+    cannot release physical locks, validate a failed acquisition or clear a
+    new source failure; live admission remains the enclosing parent's job.
+    """
+    import hashlib
+    from datetime import datetime, timezone
+    path = Path(budget_path).resolve(strict=True)
+    authorization = Path(authorization_file).resolve(strict=True)
+    rows = sorted(set(row_ids))
+    _reentry_require(path == authorization.parents[2] / "energy/energy_task_budget.json"
+                     and authorization.name == "AUFTRAG_AKTUELL.txt" and rows,
+                     "continuation authorization must belong to this report campaign")
+    text = authorization.read_text(encoding="utf-8")
+    _reentry_require("REVISION 3 TATSÄCHLICH FERTIGSTELLEN" in text
+                     and "durchgehend modellbegleiteter Abschluss" in text,
+                     "continuous user authorization missing")
+    for row_id in rows:
+        identity = json.loads(row_id)
+        _reentry_require(isinstance(identity, list) and len(identity) == 4,
+                         "exact existing campaign rows required")
+    with path.open("r+", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX); root = json.load(handle)
+        _reentry_require(root.get("campaign") is True and source_id in root["sources"], "source outside campaign")
+        import csv
+        report = authorization.parents[2]
+        with (report / "REMEASUREMENT_PLAN.csv").open(newline="") as stream:
+            required = list(csv.DictReader(stream))
+        allowed = {json.dumps([r["backend"], r["model"], r["case"], r["setup"]], separators=(",", ":"))
+                   for r in required if r["regime"] == "native" and r["energy_decision"] == "remeasure_required"}
+        generic = json.loads((report / "current_results/generic_current.json").read_text())["rows"]
+        required_generic = {(r["model"], r["case"], r["setup"]) for r in required
+                            if r["regime"] == "generic_completed" and r["energy_decision"] == "remeasure_required"}
+        allowed.update(json.dumps(["generic_completed:" + r["comparison_backend"], r["model_id"], r["case_id"], r["setup_id"]], separators=(",", ":"))
+                       for r in generic if (r["model_id"], r["case_id"], r["setup_id"]) in required_generic)
+        setups = {json.loads(r)[3] for r, t in root["tasks"].items() if t["source_id"] == source_id}
+        _reentry_require(set(rows).issubset(allowed) and all(json.loads(r)[3] in setups for r in rows),
+                         "continuation rows outside existing source/Delta scope")
+        source = root["sources"][source_id]
+        old = source.get("continuous_admission")
+        if old is not None:
+            _reentry_require(old["row_ids"] == rows and not old["source_stop_reason"]
+                             and not any(old["task_stop_reasons"].values()), "new STOP needs normal recovery/diagnosis")
+            _source_reentry(root, source_id, {})
+            return copy.deepcopy(old)
+        previous = source.get("authorized_reentry")
+        if previous is not None:
+            _reentry_require(previous["recovery_reply"]["recovery"]["status"] == "released"
+                             and not previous["source_stop_reason"], "previous physical recovery not released")
+            row, chain = previous["campaign_row"], previous["chain"]
+            prior = [copy.deepcopy(previous)]
+            basis = {"kind": "released_normal_recovery", "operation_id": previous["capture_request"]["operation_id"],
+                     "historical_source_completion_verified": chain.get("source_completion_verified") is True}
+        elif source.get("unstarted_capture_reconciliation"):
+            key = source.get("unstarted_capture_reconciliation")
+            receipt = _validate_unstarted_capture_evidence(root, source_id)
+            _reentry_require(isinstance(receipt, dict) and receipt.get("source_id") == source_id,
+                             "existing zero-start reconciliation required")
+            row, chain = receipt["campaign_row"], receipt["booked_chain"]
+            _reentry_require(chain.get("collector_started") is False and chain.get("finished") is True
+                             and source.get("post_unstarted_capture_stop_reason") == "",
+                             "zero-start source not reconciled")
+            prior = []
+            basis = {"kind": "existing_zero_start_reconciliation", "receipt": key, "operation_id": receipt["operation_id"],
+                     "historical_source_completion_verified": False, "physical_start": False}
+        else:
+            _reentry_require(not source.get("stop_reason"), "unrecovered source STOP")
+            completed = [(r, c) for r, t in root["tasks"].items() if t["source_id"] == source_id
+                         for c in t["chains"] if c.get("finished") and c.get("valid") and c.get("source_completion_verified")]
+            _reentry_require(bool(completed), "normal completed source basis missing")
+            row, chain = completed[0]; prior = []
+            basis = {"kind": "existing_normally_closed_source", "historical_source_completion_verified": True}
+        for task_row, task in root["tasks"].items():
+            if task["source_id"] != source_id:continue
+            for entry in task["chains"]:
+                _reentry_require(not _chain_owner_alive(entry) or entry.get("finished") is True,
+                                 "active unfinished source chain")
+                if entry.get("finished") is not True or (entry.get("collector_started") and entry.get("source_completion_verified") is not True):
+                    _reentry_require(any(entry == g["chain"] for g in prior) or entry == chain,
+                                     "additional unresolved source chain needs normal recovery")
+        grant = {"continuous_campaign": True, "authorization_file": str(authorization),
+                 "authorization_sha256": hashlib.sha256(authorization.read_bytes()).hexdigest(),
+                 "authorized_at": datetime.now(timezone.utc).isoformat(), "row_ids": rows,
+                 "campaign_row": row, "chain": copy.deepcopy(chain), "previous_grants": prior,
+                 "original_source_stop_reason": source["stop_reason"],
+                 "original_task_stops": {r: root["tasks"].get(r, {}).get("stop_reason", "") for r in rows},
+                 "source_stop_reason": "", "task_stop_reasons": {}, "limit_changes": {},
+                 "max_transport_failures": root["max_transport_failures"], "basis": basis,
+                 "normal_live_ownership_resource_source_admission_required": True}
+        source["continuous_admission"] = grant
+        handle.seek(0);json.dump(root, handle, indent=2);handle.truncate();handle.flush();os.fsync(handle.fileno())
+        return copy.deepcopy(grant)
 
 
 def authorized_campaign_row_policy(budget_path, row_id, environment=None):
@@ -750,6 +895,9 @@ class EnergyTaskBudget:
             if self.data["source_id"] != source_id:
                 raise ValueError("campaign row physical source changed")
             self._reentry = _source_reentry(self.root, source_id, self.environment)
+            if self._reentry is not None and self._reentry.get("continuous_campaign"):
+                _reentry_require(campaign_row in self._reentry["row_ids"], "row outside authorized campaign")
+                _budget_parent(self.environment)
             for task in self.root["tasks"].values():
                 if task["source_id"] == source_id and any(
                         (not c.get("finished") and not _chain_owner_alive(c)) or
@@ -777,7 +925,7 @@ class EnergyTaskBudget:
     def _check_cohort(self):
         if not self.cohort_id:
             return
-        grant = self.root.get("authorized_final_cohort") or {}
+        grant = final_cohort_authorization(self.root, self.cohort_id)
         parent = _budget_parent(self.environment)
         env = {**os.environ, **(self.environment or {})}
         directory = Path(env.get("ONNX_SPLITPOINT_REMOTE_LEASE_JOURNAL_DIR") or "")
@@ -892,7 +1040,7 @@ class EnergyTaskBudget:
         self._check_cohort()
         if self.cohort_id and logical_repeat not in {"repeat:0","repeat:1","repeat:2"}:
             raise ValueError("final cohort repeat outside authorized three slots")
-        if any(not c.get("finished") for c in self.matching_chains(logical_repeat)):
+        if any(not c.get("finished") and not self._covered_chain(c) for c in self.matching_chains(logical_repeat)):
             self.busy_reason = "energy_repeat_busy:" + logical_repeat
             return False
         if self.is_set() or (cancel_event is not None and cancel_event.is_set()):

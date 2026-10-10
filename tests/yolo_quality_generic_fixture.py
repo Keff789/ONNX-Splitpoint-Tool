@@ -119,6 +119,7 @@ def reseal_fixture_binding(bound, source_p2, outputs):
 
 def make_generic_fixture(tmp_path, monkeypatch, row, artifact_inputs=None):
     artifact_inputs=artifact_inputs or {}
+    task = artifact_inputs.get('task', 'detection')
     workflow_runner=artifact_inputs.get('workflow_runner')
     model_id,case_id,setup_id,backend=[row[k] for k in ('model_id','case_id','setup_id','direction')]
     eval_run_id=workflow_runner.run_id if workflow_runner is not None else artifact_inputs['eval_run_id']
@@ -150,12 +151,30 @@ def make_generic_fixture(tmp_path, monkeypatch, row, artifact_inputs=None):
     endpoint_mode=artifact_inputs.get('endpoint_mode','decoded_pre_nms')
     input_hw=tuple(artifact_inputs.get('input_hw',(64,64)))
     original_wh=tuple(artifact_inputs.get('original_wh',(80,40)))
+    if task == 'classification':
+        metadata_path=Path(bound['artifacts']['boundary_metadata']['path'])
+        metadata=json.loads(metadata_path.read_text())
+        metadata['boundary_tensor']['deepx_input_contract'] = {
+            'task':task, 'layout':'HWC', 'dtype':'uint8', 'color_space':'RGB',
+            'preprocess_mode':'resize', 'shape':[*input_hw,3],
+            'normalization':'embedded_dxcom_preprocessing',
+            'classification_preprocessing':'imagenet_mean_std',
+            'embedded_numeric_path':'dxcom_div255_then_build_onnx_imagenet_mean_std'}
+        metadata.pop('metadata_sha256',None)
+        metadata['metadata_sha256']=canonical_json_sha256(metadata)
+        write(metadata_path,metadata)
+        policy=known_native_split_policy(model_id=model_id,case_id=case_id,setup_id=setup_id,backend=backend)
+        selected=materialize_native_split_preselection(policy=policy,part1_artifact=bound['artifacts']['part1_runtime'],
+            boundary_metadata=metadata,boundary_metadata_artifact=_artifact(metadata_path))
+        bound['preselection']=selected;bound['preselection_sha256']=selected['selection_sha256']
+        bound['boundary_contract']={name:selected[name] for name in bound['boundary_contract'] if name in selected}
+        bound['boundary_contract_sha256']=canonical_json_sha256(bound['boundary_contract'])
     signatures=[(name,list(arr.shape)) for name,arr in output_arrays.items()]
     runner, case, full, _ = _load_self_contained_runner(
         tmp_path, model_id=model_id, endpoint_mode=endpoint_mode, outputs=signatures)
     if case.name!=case_id:
         case=case.rename(case.parent/case_id)
-    runner_path = write_runner_skeleton_onnxruntime(str(case), target='cpu')
+    runner_path = write_runner_skeleton_onnxruntime(str(case), target=artifact_inputs.get('runner_target','cpu'))
     runner_spec = importlib.util.spec_from_file_location('augmentation_actual_generated_runner', runner_path)
     runner = importlib.util.module_from_spec(runner_spec)
     monkeypatch.setitem(sys.modules, runner_spec.name, runner)
@@ -190,6 +209,12 @@ def make_generic_fixture(tmp_path, monkeypatch, row, artifact_inputs=None):
     contracts_path = case.parent / 'output_contracts.json'
     contracts = json.loads(contracts_path.read_text())
     contracts['contracts'][0]['backend'] = 'tensorrt'
+    if task == 'classification':
+        contracts['task'] = task
+        contracts['contracts'][0].update(task=task, endpoint_mode='classification_logits',
+            output_format='classification_logits',host_tail_required=False,postprocessing_required=False,
+            requires_external_postprocess=False)
+        write(case.parent/'benchmark_set.json',{'model_name':model_id,'benchmark_task':task})
     contracts_path.write_text(json.dumps(contracts))
     dataset = tmp_path / 'dataset'; dataset.mkdir()
     image = dataset / '00000.png'; Image.new('RGB', original_wh, (42, 96, 128)).save(image)
@@ -206,8 +231,19 @@ def make_generic_fixture(tmp_path, monkeypatch, row, artifact_inputs=None):
     (dataset / 'instances_subset.json').write_text(json.dumps({
         'images':[{'id':index,'file_name':name} for index,name in enumerate(ids)],
         'annotations':[], 'categories':[]}))
+    if task == 'classification':
+        write(dataset/'manifest.json',{'schema':'onnx-splitpoint/classification-validation-manifest',
+            'schema_version':1, 'samples':[{'image':name, 'label_id':0,
+                'source_sha256':'sha256:'+hashlib.sha256(image.read_bytes()).hexdigest(),
+                'source_size_bytes':image.stat().st_size} for name in ids]})
     old_runner = tmp_path / 'original_runner.py'; old_runner.write_text('original closed reference writer\n')
-    quality = runner._build_detection_quality_contract(
+    if task == 'classification':
+        quality = runner._build_classification_quality_contract(model_path=full,validation_source=dataset,
+            rows=[{'image':name,'label_id':0} for name in ids],image_scale='imagenet',letterbox=False,
+            input_hw=input_hw,input_dtype=np.float32,runner_path=old_runner,
+            endpoint_attestor_sha256=runner._endpoint_attestor_sha256)
+    else:
+        quality = runner._build_detection_quality_contract(
         model_path=full, validation_source=dataset, image_ids=ids,
         ground_truth_by_image={image_id:[] for image_id in ids},
         image_scale='norm', letterbox=True, input_hw=input_hw, input_dtype=np.float32,
@@ -216,10 +252,12 @@ def make_generic_fixture(tmp_path, monkeypatch, row, artifact_inputs=None):
         labels=None, runner_path=old_runner, endpoint_attestor_sha256=runner._endpoint_attestor_sha256,
     )
     reference = {'schema':'onnx-splitpoint/task-quality-reference-input','schema_version':1,
-        'task':'detection','pairing_key':'image_id','reference_role':'canonical_cpu_ort',
+        'task':task,'pairing_key':'image_id','reference_role':'canonical_cpu_ort',
         'semantic_reference_only':True,'provenance_required':True,
         'quality_contract':quality,'quality_contract_sha256':quality['quality_contract_sha256'],
-        'records':[{'image_id':key,'reference':[],'ground_truth':[]} for key in ids]}
+        'records':([{'image_id':key,'label_id':0,'label_name':None,
+                     'reference':{'top1_hit':True,'top5_hit':True}} for key in ids]
+                   if task == 'classification' else [{'image_id':key,'reference':[],'ground_truth':[]} for key in ids])}
     encoded = json.dumps(reference,sort_keys=True).encode()
     reference_path = tmp_path / 'original_reference.json'; reference_path.write_bytes(encoded)
     descriptor = {'reference_role':'canonical_cpu_ort','quality_contract':quality,
@@ -305,6 +343,10 @@ def make_generic_fixture(tmp_path, monkeypatch, row, artifact_inputs=None):
                 self.input_names = ['images']
             def infer(self, feeds):
                 calls['part1'] += 1
+                if task == 'classification' and artifact_inputs.get('quality_source_only'):
+                    actual = np.asarray(feeds['images'])
+                    assert actual.dtype == np.uint8 and actual.shape == (*input_hw,3)
+                    assert np.all(actual == np.array([42,96,128],dtype=np.uint8)), 'SDK saw reconstructed or reordered RGB'
                 if not original_feeds: original_feeds.append(feeds['images'].copy())
                 return {'cut':np.zeros(target_shape,dtype=boundary_dtype)}
             def describe_io(self):
@@ -356,7 +398,7 @@ def make_generic_fixture(tmp_path, monkeypatch, row, artifact_inputs=None):
             preset='balanced', image_scale='auto', warmup=0, runs=1, timeout_s=30,
             stage1=stage1_backend, stage2='tensorrt', variants=['composed'], phase_runs=0,
             throughput_frames=0, throughput_warmup_frames=0,
-            validation_images=str(dataset), validation_max_images=5000, benchmark_task='detection',
+            validation_images=str(dataset), validation_max_images=5000, benchmark_task=task,
             task_quality_gate=policy, management_cpu_reference=descriptor,
             quality_evidence_eval_id=eval_run_id, quality_evidence_model_id=model_id,
             quality_evidence_setup_id=setup_id, quality_evidence_source_run_id=run_id,
@@ -369,9 +411,10 @@ def make_generic_fixture(tmp_path, monkeypatch, row, artifact_inputs=None):
     command = invocations[0]
     assert json.loads(command[command.index('--existing-management-cpu-reference-json')+1]) == descriptor
     assert calls['full'] == 0 and calls['part1'] >= 5000 and calls['part2'] >= 5000
-    preprocessing, _ = runner._resolve_image_preprocessing_contract(task='detection', target_hw=input_hw)
+    preprocessing, _ = runner._resolve_image_preprocessing_contract(task=task, target_hw=input_hw)
     expected_feed = runner._load_image_as_nchw(image,target_hw=input_hw,dtype=np.float32,
-                                             scale='norm',letterbox=True,preprocessing_contract=preprocessing)
+                                             scale='imagenet' if task == 'classification' else 'norm',
+                                             letterbox=task != 'classification',preprocessing_contract=preprocessing)
     assert calls['full']==0
     request_path = case / f'results_{run_id}/task_quality_inputs/composed_request.json'
     request = json.loads(request_path.read_text())

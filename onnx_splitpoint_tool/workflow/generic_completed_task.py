@@ -927,17 +927,44 @@ def bind_runtime_source_closure(row: dict, bundle_root: Path, *, runner_root: st
     return row
 
 
+def _restore_energy_execution_environment(command: str, execution_identity: dict) -> str:
+    """Restore the measured environment before executing the unchanged payload."""
+    argv = shlex.split(command)
+    if not any(Path(part).name == 'ssh' for part in argv[:-1]):
+        return command
+    environment = execution_identity.get('environment')
+    if not argv or not isinstance(environment, dict) or not environment:
+        raise ValueError('Measured Generic execution environment missing')
+    unset = []
+    values = []
+    for name, value in sorted(environment.items()):
+        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name):
+            raise ValueError('Measured Generic environment name invalid')
+        if value is None:
+            unset += ['-u', name]
+        elif isinstance(value, str):
+            values.append(name + '=' + value)
+        else:
+            raise ValueError('Measured Generic environment value invalid')
+    argv[-1] = shlex.join(['env', *unset, *values, 'bash', '-c', argv[-1]])
+    return shlex.join(argv)
+
+
 def prepare_energy_case(row: dict, *, performance_result: Path, output: Path,
                         collector_python: str, collector_script: Path,
                         hardware_setups_file: Path, remote_command_prefix: list[str],
                         campaign_budget_file: Path,
-                        duration_s: float = 60.0) -> dict:
+                        duration_s: float = 60.0,
+                        require_environment_observation: bool = False,
+                        environment_run_id: str | None = None) -> dict:
     """Prepare ordinary collector commands; perform no device or sensor action.
 
     The caller supplies the existing resource-owned remote command prefix.
     This function neither adds an SSH transport nor schedules a capture.
     """
     import copy
+    if require_environment_observation and not environment_run_id:
+        raise ValueError('Required Generic environment needs its parent run identity')
     campaign_budget_file = Path(campaign_budget_file).resolve(strict=True)
     if not campaign_budget_file.is_file():
         raise ValueError('Existing shared campaign budget required')
@@ -997,7 +1024,10 @@ def prepare_energy_case(row: dict, *, performance_result: Path, output: Path,
         def command(argv):
             environment = dict(row.get('remote_environment') or {}, PYTHONDONTWRITEBYTECODE='1', ONNX_SPLITPOINT_ARTIFACT_POLICY='cache_verify_only')
             shell = 'cd -- ' + shlex.quote(remote_root) + ' && ' + shlex.join(['env', *[k+'='+v for k,v in sorted(environment.items())], *argv])
-            return shlex.join([*remote_command_prefix, shell]) if remote_command_prefix else shell
+            if remote_command_prefix:
+                return _restore_energy_execution_environment(
+                    shlex.join([*remote_command_prefix, shell]), execution_identity)
+            return shell
         command_file = output / f'workload_{repetition}.txt'; command_file.write_text(command(workload)+'\n')
         preflight_file = output / f'preflight_{repetition}.txt'; preflight_file.write_text(command(preflight)+'\n')
         argv = [collector_python, '-B', str(collector_script), 'measure', '--setup-id', row['setup_id'],
@@ -1011,6 +1041,8 @@ def prepare_energy_case(row: dict, *, performance_result: Path, output: Path,
             '--task-logical-repeat', f'repeat:{repetition - 1}',
             '--run-id', config['execution_id'] + f'-generic-energy-{capture_id}-{repetition}',
             '--require-runtime-work-units', '--require-command-window-alignment']
+        if require_environment_observation:
+            argv += ['--require-environment-observation', '--environment-run-id', environment_run_id]
         calls.append({'repetition_index': repetition, 'argv': argv, 'command_sha256': canonical_hash(argv),
             'workload_command_file': str(command_file), 'workload_command_sha256': file_hash(command_file),
             'preflight_command_file': str(preflight_file), 'preflight_command_sha256': file_hash(preflight_file),
@@ -1018,8 +1050,11 @@ def prepare_energy_case(row: dict, *, performance_result: Path, output: Path,
     plan = {'schema': 'onnx-splitpoint/generic-completed-task-energy-plan/v1', 'identity': row['identity'],
         'config': config, 'config_path': str(config_path), 'config_sha256': file_hash(config_path),
         'remote_config_path': remote_config, 'calls': calls, 'automatic_retry': False,
+        'execution_environment_restored': bool(remote_command_prefix),
         'campaign_budget_file': str(campaign_budget_file), 'campaign_row_id': campaign_row_id,
         'campaign_source_id': source_id,
+        'require_environment_observation': require_environment_observation,
+        'environment_run_id': environment_run_id,
         'campaign_limits': {'max_chains': 9, 'max_retries': 2, 'max_transport_failures': 20},
         'performance_result': str(performance_result), 'performance_result_sha256': file_hash(performance_result),
         'collector_script': str(collector_script), 'collector_script_sha256': file_hash(collector_script),
@@ -1029,7 +1064,9 @@ def prepare_energy_case(row: dict, *, performance_result: Path, output: Path,
     return plan
 
 
-def check_energy_campaign(plan: dict, *, logical_repeat: str | None = None) -> dict:
+def check_energy_campaign(plan: dict, *, logical_repeat: str | None = None,
+                          allow_completed_repeats: bool = False,
+                          parent_run_dir: Path | None = None) -> dict:
     """Read the shared normal budget before transport; never reset its history."""
     import copy
     import fcntl
@@ -1061,16 +1098,22 @@ def check_energy_campaign(plan: dict, *, logical_repeat: str | None = None) -> d
     # can also evaluate a Generic case that has never acquired a chain.
     budget = copy.deepcopy(budget)
     task = budget['tasks'].setdefault(expected_key, {'limits': limits, 'chains': [], 'stop_reason': '', 'source_id': source_id})
-    reason = campaign_budget_stop_reason(budget, expected_key)
+    reason = campaign_budget_stop_reason(budget, expected_key,
+        parent_run_dir=parent_run_dir or plan.get('parent_run_dir'))
     if reason:
         raise RuntimeError('Generic energy shared campaign STOP: ' + reason)
-    if len(task['chains']) >= limits['max_chains']:
+    complete = {c.get('logical_repeat') for c in task['chains']
+                if c.get('finished') is True and c.get('valid') is True
+                and c.get('source_completion_verified') is True}
+    reuse_only = allow_completed_repeats and (logical_repeat in complete if logical_repeat is not None
+                                             else complete >= {'repeat:0', 'repeat:1', 'repeat:2'})
+    if not reuse_only and len(task['chains']) >= limits['max_chains']:
         raise RuntimeError('Generic energy shared case chain limit reached')
     if logical_repeat is not None:
         if logical_repeat not in {'repeat:0', 'repeat:1', 'repeat:2'}:
             raise ValueError('Generic energy logical repeat differs')
         chains = [c for c in task['chains'] if c['logical_repeat'] == logical_repeat]
-        if any(c.get('finished') and c.get('valid') for c in chains) or len(chains) >= 3:
+        if not reuse_only and (any(c.get('finished') and c.get('valid') for c in chains) or len(chains) >= 3):
             raise RuntimeError('Generic energy logical repeat already valid or retry limit reached')
     return {'campaign_row_id': expected_key, 'source_id': source_id, 'begun_chains': len(task['chains'])}
 
@@ -1082,6 +1125,164 @@ def stage_energy_case(plan: dict, transport: SSHTransport) -> dict:
     if file_hash(config_path) != plan['config_sha256']:
         raise ValueError('Generic energy staged configuration changed')
     return upload_new_file(transport, config_path, plan['remote_config_path'], expected_sha=plan['config_sha256'])
+
+
+def _verified_energy_resume_command_context(call: dict, base: dict, config: dict) -> bool:
+    """Accept only the exact measured-environment wrapper around original bytes."""
+    for item in (base,call):
+        argv=item['argv']
+        for kind,flag in (('workload_command','--command-file'),
+                          ('preflight_command','--preflight-command-file')):
+            if (argv.count(flag)!=1 or argv.index(flag)+1>=len(argv)
+                    or argv[argv.index(flag)+1]!=item[kind+'_file']):
+                raise ValueError('Generic actual command file differs from bound metadata')
+    changed = ('workload_command_file', 'workload_command_sha256',
+               'preflight_command_file', 'preflight_command_sha256', 'original_command_files')
+    ignored = ('argv', 'command_sha256')
+    if {k:v for k,v in call.items() if k not in ignored} == {
+            k:v for k,v in base.items() if k not in ignored}:
+        return False
+    if {k:v for k,v in call.items() if k not in (*ignored,*changed)} != {
+            k:v for k,v in base.items() if k not in (*ignored,*changed)}:
+        raise ValueError('Generic resume changed prepared command scope')
+    identity = config['energy_capture']['contract']['execution_identity']
+    expected_original = {}
+    from ..runners.generic_energy import file_hash
+    for kind in ('workload_command', 'preflight_command'):
+        original = Path(base[kind+'_file'])
+        expected_original[kind] = {'path':str(original), 'sha256':base[kind+'_sha256']}
+        actual = Path(call[kind+'_file'])
+        if (file_hash(original) != base[kind+'_sha256']
+                or file_hash(actual) != call[kind+'_sha256']
+                or actual.read_text() != _restore_energy_execution_environment(
+                    original.read_text().strip(), identity)+'\n'):
+            raise ValueError('Generic resume execution environment repair differs')
+    if call.get('original_command_files') != expected_original:
+        raise ValueError('Generic resume original command bindings differ')
+    return True
+
+
+def prepare_energy_resume(plan_path: Path, case: dict, *, output: Path,
+                          previous_plans: list[Path], transport: SSHTransport | None = None,
+                          parent_run_dir: Path | None = None) -> dict:
+    """Keep original inputs and first normally verified sources; relocate missing captures."""
+    import copy
+    from ..runners.generic_energy import canonical_hash, file_hash
+    from ..generic_energy_reporting import import_generic_energy_capture
+    original = read_json(plan_path); selected = {}; selected_calls = {}; rejected = []
+    unchanged = ('identity', 'config', 'config_path', 'config_sha256', 'remote_config_path',
+        'performance_result', 'performance_result_sha256', 'collector_script', 'collector_script_sha256',
+        'hardware_setups_file', 'hardware_setups_file_sha256', 'campaign_budget_file', 'campaign_row_id',
+        'campaign_source_id', 'campaign_limits', 'require_environment_observation', 'environment_run_id')
+    output = Path(output)
+    if output.exists():raise FileExistsError('Generic resume measurement output must be fresh')
+    for previous_path in previous_plans:
+        previous = read_json(previous_path); root = Path(previous_path).parent
+        if any(previous.get(k) != original.get(k) for k in unchanged):
+            raise ValueError('Generic resume changed original scientific inputs or campaign')
+        calls = {c['repetition_index']: c for c in previous['calls']}
+        for call, base in zip(previous['calls'], original['calls']):
+            restored = _verified_energy_resume_command_context(call,base,original['config'])
+            argv = list(call['argv']);expected = list(base['argv'])
+            for flag in (('--out','--run-id','--command-file','--preflight-command-file')
+                         if restored else ('--out','--run-id')):
+                if argv.count(flag) != 1 or expected.count(flag) != 1:
+                    raise ValueError('Generic resume capture output/run identity missing or ambiguous')
+                argv[argv.index(flag)+1] = expected[expected.index(flag)+1]
+            if argv != expected or canonical_hash(call['argv']) != call['command_sha256']:
+                raise ValueError('Generic resume changed actual collector policy')
+        manifest_path = root / 'capture_sources.json'
+        manifest = read_json(manifest_path) if manifest_path.is_file() else {}
+        if manifest and manifest.get('plan_sha256') != file_hash(previous_path):
+            raise ValueError('Generic resume prior capture manifest plan binding differs')
+        descriptors = {d['repetition_index']: d for d in manifest.get('sources', [])}
+        for index in (1, 2, 3):
+            if index in selected:continue
+            call = calls[index]; descriptor = descriptors.get(index)
+            if descriptor is None:
+                receipt_path = root / f'capture_{index}_process_receipt.json'
+                if not receipt_path.is_file():continue
+                receipt = read_json(receipt_path)
+                if receipt.get('returncode') != 0:continue
+                started = read_json(root / f'capture_{index}_started.json')
+                if (started.get('argv') != call['argv'] or
+                        started.get('command_sha256') != call['command_sha256'] or
+                        started.get('plan_sha256') != file_hash(previous_path) or
+                        started.get('aggregate_absent_before_execution') is not True or
+                        any(receipt.get(k) != v for k, v in started.items()) or
+                        not isinstance(started.get('started_ns'), int) or
+                        not isinstance(receipt.get('finished_ns'), int) or
+                        receipt['finished_ns'] <= started['started_ns']):
+                    raise ValueError('Generic resume prior capture start/process binding differs')
+                argv = call['argv']; capture = Path(argv[argv.index('--out') + 1]); raw = capture / 'energy_aggregate.json'
+                aggregate = read_json(raw)
+                records = aggregate.get('runs') or []
+                if len(records) != 1:raise ValueError('Generic resume prior capture record count differs')
+                nonce = records[0].get('preflight_evidence', {}).get('nonce')
+                if not isinstance(nonce, str) or re.fullmatch(r'[0-9a-f]{64}', nonce) is None:
+                    raise ValueError('Generic resume prior capture nonce differs')
+                remote = call['remote_result_directory_template'].replace('__ONNX_SPLITPOINT_PREFLIGHT_NONCE__', nonce)
+                local = root / f'runtime_result_{index}'
+                if (local / 'generic_energy_results.json').is_file():
+                    downloaded = read_json(root / f'capture_{index}_download.json')
+                    if downloaded.get('result_collected') is not True:
+                        raise ValueError('Generic resume prior runtime download was not completed')
+                if not (local / 'generic_energy_results.json').is_file():
+                    if transport is None:
+                        raise RuntimeError('Generic resume requires owned runtime publication recovery')
+                    local = output / f'recovered_runtime_{index}_{file_hash(previous_path)[:12]}'
+                    local.mkdir(parents=True, exist_ok=False)
+                    downloaded = download_case(transport, remote, local, 1, result_filename='generic_energy_results.json')
+                    write_json(local / 'DOWNLOAD.json', downloaded)
+                    if downloaded.get('result_collected') is not True:
+                        raise RuntimeError('Generic resume runtime publication recovery failed')
+                descriptor = {'repetition_index': index, 'command': argv, 'command_sha256': call['command_sha256'],
+                    'output_dir': str(capture), 'raw_aggregate_path': str(raw), 'raw_aggregate_sha256': file_hash(raw),
+                    'process_receipt': receipt, 'runtime_result_path': str(local / 'generic_energy_results.json'),
+                    'runtime_remote_result_path': remote + '/generic_energy_results.json'}
+            if descriptor['command'] != call['argv'] or canonical_hash(call['argv']) != call['command_sha256']:
+                raise ValueError('Generic resume prior descriptor differs from actual prepared command')
+            try:
+                import_generic_energy_capture(descriptor, original['config'],
+                    expected_setup_id=case['setup_id'], expected_campaign=original)
+            except (ValueError, RuntimeError) as exc:
+                rejected.append({'plan':str(previous_path),'repetition_index':index,'error':str(exc)})
+                continue
+            selected[index] = copy.deepcopy(descriptor)
+            selected_calls[index] = copy.deepcopy(call)
+    # A recovered runtime directory may already have created output; all capture
+    # paths below remain fresh and source files retain their original bindings.
+    output.mkdir(parents=True, exist_ok=True)
+    resumed = copy.deepcopy(original)
+    resumed['parent_run_dir'] = str(parent_run_dir) if parent_run_dir is not None else original.get('parent_run_dir')
+    resumed['resume_previous_plans'] = [{'path':str(p),'sha256':file_hash(p)} for p in previous_plans]
+    resumed['resume_reused_sources'] = [selected[i] for i in sorted(selected)]
+    resumed['resume_rejected_sources'] = rejected
+    for position,call in enumerate(resumed['calls']):
+        index = call['repetition_index']
+        if index in selected:
+            resumed['calls'][position] = selected_calls[index]
+        else:
+            argv = call['argv']
+            if not original.get('execution_environment_restored') and not call.get('original_command_files'):
+                originals = {}
+                for kind,flag in (('workload_command','--command-file'),
+                                  ('preflight_command','--preflight-command-file')):
+                    original_file = Path(call[kind+'_file'])
+                    if file_hash(original_file) != call[kind+'_sha256']:
+                        raise ValueError('Generic original command file changed')
+                    originals[kind] = {'path':str(original_file),'sha256':call[kind+'_sha256']}
+                    repaired = output/f'{kind}_{index}.txt'
+                    repaired.write_text(_restore_energy_execution_environment(
+                        original_file.read_text().strip(),original['config']['energy_capture']['contract']['execution_identity'])+'\n')
+                    call[kind+'_file'] = str(repaired);call[kind+'_sha256'] = file_hash(repaired)
+                    argv[argv.index(flag)+1] = str(repaired)
+                call['original_command_files'] = originals
+            argv[argv.index('--out') + 1] = str(output / f'capture_{index}')
+            argv[argv.index('--run-id') + 1] += '-resume-' + output.parent.name
+            call['command_sha256'] = canonical_hash(argv)
+    write_json(output / 'generic_energy_plan.json', resumed)
+    return resumed
 
 
 def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport) -> dict:
@@ -1101,6 +1302,8 @@ def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport) -> dic
         raise RuntimeError('Generic energy requires the normal resource-owned capture parent')
     plan = read_json(plan_path); root = plan_path.parent
     config = plan['config']; validate_config(config)
+    for call in plan['calls']:
+        _verified_energy_resume_command_context(call,call,config)
     if case['identity'] != plan['identity']:
         raise ValueError('Generic energy case differs from prepared identity')
     for path_key in ('config', 'performance_result', 'collector_script', 'hardware_setups_file'):
@@ -1111,12 +1314,21 @@ def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport) -> dic
         raise ValueError('Generic energy requires exactly three prepared collector calls')
     if (root / 'capture_sources.json').exists() or any((root / f'capture_{i}_started.json').exists() for i in (1, 2, 3)):
         raise FileExistsError('Generic energy already attempted; preserve evidence and require explicit reviewed recovery')
-    check_energy_campaign(plan)
-    stage_energy_case(plan, transport)
-    registry = ProcessTreeRegistry(); descriptors = []
+    descriptors = list(plan.get('resume_reused_sources', []))
+    from ..generic_energy_reporting import import_generic_energy_capture
+    for descriptor in descriptors:
+        call = plan['calls'][descriptor['repetition_index'] - 1]
+        if descriptor['command'] != call['argv']:
+            raise ValueError('Generic resumed source differs from actual retained command')
+        import_generic_energy_capture(descriptor, config, expected_setup_id=case['setup_id'], expected_campaign=plan)
+    reused = {d['repetition_index'] for d in descriptors}
+    check_energy_campaign(plan, allow_completed_repeats=bool(descriptors))
+    if len(reused) < 3:stage_energy_case(plan, transport)
+    registry = ProcessTreeRegistry()
     try:
         for call in plan['calls']:
             index = call['repetition_index']; argv = call['argv']
+            if index in reused:continue
             if canonical_hash(argv) != call['command_sha256']:
                 raise ValueError('Generic energy command changed')
             expected_budget = {'--campaign-budget-file': plan['campaign_budget_file'],
@@ -1164,12 +1376,17 @@ def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport) -> dic
                 'output_dir': str(capture_output), 'raw_aggregate_path': str(raw_path), 'raw_aggregate_sha256': file_hash(raw_path),
                 'process_receipt': receipt, 'runtime_result_path': str(local_dir / 'generic_energy_results.json'),
                 'runtime_remote_result_path': remote_dir + '/generic_energy_results.json'}
+            descriptors.append(descriptor)
+            write_json(root / 'capture_sources.json', {'schema': 'onnx-splitpoint/generic-energy-capture-sources/v1',
+                'plan_sha256': file_hash(plan_path), 'sources': sorted(descriptors, key=lambda d:d['repetition_index'])})
+            # Preserve the exact source before a consumer can reject its report.
+            # Explicit resume revalidates these sources through the normal reader;
+            # this manifest records evidence and grants no scientific validity.
             imported = import_generic_energy_capture(descriptor, config, expected_setup_id=case['setup_id'], expected_campaign=plan)
             write_json(root / f'capture_{index}_normal_import.json', imported)
-            descriptors.append(descriptor)
         manifest = root / 'capture_sources.json'
         write_json(manifest, {'schema': 'onnx-splitpoint/generic-energy-capture-sources/v1',
-            'plan_sha256': file_hash(plan_path), 'sources': descriptors})
+            'plan_sha256': file_hash(plan_path), 'sources': sorted(descriptors, key=lambda d:d['repetition_index'])})
         return write_generic_energy_report(plan_path, manifest, case, root / 'reports')
     finally:
         if registry.remaining_owned_count():

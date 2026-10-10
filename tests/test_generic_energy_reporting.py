@@ -54,6 +54,24 @@ def test_real_collector_import_and_generic_marker_join(tmp_path,monkeypatch,caps
     assert raw.read_bytes()==before
 
 
+@pytest.mark.parametrize('fault',[None,'missing_completion','bad_primary_run','wrong_primary_count'])
+def test_partial_caller_managed_primary_is_capture_only(tmp_path,monkeypatch,capsys,fault):
+    d,c,record,a,raw=capture(tmp_path,monkeypatch,capsys)
+    a.update(scientific_primary_energy_status='incomplete_or_unverified',
+             scientific_primary_valid_run_count=1,caller_managed_repeat_capture_complete=True)
+    if fault=='missing_completion':a['caller_managed_repeat_capture_complete']=False
+    if fault=='bad_primary_run':record['scientific_primary_energy_status']='incomplete_or_unverified'
+    if fault=='wrong_primary_count':a['scientific_primary_valid_run_count']=0
+    raw.write_text(json.dumps(a));d['raw_aggregate_sha256']=energy.file_hash(raw);before=raw.read_bytes()
+    if fault:
+        with pytest.raises(ValueError):reporting.import_generic_energy_capture(d,c,expected_setup_id='fixture',expected_campaign=d['expected_campaign'])
+    else:
+        imported=reporting.import_generic_energy_capture(d,c,expected_setup_id='fixture',expected_campaign=d['expected_campaign'])
+        assert imported['normal_import']['energy_aggregate']['scientific_primary_energy_status']=='incomplete_or_unverified'
+        assert imported['normal_import']['energy_aggregate_verified']is True
+    assert raw.read_bytes()==before
+
+
 @pytest.mark.parametrize('change',['nonce','count','window','command','hash','diagnostic','shadow_diagnostic','source','mode'])
 def test_capture_admission_negative_and_shadow_role(tmp_path,monkeypatch,capsys,change):
     d,c,r,a,raw=capture(tmp_path,monkeypatch,capsys)

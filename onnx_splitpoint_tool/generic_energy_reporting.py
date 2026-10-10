@@ -47,7 +47,8 @@ def import_generic_energy_capture(descriptor, config, *, expected_setup_id, expe
     imported = _attach_energy_aggregate({'rc': receipt['returncode']}, shlex.join(command), output,
         expected_runs=1, expected_effective_runs=1, expected_setup_id=expected_setup_id,
         expected_command_contract_sha256=contract['command_contract_sha256'],
-        execution_started_ns=receipt['started_ns'], aggregate_absent_before_execution=receipt['aggregate_absent_before_execution'])
+        execution_started_ns=receipt['started_ns'], aggregate_absent_before_execution=receipt['aggregate_absent_before_execution'],
+        caller_managed_single_capture=True)
     if imported.get('energy_aggregate_verified') is not True:
         raise ValueError('Normal energy collector import rejected: ' + repr(imported.get('energy_aggregate_validation_errors', []) + imported.get('energy_aggregate_completion_errors', [])))
     if imported['energy_aggregate_sha256'] != descriptor['raw_aggregate_sha256']:
