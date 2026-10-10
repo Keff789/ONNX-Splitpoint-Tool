@@ -41,6 +41,9 @@ if str(ROOT) not in sys.path:
 from onnx_splitpoint_tool.resume_preparation import (  # noqa: E402
     prepare_resume_measurement_cohort as _prepare_resume_measurement_cohort,
 )
+from onnx_splitpoint_tool.resume_cohort_preflight import (  # noqa: E402
+    run_resume_cohort_preflight as _run_resume_cohort_preflight,
+)
 from onnx_splitpoint_tool.native_energy_quality_admission import (  # noqa: E402
     verify_sealed_energy_quality_admission as _verify_energy_quality_admission,
     energy_quality_reason_projection,
@@ -60,6 +63,26 @@ class _ManagedEnergyCancelled(BaseException):
         super().__init__(reason)
         self.signum = int(signum or 0)
         self.reason = str(reason or "cancelled")
+
+
+def _prepare_supplement_cohort(rows, *, campaign_cohort='', **kwargs):
+    if not campaign_cohort:
+        return _prepare_resume_measurement_cohort(rows, **kwargs)
+    # A final supplement retains each original command's artifact bindings.
+    # Its shared replay directory is not a common restaging root for those
+    # existing Split/TRT/Vendor artifacts. Verify the complete selection using
+    # the ordinary command preflights; do not broaden roots or restage caches.
+    cohort = _run_resume_cohort_preflight(
+        rows, attempt_dir=kwargs['attempt_dir'], plan_root=kwargs['plan_root'],
+        timeout_s=kwargs['timeout_s'], max_age_s=kwargs['preflight_max_age_s'],
+    )
+    allowed = cohort.get('ok') is True and cohort.get('measurement_wrapper_allowed') is True
+    return {
+        'ok': allowed, 'measurement_wrapper_allowed': allowed,
+        'status': 'ready_for_measurement' if allowed else 'resume_cohort_preflight_failed',
+        'cohort_preflight': cohort, 'remote_mutation_performed': False,
+        'selected_row_count': len(rows),
+    }
 
 
 def _install_managed_cancel_handlers():
@@ -701,6 +724,12 @@ def _command_option(command: str, name: str) -> str:
     return value
 
 
+def _command_cohort(command: str) -> str:
+    parts = shlex.split(command)
+    return _command_option(command,'--campaign-cohort') if any(
+        p=='--campaign-cohort' or p.startswith('--campaign-cohort=') for p in parts) else ''
+
+
 def _replace_command_option(parts: list[str], name: str, value: str) -> list[str]:
     updated = list(parts)
     _old, index, inline = _single_command_option_parts(updated, name)
@@ -1155,6 +1184,7 @@ def _selected_energy_repeat_run_dir(
         campaign_row = _command_option(campaign_command, '--campaign-row-id')
         if (reference.get('budget_file') != str(Path(budget_file).resolve())
             or reference.get('campaign_row') != campaign_row
+            or (reference.get('cohort_id') or '') != _command_cohort(campaign_command)
             or reference.get('logical_repeat') != f'repeat:{logical_index}'):
             fail('energy_repeat_campaign_identity_drift')
         from onnx_splitpoint_tool.energy.task_budget import read_verified_campaign_repeat
@@ -1164,6 +1194,7 @@ def _selected_energy_repeat_run_dir(
             budget = json.load(handle)
         task = (budget.get('tasks') or {}).get(campaign_row) or {}
         chains = [c for c in task.get('chains', []) if c.get('logical_repeat') == f'repeat:{logical_index}'
+                  and (c.get('cohort_id') or '') == _command_cohort(campaign_command)
                   and c.get('finished') is True and c.get('valid') is True]
         if len(chains) != 1 or chains[0].get('run_directory') != reference.get('run_directory'):
             fail('energy_repeat_campaign_accepted_attempt_drift')
@@ -1913,6 +1944,7 @@ _RESUME_ROW_CONTRACT_FIELDS = (
 # use the wider contract above; only rows carrying the explicit P0.3 admission
 # record use this technical subset.
 _P03_RESUME_ROW_CONTRACT_FIELDS = (
+    'campaign_cohort',
     'backend',
     'model',
     'case',
@@ -1941,6 +1973,7 @@ _P03_RESUME_ROW_CONTRACT_FIELDS = (
 )
 
 _RESUME_PLAN_CONTRACT_FIELDS = (
+    'campaign_cohort',
     'schema',
     'schema_version',
     'energy_runs_per_row',
@@ -1969,6 +2002,7 @@ _RESUME_PLAN_CONTRACT_FIELDS = (
 )
 
 _P03_RESUME_PLAN_CONTRACT_FIELDS = (
+    'campaign_cohort',
     'schema',
     'schema_version',
     'energy_runs_per_row',
@@ -2401,6 +2435,8 @@ def _resume_contract_sha256(
                 for field in _P03_RESUME_PLAN_CONTRACT_FIELDS
             },
         }
+        for section in ('row','plan'):
+            if not payload[section].get('campaign_cohort'): payload[section].pop('campaign_cohort',None)
         return _canonical_json_sha256(payload)
     payload = {
         'row': {
@@ -2412,6 +2448,8 @@ def _resume_contract_sha256(
             for field in _RESUME_PLAN_CONTRACT_FIELDS
         },
     }
+    for section in ('row','plan'):
+        if not payload[section].get('campaign_cohort'): payload[section].pop('campaign_cohort',None)
     return _canonical_json_sha256(payload)
 
 
@@ -2461,6 +2499,8 @@ def _managed_energy_invocation_hash(
         for key, value in sorted(vars(namespace).items())
         if key not in excluded
     }
+    for field in ('campaign_cohort','completed_row_validator','require_environment_observation','environment_run_id'):
+        if not options.get(field): options.pop(field,None)
 
     def _bound_file(value: Any) -> dict[str, Any]:
         raw = str(value or '').strip()
@@ -3047,6 +3087,8 @@ def _supplement_previous_results(
         _validate_resume_remote_commands(
             new_row if never_started else old_row, new_row, identity,
         )
+        if _command_cohort(str(old_row.get('measure_command')or'')) != _command_cohort(str(new_row.get('measure_command')or'')):
+            raise ValueError('supplement energy final cohort drift')
         for option in ('--campaign-budget-file', '--campaign-row-id', '--campaign-repeats',
                        '--campaign-max-retries', '--campaign-max-transport-failures'):
             if _command_option(str(old_row.get('measure_command') or ''), option) != _command_option(str(new_row.get('measure_command') or ''), option):
@@ -3152,6 +3194,8 @@ from onnx_splitpoint_tool.energy.task_budget import add_campaign_budget_argument
 def _main_impl() -> int:
     ap=argparse.ArgumentParser(description=__doc__)
     add_campaign_budget_arguments(ap)
+    ap.add_argument('--completed-row-validator',default='',
+                    help='Normal result importer invoked after durable row publication, before another capture.')
     ap.add_argument('--summary', required=True)
     ap.add_argument('--out-dir', required=True)
     ap.add_argument(
@@ -3241,6 +3285,8 @@ def _main_impl() -> int:
         help='Read-only listing of incomplete exact row selectors.',
     )
     ns=ap.parse_args()
+    if (ns.campaign_cohort or ns.require_environment_observation) and not ns.completed_row_validator:
+        ap.error('authorized final cohort requires completed-row validator before any capture')
     if ns.previous_results and (ns.resume_existing or ns.resume_checkpoint or ns.list_resume_candidates):
         ap.error('--previous-results is a separate supplement attempt, not an ordinary checkpoint resume')
     if str(ns.hardware_setups_file or '').strip():
@@ -3553,7 +3599,7 @@ def _main_impl() -> int:
         plan_cmd.append('--final-all-split-energy')
     if ns.validation_summary:
         plan_cmd += ['--validation-summary', ns.validation_summary]
-    if ns.previous_results:
+    if ns.previous_results or ns.campaign_cohort:
         plan_cmd.append('--reuse-campaign-repeats')
     print(f"[native-energy] PLAN_START summary={ns.summary}", flush=True)
     pr=_run(plan_cmd, timeout=120, label="energy_plan")
@@ -4020,8 +4066,9 @@ def _main_impl() -> int:
         preparation_root = resume_attempt_root if ns.resume_existing else out
         preparation_context = canonical_execution_context if ns.resume_existing else _validated_resume_execution_context(plan_payload.get('execution_context'), label='supplement plan')
         preparation_rows = [row for row in rows if _resume_row_identity(row) not in supplement_reused]
-        resume_preparation = _prepare_resume_measurement_cohort(
+        resume_preparation = _prepare_supplement_cohort(
             preparation_rows,
+            campaign_cohort=(ns.campaign_cohort or (ns.environment_run_id if ns.require_environment_observation else '')) if ns.previous_results and not ns.resume_existing else '',
             attempt_dir=preparation_root,
             plan_root=plan_dir,
             summary_path=ns.summary,
@@ -4862,6 +4909,18 @@ def _main_impl() -> int:
                 _write_partial()
                 break
             _write_partial()
+            if (ns.campaign_cohort or ns.require_environment_observation) and not ns.dry_run:
+                completed=[x for x in results if _canonical_energy_identity(x['row'])==_canonical_energy_identity(r)]
+                if len(completed)!=1 or completed[0].get('ok')is not True:
+                    raise RuntimeError('Final cohort point incomplete; no further capture')
+                if not ns.completed_row_validator:
+                    raise RuntimeError('Final cohort has no normal completed-point import gate')
+                validation_command=shlex.split(ns.completed_row_validator)+['--source',str(partial_path)]
+                checked=subprocess.run(validation_command,cwd=_REPO_ROOT if '_REPO_ROOT' in globals() else Path(__file__).resolve().parents[1],
+                                       capture_output=True,text=True,timeout=180)
+                print(checked.stdout,flush=True)
+                if checked.returncode:
+                    raise RuntimeError('Completed-point normal import rejected before next capture: '+checked.stderr[-3000:])
     except (_ManagedEnergyCancelled, BrokenPipeError) as exc:
         cancel_reason = (
             exc.reason

@@ -4183,6 +4183,9 @@ def _energy_repeat_aggregation_eligible(
     must never reject or re-acquire an otherwise valid primary repeat.
     """
     del require_ab
+    if (entry.get("campaign_cohort") or entry.get("environment_observation_required")) and (entry.get("diagnostic_only") is True
+            or (entry.get("environment_observation") or {}).get("ok") is not True):
+        return False
     return bool(
         str(entry.get("final_energy_gate_status") or "fail") == "pass"
         and str(entry.get("scientific_primary_energy_status") or "") == "available"
@@ -5240,8 +5243,7 @@ def run_fast_firmware_measurement(
             break
         recovery_before_start: dict[str, Any] | None = None
         previous_chains = (
-            [chain for chain in _task_budget.data["chains"]
-             if chain["logical_repeat"] == task_logical_repeat]
+            _task_budget.matching_chains(task_logical_repeat)
             if reuse_campaign_repeats and _task_budget is not None else []
         )
         if previous_chains:

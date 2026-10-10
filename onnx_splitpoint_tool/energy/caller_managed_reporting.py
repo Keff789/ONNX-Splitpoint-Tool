@@ -141,7 +141,9 @@ def import_caller_managed_energy_item(item):
     fcntl.flock(stream,fcntl.LOCK_SH);budget=json.load(stream)
    task=budget['tasks'][_option(argv,'--campaign-row-id')]
    if task['limits']!={'max_chains':9,'max_transport_failures':20,'max_retries':2}:raise ValueError('original physical case budget changed')
-   matching=[c for c in task['chains']if c.get('logical_repeat')==source['logical_repeat']and c.get('valid')is True and c.get('finished')is True]
+   cohort=importer._command_cohort(command)
+   if cohort!=(row.get('campaign_cohort')or''):raise ValueError('capture cohort differs from normal source operation')
+   matching=[c for c in task['chains']if c.get('logical_repeat')==source['logical_repeat']and c.get('valid')is True and c.get('finished')is True and (c.get('cohort_id')or'')==cohort]
    if len(matching)!=1 or matching[0]['run_directory']!=str(directory)or matching[0].get('source_completion_verified')is not True:raise ValueError('actual capture differs from accepted original case-budget chain')
    if _sha(raw)!=source['raw_aggregate_sha256']:raise ValueError('raw capture changed during read-only import')
    identities.append((str(output),str(directory.resolve()),nonce,source['logical_repeat'],source['raw_aggregate_sha256']))

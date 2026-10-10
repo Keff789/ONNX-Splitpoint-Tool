@@ -829,6 +829,31 @@ def _normalized_sha256(value: Any) -> str:
     return text.split(":", 1)[1] if text.startswith("sha256:") else text
 
 
+def _cohort_environment_fields(plan, records):
+    """Legacy observations unchanged; final cohorts require bound DUT evidence."""
+    cohort = plan.get('campaign_cohort')
+    if not cohort and not plan.get('environment_observation_required'): return True, {}
+    from .energy.collector import _sha256_path
+    from .energy.environment_observer import validate_environment
+    evidence = []
+    ok = len(records) == 3
+    parent_id = plan.get('environment_observation_run_id')
+    expected_row=json.dumps([plan[k]for k in ('backend','model','case','setup_id')],separators=(',',':'))
+    for record in records:
+        observed = record.get('environment_observation') or {}
+        path = Path(str(observed.get('evidence_path') or ''))
+        try:
+            purpose_ok = record.get('campaign_cohort')==cohort if cohort else (record.get('environment_observation_required') is True and bool(parent_id) and record.get('campaign_run_id')==parent_id and record.get('diagnostic_only') is not True)
+            valid = (purpose_ok and record.get('campaign_row')==expected_row and observed.get('ok') is True
+                     and path.is_file() and _sha256_path(path)==observed.get('evidence_sha256')
+                     and validate_environment(path.parent,record)['ok'])
+        except (OSError,ValueError,KeyError): valid=False
+        ok = ok and valid
+        evidence.append(observed)
+    return ok, {'campaign_cohort':cohort,'environment_observation_status':'pass' if ok else 'fail',
+                'environment_observation_evidence':evidence}
+
+
 def _strict_sha256_token(value: Any) -> str:
     """Canonicalise a bare or singly-prefixed SHA-256 token only."""
     text = str(value or "").strip().lower()
@@ -1494,6 +1519,8 @@ def collect_native_energy(run_dir: str | Path, *, include_partial: bool = False)
         payload = _energy_payload(item)
         aggregate = payload.get("_native_energy_aggregate") if isinstance(payload.get("_native_energy_aggregate"), Mapping) else {}
         repeat_records = _energy_repeat_records(item)
+        environment_records = _energy_aggregate(item).get('runs',[]) if plan.get('campaign_cohort') or plan.get('environment_observation_required') else repeat_records
+        environment_ok, environment_fields = _cohort_environment_fields(plan,environment_records)
         backend = str(plan.get("backend") or "")
         marker_energy_per_work = _num(_first(
             payload.get("avg_energy_per_work_unit_j"),
@@ -2043,6 +2070,7 @@ def collect_native_energy(run_dir: str | Path, *, include_partial: bool = False)
         )
         claim_reasons: list[str] = []
         for condition, reason in (
+            (environment_ok, "required_cohort_environment_evidence_missing_or_invalid"),
             (execution_ok, "measurement_execution_failed"),
             (
                 semantic_claim or screening_policy_nonclaimable,
@@ -2182,6 +2210,7 @@ def collect_native_energy(run_dir: str | Path, *, include_partial: bool = False)
             raw_energy_collected=raw_energy_collected,
         )
         out.append({
+            **environment_fields,
             "backend": backend,
             "model": str(plan.get("model") or ""),
             "task": task,

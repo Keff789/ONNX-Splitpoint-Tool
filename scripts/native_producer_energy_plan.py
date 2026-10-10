@@ -3365,6 +3365,14 @@ def _shell_join_with_fresh_output(argv: list[str]) -> str:
     return " ".join(rendered)
 
 
+def _write_planned_command(path,text,*,cohort=None,encoding='utf-8'):
+    if cohort and path.exists():
+        if path.read_text(encoding=encoding)!=text:
+            raise ValueError('Authorized cohort command changed: '+str(path))
+        return
+    path.write_text(text,encoding=encoding)
+
+
 def _process_local_runtime_environment(
     contract: Mapping[str, Any],
 ) -> dict[str, str]:
@@ -5095,6 +5103,14 @@ def main() -> int:
 
     out = Path(ns.out_dir).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
+    commands_out=out
+    if ns.campaign_cohort:
+        with Path(ns.campaign_budget_file).open()as handle:
+            import fcntl
+            fcntl.flock(handle,fcntl.LOCK_SH);budget=json.load(handle)
+        grant=budget.get('authorized_final_cohort')or{}
+        if grant.get('cohort_id')!=ns.campaign_cohort or grant.get('purpose')!='final':
+            raise ValueError('Final planning requires its already authorized generation')
     markdown = [
         "# Native producer energy plan",
         "",
@@ -5235,8 +5251,8 @@ def main() -> int:
             )
             + "\n"
         )
-        local_contract_file = out / f"{safe_identity}.command_contract.json"
-        local_contract_file.write_text(contract_payload, encoding="utf-8")
+        local_contract_file = commands_out / f"{safe_identity}.command_contract.json"
+        _write_planned_command(local_contract_file,contract_payload,cohort=ns.campaign_cohort)
         contract_payload_sha = _sha256_file(local_contract_file)
         remote_contract_file = (
             f"{fresh_base}/command_contract_{contract_payload_sha}.json"
@@ -5290,8 +5306,8 @@ def main() -> int:
                 f"{env_prefix}"
                 f"cd {shlex.quote(ns.remote_tool_dir)} && {preflight_child}"
             )
-            preflight_shell = out / f"{safe_identity}.preflight.sh"
-            preflight_shell.write_text(
+            preflight_shell = commands_out / f"{safe_identity}.preflight.sh"
+            _write_planned_command(preflight_shell,
                 "#!/usr/bin/env bash\nset -euo pipefail\n"
                 + _lease_aware_ssh_script_body(
                     ssh_target=str(ssh),
@@ -5304,7 +5320,7 @@ def main() -> int:
                         - _REMOTE_LEASE_OUTER_CLEANUP_MARGIN_S,
                     ),
                 ),
-                encoding="utf-8",
+                encoding="utf-8",cohort=ns.campaign_cohort,
             )
             preflight_shell.chmod(0o755)
         report_relative = _fresh_report_relative_path(backend)
@@ -5318,8 +5334,8 @@ def main() -> int:
             f'printf "[native-energy] FRESH_REPORT path=%s sha_contract={contract_sha}\\n" '
             f'"$fresh_output_root/{report_relative}"'
         )
-        shell = out / f"{safe_identity}.sh"
-        shell.write_text(
+        shell = commands_out / f"{safe_identity}.sh"
+        _write_planned_command(shell,
             "#!/usr/bin/env bash\nset -euo pipefail\n"
             + _lease_aware_ssh_script_body(
                 ssh_target=str(ssh),
@@ -5330,7 +5346,7 @@ def main() -> int:
                     float(ns.timeout) - _REMOTE_LEASE_OUTER_CLEANUP_MARGIN_S,
                 ),
             ),
-            encoding="utf-8",
+            encoding="utf-8",cohort=ns.campaign_cohort,
         )
         shell.chmod(0o755)
         energy_cli = _script_path("energy_measurement_cli.py")
@@ -6633,6 +6649,13 @@ def main() -> int:
         "model_hash_map_status": model_hash_map_status,
         "rows": plan,
     }
+    if ns.campaign_cohort:
+        payload["campaign_cohort"] = ns.campaign_cohort
+        for row in payload["rows"]: row["campaign_cohort"] = ns.campaign_cohort
+    if ns.require_environment_observation:
+        for row in payload["rows"]:
+            row["environment_observation_required"] = True
+            row["environment_observation_run_id"] = ns.environment_run_id
     (out / "native_producer_energy_plan.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     (out / "native_producer_energy_plan.md").write_text("\n".join(markdown), encoding="utf-8")
     print(json.dumps({"ok": True, "rows": len(plan), "excluded": len(excluded), "deduplicated": len(deduplicated), "json": str(out / "native_producer_energy_plan.json")}, indent=2))
