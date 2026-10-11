@@ -237,6 +237,66 @@ def _bounded_energy_journal(run, session_id, attempt_dir):
     return directory, {**start, "pid": start["parent_pid"]}, evidence
 
 
+
+def _bounded_generic_capture(run, parent_attempt, evidence):
+    """Use the bound normal plan's actual measurement root, including refreshes."""
+    read = RemoteProcessLeaseJournal._read_json_exact
+    parent = evidence.get(run / "parent_plan.json")
+    _require(parent is not None, "exact Generic prepared parent required")
+    normal_path = (Path(read(parent_attempt / "worker-plan.json")["path"])
+                   if parent_attempt != run else Path(parent["normal_energy_plan"]["path"]))
+    _require(normal_path in evidence and normal_path.name == "generic_energy_plan.json"
+             and normal_path.parent.is_relative_to(run), "bound Generic normal plan missing")
+    return normal_path, evidence[normal_path]
+
+
+def _interrupted_generic_capture(run, parent_attempt, request, reply, evidence):
+    """Bind an owner-lost physical capture; its old source close remains false."""
+    import hashlib, json
+    from ..energy.task_budget import source_completion
+    read = RemoteProcessLeaseJournal._read_json_exact
+    _require(request.get("phase") == "ACQUIRING" and request.get("sequence") == 2
+             and request.get("process_started") is None
+             and reply.get("state") == "STOP" and reply.get("reason") == "controller_resource_owner_lost",
+             "not the exact interrupted Generic acquire stage")
+    normal_path, normal = _bounded_generic_capture(run, parent_attempt, evidence)
+    capture = Path(str(request.get("attempt_dir") or ""))
+    _require(capture.is_absolute() and capture.is_dir() and not capture.is_symlink()
+             and capture.resolve() == capture and capture.name == "run_000"
+             and capture.parent.parent == normal_path.parent,
+             "interrupted capture differs from bound normal measurement root")
+    calls = [call for call in normal.get("calls", [])
+             if capture.parent.name == "capture_" + str(call.get("repetition_index"))]
+    _require(len(calls) == 1, "interrupted capture has no unique original normal call")
+    call = calls[0]; started_path = normal_path.parent / (capture.parent.name + "_started.json")
+    summary_path = capture / "energy_summary.json"; stdout_path = capture / "collector_stdout.log"
+    for path in (started_path, summary_path, stdout_path):
+        _require(path.is_file() and not path.is_symlink(), "original interrupted collector evidence missing")
+    started, summary = read(started_path), read(summary_path)
+    _require(started.get("argv") == call.get("argv")
+             and started.get("command_sha256") == call.get("command_sha256")
+             and started.get("plan_sha256") == hashlib.sha256(normal_path.read_bytes()).hexdigest()
+             and started.get("aggregate_absent_before_execution") is True
+             and type(started.get("started_ns")) is int
+             and summary.get("collector_started") is True
+             and summary.get("collector_pid") == request.get("collector_pid")
+             and summary.get("status") == "collector_running",
+             "interrupted physical collector/start binding differs")
+    text = stdout_path.read_text(encoding="utf-8", errors="replace")
+    completion = source_completion(capture)
+    _require(not completion["verified"] and len(completion["go"]) == 1
+             and len(completion["source_close"]) == 1 and completion["source_close"][0][2] == "false"
+             and "Fast Firmware first packet monotonic_ns=" in text
+             and "Running command: " + str(capture / "energy_command.sh") in text
+             and "Writer Flushed" in text,
+             "physical start/workload/local collector shutdown is not durable")
+    paths = {**evidence, started_path: started, summary_path: summary}
+    hashes = {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+              for path in (*paths, stdout_path)}
+    return {"collector_started": True, "workload_started": True,
+            "source_completion_verified": False, "source_completion": json.loads(json.dumps(completion)),
+            "capture_directory": str(capture), "evidence_sha256": hashes}
+
 def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
                               operator_evidence=None, retry_authorization=None, registry_path=None,
                               rest_attempt_dir=None, bounded_energy_attempt_dir=None):
@@ -277,20 +337,26 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
              and config.get("run_dir") == str(run), "controller session binding mismatch")
     if rest_evidence:
         _require(config.get("parent_pid") == rest_start["pid"], "rest parent PID binding mismatch")
+    interrupted = bool(rest_evidence.get(run / "parent_plan.json") is not None
+                       and request.get("phase") == "ACQUIRING"
+                       and reply.get("reason") == "controller_resource_owner_lost")
+    interrupted_proof = (_interrupted_generic_capture(run, Path(bounded_energy_attempt_dir).resolve(),
+                         request, reply, rest_evidence) if interrupted else None)
     _require(_bound(request, identity, identity) and request.get("setup_id") == setup_id
              and request.get("purpose", "capture") == "capture"
-             and request.get("phase") == "FINALIZING" and request.get("process_started") is True
+             and (interrupted or (request.get("phase") == "FINALIZING" and request.get("process_started") is True))
              and re.fullmatch(r"[0-9a-f]{32}", str(request.get("token") or "")),
              "capture operation binding mismatch")
     _require(_bound(reply, request, (*identity, "token")) and reply.get("state") == "STOP"
-             and reply.get("reason") == "campaign_source_completion_unresolved",
+             and (interrupted or reply.get("reason") == "campaign_source_completion_unresolved"),
              "only the exact source-completion STOP is recoverable")
     attempt = Path(str(request.get("attempt_dir") or ""))
     _require(attempt.is_absolute() and not attempt.is_symlink()
              and attempt.resolve().is_relative_to(run), "capture attempt outside run")
     generic_plan = rest_evidence.get(run / "parent_plan.json")
     if generic_plan is not None:
-        _require(attempt.resolve().is_relative_to(Path(bounded_energy_attempt_dir).resolve() / "measurement")
+        normal_path, _ = _bounded_generic_capture(run, Path(bounded_energy_attempt_dir).resolve(), rest_evidence)
+        _require(attempt.resolve().is_relative_to(normal_path.parent)
                  and request.get("setup_id") == generic_plan["selected_identity"]["setup_id"],
                  "Generic capture differs from its exact parent attempt")
     resources = sorted(r for r in config.get("setups", {}).get(setup_id, [])
@@ -356,7 +422,7 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
                      and fence.get("schema") == "onnx-splitpoint/evaluation-run-lock-quarantine"
                      and fence.get("run_dir") == str(lease.run_dir)
                      and fence.get("run_id") == lease.run_dir.name
-                     and payload.get("reason") == "campaign_source_completion_unresolved"
+                     and payload.get("reason") == reply["reason"]
                      and payload.get("source_completion_unproven") is True
                      and payload.get("resource_request") == request,
                      "resource quarantine does not belong to exact stopped capture")
@@ -400,10 +466,14 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
             return {"status": "already_released", **identity, "resources": resources,
                     "measurements_started": 0}
 
-        cleanup = read(attempt / "collector_stdout.log.cleanup.json")
-        _require(cleanup.get("owned_tree_quiescent") is True and cleanup.get("process_started") is True
-                 and _bound(cleanup, request, ("collector_pid", "collector_start_ticks")),
-                 "exact durable collector cleanup is missing")
+        if not interrupted:
+            cleanup = read(attempt / "collector_stdout.log.cleanup.json")
+            _require(cleanup.get("owned_tree_quiescent") is True and cleanup.get("process_started") is True
+                     and _bound(cleanup, request, ("collector_pid", "collector_start_ticks")),
+                     "exact durable collector cleanup is missing")
+        # Owner-lost cancellation predates the old sidecar writer. The NEW
+        # receipt binds terminal parent own0, original flushed collector output
+        # and the fresh owner observation below; no old cleanup proof is added.
         if bounded_energy_attempt_dir is None:
             manifest = read(run / "run_manifest.json")
             _require(manifest.get("run_id") == run.name and (rest_evidence or manifest.get("status") in
@@ -425,10 +495,15 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
                  and read(reply_path) == reply and read(config_path) == config
                  and _rest_evidence_unchanged(rest_evidence),
                  "registry or ownership changed during observation")
+        if interrupted:
+            _require(_interrupted_generic_capture(run, Path(bounded_energy_attempt_dir).resolve(),
+                     request, reply, rest_evidence) == interrupted_proof, "interrupted original capture changed")
         recovery = {**identity, "resources": resources, evidence_key: evidence,
                     "original_resources": originals, "ownership_observation": observed,
                     "status": "releasing", "started_at": datetime.now(timezone.utc).isoformat(),
                     "measurements_started": 0, "old_attempt_validated": False}
+        if interrupted:
+            recovery["interrupted_capture"] = interrupted_proof
         # Commit original evidence and the explicit release ground to the STOP reply;
         # never rewrite its state/reason, old attempt, result or budget.
         mutation_started = True

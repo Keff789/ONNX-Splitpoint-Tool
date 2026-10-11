@@ -1289,7 +1289,7 @@ def prepare_energy_resume(plan_path: Path, case: dict, *, output: Path,
     return resumed
 
 
-def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport) -> dict:
+def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport, *, performance_admission=None) -> dict:
     """Run prepared ordinary collector commands under the caller's ownership.
 
     This is the same transport/process/collector stack as normal measurements.
@@ -1411,7 +1411,8 @@ def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport) -> dic
         manifest = root / 'capture_sources.json'
         write_json(manifest, {'schema': 'onnx-splitpoint/generic-energy-capture-sources/v1',
             'plan_sha256': file_hash(plan_path), 'sources': sorted(descriptors, key=lambda d:d['repetition_index'])})
-        return write_generic_energy_report(plan_path, manifest, case, root / 'reports')
+        return write_generic_energy_report(plan_path, manifest, case, root / 'reports',
+            performance_admission=performance_admission)
     finally:
         if registry.remaining_owned_count():
             registry.terminate_all(grace_s=3)

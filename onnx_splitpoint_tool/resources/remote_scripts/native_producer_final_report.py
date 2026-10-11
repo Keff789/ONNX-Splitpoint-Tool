@@ -2927,6 +2927,53 @@ def _measurement_identity(row: dict[str, Any]) -> tuple[str, ...]:
     )
 
 
+def _rebuild_verified_materialization_completion(arguments, original_execution):
+    """Derive report provenance with the verified measured implementation intact."""
+    from onnx_splitpoint_tool import native_detection_postprocess as post
+    original = post.verify_detection_completion_execution_contract(original_execution)
+    rebuilt = post.build_detection_completion_execution_contract(**arguments)
+    old_processor = original['processor_contract']
+    processor = rebuilt['processor_contract']
+    if (old_processor.get('schema') != 'onnx-splitpoint/attested-decoded-nms-materialization'
+            or processor.get('schema') != old_processor['schema']):
+        raise post.FrozenPostprocessError('report_materialization_completion_schema_differs')
+    saved_artifacts = old_processor['implementation_artifacts']
+    current_artifacts = processor['implementation_artifacts']
+    artifact = 'native_detection_postprocess'
+    if ({k:v for k,v in saved_artifacts.items() if k != artifact} !=
+            {k:v for k,v in current_artifacts.items() if k != artifact}
+            or {k:v for k,v in saved_artifacts[artifact].items() if k != 'sha256'} !=
+            {k:v for k,v in current_artifacts[artifact].items() if k != 'sha256'}):
+        raise post.FrozenPostprocessError('report_materialization_implementation_scope_differs')
+    # Original verification above accepts only Product-recognized frozen
+    # implementations. Recompute dependent seals with the existing pure
+    # Product functions; the caller still requires exact original reconstruction
+    # before it normalizes any repNN declaration provenance.
+    processor['implementation_artifacts'] = json.loads(json.dumps(saved_artifacts))
+    processor.pop('contract_sha256')
+    processor['contract_sha256'] = post.canonical_json_sha256(processor)
+    completed = post._build_materialized_detection_endpoint_contract(processor)
+    comparison = post._build_materialized_comparison_endpoint_contract(processor)
+    rebuilt['completed_endpoint_contract'] = completed
+    rebuilt['comparison_endpoint_contract'] = comparison
+    layers = {
+        'implementation': post._completion_hash_layer('implementation',
+            post._completion_implementation_identity(processor)),
+        'schema': post._completion_hash_layer('schema', post._completion_schema_identity(
+            source_endpoint=rebuilt['source_endpoint'], completion_mode=rebuilt['completion_mode'],
+            processor_contract=processor, yolov7_head_mapping=rebuilt['yolov7_head_mapping'])),
+        'relation': post._completion_hash_layer('relation', post._completion_relation_identity(
+            source_endpoint=rebuilt['source_endpoint'], completed_endpoint=completed,
+            comparison_endpoint=comparison)),
+    }
+    rebuilt['hash_layers'] = layers
+    for name, layer in layers.items():
+        rebuilt[name + '_sha256'] = layer['sha256']
+    rebuilt.pop('contract_sha256')
+    rebuilt['contract_sha256'] = post.canonical_json_sha256(rebuilt)
+    return post.verify_detection_completion_execution_contract(rebuilt)
+
+
 def _verified_repetition_operating_point(
     row: Mapping[str, Any], *, require_observation: bool = False,
 ) -> dict[str, Any]:
@@ -3039,7 +3086,7 @@ def _verified_repetition_operating_point(
                                          'pad_value': geometry['pad_value']},
                              confidence_threshold=processor['confidence_threshold'],
                              iou_threshold=processor['iou_threshold'], max_detections=processor['max_detections'])
-            if build_detection_completion_execution_contract(**arguments) != verified_execution:
+            if _rebuild_verified_materialization_completion(arguments, verified_execution) != verified_execution:
                 return {}
             for item in (raw, row):
                 for field, expected in (
@@ -3051,7 +3098,7 @@ def _verified_repetition_operating_point(
                         return {}
             attestation['declaration_source'] = location(original_source)
             attestation['declared_contract']['declaration_source'] = location(original_source)
-            normalized_completion = build_detection_completion_execution_contract(**arguments)
+            normalized_completion = _rebuild_verified_materialization_completion(arguments, verified_execution)
         except (ValueError, TypeError, KeyError, OSError, FrozenPostprocessError):
             return {}
     body = json.loads(json.dumps(command))

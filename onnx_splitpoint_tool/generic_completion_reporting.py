@@ -567,7 +567,8 @@ def write_completion_reports(plan: Mapping[str, Any], results_dir: str | Path, o
 
 
 def write_generic_energy_report(plan_path: str | Path, captures_path: str | Path,
-                                case: Mapping[str, Any], output_dir: str | Path) -> dict[str, Any]:
+                                case: Mapping[str, Any], output_dir: str | Path, *,
+                                performance_admission=None) -> dict[str, Any]:
     """Import explicit normal energy captures without changing FPS reports."""
     from .generic_energy_reporting import collect_generic_energy_case
     plan = json.loads(Path(plan_path).read_text(encoding='utf-8'))
@@ -576,7 +577,8 @@ def write_generic_energy_report(plan_path: str | Path, captures_path: str | Path
         raise ValueError('Generic energy capture manifest schema mismatch')
     if captures.get('plan_sha256') != __import__('hashlib').sha256(Path(plan_path).read_bytes()).hexdigest():
         raise ValueError('Generic energy capture plan source changed')
-    observation = collect_generic_energy_case(plan, captures.get('sources') or [], case)
+    observation = collect_generic_energy_case(plan, captures.get('sources') or [], case,
+        performance_admission=performance_admission)
     out = Path(output_dir); out.mkdir(parents=True, exist_ok=True)
     path = out / 'generic_completed_task_energy.json'
     if path.exists():

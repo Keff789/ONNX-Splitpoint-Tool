@@ -844,8 +844,17 @@ def main(argv=None) -> int:
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--plan-only", action="store_true", help="Read-only local admission and inventory; no hardware or compiler calls")
     parser.add_argument("--output-dir", type=Path, help="Required for --plan-only; must be outside the original run")
+    parser.add_argument("--import-only", action="store_true", help="Project a saved energy parent result without any new capture")
+    parser.add_argument("--resume", action="store_true", help="Continue only missing repeats of a saved energy parent")
+    parser.add_argument("--recovery-authorization", type=Path, help="Existing explicit normal resource recovery authorization")
     args = parser.parse_args(argv)
     run_dir = args.run_dir.expanduser().resolve(strict=True)
+    from .energy_parent_flow import is_energy_parent, run_parent
+    if is_energy_parent(run_dir):
+        return run_parent(run_dir,plan_only=args.plan_only,output_dir=args.output_dir,
+            import_only=args.import_only,resume=args.resume,recovery_authorization=args.recovery_authorization)
+    if args.import_only or args.resume or args.recovery_authorization:
+        parser.error("Energy-parent controls require an existing prepared energy parent")
     from .runner import EvaluationWorkflowRunner
     runner = EvaluationWorkflowRunner(
         options_from_run(run_dir), log=lambda message: print(message, flush=True),

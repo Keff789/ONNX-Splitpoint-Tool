@@ -942,14 +942,18 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
     request, reply = capture_request, recovery_reply
     recovery = reply.get("recovery") or {}
     identity = ("run_id", "session_id", "operation_id")
+    interrupted = (request.get("phase") == "ACQUIRING" and request.get("sequence") == 2
+                   and request.get("process_started") is None
+                   and reply.get("reason") == "controller_resource_owner_lost"
+                   and isinstance(recovery.get("interrupted_capture"), dict))
     _reentry_require(all(request.get(k) and reply.get(k) == request[k]
                          and recovery.get(k) == request[k] for k in identity)
                      and reply.get("token") == request.get("token")
                      and re.fullmatch(r"[0-9a-f]{32}", str(request.get("token") or ""))
                      and request.get("purpose", "capture") == "capture"
-                     and request.get("phase") == "FINALIZING" and request.get("process_started") is True
+                     and (interrupted or (request.get("phase") == "FINALIZING" and request.get("process_started") is True))
                      and reply.get("state") == "STOP"
-                     and reply.get("reason") == "campaign_source_completion_unresolved"
+                     and (interrupted or reply.get("reason") == "campaign_source_completion_unresolved")
                      and recovery.get("status") == "released"
                      and recovery.get("old_attempt_validated") is False
                      and recovery.get("measurements_started") == 0
@@ -984,7 +988,23 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
         state = root["sources"][source_id]
         continuous = state.get("continuous_admission")
         if continuous is not None:
-            _source_reentry(root, source_id, {})
+            if interrupted:
+                _reentry_require(state["stop_reason"] == "campaign_source_interrupted_chain_unresolved",
+                                 "owner-lost recovery cannot cover a different source STOP")
+                key = request["session_id"] + "/" + request["operation_id"]
+                accounting = root.get("failure_reconciliations", {}).get(key) or {}
+                _reentry_require(accounting.get("original_stop") == {k:v for k,v in reply.items() if k != "recovery"}
+                                 and accounting.get("interrupted_capture") == recovery["interrupted_capture"]
+                                 and accounting.get("booked_chain", {}).get("source_completion_verified") is False,
+                                 "exact interrupted physical accounting receipt missing")
+                # Validate the old authority against its preserved original raw
+                # STOP. Only this receipt-bound new STOP is carried into the
+                # next grant; the raw source and previous grant remain history.
+                historical = copy.deepcopy(root)
+                historical["sources"][source_id]["stop_reason"] = continuous["original_source_stop_reason"]
+                _source_reentry(historical, source_id, {})
+            else:
+                _source_reentry(root, source_id, {})
             _reentry_require(authorized_limits is None, "continuous recovery cannot change limits")
             if continuous.get("capture_request") == request:
                 _reentry_require(continuous.get("recovery_reply") == reply
@@ -1004,8 +1024,9 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
                              and chain.get("finished") is True and chain.get("valid") is False
                              and chain.get("collector_started") is True and chain.get("workload_started") is True
                              and chain.get("source_completion_verified") is False and bool(chain.get("transport_reasons"))
-                             and continuous["source_stop_reason"] == reply["reason"]
-                             and continuous["task_stop_reasons"] == {row: reply["reason"]},
+                             and continuous["source_stop_reason"] == ("campaign_source_interrupted_chain_unresolved" if interrupted else reply["reason"])
+                             and continuous["task_stop_reasons"] == {row: continuous["source_stop_reason"]}
+                             and (not interrupted or accounting.get("booked_chain") == chain),
                              "released recovery does not cover the exact current continuous STOP")
             import yaml
             profile = yaml.safe_load(Path(authorization["new_workflow_profile"]).read_text())
@@ -1017,20 +1038,25 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
                                  and capture.resolve().is_relative_to(parent_root),
                                  "Generic recovery capture outside its exact parent")
                 parts = capture.relative_to(parent_root).parts
-                if parts and parts[0] == "measurement":
+                config_path = parent_root / "parent_plan.json"
+                normal_root = Path(json.loads(config_path.read_text())["normal_energy_plan"]["path"]).parent
+                if capture.resolve().is_relative_to(normal_root):
                     parent_attempt = parent_root
                 elif len(parts) >= 4 and parts[0] == "resume_attempts" and parts[2] == "measurement" \
                         and re.fullmatch(r"[0-9a-f]{32}", parts[1]):
                     parent_attempt = parent_root / "resume_attempts" / parts[1]
                 else:
                     raise ValueError("Generic recovery capture attempt layout mismatch")
-                from ..remote.resource_recovery import _bounded_energy_journal
+                from ..remote.resource_recovery import _bounded_energy_journal, _interrupted_generic_capture
                 from ..remote.process_lease import RemoteProcessLeaseJournal
-                journal, _, _ = _bounded_energy_journal(parent_root, request["session_id"], parent_attempt)
+                journal, _, terminal = _bounded_energy_journal(parent_root, request["session_id"], parent_attempt)
                 read_exact = RemoteProcessLeaseJournal._read_json_exact
                 _reentry_require(read_exact(journal / (request["operation_id"] + ".resource-request.json")) == request
                                  and read_exact(journal / (request["operation_id"] + ".resource-reply.json")) == reply,
                                  "Generic released journal differs from its exact budget handoff")
+                if interrupted:
+                    _reentry_require(_interrupted_generic_capture(parent_root, parent_attempt, request, reply, terminal)
+                                     == recovery["interrupted_capture"], "interrupted physical original evidence drift")
             _reentry_require(profile.get("run_dir") == str(parent_root)
                              and profile.get("historical_operation") == request["operation_id"]
                              and profile.get("source") == source_id and profile.get("setup_id") == request["setup_id"]
@@ -1050,12 +1076,14 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
             grant.update(campaign_row=row, chain=copy.deepcopy(chain), previous_grants=[copy.deepcopy(continuous)],
                          capture_request=copy.deepcopy(request), recovery_reply=copy.deepcopy(reply),
                          retry_authorization=authorization, new_parent=new_parent,
+                         original_source_stop_reason=state["stop_reason"],
                          source_stop_reason="", task_stop_reasons={},
                          basis={"kind": "released_normal_recovery", "operation_id": request["operation_id"],
                                 "historical_source_completion_verified": False})
             state["continuous_admission"] = copy.deepcopy(grant)
             handle.seek(0); json.dump(root, handle, indent=2); handle.truncate(); handle.flush(); os.fsync(handle.fileno())
             return copy.deepcopy(grant)
+        _reentry_require(not interrupted, "owner-lost continuation requires existing continuous authority")
         previous = state.get("authorized_reentry")
         if previous is not None and previous["capture_request"] == request:
             _reentry_require(previous["new_parent"] == new_parent

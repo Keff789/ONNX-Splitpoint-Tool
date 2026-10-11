@@ -1,0 +1,307 @@
+"""Continue one existing prepared energy parent through its normal product APIs.
+
+Parent plans, campaign budgets, resource journals and bound import commands are
+existing inputs. This module neither creates a campaign nor selects new cases.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import time
+import signal
+import threading
+from types import SimpleNamespace
+
+from .artifacts import write_json
+
+GENERIC_SCHEMA='revision3/generic-energy-parent/v1'
+NATIVE_SCHEMA='yolov7-full-fix/bounded-energy-parent-v1'
+PRODUCT_SOURCES=('generic_energy_parent.py','native_energy_parent.py','energy_resume.py','energy_parent_flow.py')
+
+
+def read(path):
+    path=Path(path)
+    if not path.is_file() or path.is_symlink():raise ValueError('regular parent evidence required: '+str(path))
+    return json.loads(path.read_text())
+
+
+def sha(path):
+    digest=hashlib.sha256()
+    with Path(path).open('rb') as stream:
+        for block in iter(lambda:stream.read(1024*1024),b''):digest.update(block)
+    return digest.hexdigest()
+
+
+def parent_plan_path(run):
+    run=Path(run).expanduser().resolve(strict=True)
+    paths=[p for p in (run/'parent_plan.json',run/'energy_parent_plan.json') if p.is_file()]
+    if len(paths)!=1:raise ValueError('one exact saved energy parent plan required')
+    p=paths[0];config=read(p)
+    expected=GENERIC_SCHEMA if p.name=='parent_plan.json' else NATIVE_SCHEMA
+    if config.get('schema')!=expected or config.get('run_dir')!=str(run):
+        raise ValueError('saved energy parent schema or run identity differs')
+    return p,config
+
+
+def is_energy_parent(run):
+    run=Path(run)
+    return (run/'parent_plan.json').is_file() or (run/'energy_parent_plan.json').is_file()
+
+
+def parent_context(run=None, *, plan_path=None, adapter_path=None):
+    """Resolve report data from the saved budget, code from the actual plan."""
+    import onnx_splitpoint_tool
+    controller=Path(onnx_splitpoint_tool.__file__).resolve().parent.parent
+    config=None
+    if run is not None:
+        run=Path(run).expanduser().resolve()
+        if is_energy_parent(run):
+            _,config=parent_plan_path(run)
+            budget=Path(config['campaign_budget_file']).resolve(strict=True)
+            root=budget.parent.parent
+            generic=config['schema']==GENERIC_SCHEMA
+            expected=root/'energy'/('generic_completed' if generic else '')/run.name
+            if run!=expected:raise ValueError('prepared parent is outside its exact shared-budget layout')
+            if generic:
+                binding=config['normal_energy_plan'];normal_path=Path(binding['path'])
+                if sha(normal_path)!=binding['sha256']:raise ValueError('saved normal energy plan changed')
+                normal=read(normal_path)
+                if normal['campaign_budget_file']!=str(budget) or normal['identity']!=config['selected_identity']:
+                    raise ValueError('normal energy plan differs from parent scope')
+                script=Path(normal['collector_script']).resolve(strict=True)
+                if script.name!='energy_measurement_cli.py' or script.parent.name!='scripts':
+                    raise ValueError('normal collector source root unavailable')
+                controller=script.parent.parent
+                original_adapter=Path(config['adapter']['path']).resolve(strict=True)
+            else:
+                # Native preparation stores the actual normal planner argv.
+                check=Path(config.get('plancheck_root') or run/'plancheck')/'native_producer_energy_results.json'
+                if check.is_file():
+                    argv=(read(check).get('plan') or {}).get('cmd') or []
+                    scripts=[Path(a) for a in argv if isinstance(a,str) and Path(a).name=='native_producer_energy_plan.py']
+                    if len(scripts)==1 and scripts[0].is_absolute() and scripts[0].is_file():
+                        controller=scripts[0].resolve().parent.parent
+                original_adapter=root/'operations/energy_parent_qualified.py'
+        else:
+            # Compatibility preparation derives its report root from the
+            # requested normal parent location, never an absolute campaign.
+            if run.parent.name=='generic_completed' and run.parent.parent.name=='energy':
+                root=run.parents[2];generic=True
+            elif run.parent.name=='energy':root=run.parent.parent;generic=False
+            else:raise ValueError('normal parent preparation layout required')
+            budget=root/'energy/energy_task_budget.json'
+            original_adapter=root/('operations/generic_energy_parent/adapter.py' if generic else 'operations/energy_parent_qualified.py')
+    elif plan_path is not None:
+        plan=read(plan_path);budget=Path(plan['shared_energy_campaign_budget']).resolve(strict=True)
+        root=budget.parent.parent;original_adapter=root/'operations/generic_energy_parent/adapter.py'
+    elif adapter_path is not None:
+        original_adapter=Path(adapter_path).resolve(strict=True)
+        root=original_adapter.parents[2] if original_adapter.parent.name=='generic_energy_parent' else original_adapter.parents[1]
+        budget=root/'energy/energy_task_budget.json'
+    else:raise ValueError('saved parent or performance plan required')
+    if budget.name!='energy_task_budget.json' or budget.parent.name!='energy':
+        raise ValueError('normal shared campaign budget layout required')
+    if adapter_path is not None and Path(adapter_path).resolve()!=original_adapter.resolve():
+        raise ValueError('compatibility entry differs from its saved parent adapter')
+    return {'report_root':root,'controller_root':controller,'budget':budget,
+            'adapter':original_adapter.resolve(),'config':config}
+
+
+
+def verify_product_sources(controller_root, bindings):
+    """The installed implementation must match its ordinary controller bindings."""
+    import onnx_splitpoint_tool
+    installed=Path(onnx_splitpoint_tool.__file__).resolve().parent.parent
+    source_hashes=({item['path']:item['sha256'] for item in bindings}
+                   if isinstance(bindings,list) else {str(Path(controller_root)/key):value for key,value in bindings.items()})
+    for name in PRODUCT_SOURCES:
+        relative=Path('onnx_splitpoint_tool/workflow')/name
+        path=Path(controller_root)/relative
+        expected=source_hashes.get(str(path))
+        if not expected or sha(path)!=expected or sha(installed/relative)!=expected:
+            raise ValueError('actual installed product controller source is not normally bound: '+name)
+    for path,expected in source_hashes.items():
+        try:relative=Path(path).relative_to(controller_root)
+        except ValueError:continue
+        if relative.parts and relative.parts[0]=='onnx_splitpoint_tool' and sha(installed/relative)!=expected:
+            raise ValueError('actual installed controller differs from its normal binding: '+str(relative))
+    for name in ('native_producer_final_report.py','native_producer_energy_plan.py','run_native_producer_energy_from_summary.py'):
+        script=Path(controller_root)/'scripts'/name
+        expected=source_hashes.get(str(script))
+        if expected and sha(installed/'onnx_splitpoint_tool/resources/remote_scripts'/name)!=expected:
+            raise ValueError('installed normal controller reader differs from its original script binding: '+name)
+
+def latest_attempt(run):
+    attempts=[p for p in [run,*run.glob('resume_attempts/*')] if(p/'production-start.json').is_file()]
+    return max(attempts,key=lambda p:(p/'production-start.json').stat().st_mtime) if attempts else None
+
+
+def _command(argv, *, parent, handoff=None, previous=None):
+    argv=shlex.split(argv) if isinstance(argv,str) else list(argv)
+    if not argv or not all(isinstance(a,str) and a for a in argv):raise ValueError('saved normal command missing')
+    for key,value in {'parent':parent,'handoff':handoff or '', 'previous_attempt':previous or ''}.items():
+        argv=[a.replace('{'+key+'}',str(value)) for a in argv]
+    return argv
+
+
+def saved_group(run,config,root):
+    queue=root/'operations/token_saving_batch_20261009/queue.json'
+    payload=read(queue)
+    generic=config['schema']==GENERIC_SCHEMA
+    regime='generic_completed' if generic else 'native'
+    matches=[g for g in payload['groups'] if Path(g['parent']).resolve()==run and g.get('regime','native')==regime]
+    if len(matches)!=1:raise ValueError('saved parent has no unique normal queue identity')
+    group=matches[0]
+    if generic:
+        identity=config['selected_identity'];expected=[[ 'generic_completed:'+identity['comparison_backend'],
+            identity['model_id'],identity['case_id'],identity['setup_id']]]
+    else:expected=config['capture_identities']
+    if (group['identities']!=expected or group['points']!=len(expected)
+            or {row[3] for row in expected}!={group['setup']}):
+        raise ValueError('stored queue scope differs from the exact prepared parent')
+    return queue,group
+
+
+def describe_parent(run):
+    run=Path(run).expanduser().resolve(strict=True);path,config=parent_plan_path(run)
+    prepared=read(run/'PREPARED.json');generic=config['schema']==GENERIC_SCHEMA
+    if prepared.get('ok') is not True or prepared.get('parent_plan_sha256' if generic else 'plan_sha256')!=sha(path):
+        raise ValueError('prepared parent binding changed')
+    context=parent_context(run);queue,group=saved_group(run,config,context['report_root'])
+    previous=latest_attempt(run)
+    if previous is None:state='PREPARED'
+    elif (previous/'normal_result.json').is_file() if generic else (run/'measurement/native_producer_energy_results.json').is_file():
+        state='IMPORT_PENDING'
+    else:state='RESUME_REQUIRED'
+    importer=_command(group['import_command'],parent=run)
+    parent_flag='--parent' if generic else '--cohort'
+    if (importer.count(parent_flag)!=1 or importer[importer.index(parent_flag)+1]!=str(run)
+            or importer[0]!=config.get('python_executable',config.get('python'))):
+        raise ValueError('saved importer targets another parent or interpreter')
+    scripts=[Path(a) for a in importer if a.endswith('.py')]
+    if len(scripts)!=1 or not scripts[0].is_absolute() or not scripts[0].is_file() or scripts[0].is_symlink():
+        raise ValueError('saved importer source unavailable')
+    return {'run':run,'path':path,'config':config,'context':context,'queue':queue,'group':group,
+            'previous':previous,'state':state,'importer':importer,'importer_script':scripts[0]}
+
+
+def _import_saved(item):
+    # No parent/collector callback is reachable in this function.
+    before=sha(item['importer_script'])
+    completed=subprocess.run(item['importer'],cwd=item['context']['controller_root'],capture_output=True,text=True,timeout=180)
+    log=item['context']['report_root']/'operations/token_saving_batch_20261009'/(item['run'].name+'_import.log')
+    log.parent.mkdir(parents=True,exist_ok=True)
+    log.write_text(completed.stdout+completed.stderr)
+    if sha(item['importer_script'])!=before:raise ValueError('bound normal importer changed during projection')
+    if completed.returncode:raise RuntimeError('normal saved import failed; no capture retry: '+completed.stderr[-2000:])
+    result=json.loads(completed.stdout)
+    if len(result.get('results',[]))!=item['group']['points']:
+        raise ValueError('normal imported parent remains incomplete; preserve accepted points')
+    return result
+
+
+
+def _run_parent_command(item, command):
+    """Use ordinary owned streaming and let the normal Parent finish cleanup."""
+    from onnx_splitpoint_tool.native_progress import run_streaming
+    from onnx_splitpoint_tool.process_control import ProcessTreeRegistry
+    registry=ProcessTreeRegistry();cancel=threading.Event()
+    handlers={signum:signal.signal(signum,lambda *_:cancel.set())
+              for signum in (signal.SIGINT,signal.SIGTERM)}
+    def cooperative_cleanup():
+        # The registry supplies identity-checked direct children. Compare the
+        # saved argv again before signalling only this normal parent; never a
+        # collector, DUT process, process group or unrecorded owner.
+        owners=registry.active_pids()
+        if len(owners)>1:raise ValueError('normal parent command ownership is ambiguous')
+        if owners:
+            pid=owners[0];path=Path('/proc')/str(pid)/'cmdline'
+            actual=[part for part in path.read_bytes().split(b'\0') if part]
+            if actual!=[part.encode() for part in command]:
+                raise ValueError('normal parent command identity changed before cancellation')
+            os.kill(pid,signal.SIGINT)
+            deadline=time.monotonic()+30.
+            while pid in registry.active_pids() and time.monotonic()<deadline:
+                time.sleep(.05)
+        # run_streaming retains its ordinary bounded owned-tree fallback if
+        # cooperative cleanup cannot terminate the parent; uncertainty stays
+        # in the normal parent journals/quarantines, never an implicit retry.
+    try:
+        result=run_streaming(command,cwd=item['context']['controller_root'],
+            env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'},label='normal-energy-parent',
+            cancel_event=cancel,process_registry=registry,before_terminate=cooperative_cleanup)
+        if cancel.is_set():raise RuntimeError('normal energy parent cancelled; preserve cleanup/source evidence')
+        return result
+    finally:
+        for signum,handler in handlers.items():signal.signal(signum,handler)
+
+def run_parent(run, *, plan_only=False, output_dir=None, import_only=False, resume=False,
+               recovery_authorization=None):
+    item=describe_parent(run);context=item['context'];previous=item['previous']
+    if plan_only:
+        if output_dir is None or Path(output_dir).resolve().is_relative_to(item['run']):
+            raise ValueError('energy parent preview requires an external output directory')
+        output=Path(output_dir).resolve();output.mkdir(parents=True,exist_ok=True)
+        for p in (item['path'],item['run']/'PREPARED.json'):shutil.copy2(p,output/p.name)
+        result={'status':item['state'],'parent':str(item['run']),'identities':item['group']['identities'],
+                'regime':item['group'].get('regime','native'),'setup':item['group']['setup'],
+                'queue':str(item['queue']),'queue_sha256':sha(item['queue']),
+                'prepared_plan_sha256':sha(item['path']),'import_command':item['importer'],
+                'hardware_started':False,'budget_changed':False}
+        print(json.dumps(result,indent=2));return 0
+    if import_only or (item['state']=='IMPORT_PENDING' and not resume):
+        result=_import_saved(item);print(json.dumps(result,indent=2));return 0
+    if previous is not None and not resume:
+        raise ValueError('started parent requires --resume or --import-only; never an implicit rerun')
+    if previous is None and resume:raise ValueError('resume requires its actual previous parent')
+    if recovery_authorization is not None:
+        from .energy_resume import recover
+        recover(SimpleNamespace(run_dir=str(item['run']),failed_attempt=str(previous),authorization=str(recovery_authorization)))
+        # The exact recovered STOP/handoff makes a regular metadata refresh
+        # admissible. Keep the original stopped plan until recovery completes.
+        from . import generic_energy_parent, native_energy_parent
+        parent=(generic_energy_parent if item['config']['schema']==GENERIC_SCHEMA else native_energy_parent)
+        parent.configure(item['run'])
+        parent.refresh_controller(SimpleNamespace(run_dir=str(item['run']),previous_attempt=str(previous)))
+        item=describe_parent(item['run']);context=item['context'];previous=item['previous']
+    handoff=context['report_root']/'operations/token_saving_batch_20261009'/(item['run'].name+'_handoff.json')
+    command_key='resume_command' if previous is not None else 'run_command'
+    command=_command(item['group'][command_key],parent=item['run'],handoff=handoff,previous=previous)
+    if command.count('--run-dir')!=1 or command[command.index('--run-dir')+1]!=str(item['run']):
+        raise ValueError('stored normal executor differs from selected parent')
+    write_json(handoff,{'parent':str(item['run']),'group':{'parent':str(item['run']),
+        'regime':item['group'].get('regime','native'),'setup':item['group']['setup']},
+        'authorization_file':str(context['report_root']/'operations/token_saving_batch_20261009/AUFTRAG_AKTUELL.txt'),
+        'executor':command,'importer':item['importer'],'decision':'normal product entry; existing live admission and resource claims'})
+    while True:
+        started_ns=time.time_ns()
+        completed=_run_parent_command(item,command)
+        if completed.returncode==0:break
+        if item['config']['schema']!=GENERIC_SCHEMA:
+            raise RuntimeError('normal energy parent stopped; original attempts preserved')
+        # The existing coordinator bounds each series to three fresh resumes.
+        # Only its exact, finished, source-closed pure-loss receipt permits the
+        # next series under the unchanged standing sample-loss authorization.
+        from . import generic_energy_parent
+        generic_energy_parent.configure(item['run'])
+        previous=generic_energy_parent._sample_loss_retry_attempt(item['run'],
+            started_ns=started_ns,returncode=completed.returncode)
+        from onnx_splitpoint_tool.energy.collector import _collector_reconnect_backoff
+        pause=_collector_reconnect_backoff(5.0)
+        if pause.get('cancelled'):raise RuntimeError('normal energy continuation cancelled before resume')
+        item=describe_parent(item['run'])
+        command=_command(item['group']['resume_command'],parent=item['run'],handoff=handoff,previous=previous)
+        if command.count('--run-dir')!=1 or command[command.index('--run-dir')+1]!=str(item['run']):
+            raise ValueError('stored normal resume targets another parent')
+        write_json(handoff,{'parent':str(item['run']),'group':{'parent':str(item['run']),
+            'regime':'generic_completed','setup':item['group']['setup']},
+            'authorization_file':str(context['report_root']/'operations/token_saving_batch_20261009/AUFTRAG_AKTUELL.txt'),
+            'executor':command,'importer':item['importer'],
+            'decision':'existing source-closed pure-loss authority; normal finite-series resume'})
+    result=_import_saved(describe_parent(item['run']))
+    print(json.dumps(result,indent=2));return 0

@@ -15,7 +15,8 @@ from .task_budget import _finished_chain, _reentry_require, source_completion
 
 def reconcile_stopped_capture(budget_path, *, parent_attempt, operation_id, run_dir=None):
     from ..process_control import _proc_start_time
-    from ..remote.resource_recovery import _bounded_energy_journal
+    from ..remote.resource_recovery import (_bounded_energy_journal, _interrupted_generic_capture,
+                                             _bounded_generic_capture)
     from ..remote.process_lease import RemoteProcessLeaseJournal
     from .collector import _read_workload_timing
     read = RemoteProcessLeaseJournal._read_json_exact
@@ -28,19 +29,23 @@ def reconcile_stopped_capture(budget_path, *, parent_attempt, operation_id, run_
     _reentry_require(isinstance(operation_id, str) and operation_id.startswith("capture-")
                      and Path(operation_id).name == operation_id, "invalid capture operation")
     if run_dir is not None:
-        plan = read(run / "energy_parent_plan.json")
+        plan = read(run / ("parent_plan.json" if run / "parent_plan.json" in terminal else "energy_parent_plan.json"))
         _reentry_require(plan.get("campaign_budget_file") == str(path.resolve()),
                          "shared budget is not bound by the prepared parent plan")
     request_path = journal / (operation_id + ".resource-request.json")
     reply_path = journal / (operation_id + ".resource-reply.json")
     cfg_path = journal / "controller.resources.json"
     request, reply, cfg = map(read, (request_path, reply_path, cfg_path))
+    interrupted = bool(run / "parent_plan.json" in terminal and request.get("phase") == "ACQUIRING"
+                       and reply.get("reason") == "controller_resource_owner_lost")
+    physical = (_interrupted_generic_capture(run, attempt, request, reply, terminal) if interrupted else None)
     _reentry_require(request.get("run_id") == run.name and request.get("session_id") == start["session_id"]
                      and request.get("operation_id") == operation_id
                      and all(reply.get(k) == request.get(k) for k in ("run_id", "session_id", "operation_id", "token"))
-                     and request.get("purpose") == "capture" and request.get("phase") == "FINALIZING"
-                     and request.get("process_started") is True
-                     and reply.get("state") == "STOP" and reply.get("reason") == "campaign_source_completion_unresolved"
+                     and request.get("purpose") == "capture"
+                     and (interrupted or (request.get("phase") == "FINALIZING" and request.get("process_started") is True))
+                     and reply.get("state") == "STOP"
+                     and (interrupted or reply.get("reason") == "campaign_source_completion_unresolved")
                      and cfg.get("run_id") == run.name and cfg.get("run_dir") == str(run)
                      and cfg.get("session_id") == start["session_id"] and cfg.get("parent_pid") == start["parent_pid"],
                      "exact terminal source STOP required")
@@ -82,7 +87,11 @@ def reconcile_stopped_capture(budget_path, *, parent_attempt, operation_id, run_
         _reentry_require(json.loads(row)[3] == request["setup_id"]
                          and all(chain.get(k) == request[k] for k in ("owner_pid", "owner_start_ticks"))
                          and chain.get("collector_started") is True, "chain ownership mismatch")
-        if run_dir is not None:
+        if run / "parent_plan.json" in terminal:
+            scope_paths = verify_generic_chain_scope(run=run, attempt=attempt, capture=capture,
+                campaign_row=row, terminal=terminal, read=read)
+            hashes.update({str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in scope_paths})
+        elif run_dir is not None:
             scope_paths = verify_original_chain_scope(run=run, capture=capture, campaign_row=row, read=read)
             hashes.update({str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in scope_paths})
         key = request["session_id"] + "/" + operation_id
@@ -98,13 +107,27 @@ def reconcile_stopped_capture(budget_path, *, parent_attempt, operation_id, run_
                  "final_energy_gate_status": "fail", "final_energy_gate_reasons": [reply["reason"]],
                  "workload_timing": _read_workload_timing(timing)}
         booked = _finished_chain(chain, entry, capture, campaign=True)
+        if interrupted:
+            booked["workload_started"] = physical["workload_started"]
+            booked["transport_reasons"] = sorted(set(booked["transport_reasons"] + [reply["reason"]]))
         _reentry_require(booked["valid"] is False and booked["transport_reasons"]
                          and booked["source_completion_verified"] is False, "negative transport proof missing")
         receipt = {"schema": "onnx-splitpoint/stopped-capture-accounting-v1", "original_chain": copy.deepcopy(chain),
                    "booked_chain": copy.deepcopy(booked), "original_stop": stop, "evidence_sha256": hashes}
+        if interrupted:receipt["interrupted_capture"] = physical
         source = root["sources"][source_id]
+        continuous = source.get("continuous_admission")
         grant = source.get("authorized_reentry")
-        if grant is not None:
+        if continuous is not None:
+            expected = "campaign_source_interrupted_chain_unresolved" if interrupted else reply["reason"]
+            _reentry_require(source["stop_reason"] in {continuous["original_source_stop_reason"], expected}
+                             and continuous["source_stop_reason"] in {"", reply["reason"], expected}
+                             and all(key == row and value in {reply["reason"], expected}
+                                     for key,value in continuous["task_stop_reasons"].items()),
+                             "different continuous source/task STOP cannot be reconciled")
+            continuous["source_stop_reason"] = expected
+            continuous["task_stop_reasons"][row] = expected
+        elif grant is not None:
             _reentry_require(_proc_start_time(grant["new_parent"]["pid"]) != grant["new_parent"]["start_ticks"],
                              "authorized parent still active")
             if grant["chain"] == chain:
@@ -130,6 +153,36 @@ def reconcile_stopped_capture(budget_path, *, parent_attempt, operation_id, run_
         os.fsync(handle.fileno())
         return json.loads(json.dumps(receipt))
 
+
+
+def verify_generic_chain_scope(*, run, attempt, capture, campaign_row, terminal, read):
+    from ..remote.resource_recovery import _bounded_generic_capture
+    normal_path, normal = _bounded_generic_capture(run, attempt, terminal)
+    identity = normal["identity"]
+    _reentry_require(campaign_row == normal["campaign_row_id"] == json.dumps([
+        "generic_completed:" + identity["comparison_backend"], identity["model_id"],
+        identity["case_id"], identity["setup_id"]], separators=(",", ":"))
+        and capture.parent.parent == normal_path.parent,
+        "Generic original chain scope differs from its bound normal plan")
+    config_path = Path(normal["config_path"])
+    _reentry_require(config_path.is_file() and not config_path.is_symlink()
+                     and hashlib.sha256(config_path.read_bytes()).hexdigest() == normal["config_sha256"]
+                     and read(config_path) == normal["config"], "Generic normal configuration changed")
+    calls = [call for call in normal["calls"] if capture.parent.name == "capture_" + str(call["repetition_index"])]
+    _reentry_require(len(calls) == 1, "Generic original capture call missing or ambiguous")
+    argv = calls[0]["argv"]; flag = "--preflight-expected-command-contract-sha256"
+    _reentry_require(argv.count(flag) == 1, "Generic original preflight digest missing")
+    digest = argv[argv.index(flag) + 1]
+    evidence_path = capture / "preflight/preflight_evidence.json"
+    attestation_path = capture / "preflight/preflight_attestation.json"
+    evidence, attestation = read(evidence_path), read(attestation_path)
+    _reentry_require(evidence.get("ok") is True and evidence.get("rc") == 0
+                     and evidence.get("expected_command_contract_sha256") == digest
+                     and attestation.get("ok") is True and attestation.get("command_contract_sha256") == digest
+                     and evidence.get("nonce") == attestation.get("nonce") and bool(evidence.get("nonce"))
+                     and hashlib.sha256(attestation_path.read_bytes()).hexdigest() == evidence.get("attestation_file_sha256"),
+                     "Generic actual preflight differs from its original bound task")
+    return [normal_path, config_path, evidence_path, attestation_path]
 
 def verify_original_chain_scope(*, run, capture, campaign_row, read):
     """Bind all four task-key fields to prepared input and actual preflight."""

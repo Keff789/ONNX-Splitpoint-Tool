@@ -148,7 +148,32 @@ def import_generic_energy_capture(descriptor, config, *, expected_setup_id, expe
         'normal_import': imported, 'primary_energy_claim_gate': claim}
 
 
-def collect_generic_energy_case(plan, descriptors, case):
+def _admitted_performance_pair(plan, case, admission):
+    """Reuse the exact normal comparison admitted by the owning product parent."""
+    from .ranking_methods import canonical_direction
+    identity = plan['identity']
+    performance = admission.get('performance_result') or {}
+    if (performance != {'path': plan['performance_result'], 'sha256': plan['performance_result_sha256']}
+            or admission.get('valid_repetitions') != 3
+            or admission.get('fresh_confirmation_only') is not True
+            or case.get('identity') != identity):
+        raise ValueError('Generic admitted performance source or identity differs')
+    binding = admission.get('normal_pair_report') or {}
+    report = json.loads(_source(binding.get('path', ''), binding.get('sha256')))
+    selected = [pair for pair in report.get('pairs', [])
+        if pair.get('generic_source_path') == plan['performance_result']
+        and all(pair.get(key) == identity.get(key) for key in ('model_id', 'case_id', 'setup_id', 'precision'))
+        and canonical_direction(pair.get('direction')) == canonical_direction(identity.get('direction'))]
+    if (len(selected) != 1 or selected[0] != admission.get('normal_pair')
+            or selected[0].get('eligible_for_technical_transfer') is not True):
+        raise ValueError('Generic admitted normal comparison missing, changed or technically excluded')
+    for key in ('native_cohort_proof', 'coordinator_success'):
+        source = admission.get(key) or {}
+        _source(source.get('path', ''), source.get('sha256'))
+    return selected[0]
+
+
+def collect_generic_energy_case(plan, descriptors, case, *, performance_admission=None):
     """Admit three fresh captures and retain normal Generic quality gates."""
     from .generic_completion_reporting import validate_completion_case, completion_pair
     config = plan['config']; contract = validate_config(config)
@@ -185,7 +210,8 @@ def collect_generic_energy_case(plan, descriptors, case):
     statistics = {field: _repeat_statistics([r[field] for r in observations], .95) for field in
                   ('energy_j', 'energy_per_completed_task_j', 'completed_tasks_per_j', 'active_duration_s')}
     projection = validate_completion_case(performance, case, result_root=performance_path.parent)
-    pair = completion_pair(projection, case)
+    pair = (completion_pair(projection, case) if performance_admission is None else
+            _admitted_performance_pair(plan, case, performance_admission))
     claim = pair.get('eligible_for_claim_transfer') is True and all(r['primary_energy_claim_gate'] for r in observations)
     return {'schema': 'onnx-splitpoint/generic-completed-task-energy-observation/v1',
         'identity': config['identity'], 'status': 'completed', 'valid_repetitions': 3,
