@@ -160,6 +160,88 @@ def select_case(plan_path, setup, case_id):
     return plan, row
 
 
+def current_pair_report(current, row, fallback):
+    """Resolve the existing Current-bound dataset join, preserving negative pairs."""
+    evidence = current.get('own_dataset_quality_evidence') or {}
+    binding = evidence.get('normal_cross_runner_pair_evidence')
+    if binding is None:
+        return Path(fallback)
+    result = file_binding(row['result_path'])
+    proof = {'path': current['native_cohort_proof'], 'sha256': current['native_cohort_proof_sha256']}
+    quality = current['native_quality_provenance']
+    join_binding = evidence.get('native_dataset_join_evidence') or {}
+    if quality.get('postmeasurement_dataset_quality_join_evidence') != join_binding:
+        raise ValueError('Current own comparison lacks the same normal Native dataset join')
+    join = read(bound_file(join_binding))
+    expected = {'case_key': row['case_key'], 'measured_generic_result': result,
+                'native_cohort_proof': proof,
+                'performance_plan': {'path': current['execution_plan'], 'sha256': current['execution_plan_sha256']},
+                'normal_report': {'path': str(R/quality['normal_report']), 'sha256': quality['normal_report_sha256']},
+                'normal_validation_summary': {'path': quality['quality_summary'], 'sha256': quality['quality_summary_sha256']}}
+    if (any(join.get(key) != value for key, value in expected.items())
+            or join.get('original_commands_changed') is not False
+            or join.get('performance_repeated') is not False
+            or join.get('hardware_started') is not False
+            or (join.get('evidence') or {}).get('generic_coordinator_admission') != file_binding(Path(row['result_path']).parent/'coordinator-success.json')
+            or evidence.get('measured_performance_result') != result['path']
+            or evidence.get('measured_performance_result_sha256') != result['sha256']):
+        raise ValueError('Current own comparison differs from the measured normal cohort')
+    for source in (proof, expected['performance_plan'], expected['normal_report'], expected['normal_validation_summary']):
+        bound_file(source)
+    pair_path = bound_file(binding)
+    report = read(pair_path)
+    imported = read(pair_path.parent.parent/'CURRENT_IMPORT.json')
+    if (len(report.get('pairs', [])) != 1
+            or imported.get('status') != 'NORMAL_OWN_DIRECT_QUALITY_CURRENT_IMPORTED'
+            or imported.get('case_key') != row['case_key']
+            or imported.get('normal_pair_evidence') != binding
+            or imported.get('postmeasurement_dataset_quality_join_evidence') != join_binding
+            or imported.get('central_receipt') != evidence.get('receipt')
+            or imported.get('central_receipt_sha256') != evidence.get('receipt_sha256')
+            or imported.get('performance_remeasured') is not False
+            or imported.get('hardware_started') is not False):
+        raise ValueError('Current own comparison import receipt differs')
+    bound_file({'path': evidence['receipt'], 'sha256': evidence['receipt_sha256']})
+    pair = report['pairs'][0]
+    from onnx_splitpoint_tool.ranking_methods import canonical_direction
+    if (pair.get('generic_source_path') != result['path']
+            or any(pair.get(key) != row[key] for key in ('model_id','case_id','setup_id','precision'))
+            or canonical_direction(pair.get('direction')) != canonical_direction(row['direction'])
+            or current.get('normal_quality_eligible') != pair.get('eligible_for_quality_transfer')
+            or current.get('normal_claim_eligible') != pair.get('eligible_for_claim_transfer')
+            or imported.get('normal_pair_eligibility') != {key:pair.get(key) for key in
+                ('eligible_for_technical_transfer','eligible_for_quality_transfer','eligible_for_claim_transfer')}):
+        raise ValueError('Current own comparison identity or normal eligibility differs')
+    return pair_path
+
+
+def comparison_refresh_matches(saved, current):
+    """Permit only a bound per-case dataset comparison on the same physical cohort."""
+    if performance_admission_matches(saved, current):
+        return True
+    before = copy.deepcopy(saved); after = copy.deepcopy(current)
+    for payload in (before, after):
+        for key in ('current_report', 'normal_pair_report', 'normal_pair'):
+            payload.pop(key, None)
+    allowed = (before == after and bool(current.get('normal_pair_report'))
+            and saved.get('current_report', {}).get('path') == current.get('current_report', {}).get('path')
+            and Path(current['normal_pair_report']['path']).name == 'NORMAL_PAIR.json'
+            and Path(saved.get('normal_pair_report', {}).get('path', '')).name == 'generic_cross_runner.json')
+    if not allowed:
+        return False
+    rows = [row for row in read(current['current_report']['path'])['rows']
+            if row.get('current_result_path') == current['performance_result']['path']
+            and row.get('raw_result_sha256') == current['performance_result']['sha256']]
+    if len(rows) != 1:
+        return False
+    row = rows[0]
+    case = {key: row[key] for key in ('case_key','model_id','case_id','setup_id','precision','direction')}
+    case['result_path'] = current['performance_result']['path']
+    pair_path = current_pair_report(row, case, saved['normal_pair_report']['path'])
+    return (file_binding(pair_path) == current['normal_pair_report']
+            and read(pair_path)['pairs'][0] == current['normal_pair'])
+
+
 def performance_admission(row, *, plan=None):
     from onnx_splitpoint_tool.generic_completion_reporting import validate_completion_case, completion_pair
     result = Path(row['result_path'])
@@ -220,8 +302,11 @@ def performance_admission(row, *, plan=None):
                 raise ValueError('Final Generic fresh Native Quality proof unverified')
             bound_file({'path':str(R/quality['normal_report']),'sha256':quality['normal_report_sha256']})
             bound_file({'path':quality['quality_summary'],'sha256':quality['quality_summary_sha256']})
+        from onnx_splitpoint_tool.ranking_methods import canonical_direction
+        pairs_path = current_pair_report(current, row, pairs_path)
         pairs = [r for r in read(pairs_path)['pairs'] if r.get('generic_source_path') == str(result)
-                 and all(r.get(k) == row[k] for k in ('model_id','case_id','setup_id','precision'))]
+                 and all(r.get(k) == row[k] for k in ('model_id','case_id','setup_id','precision'))
+                 and canonical_direction(r.get('direction')) == canonical_direction(row['direction'])]
         if (len(pairs) != 1 or pairs[0].get('eligible_for_technical_transfer') is not True
                 or (not followup and pairs[0].get('eligible_for_quality_transfer') is not True)):
             raise ValueError('Final Generic normal current Quality pair missing or excluded')
@@ -382,7 +467,7 @@ def performance_admission_matches(saved, current):
 
 
 def verify_parent(run, *, require_unstarted=True, allow_completed_repeats=False,
-                  refreshable_controller_paths=()):
+                  refreshable_controller_paths=(), refresh_comparison=False):
     from onnx_splitpoint_tool.workflow.generic_completed_task import check_energy_campaign
     configure(run)
     run = Path(run).resolve(strict=True); p = read(run/'parent_plan.json')
@@ -406,7 +491,8 @@ def verify_parent(run, *, require_unstarted=True, allow_completed_repeats=False,
     if case != original_case or case['identity'] != p['selected_identity']:
         raise ValueError('Selected performance case changed')
     admission = performance_admission(case, plan=performance_plan)
-    if not performance_admission_matches(p['performance_admission'],admission):
+    matcher = comparison_refresh_matches if refresh_comparison else performance_admission_matches
+    if not matcher(p['performance_admission'],admission):
         raise ValueError('Current normal admission changed')
     normal = read(p['normal_energy_plan']['path']); verify_calls(normal,p['remote_command_prefix'])
     if normal['identity'] != case['identity'] or normal['performance_result_sha256'] != admission['performance_result']['sha256']:
@@ -483,13 +569,19 @@ def refresh_controller(args):
                  str(W/'scripts/native_producer_energy_plan.py'),
                  str(W/'scripts/run_native_producer_energy_from_summary.py')}
         parent,case,normal=verify_parent(run,require_unstarted=False,allow_completed_repeats=True,
-                                         refreshable_controller_paths=allowed)
+                                         refreshable_controller_paths=allowed,refresh_comparison=True)
         changed=sorted({b['path'] for b in [parent['adapter'],*parent['controller_sources']]
                         if b['path'] in allowed and sha(b['path'])!=b['sha256']})
         before_budget=sha(BUDGET);history=run/'controller_binding_refresh'/uuid.uuid4().hex
         history.mkdir(parents=True,exist_ok=False)
         import shutil
         for name in ('parent_plan.json','PREPARED.json'):shutil.copy2(run/name,history/name)
+        performance_plan = read(bound_file(parent['performance_plan']))
+        refreshed_admission = performance_admission(case, plan=performance_plan)
+        if not performance_admission_matches(parent['performance_admission'], refreshed_admission):
+            if not comparison_refresh_matches(parent['performance_admission'], refreshed_admission):
+                raise ValueError('Controller refresh changed the physical performance cohort')
+            parent['performance_admission'] = refreshed_admission
         before_normal = parent['normal_energy_plan']
         context_restored = False
         if not(run/'production-start.json').is_file() and not normal.get('execution_environment_restored'):
