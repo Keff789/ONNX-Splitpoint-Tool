@@ -219,7 +219,11 @@ def _source_reentry(root, source_id, environment=None):
             task = root["tasks"][covered["campaign_row"]]
             _reentry_require(task["source_id"] == source_id and covered["chain"] in task["chains"],
                              "continuous admission changed historical chain")
+        _validate_sample_loss_authority(root, source_id, continuous)
         for row, change in continuous.get("limit_changes", {}).items():
+            if change.get("kind") == "sample_loss_series":
+                _validate_sample_loss_change(root, source_id, continuous, row, change)
+                continue
             task = root["tasks"][row]
             diagnosis = Path(change["diagnosis_file"])
             _reentry_require(row in continuous["row_ids"] and task["source_id"] == source_id
@@ -261,6 +265,231 @@ def _source_reentry(root, source_id, environment=None):
                          and covered["chain"] in previous_task["chains"],
                          "previous recovered chain changed")
     return grant
+
+
+def _validate_sample_loss_authority(root, source_id, grant):
+    policy = grant.get("sample_loss_retries")
+    if policy is None:
+        return
+    import hashlib
+    path = Path(policy["authorization_file"])
+    history = policy["series_history"]
+    _reentry_require(path.is_file() and not path.is_symlink()
+                     and hashlib.sha256(path.read_bytes()).hexdigest() == policy["authorization_sha256"]
+                     and policy["series_starts"] == 3
+                     and policy["row_ids"] == sorted(set(policy["row_ids"]))
+                     and set(policy["row_ids"]).issubset(grant["row_ids"])
+                     and policy["original_source_failure_limit"] == root["max_transport_failures"]
+                     and policy["effective_source_failure_limit"] == root["max_transport_failures"] + 3 * len(history),
+                     "sample loss retry authority or finite source bounds changed")
+    for index, item in enumerate(history):
+        _reentry_require(item["campaign_row"] in policy["row_ids"]
+                         and item["series_starts"] == 3
+                         and item["source_before"] == root["max_transport_failures"] + 3 * index
+                         and item["source_after"] == item["source_before"] + 3,
+                         "sample loss source series changed")
+
+
+def _validate_sample_loss_change(root, source_id, grant, row, change):
+    task = root["tasks"][row]
+    _reentry_require(row in grant.get("sample_loss_retries", {}).get("row_ids", [])
+                     and task["source_id"] == source_id and task["limits"] == change["before"]
+                     and task["chains"][:len(change["original_chains"])] == change["original_chains"]
+                     and change["logical_repeat"] in {"repeat:0", "repeat:1", "repeat:2"},
+                     "sample loss retry original task or slot changed")
+    previous = change.get("previous_change")
+    before = previous["after"] if previous else task["limits"]
+    _reentry_require(set(change["after"]) == set(before)
+                     and all(type(value) is int and value == before[key] + 3
+                             for key, value in change["after"].items())
+                     and change["cohort_id"] == (change["last_chain"].get("cohort_id") or "")
+                     and change["last_chain"] in task["chains"]
+                     and change["last_chain"].get("finished") is True
+                     and change["last_chain"].get("valid") is False
+                     and change["last_chain"].get("source_completion_verified") is True
+                     and change["last_chain"].get("transport_reasons") == ["marker_dropped_samples_nonzero"],
+                     "sample loss retry finite series or original failure changed")
+    if change["cohort_id"]:
+        _reentry_require(row in final_cohort_authorization(root, change["cohort_id"])["row_ids"],
+                         "sample loss retry outside final cohort")
+    if previous and previous.get("kind") == "sample_loss_series":
+        _validate_sample_loss_change(root, source_id, grant, row, previous)
+    elif previous:
+        # The earlier one-slot diagnosis grant remains exactly bound.
+        import hashlib
+        diagnosis = Path(previous["diagnosis_file"])
+        _reentry_require(previous["before"] == task["limits"]
+                         and previous["after"] == {**task["limits"], "max_retries": 3}
+                         and task["limits"]["max_retries"] == 2
+                         and task["chains"][:len(previous["original_chains"])] == previous["original_chains"]
+                         and diagnosis.is_file() and not diagnosis.is_symlink()
+                         and hashlib.sha256(diagnosis.read_bytes()).hexdigest() == previous["diagnosis_sha256"],
+                         "historical administrative retry grant changed")
+
+
+def authorize_campaign_sample_loss_retries(path, source_id, authorization_file, row_ids):
+    """Register the unchanged user supplement; do not release a physical STOP."""
+    import hashlib
+    path = Path(path).resolve(strict=True)
+    authorization = Path(authorization_file).resolve(strict=True)
+    rows = sorted(set(row_ids))
+    text = authorization.read_text(encoding="utf-8")
+    _reentry_require(not authorization.is_symlink()
+                     and authorization.name == "AUFTRAG_RETRIES_20261011.txt"
+                     and path == authorization.parents[2] / "energy/energy_task_budget.json"
+                     and all(phrase in text for phrase in (
+                         "PAKET-/SAMPLEVERLUST DURCH REPEATS BEHANDELN",
+                         "Die bestehende Gesamtfreigabe bleibt wirksam",
+                         "Nur den noch fehlenden logischen Repeat-Slot",
+                         "Zähler zurücksetzen"))
+                     and rows and all(isinstance(row, str) and len(json.loads(row)) == 4 for row in rows),
+                     "exact sample loss retry supplement or row scope required")
+    with path.open("r+", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        root = json.load(handle)
+        grant = _source_reentry(root, source_id, {})
+        _reentry_require(grant and grant.get("continuous_campaign") is True
+                         and set(rows).issubset(grant["row_ids"]),
+                         "sample loss retries require existing continuous row authority")
+        descriptor = {"authorization_file": str(authorization),
+                      "authorization_sha256": hashlib.sha256(authorization.read_bytes()).hexdigest(),
+                      "row_ids": rows, "series_starts": 3,
+                      "original_source_failure_limit": root["max_transport_failures"]}
+        existing = grant.get("sample_loss_retries")
+        if existing is not None:
+            _reentry_require(all(existing.get(key) == value for key, value in descriptor.items()),
+                             "sample loss supplement or scope changed")
+            return copy.deepcopy(grant)
+        previous = copy.deepcopy(grant)
+        grant["sample_loss_retries"] = {**descriptor,
+            "effective_source_failure_limit": root["max_transport_failures"], "series_history": []}
+        grant["previous_grants"] = [previous]
+        handle.seek(0); json.dump(root, handle, indent=2); handle.truncate(); handle.flush(); os.fsync(handle.fileno())
+        return copy.deepcopy(grant)
+
+
+def _pure_sample_loss_failure(chain, row, cohort_id):
+    """Classify retry permission without changing the failed scientific report."""
+    directory = Path(chain["run_directory"])
+    entry = json.loads((directory / "energy_summary.json").read_text(encoding="utf-8"))
+    request = entry.get("command_window_request") or {}
+    timing = entry.get("workload_timing") or {}
+    calibration = entry.get("energy_calibration_verification") or {}
+    if (entry.get("cancelled") or entry.get("collector_rc") != 0
+            or entry.get("workload_command_rc") != 0 or timing.get("rc") != 0 or timing.get("status") != "ok"
+            or entry.get("preflight_status") != "verified"
+            or entry.get("runtime_work_unit_gate_status") != "pass"
+            or entry.get("full_system_scope_calibration_status") not in {"pass", "not_full_system"}
+            or entry.get("diagnostic_only") is True or entry.get("global_infrastructure_failure")
+            or entry.get("postprocess_status") != "ok"
+            or calibration.get("runtime_fail_closed_required") and calibration.get("verified") is not True
+            or set(request.get("errors") or []) != {"marker_dropped_samples_nonzero", "marker_not_valid_for_final_energy"}
+            or set(entry.get("final_energy_gate_reasons") or []) - {
+                "explicit_trace_command_binding_missing_or_invalid", "raw_input_energy_provenance_unverified"}):
+        return False
+    from .collector import _energy_repeat_retry_reasons
+    reasons = _energy_repeat_retry_reasons(entry, directory)
+    if "marker_dropped_samples_nonzero" not in reasons or any(
+            reason not in {"marker_dropped_samples_nonzero", "command_window_marker_contract_invalid"}
+            and not reason.startswith("marker_binding_invalid:command_window_marker_contract_invalid")
+            for reason in reasons):
+        return False
+    if cohort_id or entry.get("environment_observation_required"):
+        from .environment_observer import validate_environment
+        observed = entry.get("environment_observation") or {}
+        if observed.get("ok") is not True:
+            # A rejected marker prevents the original environment reader from
+            # seeing its timestamps. Check the original observer samples only
+            # for retry permission; retain the original INVALID report.
+            if observed.get("reason") != "required_capture_environment_missing":
+                return False
+            marker_path = directory / "collector_storage/command_window_markers.json"
+            if request.get("marker_path") != str(marker_path):
+                return False
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            command = marker.get("command") or {}
+            if (marker.get("run_id") != entry.get("collector_run_id")
+                    or marker.get("window_id") != entry.get("collector_window_id")
+                    or command.get("process_rc") != 0
+                    or command.get("argv") != [str(directory / "energy_command.sh")]
+                    or not isinstance(command.get("start_realtime_ns"), int)
+                    or not isinstance(command.get("end_realtime_ns"), int)
+                    or command["end_realtime_ns"] <= command["start_realtime_ns"]):
+                return False
+            probe = copy.deepcopy(entry)
+            probe["campaign_row"] = row
+            if cohort_id: probe["campaign_cohort"] = cohort_id
+            probe["command_window_trace_binding"] = {
+                **(entry.get("command_window_trace_binding") or {}),
+                "command_start_realtime_ns": command["start_realtime_ns"],
+                "command_end_realtime_ns": command["end_realtime_ns"]}
+            if not validate_environment(directory, probe, freeze=False).get("ok"):
+                return False
+        elif not validate_environment(directory, entry, freeze=False).get("ok"):
+            return False
+    return True
+
+
+@contextmanager
+def _released_sample_loss_resources(chain, source_id, environment):
+    """Inspect the last normal release and four existing resource locks."""
+    from contextlib import ExitStack
+    from ..remote.process_lease import RemoteProcessLeaseJournal
+    from ..workflow.run_control import EvaluationRunLock
+    from ..process_control import _proc_start_time
+    read = RemoteProcessLeaseJournal._read_json_exact
+    parent = _budget_parent(environment)
+    env = {**os.environ, **(environment or {})}
+    journal = Path(env["ONNX_SPLITPOINT_REMOTE_LEASE_JOURNAL_DIR"])
+    current = read(journal / "controller.resources.json")
+    root = Path(current["run_dir"])
+    run = Path(chain["run_directory"])
+    _reentry_require(run.is_absolute() and run.is_relative_to(root), "retry outside current normal parent")
+    directories = {journal, root / "remote-process-leases"}
+    relative = run.relative_to(root).parts
+    if len(relative) > 2 and relative[0:2] == ("measurement", "resume_attempts"):
+        directories.add(root / "resume_attempts" / relative[2] / "remote-process-leases")
+    if len(relative) > 1 and relative[0] in {"attempts", "resume_attempts"}:
+        directories.add(root / relative[0] / relative[1] / "remote-process-leases")
+    matches = []
+    for directory in directories:
+        for request_path in directory.glob("*.resource-request.json"):
+            request = read(request_path)
+            if request.get("purpose") == "capture" and request.get("attempt_dir") == str(run):
+                matches.append((directory, request_path, request))
+    _reentry_require(len(matches) == 1, "exact last capture request required")
+    directory, request_path, request = matches[0]
+    cfg = read(directory / "controller.resources.json")
+    reply = read(directory / (request_path.name.removesuffix(".resource-request.json") + ".resource-reply.json"))
+    cleanup = read(run / "collector_stdout.log.cleanup.json")
+    resources = sorted(r for r in cfg["setups"][request["setup_id"]]
+                       if r.startswith(("source:", "dut:")) or r in {"controller:capture", "controller:nic"})
+    current_resources = sorted(r for r in current["setups"][request["setup_id"]]
+                              if r.startswith(("source:", "dut:")) or r in {"controller:capture", "controller:nic"})
+    _reentry_require(resources == current_resources and len(resources) == 4
+                     and "source:" + source_id in resources and sum(r.startswith("dut:") for r in resources) == 1
+                     and cfg["run_dir"] == str(root) and cfg["run_id"] == parent["run_id"]
+                     and request.get("run_id") == cfg["run_id"] and request.get("session_id") == cfg["session_id"]
+                     and current.get("run_id") == parent["run_id"] and current.get("session_id") == parent["session_id"]
+                     and current.get("parent_pid") == parent["pid"] and current.get("parent_start_ticks") == parent["start_ticks"]
+                     and request.get("phase") == "FINALIZING" and request.get("process_started") is True
+                     and request.get("owner_pid") == chain["owner_pid"]
+                     and request.get("owner_start_ticks") == chain["owner_start_ticks"]
+                     and reply.get("state") == "RELEASED" and not reply.get("reason")
+                     and all(reply.get(key) == request.get(key) for key in ("run_id", "session_id", "operation_id", "token"))
+                     and cleanup.get("owned_tree_quiescent") is True and cleanup.get("process_started") is True
+                     and cleanup.get("collector_pid") == request.get("collector_pid")
+                     and cleanup.get("collector_start_ticks") == request.get("collector_start_ticks")
+                     and _proc_start_time(request["collector_pid"]) != request["collector_start_ticks"],
+                     "last collector or normal resource release unresolved")
+    with ExitStack() as held:
+        for resource in resources:
+            lease = EvaluationRunLock.for_resource(resource, owner={})
+            lease.acquire_for_recovery(); held.callback(lease.release, write_released_state=False)
+            _reentry_require(not lease.quarantine_path.exists() and lease.previous_owner.get("state") == "released",
+                             "retry resource active or quarantined")
+        yield {"request_path": str(request_path), "request": request, "reply": reply,
+               "resources": resources, "parent": parent}
 
 
 def _reentry_history(grant):
@@ -1127,12 +1356,98 @@ class EnergyTaskBudget:
         return (self._reentry["task_stop_reasons"].get(self.campaign_row, "")
                 or _historical_task_stop(self.data, self.campaign_row, self._reentry))
 
+    def _effective_limits(self, logical_repeat):
+        limits = dict(self.data["limits"])
+        change = (self._reentry or {}).get("limit_changes", {}).get(self.campaign_row)
+        first = True
+        while change is not None:
+            if change.get("cohort_id") == self.cohort_id:
+                if first:
+                    limits.update({key: change["after"][key] for key in ("max_chains", "max_transport_failures")})
+                    first = False
+                if change.get("logical_repeat") == logical_repeat:
+                    limits["max_retries"] = change["after"]["max_retries"]
+                    break
+            change = change.get("previous_change")
+        return limits
+
+    def _source_failure_limit(self):
+        return ((self._reentry or {}).get("sample_loss_retries") or {}).get(
+            "effective_source_failure_limit", self.root.get("max_transport_failures"))
+
     @_budget_transaction
     def authorized_retry_limit(self):
         change = (self._reentry or {}).get("limit_changes", {}).get(self.campaign_row)
-        if change is not None and change.get("cohort_id") and change["cohort_id"] != self.cohort_id:
-            return None
-        return change["after"]["max_retries"] if change is not None else None
+        return change["after"]["max_retries"] if change and change.get("cohort_id") == self.cohort_id else None
+
+    @_budget_transaction
+    def extend_sample_loss_retries(self, logical_repeat):
+        """Permit a pure-loss retry, recording +3 only when a bound is spent."""
+        policy = (self._reentry or {}).get("sample_loss_retries")
+        if (policy is None or self.campaign_row not in policy["row_ids"]
+                or logical_repeat not in {"repeat:0", "repeat:1", "repeat:2"}):
+            return False
+        attempts = self.matching_chains(logical_repeat)
+        if not attempts or any(c.get("valid") is True or c.get("finished") is not True for c in attempts):
+            return False
+        last = attempts[-1]
+        if (last.get("collector_started") is not True or last.get("valid") is not False
+                or last.get("source_completion_verified") is not True
+                or last.get("transport_reasons") != ["marker_dropped_samples_nonzero"]):
+            return False
+        administrative = {"", "task_logical_retry_limit", "task_chain_limit", "task_transport_failure_limit",
+                          "campaign_source_transport_failure_limit"}
+        if self._stop_reason() not in administrative or self._reentry["source_stop_reason"] not in {"", "campaign_source_transport_failure_limit"}:
+            return False
+        from ..process_control import current_process_registry
+        registry = current_process_registry()
+        if ((self.cancel_event is not None and self.cancel_event.is_set()) or registry is not None and registry.cancelled):
+            return False
+        for task in self.root["tasks"].values():
+            if task["source_id"] != self.source_id:
+                continue
+            for chain in task["chains"]:
+                if self._covered_chain(chain):
+                    continue
+                if not chain.get("finished") or (chain.get("collector_started") and chain.get("source_completion_verified") is not True):
+                    return False
+        try:
+            if not source_completion(last["run_directory"])["verified"] or not _pure_sample_loss_failure(last, self.campaign_row, self.cohort_id):
+                return False
+            self._check_cohort()
+            with _released_sample_loss_resources(last, self.source_id, self.environment) as release:
+                limits = self._effective_limits(logical_repeat)
+                counts = self.counts()
+                source_count = sum(bool(c.get("transport_reasons")) for task in self.root["tasks"].values()
+                                   if task["source_id"] == self.source_id for c in task["chains"])
+                if (len(attempts) < 1 + limits["max_retries"]
+                        and counts["begun_chains"] < limits["max_chains"]
+                        and counts["transport_failures"] < limits["max_transport_failures"]
+                        and source_count < self._source_failure_limit() and not self._stop_reason()
+                        and not self._reentry["source_stop_reason"]):
+                    return True
+                previous = copy.deepcopy(self._reentry.get("limit_changes", {}).get(self.campaign_row))
+                before = previous["after"] if previous else dict(self.data["limits"])
+                after = {key: value + 3 for key, value in before.items()}
+                change = {"kind": "sample_loss_series", "before": copy.deepcopy(self.data["limits"]),
+                          "after": after, "previous_change": previous, "cohort_id": self.cohort_id,
+                          "logical_repeat": logical_repeat, "original_chains": copy.deepcopy(self.data["chains"]),
+                          "last_chain": copy.deepcopy(last), "released_capture": release,
+                          "previous_task_stop": self._stop_reason(), "previous_source_stop": self._reentry["source_stop_reason"]}
+                source_before = self._source_failure_limit()
+                policy["series_history"].append({"campaign_row": self.campaign_row, "cohort_id": self.cohort_id,
+                    "logical_repeat": logical_repeat, "series_starts": 3, "source_before": source_before,
+                    "source_after": source_before + 3, "source_transport_failures": source_count,
+                    "task_counts": counts, "last_run_directory": last["run_directory"], "parent": release["parent"]})
+                policy["effective_source_failure_limit"] = source_before + 3
+                self._reentry.setdefault("limit_changes", {})[self.campaign_row] = change
+                self._reentry["task_stop_reasons"].pop(self.campaign_row, None)
+                if self._reentry["source_stop_reason"] == "campaign_source_transport_failure_limit":
+                    self._reentry["source_stop_reason"] = ""
+                self.save()
+                return True
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+            return False
 
     def _stop_source(self, reason):
         state = self._reentry if self._reentry is not None else self.source
@@ -1254,13 +1569,7 @@ class EnergyTaskBudget:
             # of old result files is attempted by this admission check.
             self.busy_reason = "energy_repeat_already_valid:" + str(logical_repeat)
             return False
-        limits = self.data["limits"]
-        change = (self._reentry or {}).get("limit_changes", {}).get(self.campaign_row)
-        if (change is not None and change.get("cohort_id") == self.cohort_id
-                and change.get("logical_repeat") == logical_repeat):
-            _reentry_require(limits == change["before"] and self.data["chains"][:len(change["original_chains"])] == change["original_chains"],
-                             "administrative retry changed original task limits or chains")
-            limits = change["after"]
+        limits = self._effective_limits(logical_repeat)
         counts = self.counts()
         if counts["transport_failures"] >= limits["max_transport_failures"]:
             self.stop("task_transport_failure_limit")
@@ -1342,11 +1651,11 @@ class EnergyTaskBudget:
                                   if task["source_id"] == self.data["source_id"]
                                   for c in task["chains"])
             self.source["transport_failures"] = source_failures
-            if source_failures >= self.root["max_transport_failures"]:
+            if source_failures >= self._source_failure_limit():
                 self._stop_source("campaign_source_transport_failure_limit")
             self._check_source()
             self.save()
-        if self.counts()["transport_failures"] >= self.data["limits"]["max_transport_failures"]:
+        if self.counts()["transport_failures"] >= self._effective_limits(chain["logical_repeat"])["max_transport_failures"]:
             self.stop("task_transport_failure_limit")
 
     @_budget_transaction
@@ -1357,7 +1666,7 @@ class EnergyTaskBudget:
             chains = self.data["chains"]
             for cohort, logical in {(c.get("cohort_id") or "",c["logical_repeat"]) for c in chains}:
                 attempts = [c for c in chains if (c.get("cohort_id") or "") == cohort and c["logical_repeat"] == logical and c["collector_started"]]
-                if (len(attempts) >= 1 + self.data["limits"]["max_retries"]
+                if (len(attempts) >= 1 + (self._effective_limits(logical) if cohort == self.cohort_id else self.data["limits"])["max_retries"]
                         and all(c.get("finished") for c in attempts)
                         and not any(c.get("valid") for c in attempts)):
                     self.stop("task_logical_retry_limit")
@@ -1365,6 +1674,8 @@ class EnergyTaskBudget:
         if self.busy_reason and not reason:
             result.update(ok=False, status="not_dispatched", reason=self.busy_reason, physical_dispatch_started=False)
         result["task_budget"] = {**self.data, "counts": self.counts()}
+        if (self._reentry or {}).get("sample_loss_retries"):
+            result["task_budget"]["effective_limits"] = {logical: self._effective_limits(logical) for logical in ("repeat:0", "repeat:1", "repeat:2")}
         if self.source is not None:
             result["task_budget"]["campaign_source"] = dict(self.source)
         if self._reentry is not None or self.data.get("unstarted_capture_reconciliation"):

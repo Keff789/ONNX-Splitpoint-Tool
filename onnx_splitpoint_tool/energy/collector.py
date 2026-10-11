@@ -4674,6 +4674,7 @@ def run_fast_firmware_measurement(
     subprocess_env: Mapping[str, str] | None = None,
     _task_budget: Any = None,
     _task_logical_repeat: str | None = None,
+    _sample_loss_retry_driver: bool = True,
 ) -> dict[str, Any]:
     defaults = defaults or EnergyDefaults()
     if invalid_repeat_reconnect_backoff_s is not None:
@@ -4762,7 +4763,12 @@ def run_fast_firmware_measurement(
     authorized_retry_limit = (
         _task_budget.authorized_retry_limit() if _task_budget is not None else None
     )
-    if authorized_retry_limit == 5 and defaults.invalid_repeat_reconnect_backoff_s != 10.0:
+    sample_loss_authority = bool(
+        (getattr(_task_budget, "_reentry", None) or {}).get("sample_loss_retries")
+        if _task_budget is not None else False
+    )
+    if (authorized_retry_limit == 5 and not sample_loss_authority
+            and defaults.invalid_repeat_reconnect_backoff_s != 10.0):
         raise ValueError("authorized H8 retries require the bound 10 second reconnect pause")
     invalid_repeat_max_retries_requested = max(
         0,
@@ -5237,8 +5243,15 @@ def run_fast_firmware_measurement(
                 original, reference = previous
                 runs.append({**original, "run_index": i, "campaign_reused_repeat": reference})
                 continue
-        if _task_budget is not None and not _task_budget.allowed(task_logical_repeat, cancel_event):
-            break
+        if _task_budget is not None:
+            # Additional administrative room applies only after the normal
+            # budget verifies the last closed loss and released ownership.
+            extend = (getattr(_task_budget, "extend_sample_loss_retries", None)
+                      if _sample_loss_retry_driver and not exact_run_count else None)
+            if extend is not None:
+                extend(task_logical_repeat)
+            if not _task_budget.allowed(task_logical_repeat, cancel_event):
+                break
         if _cancel_requested(cancel_event):
             break
         recovery_before_start: dict[str, Any] | None = None
@@ -6168,10 +6181,18 @@ def run_fast_firmware_measurement(
             initial_reasons
             and not initial_global_failure
             and not global_stop_present
-            and invalid_repeat_max_retries > 0
+            and (invalid_repeat_max_retries > 0 or
+                 (_sample_loss_retry_driver and not exact_run_count and _task_budget is not None))
         ):
-            for retry_index in range(1, invalid_repeat_max_retries + 1):
+            retry_index = 0
+            while True:
                 retry_logical_repeat = _task_logical_repeat or f"repeat:{logical_index}"
+                extend = (getattr(_task_budget, "extend_sample_loss_retries", None)
+                          if _sample_loss_retry_driver and not exact_run_count else None)
+                loss_retry_authorized = bool(extend and extend(retry_logical_repeat))
+                if retry_index >= invalid_repeat_max_retries and not loss_retry_authorized:
+                    break
+                retry_index += 1
                 if _task_budget is not None and not _task_budget.allowed(retry_logical_repeat, cancel_event):
                     break
                 if _cancel_requested(cancel_event):
@@ -6243,6 +6264,7 @@ def run_fast_firmware_measurement(
                     _task_budget=_task_budget,
                     preflight_prepare_command=preflight_prepare_command,
                     _task_logical_repeat=retry_logical_repeat,
+                    _sample_loss_retry_driver=False,
                     diagnostic_only=diagnostic_only,
                     claim_exclusion_reason=claim_exclusion_reason,
                     host_normalization_role=host_normalization_role,
