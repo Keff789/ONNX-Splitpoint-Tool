@@ -625,6 +625,58 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
         source_id = source.removeprefix("source:")
         _reentry_require(root.get("campaign") is True and source_id in root["sources"], "campaign source missing")
         state = root["sources"][source_id]
+        continuous = state.get("continuous_admission")
+        if continuous is not None:
+            _source_reentry(root, source_id, {})
+            _reentry_require(authorized_limits is None, "continuous recovery cannot change limits")
+            if continuous.get("capture_request") == request:
+                _reentry_require(continuous.get("recovery_reply") == reply
+                                 and not continuous["source_stop_reason"]
+                                 and not any(continuous["task_stop_reasons"].values()),
+                                 "later STOP requires its own exact released recovery")
+                return copy.deepcopy(continuous)
+            matches = [(key, task, chain) for key, task in root["tasks"].items()
+                       if task["source_id"] == source_id for chain in task["chains"]
+                       if chain.get("run_directory") == request.get("attempt_dir")]
+            _reentry_require(len(matches) == 1, "current continuous capture chain missing or ambiguous")
+            row, task, chain = matches[0]
+            _reentry_require(row in continuous["row_ids"]
+                             and json.loads(row)[3] == request["setup_id"]
+                             and all(chain.get(k) == request.get(k) for k in ("owner_pid", "owner_start_ticks"))
+                             and not _chain_owner_alive(chain)
+                             and chain.get("finished") is True and chain.get("valid") is False
+                             and chain.get("collector_started") is True and chain.get("workload_started") is True
+                             and chain.get("source_completion_verified") is False and bool(chain.get("transport_reasons"))
+                             and continuous["source_stop_reason"] == reply["reason"]
+                             and continuous["task_stop_reasons"] == {row: reply["reason"]},
+                             "released recovery does not cover the exact current continuous STOP")
+            import yaml
+            profile = yaml.safe_load(Path(authorization["new_workflow_profile"]).read_text())
+            _reentry_require(profile.get("run_dir") == str(path.resolve().parent / request["run_id"])
+                             and profile.get("historical_operation") == request["operation_id"]
+                             and profile.get("source") == source_id and profile.get("setup_id") == request["setup_id"]
+                             and profile.get("same_original_budget") == str(path.resolve())
+                             and profile.get("unchanged_limits") == task["limits"]
+                             and profile.get("source_completion_remains_unproven") is True,
+                             "continuous recovery profile differs from this stopped parent/budget")
+            unresolved = [c for t in root["tasks"].values() if t["source_id"] == source_id for c in t["chains"]
+                          if (not c.get("finished") or (c.get("collector_started") and c.get("source_completion_verified") is not True))
+                          and not any(c == old["chain"] for old in _reentry_history(continuous))]
+            _reentry_require(unresolved == [chain], "another unresolved continuous source chain exists")
+            _reentry_require(state.get("transport_failures", 0) < root["max_transport_failures"]
+                             and len(task["chains"]) < task["limits"]["max_chains"]
+                             and task["limits"]["max_transport_failures"] == root["max_transport_failures"],
+                             "existing continuous budget exhausted or inconsistent")
+            grant = copy.deepcopy(continuous)
+            grant.update(campaign_row=row, chain=copy.deepcopy(chain), previous_grants=[copy.deepcopy(continuous)],
+                         capture_request=copy.deepcopy(request), recovery_reply=copy.deepcopy(reply),
+                         retry_authorization=authorization, new_parent=new_parent,
+                         source_stop_reason="", task_stop_reasons={},
+                         basis={"kind": "released_normal_recovery", "operation_id": request["operation_id"],
+                                "historical_source_completion_verified": False})
+            state["continuous_admission"] = copy.deepcopy(grant)
+            handle.seek(0); json.dump(root, handle, indent=2); handle.truncate(); handle.flush(); os.fsync(handle.fileno())
+            return copy.deepcopy(grant)
         previous = state.get("authorized_reentry")
         if previous is not None and previous["capture_request"] == request:
             _reentry_require(previous["new_parent"] == new_parent
