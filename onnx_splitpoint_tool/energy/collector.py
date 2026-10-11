@@ -6113,6 +6113,15 @@ def run_fast_firmware_measurement(
         runs.append(entry)
         if _task_budget is not None:
             _task_budget.finish(task_chain, entry, run_dir)
+            # A closed pure loss can spend the source quota before the next
+            # initial slot. Record its finite series now, before that slot's
+            # normal admission; the failed measurement remains invalid.
+            extend = (getattr(_task_budget, "extend_sample_loss_retries", None)
+                      if _sample_loss_retry_driver and not exact_run_count
+                      and not global_infrastructure_failure
+                      and entry.get("final_energy_gate_status") != "pass" else None)
+            if extend is not None:
+                extend(task_logical_repeat)
         if global_infrastructure_failure:
             break
 
