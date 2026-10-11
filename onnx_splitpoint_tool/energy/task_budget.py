@@ -219,6 +219,18 @@ def _source_reentry(root, source_id, environment=None):
             task = root["tasks"][covered["campaign_row"]]
             _reentry_require(task["source_id"] == source_id and covered["chain"] in task["chains"],
                              "continuous admission changed historical chain")
+        for row, change in continuous.get("limit_changes", {}).items():
+            task = root["tasks"][row]
+            diagnosis = Path(change["diagnosis_file"])
+            _reentry_require(row in continuous["row_ids"] and task["source_id"] == source_id
+                             and task["limits"] == change["before"] and change["before"]["max_retries"] == 2
+                             and change["after"] == {**change["before"], "max_retries": 3}
+                             and change["logical_repeat"] in {"repeat:0", "repeat:1", "repeat:2"}
+                             and row in final_cohort_authorization(root, change["cohort_id"])["row_ids"]
+                             and task["chains"][:len(change["original_chains"])] == change["original_chains"]
+                             and diagnosis.is_file() and not diagnosis.is_symlink()
+                             and hashlib.sha256(diagnosis.read_bytes()).hexdigest() == change["diagnosis_sha256"],
+                             "administrative retry authorization or original evidence changed")
         # This is permission, not a resource lease or proof of the old source
         # close. Every executing caller still requires its ordinary broker.
         if (environment or os.environ).get("ONNX_SPLITPOINT_CONTROLLER_RESOURCES") == "required":
@@ -418,7 +430,117 @@ def campaign_budget_stop_reason(root, row_id, environment=None, *, source_id=Non
                or (_historical_task_stop(task, row_id, grant) if task is not None else ""))
 
 
-def authorize_campaign_source_continuation(budget_path, *, source_id, authorization_file, row_ids):
+def _authorize_closed_retry_continuation(path, source_id, authorization, rows, requested, diagnosis_file, previous_attempt_dir):
+    """One diagnosed retry slot; preserve all physical history and base limits."""
+    import hashlib
+    from contextlib import ExitStack
+    from datetime import datetime, timezone
+    from ..remote.resource_recovery import _bounded_energy_journal, _rest_evidence_unchanged
+    from ..remote.process_lease import RemoteProcessLeaseJournal
+    from ..workflow.run_control import EvaluationRunLock
+    from ..process_control import _proc_start_time
+    read = RemoteProcessLeaseJournal._read_json_exact
+    attempt = Path(previous_attempt_dir).resolve(strict=True)
+    diagnosis_path = Path(diagnosis_file).resolve(strict=True)
+    diagnosis = read(diagnosis_path)
+    run = Path(diagnosis["parent_run_dir"]).resolve(strict=True)
+    parent_plan = read(run / "energy_parent_plan.json")
+    _reentry_require(parent_plan.get("campaign_budget_file") == str(path)
+                     and parent_plan.get("campaign_cohort") == run.name
+                     and json.loads(diagnosis["campaign_row"]) in parent_plan.get("capture_identities", []),
+                     "retry differs from original prepared budget/cohort/capture scope")
+    start = read(attempt / "production-start.json")
+    directory, _, terminal = _bounded_energy_journal(run, start["session_id"], attempt)
+    config = read(directory / "controller.resources.json")
+    cleanup = read(attempt / "cleanup-status.json")
+    _reentry_require(diagnosis["previous_attempt_dir"] == str(attempt)
+                     and diagnosis["cohort_id"] == run.name
+                     and start["run_id"] == run.name and config["run_dir"] == str(run)
+                     and config["parent_pid"] == start["parent_pid"]
+                     and _proc_start_time(config["parent_pid"]) != config["parent_start_ticks"]
+                     and cleanup.get("cleanup_proven") is True and cleanup.get("errors") == []
+                     and cleanup.get("owned_remote_active") == cleanup.get("owned_local_active") == 0
+                     and not list(directory.glob("*.remote-lease.json")), "retry predecessor not clean and quiescent")
+    resources = sorted({r for value in config["setups"].values() for r in value
+                        if r.startswith(("source:", "dut:")) or r in {"controller:capture", "controller:nic"}})
+    _reentry_require(len(resources) == 4 and "source:" + source_id in resources
+                     and sum(r.startswith("dut:") for r in resources) == 1,
+                     "retry requires its exact four original resources")
+    for request_path in directory.glob("*.resource-request.json"):
+        request = read(request_path)
+        reply_path = directory / (request_path.name.removesuffix(".resource-request.json") + ".resource-reply.json")
+        reply = read(reply_path)
+        _reentry_require(reply.get("state") == "RELEASED"
+                         and request.get("run_id") == run.name and request.get("session_id") == start["session_id"]
+                         and all(reply.get(k) == request.get(k) for k in ("run_id", "session_id", "operation_id", "token")),
+                         "retry predecessor operation not released")
+        terminal.update({request_path: request, reply_path: reply})
+    terminal[directory / "controller.resources.json"] = config
+    diagnosis_sha = hashlib.sha256(diagnosis_path.read_bytes()).hexdigest()
+    with ExitStack() as held:
+        for resource in resources:
+            lease = EvaluationRunLock.for_resource(resource, owner={})
+            lease.acquire_for_recovery(); held.callback(lease.release, write_released_state=False)
+            _reentry_require(not lease.quarantine_path.exists() and lease.previous_owner.get("state") == "released",
+                             "retry resource active or quarantined")
+        with path.open("r+", encoding="utf-8") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX); root = json.load(handle)
+            grant = _source_reentry(root, source_id, {})
+            _reentry_require(grant is not None and grant.get("continuous_campaign") is True
+                             and grant["authorization_file"] == str(authorization) and grant["row_ids"] == rows
+                             and not grant["source_stop_reason"], "exact current continuous authority required")
+            if grant.get("basis", {}).get("diagnosis_sha256") == diagnosis_sha:
+                _reentry_require(not any(grant["task_stop_reasons"].values()), "used retry authorization cannot clear a later STOP")
+                return copy.deepcopy(grant)
+            row = diagnosis["campaign_row"]; logical = diagnosis["logical_repeat"]
+            _reentry_require(set(requested) == {row} and row in rows and logical in {"repeat:0", "repeat:1", "repeat:2"}
+                             and diagnosis.get("stop_reason") == "task_logical_retry_limit"
+                             and diagnosis.get("finding") == "received_counter_gaps_not_proven_reader_bug"
+                             and grant["task_stop_reasons"] == {row: "task_logical_retry_limit"}
+                             and row not in grant["limit_changes"], "exact diagnosed administrative retry STOP required")
+            task = root["tasks"][row]; limits = task["limits"]
+            cohort = final_cohort_authorization(root, run.name)
+            _reentry_require(cohort["parent_run_dir"] == str(run) and cohort["source_id"] == source_id
+                             and row in cohort["row_ids"] and task["source_id"] == source_id,
+                             "retry outside original final parent/cohort/source")
+            after = requested[row]
+            _reentry_require(type(after.get("max_retries")) is int and limits["max_retries"] == 2
+                             and after == {**limits, "max_retries": 3}
+                             and root["sources"][source_id]["transport_failures"] < root["max_transport_failures"]
+                             and len(task["chains"]) < limits["max_chains"], "only one bounded retry raise permitted")
+            invalid = [c for c in task["chains"] if c.get("cohort_id") == run.name and c["logical_repeat"] == logical]
+            _reentry_require(len(invalid) == 3 and all(c.get("valid") is False
+                             and c.get("transport_reasons") == ["marker_dropped_samples_nonzero"] for c in invalid)
+                             and diagnosis["invalid_run_directories"] == [c["run_directory"] for c in invalid],
+                             "diagnosis differs from original three failed attempts")
+            for other in root["tasks"].values():
+                if other["source_id"] != source_id: continue
+                for chain in other["chains"]:
+                    _reentry_require(chain.get("finished") is True and not _chain_owner_alive(chain)
+                                     and (not chain.get("collector_started") or chain.get("source_completion_verified") is True),
+                                     "retry source has active or unresolved original acquisition")
+                    if chain.get("cohort_id") == run.name and chain.get("collector_started"):
+                        _reentry_require(source_completion(chain["run_directory"])["verified"], "original source close not verified")
+            _reentry_require(_rest_evidence_unchanged(terminal)
+                             and hashlib.sha256(diagnosis_path.read_bytes()).hexdigest() == diagnosis_sha,
+                             "retry terminal or diagnosis evidence changed")
+            updated = copy.deepcopy(grant)
+            updated.update(campaign_row=row, chain=copy.deepcopy(invalid[-1]), previous_grants=[copy.deepcopy(grant)],
+                           authorized_at=datetime.now(timezone.utc).isoformat(), task_stop_reasons={},
+                           basis={"kind": "diagnosed_closed_administrative_retry", "diagnosis_file": str(diagnosis_path),
+                                  "diagnosis_sha256": diagnosis_sha, "previous_attempt_dir": str(attempt),
+                                  "original_task_stop_reason": "task_logical_retry_limit"})
+            updated["limit_changes"][row] = {"before": copy.deepcopy(limits), "after": copy.deepcopy(after),
+                                          "cohort_id": run.name, "logical_repeat": logical,
+                                          "diagnosis_file": str(diagnosis_path), "diagnosis_sha256": diagnosis_sha,
+                                          "original_chains": copy.deepcopy(task["chains"])}
+            root["sources"][source_id]["continuous_admission"] = updated
+            handle.seek(0); json.dump(root, handle, indent=2); handle.truncate(); handle.flush(); os.fsync(handle.fileno())
+            return copy.deepcopy(updated)
+
+
+def authorize_campaign_source_continuation(budget_path, *, source_id, authorization_file, row_ids,
+                                           authorized_limits=None, diagnosis_file=None, previous_attempt_dir=None):
     """Extend the existing reconciled source permission for this campaign only.
 
     Original STOPs, grants, chains, counters and limits remain untouched. This
@@ -437,6 +559,12 @@ def authorize_campaign_source_continuation(budget_path, *, source_id, authorizat
     _reentry_require("REVISION 3 TATSÄCHLICH FERTIGSTELLEN" in text
                      and "durchgehend modellbegleiteter Abschluss" in text,
                      "continuous user authorization missing")
+    if authorized_limits is not None:
+        _reentry_require(diagnosis_file is not None and previous_attempt_dir is not None,
+                         "administrative retry requires diagnosis and exact clean predecessor")
+        return _authorize_closed_retry_continuation(path, source_id, authorization, rows,
+                                                    authorized_limits, diagnosis_file, previous_attempt_dir)
+    _reentry_require(diagnosis_file is None and previous_attempt_dir is None, "unexpected retry evidence without limits")
     for row_id in rows:
         identity = json.loads(row_id)
         _reentry_require(isinstance(identity, list) and len(identity) == 4,
@@ -1002,6 +1130,8 @@ class EnergyTaskBudget:
     @_budget_transaction
     def authorized_retry_limit(self):
         change = (self._reentry or {}).get("limit_changes", {}).get(self.campaign_row)
+        if change is not None and change.get("cohort_id") and change["cohort_id"] != self.cohort_id:
+            return None
         return change["after"]["max_retries"] if change is not None else None
 
     def _stop_source(self, reason):
@@ -1125,6 +1255,12 @@ class EnergyTaskBudget:
             self.busy_reason = "energy_repeat_already_valid:" + str(logical_repeat)
             return False
         limits = self.data["limits"]
+        change = (self._reentry or {}).get("limit_changes", {}).get(self.campaign_row)
+        if (change is not None and change.get("cohort_id") == self.cohort_id
+                and change.get("logical_repeat") == logical_repeat):
+            _reentry_require(limits == change["before"] and self.data["chains"][:len(change["original_chains"])] == change["original_chains"],
+                             "administrative retry changed original task limits or chains")
+            limits = change["after"]
         counts = self.counts()
         if counts["transport_failures"] >= limits["max_transport_failures"]:
             self.stop("task_transport_failure_limit")
