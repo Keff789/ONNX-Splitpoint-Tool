@@ -471,6 +471,7 @@ def refresh_controller(args):
         allowed={str(ADAPTER_PATH.resolve()),str(W/'onnx_splitpoint_tool/workflow/generic_completed_task.py'),
                  str(W/'onnx_splitpoint_tool/energy/collector.py'),
                  str(W/'onnx_splitpoint_tool/remote/resource_recovery.py'),
+                 str(W/'onnx_splitpoint_tool/energy/recovery_accounting.py'),
                  str(W/'onnx_splitpoint_tool/energy/task_budget.py'),
                  str(W/'onnx_splitpoint_tool/energy/environment_observer.py'),
                  str(W/'onnx_splitpoint_tool/generic_energy_reporting.py'),

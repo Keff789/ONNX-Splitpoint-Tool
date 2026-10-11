@@ -149,6 +149,35 @@ def _command(argv, *, parent, handoff=None, previous=None):
     return argv
 
 
+
+def _parent_command(group, config, *, parent, handoff, previous=None):
+    """Keep the existing serial wrapper's stored Native command fallback."""
+    key='resume_command' if previous is not None else 'run_command'
+    if group.get(key):
+        return _command(group[key],parent=parent,handoff=handoff,previous=previous)
+    if config['schema']!=NATIVE_SCHEMA:
+        raise ValueError('Generic parent requires its stored normal run/resume command')
+    prepared=_command(group.get('prepare_command'),parent=parent) if group.get('prepare_command') else []
+    if not prepared or prepared.count('prepare')!=1:
+        raise ValueError('legacy Native parent has no exact stored preparation entry')
+    prefix=prepared[:prepared.index('prepare')]
+    if not prefix:raise ValueError('stored Native preparation entry missing')
+    return prefix+(['resume','--previous-attempt',str(previous)] if previous is not None else ['run'])+[
+        '--run-dir',str(parent),'--slot-handoff',str(handoff)]
+
+
+def _parent_importer(group, config, *, parent):
+    stored=group.get('import_command')
+    if stored is None and config['schema']==NATIVE_SCHEMA:
+        stored=config.get('import_command') or config.get('completed_row_validator')
+    if not stored:raise ValueError('stored normal parent importer missing')
+    command=[arg for arg in _command(stored,parent=parent) if arg!='--allow-partial']
+    # Historical Native plans store a shell-style Python name. Use the SAME
+    # explicitly bound interpreter without rewriting that original command.
+    if config['schema']==NATIVE_SCHEMA and command[0] in {'python','python3'}:
+        command[0]=config['python']
+    return command
+
 def saved_group(run,config,root):
     queue=root/'operations/token_saving_batch_20261009/queue.json'
     payload=read(queue)
@@ -178,7 +207,7 @@ def describe_parent(run):
     elif (previous/'normal_result.json').is_file() if generic else (run/'measurement/native_producer_energy_results.json').is_file():
         state='IMPORT_PENDING'
     else:state='RESUME_REQUIRED'
-    importer=_command(group['import_command'],parent=run)
+    importer=_parent_importer(group,config,parent=run)
     parent_flag='--parent' if generic else '--cohort'
     if (importer.count(parent_flag)!=1 or importer[importer.index(parent_flag)+1]!=str(run)
             or importer[0]!=config.get('python_executable',config.get('python'))):
@@ -270,8 +299,7 @@ def run_parent(run, *, plan_only=False, output_dir=None, import_only=False, resu
         parent.refresh_controller(SimpleNamespace(run_dir=str(item['run']),previous_attempt=str(previous)))
         item=describe_parent(item['run']);context=item['context'];previous=item['previous']
     handoff=context['report_root']/'operations/token_saving_batch_20261009'/(item['run'].name+'_handoff.json')
-    command_key='resume_command' if previous is not None else 'run_command'
-    command=_command(item['group'][command_key],parent=item['run'],handoff=handoff,previous=previous)
+    command=_parent_command(item['group'],item['config'],parent=item['run'],handoff=handoff,previous=previous)
     if command.count('--run-dir')!=1 or command[command.index('--run-dir')+1]!=str(item['run']):
         raise ValueError('stored normal executor differs from selected parent')
     write_json(handoff,{'parent':str(item['run']),'group':{'parent':str(item['run']),
@@ -295,7 +323,7 @@ def run_parent(run, *, plan_only=False, output_dir=None, import_only=False, resu
         pause=_collector_reconnect_backoff(5.0)
         if pause.get('cancelled'):raise RuntimeError('normal energy continuation cancelled before resume')
         item=describe_parent(item['run'])
-        command=_command(item['group']['resume_command'],parent=item['run'],handoff=handoff,previous=previous)
+        command=_parent_command(item['group'],item['config'],parent=item['run'],handoff=handoff,previous=previous)
         if command.count('--run-dir')!=1 or command[command.index('--run-dir')+1]!=str(item['run']):
             raise ValueError('stored normal resume targets another parent')
         write_json(handoff,{'parent':str(item['run']),'group':{'parent':str(item['run']),
