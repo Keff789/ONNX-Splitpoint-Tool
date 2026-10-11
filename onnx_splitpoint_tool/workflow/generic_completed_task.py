@@ -1071,7 +1071,7 @@ def check_energy_campaign(plan: dict, *, logical_repeat: str | None = None,
     import copy
     import fcntl
     from ..energy.config import energy_setup_from_registry, load_hardware_registry
-    from ..energy.task_budget import campaign_budget_stop_reason
+    from ..energy.task_budget import campaign_budget_stop_reason, EnergyTaskBudget, _source_reentry
     identity = plan['identity']
     expected_key = json.dumps(['generic_completed:' + identity['comparison_backend'],
         identity['model_id'], identity['case_id'], identity['setup_id']], separators=(',', ':'))
@@ -1102,18 +1102,22 @@ def check_energy_campaign(plan: dict, *, logical_repeat: str | None = None,
         parent_run_dir=parent_run_dir or plan.get('parent_run_dir'))
     if reason:
         raise RuntimeError('Generic energy shared campaign STOP: ' + reason)
+    projection = object.__new__(EnergyTaskBudget)
+    projection.data, projection.campaign_row, projection.cohort_id = task, expected_key, ''
+    projection._reentry = _source_reentry(budget, source_id, {})
+    effective = projection._effective_limits(logical_repeat or 'repeat:0')
     complete = {c.get('logical_repeat') for c in task['chains']
                 if c.get('finished') is True and c.get('valid') is True
                 and c.get('source_completion_verified') is True}
     reuse_only = allow_completed_repeats and (logical_repeat in complete if logical_repeat is not None
                                              else complete >= {'repeat:0', 'repeat:1', 'repeat:2'})
-    if not reuse_only and len(task['chains']) >= limits['max_chains']:
+    if not reuse_only and len(task['chains']) >= effective['max_chains']:
         raise RuntimeError('Generic energy shared case chain limit reached')
     if logical_repeat is not None:
         if logical_repeat not in {'repeat:0', 'repeat:1', 'repeat:2'}:
             raise ValueError('Generic energy logical repeat differs')
         chains = [c for c in task['chains'] if c['logical_repeat'] == logical_repeat]
-        if not reuse_only and (any(c.get('finished') and c.get('valid') for c in chains) or len(chains) >= 3):
+        if not reuse_only and (any(c.get('finished') and c.get('valid') for c in chains) or len(chains) >= 1 + effective['max_retries']):
             raise RuntimeError('Generic energy logical repeat already valid or retry limit reached')
     return {'campaign_row_id': expected_key, 'source_id': source_id, 'begun_chains': len(task['chains'])}
 
@@ -1325,6 +1329,7 @@ def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport) -> dic
     check_energy_campaign(plan, allow_completed_repeats=bool(descriptors))
     if len(reused) < 3:stage_energy_case(plan, transport)
     registry = ProcessTreeRegistry()
+    sample_loss_retry = None
     try:
         for call in plan['calls']:
             index = call['repetition_index']; argv = call['argv']
@@ -1359,6 +1364,25 @@ def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport) -> dic
                     receipt['finished_ns'] = time.time_ns()
                     write_json(root / f'capture_{index}_process_receipt.json', receipt)
             if receipt.get('returncode') != 0:
+                # Exact single captures remain unchanged. Only the normal
+                # budget can permit a clean, subsequent Parent resume.
+                if registry.remaining_owned_count():registry.terminate_all(grace_s=3)
+                if registry.remaining_owned_count() == 0:
+                    from ..energy.task_budget import EnergyTaskBudget, _budget_parent
+                    with Path(plan['campaign_budget_file']).open('r+') as handle:
+                        budget = EnergyTaskBudget(handle, plan['campaign_limits'],
+                            campaign_row=plan['campaign_row_id'], source_id=plan['campaign_source_id'],
+                            environment=os.environ)
+                        logical = f'repeat:{index - 1}'
+                        if budget.extend_sample_loss_retries(logical):
+                            policy = budget._reentry['sample_loss_retries']
+                            sample_loss_retry = {'kind':'pure_marker_dropped_samples_nonzero',
+                                'plan':{'path':str(plan_path.resolve()),'sha256':file_hash(plan_path)},
+                                'campaign_budget_file':plan['campaign_budget_file'],
+                                'campaign_row_id':plan['campaign_row_id'],'source_id':plan['campaign_source_id'],
+                                'logical_repeat':logical,'chain':dict(budget.matching_chains(logical)[-1]),
+                                'parent':_budget_parent(os.environ),
+                                'authorization':{k:policy[k] for k in ('authorization_file','authorization_sha256')}}
                 raise RuntimeError('Generic energy collector failed; no automatic retry')
             raw_path = capture_output / 'energy_aggregate.json'; raw = read_json(raw_path)
             if len(raw.get('runs') or []) != 1:
@@ -1391,5 +1415,7 @@ def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport) -> dic
     finally:
         if registry.remaining_owned_count():
             registry.terminate_all(grace_s=3)
-        write_json(root / 'controller_cleanup.json', {'owned_local_remaining': registry.remaining_owned_count(),
-            'remote_cleanup_owner': 'normal enclosing energy parent'})
+        cleanup = {'owned_local_remaining':registry.remaining_owned_count(),
+            'remote_cleanup_owner':'normal enclosing energy parent'}
+        if sample_loss_retry is not None:cleanup['sample_loss_retry'] = sample_loss_retry
+        write_json(root / 'controller_cleanup.json', cleanup)
