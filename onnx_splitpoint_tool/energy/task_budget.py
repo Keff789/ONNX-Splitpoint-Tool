@@ -1009,7 +1009,29 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
                              "released recovery does not cover the exact current continuous STOP")
             import yaml
             profile = yaml.safe_load(Path(authorization["new_workflow_profile"]).read_text())
-            _reentry_require(profile.get("run_dir") == str(path.resolve().parent / request["run_id"])
+            parent_root = path.resolve().parent / request["run_id"]
+            if json.loads(row)[0].startswith("generic_completed:"):
+                parent_root = path.resolve().parent / "generic_completed" / request["run_id"]
+                capture = Path(request["attempt_dir"])
+                _reentry_require(capture.is_absolute() and not capture.is_symlink()
+                                 and capture.resolve().is_relative_to(parent_root),
+                                 "Generic recovery capture outside its exact parent")
+                parts = capture.relative_to(parent_root).parts
+                if parts and parts[0] == "measurement":
+                    parent_attempt = parent_root
+                elif len(parts) >= 4 and parts[0] == "resume_attempts" and parts[2] == "measurement" \
+                        and re.fullmatch(r"[0-9a-f]{32}", parts[1]):
+                    parent_attempt = parent_root / "resume_attempts" / parts[1]
+                else:
+                    raise ValueError("Generic recovery capture attempt layout mismatch")
+                from ..remote.resource_recovery import _bounded_energy_journal
+                from ..remote.process_lease import RemoteProcessLeaseJournal
+                journal, _, _ = _bounded_energy_journal(parent_root, request["session_id"], parent_attempt)
+                read_exact = RemoteProcessLeaseJournal._read_json_exact
+                _reentry_require(read_exact(journal / (request["operation_id"] + ".resource-request.json")) == request
+                                 and read_exact(journal / (request["operation_id"] + ".resource-reply.json")) == reply,
+                                 "Generic released journal differs from its exact budget handoff")
+            _reentry_require(profile.get("run_dir") == str(parent_root)
                              and profile.get("historical_operation") == request["operation_id"]
                              and profile.get("source") == source_id and profile.get("setup_id") == request["setup_id"]
                              and profile.get("same_original_budget") == str(path.resolve())

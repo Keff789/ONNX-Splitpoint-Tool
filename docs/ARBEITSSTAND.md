@@ -2565,3 +2565,10 @@ Der normale Reader prüft wiederverwendete gültige Retryversuche anhand ihrer e
 
 
 Der Generic-Controller erhält seine drei exakten Einzelerfassungen und verwendet für reine bestätigte Sampleverluste den bestehenden normalen Parent-Resume. Ein aktiver Broker/Budgethook prüft Freigabe und Ressourcen; erst nach komplettem Parentexit und normalem Cleanup folgen höchstens drei getrennte Resumes mit fünf Sekunden Pause. Gültige Slots, Current-/LATEST-Attemptpfade und die unveränderte wissenschaftliche Zulassung bleiben erhalten. 27 gezielte Series-/Abbruch-/Bindungs-/Reuse-/Limitregressionen bestanden; der reale DeepX-Mobile-b001-Resume wurde über dieselbe Restqueue gestartet.
+
+
+### 2026-10-11: Revision 3 – normaler Generic-Recoveryhandoff
+
+Die bestehende physische Vierressourcen-Recovery bindet jetzt auch das genaue Generic-Parentlayout einschließlich Original-/Resume-Plan, terminalem Journal und PREPARED. Die normale Budgetübergabe verwendet den vorhandenen Generic-Unterordner; der externe Adapter übernimmt dieselben freigegebenen Vorgänger und den bestehenden Runfence-Callback wie Native. Historische Quellenabschlüsse, Fehlversuche, Zähler und wissenschaftliche Kriterien bleiben erhalten. Der Controllerrefresh erlaubt ausschließlich die bereits gebundene geänderte Recoverydatei.
+
+53 gezielte Tests und die unabhängige Prüfung bestanden. Die konkrete H8-RegNet-b001-Operation capture-6844f7b6f43a412aaba7c5d9bae73146 wurde anschließend normal physisch freigegeben, mit null neuen Captures und regulärem Sourcebudgethandoff. Der historische Quellenabschluss bleibt unbestätigt; fünf ungültige Versuche bleiben erhalten. Die Kampagne ist weiter offen. Current: 165 dokumentierte Native-/157 finale Punkte sowie 20 normale Generic-Energiepunkte; laufender Zustand und Belege stehen im vorhandenen Reportroot.

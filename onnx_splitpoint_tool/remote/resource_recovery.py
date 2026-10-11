@@ -158,16 +158,69 @@ def _bounded_energy_journal(run, session_id, attempt_dir):
         evidence[path] = read(path)
     start, result, cleanup = (evidence[attempt / name] for name in (
         "production-start.json", "production-result.json", "cleanup-status.json"))
-    plan_path = run / "energy_parent_plan.json"
+    generic = not (run / "energy_parent_plan.json").exists()
+    plan_path = run / ("parent_plan.json" if generic else "energy_parent_plan.json")
     prepared_path = run / "PREPARED.json"
     _require(all(p.is_file() and not p.is_symlink() for p in (plan_path, prepared_path)),
              "bounded energy plan unavailable")
     plan, prepared = read(plan_path), read(prepared_path)
     import hashlib
-    _require(plan.get("schema") == "yolov7-full-fix/bounded-energy-parent-v1"
+    _require(plan.get("schema") == ("revision3/generic-energy-parent/v1" if generic else
+                                   "yolov7-full-fix/bounded-energy-parent-v1")
              and plan.get("run_dir") == str(run) and prepared.get("ok") is True
-             and prepared.get("plan_sha256") == hashlib.sha256(plan_path.read_bytes()).hexdigest(),
+             and prepared.get("parent_plan_sha256" if generic else "plan_sha256")
+             == hashlib.sha256(plan_path.read_bytes()).hexdigest(),
              "bounded energy prepared plan binding mismatch")
+    if generic:
+        resumed = attempt != run
+        _require(not resumed or (attempt.parent == run / "resume_attempts"
+                 and re.fullmatch(r"[0-9a-f]{32}", attempt.name)), "invalid Generic energy attempt layout")
+        _require(start.get("attempt_dir") == str(attempt)
+                 and start.get("selected_identity") == plan.get("selected_identity")
+                 and plan.get("point_count") == 1 and plan.get("capture_count") == 3
+                 and plan.get("duration_s") == 60., "Generic energy parent scope mismatch")
+        expected_argv = [plan.get("python_executable"), "-B", (plan.get("adapter") or {}).get("path"),
+                         "worker", "--run-dir", str(run)]
+        if resumed:
+            expected_argv += ["--attempt-dir", str(attempt)]
+        _require(all(isinstance(arg, str) and arg for arg in expected_argv)
+                 and start.get("argv") == expected_argv, "Generic energy worker argv mismatch")
+        normal_binding = plan.get("normal_energy_plan") or {}
+        normal_path = Path(str(normal_binding.get("path") or ""))
+        _require(normal_path.is_absolute() and normal_path.is_file() and not normal_path.is_symlink()
+                 and normal_path.resolve().is_relative_to(run)
+                 and hashlib.sha256(normal_path.read_bytes()).hexdigest() == normal_binding.get("sha256")
+                 and start.get("normal_plan_sha256") == normal_binding.get("sha256"),
+                 "Generic original energy plan binding mismatch")
+        normal = read(normal_path)
+        evidence[normal_path] = normal
+        if resumed:
+            worker_path = attempt / "worker-plan.json"
+            _require(worker_path.is_file() and not worker_path.is_symlink(), "Generic worker plan missing")
+            worker_binding = read(worker_path)
+            worker_plan = attempt / "measurement/generic_energy_plan.json"
+            _require(worker_binding.get("path") == str(worker_plan) and worker_plan.is_file()
+                     and not worker_plan.is_symlink()
+                     and hashlib.sha256(worker_plan.read_bytes()).hexdigest() == worker_binding.get("sha256"),
+                     "Generic resumed energy plan binding mismatch")
+            original = normal
+            normal = read(worker_plan)
+            _require(all(normal.get(key) == original.get(key) for key in (
+                "identity", "campaign_row_id", "campaign_source_id", "campaign_budget_file",
+                "campaign_limits", "performance_result", "performance_result_sha256",
+                "require_environment_observation", "environment_run_id")), "Generic resumed campaign scope changed")
+            evidence.update({worker_path: worker_binding, worker_plan: normal})
+        identity = plan.get("selected_identity") or {}
+        import json
+        expected_row = json.dumps(["generic_completed:" + str(identity.get("comparison_backend") or ""),
+            identity.get("model_id"), identity.get("case_id"), identity.get("setup_id")], separators=(",", ":"))
+        _require(normal.get("schema") == "onnx-splitpoint/generic-completed-task-energy-plan/v1"
+                 and normal.get("identity") == identity and normal.get("campaign_row_id") == expected_row
+                 and normal.get("campaign_budget_file") == plan.get("campaign_budget_file")
+                 and normal.get("campaign_source_id") == str((plan.get("target", {}).get("energy") or {})
+                     .get("urecs_address") or "").strip().lower()
+                 and normal.get("require_environment_observation") is True,
+                 "Generic energy campaign identity mismatch")
     _require(start.get("run_id") == run.name and start.get("session_id") == session_id
              and type(start.get("parent_pid")) is int and start["parent_pid"] > 0
              and type(result.get("returncode")) is int
@@ -235,6 +288,11 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
     attempt = Path(str(request.get("attempt_dir") or ""))
     _require(attempt.is_absolute() and not attempt.is_symlink()
              and attempt.resolve().is_relative_to(run), "capture attempt outside run")
+    generic_plan = rest_evidence.get(run / "parent_plan.json")
+    if generic_plan is not None:
+        _require(attempt.resolve().is_relative_to(Path(bounded_energy_attempt_dir).resolve() / "measurement")
+                 and request.get("setup_id") == generic_plan["selected_identity"]["setup_id"],
+                 "Generic capture differs from its exact parent attempt")
     resources = sorted(r for r in config.get("setups", {}).get(setup_id, [])
                        if r.startswith(("source:", "dut:")) or r in {"controller:capture", "controller:nic"})
     _require(len(resources) == len(set(resources)) == 4
