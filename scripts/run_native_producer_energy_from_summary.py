@@ -1206,10 +1206,47 @@ def _selected_energy_repeat_run_dir(
         projected = dict(run); projected.pop('campaign_reused_repeat'); projected['run_index'] = source.get('run_index')
         if projected != source:
             fail('energy_repeat_campaign_source_payload_drift')
-        original_root = Path(reference['run_directory']).parent
-        directory, evidence = _selected_energy_repeat_run_dir(
-            source, measurement_root=original_root, logical_index=source['run_index'],
+        physical = Path(reference['run_directory'])
+        original_root = physical.parent
+        selected_source = source
+        original_index = source['run_index']
+        selection_keys = (
+            'logical_repeat_index', 'selected_repeat_attempt_index',
+            'repeat_attempt_count', 'repeat_attempt_history',
+            'repeat_retry_attempted', 'repeat_retry_recovered',
         )
+        if ('repeat_retry_attempts' in physical.parts
+                and not any(key in source for key in selection_keys)):
+            # The accepted budget chain binds the immutable physical report.
+            # Its outer selection lives in the original collector aggregate,
+            # not in the retry's run-local energy_summary.json.
+            if (physical.name != 'run_000'
+                    or physical.parents[2].name != 'repeat_retry_attempts'
+                    or not re.fullmatch(r'repeat_\d{3,}', physical.parents[1].name)
+                    or not re.fullmatch(r'attempt_\d{2,}', physical.parent.name)):
+                fail('energy_repeat_campaign_retry_layout_invalid')
+            original_root = physical.parents[3]
+            original_index = int(physical.parents[1].name.removeprefix('repeat_'))
+            aggregate_path = original_root / 'energy_aggregate.json'
+            if not aggregate_path.is_file() or aggregate_path.is_symlink():
+                fail('energy_repeat_campaign_retry_selection_missing')
+            aggregate = json.loads(aggregate_path.read_text(encoding='utf-8'))
+            choices = [item for item in aggregate.get('runs', [])
+                       if isinstance(item, Mapping) and type(item.get('run_index')) is int
+                       and item['run_index'] == original_index]
+            if len(choices) != 1:
+                fail('energy_repeat_campaign_retry_selection_ambiguous')
+            selected_source = choices[0]
+            original_payload = {key: value for key, value in selected_source.items()
+                                if key not in selection_keys}
+            original_payload['run_index'] = source['run_index']
+            if original_payload != source:
+                fail('energy_repeat_campaign_retry_source_payload_drift')
+        directory, evidence = _selected_energy_repeat_run_dir(
+            selected_source, measurement_root=original_root, logical_index=original_index,
+        )
+        if directory != physical:
+            fail('energy_repeat_campaign_selected_directory_drift')
         return directory, {**evidence, 'logical_repeat_index': logical_index,
                            'repeat_selection_provenance': 'verified_existing_campaign_repeat',
                            'campaign_reused_repeat': dict(reference)}
