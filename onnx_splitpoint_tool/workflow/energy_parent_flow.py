@@ -15,6 +15,8 @@ import subprocess
 import time
 import signal
 import threading
+import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from .artifacts import write_json
@@ -293,6 +295,135 @@ def _run_parent_command(item, command):
     finally:
         for signum,handler in handlers.items():signal.signal(signum,handler)
 
+
+def _timeout_recovery_authorization(item, *, started_ns, returncode):
+    """Record one standing-authorized recovery of an exact terminal timeout."""
+    if item['config']['schema']!=GENERIC_SCHEMA or not returncode:return None
+    from . import energy_resume
+    from onnx_splitpoint_tool.process_control import _proc_start_time
+    from onnx_splitpoint_tool.energy.task_budget import _source_reentry, _reentry_history, source_completion
+    run=item['run'];attempt=latest_attempt(run)
+    if attempt is None:return None
+    terminal=read(attempt/'cleanup-status.json')
+    if terminal.get('cleanup_proven') is True:return None
+    start=read(attempt/'production-start.json');finished=read(attempt/'production-result.json')
+    if ((attempt/'production-start.json').stat().st_mtime_ns<started_ns
+            or finished.get('returncode')!=returncode
+            or start.get('selected_identity')!=item['config']['selected_identity']
+            or start.get('no_deployment_or_build') is not True):
+        raise ValueError('timeout recovery requires this exact new failed normal Parent')
+    directory,request,reply,_=energy_resume.predecessor(run,attempt)
+    if (request.get('phase')!='FINALIZING' or request.get('process_started') is not True
+            or reply.get('reason')!='campaign_source_completion_unresolved' or reply.get('recovery')
+            or not isinstance(request.get('token'),str)or len(request['token'])!=32
+            or any(c not in '0123456789abcdef'for c in request['token'])):
+        raise ValueError('automatic recovery is restricted to an unrecovered FINALIZING source timeout')
+    binding=read(attempt/'worker-plan.json')if attempt!=run else item['config']['normal_energy_plan']
+    plan_path=Path(binding['path']);plan=read(plan_path)
+    if (sha(plan_path)!=binding['sha256'] or plan.get('identity')!=item['config']['selected_identity']
+            or (attempt!=run and plan_path!=attempt/'measurement/generic_energy_plan.json')
+            or plan.get('campaign_budget_file')!=str(item['context']['budget'])):
+        raise ValueError('timeout recovery normal plan or shared budget differs')
+    cfg=read(directory/'controller.resources.json');setup=request['setup_id']
+    resources=sorted(r for r in cfg['setups'][setup]
+                     if r.startswith(('source:','dut:'))or r in {'controller:capture','controller:nic'})
+    source=plan['campaign_source_id'];row=plan['campaign_row_id']
+    identity=item['config']['selected_identity']
+    expected_row=json.dumps(['generic_completed:'+identity['comparison_backend'],
+        identity['model_id'],identity['case_id'],identity['setup_id']],separators=(',',':'))
+    if (len(set(resources))!=len(resources)or len(resources)!=4
+            or resources.count('source:'+source)!=1 or sum(r.startswith('dut:')for r in resources)!=1
+            or not {'controller:capture','controller:nic'}.issubset(resources)
+            or setup!=identity['setup_id']or row!=expected_row
+            or cfg.get('parent_pid')!=start.get('parent_pid')
+            or cfg.get('parent_start_ticks')!=start.get('parent_start_ticks')
+            or terminal.get('cleanup_proven') is not False
+            or terminal.get('owned_remote_active')!=0 or terminal.get('owned_local_active')!=0
+            or terminal.get('errors')!=['stopped physical resources: '+repr(resources)]):
+        raise ValueError('timeout recovery requires only the exact four stopped physical resources')
+    for pid,ticks in ((cfg['parent_pid'],cfg['parent_start_ticks']),
+                      (request['owner_pid'],request['owner_start_ticks']),
+                      (request['collector_pid'],request['collector_start_ticks'])):
+        if (type(pid)is not int or pid<=0 or not str(ticks or '').isdigit()
+                or _proc_start_time(pid)==str(ticks)):
+            raise ValueError('timeout recovery predecessor identity missing or still active')
+    capture=Path(request['attempt_dir']);cleanup=read(capture/'collector_stdout.log.cleanup.json')
+    summary=read(capture/'energy_summary.json');completion=source_completion(capture)
+    calibration=summary.get('energy_calibration_verification')or{}
+    close=completion['source_close'];reason=close[0][3]if len(close)==1 else ''
+    if (cleanup.get('owned_tree_quiescent') is not True or cleanup.get('process_started') is not True
+            or any(cleanup.get(k)!=request[k]for k in ('collector_pid','collector_start_ticks'))
+            or summary.get('cancelled') is not False or summary.get('collector_started') is not True
+            or summary.get('status')!='collector_failed'
+            or summary.get('preflight_status')!='verified'
+            or summary.get('final_energy_gate_reasons')!=['capture_release_failed']
+            or summary.get('environment_observation_error')not in (None,'required_capture_environment_missing')
+            or (summary.get('workload_timing')or{}).get('rc')not in (None,0)
+            or calibration.get('runtime_binding_errors')
+            or (calibration.get('runtime_fail_closed_required')is True and calibration.get('verified')is not True)
+            or completion['verified']or len(completion['go'])!=1 or completion['protocol_end']
+            or len(close)!=1 or close[0][2]!='false' or close[0][1]!=completion['go'][0][1]
+            or 'silence timeout'not in reason
+            or not any(marker in reason for marker in ('receive socket error','ReceiveSocketTimeout'))):
+        raise ValueError('automatic recovery requires the original quiescent receive-silence timeout')
+    budget=read(item['context']['budget']);grant=_source_reentry(budget,source,{})
+    task=budget['tasks'].get(row)or{};chains=task.get('chains')or[]
+    matched=[chain for chain in chains if chain.get('run_directory')==str(capture)]
+    if (not grant or grant.get('continuous_campaign') is not True or row not in grant.get('row_ids',[])
+            or grant.get('source_stop_reason')!=reply['reason']or grant.get('task_stop_reasons')!={row:reply['reason']}
+            or task.get('source_id')!=source or task.get('limits')!=plan.get('campaign_limits')
+            or len(matched)!=1):
+        raise ValueError('timeout recovery lacks this current continuous task/source authority')
+    chain=matched[0];logical=chain.get('logical_repeat')
+    if (logical not in {'repeat:0','repeat:1','repeat:2'} or chain.get('cohort_id')
+            or chain.get('finished') is not True or chain.get('valid') is not False
+            or chain.get('collector_started') is not True or chain.get('workload_started') is not True
+            or chain.get('source_completion_verified') is not False
+            or chain.get('transport_reasons')!=['transport_log_error']
+            or any(chain.get(k)!=request[k]for k in ('owner_pid','owner_start_ticks'))):
+        raise ValueError('timeout recovery differs from the original invalid physical chain')
+    accepted=[c for c in chains if c.get('valid') is True]
+    slots={c.get('logical_repeat')for c in accepted}
+    if (logical in slots or len(slots)!=len(accepted)or not slots<{'repeat:0','repeat:1','repeat:2'}
+            or any(c.get('finished')is not True or c.get('source_completion_verified')is not True
+                   or not Path(c['run_directory']).is_relative_to(run)for c in accepted)):
+        raise ValueError('timeout recovery must preserve accepted slots and target only missing repeats')
+    history=list(_reentry_history(grant))
+    unresolved=[c for t in budget['tasks'].values()if t.get('source_id')==source for c in t['chains']
+                if (not c.get('finished')or(c.get('collector_started')and c.get('source_completion_verified')is not True))
+                and not any(c==old['chain']for old in history)]
+    if unresolved!=[chain]:raise ValueError('another unresolved source chain blocks automatic recovery')
+    import yaml
+    output=run/'attempts'/('energy-recovery-'+uuid.uuid4().hex);output.mkdir(parents=True,exist_ok=False)
+    profile={'schema':'revision3/bounded-source-recovery-profile','run_dir':str(run),'failed_attempt':str(attempt),
+        'historical_operation':request['operation_id'],'source':source,'setup_id':setup,'regime':'generic_completed',
+        'selected_remaining_points':[{'identity':json.loads(row),'missing_valid_repeats':3-len(slots)}],
+        'duration_s':60,'same_original_budget':str(item['context']['budget']),'unchanged_limits':task['limits'],
+        'source_completion_remains_unproven':True,'authorization_basis':grant['authorization_file'],
+        'authorization_basis_sha256':grant['authorization_sha256'],'no_device_reset':True,'no_build_or_deployment':True}
+    profile_path=output/'one_workflow.yaml';profile_path.write_text(yaml.safe_dump(profile,sort_keys=False))
+    authorization=output/'AUTHORIZATION.json'
+    write_json(authorization,{'source':'source:'+source,'operator':'Normal product applying the bound continuous user authorization',
+        'authorized_at':datetime.now(timezone.utc).isoformat(),
+        'reason':'Exact terminal receive-silence timeout '+request['operation_id']+'; standing authority '+
+            grant['authorization_file']+' sha256='+grant['authorization_sha256']+'; preserve source-unclosed history and accepted slots',
+        'new_workflow_profile':str(profile_path),'authorize_new_attempt':True,'scope':'one_new_workflow',
+        'source_completion_unproven':True})
+    return attempt,authorization
+
+
+def _recover_parent(item, authorization, *, expected_previous=None):
+    from .energy_resume import recover
+    previous=item['previous']
+    if expected_previous is not None and (previous!=expected_previous or latest_attempt(item['run'])!=expected_previous):
+        raise ValueError('timeout predecessor changed before normal recovery')
+    recover(SimpleNamespace(run_dir=str(item['run']),failed_attempt=str(previous),authorization=str(authorization)))
+    from . import generic_energy_parent,native_energy_parent
+    parent=generic_energy_parent if item['config']['schema']==GENERIC_SCHEMA else native_energy_parent
+    parent.configure(item['run'])
+    parent.refresh_controller(SimpleNamespace(run_dir=str(item['run']),previous_attempt=str(previous)))
+    return describe_parent(item['run'])
+
 def run_parent(run, *, plan_only=False, output_dir=None, import_only=False, resume=False,
                recovery_authorization=None):
     item=describe_parent(run);context=item['context'];previous=item['previous']
@@ -313,15 +444,9 @@ def run_parent(run, *, plan_only=False, output_dir=None, import_only=False, resu
         raise ValueError('started parent requires --resume or --import-only; never an implicit rerun')
     if previous is None and resume:raise ValueError('resume requires its actual previous parent')
     if recovery_authorization is not None:
-        from .energy_resume import recover
-        recover(SimpleNamespace(run_dir=str(item['run']),failed_attempt=str(previous),authorization=str(recovery_authorization)))
         # The exact recovered STOP/handoff makes a regular metadata refresh
         # admissible. Keep the original stopped plan until recovery completes.
-        from . import generic_energy_parent, native_energy_parent
-        parent=(generic_energy_parent if item['config']['schema']==GENERIC_SCHEMA else native_energy_parent)
-        parent.configure(item['run'])
-        parent.refresh_controller(SimpleNamespace(run_dir=str(item['run']),previous_attempt=str(previous)))
-        item=describe_parent(item['run']);context=item['context'];previous=item['previous']
+        item=_recover_parent(item,recovery_authorization);context=item['context'];previous=item['previous']
     handoff=context['report_root']/'operations/token_saving_batch_20261009'/(item['run'].name+'_handoff.json')
     command=_parent_command(item['group'],item['config'],parent=item['run'],handoff=handoff,previous=previous)
     if command.count('--run-dir')!=1 or command[command.index('--run-dir')+1]!=str(item['run']):
@@ -341,8 +466,14 @@ def run_parent(run, *, plan_only=False, output_dir=None, import_only=False, resu
         # next series under the unchanged standing sample-loss authorization.
         from . import generic_energy_parent
         generic_energy_parent.configure(item['run'])
-        previous=generic_energy_parent._sample_loss_retry_attempt(item['run'],
-            started_ns=started_ns,returncode=completed.returncode)
+        timeout=_timeout_recovery_authorization(item,started_ns=started_ns,returncode=completed.returncode)
+        if timeout is None:
+            previous=generic_energy_parent._sample_loss_retry_attempt(item['run'],
+                started_ns=started_ns,returncode=completed.returncode)
+        else:
+            failed,authorization=timeout
+            item=_recover_parent(describe_parent(item['run']),authorization,expected_previous=failed)
+            context=item['context'];previous=item['previous']
         from onnx_splitpoint_tool.energy.collector import _collector_reconnect_backoff
         pause=_collector_reconnect_backoff(5.0)
         if pause.get('cancelled'):raise RuntimeError('normal energy continuation cancelled before resume')
