@@ -33,7 +33,9 @@ ADAPTER_PATH = Path(__file__).resolve()
 def configure(run=None, *, plan_path=None, adapter_path=None):
     global R, W, BUDGET, DEFAULT_PLAN, FINAL_PLAN, FINAL_FREEZE, ADAPTER_PATH
     from .energy_parent_flow import parent_context
-    context = parent_context(run, plan_path=plan_path, adapter_path=adapter_path)
+    bound=({'report_root':R,'controller_root':W,'budget':BUDGET,'adapter':ADAPTER_PATH}
+           if run is None and plan_path is not None and R is not None else None)
+    context = parent_context(run, plan_path=plan_path, adapter_path=adapter_path,bound_context=bound)
     R, W, BUDGET, ADAPTER_PATH = context['report_root'], context['controller_root'], context['budget'], context['adapter']
     DEFAULT_PLAN = R/'generic_energy_extension/confirmation_v2/plan/execution-plan.json'
     FINAL_PLAN = R/'generic_energy_extension/confirmation_final_20261008/plan/execution-plan.json'

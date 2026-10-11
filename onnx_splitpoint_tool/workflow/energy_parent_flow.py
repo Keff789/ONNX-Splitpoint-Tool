@@ -53,7 +53,7 @@ def is_energy_parent(run):
     return (run/'parent_plan.json').is_file() or (run/'energy_parent_plan.json').is_file()
 
 
-def parent_context(run=None, *, plan_path=None, adapter_path=None):
+def parent_context(run=None, *, plan_path=None, adapter_path=None, bound_context=None):
     """Resolve report data from the saved budget, code from the actual plan."""
     import onnx_splitpoint_tool
     controller=Path(onnx_splitpoint_tool.__file__).resolve().parent.parent
@@ -97,8 +97,32 @@ def parent_context(run=None, *, plan_path=None, adapter_path=None):
             budget=root/'energy/energy_task_budget.json'
             original_adapter=root/('operations/generic_energy_parent/adapter.py' if generic else 'operations/energy_parent_qualified.py')
     elif plan_path is not None:
-        plan=read(plan_path);budget=Path(plan['shared_energy_campaign_budget']).resolve(strict=True)
-        root=budget.parent.parent;original_adapter=root/'operations/generic_energy_parent/adapter.py'
+        path=Path(plan_path).resolve(strict=True);plan=read(path)
+        if plan.get('shared_energy_campaign_budget'):
+            budget=Path(plan['shared_energy_campaign_budget']).resolve(strict=True)
+            root=budget.parent.parent
+        else:
+            # Normal prepared follow-up performance plans contain rows and an
+            # output_root, not an energy budget. Derive ONLY their existing
+            # exact report layout; the later Parent gates keep science/Scope.
+            output=Path(str(plan.get('output_root') or ''))
+            if (plan.get('schema')!='onnx-splitpoint/generic-completion-plan'
+                    or not isinstance(plan.get('rows'),list) or not plan['rows']
+                    or path.name!='execution-plan.json' or path.parent.name!='plan'
+                    or path.parents[2].name!='batches' or path.parents[3].name!='generic_followup'
+                    or not output.is_absolute() or output.resolve()!=path.parent.parent):
+                raise ValueError('normal follow-up performance plan context unavailable')
+            root=path.parents[4]
+            budget=(root/'energy/energy_task_budget.json').resolve(strict=True)
+        original_adapter=root/'operations/generic_energy_parent/adapter.py'
+        if bound_context is not None:
+            if (root!=Path(bound_context['report_root']).resolve()
+                    or budget!=Path(bound_context['budget']).resolve()
+                    or not path.is_relative_to(root)):
+                raise ValueError('performance plan differs from already bound Parent report/budget context')
+            controller=Path(bound_context['controller_root']).resolve(strict=True)
+            if original_adapter.resolve()!=Path(bound_context['adapter']).resolve():
+                raise ValueError('performance plan differs from already bound Parent adapter')
     elif adapter_path is not None:
         original_adapter=Path(adapter_path).resolve(strict=True)
         root=original_adapter.parents[2] if original_adapter.parent.name=='generic_energy_parent' else original_adapter.parents[1]
