@@ -1290,7 +1290,7 @@ def prepare_energy_resume(plan_path: Path, case: dict, *, output: Path,
 
 
 def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport, *, performance_admission=None,
-                    process_registry=None, cancel_event=None) -> dict:
+                    process_registry=None, cancel_event=None, before_capture=None) -> dict:
     """Run prepared ordinary collector commands under the caller's ownership.
 
     This is the same transport/process/collector stack as normal measurements.
@@ -1354,6 +1354,8 @@ def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport, *, per
             capture_output = Path(argv[argv.index('--out') + 1])
             if capture_output.exists():
                 raise FileExistsError('Generic energy collector output must be fresh')
+            if before_capture is not None:
+                before_capture(plan, call)
             receipt = {'argv': argv, 'command_sha256': call['command_sha256'], 'started_ns': time.time_ns(),
                        'aggregate_absent_before_execution': True, 'plan_sha256': file_hash(plan_path)}
             write_json(root / f'capture_{index}_started.json', receipt)
