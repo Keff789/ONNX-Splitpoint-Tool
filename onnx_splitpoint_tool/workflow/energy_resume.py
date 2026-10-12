@@ -169,8 +169,13 @@ def reconcile(args):
 
 
 def released_recovery_owner(lease, resource, identity, resources, recovery):
-    """Allow a subsequently released shared controller while its flock is held."""
-    from datetime import datetime
+    """Accept a later normal release of the same resource under its held flock.
+
+    A completed intervening workflow can also replace a source/DUT lock owner.
+    This only permits the old recovery's accounting handoff; normal parent live
+    admission still precedes every new capture and old source failure stays invalid.
+    """
+    from datetime import datetime, timezone
     import socket
     from onnx_splitpoint_tool.process_control import _proc_start_time
     current = lease.previous_owner
@@ -179,18 +184,25 @@ def released_recovery_owner(lease, resource, identity, resources, recovery):
     binding = current.get('resource_recovery') or {}
     if all(binding.get(k) == v for k,v in identity.items()) and binding.get('resources') == resources:
         return
-    if resource not in {'controller:capture','controller:nic'}:
-        raise ValueError('released source/DUT recovery identity changed')
-    if (current.get('physical_resource') != resource
+    if (resource not in resources or not (resource in {'controller:capture','controller:nic'}
+            or resource.startswith(('source:', 'dut:')))):
+        raise ValueError('later release is outside recovered physical resources')
+    if (current.get('schema') != 'onnx-splitpoint/evaluation-run-lock'
+            or current.get('schema_version') != 1
+            or current.get('physical_resource') != resource
             or current.get('hostname') != socket.gethostname()
             or any(not current.get(k) for k in ('run_id','session_id','operation_id','released_at','pid'))
+            or any(type(current[k]) is not int or current[k] <= 0 for k in ('pid','owner_pid') if k in current)
             or any(bool(_proc_start_time(current[k])) for k in ('pid','owner_pid') if current.get(k))):
-        raise ValueError('later shared controller release is not terminal')
+        raise ValueError('later physical resource release is not terminal')
     try:
-        if datetime.fromisoformat(current['released_at']) <= datetime.fromisoformat(recovery['released_at']):
-            raise ValueError('shared controller release predates recovery')
+        released = datetime.fromisoformat(current['released_at'])
+        recovered = datetime.fromisoformat(recovery['released_at'])
+        if (released.tzinfo is None or recovered.tzinfo is None
+                or not recovered < released <= datetime.now(timezone.utc)):
+            raise ValueError('physical resource release does not follow recovery')
     except (KeyError, TypeError) as exc:
-        raise ValueError('shared controller release time missing') from exc
+        raise ValueError('physical resource release time missing') from exc
 
 
 def recover_run_fence(run, output, session, lock, fence, attempt):

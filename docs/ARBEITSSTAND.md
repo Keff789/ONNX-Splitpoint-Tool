@@ -1,5 +1,25 @@
 # ONNX Splitpoint – fortlaufender Arbeitsstand
 
+## Begrenzter Revision-3-Deltaabschluss: Recovery nach sauberem Folgelauf (12.10.2026)
+
+Die normale wissenschaftliche Resume-Übergabe eines bereits physisch freigegebenen
+alten STOP lehnte eine zwischenzeitlich sauber abgeschlossene Hardwareabnahme auf
+demselben DUT und derselben Sensorquelle ab. Für Controllerressourcen war diese
+Folge bereits unterstützt. Dieselbe strikte Prüfung gilt jetzt für genau die vier
+ursprünglichen Ressourcen: normale Released-Metadaten, passende physische Ressource,
+gleicher Controller, tote Besitzer, keine Quarantine und eine spätere, nicht zukünftige
+Freigabezeit. Alle Flocks bleiben während der Accounting-Übergabe gehalten; die normale
+Live-Zulassung vor dem nächsten Capture bleibt erforderlich.
+
+Alte STOPs, ungültige Quellenabschlüsse, gültige Repeats, Zähler und Messkriterien
+werden dadurch nicht geändert. 120 bestehende Recoveryregressionen und 42 gezielte
+Tests mit temporären echten Locks bestanden. Ein erster Testaufruf scheiterte am
+fehlenden externen Ausgabe-Elternordner; der korrigierte Lauf bestand. Unabhängige
+Diffprüfung ohne blockierenden Befund. Diese Softwareprüfung ist kein Hardwarebeleg;
+die anschließenden zulässigen wissenschaftlichen Deltaaufnahmen werden im bestehenden
+Report unter operations/token_saving_batch_20261009/delta_abschluss_20261012 dokumentiert.
+Version 2.94.0 bleibt bestehen; keine neue Toolabnahme oder Releasekampagne.
+
 ## H8-Zusatzaufnahme mit Paketmitschnitt (06.10.2026)
 
 Genau eine Zusatzaufnahme für repeat:2 ausgeführt; die zwei gültigen Repeats
