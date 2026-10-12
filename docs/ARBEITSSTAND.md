@@ -2700,3 +2700,14 @@ Kohortenstatistiken. Die vorhandenen drei Repeats und sämtliche Fehlversuche
 bleiben unverändert erhalten. Der wissenschaftliche Standardpfad bleibt bei
 drei Wiederholungen. Neue Full-Baselines und N5000-Auswertungen gehören nicht
 zu dieser reduzierten Abnahme. Die installierte Version bleibt 2.94.0.
+
+Die erste reduzierte reale GUI-Ausführung bestätigte ResNet50/DeepX mit
+genau einem gültigen Performanceprozess, einem gültigen 60-s-Capture,
+numerischer Oracleprüfung und normalem Import. Damit sind neun Zellen
+abgeschlossen. YOLOv7/Hailo8 wurde danach noch vor dem SDK-Start abgewiesen:
+dem historischen Vertrag für belegte HWC-RGB-uint8-Bytes fehlte die explizite
+Zahlenbereichsangabe. Die gezielte Metadatenkorrektur übernimmt `uint8_0_255`
+nur bei verifiziertem RGB-Preprocessing und identischem vorbereiteten
+Payload-/RGB-Hash. Eingabebytes, Padding, Modellartefakte und Oracle bleiben
+unverändert; der Fehlversuch und seine null Capturestarts bleiben erhalten.
+Die Fortsetzung umfasst ausschließlich die zwölf offenen Detektorzellen.

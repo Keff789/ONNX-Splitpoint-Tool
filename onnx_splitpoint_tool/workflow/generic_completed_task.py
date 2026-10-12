@@ -328,6 +328,55 @@ def validate_plan(plan: dict, scope_csv: Path, primary: Path) -> list[dict]:
     return rows
 
 
+def _bind_prepared_numeric_domain(row: dict, command: dict, prepared: dict, runtime_input_format: str) -> None:
+    """Describe an exact historical RGB feed without changing its bytes."""
+    binding = row['input_binding']
+    contract = binding['prepared_input_contract']
+    declarations = [prepared, contract, contract.get('source_input_contract') or {}, *contract.get('entries', [])]
+    for key in ('normalization', 'source_domain'):
+        values = {item[key] for item in declarations if item.get(key)}
+        if len(values) > 1:
+            raise ValueError('Generic prepared input numeric contract conflict: ' + key)
+    if any(item.get(key) for item in declarations for key in ('normalization', 'source_domain')):
+        return
+    entries = binding.get('entries') or []
+    artifact = (command.get('artifacts') or {}).get('prepared_input') or {}
+    shape = prepared.get('shape') or []
+    if (row.get('task') != 'detection' or command.get('backend') != 'hailo8_to_trt'
+            or runtime_input_format != 'uint8' or len(entries) != 1
+            or contract != command.get('prepared_input_contract')
+            or contract.get('format') != 'raw_runtime_tensor'
+            or contract.get('preprocess') != 'opencv_letterbox_rgb_uint8'
+            or contract.get('layout') != 'HWC' or contract.get('dtype') != 'uint8'
+            or len(shape) != 3 or shape[-1] != 3 or contract.get('shape') != shape
+            or any(type(dim) is not int or dim <= 0 for dim in shape)
+            or prepared.get('dtype') != 'uint8' or prepared.get('format') != 'raw'
+            or prepared.get('path') != artifact.get('path')
+            or prepared.get('sha256') != artifact.get('sha256')
+            or not re.fullmatch('[a-f0-9]{64}', str(prepared.get('sha256') or ''))
+            or contract.get('shared_rgb_source_sha256') != prepared['sha256']
+            or not contract.get('shared_rgb_source')
+            or contract.get('source_image_sha256') != command.get('input_image_sha256')
+            or binding.get('source_image_sha256') != command.get('input_image_sha256')
+            or command.get('contract_sha256') != row.get('native_command_contract_sha256')):
+        raise ValueError('Generic prepared input lacks an explicitly bound numeric domain/normalization')
+    local = Path(entries[0].get('local_path') or '')
+    if (not local.is_file() or local.stat().st_size != shape[0] * shape[1] * shape[2]
+            or file_sha256(local) != prepared['sha256']):
+        raise ValueError('Generic legacy RGB prepared input bytes differ from the bound source')
+    prepared['source_domain'] = 'uint8_0_255'
+    prepared['source_domain_binding'] = {
+        'schema': 'onnx-splitpoint/generic-prepared-input-domain-binding/v1',
+        'source_domain': 'uint8_0_255', 'numeric_transform_applied': False,
+        'derivation': 'verified_hailo8_opencv_letterbox_rgb_uint8_shared_source_exact_bytes',
+        'native_source': {'path': row['native_source'], 'sha256': file_sha256(Path(row['native_source']))},
+        'native_command_contract_sha256': command['contract_sha256'],
+        'native_quality_binding_sha256': row['native_quality_binding_sha256'],
+        'source_contract_field': 'native_command_contract.prepared_input_contract',
+        'preprocess': contract['preprocess'], 'prepared_input_sha256': prepared['sha256'],
+        'shared_rgb_source': {'path': contract['shared_rgb_source'], 'sha256': contract['shared_rgb_source_sha256']}}
+
+
 def runtime_configuration(row: dict, remote_root: str, execution_id: str) -> tuple[dict, list[dict]]:
     """Project original bound files into a new attempt, with unchanged content."""
     import posixpath
@@ -409,6 +458,7 @@ def runtime_configuration(row: dict, remote_root: str, execution_id: str) -> tup
         runtime_input_format = input_spec["dtype"]
     if runtime_input_format not in {"uint8", "float32"}:
         raise ValueError("original accelerator runtime input format missing")
+    _bind_prepared_numeric_domain(row, command, input_spec, runtime_input_format)
     completion = row["completion_contract"] if row["task"] == "detection" else {
         "task": "classification", "operation": "top1_top5", "label_offset": 0}
     config = {"identity": row["identity"], "execution_id": execution_id, "original_run": row["original_run"],
