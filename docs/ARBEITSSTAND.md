@@ -63,6 +63,17 @@ Scope- und Bundlebedingungen. Keine geänderte Numerik oder aufgeweichte
 Messwert-/Qualitätsgrenze wird dadurch zugelassen. Originalquellen, Vorversionen
 und die konkrete Abgrenzung stehen im begrenzten Delta-Operationsbereich.
 
+Die erste neue Generic-Kohorte wurde regulär mit drei gültigen Repeats beendet,
+aber ihr installierter Ergebnisreader erkannte die vorher belegte Collector-
+Metadatenhistorie noch nicht. Der normale GUI-/CLI-Import prüft jetzt auch diese
+exakte, vor jedem Capture erzeugte Historie und ihre erhaltenen Parent-/Plan-
+Hashes. Ausschließlich die bereits geprüfte Collectorbindung wird zum Vergleich
+in einer Plankopie angeglichen; originale Pläne, numerische Verträge und
+Messkriterien bleiben erhalten. Neun gezielte Produkttests einschließlich acht
+negativer Bindungsfälle sowie 24 bestehende Refresh-/Import-/Parentflowtests
+bestanden (33 insgesamt). Der reale erste Fall wird ausschließlich aus seinen
+vorhandenen drei Aufnahmen erneut importiert; daraus entsteht kein Messauftrag.
+
 ## H8-Zusatzaufnahme mit Paketmitschnitt (06.10.2026)
 
 Genau eine Zusatzaufnahme für repeat:2 ausgeführt; die zwei gültigen Repeats

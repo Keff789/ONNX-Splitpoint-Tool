@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.94.0",
   "workflow_version": "v2.94.0",
-  "file_count": 2237,
+  "file_count": 2238,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 317958,
-      "sha256": "ed342eaecb2819f725c403acefe631b3f0693d7393f83b9ff1b5c899eaba6672"
+      "size": 318752,
+      "sha256": "0adf33934fa8edc8d9eda85ceadcf85a50018e3f6894636157ba87dfda94e703"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -2976,8 +2976,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/energy_current_projection.py",
-      "size": 16924,
-      "sha256": "2f5a8f37248017913b570453d5078179c41311fd689661be8376cb0a3f388917"
+      "size": 19834,
+      "sha256": "b549fb383762ba26ea34f2c3b3899e30997097d4f950944481cd996deb378d70"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/energy_parent_flow.py",
@@ -7148,6 +7148,11 @@
       "path": "tests/test_generic_energy_generated_processes.py",
       "size": 10372,
       "sha256": "752fa0875305030c89ae9d560d783f5d8007e16a52d9426b7fef983f60cedd72"
+    },
+    {
+      "path": "tests/test_generic_energy_refresh_projection.py",
+      "size": 4509,
+      "sha256": "dae6be588fc9c2a6269dda8edd531ad25becc4406eba9fd260983536a3247225"
     },
     {
       "path": "tests/test_generic_energy_reporting.py",

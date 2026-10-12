@@ -38,7 +38,7 @@ def csvwrite(path, rows, fields):
     atomic_write_text(Path(path), stream.getvalue())
 
 
-def _generic_energy_preparation(root,p,parent):
+def _generic_energy_preparation(root,p,parent,*,parent_sha=None):
  prepared=parent.bound_file(p['normal_energy_plan']).resolve(strict=True)
  original=root/'measurement/generic_energy_plan.json'
  if prepared==original:return prepared,original,[]
@@ -55,6 +55,35 @@ def _generic_energy_preparation(root,p,parent):
   fields=lambda payload:{k:v for k,v in payload.items()if k not in ('adapter','controller_sources','normal_energy_plan','performance_admission')}
   return (fields(before)==fields(after) and
    parent.comparison_refresh_matches(before.get('performance_admission',{}),after.get('performance_admission',{})))
+ if receipt.get('collector_script_binding_refreshed') is True:
+  if (saved_prepared.get('ok') is not True or saved_prepared.get('parent_plan_sha256')!=saved_binding['sha256']
+      or not immutable_match(saved,p) or receipt.get('normal_energy_plan_before')!=saved['normal_energy_plan']
+      or receipt.get('normal_energy_plan_after')!=p['normal_energy_plan']
+      or receipt.get('prepared_measured_execution_context_restored') is not False
+      or receipt.get('normal_energy_plan_unchanged') is not False
+      or receipt.get('scientific_inputs_and_runtime_unchanged') is not True
+      or receipt.get('hardware_started') is not False
+      or receipt.get('current_parent_plan')!={'path':str(root/'parent_plan.json'),'sha256':parent_sha or sha(root/'parent_plan.json')}
+      or any(not isinstance(receipt.get(k),str) or len(receipt[k])!=64 or any(c not in '0123456789abcdef' for c in receipt[k])
+             for k in ('budget_before_sha256','budget_after_sha256'))):
+   raise ValueError('Generic collector refresh receipt or Parent differs')
+  before=read(parent.bound_file(saved['normal_energy_plan']));after=read(prepared)
+  old_collector={'path':before.get('collector_script'),'sha256':before.get('collector_script_sha256')}
+  new_collector={'path':after.get('collector_script'),'sha256':after.get('collector_script_sha256')}
+  frozen=lambda value:{k:v for k,v in value.items()if k!='collector_script_sha256'}
+  if (frozen(before)!=frozen(after) or old_collector not in saved['controller_sources']
+      or new_collector not in p['controller_sources'] or old_collector==new_collector
+      or Path(new_collector['path']).name!='energy_measurement_cli.py'
+      or new_collector['path'] not in receipt.get('refreshed_controller_paths',[])):
+   raise ValueError('Generic collector refresh changed a scientific field or unbound source')
+  at=datetime.datetime.fromisoformat(receipt['at'])
+  if at.tzinfo is None:raise ValueError('Generic collector refresh timestamp is not explicit')
+  for start_path in [root/'production-start.json',*root.glob('resume_attempts/*/production-start.json')]:
+   if start_path.is_file():
+    started=datetime.datetime.fromisoformat(read(start_path)['started_at'])
+    if started.tzinfo is None or started<at:raise ValueError('Generic collector refresh followed a capture attempt')
+  _,original,prior_receipts=_generic_energy_preparation(root,saved,parent,parent_sha=saved_binding['sha256'])
+  return prepared,original,[*prior_receipts,receipt_path]
  if (saved_prepared.get('ok') is not True or saved_prepared.get('parent_plan_sha256')!=saved_binding['sha256']
      or not immutable_match(saved,p) or receipt.get('normal_energy_plan_before')!=saved['normal_energy_plan']
      or receipt.get('normal_energy_plan_after')!=p['normal_energy_plan']
@@ -73,7 +102,7 @@ def _generic_energy_preparation(root,p,parent):
  # independently verifies this exact task, source, limits and accepted chains.
  # Later normal controller-only refreshes can retain this exact prepared plan.
  reached={receipt['current_parent_plan']['sha256']};used=[receipt_path]
- actual_parent_sha=sha(root/'parent_plan.json')
+ actual_parent_sha=parent_sha or sha(root/'parent_plan.json')
  if actual_parent_sha not in reached:
   remaining=list((root/'controller_binding_refresh').glob('*/REFRESH_RECEIPT.json'))
   while actual_parent_sha not in reached:
@@ -145,6 +174,11 @@ def generic_energy_projection(case,current,source):
  saved_case=read(parent.bound_file(p['case']))
  prepared_plan_path,original_plan_path,refresh_receipts=_generic_energy_preparation(root,p,parent)
  original_plan=read(original_plan_path);plan_path=prepared_plan_path
+ if any(read(path).get('collector_script_binding_refreshed') is True for path in refresh_receipts):
+  # The preparation reader verified the exact metadata-only transition and
+  # preserved its original plan. Compare later resumes with that admitted CLI.
+  original_plan=copy.deepcopy(original_plan)
+  original_plan['collector_script_sha256']=read(prepared_plan_path)['collector_script_sha256']
  if prepared_plan_path!=original_plan_path:
   _verify_generic_energy_command_plan(read(prepared_plan_path),original_plan)
  if attempt!=root:
