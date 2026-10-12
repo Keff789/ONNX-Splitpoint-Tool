@@ -111,9 +111,10 @@ def test_empty_runtime_cohort_preserves_runtime_blocked_status(
     tmp_path: Path,
 ) -> None:
     row = _runtime_row("b004")
-    # Even a claimed count of one cannot replace the missing sealed technical
-    # Part-2 proof in this deliberately incomplete subprocess fixture.
-    row["part2_input_count"] = 1
+    # This fixture must actually lack a constructible command. Unsealed summary
+    # input counts cannot veto the verified single-input contract supplied by
+    # _runtime_row (covered explicitly by the parametrized test above).
+    row.pop("native_command_contract")
     summary, validation = _write_inputs(tmp_path, row)
     out = tmp_path / "energy"
 
@@ -515,16 +516,24 @@ def test_variant_wrapper_forwards_and_archives_final_all_split_energy(
             )
             root.mkdir(parents=True, exist_ok=True)
         elif label == "final_report":
+            # This command-forwarding fixture must publish the complete
+            # configured three-row import before downstream Energy can run.
+            # The real performance checkpoint/denominator gate stays active.
+            common = {"model": "yolo26s", "setup_id": "hailo8_setup",
+                      "variant": "final", "backend_key": "hailo8", "ok": True}
+            fixture_rows = [
+                {**common, "backend": "hailo8", "case": "b038", "execution_mode": "native_split"},
+                {**common, "backend": "native_full_hailo8", "case": "full",
+                 "comparison_backend": "hailo8", "execution_mode": "native_full_baseline"},
+                {**common, "backend": "native_full_tensorrt", "case": "full",
+                 "comparison_backend": "hailo8", "execution_mode": "native_full_baseline"},
+            ]
             (reports / "native_producer_combined_summary.json").write_text(
-                json.dumps({"rows": [{
-                    "backend": "hailo8_to_trt",
-                    "model": "yolo26s",
-                    "case": "b038",
-                    "precision": "uint8_dequant_fp16",
-                    "ok": True,
-                }]}),
+                json.dumps({"rows": fixture_rows}),
                 encoding="utf-8",
             )
+            for suffix in ("csv", "md"):
+                (reports / f"native_producer_combined_summary.{suffix}").write_text("local fixture report\n")
         elif label == "native_validation":
             validation = reports / "native_validation"
             validation.mkdir(parents=True, exist_ok=True)

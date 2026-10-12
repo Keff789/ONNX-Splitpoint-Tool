@@ -1,6 +1,10 @@
 # Versioning policy
 
-## Current release: 2.92.0 — consolidated campaign and completion release
+## Current release: 2.93.0 — normal configuration and bounded energy integration
+
+Package/GUI: `2.93.0`; build/workflow: `v2.93.0`; development lineage: `v2.79`; build-contract version: `2`. This minor release publishes the integrated normal energy-parent, retry/resume, result-reader and GUI/CLI configuration paths. See [RELEASE_2.93.0.md](RELEASE_2.93.0.md). Existing numerical and scientific rules are retained. Historical acquisitions keep their original versions and sources; the reserved confirmatory release remains `3.0.0`.
+
+## Historical release: 2.92.0 — consolidated campaign and completion release
 
 Package/GUI: `2.92.0`; build/workflow: `v2.92.0`; development lineage: `v2.79`; build-contract version: `2`. The minor version identifies the integrated selective completion, YOLO augmentation and bounded energy recovery functionality documented in [RELEASE_2.92.0.md](RELEASE_2.92.0.md). Dependencies and scientific acceptance policies are unchanged.
 

@@ -4971,7 +4971,8 @@ def _main_impl() -> int:
                     raise RuntimeError('Final cohort point incomplete; no further capture')
                 if not ns.completed_row_validator:
                     raise RuntimeError('Final cohort has no normal completed-point import gate')
-                validation_command=shlex.split(ns.completed_row_validator)+['--source',str(partial_path)]
+                from onnx_splitpoint_tool.workflow.energy_parent_import import product_import_command
+                validation_command=product_import_command(ns.completed_row_validator)+['--source',str(partial_path)]
                 checked=subprocess.run(validation_command,cwd=_REPO_ROOT if '_REPO_ROOT' in globals() else Path(__file__).resolve().parents[1],
                                        capture_output=True,text=True,timeout=180)
                 print(checked.stdout,flush=True)

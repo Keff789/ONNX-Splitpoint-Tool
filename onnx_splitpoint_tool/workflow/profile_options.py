@@ -28,7 +28,7 @@ def _as_bool(value: Any, default: bool = False) -> bool:
 
 def _as_int(value: Any, default: int = 0) -> int:
     try:
-        return int(str(value or "").strip())
+        return int(str(value if value is not None else "").strip())
     except Exception:
         return int(default)
 

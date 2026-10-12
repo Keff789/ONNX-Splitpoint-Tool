@@ -1,6 +1,10 @@
+# ONNX Splitpoint Tool v2.93.0
+
+Aktueller Build: `v2.93.0`. Reguläre GUI-/CLI-Konfigurationsauflösung, begrenzte Energie-Fortsetzung und paketierte Ergebnisimporte. Gespeicherte Null-Warmups bleiben erhalten; Originalmessungen und wissenschaftliche Entscheidungen behalten ihre ursprünglichen Belege. [Release 2.93.0](docs/RELEASE_2.93.0.md), [Arbeitsstand](docs/ARBEITSSTAND.md), [Versionsregeln](docs/VERSIONING.md).
+
 # ONNX Splitpoint Tool v2.92.0
 
-Aktueller Build: `v2.92.0`. Konsolidierter Softwarestand für selektive Kampagnenergänzung, Generic-Completion, graphbasierte YOLO-Min3-Augmentierung und streng gebundene Energie-Fortsetzung. Die Veröffentlichung bewahrt die ursprünglichen Messquellen und wissenschaftlichen Einschränkungen. [Release 2.92.0](docs/RELEASE_2.92.0.md), [Arbeitsstand](docs/ARBEITSSTAND.md), [Versionsregeln](docs/VERSIONING.md).
+Vorheriger Build: `v2.92.0`. Konsolidierter Softwarestand für selektive Kampagnenergänzung, Generic-Completion, graphbasierte YOLO-Min3-Augmentierung und streng gebundene Energie-Fortsetzung. Die Veröffentlichung bewahrt die ursprünglichen Messquellen und wissenschaftlichen Einschränkungen. [Release 2.92.0](docs/RELEASE_2.92.0.md), [Arbeitsstand](docs/ARBEITSSTAND.md), [Versionsregeln](docs/VERSIONING.md).
 
 # ONNX Splitpoint Tool v2.91.2
 

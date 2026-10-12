@@ -2583,3 +2583,16 @@ Die wiederverwendbare Parent-/Resume-/Retrylogik liegt im Toolpaket; historische
 Der Generic-Vergleich übernimmt einen vorhandenen qualifizierten Normalvergleich nur bei exakt gebundener Performancequelle, ausgewählter Identität und unverändert gültigen Energieprimärgates. Die belegte fehlende H8-MobileNet-Projektion wird dadurch geschlossen; negative Qualität oder Capturegates werden nicht freigegeben. Keine Änderung an DUT-Runtime, Messfenster, Samples, erstgültiger Auswahl oder kumulativen Startzahlen.
 
 Die zusammenhängende Integration ist gezielt getestet und unabhängig geprüft. Reale Produktabnahme, Current-/Archivstand und verbleibender Gesamtabschluss werden im bestehenden Revision-3-Reportroot dokumentiert. Der Gesamtauftrag ist dadurch noch nicht abgeschlossen.
+
+
+## 12.10.2026 — Toolabnahme und veröffentlichbarer Produktstand 2.93.0
+
+Eigene Softwarephase; die Restmesskampagne bleibt gespeichert und pausiert. Der bestehende Stand wurde nach Sicherung der abweichenden Benutzerinstallation bytegenau mit dem Worktree konsolidiert. Keine neue Modellgruppe, kein N5000-Lauf, kein DUT-Deployment und kein Artefaktneubau.
+
+GUI-Startcallback und normaler profilgesteuerter CLI-Einstieg werden mit derselben speicherbaren Konfiguration bis zu den tatsächlich materialisierten Generic-/Native-Backendrequests geprüft. Run-mode-Budgets bleiben maßgeblich; Nullwerte in der Profilauflösung und im expliziten Remote-Warmup werden erhalten. Die GUI zeigt einen korrekt quotierten profilgesteuerten Startbefehl.
+
+Native-/Generic-Originaldatenimporte und die gezielte Generic-Current-/CSV-Projektion sind nun paketiert. Gespeicherte historische Importargv behalten ihre Kontrollen und lösen regulär auf den installierten Produktleser auf; ein altes Arbeitsverzeichnis oder PYTHONPATH überschattet ihn nicht. Die historischen Leser, Daten und Belege bleiben erhalten. Neue Native-Resumes verwenden den normalen Collector statt eines privaten Modul-Overlays und prüfen seine installierte Quellenbindung.
+
+Originaldaten-Reprocessing: sechs gespeicherte Parents, 23 Punkte auf H8/H10/DeepX, exakt gleiche Ergebnis-/Entscheidungsfelder. 236 originale JSON-Quellen sowie Queue, Budget und Vergleichsmatrix bleiben unverändert. Das ist ein Reader-/Produktnachweis mit vorhandenen Hardwaredaten, keine neue physische GUI-/Collectorabnahme. Private vollständige Fairness-Neuauswertung bleibt ein eigener Berichtsvorgang.
+
+Gezielte lokale Tests, Installations-/Archivprüfung, regulärer GUI-Start und tatsächlicher Remotecommit werden im bestehenden Operationsbereich unter `tool_acceptance_push_20261012` belegt. Automatisierte Controller-/Signalprüfung und echte Tk-Start-/Editorprüfung werden getrennt von physischer Ausführung ausgewiesen.

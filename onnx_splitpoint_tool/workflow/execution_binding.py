@@ -1913,7 +1913,9 @@ def _remote_args_from_options(
     from ..benchmark.remote_run import RemoteBenchmarkArgs
     from .artifact_cache_preflight import resolve_artifact_cache_preflight_policy
     profile_remote = _profile_remote_with_override(profile_payload, runtime_override)
-    warmup = _int(getattr(options, "remote_warmup", None), 0) or _int(getattr(options, "benchmark_warmup", None), _int(profile_remote.get("warmup"), 10))
+    remote_warmup = getattr(options, "remote_warmup", None)
+    warmup = (_int(remote_warmup, 0) if remote_warmup is not None else
+              _int(getattr(options, "benchmark_warmup", None), _int(profile_remote.get("warmup"), 10)))
     iters = _int(getattr(options, "remote_iters", None), 0) or _int(getattr(options, "benchmark_runs", None), _int(profile_remote.get("iters"), 100))
     repeats = _int(getattr(options, "remote_repeats", None), _int(profile_remote.get("repeats"), 1))
     timeout_s = _int(getattr(options, "remote_timeout_s", None), 0) or _int(getattr(options, "benchmark_timeout_s", None), 0) or _int(profile_remote.get("timeout_s"), 7200)

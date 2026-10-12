@@ -247,8 +247,9 @@ def describe_parent(run):
 
 def _import_saved(item):
     # No parent/collector callback is reachable in this function.
+    from .energy_parent_import import product_import_command
     before=sha(item['importer_script'])
-    completed=subprocess.run(item['importer'],cwd=item['context']['controller_root'],capture_output=True,text=True,timeout=180)
+    completed=subprocess.run(product_import_command(item['importer']),cwd=item['context']['controller_root'],capture_output=True,text=True,timeout=180)
     log=item['context']['report_root']/'operations/token_saving_batch_20261009'/(item['run'].name+'_import.log')
     log.parent.mkdir(parents=True,exist_ok=True)
     log.write_text(completed.stdout+completed.stderr)

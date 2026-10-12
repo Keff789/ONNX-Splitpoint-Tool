@@ -964,7 +964,8 @@ def run_prepared(args):
         if prior_results.is_file()and any((x.get('run')or{}).get('energy_aggregate_complete')is True
                                          for x in read(prior_results).get('rows',[])):
             import shlex
-            checked=subprocess.run(shlex.split(config['completed_row_validator'])+['--source',str(prior_results)],
+            from .energy_parent_import import product_import_command
+            checked=subprocess.run(product_import_command(config['completed_row_validator'])+['--source',str(prior_results)],
                 cwd=TOOL,capture_output=True,text=True,timeout=180)
             if checked.returncode:raise ValueError('Previously completed final points still fail normal import; no resume capture: '+checked.stderr[-2000:])
             imported=json.loads(checked.stdout)

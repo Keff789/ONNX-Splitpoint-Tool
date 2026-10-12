@@ -225,6 +225,7 @@ ALLOWED_DOC_FILES = {
     "docs/RELEASE_2.91.1.md",
     "docs/RELEASE_2.91.2.md",
     "docs/RELEASE_2.92.0.md",
+    "docs/RELEASE_2.93.0.md",
     "docs/ARBEITSSTAND.md",
     "docs/V2804_QUALITAET_UND_ABNAHME.md",
     "docs/RELEASE_SCOPE_V281.md",

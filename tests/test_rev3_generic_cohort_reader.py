@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,9 @@ from onnx_splitpoint_tool.workflow.cross_runner_reporting import (
     _bound_native_cohort_rates, compute_cross_runner_report,
 )
 
-R = Path('/home/kmika/Reports/native-fairness-rev3-20261007')
+ARCHIVE = os.environ.get('ONNX_SPLITPOINT_REV3_ARCHIVE', '')
+R = Path(ARCHIVE).expanduser()
+pytestmark = pytest.mark.skipif(not ARCHIVE, reason='Optional original-data replay requires ONNX_SPLITPOINT_REV3_ARCHIVE')
 
 
 def load_module(name, path):
@@ -100,10 +103,22 @@ def test_plan_progress_keeps_regimes_separate(tmp_path, monkeypatch):
     updater = load_module('existing_matrix_updater', R / 'current_results/build_fairness_matrix.py')
     monkeypatch.setattr(updater, 'R', tmp_path)
     def read_with_generic_stop(path):
-        value = json.loads((R / Path(path).relative_to(tmp_path)).read_text())
+        path = Path(path)
+        source = R / path.relative_to(tmp_path) if path.is_relative_to(tmp_path) else path
+        value = json.loads(source.read_text())
+        if path.name == 'REMEASUREMENT_PLAN_SUMMARY.json':
+            value['plan_file'] = str(tmp_path / 'REMEASUREMENT_PLAN.csv')
         if Path(path).name == 'energy_task_budget.json':
             key = json.dumps(['generic_completed:deepx', 'yolov7_paper', 'b044', 'orin_nx_deepx_m1_01'], separators=(',', ':'))
-            value['tasks'][key] = {'stop_reason': 'generic_fixture_stop'}
+            source_id = value['tasks'][key]['source_id']
+            # This is a reporting fixture, independent of any live campaign
+            # permission. A later session may intentionally supersede that
+            # permission without invalidating the archived scientific data.
+            value = {'campaign': True, 'max_transport_failures': 20,
+                     'sources': {source_id: {'stop_reason': '', 'transport_failures': 0}},
+                     'tasks': {key: {'source_id': source_id, 'stop_reason': 'generic_fixture_stop',
+                                     'chains': [], 'limits': {'max_chains': 9, 'max_retries': 2,
+                                                             'max_transport_failures': 20}}}}
         return value
     monkeypatch.setattr(updater, 'read', read_with_generic_stop)
     plan = list(csv.DictReader((R / 'REMEASUREMENT_PLAN.csv').open()))
@@ -117,6 +132,11 @@ def test_plan_progress_keeps_regimes_separate(tmp_path, monkeypatch):
     for g in generic['rows']:
         if g['model_id'] == 'yolov7_paper' and g['case_id'] in ('b044', 'b066') and g['comparison_backend'] == 'deepx':
             g['normal_claim_eligible'] = False
+            # The original archive may have gained valid Energy since this
+            # fixture was written. Keep the intended missing-Generic scenario
+            # explicit in this copied fixture, without changing original data.
+            g['normal_energy_eligible'] = False
+            g['energy_provenance']['normal_report_verified'] = False
     updater.update_plan_progress(native, generic)
     result = list(csv.DictReader((tmp_path / 'REMEASUREMENT_PLAN.csv').open()))
     for row in result:

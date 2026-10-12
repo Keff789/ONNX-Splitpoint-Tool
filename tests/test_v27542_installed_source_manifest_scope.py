@@ -26,6 +26,10 @@ def _write_release_identity(root: Path, version: str, build_id: str) -> None:
 
 
 CURRENT_UPDATER_REQUIRED_ENTRY_POINTS = (
+    "onnx-splitpoint-gui=onnx_splitpoint_tool.gui_app:main",
+    "onnx-splitpoint-evaluation=onnx_splitpoint_tool.workflow.run_evaluation:main",
+    "onnx-splitpoint-complete-evaluation=onnx_splitpoint_tool.workflow.supplement:main",
+    "onnx-splitpoint-energy-import=onnx_splitpoint_tool.workflow.energy_parent_import:main",
     "onnx-splitpoint-smoke-v279=onnx_splitpoint_tool.v279_smoke:main",
     "onnx-splitpoint-smoke-v2791=onnx_splitpoint_tool.v279_smoke:main",
     "onnx-splitpoint-smoke-v2-79-1=onnx_splitpoint_tool.v279_smoke:main",

@@ -61,7 +61,8 @@ def test_refresher_parses_current_project_without_tomllib_or_backend() -> None:
     # This test exercises the historical stdlib parser against the current
     # release tree.  Historical console-script identities below stay frozen,
     # while the project version must follow the release being packaged.
-    assert project.version == "2.79.13"
+    from onnx_splitpoint_tool.release_identity import VERSION
+    assert project.version == VERSION
     assert len(project.scripts) >= 100
     assert project.scripts["onnx-splitpoint-smoke-v27542"] == (
         "onnx_splitpoint_tool.v27542_smoke:main"

@@ -1,10 +1,12 @@
 """Original measured v2 arithmetic survives a reporting-only module change."""
 from pathlib import Path
-import ast,copy,json
+import ast,copy,json,os
 import pytest
 from onnx_splitpoint_tool import native_detection_postprocess as post
 
-R=Path('/home/kmika/Reports/native-fairness-rev3-20261007')
+ARCHIVE=os.environ.get('ONNX_SPLITPOINT_REV3_ARCHIVE','')
+R=Path(ARCHIVE).expanduser()
+pytestmark=pytest.mark.skipif(not ARCHIVE,reason='Optional frozen-source replay requires ONNX_SPLITPOINT_REV3_ARCHIVE')
 
 def contract():
     return json.loads((R/'energy/generic_completed/deepx_yolov7_b009_final_20261010/measurement/generic_energy_plan.json').read_text())['config']['completion_contract']['processor_contract']

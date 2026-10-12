@@ -6991,6 +6991,15 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         )
 
     def _eval_workflow_command_preview(self, opts: WorkflowOptions) -> str:
+        if opts.profile_start_snapshot and not opts.resume:
+            argv = [sys.executable, "-m", "onnx_splitpoint_tool.workflow.run_evaluation",
+                    "--profile-driven", "--profile", str(opts.profile), "--out", str(opts.out)]
+            for flag, value in (("--models-root", opts.models_root), ("--only-model", opts.only_model)):
+                if value:
+                    argv.extend([flag, str(value)])
+            if opts.require_fresh_run:
+                argv.append("--require-fresh-run")
+            return shlex.join(argv)
         parts = [
             "python -m onnx_splitpoint_tool.workflow.run_evaluation",
             f"--profile {opts.profile}",

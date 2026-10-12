@@ -309,36 +309,31 @@ def verify_repeat(run, row, index):
 
 
 def accounting_overlay(output, tool):
-    """Use the ordinary frozen CLI, changing only controller error accounting.
+    """Compatibility name: bind the ordinary CLI without a module overlay.
 
-    The original package still supplies calibration, calculations and runtime.
-    Snapshot the two corrected modules per parent; do not deploy the Full fix
-    or change the frozen controller installation for a before measurement.
+    Historical attempts keep their recorded accounting snapshots. New resumes
+    require the installed collector and budget implementation to match the
+    saved controller source, then execute its unchanged normal CLI.
     """
-    import shutil
-    directory = output/'controller-accounting'
-    directory.mkdir()
+    import onnx_splitpoint_tool
+    installed = Path(onnx_splitpoint_tool.__file__).resolve().parent.parent
+    tool = Path(tool).resolve(strict=True)
     hashes = {}
-    for name in ('collector.py','task_budget.py'):
-        source = WORKTREE/'onnx_splitpoint_tool/energy'/name
-        dest = directory/name
-        shutil.copyfile(source,dest)
-        hashes[str(dest)] = sha(dest)
-    launcher = directory/'energy_cli.py'
-    launcher.write_text('import sys, runpy, importlib.util\n'
-        + f'sys.path.insert(0, {str(tool)!r})\n'
-        + 'import onnx_splitpoint_tool as package\n'
-        + f'spec = importlib.util.spec_from_file_location("onnx_splitpoint_tool.energy", {str(tool/"onnx_splitpoint_tool/energy/__init__.py")!r}, submodule_search_locations={[str(directory),str(tool/"onnx_splitpoint_tool/energy")]!r})\n'
-        + 'energy = importlib.util.module_from_spec(spec)\n'
-        + 'sys.modules[spec.name] = energy\n'
-        + 'spec.loader.exec_module(energy)\n'
-        + 'package.energy = energy\n'
-        + f'sys.argv[0] = {str(tool/"scripts/energy_measurement_cli.py")!r}\n'
-        + 'runpy.run_path(sys.argv[0], run_name="__main__")\n')
-    hashes[str(launcher)] = sha(launcher)
-    write(output/'controller-accounting.json',{'original_cli':str(tool/'scripts/energy_measurement_cli.py'),
-        'original_cli_sha256':sha(tool/'scripts/energy_measurement_cli.py'),'overrides_sha256':hashes,
-        'measurement_runtime_deployed':False})
+    for name in ('collector.py', 'task_budget.py'):
+        relative = Path('onnx_splitpoint_tool/energy') / name
+        source = tool / relative
+        if sha(source) != sha(installed / relative):
+            raise ValueError('ordinary installed energy source differs from saved controller: ' + name)
+        hashes[str(source)] = sha(source)
+    launcher = tool / 'scripts/energy_measurement_cli.py'
+    if not launcher.is_file() or launcher.is_symlink():
+        raise ValueError('ordinary saved energy CLI unavailable')
+    write(output/'controller-accounting.json', {
+        'original_cli': str(launcher), 'original_cli_sha256': sha(launcher),
+        'normal_installed_sources_sha256': hashes,
+        'installed_distribution_root': str(installed),
+        'private_module_overlay': False, 'measurement_runtime_deployed': False,
+    })
     return launcher, hashes
 
 
