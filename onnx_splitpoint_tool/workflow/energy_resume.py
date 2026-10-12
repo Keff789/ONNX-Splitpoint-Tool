@@ -132,18 +132,33 @@ def recover(args):
     lock.acquire_for_recovery()
     try:
         _, request, reply, _ = predecessor(run, Path(args.failed_attempt).resolve())
+        authorization = read(args.authorization)
+        continuation_authorization = None
+        prior = reply.get('recovery') or {}
+        physical_authorization = authorization
+        if (prior.get('status') == 'released' and prior.get('retry_authorization')
+                and authorization != prior['retry_authorization']):
+            from onnx_splitpoint_tool.remote.resource_recovery import _retry_authorization
+            source = next(r for r in prior['resources'] if r.startswith('source:'))
+            continuation_authorization = _retry_authorization(authorization, source, prior['released_at'])
+            if not read(budget_path(run))['sources'][source.removeprefix('source:')].get('continuous_admission'):
+                raise ValueError('new continuation requires existing continuous campaign authority')
+            physical_authorization = prior['retry_authorization']
         if request.get("phase")=="ACQUIRING" and reply.get("reason")=="controller_resource_owner_lost":
             from onnx_splitpoint_tool.energy.recovery_accounting import reconcile_stopped_capture
             reconcile_stopped_capture(budget_path(run),parent_attempt=Path(args.failed_attempt).resolve(),
                 operation_id=request["operation_id"],run_dir=run)
         result = recover_capture_resources(run_dir=run, session_id=request['session_id'],
             operation_id=request['operation_id'], setup_id=request['setup_id'],
-            retry_authorization=read(args.authorization), bounded_energy_attempt_dir=Path(args.failed_attempt).resolve())
+            retry_authorization=physical_authorization, bounded_energy_attempt_dir=Path(args.failed_attempt).resolve())
+        if continuation_authorization is not None and result.get('status') != 'already_released':
+            raise ValueError('new continuation requires the unchanged already released recovery')
         source = next(r[7:] for r in result['resources'] if r.startswith('source:'))
         if read(budget_path(run))['sources'][source].get('continuous_admission'):
             session = 'energy-recovery-' + uuid.uuid4().hex
             output = run/'attempts'/session; output.mkdir(parents=True,exist_ok=False)
-            recover_run_fence(run,output,session,lock,read(lock.quarantine_path),Path(args.failed_attempt).resolve())
+            recover_run_fence(run,output,session,lock,read(lock.quarantine_path),Path(args.failed_attempt).resolve(),
+                              continuation_authorization=continuation_authorization)
             result['source_budget_handoff'] = str(output/'source-budget-handoff.json')
         print(json.dumps(result), flush=True)
         return result
@@ -205,7 +220,7 @@ def released_recovery_owner(lease, resource, identity, resources, recovery):
         raise ValueError('physical resource release time missing') from exc
 
 
-def recover_run_fence(run, output, session, lock, fence, attempt):
+def recover_run_fence(run, output, session, lock, fence, attempt, *, continuation_authorization=None):
     from onnx_splitpoint_tool.remote.resource_recovery import _rest_evidence_unchanged
     from onnx_splitpoint_tool.workflow.run_control import EvaluationRunLock
     from onnx_splitpoint_tool.energy.task_budget import install_authorized_source_reentry
@@ -247,7 +262,8 @@ def recover_run_fence(run, output, session, lock, fence, attempt):
         grant = install_authorized_source_reentry(budget_path(run),
             capture_request=request, recovery_reply=reply,
             new_parent={'run_id':run.name,'session_id':session,'pid':os.getpid(),
-                        'start_ticks':_proc_start_time(os.getpid())})
+                        'start_ticks':_proc_start_time(os.getpid())},
+            continuation_authorization=continuation_authorization)
         if grant.get('continuous_campaign'):
             from onnx_splitpoint_tool.energy.task_budget import authorize_campaign_source_continuation
             source = next(r[7:] for r in resources if r.startswith('source:'))
@@ -255,7 +271,7 @@ def recover_run_fence(run, output, session, lock, fence, attempt):
                 authorization_file=grant['authorization_file'],row_ids=grant['row_ids'])
         write(output/'source-budget-handoff.json',grant)
         write(output/'runlock-recovery.json',{'original_fence':fence,'original_owner':owner,
-            'physical_recovery_reply':reply,'at':now()})
+            'physical_recovery_reply':reply,'continuation_authorization':continuation_authorization,'at':now()})
     return True
 
 

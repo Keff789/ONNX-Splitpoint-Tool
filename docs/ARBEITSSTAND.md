@@ -20,6 +20,18 @@ die anschließenden zulässigen wissenschaftlichen Deltaaufnahmen werden im best
 Report unter operations/token_saving_batch_20261009/delta_abschluss_20261012 dokumentiert.
 Version 2.94.0 bleibt bestehen; keine neue Toolabnahme oder Releasekampagne.
 
+Der anschließende normale Recoveryversuch legte zwei weitere Bindungsprobleme offen:
+Die Nachbuchung erhält den historischen Raw-STOP und schreibt den aktuellen Fehler
+in die fortlaufende Autorisierung; deren Wiedereintritt erkennt jetzt beide belegten
+Darstellungen. Eine bereits für einen anderen Workflow erteilte physische Freigabe
+wird unverändert wiederverwendet. Die ausdrückliche wissenschaftliche Fortsetzung
+erhält eine getrennte Autorisierung mit exakter Parent-/Operations-/Quellen-/Budget-
+und Limitbindung. Das geprüfte Profil wird unverändert versiegelt; spätere Recovery
+erhält frühere Autorisierungen ausschließlich in ihrer zugehörigen Historie.
+23 zusätzliche gezielte Tests bestanden, insgesamt 185 unterschiedliche Regressionen.
+Die unabhängige Prüfung umfasst Folge-Recovery, Profiländerung während der Übergabe
+und die Trennung beider Autorisierungen im normalen CLI-/Backendweg.
+
 ## H8-Zusatzaufnahme mit Paketmitschnitt (06.10.2026)
 
 Genau eine Zusatzaufnahme für repeat:2 ausgeführt; die zwei gültigen Repeats

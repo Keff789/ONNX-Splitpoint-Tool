@@ -215,6 +215,15 @@ def _source_reentry(root, source_id, environment=None):
         _reentry_require(source["stop_reason"] == continuous["original_source_stop_reason"]
                          and root["max_transport_failures"] == continuous["max_transport_failures"],
                          "continuous admission changed original source policy")
+        continuation = continuous.get("continuation_authorization")
+        if continuation is not None:
+            from ..remote.resource_recovery import _retry_authorization
+            recovery = continuous["recovery_reply"]["recovery"]
+            _retry_authorization(continuation, "source:" + source_id, recovery["released_at"])
+            profile = Path(continuation["new_workflow_profile"])
+            _reentry_require(hashlib.sha256(profile.read_bytes()).hexdigest()
+                             == continuous.get("continuation_profile_sha256"),
+                             "scientific continuation profile changed")
         for covered in _reentry_history(continuous):
             task = root["tasks"][covered["campaign_row"]]
             _reentry_require(task["source_id"] == source_id and covered["chain"] in task["chains"],
@@ -929,7 +938,8 @@ def _h8_limit_changes(root, source_id, capture_row, requested, request, recovery
     return changes
 
 
-def install_authorized_source_reentry(budget_path, *, capture_request, recovery_reply, new_parent, authorized_limits=None):
+def install_authorized_source_reentry(budget_path, *, capture_request, recovery_reply, new_parent, authorized_limits=None,
+                                      continuation_authorization=None):
     """Bind one released, explicitly authorized capture to one live parent.
 
     The caller holds the existing run fence and all four recovery resource
@@ -970,6 +980,8 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
     _reentry_require(set(original_resources) == set(resources), "original resource evidence incomplete")
     stopped = max(item["quarantine"]["quarantined_at"] for item in original_resources.values())
     authorization = _retry_authorization(recovery.get("retry_authorization"), source, stopped)
+    continuation = (_retry_authorization(continuation_authorization, source, recovery["released_at"])
+                    if continuation_authorization is not None else None)
     _reentry_require("operator_evidence" not in recovery and recovery.get("released_at")
                      and set(new_parent) == {"run_id", "session_id", "pid", "start_ticks"}
                      and new_parent["run_id"] == request["run_id"]
@@ -987,9 +999,12 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
         _reentry_require(root.get("campaign") is True and source_id in root["sources"], "campaign source missing")
         state = root["sources"][source_id]
         continuous = state.get("continuous_admission")
+        _reentry_require(continuation is None or continuous is not None,
+                         "new continuation requires existing continuous campaign authority")
         if continuous is not None:
             if interrupted:
-                _reentry_require(state["stop_reason"] == "campaign_source_interrupted_chain_unresolved",
+                _reentry_require(state["stop_reason"] in {continuous["original_source_stop_reason"],
+                                                         "campaign_source_interrupted_chain_unresolved"},
                                  "owner-lost recovery cannot cover a different source STOP")
                 key = request["session_id"] + "/" + request["operation_id"]
                 accounting = root.get("failure_reconciliations", {}).get(key) or {}
@@ -1009,7 +1024,8 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
             if continuous.get("capture_request") == request:
                 _reentry_require(continuous.get("recovery_reply") == reply
                                  and not continuous["source_stop_reason"]
-                                 and not any(continuous["task_stop_reasons"].values()),
+                                 and not any(continuous["task_stop_reasons"].values())
+                                 and (continuation is None or continuous.get("continuation_authorization") == continuation),
                                  "later STOP requires its own exact released recovery")
                 return copy.deepcopy(continuous)
             matches = [(key, task, chain) for key, task in root["tasks"].items()
@@ -1029,7 +1045,9 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
                              and (not interrupted or accounting.get("booked_chain") == chain),
                              "released recovery does not cover the exact current continuous STOP")
             import yaml
-            profile = yaml.safe_load(Path(authorization["new_workflow_profile"]).read_text())
+            profile_path = Path((continuation or authorization)["new_workflow_profile"])
+            profile_bytes = profile_path.read_bytes()
+            profile = yaml.safe_load(profile_bytes)
             parent_root = path.resolve().parent / request["run_id"]
             if json.loads(row)[0].startswith("generic_completed:"):
                 parent_root = path.resolve().parent / "generic_completed" / request["run_id"]
@@ -1082,6 +1100,17 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
                          source_stop_reason="", task_stop_reasons={},
                          basis={"kind": "released_normal_recovery", "operation_id": request["operation_id"],
                                 "historical_source_completion_verified": False})
+            if continuation is not None:
+                import hashlib
+                grant["continuation_authorization"] = continuation
+                grant["continuation_profile_sha256"] = hashlib.sha256(profile_bytes).hexdigest()
+            else:
+                # A later recovery has its own physical retry authorization.
+                # Keep any older separate continuation only in previous_grants.
+                grant.pop("continuation_authorization", None)
+                grant.pop("continuation_profile_sha256", None)
+            _reentry_require(profile_path.read_bytes() == profile_bytes,
+                             "continuation profile changed during handoff")
             state["continuous_admission"] = copy.deepcopy(grant)
             handle.seek(0); json.dump(root, handle, indent=2); handle.truncate(); handle.flush(); os.fsync(handle.fileno())
             return copy.deepcopy(grant)

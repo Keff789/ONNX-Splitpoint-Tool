@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.94.0",
   "workflow_version": "v2.94.0",
-  "file_count": 2234,
+  "file_count": 2235,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 314787,
-      "sha256": "6d516a42122f30d5a3eeb1cbb30f7550e32d6d82cb2f020452bd499493e2cbbf"
+      "size": 315710,
+      "sha256": "d5d8dd814b015321eea6523f3d99bcbd4888eae3c4b07eba18e58029a9232dbb"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -916,8 +916,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/energy/task_budget.py",
-      "size": 123998,
-      "sha256": "5b3ec63747a3abd69934ec94d13e2caecd1cade136d0da3be4a7a442fdeedd87"
+      "size": 126052,
+      "sha256": "bec984369bf46e49c6ffab92588a49a5aee8d9f04d5a2732fcdd098f777c26da"
     },
     {
       "path": "onnx_splitpoint_tool/execution_plan.py",
@@ -2991,8 +2991,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/energy_resume.py",
-      "size": 27754,
-      "sha256": "89117fd334eac0132f3e05669fc06c5f46b0de43c1dd114403036bbb946f2b8a"
+      "size": 29088,
+      "sha256": "2d5fb2721ef947c2e136a9a99f4c19659fd4a03d6b066e84f7dcecf268b51a87"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/evidence_state_model.py",
@@ -7053,6 +7053,11 @@
       "path": "tests/test_energy_final_contract_regressions.py",
       "size": 123187,
       "sha256": "e5b0ee6c0ab5bb417e253ace77f609bb757b632aa32509b2834ee0a7110ed234"
+    },
+    {
+      "path": "tests/test_energy_recovery_continuation_authority.py",
+      "size": 13611,
+      "sha256": "68b83f8da10c765ef349af1df4864d7690c834ff83ff14d4ae5ac1a816eb8bc7"
     },
     {
       "path": "tests/test_energy_recovery_later_release.py",
