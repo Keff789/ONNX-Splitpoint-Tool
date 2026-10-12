@@ -111,4 +111,3 @@ def test_source_closed_sample_loss_resumes_normally_and_imports_once(tmp_path, m
     assert events == ['source_closed_loss_admission', ('backoff', 5.0)]
     assert flow.read(tmp_path / 'operations/token_saving_batch_20261009/parent_handoff.json')['decision'] == (
         'existing source-closed pure-loss authority; normal finite-series resume')
-
