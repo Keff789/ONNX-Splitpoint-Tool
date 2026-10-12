@@ -2550,7 +2550,8 @@ def _managed_energy_invocation_hash(
         for key, value in sorted(vars(namespace).items())
         if key not in excluded
     }
-    for field in ('campaign_cohort','completed_row_validator','require_environment_observation','environment_run_id'):
+    for field in ('campaign_cohort','completed_row_validator','require_environment_observation','environment_run_id',
+                  'capture_admission_file','capture_admission_sha256','capture_admission_hook'):
         if not options.get(field): options.pop(field,None)
 
     def _bound_file(value: Any) -> dict[str, Any]:
@@ -3240,11 +3241,13 @@ def _measurement_preflight_allows(
 
 
 from onnx_splitpoint_tool.energy.task_budget import add_campaign_budget_arguments, campaign_budget_forward_args
+from onnx_splitpoint_tool.energy.collector import add_capture_admission_arguments, capture_admission_forward_args
 
 
 def _main_impl() -> int:
     ap=argparse.ArgumentParser(description=__doc__)
     add_campaign_budget_arguments(ap)
+    add_capture_admission_arguments(ap)
     ap.add_argument('--completed-row-validator',default='',
                     help='Normal result importer invoked after durable row publication, before another capture.')
     ap.add_argument('--summary', required=True)
@@ -3336,6 +3339,10 @@ def _main_impl() -> int:
         help='Read-only listing of incomplete exact row selectors.',
     )
     ns=ap.parse_args()
+    try:
+        capture_admission_args = capture_admission_forward_args(ns)
+    except ValueError as exc:
+        ap.error(str(exc))
     if (ns.campaign_cohort or ns.require_environment_observation) and not ns.completed_row_validator:
         ap.error('authorized final cohort requires completed-row validator before any capture')
     if ns.previous_results and (ns.resume_existing or ns.resume_checkpoint or ns.list_resume_candidates):
@@ -3630,6 +3637,7 @@ def _main_impl() -> int:
         )
     plan_cmd=[sys.executable, '-u', str(_script_path('native_producer_energy_plan.py')), '--summary', ns.summary, '--out-dir', str(plan_dir), '--hailo8-ssh', ns.hailo8_ssh, '--hailo10-ssh', ns.hailo10_ssh, '--deepx-ssh', ns.deepx_ssh, '--hailo8-env', ns.hailo8_env, '--hailo10-env', ns.hailo10_env, '--deepx-env', ns.deepx_env, '--engine-build-python', ns.engine_build_python, '--remote-tool-dir', ns.remote_tool_dir, '--remote-root', ns.remote_root, '--duration-s', str(float(ns.duration_s or 0.0)), '--frames', str(ns.frames), '--warmup', str(ns.warmup), '--timeout', str(ns.timeout), '--runs', str(max(1, int(ns.runs or 1))), '--physical-scope', ns.physical_scope, '--window-label', ns.window_label, '--calibration-manifest', ns.calibration_manifest, '--calibration-sha256', ns.calibration_sha256, '--pipeline-contract-manifest', ns.pipeline_contract_manifest, '--pipeline-contract-sha256', ns.pipeline_contract_sha256, '--model-hash-map', ns.model_hash_map, '--model-hash-map-sha256', ns.model_hash_map_sha256]
     plan_cmd += campaign_budget_forward_args(ns)
+    plan_cmd += capture_admission_args
     if str(ns.hardware_setups_file or '').strip():
         plan_cmd += ['--hardware-setups-file', str(ns.hardware_setups_file)]
     if str(ns.window_method_ab_json or '').strip():

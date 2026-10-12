@@ -2661,3 +2661,22 @@ zusätzlich schreibgeschützt in das private Metadatenverzeichnis übernommen;
 die ursprüngliche Artefaktbindung bleibt erhalten, ohne Build oder Cacheeingriff.
 Der tatsächliche Abschluss der 21 Zellen bleibt bis zu den weiteren realen
 GUI-Ausführungen offen.
+
+Der erste reale Native-Energieretry auf Hailo8 scheiterte an Empfangsstille
+ohne Quellenendpaket. Die normale Ressourcen-Recovery erhält diesen invaliden
+Versuch. Für die endliche Fortsetzung prüft ein SHA-gebundener normaler
+Admission-Hook vor jeder Collectorreservierung, einschließlich interner Retries,
+die alten und aktuellen Starts derselben Matrix: höchstens drei je Slot und
+neun je Pfad. Der erste Fehlstart verbraucht eine Slotgutschrift. Die Profile
+behalten drei Repeats und maximal zwei Retries. Alte akzeptierte Energie aus
+einem anderen Job wird ohne normale Übernahmeprüfung abgewiesen; gültige
+Repeats im aktuellen Job bleiben über den bestehenden Reusepfad erhalten.
+77 Native-, 17 Coordinator- und 103 relevante Coreprüfungen bestanden;
+unabhängige Prüfung bestätigte den begrenzten Fortsetzungspfad.
+
+Generic/MobileNet/Hailo10 hat nach normaler Recovery drei neue gültige
+Energieaufnahmen und normale Ergebnisübernahme/Darstellung abgeschlossen.
+Die drei bereits gültigen aktuellen Performance-Repeats wurden erhalten,
+ohne einen weiteren Performanceprozess zu starten. Der alte Fehlversuch bleibt
+zusätzlich gezählt. Die weiteren Zellen werden weiter ausschließlich über
+die gespeicherte endliche GUI-Startliste abgearbeitet.

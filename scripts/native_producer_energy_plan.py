@@ -3719,11 +3719,13 @@ def _prospective_detection_exclusion(
 
 
 from onnx_splitpoint_tool.energy.task_budget import add_campaign_budget_arguments, campaign_budget_forward_args
+from onnx_splitpoint_tool.energy.collector import add_capture_admission_arguments, capture_admission_forward_args
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     add_campaign_budget_arguments(parser)
+    add_capture_admission_arguments(parser)
     parser.add_argument("--summary", required=True)
     parser.add_argument("--validation-summary", default="")
     parser.add_argument("--out-dir", required=True)
@@ -3823,6 +3825,10 @@ def main() -> int:
         ),
     )
     ns = parser.parse_args()
+    try:
+        capture_admission_args = capture_admission_forward_args(ns)
+    except ValueError as exc:
+        parser.error(str(exc))
     hardware_registry_binding: dict[str, str] = {}
     if str(ns.hardware_setups_file or "").strip():
         registry_input = Path(ns.hardware_setups_file).expanduser()
@@ -5429,6 +5435,7 @@ def main() -> int:
             "--physical-scope", shlex.quote(str(ns.physical_scope or "")),
             "--window-label", shlex.quote(str(ns.window_label or "command")),
         ]
+        measure_parts += [shlex.quote(value) for value in capture_admission_args]
         if ns.reuse_campaign_repeats:
             measure_parts.append("--reuse-campaign-repeats")
         if ns.campaign_budget_file:

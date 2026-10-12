@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 from onnx_splitpoint_tool.energy.config import EnergyDefaults, apply_energy_ab_config, default_registry_path, energy_defaults_from_registry, energy_measurements_root, energy_setup_from_registry, get_setup_energy, load_energy_defaults, load_hardware_registry, save_energy_defaults  # noqa: E402
 from onnx_splitpoint_tool.energy.task_budget import add_campaign_budget_arguments, campaign_budget_measurement_kwargs
 from onnx_splitpoint_tool.energy.collector import check_energy_tools, run_fast_firmware_measurement, select_host_normalization_role  # noqa: E402
+from onnx_splitpoint_tool.energy.collector import add_capture_admission_arguments, capture_admission_measurement_kwargs
 from onnx_splitpoint_tool.workflow.hardware_matrix import ensure_hardware_setups_file  # noqa: E402
 
 
@@ -417,6 +418,7 @@ def cmd_measure(args: argparse.Namespace) -> int:
         host_normalization_role=host_normalization_role,
         host_normalization_source_run_id=normalization_source_run_id,
         host_normalization_target_variant=normalization_target_variant,
+        **capture_admission_measurement_kwargs(args),
     )
     return _print(data)
 
@@ -456,6 +458,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--invalid-repeat-reconnect-backoff-s", type=float, default=None, help="Task-local reconnect pause; defaults to the unchanged Energy Config value.")
     p.add_argument("--reuse-campaign-repeats", action="store_true", help="Reuse only previously accepted repeats from this exact campaign row and command contract.")
     add_campaign_budget_arguments(p, measurement=True)
+    add_capture_admission_arguments(p)
     p.add_argument("--task-budget-file", default=None, help="Persistent checkpoint shared by all entries of one bounded energy task; existing limits cannot be reset.")
     p.add_argument("--task-max-chains", type=int, default=None, help="Task-wide maximum including failed preflights; requires --task-budget-file and --task-max-transport-failures.")
     p.add_argument("--task-max-transport-failures", type=int, default=None, help="Stop before any further chain after this many transport failures.")

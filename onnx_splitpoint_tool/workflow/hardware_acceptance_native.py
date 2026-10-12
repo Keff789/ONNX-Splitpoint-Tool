@@ -375,6 +375,175 @@ def _performance_reference(cell: Mapping) -> dict | None:
     return copy.deepcopy(dict(value))
 
 
+def _energy_continuation(cell: Mapping) -> dict | None:
+    value = cell.get("native_energy_continuation")
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("Native energy continuation must be explicitly hash-bound")
+    if "path" in value:
+        if not re.fullmatch(r"[a-f0-9]{64}", str(value.get("sha256") or "")):
+            raise ValueError("Native energy continuation descriptor hash missing")
+        value = _read(_bound_path(value))
+    if (value.get("schema") != "onnx-splitpoint/hardware-acceptance-native-energy-continuation/v1"
+            or not isinstance(value.get("prior_budgets"), list) or not value["prior_budgets"]):
+        raise ValueError("Native energy continuation needs exact prior normal budgets")
+    return copy.deepcopy(dict(value))
+
+
+def _strict_file_binding(value: Mapping, root: Path) -> Path:
+    if not isinstance(value, Mapping) or not re.fullmatch(r"[a-f0-9]{64}", str(value.get("sha256") or "")):
+        raise ValueError("Native continuation evidence lacks an explicit hash")
+    path = _bound_path(value)
+    if (str(path) != str(value.get("path")) or not path.is_file() or path.is_symlink()
+            or not path.is_relative_to(root)):
+        raise ValueError("Native continuation evidence escapes its normal phase")
+    return path
+
+
+def _verify_native_source_release(continuation: Mapping, chain: Mapping, prepared: Mapping, origin: Path, phase: Path) -> None:
+    """Read the exact ordinary recovery; never amend the failed source close."""
+    recoveries = continuation.get("source_recovery") or []
+    if isinstance(recoveries, Mapping):
+        recoveries = [recoveries]
+    matches = []
+    for descriptor in recoveries:
+        request_path = _strict_file_binding(descriptor.get("request"), phase / "hardware_runs")
+        reply_path = _strict_file_binding(descriptor.get("reply"), phase / "hardware_runs")
+        request = _read(request_path)
+        if request.get("attempt_dir") == chain.get("run_directory"):
+            matches.append((request_path, reply_path, request, _read(reply_path)))
+    if len(matches) != 1:
+        raise ValueError("Native unresolved source requires its exact normal recovery receipt")
+    request_path, reply_path, request, reply = matches[0]
+    recovery = reply.get("recovery") or {}
+    identity_fields = ("run_id", "session_id", "operation_id", "token")
+    source = prepared["target_binding"]["urecs_address"]
+    expected = sorted([physical_dut_key(prepared["target"]), "source:" + source, "controller:capture", "controller:nic"])
+    if (not request_path.is_relative_to(origin) or not reply_path.is_relative_to(origin)
+            or reply_path.name != request_path.name.removesuffix(".resource-request.json") + ".resource-reply.json"
+            or request.get("purpose") != "capture" or request.get("phase") != "FINALIZING"
+            or request.get("process_started") is not True or request.get("run_id") != origin.name
+            or request.get("setup_id") != prepared["identity"]["setup_id"]
+            or request.get("owner_pid") != chain.get("owner_pid")
+            or request.get("owner_start_ticks") != chain.get("owner_start_ticks")
+            or any(not request.get(key) or reply.get(key) != request[key] for key in identity_fields)
+            or any(recovery.get(key) != request[key] for key in identity_fields[:-1])
+            or reply.get("state") != "STOP" or reply.get("reason") != "campaign_source_completion_unresolved"
+            or recovery.get("status") != "released" or recovery.get("old_attempt_validated") is not False
+            or recovery.get("measurements_started") != 0 or (recovery.get("ownership_observation") or {}).get("ok") is not True
+            or sorted(recovery.get("resources") or []) != expected):
+        raise ValueError("Native recovery does not prove exact normal physical release")
+
+
+def _native_phase_debt(prepared: Mapping, run_dir: Path, phase_matrix: Mapping, continuation: Mapping | None,
+                       *, logical_repeat: str | None = None) -> dict:
+    """Count existing normal chains before admission; no second ledger."""
+    from ..benchmark.evaluation_profiles import load_evaluation_profile
+    matrix = _strict_file_binding(phase_matrix, Path(phase_matrix["path"]).parent)
+    phase = matrix.parent
+    identity = prepared["identity"]
+    cell_directory = phase / "hardware_runs" / (identity["model"] + "__" + identity["setup_id"])
+    if run_dir.parent != cell_directory:
+        raise ValueError("Native capture admission is outside its fixed hardware phase")
+    if Path(prepared["output"]) != run_dir / "native" / "__".join(identity[key] for key in ("model", "setup_id", "case")):
+        raise ValueError("Native capture output differs from its selected normal workflow")
+    row_id = json.dumps([identity[key] for key in ("backend", "model", "case", "setup_id")], separators=(",", ":"))
+    source = prepared["target_binding"]["urecs_address"]
+    bound_budgets = {}
+    for descriptor in (continuation or {}).get("prior_budgets", []):
+        path = _strict_file_binding(descriptor, phase / "hardware_runs")
+        if str(path) in bound_budgets:
+            raise ValueError("duplicate Native previous budget reference")
+        bound_budgets[str(path)] = descriptor
+    counts = dict.fromkeys(("repeat:0", "repeat:1", "repeat:2"), 0)
+    prior_counts = dict(counts)
+    evidence, matched = [], set()
+    for origin in sorted(run_dir.parent.iterdir()):
+        path = origin / "energy/energy_task_budget.json"
+        if not path.is_file():
+            continue
+        budget = _read(path)
+        task = (budget.get("tasks") or {}).get(row_id)
+        if task is None or not task.get("chains"):
+            continue
+        if (path.is_symlink() or budget.get("campaign") is not True or budget.get("max_transport_failures") != 20
+                or task.get("source_id") != source or task.get("limits") != {"max_chains": 9, "max_retries": 2,
+                                                                              "max_transport_failures": 20}):
+            raise ValueError("Native phase energy budget/source policy differs")
+        if origin != run_dir:
+            if str(path) not in bound_budgets:
+                raise ValueError("Native prior capture debt lacks its exact budget binding")
+            matched.add(str(path))
+            manifest = _read(origin / "run_manifest.json")
+            closure = _read(origin / "reports/artifact_index_closure.json")
+            profile = load_evaluation_profile(origin / "profile.yaml", validate=False).raw_profile
+            old_matrix = _bound_path((profile.get("hardware_acceptance") or {}).get("matrix_evidence"))
+            old_prepared = _read(origin / "native" / Path(prepared["output"]).name / "PREPARED.json")
+            fixed_fields = ("identity", "source_plan", "source_plan_sha256", "source_raw_report", "source_raw_report_sha256",
+                            "source_validation", "source_validation_sha256", "source_contract", "target_binding",
+                            "performance_recipe", "energy_recipe")
+            matrix_time = datetime.fromisoformat(str(_read(matrix)["recorded_before_hardware_start"]).replace("Z", "+00:00"))
+            created = datetime.fromisoformat(str(manifest["created_at"]).replace("Z", "+00:00"))
+            if (old_matrix != matrix or manifest.get("run_id") != origin.name
+                    or created < matrix_time or any(old_prepared.get(key) != prepared.get(key) for key in fixed_fields)
+                    or manifest.get("status") not in {"ok", "partial", "failed", "cancelled"}
+                    or (manifest.get("hardware_acceptance") or {}).get("schema") != "onnx-splitpoint/hardware-acceptance/v1"
+                    or (manifest.get("hardware_acceptance") or {}).get("source_campaign_resumed") is not False
+                    or closure.get("status") != "pass" or closure.get("run_id") != origin.name
+                    or closure.get("workflow_status") != manifest.get("status")):
+                raise ValueError("Native prior capture is not a closed same-phase acceptance workflow")
+        for chain in task["chains"]:
+            position = chain.get("logical_repeat")
+            if (position not in counts or chain.get("finished") is not True
+                    or not Path(str(chain.get("run_directory"))).resolve().is_relative_to(origin)):
+                raise ValueError("Native prior capture is active, unknown or outside its normal workflow")
+            if chain.get("valid") is True and origin != run_dir:
+                raise RuntimeError("Native prior accepted energy slots require normal preserved-slot resume; recapture refused")
+            if chain.get("valid") is True and position == logical_repeat:
+                raise RuntimeError("Native current accepted energy slot cannot be recaptured")
+            if origin != run_dir and chain.get("collector_started") is True and chain.get("source_completion_verified") is not True:
+                _verify_native_source_release(continuation or {}, chain, prepared, origin, phase)
+            if origin == run_dir and chain.get("collector_started") is True and chain.get("source_completion_verified") is not True:
+                raise RuntimeError("Native current source completion is unresolved; normal recovery required")
+            counts[position] += 1
+            if origin != run_dir:
+                prior_counts[position] += 1
+        evidence.append({"path": str(path), "sha256": _sha(path), "chains": len(task["chains"]),
+                         "physical_collector_starts": sum(chain.get("collector_started") is True for chain in task["chains"])})
+    if matched != set(bound_budgets):
+        raise ValueError("Native continuation budget is outside selected phase debt")
+    if logical_repeat is not None and (logical_repeat not in counts or counts[logical_repeat] >= 3 or sum(counts.values()) >= 9):
+        raise RuntimeError("Native cumulative phase retry/chain limit reached for " + str(logical_repeat))
+    return {"campaign_row_id": row_id, "campaign_source_id": source, "prior_and_current_chains": counts,
+            "prior_chains": prior_counts, "profile_max_retries": 2, "profile_max_chains": 9,
+            "budget_evidence": evidence}
+
+
+def admit_energy_capture(descriptor: Mapping, request: Mapping) -> dict:
+    """Normal collector callback before every original or retry reservation."""
+    if descriptor.get("schema") != "onnx-splitpoint/hardware-acceptance-native-capture-admission/v1":
+        raise ValueError("Native capture admission descriptor schema invalid")
+    run_dir = Path(descriptor["run_dir"]).resolve()
+    prepared_path = _strict_file_binding(descriptor["prepared"], run_dir)
+    prepared = _read(prepared_path)
+    identity = prepared["identity"]
+    row_id = json.dumps([identity[key] for key in ("backend", "model", "case", "setup_id")], separators=(",", ":"))
+    if (str(Path(request["campaign_budget_file"]).resolve()) != str(run_dir / "energy/energy_task_budget.json")
+            or request.get("campaign_row_id") != row_id or request.get("setup_id") != identity["setup_id"]
+            or request.get("campaign_source_id") != prepared["target_binding"]["urecs_address"]
+            or request.get("duration_s") != 60 or request.get("command_contract_sha256") != descriptor["command_contract_sha256"]
+            or request.get("require_runtime_work_units") is not True or request.get("require_command_window_alignment") is not True
+            or not Path(request["run_directory"]).resolve().is_relative_to(Path(prepared["output"]) / "energy_view")):
+        raise ValueError("Native collector request differs from its bound finite job")
+    proof = _native_phase_debt(prepared, run_dir, descriptor["phase_matrix"], prepared.get("native_energy_continuation"),
+                               logical_repeat=request.get("logical_repeat"))
+    return {"ok": True, "logical_repeat": request["logical_repeat"], **proof,
+            "remaining_chains_for_slot": 3 - proof["prior_and_current_chains"][request["logical_repeat"]],
+            "remaining_chains_for_case": 9 - sum(proof["prior_and_current_chains"].values()),
+            "normal_recovery_does_not_validate_old_attempt": True}
+
+
 def _verify_performance_reference(prepared: Mapping, context: Mapping, reference: Mapping) -> dict:
     """Revalidate only a closed, physically completed cohort in this phase.
 
@@ -582,6 +751,15 @@ def prepare_native(cell: Mapping, context: Mapping) -> dict:
         retained = _verify_performance_reference(prepared, context, reference)
         prepared.update(fresh_performance_reference=reference, performance_reuse_proof=retained["proof"],
                         new_performance_processes=0, retained_fresh_performance_processes=3)
+    continuation = _energy_continuation(cell)
+    if continuation is not None:
+        if reference is None:
+            raise ValueError("Native energy continuation requires the retained fresh performance cohort")
+        prepared["native_energy_continuation"] = continuation
+    matrix = _bound_path((context["profile"].get("hardware_acceptance") or {})["matrix_evidence"])
+    prepared["phase_matrix"] = {"path": str(matrix), "sha256": _sha(matrix)}
+    prepared["phase_energy_admission"] = _native_phase_debt(prepared, Path(context["run_dir"]).resolve(),
+                                                            prepared["phase_matrix"], continuation)
     _write(output / "PREPARED.json", prepared)
     return prepared
 
@@ -744,6 +922,22 @@ def _energy_capture(prepared: Mapping, summary: Path, context: Mapping) -> dict:
     policy = dict((native.get("energy") or {}).get("task_budget") or {})
     if policy.get("max_retries", 2) != 2 or policy.get("max_transport_failures", 20) != 20:
         raise ValueError("Native acceptance retry policy differs from saved profile")
+    summary_rows = _read(summary).get("rows") or []
+    if len(summary_rows) != 1 or any(summary_rows[0].get(key) != value for key, value in identity.items()):
+        raise ValueError("Native energy admission summary changed selected scope")
+    command_hash = str((summary_rows[0].get("native_command_contract") or {}).get("contract_sha256") or "")
+    if not re.fullmatch(r"[a-f0-9]{64}", command_hash):
+        raise ValueError("Native energy admission lacks the normal imported command contract")
+    prepared_path = output / "PREPARED.json"
+    if _read(prepared_path) != prepared:
+        raise ValueError("Native energy admission preparation changed")
+    debt = _native_phase_debt(prepared, Path(context["run_dir"]).resolve(), prepared["phase_matrix"],
+                              prepared.get("native_energy_continuation"))
+    admission_path = output / "CAPTURE_ADMISSION.json"
+    _write(admission_path, {"schema": "onnx-splitpoint/hardware-acceptance-native-capture-admission/v1",
+                           "run_dir": str(Path(context["run_dir"]).resolve()), "phase_matrix": prepared["phase_matrix"],
+                           "prepared": {"path": str(prepared_path), "sha256": _sha(prepared_path)},
+                           "command_contract_sha256": command_hash, "phase_energy_debt_before_dispatch": debt})
     command = [str(context["python"]), "-I", "-B", "-u", "-m",
                "onnx_splitpoint_tool.resources.remote_scripts.run_native_producer_energy_from_summary",
                "--summary", str(summary), "--validation-summary", prepared["source_validation"],
@@ -757,7 +951,9 @@ def _energy_capture(prepared: Mapping, summary: Path, context: Mapping) -> dict:
     validator = [str(context["python"]), "-I", "-B", "-m", "onnx_splitpoint_tool.workflow.hardware_acceptance_native",
                  "--validate-energy-view", str(energy_view)]
     command += ["--require-environment-observation", "--environment-run-id", Path(context["run_dir"]).name,
-                "--completed-row-validator", shlex.join(validator)]
+                "--completed-row-validator", shlex.join(validator),
+                "--capture-admission-file", str(admission_path), "--capture-admission-sha256", _sha(admission_path),
+                "--capture-admission-hook", "onnx_splitpoint_tool.workflow.hardware_acceptance_native:admit_energy_capture"]
     # Exact native Split source environments are retained; there is no special
     # source import overlay in this normal collector command.
     remote_environment = dict(prepared["runs"][0]["env"])
@@ -777,6 +973,7 @@ def _energy_capture(prepared: Mapping, summary: Path, context: Mapping) -> dict:
         raise RuntimeError("normal Native energy consumer did not admit three fresh valid repeats")
     return {"row": selected[0], "new_capture_count": counts["collector_starts"], "valid_repeats": counts["valid_repeats"],
             "failed_attempts": counts["failed_attempts"], "start_accounting": counts,
+            "phase_energy_admission": debt, "capture_admission": str(admission_path),
             "energy_result": str(measurement / "native_producer_energy_results.json"),
             "import": str(output / "NORMAL_ENERGY_IMPORT.json")}
 
@@ -896,6 +1093,8 @@ def _run_native(prepared: Mapping, context: Mapping) -> dict:
               "new_capture_count": energy["new_capture_count"], "valid_repeats": {"performance": 3, "energy": 3},
               "failed_attempts": sum(row["returncode"] != 0 for row in attempts) + energy["failed_attempts"], "attempts": len(attempts),
               "energy_start_accounting": energy["start_accounting"],
+              "phase_energy_admission": energy.get("phase_energy_admission", prepared.get("phase_energy_admission")),
+              "previous_energy_failed_attempts": sum((prepared.get("phase_energy_admission") or {}).get("prior_chains", {}).values()),
               "fps_median": statistics.median(row["fps"] for row in normalized),
               "output_validation": "normal_completed_task_and_output_contract", "performance_summary": str(summary),
               "energy": energy["row"], "normal_projection": True, "full_recaptures": 0,
@@ -907,6 +1106,8 @@ def _run_native(prepared: Mapping, context: Mapping) -> dict:
                                  str(output / "FULL_REFERENCE_COMPARISONS.json")]}
     if retained is not None:
         result["evidence_paths"].append(str(output / "PERFORMANCE_REUSE.json"))
+    if energy.get("capture_admission"):
+        result["evidence_paths"].append(energy["capture_admission"])
     _write(output / "RESULT.json", result)
     return result
 
@@ -946,6 +1147,8 @@ def run_native(prepared: Mapping, context: Mapping) -> dict:
                   "valid_repeats": {"performance": len(valid) + retained_count, "energy": valid_energy},
                   "failed_attempts": sum(item.get("returncode", 1) != 0 for item in attempts)
                                       + counts["failed_attempts"], "energy_start_accounting": counts,
+                  "phase_energy_admission": prepared.get("phase_energy_admission"),
+                  "previous_energy_failed_attempts": sum((prepared.get("phase_energy_admission") or {}).get("prior_chains", {}).values()),
                   "evidence_paths": [str(path) for path in output.rglob("*.json")],
                   "full_recaptures": 0, "quality_dataset_reexecutions": 0}
         _write(output / "RESULT.json", result)

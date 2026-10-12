@@ -34,6 +34,11 @@ Diagnostische technische Energie erhält die erforderliche reale Umweltbeobachtu
 und alle bestehenden Messprüfungen, ohne wissenschaftliche Vergleichszulassung.
 Finale wissenschaftliche Kohorten akzeptieren weiterhin keine Diagnostikaufnahmen.
 
+Die optionale beleggebundene Capture-Admission prüft den kumulativen Umfang vor
+jeder normalen Reservierung und jedem internen Retry. Die bestehenden drei
+Repeats, zwei Retries je Slot und neun Ketten je ausgewähltem Pfad bleiben
+unverändert; eine neue GUI-Ausgabe setzt verbrauchte Versuche nicht zurück.
+
 Die normale Ressourcen-Recovery erkennt außerdem den exakt gebundenen Native-
 Abbruch in ACQUIRING. Sie prüft die gespeicherten Besitzer-, Kommando-, Quellen-
 und Budgetbelege sowie aktuelle lokale und DUT-Verfügbarkeit unter den normalen

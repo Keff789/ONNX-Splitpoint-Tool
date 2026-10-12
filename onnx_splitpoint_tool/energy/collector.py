@@ -807,6 +807,73 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.write_text(json.dumps(dict(payload), indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def add_capture_admission_arguments(parser) -> None:
+    """Optional normal product admission before every new physical attempt."""
+    parser.add_argument("--capture-admission-file", default="",
+                        help="Immutable admission descriptor checked before every capture attempt.")
+    parser.add_argument("--capture-admission-sha256", default="",
+                        help="Exact SHA-256 of the capture admission descriptor.")
+    parser.add_argument("--capture-admission-hook", default="",
+                        help="Installed onnx_splitpoint_tool.module:callable admission consumer.")
+
+
+def capture_admission_measurement_kwargs(args) -> dict[str, str]:
+    values = {name: str(getattr(args, name, "") or "") for name in (
+        "capture_admission_file", "capture_admission_sha256", "capture_admission_hook")}
+    if not any(values.values()):
+        return values
+    if (not all(values.values()) or not Path(values["capture_admission_file"]).is_absolute()
+            or not re.fullmatch(r"[0-9a-f]{64}", values["capture_admission_sha256"])
+            or not re.fullmatch(r"onnx_splitpoint_tool(?:\.[a-z_][a-z0-9_]*)+:[a-z_][a-z0-9_]*",
+                                values["capture_admission_hook"])):
+        raise ValueError("capture admission requires an absolute file, exact SHA-256 and installed product hook")
+    return values
+
+
+def capture_admission_forward_args(args) -> list[str]:
+    values = capture_admission_measurement_kwargs(args)
+    return [item for key, value in values.items() if value
+            for item in ("--" + key.replace("_", "-"), value)]
+
+
+def _capture_admission_before_reserve(options, request) -> None:
+    if not options["capture_admission_file"]:
+        return
+    path = Path(options["capture_admission_file"])
+    evidence = {"descriptor_path": str(path), "descriptor_sha256": options["capture_admission_sha256"],
+                "hook": options["capture_admission_hook"], "request": request}
+    receipt = Path(request["run_directory"]) / "capture_admission.json"
+    if receipt.exists() or receipt.is_symlink() or (receipt.parent / "energy_summary.json").exists():
+        raise ValueError("capture admission attempt output already exists")
+    def record():
+        receipt.parent.mkdir(parents=True, exist_ok=True)
+        with receipt.open("x", encoding="utf-8") as stream:
+            json.dump(evidence, stream, indent=2, ensure_ascii=False)
+    try:
+        if path.is_symlink() or path.resolve(strict=True) != path:
+            raise ValueError("capture admission descriptor is not a regular canonical file")
+        content = path.read_bytes()
+        if hashlib.sha256(content).hexdigest() != options["capture_admission_sha256"]:
+            raise ValueError("capture admission descriptor changed")
+        descriptor = json.loads(content)
+        if not isinstance(descriptor, Mapping):
+            raise ValueError("capture admission descriptor must be an object")
+        import importlib
+        module, name = options["capture_admission_hook"].split(":")
+        consumer = getattr(importlib.import_module(module), name)
+        if not callable(consumer):
+            raise ValueError("capture admission consumer is not callable")
+        result = consumer(descriptor, dict(request))
+        if not isinstance(result, Mapping) or result.get("ok") is not True:
+            raise ValueError("capture admission consumer refused the physical attempt")
+        evidence.update(status="admitted", result=dict(result))
+    except Exception as exc:
+        evidence.update(status="refused", reason=str(exc), exception=type(exc).__name__)
+        record()
+        raise
+    record()
+
+
 def _clamp_diagnostic_claim_fields(value: Any) -> Any:
     """Preserve technical diagnostics while making scientific claims impossible."""
 
@@ -4670,6 +4737,9 @@ def run_fast_firmware_measurement(
     invalid_repeat_max_retries: int | None = None,
     invalid_repeat_reconnect_backoff_s: float | None = None,
     reuse_campaign_repeats: bool = False,
+    capture_admission_file: str = "",
+    capture_admission_sha256: str = "",
+    capture_admission_hook: str = "",
     diagnostic_only: bool = False,
     claim_exclusion_reason: str = "",
     host_normalization_role: str | None = None,
@@ -4681,6 +4751,12 @@ def run_fast_firmware_measurement(
     _task_logical_repeat: str | None = None,
     _sample_loss_retry_driver: bool = True,
 ) -> dict[str, Any]:
+    from types import SimpleNamespace
+    capture_admission = capture_admission_measurement_kwargs(SimpleNamespace(
+        capture_admission_file=capture_admission_file, capture_admission_sha256=capture_admission_sha256,
+        capture_admission_hook=capture_admission_hook))
+    if capture_admission_file and (_task_budget is None or _task_budget.campaign_row is None):
+        raise ValueError("capture admission requires the normal campaign budget")
     defaults = defaults or EnergyDefaults()
     if invalid_repeat_reconnect_backoff_s is not None:
         if (isinstance(invalid_repeat_reconnect_backoff_s, bool)
@@ -5300,6 +5376,18 @@ def run_fast_firmware_measurement(
                 if recovery_before_start.get("cancelled"):
                     break
         run_dir = out_dir / f"run_{i:03d}"
+        if capture_admission_file:
+            _capture_admission_before_reserve(capture_admission, {
+                "campaign_budget_file": str(_task_budget.checkpoint_path),
+                "campaign_row_id": _task_budget.campaign_row,
+                "campaign_source_id": _task_budget.source_id,
+                "logical_repeat": task_logical_repeat, "run_directory": str(run_dir.resolve()),
+                "duration_s": workload_duration_s,
+                "command_contract_sha256": preflight_expected_command_contract_sha256,
+                "setup_id": setup_id or setup.setup_id,
+                "require_runtime_work_units": require_runtime_work_units,
+                "require_command_window_alignment": require_command_window_alignment,
+            })
         task_chain = None
         if _task_budget is not None:
             task_chain = _task_budget.reserve(task_logical_repeat, run_dir, preflight_requested or bool(preflight_prepare_command), cancel_event)
@@ -6277,6 +6365,9 @@ def run_fast_firmware_measurement(
                         preflight_expected_command_contract_sha256
                     ),
                     invalid_repeat_max_retries=0,
+                    capture_admission_file=capture_admission_file,
+                    capture_admission_sha256=capture_admission_sha256,
+                    capture_admission_hook=capture_admission_hook,
                     _task_budget=_task_budget,
                     preflight_prepare_command=preflight_prepare_command,
                     _task_logical_repeat=retry_logical_repeat,

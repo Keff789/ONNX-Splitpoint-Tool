@@ -483,3 +483,220 @@ def test_continuation_reimports_normally_has_zero_new_performance_starts(fresh_p
     assert json.loads((output / "DISPATCH_ATTEMPTS.json").read_text())["attempts"] == []
     assert not list(output.glob("rep*/VALIDATED.json"))
     assert not list(output.glob("rep*/download/*"))
+
+
+@pytest.fixture
+def native_phase_energy(tmp_path):
+    import copy
+    from datetime import datetime, timedelta, timezone
+    import hashlib
+    import json
+    import yaml
+    from onnx_splitpoint_tool.workflow import hardware_acceptance_native as module
+    phase = tmp_path / "phase"
+    origin = phase / "hardware_runs/resnet50__orin_nx_hailo8_01/failed"
+    current = origin.parent / "continuation"
+    current.mkdir(parents=True)
+    def binding(path):
+        return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    def write(path, payload):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, sort_keys=True))
+        return binding(path)
+    clock = datetime.now(timezone.utc)
+    matrix = phase / "FINITE_MATRIX.json"
+    matrix_binding = write(matrix, {"recorded_before_hardware_start": (clock - timedelta(minutes=2)).isoformat()})
+    component = "__".join(IDENTITY[key] for key in ("model", "setup_id", "case"))
+    prepared = {"schema": "onnx-splitpoint/hardware-acceptance-native-plan/v1", "identity": IDENTITY,
+                "output": str(current / "native" / component), "target": {"remote": {"host": "192.168.0.104", "user": "nx"}},
+                "remote_tool_dir": "/home/nx/ONNX-Splitpoint-Tool",
+                "target_binding": {"urecs_address": "192.168.0.197"}, "phase_matrix": matrix_binding,
+                "source_contract": {"contract_sha256": "a" * 64},
+                "performance_recipe": {"warmup_tasks_per_process": 100, "completed_tasks_per_process": 1000, "processes": 3},
+                "energy_recipe": {"duration_s": 60, "repeats": 3}, "runs": [{"env": {}}]}
+    for key in ("source_plan", "source_raw_report", "source_validation"):
+        descriptor = write(tmp_path / (key + ".json"), {"immutable": key})
+        prepared[key], prepared[key + "_sha256"] = descriptor["path"], descriptor["sha256"]
+    old_prepared = copy.deepcopy(prepared)
+    old_prepared["output"] = str(origin / "native" / component)
+    write(Path(old_prepared["output"]) / "PREPARED.json", old_prepared)
+    write(origin / "run_manifest.json", {"run_id": origin.name, "status": "partial", "created_at": clock.isoformat(),
+              "hardware_acceptance": {"schema": "onnx-splitpoint/hardware-acceptance/v1", "source_campaign_resumed": False}})
+    write(origin / "reports/artifact_index_closure.json", {"status": "pass", "run_id": origin.name, "workflow_status": "partial"})
+    (origin / "profile.yaml").write_text(yaml.safe_dump({"hardware_acceptance": {"matrix_evidence": matrix_binding}}))
+    row_id = json.dumps([IDENTITY[key] for key in ("backend", "model", "case", "setup_id")], separators=(",", ":"))
+    chain = {"logical_repeat": "repeat:0", "owner_pid": 123, "owner_start_ticks": "456", "finished": True,
+             "valid": False, "collector_started": True, "source_completion_verified": False,
+             "run_directory": str(Path(old_prepared["output"]) / "energy_view/measurements/plan/attempt/run_000")}
+    def budget(chains):
+        return {"campaign": True, "max_transport_failures": 20, "tasks": {row_id: {
+            "source_id": "192.168.0.197", "limits": {"max_chains": 9, "max_retries": 2, "max_transport_failures": 20},
+            "chains": chains, "stop_reason": "campaign_source_completion_unresolved"}}}
+    old_budget = origin / "energy/energy_task_budget.json"
+    continuation = {"schema": "onnx-splitpoint/hardware-acceptance-native-energy-continuation/v1",
+                    "prior_budgets": [write(old_budget, budget([chain]))], "source_recovery": []}
+    request = {"run_id": origin.name, "session_id": "session", "operation_id": "capture-operation", "token": "token",
+               "setup_id": IDENTITY["setup_id"], "purpose": "capture", "phase": "FINALIZING", "process_started": True,
+               "owner_pid": 123, "owner_start_ticks": "456", "attempt_dir": chain["run_directory"]}
+    reply = {**{key: request[key] for key in ("run_id", "session_id", "operation_id", "token")},
+             "state": "STOP", "reason": "campaign_source_completion_unresolved", "recovery": {
+                 **{key: request[key] for key in ("run_id", "session_id", "operation_id")},
+                 "status": "released", "old_attempt_validated": False, "measurements_started": 0,
+                 "ownership_observation": {"ok": True},
+                 "resources": ["dut:192.168.0.104", "source:192.168.0.197", "controller:capture", "controller:nic"]}}
+    request_path = origin / "jobs/remote_process_leases/session/capture-operation.resource-request.json"
+    reply_path = request_path.with_name("capture-operation.resource-reply.json")
+    continuation["source_recovery"] = [{"request": write(request_path, request), "reply": write(reply_path, reply)}]
+    prepared["native_energy_continuation"] = continuation
+    prepared_path = Path(prepared["output"]) / "PREPARED.json"
+    descriptor = {"schema": "onnx-splitpoint/hardware-acceptance-native-capture-admission/v1", "run_dir": str(current),
+                  "prepared": write(prepared_path, prepared), "phase_matrix": matrix_binding,
+                  "command_contract_sha256": "b" * 64}
+    call = {"campaign_budget_file": str(current / "energy/energy_task_budget.json"), "campaign_row_id": row_id,
+            "campaign_source_id": "192.168.0.197", "logical_repeat": "repeat:0", "duration_s": 60,
+            "command_contract_sha256": "b" * 64, "setup_id": IDENTITY["setup_id"],
+            "require_runtime_work_units": True, "require_command_window_alignment": True,
+            "run_directory": str(Path(prepared["output"]) / "energy_view/measurements/new/run_000")}
+    return {"module": module, "phase": phase, "origin": origin, "current": current, "prepared": prepared,
+            "descriptor": descriptor, "call": call, "continuation": continuation, "old_budget": old_budget,
+            "request_path": request_path, "reply_path": reply_path, "write": write, "binding": binding,
+            "budget": budget, "chain": chain, "prepared_path": prepared_path}
+
+
+def test_native_phase_admission_charges_failed_chain_keeps_stop_and_budget_immutable(native_phase_energy):
+    f = native_phase_energy
+    before = {path: path.read_bytes() for path in (f["old_budget"], f["request_path"], f["reply_path"])}
+    result = f["module"].admit_energy_capture(f["descriptor"], f["call"])
+    assert result["ok"] is True
+    assert result["prior_chains"] == {"repeat:0": 1, "repeat:1": 0, "repeat:2": 0}
+    assert result["remaining_chains_for_slot"] == 2 and result["remaining_chains_for_case"] == 8
+    assert result["normal_recovery_does_not_validate_old_attempt"] is True
+    assert all(path.read_bytes() == payload for path, payload in before.items())
+    assert not Path(f["call"]["campaign_budget_file"]).exists()
+
+
+@pytest.mark.parametrize("repeats", [[0, 0], [0, 1, 1, 1, 2, 2, 2, 2]])
+def test_native_phase_denies_cumulative_slot_or_path_exhaustion(native_phase_energy, repeats):
+    f = native_phase_energy
+    chains = [{**f["chain"], "logical_repeat": "repeat:" + str(repeat), "source_completion_verified": True,
+               "run_directory": str(Path(f["prepared"]["output"]) / f"energy_view/current/attempt{index}")} for index, repeat in enumerate(repeats)]
+    f["write"](Path(f["call"]["campaign_budget_file"]), f["budget"](chains))
+    with pytest.raises(RuntimeError, match="cumulative phase"):
+        f["module"].admit_energy_capture(f["descriptor"], f["call"])
+
+
+@pytest.mark.parametrize("change", ["budget_hash", "missing_budget", "source", "limits", "active", "unclosed",
+                                   "old_phase", "old_source_contract", "outside_attempt", "prior_valid", "old_timestamp"])
+def test_native_phase_guard_rejects_unbound_or_changed_origin(native_phase_energy, change):
+    import json
+    f = native_phase_energy
+    prepared, continuation = f["prepared"], f["continuation"]
+    budget = json.loads(f["old_budget"].read_text())
+    task = next(iter(budget["tasks"].values()))
+    if change == "missing_budget":
+        continuation["prior_budgets"] = []
+    elif change == "unclosed":
+        f["write"](f["origin"] / "reports/artifact_index_closure.json", {"status": "failed"})
+    elif change == "old_phase":
+        (f["origin"] / "profile.yaml").write_text("hardware_acceptance: {}\n")
+    elif change == "old_timestamp":
+        path = f["origin"] / "run_manifest.json"
+        payload = json.loads(path.read_text()); payload["created_at"] = "2000-01-01T00:00:00+00:00"
+        f["write"](path, payload)
+    elif change == "old_source_contract":
+        path = f["origin"] / "native" / Path(prepared["output"]).name / "PREPARED.json"
+        payload = json.loads(path.read_text()); payload["source_contract"] = {"contract_sha256": "c" * 64}
+        f["write"](path, payload)
+    else:
+        if change == "budget_hash": task["chains"][0]["status"] = "changed"
+        elif change == "source": task["source_id"] = "wrong"
+        elif change == "limits": task["limits"]["max_chains"] = 10
+        elif change == "active": task["chains"][0]["finished"] = False
+        elif change == "outside_attempt": task["chains"][0]["run_directory"] = str(f["phase"] / "outside")
+        elif change == "prior_valid": task["chains"][0]["valid"] = True
+        updated = f["write"](f["old_budget"], budget)
+        if change != "budget_hash": continuation["prior_budgets"] = [updated]
+    with pytest.raises((ValueError, RuntimeError, KeyError, FileNotFoundError)):
+        f["module"]._native_phase_debt(prepared, f["current"], prepared["phase_matrix"], continuation, logical_repeat="repeat:0")
+
+
+@pytest.mark.parametrize("change", ["missing", "token", "owner", "resources", "old_valid", "new_starts", "release", "observation"])
+def test_native_phase_requires_exact_normal_recovery_without_validating_failed_attempt(native_phase_energy, change):
+    import json
+    f = native_phase_energy
+    continuation = f["continuation"]
+    reply = json.loads(f["reply_path"].read_text())
+    if change == "missing": continuation["source_recovery"] = []
+    elif change == "owner":
+        request = json.loads(f["request_path"].read_text()); request["owner_start_ticks"] = "wrong"
+        continuation["source_recovery"][0]["request"] = f["write"](f["request_path"], request)
+    else:
+        if change == "token": reply["token"] = "wrong"
+        elif change == "resources": reply["recovery"]["resources"] = ["controller:capture"]
+        elif change == "old_valid": reply["recovery"]["old_attempt_validated"] = True
+        elif change == "new_starts": reply["recovery"]["measurements_started"] = 1
+        elif change == "release": reply["recovery"]["status"] = "failed"
+        elif change == "observation": reply["recovery"]["ownership_observation"]["ok"] = False
+        continuation["source_recovery"][0]["reply"] = f["write"](f["reply_path"], reply)
+    with pytest.raises(ValueError, match="normal recovery receipt|physical release"):
+        f["module"]._native_phase_debt(f["prepared"], f["current"], f["prepared"]["phase_matrix"], continuation, logical_repeat="repeat:0")
+
+
+@pytest.mark.parametrize("change", ["budget", "row", "source", "duration", "command", "runtime", "window", "output", "prepared"])
+def test_native_admission_hook_rejects_request_or_prepared_drift(native_phase_energy, change):
+    f = native_phase_energy
+    call = dict(f["call"])
+    if change == "budget": call["campaign_budget_file"] = str(f["old_budget"])
+    elif change == "row": call["campaign_row_id"] = "wrong"
+    elif change == "source": call["campaign_source_id"] = "wrong"
+    elif change == "duration": call["duration_s"] = 5
+    elif change == "command": call["command_contract_sha256"] = "c" * 64
+    elif change == "runtime": call["require_runtime_work_units"] = False
+    elif change == "window": call["require_command_window_alignment"] = False
+    elif change == "output": call["run_directory"] = str(f["origin"] / "energy_view/new")
+    else: f["prepared_path"].write_text("{}")
+    with pytest.raises(ValueError):
+        f["module"].admit_energy_capture(f["descriptor"], call)
+
+
+@pytest.mark.parametrize("valid,verified,expected", [(True, True, "accepted energy slot"), (False, False, "source completion")])
+def test_native_phase_refuses_current_valid_slot_or_unresolved_source(native_phase_energy, valid, verified, expected):
+    f = native_phase_energy
+    chain = {**f["chain"], "valid": valid, "source_completion_verified": verified,
+             "run_directory": str(Path(f["prepared"]["output"]) / "energy_view/current")}
+    f["write"](Path(f["call"]["campaign_budget_file"]), f["budget"]([chain]))
+    with pytest.raises(RuntimeError, match=expected):
+        f["module"].admit_energy_capture(f["descriptor"], f["call"])
+
+
+def test_native_adapter_forwards_hash_bound_normal_admission_and_preserves_current_slots(native_phase_energy, monkeypatch):
+    import json
+    from types import SimpleNamespace
+    f = native_phase_energy
+    module, prepared = f["module"], f["prepared"]
+    summary = Path(prepared["output"]) / "reports/native_producer_combined_summary.json"
+    f["write"](summary, {"rows": [{**IDENTITY, "native_command_contract": {"contract_sha256": "b" * 64}}]})
+    context = {"run_dir": str(f["current"]), "budget_file": f["call"]["campaign_budget_file"], "python": "unused",
+               "hardware_registry": "unused", "profile": {}}
+    original_budget = f["old_budget"].read_bytes()
+    def normal_dispatch(command, ctx, **kwargs):
+        assert kwargs["label"] == "acceptance-native-energy"
+        admission = Path(command[command.index("--capture-admission-file") + 1])
+        assert command[command.index("--capture-admission-sha256") + 1] == f["binding"](admission)["sha256"]
+        assert command[command.index("--capture-admission-hook") + 1] == "onnx_splitpoint_tool.workflow.hardware_acceptance_native:admit_energy_capture"
+        assert module.admit_energy_capture(json.loads(admission.read_text()), f["call"])["remaining_chains_for_slot"] == 2
+        chains = [{**f["chain"], "logical_repeat": "repeat:" + str(repeat), "valid": True,
+                   "source_completion_verified": True, "workload_started": True,
+                   "run_directory": str(Path(prepared["output"]) / f"energy_view/current/{repeat}")} for repeat in range(3)]
+        f["write"](Path(context["budget_file"]), f["budget"](chains))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(module, "_run_local", normal_dispatch)
+    monkeypatch.setattr(module, "collect_native_energy", lambda *args, **kwargs: [{**IDENTITY, "ok": True,
+                        "energy_repeat_valid_n": 3, "energy_calibration_verified": True, "environment_observation_status": "pass"}])
+    result = module._energy_capture(prepared, summary, context)
+    assert result["new_capture_count"] == result["valid_repeats"] == 3
+    assert result["phase_energy_admission"]["prior_chains"]["repeat:0"] == 1
+    assert f["old_budget"].read_bytes() == original_budget
+    # Admission may still inspect other already accepted slots without replay.
+    proof = module._native_phase_debt(prepared, f["current"], prepared["phase_matrix"], f["continuation"])
+    assert proof["prior_and_current_chains"] == {"repeat:0": 2, "repeat:1": 1, "repeat:2": 1}
