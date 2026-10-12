@@ -95,4 +95,3 @@ def test_normal_main_preflights_and_captures_same_immutable_prefix(tmp_path,monk
             # verify dispatch scope, never claim a scientific capture PASS.
             assert rc in (0,2,3)
     assert previous_fixture._files(source.parent)==before
-

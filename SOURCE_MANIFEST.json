@@ -7331,8 +7331,8 @@
     },
     {
       "path": "tests/test_rev3_native_capture_prefix.py",
-      "size": 5525,
-      "sha256": "6c6258489df25f3a7fcbee39a4747ff5a77d16e1fd78a20eb286c3e224df96a1"
+      "size": 5524,
+      "sha256": "bf938ff3bdd4cd87a9cf5870e45da427ee679d42073686f872239151ff923680"
     },
     {
       "path": "tests/test_rev3_native_environment_observer.py",
