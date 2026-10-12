@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.94.0",
   "workflow_version": "v2.94.0",
-  "file_count": 2231,
+  "file_count": 2232,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 308579,
-      "sha256": "3905e87ad0fe6563ece8302439313b5939f80cb704ad4396cca12f58288840f3"
+      "size": 309894,
+      "sha256": "050f5c9e87fe14aa05ea4f5f68b31860ef33e67527b48e592c6c258496160381"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -496,8 +496,8 @@
     },
     {
       "path": "docs/RELEASE_2.94.0.md",
-      "size": 3624,
-      "sha256": "1bc2dfbe888d9479c24869e056612133e389c33aecb76921ae05994f749828dc"
+      "size": 4742,
+      "sha256": "1e9addea184dbfe7ecf78049d2a59310a460e1ade1791697f4def13db3fa01e7"
     },
     {
       "path": "docs/RELEASE_SCOPE_V2802.md",
@@ -951,8 +951,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/generic_energy_reporting.py",
-      "size": 16663,
-      "sha256": "f699eb5064bf6c2c6bec1a5dca5adf65bb9055b5be5b13b9c02e77747fc04966"
+      "size": 22305,
+      "sha256": "b454d30c155e88950e27e6bd3f0ed83f6f04bb1711af227a6469749d5b879a0a"
     },
     {
       "path": "onnx_splitpoint_tool/gui/__init__.py",
@@ -1991,8 +1991,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/resources/schemas/evaluation_profile.schema.json",
-      "size": 91831,
-      "sha256": "58d27059ea5cc7880694f1e4bc17db509f14c2de8e4aa586d2343abe22c7c284"
+      "size": 91887,
+      "sha256": "1ccc4ddccfe434e7dfedd64971b0d8a0b12a8390646c16e1ccde3bdfaaabf8ba"
     },
     {
       "path": "onnx_splitpoint_tool/resources/schemas/split_manifest.schema.json",
@@ -3021,8 +3021,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_completed_task.py",
-      "size": 93852,
-      "sha256": "96f5b8e0d1607d07de1389813486b5912d5cc5da31b497e9ef715900689e08dd"
+      "size": 95724,
+      "sha256": "68b8851c41c65ec09cacb107e2aafa9de041654189119160205d5a2b31532004"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_energy_parent.py",
@@ -3051,18 +3051,18 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/hardware_acceptance.py",
-      "size": 28259,
-      "sha256": "d4f16fb1f7d25ae2aa7e1f5a76572428c79bdcd72d47a37132c2b0ec2e4afe14"
+      "size": 30214,
+      "sha256": "7cb6dff1f405ead4bd8aa3e7fa130b826b2865783ff16c570ffb61985ef0e480"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/hardware_acceptance_generic.py",
-      "size": 49217,
-      "sha256": "2ae9841073ecfb83f5559d4c0f961ec129bf06cd7712d5f3ceb590b1fbe3cf43"
+      "size": 56330,
+      "sha256": "e20cdbebd22086d4042fc275de659cc089ec5a0f1ab13a4f764c0101c2693a43"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/hardware_acceptance_native.py",
-      "size": 78615,
-      "sha256": "9970af28f04c3735823df7f903b4d2e8770b9b487b9655959afb73910401476f"
+      "size": 79234,
+      "sha256": "4abd4e66ce148dfd0a348d26b9d13d7e96ed4fd968113600b084af145ca9b07b"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/hardware_matrix.py",
@@ -7151,13 +7151,18 @@
     },
     {
       "path": "tests/test_hardware_acceptance.py",
-      "size": 13000,
-      "sha256": "29eacaabe7167435278a9e30de9b0d936014d3fc974cf01b2878fba3dfa83854"
+      "size": 16996,
+      "sha256": "a277e4bef7c1168b02d9c1533f1b226cf83eb0fdfd3120a638952d57d789ca33"
     },
     {
       "path": "tests/test_hardware_acceptance_generic.py",
       "size": 18806,
       "sha256": "84186e815ecc463ab68daabf1d67a2b007f43e71c574fef8f427bcb8cc0eda5e"
+    },
+    {
+      "path": "tests/test_hardware_acceptance_generic_functional.py",
+      "size": 19582,
+      "sha256": "552cf7d8d7566db2ad028c5ecf45fec618e4de42916b8c9b57c0ba48157ee5c8"
     },
     {
       "path": "tests/test_hardware_acceptance_generic_reuse.py",
@@ -7166,8 +7171,8 @@
     },
     {
       "path": "tests/test_hardware_acceptance_native.py",
-      "size": 43537,
-      "sha256": "946401ec544b41ec3974fca103a1987cec26cbea4ecf8ff6522273d992c280c1"
+      "size": 44942,
+      "sha256": "d06d6aaffbea6ccec8dba985cbd91b3502bd422dbb2fed713bb65c342332bd6e"
     },
     {
       "path": "tests/test_holdout_audit_freeze_contract_v61e.py",
