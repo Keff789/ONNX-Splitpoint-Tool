@@ -2711,3 +2711,42 @@ nur bei verifiziertem RGB-Preprocessing und identischem vorbereiteten
 Payload-/RGB-Hash. Eingabebytes, Padding, Modellartefakte und Oracle bleiben
 unverändert; der Fehlversuch und seine null Capturestarts bleiben erhalten.
 Die Fortsetzung umfasst ausschließlich die zwölf offenen Detektorzellen.
+
+Die reduzierte Hardware-Funktionsabnahme wurde am 12.10.2026 um 19:46 Uhr
+regulär beendet: 21 von 21 festen Modell-/Setup-Kombinationen besitzen gültige
+Performance-, Energie- und numerische Outputbelege sowie normale GUI-/CLI-
+Ergebnisübernahme. RegNet verwendet auf den drei Acceleratoren Native, die
+übrigen 18 Zellen Generic. Acht bereits vollständig ausgeführte Kombinationen
+wurden übernommen; die 13 offenen Zellen erhielten jeweils genau einen neuen
+Prozess mit 100 Warmups/1000 Tasks und eine gültige 60-s-Aufnahme. Für diese
+13 Aufnahmen war kein Retry nötig. Der YOLOv7/Hailo8-Metadatenfehlversuch vor
+SDK-Start bleibt erhalten; nur dessen betroffener Test wurde nach Korrektur
+erneut gestartet. Es gab keine neuen Full-Baselines oder N5000-Auswertungen.
+
+Die gesamte frühere und reduzierte Abnahmehistorie bleibt separat belegt:
+61 lokal bewiesene Performanceprozesse, 63 Dispatchversuche (62 remote
+abgeschlossen) und 65 physische Energiestarts mit 61 gültigen und vier
+ungültigen Aufnahmen. Zwei alte unbestätigte Quellenabschlüsse bleiben
+unbestätigt; aktuelle Recoveryfreigaben ändern diese negativen Belege nicht.
+Diese Summen enthalten die früheren umfangreicheren Läufe und sind kein
+zusätzlicher Umfang der reduzierten Fortsetzung.
+
+Der Abschlussbericht führt genau 21 Zeilen sowie getrennte Performance-,
+Energie-, Output- und Importprüfungen. Für sechs zugewiesene Betriebspunkte
+fehlt eine geeignete historische Energievergleichsaufnahme; Native behält
+seine diagnostischen Freigaben und unvollständigen historischen Vertragsfelder.
+MobileNet/Hailo8 behält den historischen N5000-Befund `accuracy_loss` trotz
+bestandener aktueller numerischer Funktionsprobe. Unterschiede zu bisherigen
+FPS-/Energiewerten bleiben mit vorhandener Streuung und belegten Bedingungen
+beschrieben, ohne neue Toleranzgrenzen, Kausalbehauptungen oder Einzelproben-
+Statistikclaims. Belege liegen unter
+`~/Reports/native-fairness-rev3-20261007/operations/token_saving_batch_20261009/hardware_acceptance_20261012/analysis_review/REDUCED_ACCEPTANCE_EVIDENCE.json`
+und `analysis_matrix/HARDWARE_ACCEPTANCE_REPORT.txt` im selben Abnahmeverzeichnis.
+
+Gezielte Softwareprüfungen bestanden separat: 20 Coordinator-, 81 Native-,
+54 Generic-Regressions- und 25 Eingabedomänenfälle sowie ein normaler
+GUI-Workflowtest; alle 13 reduzierten Profile wurden regulär zurückgelesen.
+Der finale Quellarchivstand bleibt Version 2.94.0. Gegenüber dem tatsächlich
+gemessenen v8-Quellstand werden zum Abschluss nur dieser Arbeitsstand und die
+normalen Quellenindizes ergänzt. Die große Revision-3-Restkampagne bleibt
+pausiert; nach Git-/Installationsabschluss wird keine weitere Messung gestartet.
