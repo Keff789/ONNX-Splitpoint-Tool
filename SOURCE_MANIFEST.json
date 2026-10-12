@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.94.0",
   "workflow_version": "v2.94.0",
-  "file_count": 2235,
+  "file_count": 2236,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 315710,
-      "sha256": "d5d8dd814b015321eea6523f3d99bcbd4888eae3c4b07eba18e58029a9232dbb"
+      "size": 316847,
+      "sha256": "58d8aa47d6d14ecf719715cbc74572aa71e2008cb154ba832154168138c65809"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -3026,8 +3026,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_energy_parent.py",
-      "size": 79943,
-      "sha256": "94f3a47e537cd69125c68366e6bf8629f1dec1066f27d022ddd2fed581ae40e6"
+      "size": 81547,
+      "sha256": "dfbf3b6457483ba9b9b290d81e7d89a813e6994c3dc601d2f9c3bd232410c7c7"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/hailo_artifact_scope.py",
@@ -7133,6 +7133,11 @@
       "path": "tests/test_generic_energy_controller.py",
       "size": 2193,
       "sha256": "9d4c1e12540307ca00ff014b2d3985c374e8852bf1aabe71b1d02d3de519b0c1"
+    },
+    {
+      "path": "tests/test_generic_energy_controller_refresh.py",
+      "size": 7093,
+      "sha256": "17efa32884457bb6d6cf22883ce3c090c508025053e81df28f4b26a327535dde"
     },
     {
       "path": "tests/test_generic_energy_duration.py",

@@ -32,6 +32,22 @@ erhält frühere Autorisierungen ausschließlich in ihrer zugehörigen Historie.
 Die unabhängige Prüfung umfasst Folge-Recovery, Profiländerung während der Übergabe
 und die Trennung beider Autorisierungen im normalen CLI-/Backendweg.
 
+Der vorbereitete wissenschaftliche Generic-Controllerrefresh berücksichtigt zusätzlich
+die seit v2.92.0 ergänzten administrativen Recovery-/Admission-CLI-Bindungen und
+`execution_binding.py`. Dessen einzige Änderung betrifft die Auflösung expliziter
+Benchmark-Warmups; dieser Generic-Energiepfad benutzt nur die unveränderte
+`physical_dut_key`-Funktion und seine eingefrorenen Runner-/Aufrufverträge. Die
+wissenschaftlichen Aufruf- und Runtimeverträge werden weiterhin geprüft; frühere
+Controllerbindungen bleiben im normalen Refresh-Receipt erhalten. Bei strikt
+ungestarteten Parents wird ausschließlich die eingebettete Collector-CLI-Bindung
+in einer erhaltenen Plankopie aktualisiert, nicht deren wissenschaftlicher Vertrag.
+Sieben gezielte
+Regressionen bestätigen den Metadatenrefresh ohne Hardware-/Budgetänderung sowie
+die Ablehnung geänderter Runner, Eingaben, Dauer und Wiederholungszahl sowie
+fremder Collectorbindungen und bereits versuchter Captures; sechs
+bestehende Parentflow-Prüfungen bestehen ebenfalls. Reale Deltaaufnahmen sind
+separat im Operationsstand ausgewiesen, nicht durch diese Tests behauptet.
+
 ## H8-Zusatzaufnahme mit Paketmitschnitt (06.10.2026)
 
 Genau eine Zusatzaufnahme für repeat:2 ausgeführt; die zwei gültigen Repeats

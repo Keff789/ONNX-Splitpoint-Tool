@@ -558,6 +558,11 @@ def refresh_controller(args):
         if(run/'production-start.json').is_file():latest_clean_attempt(run)
         allowed={str(ADAPTER_PATH.resolve()),str(W/'onnx_splitpoint_tool/workflow/generic_completed_task.py'),
                  str(W/'onnx_splitpoint_tool/energy/collector.py'),
+                 str(W/'onnx_splitpoint_tool/remote/process_lease.py'),
+                 # This parent uses physical_dut_key, not the benchmark-option
+                 # warmup resolver. The measured runner and plan stay frozen.
+                 str(W/'onnx_splitpoint_tool/workflow/execution_binding.py'),
+                 str(W/'scripts/energy_measurement_cli.py'),
                  str(W/'onnx_splitpoint_tool/remote/resource_recovery.py'),
                  str(W/'onnx_splitpoint_tool/energy/recovery_accounting.py'),
                  str(W/'onnx_splitpoint_tool/energy/task_budget.py'),
@@ -572,6 +577,15 @@ def refresh_controller(args):
                                          refreshable_controller_paths=allowed,refresh_comparison=True)
         changed=sorted({b['path'] for b in [parent['adapter'],*parent['controller_sources']]
                         if b['path'] in allowed and sha(b['path'])!=b['sha256']})
+        collector_path = str(W/'scripts/energy_measurement_cli.py')
+        collector_refreshed = (normal.get('collector_script') == collector_path
+                               and normal.get('collector_script_sha256') != sha(collector_path))
+        if collector_refreshed:
+            if (previous is not None or any((run/'measurement'/f'capture_{i}_started.json').exists()
+                                           for i in (1,2,3))):
+                raise ValueError('Collector binding refresh requires an unstarted scientific parent')
+            if {'path': collector_path, 'sha256': normal['collector_script_sha256']} not in parent['controller_sources']:
+                raise ValueError('Collector plan binding differs from the frozen controller source')
         before_budget=sha(BUDGET);history=run/'controller_binding_refresh'/uuid.uuid4().hex
         history.mkdir(parents=True,exist_ok=False)
         import shutil
@@ -595,6 +609,11 @@ def refresh_controller(args):
             write(history/'measurement/generic_energy_plan.json',restored)
             parent['normal_energy_plan'] = file_binding(history/'measurement/generic_energy_plan.json')
             context_restored = True
+        if collector_refreshed:
+            refreshed_normal = read(bound_file(parent['normal_energy_plan']))
+            refreshed_normal['collector_script_sha256'] = sha(collector_path)
+            write(history/'measurement/generic_energy_plan.json',refreshed_normal)
+            parent['normal_energy_plan'] = file_binding(history/'measurement/generic_energy_plan.json')
         existing={b['path'] for b in parent['controller_sources']}
         parent['controller_sources'] += [b for b in controller_sources() if b['path'] not in existing
             and '/workflow/' in b['path'] and Path(b['path']).name in {
@@ -606,7 +625,8 @@ def refresh_controller(args):
         write(run/'PREPARED.json',prepared)
         write(history/'REFRESH_RECEIPT.json',{'at':now(),'original_parent_plan':file_binding(history/'parent_plan.json'),
             'current_parent_plan':file_binding(run/'parent_plan.json'),'refreshed_controller_paths':changed,
-            'normal_energy_plan_unchanged':before_normal if not context_restored else False,
+            'normal_energy_plan_unchanged':before_normal if not (context_restored or collector_refreshed) else False,
+            'collector_script_binding_refreshed':collector_refreshed,
             'normal_energy_plan_before':before_normal,'normal_energy_plan_after':parent['normal_energy_plan'],
             'prepared_measured_execution_context_restored':context_restored,
             'budget_before_sha256':before_budget,'budget_after_sha256':sha(BUDGET),
