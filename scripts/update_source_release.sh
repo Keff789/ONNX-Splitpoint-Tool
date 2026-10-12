@@ -405,6 +405,7 @@ ALLOWED_DOC_FILES = {
     "docs/RELEASE_2.91.1.md",
     "docs/RELEASE_2.91.2.md",
     "docs/RELEASE_2.92.0.md",
+    "docs/RELEASE_2.93.0.md",
     "docs/RELEASE_2.94.0.md",
     "docs/ARBEITSSTAND.md",
     "docs/V281_EVIDENCE_INDEX.json",
