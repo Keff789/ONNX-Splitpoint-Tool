@@ -940,10 +940,19 @@ def check_final_local_sources(freeze,local_runtime,*,frozen_bundle=None):
      'onnx_splitpoint_tool/energy/task_budget.py','onnx_splitpoint_tool/generic_energy_reporting.py',
      'onnx_splitpoint_tool/remote/resource_recovery.py','onnx_splitpoint_tool/generic_completion_reporting.py',
      'onnx_splitpoint_tool/native_detection_postprocess.py','onnx_splitpoint_tool/native_energy_reporting.py',
-     'onnx_splitpoint_tool/workflow/generic_completed_task.py'}
+     'onnx_splitpoint_tool/workflow/generic_completed_task.py',
+     'onnx_splitpoint_tool/remote/process_lease.py',
+     'onnx_splitpoint_tool/workflow/execution_binding.py'}
+ # These UI/dispatch/release files do not define this saved DUT workload.
+ # Release metadata may be imported; its reviewed change still requires the
+ # original measured DUT bundle, as do the unused GUI and profile branches.
+ unexecuted_control={'onnx_splitpoint_tool/gui/app.py',
+     'onnx_splitpoint_tool/gui/panels/panel_evaluation_workflow.py',
+     'onnx_splitpoint_tool/release_identity.py','onnx_splitpoint_tool/run_modes.py',
+     'onnx_splitpoint_tool/workflow/profile_options.py','onnx_splitpoint_tool/workflow/runner.py'}
  quality_templates={'onnx_splitpoint_tool/resources/templates/benchmark_suite.py.txt',
                     'onnx_splitpoint_tool/resources/templates/run_split_onnxruntime.py.txt'}
- allowed|=scoped_controller|quality_templates
+ allowed|=scoped_controller|quality_templates|unexecuted_control
  for item in freeze['runtime_files']:
   rel=item['relative_path'];expected=item['sha256']
   if sha(snapshot/rel)!=expected:raise RuntimeError('frozen final snapshot changed: '+rel)
@@ -965,11 +974,12 @@ def check_final_local_sources(freeze,local_runtime,*,frozen_bundle=None):
    raise RuntimeError('local controller report bytes not bound: '+rel)
   if rel in scoped_controller and matches[0].get('scope')!='controller_or_postflight':
    raise RuntimeError('controller change scope missing: '+rel)
-  if rel in quality_templates:
-   if (matches[0].get('scope')!='isolated_quality_template'
+  if rel in quality_templates or rel in unexecuted_control:
+   expected_scope='isolated_quality_template' if rel in quality_templates else 'unexecuted_gui_or_dispatch'
+   if (matches[0].get('scope')!=expected_scope
        or reporting.get('original_measured_bundles_changed') is not False
        or not isinstance(frozen_bundle,dict)):
-    raise RuntimeError('Quality template requires an unchanged measured bundle: '+rel)
+    raise RuntimeError('Isolated controller change requires an unchanged measured bundle: '+rel)
    if not bundle_verified:
     bundle=Path(frozen_bundle.get('path',''))
     original=read(R/'generic_energy_extension/confirmation_final_20261008/BUNDLE_PREPARATION.json')

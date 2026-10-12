@@ -48,6 +48,21 @@ fremder Collectorbindungen und bereits versuchter Captures; sechs
 bestehende Parentflow-Prüfungen bestehen ebenfalls. Reale Deltaaufnahmen sind
 separat im Operationsstand ausgewiesen, nicht durch diese Tests behauptet.
 
+Der wissenschaftliche Generic-Originalabgleich prüft weiterhin jedes eingefrorene
+Snapshotbyte und die tatsächlich gemessenen DUT-Bundles. Seit der Funktionsabnahme
+geänderte GUI-, Profil-/Dispatcher- und Releasemetadaten erhalten eng benannte,
+unabhängig geprüfte lokale Bindungen im bestehenden Quellsupplement; ihre
+vorhandenen Modell- und Energieaufrufe werden nicht neu konstruiert. Änderungen
+an expliziten Null-Warmups sind allgemein semantisch relevant, aber in diesen
+bereits vorbereiteten wissenschaftlichen Generic-Aufrufen nicht wirksam. Die
+zusätzlichen sechs UI-/Dispatcher-Metadatenbindungen erfordern ausdrücklich das
+unveränderte Originalbundle; zwei administrative Controllerbindungen bleiben in
+der bestehenden Controllerklasse. Zwanzig gezielte Regressionen prüfen diese
+zulässigen Fälle und die unverändert strengen negativen Snapshot-, Quellen-,
+Scope- und Bundlebedingungen. Keine geänderte Numerik oder aufgeweichte
+Messwert-/Qualitätsgrenze wird dadurch zugelassen. Originalquellen, Vorversionen
+und die konkrete Abgrenzung stehen im begrenzten Delta-Operationsbereich.
+
 ## H8-Zusatzaufnahme mit Paketmitschnitt (06.10.2026)
 
 Genau eine Zusatzaufnahme für repeat:2 ausgeführt; die zwei gültigen Repeats
