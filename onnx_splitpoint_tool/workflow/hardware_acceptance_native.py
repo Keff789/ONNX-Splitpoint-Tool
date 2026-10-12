@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import copy
+from datetime import datetime
 import hashlib
 import inspect
 import json
@@ -121,7 +122,7 @@ def _rewrite_run(item: Mapping, identity: Mapping, remote_root: str) -> dict:
             or source_benchmark.startswith(remote_root + "/")):
         raise ValueError("Native fresh output overlaps historical inputs or outputs")
     # Every supported source uses the ordinary quality-first binding to resolve
-    # sealed artifacts and one explicit image.  No model/dataset tree is copied.
+    # sealed accelerator artifacts and one explicit image. No dataset tree is copied.
     _argument(argv, "--native-split-quality-binding")
     _argument(argv, "--image")
     for index, flag in enumerate(argv[:-1]):
@@ -145,7 +146,25 @@ def _rewrite_run(item: Mapping, identity: Mapping, remote_root: str) -> dict:
     return result
 
 
-def _copy_benchmark_metadata(source, destination, case):
+def _benchmark_case_inputs(contract: Mapping, identity: Mapping) -> list[dict]:
+    """Retain the exact optional Hailo10 ONNX canonical-slot input."""
+    options = contract.get("runtime_options") or {}
+    if options.get("part1_onnx_used") is not True:
+        return []
+    if identity["backend"] != "hailo10h_to_trt":
+        raise ValueError("Native Part1 ONNX helper is not supported for this backend")
+    artifact = (contract.get("artifacts") or {}).get("part1_onnx") or {}
+    path = str(artifact.get("path") or "")
+    name = PurePosixPath(path).name
+    digest = str(artifact.get("sha256") or "")
+    if (not path.startswith("/") or str(PurePosixPath(path)) != path or ".." in PurePosixPath(path).parts
+            or not name.endswith(".onnx") or "part1" not in name or not re.fullmatch(r"[a-f0-9]{64}", digest)
+            or not options.get("canonical_input_slot_names") or not options.get("canonical_output_slot_names")):
+        raise ValueError("Native Part1 ONNX helper has no exact path/hash/slot binding")
+    return [{"path": path, "sha256": digest, "relative_path": identity["case"] + "/" + name}]
+
+
+def _copy_benchmark_metadata(source, destination, case, case_inputs=()):
     """Create a private writable root from the exact small runner declarations.
 
     This function is also sent through the ordinary journaled SSHTransport;
@@ -154,6 +173,7 @@ def _copy_benchmark_metadata(source, destination, case):
     """
     import hashlib
     import json
+    import re
     from pathlib import Path
 
     source, destination = Path(source).resolve(strict=True), Path(destination)
@@ -166,8 +186,17 @@ def _copy_benchmark_metadata(source, destination, case):
     canonical = destination.resolve()
     if canonical == source or canonical in source.parents or source in canonical.parents:
         raise ValueError("Native benchmark metadata would overlap its source")
+    if not re.fullmatch(r"b[0-9]{3,}", case) or len(case_inputs) > 1:
+        raise ValueError("Native benchmark metadata has an invalid case/helper count")
+    for item in case_inputs:
+        path = Path(str(item.get("path") or ""))
+        relative = Path(str(item.get("relative_path") or ""))
+        if (not path.is_absolute() or str(path) != str(item.get("path")) or ".." in path.parts
+                or path.suffix != ".onnx" or "part1" not in path.name
+                or relative.parts != (case, path.name) or not re.fullmatch(r"[a-f0-9]{64}", str(item.get("sha256") or ""))):
+            raise ValueError("Native benchmark helper escapes the selected case or lacks an exact hash")
     # Explicit allowlist: no old results, Native pipeline, executable code,
-    # artifacts, other cases or N5000 resources enter the fresh writable tree.
+    # other cases or N5000 resources enter the fresh writable tree.
     names = ("benchmark_set.json", "benchmark_plan.json", "output_contracts.json", "split_manifest.json")
     files = []
     for name in names:
@@ -190,8 +219,32 @@ def _copy_benchmark_metadata(source, destination, case):
         if hashlib.sha256((source / name).read_bytes()).hexdigest() != digest:
             raise ValueError("Native benchmark metadata changed while staging")
         copied.append({"name": name, "sha256": digest, "size_bytes": len(payload)})
+    # The optional graph is only consulted for canonical slot names by the
+    # ordinary Hailo10 runner.  It is a copy, never a writable historical link.
+    for item in case_inputs:
+        path = Path(item["path"])
+        target = destination / item["relative_path"]
+        if not path.is_file() or path.stat().st_size > 512 * 1024 * 1024:
+            raise ValueError("Native benchmark helper missing or exceeds bounded size")
+        target.parent.mkdir(parents=True, exist_ok=False)
+        digest = hashlib.sha256()
+        with path.open("rb") as original, target.open("xb") as staged:
+            for block in iter(lambda: original.read(8 * 1024 * 1024), b""):
+                staged.write(block)
+                digest.update(block)
+        if digest.hexdigest() != item["sha256"]:
+            raise ValueError("Native benchmark helper differs from its sealed source hash")
+        with path.open("rb") as original:
+            after = hashlib.sha256()
+            for block in iter(lambda: original.read(8 * 1024 * 1024), b""):
+                after.update(block)
+        if after.hexdigest() != item["sha256"]:
+            raise ValueError("Native benchmark helper changed while staging")
+        target.chmod(0o444)
+        copied.append({"name": item["relative_path"], "sha256": digest.hexdigest(),
+                       "size_bytes": target.stat().st_size, "role": "part1_onnx_canonical_slots"})
     return {"source": str(source), "destination": str(destination), "case": case,
-            "files": copied, "copied_artifacts": 0, "copied_dataset_files": 0,
+            "files": copied, "copied_artifacts": len(case_inputs), "copied_dataset_files": 0,
             "historical_results_copied": False}
 
 
@@ -199,7 +252,8 @@ def _stage_benchmark_set(transport: SSHTransport, item: Mapping, directory: Path
     destination = _argument(item["argv"], "--benchmark-set")
     program = (inspect.getsource(_copy_benchmark_metadata) + "\nimport json\nprint(json.dumps(_copy_benchmark_metadata("
                + repr(item["source_benchmark_set"]) + "," + repr(destination) + ","
-               + repr(_argument(item["argv"], "--case")) + "),sort_keys=True))\n")
+               + repr(_argument(item["argv"], "--case")) + "," + repr(item.get("benchmark_case_inputs") or [])
+               + "),sort_keys=True))\n")
     command = "python3 -B - <<'NATIVE_ACCEPTANCE_METADATA'\n" + program + "NATIVE_ACCEPTANCE_METADATA"
     rc, text = transport.run(command, timeout=120)
     _write(directory / "benchmark_staging.json", {"returncode": rc, "output": text[-12000:]})
@@ -306,6 +360,151 @@ def _source_references(cell: Mapping, plan: Mapping, source: Path) -> tuple[Path
     return raw_path, validation
 
 
+def _performance_reference(cell: Mapping) -> dict | None:
+    if cell.get("fresh_performance_reference") and cell.get("native_performance_reuse"):
+        raise ValueError("ambiguous Native fresh performance reference")
+    value = cell.get("fresh_performance_reference") or cell.get("native_performance_reuse")
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("Native fresh performance reference must be explicitly hash-bound")
+    if "path" in value:
+        if not re.fullmatch(r"[a-f0-9]{64}", str(value.get("sha256") or "")):
+            raise ValueError("Native fresh performance descriptor hash missing")
+        value = _read(_bound_path(value))
+    return copy.deepcopy(dict(value))
+
+
+def _verify_performance_reference(prepared: Mapping, context: Mapping, reference: Mapping) -> dict:
+    """Revalidate only a closed, physically completed cohort in this phase.
+
+    Every leaf is supplied with its original hash. No historical campaign raw
+    report or cache result can acquire current-phase authority through a name.
+    """
+    from ..benchmark.evaluation_profiles import load_evaluation_profile
+
+    def bound(value, root=None):
+        if not isinstance(value, Mapping) or not re.fullmatch(r"[a-f0-9]{64}", str(value.get("sha256") or "")):
+            raise ValueError("Native fresh performance file lacks explicit hash")
+        path = _bound_path(value)
+        if str(path) != str(value["path"]) or any(p.is_symlink() for p in (path, *path.parents)):
+            raise ValueError("Native fresh performance evidence is not a canonical regular path")
+        if root is not None and not path.is_relative_to(root):
+            raise ValueError("Native fresh performance evidence escapes its closed origin")
+        return path
+
+    origin_prepared = bound(reference.get("prepared"))
+    manifest_path = bound(reference.get("run_manifest"))
+    origin = manifest_path.parent
+    current = Path(context["run_dir"]).resolve()
+    old = _read(origin_prepared)
+    manifest = _read(manifest_path)
+    closure_path = bound(reference.get("closure"), origin)
+    closure = _read(closure_path)
+    profile_path = bound(reference.get("profile"), origin)
+    old_profile = load_evaluation_profile(profile_path, validate=False).raw_profile
+    if (manifest_path.name != "run_manifest.json" or profile_path != origin / "profile.yaml"
+            or closure_path != origin / "reports/artifact_index_closure.json"):
+        raise ValueError("Native fresh performance terminal bindings have nonstandard paths")
+    prior_acceptance = old_profile.get("hardware_acceptance") or {}
+    current_acceptance = (context.get("profile") or {}).get("hardware_acceptance") or {}
+    if (prior_acceptance.get("enabled") is not True or current_acceptance.get("enabled") is not True
+            or prior_acceptance.get("schema") != "onnx-splitpoint/hardware-acceptance/v1"
+            or (manifest.get("hardware_acceptance") or {}).get("schema") != prior_acceptance.get("schema")
+            or (manifest.get("hardware_acceptance") or {}).get("source_campaign_resumed") is not False
+            or manifest.get("status") not in {"ok", "partial", "failed", "cancelled"}
+            or closure.get("schema") != "onnx-splitpoint/artifact-index-terminal-closure"
+            or closure.get("status") != "pass" or closure.get("run_id") != manifest.get("run_id")
+            or manifest.get("run_id") != origin.name or closure.get("workflow_status") != manifest.get("status")):
+        raise ValueError("Native fresh performance origin is not a closed normal acceptance run")
+    matrix = _bound_path(current_acceptance.get("matrix_evidence"))
+    old_matrix = _bound_path(prior_acceptance.get("matrix_evidence"))
+    if matrix != old_matrix or origin == current or origin.parent != current.parent:
+        raise ValueError("Native fresh performance origin is outside the current acceptance phase")
+    phase = matrix.parent
+    if not origin.is_relative_to(phase / "hardware_runs") or not current.is_relative_to(phase / "hardware_runs"):
+        raise ValueError("Native fresh performance origin is outside phase hardware runs")
+    matrix_payload = _read(matrix)
+    created = datetime.fromisoformat(str(manifest.get("created_at")))
+    fixed = datetime.fromisoformat(str(matrix_payload.get("recorded_before_hardware_start")))
+    if created < fixed or created > datetime.now(created.tzinfo):
+        raise ValueError("Native performance predates the current fixed acceptance phase")
+    identity = prepared["identity"]
+    if not any(all(row.get(key) == identity[field] for key, field in
+                   (("model_id", "model"), ("setup_id", "setup_id"), ("case_id", "case")))
+               for row in matrix_payload.get("cells", [])):
+        raise ValueError("Native fresh performance selection is not in the fixed phase matrix")
+    component = "__".join(identity[key] for key in ("model", "setup_id", "case"))
+    old_output = origin / "native" / component
+    if origin_prepared != old_output / "PREPARED.json" or Path(str(old.get("output"))) != old_output:
+        raise ValueError("Native fresh performance prepared binding has a different origin")
+    if old.get("schema") != prepared["schema"] or old.get("identity") != identity:
+        raise ValueError("Native fresh performance selection differs")
+    for field in ("source_plan", "source_plan_sha256", "source_raw_report_sha256", "source_validation",
+                  "source_validation_sha256", "source_primary_run", "source_contract", "target_binding", "performance_recipe",
+                  "full_baseline_references"):
+        if old.get(field) != prepared.get(field):
+            raise ValueError("Native fresh performance source/quality/target differs: " + field)
+    for profile in (old_profile, context["profile"]):
+        native = profile.get("native_producers") or {}
+        energy = native.get("energy") or {}
+        task_budget = energy.get("task_budget") or {}
+        if (tuple(native.get(key) for key in ("warmup", "frames", "repetitions")) != (100, 1000, 3)
+                or tuple(energy.get(key) for key in ("duration_s", "physical_scope", "window_label")) != (60, "FS", "command")
+                or task_budget.get("enabled") is not True or task_budget.get("max_retries") != 2
+                or task_budget.get("max_transport_failures") != 20):
+            raise ValueError("Native fresh performance profile budget differs")
+    summary_path = bound(reference.get("summary"), old_output)
+    if summary_path != old_output / "reports/native_producer_combined_summary.json":
+        raise ValueError("Native fresh performance normal summary path differs")
+    summary_rows = _read(summary_path).get("rows") or []
+    if (len(summary_rows) != 1 or any(summary_rows[0].get(key) != value for key, value in identity.items())
+            or summary_rows[0].get("repetition_count_valid") != 3):
+        raise ValueError("Native fresh performance normal import has no complete selected cohort")
+    references = reference.get("repeats") or []
+    attempts = _read(old_output / "DISPATCH_ATTEMPTS.json").get("attempts") or []
+    source_runs = old.get("runs") or []
+    if len(references) != 3 or len(attempts) != 3 or len(source_runs) != 3:
+        raise ValueError("Native fresh performance requires three original dispatches and raw leaves")
+    normalized, reports, leaves, runtime_ids = [], [], [], []
+    for repeat, (ref, attempt, source_run) in enumerate(zip(references, attempts, source_runs), 1):
+        validation_path = bound(ref.get("validation"), old_output)
+        raw_path = bound(ref.get("raw_report"), old_output)
+        validation = _read(validation_path)
+        raw = _read(raw_path)
+        if (validation_path != old_output / f"rep{repeat:02d}/VALIDATED.json"
+                or not raw_path.is_relative_to(old_output / f"rep{repeat:02d}/download")
+                or validation.get("repeat") != repeat or validation.get("report") != str(raw_path)
+                or validation.get("report_sha256") != _sha(raw_path)
+                or attempt.get("repeat") != repeat or attempt.get("returncode") != 0
+                or attempt.get("argv") != source_run.get("argv")
+                or source_run.get("repeat") != repeat or not source_run.get("source_benchmark_set")
+                or not source_run.get("remote_output_root", "").startswith(
+                    "/home/nx/splitpoint_runs/hardware_acceptance/" + origin.name + "/native/" + component + "/")):
+            raise ValueError("Native fresh performance original dispatch/leaf binding invalid")
+        proof = _validate_raw(raw, identity, prepared["source_contract"])
+        runtime = raw.get("runtime_instance_id")
+        if (not runtime or runtime != ref.get("runtime_instance_id") or runtime != validation.get("runtime_instance_id")
+                or proof["contract_sha256"] != validation.get("contract_sha256")
+                or proof["contract"]["benchmark_set"] != _argument(source_run["argv"], "--benchmark-set")):
+            raise ValueError("Native fresh performance runtime/contract binding differs")
+        runtime_ids.append(runtime)
+        normalized.append(proof)
+        reports.append(str(raw_path))
+        leaves.append({"repeat": repeat, "validation": copy.deepcopy(ref["validation"]),
+                       "raw_report": copy.deepcopy(ref["raw_report"]), "runtime_instance_id": runtime,
+                       "contract_sha256": proof["contract_sha256"]})
+    if len(set(runtime_ids)) != 3:
+        raise ValueError("Native fresh performance did not prove independent runtime instances")
+    proof = {"schema": "onnx-splitpoint/hardware-acceptance-native-performance-reuse/v1", "identity": identity,
+             "phase_matrix": {"path": str(matrix), "sha256": _sha(matrix)},
+             "origin": {"run_id": origin.name, "run_dir": str(origin),
+                        **{key: copy.deepcopy(reference[key]) for key in ("prepared", "summary", "run_manifest", "closure", "profile")}},
+             "repeats": leaves, "retained_fresh_performance_processes": 3,
+             "new_performance_processes": 0, "old_campaign_or_cache_reused": False}
+    return {"proof": proof, "reports": reports, "normalized": normalized}
+
+
 def prepare_native(cell: Mapping, context: Mapping) -> dict:
     """Resolve one saved selection offline; no SSH, build, capture or quality run."""
     identity = _identity(cell)
@@ -339,6 +538,8 @@ def prepare_native(cell: Mapping, context: Mapping) -> dict:
         raise ValueError("Native acceptance needs exactly three source process repetitions")
     prepared_runs = [_rewrite_run(item, identity, remote_base + f"/rep{int(item['repeat']):02d}")
                      for item in sorted(runs, key=lambda item: item["repeat"])]
+    for item in prepared_runs:
+        item["benchmark_case_inputs"] = _benchmark_case_inputs(contract, identity)
     declared_primary = cell.get("native_original_run") or context.get("source_primary_run") or cell["original_run"]
     primary = _bound_path(declared_primary)
     manifest = _read(primary / "run_manifest.json")
@@ -376,6 +577,11 @@ def prepare_native(cell: Mapping, context: Mapping) -> dict:
                                   "window": "whole_command", "source": "normal_native_energy_parent.command_for_and_split_energy_runtime_argv"},
                 "new_performance_processes": 3, "new_selected_energy_repeats": 3,
                 "full_recaptures": 0, "quality_dataset_reexecutions": 0, "hardware_executed": False}
+    reference = _performance_reference(cell)
+    if reference is not None:
+        retained = _verify_performance_reference(prepared, context, reference)
+        prepared.update(fresh_performance_reference=reference, performance_reuse_proof=retained["proof"],
+                        new_performance_processes=0, retained_fresh_performance_processes=3)
     _write(output / "PREPARED.json", prepared)
     return prepared
 
@@ -421,11 +627,16 @@ def _validate_raw(raw: Mapping, identity: Mapping, source_contract: Mapping) -> 
             or latency.get("task_complete") is not True
             or raw.get("postprocess_completion_verified") is not True):
         raise ValueError("fresh Native task counts, latency or completion failed")
-    for role in ("hef", "dxnn", "engine"):
+    for role in ("hef", "dxnn", "engine", "part1_onnx"):
         old = (source_contract.get("artifacts") or {}).get(role)
         new = (contract.get("artifacts") or {}).get(role)
         if old and (not new or new.get("sha256") != old.get("sha256")):
             raise ValueError("fresh Native artifact differs: " + role)
+    if identity["backend"] == "hailo10h_to_trt":
+        old_options = source_contract.get("runtime_options") or {}
+        for field in ("part1_onnx_used", "canonical_input_slot_names", "canonical_output_slot_names"):
+            if options.get(field) != old_options.get(field):
+                raise ValueError("fresh Native canonical-slot source differs: " + field)
     elapsed = float(raw.get("makespan_ms") or 0)
     fps = float(raw.get("fps_makespan") or 0)
     if not math.isfinite(fps) or fps <= 0 or elapsed <= 0 or not math.isclose(fps, 1000000 / elapsed, rel_tol=1e-8):
@@ -621,51 +832,67 @@ def _run_native(prepared: Mapping, context: Mapping) -> dict:
     if target_binding != prepared["target_binding"]:
         raise ValueError("Native target registry changed after preparation")
     output = Path(prepared["output"])
-    transport = _transport(prepared, context)
     reports, normalized, attempts = [], [], []
+    reference = prepared.get("fresh_performance_reference")
+    retained = _verify_performance_reference(prepared, context, reference) if reference else None
     started = output / "production-start.json"
     with started.open("x", encoding="utf-8") as stream:
         json.dump({"pid": os.getpid(), "started_at": time.time(), "selection": prepared["identity"]}, stream)
-    owner = {"run_id": Path(context["run_dir"]).name, "purpose": "hardware_acceptance_native"}
-    with ExitStack() as stack:
-        physical = stack.enter_context(EvaluationRunLock.for_resource(physical_dut_key(prepared["target"]), owner=owner))
-        def fence_cleanup():
-            if context["remote_process_registry"].active_count():
-                physical.commit_quarantine_fence({"reason": "hardware_acceptance_native_cleanup_unproven", "evidence": str(output)})
-        stack.callback(fence_cleanup)
-        for item in prepared["runs"]:
-            cancel = context.get("cancel_event")
-            if cancel is not None and cancel.is_set():
-                raise RuntimeError("Native acceptance cancelled before next repeat")
-            directory = output / f"rep{int(item['repeat']):02d}"
-            directory.mkdir(parents=True, exist_ok=False)
-            with bind_workflow_resource_options(controller_setup_id=prepared["identity"]["setup_id"],
-                                                controller_attempt_dir=str(directory)):
-                _stage_benchmark_set(transport, item, directory)
-                command = "cd -- " + shlex.quote(prepared["remote_tool_dir"]) + " && " + shlex.join(item["argv"])
-                attempt = {"repeat": item["repeat"], "argv": item["argv"], "environment": item["env"], "started_at": time.time()}
-                attempts.append(attempt)
-                _write(output / "DISPATCH_ATTEMPTS.json", {"attempts": attempts})
-                rc, text = transport.run(command, timeout=int(item.get("timeout_s") or 900), env=item["env"])
-                attempt.update(returncode=rc, completed_at=time.time(), console=text[-12000:])
-                _write(output / "DISPATCH_ATTEMPTS.json", {"attempts": attempts})
-                if rc:
-                    raise RuntimeError(f"Native acceptance repetition {item['repeat']} failed with rc {rc}")
-                report = _collect_repeat(transport, item, directory)
-            raw = _read(report)
-            proof = _validate_raw(raw, prepared["identity"], prepared["source_contract"])
-            proof.update(report=str(report), report_sha256=_sha(report), repeat=item["repeat"],
-                         runtime_instance_id=raw.get("runtime_instance_id"))
-            _write(directory / "VALIDATED.json", proof)
-            normalized.append(proof)
-            reports.append(report)
+    if retained is not None:
+        _write(output / "DISPATCH_ATTEMPTS.json", {"attempts": []})
+        _write(output / "PERFORMANCE_REUSE.json", retained["proof"])
+        reports = [Path(path) for path in retained["reports"]]
+        normalized = retained["normalized"]
+        for proof, leaf in zip(normalized, retained["proof"]["repeats"]):
+            proof["runtime_instance_id"] = leaf["runtime_instance_id"]
+    else:
+        transport = _transport(prepared, context)
+        owner = {"run_id": Path(context["run_dir"]).name, "purpose": "hardware_acceptance_native"}
+        with ExitStack() as stack:
+            physical = stack.enter_context(EvaluationRunLock.for_resource(physical_dut_key(prepared["target"]), owner=owner))
+            def fence_cleanup():
+                if context["remote_process_registry"].active_count():
+                    physical.commit_quarantine_fence({"reason": "hardware_acceptance_native_cleanup_unproven", "evidence": str(output)})
+            stack.callback(fence_cleanup)
+            for item in prepared["runs"]:
+                cancel = context.get("cancel_event")
+                if cancel is not None and cancel.is_set():
+                    raise RuntimeError("Native acceptance cancelled before next repeat")
+                directory = output / f"rep{int(item['repeat']):02d}"
+                directory.mkdir(parents=True, exist_ok=False)
+                with bind_workflow_resource_options(controller_setup_id=prepared["identity"]["setup_id"],
+                                                    controller_attempt_dir=str(directory)):
+                    _stage_benchmark_set(transport, item, directory)
+                    command = "cd -- " + shlex.quote(prepared["remote_tool_dir"]) + " && " + shlex.join(item["argv"])
+                    attempt = {"repeat": item["repeat"], "argv": item["argv"], "environment": item["env"], "started_at": time.time()}
+                    attempts.append(attempt)
+                    _write(output / "DISPATCH_ATTEMPTS.json", {"attempts": attempts})
+                    rc, text = transport.run(command, timeout=int(item.get("timeout_s") or 900), env=item["env"])
+                    attempt.update(returncode=rc, completed_at=time.time(), console=text[-12000:])
+                    _write(output / "DISPATCH_ATTEMPTS.json", {"attempts": attempts})
+                    if rc:
+                        raise RuntimeError(f"Native acceptance repetition {item['repeat']} failed with rc {rc}")
+                    report = _collect_repeat(transport, item, directory)
+                raw = _read(report)
+                proof = _validate_raw(raw, prepared["identity"], prepared["source_contract"])
+                proof.update(report=str(report), report_sha256=_sha(report), repeat=item["repeat"],
+                             runtime_instance_id=raw.get("runtime_instance_id"))
+                _write(directory / "VALIDATED.json", proof)
+                normalized.append(proof)
+                reports.append(report)
     runtime_ids = [row.get("runtime_instance_id") for row in normalized]
     if not all(runtime_ids) or len(set(runtime_ids)) != 3:
         raise ValueError("Native repetitions did not prove three independent runtime instances")
     summary = _normal_performance_import(prepared, reports, context)
+    if retained is not None:
+        # Recheck the closed originals after the ordinary reimport and before
+        # any new collector admission. Reference changes never trigger replay.
+        _verify_performance_reference(prepared, context, reference)
     energy = _energy_capture(prepared, summary, context)
     reference_comparisons = _reference_energy_pairs(prepared, energy["row"], context)
-    result = {"status": "completed", "fresh_hardware_executed": True, "new_performance_processes": 3,
+    result = {"status": "completed", "fresh_hardware_executed": True, "new_performance_processes": len(attempts),
+              "retained_fresh_performance_processes": 3 if retained else 0,
+              "performance_reuse_origin": retained["proof"]["origin"] if retained else None,
               "new_capture_count": energy["new_capture_count"], "valid_repeats": {"performance": 3, "energy": 3},
               "failed_attempts": sum(row["returncode"] != 0 for row in attempts) + energy["failed_attempts"], "attempts": len(attempts),
               "energy_start_accounting": energy["start_accounting"],
@@ -678,6 +905,8 @@ def _run_native(prepared: Mapping, context: Mapping) -> dict:
               "missing_full_energy_comparisons": reference_comparisons["missing_full_energy_comparisons"],
               "evidence_paths": [str(started), str(output / "DISPATCH_ATTEMPTS.json"), str(summary), energy["energy_result"], energy["import"],
                                  str(output / "FULL_REFERENCE_COMPARISONS.json")]}
+    if retained is not None:
+        result["evidence_paths"].append(str(output / "PERFORMANCE_REUSE.json"))
     _write(output / "RESULT.json", result)
     return result
 
@@ -695,6 +924,15 @@ def run_native(prepared: Mapping, context: Mapping) -> dict:
         attempts_path = output / "DISPATCH_ATTEMPTS.json"
         attempts = _read(attempts_path).get("attempts", []) if attempts_path.is_file() else []
         valid = list(output.glob("rep*/VALIDATED.json"))
+        retained_count, retained_origin = 0, None
+        reuse_path = output / "PERFORMANCE_REUSE.json"
+        if reuse_path.is_file() and prepared.get("fresh_performance_reference"):
+            try:
+                proof = _verify_performance_reference(prepared, context, prepared["fresh_performance_reference"])["proof"]
+                if _read(reuse_path) == proof:
+                    retained_count, retained_origin = 3, proof["origin"]
+            except Exception:
+                pass  # A changed reference cannot retain accepted completion.
         counts = _budget_counts(prepared, context)
         captures = counts["collector_starts"]
         valid_energy = counts["valid_repeats"]
@@ -704,7 +942,8 @@ def run_native(prepared: Mapping, context: Mapping) -> dict:
                   "fresh_hardware_executed": True if valid or captures else None if attempts else False,
                   "fresh_hardware_execution_unresolved": bool(attempts and not valid),
                   "new_performance_processes": len(attempts), "new_capture_count": captures,
-                  "valid_repeats": {"performance": len(valid), "energy": valid_energy},
+                  "retained_fresh_performance_processes": retained_count, "performance_reuse_origin": retained_origin,
+                  "valid_repeats": {"performance": len(valid) + retained_count, "energy": valid_energy},
                   "failed_attempts": sum(item.get("returncode", 1) != 0 for item in attempts)
                                       + counts["failed_attempts"], "energy_start_accounting": counts,
                   "evidence_paths": [str(path) for path in output.rglob("*.json")],

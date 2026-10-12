@@ -26,11 +26,22 @@ Jeder frische Repeat besitzt ein eigenes Benchmark-Metadatenverzeichnis für
 die vom normalen Runner geschriebenen Hilfsberichte. Die versiegelten
 Modellartefakte und Eingabebindungen werden dabei weiterverwendet.
 
+Die Energie-Fortsetzung erhält exakt verifizierte gültige Performance-Repeats
+aus abgeschlossenen Jobs derselben neuen Abnahmephase. Ursprüngliche Prozesse,
+Outputs und Fehlstarts bleiben getrennt belegt; die Fortsetzung misst Energie
+neu und rechnet bereits verbrauchte Captureversuche gegen dieselben Grenzen.
+Diagnostische technische Energie erhält die erforderliche reale Umweltbeobachtung
+und alle bestehenden Messprüfungen, ohne wissenschaftliche Vergleichszulassung.
+Finale wissenschaftliche Kohorten akzeptieren weiterhin keine Diagnostikaufnahmen.
+
 Die normale Ressourcen-Recovery erkennt außerdem den exakt gebundenen Native-
 Abbruch in ACQUIRING. Sie prüft die gespeicherten Besitzer-, Kommando-, Quellen-
 und Budgetbelege sowie aktuelle lokale und DUT-Verfügbarkeit unter den normalen
 vier Ressourcensperren. Eine aktuelle Ressourcenfreigabe bestätigt keinen früher
 unbewiesenen Quellenabschluss und startet den alten Parent nicht erneut.
+Dasselbe gilt für den exakt gebundenen terminalen Partial-Workflow nach einem
+Generic-Captureabbruch: Quellenlogs werden vor und nach aktueller Ownerbeobachtung
+geprüft; der ursprüngliche STOP und sein invalides Budget bleiben erhalten.
 
 Installation und Veröffentlichung nutzen unverändert das manifestgebundene
 Quellarchiv und `scripts/update_source_release.sh RELEASE.zip TOOL_DIR`.

@@ -97,6 +97,7 @@ def test_normal_reuse_skips_old_invalid_chains_then_uses_first_valid_slots(tmp_p
     budget.data = {'chains':copy.deepcopy(data['chains']),'limits':data['limits'],'source_id':'source'}
     budget.source = {}
     budget.source_id = 'source'
+    budget._reentry = None
     budget.root = {'tasks':{'task':budget.data}}
     budget.checkpoint_path = tmp_path/'copy-budget'
     budget._check_cohort = lambda:None

@@ -2638,3 +2638,26 @@ Benchmark-Metadatenverzeichnis; Modellartefakte bleiben unverändert gebunden.
 Die gültige Generic-Kohorte bleibt erhalten. Die Fortsetzung prüft nur die
 41 noch nicht abgeschlossenen Pfade; der zusätzliche Native-Prozess wird im
 Abnahmebericht separat gezählt. Die Restkampagne bleibt pausiert.
+
+Die gezielte Native-Fortsetzung lieferte drei gültige frische Performance-
+Repeats. Der folgende Energiestart wurde vor dem Collector abgewiesen, weil
+diagnostische Rohaufnahmen und erforderliche Umweltbeobachtung bislang
+widersprüchlich behandelt wurden. Die Korrektur erlaubt die normale technische
+Rohabnahme mit unveränderten Umwelt-/Fenster-/Budgetprüfungen; wissenschaftliche
+Claims bleiben falsch, und finale wissenschaftliche Kohorten bleiben gesperrt.
+Gültige Performance aus einem abgeschlossenen Abnahmelauf derselben Matrix wird
+beleggebunden erhalten; die Energie-Fortsetzung führt weiterhin neue reale
+Captures durch. Sie zählt keine alten Prozesse als neue Ausführung.
+
+Generic/MobileNet/Hailo10 lieferte ebenfalls drei gültige frische Performance-
+Repeats. Sein erster Capture scheiterte an Empfangsstille ohne Quellenendbeleg.
+Die reguläre Recovery akzeptiert jetzt auch den exakt belegten terminalen
+Partial-Workflow, prüft dessen unveränderten negativen Quellenabschluss erneut
+nach aktueller Ownerbeobachtung und erhält STOP, Fehlversuch und Budget.
+Die Fortsetzung zählt diesen ersten Start weiter gegen die bestehenden drei
+Versuche je Slot und neun je Pfad. Kein Quellenabschluss wird nachgetragen.
+Für Hailo10/YOLOv7 wird der vom normalen Runner benötigte vorhandene Part1-ONNX
+zusätzlich schreibgeschützt in das private Metadatenverzeichnis übernommen;
+die ursprüngliche Artefaktbindung bleibt erhalten, ohne Build oder Cacheeingriff.
+Der tatsächliche Abschluss der 21 Zellen bleibt bis zu den weiteren realen
+GUI-Ausführungen offen.

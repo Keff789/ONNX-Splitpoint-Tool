@@ -91,6 +91,83 @@ def test_private_metadata_stage_rejects_reuse_and_symlink_destination(tmp_path):
         _copy_benchmark_metadata(source, alias / "new", "b002")
 
 
+def test_hailo10_canonical_graph_is_exact_read_only_copy_in_selected_case(tmp_path):
+    import ast
+    import hashlib
+    from onnx_splitpoint_tool.workflow.hardware_acceptance_native import _benchmark_case_inputs, _copy_benchmark_metadata
+    source = tmp_path / "historical"
+    source.mkdir()
+    (source / "benchmark_set.json").write_text('{"task":"detection"}')
+    graph = source / "b044/yolov7_part1_b44.onnx"
+    graph.parent.mkdir()
+    graph.write_bytes(b"exact graph carrying images/cat_1 canonical slots")
+    digest = hashlib.sha256(graph.read_bytes()).hexdigest()
+    identity = {**IDENTITY, "case": "b044", "backend": "hailo10h_to_trt"}
+    contract = {"runtime_options": {"part1_onnx_used": True, "canonical_input_slot_names": ["images"],
+                                    "canonical_output_slot_names": ["cat_1"]},
+                "artifacts": {"part1_onnx": {"path": str(graph), "sha256": digest}}}
+    inputs = _benchmark_case_inputs(contract, identity)
+    destination = tmp_path / "acceptance/rep01/benchmark_set"
+    proof = _copy_benchmark_metadata(source, destination, identity["case"], inputs)
+    # Execute the exact ordinary Hailo10 discovery function without importing
+    # accelerator vendor dependencies or starting hardware.
+    runner = Path(__file__).parents[1] / "onnx_splitpoint_tool/resources/remote_scripts/native_hailo10_trt_e2e_from_benchmarkset.py"
+    tree = ast.parse(runner.read_text())
+    finder = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_find_part1_onnx")
+    namespace = {"Path": Path}
+    exec(compile(ast.Module(body=[finder], type_ignores=[]), str(runner), "exec"), namespace)
+    copied = namespace["_find_part1_onnx"](destination / identity["case"], identity["case"])
+    assert copied.is_file() and not copied.is_symlink()
+    assert copied.read_bytes() == graph.read_bytes()
+    assert hashlib.sha256(copied.read_bytes()).hexdigest() == digest
+    assert copied.stat().st_ino != graph.stat().st_ino
+    assert copied.stat().st_mode & 0o222 == 0
+    assert proof["copied_artifacts"] == 1
+
+
+@pytest.mark.parametrize("relative,count", [("b003/helper_part1.onnx", 1), ("b002/../../helper_part1.onnx", 1),
+                                         ("b002/helper_part1.onnx", 2)])
+def test_canonical_helper_escape_or_multiple_inputs_rejected_before_stage(tmp_path, relative, count):
+    from onnx_splitpoint_tool.workflow.hardware_acceptance_native import _copy_benchmark_metadata
+    source = tmp_path / "historical"
+    source.mkdir()
+    (source / "benchmark_set.json").write_text("{}")
+    item = {"path": str(source / "helper_part1.onnx"), "sha256": "a" * 64, "relative_path": relative}
+    with pytest.raises(ValueError, match="case/helper count|escapes"):
+        _copy_benchmark_metadata(source, tmp_path / "fresh", "b002", [item] * count)
+    assert not (tmp_path / "fresh").exists()
+
+
+def test_canonical_helper_hash_drift_prevents_dispatch_stage(tmp_path):
+    from onnx_splitpoint_tool.workflow.hardware_acceptance_native import _copy_benchmark_metadata
+    source = tmp_path / "historical"
+    source.mkdir()
+    (source / "benchmark_set.json").write_text("{}")
+    graph = source / "helper_part1.onnx"
+    graph.write_bytes(b"changed graph")
+    item = {"path": str(graph), "sha256": "a" * 64, "relative_path": "b002/" + graph.name}
+    with pytest.raises(ValueError, match="sealed source hash"):
+        _copy_benchmark_metadata(source, tmp_path / "fresh", "b002", [item])
+    assert graph.read_bytes() == b"changed graph"
+
+
+@pytest.mark.parametrize("field,bad", [("part1_onnx_used", False), ("canonical_input_slot_names", ["wrong"]),
+                                     ("canonical_output_slot_names", ["wrong"])])
+def test_fresh_native_canonical_slot_drift_is_rejected(monkeypatch, field, bad):
+    from copy import deepcopy
+    from onnx_splitpoint_tool.workflow import hardware_acceptance_native as module
+    source = {"contract_sha256": "a" * 64, "runtime_options": {"part1_onnx_used": True,
+              "canonical_input_slot_names": ["images"], "canonical_output_slot_names": ["cat_1"]},
+              "artifacts": {"part1_onnx": {"sha256": "b" * 64}}}
+    fresh = deepcopy(source)
+    fresh["runtime_options"][field] = bad
+    monkeypatch.setattr(module, "verify_native_command_contract", lambda *args, **kwargs: (fresh, "verified"))
+    monkeypatch.setattr(module, "validate_latency", lambda *args: {"status": "complete", "count": 1000, "task_complete": True})
+    raw = {"ok": True, "completed_frames": 1000, "warmup": 100, "postprocess_completion_verified": True}
+    with pytest.raises(ValueError, match="canonical-slot source differs: " + field):
+        module._validate_raw(raw, {**IDENTITY, "backend": "hailo10h_to_trt"}, source)
+
+
 def test_normal_transport_executes_identical_tested_metadata_stage(tmp_path):
     import json
     import subprocess
@@ -244,3 +321,165 @@ def test_completed_energy_callback_rejects_missing_calibration_or_environment(tm
     monkeypatch.setattr(module, "collect_native_energy", lambda *args, **kwargs: [row])
     with pytest.raises(ValueError, match="calibration/environment"):
         module.validate_energy_view(tmp_path, source)
+
+
+@pytest.fixture
+def fresh_performance_reference(tmp_path, monkeypatch):
+    import copy
+    from datetime import datetime, timedelta, timezone
+    import hashlib
+    import json
+    import yaml
+    from onnx_splitpoint_tool.workflow import hardware_acceptance_native as module
+    phase = tmp_path / "phase"
+    origin = phase / "hardware_runs/resnet50__orin_nx_hailo8_01/origin"
+    current = origin.parent / "continuation"
+    component = "resnet50__orin_nx_hailo8_01__b002"
+    old_output = origin / "native" / component
+    output = current / "native" / component
+    def write(path, payload):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, sort_keys=True))
+        return binding(path)
+    def binding(path):
+        return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    matrix = phase / "FINITE_MATRIX.json"
+    clock = datetime.now(timezone.utc)
+    write(matrix, {"recorded_before_hardware_start": (clock - timedelta(minutes=2)).isoformat(),
+                   "cells": [{"model_id": "resnet50", "setup_id": IDENTITY["setup_id"], "case_id": "b002"}]})
+    profile = {"hardware_acceptance": {"schema": "onnx-splitpoint/hardware-acceptance/v1", "enabled": True,
+                                      "matrix_evidence": str(matrix)},
+               "native_producers": {"warmup": 100, "frames": 1000, "repetitions": 3,
+                   "energy": {"duration_s": 60, "physical_scope": "FS", "window_label": "command",
+                              "task_budget": {"enabled": True, "max_retries": 2, "max_transport_failures": 20}}}}
+    old = {"schema": "onnx-splitpoint/hardware-acceptance-native-plan/v1", "identity": IDENTITY,
+           "output": str(old_output), "source_contract": {"contract_sha256": "a" * 64},
+           "source_primary_run": str(tmp_path / "old_campaign"), "target_binding": {"exact": True},
+           "full_baseline_references": [], "performance_recipe": {"warmup_tasks_per_process": 100,
+                "completed_tasks_per_process": 1000, "processes": 3}, "runs": []}
+    for name in ("source_plan", "source_raw_report", "source_validation"):
+        path = tmp_path / (name + ".json")
+        descriptor = write(path, {"original": name})
+        old[name], old[name + "_sha256"] = descriptor["path"], descriptor["sha256"]
+    reference = {"repeats": []}
+    attempts = []
+    for repeat in range(1, 4):
+        remote = "/home/nx/splitpoint_runs/hardware_acceptance/origin/native/" + component + f"/rep{repeat:02d}"
+        run = {"repeat": repeat, "remote_output_root": remote, "source_benchmark_set": "/old/benchmark_set",
+               "argv": ["--benchmark-set", remote + "/benchmark_set"]}
+        old["runs"].append(run)
+        attempts.append({"repeat": repeat, "argv": run["argv"], "returncode": 0})
+        runtime = "fresh-runtime-" + str(repeat)
+        raw = {"runtime_instance_id": runtime, "contract": {"contract_sha256": str(repeat) * 64,
+                                                             "benchmark_set": remote + "/benchmark_set"}}
+        raw_path = old_output / f"rep{repeat:02d}/download/rep{repeat:02d}/native_fifo_results.json"
+        raw_binding = write(raw_path, raw)
+        validation = {"repeat": repeat, "report": str(raw_path), "report_sha256": raw_binding["sha256"],
+                      "runtime_instance_id": runtime, "contract_sha256": raw["contract"]["contract_sha256"]}
+        reference["repeats"].append({"validation": write(old_output / f"rep{repeat:02d}/VALIDATED.json", validation),
+                                     "raw_report": raw_binding, "runtime_instance_id": runtime})
+    write(old_output / "DISPATCH_ATTEMPTS.json", {"attempts": attempts})
+    reference["prepared"] = write(old_output / "PREPARED.json", old)
+    reference["summary"] = write(old_output / "reports/native_producer_combined_summary.json",
+                                  {"rows": [{**IDENTITY, "repetition_count_valid": 3}]})
+    reference["run_manifest"] = write(origin / "run_manifest.json", {"run_id": "origin", "status": "partial",
+                  "created_at": (clock - timedelta(minutes=1)).isoformat(), "hardware_acceptance": {
+                    "schema": "onnx-splitpoint/hardware-acceptance/v1", "source_campaign_resumed": False}})
+    reference["closure"] = write(origin / "reports/artifact_index_closure.json", {
+        "schema": "onnx-splitpoint/artifact-index-terminal-closure", "status": "pass", "run_id": "origin",
+        "workflow_status": "partial"})
+    profile_path = origin / "profile.yaml"
+    profile_path.write_text(yaml.safe_dump(profile))
+    reference["profile"] = binding(profile_path)
+    prepared = copy.deepcopy(old)
+    prepared["output"] = str(output)
+    prepared["fresh_performance_reference"] = reference
+    context = {"run_dir": str(current), "profile": profile, "execute_allowed": True,
+               "budget_file": str(current / "energy/task_budget.json")}
+    monkeypatch.setattr(module, "_validate_raw", lambda raw, *args: {
+        "fps": 1000., "contract": raw["contract"], "contract_sha256": raw["contract"]["contract_sha256"]})
+    return module, prepared, context, reference, binding
+
+
+def test_same_phase_reference_revalidates_three_original_leaves_without_copy(fresh_performance_reference):
+    module, prepared, context, reference, _ = fresh_performance_reference
+    result = module._verify_performance_reference(prepared, context, reference)
+    assert len(result["reports"]) == 3
+    assert result["proof"]["new_performance_processes"] == 0
+    assert result["proof"]["retained_fresh_performance_processes"] == 3
+    assert len({row["runtime_instance_id"] for row in result["proof"]["repeats"]}) == 3
+    assert not Path(prepared["output"]).exists()
+
+
+@pytest.mark.parametrize("change", ["raw_hash", "validation_hash", "unclosed", "runtime", "source_quality",
+                                   "profile_budget", "phase", "timestamp", "dispatch_rc"])
+def test_reference_drift_or_old_phase_is_rejected(fresh_performance_reference, change):
+    import copy
+    import json
+    module, prepared, context, reference, binding = fresh_performance_reference
+    reference = copy.deepcopy(reference)
+    if change in {"raw_hash", "validation_hash"}:
+        key = "raw_report" if change == "raw_hash" else "validation"
+        Path(reference["repeats"][0][key]["path"]).write_text("{}")
+    elif change == "unclosed":
+        path = Path(reference["closure"]["path"])
+        value = json.loads(path.read_text()); value["status"] = "failed"
+        path.write_text(json.dumps(value)); reference["closure"] = binding(path)
+    elif change == "runtime":
+        reference["repeats"][0]["runtime_instance_id"] = "different"
+    elif change == "source_quality":
+        prepared["source_validation_sha256"] = "b" * 64
+    elif change == "profile_budget":
+        context["profile"]["native_producers"]["frames"] = 500
+    elif change == "timestamp":
+        path = Path(reference["run_manifest"]["path"])
+        value = json.loads(path.read_text()); value["created_at"] = "2000-01-01T00:00:00+00:00"
+        path.write_text(json.dumps(value)); reference["run_manifest"] = binding(path)
+    elif change == "dispatch_rc":
+        path = Path(reference["prepared"]["path"]).parent / "DISPATCH_ATTEMPTS.json"
+        value = json.loads(path.read_text()); value["attempts"][0]["returncode"] = 70
+        path.write_text(json.dumps(value))
+    else:
+        context["run_dir"] = str(Path(context["run_dir"]).parent.parent / "another-phase")
+    with pytest.raises(ValueError):
+        module._verify_performance_reference(prepared, context, reference)
+    assert not Path(prepared["output"]).exists()
+
+
+@pytest.mark.parametrize("energy_fails", [False, True])
+def test_continuation_reimports_normally_has_zero_new_performance_starts(fresh_performance_reference, monkeypatch, energy_fails):
+    import json
+    module, prepared, context, reference, _ = fresh_performance_reference
+    output = Path(prepared["output"])
+    output.mkdir(parents=True)
+    monkeypatch.setattr(module, "_verify_current_target", lambda *args: prepared["target_binding"])
+    prepared["target"] = {"id": IDENTITY["setup_id"]}
+    def forbidden(*args, **kwargs):
+        raise AssertionError("performance transport/staging/replay must not run")
+    monkeypatch.setattr(module, "_transport", forbidden)
+    monkeypatch.setattr(module, "_stage_benchmark_set", forbidden)
+    imports = []
+    def normal_import(plan, reports, ctx):
+        imports.extend(reports)
+        path = output / "reports/native_producer_combined_summary.json"
+        path.parent.mkdir(); path.write_text('{}')
+        return path
+    monkeypatch.setattr(module, "_normal_performance_import", normal_import)
+    def energy(*args):
+        if energy_fails:
+            raise RuntimeError("collector stopped before start")
+        return {"row": {}, "new_capture_count": 3, "failed_attempts": 0, "start_accounting": {},
+                "energy_result": str(output / "energy.json"), "import": str(output / "import.json")}
+    monkeypatch.setattr(module, "_energy_capture", energy)
+    monkeypatch.setattr(module, "_reference_energy_pairs", lambda *args: {"missing_full_energy_comparisons": []})
+    prepared["full_baseline_proofs"] = []
+    result = module.run_native(prepared, context)
+    assert result["status"] == ("failed" if energy_fails else "completed")
+    assert result["new_performance_processes"] == 0
+    assert result["retained_fresh_performance_processes"] == 3
+    assert result["valid_repeats"]["performance"] == 3
+    assert result["performance_reuse_origin"]["run_id"] == "origin"
+    assert len(imports) == 3 and all(path.is_file() for path in imports)
+    assert json.loads((output / "DISPATCH_ATTEMPTS.json").read_text())["attempts"] == []
+    assert not list(output.glob("rep*/VALIDATED.json"))
+    assert not list(output.glob("rep*/download/*"))

@@ -392,6 +392,89 @@ def _interrupted_bounded_capture(run, parent_attempt, request, reply, evidence):
     return proof(run, parent_attempt, request, reply, evidence)
 
 
+def _partial_workflow_capture_evidence(run, session_id, request, reply, config):
+    """Bind a terminal ordinary acceptance run to its actual failed capture.
+
+    ``partial`` is a finished workflow outcome, but it is also too broad to
+    admit without its exact session, final result and unchanged source STOP.
+    All physical-owner and cleanup checks still apply in the caller.
+    """
+    read = RemoteProcessLeaseJournal._read_json_exact
+    paths = [run / "run_manifest.json", run / "jobs/workflow_control.json",
+             run / "reports/hardware_acceptance_results.json", run / "energy/energy_task_budget.json",
+             Path(request["attempt_dir"]) / "energy_summary.json"]
+    _require(all(path.is_file() and not path.is_symlink() for path in paths),
+             "partial workflow terminal capture evidence missing")
+    evidence = {path: read(path) for path in paths}
+    manifest, control, result, budget, summary = (evidence[path] for path in paths)
+    sessions = [row for row in manifest.get("execution_sessions", [])
+                if isinstance(row, Mapping) and row.get("session_id") == session_id]
+    _require(manifest.get("schema") == "onnx-splitpoint/evaluation-run-manifest"
+             and manifest.get("run_id") == run.name and manifest.get("run_dir") == str(run)
+             and manifest.get("status") == "partial" and manifest.get("current_session_id") == session_id
+             and manifest.get("workflow_stages") == ["hardware_acceptance"]
+             and len(sessions) == 1 and sessions[0].get("status") == "partial"
+             and _time(sessions[0].get("started_at")) <= _time(sessions[0].get("finished_at"))
+             <= datetime.now(timezone.utc), "partial workflow session is not exactly terminal")
+    _require(control.get("schema") == "onnx-splitpoint/workflow-control"
+             and control.get("run_id") == run.name and control.get("session_id") == session_id
+             and control.get("state") == "finished"
+             and _time(sessions[0]["finished_at"]) <= _time(control.get("updated_at"))
+             <= datetime.now(timezone.utc), "partial workflow control is not finished")
+    admission = manifest.get("hardware_acceptance") or {}
+    _require(result.get("schema") == admission.get("schema") == "onnx-splitpoint/hardware-acceptance/v1"
+             and result.get("run_id") == run.name and result.get("status") == "partial"
+             and result.get("complete") is False and result.get("source_campaign_resumed") is False
+             and result.get("new_dataset_quality_started") is False
+             and type(result.get("matrix_cells")) is int and result["matrix_cells"] > 0
+             and result["matrix_cells"] == admission.get("cell_count")
+             and type(result.get("runtime_paths")) is int and result["runtime_paths"] > 0
+             and result["runtime_paths"] == admission.get("runtime_path_count")
+             and isinstance(result.get("rows"), list) and len(result["rows"]) == result["runtime_paths"],
+             "partial workflow final acceptance result is incomplete or foreign")
+    key = summary.get("campaign_row")
+    import json
+    try:
+        identity = json.loads(key)
+    except (TypeError, ValueError):
+        identity = None
+    _require(isinstance(identity, list) and len(identity) == 4 and identity[3] == request["setup_id"],
+             "partial workflow capture identity unavailable")
+    variant = "generic_completed" if str(identity[0]).startswith("generic_completed:") else "native"
+    rows = [row for row in result["rows"] if isinstance(row, Mapping)
+            and (row.get("model_id"), row.get("case_id"), row.get("setup_id"), row.get("runtime_variant"))
+            == (identity[1], identity[2], identity[3], variant)]
+    _require(len(rows) == 1 and rows[0].get("status") == "failed"
+             and rows[0].get("fresh_hardware_executed") is True
+             and type(rows[0].get("new_capture_count")) is int and rows[0]["new_capture_count"] > 0
+             and _time(rows[0].get("finished_at")) <= _time(sessions[0]["finished_at"]),
+             "partial workflow failed result does not bind the actual capture")
+    task = (budget.get("tasks") or {}).get(key) or {}
+    chains = [chain for chain in task.get("chains", [])
+              if chain.get("run_directory") == request["attempt_dir"]]
+    sources = [resource.removeprefix("source:") for resource in config.get("setups", {}).get(request["setup_id"], [])
+               if resource.startswith("source:")]
+    _require(len(sources) == 1 and task.get("source_id") == sources[0]
+             and task.get("stop_reason") == reply["reason"]
+             and (budget.get("sources", {}).get(sources[0]) or {}).get("stop_reason") == reply["reason"]
+             and len(chains) == 1 and chains[0].get("collector_started") is True
+             and chains[0].get("finished") is True and chains[0].get("valid") is False
+             and chains[0].get("source_completion_verified") is False
+             and _bound(chains[0], request, ("owner_pid", "owner_start_ticks"))
+             and summary.get("campaign_run_id") == run.name and summary.get("collector_started") is True
+             and summary.get("collector_pid") == request["collector_pid"]
+             and summary.get("status") == "collector_failed"
+             and summary.get("final_energy_gate_reasons") == ["capture_release_failed"]
+             and (summary.get("capture_release_error") or {}).get("detail") == reply["reason"],
+             "partial workflow original invalid source chain differs")
+    from ..energy.task_budget import source_completion
+    completion = source_completion(Path(request["attempt_dir"]))
+    _require(completion["verified"] is False
+             and json.dumps(chains[0].get("source_completion"), sort_keys=True) == json.dumps(completion, sort_keys=True),
+             "partial workflow original source completion changed")
+    return evidence
+
+
 def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
                               operator_evidence=None, retry_authorization=None, registry_path=None,
                               rest_attempt_dir=None, bounded_energy_attempt_dir=None):
@@ -482,6 +565,8 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
 
     leases = []
     originals = {}
+    workflow_evidence = {}
+    terminal_workflow = None
     mutation_started = False
     recovery = None
     try:
@@ -500,6 +585,15 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
         if interrupted and previous_recovery:
             _require(previous_recovery.get("interrupted_capture") == interrupted_proof,
                      "recorded interrupted evidence changed")
+        if bounded_energy_attempt_dir is None and not rest_evidence:
+            manifest = read(run / "run_manifest.json")
+            if manifest.get("status") == "partial" or previous_recovery.get("terminal_workflow"):
+                workflow_evidence = _partial_workflow_capture_evidence(run, session_id, request, reply, config)
+                terminal_workflow = {"run_id": run.name, "session_id": session_id,
+                    "status": "partial", "state": "finished",
+                    "campaign_row": workflow_evidence[attempt / "energy_summary.json"]["campaign_row"]}
+                _require(not previous_recovery or previous_recovery.get("terminal_workflow") == terminal_workflow,
+                         "recorded partial workflow terminal evidence changed")
         for resource, lease in leases:
             owner = lease.previous_owner
             _require(bool(owner), "resource owner unreadable")
@@ -561,6 +655,9 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
         if previous_recovery.get("status") == "released" and all(
                 not lease.quarantine_path.exists() and lease.previous_owner.get("state") == "released"
                 for _, lease in leases):
+            if workflow_evidence:
+                _require(_partial_workflow_capture_evidence(run, session_id, request, reply, config) == workflow_evidence,
+                         "partial workflow source completion changed during replay")
             return {"status": "already_released", **identity, "resources": resources,
                     "measurements_started": 0}
 
@@ -574,7 +671,7 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
         # and the fresh owner observation below; no old cleanup proof is added.
         if bounded_energy_attempt_dir is None:
             manifest = read(run / "run_manifest.json")
-            _require(manifest.get("run_id") == run.name and (rest_evidence or manifest.get("status") in
+            _require(manifest.get("run_id") == run.name and (rest_evidence or workflow_evidence or manifest.get("status") in
                      {"failed", "cancelled", "completed", "success", "done"}), "parent workflow is not terminal")
         for path in directory.glob("*.remote-lease.json"):
             # Active or corrupt predecessor descriptors require their existing
@@ -591,15 +688,20 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
         _require(observed.get("ok") is True, "active or unobservable local/remote predecessor")
         _require(registry_file.read_bytes() == registry_before and read(request_path) == request
                  and read(reply_path) == reply and read(config_path) == config
-                 and _rest_evidence_unchanged(rest_evidence),
+                 and _rest_evidence_unchanged(rest_evidence) and _rest_evidence_unchanged(workflow_evidence),
                  "registry or ownership changed during observation")
         if interrupted:
             _require(_interrupted_bounded_capture(run, Path(bounded_energy_attempt_dir).resolve(),
                      request, reply, rest_evidence) == interrupted_proof, "interrupted original capture changed")
+        if workflow_evidence:
+            _require(_partial_workflow_capture_evidence(run, session_id, request, reply, config) == workflow_evidence,
+                     "partial workflow source completion changed during observation")
         recovery = {**identity, "resources": resources, evidence_key: evidence,
                     "original_resources": originals, "ownership_observation": observed,
                     "status": "releasing", "started_at": datetime.now(timezone.utc).isoformat(),
                     "measurements_started": 0, "old_attempt_validated": False}
+        if terminal_workflow:
+            recovery["terminal_workflow"] = terminal_workflow
         if interrupted:
             recovery["interrupted_capture"] = interrupted_proof
         # Commit original evidence and the explicit release ground to the STOP reply;

@@ -1575,6 +1575,7 @@ class EnergyTaskBudget:
         entry = read_verified_campaign_repeat(
             chain, command=command, command_contract_sha256=command_contract_sha256,
             duration_s=duration_s, require_ab=require_ab,
+            require_environment_observation=getattr(self, "require_environment_observation", False),
         )
         if self.checkpoint_path is None:
             raise ValueError("campaign checkpoint path missing for repeat reuse")
@@ -1752,9 +1753,10 @@ class EnergyTaskBudget:
         return result
 
 
-def read_verified_campaign_repeat(chain, *, command, command_contract_sha256, duration_s, require_ab):
+def read_verified_campaign_repeat(chain, *, command, command_contract_sha256, duration_s, require_ab,
+                                  require_environment_observation=False):
     """Verify the original accepted attempt with its existing local evidence."""
-    from .collector import (_energy_repeat_aggregation_eligible, _sha256_path,
+    from .collector import (_energy_repeat_aggregation_eligible, _clamp_diagnostic_claim_fields, _sha256_path,
                             _sha256_text, _validate_energy_preflight_attestation)
     root = Path(str(chain.get("run_directory") or ""))
     if (not root.is_absolute() or root.resolve() != root or chain.get("finished") is not True
@@ -1762,10 +1764,15 @@ def read_verified_campaign_repeat(chain, *, command, command_contract_sha256, du
         or not source_completion(root).get("verified")):
         raise ValueError("campaign repeat source completion invalid")
     entry = json.loads((root / "energy_summary.json").read_text(encoding="utf-8"))
-    if chain.get("cohort_id") or entry.get("environment_observation_required"):
+    if chain.get("cohort_id") or entry.get("environment_observation_required") or require_environment_observation:
         from .environment_observer import validate_environment
         environment = entry.get("environment_observation") or {}
-        if (entry.get("campaign_cohort") != chain.get("cohort_id") or entry.get("diagnostic_only") is True
+        if (entry.get("campaign_cohort") != chain.get("cohort_id")
+                or (require_environment_observation and not chain.get("cohort_id")
+                    and entry.get("environment_observation_required") is not True)
+                or (chain.get("cohort_id") and entry.get("diagnostic_only") is True)
+                or (entry.get("diagnostic_only") is True
+                    and _clamp_diagnostic_claim_fields(entry) != entry)
                 or not validate_environment(root,entry)["ok"]
                 or _sha256_path(Path(environment.get("evidence_path") or "")) != environment.get("evidence_sha256")):
             raise ValueError("final cohort repeat environment/purpose binding invalid")
@@ -1799,8 +1806,8 @@ def bounded_energy_task(function):
         cohort_id = kwargs.pop("campaign_cohort", None)
         require_environment = bool(kwargs.pop("require_environment_observation", False) or cohort_id)
         environment_run_id = kwargs.pop("environment_run_id",None)
-        if require_environment and (not campaign or kwargs.get("diagnostic_only") or not kwargs.get("require_runtime_work_units") or not kwargs.get("require_command_window_alignment")):
-            raise ValueError("required environment requires non-diagnostic campaign command-window task measurement")
+        if require_environment and (not campaign or not kwargs.get("require_runtime_work_units") or not kwargs.get("require_command_window_alignment")):
+            raise ValueError("required environment requires campaign command-window task measurement")
         campaign_row = kwargs.pop("campaign_row_id", None)
         campaign_repeats = kwargs.pop("campaign_repeats", None)
         campaign_retries = kwargs.pop("campaign_max_retries", None)

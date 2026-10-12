@@ -708,7 +708,8 @@ def _preserved_campaign_repeat_records(item: Mapping[str, Any]) -> list[dict[str
             index = int(match[1])
             record = read_verified_campaign_repeat(chain, command=command,
                 command_contract_sha256=contract_sha, duration_s=duration,
-                require_ab=(plan.get("window_method_ab") or {}).get("enabled") is True)
+                require_ab=(plan.get("window_method_ab") or {}).get("enabled") is True,
+                require_environment_observation=bool(plan.get("environment_observation_required") or plan.get("campaign_cohort")))
             records[index] = {**record, "run_index": index, "campaign_reused_repeat": {
                 "budget_file": str(checkpoint), "campaign_row": row_id,
                 "logical_repeat": chain["logical_repeat"], "run_directory": chain["run_directory"],
@@ -830,7 +831,7 @@ def _normalized_sha256(value: Any) -> str:
 
 
 def _cohort_environment_fields(plan, records):
-    """Legacy observations unchanged; final cohorts require bound DUT evidence."""
+    """Validate actual DUT evidence independently of non-cohort claim eligibility."""
     cohort = plan.get('campaign_cohort')
     if not cohort and not plan.get('environment_observation_required'): return True, {}
     from .energy.collector import _sha256_path
@@ -843,7 +844,10 @@ def _cohort_environment_fields(plan, records):
         observed = record.get('environment_observation') or {}
         path = Path(str(observed.get('evidence_path') or ''))
         try:
-            purpose_ok = record.get('campaign_cohort')==cohort if cohort else (record.get('environment_observation_required') is True and bool(parent_id) and record.get('campaign_run_id')==parent_id and record.get('diagnostic_only') is not True)
+            purpose_ok = (record.get('campaign_cohort') == cohort and record.get('diagnostic_only') is not True
+                          if cohort else (record.get('environment_observation_required') is True
+                          and not record.get('campaign_cohort')
+                          and bool(parent_id) and record.get('campaign_run_id') == parent_id))
             valid = (purpose_ok and record.get('campaign_row')==expected_row and observed.get('ok') is True
                      and path.is_file() and _sha256_path(path)==observed.get('evidence_sha256')
                      and validate_environment(path.parent,record)['ok'])
