@@ -9,6 +9,7 @@ from __future__ import annotations
 from contextlib import ExitStack
 import copy
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -22,6 +23,7 @@ from typing import Any, Mapping
 
 from ..native_command_contract import verify_native_command_contract
 from ..native_energy_reporting import build_native_energy_pairs, collect_native_energy
+from ..process_control import bind_workflow_resource_options
 from ..remote.ssh_transport import HostConfig, SSHTransport
 from ..runners.request_latency import validate_latency
 from .checkpoints import atomic_write_json
@@ -106,17 +108,29 @@ def _rewrite_run(item: Mapping, identity: Mapping, remote_root: str) -> dict:
         raise ValueError("saved Native operating point differs from selected cell/profile")
     if "--duration-s" in argv and float(_argument(argv, "--duration-s")) != 0:
         raise ValueError("Native performance is a fixed completed-task run")
-    if any(flag in argv for flag in ("--build", "--force-build", "--force-rebuild", "--energy-workload-only")):
+    if any(flag in argv for flag in ("--build", "--force-build", "--force-rebuild", "--build-missing-engine",
+                                    "--force-rebuild-engine", "--energy-workload-only")):
         raise ValueError("build or energy mode in Native performance source")
     old_root = str(item["remote_output_root"]).rstrip("/")
-    if not old_root.startswith("/") or ".." in PurePosixPath(old_root).parts:
-        raise ValueError("saved Native output root is not canonical")
+    source_benchmark = _argument(argv, "--benchmark-set")
+    for path in (old_root, remote_root, source_benchmark):
+        if not path.startswith("/") or str(PurePosixPath(path)) != path or ".." in PurePosixPath(path).parts:
+            raise ValueError("Native output or benchmark-set path is not canonical")
+    if (remote_root == old_root or remote_root.startswith(old_root + "/") or old_root.startswith(remote_root + "/")
+            or remote_root == source_benchmark or remote_root.startswith(source_benchmark + "/")
+            or source_benchmark.startswith(remote_root + "/")):
+        raise ValueError("Native fresh output overlaps historical inputs or outputs")
+    # Every supported source uses the ordinary quality-first binding to resolve
+    # sealed artifacts and one explicit image.  No model/dataset tree is copied.
+    _argument(argv, "--native-split-quality-binding")
+    _argument(argv, "--image")
     for index, flag in enumerate(argv[:-1]):
         if flag in _OUTPUT_FLAGS:
             old = argv[index + 1]
             if old != old_root and not old.startswith(old_root + "/"):
                 raise ValueError("saved Native writable path escapes its output root")
             argv[index + 1] = remote_root + old[len(old_root):]
+    argv[argv.index("--benchmark-set") + 1] = remote_root + "/benchmark_set"
     # The archived vendor dependency environment remains ordinary runner
     # configuration; a controller source overlay is never propagated.
     environment = {str(k): str(v) for k, v in dict(item.get("env") or {}).items()
@@ -125,9 +139,75 @@ def _rewrite_run(item: Mapping, identity: Mapping, remote_root: str) -> dict:
     if identity["backend"] == "hailo8_to_trt" and "--no-build" not in argv:
         raise ValueError("Hailo Native acceptance requires explicit no-build")
     result = dict(item, argv=argv, env=environment, remote_output_root=remote_root,
+                  source_benchmark_set=source_benchmark,
                   result_json=remote_root + "/" + _RAW_NAMES[identity["backend"]])
     result.pop("remote_telemetry_root", None)
     return result
+
+
+def _copy_benchmark_metadata(source, destination, case):
+    """Create a private writable root from the exact small runner declarations.
+
+    This function is also sent through the ordinary journaled SSHTransport;
+    keeping its imports local makes the tested implementation self-contained.
+    Artifact and quality-binding paths remain the unchanged sealed inputs.
+    """
+    import hashlib
+    import json
+    from pathlib import Path
+
+    source, destination = Path(source).resolve(strict=True), Path(destination)
+    if not source.is_dir() or not destination.is_absolute():
+        raise ValueError("Native benchmark metadata source/destination invalid")
+    if destination.exists() or destination.is_symlink():
+        raise ValueError("Native benchmark metadata destination already exists")
+    if any(path.is_symlink() for path in destination.parents):
+        raise ValueError("Native benchmark metadata destination has a symlink ancestor")
+    canonical = destination.resolve()
+    if canonical == source or canonical in source.parents or source in canonical.parents:
+        raise ValueError("Native benchmark metadata would overlap its source")
+    # Explicit allowlist: no old results, Native pipeline, executable code,
+    # artifacts, other cases or N5000 resources enter the fresh writable tree.
+    names = ("benchmark_set.json", "benchmark_plan.json", "output_contracts.json", "split_manifest.json")
+    files = []
+    for name in names:
+        path = source / name
+        if not path.is_file():
+            if name == "benchmark_set.json":
+                raise ValueError("Native benchmark-set declaration missing")
+            continue
+        if path.stat().st_size > 16 * 1024 * 1024:
+            raise ValueError("Native benchmark metadata exceeds bounded size")
+        payload = path.read_bytes()
+        json.loads(payload)
+        digest = hashlib.sha256(payload).hexdigest()
+        files.append((name, payload, digest))
+    destination.mkdir(parents=True, exist_ok=False)
+    copied = []
+    for name, payload, digest in files:
+        with (destination / name).open("xb") as stream:
+            stream.write(payload)
+        if hashlib.sha256((source / name).read_bytes()).hexdigest() != digest:
+            raise ValueError("Native benchmark metadata changed while staging")
+        copied.append({"name": name, "sha256": digest, "size_bytes": len(payload)})
+    return {"source": str(source), "destination": str(destination), "case": case,
+            "files": copied, "copied_artifacts": 0, "copied_dataset_files": 0,
+            "historical_results_copied": False}
+
+
+def _stage_benchmark_set(transport: SSHTransport, item: Mapping, directory: Path) -> None:
+    destination = _argument(item["argv"], "--benchmark-set")
+    program = (inspect.getsource(_copy_benchmark_metadata) + "\nimport json\nprint(json.dumps(_copy_benchmark_metadata("
+               + repr(item["source_benchmark_set"]) + "," + repr(destination) + ","
+               + repr(_argument(item["argv"], "--case")) + "),sort_keys=True))\n")
+    command = "python3 -B - <<'NATIVE_ACCEPTANCE_METADATA'\n" + program + "NATIVE_ACCEPTANCE_METADATA"
+    rc, text = transport.run(command, timeout=120)
+    _write(directory / "benchmark_staging.json", {"returncode": rc, "output": text[-12000:]})
+    if rc:
+        raise RuntimeError("Native private benchmark metadata staging failed: " + text[-2000:])
+    proof = json.loads(text)
+    if proof.get("destination") != destination or proof.get("historical_results_copied") is not False:
+        raise ValueError("Native private benchmark metadata staging proof invalid")
 
 
 def _verify_baseline_references(cell: Mapping, identity: Mapping, source_contract: Mapping, context: Mapping) -> list[dict]:
@@ -559,16 +639,19 @@ def _run_native(prepared: Mapping, context: Mapping) -> dict:
                 raise RuntimeError("Native acceptance cancelled before next repeat")
             directory = output / f"rep{int(item['repeat']):02d}"
             directory.mkdir(parents=True, exist_ok=False)
-            command = "cd -- " + shlex.quote(prepared["remote_tool_dir"]) + " && " + shlex.join(item["argv"])
-            attempt = {"repeat": item["repeat"], "argv": item["argv"], "environment": item["env"], "started_at": time.time()}
-            attempts.append(attempt)
-            _write(output / "DISPATCH_ATTEMPTS.json", {"attempts": attempts})
-            rc, text = transport.run(command, timeout=int(item.get("timeout_s") or 900), env=item["env"])
-            attempt.update(returncode=rc, completed_at=time.time(), console=text[-12000:])
-            _write(output / "DISPATCH_ATTEMPTS.json", {"attempts": attempts})
-            if rc:
-                raise RuntimeError(f"Native acceptance repetition {item['repeat']} failed with rc {rc}")
-            report = _collect_repeat(transport, item, directory)
+            with bind_workflow_resource_options(controller_setup_id=prepared["identity"]["setup_id"],
+                                                controller_attempt_dir=str(directory)):
+                _stage_benchmark_set(transport, item, directory)
+                command = "cd -- " + shlex.quote(prepared["remote_tool_dir"]) + " && " + shlex.join(item["argv"])
+                attempt = {"repeat": item["repeat"], "argv": item["argv"], "environment": item["env"], "started_at": time.time()}
+                attempts.append(attempt)
+                _write(output / "DISPATCH_ATTEMPTS.json", {"attempts": attempts})
+                rc, text = transport.run(command, timeout=int(item.get("timeout_s") or 900), env=item["env"])
+                attempt.update(returncode=rc, completed_at=time.time(), console=text[-12000:])
+                _write(output / "DISPATCH_ATTEMPTS.json", {"attempts": attempts})
+                if rc:
+                    raise RuntimeError(f"Native acceptance repetition {item['repeat']} failed with rc {rc}")
+                report = _collect_repeat(transport, item, directory)
             raw = _read(report)
             proof = _validate_raw(raw, prepared["identity"], prepared["source_contract"])
             proof.update(report=str(report), report_sha256=_sha(report), repeat=item["repeat"],
@@ -602,7 +685,9 @@ def _run_native(prepared: Mapping, context: Mapping) -> dict:
 def run_native(prepared: Mapping, context: Mapping) -> dict:
     """Keep actual starts and valid slots visible after a controlled failure."""
     try:
-        return _run_native(prepared, context)
+        with bind_workflow_resource_options(controller_setup_id=(prepared.get("identity") or {}).get("setup_id"),
+                                            controller_attempt_dir=str(prepared["output"])):
+            return _run_native(prepared, context)
     except Exception as exc:
         output = Path(prepared["output"])
         if not (output / "production-start.json").is_file():

@@ -21,6 +21,11 @@ negative Modellqualität und historische Ausschlüsse werden erhalten.
 Normale Sampleverlust-Retries erhalten die gültigen Slots und zählen alle Starts.
 Gemeinsame Capture- und Transferressourcen werden seriell genutzt.
 
+Native-Transfers tragen die normale Setup- und Ausgabebindung des Controllers.
+Jeder frische Repeat besitzt ein eigenes Benchmark-Metadatenverzeichnis für
+die vom normalen Runner geschriebenen Hilfsberichte. Die versiegelten
+Modellartefakte und Eingabebindungen werden dabei weiterverwendet.
+
 Die normale Ressourcen-Recovery erkennt außerdem den exakt gebundenen Native-
 Abbruch in ACQUIRING. Sie prüft die gespeicherten Besitzer-, Kommando-, Quellen-
 und Budgetbelege sowie aktuelle lokale und DUT-Verfügbarkeit unter den normalen

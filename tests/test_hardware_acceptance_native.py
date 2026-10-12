@@ -13,20 +13,150 @@ def source_run():
             "argv": ["/usr/bin/python3", "/home/nx/ONNX-Splitpoint-Tool/scripts/native_hailo_trt_fifo_from_benchmarkset.py",
                      "--case", "b002", "--model-id", "resnet50", "--setup-id", "orin_nx_hailo8_01",
                      "--benchmark-set", "/home/nx/artifacts/benchmark_set", "--frames", "1000", "--warmup", "100",
+                     "--native-split-quality-binding", "/home/nx/artifacts/native_split_quality_binding.json",
+                     "--image", "/home/nx/artifacts/exact-image.jpg",
                      "--repetitions", "1", "--duration-s", "0", "--no-build",
                      "--result-json", "/home/nx/old/rep01/native_fifo_results.json",
                      "--work-dir", "/home/nx/old/rep01"],
             "env": {"PYTHONPATH": "/private/controller_overlay", "ONNX_SPLITPOINT_NATIVE_TRT_BUILD": "1"}}
 
 
-def test_replay_preserves_exact_case_and_artifacts_changes_only_outputs():
+def test_replay_preserves_exact_case_and_artifacts_isolates_all_writable_roots():
     original = source_run()
     replay = _rewrite_run(original, IDENTITY, "/home/nx/new/rep01")
-    assert replay["argv"][replay["argv"].index("--benchmark-set") + 1] == "/home/nx/artifacts/benchmark_set"
+    assert replay["argv"][replay["argv"].index("--benchmark-set") + 1] == "/home/nx/new/rep01/benchmark_set"
+    assert replay["source_benchmark_set"] == "/home/nx/artifacts/benchmark_set"
+    for flag in ("--native-split-quality-binding", "--image"):
+        assert replay["argv"][replay["argv"].index(flag) + 1] == original["argv"][original["argv"].index(flag) + 1]
     assert replay["argv"][replay["argv"].index("--result-json") + 1] == "/home/nx/new/rep01/native_fifo_results.json"
     assert "PYTHONPATH" not in replay["env"]
     assert replay["env"]["ONNX_SPLITPOINT_NATIVE_TRT_BUILD"] == "0"
     assert original == source_run()
+
+
+@pytest.mark.parametrize("flag", ["--build-missing-engine", "--force-rebuild-engine"])
+def test_engine_build_flags_rejected_before_staging(flag):
+    source = source_run()
+    source["argv"].append(flag)
+    with pytest.raises(ValueError, match="build"):
+        _rewrite_run(source, IDENTITY, "/home/nx/new/rep01")
+
+
+@pytest.mark.parametrize("destination", ["/home/nx/old/rep01", "/home/nx/old",
+                                       "/home/nx/artifacts/benchmark_set/new", "/home/nx/artifacts"])
+def test_replay_rejects_historical_output_or_benchmark_overlap(destination):
+    with pytest.raises(ValueError, match="overlaps"):
+        _rewrite_run(source_run(), IDENTITY, destination)
+
+
+def test_private_metadata_stage_does_not_copy_or_mutate_historical_results(tmp_path):
+    import hashlib
+    from onnx_splitpoint_tool.workflow.hardware_acceptance_native import _copy_benchmark_metadata
+    source = tmp_path / "historical/benchmark_set"
+    source.mkdir(parents=True)
+    metadata = b'{"model_id":"resnet50","task":"classification"}'
+    (source / "benchmark_set.json").write_bytes(metadata)
+    (source / "output_contracts.json").write_bytes(b'{"contracts":[]}')
+    old_result = source / "benchmark_results_native_fifo_b002.json"
+    old_result.write_bytes(b'{"historical":true}')
+    for name in ("b003", "resources", "native_pipeline"):
+        (source / name).mkdir()
+        (source / name / "not-needed").write_bytes(b"old payload")
+    source_before = {path.relative_to(source).as_posix(): path.read_bytes() for path in source.rglob("*") if path.is_file()}
+    destination = tmp_path / "acceptance/rep01/benchmark_set"
+    proof = _copy_benchmark_metadata(source, destination, "b002")
+    assert (destination / "benchmark_set.json").read_bytes() == metadata
+    assert proof["files"][0]["sha256"] == hashlib.sha256(metadata).hexdigest()
+    assert {path.name for path in destination.iterdir()} == {"benchmark_set.json", "output_contracts.json"}
+    assert not any(path.is_symlink() for path in destination.rglob("*"))
+    # Exercise the Hailo8 runner's implicit publication destination.
+    (destination / old_result.name).write_bytes(b'{"fresh":true}')
+    assert {path.relative_to(source).as_posix(): path.read_bytes() for path in source.rglob("*") if path.is_file()} == source_before
+    assert proof["historical_results_copied"] is False
+    assert proof["copied_artifacts"] == proof["copied_dataset_files"] == 0
+
+
+def test_private_metadata_stage_rejects_reuse_and_symlink_destination(tmp_path):
+    from onnx_splitpoint_tool.workflow.hardware_acceptance_native import _copy_benchmark_metadata
+    source = tmp_path / "historical"
+    source.mkdir()
+    (source / "benchmark_set.json").write_text("{}")
+    destination = tmp_path / "fresh"
+    _copy_benchmark_metadata(source, destination, "b002")
+    with pytest.raises(ValueError, match="already exists"):
+        _copy_benchmark_metadata(source, destination, "b002")
+    alias = tmp_path / "alias"
+    alias.symlink_to(source, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlink ancestor"):
+        _copy_benchmark_metadata(source, alias / "new", "b002")
+
+
+def test_normal_transport_executes_identical_tested_metadata_stage(tmp_path):
+    import json
+    import subprocess
+    from onnx_splitpoint_tool.workflow.hardware_acceptance_native import _stage_benchmark_set
+    source = tmp_path / "historical"
+    source.mkdir()
+    (source / "benchmark_set.json").write_text('{"task":"classification"}')
+    destination = tmp_path / "remote-owned/benchmark_set"
+    directory = tmp_path / "local-repeat"
+    item = {"source_benchmark_set": str(source), "argv": ["--benchmark-set", str(destination), "--case", "b002"]}
+    class LocalTransport:
+        def run(self, command, *, timeout):
+            result = subprocess.run(["bash", "-c", command], capture_output=True, text=True, timeout=timeout)
+            return result.returncode, result.stdout + result.stderr
+    _stage_benchmark_set(LocalTransport(), item, directory)
+    proof = json.loads(json.loads((directory / "benchmark_staging.json").read_text())["output"])
+    assert proof["destination"] == str(destination)
+    assert (destination / "benchmark_set.json").read_bytes() == (source / "benchmark_set.json").read_bytes()
+
+
+def test_native_entry_binds_normal_setup_and_output_for_controller_work(tmp_path, monkeypatch):
+    from onnx_splitpoint_tool.process_control import workflow_resource_options
+    from onnx_splitpoint_tool.workflow import hardware_acceptance_native as module
+    before = workflow_resource_options()
+    def capture(prepared, context):
+        options = workflow_resource_options()
+        assert options["controller_setup_id"] == IDENTITY["setup_id"]
+        assert options["controller_attempt_dir"] == str(tmp_path)
+        return {"status": "completed"}
+    monkeypatch.setattr(module, "_run_native", capture)
+    assert module.run_native({"output": str(tmp_path), "identity": IDENTITY}, {})["status"] == "completed"
+    assert workflow_resource_options() == before
+
+
+def test_normal_scp_download_gets_bound_context_when_resources_required(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from onnx_splitpoint_tool.remote import process_lease
+    from onnx_splitpoint_tool.remote.ssh_transport import HostConfig, SSHTransport
+    from onnx_splitpoint_tool.workflow import hardware_acceptance_native as module
+    claims = []
+    @contextmanager
+    def claim(**kwargs):
+        claims.append(kwargs)
+        yield SimpleNamespace(operation="normal-transfer-operation")
+    monkeypatch.setenv("ONNX_SPLITPOINT_CONTROLLER_RESOURCES", "required")
+    monkeypatch.setattr(process_lease, "controller_activity", claim)
+    transport = SSHTransport(HostConfig.from_dict({"id": IDENTITY["setup_id"], "host": "unused", "user": "unused"}))
+    def fake_capture(argv, **kwargs):
+        # Only the external SCP process is replaced; its normal resource
+        # decorator and context lookup execute unchanged.
+        report = Path(argv[-1]) / "rep01/native_fifo_results.json"
+        report.parent.mkdir()
+        report.write_text('{"fresh":true}')
+        return 0, ""
+    monkeypatch.setattr(transport, "_run_capture", fake_capture)
+    def collect(prepared, context):
+        report = module._collect_repeat(transport, {"remote_output_root": "/new/rep01",
+            "result_json": "/new/rep01/native_fifo_results.json"}, tmp_path / "rep01")
+        return {"status": "completed", "report": str(report)}
+    monkeypatch.setattr(module, "_run_native", collect)
+    result = module.run_native({"output": str(tmp_path), "identity": IDENTITY}, {})
+    assert Path(result["report"]).is_file()
+    assert claims[0]["setup_id"] == IDENTITY["setup_id"]
+    assert claims[0]["attempt_dir"] == str(tmp_path)
+    assert claims[0]["purpose"] == "transfer"
 
 
 @pytest.mark.parametrize("flag,value", [("--case", "b003"), ("--frames", "100"), ("--warmup", "10"), ("--repetitions", "3")])

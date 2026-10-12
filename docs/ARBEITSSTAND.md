@@ -2626,3 +2626,15 @@ bestanden; die neue Controller-/Adapterabdeckung wird separat geprüft.
 Der reale Hardwareabschluss wird ausschließlich aus den anschließend tatsächlich
 ausgeführten GUI-Jobs und normalen Imports berichtet. Der veröffentlichte
 2.93.0-Softwareabschluss mit 377 Fällen ersetzt diese Hardwarebelege nicht.
+
+Die erste installierte sichtbare GUI-Ausführung bestätigte Generic Completed
+für MobileNet/Hailo8 mit drei neuen Performanceprozessen und drei gültigen
+FS-command-Aufnahmen, normalem Import und Ressourcenfreigabe. Native schloss
+zunächst 1000 Tasks ab, scheiterte danach aber beim Download an fehlender
+Controller-Aktivitätsbindung. Der Runner schrieb zudem seinen Hilfsbericht in
+das wiederverwendete Benchmarkverzeichnis. Die gezielte Korrektur bindet die
+normalen Transfers und gibt jedem Repeat ein eigenes beschreibbares
+Benchmark-Metadatenverzeichnis; Modellartefakte bleiben unverändert gebunden.
+Die gültige Generic-Kohorte bleibt erhalten. Die Fortsetzung prüft nur die
+41 noch nicht abgeschlossenen Pfade; der zusätzliche Native-Prozess wird im
+Abnahmebericht separat gezählt. Die Restkampagne bleibt pausiert.
