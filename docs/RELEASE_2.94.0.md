@@ -35,9 +35,26 @@ und alle bestehenden Messprüfungen, ohne wissenschaftliche Vergleichszulassung.
 Finale wissenschaftliche Kohorten akzeptieren weiterhin keine Diagnostikaufnahmen.
 
 Die optionale beleggebundene Capture-Admission prüft den kumulativen Umfang vor
-jeder normalen Reservierung und jedem internen Retry. Die bestehenden drei
-Repeats, zwei Retries je Slot und neun Ketten je ausgewähltem Pfad bleiben
-unverändert; eine neue GUI-Ausgabe setzt verbrauchte Versuche nicht zurück.
+jeder normalen Reservierung und jedem internen Retry. Im wissenschaftlichen
+Standardpfad bleiben drei Repeats, zwei Retries je Slot und neun Ketten je
+ausgewähltem Pfad unverändert; eine neue GUI-Ausgabe setzt verbrauchte Versuche
+nicht zurück.
+
+Der explizite Modus `hardware_acceptance.mode: functional` begrenzt jede Zelle
+auf einen zugewiesenen Runtimepfad mit einem vollständigen Prozess
+(100 Warmups, 1000 Tasks) und einer gültigen 60-s-FS-command-Aufnahme.
+Die maximal zwei Retries gelten ausschließlich dem ungültigen Energieslot;
+gültige Belege derselben Abnahme werden ohne erneute Messung übernommen.
+Die normalen numerischen Oracleprüfungen und Energieimportbedingungen bleiben
+Pflicht. Die Einzelprobe ist diagnostisch und erhält keine wissenschaftlichen
+Kohortenstatistiken oder Claims. Der normale Generic-Rohvertrag bleibt streng
+bei drei wissenschaftlichen Wiederholungen; die funktionale Übernahme weist
+die tatsächlich ausgeführte Einzelprobe gesondert aus.
+Bereits ausgeführte Native-Prozesse besitzen gespeicherte Eingabe- und
+Output-Dumps, die mit den normalen numerischen Validatoren ohne neue
+Hardwareausführung geprüft werden können. Ein frischer Native-Einzelpfad ist
+im neuen Modus noch nicht unterstützt und wird vor jeder Ausführung gesperrt;
+der bestehende Native-Standardpfad bleibt unverändert.
 
 Die normale Ressourcen-Recovery erkennt außerdem den exakt gebundenen Native-
 Abbruch in ACQUIRING. Sie prüft die gespeicherten Besitzer-, Kommando-, Quellen-

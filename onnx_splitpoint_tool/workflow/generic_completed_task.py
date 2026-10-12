@@ -234,6 +234,12 @@ def upload_new_file(transport: SSHTransport, local: Path, remote: str, *, expect
     return {"path": remote, "sha256": actual, "status": "uploaded_exact_bytes"}
 
 
+def _acceptance_repetitions(scope: dict) -> int:
+    """Reduce controller dispatch only for an explicit functional acceptance."""
+    from ..generic_energy_reporting import _acceptance_repetitions as repetitions
+    return repetitions(scope)
+
+
 def validate_plan(plan: dict, scope_csv: Path, primary: Path) -> list[dict]:
     import csv
     from ..generic_completion_plan import completion_identity
@@ -288,7 +294,10 @@ def validate_plan(plan: dict, scope_csv: Path, primary: Path) -> list[dict]:
     expected, actual = [key(r) for r in source], [key(r) for r in rows]
     if len(set(expected)) != expected_count or len(set(actual)) != expected_count or set(expected) != set(actual):
         raise ValueError(f"completion plan differs from the authorized {expected_count} identities")
+    requested_repetitions = _acceptance_repetitions(plan)
     for row in rows:
+        if _acceptance_repetitions(row) != requested_repetitions:
+            raise ValueError('Generic acceptance row differs from its controller recipe')
         config = row.get("runtime_config", row)
         if key(config) != key(row) or (row.get("identity") and key(row) != completion_identity(row)):
             raise ValueError("completion runtime identity differs from its authorized row")
@@ -626,14 +635,18 @@ def download_case(transport: SSHTransport, remote_output: str, local_output: Pat
 def run_case(row: dict, transport: SSHTransport, output: Path, index: int, *, total: int = 192,
              runner_root: str | None = None) -> None:
     from ..generic_completion_reporting import load_valid_repetitions, validate_completion_case
+    requested_repetitions = _acceptance_repetitions(row)
+    requested_indices = set(range(1, requested_repetitions + 1))
     config = row["runtime_config"]
     local_output = Path(row["result_path"]).parent
     local_output.mkdir(parents=True, exist_ok=True)
     valid = load_valid_repetitions(row["result_path"], row)
     completed = {r["repetition_index"] for r in valid}
-    if completed == {1, 2, 3}:
-        print(f"[completion] {index}/{total} {case_name(row)} reuse=3/3", flush=True)
+    if completed == requested_indices:
+        print(f"[completion] {index}/{total} {case_name(row)} reuse={requested_repetitions}/{requested_repetitions}", flush=True)
         return
+    if not completed <= requested_indices:
+        raise ValueError('Generic acceptance result contains unrequested repetitions')
     remote_config = stage_case(row, config, row["staging_files"], transport,
                               output / "staging" / row["case_output_relative"])
     remote_output = row["remote_root"] + "/results/" + row["case_output_relative"]
@@ -652,7 +665,7 @@ def run_case(row: dict, transport: SSHTransport, output: Path, index: int, *, to
         upload_new_file(transport, Path(row["result_path"]), remote_output + "/generic_completion_results.json")
     attempts_path = local_output / "dispatch_attempts.json"
     attempts = read_json(attempts_path).get("attempts", []) if attempts_path.exists() else []
-    for repetition in (1, 2, 3):
+    for repetition in sorted(requested_indices):
         if repetition in completed:
             continue
         argv = [row["remote_python_executable"], "-B", "-u",
@@ -663,13 +676,13 @@ def run_case(row: dict, transport: SSHTransport, output: Path, index: int, *, to
         attempt = {"repetition_index": repetition, "command": command, "started_at": now(), "status": "running"}
         attempts.append(attempt)
         write_json(attempts_path, {"attempts": attempts})
-        print(f"[completion] {index}/{total} {case_name(row)} repetition={repetition}/3 warmup=100 tasks=1000 START", flush=True)
+        print(f"[completion] {index}/{total} {case_name(row)} repetition={repetition}/{requested_repetitions} warmup=100 tasks=1000 START", flush=True)
         logfile = local_output / f"dispatch_{len(attempts):03d}.log"
         try:
             with logfile.open("x", encoding="utf-8") as stream:
                 def on_line(line):
                     stream.write(line + "\n"); stream.flush()
-                    print(f"[{index}/{total} rep{repetition}/3] {line}", flush=True)
+                    print(f"[{index}/{total} rep{repetition}/{requested_repetitions}] {line}", flush=True)
                 row["dispatch_attempted"] = True
                 rc = transport.run_streaming(command, on_line=on_line, timeout=7200,
                     env={**row.get("remote_environment", {}), "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1",
@@ -683,9 +696,12 @@ def run_case(row: dict, transport: SSHTransport, output: Path, index: int, *, to
         completed = {r["repetition_index"] for r in valid}
         if attempt.get("returncode") != 0 or repetition not in completed:
             raise RuntimeError(f"Generic case stopped: {case_name(row)} repetition={repetition}, rc={attempt.get('returncode')}")
-        print(f"[completion] {index}/{total} {case_name(row)} repetition={repetition}/3 VALID", flush=True)
+        print(f"[completion] {index}/{total} {case_name(row)} repetition={repetition}/{requested_repetitions} VALID", flush=True)
     final = validate_completion_case(read_json(Path(row["result_path"])), row, result_root=local_output)
-    if final["status"] != "completed":
+    if requested_repetitions == 1:
+        if final['valid_repetition_count'] != 1 or final['pending_repetition_indices'] != [2, 3]:
+            raise RuntimeError('Generic functional acceptance lacks one complete validated process')
+    elif final["status"] != "completed":
         raise RuntimeError("Generic case lacks three valid independent repetitions")
 
 
@@ -963,6 +979,7 @@ def prepare_energy_case(row: dict, *, performance_result: Path, output: Path,
     This function neither adds an SSH transport nor schedules a capture.
     """
     import copy
+    requested_repetitions = _acceptance_repetitions(row)
     if require_environment_observation and not environment_run_id:
         raise ValueError('Required Generic environment needs its parent run identity')
     campaign_budget_file = Path(campaign_budget_file).resolve(strict=True)
@@ -982,8 +999,9 @@ def prepare_energy_case(row: dict, *, performance_result: Path, output: Path,
         raise ValueError('Generic energy requires the declared physical campaign source')
     performance = read_json(performance_result)
     repeats = valid_split_completion_repetitions(performance, config, result_root=performance_result.parent)
-    if len(repeats) != 3 or performance.get('process_repetition_policy') != 'separate_processes':
-        raise ValueError('Generic energy requires three actual current performance processes')
+    if (len(repeats) != requested_repetitions or [r['repetition_index'] for r in repeats] != list(range(1, requested_repetitions + 1))
+            or performance.get('process_repetition_policy') != 'separate_processes'):
+        raise ValueError('Generic energy requires the requested actual current performance processes')
     sources = config.get('runtime_source_files') or []
     wanted = {r['path']: r['sha256'] for r in sources}
     modes = {r.get('completion_runtime_mode', 'classification_top1_top5') for r in repeats}
@@ -1011,7 +1029,7 @@ def prepare_energy_case(row: dict, *, performance_result: Path, output: Path,
     remote_config = remote_base + '/generic_energy_config.json'
     runtime_attestation = remote_base + '/preflight_' + NONCE_TOKEN + '.json'
     calls = []
-    for repetition in (1, 2, 3):
+    for repetition in range(1, requested_repetitions + 1):
         remote_output = remote_base + f'/repetition_{repetition}/' + NONCE_TOKEN
         workload = [row['remote_python_executable'], '-B', '-u', runner_paths[0],
             '--generic-completion-config', remote_config, '--generic-completion-repetition', str(repetition),
@@ -1037,7 +1055,7 @@ def prepare_energy_case(row: dict, *, performance_result: Path, output: Path,
             '--preflight-expected-command-contract-sha256', contract['command_contract_sha256'],
             '--duration', str(duration_s), '--runs', '1', '--exact-run-count', '--invalid-repeat-max-retries', '0',
             '--campaign-budget-file', str(campaign_budget_file), '--campaign-row-id', campaign_row_id,
-            '--campaign-repeats', '3', '--campaign-max-retries', '2', '--campaign-max-transport-failures', '20',
+            '--campaign-repeats', str(requested_repetitions), '--campaign-max-retries', '2', '--campaign-max-transport-failures', '20',
             '--task-logical-repeat', f'repeat:{repetition - 1}',
             '--run-id', config['execution_id'] + f'-generic-energy-{capture_id}-{repetition}',
             '--require-runtime-work-units', '--require-command-window-alignment']
@@ -1048,6 +1066,7 @@ def prepare_energy_case(row: dict, *, performance_result: Path, output: Path,
             'preflight_command_file': str(preflight_file), 'preflight_command_sha256': file_hash(preflight_file),
             'remote_result_directory_template': remote_output})
     plan = {'schema': 'onnx-splitpoint/generic-completed-task-energy-plan/v1', 'identity': row['identity'],
+        'acceptance_mode': row.get('acceptance_mode', 'scientific'), 'requested_repetitions': requested_repetitions,
         'config': config, 'config_path': str(config_path), 'config_sha256': file_hash(config_path),
         'remote_config_path': remote_config, 'calls': calls, 'automatic_retry': False,
         'execution_environment_restored': bool(remote_command_prefix),
@@ -1055,7 +1074,7 @@ def prepare_energy_case(row: dict, *, performance_result: Path, output: Path,
         'campaign_source_id': source_id,
         'require_environment_observation': require_environment_observation,
         'environment_run_id': environment_run_id,
-        'campaign_limits': {'max_chains': 9, 'max_retries': 2, 'max_transport_failures': 20},
+        'campaign_limits': {'max_chains': 3 * requested_repetitions, 'max_retries': 2, 'max_transport_failures': 20},
         'performance_result': str(performance_result), 'performance_result_sha256': file_hash(performance_result),
         'collector_script': str(collector_script), 'collector_script_sha256': file_hash(collector_script),
         'hardware_setups_file': str(hardware_setups_file), 'hardware_setups_file_sha256': file_hash(hardware_setups_file),
@@ -1073,9 +1092,10 @@ def check_energy_campaign(plan: dict, *, logical_repeat: str | None = None,
     from ..energy.config import energy_setup_from_registry, load_hardware_registry
     from ..energy.task_budget import campaign_budget_stop_reason, EnergyTaskBudget, _source_reentry
     identity = plan['identity']
+    requested_repetitions = _acceptance_repetitions(plan)
     expected_key = json.dumps(['generic_completed:' + identity['comparison_backend'],
         identity['model_id'], identity['case_id'], identity['setup_id']], separators=(',', ':'))
-    limits = {'max_chains': 9, 'max_retries': 2, 'max_transport_failures': 20}
+    limits = {'max_chains': 3 * requested_repetitions, 'max_retries': 2, 'max_transport_failures': 20}
     if plan.get('campaign_row_id') != expected_key or plan.get('campaign_limits') != limits:
         raise ValueError('Generic energy shared campaign identity/limits changed')
     path = Path(plan['campaign_budget_file'])
@@ -1110,11 +1130,11 @@ def check_energy_campaign(plan: dict, *, logical_repeat: str | None = None,
                 if c.get('finished') is True and c.get('valid') is True
                 and c.get('source_completion_verified') is True}
     reuse_only = allow_completed_repeats and (logical_repeat in complete if logical_repeat is not None
-                                             else complete >= {'repeat:0', 'repeat:1', 'repeat:2'})
+                                             else complete >= {f'repeat:{i}' for i in range(requested_repetitions)})
     if not reuse_only and len(task['chains']) >= effective['max_chains']:
         raise RuntimeError('Generic energy shared case chain limit reached')
     if logical_repeat is not None:
-        if logical_repeat not in {'repeat:0', 'repeat:1', 'repeat:2'}:
+        if logical_repeat not in {f'repeat:{i}' for i in range(requested_repetitions)}:
             raise ValueError('Generic energy logical repeat differs')
         chains = [c for c in task['chains'] if c['logical_repeat'] == logical_repeat]
         if not reuse_only and (any(c.get('finished') and c.get('valid') for c in chains) or len(chains) >= 1 + effective['max_retries']):
@@ -1174,7 +1194,8 @@ def prepare_energy_resume(plan_path: Path, case: dict, *, output: Path,
     from ..runners.generic_energy import canonical_hash, file_hash
     from ..generic_energy_reporting import import_generic_energy_capture
     original = read_json(plan_path); selected = {}; selected_calls = {}; rejected = []
-    unchanged = ('identity', 'config', 'config_path', 'config_sha256', 'remote_config_path',
+    requested_repetitions = _acceptance_repetitions(original)
+    unchanged = ('identity', 'acceptance_mode', 'requested_repetitions', 'config', 'config_path', 'config_sha256', 'remote_config_path',
         'performance_result', 'performance_result_sha256', 'collector_script', 'collector_script_sha256',
         'hardware_setups_file', 'hardware_setups_file_sha256', 'campaign_budget_file', 'campaign_row_id',
         'campaign_source_id', 'campaign_limits', 'require_environment_observation', 'environment_run_id')
@@ -1200,7 +1221,7 @@ def prepare_energy_resume(plan_path: Path, case: dict, *, output: Path,
         if manifest and manifest.get('plan_sha256') != file_hash(previous_path):
             raise ValueError('Generic resume prior capture manifest plan binding differs')
         descriptors = {d['repetition_index']: d for d in manifest.get('sources', [])}
-        for index in (1, 2, 3):
+        for index in range(1, requested_repetitions + 1):
             if index in selected:continue
             call = calls[index]; descriptor = descriptors.get(index)
             if descriptor is None:
@@ -1306,6 +1327,7 @@ def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport, *, per
     if os.environ.get('ONNX_SPLITPOINT_CONTROLLER_RESOURCES') != 'required':
         raise RuntimeError('Generic energy requires the normal resource-owned capture parent')
     plan = read_json(plan_path); root = plan_path.parent
+    requested_repetitions = _acceptance_repetitions(plan)
     config = plan['config']; validate_config(config)
     for call in plan['calls']:
         _verified_energy_resume_command_context(call,call,config)
@@ -1315,9 +1337,9 @@ def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport, *, per
         path = plan[path_key + '_path'] if path_key == 'config' else plan[path_key]
         if file_hash(path) != plan[path_key + '_sha256']:
             raise ValueError('Generic energy prepared source changed: ' + path_key)
-    if sorted(c['repetition_index'] for c in plan['calls']) != [1, 2, 3]:
-        raise ValueError('Generic energy requires exactly three prepared collector calls')
-    if (root / 'capture_sources.json').exists() or any((root / f'capture_{i}_started.json').exists() for i in (1, 2, 3)):
+    if sorted(c['repetition_index'] for c in plan['calls']) != list(range(1, requested_repetitions + 1)):
+        raise ValueError('Generic energy prepared collector calls differ from acceptance recipe')
+    if (root / 'capture_sources.json').exists() or any((root / f'capture_{i}_started.json').exists() for i in range(1, requested_repetitions + 1)):
         raise FileExistsError('Generic energy already attempted; preserve evidence and require explicit reviewed recovery')
     descriptors = list(plan.get('resume_reused_sources', []))
     from ..generic_energy_reporting import import_generic_energy_capture
@@ -1330,7 +1352,7 @@ def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport, *, per
     if cancel_event is not None and cancel_event.is_set():
         raise RuntimeError('Generic energy cancelled before capture dispatch')
     check_energy_campaign(plan, allow_completed_repeats=bool(descriptors))
-    if len(reused) < 3:stage_energy_case(plan, transport)
+    if len(reused) < requested_repetitions:stage_energy_case(plan, transport)
     registry = process_registry if process_registry is not None else ProcessTreeRegistry()
     sample_loss_retry = None
     try:
@@ -1342,7 +1364,7 @@ def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport, *, per
             if canonical_hash(argv) != call['command_sha256']:
                 raise ValueError('Generic energy command changed')
             expected_budget = {'--campaign-budget-file': plan['campaign_budget_file'],
-                '--campaign-row-id': plan['campaign_row_id'], '--campaign-repeats': '3',
+                '--campaign-row-id': plan['campaign_row_id'], '--campaign-repeats': str(requested_repetitions),
                 '--campaign-max-retries': '2', '--campaign-max-transport-failures': '20',
                 '--task-logical-repeat': f'repeat:{index - 1}', '--invalid-repeat-max-retries': '0'}
             if any(argv.count(k) != 1 or argv[argv.index(k)+1] != v for k, v in expected_budget.items()) or '--task-budget-file' in argv:

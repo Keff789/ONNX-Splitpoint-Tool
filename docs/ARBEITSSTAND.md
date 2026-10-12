@@ -2680,3 +2680,23 @@ Die drei bereits gültigen aktuellen Performance-Repeats wurden erhalten,
 ohne einen weiteren Performanceprozess zu starten. Der alte Fehlversuch bleibt
 zusätzlich gezählt. Die weiteren Zellen werden weiter ausschließlich über
 die gespeicherte endliche GUI-Startliste abgearbeitet.
+
+Die anschließende Nutzerkorrektur begrenzt die praktische Abnahme auf genau
+21 Modell-/Setup-Kombinationen. Die umfangreiche Startliste wurde regulär
+an der Zellgrenze beendet. Acht Kombinationen besitzen bereits gültige neue
+Performance- und Energiebelege; diese werden ohne Wiederholung übernommen.
+Für die verbleibenden 13 Zellen fordert der explizite Profilmodus
+`hardware_acceptance.mode: functional` jeweils genau einen zugewiesenen
+Runner, einen vollständigen Prozess mit 100 Warmups und 1000 Tasks sowie
+eine gültige 60-s-FS-command-Aufnahme. Zwei reguläre Retries bleiben erlaubt;
+die unveränderte große Restkampagne bleibt pausiert.
+
+Der normale GUI-/CLI-Koordinator, Generic-Dispatcher und Energieimport
+unterscheiden diese Einzelprobe ausdrücklich von wissenschaftlichen
+Dreierkohorten. Numerischer Output gegen den gebundenen Oracle, normaler
+Import, Kalibrierung, Taskcount, Drain und Quellenabschluss bleiben Pflicht.
+Einzelproben erhalten keine neuen wissenschaftlichen Claims oder
+Kohortenstatistiken. Die vorhandenen drei Repeats und sämtliche Fehlversuche
+bleiben unverändert erhalten. Der wissenschaftliche Standardpfad bleibt bei
+drei Wiederholungen. Neue Full-Baselines und N5000-Auswertungen gehören nicht
+zu dieser reduzierten Abnahme. Die installierte Version bleibt 2.94.0.

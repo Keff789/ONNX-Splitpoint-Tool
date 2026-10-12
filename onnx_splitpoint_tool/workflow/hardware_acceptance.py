@@ -60,6 +60,10 @@ def validate_request(profile: Mapping[str, Any], options=None) -> dict[str, Any]
     config = copy.deepcopy(dict(profile["hardware_acceptance"]))
     if config.get("schema", SCHEMA) != SCHEMA:
         raise ValueError("unsupported hardware acceptance schema")
+    mode = config.get("mode", "scientific")
+    if mode not in {"scientific", "functional"}:
+        raise ValueError("unsupported hardware acceptance mode")
+    repetitions = 1 if mode == "functional" else 3
     cells = config.get("cells")
     if not isinstance(cells, list) or not cells or len(cells) > 21:
         raise ValueError("hardware acceptance requires 1 through 21 explicit cells")
@@ -76,8 +80,8 @@ def validate_request(profile: Mapping[str, Any], options=None) -> dict[str, Any]
                "task_budget": copy.deepcopy(energy.get("task_budget") or {})}
     # These are the existing Revision-3 supported runner/collector contracts.
     # No hidden smoke reduction or dataset-quality expansion is permitted.
-    if tuple(regular[key] for key in ("frames", "warmup", "repetitions", "duration_s")) != (1000, 100, 3, 60):
-        raise ValueError("acceptance adapters require regular 1000/100/3 and 60-second budgets")
+    if tuple(regular[key] for key in ("frames", "warmup", "repetitions", "duration_s")) != (1000, 100, repetitions, 60):
+        raise ValueError(f"acceptance adapters require regular 1000/100/{repetitions} and 60-second budgets for {mode} mode")
     if regular["physical_scope"] != "FS" or regular["window_label"] != "command":
         raise ValueError("acceptance requires the regular FS command measurement boundary")
     from ..energy.task_budget import campaign_budget_policy
@@ -107,6 +111,8 @@ def validate_request(profile: Mapping[str, Any], options=None) -> dict[str, Any]
         variants = [_variant(item) for item in cell.get("runtime_variants", ["native", "generic_completed"])]
         if len(variants) != len(set(variants)) or not variants:
             raise ValueError("acceptance runtime variants must be unique and explicit")
+        if mode == "functional" and len(variants) != 1:
+            raise ValueError("functional acceptance requires one explicitly assigned runtime per cell")
         cell["runtime_variants"] = [v for v in ("native", "generic_completed") if v in variants]
         cell.setdefault("backend", cell.get("native_backend") or cell.get("measurement_direction") or cell.get("profile_split_run_id"))
         cell.setdefault("native_source_plan", cell.get("native_performance_plan"))
@@ -117,7 +123,7 @@ def validate_request(profile: Mapping[str, Any], options=None) -> dict[str, Any]
     primary = Path(str(config.get("source_primary_run") or "")).expanduser()
     if not report.is_absolute() or not report.is_dir() or not primary.is_absolute() or not primary.is_dir():
         raise ValueError("existing absolute source report and primary run directories are required")
-    config.update(cells=normalized, regular_budget=regular, schema=SCHEMA,
+    config.update(cells=normalized, regular_budget=regular, schema=SCHEMA, mode=mode,
                   source_report_root=str(report.resolve()), source_primary_run=str(primary.resolve()))
     return config
 
@@ -127,6 +133,7 @@ def summary_lines(profile: Mapping[str, Any]) -> list[str]:
     cells, budget = config["cells"], config["regular_budget"]
     paths = sum(len(cell["runtime_variants"]) for cell in cells)
     return [f"Hardware-Abnahme: {len(cells)} feste Netz/Setup-Zellen, {paths} frische Split-Pfade; je Zelle genau eine Splitposition.",
+            "Einzelproben zur Funktionsabnahme; keine neuen wissenschaftlichen Kohorten oder statistischen Claims." if config["mode"] == "functional" else "Reguläre Abnahme mit drei Wiederholungen je Pfad.",
             f"Aufnahmen: je Pfad {budget['repetitions']} gültige Energie-Repeats à {budget['duration_s']} s, FS/command; reguläre Retries {budget['task_budget']}.",
             f"Timing/Task: warmup={budget['warmup']}, tasks={budget['frames']}, Prozesse={budget['repetitions']}.",
             "Vorhandene Artefakte und passende Full/Quality-Referenzen werden geprüft und wiederverwendet; neue Dataset-Quality wird nicht gestartet.",
@@ -209,6 +216,17 @@ def _accepted_result(result, context):
         valid = int(repeats) == context["expected_repetitions"]
     if not valid:
         raise ValueError("hardware PASS requires all regular valid repeats")
+    if context.get("acceptance_mode") == "functional":
+        if (result.get("acceptance_mode") != "functional"
+                or result.get("evaluation_role") != "functional_acceptance"
+                or result.get("functional_acceptance") is not True
+                or result.get("diagnostic_only") is not True
+                or any(result.get(key) is not False for key in (
+                    "scientific_cohort_complete", "scientific_claim_eligible", "scientific_statistics_published"))):
+            raise ValueError("functional PASS requires explicit diagnostic-only nonclaimable evidence")
+        if (result.get("output_validation", {}).get("status") != "passed"
+                or result.get("import_projection", {}).get("normal_report_verified") is not True):
+            raise ValueError("functional PASS requires actual numeric oracle validation and normal result import")
     paths = result.get("evidence_paths") or []
     if not paths:
         raise ValueError("hardware PASS requires fresh original evidence paths")
@@ -277,7 +295,7 @@ def _initialize_budget(context, config, cell, variant):
     path = Path(context["budget_file"])
     path.parent.mkdir(parents=True, exist_ok=True)
     policy = config["regular_budget"]["task_budget"]
-    limits = {"max_chains": 3 * (1 + policy["max_retries"]), "max_retries": policy["max_retries"],
+    limits = {"max_chains": config["regular_budget"]["repetitions"] * (1 + policy["max_retries"]), "max_retries": policy["max_retries"],
               "max_transport_failures": policy["max_transport_failures"]}
     with os.fdopen(os.open(path, os.O_RDWR | os.O_CREAT, 0o600), "r+", encoding="utf-8") as handle:
         backend = cell["backend"] if variant == "native" else "generic_completed:" + cell["comparison_backend"]
@@ -310,7 +328,8 @@ def run_acceptance(runner) -> WorkflowRunResult:
                "remote_process_registry": runner._remote_process_registry, "execute_allowed": True,
                "budget_file": str(root / "energy/energy_task_budget.json"),
                "budget_path": str(root / "energy/energy_task_budget.json"),
-               "expected_duration_s": 60, "expected_repetitions": 3, "expected_frames": 1000, "expected_warmup": 100}
+               "acceptance_mode": config["mode"], "requested_repetitions": config["regular_budget"]["repetitions"],
+               "expected_duration_s": 60, "expected_repetitions": config["regular_budget"]["repetitions"], "expected_frames": 1000, "expected_warmup": 100}
     plan_path = write_json(root / "reports/hardware_acceptance_plan.json", config)
     paths = [plan_path]
     rows, errors = [], []
@@ -318,7 +337,8 @@ def run_acceptance(runner) -> WorkflowRunResult:
     runner._progress_total = total + 2
     runner.manifest["workflow_stages"] = ["hardware_acceptance"]
     runner.manifest["hardware_acceptance"] = {"schema": SCHEMA, "cell_count": len(config["cells"]),
-                                             "runtime_path_count": total, "source_campaign_resumed": False}
+                                             "runtime_path_count": total, "source_campaign_resumed": False,
+                                             "acceptance_mode": config["mode"], "requested_repetitions": context["expected_repetitions"]}
     runner.manifest["model_count"] = len({cell["model_id"] for cell in config["cells"]})
     runner._save_manifest("running")
     broker = _resource_context(runner, config, context)
@@ -424,6 +444,7 @@ def run_acceptance(runner) -> WorkflowRunResult:
     completion = workflow_completion_projection(status)
     captures = sum(int(row.get("new_capture_count") or 0) for row in rows)
     final = {"schema": SCHEMA, "run_id": runner.run_id, "rows": rows, "status": status,
+             "acceptance_mode": config["mode"], "requested_repetitions": context["expected_repetitions"],
              "complete": status == "ok", "matrix_cells": len(config["cells"]), "runtime_paths": total,
              "fresh_pass_paths": sum(row["status"] == "ok" for row in rows), "new_capture_count": captures,
              "source_campaign_resumed": False, "new_dataset_quality_started": False, "resource_errors": errors}

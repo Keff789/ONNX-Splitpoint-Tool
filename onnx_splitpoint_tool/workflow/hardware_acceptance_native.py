@@ -50,6 +50,11 @@ _STAGE_NAMES = {
 _OUTPUT_FLAGS = {"--out-dir", "--result-json", "--config-json", "--output-dir", "--boundary-dir", "--work-dir"}
 
 
+def _functional_mode(value: Mapping) -> bool:
+    return (value.get("acceptance_mode") == "functional"
+            or ((value.get("profile") or {}).get("hardware_acceptance") or {}).get("mode") == "functional")
+
+
 def _read(path: str | Path) -> dict:
     value = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(value, dict):
@@ -676,6 +681,8 @@ def _verify_performance_reference(prepared: Mapping, context: Mapping, reference
 
 def prepare_native(cell: Mapping, context: Mapping) -> dict:
     """Resolve one saved selection offline; no SSH, build, capture or quality run."""
+    if _functional_mode(context):
+        raise ValueError("Fresh Native functional dispatch is unsupported; validate existing captured Native outputs with the normal numeric validators")
     identity = _identity(cell)
     if (int(context.get("frames", 1000)) != 1000 or int(context.get("warmup", 100)) != 100
             or int(context.get("repetitions", 3)) != 3
@@ -1022,6 +1029,8 @@ def _run_native(prepared: Mapping, context: Mapping) -> dict:
     """Dispatch the finite selection through normal ownership and product APIs."""
     if context.get("execute_allowed") is not True:
         raise ValueError("Native acceptance hardware dispatch is not enabled")
+    if _functional_mode(prepared) or _functional_mode(context):
+        raise ValueError("Fresh Native functional dispatch is unsupported; validate existing captured Native outputs with the normal numeric validators")
     for name in ("source_plan", "source_raw_report", "source_validation"):
         if _sha(prepared[name]) != prepared[name + "_sha256"]:
             raise ValueError("Native acceptance source changed after preparation: " + name)

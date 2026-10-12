@@ -11,11 +11,36 @@ import shlex
 from .runners.generic_energy import (SCHEMA, COMPLETION_MARKER, canonical_hash, file_hash,
                                      operation_binding, validate_config, validate_energy_result)
 from .runners.task_completion import valid_split_completion_repetitions
-from .energy.collector import _energy_repeat_contract_complete, _repeat_statistics
+from .energy.collector import (_energy_repeat_contract_complete, _repeat_statistics,
+                               _clamp_diagnostic_claim_fields)
 
 
 def _positive(value):
     return type(value) in (int, float) and math.isfinite(value) and value > 0
+
+
+def _acceptance_repetitions(scope):
+    """Keep scientific cohorts strict; opt in explicitly to a functional check."""
+    mode = scope.get('acceptance_mode', 'scientific')
+    expected = 1 if mode == 'functional' else 3
+    requested = scope.get('requested_repetitions', expected)
+    if mode not in {'scientific', 'functional'} or type(requested) is not int or requested != expected:
+        raise ValueError('Generic acceptance mode/repetition recipe differs')
+    if mode == 'functional' and scope.get('requested_repetitions') != 1:
+        raise ValueError('Generic functional acceptance requires one explicit requested repetition')
+    return expected
+
+
+def _functional_view(value):
+    """Project derived flags without modifying immutable source records."""
+    def generic_fields(item):
+        if isinstance(item, dict):
+            return {key: False if key in {'eligible_for_claim_transfer', 'primary_energy_claim_gate'}
+                    else generic_fields(child) for key, child in item.items()}
+        if isinstance(item, list):
+            return [generic_fields(child) for child in item]
+        return item
+    return generic_fields(_clamp_diagnostic_claim_fields(value))
 
 
 def _source(path, expected_sha, *, maximum_bytes=8 * 1024 * 1024):
@@ -33,6 +58,7 @@ def import_generic_energy_capture(descriptor, config, *, expected_setup_id, expe
     """Import a real single capture through the existing collector importer."""
     from scripts.run_native_producer_energy_from_summary import _attach_energy_aggregate, _selected_energy_repeat_run_dir
     contract = validate_config(config)
+    requested_repetitions = _acceptance_repetitions(expected_campaign)
     command = descriptor['command']; receipt = descriptor['process_receipt']
     if (not isinstance(command, list) or canonical_hash(command) != descriptor['command_sha256']
             or receipt.get('argv') != command or receipt.get('command_sha256') != descriptor['command_sha256']
@@ -69,11 +95,11 @@ def import_generic_energy_capture(descriptor, config, *, expected_setup_id, expe
                          identity['case_id'], identity['setup_id']], separators=(',', ':'))
     index = descriptor['repetition_index']
     logical_repeat = f'repeat:{index - 1}'
-    if (index not in (1, 2, 3) or option('--campaign-row-id') != row_id
+    if (index not in range(1, requested_repetitions + 1) or option('--campaign-row-id') != row_id
             or expected_campaign['campaign_row_id'] != row_id
             or option('--campaign-budget-file') != expected_campaign['campaign_budget_file']
             or option('--task-logical-repeat') != logical_repeat
-            or option('--campaign-repeats') != '3' or option('--campaign-max-retries') != '2'
+            or option('--campaign-repeats') != str(requested_repetitions) or option('--campaign-max-retries') != '2'
             or option('--campaign-max-transport-failures') != '20' or '--task-budget-file' in command):
         raise ValueError('Generic energy original shared campaign binding differs')
     path = Path(expected_campaign['campaign_budget_file'])
@@ -84,7 +110,7 @@ def import_generic_energy_capture(descriptor, config, *, expected_setup_id, expe
         budget = json.load(stream)
     task = budget.get('tasks', {}).get(row_id) or {}
     if (budget.get('campaign') is not True or budget.get('max_transport_failures') != 20
-            or task.get('limits') != {'max_chains': 9, 'max_retries': 2, 'max_transport_failures': 20}
+            or task.get('limits') != {'max_chains': 3 * requested_repetitions, 'max_retries': 2, 'max_transport_failures': 20}
             or task.get('source_id') != expected_campaign['campaign_source_id']):
         raise ValueError('Generic energy actual campaign case/source differs')
     matching = [c for c in task['chains'] if c.get('logical_repeat') == logical_repeat and c.get('finished') is True and c.get('valid') is True]
@@ -134,7 +160,7 @@ def import_generic_energy_capture(descriptor, config, *, expected_setup_id, expe
              and record.get('energy_efficiency_claim_eligible') is True
              and aggregate.get('diagnostic_only') is not True and record.get('diagnostic_only') is not True
              and not aggregate.get('claim_exclusion_reason') and not record.get('claim_exclusion_reason'))
-    return {'schema': SCHEMA, 'status': 'normal_collector_and_generic_completion_verified',
+    observation = {'schema': SCHEMA, 'status': 'normal_collector_and_generic_completion_verified',
         'raw_aggregate_path': str(raw_path), 'raw_aggregate_sha256': descriptor['raw_aggregate_sha256'],
         'runtime_result_path': descriptor['runtime_result_path'], 'runtime_result_sha256': marker['report_sha256'],
         'physical_run_directory': str(directory), 'selection_evidence': selection,
@@ -146,6 +172,11 @@ def import_generic_energy_capture(descriptor, config, *, expected_setup_id, expe
         'source_contract_sha256': contract['command_contract_sha256'],
         'completion_runtime_mode': repetition['completion_runtime_mode'],
         'normal_import': imported, 'primary_energy_claim_gate': claim}
+    if requested_repetitions == 1:
+        observation = _functional_view(observation)
+        observation.update(evaluation_role='functional_acceptance', diagnostic_only=True,
+                           source_flags_projected_for_functional_scope=True)
+    return observation
 
 
 def _admitted_performance_pair(plan, case, admission):
@@ -175,6 +206,10 @@ def _admitted_performance_pair(plan, case, admission):
 
 def collect_generic_energy_case(plan, descriptors, case, *, performance_admission=None):
     """Admit three fresh captures and retain normal Generic quality gates."""
+    if _acceptance_repetitions(plan) == 1:
+        if performance_admission is not None:
+            raise ValueError('Functional Generic acceptance cannot borrow a scientific cohort admission')
+        return _collect_functional_energy_case(plan, descriptors, case)
     from .generic_completion_reporting import validate_completion_case, completion_pair
     config = plan['config']; contract = validate_config(config)
     performance_path = Path(plan['performance_result'])
@@ -224,3 +259,51 @@ def collect_generic_energy_case(plan, descriptors, case, *, performance_admissio
         'normal_report_verified': True, 'energy_efficiency_claim_eligible': claim,
         'normal_generic_performance_pair': pair, 'scientific_primary_method': 'command_marker_window',
         'raw_source_records_modified': False, 'raw_run_indices': [r['raw_run_index'] for r in observations]}
+
+
+def _collect_functional_energy_case(plan, descriptors, case):
+    """Validate one ordinary capture and publish no scientific cohort claims."""
+    from .generic_completion_reporting import validate_completion_case
+    if _acceptance_repetitions(plan) != 1 or _acceptance_repetitions(case) != 1:
+        raise ValueError('Functional Generic energy/performance role differs')
+    config = plan['config']; contract = validate_config(config)
+    performance_path = Path(plan['performance_result'])
+    performance = json.loads(_source(performance_path, plan['performance_result_sha256']))
+    if (config['energy_capture'].get('performance_result_sha256') != plan['performance_result_sha256']
+            or operation_binding(case['runtime_config']) != contract['operation']):
+        raise ValueError('Functional Generic performance source/operation differs')
+    projection = validate_completion_case(performance, case, result_root=performance_path.parent)
+    repetitions = projection['repetitions']
+    if (projection['status'] != 'partial' or projection['valid_repetition_count'] != 1
+            or repetitions[0]['repetition_index'] != 1
+            or performance.get('process_repetition_policy') != 'separate_processes'):
+        raise ValueError('Functional Generic energy requires one actual validated performance process')
+    source_map = {x['path']: x['sha256'] for x in contract['source_files']}
+    rep = repetitions[0]
+    if (rep.get('runtime_source_binding') != {'before': source_map, 'after': source_map, 'unchanged': True}
+            or rep.get('execution_identity') != contract['execution_identity']
+            or rep.get('completion_runtime_mode', 'classification_top1_top5') != contract['completion_runtime_mode']):
+        raise ValueError('Functional Generic energy/performance source or completion mode differs')
+    if ([d.get('repetition_index') for d in descriptors] != [1]
+            or [c.get('repetition_index') for c in plan['calls']] != [1]):
+        raise ValueError('Functional Generic energy requires one explicit actual capture')
+    call = plan['calls'][0]; descriptor = descriptors[0]
+    if descriptor['command'] != call['argv'] or canonical_hash(call['argv']) != call['command_sha256']:
+        raise ValueError('Functional Generic capture differs from its prepared command')
+    for kind in ('workload_command', 'preflight_command'):
+        _source(call[kind + '_file'], call[kind + '_sha256'])
+    observation = import_generic_energy_capture(descriptor, config,
+        expected_setup_id=case['setup_id'], expected_campaign=plan)
+    return {'schema': 'onnx-splitpoint/generic-functional-energy-observation/v1',
+        'acceptance_mode': 'functional', 'requested_repetitions': 1, 'valid_repetitions': 1,
+        'evaluation_role': 'functional_acceptance', 'diagnostic_only': True,
+        'identity': config['identity'], 'status': 'completed', 'normal_report_verified': True,
+        'performance_result_sha256': plan['performance_result_sha256'],
+        'source_contract_sha256': contract['command_contract_sha256'], 'operation': contract['operation'],
+        'observations': [observation], 'normal_scientific_performance_projection': projection,
+        'aggregation': 'single_observation_no_cohort_statistics',
+        'energy_per_completed_task_j': observation['energy_per_completed_task_j'],
+        'completed_tasks_per_j': observation['completed_tasks_per_j'],
+        'energy_efficiency_claim_eligible': False, 'scientific_cohort_complete': False,
+        'scientific_claim_eligible': False, 'scientific_statistics_published': False,
+        'raw_source_records_modified': False, 'raw_run_indices': [observation['raw_run_index']]}

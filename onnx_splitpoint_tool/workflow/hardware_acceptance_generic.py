@@ -31,11 +31,12 @@ def _campaign_key(identity):
 
 
 def _profile_budget(context):
-    expected = {'expected_duration_s': 60., 'expected_repetitions': 3,
+    mode, repetitions = _acceptance_recipe(context)
+    expected = {'expected_duration_s': 60., 'expected_repetitions': repetitions,
                 'expected_frames': 1000, 'expected_warmup': 100}
     for name, value in expected.items():
         if context.get(name, value) != value:
-            raise ValueError('Generic Completed requires the regular 100/1000/3/60s profile: ' + name)
+            raise ValueError('Generic Completed regular acceptance recipe differs: ' + name)
     profile = context.get('profile') or context.get('source_profile') or {}
     if isinstance(profile, dict):
         native = profile.get('native_producers') or profile.get('native_producer') or {}
@@ -44,6 +45,18 @@ def _profile_budget(context):
             policy = campaign_budget_policy(native)
             if policy.get('max_retries') != 2 or policy.get('max_transport_failures') != 20:
                 raise ValueError('Generic Completed regular energy retry policy differs')
+
+
+def _acceptance_recipe(context):
+    profile = context.get('profile') or context.get('source_profile') or {}
+    acceptance = profile.get('hardware_acceptance') or {}
+    profile_mode = acceptance.get('mode', 'scientific')
+    mode = context.get('acceptance_mode', profile_mode)
+    if mode != profile_mode:
+        raise ValueError('Generic acceptance mode differs from its explicit profile')
+    repetitions = completed._acceptance_repetitions({'acceptance_mode': mode,
+        'requested_repetitions': context.get('requested_repetitions', 1 if mode == 'functional' else 3)})
+    return mode, repetitions
 
 
 def _source(cell):
@@ -314,6 +327,8 @@ def _phase_energy_admission(prepared, context, plan, call):
     """Read existing phase budgets before each Single; never reset their history."""
     reference = prepared.get('fresh_performance_reference')
     if reference is None:
+        if prepared.get('acceptance_mode') == 'functional':
+            return _functional_energy_admission(prepared, context, plan, call)
         return None
     scope = reference['reuse_scope']
     _bound_reference(scope['prior_budget'])
@@ -370,10 +385,58 @@ def _phase_energy_admission(prepared, context, plan, call):
             'profile_max_retries': 2, 'profile_max_chains': 9, 'budget_evidence': evidence}
 
 
+def _functional_energy_admission(prepared, context, plan, call):
+    """Never give a failed functional capture fresh credit through a new run."""
+    root = _root(context)
+    if completed._acceptance_repetitions(plan) != 1 or call.get('repetition_index') != 1:
+        raise ValueError('Functional Generic capture admission differs from its one-slot recipe')
+    if (plan.get('campaign_row_id') != _campaign_key(prepared['selected_identity'])
+            or plan.get('campaign_limits') != {'max_chains': 3, 'max_retries': 2, 'max_transport_failures': 20}
+            or Path(plan['campaign_budget_file']).resolve() != root / 'energy/energy_task_budget.json'):
+        raise ValueError('Functional Generic capture budget/selected row differs')
+    evidence = []
+    counts = 0
+    for directory in sorted(root.parent.iterdir()):
+        path = directory / 'energy/energy_task_budget.json'
+        if not path.is_file():
+            continue
+        budget = completed.read_json(path)
+        task = (budget.get('tasks') or {}).get(plan['campaign_row_id'])
+        if task is None:
+            continue
+        if directory != root:
+            if task.get('chains'):
+                raise RuntimeError('Prior Generic capture requires reviewed continuation or accepted-slot reuse; preserve its budget')
+            continue
+        if (budget.get('campaign') is not True or task.get('limits') != plan['campaign_limits']
+                or task.get('source_id') != plan['campaign_source_id']):
+            raise ValueError('Functional Generic current campaign policy/source differs')
+        chains = task.get('chains') or []
+        for chain in chains:
+            if (chain.get('logical_repeat') != 'repeat:0' or chain.get('finished') is not True
+                    or chain.get('source_completion_verified') is not True
+                    or not Path(chain.get('run_directory') or '').resolve().is_relative_to(root)):
+                raise RuntimeError('Functional Generic previous capture is active or source completion unresolved')
+            if chain.get('valid') is True:
+                raise RuntimeError('Functional Generic accepted energy slot must not be recaptured')
+        counts = len(chains)
+        evidence.append({'path': str(path), 'sha256': completed.file_sha256(path), 'chains': counts,
+                         'physical_collector_starts': sum(c.get('collector_started') is True for c in chains)})
+    if not evidence or counts >= 3:
+        raise RuntimeError('Functional Generic cumulative three-chain retry limit reached or budget absent')
+    return {'campaign_row_id': plan['campaign_row_id'], 'logical_repeat': 'repeat:0',
+        'prior_and_current_chains': {'repeat:0': counts}, 'remaining_single_starts_for_slot': 3 - counts,
+        'remaining_single_starts_for_case': 3 - counts, 'normal_single_internal_retries': 0,
+        'profile_max_retries': 2, 'profile_max_chains': 3, 'budget_evidence': evidence}
+
+
 def prepare_generic(cell, context):
     """Resolve one selected source row and generate fresh normal configuration offline."""
     _profile_budget(context)
+    mode, repetitions = _acceptance_recipe(context)
     reference = _performance_reference(cell)
+    if reference is not None and mode == 'functional':
+        raise ValueError('Functional Generic acceptance requires its dedicated one-process cohort')
     source, source_sha, row = _source(cell)
     root = _root(context)
     configured_primary = Path(context.get('source_primary_run') or context['primary_run']).resolve(strict=True)
@@ -412,6 +475,7 @@ def prepare_generic(cell, context):
                  'runtime_environment_comparison', 'dispatch_attempted', 'execution_status',
                  'execution_error', 'completion_observed_at', 'dispatch_wall_seconds'):
         row.pop(name, None)
+    row.update(acceptance_mode=mode, requested_repetitions=repetitions)
     output.mkdir(parents=True, exist_ok=False)
     scope = output / 'inputs' / 'selected_scope.csv'
     scope.parent.mkdir(parents=True, exist_ok=False)
@@ -426,7 +490,8 @@ def prepare_generic(cell, context):
         'scope_source_sha256': completed.file_sha256(scope),
         'source_execution_plans': [{'path': str(source), 'sha256': source_sha}],
         'source_run_bindings': [], 'start_case_keys': [row['case_key']], 'rows': [row],
-        'planned_repetitions': 3, 'planned_measured_completions': 3000,
+        'acceptance_mode': mode, 'requested_repetitions': repetitions,
+        'planned_repetitions': repetitions, 'planned_measured_completions': repetitions * 1000,
         'build_allowed': False, 'fallback_allowed': False, 'automatic_retry': False,
         'selection_policy': 'one_preselected_supported_split_per_model_and_setup',
         'remeasurement_reason': 'finite_fresh_hardware_acceptance'}
@@ -440,6 +505,7 @@ def prepare_generic(cell, context):
     registry_snapshot = output / 'inputs' / 'hardware_snapshot.json'
     completed.write_json(registry_snapshot, registry)
     prepared = {'schema': 'onnx-splitpoint/hardware-acceptance-generic/v1',
+        'acceptance_mode': mode, 'requested_repetitions': repetitions,
         'model_id': row['model_id'], 'setup_id': row['setup_id'], 'selected_identity': row['identity'],
         'output_root': str(output), 'acceptance_root': str(root),
         'execution_plan': str(execution), 'execution_plan_sha256': completed.file_sha256(execution),
@@ -449,11 +515,11 @@ def prepare_generic(cell, context):
         'runner_bundle': str(bundle), 'runner_bundle_sha256': completed.file_sha256(bundle),
         'registry_snapshot': str(registry_snapshot), 'target': target, 'resources': resources,
         'calibration': calibration, 'collector_binary': collector,
-        'hardware_executed': False, 'performance_processes': 3, 'energy_captures': 3,
+        'hardware_executed': False, 'performance_processes': repetitions, 'energy_captures': repetitions,
         'warmup_count': 100, 'task_count': 1000, 'duration_s': 60.,
-        'performance_recipe': {'warmup_count': 100, 'task_count': 1000, 'repetitions': 3,
+        'performance_recipe': {'warmup_count': 100, 'task_count': 1000, 'repetitions': repetitions,
                                'process_repetition_policy': 'separate_processes'},
-        'energy_recipe': {'warmup_count': 0, 'task_count': None, 'duration_s': 60., 'repetitions': 3,
+        'energy_recipe': {'warmup_count': 0, 'task_count': None, 'duration_s': 60., 'repetitions': repetitions,
                           'count_policy': 'all_admitted_tasks_completed_after_lossless_drain',
                           'capture_scope': 'whole_workload_command_including_initialization_and_postflight',
                           'physical_scope': 'FS', 'window_label': 'command',
@@ -482,7 +548,8 @@ def _budget(prepared, row, context):
                       identity['case_id'], identity['setup_id']], separators=(',', ':'))
     source_id = str(prepared['target']['energy']['urecs_address']).strip().lower()
     with os.fdopen(os.open(path, os.O_RDWR | os.O_CREAT, 0o600), 'r+', encoding='utf-8') as stream:
-        EnergyTaskBudget(stream, {'max_chains': 9, 'max_retries': 2, 'max_transport_failures': 20},
+        EnergyTaskBudget(stream, {'max_chains': 3 * prepared.get('requested_repetitions', 3),
+                                 'max_retries': 2, 'max_transport_failures': 20},
                          campaign_row=key, source_id=source_id,
                          cancel_event=context.get('cancel_event'), environment=context.get('environment'))
     return path
@@ -555,6 +622,10 @@ def run_generic(prepared, context):
     from ..process_control import bind_process_registry, bind_workflow_resource_options
     from ..remote.process_lease import RemoteProcessLeaseJournal
     _profile_budget(context)
+    mode, repetitions = _acceptance_recipe(context)
+    if (prepared.get('acceptance_mode', 'scientific') != mode
+            or prepared.get('requested_repetitions', 3) != repetitions):
+        raise ValueError('Prepared Generic acceptance mode/recipe changed')
     if context.get('execute_allowed') is not True:
         raise ValueError('Hardware dispatch requires the normal acceptance controller')
     if Path(prepared['acceptance_root']).resolve() != _root(context):
@@ -590,7 +661,8 @@ def run_generic(prepared, context):
                    'run_id': journal.scope.run_id, 'session_id': journal.scope.session_id,
                    'plan': str(plan_path), 'selected_identity': row['identity'],
                    'purpose': 'finite_fresh_hardware_acceptance',
-                   'new_performance_processes': 0 if retained is not None else 3,
+                   'acceptance_mode': mode, 'requested_repetitions': repetitions,
+                   'new_performance_processes': 0 if retained is not None else repetitions,
                    'retained_fresh_performance_origin': retained['proof']['origin'] if retained is not None else None}, stream, indent=2)
     log = context.get('log') or print
     raw_transport = completed.transport_for(prepared['target'], output / 'diagnostics',
@@ -624,6 +696,10 @@ def run_generic(prepared, context):
             else:
                 completed.stage_case(row, row['runtime_config'], row['staging_files'], transport,
                                      output / 'staging' / row['case_output_relative'])
+            if mode == 'functional':
+                actual, _, _, _ = _evidence(output, row, [])
+                if actual['valid_repetition_count'] != 1 or actual['pending_repetition_indices'] != [2, 3]:
+                    raise RuntimeError('Functional Generic performance lacks one normally validated process')
             completed.write_json(plan_path, plan)
             write_completion_reports(report_plan, output / 'results', output / 'reports')
             phase = 'energy'
@@ -640,9 +716,9 @@ def run_generic(prepared, context):
                 try:
                     energy = completed.run_energy_case(energy_plans[-1], row, transport,
                         process_registry=processes, cancel_event=context.get('cancel_event'),
-                        before_capture=before_capture if retained is not None else None)
-                    if energy.get('normal_report_verified') is not True or energy.get('valid_repetitions') != 3:
-                        raise RuntimeError('Normal Generic energy import did not verify all three captures')
+                        before_capture=before_capture if retained is not None or mode == 'functional' else None)
+                    if energy.get('normal_report_verified') is not True or energy.get('valid_repetitions') != repetitions:
+                        raise RuntimeError('Normal Generic energy import did not verify the requested captures')
                     break
                 except RuntimeError:
                     if attempt == 6 or not _sample_loss_retry(energy_plans[-1], context):
@@ -692,6 +768,7 @@ def run_generic(prepared, context):
     if retained is not None:
         paths.append(str(output / 'PERFORMANCE_REUSE.json'))
     result = {'status': 'completed' if phase == 'complete' else ('failed' if attempts or starts else 'blocked'),
+        'acceptance_mode': mode, 'requested_repetitions': repetitions,
         'fresh_hardware_executed': bool(process_reports or captures), 'new_capture_count': len(captures),
         'collector_cli_attempts': len(starts), 'new_performance_dispatch_attempt_count': len(attempts),
         'new_performance_process_count': len(process_reports),
@@ -701,7 +778,9 @@ def run_generic(prepared, context):
         'valid_repeats': {'performance': projection['valid_repetition_count'], 'energy': energy_repeats},
         'failed_attempts': {'performance': sum(a.get('returncode') != 0 for a in attempts),
                             'energy': max(0, len(starts) - energy_repeats)},
-        'output_validation': {'status': projection['status'], 'procedure': 'normal_bound_functional_output_validation'},
+        'output_validation': {'status': 'passed' if mode == 'functional' and projection['valid_repetition_count'] == 1 else projection['status'],
+                              'scientific_status': projection['status'],
+                              'procedure': 'normal_bound_functional_output_validation'},
         'performance': projection, 'energy': energy or {'status': 'incomplete', 'valid_repetitions': energy_repeats},
         'import_projection': {'status': 'completed' if energy is not None and energy.get('normal_report_verified') else 'incomplete',
                               'normal_report_verified': bool(energy and energy.get('normal_report_verified'))},
@@ -709,6 +788,28 @@ def run_generic(prepared, context):
         'references_reused': {'historical_performance_result': prepared['historical_result_reference'],
                               'native_functional_input_and_quality_reference': row['native_source']},
         'new_dataset_quality_capture': False}
+    if mode == 'functional':
+        report = {'schema': 'onnx-splitpoint/generic-functional-acceptance/v1',
+            'acceptance_mode': mode, 'requested_performance_processes': 1, 'requested_energy_captures': 1,
+            'status': result['status'], 'identity': row['identity'],
+            'actual_valid_performance_processes': projection['valid_repetition_count'],
+            'actual_valid_energy_captures': energy_repeats,
+            'performance_result': {'path': row['result_path'],
+                'sha256': completed.file_sha256(Path(row['result_path'])) if Path(row['result_path']).is_file() else None},
+            'normal_performance_projection': projection, 'normal_energy_projection': result['energy'],
+            'output_oracle': projection['repetitions'][0]['functional_control'] if projection['valid_repetition_count'] == 1 else {},
+            'output_samples': projection['repetitions'][0]['raw_output_samples'] if projection['valid_repetition_count'] == 1 else {},
+            'completed_result_artifact': projection['repetitions'][0]['completed_result_artifact'] if projection['valid_repetition_count'] == 1 else {},
+            'functional_reference': row['runtime_config']['functional_reference'],
+            'scientific_cohort_complete': False, 'scientific_claim_eligible': False,
+            'scientific_statistics_published': False}
+        path = output / 'FUNCTIONAL_ACCEPTANCE.json'
+        completed.write_json(path, report)
+        result['evidence_paths'].append(str(path))
+        result.update(functional_acceptance=True, scientific_cohort_complete=False,
+                      scientific_claim_eligible=False, scientific_statistics_published=False,
+                      evaluation_role='functional_acceptance', diagnostic_only=True,
+                      phase_energy_admissions=phase_admissions)
     if retained is not None:
         prior = completed.read_json(_bound_reference(reference['reuse_scope']['prior_budget']))
         prior_chains = prior['tasks'][_campaign_key(row['identity'])]['chains']

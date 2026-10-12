@@ -53,6 +53,48 @@ def test_hidden_budget_shortening_is_rejected(acceptance_request, field, value):
         acceptance.validate_request(profile, options)
 
 
+def test_functional_recipe_is_explicit_and_keeps_task_window_and_retry_limits(acceptance_request, tmp_path):
+    profile, options = acceptance_request
+    profile["hardware_acceptance"]["mode"] = "functional"
+    profile["native_producers"]["repetitions"] = 1
+    with pytest.raises(ValueError, match="one explicitly assigned runtime"):
+        acceptance.validate_request(profile, options)
+    profile["hardware_acceptance"]["cells"][0]["runtime_variants"] = ["generic_completed"]
+    config = acceptance.validate_request(profile, options)
+    context = {"budget_file": str(tmp_path / "functional_budget.json"),
+        "source_ids": {"orin_nx_hailo8_01": "192.0.2.20"}, "environment": {}}
+    acceptance._initialize_budget(context, config, acceptance._bound_cell(config["cells"][0], "generic_completed"), "generic_completed")
+    task = next(iter(json.loads(Path(context["budget_file"]).read_text())["tasks"].values()))
+    assert task["limits"] == {"max_chains": 3, "max_retries": 2, "max_transport_failures": 20}
+    assert not task["chains"]
+    assert any("keine neuen wissenschaftlichen" in line for line in acceptance.summary_lines(profile))
+    for field, value in [("frames", 1), ("warmup", 0), ("repetitions", 3)]:
+        changed = copy.deepcopy(profile)
+        changed["native_producers"][field] = value
+        with pytest.raises(ValueError, match="regular"):
+            acceptance.validate_request(changed, options)
+
+
+def test_functional_pass_requires_oracle_import_and_no_scientific_claim(tmp_path):
+    proof = tmp_path / "fresh.json"
+    proof.write_text("{}")
+    context = {"run_dir": str(tmp_path), "expected_repetitions": 1, "acceptance_mode": "functional"}
+    result = {"status": "completed", "fresh_hardware_executed": True, "new_capture_count": 1,
+        "valid_repeats": {"performance": 1, "energy": 1}, "evidence_paths": [str(proof)],
+        "acceptance_mode": "functional", "evaluation_role": "functional_acceptance",
+        "functional_acceptance": True, "diagnostic_only": True,
+        "scientific_cohort_complete": False, "scientific_claim_eligible": False,
+        "scientific_statistics_published": False, "output_validation": {"status": "passed"},
+        "import_projection": {"normal_report_verified": True}}
+    assert acceptance._accepted_result(result, context)["status"] == "ok"
+    for field, value in [("scientific_claim_eligible", True), ("scientific_statistics_published", True),
+                         ("output_validation", {"status": "failed"}),
+                         ("import_projection", {"normal_report_verified": False})]:
+        changed = {**result, field: value}
+        with pytest.raises(ValueError, match="functional PASS"):
+            acceptance._accepted_result(changed, context)
+
+
 @pytest.mark.parametrize("field,value", [("resume", True), ("dry_run", True), ("skip_benchmarks", True),
     ("no_remote", True), ("stop_after", "prepare_model"), ("force_stage", ["run_native_producers"])])
 def test_shortcut_cannot_replace_fresh_hardware(acceptance_request, field, value):
@@ -180,7 +222,8 @@ def test_independent_variant_runs_when_one_source_is_blocked(acceptance_request,
     assert len(events) == 4
 
 
-def test_normal_runner_lifecycle_uses_acceptance_without_legacy_quality_or_sweep(acceptance_request, tmp_path, monkeypatch):
+@pytest.mark.parametrize("functional", [False, True])
+def test_normal_runner_lifecycle_uses_acceptance_without_legacy_quality_or_sweep(acceptance_request, tmp_path, monkeypatch, functional):
     """Exercise run locks, profile copying, cleanup and sealing with fake DUTs."""
     import yaml
     from onnx_splitpoint_tool.workflow.runner import EvaluationWorkflowRunner
@@ -192,11 +235,17 @@ def test_normal_runner_lifecycle_uses_acceptance_without_legacy_quality_or_sweep
     profile["model_suite"]["primary"] = [row for row in profile["model_suite"]["primary"] if row["id"] == "resnet50"]
     profile["model_suite"]["reserve"] = []
     profile["native_producers"] = copy.deepcopy(minimal["native_producers"])
+    repetitions = 1 if functional else 3
+    if functional:
+        profile["hardware_acceptance"]["mode"] = "functional"
+        profile["hardware_acceptance"]["cells"][0]["runtime_variants"] = ["generic_completed"]
+        profile["native_producers"]["repetitions"] = repetitions
     profile["native_producers"].update(enabled=True, backends=["hailo8"])
     profile["hardware"] = minimal["hardware"]
     mode = default_run_modes_config()["modes"]["standard"]
     profile["execution_preset"] = {"id": "standard", "follow_tool_config": False, "snapshot": mode,
-                                    "overrides": {"native_enabled": True, "energy_enabled": True}}
+                                    "overrides": {"native_enabled": True, "energy_enabled": True,
+                                        "native_performance": {"frames": 1000, "warmup": 100, "repetitions": repetitions}}}
     profile["workflow"] = {"execution_mode": "generate_and_run", "skip_runtime_benchmarks": False}
     path = tmp_path / "profile.yaml"
     path.write_text(yaml.safe_dump(profile, sort_keys=False))
@@ -211,12 +260,20 @@ def test_normal_runner_lifecycle_uses_acceptance_without_legacy_quality_or_sweep
     monkeypatch.setattr(acceptance, "_resource_context", resources)
     def adapter(variant):
         def prepare(cell, context):
+            assert context["expected_repetitions"] == repetitions
+            assert context["requested_repetitions"] == repetitions
+            assert context["acceptance_mode"] == ("functional" if functional else "scientific")
             return {"identity": cell}
         def execute(prepared, context):
             proof = Path(context["run_dir"]) / "reports" / (variant + "_fixture.json")
             proof.write_text("{}")
-            return {"status": "completed", "fresh_hardware_executed": True, "new_capture_count": 3,
-                    "valid_repeats": {"performance": 3, "energy": 3}, "evidence_paths": [str(proof)]}
+            return {"status": "completed", "fresh_hardware_executed": True, "new_capture_count": repetitions,
+                    "valid_repeats": {"performance": repetitions, "energy": repetitions}, "evidence_paths": [str(proof)],
+                    "acceptance_mode": "functional" if functional else "scientific",
+                    "evaluation_role": "functional_acceptance", "functional_acceptance": functional,
+                    "diagnostic_only": functional, "scientific_cohort_complete": False,
+                    "scientific_claim_eligible": False, "scientific_statistics_published": False,
+                    "output_validation": {"status": "passed"}, "import_projection": {"normal_report_verified": True}}
         return prepare, execute
     monkeypatch.setattr(acceptance, "_adapter", adapter)
     def legacy_forbidden(*args, **kwargs):
@@ -229,5 +286,5 @@ def test_normal_runner_lifecycle_uses_acceptance_without_legacy_quality_or_sweep
     closure = json.loads((root / "reports/artifact_index_closure.json").read_text())
     assert closure["status"] == "pass"
     manifest = json.loads((root / "run_manifest.json").read_text())
-    assert manifest["hardware_acceptance"]["runtime_path_count"] == 2
+    assert manifest["hardware_acceptance"]["runtime_path_count"] == (1 if functional else 2)
     assert manifest["workflow_stages"] == ["hardware_acceptance"]

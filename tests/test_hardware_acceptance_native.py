@@ -700,3 +700,26 @@ def test_native_adapter_forwards_hash_bound_normal_admission_and_preserves_curre
     # Admission may still inspect other already accepted slots without replay.
     proof = module._native_phase_debt(prepared, f["current"], prepared["phase_matrix"], f["continuation"])
     assert proof["prior_and_current_chains"] == {"repeat:0": 2, "repeat:1": 1, "repeat:2": 1}
+
+
+@pytest.mark.parametrize("context", [{"acceptance_mode": "functional"}, {"profile": {"hardware_acceptance": {"mode": "functional"}}}])
+def test_fresh_native_functional_prepare_blocks_before_artifact_or_hardware_work(tmp_path, context):
+    from onnx_splitpoint_tool.workflow.hardware_acceptance_native import prepare_native
+    with pytest.raises(ValueError, match="Fresh Native functional dispatch is unsupported"):
+        prepare_native({}, {**context, "run_dir": str(tmp_path)})
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("prepared_mode,context_mode", [(True, False), (False, True)])
+def test_fresh_native_functional_run_blocks_before_production_start(tmp_path, monkeypatch, prepared_mode, context_mode):
+    from onnx_splitpoint_tool.workflow import hardware_acceptance_native as module
+    def forbidden(*args, **kwargs):
+        raise AssertionError("unsupported functional Native cannot start transport")
+    monkeypatch.setattr(module, "_transport", forbidden)
+    prepared = {"identity": IDENTITY, "output": str(tmp_path)}
+    context = {"execute_allowed": True}
+    if prepared_mode: prepared["acceptance_mode"] = "functional"
+    if context_mode: context["acceptance_mode"] = "functional"
+    with pytest.raises(ValueError, match="Fresh Native functional dispatch is unsupported"):
+        module.run_native(prepared, context)
+    assert not list(tmp_path.iterdir())

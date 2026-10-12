@@ -285,6 +285,7 @@
       "properties": {
         "enabled": {"type": "boolean"},
         "schema": {"const": "onnx-splitpoint/hardware-acceptance/v1"},
+        "mode": {"enum": ["scientific", "functional"]},
         "source_report_root": {"type": "string", "minLength": 1},
         "source_primary_run": {"type": "string", "minLength": 1},
         "hardware_registry_path": {"type": "string", "minLength": 1},
