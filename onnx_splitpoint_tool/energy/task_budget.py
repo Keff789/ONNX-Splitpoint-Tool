@@ -1002,9 +1002,9 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
                 # next grant; the raw source and previous grant remain history.
                 historical = copy.deepcopy(root)
                 historical["sources"][source_id]["stop_reason"] = continuous["original_source_stop_reason"]
-                _source_reentry(historical, source_id, {})
+                validated = _source_reentry(historical, source_id, {})
             else:
-                _source_reentry(root, source_id, {})
+                validated = _source_reentry(root, source_id, {})
             _reentry_require(authorized_limits is None, "continuous recovery cannot change limits")
             if continuous.get("capture_request") == request:
                 _reentry_require(continuous.get("recovery_reply") == reply
@@ -1068,7 +1068,9 @@ def install_authorized_source_reentry(budget_path, *, capture_request, recovery_
                           if (not c.get("finished") or (c.get("collector_started") and c.get("source_completion_verified") is not True))
                           and not any(c == old["chain"] for old in _reentry_history(continuous))]
             _reentry_require(unresolved == [chain], "another unresolved continuous source chain exists")
-            _reentry_require(state.get("transport_failures", 0) < root["max_transport_failures"]
+            source_failure_limit = (validated.get("sample_loss_retries") or {}).get(
+                "effective_source_failure_limit", root["max_transport_failures"])
+            _reentry_require(state.get("transport_failures", 0) < source_failure_limit
                              and len(task["chains"]) < task["limits"]["max_chains"]
                              and task["limits"]["max_transport_failures"] == root["max_transport_failures"],
                              "existing continuous budget exhausted or inconsistent")
