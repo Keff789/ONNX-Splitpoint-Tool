@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.94.0",
   "workflow_version": "v2.94.0",
-  "file_count": 2229,
+  "file_count": 2230,
   "files": [
     {
       "path": ".gitignore",
@@ -3021,8 +3021,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_completed_task.py",
-      "size": 93745,
-      "sha256": "203f3387625676b56ad3707401da676b657bb8e7a4a595e42b482ebb4d1aef85"
+      "size": 93852,
+      "sha256": "96f5b8e0d1607d07de1389813486b5912d5cc5da31b497e9ef715900689e08dd"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_energy_parent.py",
@@ -3056,8 +3056,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/hardware_acceptance_generic.py",
-      "size": 23395,
-      "sha256": "d8d207822da6a55f390ee7229ba8db9e3f8b36b968c003b206085be5c7125799"
+      "size": 49217,
+      "sha256": "2ae9841073ecfb83f5559d4c0f961ec129bf06cd7712d5f3ceb590b1fbe3cf43"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/hardware_acceptance_native.py",
@@ -7153,6 +7153,11 @@
       "path": "tests/test_hardware_acceptance_generic.py",
       "size": 18806,
       "sha256": "84186e815ecc463ab68daabf1d67a2b007f43e71c574fef8f427bcb8cc0eda5e"
+    },
+    {
+      "path": "tests/test_hardware_acceptance_generic_reuse.py",
+      "size": 23849,
+      "sha256": "65d6d7dcf5ba7acef188593a8e65bef58f4b7151e5ce46e76faf55455c46b866"
     },
     {
       "path": "tests/test_hardware_acceptance_native.py",
