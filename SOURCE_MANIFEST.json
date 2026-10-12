@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.94.0",
   "workflow_version": "v2.94.0",
-  "file_count": 2232,
+  "file_count": 2233,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 309894,
-      "sha256": "050f5c9e87fe14aa05ea4f5f68b31860ef33e67527b48e592c6c258496160381"
+      "size": 310646,
+      "sha256": "cb40f46355479da853f8d978f706ca862c3000e95993973b1b939af9494e5cc1"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -3021,8 +3021,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_completed_task.py",
-      "size": 95724,
-      "sha256": "68b8851c41c65ec09cacb107e2aafa9de041654189119160205d5a2b31532004"
+      "size": 99272,
+      "sha256": "3c27a6fcca386e0faed46b224f843cfd29c2e542317862d21a989dfeab098b90"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_energy_parent.py",
@@ -7143,6 +7143,11 @@
       "path": "tests/test_generic_native_selection_rules.py",
       "size": 23797,
       "sha256": "ed0970bd5ca44e863a4cf138597c4311ff331639f5ec321331f868c4fdf5e3b4"
+    },
+    {
+      "path": "tests/test_generic_prepared_input_domain.py",
+      "size": 8054,
+      "sha256": "151a7dc641a7b42e18acece206c141a8ff3475388e57a08e36eebf20259a0235"
     },
     {
       "path": "tests/test_hailo10_yolo26_full_semantic_fixture.py",
