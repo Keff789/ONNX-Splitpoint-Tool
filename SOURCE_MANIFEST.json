@@ -5246,8 +5246,8 @@
     },
     {
       "path": "scripts/update_source_release.sh",
-      "size": 62931,
-      "sha256": "22585d8498109e7c24575aae59bde21d3d9eac7ad08d9708ac38d65d93f773e5"
+      "size": 62961,
+      "sha256": "07073ce4e3b007f3c6a7ffa95636ae7927072925976114fe03595e936892b55e"
     },
     {
       "path": "scripts/v2803_fix2_revision.json",
