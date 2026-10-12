@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 304896,
-      "sha256": "4df29c95b55f8b5c7cfd3c47556eec9674091b075b043320c217ba723929efd1"
+      "size": 305729,
+      "sha256": "6b2afc889b0ac87b871c801bd11bf117d8475f7ce6b57814c389cf1dc255e7b6"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -496,8 +496,8 @@
     },
     {
       "path": "docs/RELEASE_2.94.0.md",
-      "size": 2216,
-      "sha256": "7dd5fbba1dbdc7de6aebe9dabbcf937a299464ac8cb7b7e26138de1ac55a15d3"
+      "size": 2510,
+      "sha256": "6d5a3fba2c1d36b831b2b328d9881901ef43d388495dd36a38b413d49db30d22"
     },
     {
       "path": "docs/RELEASE_SCOPE_V2802.md",
@@ -3061,8 +3061,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/hardware_acceptance_native.py",
-      "size": 41809,
-      "sha256": "33763d03beb149b4497533c5d24f88597f9d966feeb39cb008824da7720cae01"
+      "size": 47004,
+      "sha256": "52c77094aa8860b58b8977d61d8be04d01b2af3b30f12eec8b4abfa2786afded"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/hardware_matrix.py",
@@ -7151,8 +7151,8 @@
     },
     {
       "path": "tests/test_hardware_acceptance_native.py",
-      "size": 6225,
-      "sha256": "c25aeb1a6f34d29bb2cb1914515388f6a3ad790463ba66ba8d1d6adc56b246d9"
+      "size": 13551,
+      "sha256": "5b0767c66c7ad9b1230f8bac51ccd0f91c4f28424f5714ba684a0618709d7e69"
     },
     {
       "path": "tests/test_holdout_audit_freeze_contract_v61e.py",
