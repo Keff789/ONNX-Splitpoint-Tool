@@ -1,6 +1,6 @@
-# ONNX Splitpoint Tool v2.93.0
+# ONNX Splitpoint Tool v2.94.0
 
-Aktueller Build: `v2.93.0`. Reguläre GUI-/CLI-Konfigurationsauflösung, begrenzte Energie-Fortsetzung und paketierte Ergebnisimporte. Gespeicherte Null-Warmups bleiben erhalten; Originalmessungen und wissenschaftliche Entscheidungen behalten ihre ursprünglichen Belege. [Release 2.93.0](docs/RELEASE_2.93.0.md), [Arbeitsstand](docs/ARBEITSSTAND.md), [Versionsregeln](docs/VERSIONING.md).
+Aktueller Build: `v2.94.0`. Begrenzte neue Hardware-Abnahmeläufe aus gespeicherten Profilen über den regulären GUI-/CLI-Controller: ein ausgewählter Split je Netz/Setup, Native und Generic Completed, bestehende Artefakte und getrennt ausgewiesene Full-Referenzen. [Release 2.94.0](docs/RELEASE_2.94.0.md), [Arbeitsstand](docs/ARBEITSSTAND.md), [Versionsregeln](docs/VERSIONING.md).
 
 # ONNX Splitpoint Tool v2.92.0
 

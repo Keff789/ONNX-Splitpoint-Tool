@@ -1637,6 +1637,7 @@ def apply_run_mode(
             "model_suite",
             "run_profiles",
             "measurement_campaign",
+            "hardware_acceptance",
             "workflow_execution",
             "execution_guard",
             # Artifact-cache acceptance is orthogonal to run effort.  A

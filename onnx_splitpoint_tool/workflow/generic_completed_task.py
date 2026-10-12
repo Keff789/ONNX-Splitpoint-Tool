@@ -1289,7 +1289,8 @@ def prepare_energy_resume(plan_path: Path, case: dict, *, output: Path,
     return resumed
 
 
-def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport, *, performance_admission=None) -> dict:
+def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport, *, performance_admission=None,
+                    process_registry=None, cancel_event=None) -> dict:
     """Run prepared ordinary collector commands under the caller's ownership.
 
     This is the same transport/process/collector stack as normal measurements.
@@ -1326,14 +1327,18 @@ def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport, *, per
             raise ValueError('Generic resumed source differs from actual retained command')
         import_generic_energy_capture(descriptor, config, expected_setup_id=case['setup_id'], expected_campaign=plan)
     reused = {d['repetition_index'] for d in descriptors}
+    if cancel_event is not None and cancel_event.is_set():
+        raise RuntimeError('Generic energy cancelled before capture dispatch')
     check_energy_campaign(plan, allow_completed_repeats=bool(descriptors))
     if len(reused) < 3:stage_energy_case(plan, transport)
-    registry = ProcessTreeRegistry()
+    registry = process_registry if process_registry is not None else ProcessTreeRegistry()
     sample_loss_retry = None
     try:
         for call in plan['calls']:
             index = call['repetition_index']; argv = call['argv']
             if index in reused:continue
+            if (cancel_event is not None and cancel_event.is_set()) or registry.cancelled:
+                raise RuntimeError('Generic energy cancelled before next capture')
             if canonical_hash(argv) != call['command_sha256']:
                 raise ValueError('Generic energy command changed')
             expected_budget = {'--campaign-budget-file': plan['campaign_budget_file'],
@@ -1358,7 +1363,8 @@ def run_energy_case(plan_path: Path, case: dict, transport: SSHTransport, *, per
                 try:
                     result = run_streaming(argv, cwd=Path(plan['collector_script']).parent.parent,
                         env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}, timeout=900,
-                        label=f'generic-completed-energy-{index}', line_callback=line, process_registry=registry)
+                        label=f'generic-completed-energy-{index}', line_callback=line, process_registry=registry,
+                        cancel_event=cancel_event, should_cancel=lambda: registry.cancelled)
                     receipt['returncode'] = result.returncode
                 finally:
                     receipt['finished_ns'] = time.time_ns()

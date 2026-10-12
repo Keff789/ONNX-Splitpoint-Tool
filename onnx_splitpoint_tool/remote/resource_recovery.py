@@ -297,6 +297,101 @@ def _interrupted_generic_capture(run, parent_attempt, request, reply, evidence):
             "source_completion_verified": False, "source_completion": json.loads(json.dumps(completion)),
             "capture_directory": str(capture), "evidence_sha256": hashes}
 
+
+def _interrupted_native_capture(run, parent_attempt, request, reply, evidence):
+    """Bind the Native owner's cancelled acquire without inventing old cleanup."""
+    import hashlib, json
+    from ..energy.recovery_accounting import verify_original_chain_scope
+    from ..energy.task_budget import source_completion
+    read = RemoteProcessLeaseJournal._read_json_exact
+    parent = evidence.get(run / "energy_parent_plan.json")
+    _require(parent is not None and request.get("phase") == "ACQUIRING"
+             and request.get("sequence") == 2 and request.get("process_started") is None
+             and reply.get("state") == "STOP"
+             and reply.get("reason") == "controller_resource_owner_lost",
+             "not the exact interrupted Native acquire stage")
+    start = evidence[parent_attempt / "production-start.json"]
+    argv = start.get("argv")
+    _require(isinstance(argv, list) and all(isinstance(arg, str) for arg in argv),
+             "Native original worker argv missing")
+
+    def option(name):
+        indices = [i for i, arg in enumerate(argv) if arg == name or arg.startswith(name + "=")]
+        _require(len(indices) == 1, "Native original option must be unique: " + name)
+        index = indices[0]
+        if argv[index].startswith(name + "="):
+            return argv[index].split("=", 1)[1]
+        _require(index + 1 < len(argv) and not argv[index + 1].startswith("--"),
+                 "Native original option missing: " + name)
+        return argv[index + 1]
+
+    expected_output = run / "measurement"
+    if parent_attempt != run:
+        _require(parent_attempt.parent == run / "resume_attempts"
+                 and re.fullmatch(r"[0-9a-f]{32}", parent_attempt.name),
+                 "invalid interrupted Native parent attempt layout")
+        expected_output = expected_output / "resume_attempts" / parent_attempt.name
+    budget_path = Path(str(parent.get("campaign_budget_file") or ""))
+    _require(option("--out-dir") == str(expected_output)
+             and option("--summary") == parent.get("summary")
+             and option("--campaign-budget-file") == str(budget_path)
+             and budget_path.is_absolute() and budget_path.is_file() and not budget_path.is_symlink(),
+             "interrupted Native worker differs from its prepared parent")
+    capture = Path(str(request.get("attempt_dir") or ""))
+    _require(capture.is_absolute() and capture.is_dir() and not capture.is_symlink()
+             and capture.resolve() == capture and re.fullmatch(r"run_[0-9]{3}", capture.name)
+             and capture.is_relative_to(expected_output / "measurements"),
+             "interrupted Native capture differs from its normal measurement root")
+    budget = read(budget_path)
+    matches = [(key, task, chain) for key, task in budget.get("tasks", {}).items()
+               for chain in task.get("chains", []) if chain.get("run_directory") == str(capture)]
+    _require(len(matches) == 1, "interrupted Native capture has no unique original chain")
+    key, task, chain = matches[0]
+    identity = json.loads(key)
+    _require(identity in parent.get("capture_identities", [])
+             and len(identity) == 4 and identity[3] == request.get("setup_id")
+             and _bound(chain, request, ("owner_pid", "owner_start_ticks"))
+             and chain.get("collector_started") is True and chain.get("valid") is not True
+             and chain.get("source_completion_verified") is not True
+             and task.get("source_id") == str(((parent.get("targets") or {}).get(identity[3], {})
+                                                .get("energy") or {}).get("urecs_address") or "").strip().lower(),
+             "interrupted Native task or ownership differs from its prepared parent")
+    scope_paths = verify_original_chain_scope(run=run, capture=capture, campaign_row=key, read=read)
+    summary_path, stdout_path = capture / "energy_summary.json", capture / "collector_stdout.log"
+    paths = [*scope_paths, summary_path, stdout_path, capture / "collector_stderr.log"]
+    _require(all(path.is_file() and not path.is_symlink() for path in paths),
+             "original interrupted Native collector evidence missing")
+    summary = read(summary_path)
+    collector = summary.get("collector_cmd")
+    _require(summary.get("collector_started") is True
+             and summary.get("collector_pid") == request.get("collector_pid")
+             and summary.get("status") == "collector_running"
+             and isinstance(collector, list)
+             and collector.count("-c=" + str(capture / "energy_command.sh")) == 1
+             and collector.count("--address=" + task["source_id"]) == 1,
+             "interrupted Native physical collector/start binding differs")
+    text = stdout_path.read_text(encoding="utf-8", errors="replace")
+    completion = source_completion(capture)
+    _require(not completion["verified"] and len(completion["go"]) == 1
+             and len(completion["source_close"]) == 1 and completion["source_close"][0][2] == "false"
+             and completion["go"][0][1] == completion["source_close"][0][1]
+             and "Fast Firmware first packet monotonic_ns=" in text
+             and "Running command: " + str(capture / "energy_command.sh") in text
+             and "Writer Flushed" in text,
+             "Native physical start/workload/local collector shutdown is not durable")
+    hashes = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in (*evidence, *paths)}
+    return {"collector_started": True, "workload_started": True,
+            "source_completion_verified": False, "source_completion": json.loads(json.dumps(completion)),
+            "capture_directory": str(capture), "measurement_root": str(expected_output / "measurements"),
+            "campaign_row": key, "evidence_sha256": hashes}
+
+
+def _interrupted_bounded_capture(run, parent_attempt, request, reply, evidence):
+    proof = (_interrupted_generic_capture if run / "parent_plan.json" in evidence
+             else _interrupted_native_capture)
+    return proof(run, parent_attempt, request, reply, evidence)
+
+
 def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
                               operator_evidence=None, retry_authorization=None, registry_path=None,
                               rest_attempt_dir=None, bounded_energy_attempt_dir=None):
@@ -337,10 +432,10 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
              and config.get("run_dir") == str(run), "controller session binding mismatch")
     if rest_evidence:
         _require(config.get("parent_pid") == rest_start["pid"], "rest parent PID binding mismatch")
-    interrupted = bool(rest_evidence.get(run / "parent_plan.json") is not None
+    interrupted = bool(bounded_energy_attempt_dir is not None
                        and request.get("phase") == "ACQUIRING"
                        and reply.get("reason") == "controller_resource_owner_lost")
-    interrupted_proof = (_interrupted_generic_capture(run, Path(bounded_energy_attempt_dir).resolve(),
+    interrupted_proof = (_interrupted_bounded_capture(run, Path(bounded_energy_attempt_dir).resolve(),
                          request, reply, rest_evidence) if interrupted else None)
     _require(_bound(request, identity, identity) and request.get("setup_id") == setup_id
              and request.get("purpose", "capture") == "capture"
@@ -402,6 +497,9 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
         _require(not previous_recovery or (
             _bound(previous_recovery, identity, identity)
             and previous_recovery.get("resources") == resources), "foreign recovery metadata")
+        if interrupted and previous_recovery:
+            _require(previous_recovery.get("interrupted_capture") == interrupted_proof,
+                     "recorded interrupted evidence changed")
         for resource, lease in leases:
             owner = lease.previous_owner
             _require(bool(owner), "resource owner unreadable")
@@ -496,7 +594,7 @@ def recover_capture_resources(*, run_dir, session_id, operation_id, setup_id,
                  and _rest_evidence_unchanged(rest_evidence),
                  "registry or ownership changed during observation")
         if interrupted:
-            _require(_interrupted_generic_capture(run, Path(bounded_energy_attempt_dir).resolve(),
+            _require(_interrupted_bounded_capture(run, Path(bounded_energy_attempt_dir).resolve(),
                      request, reply, rest_evidence) == interrupted_proof, "interrupted original capture changed")
         recovery = {**identity, "resources": resources, evidence_key: evidence,
                     "original_resources": originals, "ownership_observation": observed,

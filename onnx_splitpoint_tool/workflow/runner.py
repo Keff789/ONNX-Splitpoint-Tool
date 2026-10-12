@@ -12013,6 +12013,9 @@ class EvaluationWorkflowRunner:
             )
         self._emit_log(f"[workflow] loading profile {self.options.profile}")
         self._load_profile()
+        from .hardware_acceptance import enabled as hardware_acceptance_enabled, validate_request as validate_hardware_acceptance
+        if hardware_acceptance_enabled(self.profile_payload):
+            validate_hardware_acceptance(self.profile_payload, self.options)
         self._validate_requested_start_contract()
         self._materialize_window_method_probe_profile()
         self._open_run_dir()
@@ -12314,6 +12317,10 @@ class EvaluationWorkflowRunner:
         self._init_manifest_and_index()
         self._commit_missing_full_quality_reuse_attestation()
         self._copy_profile()
+
+        from .hardware_acceptance import enabled as hardware_acceptance_enabled, run_acceptance
+        if hardware_acceptance_enabled(self.profile_payload):
+            return run_acceptance(self)
 
         rows = self._resolve_model_rows()
         if self.options.max_models is not None:

@@ -7144,6 +7144,16 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
                 lines.append(f"  - {key}: {counts[key]}")
         else:
             lines.append("  - no stage results recorded")
+        acceptance = (payload.get("evidence_status") or {}).get("hardware_acceptance") or {}
+        if acceptance:
+            lines.extend(["", "Hardware acceptance:",
+                          f"Fixed cells: {acceptance.get('matrix_cells')} · runtime paths: {acceptance.get('runtime_paths')}",
+                          f"Fresh completed paths: {acceptance.get('fresh_pass_paths')} · actual new collector starts: {acceptance.get('new_capture_count')}"])
+            for row in acceptance.get("rows", []):
+                lines.append(f"  {row.get('model_id')} | {row.get('setup_id')} | {row.get('case_id')} | {row.get('runtime_variant')}: {row.get('status')} · repeats={row.get('valid_repeats', 'unavailable')}")
+                if row.get("reason"):
+                    lines.append("    " + str(row["reason"]))
+            lines.append("Existing Full/quality references retain their original exclusions. The source campaign remains paused.")
         energy_messages = _evaluation_energy_not_started_messages(payload)
         if energy_messages:
             lines.extend(["", "Energy:"])

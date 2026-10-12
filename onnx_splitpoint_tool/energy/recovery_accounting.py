@@ -15,7 +15,7 @@ from .task_budget import _finished_chain, _reentry_require, source_completion
 
 def reconcile_stopped_capture(budget_path, *, parent_attempt, operation_id, run_dir=None):
     from ..process_control import _proc_start_time
-    from ..remote.resource_recovery import (_bounded_energy_journal, _interrupted_generic_capture,
+    from ..remote.resource_recovery import (_bounded_energy_journal, _interrupted_bounded_capture,
                                              _bounded_generic_capture)
     from ..remote.process_lease import RemoteProcessLeaseJournal
     from .collector import _read_workload_timing
@@ -36,9 +36,9 @@ def reconcile_stopped_capture(budget_path, *, parent_attempt, operation_id, run_
     reply_path = journal / (operation_id + ".resource-reply.json")
     cfg_path = journal / "controller.resources.json"
     request, reply, cfg = map(read, (request_path, reply_path, cfg_path))
-    interrupted = bool(run / "parent_plan.json" in terminal and request.get("phase") == "ACQUIRING"
+    interrupted = bool(request.get("phase") == "ACQUIRING"
                        and reply.get("reason") == "controller_resource_owner_lost")
-    physical = (_interrupted_generic_capture(run, attempt, request, reply, terminal) if interrupted else None)
+    physical = (_interrupted_bounded_capture(run, attempt, request, reply, terminal) if interrupted else None)
     _reentry_require(request.get("run_id") == run.name and request.get("session_id") == start["session_id"]
                      and request.get("operation_id") == operation_id
                      and all(reply.get(k) == request.get(k) for k in ("run_id", "session_id", "operation_id", "token"))
@@ -55,8 +55,10 @@ def reconcile_stopped_capture(budget_path, *, parent_attempt, operation_id, run_
         _reentry_require(type(pid) is int and pid > 0 and str(ticks or "").isdigit()
                          and _proc_start_time(pid) != ticks, "capture owner still active or unbound")
     capture = Path(str(request.get("attempt_dir") or ""))
+    capture_root = (Path(physical["measurement_root"]) if interrupted
+                    and run / "energy_parent_plan.json" in terminal else attempt.resolve())
     _reentry_require(capture.is_absolute() and capture.is_dir() and not capture.is_symlink()
-                     and capture.resolve().is_relative_to(attempt.resolve()), "capture outside parent attempt")
+                     and capture.resolve().is_relative_to(capture_root), "capture outside bound parent measurement")
     paths = [*terminal, request_path, cfg_path, capture / "energy_summary.json",
              capture / "collector_stdout.log", capture / "collector_stderr.log"]
     timing = capture / "workload_timing.txt"

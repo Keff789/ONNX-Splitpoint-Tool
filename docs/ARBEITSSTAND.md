@@ -2596,3 +2596,33 @@ Native-/Generic-Originaldatenimporte und die gezielte Generic-Current-/CSV-Proje
 Originaldaten-Reprocessing: sechs gespeicherte Parents, 23 Punkte auf H8/H10/DeepX, exakt gleiche Ergebnis-/Entscheidungsfelder. 236 originale JSON-Quellen sowie Queue, Budget und Vergleichsmatrix bleiben unverändert. Das ist ein Reader-/Produktnachweis mit vorhandenen Hardwaredaten, keine neue physische GUI-/Collectorabnahme. Private vollständige Fairness-Neuauswertung bleibt ein eigener Berichtsvorgang.
 
 Gezielte lokale Tests, Installations-/Archivprüfung, regulärer GUI-Start und tatsächlicher Remotecommit werden im bestehenden Operationsbereich unter `tool_acceptance_push_20261012` belegt. Automatisierte Controller-/Signalprüfung und echte Tk-Start-/Editorprüfung werden getrennt von physischer Ausführung ausgewiesen.
+
+
+### 2026-10-12: endliche neue Hardwareabnahme je Netz und Setup
+
+Die explizite Zusatzbeauftragung begrenzt die Abnahme auf 21 Netz/Setup-Zellen
+und je eine vorab ausgewählte unterstützte Splitposition. Native und Generic
+Completed erhalten getrennte frische Performance- und Energiebelege; eine
+vollständige Splitkampagne und die Revision-3-Restqueue bleiben pausiert.
+Die Matrix, Auswahlregel, normalen 100/1000/3-Performancewerte, das vorhandene
+60-s-/3-Repeat-FS-command-Energieverfahren und normale Retrygrenzen liegen vor
+dem ersten Hardwarestart im bestehenden Abnahmebereich. Fulls bleiben separat
+gebundene Referenzen; fehlende Energievergleiche und negative Qualität bleiben
+sichtbar. Es wird keine neue N5000-Auswertung gestartet.
+
+Die Produktprüfung zeigte fehlenden Generic-Completed-Dispatch im regulären
+GUI-Workflow und eine unzureichende Fallbegrenzung beim bestehenden Suiteimport.
+Der neue gespeicherte Abschnitt `hardware_acceptance` läuft deshalb über den
+regulären GUI-Startcontroller und denselben profilgesteuerten CLI. Er verbindet
+endliche Auswahl und Prepare mit den vorhandenen Runnern, normalen Sperren,
+Prozessleases, Collectors und Ergebnislesern in einem neuen EvaluationRun.
+Ein eigener endlicher Budgetstand zählt die neue Abnahme, während historische
+Messungen, Originalqueues und Originalbudgets erhalten bleiben.
+
+Die konkrete Native-ACQUIRING-Recovery erhält den unbewiesenen historischen
+Quellenabschluss und prüft aktuelle Ressourcen unter den normalen Sperren.
+140 fokussierte Recoveryprüfungen und 33 gezielte Release-/Installerprüfungen
+bestanden; die neue Controller-/Adapterabdeckung wird separat geprüft.
+Der reale Hardwareabschluss wird ausschließlich aus den anschließend tatsächlich
+ausgeführten GUI-Jobs und normalen Imports berichtet. Der veröffentlichte
+2.93.0-Softwareabschluss mit 377 Fällen ersetzt diese Hardwarebelege nicht.

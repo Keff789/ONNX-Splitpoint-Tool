@@ -1,6 +1,10 @@
 # Versioning policy
 
-## Current release: 2.93.0 — normal configuration and bounded energy integration
+## Current release: 2.94.0 — finite normal hardware acceptance
+
+Package/GUI: `2.94.0`; build/workflow: `v2.94.0`; development lineage: `v2.79`; build-contract version: `2`. This minor release connects finite fresh Native and Generic Completed hardware acceptance to the saved-profile GUI/CLI controller. Existing artifacts, runtime measurement budgets, output validation and scientific admission remain authoritative. Recovery supports an exactly bound interrupted Native capture without inventing historical source completion. See [RELEASE_2.94.0.md](RELEASE_2.94.0.md). The reserved confirmatory release remains `3.0.0`.
+
+## Historical release: 2.93.0 — normal configuration and bounded energy integration
 
 Package/GUI: `2.93.0`; build/workflow: `v2.93.0`; development lineage: `v2.79`; build-contract version: `2`. This minor release publishes the integrated normal energy-parent, retry/resume, result-reader and GUI/CLI configuration paths. See [RELEASE_2.93.0.md](RELEASE_2.93.0.md). Existing numerical and scientific rules are retained. Historical acquisitions keep their original versions and sources; the reserved confirmatory release remains `3.0.0`.
 

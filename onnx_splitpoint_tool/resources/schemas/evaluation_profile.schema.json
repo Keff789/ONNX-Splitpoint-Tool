@@ -278,6 +278,33 @@
         "$ref": "#/$defs/runProfile"
       }
     },
+    "hardware_acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "source_report_root", "source_primary_run", "cells"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "schema": {"const": "onnx-splitpoint/hardware-acceptance/v1"},
+        "source_report_root": {"type": "string", "minLength": 1},
+        "source_primary_run": {"type": "string", "minLength": 1},
+        "hardware_registry_path": {"type": "string", "minLength": 1},
+        "matrix_evidence": {"type": "string", "minLength": 1},
+        "cells": {
+          "type": "array", "minItems": 1, "maxItems": 21,
+          "items": {
+            "type": "object",
+            "required": ["model_id", "setup_id", "case_id", "runtime_variants"],
+            "properties": {
+              "model_id": {"type": "string", "minLength": 1},
+              "setup_id": {"type": "string", "minLength": 1},
+              "case_id": {"type": "string", "pattern": "^b[0-9]+$"},
+              "runtime_variants": {"type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true,
+                "items": {"enum": ["native", "generic_completed", "Native", "Generic Completed"]}}
+            }
+          }
+        }
+      }
+    },
     "quality_canary": {
       "type": "object",
       "additionalProperties": false,

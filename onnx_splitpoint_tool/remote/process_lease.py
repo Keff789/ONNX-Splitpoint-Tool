@@ -1970,6 +1970,8 @@ def process_lease_cli_main(argv: Optional[Sequence[str]] = None) -> int:
     recover.add_argument("--registry", default=None)
     recover.add_argument("--rest-attempt-dir", default=None,
                          help="existing explicit YOLO rest attempt with its bound journal and terminal evidence")
+    recover.add_argument("--bounded-energy-attempt-dir", default=None,
+                         help="existing terminal Native or Generic energy parent attempt; recovery starts no measurements")
     release_ground = recover.add_mutually_exclusive_group(required=True)
     release_ground.add_argument("--confirm-action-performed", action="store_true",
                                 help="attest that the described operator action actually occurred")
@@ -2009,6 +2011,8 @@ def process_lease_cli_main(argv: Optional[Sequence[str]] = None) -> int:
                 operation_id=arguments.operation_id, setup_id=arguments.setup_id,
                 registry_path=arguments.registry,
                 **({"rest_attempt_dir": arguments.rest_attempt_dir} if arguments.rest_attempt_dir else {}),
+                **({"bounded_energy_attempt_dir": arguments.bounded_energy_attempt_dir}
+                   if arguments.bounded_energy_attempt_dir else {}),
                 **evidence,
             )
             print(json.dumps(result, indent=2))
