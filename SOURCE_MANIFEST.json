@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.94.0",
   "workflow_version": "v2.94.0",
-  "file_count": 2227,
+  "file_count": 2229,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 305729,
-      "sha256": "6b2afc889b0ac87b871c801bd11bf117d8475f7ce6b57814c389cf1dc255e7b6"
+      "size": 307311,
+      "sha256": "48dd92e5a84146b3a9375d8e9f4b3be53e712f36c425a81e86f4bb1ea8705355"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -496,8 +496,8 @@
     },
     {
       "path": "docs/RELEASE_2.94.0.md",
-      "size": 2510,
-      "sha256": "6d5a3fba2c1d36b831b2b328d9881901ef43d388495dd36a38b413d49db30d22"
+      "size": 3313,
+      "sha256": "0c4e2548fd60eea472014f2176972aaf6ae75099bf0081cc610764c4ce3d0e48"
     },
     {
       "path": "docs/RELEASE_SCOPE_V2802.md",
@@ -876,8 +876,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/energy/collector.py",
-      "size": 323410,
-      "sha256": "098122cfea109b43f1b5233d0c2fb4babcb65da6d8b3569d3f2245b33256f35f"
+      "size": 323856,
+      "sha256": "72490089bdb7efa830fe73a1e92554e796ed1cfdd4841a79a53148638c7af02b"
     },
     {
       "path": "onnx_splitpoint_tool/energy/comparison.py",
@@ -916,8 +916,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/energy/task_budget.py",
-      "size": 123465,
-      "sha256": "1728559528593ec5ae5bba07000b4f9bf105844323a6ad66087d78b9a1506db2"
+      "size": 123998,
+      "sha256": "5b3ec63747a3abd69934ec94d13e2caecd1cade136d0da3be4a7a442fdeedd87"
     },
     {
       "path": "onnx_splitpoint_tool/execution_plan.py",
@@ -1311,8 +1311,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/native_energy_reporting.py",
-      "size": 189780,
-      "sha256": "2a8a7b2d22716742a7447dd23537c0ad3ee1ba710bc61666c392b46b40ad63a9"
+      "size": 190036,
+      "sha256": "98ed97ef4a76edb33f2e2c3b091742edc3301bd2705f102006e9796f634a6d70"
     },
     {
       "path": "onnx_splitpoint_tool/native_execution_contract.py",
@@ -1516,8 +1516,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/remote/resource_recovery.py",
-      "size": 41483,
-      "sha256": "3c60f755ea0325d354e51325c8e0cc43a11961d7f4152b31c3648cba5276e9bb"
+      "size": 48877,
+      "sha256": "2dbb82a7fcf40ce31f5750a8c7dd38430925005162236c640ab4fcc16aceb07d"
     },
     {
       "path": "onnx_splitpoint_tool/remote/resource_recovery_observation.py",
@@ -3061,8 +3061,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/hardware_acceptance_native.py",
-      "size": 47004,
-      "sha256": "52c77094aa8860b58b8977d61d8be04d01b2af3b30f12eec8b4abfa2786afded"
+      "size": 63433,
+      "sha256": "18b369de69d64668ae576fca7a8409256fbf0f191dc3d9c0ef7725f08d1a4e90"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/hardware_matrix.py",
@@ -7020,6 +7020,11 @@
       "sha256": "c28c94a4d5a6a03e6a661978bc88c6bfd6df57fc0f2975457b1ff816fd069cf3"
     },
     {
+      "path": "tests/test_diagnostic_energy_environment.py",
+      "size": 17026,
+      "sha256": "d982f0d833c95587995d934499e7ac8fccbd78f7e3165c09cc592833ed959072"
+    },
+    {
       "path": "tests/test_endpoint_alias_readiness_repairs.py",
       "size": 13655,
       "sha256": "7665847e2861e398f3c37cdab56d0e06f593c5aeddd2fa549163ae0ef82a11e2"
@@ -7151,8 +7156,8 @@
     },
     {
       "path": "tests/test_hardware_acceptance_native.py",
-      "size": 13551,
-      "sha256": "5b0767c66c7ad9b1230f8bac51ccd0f91c4f28424f5714ba684a0618709d7e69"
+      "size": 28230,
+      "sha256": "ca761a4e8cd4e52151255f7a58a8b87f4e07be9b6330d94b464b80b67539c5de"
     },
     {
       "path": "tests/test_holdout_audit_freeze_contract_v61e.py",
@@ -7213,6 +7218,11 @@
       "path": "tests/test_p03_native_energy_planner_invariant.py",
       "size": 62695,
       "sha256": "61890e4bf2edf4bfd52c7840f2b7e459edf3dffef83e5cceaf83ab4f6ea12cf6"
+    },
+    {
+      "path": "tests/test_partial_workflow_capture_recovery.py",
+      "size": 9021,
+      "sha256": "c3a9dbb5b165e0264f59ff31ec0799b0b5d04f7c52e3298fb0af2adc06e64d3a"
     },
     {
       "path": "tests/test_physical_resource_recovery.py",
@@ -7371,8 +7381,8 @@
     },
     {
       "path": "tests/test_rev3_native_environment_observer.py",
-      "size": 8923,
-      "sha256": "d4c478b5db72f630ec0e2160af2e139ad8551ed5044e075824a0990be757410e"
+      "size": 8950,
+      "sha256": "5d72835c25aa4d3b4935e45c1802821a77aa8be046e080e738dab2c29978977d"
     },
     {
       "path": "tests/test_rev3_native_repeat_operating_point.py",
