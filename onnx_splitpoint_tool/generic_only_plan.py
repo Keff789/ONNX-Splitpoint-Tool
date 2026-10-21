@@ -144,7 +144,9 @@ def validate_quality_reference(row):
             != reference["request"]["sha256"]):
         raise ValueError("Generic-only Quality request/result binding differs")
     cpu = result.get("management_cpu_reference") or {}
-    if (cpu.get("provider") != "onnxruntime_cpu" or cpu.get("status") != "completed"
+    # The normal management reference reader treats both as successful jobs.
+    # Cached references retain the same bound artifact and full checks below.
+    if (cpu.get("provider") != "onnxruntime_cpu" or cpu.get("status") not in {"completed", "cache_hit"}
             or cpu.get("reference_sha256") != reference["cpu_reference"]["sha256"]
             or cpu.get("semantic_reference_only") is not True):
         raise ValueError("Generic-only Quality lacks its actual canonical CPU reference")

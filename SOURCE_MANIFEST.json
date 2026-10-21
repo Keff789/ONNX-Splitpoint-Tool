@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2337,
+  "file_count": 2338,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 406528,
-      "sha256": "b54db72e91883f13454901e37d1d56413fa1990da17549af808c02a305bf7496"
+      "size": 407263,
+      "sha256": "ee71a0e7a07d2e25b00e4029b7511bebcbc93a3bc610bc9060a5c341858f9c35"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -996,8 +996,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/generic_only_plan.py",
-      "size": 28991,
-      "sha256": "74c4742e8cfc7a74a7111179edf55999e3de617a63d8814fbae8a58be3980065"
+      "size": 29165,
+      "sha256": "2ff97c788530ec637b0e0fcd56ed2320c7028d7886b269b0de686a7c64b49653"
     },
     {
       "path": "onnx_splitpoint_tool/generic_only_reporting.py",
@@ -7373,6 +7373,11 @@
       "path": "tests/test_generic_only_420_runtime.py",
       "size": 14063,
       "sha256": "c73b9f5fa62f3bffd83aab0275a380ce48703bc35cb339ff87e809afe85fe504"
+    },
+    {
+      "path": "tests/test_generic_only_cached_cpu_reference.py",
+      "size": 3598,
+      "sha256": "0dd5f61688b1a720b557b3f18ba1892bd1d31bad46cd4607712fdae474e070e5"
     },
     {
       "path": "tests/test_generic_only_cell_policy.py",
