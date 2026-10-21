@@ -191,7 +191,7 @@ def test_generated_main_uses_real_generic_deepx_input_and_output_adapters(tmp_pa
     from onnx_splitpoint_tool.runners.task_completion import valid_split_completion_repetitions
     from onnx_splitpoint_tool.runners import generic_async
 
-    module = _module(monkeypatch)
+    module = _module(monkeypatch, tmp_path / 'normal_runner_suite')
     monkeypatch.setitem(sys.modules, "splitpoint_runners.generic_async", generic_async)
     config, logits = _fixture(tmp_path)
     config["stage1_execution"] = {"policy": "deepx_async_slots_v1", "inflight": 4}
@@ -254,6 +254,8 @@ def test_generated_main_uses_real_generic_deepx_input_and_output_adapters(tmp_pa
     monkeypatch.setattr(sys, "argv", ["runner", "--generic-completion-config", str(path),
         "--out-dir", str(output), "--generic-completion-repetition", "1"])
     assert module.main() == 0
+    assert Path(sys.modules['splitpoint_runners.generic_passthrough'].__file__).resolve().is_relative_to(
+        tmp_path / 'normal_runner_suite')
     result = json.loads((output / "generic_completion_results.json").read_text())
     assert len(valid_split_completion_repetitions(result, config, result_root=output)) == 1
     assert result["repetitions"][0]["stage1_peak_uncollected_jobs"] == 4

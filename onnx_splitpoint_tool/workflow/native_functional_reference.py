@@ -221,6 +221,50 @@ def _recipe_environment(row):
     return env
 
 
+def _output_contract_source(row, raw):
+    """Bind the exact archived declaration already attested by this Native job."""
+    from ..native_output_endpoint import load_authoritative_output_contract
+    from ..resources.remote_scripts.native_producer_final_report import _resolve_split_semantic_manifest
+    manifest, evidence = _resolve_split_semantic_manifest(Path(row['native_source']), (raw,), kind='output')
+    require(manifest is not None and evidence.get('manifest_resolution_status') == 'manifest_verified',
+            'Functional output declaration requires the original sealed semantic output manifest')
+    recorded = read(manifest).get('authoritative_output_contract_resolution') or {}
+    require(recorded.get('authoritative_output_contract') is True
+            and recorded.get('contract_resolution_status') == 'attested',
+            'Historical Native output declaration was not authoritatively resolved')
+    # Follow the same original normal staging authority retained by the Native
+    # summary. A suite with a merely equivalent row cannot replace its exact
+    # historical container, even if other backend rows caused the difference.
+    if (row.get('native_measurement_boundary') or {}).get('process_repetition_policy') == 'separate_processes':
+        summary = Path(row['native_measurement_boundary']['source'])
+        summary_payload = read(summary)
+        staging_plan = checked({'path': summary_payload.get('plan'), 'sha256': summary_payload.get('plan_sha256')})
+        matches = [item for item in read(staging_plan).get('stage_files', [])
+                   if item.get('remote') == recorded.get('declaration_source')
+                   and item.get('sha256') == recorded.get('source_contracts_sha256')]
+        require(len(matches) == 1, 'Original normal staging plan does not bind the exact output declaration')
+        source = Path(matches[0]['local'])
+        origin = {'summary': bound(summary), 'staging_plan': bound(staging_plan)}
+    else:
+        captured = Path(row['native_source']).parent / 'benchmark_set' / 'output_contracts.json'
+        source = captured if captured.exists() or captured.is_symlink() else Path(row['original_local_case_dir']).parent / 'output_contracts.json'
+        origin = {'original_suite': str(source.parent.resolve())}
+    require(source.is_file() and not source.is_symlink(), 'Archived output declaration is missing or symlinked')
+    descriptor = bound(source)
+    checked(descriptor)
+    require(descriptor['sha256'] == recorded.get('source_contracts_sha256'),
+            'Archived output declaration differs from its original semantic manifest')
+    declaration = load_authoritative_output_contract(source, backend='tensorrt', model_id=row['model_id'],
+                                                     variant='full', task='detection')
+    fields = ('model_id', 'task', 'backend', 'variant', 'stage', 'source_contract_sha256', 'source_contracts_sha256')
+    require(declaration.get('authoritative_output_contract') is True
+            and declaration.get('contract_resolution_status') == 'attested'
+            and all(declaration.get(key) == recorded.get(key) for key in fields),
+            'Archived output declaration no longer resolves to the original model/endpoint authority')
+    return {'source': descriptor, 'semantic_output_manifest': bound(manifest), 'original_authority': origin,
+            'declaration': {key: declaration[key] for key in fields}}
+
+
 def _collected_path(remote_path, benchmark, local_root):
     remote_path, benchmark = PurePosixPath(remote_path), PurePosixPath(benchmark)
     require(remote_path.is_absolute() and benchmark.is_absolute() and '..' not in remote_path.parts
@@ -236,7 +280,7 @@ def validate_capture_plan(plan):
     """Rebuild the finite ordinary command before any staging or hardware work."""
     from .generic_completed_task import bound_targets
     from .hardware_acceptance_native import _benchmark_case_inputs
-    row, _, command = _historical(plan, plan['source_row'])
+    row, raw, command = _historical(plan, plan['source_row'])
     require(plan['schema'] == PLAN_SCHEMA and plan['identity'] == identity(row)
             and plan['purpose'] == 'functional_reference_only_not_scientific_native_performance', 'Wrong functional plan role')
     require(all(plan[key] is False for key in ('build_allowed', 'fallback_allowed', 'automatic_retry', 'energy_capture', 'hardware_executed')),
@@ -264,6 +308,9 @@ def validate_capture_plan(plan):
     quality = checked(plan['quality_binding_file'])
     require(quality == output / 'native_split_quality_binding.json'
             and read(quality) == command['native_split_quality_binding'], 'Functional quality source changed')
+    output_contract = _output_contract_source(row, raw)
+    require(plan.get('output_contract_source') == output_contract,
+            'Functional output declaration source changed or is missing')
     sources = plan['source_files']
     require(isinstance(sources, dict) and sources and all(
         not PurePosixPath(name).is_absolute() and '..' not in PurePosixPath(name).parts
@@ -291,6 +338,7 @@ def validate_capture_plan(plan):
     expected.update({prepared['remote_path']: prepared['sha256'], command['input_image']: command['input_image_sha256'],
                      command['python_executable']: environment['executable_sha256']})
     expected.update({remote + '/tool/' + name: digest for name, digest in sources.items()})
+    expected[benchmark + '/output_contracts.json'] = output_contract['source']['sha256']
     require(plan['expected_remote_files'] == expected, 'Functional artifact/input/source closure differs')
     return command
 
@@ -305,8 +353,10 @@ def prepare_capture(source_plan, case_key, output, *, runtime_environment_eviden
     require(len(rows) == 1, 'Exactly one existing paired case is required')
     row = copy.deepcopy(rows[0])
     ident = identity(row)
-    command, status = verify_native_command_contract(read(row['native_source']).get('native_command_contract'))
+    native_raw = read(row['native_source'])
+    command, status = verify_native_command_contract(native_raw.get('native_command_contract'))
     require(command is not None, 'Historical artifact source command invalid: ' + status)
+    output_contract = _output_contract_source(row, native_raw)
     output = Path(output).resolve()
     require(not output.exists() and not output.is_relative_to(Path(row['original_run']).resolve()), 'Fresh reference output must not replace historical evidence')
     environment_source = bound(runtime_environment_evidence)
@@ -338,6 +388,7 @@ def prepare_capture(source_plan, case_key, output, *, runtime_environment_eviden
     expected[command['input_image']] = command['input_image_sha256']
     expected[command['python_executable']] = environment['executable_sha256']
     expected.update({remote + '/tool/' + name: digest for name, digest in sources.items()})
+    expected[benchmark + '/output_contracts.json'] = output_contract['source']['sha256']
     env = _recipe_environment(row)
     plan = {'schema': PLAN_SCHEMA, 'purpose': 'functional_reference_only_not_scientific_native_performance',
         'created_at': datetime.now(timezone.utc).isoformat(), 'identity': ident, 'source_row': row,
@@ -349,6 +400,7 @@ def prepare_capture(source_plan, case_key, output, *, runtime_environment_eviden
         'output_root': str(output), 'remote_root': remote, 'remote_tool_dir': remote + '/tool',
         'execution_id': session, 'target': bound_targets(Path(row['original_run']), [row])[row['setup_id']],
         'expected_remote_files': expected, 'quality_binding_file': bound(quality),
+        'output_contract_source': output_contract,
         'item': {'argv': argv, 'env': env, 'repeat': 1, 'source_benchmark_set': command['benchmark_set'],
                  'benchmark_case_inputs': _benchmark_case_inputs(command, {'backend': row['direction'], 'case': row['case_id']}),
                  'remote_output_root': remote_output, 'result_json': remote_output + '/' + ('deepx_native_fifo_e2e_results.json'
@@ -456,6 +508,9 @@ def execute_capture(prepared_path):
             upload_new_file(transport, checked(plan['quality_binding_file']), remote + '/native_split_quality_binding.json',
                             expected_sha=plan['quality_binding_file']['sha256'])
             _stage_benchmark_set(transport, plan['item'], output)
+            benchmark = plan['item']['argv'][plan['item']['argv'].index('--benchmark-set') + 1]
+            upload_new_file(transport, checked(plan['output_contract_source']['source']), benchmark + '/output_contracts.json',
+                            expected_sha=plan['output_contract_source']['source']['sha256'])
             before = _remote_sources(transport, plan['expected_remote_files'], row['remote_python_executable'])
             write_new(output / 'source-binding-before.json', before)
             command = 'cd -- ' + shlex.quote(plan['remote_tool_dir']) + ' && ' + shlex.join(plan['item']['argv'])

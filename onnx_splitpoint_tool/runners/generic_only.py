@@ -18,6 +18,7 @@ ARTIFACT_SCHEMA = "onnx-splitpoint/generic-only-artifact-binding/v1"
 ARTIFACT_ROLES = ("part1_runtime", "engine", "source_part1_onnx", "source_part2_onnx",
                   "build_part2_onnx", "engine_build_receipt", "boundary_metadata",
                   "part1_build_receipt")
+CLASSIFICATION_CONTRACT = {"task": "classification", "operation": "top1_top5", "label_offset": 0}
 
 
 def _sha(path):
@@ -59,10 +60,19 @@ def validate_generic_only_config(config, *, check_files=False):
     expected_policy = ({"policy": "hailo_async_slots_v1", "inflight": 8}
                        if provider in {"hailo10h", "hailo10"} else
                        {"policy": "deepx_async_slots_v1", "inflight": 4}
-                       if provider == "deepx_m1" else None)
-    if expected_policy is None or normalize_stage1_execution(config.get("stage1_execution")) != expected_policy:
-        raise ValueError("Generic-only detector execution requires the fixed backend async policy")
-    if (config.get("task") != "detection" or config.get("energy_capture")
+                       if provider == "deepx_m1" else
+                       {"policy": "synchronous", "inflight": 1}
+                       if provider == "hailo8" else None)
+    if (expected_policy is None or not isinstance(config.get("stage1_execution"), Mapping)
+            or normalize_stage1_execution(config["stage1_execution"]) != expected_policy):
+        raise ValueError("Generic-only execution requires the fixed backend stage1 policy")
+    if config.get("task") not in {"classification", "detection"}:
+        raise ValueError("Generic-only task is unsupported")
+    if (config["task"] == "classification"
+            and (config.get("completion_contract") != CLASSIFICATION_CONTRACT
+                 or type(config["completion_contract"].get("label_offset")) is not int)):
+        raise ValueError("Generic-only classification requires the normal Top1/Top5 contract")
+    if (config.get("energy_capture")
             or original.get("native_split_quality_binding")
             or config.get("native_source") or config.get("native_command_contract")):
         raise ValueError("Generic-only controls cannot claim a Native binding or energy result")
@@ -108,9 +118,32 @@ def _json_value(value):
 
 def _completed_value(processor, config):
     value = _json_value(processor.last_result)
-    value.setdefault("host_nms_applied", config["completion_contract"].get("completion_mode")
-                     != "decoded_nms_attested_materialization_no_second_nms")
+    if config["task"] == "detection":
+        value.setdefault("host_nms_applied", config["completion_contract"].get("completion_mode")
+                         != "decoded_nms_attested_materialization_no_second_nms")
     return value
+
+
+def _classification_result(outputs):
+    from .harness.classification import classification_topk
+    top5 = classification_topk(outputs)
+    return {"top1": top5[:, 0].tolist(), "top5": top5.tolist()}
+
+
+def validate_classification_report(report, completed, expected_count):
+    """Check the unchanged processor's actual report, with no detector fields."""
+    from .harness.classification import ClassificationCompletion
+    value = _semantic_result(completed, expected_count, task="classification")
+    processor = ClassificationCompletion()
+    processor.last_result = {key: np.asarray(item, dtype=np.int64) for key, item in value.items()}
+    processor.completed_count = expected_count
+    expected = processor.report()
+    if (not isinstance(report, Mapping) or dict(report) != expected
+            or any(type(report.get(key)) is not type(item) for key, item in expected.items())
+            or _semantic_result(report.get("classification_topk"), expected_count,
+                                task="classification") != value):
+        raise ValueError("Generic-only classification postprocess report/count differs")
+    return expected
 
 
 def capture_serial_reference(config, output, repetition_index, *, stage1, transfer, stage2, processor,
@@ -157,10 +190,15 @@ def capture_serial_reference(config, output, repetition_index, *, stage1, transf
              "raw_output_samples": samples, "last_completed_result": completed,
              "completed_result_artifact": {"path": str(completed_path.relative_to(root)),
                                            "sha256": _sha(completed_path)}}
+    if config["task"] == "classification":
+        if completed != _classification_result(outputs):
+            raise ValueError("Generic-only serial classification differs from current raw Top1/Top5")
+        proof["postprocess_report"] = _json_value(processor.report())
+        validate_classification_report(proof["postprocess_report"], completed, 1)
     return outputs, proof
 
 
-def _semantic_result(value, expected_count):
+def _semantic_result(value, expected_count, *, task="detection"):
     """Keep every semantic field while checking the separate invocation count.
 
     Strict completion binds its invocation index/hash; fast completion records
@@ -168,6 +206,16 @@ def _semantic_result(value, expected_count):
     completion attestation verifier checks the measured execution separately.
     """
     value = _json_value(value)
+    if task == "classification":
+        if (not isinstance(value, Mapping) or set(value) != {"top1", "top5"}
+                or not isinstance(value["top1"], list) or not value["top1"]
+                or not isinstance(value["top5"], list) or len(value["top5"]) != len(value["top1"])
+                or any(not isinstance(row, list) or not 1 <= len(row) <= 5
+                       or any(type(index) is not int or index < 0 for index in row)
+                       or len(set(row)) != len(row) or type(first) is not int or first != row[0]
+                       for first, row in zip(value["top1"], value["top5"]))):
+            raise ValueError("Generic-only classification Top1/Top5 result differs")
+        return value
     counters = [name for name in ("completed_count", "invocation_index") if name in value]
     if not counters or any(type(value[name]) is not int or value[name] != expected_count for name in counters):
         raise ValueError("Generic-only serial/measured completion count differs")
@@ -195,18 +243,26 @@ def _semantic_result(value, expected_count):
 
 
 def compare_serial_reference(outputs, completed, reference_outputs, proof):
+    task = (proof.get("completion_contract") or {}).get("task", "detection")
     if (set(outputs) != set(reference_outputs)
             or any(np.asarray(outputs[name]).dtype != reference_outputs[name].dtype
                    or np.asarray(outputs[name]).shape != reference_outputs[name].shape
                    or not np.array_equal(outputs[name], reference_outputs[name])
                    for name in reference_outputs)
-            or _semantic_result(completed, 1100) != _semantic_result(proof["last_completed_result"], 1)):
+            or _semantic_result(completed, 1100, task=task)
+               != _semantic_result(proof["last_completed_result"], 1, task=task)):
         raise ValueError("Generic-only measured raw/completed output differs from its serial reference")
+    if task == "classification" and (_json_value(completed) != _classification_result(outputs)
+            or proof["last_completed_result"] != _classification_result(reference_outputs)):
+        raise ValueError("Generic-only classification result differs from current raw Top1/Top5")
 
 
 def validate_serial_reference(repetition, config, *, result_root=None):
     """Normal importer verification, including actual saved array equality."""
     validate_generic_only_config(config)
+    if (config["stage1_execution"]["policy"] == "synchronous"
+            and "stage1_peak_uncollected_jobs" in repetition):
+        raise ValueError("Generic-only synchronous completion cannot claim an observed async peak")
     proof = repetition.get("serial_reference") or {}
     expected = {"status": "passed", "checked_outside_timer": True, "observed_task_count": 1,
                 "relation": "serial_same_compiled_parts_before_measured_tasks",
@@ -217,10 +273,14 @@ def validate_serial_reference(repetition, config, *, result_root=None):
         raise ValueError("Generic-only serial reference is missing or foreign")
     specs = config["functional_reference"]["outputs"]
     samples = proof.get("raw_output_samples") or {}
+    task = config["task"]
     if (set(samples) != set(specs)
-            or _semantic_result(proof.get("last_completed_result") or {}, 1)
-               != _semantic_result(repetition.get("last_completed_result") or {}, 1100)):
+            or _semantic_result(proof.get("last_completed_result") or {}, 1, task=task)
+               != _semantic_result(repetition.get("last_completed_result") or {}, 1100, task=task)):
         raise ValueError("Generic-only serial reference endpoint/completed result differs")
+    if task == "classification":
+        validate_classification_report(proof.get("postprocess_report"), proof["last_completed_result"], 1)
+        validate_classification_report(repetition.get("postprocess_report"), repetition["last_completed_result"], 1100)
     for name, spec in specs.items():
         if any(samples[name].get(key) != value for key, value in spec.items()):
             raise ValueError("Generic-only serial tensor metadata differs")

@@ -152,6 +152,10 @@ def load_bound_mixed_control(config):
             "task": "classification", "operation": "top1_top5", "label_offset": 0}:
         raise ValueError("Mixed classification control changed Top1/Top5 completion")
     tensors = []
+    from .generic_passthrough import passthrough_sources
+    canonical = config.get("canonical_full_input_bindings")
+    if passthrough_sources(config) and (not isinstance(canonical, list) or len(canonical) != 2):
+        raise ValueError("Mixed original-input passthrough lacks two bound canonical full inputs")
     for index, item in enumerate(payload["inputs"]):
         if not isinstance(item, Mapping) or not isinstance(item.get("prepared_input"), Mapping):
             raise ValueError("Mixed functional input descriptor malformed")
@@ -165,6 +169,14 @@ def load_bound_mixed_control(config):
                               ("path", "sha256", "input_name", "shape", "dtype", "format")):
             raise ValueError("Mixed control input zero must preserve the unchanged baseline prepared input")
         tensors.append(load_completion_bound_array(spec, file_sha256=_sha))
+        if passthrough_sources(config):
+            binding = canonical[index]
+            image = binding.get("source_image") or {}
+            if (item.get("canonical_full_input_binding") != binding
+                    or binding.get("prepared_input_sha256") != spec["sha256"]
+                    or source_map.get(image.get("path")) != image.get("sha256")
+                    or _sha(image["path"]) != image["sha256"]):
+                raise ValueError("Mixed canonical original input differs from its task/source binding")
         if config["task"] == "detection":
             _detection_contract(item["completion_contract"], config["completion_contract"],
                 {**spec, "original_wh": item.get("original_wh"), **({"geometry": item["geometry"]} if "geometry" in item else {})})
@@ -205,7 +217,7 @@ def _tensor_snapshot(value):
 
 def run_bound_mixed_control(config, output, repetition, *, serial_stage1, transfer,
                             stage2, stage1_async, prepare_async_feed, clone_payload,
-                            runner_source, boundary_runtime=None):
+                            runner_source, boundary_runtime=None, canonical_full_feeds=None):
     """Run 32 serial references and 32 ordinary pipeline tasks before timing."""
     from .generic_mixed_control import run_mixed_control
     from .harness.classification import ClassificationCompletion
@@ -223,6 +235,26 @@ def run_bound_mixed_control(config, output, repetition, *, serial_stage1, transf
     tasks = [{"task_id": f"task_{index:02d}", "prepared_input": payload["inputs"][sequence[index]]["prepared_input"],
               "feed": {config["input_binding"]["prepared_input"]["input_name"]: tensors[sequence[index]]}}
              for index in range(32)]
+    from .generic_passthrough import passthrough_sources, _snapshot
+    if passthrough_sources(config):
+        if not isinstance(canonical_full_feeds, list) or len(canonical_full_feeds) != 2:
+            raise ValueError("Mixed original-input passthrough was not prepared outside timing")
+        for index, full in enumerate(canonical_full_feeds):
+            binding = config["canonical_full_input_bindings"][index]
+            expected = binding["inputs"]
+            if (not isinstance(full, Mapping) or set(full) != set(expected)
+                    or any(_snapshot(full[name]) != expected[name] for name in full)):
+                raise ValueError("Mixed canonical original-input bytes/normalization differ from actual Quality")
+            original = _snapshot(tensors[index])
+            feed = {config["input_binding"]["prepared_input"]["input_name"]: tensors[index]}
+            runtime_feed = prepare_async_feed(feed) if callable(prepare_async_feed) else feed
+            if ({name: _snapshot(value) for name, value in runtime_feed.items()} != binding["runtime_inputs"]
+                    or _snapshot(tensors[index]) != original):
+                raise ValueError("Mixed prepared SDK input differs from the same image's actual normal Quality")
+        for index, task in enumerate(tasks):
+            task["full_feed"] = canonical_full_feeds[sequence[index]]
+    elif canonical_full_feeds is not None:
+        raise ValueError("Canonical full feeds require an actual original-input passthrough")
 
     class DetectionSequence:
         def __init__(self):
@@ -269,7 +301,9 @@ def run_bound_mixed_control(config, output, repetition, *, serial_stage1, transf
             processor_factory=ClassificationCompletion if config["task"] == "classification" else DetectionSequence,
             stage1_async_factory=factory if stage1_async is not None else None, clone_payload=clone_payload,
             boundary_observation=boundary_contract, boundary_runtime=boundary_runtime)
-        if report["stage1_peak_uncollected_jobs"] != normalize_stage1_execution(config.get("stage1_execution"))["inflight"]:
+        submission = _submission_requirements(config, execution)
+        if (any(report.get(key) != value for key, value in submission.items())
+                or ("stage1_submission_mode" in submission and "stage1_peak_uncollected_jobs" in report)):
             raise RuntimeError("Mixed control did not observe the requested host submission depth")
         source_after = {item["path"]: _sha(item["path"]) for item in config["runtime_source_files"]}
         if source_after != source_before:
@@ -294,10 +328,10 @@ def run_bound_mixed_control(config, output, repetition, *, serial_stage1, transf
     proof = {"status": "passed", "checked_outside_throughput_timer": True,
             "serial_reference_count": report["serial_reference_count"],
             "mixed_completed_count": report["mixed_completed_count"],
-            "stage1_peak_uncollected_jobs": report["stage1_peak_uncollected_jobs"],
             "drain_completed": report["drain_completed"], "stage1_execution": report["stage1_execution"],
             "control_sidecar": dict(config["mixed_input_control"]),
             "report": {"path": str(destination.relative_to(output)), "sha256": _sha(destination)}}
+    proof.update(_submission_requirements(config, execution))
     if boundary_contract is not None:
         proof["boundary_observation"] = deepcopy(report["boundary_observation"])
     return proof
@@ -397,21 +431,41 @@ def _validate_boundary_result(proof, config, report=None):
     if report.get("boundary_observation") != actual:
         raise ValueError("Generic mixed boundary full report differs from its proof")
     first_runtime = None
-    for observation in report["observations"]:
+    for task_index, observation in enumerate(report["observations"]):
         record = observation.get("boundary_observation")
         if not isinstance(record, Mapping) or set(record) != {"serial", "mixed", "passed"} or record["passed"] is not True:
             raise ValueError("Generic mixed boundary task observation missing")
         for phase in ("serial", "mixed"):
             item = record[phase]
-            if not isinstance(item, Mapping) or set(item) != {
+            expected_keys = {
                     "part1_at_collection", "part1_before_transfer", "part1_after_transfer",
                     "part2_after_transfer", "part2_before_inference", "part2_after_inference",
-                    "no_reusable_sdk_buffer_alias", "no_prepared_input_alias", "runtime", "part2_to_part1_aliases"}:
+                    "no_reusable_sdk_buffer_alias", "no_prepared_input_alias", "runtime", "part2_to_part1_aliases"}
+            if contract["passthrough_inputs"]:
+                expected_keys.add("passthrough_input_content")
+            if not isinstance(item, Mapping) or set(item) != expected_keys:
                 raise ValueError("Generic mixed boundary phase evidence malformed")
             for key in ("part1_at_collection", "part1_before_transfer", "part1_after_transfer"):
                 _validate_boundary_snapshot(item[key], contract["part1_outputs"])
             for key in ("part2_after_transfer", "part2_before_inference", "part2_after_inference"):
                 _validate_boundary_snapshot(item[key], contract["part2_inputs"])
+            if contract["passthrough_inputs"]:
+                bindings = config.get("canonical_full_input_bindings")
+                if not isinstance(bindings, list) or len(bindings) != 2:
+                    raise ValueError("Generic mixed canonical original-input binding missing")
+                binding = bindings[_input_sequence()[task_index]]
+                evidence = item["passthrough_input_content"]
+                if (not isinstance(evidence, Mapping) or set(evidence) != set(contract["passthrough_inputs"])
+                        or observation.get("input_sha256") != binding["prepared_input_sha256"]):
+                    raise ValueError("Generic mixed canonical original-input task/source mismatch")
+                _validate_boundary_snapshot(evidence, {name: contract["part2_inputs"][name]
+                    for name in contract["passthrough_inputs"]})
+                for target, source in contract["passthrough_inputs"].items():
+                    observed = {key: evidence[target][key] for key in ("shape", "dtype", "tensor_sha256")}
+                    actual_input = {key: item["part2_before_inference"][target][key]
+                                    for key in ("shape", "dtype", "tensor_sha256")}
+                    if observed != binding["inputs"][source] or actual_input != observed:
+                        raise ValueError("Generic mixed passthrough bytes differ from this task's canonical normal Quality input")
             if (_boundary_content(item["part1_at_collection"]) != _boundary_content(item["part1_before_transfer"])
                     or item["part1_before_transfer"] != item["part1_after_transfer"]
                     or item["part2_after_transfer"] != item["part2_before_inference"]
@@ -444,6 +498,13 @@ def _validate_boundary_result(proof, config, report=None):
                 raise ValueError("Generic mixed boundary serial/async tensor content differs")
 
 
+def _submission_requirements(config, execution):
+    if (execution["policy"] == "synchronous"
+            and config.get("measurement_mode") == "generic_only_completed_task"):
+        return {"stage1_submission_mode": "synchronous_stage1_in_two_worker_pipeline"}
+    return {"stage1_peak_uncollected_jobs": execution["inflight"]}
+
+
 def validate_bound_mixed_result(repetition, config, *, result_root=None):
     """Reject foreign/partial controls on normal result import and reentry.
 
@@ -462,10 +523,12 @@ def validate_bound_mixed_result(repetition, config, *, result_root=None):
     execution = normalize_stage1_execution(config.get("stage1_execution"))
     required = {"status": "passed", "checked_outside_throughput_timer": True,
                 "serial_reference_count": 32, "mixed_completed_count": 32,
-                "stage1_peak_uncollected_jobs": execution["inflight"], "drain_completed": True,
+                **_submission_requirements(config, execution), "drain_completed": True,
                 "stage1_execution": execution, "control_sidecar": dict(expected)}
+    synchronous_generic_only = "stage1_submission_mode" in required
     if (any(proof.get(key) != value or type(proof.get(key)) is not type(value)
             for key, value in required.items())
+            or (synchronous_generic_only and "stage1_peak_uncollected_jobs" in proof)
             or normalize_stage1_execution(repetition.get("stage1_execution")) != execution):
         raise ValueError("Generic mixed functional control counts/policy/drain evidence mismatch")
     _validate_boundary_result(proof, config)
@@ -493,6 +556,7 @@ def validate_bound_mixed_result(repetition, config, *, result_root=None):
         "queue_depth": config.get("queue_depth"), "timeout_s": config.get("timeout_s"),
         "handoff_payload_copy": repetition.get("handoff_payload_copy")}
     if (any(report.get(key) != value for key, value in report_required.items())
+            or (synchronous_generic_only and "stage1_peak_uncollected_jobs" in report)
             or any(key in report for key in ("completed_task_fps", "measurement_start_ns",
                                               "measured_makespan_seconds"))):
         raise ValueError("Generic mixed functional control full report contract mismatch")
@@ -542,14 +606,19 @@ def validate_bound_mixed_result(repetition, config, *, result_root=None):
             raise ValueError("Generic mixed functional control raw/completion snapshots mismatch")
     if observations[0]["serial"]["outputs"] == observations[1]["serial"]["outputs"]:
         raise ValueError("Generic mixed functional control serial outputs cannot distinguish inputs")
-    coverage = report.get("stage1_slot_input_coverage")
+    coverage_key = ("stage1_submission_input_coverage" if synchronous_generic_only
+                    else "stage1_slot_input_coverage")
+    index_key = "submission_stream_index" if synchronous_generic_only else "slot_index"
+    if synchronous_generic_only and "stage1_slot_input_coverage" in report:
+        raise ValueError("Generic mixed synchronous control cannot claim SDK slot coverage")
+    coverage = report.get(coverage_key)
     if not isinstance(coverage, list) or len(coverage) != execution["inflight"]:
         raise ValueError("Generic mixed functional control lacks actual slot input coverage")
     for slot, observed in enumerate(coverage):
         indices = list(range(slot, 32, execution["inflight"]))
         expected_hashes = sorted({observations[index]["prepared_tensor_sha256"] for index in indices})
-        if (not isinstance(observed, Mapping) or type(observed.get("slot_index")) is not int
-                or observed["slot_index"] != slot
+        if (not isinstance(observed, Mapping) or type(observed.get(index_key)) is not int
+                or observed[index_key] != slot
                 or observed.get("task_ids") != [f"task_{index:02d}" for index in indices]
                 or observed.get("prepared_tensor_sha256") != expected_hashes
                 or observed.get("distinct_prepared_tensor_count") != 2

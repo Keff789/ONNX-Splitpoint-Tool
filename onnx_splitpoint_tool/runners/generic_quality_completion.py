@@ -9,12 +9,16 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextlib import contextmanager
 from copy import deepcopy
+import base64
 import hashlib
+import io
 import json
+import math
 import os
 from pathlib import Path
 import re
 import sys
+import time
 
 import numpy as np
 
@@ -25,6 +29,15 @@ EVIDENCE_SCHEMA = "onnx-splitpoint/generic-composed-quality-completion-evidence"
 FIELD = "generic_completed_quality"
 ARTIFACT_ROLES = {"part1_runtime", "engine", "source_part1_onnx", "source_part2_onnx",
                   "build_part2_onnx", "engine_build_receipt", "boundary_metadata", "part1_build_receipt"}
+H8_INPUT_ADAPTER = {"backend": "hailo8", "task": "detection",
+                    "function": "_completion_hailo_inputs", "runtime_input_format": "float32"}
+_MAX_REPRESENTATIVE_FILE_BYTES = 8 * 1024 * 1024
+CAPTURE_TIMING_SCOPE = {"scope": "generic_serial_quality_per_image_loop",
+    "includes": ["image_loading_and_preparation", "existing_compiled_P1_P2_serial_inference",
+                 "normal_detection_completion", "per_image_evidence_and_record_assembly"],
+    "excludes": ["engine_loading_and_initialization", "post_loop_aggregation_export_and_report",
+                 "central_CPU_reference_comparison_and_bootstrap"],
+    "clock": "time.perf_counter_ns", "performance_measurement_executed": False}
 
 
 def capture_runtime_context(boundary_runtime):
@@ -247,6 +260,9 @@ def load_quality_completion_config(path, *, check_files=True):
         config["expected_runtime_artifacts"] = {key: resolve(value) for key, value in config["expected_runtime_artifacts"].items()}
     if isinstance(config.get("runtime_source_files"), list):
         config["runtime_source_files"] = [resolve(value) for value in config["runtime_source_files"]]
+    bridge = config.get("existing_part2_bridge")
+    if isinstance(bridge, Mapping) and isinstance(bridge.get("binding_source"), Mapping):
+        config["existing_part2_bridge"] = {**bridge, "binding_source": resolve(bridge["binding_source"])}
     alias = config.get("generic_artifact_binding")
     if isinstance(alias, Mapping) and isinstance(alias.get("artifacts"), Mapping):
         config["generic_artifact_binding"] = {**alias, "artifacts": {
@@ -262,6 +278,10 @@ def load_quality_completion_config(path, *, check_files=True):
             for key in ("model_id", "case_id", "setup_id", "precision"))):
         raise ValueError("Generic completed Quality identity missing")
     base = _verify_contract(config.get("completion_contract"))
+    if identity.get("comparison_backend") == "hailo8":
+        _h8_representative(config.get("representative_input"), base["processor_contract"]["input_hw"])
+    elif representative is not None and "runtime_input_adapter" in representative:
+        raise ValueError("Generic completed Quality H8 input adapter cannot authorize another backend")
     if base["model_id"] != identity["model_id"]:
         raise ValueError("Generic completed Quality model differs from completion")
     full_source = config.get("source_endpoint_contract")
@@ -272,6 +292,7 @@ def load_quality_completion_config(path, *, check_files=True):
     _artifact_identity(artifacts)
     for descriptor in artifacts.values():
         _descriptor(descriptor, check_files=check_files)
+    _verify_existing_part2_bridge(config, check_files=check_files)
     _endpoint.verify_generic_quality_endpoint_projection(config, check_files=check_files)
     alias = config.get("generic_artifact_binding")
     if alias is not None and (not isinstance(alias, Mapping) or alias.get("artifacts") != artifacts):
@@ -282,6 +303,120 @@ def load_quality_completion_config(path, *, check_files=True):
             or ids != sorted(set(ids))):
         raise ValueError("Generic completed Quality frozen image IDs invalid")
     return dict(config)
+
+
+def _verify_existing_part2_bridge(config, *, check_files):
+    """Join an existing transformed engine to its normal sealed file proof.
+
+    The historical Quality decision is never reused here. Only the existing
+    compiler recipe and physical artifacts authorize this explicit execution.
+    Runtime loading re-hashes all eight original artifacts through the normal
+    validator, before initialization and again at Quality observer creation.
+    """
+    bridge = config.get("existing_part2_bridge")
+    if bridge is None:
+        return
+    original = config.get("original_run_cfg") or {}
+    identity = config["identity"]
+    if (not isinstance(bridge, Mapping) or set(bridge) != {
+            "schema", "schema_version", "binding_sha256", "policy_sha256", "precision", "binding_source"}
+            or bridge.get("schema") != "onnx-splitpoint/existing-part2-bridge-reference"
+            or type(bridge.get("schema_version")) is not int or bridge["schema_version"] != 1
+            or bridge.get("precision") not in {"uint8_dequant_fp16", "float32_layout_fp16"}
+            or bridge["precision"] != identity["precision"]
+            or any(not _digest(bridge.get(key)) for key in ("binding_sha256", "policy_sha256"))
+            or original.get("native_trt_precision") != bridge["precision"]
+            or type(original.get("native_trt_workspace_mb")) is not int or original["native_trt_workspace_mb"] <= 0
+            or original.get("boundary_mode") != ("raw_uint8_hailo" if bridge["precision"] == "uint8_dequant_fp16" else "canonical_float32")):
+        raise ValueError("Generic completed Quality existing Part2 bridge reference invalid")
+    source = _descriptor(bridge.get("binding_source"), check_files=check_files)
+    if (source.get("pointer") != "/native_split_quality_binding"
+            or type(source.get("size_bytes")) is not int or source["size_bytes"] <= 0):
+        raise ValueError("Generic completed Quality original bridge binding source invalid")
+    if not check_files:
+        return
+    container = json.loads(Path(source["path"]).read_text(encoding="utf-8"))
+    validator = _bridge_validator()
+    module_path = Path(validator.__file__).resolve()
+    if _sources(config.get("runtime_source_files"), check_files=False).get(str(module_path)) != _sha(module_path):
+        raise ValueError("Generic completed Quality existing bridge validator outside frozen source closure")
+    binding, status = validator.validate_native_split_quality_binding(container.get("native_split_quality_binding"),
+        verification_mode="local", expected_identity={"model": identity["model_id"], "case": identity["case_id"],
+            "setup_id": identity["setup_id"], "task": "detection", "backend": identity["comparison_backend"],
+            "precision": identity["precision"]})
+    if (binding is None or binding.get("binding_sha256") != bridge["binding_sha256"]
+            or binding["preselection"]["policy_sha256"] != bridge["policy_sha256"]):
+        raise ValueError("Generic completed Quality existing bridge normal local validator rejected: " + status)
+    for role in ("part1_runtime", "boundary_metadata", "source_part2_onnx", "build_part2_onnx", "engine", "engine_build_receipt"):
+        selected = config["expected_runtime_artifacts"][role]; sealed = binding["artifacts"][role]
+        if any(selected.get(key) != sealed.get(key) for key in ("sha256", "size_bytes")):
+            raise ValueError("Generic completed Quality existing bridge selected artifact differs: " + role)
+        if role in {"engine", "build_part2_onnx", "engine_build_receipt"} and Path(selected["path"]).resolve() != Path(sealed["path"]).resolve():
+            raise ValueError("Generic completed Quality existing bridge persistent artifact path differs: " + role)
+
+
+def _bridge_validator():
+    if __package__ == "splitpoint_runners":
+        from . import native_split_quality
+    else:
+        from .. import native_split_quality
+    return native_split_quality
+
+
+def _h8_representative(representative, input_hw):
+    if (not isinstance(representative, Mapping)
+            or representative.get("runtime_input_adapter") != H8_INPUT_ADAPTER
+            or not isinstance(representative.get("runtime_input_name"), str)
+            or not representative["runtime_input_name"]):
+        raise ValueError("Generic completed Quality H8 requires the explicit normal input adapter")
+    prepared = representative.get("prepared_input") or {}
+    if (prepared.get("dtype") != "uint8" or prepared.get("shape") != [*input_hw, 3]
+            or prepared.get("format") not in {"npy", "raw", "raw_bin", "binary"}):
+        raise ValueError("Generic completed Quality H8 requires bound HWC RGB uint8 input bytes")
+
+
+def _portable_h8_input(adapter_proof, representative, input_hw, runner):
+    """Verify an existing representative file against the normal H8 conversion.
+
+    One bounded original file is transported with the proof. This permits the
+    controller to verify the numeric relation without inventing byte parity
+    between the RGB source and the float32 SDK input or re-running inference.
+    """
+    _h8_representative(representative, input_hw)
+    if (not isinstance(adapter_proof, Mapping) or set(adapter_proof) != {
+            "prepared_file_base64", "adapter_implementation", "expected_runtime_input"}
+            or adapter_proof.get("adapter_implementation") != {
+                "function": H8_INPUT_ADAPTER["function"], "runner": runner}):
+        raise ValueError("Generic completed Quality H8 adapter implementation proof invalid")
+    encoded = adapter_proof.get("prepared_file_base64")
+    if not isinstance(encoded, str) or len(encoded) > 4*((_MAX_REPRESENTATIVE_FILE_BYTES+2)//3):
+        raise ValueError("Generic completed Quality H8 representative bytes exceed bounded proof")
+    try:
+        payload = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as error:
+        raise ValueError("Generic completed Quality H8 representative encoding invalid") from error
+    descriptor = representative["prepared_input"]
+    if (not payload or len(payload) > _MAX_REPRESENTATIVE_FILE_BYTES
+            or hashlib.sha256(payload).hexdigest() != descriptor["sha256"]
+            or ("size_bytes" in descriptor and len(payload) != descriptor["size_bytes"])):
+        raise ValueError("Generic completed Quality H8 original prepared file changed")
+    try:
+        if descriptor["format"] == "npy":
+            source = np.load(io.BytesIO(payload), allow_pickle=False)
+        else:
+            source = np.frombuffer(payload, dtype=np.uint8).reshape(descriptor["shape"])
+    except (ValueError, TypeError, EOFError) as error:
+        raise ValueError("Generic completed Quality H8 original tensor invalid") from error
+    if (not isinstance(source, np.ndarray) or source.dtype != np.uint8
+            or list(source.shape) != descriptor["shape"] or not source.flags.c_contiguous):
+        raise ValueError("Generic completed Quality H8 original RGB tensor differs")
+    # Verification arithmetic only. Capture invokes the unchanged normal runner
+    # function, and the observer records the real post-adapter SDK feed.
+    expected = source.astype(np.float32) / np.float32(255.0)
+    expected_snapshot = _input_snapshot({representative["runtime_input_name"]: expected})
+    if adapter_proof["expected_runtime_input"] != expected_snapshot:
+        raise ValueError("Generic completed Quality H8 normal float32/255 relation differs")
+    return source, expected_snapshot
 
 
 def _verify_runtime_producer(config, context):
@@ -322,7 +457,7 @@ class GenericQualityCompletion:
     def __init__(self, config_path, *, producer_context, runner_source, input_hw,
                  expected_image_ids, runtime_precision_identity, confidence_threshold,
                  iou_threshold, max_detections, letterbox, preprocessing_contract,
-                 class_names):
+                 class_names, timed_input_adapter=None):
         self.config = load_quality_completion_config(config_path, check_files=True)
         self.config_file = {"path": str(Path(config_path).resolve()), "sha256": _sha(config_path)}
         self.sources_before = _sources(self.config["runtime_source_files"], check_files=True)
@@ -332,6 +467,17 @@ class GenericQualityCompletion:
         self.runner_source = str(runner_source)
         self.runner_descriptor = {"path": str(Path(runner_source).resolve()),
             "sha256": _sha(runner_source), "size_bytes": Path(runner_source).stat().st_size}
+        self.timed_input_adapter = timed_input_adapter
+        h8 = self.config["identity"].get("comparison_backend") == "hailo8"
+        if h8 != (str(producer_context.get("stage1_backend") or "").lower() == "hailo8"):
+            raise ValueError("Generic completed Quality H8 backend identity differs from actual producer")
+        if h8:
+            if (not callable(timed_input_adapter)
+                    or getattr(timed_input_adapter, "__name__", None) != H8_INPUT_ADAPTER["function"]
+                    or Path(timed_input_adapter.__code__.co_filename).resolve() != Path(runner_source).resolve()):
+                raise ValueError("Generic completed Quality H8 requires the actual frozen normal adapter")
+        elif timed_input_adapter is not None:
+            raise ValueError("Generic completed Quality H8 adapter supplied for another backend")
         self.preprocessing_contract = _validate_preprocessing(preprocessing_contract, input_hw)
         self.class_names = list(class_names)
         _present_detections([], self.class_names)
@@ -351,6 +497,25 @@ class GenericQualityCompletion:
         self._boundary_observations = 0
         self._logical_boundary = None
         self._transfer_observations = 0
+        self._capture_started_ns = None
+        self._capture_timing = None
+
+    def begin_capture(self):
+        """Observe the whole untimed Quality image loop after engine setup."""
+        if self._capture_started_ns is not None or self.entries:
+            raise ValueError("Generic completed Quality capture clock already started")
+        self._capture_started_ns = time.perf_counter_ns()
+
+    def finish_capture(self):
+        end = time.perf_counter_ns()
+        if self._capture_started_ns is None or self._capture_timing is not None:
+            raise ValueError("Generic completed Quality capture clock lifecycle invalid")
+        timing = {**deepcopy(CAPTURE_TIMING_SCOPE), "image_count": len(self.entries),
+            "start_monotonic_ns": self._capture_started_ns, "end_monotonic_ns": end,
+            "wall_seconds": (end-self._capture_started_ns)/1_000_000_000}
+        _validate_capture_timing(timing, len(self.config["expected_image_ids"]))
+        self._capture_timing = timing
+        return deepcopy(timing)
 
     @contextmanager
     def observe_boundary_transfer(self, transfer):
@@ -473,12 +638,27 @@ class GenericQualityCompletion:
             expected = load_completion_bound_array(representative["prepared_input"], file_sha256=_sha)
             name = representative.get("runtime_input_name")
             actual = runtime_inputs.get(name) if name else next(iter(runtime_inputs.values())) if len(runtime_inputs) == 1 else None
-            if (actual is None or actual.dtype != expected.dtype or actual.shape != expected.shape
-                    or not np.array_equal(actual, expected) or representative.get("source_image_sha256") != image_sha
+            adapter_proof = None
+            compared = expected
+            if self.timed_input_adapter is not None:
+                compared_map = self.timed_input_adapter({"task": "detection", "input_binding": {
+                    "runtime_input_format": H8_INPUT_ADAPTER["runtime_input_format"]}}, "hailo8", {name: expected})
+                if not isinstance(compared_map, Mapping) or set(compared_map) != {name}:
+                    raise ValueError("Generic completed Quality H8 actual adapter endpoint changed")
+                compared = compared_map[name]
+                payload = Path(representative["prepared_input"]["path"]).read_bytes()
+                adapter_proof = {"prepared_file_base64": base64.b64encode(payload).decode("ascii"),
+                    "adapter_implementation": {"function": H8_INPUT_ADAPTER["function"], "runner": self.runner_descriptor},
+                    "expected_runtime_input": _input_snapshot(compared_map)}
+                _portable_h8_input(adapter_proof, representative, policy["input_hw"], self.runner_descriptor)
+            if (actual is None or actual.dtype != compared.dtype or actual.shape != compared.shape
+                    or not np.array_equal(actual, compared) or representative.get("source_image_sha256") != image_sha
                     or representative.get("original_wh") != list(original_wh)):
-                raise ValueError("Generic completed Quality representative actual runtime input differs from timed prepared bytes")
+                raise ValueError("Generic completed Quality representative actual runtime input differs from the normal timed input relation")
             representative_proof = {**deepcopy(representative), "actual_runtime_input": runtime_snapshot,
                                     "prepared_tensor": _input_snapshot({"canonical": expected})["canonical"]}
+            if adapter_proof is not None:
+                representative_proof["runtime_input_adapter_proof"] = adapter_proof
         entry = {"image_id": image_id, "source_image_sha256": image_sha, "original_wh": list(original_wh),
                  "completion_contract": contract, "runtime_mode": runtime.completion_runtime_mode,
                  "attestation": attestation, "detections_sha256": _hash(detections),
@@ -520,6 +700,12 @@ class GenericQualityCompletion:
         for key in ("source_endpoint_authority", "source_endpoint_projection"):
             if key in self.config:
                 evidence[key] = deepcopy(self.config[key])
+        if "existing_part2_bridge" in self.config:
+            evidence["existing_part2_bridge"] = deepcopy(self.config["existing_part2_bridge"])
+            evidence["existing_part2_bridge_runtime_policy"] = deepcopy(self.config["original_run_cfg"])
+        if self._capture_started_ns is not None:
+            _validate_capture_timing(self._capture_timing, len(ids))
+            evidence["capture_timing"] = deepcopy(self._capture_timing)
         evidence["evidence_sha256"] = _hash(evidence)
         # The exporter binds complete records including ground truth separately.
         return evidence
@@ -611,6 +797,19 @@ def _validate_input_snapshot(value):
             raise ValueError("Generic completed Quality actual input snapshot invalid")
 
 
+def _validate_capture_timing(value, expected_count):
+    if (not isinstance(value, Mapping) or set(value) != set(CAPTURE_TIMING_SCOPE) | {
+            "image_count", "start_monotonic_ns", "end_monotonic_ns", "wall_seconds"}
+            or any(value.get(key) != item for key,item in CAPTURE_TIMING_SCOPE.items())
+            or value.get("performance_measurement_executed") is not False
+            or type(value.get("image_count")) is not int or value["image_count"] != expected_count
+            or any(type(value.get(key)) is not int or value[key] < 0 for key in ("start_monotonic_ns", "end_monotonic_ns"))
+            or value["end_monotonic_ns"] <= value["start_monotonic_ns"]
+            or type(value.get("wall_seconds")) not in (int,float) or not math.isfinite(value["wall_seconds"])
+            or value["wall_seconds"] != (value["end_monotonic_ns"]-value["start_monotonic_ns"])/1_000_000_000):
+        raise ValueError("Generic completed Quality capture timing scope/count/monotonic duration invalid")
+
+
 def _validate_evidence(evidence, records, completion_contract, expected_runtime_artifacts):
     if (not isinstance(evidence, Mapping) or evidence.get("schema") != EVIDENCE_SCHEMA
             or type(evidence.get("schema_version")) is not int or evidence["schema_version"] != 1):
@@ -647,6 +846,15 @@ def _validate_evidence(evidence, records, completion_contract, expected_runtime_
     if (type(runner.get("size_bytes")) is not int or runner["size_bytes"] < 1
             or sources.get(runner["path"]) != runner["sha256"]):
         raise ValueError("Generic completed Quality actual runner missing from source closure")
+    if "existing_part2_bridge" in evidence:
+        _verify_existing_part2_bridge({"identity": evidence["identity"],
+            "existing_part2_bridge": evidence["existing_part2_bridge"],
+            "original_run_cfg": evidence.get("existing_part2_bridge_runtime_policy")}, check_files=False)
+        module = _bridge_validator().__file__
+        if not any(Path(path).name == Path(module).name and digest == _sha(module) for path, digest in sources.items()):
+            raise ValueError("Generic completed Quality bridge proof validator implementation differs")
+    elif "existing_part2_bridge_runtime_policy" in evidence:
+        raise ValueError("Generic completed Quality bridge proof reference missing")
     # Controller/source aliases may differ from deployed paths; implementation
     # bytes must still match the actual verifier modules, not just their names.
     for module in (__file__, _product().__file__, _three_stage().__file__, _product()._yolo_module.__file__, _endpoint.__file__):
@@ -663,6 +871,8 @@ def _validate_evidence(evidence, records, completion_contract, expected_runtime_
             or not isinstance(per_image, list) or [entry.get("image_id") for entry in per_image] != ids
             or [record.get("image_id") for record in records] != ids):
         raise ValueError("Generic completed Quality frozen image count/order differs")
+    if "capture_timing" in evidence:
+        _validate_capture_timing(evidence["capture_timing"], len(ids))
     default_mode = _product().create_detection_completion_runtime(base).completion_runtime_mode
     for entry, record in zip(per_image, records):
         contract = _same_policy(base, entry.get("completion_contract"))
@@ -689,6 +899,8 @@ def _validate_evidence(evidence, records, completion_contract, expected_runtime_
                 or entry.get("detections_sha256") != _hash(detections)):
             raise ValueError("Generic completed Quality exported detections differ from actual completed result")
     representative = evidence.get("representative_input")
+    if evidence["identity"].get("comparison_backend") == "hailo8":
+        _h8_representative(representative, base["processor_contract"]["input_hw"])
     if representative is not None:
         matched = [entry for entry in per_image if entry["image_id"] == representative.get("image_id")]
         if len(matched) != 1:
@@ -699,7 +911,18 @@ def _validate_evidence(evidence, records, completion_contract, expected_runtime_
         name = representative.get("runtime_input_name")
         observed_tensor = (actual["runtime_inputs"].get(name) if name else
                            next(iter(actual["runtime_inputs"].values())) if len(actual["runtime_inputs"]) == 1 else None)
-        if (comparison != {**representative, "actual_runtime_input": actual["runtime_inputs"], "prepared_tensor": expected_tensor}
+        expected_comparison = {**representative, "actual_runtime_input": actual["runtime_inputs"], "prepared_tensor": expected_tensor}
+        if evidence["identity"].get("comparison_backend") == "hailo8":
+            adapter_proof = comparison.get("runtime_input_adapter_proof")
+            source, adapted = _portable_h8_input(adapter_proof, representative,
+                                               base["processor_contract"]["input_hw"], runner)
+            if expected_tensor != _input_snapshot({"canonical": source})["canonical"]:
+                raise ValueError("Generic completed Quality H8 prepared source snapshot differs")
+            expected_tensor = adapted[name]
+            expected_comparison["runtime_input_adapter_proof"] = adapter_proof
+        elif "runtime_input_adapter" in representative:
+            raise ValueError("Generic completed Quality H8 input relation cannot authorize another backend")
+        if (comparison != expected_comparison
                 or actual["source_image_sha256"] != representative.get("source_image_sha256")
                 or actual["original_wh"] != representative.get("original_wh") or observed_tensor is None
                 or not isinstance(expected_tensor, Mapping)

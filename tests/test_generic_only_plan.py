@@ -19,8 +19,8 @@ def document(path, value):
 
 def scope_fixture(tmp_path, monkeypatch, backend="hailo10h"):
     primary = tmp_path / "producer"
-    setup = "orin_nx_hailo10_01" if backend == "hailo10h" else "orin_nx_deepx_m1_01"
-    direction = "hailo10h_to_trt" if backend == "hailo10h" else "deepx_to_trt"
+    setup = {"hailo8": "orin_nx_hailo8_01", "hailo10h": "orin_nx_hailo10_01", "deepx": "orin_nx_deepx_m1_01"}[backend]
+    direction = {"hailo8": "hailo8_to_trt", "hailo10h": "hailo10h_to_trt", "deepx": "deepx_to_trt"}[backend]
     identity = dict(model_id="yolo26s", case_id="b039", setup_id=setup,
         direction=direction, comparison_backend=backend, precision="float32_layout_fp16",
         output_endpoint_id="detection:decoded_nms:" + "f" * 64)
@@ -49,7 +49,7 @@ def scope_fixture(tmp_path, monkeypatch, backend="hailo10h"):
         "original_local_case_dir": str(local), "selection_source": selection, "split_manifest": split,
         "case_output_relative": f"{setup}/yolo26s/b039", "quality_status": "accuracy_loss",
         "quality_reference": quality, "boundary_observation": boundary,
-        "original_run_cfg": {"stage1_provider": "hailo10h" if backend == "hailo10h" else "deepx_m1",
+        "original_run_cfg": {"stage1_provider": {"hailo8": "hailo8", "hailo10h": "hailo10h", "deepx": "deepx_m1"}[backend],
                              "stage2_provider": "tensorrt", "throughput_queue_depth": 2},
         "generic_runtime_environment": {"python": "/venv/bin/python3", "python_sha256": "a" * 64,
             "environment": {}, "source": env},
@@ -62,8 +62,8 @@ def scope_fixture(tmp_path, monkeypatch, backend="hailo10h"):
             "outputs": {"detections": {"shape": [1, 300, 6], "dtype": "float32"}}},
         "completion_contract": {"fixture": "the runtime/normal builder validates the real execution contract"},
         "mixed_input_control": {"path": "/fixture/mixed.json", "sha256": "d" * 64},
-        "stage1_execution": {"policy": "hailo_async_slots_v1" if backend == "hailo10h" else "deepx_async_slots_v1",
-                             "inflight": 8 if backend == "hailo10h" else 4}}
+        "stage1_execution": {"policy": {"hailo8": "synchronous", "hailo10h": "hailo_async_slots_v1", "deepx": "deepx_async_slots_v1"}[backend],
+                             "inflight": {"hailo8": 1, "hailo10h": 8, "deepx": 4}[backend]}}
     row["expected_runtime_artifacts"] = {role: {k: artifacts[role][k] for k in ("path", "sha256")}
                                         for role in ("part1_runtime", "engine")}
     scope = tmp_path / "scope.csv"
@@ -77,13 +77,13 @@ def scope_fixture(tmp_path, monkeypatch, backend="hailo10h"):
     return plan, scope, primary, row
 
 
-@pytest.mark.parametrize("backend", ["hailo10h", "deepx"])
+@pytest.mark.parametrize("backend", ["hailo8", "hailo10h", "deepx"])
 def test_scope_admits_quality_fail_without_any_native_row(tmp_path, monkeypatch, backend):
     plan, scope, primary, row = scope_fixture(tmp_path, monkeypatch, backend)
     assert completed.validate_plan(plan, scope, primary) == [row]
     config, staged = completed.runtime_configuration(row, "/session/new", "fresh")
     assert config["measurement_mode"] == admission.MODE
-    assert config["stage1_execution"]["inflight"] == (8 if backend == "hailo10h" else 4)
+    assert config["stage1_execution"]["inflight"] == {"hailo8": 1, "hailo10h": 8, "deepx": 4}[backend]
     assert config["original_run_cfg"]["native_split_quality_binding"] == ""
     assert config["boundary_observation"] == row["boundary_observation"]
     assert config["functional_reference"]["outputs"] == row["functional_reference"]["outputs"]
@@ -143,7 +143,7 @@ def test_immutable_tensorrt_receipt_paths_cannot_be_relocated(tmp_path, monkeypa
 
 
 @pytest.mark.parametrize("fault,error", [
-    ("policy", "fixed backend async"), ("budget", "work budget"), ("artifact", "source/quality"),
+    ("policy", "fixed backend"), ("budget", "work budget"), ("artifact", "source/quality"),
     ("input", "operation differs"), ("completion", "operation differs"),
     ("reference", "operation differs"), ("mixed", "operation differs"),
     ("boundary", "operation differs"), ("original", "operation differs"),

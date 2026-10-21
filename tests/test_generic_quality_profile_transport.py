@@ -67,7 +67,7 @@ def test_normal_schema_rejects_malformed_explicit_quality_profile(damage):
     elif damage == "empty_cases":
         row["case_ids"] = []
     elif damage == "wrong_stage":
-        row["stage1"] = "hailo8"
+        row["stage1"] = "onnxruntime_cpu"
     else:
         payload["quality_gate"]["management_reference"]["existing_reference"]["made_up"] = True
     with pytest.raises(ValueError, match="Invalid evaluation profile"):

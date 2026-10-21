@@ -1,8 +1,196 @@
+## 21.10.2026 — Parallele physische Setup-Warteschlangen für Generic-only
+
+Der ausdrücklich angeforderte Einstieg `--execute-batch` verteilt vorbereitete
+Generic-only-Pläne mit `parallel_remote_setups=true`, `max_parallel_setups=3`
+und `setup_queue_mode=per_setup` über den vorhandenen
+`PhysicalSetupDispatchManager`. Jeder Plan bleibt an genau ein physisches
+Setup und einen normalen Ausführungs-/Ergebnisordner gebunden. Die drei
+Wiederholungen eines Cuts bleiben seriell. Die innere Generic-Pipeline,
+H10 mit acht Slots, DeepX mit vier Slots und H8 mit synchroner Stage1 bleiben
+unverändert. Qualitätsinferenz und Builds gehören nicht zu diesem Batch.
+
+Physische Aliasse teilen dieselbe Warteschlange. Normale Ressourcenlocks,
+Ownershipprüfungen, Leasejournale und Prozessbereinigung bleiben wirksam.
+Ungeklärte Freigaben erzeugen vor Rückgabe des Workers einen dauerhaften
+gerätespezifischen Sperrbeleg, den auch eine spätere explizite Wiederaufnahme
+beachtet. Ein vollständig bereinigter einzelner Messfehler sperrt dagegen
+keine unabhängigen Zellen. Gemeinsame Quellenfehler beenden weitere betroffene
+Dispatches an den normalen Fall-/Wiederholungsgrenzen.
+
+Der Batch bindet genau einen veröffentlichten Source-Freeze. Importierte
+Controllerdateien müssen dem verifizierten Quellenmanifest angehören;
+die tatsächlichen Bundlemitglieder müssen dem normalen Produktwriter
+entsprechen. Jeder Plan behält seinen ursprünglichen Startmarker, seine
+Execution-ID und sein gebundenes Wiederholungsbudget. Gemeinsamer Status
+wird ausschließlich vom Controllerhauptthread atomar geschrieben,
+Einzelergebnisse bleiben in getrennten Planordnern. Gruppentimestamps
+beschreiben Controller-/Prozessfenster und keine NPU-Auslastung.
+
+61 gezielte Softwareprüfungen des Batchs und der bestehenden Dispatchpfade
+bestanden. Ein unabhängiger Test mit echten lokalen Kindprozessen belegte
+Überlappung verschiedener physischer Kennungen, Serialisierung von Aliasen
+und den ausbleibenden Start eines vorher abgebrochenen Queueeintrags.
+Der begrenzte Test auf tatsächlichen unabhängigen Beschleunigersystemen
+bleibt vor dem vollständigen Parallelbetrieb erforderlich.
+
+Die abschließende gemeinsame Regression bestand 1.233 Tests in 356,87 Sekunden
+bei unveränderten geprüften Produkt-/Testquellen. Vier optionale Tests eines
+explizit anzugebenden unveränderlichen Native-Archivs wurden mit dieser
+Begründung übersprungen. Die tatsächlich vorhandenen vier Containerbindungen
+sind separat geprüft. Der vorherige Integrationslauf mit acht Fehlern bleibt
+als Diagnose erhalten: Drei Runnerfixtures benötigten den normalen kopierten
+Bibliothekskontext, eine Bridgefixture den tatsächlichen Child-Importkontext.
+Außerdem fehlten einer schon im Ausgangsstand vorhandenen, nur lesenden
+Budgetprojektion zwei Kontextfelder; deren Ergänzung bestand 49 gezielte
+Regressionen. Es wurden keine Budgets oder historischen Energie-Freezes
+verändert und keine Energieaufnahme ausgeführt.
+
+Der abschließende Quellenreview bindet zusätzlich den expliziten
+`product_freeze` jedes Kindplans an denselben vollständigen Batch-Freeze.
+Ein identisches Runtimearchiv allein darf keine frühere Controller-Epoche
+umetikettieren. Die erste noch unveröffentlichte Paketkopie bleibt als
+Vorbereitungsstand erhalten; die endgültigen Quellenindizes werden nach
+dieser eng begrenzten Ergänzung erneut mit dem normalen Builder erzeugt.
+Die gezielte abschließende Wiederholung bestand 61 Tests in 9,22 Sekunden.
+
+## 21.10.2026 — Quellengebundene Eingaben und erweiterte Qualitätszulassung
+
+15 späte YOLOv7-Zellen verwenden neben den P1-Grenztensoren die ursprüngliche
+Bildeingabe für eine echte Part2-Faltung. Die vorherige Umwandlung des
+SDK-UInt8-Inputs nach Float32 stellte deren kanonische Normierung nicht her.
+Die Vorbereitung bindet nun den normalen vollständigen Bild-Feed und dessen
+tatsächliche Bytes je Eingang; der Loader materialisiert ihn vor dem Timer.
+Die gemischte Kontrolle verwendet unveränderliche Zuordnungen je Aufgabe und
+prüft den tatsächlichen Part2-Passthrough. Sechs dieser Zellen haben nur einen
+P1-Grenztensor und zusätzlich das Bild als zweiten Part2-Eingang; die Zulassung
+bildet diese tatsächliche Struktur ab. Die neun zentralen Inferenz- und
+Schedulingdefinitionen sind weiterhin bytegleich zum veröffentlichten Stand
+`4a0be2c3464a873c348783cf20010a526f911a7e`.
+
+Die unabhängige Softwareprüfung umfasst den normalen Qualitätswriter,
+strikten Reader und zentralen Dienst mit ausdrücklich synthetischen N2/B7-Daten
+sowie manipulierte Bild-, Skalierungs-, Quellen- und Bytebindungen. Sie
+bestand 91 fokussierte und 21 zusätzliche Prüfungen. Die bestehende
+Qualitäts-/Funktionsprüfung auf der Hardware bleibt erforderlich.
+
+H8 verwendet für Qualitäts- und FPS-Eingaben den vorhandenen Bound-Tensorloader
+auch bei echten BIN-Dateien. Die Beziehung zwischen den ursprünglichen
+UInt8-Eingaben und dem tatsächlichen SDK-Float32-Adapter wird ausdrücklich
+geprüft. Bestehende transformierte TensorRT-Engines werden an den tatsächlichen
+ursprünglichen Generic-Request mit dessen versiegelter Bridge gebunden.
+Der normale Validator prüft alle acht ursprünglichen Dateien vor und nach
+Engineinitialisierung; ein anderer Native-Vergleichsbeleg ersetzt diesen
+Request nicht. Die 64 zusätzlichen Detektorrezepte wurden einzeln geprüft:
+40 direkte FP16-Engines, 16 UInt8-Dequant-Bridges und acht DeepX-Float32-Bridges
+ohne zusätzliche Layouttransformation. 57 fokussierte und acht unabhängige
+Vorprüfungsregressionen bestanden.
+
+Die reine Qualitätsaufnahme protokolliert die monotone Dauer ihrer vollständigen
+Bildschleife und deren Bildanzahl. Diese Beobachtung umfasst Bildvorbereitung,
+serielle Inferenz, Completion und Belegerfassung je Bild; sie schließt
+Engineinitialisierung, nachfolgenden Export und zentrale CPU-Auswertung samt
+Bootstrap aus. Sie wird getrennt von Generic-FPS geführt. Der unabhängige
+H8-Review bestand 19 zusätzliche und 26 fokussierte Softwareprüfungen,
+einschließlich des tatsächlich generierten Programmeinstiegs und des normalen
+Qualitäts-/Collectorwegs. Die verwendeten synthetischen Prüfdatensätze sind
+keine N5000-Hardwarebelege.
+
+## 21.10.2026 — Cache-Abgleich, Wiederverwendung und reale Vorprüfungsfehler
+
+Der unabhängige 420er-Cache-Audit ist mit späteren vorhandenen Quellen- und
+Receiptbelegen abgeglichen. Alle 36 offenen ResNet-Artefaktidentitäten sind
+geschlossen. Für H8 und H10/b119 waren die zum richtigen P1 gehörenden,
+bereits inventarisierten Enginealternativen erforderlich. 359 Artefaktpaare
+sind damit bestätigt; 61 bekannte technische Negativfälle bleiben erhalten.
+Der ursprüngliche Audit wird nicht umgeschrieben, und dieser Abgleich führt
+keine zusätzlichen Builds oder Hardwareproben aus.
+
+112 historische H10-/DeepX-Klassifikatorfälle wurden einschließlich ihrer
+336 Wiederholungen mit dem normalen Parser und ihren ursprünglichen
+Quellen-, Eingabe-, Artefakt- und Completionbindungen geprüft. Zusammen mit
+15 zuvor zugelassenen Detektorfällen und 64 ebenfalls vollständig geprüften
+H8-Fällen sind 191 vorhandene FPS-Datensätze mit 573 Wiederholungen
+wiederverwendbar. H8 behält seine tatsächliche archivierte 2.92.0-Quellmischung
+und die synchrone Stage1 mit zwei Pipelineworkern; daraus wird kein sauberer
+Commitstand oder neuer Async-Lauf abgeleitet. 168 unterstützte Zellen benötigen
+noch neue FPS; die 61 technischen Negativfälle bleiben getrennt erhalten.
+Diese Wiederverwendung ist keine neue Messung des erweiterten Runners.
+
+Alle 180 Klassifikator-Qualitätsbelege erfüllen den unveränderten Vertrag.
+Die Zulassung prüft tatsächliche Top1-/Top5-Trefferzahlen und die normale
+Qualitätsentscheidung anhand der vorhandenen Konfidenzintervalle erneut;
+Datasetinferenz, Bootstrap und Qualitätsgrenzen werden nicht neu ausgeführt
+oder verändert. 160 Fälle sind qualitätszulässig, 20 behalten ihren FAIL.
+Für alle 179 unterstützten Detektorfälle ist dagegen eine Qualitätsaufnahme
+mit dem vollständigen aktuellen Completionpfad nötig. Die 23 darunter bereits
+FPS-gemessenen Fälle behalten ihre Durchsatzwerte, sind in der neuen
+qualitätsgefilterten Ansicht aber bis dahin ausstehend. Historische A/B-Belege
+und deren damalige Qualitätszulassungen werden nicht geändert.
+
+Die erste gezielte Native-Funktionskontrolle auf DeepX scheiterte am fehlenden
+vollständigen Output-Contract-Container im privaten Staging. Die Korrektur
+bindet den tatsächlichen historischen Container einschließlich Dateihash,
+überträgt ihn vor dem normalen Dispatch und prüft ihn vor und nach Ausführung.
+Gleiche ausgewählte Vertragszeilen in einem anderen Container genügen nicht.
+77 fokussierte und 23 unabhängige Softwareprüfungen bestanden. Der fehlgeschlagene
+Hardwareversuch und sein nachgewiesener Prozessabschluss bleiben erhalten;
+ein neuer funktionaler Hardware-PASS ist noch nicht erreicht.
+
+Der erste normale H10/YOLO26s-b039-Qualitätslauf endete nach 348,758 Sekunden
+vor der Inferenz. Der Generator hatte den vollständigen 20er-Katalog erzeugt,
+während das ausdrücklich selektive Profil nur b039 ausführbar bindet.
+Die Scopeprüfung verwendet für diese Ausnahme nun dieselbe vollständige
+Profil-/Plan-Autorisierung wie der Qualitätsworkflow. Fehlende Autorisierung,
+abweichende Quellen und nicht akzeptierte angeforderte Fälle bleiben sperrend;
+andere angeforderte Messpfade behalten ihren vollständigen Umfang.
+38 fokussierte Scope-/Accountingprüfungen sowie 30 unabhängige Prüfungen bestanden.
+Der weitere Fehler der TensorRT-Vorprüfung beruhte auf der irrtümlichen Wahl
+des Native-Präzisionsrezepts für die explizit gebundene Generic-Konfiguration.
+Die Vorprüfung bindet nun genau deren Engine, Build-Receipt und Build-ONNX
+einschließlich Pfad, Größe und Hash. Die Runtimekennung `float32_layout_fp16`
+bleibt von der tatsächlichen FP16-Compilerrezeptur getrennt. Bestehende
+Native-Bridge-, Owner-, ABI-, Befehls-, Form- und Byteprüfungen bleiben wirksam.
+35 fokussierte Prüfungen und deren unabhängige Wiederholung bestanden;
+beide tatsächlichen H10-/DeepX-b039-Konfigurationen bestanden die lokale
+Rezeptprojektion. Eine Remote- oder Hardwareabnahme ist damit nicht belegt.
+Es gab keine neue Kompilierung, keine Qualitätsbilder und keine FPS-Ergebnisse.
+Die tatsächliche Capturegeschwindigkeit und eine darauf beruhende Restlaufzeit
+sind daher noch nicht bestimmt. Alle Belege liegen im externen Auftragsordner
+`/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/`.
+
+## 21.10.2026 — Begrenzte Wiederaufnahme unabhängiger Generic-Zellen
+
+Der ausdrücklich gebundene Planmodus `independent_cells_v1` erlaubt höchstens
+zwei Controllerstarts je fehlender Wiederholung. Das Budget wird vor dem
+Dispatch dauerhaft reserviert. Gültige Wiederholungen werden unverändert
+erhalten. Ein explizites `--execute PLAN --resume` prüft ursprünglichen Plan,
+Execution-ID, Konfiguration und Bundle; der exklusive ursprüngliche Startmarker
+bleibt bestehen. Ohne diesen Planmodus gilt weiterhin die bisherige einmalige
+Ausführung. Jeder weitere Dispatch benötigt seine vorher dauerhaft gebuchte
+Versuchsnummer und startet über den normalen Produktpfad einen frischen
+Prozess; unbeschränkte Wiederholungen sind ausgeschlossen.
+
+Vorprüfung, physischer Lock, Prozessregistry, Leasejournal und Quarantäne sind
+im neuen Modus je Backend gebunden. Ein Fehler sperrt den betroffenen Zweig;
+unabhängige saubere Zweige laufen weiter. Vor jedem weiteren Versuch sind die
+tatsächlichen Besitz- und Freigabeprüfungen erforderlich. Parsergültige
+Rohdaten eines erst danach fehlgeschlagenen Prozesses werden erhalten, aber
+ohne erfolgreichen technischen Abschluss nicht übernommen. Eine erstmalige
+Ausführung darf keine zufällig vorhandenen Ergebnisdateien übernehmen.
+
+121 Controllerregressionen bestanden; nach der abschließenden Versionierung
+der Fehlerbelege bestanden 29 fokussierte Tests. Der unabhängige Review bestand
+29 Tests und prüfte zusätzlich den normalen Generic-only-Wrapper mit drei
+frischen CPU-Testprozessen: Ein kontrollierter fehlender Repeat wurde begrenzt
+ergänzt, der erste gültige Repeat blieb unverändert, und ein vollständiger
+Reentry startete keinen Prozess. Simulierte SDKs und Testtransporte belegen
+keine Acceleratorabnahme. Quellen und Rohbelege stehen im externen Auftrag.
+
 ## 21.10.2026 — Laufende Erweiterung auf 420 Generic-Zielkonfigurationen
 
 Die Ergänzung `CODEX_Generic_420_Live_Ergaenzung_20261021.txt` hebt den bisherigen H8-Ausschluss auf und erweitert den laufenden Auftrag auf sieben Modelle mit jeweils 20 historischen stratified_windows-Cuts auf drei Backends. Der Auftrag und seine bisherigen H10-/DeepX-Belege werden fortgeführt. MobileNet erhält die ursprünglichen zusätzlichen Cuts b029, b043 und b119, ResNet b028; die bisherige Auswahl wird nicht anhand neuer FPS verändert. Neue 420er-Inventare und Statusstände werden getrennt von den bereits eingefrorenen 160er-Belegen geführt.
 
-Die installierte H8-Stage1 arbeitet synchron, während die bestehende Pipeline zwei Worker und eine begrenzte FIFO mit Tiefe zwei verwendet. Stage1 kann dadurch mit TensorRT und Taskabschluss des vorigen Bildes überlappen. Die geprüften Inferenz- und Schedulingfunktionen sind identisch zum zuvor tatsächlich gemessenen H8-Freeze. Eine H10-Async-Umstellung ist nicht vorgesehen; zusätzliche Zulassungs- und Mehrtensorprüfungen für H8 und Klassifikatoren sind noch ausstehende Arbeiten. H10 und DeepX behalten acht beziehungsweise vier Async-Slots.
+Die installierte H8-Stage1 arbeitet synchron, während die bestehende Pipeline zwei Worker und eine begrenzte FIFO mit Tiefe zwei verwendet. Stage1 kann dadurch mit TensorRT und Taskabschluss des vorigen Bildes überlappen. Die geprüften Inferenz- und Schedulingfunktionen sind identisch zum zuvor tatsächlich gemessenen H8-Freeze. Eine H8-Async-Umstellung ist nicht vorgesehen; zusätzliche Zulassungs- und Mehrtensorprüfungen für H8 und Klassifikatoren sind noch ausstehende Arbeiten. H10 und DeepX behalten acht beziehungsweise vier Async-Slots.
 
 Einzelne technisch nicht ausführbare Zellen bleiben mit Ursache und Beleg erhalten. Qualitäts-FAILs werden bei funktionaler Korrektheit auf FPS gemessen. Vorhandene gültige Wiederholungen werden erhalten; der normale Fallrunner kann fehlende Wiederholungen gezielt ergänzen. Ein ausdrücklich begrenzter kampagnenweiter Fortsetzungsweg mit unveränderten Quellenbindungen und erhaltenen Startmarkern ist noch zu integrieren. Die vier offenen gepaarten Fälle sperren keine unabhängigen Generic-only-Fälle. Es entstehen keine neuen wissenschaftlichen Native-, Full- oder Energiewerte.
 

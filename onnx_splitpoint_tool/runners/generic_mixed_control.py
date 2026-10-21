@@ -142,6 +142,22 @@ def _tasks(tasks, config):
         frozen.append({"task_id": task_id, "prepared_input": deepcopy(dict(descriptor)),
             "input_sha256": source_sha, "prepared_tensor_sha256": digest,
             "feed": {name: by_source[source_sha][1]}})
+        passthrough = (config.get("boundary_observation") or {}).get("passthrough_inputs") or {}
+        if passthrough:
+            full = item.get("full_feed")
+            if not isinstance(full, Mapping) or set(full) != set(passthrough.values()):
+                raise ValueError("mixed original-input passthrough requires the task's canonical full feed")
+            owned = {}
+            for target, source in passthrough.items():
+                value = full[source]
+                expected = config["boundary_observation"]["part2_inputs"][target]
+                if (not isinstance(value, np.ndarray) or list(value.shape) != expected["shape"]
+                        or str(value.dtype) != expected["dtype"] or not np.isfinite(value).all()):
+                    raise ValueError("mixed canonical original-input shape/dtype differs")
+                owned[source] = np.array(value, copy=True, order="C")
+            frozen[-1]["full_feed"] = owned
+            frozen[-1]["full_feed_content"] = _boundary_snapshot(owned, {
+                source: {"shape": list(value.shape), "dtype": str(value.dtype)} for source, value in owned.items()})
     if len({item[0] for item in by_source.values()}) < 2:
         raise ValueError("mixed control requires at least two distinct actual prepared tensor payloads")
     return frozen
@@ -176,9 +192,13 @@ def normalize_boundary_observation(value):
             "schema_version", "minimum_boundary_tensors", "part1_outputs", "part2_inputs",
             "part2_to_part1", "passthrough_inputs", "transfer_contract"}:
         raise ValueError("mixed boundary observation contract malformed")
+    one_cut_with_original_input = (value["minimum_boundary_tensors"] == 1
+        and isinstance(value["part1_outputs"], Mapping) and len(value["part1_outputs"]) == 1
+        and isinstance(value["part2_inputs"], Mapping) and len(value["part2_inputs"]) >= 2
+        and isinstance(value["passthrough_inputs"], Mapping) and bool(value["passthrough_inputs"]))
     if (type(value["schema_version"]) is not int or value["schema_version"] != 1
             or type(value["minimum_boundary_tensors"]) is not int
-            or value["minimum_boundary_tensors"] < 2):
+            or (value["minimum_boundary_tensors"] < 2 and not one_cut_with_original_input)):
         raise ValueError("mixed boundary observation requires at least two boundary tensors")
     result = deepcopy(dict(value))
     for role in ("part1_outputs", "part2_inputs"):
@@ -325,6 +345,14 @@ class _BoundaryObservation:
             raise RuntimeError("mixed boundary live mapping/IO/layout/quantization differs from contract")
         if any(source not in feed for source in runtime["passthrough_inputs"].values()):
             raise RuntimeError("mixed boundary passthrough is not an actual original input")
+        for target, source in runtime["passthrough_inputs"].items():
+            if (inputs[target].dtype != feed[source].dtype or inputs[target].shape != feed[source].shape
+                    or not np.array_equal(inputs[target], feed[source])):
+                raise RuntimeError("mixed boundary passthrough bytes differ from this task's canonical original input")
+        if runtime["passthrough_inputs"]:
+            record["passthrough_input_content"] = {target: _boundary_snapshot(
+                {source: feed[source]}, {source: self.contract["part2_inputs"][target]})[source]
+                for target, source in runtime["passthrough_inputs"].items()}
         if self.first_runtime is None:
             self.first_runtime = deepcopy(dict(runtime))
         elif runtime != self.first_runtime:
@@ -507,8 +535,9 @@ def run_mixed_control(tasks, *, config, original_sources, serial_stage1, transfe
                 or envelope["task_index"] != len(candidates)):
             raise RuntimeError("mixed control FIFO task association mismatch")
         index = envelope["task_index"]
-        inputs = (boundary.transferred("mixed", index, envelope["outputs"], transfer, frozen[index]["feed"])
-                  if boundary is not None else transfer(envelope["outputs"], frozen[index]["feed"]))
+        full_feed = frozen[index].get("full_feed", frozen[index]["feed"])
+        inputs = (boundary.transferred("mixed", index, envelope["outputs"], transfer, full_feed)
+                  if boundary is not None else transfer(envelope["outputs"], full_feed))
         return {"task_index": index, "inputs": inputs}
 
     current = {"task_index": None}
@@ -516,8 +545,9 @@ def run_mixed_control(tasks, *, config, original_sources, serial_stage1, transfe
     def pipeline_stage2(envelope):
         index = envelope["task_index"]
         current["task_index"] = index
-        return (boundary.inferred("mixed", index, envelope["inputs"], stage2, frozen[index]["feed"])
-                if boundary is not None else stage2(envelope["inputs"], frozen[index]["feed"]))
+        full_feed = frozen[index].get("full_feed", frozen[index]["feed"])
+        return (boundary.inferred("mixed", index, envelope["inputs"], stage2, full_feed)
+                if boundary is not None else stage2(envelope["inputs"], full_feed))
 
     def copy_envelope(envelope):
         return {"task_index": envelope["task_index"], "outputs": clone_payload(envelope["outputs"])}
@@ -529,6 +559,10 @@ def run_mixed_control(tasks, *, config, original_sources, serial_stage1, transfe
                     or str(value.dtype) != item["prepared_input"]["dtype"]
                     or hashlib.sha256(value.tobytes()).hexdigest() != item["prepared_tensor_sha256"]):
                 raise RuntimeError("mixed control runtime mutated the prepared input")
+            if "full_feed" in item and _boundary_snapshot(item["full_feed"], {
+                    name: {"shape": list(array.shape), "dtype": str(array.dtype)}
+                    for name, array in item["full_feed"].items()}) != item["full_feed_content"]:
+                raise RuntimeError("mixed control runtime mutated a canonical original input")
 
     class Recorder:
         completed_count = 0
@@ -553,13 +587,14 @@ def run_mixed_control(tasks, *, config, original_sources, serial_stage1, transfe
             associated = _AssociatedAsync(adapter, frozen, prepared, boundary)
         for index, item in enumerate(frozen):
             feed = item["feed"]
+            full_feed = item.get("full_feed", feed)
             if boundary is None:
-                outputs = stage2(transfer(serial_stage1(feed), feed), feed)
+                outputs = stage2(transfer(serial_stage1(feed), full_feed), full_feed)
             else:
                 p1 = serial_stage1(feed)
                 boundary.collected("serial", index, p1)
-                p2 = boundary.transferred("serial", index, p1, transfer, feed)
-                outputs = boundary.inferred("serial", index, p2, stage2, feed)
+                p2 = boundary.transferred("serial", index, p1, transfer, full_feed)
+                outputs = boundary.inferred("serial", index, p2, stage2, full_feed)
             references.append(_complete(reference_processor, outputs))
             report["serial_reference_count"] = len(references)
         check_input_bytes()
@@ -581,11 +616,21 @@ def run_mixed_control(tasks, *, config, original_sources, serial_stage1, transfe
                     or associated.submitted != list(range(len(frozen)))
                     or associated.collected != associated.submitted))):
             raise RuntimeError("mixed control task counts, policy, or full drain differ")
-        report["stage1_peak_uncollected_jobs"] = pipeline.get("stage1_peak_uncollected_jobs", 1)
+        synchronous_generic_only = (not asynchronous
+            and config.get("measurement_mode") == "generic_only_completed_task")
+        if synchronous_generic_only:
+            # This is the existing blocking P1 worker overlapping the P2
+            # worker. It has no SDK async slot/occupancy observation.
+            report["stage1_submission_mode"] = "synchronous_stage1_in_two_worker_pipeline"
+        else:
+            report["stage1_peak_uncollected_jobs"] = pipeline.get("stage1_peak_uncollected_jobs", 1)
         observed_groups = list(associated.slot_tasks.values()) if associated is not None else slot_groups
         if observed_groups != slot_groups:
             raise RuntimeError("mixed control observed adapter slot reuse differs from its FIFO recipe")
-        report["stage1_slot_input_coverage"] = [{"slot_index": slot,
+        coverage_key = ("stage1_submission_input_coverage" if synchronous_generic_only
+                        else "stage1_slot_input_coverage")
+        index_key = "submission_stream_index" if synchronous_generic_only else "slot_index"
+        report[coverage_key] = [{index_key: slot,
             "task_ids": [frozen[index]["task_id"] for index in indices],
             "prepared_tensor_sha256": sorted({frozen[index]["prepared_tensor_sha256"] for index in indices}),
             "distinct_prepared_tensor_count": len({frozen[index]["prepared_tensor_sha256"] for index in indices}),

@@ -3425,13 +3425,20 @@ for root, namespace, owner_status in roots:
         receipts.append((resolved, root, namespace, owner_status))
 
 def native_binding_for(receipt_path, root, requirement, receipt):
-    for parent in receipt_path.parents:
-        if not within(parent, root):
-            break
-        candidate = parent / "native_split_quality_binding.json"
-        if not candidate.is_file() or candidate.is_symlink():
-            continue
-        binding = load(candidate)
+    supplied = requirement.get("generic_quality_bridge_binding")
+    candidates = []
+    if supplied is not None:
+        container = requirement["generic_quality_bridge_container"]
+        candidates.append(("original_generic_request:" + container["sha256"] + container["pointer"], supplied))
+    else:
+        for parent in receipt_path.parents:
+            if not within(parent, root):
+                break
+            candidate = parent / "native_split_quality_binding.json"
+            if candidate.is_file() and not candidate.is_symlink():
+                candidates.append((candidate, None))
+    for candidate, supplied_binding in candidates:
+        binding = supplied_binding if supplied_binding is not None else load(candidate)
         validator, validator_detail = strict_native_quality_validator()
         if validator is None:
             return False, "native_binding_strict_validation_unavailable", {
@@ -3471,6 +3478,14 @@ def native_binding_for(receipt_path, root, requirement, receipt):
         binding = verified
         declared = str(binding.get("binding_sha256") or "").lower()
         artifacts = binding.get("artifacts") or {}
+        expected_generic_bridge = requirement.get("generic_quality_bridge_binding_sha256")
+        if expected_generic_bridge is not None:
+            if declared != expected_generic_bridge:
+                return False, "generic_quality_bridge_binding_mismatch", {}
+            for role, expected in requirement["generic_quality_bridge_artifact_identities"].items():
+                actual = artifacts.get(role) or {}
+                if any(actual.get(key) != expected[key] for key in ("sha256", "size_bytes")):
+                    return False, "generic_quality_bridge_artifact_mismatch", {"artifact_role": role}
         source_row = artifacts.get("source_part2_onnx") or {}
         build_row = artifacts.get("build_part2_onnx") or {}
         engine_row = artifacts.get("engine") or {}
@@ -3515,7 +3530,8 @@ def native_binding_for(receipt_path, root, requirement, receipt):
                 or int(actual_part1.get("size_bytes") or 0)
                    != int(requirement.get("part1_artifact_size_bytes") or 0)):
                 return False, "native_binding_part1_mismatch", {}
-        expected_policy = str(requirement.get("native_policy_sha256") or "").lower()
+        expected_policy = str(requirement.get("generic_quality_bridge_policy_sha256")
+                              or requirement.get("native_policy_sha256") or "").lower()
         if expected_policy and str((binding.get("preselection") or {}).get(
             "policy_sha256") or "").lower() != expected_policy:
             return False, "native_binding_policy_mismatch", {}
@@ -3686,6 +3702,12 @@ def generic_uint8_cast_bridge_for(
     }
 
 def verify(receipt_path, root, namespace, owner_status, requirement):
+    generic_artifacts = requirement.get("generic_quality_artifacts")
+    if generic_artifacts is not None:
+        if receipt_path.resolve() != pathlib.Path(
+            generic_artifacts["engine_build_receipt"]["path"]
+        ).resolve():
+            return None, "generic_quality_receipt_path_mismatch", {}
     if owner_status == "current_owner_missing":
         return None, "current_owner_missing", {}
     if owner_status == "current_owner_builder_abi_mismatch":
@@ -3727,6 +3749,17 @@ def verify(receipt_path, root, namespace, owner_status, requirement):
     source_sha = sha_file(source)
     engine_sha = sha_file(engine)
     builder_sha = sha_file(builder)
+    if generic_artifacts is not None:
+        for role, path, actual_sha in (
+            ("engine_build_receipt", receipt_path, sha_file(receipt_path)),
+            ("engine", engine, engine_sha),
+            ("build_part2_onnx", source, source_sha),
+        ):
+            expected = generic_artifacts[role]
+            if (path.resolve() != pathlib.Path(expected["path"]).resolve()
+                or path.stat().st_size != expected["size_bytes"]
+                or actual_sha != expected["sha256"]):
+                return None, "generic_quality_artifact_mismatch", {"artifact_role": role}
     if source_sha != str(raw.get("source_onnx_sha256") or "").lower():
         return None, "source_onnx_mismatch", {}
     if engine_sha != str(raw.get("engine_sha256") or "").lower():
@@ -3835,6 +3868,12 @@ def verify(receipt_path, root, namespace, owner_status, requirement):
             return None, "special_precision_direct_source_not_allowed", {}
         if source_sha == requirement["source_sha256"] and precision not in special_bridge_precisions:
             bridge = {"source_binding": "direct_part2_source"}
+            if generic_artifacts is not None:
+                bridge.update({
+                    "source_binding": "generic_quality_completion_config",
+                    "generic_quality_config_sha256": requirement["generic_quality_config_sha256"],
+                    "runtime_precision_identity": requirement["runtime_precision_identity"],
+                })
             shape_contract = dict(requirement.get("shape_contract") or {})
         else:
             valid = False
@@ -3862,6 +3901,13 @@ def verify(receipt_path, root, namespace, owner_status, requirement):
                     # non-canonical Part-2 path that is execution-equivalent.
                     valid = True
                     reason, bridge = native_reason, native_detail
+                    if generic_artifacts is not None:
+                        bridge.update({
+                            "source_binding": "generic_quality_existing_part2_bridge",
+                            "generic_quality_config_sha256": requirement["generic_quality_config_sha256"],
+                            "runtime_precision_identity": requirement["runtime_precision_identity"],
+                            "existing_bridge_does_not_admit_current_quality": True,
+                        })
                 elif precision == "uint8_cast_fp16" and generic_reason:
                     reason, bridge = generic_reason, generic_detail
                 else:
@@ -3901,7 +3947,10 @@ def verify(receipt_path, root, namespace, owner_status, requirement):
     # A changed namespace key is not itself an artifact incompatibility.
     # Reuse across it needs a fully known current source/build contract; an
     # unreadable ONNX's permissive empty-shape fallback cannot authorize it.
-    if owner_status == "legacy_owner_engine_key_changed":
+    # Explicit Generic Quality executes the exact pinned legacy path; it does
+    # not migrate that engine into the current namespace. Owner/ABI, receipt,
+    # command, source, bytes and shapes are still verified above and below.
+    if owner_status == "legacy_owner_engine_key_changed" and generic_artifacts is None:
         if not bool(shape_contract.get("complete")):
             return None, "shape_contract_unavailable", {
                 "shape_contract": shape_contract,
@@ -3990,6 +4039,8 @@ for requirement in P["requirements"]:
         else "legacy_candidate_not_found" if len(roots) > 1 else "not_found"
     )
     priorities = (
+        "generic_quality_artifact_mismatch",
+        "generic_quality_bridge_binding_mismatch", "generic_quality_bridge_artifact_mismatch",
         "builder_abi_mismatch", "source_onnx_mismatch",
         "engine_sha256_mismatch", "receipt_integrity_mismatch",
         "native_binding_integrity_mismatch", "native_binding_receipt_mismatch",
@@ -4278,12 +4329,23 @@ def probe_remote_trt_artifact_cache(
         )
         if role == "part2" and requirement.get("recipe_source") != "generic_same_backend_split":
             try:
-                native_policy = _trt_preflight_native_policy(
-                    suite, model_id=model_id, setup_id=setup,
-                    requirement=requirement,
+                from .generic_quality_preflight import project_generic_quality_requirement
+                generic_recipe = project_generic_quality_requirement(
+                    suite_dir=suite, model_id=model_id, setup_id=setup,
+                    requirement=requirement, runtime_contract=runtime_contract,
+                    hash_file=_stable_file_sha256,
                 )
-            except (TypeError, ValueError) as exc:
-                local_errors.append(f"native_recipe:{requirement['case_id']}:{exc}")
+                if generic_recipe is not None:
+                    requirement.update(generic_recipe)
+                    effective_precision = generic_recipe["engine_precision"]
+                    native_policy = None
+                else:
+                    native_policy = _trt_preflight_native_policy(
+                        suite, model_id=model_id, setup_id=setup,
+                        requirement=requirement,
+                    )
+            except (OSError, TypeError, ValueError, KeyError) as exc:
+                local_errors.append(f"part2_recipe:{requirement['case_id']}:{exc}")
                 requirement["local_error"] = local_errors[-1]
                 native_policy = None
             if native_policy is not None:

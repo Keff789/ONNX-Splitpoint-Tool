@@ -77,6 +77,15 @@ def _materialize_assets(config, root, case_id):
     artifacts = config.get("expected_runtime_artifacts", {})
     if not isinstance(artifacts, Mapping):
         raise ValueError("generic_quality_sidecar_assets_invalid")
+    artifacts = dict(artifacts)
+    if "existing_part2_bridge" in config:
+        bridge = config["existing_part2_bridge"]
+        source = bridge.get("binding_source") if isinstance(bridge, Mapping) else None
+        if (not isinstance(source, Mapping)
+                or source.get("path") != prefix + "existing_part2_bridge/composed_request.json"
+                or source.get("pointer") != "/native_split_quality_binding"):
+            raise ValueError("generic_quality_sidecar_bridge_source_invalid")
+        artifacts["existing_part2_bridge_binding_source"] = source
     for role, descriptor in artifacts.items():
         if not isinstance(descriptor, Mapping):
             raise ValueError("generic_quality_sidecar_asset_descriptor_invalid")

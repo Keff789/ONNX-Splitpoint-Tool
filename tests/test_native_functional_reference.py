@@ -224,13 +224,19 @@ def finite_plan(tmp_path, monkeypatch):
         runner_sha=sources['scripts/native_deepx_trt_e2e_from_benchmarkset.py'], quality_binding=remote+'/native_split_quality_binding.json')
     expected = {'/cache/model.dxnn': 'dxnn', '/old/input.npy': 'input', '/dataset/image.jpg': 'image', '/venv/bin/python': 'python'}
     expected.update({remote+'/tool/'+name: value for name,value in sources.items()})
+    output_contract = {'source': dump(tmp_path / 'metadata/output_contracts.json', {'fixture': 'sealed declaration'}),
+                       'semantic_output_manifest': dump(tmp_path / 'metadata/native_outputs_manifest.json', {'fixture': True}),
+                       'declaration': {'model_id': 'yolov7_paper'}}
+    monkeypatch.setattr(subject, '_output_contract_source', lambda *_: copy.deepcopy(output_contract))
+    expected[benchmark+'/output_contracts.json'] = output_contract['source']['sha256']
     return {'source_row': row, 'schema': subject.PLAN_SCHEMA, 'identity': row['identity'],
         'purpose': 'functional_reference_only_not_scientific_native_performance', 'build_allowed': False,
         'fallback_allowed': False, 'automatic_retry': False, 'energy_capture': False, 'hardware_executed': False,
         'recipe': {'processes': 1, 'completed_tasks': 1, 'warmup_tasks': 0, 'duration_s': 0., 'completion_runtime_mode': 'strict'},
         'execution_id': session, 'remote_root': remote, 'remote_tool_dir': remote+'/tool', 'output_root': str(output),
         'runtime_environment_evidence': env_source, 'expected_interpreter': environment, 'target': {'id': setup},
-        'quality_binding_file': quality, 'source_files': sources, 'archive': subject.bound(archive), 'expected_remote_files': expected,
+        'quality_binding_file': quality, 'output_contract_source': output_contract,
+        'source_files': sources, 'archive': subject.bound(archive), 'expected_remote_files': expected,
         'item': {'argv': argv, 'env': subject._recipe_environment(row), 'repeat': 1, 'source_benchmark_set': '/old/benchmark',
             'benchmark_case_inputs': [], 'remote_output_root': native_output, 'result_json': native_output+'/deepx_native_fifo_e2e_results.json'}}
 

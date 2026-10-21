@@ -15420,7 +15420,8 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
                 attempt["mixed_input_control"] = mixed_control(index)
                 publish()
                 print(f"[generic-completion] repetition={index} mixed_control=passed tasks=32 "
-                      f"peak_uncollected={attempt['mixed_input_control']['stage1_peak_uncollected_jobs']}", flush=True)
+                      f"stage1_policy={attempt['mixed_input_control']['stage1_execution']['policy']} "
+                      f"peak_uncollected={attempt['mixed_input_control'].get('stage1_peak_uncollected_jobs', 'not_recorded')}", flush=True)
             measured = measure_split_completion(stage1, transfer, observe_stage2, current_processor,
                 warmup=0 if energy else 100, tasks=None if energy else 1000,
                 duration_s=energy_contract["duration_s"] if energy else None,
@@ -15458,6 +15459,8 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
                     "sha256": _sp_file_sha256(sample_path), "shape": list(value.shape), "dtype": str(value.dtype)}
             completed_result = json.loads(json.dumps(current_processor.last_result,
                 default=lambda value: value.tolist() if isinstance(value, np.ndarray) else value.item()))
+            if generic_only and config["task"] == "classification":
+                attempt["postprocess_report"] = current_processor.report()
             if config["task"] == "detection":
                 completed_result.setdefault("host_nms_applied",
                     config["completion_contract"].get("completion_mode") != "decoded_nms_attested_materialization_no_second_nms")
@@ -16179,7 +16182,7 @@ def main() -> int:
         stage1 = _canonical_validation_backend_token(args.stage1_provider or args.provider)
         stage2 = _canonical_validation_backend_token(args.stage2_provider or args.provider)
         if (not args.quality_source_only or args.native_split_quality_binding
-                or stage1 not in {"hailo10h", "deepx_m1"} or stage2 != "tensorrt"
+                or stage1 not in {"hailo8", "hailo10h", "deepx_m1"} or stage2 != "tensorrt"
                 or quality_identity.get("model_id") != _decoder_model_id
                 or quality_identity.get("case_id") != base_dir.name
                 or quality_identity.get("setup_id") != str(args.quality_evidence_setup_id or "")
@@ -18924,6 +18927,21 @@ def main() -> int:
     if generic_completion_config:
         if variant_errors or native_p2_sess is None or (hailo_p1 is None and deepx_p1 is None):
             raise RuntimeError(f"Generic completion exact runtime initialization failed: {variant_errors}")
+        from splitpoint_runners.generic_passthrough import prepare_full_feeds
+        canonical_full_feeds = prepare_full_feeds(generic_completion_config, _load_image_as_nchw)
+        completion_transfer = _build_stage2_inputs
+        completion_stage2 = run_stage2_map
+        if canonical_full_feeds is not None:
+            # Original image inputs have a different domain from encoded SDK
+            # inputs. Prepare both immutable images once, before any timer;
+            # each mixed task carries its own full map without global mutation.
+            def completion_transfer(outputs, full_feed=None):
+                return _build_stage2_inputs(outputs, feeds_full_override=(
+                    canonical_full_feeds[0] if full_feed is None else full_feed))
+
+            def completion_stage2(inputs, full_feed=None):
+                return run_stage2_map(inputs, feeds_full_override=(
+                    canonical_full_feeds[0] if full_feed is None else full_feed))
         if deepx_p1 is not None:
             deepx_p1.exact_prepared_input = True
         if int(generic_completion_config.get("queue_depth", 2)) != int(args.throughput_queue_depth):
@@ -18970,13 +18988,14 @@ def main() -> int:
 
             def mixed_control(repetition):
                 return run_bound_mixed_control(generic_completion_config, out_dir, repetition,
-                    serial_stage1=run_stage1_map, transfer=_build_stage2_inputs, stage2=run_stage2_map,
+                    serial_stage1=run_stage1_map, transfer=completion_transfer, stage2=completion_stage2,
                     stage1_async=stage1_async, prepare_async_feed=prepare_mixed_async_feed,
                     clone_payload=_clone_tensor_map if streaming_impl == "generic" else None,
-                    runner_source=__file__, boundary_runtime=boundary_runtime)
+                    runner_source=__file__, boundary_runtime=boundary_runtime,
+                    canonical_full_feeds=canonical_full_feeds)
         return _run_generic_split_completion(
             generic_completion_config, out_dir, run_stage1_map,
-            _build_stage2_inputs, run_stage2_map, artifacts,
+            completion_transfer, completion_stage2, artifacts,
             clone_payload=_clone_tensor_map if streaming_impl == "generic" else None,
             repetition_index=args.generic_completion_repetition, stage1_async=stage1_async,
             mixed_control=mixed_control)
@@ -20634,6 +20653,7 @@ def main() -> int:
     mini_classification_eval_summary: Optional[Dict[str, Any]] = None
     task_quality_gate_by_variant: Dict[str, Dict[str, Any]] = {}
     task_quality_input_requests_by_variant: Dict[str, Dict[str, Any]] = {}
+    generic_quality_capture_timing_by_variant: Dict[str, Dict[str, Any]] = {}
     task_quality_input_export_diagnostics_by_variant: Dict[str, Dict[str, Any]] = {}
     task_quality_gate_summary: Optional[Dict[str, Any]] = None
     backend_drift_report: Optional[Dict[str, Any]] = {
@@ -21604,7 +21624,9 @@ def main() -> int:
                     max_detections=int(args.yolo_max_det), letterbox=bool(val_letterbox),
                     preprocessing_contract=validation_preprocessing_contract,
                     class_names=list(labels or _COCO80),
+                    timed_input_adapter=(_completion_hailo_inputs if str(stage1_tok).lower() == "hailo8" else None),
                 )
+                _generic_quality_completion.begin_capture()
             for img_file in validation_dataset_images:
                 row: Dict[str, Any] = {
                     "image": str(img_file.name),
@@ -21933,6 +21955,9 @@ def main() -> int:
                     row["pass"] = False
                     row["error"] = f"{type(e).__name__}: {e}"
                 per_image_rows.append(row)
+
+            if _generic_quality_completion is not None:
+                generic_quality_capture_timing_by_variant[str(v)] = _generic_quality_completion.finish_capture()
 
             if (
                 _task_quality_execution_location(task_quality_policy)
@@ -23537,6 +23562,9 @@ def main() -> int:
         final_pass=(bool(final_pass) if final_pass is not None else None),
         warnings=warn_list,
     )
+
+    if generic_quality_capture_timing_by_variant:
+        report["generic_quality_capture_timing_by_variant"] = generic_quality_capture_timing_by_variant
 
     # Write report JSON
     print("[case-phase] report_write_begin", flush=True)

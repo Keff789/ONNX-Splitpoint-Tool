@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / 'onnx_splitpoint_tool/resources/templates/run_split_onnxruntime.py.txt'
 
 
-def _module(monkeypatch):
+def _module(monkeypatch, suite_dir=None):
     # Generated CLI tests execute in pytest's process. Preserve the environment
     # around the CLI's normal cache-only guard, including an initially absent key.
     original_policy = os.environ.get('ONNX_SPLITPOINT_ARTIFACT_POLICY')
@@ -37,10 +37,23 @@ def _module(monkeypatch):
     import onnx_splitpoint_tool.runners.harness.classification as classification
     import onnx_splitpoint_tool.native_detection_postprocess as detection
     import onnx_splitpoint_tool.runners.generic_only as generic_only
-    for name, module in [('task_completion', completion), ('harness.classification', classification),
-                         ('native_detection_postprocess', detection), ('generic_only', generic_only)]:
-        monkeypatch.setitem(sys.modules, 'splitpoint_runners.' + name, module)
-    loader = importlib.machinery.SourceFileLoader('_generic_completion_template_test', str(TEMPLATE))
+    source = TEMPLATE
+    if suite_dir is not None:
+        from onnx_splitpoint_tool.gui.controller import _copy_runner_lib
+        from onnx_splitpoint_tool.split_export_runners import write_runner_skeleton_onnxruntime
+        _copy_runner_lib(suite_dir)
+        source = Path(write_runner_skeleton_onnxruntime(str(suite_dir / 'b001')))
+        # A generated CLI runs with its ordinary self-contained library. Keep
+        # that context here, including real passthrough helpers and defaults.
+        for name in tuple(sys.modules):
+            if name == 'splitpoint_runners' or name.startswith('splitpoint_runners.'):
+                monkeypatch.delitem(sys.modules, name)
+        monkeypatch.syspath_prepend(str(suite_dir))
+    else:
+        for name, module in [('task_completion', completion), ('harness.classification', classification),
+                             ('native_detection_postprocess', detection), ('generic_only', generic_only)]:
+            monkeypatch.setitem(sys.modules, 'splitpoint_runners.' + name, module)
+    loader = importlib.machinery.SourceFileLoader('_generic_completion_template_test', str(source))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, loader.name, module)
@@ -211,7 +224,7 @@ def test_progress_callback_time_is_outside_measured_makespan():
 
 
 def test_real_generated_main_uses_generic_pipeline_and_never_cpu_reference(tmp_path, monkeypatch):
-    module = _module(monkeypatch)
+    module = _module(monkeypatch, tmp_path / 'normal_runner_suite')
     config, logits = _fixture(tmp_path)
     calls = {'p1': 0, 'p2': 0}
     def forbidden(*args, **kwargs):
@@ -256,6 +269,8 @@ def test_real_generated_main_uses_generic_pipeline_and_never_cpu_reference(tmp_p
         monkeypatch.setattr(sys, 'argv', ['runner', '--generic-completion-config', str(path), '--out-dir', str(output),
                                         '--generic-completion-repetition', str(index)])
         assert module.main() == 0
+    assert Path(sys.modules['splitpoint_runners.generic_passthrough'].__file__).resolve().is_relative_to(
+        tmp_path / 'normal_runner_suite')
     result=json.loads((output/'generic_completion_results.json').read_text())
     assert calls == {'p1': 3300, 'p2': 3300}
     assert len(valid_split_completion_repetitions(result, config)) == 3

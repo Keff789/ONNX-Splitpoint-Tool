@@ -9688,7 +9688,7 @@ def _generic_quality_source_for_case(root, run, case_dir, *, model_id, setup_id,
     from splitpoint_runners.generic_quality_completion import load_quality_completion_config
     config = load_quality_completion_config(path, check_files=True)
     identity = config["identity"]
-    backend = {"hailo10": "hailo10h", "hailo10h": "hailo10h",
+    backend = {"hailo8": "hailo8", "hailo10": "hailo10h", "hailo10h": "hailo10h",
                "deepx_m1": "deepx_m1"}.get(str(stage1).lower())
     if (backend is None or not model_id or not setup_id
             or identity.get("model_id") != str(model_id)

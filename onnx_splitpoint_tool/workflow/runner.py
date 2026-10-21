@@ -5794,6 +5794,42 @@ def _seal_model_scope_from_accepted_cases_v27919(
         benchmark_plan=benchmark_plan,
         benchmark_set_contract=case_contract,
     )
+    # A selective Generic quality capture retains the full accepted catalogue,
+    # but executes only the cases authorized by the frozen profile.  Reuse the
+    # same exact profile/plan binding as runtime and completeness accounting;
+    # a row-local case_ids flag must not shrink the sealed executable scope.
+    expected_split_case_ids = sorted(accepted_case_ids)
+    if any("generic_quality_completion_configs" in row
+           for row in benchmark_plan.get("runs", []) if isinstance(row, Mapping)):
+        from ..runners.generic_quality_accounting import authorized_runs
+        profile_path = Path(run_dir) / "profile.yaml"
+        try:
+            profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+            quality_runs = authorized_runs(benchmark_plan, profile)
+        except (OSError, ValueError, yaml.YAMLError) as exc:
+            raise RequiredRunScopeError(
+                f"accepted_case_scope_quality_authorization_invalid:{exc}"
+            ) from exc
+        quality_ids = {row["id"] for row in quality_runs}
+        declared_quality_ids = {
+            row.get("id") for row in benchmark_plan.get("runs", [])
+            if isinstance(row, Mapping) and "generic_quality_completion_configs" in row
+        }
+        if not quality_ids or declared_quality_ids != quality_ids:
+            raise RequiredRunScopeError(
+                f"accepted_case_scope_quality_authorization_missing:model={model_id}"
+            )
+        selected = {case for row in quality_runs for case in row["case_ids"]}
+        missing = sorted(selected - set(accepted_case_ids))
+        if missing:
+            raise RequiredRunScopeError(
+                f"accepted_case_scope_requested_quality_case_missing:model={model_id}:cases={missing}"
+            )
+        if quality_runs and not any(
+            row.get("variant") == "split" and row.get("run_id") not in quality_ids
+            for row in required
+        ):
+            expected_split_case_ids = sorted(selected)
     scope_payload = build_model_required_run_scope(
         model_id=model_id,
         measurements=required,
@@ -5813,13 +5849,9 @@ def _seal_model_scope_from_accepted_cases_v27919(
         "candidate_reject_backfill_may_change_case_identity": True,
         "rejected_candidate_is_not_a_missing_runtime_measurement": True,
     })
-    scope = seal_required_run_scope(
-        scope_path,
-        scope_payload,
-    )
     sealed_split_case_ids = sorted({
         str(row.get("case_id") or "")
-        for row in list(scope.get("identities") or [])
+        for row in list(scope_payload.get("identities") or [])
         if isinstance(row, Mapping)
         and str(row.get("variant") or "").strip().lower() == "split"
     })
@@ -5827,12 +5859,14 @@ def _seal_model_scope_from_accepted_cases_v27919(
         str(row.get("variant") or "").strip().lower() == "split"
         for row in required
     )
-    if has_split_runs and sealed_split_case_ids != sorted(accepted_case_ids):
+    if has_split_runs and sealed_split_case_ids != expected_split_case_ids:
         raise RequiredRunScopeError(
             "accepted_case_scope_projection_mismatch:"
             f"model={model_id}:accepted={sorted(accepted_case_ids)}:"
+            f"expected={expected_split_case_ids}:"
             f"sealed={sealed_split_case_ids}"
         )
+    scope = seal_required_run_scope(scope_path, scope_payload)
     return scope, benchmark_plan, projection, case_contract
 
 

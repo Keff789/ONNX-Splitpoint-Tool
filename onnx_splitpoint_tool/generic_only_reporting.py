@@ -22,7 +22,13 @@ def validate_completion_attestations(observation, row, *, expected_repetitions=3
     )
     from .native_three_stage import verify_fast_completion_attestation
     config = row.get("runtime_config", row)
-    contract = verify_detection_completion_execution_contract(config["completion_contract"])
+    classification = config.get("task") == "classification"
+    if classification:
+        if config["completion_contract"] != {"task": "classification", "operation": "top1_top5", "label_offset": 0}:
+            raise ValueError("Generic-only classification completion contract differs")
+        contract = config["completion_contract"]
+    else:
+        contract = verify_detection_completion_execution_contract(config["completion_contract"])
     from .runners.task_completion import normalize_stage1_execution
     execution = normalize_stage1_execution(config["stage1_execution"])
     source_map = {item["path"]: item["sha256"] for item in config.get("runtime_source_files", [])}
@@ -44,9 +50,33 @@ def validate_completion_attestations(observation, row, *, expected_repetitions=3
             raise ValueError("Generic-only repetitions share a process or runtime instance")
         process_identities.add(identity)
         runtime_instances.add(instance)
+        peak = repetition.get("stage1_peak_uncollected_jobs")
         if (repetition.get("stage1_execution") != execution
-                or repetition.get("stage1_peak_uncollected_jobs") != execution["inflight"]):
+                or (execution["policy"] == "synchronous" and (execution["inflight"] != 1 or peak is not None))
+                or (execution["policy"] != "synchronous" and peak != execution["inflight"])):
             raise ValueError("Generic-only actual stage1 asynchronous host peak differs")
+        if classification:
+            from .runners.generic_only import validate_classification_report, _classification_result
+            source = repetition.get("runtime_source_binding") or {}
+            before = source.get("before") or {}
+            if (source.get("unchanged") is not True or not before or source.get("after") != before
+                    or before != source_map
+                    or not any(path.endswith("/harness/classification.py") for path in before)):
+                raise ValueError("Generic-only classification implementation source binding differs")
+            count = repetition["warmup_completed_count"] + repetition["completed_task_count"]
+            if count != 1100:
+                raise ValueError("Generic-only classification task count differs")
+            outputs = {name: np.load(root / descriptor["path"], allow_pickle=False)
+                       for name, descriptor in repetition["raw_output_samples"].items()}
+            observed = repetition.get("last_completed_result")
+            validate_classification_report(repetition.get("postprocess_report"), observed, count)
+            if observed != _classification_result(outputs):
+                raise ValueError("Generic-only classification sentinel differs from the actual last raw outputs")
+            proofs.append({"repetition_index": repetition["repetition_index"],
+                "completion_operation": "classification_top1_top5", "completed_work_units": count,
+                "process_identity": {"boot_id": boot, "pid": pid, "process_start_ticks": ticks},
+                "execution_id": repetition["execution_id"]})
+            continue
         source = repetition.get("completion_source_check") or {}
         before = source.get("before") or {}
         if (source.get("unchanged") is not True or not before or source.get("after") != before
@@ -91,7 +121,7 @@ def validate_completion_attestations(observation, row, *, expected_repetitions=3
     return proofs
 
 
-def generic_only_admission(observation, row):
+def generic_only_admission(observation, row, *, cell_control=None):
     config = row.get("runtime_config", row)
     reasons = []
     if config.get("admission_mode") != "generic_only" or config.get("measurement_mode") != MODE:
@@ -102,6 +132,18 @@ def generic_only_admission(observation, row):
         reasons.append("observed_runtime_configuration_conflict_or_missing")
     if row.get("quality_status") not in {"reference_close", "accuracy_loss", "inconclusive"}:
         reasons.append("completed_cpu_quality_evidence_missing")
+    if cell_control is not None:
+        from .workflow.generic_only_cell_policy import (
+            require_bound_control, read_dispatch_attempts, validate_dispatch_history,
+            CellCompletionRejected,
+        )
+        try:
+            require_bound_control(cell_control, cell_control)
+            validate_dispatch_history(row, observation.get("repetitions", []), read_dispatch_attempts(row["result_path"]))
+            if row.get("execution_status") in {"failed", "blocked", "cancelled"}:
+                raise CellCompletionRejected("Controller cell technical failure retained; parser completion is not admission")
+        except (ValueError, TypeError, KeyError, OSError, CellCompletionRejected) as error:
+            reasons.append(str(error))
     proof = []
     if not reasons:
         try:
@@ -151,7 +193,7 @@ def write_completion_reports(plan, results_dir, out_dir):
             observation["errors"].append(str(row["execution_error"]))
         if observation["status"] == "unstarted" and row.get("execution_status") in {"failed", "blocked", "cancelled"}:
             observation["status"] = row["execution_status"]
-        decision = generic_only_admission(observation, row)
+        decision = generic_only_admission(observation, row, cell_control=plan.get("cell_execution_control"))
         if observation["status"] == "completed" and not decision["eligible_for_generic_only_execution"]:
             observation.update(status="blocked", parser_measurement_status="completed")
             observation["errors"].extend(decision["reasons"])

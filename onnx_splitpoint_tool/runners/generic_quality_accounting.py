@@ -37,7 +37,7 @@ def _binding(row):
     sources = row.get("generic_quality_completion_sources")
     if (row.get("quality_source_only") is not True or row.get("variants") != ["composed"]
             or row.get("type") not in {"mixed_backend", "matrix"}
-            or _stage(row.get("stage1")) not in {"hailo10", "deepx_m1"}
+            or _stage(row.get("stage1")) not in {"hailo8", "hailo10", "deepx_m1"}
             or _stage(row.get("stage2")) != "tensorrt"
             or not isinstance(cases, list) or not cases or len(cases) != len(set(cases))
             or any(not isinstance(c, str) or re.fullmatch(r"b[0-9]+", c) is None for c in cases)
@@ -142,6 +142,15 @@ def verify_capture(request_path, config, *, config_path, eval_run_id=None, sourc
     if proof.get("config_file", {}).get("sha256") != _file(config_path)["sha256"]:
         raise ValueError("generic_quality_capture_selected_config_changed")
     raw_config = json.loads(Path(config_path).read_text())
+    expected_bridge = deepcopy(raw_config.get("existing_part2_bridge"))
+    actual_bridge = deepcopy(proof.get("existing_part2_bridge"))
+    for bridge in (expected_bridge, actual_bridge):
+        if isinstance(bridge, Mapping) and isinstance(bridge.get("binding_source"), Mapping):
+            bridge["binding_source"] = {key: bridge["binding_source"].get(key)
+                for key in ("sha256", "size_bytes", "pointer")}
+    if (actual_bridge != expected_bridge or proof.get("existing_part2_bridge_runtime_policy") != (
+            raw_config.get("original_run_cfg") if expected_bridge is not None else None)):
+        raise ValueError("generic_quality_capture_existing_bridge_reference_changed")
     observed_sources = proof.get("runtime_source_files") or []
     if len(observed_sources) != len(raw_config.get("runtime_source_files") or []):
         raise ValueError("generic_quality_capture_selected_source_closure_changed")

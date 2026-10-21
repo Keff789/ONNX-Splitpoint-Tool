@@ -101,7 +101,8 @@ def validate_quality_input_binding(row, proof):
             or representative.get("original_wh") != original_wh
             or any(quality_prepared.get(key) != prepared.get(key) for key in ("sha256", "shape", "dtype"))):
         raise ValueError("Generic-only Quality representative differs from the exact timing image/input")
-    array = np.load(read_bound(prepared), allow_pickle=False)
+    from .runners.task_completion import load_completion_bound_array
+    array = load_completion_bound_array({**prepared, "path": str(read_bound(prepared))}, file_sha256=file_sha256)
     tensor = comparison.get("prepared_tensor") or {}
     if (list(array.shape) != prepared.get("shape") or str(array.dtype) != prepared.get("dtype")
             or tensor.get("shape") != list(array.shape) or tensor.get("dtype") != str(array.dtype)
@@ -111,6 +112,9 @@ def validate_quality_input_binding(row, proof):
 
 def validate_quality_reference(row):
     """Use the ordinary portable quality loader; do not rerun its bootstrap."""
+    if row.get("task") == "classification":
+        from .generic_only_classification_quality import validate_classification_quality_reference
+        return validate_classification_quality_reference(row)
     from .quality_service import quality_request_from_manifest
     from .quality_service import _validate_generic_composed_candidate_execution_contract
     reference = row.get("quality_reference")
@@ -191,6 +195,8 @@ def validate_quality_reference(row):
     status = (result.get("accuracy_assessment") or {}).get("accuracy_class")
     if status not in {"reference_close", "accuracy_loss", "inconclusive"}:
         raise ValueError("Generic-only Quality classification is missing or technical failure")
+    from .runners.generic_passthrough import validate_quality_bindings
+    validate_quality_bindings(row, request.get("generic_completed_quality") or {})
     return {"status": status, "quality_eligible": status == "reference_close",
             "policy_sha256": result["policy_sha256"],
             "dataset_manifest_sha256": reference["dataset_manifest_sha256"],
@@ -239,12 +245,15 @@ def validate_plan(plan, scope_csv, primary):
         raise ValueError("Generic-only plan requires its explicit separated admission mode")
     count = plan.get("authorized_row_count")
     rows = plan.get("rows")
-    if (type(count) is not int or not 1 <= count <= 160
+    if (type(count) is not int or not 1 <= count <= 420
             or type(plan.get("row_count")) is not int or plan["row_count"] != count
             or not isinstance(rows, list) or len(rows) != count):
-        raise ValueError("Generic-only scope must explicitly authorize one through 160 rows")
+        raise ValueError("Generic-only scope must explicitly authorize one through 420 rows")
     if any(plan.get(key) is not False for key in ("build_allowed", "fallback_allowed", "automatic_retry")):
         raise ValueError("Generic-only throughput preparation forbids builds, fallback and automatic retries")
+    if plan.get("cell_execution_control") is not None:
+        from .workflow.generic_only_cell_policy import require_bound_control
+        require_bound_control(plan["cell_execution_control"], plan["cell_execution_control"])
     if file_sha256(scope_csv) != plan.get("scope_source_sha256"):
         raise ValueError("Generic-only scope CSV changed")
     with Path(scope_csv).open(newline="", encoding="utf-8") as stream:
@@ -257,17 +266,18 @@ def validate_plan(plan, scope_csv, primary):
     if read_bound(plan["producer_run_manifest"]).resolve() != Path(primary).resolve() / "run_manifest.json":
         raise ValueError("Generic-only producer run manifest belongs to another run")
     targets = {item["id"] for item in manifest.get("hardware_targets", [])}
-    requests = {"hailo10h": ("hailo_async_slots_v1", 8), "deepx": ("deepx_async_slots_v1", 4)}
+    requests = {"hailo8": ("synchronous", 1), "hailo10h": ("hailo_async_slots_v1", 8),
+                "deepx": ("deepx_async_slots_v1", 4)}
     for row in rows:
         identity = row["identity"]
-        if (row.get("admission_mode") != "generic_only" or row.get("task") != "detection"
+        if (row.get("admission_mode") != "generic_only" or row.get("task") not in {"classification", "detection"}
                 or any(row.get(key) not in (None, "", {}) for key in FORBIDDEN_NATIVE)
                 or row.get("energy_capture") or row.get("acceptance_mode", "scientific") != "scientific"):
             raise ValueError("Generic-only row cannot import Native, energy or functional-only scope")
         if any(str(row.get(key) or "") != str(identity[key]) for key in identity):
             raise ValueError("Generic-only row identity projection differs")
         if identity["setup_id"] not in targets or identity["comparison_backend"] not in requests:
-            raise ValueError("Generic-only requires a bound H10/DeepX target")
+            raise ValueError("Generic-only requires a bound H8/H10/DeepX target")
         if Path(row["original_run"]).resolve() != Path(primary).resolve():
             raise ValueError("Generic-only row is outside its bound producer run")
         selection = _json(row.get("selection_source"))
@@ -285,7 +295,7 @@ def validate_plan(plan, scope_csv, primary):
                 or binding.get("producer_source") != (row.get("quality_reference") or {}).get("request")):
             raise ValueError("Generic-only producer source/Quality binding differs")
         boundary = binding.get("boundary_contract") or {}
-        if (len(boundary.get("part1_outputs") or {}) >= 2
+        if ((len(boundary.get("part1_outputs") or {}) >= 2 or boundary.get("passthrough_inputs"))
                 and row.get("boundary_observation") != boundary):
             raise ValueError("Generic-only multi-tensor cuts require the actual bound boundary observation")
         if any(role not in artifacts for role in ARTIFACT_ROLES):
@@ -397,6 +407,11 @@ def runtime_configuration(row, remote_root, execution_id, *, stage1_execution=No
         config["boundary_observation"] = copy.deepcopy(row["boundary_observation"])
     if row.get("additional_staging_files"):
         staged.extend(copy.deepcopy(row["additional_staging_files"]))
+    from .runners.generic_passthrough import project_bindings
+    canonical, canonical_staging = project_bindings(row, case_dir)
+    if canonical is not None:
+        config["canonical_full_input_bindings"] = canonical
+        staged.extend(canonical_staging)
     return config, staged
 
 

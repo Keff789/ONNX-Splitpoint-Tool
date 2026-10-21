@@ -778,56 +778,82 @@ def download_case(transport: SSHTransport, remote_output: str, local_output: Pat
 
 
 def run_case(row: dict, transport: SSHTransport, output: Path, index: int, *, total: int = 192,
-             runner_root: str | None = None) -> None:
+             runner_root: str | None = None, cell_context: dict | None = None,
+             source_guard=None) -> None:
     from ..generic_completion_reporting import load_valid_repetitions, validate_completion_case
     requested_repetitions = _acceptance_repetitions(row)
     requested_indices = set(range(1, requested_repetitions + 1))
     config = row["runtime_config"]
+    if source_guard is not None:
+        source_guard()
+    if cell_context is not None:
+        from .generic_only_cell_policy import require_same_case, require_clean_ownership
+        require_same_case(row, cell_context["initial_row"])
+        require_clean_ownership(cell_context["registry"], cell_context["journal"], cell_context["scope"])
     local_output = Path(row["result_path"]).parent
     local_output.mkdir(parents=True, exist_ok=True)
     valid = load_valid_repetitions(row["result_path"], row)
     if row.get("admission_mode") == "generic_only" and valid:
         from ..generic_only_reporting import validate_completion_attestations
         validate_completion_attestations({"repetitions": valid}, row, expected_repetitions=len(valid))
+    if cell_context is not None:
+        from .generic_only_cell_policy import read_dispatch_attempts, validate_dispatch_history
+        attempts = read_dispatch_attempts(row["result_path"])
+        validate_dispatch_history(row, valid, attempts)
     completed = {r["repetition_index"] for r in valid}
     if completed == requested_indices:
         print(f"[completion] {index}/{total} {case_name(row)} reuse={requested_repetitions}/{requested_repetitions}", flush=True)
         return
     if not completed <= requested_indices:
         raise ValueError('Generic acceptance result contains unrequested repetitions')
-    remote_config = stage_case(row, config, row["staging_files"], transport,
-                              output / "staging" / row["case_output_relative"])
     remote_output = row["remote_root"] + "/results/" + row["case_output_relative"]
     runtime_root = runner_root or row["remote_root"]
-    checked_remote("mkdir -p -- " + shlex.quote(remote_output), transport)
-    # A reentry may have locally collected valid work even if a previous remote
-    # workspace was lost. Copy that exact parsed result into the new workspace.
-    if completed:
-        for repetition in valid:
-            descriptors = [*(repetition.get("raw_output_samples") or {}).values(),
-                           repetition["completed_result_artifact"]]
-            if (repetition.get("mixed_input_control") or {}).get("report"):
-                descriptors.append(repetition["mixed_input_control"]["report"])
-            serial = repetition.get("serial_reference") or {}
-            descriptors.extend((serial.get("raw_output_samples") or {}).values())
-            if serial.get("completed_result_artifact"):
-                descriptors.append(serial["completed_result_artifact"])
-            for descriptor in descriptors:
-                relative = descriptor["path"]  # checked by load_valid_repetitions
-                upload_new_file(transport, local_output / relative, remote_output + "/" + relative,
-                                expected_sha=descriptor["sha256"])
-        upload_new_file(transport, Path(row["result_path"]), remote_output + "/generic_completion_results.json")
+    try:
+        remote_config = stage_case(row, config, row["staging_files"], transport,
+                                  output / "staging" / row["case_output_relative"])
+        checked_remote("mkdir -p -- " + shlex.quote(remote_output), transport)
+        # Preserve exact parsed work when a prior remote workspace was lost.
+        if completed:
+            for repetition in valid:
+                descriptors = [*(repetition.get("raw_output_samples") or {}).values(),
+                               repetition["completed_result_artifact"]]
+                if (repetition.get("mixed_input_control") or {}).get("report"):
+                    descriptors.append(repetition["mixed_input_control"]["report"])
+                serial = repetition.get("serial_reference") or {}
+                descriptors.extend((serial.get("raw_output_samples") or {}).values())
+                if serial.get("completed_result_artifact"):
+                    descriptors.append(serial["completed_result_artifact"])
+                for descriptor in descriptors:
+                    relative = descriptor["path"]  # checked by load_valid_repetitions
+                    upload_new_file(transport, local_output / relative, remote_output + "/" + relative,
+                                    expected_sha=descriptor["sha256"])
+            upload_new_file(transport, Path(row["result_path"]), remote_output + "/generic_completion_results.json")
+    except Exception as staging_error:
+        if cell_context is not None:
+            from .generic_only_cell_policy import InvalidResumeBinding
+            raise InvalidResumeBinding("Normal staging/source admission failed before measurement reservation") from staging_error
+        raise
     attempts_path = local_output / "dispatch_attempts.json"
-    attempts = read_json(attempts_path).get("attempts", []) if attempts_path.exists() else []
+    if cell_context is None:
+        attempts = read_json(attempts_path).get("attempts", []) if attempts_path.exists() else []
     for repetition in sorted(requested_indices):
         if repetition in completed:
             continue
+        if source_guard is not None:
+            source_guard()
         argv = [row["remote_python_executable"], "-B", "-u",
                 runtime_root + "/runner/run_split_onnxruntime.py",
                 "--generic-completion-config", remote_config,
                 "--generic-completion-repetition", str(repetition), "--out-dir", remote_output]
         command = "cd -- " + shlex.quote(runtime_root) + " && " + shlex.join(argv)
         attempt = {"repetition_index": repetition, "command": command, "started_at": now(), "status": "running"}
+        if cell_context is not None:
+            from .generic_only_cell_policy import admit_missing_repetition
+            attempt["bounded_cell_admission"] = admit_missing_repetition(row,
+                cell_context["initial_row"], repetition, valid, attempts,
+                control=cell_context["control"], initial_control=cell_context["initial_control"],
+                registry=cell_context["registry"], journal=cell_context["journal"],
+                expected_scope=cell_context["scope"])
         attempts.append(attempt)
         write_json(attempts_path, {"attempts": attempts})
         print(f"[completion] {index}/{total} {case_name(row)} repetition={repetition}/{requested_repetitions} warmup=100 tasks=1000 START", flush=True)
@@ -838,10 +864,16 @@ def run_case(row: dict, transport: SSHTransport, output: Path, index: int, *, to
                     stream.write(line + "\n"); stream.flush()
                     print(f"[{index}/{total} rep{repetition}/{requested_repetitions}] {line}", flush=True)
                 row["dispatch_attempted"] = True
+                if cell_context is not None:
+                    attempt["transport_call_entered"] = True
                 rc = transport.run_streaming(command, on_line=on_line, timeout=7200,
                     env={**row.get("remote_environment", {}), "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1",
                          "ONNX_SPLITPOINT_ARTIFACT_POLICY": "cache_verify_only"})
             attempt.update(returncode=rc, status="exited")
+        except BaseException as dispatch_error:
+            if cell_context is not None:
+                attempt.update(status="dispatch_error", error=f"{type(dispatch_error).__name__}: {dispatch_error}")
+            raise
         finally:
             attempt["finished_at"] = now()
             attempt["download"] = download_case(transport, remote_output, local_output, len(attempts))
@@ -852,6 +884,9 @@ def run_case(row: dict, transport: SSHTransport, output: Path, index: int, *, to
             validate_completion_attestations({"repetitions": valid}, row, expected_repetitions=len(valid))
         completed = {r["repetition_index"] for r in valid}
         if attempt.get("returncode") != 0 or repetition not in completed:
+            if cell_context is not None:
+                from .generic_only_cell_policy import require_no_recorded_integrity_failure
+                require_no_recorded_integrity_failure(logfile)
             raise RuntimeError(f"Generic case stopped: {case_name(row)} repetition={repetition}, rc={attempt.get('returncode')}")
         print(f"[completion] {index}/{total} {case_name(row)} repetition={repetition}/{requested_repetitions} VALID", flush=True)
     final = validate_completion_case(read_json(Path(row["result_path"])), row, result_root=local_output)
@@ -922,7 +957,8 @@ def _write_completion_reports(plan, results, reports):
     return write_completion_reports(plan, results, reports)
 
 
-def execute_plan(plan_path: Path) -> int:
+def execute_plan(plan_path: Path, *, resume: bool = False,
+                 _cancel_event: threading.Event | None = None, _source_guard=None) -> int:
     from ..generic_completion_reporting import load_valid_repetitions, completion_pair, validate_completion_case
     plan = read_json(plan_path)
     primary = Path(plan["original_run"]).resolve()
@@ -935,6 +971,14 @@ def execute_plan(plan_path: Path) -> int:
     starts = plan["start_case_keys"]
     selected_groups = {(r["setup_id"], r["task"]) for r in rows}
     generic_only = plan.get("scope_mode") == "generic_only_completed_task"
+    independent = plan.get("cell_execution_control") is not None
+    if independent:
+        from .generic_only_cell_policy import require_bound_control
+        require_bound_control(plan["cell_execution_control"], plan["cell_execution_control"])
+        if not generic_only:
+            raise ValueError("Independent cell continuation requires Generic-only admission")
+    elif resume:
+        raise ValueError("--resume requires an explicitly prepared independent-cell plan")
     required_groups = (selected_groups if plan.get("scope_mode") in {"audited_selective_remeasurement", "generic_only_completed_task"}
                        else {(setup, task) for setup in targets for task in ("classification", "detection")})
     if len(starts) != len(required_groups) or len(set(starts)) != len(starts) or not set(starts) <= {r["case_key"] for r in rows}:
@@ -944,77 +988,205 @@ def execute_plan(plan_path: Path) -> int:
         raise ValueError("start cases must cover each selected setup/task group")
     ordered = start_rows + [r for r in rows if r["case_key"] not in starts]
     session = plan["execution_id"]
-    cancel = threading.Event()
+    cancel = _cancel_event if _cancel_event is not None else threading.Event()
+    if threading.current_thread() is not threading.main_thread() and _cancel_event is None:
+        raise ValueError("Threaded Generic dispatch requires the owning controller cancellation event")
     scope = RemoteProcessLeaseScope(primary.name, session)
     registry = RemoteProcessLeaseRegistry()
+    branch_ownership = {}
     transports = {}
     status, error, current = "blocked", "", None
     rc = 1
     old_handlers = {}
     admitted = False
+    controller_marker = None
+    initial_plan = None
+    blocked_setups = set()
+    lock_failures = {}
     stack = ExitStack()
     def cancelled(signum, frame):
         cancel.set()
-    for signum in (signal.SIGINT, signal.SIGTERM):
-        old_handlers[signum] = signal.signal(signum, cancelled)
+    if threading.current_thread() is threading.main_thread():
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            old_handlers[signum] = signal.signal(signum, cancelled)
     try:
         stack.enter_context(EvaluationRunLock(out_root=output.parent, run_dir=output,
                             owner={"run_id": primary.name, "session_id": session, "purpose": "generic_completed_task_192"}))
-        physical_locks = []
-        for target in targets.values():
-            lock = EvaluationRunLock.for_resource(physical_dut_key(target),
-                owner={"run_id": primary.name, "session_id": session, "purpose": "generic_completed_task_192"})
-            stack.enter_context(lock)
-            physical_locks.append(lock)
+        physical_locks = {}
+        for setup, target in targets.items():
+            try:
+                lock = EvaluationRunLock.for_resource(physical_dut_key(target),
+                    owner={"run_id": primary.name, "session_id": session, "purpose": "generic_completed_task_192"})
+                stack.enter_context(lock)
+                physical_locks[setup] = lock
+            except Exception as lock_error:
+                if not independent:
+                    raise
+                blocked_setups.add(setup)
+                lock_failures[setup] = f"{type(lock_error).__name__}: {lock_error}"
         def fence_unresolved_cleanup():
+            if independent:
+                for setup, owner in branch_ownership.items():
+                    pending = owner["registry"].active_count()
+                    if pending or owner["registry"].cancelled or owner["journal"].pending_count():
+                        physical_locks[setup].commit_quarantine_fence({
+                            "reason": "generic_completion_remote_cleanup_unproven",
+                            "pending_operations": pending, "journal": str(owner["journal"].directory)})
+                return
             pending = registry.active_count()
             if pending:
-                for lock in physical_locks:
+                for lock in physical_locks.values():
                     lock.commit_quarantine_fence({"reason": "generic_completion_remote_cleanup_unproven",
                         "pending_operations": pending, "journal": str(output / "remote-process-leases" / session)})
         stack.callback(fence_unresolved_cleanup)
         start_record = output / "production-start.json"
-        # A previous technical stop never becomes an automatic restart.
-        with start_record.open("x", encoding="utf-8") as stream:
-            json.dump({"execution_id": session, "pid": os.getpid(), "ppid": os.getppid(),
-                       "started_at": now(), "plan": str(plan_path), "runner_bundle": str(bundle),
-                       "runner_bundle_sha256": file_sha256(bundle)}, stream, indent=2)
+        if independent:
+            from .generic_only_cell_policy import admit_controller_attempt, require_clean_ownership
+            initial_plan, controller_marker = admit_controller_attempt(plan, plan_path, output, bundle,
+                resume=resume, started_at=now())
+        else:
+            # The default path retains its existing once-only entry.
+            with start_record.open("x", encoding="utf-8") as stream:
+                json.dump({"execution_id": session, "pid": os.getpid(), "ppid": os.getppid(),
+                           "started_at": now(), "plan": str(plan_path), "runner_bundle": str(bundle),
+                           "runner_bundle_sha256": file_sha256(bundle)}, stream, indent=2)
         admitted = True
-        registry.configure_journal(scope=scope, journal_dir=output / "remote-process-leases" / session)
-        observe_owners(targets, output / "production-preflight")
+        if not independent:
+            journal = registry.configure_journal(scope=scope, journal_dir=output / "remote-process-leases" / session)
+        preflight = (output / "production-preflight" / controller_marker.stem
+                     if independent else output / "production-preflight")
+        if not independent:
+            observe_owners(targets, preflight)
         for setup, target in targets.items():
-            transport = transport_for(target, output / "diagnostics" / setup, scope=scope, registry=registry, cancel=cancel)
-            transports[setup] = transport
-            config_path = output / "production-preflight" / setup / "configuration.json"
-            snapshot = capture_configuration(transport, target, primary=primary, output=config_path, phase="pre")
-            representative = next(r for r in rows if r["setup_id"] == setup)
-            verify_runtime_environment(transport, representative,
-                output / "production-preflight" / setup / "runtime-environment.json")
-            for row in rows:
-                if row["setup_id"] == setup:
-                    row["runtime_environment_comparison"] = configuration_comparison(row, snapshot, config_path)
-            remote_root = next(r["remote_root"] for r in rows if r["setup_id"] == setup)
-            upload_new_file(transport, bundle, remote_root + "/runner-bundle.tar.gz")
-            checked_remote("tar -xzf " + shlex.quote(remote_root + "/runner-bundle.tar.gz")
-                           + " -C " + shlex.quote(remote_root), transport)
+            if independent and setup in lock_failures:
+                write_json(output / "branch-stops" / controller_marker.stem / (setup + ".json"),
+                    {"at": now(), "setup_id": setup, "phase": "normal_physical_resource_lock",
+                     "error": lock_failures[setup], "measurement_execution_id": session, "automatic_retry": False})
+                for row in rows:
+                    if row["setup_id"] == setup:
+                        row.update(execution_status="blocked", execution_error=lock_failures[setup])
+                continue
+            try:
+                branch_scope, branch_registry = scope, registry
+                if independent:
+                    branch_scope = RemoteProcessLeaseScope(primary.name, session + ":" + setup)
+                    branch_registry = RemoteProcessLeaseRegistry()
+                    branch_journal = branch_registry.configure_journal(scope=branch_scope,
+                        journal_dir=output / "remote-process-leases" / session / setup)
+                    branch_ownership[setup] = {"registry": branch_registry, "journal": branch_journal,
+                        "scope": branch_scope}
+                    require_clean_ownership(branch_registry, branch_journal, branch_scope)
+                    observe_owners({setup: target}, preflight / "branches" / setup)
+                transport = transport_for(target, output / "diagnostics" / setup,
+                    scope=branch_scope, registry=branch_registry, cancel=cancel)
+                transports[setup] = transport
+                config_path = preflight / setup / "configuration.json"
+                snapshot = capture_configuration(transport, target, primary=primary, output=config_path, phase="pre")
+                representative = next(r for r in rows if r["setup_id"] == setup)
+                verify_runtime_environment(transport, representative,
+                    preflight / setup / "runtime-environment.json")
+                for row in rows:
+                    if row["setup_id"] == setup:
+                        row["runtime_environment_comparison"] = configuration_comparison(row, snapshot, config_path)
+                remote_root = next(r["remote_root"] for r in rows if r["setup_id"] == setup)
+                upload_new_file(transport, bundle, remote_root + "/runner-bundle.tar.gz")
+                checked_remote("tar -xzf " + shlex.quote(remote_root + "/runner-bundle.tar.gz")
+                               + " -C " + shlex.quote(remote_root), transport)
+            except Exception as branch_error:
+                if not independent or cancel.is_set():
+                    raise
+                blocked_setups.add(setup)
+                message = f"{type(branch_error).__name__}: {branch_error}"
+                write_json(output / "branch-stops" / controller_marker.stem / (setup + ".json"),
+                    {"at": now(), "setup_id": setup, "phase": "normal_preflight", "error": message,
+                     "measurement_execution_id": session, "automatic_retry": False})
+                for row in rows:
+                    if row["setup_id"] == setup:
+                        row.update(execution_status="blocked", execution_error=message)
         write_json(plan_path, plan)
         status = "start_cases_running"
         for index, row in enumerate(ordered, 1):
             current = row
+            if independent and row["setup_id"] in blocked_setups:
+                row.update(execution_status="blocked", execution_error="Affected backend branch blocked by earlier source/ownership failure")
+                write_json(plan_path, plan)
+                continue
             if cancel.is_set():
                 raise RuntimeError("completion cancelled before next case")
             entered = time.monotonic()
-            run_case(row, transports[row["setup_id"]], output, index, total=len(rows))
+            context = None
+            if independent:
+                from .generic_only_cell_policy import (
+                    CellAttemptLimitReached, CellCompletionRejected, InvalidResumeBinding, UnresolvedOwnedProcesses,
+                )
+                owner = branch_ownership[row["setup_id"]]
+                context = {"initial_row": next(item for item in initial_plan["rows"] if item["case_key"] == row["case_key"]),
+                    "control": plan["cell_execution_control"], "initial_control": initial_plan["cell_execution_control"],
+                    "registry": owner["registry"], "journal": owner["journal"], "scope": owner["scope"]}
+                cell_error = None
+                # At most six durable reservations exist: two for each original
+                # index. run_case itself skips every normally validated index.
+                for _ in range(7):
+                    try:
+                        run_case(row, transports[row["setup_id"]], output, index, total=len(rows),
+                            cell_context=context, source_guard=_source_guard)
+                        cell_error = None
+                        break
+                    except (CellAttemptLimitReached, CellCompletionRejected, InvalidResumeBinding, UnresolvedOwnedProcesses) as exc:
+                        cell_error = exc
+                        if exc.failure_scope != "cell":
+                            blocked_setups.add(row["setup_id"])
+                        break
+                    except RuntimeError as exc:
+                        cell_error = exc
+                        if cancel.is_set():
+                            raise RuntimeError("completion cancelled before bounded retry") from exc
+                        try:
+                            require_clean_ownership(owner["registry"], owner["journal"], owner["scope"])
+                        except UnresolvedOwnedProcesses as unsafe:
+                            cell_error = unsafe
+                            blocked_setups.add(row["setup_id"])
+                            break
+                    except (ValueError, OSError, KeyError, TypeError) as exc:
+                        cell_error = exc
+                        blocked_setups.add(row["setup_id"])
+                        break
+                if cell_error is not None:
+                    row.update(execution_status="failed" if row.get("dispatch_attempted") else "blocked",
+                        execution_error=f"{type(cell_error).__name__}: {cell_error}")
+                    write_json(plan_path, plan)
+                    summary = _write_completion_reports(plan, output / "results", output / "reports")
+                    write_json(output / "cell-stops" / controller_marker.stem / (case_name(row) + ".json"), {
+                        "at": now(), "case_key": row["case_key"], "error": row["execution_error"],
+                        "failure_scope": getattr(cell_error, "failure_scope", "backend" if row["setup_id"] in blocked_setups else "cell"),
+                        "valid_repetition_indices": [item["repetition_index"] for item in load_valid_repetitions(row["result_path"], row)],
+                        "automatic_unbounded_retry": False})
+                    continue
+            else:
+                run_case(row, transports[row["setup_id"]], output, index, total=len(rows), source_guard=_source_guard)
+            if _source_guard is not None:
+                _source_guard()
             row["completion_observed_at"] = now()
             row["dispatch_wall_seconds"] = time.monotonic() - entered
+            if independent:
+                row["execution_status"] = "completed"
+                row.pop("execution_error", None)
             observed = validate_completion_case(read_json(Path(row["result_path"])), row,
                 result_root=Path(row["result_path"]).parent)
             if generic_only:
                 from ..generic_only_reporting import generic_only_admission
-                admission = generic_only_admission(observed, row)
+                admission = (generic_only_admission(observed, row, cell_control=plan["cell_execution_control"])
+                             if independent else generic_only_admission(observed, row))
                 if not admission["eligible_for_generic_only_execution"]:
-                    write_json(output / "generic-only-admission-failure.json", admission)
-                    raise RuntimeError("case has no valid Generic-only completion admission: " + row["case_key"])
+                    if independent:
+                        row.update(execution_status="failed", execution_error="case has no valid Generic-only completion admission")
+                        write_json(output / "cell-stops" / controller_marker.stem / (case_name(row) + ".admission.json"), admission)
+                        write_json(plan_path, plan)
+                        _write_completion_reports(plan, output / "results", output / "reports")
+                        continue
+                    else:
+                        write_json(output / "generic-only-admission-failure.json", admission)
+                        raise RuntimeError("case has no valid Generic-only completion admission: " + row["case_key"])
             else:
                 pair = completion_pair(observed, row)
                 if row["case_key"] in starts and not pair["eligible_for_technical_transfer"]:
@@ -1022,7 +1194,8 @@ def execute_plan(plan_path: Path) -> int:
                     raise RuntimeError("start case has no valid completed-task pair: " + row["case_key"])
             write_json(plan_path, plan)
             summary = _write_completion_reports(plan, output / "results", output / "reports")
-            if index == len(starts):
+            if index == len(starts) and (not independent or all(
+                    item.get("execution_status") == "completed" for item in start_rows)):
                 write_json(output / "start-cases-accepted.json", {"accepted_at": now(),
                     "case_keys": starts, "valid_repetitions": 3 * len(starts), "remaining_cases": len(rows) - len(starts),
                     "original_start_results_reused": True, "summary": summary})
@@ -1042,7 +1215,9 @@ def execute_plan(plan_path: Path) -> int:
                 "remaining": len(rows)-index, "measured_group_remaining_seconds": estimate,
                 "groups_without_observed_duration": sorted(set(unresolved_groups)), "summary": summary})
             write_status_report(plan, summary, output, status=status)
-        status, rc = "complete", 0
+        summary = _write_completion_reports(plan, output / "results", output / "reports") if independent else None
+        status, rc = (("complete", 0) if not independent or summary["all_cases_measured"]
+                      else ("complete_with_cell_failures", 1))
     except BaseException as exc:
         error = f"{type(exc).__name__}: {exc}"
         traceback.print_exc()
@@ -1053,8 +1228,11 @@ def execute_plan(plan_path: Path) -> int:
             current["execution_status"] = "failed" if current.get("dispatch_attempted") else "blocked"
             current["execution_error"] = error
             write_json(plan_path, plan)
-        write_json(output / "technical-stop.json", {"at": now(), "error": error,
-            "case_key": current.get("case_key") if current else None, "automatic_restart": False})
+        stop = {"at": now(), "error": error,
+            "case_key": current.get("case_key") if current else None, "automatic_restart": False}
+        write_json(output / "technical-stop.json", stop)
+        if controller_marker is not None:
+            write_json(controller_marker.with_suffix(".technical-stop.json"), stop)
     finally:
         for signum, handler in old_handlers.items():
             signal.signal(signum, handler)
@@ -1062,12 +1240,31 @@ def execute_plan(plan_path: Path) -> int:
             if admitted:
                 # SSHTransport already performs exact token-bound cleanup on failures.
                 # Any unresolved lease is retained and fenced, never globally killed.
-                write_json(output / "cleanup-status.json", {"at": now(), "active_owned_remote_operations": registry.active_count(),
-                    "registry_cancelled_or_poisoned": registry.cancelled, "foreign_processes_stopped": False})
+                cleanup = {"at": now(), "active_owned_remote_operations": registry.active_count(),
+                    "registry_cancelled_or_poisoned": registry.cancelled, "foreign_processes_stopped": False}
+                if independent:
+                    branches = {}
+                    for setup, owner in branch_ownership.items():
+                        directory = owner["journal"].directory
+                        branches[setup] = {"active_owned_remote_operations": owner["registry"].active_count(),
+                            "registry_cancelled_or_poisoned": owner["registry"].cancelled,
+                            "journal": str(directory), "journal_pending_count": owner["journal"].pending_count(),
+                            "journal_cancelled": owner["journal"].is_cancelled(),
+                            "journal_empty": directory.is_dir() and not directory.is_symlink() and not any(directory.iterdir()),
+                            "ownership_scope": {"run_sha256": owner["scope"].run_sha256,
+                                "session_sha256": owner["scope"].session_sha256}}
+                    cleanup.update(per_backend_journals=branches,
+                        active_owned_remote_operations=sum(item["active_owned_remote_operations"] for item in branches.values()),
+                        registry_cancelled_or_poisoned=any(item["registry_cancelled_or_poisoned"] for item in branches.values()))
+                write_json(output / "cleanup-status.json", cleanup)
                 summary = _write_completion_reports(plan, output / "results", output / "reports")
                 write_status_report(plan, summary, output, status=status, error=error)
                 write_json(output / "terminal-status.json", {"finished_at": now(), "status": status, "exitcode": rc,
                            "summary": summary, "error": error, "automatic_restart": False})
+                if controller_marker is not None:
+                    write_json(controller_marker.with_suffix(".terminal.json"), {
+                        "finished_at": now(), "status": status, "exitcode": rc, "summary": summary,
+                        "cleanup": read_json(output / "cleanup-status.json"), "error": error})
                 terminal_bundle(output)
         finally:
             stack.close()
@@ -1079,13 +1276,17 @@ def main(argv=None) -> int:
     actions = parser.add_mutually_exclusive_group(required=True)
     actions.add_argument("--prepare", type=Path, metavar="SCOPE_PLAN_JSON")
     actions.add_argument("--execute", type=Path, metavar="EXECUTION_PLAN_JSON")
+    actions.add_argument("--execute-batch", type=Path, metavar="GENERIC_ONLY_PARALLEL_BATCH_JSON")
     parser.add_argument("--output-root", type=Path)
+    parser.add_argument("--resume", action="store_true", help="explicit bounded continuation of the same independent-cell execution")
     parser.add_argument("--hailo-async-inflight", type=int, choices=range(1, 33), metavar="N",
                         help="prepare Hailo10H rows with N asynchronous stage1 slots (default: historical synchronous stage1)")
     parser.add_argument("--deepx-async-inflight", type=int, choices=range(1, 33), metavar="N",
                         help="prepare DeepX M1 rows with N asynchronous stage1 slots (default: historical synchronous stage1)")
     args = parser.parse_args(argv)
     if args.prepare:
+        if args.resume:
+            parser.error("--resume is execute-only")
         if args.output_root is None:
             parser.error("--prepare requires --output-root outside the primary run")
         kwargs = {key: getattr(args, key) for key in ("hailo_async_inflight", "deepx_async_inflight")
@@ -1094,7 +1295,10 @@ def main(argv=None) -> int:
         return 0
     if args.hailo_async_inflight is not None or args.deepx_async_inflight is not None:
         parser.error("async inflight options are prepare-only; --execute uses its bound plan")
-    return execute_plan(args.execute)
+    if args.execute_batch:
+        from .generic_only_parallel import execute_batch
+        return execute_batch(args.execute_batch, resume=args.resume)
+    return execute_plan(args.execute, resume=args.resume)
 
 
 if __name__ == "__main__":
@@ -1326,6 +1530,7 @@ def check_energy_campaign(plan: dict, *, logical_repeat: str | None = None,
         raise RuntimeError('Generic energy shared campaign STOP: ' + reason)
     projection = object.__new__(EnergyTaskBudget)
     projection.data, projection.campaign_row, projection.cohort_id = task, expected_key, ''
+    projection.root, projection.environment = budget, {}
     projection._reentry = _source_reentry(budget, source_id, {})
     effective = projection._effective_limits(logical_repeat or 'repeat:0')
     complete = {c.get('logical_repeat') for c in task['chains']
