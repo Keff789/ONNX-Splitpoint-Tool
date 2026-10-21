@@ -1,6 +1,24 @@
+# ONNX Splitpoint Tool v2.95.5
+
+Aktueller Build: `v2.95.5`. Die A4-Full-Ausgabe vorbereiteter Eingaben wird mit dem bestehenden strikten Pfadvertrag und der normalen Abholung der Originalbelege vereinheitlicht. Der echte 2.95.4-GUI-Lauf lieferte einen regulären MobileNet-b027-Numerik-PASS; Full blieb wegen der Artefaktpfadbindung failed, bei bestätigtem Geräteabschluss. [Release 2.95.5](docs/RELEASE_2.95.5.md) trennt diese Integration von der noch laufenden Hardwareabnahme.
+
+# ONNX Splitpoint Tool v2.95.4
+
+Vorheriger Build: `v2.95.4`. Die A4-Full-Bereitstellung ergänzt nach dem tatsächlichen GUI-Fehler die vorhandenen Suite- und Outputmetadaten. Die Auswahl muss den vorgesehenen DeepX-Full-Auftrag vor SDK-Start eindeutig auflösen. Die getrennte Prüfung von Ergebnisgültigkeit und Geräteabschluss sowie dokumentierte technische Reparaturversuche bleiben erhalten. [Release 2.95.4](docs/RELEASE_2.95.4.md) beschreibt den Stand. Reale GUI-Abnahme, Performance und Native-Energie werden getrennt im Auftragsreport nachgewiesen.
+
+# ONNX Splitpoint Tool v2.95.1
+
+Vorheriger Build: `v2.95.1`. Fehlerbehebungsstand für beleggebundene Vorbereitung-/Lifecycle-Recovery und die reguläre GUI-Fortsetzung der DeepX-Native-A4-Abnahme und gezielten Neuaufnahme. [Release 2.95.1](docs/RELEASE_2.95.1.md) hält den damaligen vorläufigen Stand fest; Originalarchiv und anschließende reale Fehlversuche bleiben erhalten.
+
+# ONNX Splitpoint Tool v2.95.0
+
+Vorheriger Build: `v2.95.0`. DeepX Native Full und unterstützte Native Splits verwenden für neue Profile einheitlich A4: Batch 1, eine Engine und höchstens vier offene Async-Jobs; Splits behalten FIFO 3 und einen seriellen TRT-/Task-Consumer. Generic und Hailo behalten ihre Ausführungspolitik. [Release 2.95.0](docs/RELEASE_2.95.0.md) dokumentiert den damaligen Abnahmestand und offene Zellen.
+
+Software geprüft und regulär installiert; die reale Abnahme ist nach zwei MobileNet-Vorprüfungsfehlern durch die erhaltene DUT-Quarantäne blockiert. Kein Hardware-PASS, keine neue Performance- oder Energiekohorte.
+
 # ONNX Splitpoint Tool v2.94.0
 
-Aktueller Build: `v2.94.0`. Begrenzte neue Hardware-Abnahmeläufe aus gespeicherten Profilen über den regulären GUI-/CLI-Controller: ein ausgewählter Split je Netz/Setup, Native und Generic Completed, bestehende Artefakte und getrennt ausgewiesene Full-Referenzen. [Release 2.94.0](docs/RELEASE_2.94.0.md), [Arbeitsstand](docs/ARBEITSSTAND.md), [Versionsregeln](docs/VERSIONING.md).
+Vorheriger Build: `v2.94.0`. Begrenzte neue Hardware-Abnahmeläufe aus gespeicherten Profilen über den regulären GUI-/CLI-Controller: ein ausgewählter Split je Netz/Setup, Native und Generic Completed, bestehende Artefakte und getrennt ausgewiesene Full-Referenzen. [Release 2.94.0](docs/RELEASE_2.94.0.md), [Arbeitsstand](docs/ARBEITSSTAND.md), [Versionsregeln](docs/VERSIONING.md).
 
 # ONNX Splitpoint Tool v2.92.0
 

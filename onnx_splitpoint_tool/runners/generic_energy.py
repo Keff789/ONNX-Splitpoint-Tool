@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import sys
 import time
+from .task_completion import normalize_stage1_execution
 
 SCHEMA = 'onnx-splitpoint/generic-completed-task-energy/v1'
 PREFLIGHT_SCHEMA = 'onnx-splitpoint/energy-preflight-attestation'
@@ -37,6 +38,17 @@ def operation_binding(config):
     value = {k: config[k] for k in OPERATION_FIELDS if k in config}
     value['queue_depth'] = config.get('queue_depth', 2)
     value['handoff_payload_copy'] = (config['original_run_cfg'].get('streaming_impl', 'auto') == 'generic')
+    # Preserve old synchronous command hashes, while sealing any explicit policy.
+    # An absent field always denotes synchronous execution with one P1 job.
+    execution = normalize_stage1_execution(config.get('stage1_execution'))
+    original = config['original_run_cfg']
+    provider = str(original.get('stage1_provider') or original.get('provider') or '').strip().lower()
+    if execution['policy'] == 'hailo_async_slots_v1' and provider not in {'hailo10', 'hailo10h'}:
+        raise ValueError('Generic async energy requires the bound Hailo10H provider')
+    if execution['policy'] == 'deepx_async_slots_v1' and provider != 'deepx_m1':
+        raise ValueError('Generic async energy requires the bound DeepX M1 provider')
+    if 'stage1_execution' in config:
+        value['stage1_execution'] = execution
     return value
 
 
@@ -171,12 +183,14 @@ def verify_runtime_preflight(config, *, nonce, attestation_path, expected_sha256
 def validate_energy_result(result, config, *, result_root=None):
     from .task_completion import validate_split_completion_duration, _validate_split_completion_samples
     contract = validate_config(config)
+    execution = normalize_stage1_execution(config.get('stage1_execution'))
     if (result.get('schema_version') != 2 or result.get('measurement_mode') != 'generic_completed_task_energy'
             or result.get('status') != 'ok' or result.get('energy_contract') != contract
             or result.get('identity') != config['identity'] or result.get('input_binding') != config['input_binding']
             or result.get('completion_contract') != config['completion_contract']
             or result.get('measurement_boundary') != 'prepared_input_before_p1_to_completed_pipeline_drain'
             or result.get('functional_reference') != config['functional_reference']
+            or normalize_stage1_execution(result.get('stage1_execution')) != execution
             or len(result.get('repetitions') or []) != 1):
         raise ValueError('Generic energy result schema/operation mismatch')
     row = result['repetitions'][0]
@@ -186,6 +200,7 @@ def validate_energy_result(result, config, *, result_root=None):
             or row.get('runtime_artifacts') != config['expected_runtime_artifacts']
             or row.get('queue_depth') != contract['operation']['queue_depth']
             or row.get('handoff_payload_copy') != contract['operation']['handoff_payload_copy']
+            or normalize_stage1_execution(row.get('stage1_execution')) != execution
             or row.get('functional_control', {}).get('status') != 'passed'
             or row.get('functional_control', {}).get('reference_binding') != config['functional_reference']
             or row.get('functional_control', {}).get('checked_outside_timer') is not True
@@ -218,6 +233,8 @@ def completion_marker(config, repetition, *, report_path, nonce):
     from .task_completion import validate_split_completion_duration
     contract = validate_config(config, check_files=True)
     validate_split_completion_duration(repetition, duration_s=contract['duration_s'])
+    if normalize_stage1_execution(repetition.get('stage1_execution')) != normalize_stage1_execution(config.get('stage1_execution')):
+        raise ValueError('Generic energy stage1 execution policy mismatch')
     if repetition.get('functional_control', {}).get('status') != 'passed':
         raise ValueError('Generic energy functional control did not pass')
     if repetition.get('preflight_nonce') != nonce:

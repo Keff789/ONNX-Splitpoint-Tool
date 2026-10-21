@@ -1033,6 +1033,11 @@ def build_effective_execution_plan(profile: Mapping[str, Any]) -> Dict[str, Any]
             native_execution_contract["queue_depth"]
         ),
         "native_inflight": int(native_execution_contract["inflight"]),
+        **({
+            "native_deepx_runtime_mode": native_execution_contract["deepx_runtime_mode"],
+            "native_deepx_max_inflight": native_execution_contract["deepx_max_inflight"],
+            "native_deepx_queue_depth": native_execution_contract["deepx_queue_depth"],
+        } if "deepx_runtime_mode" in native_execution_contract else {}),
         "native_execution_contract": native_execution_contract,
         "native_execution_contract_sha256": str(
             native_execution_contract["contract_sha256"]
@@ -1164,6 +1169,11 @@ def execution_plan_text(plan: Mapping[str, Any]) -> str:
         ),
         f"Remote TensorRT cache: {'on' if plan.get('tensorrt_remote_cache') else 'off'}",
     ]
+    if plan.get("native_deepx_runtime_mode"):
+        lines.append(
+            f"DeepX Native: {plan['native_deepx_runtime_mode']} · batch=1 · engines=1 · "
+            f"max pending={plan['native_deepx_max_inflight']} · split FIFO={plan['native_deepx_queue_depth']}"
+        )
     if plan.get("quality_canary_enabled"):
         lines.extend([
             (

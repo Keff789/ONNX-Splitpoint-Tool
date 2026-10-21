@@ -2651,6 +2651,8 @@ def _native_ranking_base_identity(
     )
     if stratum["runner_regime"] != "native_fifo" or not all(values):
         return None
+    if str(row.get("backend") or "") in {"deepx", "deepx_to_trt", "native_full_deepx"}:
+        return values + (str(row.get("deepx_runtime_mode") or "S1"),)
     return values
 
 
@@ -3800,6 +3802,11 @@ def _scientific_row(row: Mapping[str, Any]) -> dict[str, Any]:
         # Preserve the measured endpoint and its existing completion evidence
         # through Scientific JSON/CSV; never infer completion from a rate.
         "measurement_endpoint": row.get("measurement_endpoint"),
+        **{key: row[key] for key in (
+            "deepx_runtime_mode", "deepx_max_inflight", "host_pending_max",
+        ) if key in row and str(row.get("backend") or "") in {
+            "deepx", "deepx_to_trt", "native_full_deepx",
+        }},
         **{key: row.get(key) for key in (
             "timing_input_binding", "input_binding", "input_image_sha256", "measurement_boundary",
             "canonical_rgb_sha256", "preprocessing_contract_sha256",

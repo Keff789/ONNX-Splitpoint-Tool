@@ -370,6 +370,7 @@ class EvaluationProfileEditor(tk.Toplevel):
         # a simplified GUI control.  Preserve it verbatim until the editor has
         # dedicated controls for every field in that block.
         self._measurement_campaign_passthrough: dict[str, Any] | None = None
+        self._native_refresh_passthrough: dict[str, Any] | None = None
         # Cache-verification profiles are immutable safety contracts.  The
         # simplified editor has no controls for their exact row attestation or
         # variants, so preserve those blocks verbatim on a load/save roundtrip.
@@ -3178,6 +3179,7 @@ class EvaluationProfileEditor(tk.Toplevel):
                 "repetitions": max(1, int(self.var_native_repetitions.get())),
                 "queue_depth": max(1, int(self.var_native_queue_depth.get() or 3)),
                 "inflight": max(1, int(self.var_native_inflight.get() or 8)),
+                "deepx_runtime_mode": getattr(self, "_loaded_deepx_runtime_mode", "A4"),
                 "hailo_format": "uint8",
                 "remote_root": "/home/nx/native_fifo_evalsets",
                 "remote_tool_dir": "/home/nx/ONNX-Splitpoint-Tool",
@@ -3278,6 +3280,8 @@ class EvaluationProfileEditor(tk.Toplevel):
             ]
         if isinstance(self._measurement_campaign_passthrough, Mapping):
             payload["measurement_campaign"] = copy.deepcopy(dict(self._measurement_campaign_passthrough))
+        if isinstance(getattr(self, "_native_refresh_passthrough", None), Mapping):
+            payload["native_refresh"] = copy.deepcopy(dict(self._native_refresh_passthrough))
         if isinstance(self._execution_guard_passthrough, Mapping):
             payload["execution_guard"] = copy.deepcopy(
                 dict(self._execution_guard_passthrough)
@@ -3464,6 +3468,9 @@ class EvaluationProfileEditor(tk.Toplevel):
                 getattr(self, "_require_protocol_freeze_passthrough", False)
             )
         payload["campaign"] = campaign
+        from ..native_execution_contract import native_deepx_selected
+        if not native_deepx_selected(payload):
+            payload["native_producers"].pop("deepx_runtime_mode", None)
         return validate_evaluation_profile_payload(payload, source="profile editor")
 
     def _apply_payload(self, payload: Mapping[str, Any], *, path: str = "") -> None:
@@ -3575,6 +3582,10 @@ class EvaluationProfileEditor(tk.Toplevel):
         self._reserve_model_entries = copy.deepcopy(reserve)
         self.var_reserve.set(", ".join(str(x.get("id") if isinstance(x, Mapping) else x) for x in reserve if str(x).strip()))
         measurement_campaign = data.get("measurement_campaign")
+        self._native_refresh_passthrough = (
+            copy.deepcopy(dict(data["native_refresh"]))
+            if isinstance(data.get("native_refresh"), Mapping) else None
+        )
         self._measurement_campaign_passthrough = (
             copy.deepcopy(dict(measurement_campaign))
             if isinstance(measurement_campaign, Mapping)
@@ -3827,6 +3838,7 @@ class EvaluationProfileEditor(tk.Toplevel):
             self._update_energy_estimate()
 
         native = dict(data.get("native_producers") or {})
+        self._loaded_deepx_runtime_mode = str(native.get("deepx_runtime_mode") or "A4").upper()
         self._native_checkpoint_passthrough = copy.deepcopy(native.get("native_performance_checkpoint"))
         from ..native_execution_contract import resolve_native_execution_contract
         contract = resolve_native_execution_contract(data)

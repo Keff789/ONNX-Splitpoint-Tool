@@ -2276,7 +2276,16 @@ def _rows_from_deepx(root: Path) -> list[dict[str, Any]]:
                 native_impl=j.get('native_fifo_e2e_implemented')
                 status='ok' if ok else ('e2e_not_implemented' if native_impl is False else str(r.get('status') or j.get('error') or 'failed'))
                 diag=_diagnostic_fields(r, j, fallback='deepx_native_e2e_failed_or_missing', ok=ok)
+                deepx_observation = {}
+                for field in ('deepx_runtime_mode', 'deepx_max_inflight', 'host_pending_max',
+                              'deepx_actual_pending_max', 'actual_pending_max',
+                              'deepx_runtime_observation', 'deepx_async_observation'):
+                    for source in (j, r):
+                        if field in source:
+                            deepx_observation[field] = source[field]
+                            break
                 out.append({'backend':'deepx_to_trt','producer_impl':'deepx_python_dx_engine_fifo' if ok else 'deepx_scaffold','model':model,'case':case,'precision':precision,'status':status,'ok':ok,
+                    **deepx_observation,
                     'runtime_success':runtime_success,
                     'fps_makespan':_num(r.get('fps_makespan') or j.get('fps_makespan')),'paper_fps':_num(r.get('paper_fps') or j.get('paper_equivalent_fps')),'handoff_ms':_num(r.get('handoff_ms') or j.get('handoff_ms')),
                     'p1_ms':_num(j.get('p1_ms') or j.get('deepx_run_ms')),'p2_run_ms':_num(j.get('p2_run_ms')),'p1_thread_ms':_num(j.get('p1_thread_ms')),'p2_thread_ms':_num(j.get('p2_thread_ms')),
@@ -2481,6 +2490,12 @@ def _rows_from_native_full(root: Path) -> list[dict[str, Any]]:
                 'diagnostic_only', 'counts_as_benchmark',
                 'scientific_claim_exclusion_reason',
             ) if key in r},
+            **({key: r[key] for key in (
+                'deepx_runtime_mode', 'deepx_max_inflight', 'actual_pending_max',
+                'deepx_async_observation', 'accepted_work_drained', 'submitted_count',
+                'numerical_validation', 'numerical_smoke_completed_count', 'runtime_options',
+                'runtime_output_name_binding',
+            ) if key in r} if backend == 'native_full_deepx' else {}),
             'setup_id': r.get('setup_id') or '',
             'comparison_backend': r.get('comparison_backend') or '',
             **source_contract,
@@ -2899,6 +2914,15 @@ def _rows_from_native_full(root: Path) -> list[dict[str, Any]]:
             'steps': r.get('steps') or [],
             'note': 'native full baseline measured' if ok else (r.get('failure_reason') or r.get('status_detail') or r.get('error') or 'native full baseline failed'),
         })
+        # Preserve only the actual A4 DeepX task outcome; other Full mappings
+        # retain their historical projection and a missing flag stays missing.
+        command_options = (r.get('full_command_contract') or {}).get('runtime_options') or {}
+        if (r.get('backend') == 'native_full_deepx' and r.get('deepx_runtime_mode') == 'A4'
+                and command_options.get('deepx_runtime_mode') == 'A4'):
+            out[-1]['operating_point_source_report'] = str(p)
+            out[-1]['operating_point_source_report_sha256'] = _hash_file(p)
+            if type(r.get('task_complete')) is bool:
+                out[-1]['task_complete'] = r['task_complete']
         # Preserve adapter timing and its series even when this report is
         # exported without access to the collected source_root.
         out[-1].update({key: r[key] for key in (
@@ -2974,10 +2998,254 @@ def _rebuild_verified_materialization_completion(arguments, original_execution):
     return post.verify_detection_completion_execution_contract(rebuilt)
 
 
+def _normalized_full_bn6_workload(workload, *, manifest_path, benchmark, report, location):
+    """Reuse the original BN6 proof, changing only authorized declaration paths."""
+    from onnx_splitpoint_tool import native_detection_postprocess as post
+    from onnx_splitpoint_tool.native_output_endpoint import runtime_output_contract
+    from scripts.validate_output_dumps import load_dump
+    try:
+        saved = _load_strict_json_object(manifest_path.parent / 'native_full_outputs_manifest.json')
+        declaration = dict(saved['authoritative_output_contract_resolution'])
+        original_source = declaration['declaration_source']
+        if Path(original_source) != benchmark / 'output_contracts.json':
+            return None
+        source_path = Path(original_source)
+        if not source_path.is_file():
+            source_path = report.parent.parent / workload['input_contract']['model_id'] / 'benchmark_set/output_contracts.json'
+        if (source_path.is_symlink() or not source_path.is_file()
+                or _hash_file(source_path) != declaration['source_contracts_sha256']):
+            return None
+        tensors, _ = load_dump(str(manifest_path.parent / 'native_full_outputs_manifest.json'))
+        declaration['declaration_source'] = str(source_path.resolve())
+        source = runtime_output_contract('detection', tensors, raw_fallback=False, declared_contract=declaration)
+        attestation = source['output_endpoint_attestation']
+        attestation['declaration_source'] = original_source
+        attestation['declared_contract']['declaration_source'] = original_source
+        if attestation != saved['output_endpoint_attestation']:
+            return None
+        original = post.verify_frozen_decoded_nms_normalization_contract(workload['frozen_decoded_nms_normalization_contract'])
+        geometry = original['letterbox_geometry_contract']
+        arguments = dict(model_id=original['model_id'], outputs=tensors, input_hw=geometry['input_hw'],
+            original_wh=geometry['original_wh'], preprocess={'mode': 'letterbox', 'rgb': geometry['color_space'] == 'RGB',
+            'pad_value': geometry['pad_value']}, source_coordinate_space=original['source_coordinate_space'],
+            source_endpoint_contract_hash=original['source_endpoint_contract_hash'], source_output_endpoint_attestation=attestation,
+            confidence_threshold=original['confidence_threshold'], iou_threshold=original['iou_threshold'],
+            max_detections=original['max_detections'], source_completed=original['schema_version'] == 2)
+        if post.build_frozen_decoded_nms_normalization_contract(**arguments) != original:
+            return None
+        result = workload['frozen_decoded_nms_normalization_result']
+        actual = post.FrozenDecodedNmsPostprocessor(original).process(tensors)
+        if any(actual.get(key) != result.get(key) for key in ('detections', 'detections_sha256', 'detection_count',
+                    'completed_result_artifact', 'completed_result_artifact_sha256')):
+            return None
+        counts = dict(completed_frames=workload['successful_run_completed_frames'],
+                      postprocess_completed_frames=workload['postprocess_completed_frames'])
+        if post.build_normalized_detection_endpoint_attestation(original, result, **counts) != workload['completed_task_endpoint_attestation']:
+            return None
+        attestation['declaration_source'] = location(original_source)
+        attestation['declared_contract']['declaration_source'] = location(original_source)
+        normalized = post.build_frozen_decoded_nms_normalization_contract(**arguments)
+        normalized_result = {**result, 'normalization_contract_sha256': normalized['contract_sha256']}
+        return {**workload, 'frozen_decoded_nms_normalization_contract': normalized,
+                'frozen_decoded_nms_normalization_contract_sha256': normalized['contract_sha256'],
+                'frozen_decoded_nms_normalization_result': normalized_result,
+                'source_output_endpoint_attestation_sha256': normalized['source_output_endpoint_attestation_sha256'],
+                'completed_task_endpoint_attestation': post.build_normalized_detection_endpoint_attestation(
+                    normalized, normalized_result, **counts)}
+    except (KeyError, TypeError, ValueError, OSError, post.FrozenPostprocessError):
+        return None
+
+
+def _verified_full_repetition_operating_point(
+    row: Mapping[str, Any], report: Path, raw: Mapping[str, Any], *,
+    require_observation: bool, remote_execution_contexts: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Compare verified Full A4 workloads without replacing their own seals."""
+    candidates = raw.get('rows')
+    if not isinstance(candidates, list) or len(candidates) != 1 or not isinstance(candidates[0], dict):
+        return {}
+    observed = candidates[0]
+    if observed.get('backend') != 'native_full_deepx' or _strict_verify_full_command_contract is None:
+        return {}
+    command = observed.get('full_command_contract')
+    if not isinstance(command, dict):
+        return {}
+    context, _ = _remote_execution_context_for_performance_row(observed, command, remote_execution_contexts)
+    if not context:
+        return {}
+    expected = {key: observed.get(key) for key in ('backend', 'model', 'case', 'setup_id', 'comparison_backend')}
+    expected.update(remote_root=context['remote_root'], remote_tool_dir=context['remote_tool_dir'])
+    verified, _ = _strict_verify_full_command_contract(command, expected_identity=expected)
+    if verified is None:
+        return {}
+    options, workload = command.get('runtime_options') or {}, command.get('energy_workload') or {}
+    if (options.get('deepx_runtime_mode') != 'A4' or options.get('deepx_max_inflight') != 4
+            or type(options.get('inflight')) is not int or not 1 <= options['inflight'] <= 4
+            or workload.get('deepx_runtime_mode') != 'A4'
+            or workload.get('deepx_max_inflight') != 4):
+        return {}
+    for key in ('backend', 'model', 'case', 'setup_id', 'comparison_backend'):
+        if row.get(key) not in (None, '', observed.get(key)):
+            return {}
+    if isinstance(row.get('full_command_contract'), Mapping) and row['full_command_contract'] != command:
+        return {}
+    for key in ('full_command_contract_sha256', 'workload_contract_sha256'):
+        if row.get(key) not in (None, '', command['contract_sha256']):
+            return {}
+    source_sha = row.get('operating_point_source_report_sha256')
+    if source_sha and source_sha != _hash_file(report):
+        return {}
+    if require_observation:
+        for key in ('completed_work_units', 'completed_frames', 'postprocess_completed_frames', 'fps_makespan',
+                    'measurement_boundary', 'runtime_instance_id', 'completed_task_endpoint_contract_hash'):
+            if row.get(key) not in (None, '') and row.get(key) != observed.get(key):
+                return {}
+    root, benchmark = Path(context['remote_root']), Path(command['benchmark_set'])
+    def location(value):
+        if not isinstance(value, str) or not _canonical_remote_context_path(value):
+            return value
+        try:
+            relative = Path(value).relative_to(root)
+        except ValueError:
+            return value
+        return '/__authorized_full_input_root__/' + relative.as_posix()
+    artifacts = command.get('artifacts') or {}
+    def artifact_file(role):
+        artifact = artifacts.get(role) or {}
+        remote = Path(str(artifact.get('path') or ''))
+        try:
+            relative = remote.relative_to(benchmark)
+        except ValueError:
+            return None
+        # The normal collector retains the canonical semantic subtree here.
+        copied = report.parent.parent / str(command['model']) / 'benchmark_set' / relative
+        path = remote if remote.is_file() else copied
+        if path.is_symlink() or not path.is_file() or _hash_file(path) != artifact.get('sha256'):
+            return None
+        return path
+    manifest_path, tensor_path = artifact_file('input_manifest'), artifact_file('runtime_input_tensor')
+    if manifest_path is None or tensor_path is None:
+        return {}
+    manifest = _load_strict_json_object(manifest_path)
+    if not isinstance(manifest, dict):
+        return {}
+    for key in ('backend', 'model', 'case', 'setup_id', 'comparison_backend'):
+        if manifest.get(key) != command.get(key):
+            return {}
+    if (manifest.get('image') != command.get('input_image') or manifest.get('input_image') != command.get('input_image')
+            or manifest.get('image_sha256') != command.get('input_image_sha256')
+            or manifest.get('input_image_sha256') != command.get('input_image_sha256')):
+        return {}
+    for key in ('runtime_input_name', 'runtime_input_shape', 'runtime_input_dtype', 'runtime_input_layout',
+                'runtime_input_sha256', 'runtime_input_bytes', 'runtime_preprocessing_identity',
+                'runtime_preprocessing_sha256', 'runtime_numeric_input_identity', 'runtime_numeric_input_sha256'):
+        if manifest.get(key) != workload.get(key):
+            return {}
+    if (_hash_file(tensor_path) != manifest.get('runtime_input_sha256')
+            or tensor_path.stat().st_size != manifest.get('runtime_input_bytes')):
+        return {}
+    dump_name = manifest.get('input_dump')
+    if not isinstance(dump_name, str) or Path(dump_name).name != dump_name:
+        return {}
+    dump = manifest_path.parent / dump_name
+    if (dump.is_symlink() or not dump.is_file() or _hash_file(dump) != manifest.get('input_dump_sha256')
+            or dump.stat().st_size != manifest.get('input_dump_bytes')):
+        return {}
+    body = json.loads(json.dumps(command))
+    body.pop('contract_sha256', None)
+    bn6_normalized = False
+    if workload.get('normalization_frozen') is True:
+        normalized_workload = _normalized_full_bn6_workload(
+            workload, manifest_path=manifest_path, benchmark=benchmark, report=report, location=location)
+        if normalized_workload is None:
+            return {}
+        body['energy_workload'] = json.loads(json.dumps(normalized_workload))
+        bn6_normalized = True
+    for key in ('root', 'benchmark_set', 'input_image'):
+        body[key] = location(body.get(key))
+    for model_cases in body['runtime_options'].get('image_map', {}).values():
+        if not isinstance(model_cases, dict):
+            return {}
+        for key, value in model_cases.items():
+            model_cases[key] = location(value)
+    stable_workload = body['energy_workload']
+    stable_workload['input_image'] = location(stable_workload.get('input_image'))
+    input_contract = stable_workload.get('input_contract') or {}
+    for key in ('source_path', 'artifact_path', 'suite_artifact_path'):
+        if key in input_contract:
+            input_contract[key] = location(input_contract[key])
+    endpoint = input_contract.get('endpoint_semantic_attestation') or {}
+    if 'source_path' in endpoint:
+        endpoint['source_path'] = location(endpoint['source_path'])
+    for role in ('benchmark_set_manifest', 'source_onnx', 'dxnn', 'input_manifest', 'runtime_input_tensor', 'performance_report'):
+        artifact = body['artifacts'].get(role)
+        if not isinstance(artifact, dict):
+            return {}
+        artifact['path'] = location(artifact.get('path'))
+    # A report's timings are observations, already retained under its original
+    # seal. They are never part of the stable workload or substituted for data.
+    body['artifacts']['performance_report'].pop('sha256', None)
+    body['artifacts']['performance_report'].pop('size_bytes', None)
+    for key in ('image', 'input_image'):
+        manifest[key] = location(manifest[key])
+    body['artifacts']['input_manifest']['sha256'] = _canonical_json_sha256(manifest)
+    return {'schema': 'onnx-splitpoint/verified-repetition-operating-point', 'schema_version': 1,
+            'operating_point_sha256': _canonical_json_sha256(body), 'report': str(report), 'report_sha256': _hash_file(report),
+            'full_command_contract_sha256': command['contract_sha256'],
+            'semantic_binding_status': 'full_input_manifest_tensor_and_external_context_verified',
+            'completion_contract_provenance_normalized': bn6_normalized,
+            'remote_execution_context': context}
+
+
+def _normal_split_collected_declaration(report, command, original_source):
+    """Locate the original declaration from an accepted normal A4 download."""
+    try:
+        if (command.get('backend') != 'deepx_to_trt'
+                or (command.get('runtime_options') or {}).get('deepx_runtime_mode') != 'A4'
+                or Path(original_source) != Path(command['benchmark_set']) / 'output_contracts.json'):
+            return None
+        point = report.parents[3]
+        prepared_path = point / 'PREPARED.json'
+        if prepared_path.is_symlink():
+            return None
+        prepared = _load_strict_json_object(prepared_path)
+        if (not isinstance(prepared, dict) or prepared.get('output') != str(point)
+                or prepared.get('deepx_runtime_mode') != 'A4'
+                or (prepared.get('identity') or {}).get('backend') != 'deepx_to_trt'):
+            return None
+        from onnx_splitpoint_tool.workflow.hardware_acceptance_native import (
+            _same_run_performance_slots, verify_performance_import, _performance_attempt_items, _argument,
+        )
+        slots = _same_run_performance_slots(prepared)['slots']
+        if set(slots) != {1, 2, 3}:
+            return None
+        reports = [Path(slots[index]['report']) for index in (1, 2, 3)]
+        if report not in reports:
+            return None
+        dispatches = []
+        for source in prepared['runs']:
+            for item, suffix in _performance_attempt_items(source, point):
+                relative = Path(item['result_json']).relative_to(item['remote_output_root'])
+                local_report = (point / (f"rep{source['repeat']:02d}" + suffix) / 'download'
+                                / Path(item['remote_output_root']).name / relative)
+                if local_report == report:
+                    dispatches.append(item)
+        if len(dispatches) != 1 or _argument(dispatches[0]['argv'], '--benchmark-set') != command['benchmark_set']:
+            return None
+        verify_performance_import(prepared, reports)
+        local = report.parent / 'benchmark_set/output_contracts.json'
+        if any(path.is_symlink() for path in (local, *local.parents)):
+            return None
+        return local
+    except (OSError, ValueError, TypeError, KeyError, IndexError):
+        return None
+
+
 def _verified_repetition_operating_point(
     row: Mapping[str, Any], *, require_observation: bool = False,
+    remote_execution_contexts: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
-    """Re-prove a Split operating point while preserving every original seal.
+    """Re-prove a Native operating point while preserving every original seal.
 
     Independent processes may place identical prepared inputs and semantic
     dumps in ``repNN`` directories. Only enumerated location/observation fields
@@ -2986,7 +3254,13 @@ def _verified_repetition_operating_point(
     """
     report = Path(str(row.get('operating_point_source_report') or row.get('report') or ''))
     raw = _load_strict_json_object(report)
-    if not isinstance(raw, dict) or _strict_verify_native_command_contract is None:
+    if not isinstance(raw, dict):
+        return {}
+    if isinstance(raw.get('rows'), list):
+        return _verified_full_repetition_operating_point(
+            row, report, raw, require_observation=require_observation,
+            remote_execution_contexts=remote_execution_contexts)
+    if _strict_verify_native_command_contract is None:
         return {}
     if require_observation:
         for field in ('completed_work_units', 'completed_frames', 'postprocess_completed_frames',
@@ -3054,6 +3328,10 @@ def _verified_repetition_operating_point(
             declaration = dict(saved['authoritative_output_contract_resolution'])
             original_source = str(declaration['declaration_source'])
             local_source = Path(original_source)
+            if not local_source.is_file():
+                collected = _normal_split_collected_declaration(report, command, original_source)
+                if collected is not None:
+                    local_source = collected
             if not local_source.is_file():
                 # A collected report retains its remote origin. The original
                 # plan already binds the exact staged declaration's local bytes.
@@ -3345,7 +3623,7 @@ def _explicit_unstarted_prerequisite(group: list[dict[str, Any]]) -> bool:
     return bool(group)
 
 
-def _aggregate_repetitions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _aggregate_repetitions(rows: list[dict[str, Any]], *, remote_execution_contexts: Iterable[Mapping[str, Any]] = ()) -> list[dict[str, Any]]:
     """Aggregate repeated evidence by median; never select the fastest row."""
     groups: dict[tuple[str, ...], list[dict[str, Any]]] = {}
     evidence_seen: dict[tuple[tuple[str, ...], tuple[str, ...]], dict[str, Any]] = {}
@@ -3366,7 +3644,7 @@ def _aggregate_repetitions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for key, group in groups.items():
         claim_identities = [_repetition_claim_identity(row) for row in group]
-        operating_points = [_verified_repetition_operating_point(row) for row in group]
+        operating_points = [_verified_repetition_operating_point(row, remote_execution_contexts=remote_execution_contexts) for row in group]
         # These last three identity values are individually checked against
         # each BN6 execution above and derived from declaration provenance.
         # The common operating point still binds the complete rebuilt contract.
@@ -3451,7 +3729,13 @@ def _aggregate_repetitions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             embedded_records = row.get('repetition_records')
             if isinstance(embedded_records, list):
                 raw_records.extend(
-                    dict(record, operating_point_source_report=str(row.get('report') or ''))
+                    dict(record, operating_point_source_report=str(row.get('operating_point_source_report') or row.get('report') or ''),
+                         **({'operating_point_source_report_sha256': row['operating_point_source_report_sha256']}
+                            if 'operating_point_source_report_sha256' in row else {}),
+                         **({'full_command_contract_sha256': record.get('full_command_contract_sha256', row.get('full_command_contract_sha256')),
+                             'workload_contract_sha256': record.get('workload_contract_sha256', row.get('full_command_contract_sha256'))}
+                            if row.get('backend') == 'native_full_deepx'
+                            and ((row.get('full_command_contract') or {}).get('runtime_options') or {}).get('deepx_runtime_mode') == 'A4' else {}))
                     for record in embedded_records if isinstance(record, dict)
                 )
             elif row.get('repetition_index') not in (None, ''):
@@ -5282,7 +5566,7 @@ def _repeat_record_id(record: dict[str, Any]) -> str:
     return ''
 
 
-def _validate_repeat_claim_evidence(row: dict[str, Any]) -> tuple[bool, list[str]]:
+def _validate_repeat_claim_evidence(row: dict[str, Any], *, remote_execution_contexts: Iterable[Mapping[str, Any]] = ()) -> tuple[bool, list[str]]:
     """Recompute repeat statistics from unique raw, fresh-runtime records.
 
     Summary counts and pre-computed confidence intervals are never sufficient
@@ -5373,8 +5657,8 @@ def _validate_repeat_claim_evidence(row: dict[str, Any]) -> tuple[bool, list[str
     if work_units and len(work_units) == len(records) and len(set(work_units)) != 1:
         reasons.append('repetition_completed_work_units_mismatch')
     if workload_hashes and len(workload_hashes) == len(records) and len(set(workload_hashes)) != 1:
-        operating_points = [_verified_repetition_operating_point(record, require_observation=True) for record in records]
-        representative = _verified_repetition_operating_point(row)
+        operating_points = [_verified_repetition_operating_point(record, require_observation=True, remote_execution_contexts=remote_execution_contexts) for record in records]
+        representative = _verified_repetition_operating_point(row, remote_execution_contexts=remote_execution_contexts)
         common = bool(
             representative and all(operating_points)
             and len({item['operating_point_sha256'] for item in [representative, *operating_points]}) == 1
@@ -5444,7 +5728,7 @@ def _validate_repeat_claim_evidence(row: dict[str, Any]) -> tuple[bool, list[str
     return not reasons, reasons
 
 
-def _apply_comparison_claim_gates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _apply_comparison_claim_gates(rows: list[dict[str, Any]], *, remote_execution_contexts: Iterable[Mapping[str, Any]] = ()) -> list[dict[str, Any]]:
     """Fail closed for endpoint, precision-quality and repeat comparability."""
     groups: dict[tuple[str, ...], list[dict[str, Any]]] = {}
     for row in rows:
@@ -5500,7 +5784,7 @@ def _apply_comparison_claim_gates(rows: list[dict[str, Any]]) -> list[dict[str, 
             precision = _runtime_precision_identity(row)
             precision_explicit = bool(precision and precision not in {'unknown', 'unavailable', 'auto'})
             quality_verified = _quality_precision_verified(row)
-            repeat_gate, repeat_reasons = _validate_repeat_claim_evidence(row)
+            repeat_gate, repeat_reasons = _validate_repeat_claim_evidence(row, remote_execution_contexts=remote_execution_contexts)
             comparison_stratum_explicit = bool(
                 not is_full
                 or (
@@ -5569,21 +5853,21 @@ def _apply_comparison_claim_gates(rows: list[dict[str, Any]]) -> list[dict[str, 
 
 
 
-def _final_rate_fields(row: dict[str, Any]) -> dict[str, Any]:
+def _verified_separate_process_rate_fields(row: dict[str, Any], *, remote_execution_contexts: Iterable[Mapping[str, Any]] = ()) -> dict[str, Any] | None:
     """Project verified separate-process records through the standard rate gate.
 
     The representative command's leaf report contains one repetition, so it
     cannot replace the aggregate. Re-prove the full cohort before consuming
-    its original count/time records; otherwise retain the legacy strict path.
+    its original count/time records; return None when that proof is unavailable.
     """
     from onnx_splitpoint_tool.native_rate_endpoints import (
-        report_rate_fields, rate_endpoint_fields, project_rate_endpoint, _execution_metadata_fields,
+        rate_endpoint_fields, project_rate_endpoint, _execution_metadata_fields,
     )
     records = row.get('repetition_records') or []
     if isinstance(records, list) and len(records) >= 3:
-        valid, _reasons = _validate_repeat_claim_evidence(row)
-        proofs = [_verified_repetition_operating_point(record, require_observation=True) for record in records]
-        representative = _verified_repetition_operating_point(row)
+        valid, _reasons = _validate_repeat_claim_evidence(row, remote_execution_contexts=remote_execution_contexts)
+        proofs = [_verified_repetition_operating_point(record, require_observation=True, remote_execution_contexts=remote_execution_contexts) for record in records]
+        representative = _verified_repetition_operating_point(row, remote_execution_contexts=remote_execution_contexts)
         if (valid and representative and all(proofs)
                 and len({item['operating_point_sha256'] for item in [representative, *proofs]}) == 1):
             fields = rate_endpoint_fields(row)
@@ -5633,7 +5917,13 @@ def _final_rate_fields(row: dict[str, Any]) -> dict[str, Any]:
             fields['rate_endpoint_source'] = 'verified_separate_process_repetition_evidence'
             fields['rate_endpoint_operating_point_evidence'] = proofs
             return fields
-    return report_rate_fields(row)
+    return None
+
+
+def _final_rate_fields(row: dict[str, Any], *, remote_execution_contexts: Iterable[Mapping[str, Any]] = ()) -> dict[str, Any]:
+    from onnx_splitpoint_tool.native_rate_endpoints import report_rate_fields
+    verified = _verified_separate_process_rate_fields(row, remote_execution_contexts=remote_execution_contexts)
+    return verified if verified is not None else report_rate_fields(row)
 
 
 def _safe_component(value: Any) -> str:
@@ -6090,7 +6380,7 @@ def main() -> int:
         planned_contexts = list(stage.get('expected_native_rows') or [])
     if planned_contexts:
         rows = [_complete_bound_native_identity(row, planned_contexts) for row in rows]
-    aggregated_rows = _aggregate_repetitions(rows)
+    aggregated_rows = _aggregate_repetitions(rows, remote_execution_contexts=remote_execution_contexts)
     stage = _load_strict_json_object(outdir / 'native_producer_stage.json') or {}
     subset_rows = list(stage.get('native_not_supported_rows') or [])
     augmentation_terminals = _augmentation_terminal_rows(stage, split_quality_authority)
@@ -6117,13 +6407,13 @@ def main() -> int:
     if _apply_host_postprocess_aliases is not None:
         for row in rows:
             _apply_host_postprocess_aliases(row)
-    rows = _apply_comparison_claim_gates(rows)
+    rows = _apply_comparison_claim_gates(rows, remote_execution_contexts=remote_execution_contexts)
     rows = _apply_detection_claim_exclusions(
         rows, detection_exclusions,
     )
     from onnx_splitpoint_tool.native_rate_endpoints import report_rate_fields
     for row in rows:
-        row.update(_final_rate_fields(row))
+        row.update(_final_rate_fields(row, remote_execution_contexts=remote_execution_contexts))
         if row.get('completed_task_fps') is None:
             row['performance_claim_eligible'] = False
             row.setdefault('performance_claim_exclusion_reasons', []).append(row['completed_task_fps_unavailable_reason'])

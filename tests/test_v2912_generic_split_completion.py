@@ -118,6 +118,54 @@ def test_timer_drains_warmup_and_retains_existing_pipeline_overlap():
     assert report['completed_task_fps'] == pytest.approx(6/report['measured_makespan_seconds'])
 
 
+def test_explicit_mixed_control_cannot_be_omitted(monkeypatch, tmp_path):
+    module = _module(monkeypatch)
+    config, _ = _fixture(tmp_path)
+    config['mixed_input_control'] = {'path': '/bound/control.json', 'sha256': 'a' * 64}
+    with pytest.raises(ValueError, match='explicit runtime binding'):
+        module._run_generic_split_completion(config, tmp_path / 'result',
+            lambda: None, lambda value: value, lambda value: value, {}, clone_payload=None)
+
+
+def test_hailo_mixed_feed_preserves_existing_prepared_codes(monkeypatch, tmp_path):
+    module = _module(monkeypatch)
+    config, _ = _fixture(tmp_path)
+    prepared = config['input_binding']['prepared_input']
+    value = np.load(prepared['path'], allow_pickle=False)
+    session = SimpleNamespace(input_names=['hef_canonical_input'])
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Prepared Hailo codes must not be quantized again')
+    monkeypatch.setattr(module, '_prepare_hailo_image_input', forbidden)
+    mapped = module._completion_hailo_prepared_feed(config, session, {prepared['input_name']: value})
+    assert mapped == {'hef_canonical_input': value}
+    assert mapped['hef_canonical_input'] is value
+    assert module._completion_hailo_inputs(config, 'hailo10h', mapped) is mapped
+    with pytest.raises(ValueError, match='shape/dtype/layout differs'):
+        module._completion_hailo_prepared_feed(config, session, {prepared['input_name']: value.astype(np.float32)})
+
+
+def test_failed_mixed_control_stops_before_any_timed_task(monkeypatch, tmp_path):
+    module = _module(monkeypatch)
+    config, logits = _fixture(tmp_path)
+    config['mixed_input_control'] = {'path': '/bound/control.json', 'sha256': 'a' * 64}
+    output = tmp_path / 'result'
+    output.mkdir()
+    submissions = []
+    def control(index):
+        assert index == 1
+        raise RuntimeError('bounded mixed-input mismatch')
+    with pytest.raises(RuntimeError, match='bounded mixed-input mismatch'):
+        module._run_generic_split_completion(config, output,
+            lambda: submissions.append('timed'), lambda value: value, lambda value: {'logits': logits},
+            {role: spec['path'] for role, spec in config['expected_runtime_artifacts'].items()},
+            clone_payload=None, repetition_index=1, mixed_control=control)
+    assert submissions == []
+    result = json.loads((output / 'generic_completion_results.json').read_text())
+    assert result['status'] == 'failed'
+    assert result['repetitions'][0]['status'] == 'failed'
+    assert 'completed_task_fps' not in result['repetitions'][0]
+
+
 @pytest.mark.parametrize('failure', ['counter', 'async', 'stage1', 'stage2'])
 def test_partial_or_unfinished_work_is_never_a_rate(failure):
     processor = ClassificationCompletion()

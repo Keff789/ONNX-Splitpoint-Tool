@@ -48,6 +48,7 @@ else:
     _NATIVE_TRT_IMPORT_ERROR = None
 
 from onnx_splitpoint_tool.runners.request_latency import RequestLatency
+from onnx_splitpoint_tool.native_deepx_async import NativeDeepXAsync, NativeDeepXAsyncError, NativeExecutionLifecycle, run_a4
 from onnx_splitpoint_tool.runners.harness.classification import ClassificationCompletion
 from onnx_splitpoint_tool.native_command_contract import (
     load_split_energy_workload_binding,
@@ -518,6 +519,66 @@ def _run_deepx(engine: Any, inp: np.ndarray) -> list[np.ndarray]:
     if not isinstance(outs, (list, tuple)):
         outs = [outs]
     return [np.asarray(o) for o in outs]
+
+
+def _a4_serial_failure(adapter: NativeDeepXAsync, inputs: Any, phase: str,
+                       exc: BaseException) -> NativeDeepXAsyncError:
+    adapter.retain_unresolved_serial(inputs, f'{phase}:{type(exc).__name__}:{exc}')
+    observation = adapter.report()
+    error = NativeDeepXAsyncError({
+        'errors': [f'{phase}:serial_sdk_return_unproven:{type(exc).__name__}:{exc}'],
+        'observation': observation, 'drained': False, 'unsafe_runtime_state': True,
+        'unsafe_runtime_reasons': list(observation['failure_notes']),
+        'submitted_count': adapter.submitted, 'completed_count': 0,
+    }, adapter)
+    error.deepx_workload_phase = phase
+    return error
+
+
+def _run_a4_serial(adapter: NativeDeepXAsync, inp: np.ndarray, *, phase: str,
+                   progress: dict[str, Any]) -> list[np.ndarray]:
+    """Keep a serial oracle's actual SDK entry separate from task processing."""
+    value = np.ascontiguousarray(inp)
+    invoke = getattr(adapter.engine, 'run', None)
+    if invoke is None:
+        invoke = getattr(adapter.engine, 'Run', None)
+    if not callable(invoke):
+        raise RuntimeError('dx_engine.InferenceEngine has no run/Run method')
+    if adapter.execution_lifecycle is not None:
+        adapter.execution_lifecycle.inference_enter()
+    progress['serial_sdk_calls_started'] = int(progress.get('serial_sdk_calls_started', 0)) + 1
+    if phase == 'numerical_reference':
+        progress['serial_reference_calls_started'] = int(progress.get('serial_reference_calls_started', 0)) + 1
+    try:
+        outs = invoke([value])
+    except BaseException as exc:
+        raise _a4_serial_failure(adapter, [value], phase, exc) from exc
+    if adapter.execution_lifecycle is not None:
+        adapter.execution_lifecycle.inference_return()
+    progress['serial_sdk_calls_completed'] = int(progress.get('serial_sdk_calls_completed', 0)) + 1
+    if phase == 'numerical_reference':
+        progress['serial_reference_calls_completed'] = int(progress.get('serial_reference_calls_completed', 0)) + 1
+    if not isinstance(outs, (list, tuple)):
+        outs = [outs]
+    return [np.asarray(output) for output in outs]
+
+
+def _run_a4_serial_trt(adapter: NativeDeepXAsync, trt: Any, feeds: Mapping[str, np.ndarray], *,
+                       phase: str, progress: dict[str, Any]) -> dict[str, np.ndarray]:
+    invoke = getattr(trt, 'run', None)
+    if not callable(invoke):
+        raise RuntimeError('native TensorRT serial run method missing')
+    if adapter.execution_lifecycle is not None:
+        adapter.execution_lifecycle.inference_enter()
+    progress['serial_trt_calls_started'] = int(progress.get('serial_trt_calls_started', 0)) + 1
+    try:
+        outputs = invoke(feeds)
+    except BaseException as exc:
+        raise _a4_serial_failure(adapter, [trt, feeds], phase, exc) from exc
+    if adapter.execution_lifecycle is not None:
+        adapter.execution_lifecycle.inference_return()
+    progress['serial_trt_calls_completed'] = int(progress.get('serial_trt_calls_completed', 0)) + 1
+    return outputs
 
 
 def _select_input_candidate(engine: Any, candidates: list[np.ndarray], trt: Any) -> tuple[np.ndarray, list[np.ndarray], dict[str, Any]]:
@@ -1006,7 +1067,401 @@ def _dump_trt_outputs(outputs: dict[str, np.ndarray], out_dir: Path, *, producer
     mp.write_text(json.dumps(manifest, indent=2), encoding='utf-8')
     return str(mp)
 
+def _bind_a4_split_boundary(adapter: Any, trt: Any) -> dict[str, Any]:
+    """Bind the supported single boundary before any measured submit.
+
+    Same-sized tensors are insufficient: A4 never guesses an output, reshapes
+    a boundary, or casts its values to make an incompatible engine executable.
+    """
+    outputs = adapter.output_contracts
+    if len(outputs) != 1 or len(trt.inputs) != 1:
+        raise RuntimeError('deepx_a4_multi_boundary_unsupported')
+    source = outputs[0]
+    target_name = trt.inputs[0]
+    target_shape = tuple(int(value) for value in trt.shapes[target_name])
+    target_dtype = np.dtype(trt.dtypes[target_name])
+    if source.shape != target_shape:
+        raise RuntimeError('deepx_a4_boundary_shape_mismatch')
+    if source.dtype != target_dtype:
+        raise RuntimeError('deepx_a4_boundary_dtype_mismatch')
+    if _STRICT_SPLIT_BOUNDARY is not None:
+        bound = _STRICT_SPLIT_BOUNDARY
+        names = tuple(str(value) for value in bound.get('output_names') or [])
+        if names != adapter.output_names or str(bound.get('name') or '') != source.name:
+            raise RuntimeError('deepx_a4_boundary_name_or_order_mismatch')
+        if tuple(int(value) for value in bound.get('shape') or []) != source.shape:
+            raise RuntimeError('deepx_a4_bound_boundary_shape_mismatch')
+        if np.dtype(bound.get('dtype')) != source.dtype:
+            raise RuntimeError('deepx_a4_bound_boundary_dtype_mismatch')
+    return {
+        'source_name': source.name,
+        'source_shape': list(source.shape), 'source_dtype': str(source.dtype),
+        'trt_input': target_name,
+        'target_shape': list(target_shape), 'target_dtype': str(target_dtype),
+        'selection_method': 'exact_single_sdk_output_to_single_trt_input',
+    }
+
+
+def _map_a4_deepx_output_to_trt(
+    outputs: list[np.ndarray], trt: Any, binding: Mapping[str, Any],
+) -> tuple[str, np.ndarray, dict[str, Any]]:
+    if len(outputs) != 1:
+        raise RuntimeError('deepx_a4_runtime_output_count_mismatch')
+    source = np.asarray(outputs[0])
+    if tuple(source.shape) != tuple(binding['source_shape']):
+        raise RuntimeError('deepx_a4_runtime_boundary_shape_mismatch')
+    if source.dtype != np.dtype(binding['source_dtype']):
+        raise RuntimeError('deepx_a4_runtime_boundary_dtype_mismatch')
+    return _map_deepx_output_to_trt(outputs, trt)
+
+
+def _select_a4_input(adapter: Any, candidates: list[np.ndarray]) -> np.ndarray:
+    if len(adapter.input_contracts) != 1:
+        raise RuntimeError('deepx_a4_split_multi_input_unsupported')
+    contract = adapter.input_contracts[0]
+    matches = [candidate for candidate in candidates
+               if tuple(candidate.shape) == contract.shape
+               and candidate.dtype == contract.dtype]
+    if len(matches) != 1:
+        raise RuntimeError('deepx_a4_exact_sdk_input_contract_unresolved')
+    return adapter.prepare_input(matches[0])
+
+
+def _numerical_image_paths(manifest_path: str, timing_image: str) -> list[str]:
+    manifest = Path(manifest_path).expanduser().resolve()
+    payload = _load_json(manifest)
+    images = payload.get('images') if isinstance(payload, Mapping) else None
+    if not isinstance(images, list) or not 1 <= len(images) <= 32:
+        raise ValueError('deepx_numerical_images_requires_one_to_32_images')
+    paths = []
+    for item in images:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError('deepx_numerical_image_path_invalid')
+        path = Path(item).expanduser()
+        path = (path if path.is_absolute() else manifest.parent / path).resolve()
+        if not path.is_file():
+            raise ValueError(f'deepx_numerical_image_missing:{path}')
+        paths.append(str(path))
+    if len(set(paths)) != len(paths):
+        raise ValueError('deepx_numerical_images_must_be_distinct')
+    if not timing_image or str(Path(timing_image).expanduser().resolve()) not in paths:
+        raise ValueError('deepx_numerical_images_must_include_timing_image')
+    return paths
+
+
+def _compare_numerical_tensors(
+    expected: Mapping[str, np.ndarray], observed: Mapping[str, np.ndarray],
+) -> list[dict[str, Any]]:
+    if list(expected) != list(observed):
+        raise RuntimeError('deepx_numerical_output_name_or_order_mismatch')
+    rows = []
+    for name in expected:
+        reference, actual = np.asarray(expected[name]), np.asarray(observed[name])
+        if reference.shape != actual.shape or reference.dtype != actual.dtype:
+            raise RuntimeError(f'deepx_numerical_shape_dtype_mismatch:{name}')
+        if not np.isfinite(reference).all() or not np.isfinite(actual).all():
+            raise RuntimeError(f'deepx_numerical_nonfinite:{name}')
+        exact = reference.dtype.kind in 'biu'
+        equal = (np.array_equal(reference, actual) if exact else
+                 np.allclose(reference, actual, rtol=1e-4, atol=1e-5, equal_nan=False))
+        if not equal:
+            raise RuntimeError(f'deepx_numerical_output_mismatch:{name}')
+        rows.append({'name': name, 'shape': list(reference.shape),
+                     'dtype': str(reference.dtype), 'comparison': 'integer_exact' if exact else 'rtol_1e-4_atol_1e-5',
+                     'max_abs_difference': float(np.max(np.abs(reference.astype(np.float64) - actual.astype(np.float64)))) if reference.size else 0.0})
+    return rows
+
+
+def deepx_split_numerical_preflight(
+    engine: Any, trt: Any, prepared_inputs: list[np.ndarray], *,
+    image_paths: list[str], benchmark_set: Path, model_id: str, task: str,
+    preprocess_mode: str, letterbox_pad_value: int, completion_runtime_mode: str,
+    progress: dict[str, Any] | None = None,
+    execution_lifecycle: Any = None,
+) -> dict[str, Any]:
+    """Compare serial references with the product A4 executor before FPS work.
+
+    Raw boundaries, every TRT output and task records are copied here for the
+    bounded numerical check. These copies and comparisons are never added to
+    the ordinary count/duration workload.
+    """
+    if not 1 <= len(prepared_inputs) <= 32 or len(prepared_inputs) != len(image_paths):
+        raise ValueError('deepx_numerical_prepared_input_count_invalid')
+    adapter = NativeDeepXAsync(engine, execution_lifecycle=execution_lifecycle)
+    binding = _bind_a4_split_boundary(adapter, trt)
+    inputs = [adapter.prepare_input(value) for value in prepared_inputs]
+    references = []
+    measured_runtimes = []
+    progress = progress if progress is not None else {}
+    progress.update(status='running', serial_reference_calls_started=0, serial_reference_calls_completed=0,
+                    serial_reference_requests=0, mixed_completions=0)
+    for value, image in zip(inputs, image_paths):
+        raw = _run_a4_serial(adapter, value, phase='numerical_reference', progress=progress)
+        name, boundary, _meta = _map_a4_deepx_output_to_trt(raw, trt, binding)
+        serial_outputs = _run_a4_serial_trt(
+            adapter, trt, {name: boundary}, phase='numerical_reference_trt', progress=progress,
+        )
+        outputs = {key: np.array(tensor, copy=True, order='C') for key, tensor in serial_outputs.items()}
+        if task == 'classification':
+            serial = ClassificationCompletion()
+            measured = ClassificationCompletion()
+        else:
+            execution = _build_detection_completion_contract(
+                benchmark_set=benchmark_set, model_id=model_id, outputs=outputs,
+                selected_input=value, image_path=image,
+                preprocess_mode=preprocess_mode, letterbox_pad_value=letterbox_pad_value,
+            )
+            serial = create_detection_completion_runtime(execution, runtime_mode='strict')
+            measured = create_detection_completion_runtime(execution, runtime_mode=completion_runtime_mode)
+        completed = serial.process(outputs)
+        references.append({'boundary': {binding['source_name']: boundary},
+                           'outputs': outputs, 'completed': completed})
+        measured_runtimes.append(measured)
+        progress['serial_reference_requests'] += 1
+
+    def map_outputs(request_id: int, outputs: list[np.ndarray]):
+        name, boundary, _meta = _map_a4_deepx_output_to_trt(outputs, trt, binding)
+        return name, boundary
+
+    def consume(request_id: int, payload: tuple[str, np.ndarray]):
+        name, boundary = payload
+        if adapter.execution_lifecycle is not None:
+            adapter.execution_lifecycle.inference_enter()
+        trt.prepare_inputs({name: boundary})
+        outputs = trt.run_prepared()
+        if adapter.execution_lifecycle is not None:
+            adapter.execution_lifecycle.inference_return()
+        return {'boundary': {binding['source_name']: boundary},
+                'outputs': {key: np.array(value, copy=True, order='C') for key, value in outputs.items()}}
+
+    def complete(request_id: int, payload: Mapping[str, Any]):
+        return measured_runtimes[request_id].process(payload['outputs'])
+
+    try:
+        observation = run_a4(
+            adapter, lambda request_id: inputs[request_id], count=len(inputs),
+            map_outputs=map_outputs, consume=consume, complete=complete, capture=True,
+        )
+    except Exception as exc:
+        exc.deepx_workload_phase = 'numerical_mixed'
+        if isinstance(getattr(exc, 'result', None), Mapping):
+            progress.update(mixed_submitted_requests=exc.result['submitted_count'],
+                            mixed_completions=exc.result['completed_count'],
+                            mixed_drained=exc.result['drained'])
+        raise
+    progress.update(mixed_submitted_requests=observation['submitted_count'],
+                    mixed_completions=observation['completed_count'],
+                    mixed_drained=observation['drained'])
+    rows = []
+    for request_id, reference in enumerate(references):
+        actual = observation['captured'][request_id]
+        try:
+            boundary_rows = _compare_numerical_tensors(reference['boundary'], actual['boundary'])
+            output_rows = _compare_numerical_tensors(reference['outputs'], actual['outputs'])
+        except RuntimeError as exc:
+            raise RuntimeError(f'deepx_numerical_request_failed:{request_id}:{exc}') from exc
+        completed = measured_runtimes[request_id].last_result
+        if task == 'classification':
+            if any(not np.array_equal(reference['completed'][key], completed[key])
+                   for key in ('top1', 'top5')):
+                raise RuntimeError(f'deepx_numerical_classification_topk_mismatch:{request_id}')
+        else:
+            if reference['completed']['detections'] != completed['detections']:
+                raise RuntimeError(f'deepx_numerical_completed_detections_mismatch:{request_id}')
+            _completion_attestation_fields(measured_runtimes[request_id], completed_work_units=1)
+        rows.append({'request_id': request_id, 'image': image_paths[request_id],
+                     'boundary': boundary_rows, 'outputs': output_rows,
+                     'completed_task_equal': True})
+    progress.update(status='passed')
+    return {**progress, 'status': 'passed', 'mode': 'A4', 'image_count': len(inputs),
+            'serial_reference_requests': len(inputs), 'mixed_completions': observation['completed_count'],
+            'actual_pending_max': observation['actual_pending_max'],
+            'drained': observation['drained'], 'queue_depth': 3,
+            'float_rtol': 1e-4, 'float_atol': 1e-5, 'integer_exact': True,
+            'nonfinite_rejected': True, 'comparison_outside_performance_timing': True,
+            'requests': rows}
+
+
 def _deepx_fifo_run(
+    engine: Any,
+    input_arr: np.ndarray,
+    trt: Any,
+    *,
+    frames: int,
+    warmup: int,
+    queue_depth: int,
+    duration_s: float = 0.0,
+    task: str = 'classification',
+    completion_runtime: Any | None = None,
+    warmup_completion_runtime: Any | None = None,
+    deepx_runtime_mode: str = 'S1',
+    last_outputs_sink: dict[str, np.ndarray] | None = None,
+    execution_lifecycle: Any = None,
+) -> dict[str, Any]:
+    """Use the shared A4 executor, retaining explicit historical S1 replay."""
+    mode = str(deepx_runtime_mode).upper()
+    if mode == 'S1':
+        result = _deepx_s1_fifo_run(
+            engine, input_arr, trt, frames=frames, warmup=warmup,
+            queue_depth=queue_depth, duration_s=duration_s, task=task,
+            completion_runtime=completion_runtime,
+            warmup_completion_runtime=warmup_completion_runtime,
+        )
+        result.update(deepx_runtime_mode='S1', deepx_max_inflight=1)
+        return result
+    if mode != 'A4':
+        raise ValueError('deepx_native_runtime_mode_invalid')
+    if int(queue_depth) != 3:
+        raise ValueError('deepx_a4_fifo_depth_must_be_three')
+    if int(frames) < 0 or int(warmup) < 0 or float(duration_s) < 0:
+        raise ValueError('deepx_a4_workload_count_or_duration_invalid')
+    task_value = str(task or '').strip().lower()
+    if task_value not in {'classification', 'detection'}:
+        raise RuntimeError('native FIFO task must be classification or detection')
+    if task_value == 'classification':
+        completion_runtime = ClassificationCompletion()
+        warmup_completion_runtime = ClassificationCompletion()
+    elif completion_runtime is None:
+        raise RuntimeError('detection completion runtime missing from measured hotloop')
+    elif int(warmup) > 0 and warmup_completion_runtime is None:
+        raise RuntimeError('detection completion runtime missing from warmup hotloop')
+
+    adapter = NativeDeepXAsync(engine, execution_lifecycle=execution_lifecycle)
+    input_arr = adapter.prepare_input(input_arr)
+    boundary_binding = _bind_a4_split_boundary(adapter, trt)
+    strict_evidence: dict[str, Any] = {}
+    map_times: list[float] = []
+    input_copy_times: list[float] = []
+    p2_times: list[float] = []
+    completion_times: list[float] = []
+    boundary_copy_counts: list[int] = []
+    request_latency = RequestLatency(
+        int(frames), task_complete=True,
+        start_anchor='deepx_a4_fifo:before_run_async_submit',
+        end_anchor='deepx_a4_fifo:after_task_completion',
+        enabled=not duration_s,
+    )
+    measured = False
+
+    def map_outputs(request_id: int, outputs: list[np.ndarray]) -> tuple[str, np.ndarray]:
+        before = _now_ms()
+        name, boundary, meta = _map_a4_deepx_output_to_trt(outputs, trt, boundary_binding)
+        current = dict(meta.get('strict_quality_boundary') or {})
+        if current:
+            if strict_evidence and current != strict_evidence:
+                raise RuntimeError('native_split_quality_runtime_boundary_evidence_drift')
+            strict_evidence.update(current)
+        if measured:
+            map_times.append(_now_ms() - before)
+            boundary_copy_counts.append(int(meta.get('boundary_copy_count') or 0))
+        return name, boundary
+
+    def consume(request_id: int, payload: tuple[str, np.ndarray]) -> dict[str, np.ndarray]:
+        name, boundary = payload
+        before = _now_ms()
+        if adapter.execution_lifecycle is not None:
+            adapter.execution_lifecycle.inference_enter()
+        trt.prepare_inputs({name: boundary})
+        staged = _now_ms()
+        outputs = trt.run_prepared()
+        if adapter.execution_lifecycle is not None:
+            adapter.execution_lifecycle.inference_return()
+        finished = _now_ms()
+        if measured:
+            input_copy_times.append(staged - before)
+            p2_times.append(finished - staged)
+        return outputs
+
+    def complete_with(runtime: Any):
+        def complete(request_id: int, outputs: dict[str, np.ndarray]) -> None:
+            before = _now_ms()
+            runtime.process(outputs)
+            if measured:
+                completion_times.append(_now_ms() - before)
+                request_latency.complete(request_id)
+        return complete
+
+    # Both intervals use identical A4, boundary copy, FIFO, TRT and completion
+    # stages. The warmup executor joins and drains before the main start signal.
+    try:
+        warmup_observation = run_a4(
+            adapter, lambda request_id: input_arr, count=int(warmup),
+            map_outputs=map_outputs, consume=consume,
+            complete=complete_with(warmup_completion_runtime),
+        )
+    except Exception as exc:
+        exc.deepx_workload_phase = 'warmup'
+        raise
+    measured = True
+    try:
+        observation = run_a4(
+            adapter, lambda request_id: input_arr,
+            count=None if duration_s else int(frames), duration_s=float(duration_s),
+            map_outputs=map_outputs, consume=consume,
+            complete=complete_with(completion_runtime),
+            on_submit=request_latency.start,
+        )
+    except Exception as exc:
+        exc.deepx_workload_phase = 'measurement'
+        exc.request_latency = request_latency.report()
+        raise
+    completed = int(observation['completed_count'])
+    accepted = int(observation['submitted_count'])
+    if not observation['drained'] or accepted != completed or completed != len(completion_times):
+        raise request_latency.failure('deepx_a4_split_completion_or_drain_incomplete')
+    if len(boundary_copy_counts) != completed or any(count != 1 for count in boundary_copy_counts):
+        raise request_latency.failure('deepx_a4_split_boundary_copy_count_mismatch')
+    if last_outputs_sink is not None and observation['last_outputs'] is not None:
+        last_outputs_sink.clear()
+        last_outputs_sink.update(observation['last_outputs'])
+
+    def mean(values: list[float]) -> float | None:
+        return float(np.mean(values)) if values else None
+
+    input_copy_ms = mean(input_copy_times)
+    map_ms = mean(map_times)
+    p2_ms = mean(p2_times)
+    completion_ms = mean(completion_times)
+    result = {
+        'request_latency': request_latency.report(),
+        'frames': completed, 'completed_frames': completed,
+        'completed_work_units': completed, 'accepted_work_units': accepted,
+        'requested_frames': int(frames), 'duration_s': float(duration_s),
+        'warmup': int(warmup), 'warmup_completed_frames': int(warmup_observation['completed_count']),
+        'queue_depth': 3, 'deepx_runtime_mode': 'A4', 'deepx_max_inflight': 4,
+        'deepx_actual_pending_max': int(observation['actual_pending_max']),
+        'deepx_runtime_observation': observation['observation'],
+        'deepx_final_drain_complete': True,
+        'deepx_worker_policy': 'one_a4_producer_fifo3_one_serial_trt_completion_consumer',
+        'output_map_ms': map_ms, 'trt_input_copy_ms': input_copy_ms,
+        'p2_run_ms': p2_ms, 'completion_tail_ms': completion_ms,
+        'postprocess_ms': completion_ms,
+        'p1_ms': None, 'deepx_run_ms': None,
+        'handoff_ms': (map_ms + input_copy_ms) if completed else None,
+        'p1_thread_ms': None,
+        'p2_thread_ms': (input_copy_ms + p2_ms + completion_ms) if completed else None,
+        'paper_equivalent_cycle_ms': None, 'paper_equivalent_fps': None,
+        'makespan_ms': float(observation['makespan_s']) * 1000.0,
+        'fps_makespan': observation['fps_makespan'],
+        'measurement_boundary': 'workers_ready_to_last_completed_task_frame',
+        'last_completion_source': 'same_hotloop_completed_task_sentinel',
+        'warmup_contract': 'a4_fully_drained_before_main_worker_start',
+        'trt_host_memory_policy': getattr(trt, 'host_memory_policy', 'unknown'),
+        'trt_output_materialization_policy': getattr(trt, 'output_materialization_policy', 'unknown'),
+        'trt_copy_outputs': True, 'boundary_copy_count': 1,
+        'boundary_copy_total': int(sum(boundary_copy_counts)),
+        'boundary_copy_policy': 'one_owned_contiguous_typed_copy_before_fifo_enqueue',
+        'fifo_payload_ownership': 'owned_no_alias_to_deepx_runtime_output',
+        'boundary_binding': boundary_binding, 'strict_quality_boundary': strict_evidence,
+    }
+    if task_value == 'detection' and completed:
+        result.update(_completion_attestation_fields(completion_runtime, completed_work_units=completed))
+    elif task_value == 'classification':
+        result.update(completion_runtime.report())
+    return result
+
+
+def _deepx_s1_fifo_run(
     engine: Any,
     input_arr: np.ndarray,
     trt: Any,
@@ -1227,6 +1682,16 @@ def _deepx_energy_binding(ns: argparse.Namespace) -> tuple[dict[str, Any] | None
     artifacts = dict(binding.get('artifacts') or {})
     prepared_contract = binding.get('prepared_input_contract')
     errors=[]
+    bound_runtime_mode = str(options.get('deepx_runtime_mode') or 'S1').upper()
+    requested_runtime_mode = str(getattr(ns, 'deepx_runtime_mode', 'S1')).upper()
+    if bound_runtime_mode not in {'A4', 'S1'} or requested_runtime_mode != bound_runtime_mode:
+        errors.append('split_energy_deepx_runtime_mode_mismatch')
+    if bound_runtime_mode == 'A4' and (
+        int(options.get('deepx_max_inflight') or 0) != 4
+        or int(options.get('queue_depth') or 0) != 3
+        or int(ns.queue_depth) != 3
+    ):
+        errors.append('split_energy_deepx_a4_policy_mismatch')
     if int(ns.warmup) != 0 or int(options.get('warmup') if options.get('warmup') is not None else -1) != 0:
         errors.append('split_energy_warmup_must_be_zero')
     if ns.build_missing_engine:
@@ -1300,7 +1765,7 @@ def _deepx_energy_binding(ns: argparse.Namespace) -> tuple[dict[str, Any] | None
     return binding, reason
 
 
-def main() -> int:
+def _main(lifecycle_context: dict[str, Any]) -> int:
     ap = argparse.ArgumentParser(description='DeepX->NativeTRT Python FIFO E2E runner')
     ap.add_argument('--benchmark-set', required=True)
     ap.add_argument('--case', required=True)
@@ -1311,6 +1776,9 @@ def main() -> int:
     ap.add_argument('--warmup', type=int, default=100)
     ap.add_argument('--duration-s', type=float, default=0.0, help='Run measured workload for this many seconds instead of fixed frame count (energy mode).')
     ap.add_argument('--queue-depth', type=int, default=3)
+    ap.add_argument('--deepx-runtime-mode', default='S1', choices=['S1', 'A4'], help='Explicit DeepX Native recipe. New product requests select A4; missing historical options retain S1.')
+    ap.add_argument('--deepx-numerical-images', default='', help='Bounded acceptance JSON object with images[]: at most 32 distinct existing paths including --image.')
+    ap.add_argument('--deepx-numerical-only', action='store_true', help='Run mixed-image serial/A4 numerical acceptance, followed only by --frames <=64 smoke tasks (zero skips the smoke).')
     ap.add_argument('--repetitions', type=int, default=1, help='Independent performance intervals; reported as median with a 95%% repetition-level CI (never best-of).')
     ap.add_argument('--timeout', type=float, default=1800)
     ap.add_argument('--dump-outputs', action='store_true')
@@ -1337,8 +1805,26 @@ def main() -> int:
     ap.add_argument('--energy-preflight-nonce', default='', help='Fresh collector repeat nonce expected in the preflight attestation.')
     ap.add_argument('--energy-preflight-max-age-s', type=float, default=300.0)
     ns = ap.parse_args()
+    execution_lifecycle = None
+    if ns.deepx_runtime_mode == 'A4':
+        execution_lifecycle = NativeExecutionLifecycle()
+        lifecycle_context.update(lifecycle=execution_lifecycle, namespace=ns)
+        if ns.out_dir:
+            lifecycle_context['out_path'] = Path(ns.out_dir).expanduser().resolve() / 'deepx_native_fifo_e2e_results.json'
     if int(ns.repetitions) < 1:
         ap.error('--repetitions must be >= 1')
+    if ns.deepx_runtime_mode == 'A4' and int(ns.queue_depth) != 3:
+        ap.error('DeepX Native A4 requires --queue-depth 3')
+    if ns.deepx_runtime_mode == 'A4' and int(ns.repetitions) != 1:
+        ap.error('DeepX Native A4 requires one measured repetition per fresh worker process')
+    if ns.deepx_numerical_only or ns.deepx_numerical_images:
+        if ns.deepx_runtime_mode != 'A4' or not ns.deepx_numerical_only or not ns.deepx_numerical_images:
+            ap.error('DeepX numerical acceptance requires A4, --deepx-numerical-images and --deepx-numerical-only')
+        if ns.energy_workload_only or ns.build_missing_engine or not 0 <= int(ns.frames) <= 64:
+            ap.error('DeepX numerical acceptance forbids energy/build and permits at most 64 smoke tasks')
+        numerical_images = _numerical_image_paths(ns.deepx_numerical_images, ns.image)
+    else:
+        numerical_images = []
     energy_binding: dict[str, Any] | None = None
     energy_binding_status = ''
     if ns.energy_workload_only:
@@ -1392,7 +1878,10 @@ def main() -> int:
     out_dir = Path(ns.out_dir).expanduser().resolve() if ns.out_dir else bs/'native_pipeline'/case/'deepx_to_trt'/ns.precision; out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir/'deepx_native_fifo_e2e_results.json'
     attested_input_sha = str(energy_binding.get('input_image_sha256') or '') if energy_binding is not None else (_file_sha256(ns.image) if ns.image else '')
-    report: dict[str, Any] = {'ok': False, 'mode': 'deepx_python_native_fifo_e2e', 'benchmark_set': str(bs), 'case': case, 'precision': ns.precision, 'input_image': str(ns.image or ''), 'input_image_sha256': attested_input_sha, 'input_image_source': 'exact_file' if ns.image else 'synthetic_or_unknown', 'task': task, 'preprocess_mode_requested': str(ns.preprocess_mode), 'preprocess_mode_effective': preprocess_mode_effective, 'letterbox_pad_value_requested': int(ns.letterbox_pad_value), 'letterbox_pad_value_effective': int(letterbox_pad_value_effective), 'steps': [], 'energy_workload_only': bool(ns.energy_workload_only), 'energy_preflight_status': energy_binding_status}
+    report: dict[str, Any] = {'ok': False, 'mode': 'deepx_python_native_fifo_e2e', 'deepx_runtime_mode': ns.deepx_runtime_mode, 'deepx_max_inflight': 4 if ns.deepx_runtime_mode == 'A4' else 1, 'benchmark_set': str(bs), 'case': case, 'precision': ns.precision, 'input_image': str(ns.image or ''), 'input_image_sha256': attested_input_sha, 'input_image_source': 'exact_file' if ns.image else 'synthetic_or_unknown', 'task': task, 'preprocess_mode_requested': str(ns.preprocess_mode), 'preprocess_mode_effective': preprocess_mode_effective, 'letterbox_pad_value_requested': int(ns.letterbox_pad_value), 'letterbox_pad_value_effective': int(letterbox_pad_value_effective), 'steps': [], 'energy_workload_only': bool(ns.energy_workload_only), 'energy_preflight_status': energy_binding_status}
+    if execution_lifecycle is not None:
+        lifecycle_context.update(report=report, out_path=out_path)
+        report['deepx_execution_lifecycle'] = execution_lifecycle.report()
     try:
         if energy_binding is not None:
             energy_artifacts = dict(energy_binding.get('artifacts') or {})
@@ -1434,8 +1923,17 @@ def main() -> int:
         if NativeTRT is None:
             raise RuntimeError(f'NativeTRT import failed: {_NATIVE_TRT_IMPORT_ERROR!r}')
         from dx_engine import InferenceEngine  # type: ignore
+        if execution_lifecycle is not None:
+            execution_lifecycle.construction_enter()
         dx_engine = InferenceEngine(str(dxnn))
+        if execution_lifecycle is not None:
+            execution_lifecycle.construction_return()
+            execution_lifecycle.construction_enter()
         trt = NativeTRT(engine_path)
+        if execution_lifecycle is not None:
+            execution_lifecycle.construction_return()
+        setup_adapter = NativeDeepXAsync(dx_engine, execution_lifecycle=execution_lifecycle) if ns.deepx_runtime_mode == 'A4' else None
+        a4_boundary_binding = _bind_a4_split_boundary(setup_adapter, trt) if setup_adapter is not None else None
         prepared_input_path: Path | None = None
         prepared_input_contract: dict[str, Any] = {}
         completion_execution_contract: dict[str, Any] | None = None
@@ -1453,6 +1951,10 @@ def main() -> int:
                 raise RuntimeError('split_energy_prepared_input_dtype_mismatch')
             if not selected_input.flags.c_contiguous:
                 raise RuntimeError('split_energy_prepared_input_not_c_contiguous')
+            if setup_adapter is not None:
+                prepared = setup_adapter.prepare_input(selected_input)
+                if tuple(prepared.shape) != tuple(selected_input.shape):
+                    raise RuntimeError('split_energy_a4_prepared_input_sdk_shape_mismatch')
             select_meta = {
                 **prepared_input_contract,
                 'selection_method': 'preflight_attested_prepared_input_no_probe',
@@ -1518,28 +2020,60 @@ def main() -> int:
                     letterbox_pad_value=letterbox_pad_value_effective,
                     timing_input_binding=report.setdefault('timing_input_binding', {}),
                 )
-                first_outs=_run_deepx(dx_engine,selected_input)
+                source_prepared_shape = list(selected_input.shape)
+                if setup_adapter is not None:
+                    selected_input = setup_adapter.prepare_input(selected_input)
+                first_outs = (
+                    _run_a4_serial(setup_adapter, selected_input, phase='setup_reference',
+                                   progress=report.setdefault('deepx_serial_runtime_observation', {}))
+                    if setup_adapter is not None else _run_deepx(dx_engine, selected_input)
+                )
                 select_meta={
                     'candidate_index':0,
                     'selected_shape':[int(x) for x in selected_input.shape],
                     'selected_dtype':str(selected_input.dtype),
                     'selection_method':'quality_bound_exact_input_contract_no_probe_or_fallback',
                     'source_input_contract':source_input_contract,
+                    'source_prepared_shape': source_prepared_shape,
+                    'sdk_batch_axis_added': source_prepared_shape != list(selected_input.shape),
                 }
             else:
+                if setup_adapter is not None:
+                    if len(setup_adapter.input_contracts) != 1:
+                        raise RuntimeError('deepx_a4_split_multi_input_unsupported')
+                    shape = setup_adapter.input_contracts[0].shape
                 cands = _make_candidate_inputs(
                     shape,
                     image=(ns.image or None),
                     preprocess_mode=preprocess_mode_effective,
                     letterbox_pad_value=letterbox_pad_value_effective,
                 )
-                selected_input, first_outs, select_meta = _select_input_candidate(dx_engine, cands, trt)
-            _n0, _boundary0, map_meta = _map_deepx_output_to_trt(first_outs, trt)
+                if setup_adapter is not None:
+                    selected_input = _select_a4_input(setup_adapter, cands)
+                    first_outs = _run_a4_serial(
+                        setup_adapter, selected_input, phase='setup_reference',
+                        progress=report.setdefault('deepx_serial_runtime_observation', {}),
+                    )
+                    select_meta = {
+                        'candidate_index': 0, 'selected_shape': list(selected_input.shape),
+                        'selected_dtype': str(selected_input.dtype),
+                        'selection_method': 'exact_sdk_input_contract_no_inference_probe',
+                    }
+                else:
+                    selected_input, first_outs, select_meta = _select_input_candidate(dx_engine, cands, trt)
+            _n0, _boundary0, map_meta = (
+                _map_a4_deepx_output_to_trt(first_outs, trt, a4_boundary_binding)
+                if a4_boundary_binding is not None else _map_deepx_output_to_trt(first_outs, trt)
+            )
             report['replay_artifact_verification']['runtime_boundary_evidence'] = dict(
                 map_meta.get('strict_quality_boundary') or {}
             )
             if task == 'detection':
-                probe_outputs = trt.run({_n0: _boundary0})
+                probe_outputs = (
+                    _run_a4_serial_trt(setup_adapter, trt, {_n0: _boundary0}, phase='setup_reference_trt',
+                                       progress=report.setdefault('deepx_serial_runtime_observation', {}))
+                    if setup_adapter is not None else trt.run({_n0: _boundary0})
+                )
                 completion_execution_contract = (
                     _build_detection_completion_contract(
                         benchmark_set=bs,
@@ -1642,40 +2176,93 @@ def main() -> int:
                     ).get('output_endpoint_id') or ''
                 ),
             })
-        # Input probing is setup, not a repetition.  Release both runtimes and
-        # instantiate them anew for every measured interval so the raw repeat
-        # records are genuinely independent runtime instances.
-        try:
-            trt.close()
-        except Exception:
-            pass
-        trt = None
-        try:
-            if hasattr(dx_engine, 'close'):
-                dx_engine.close()
-        except Exception:
-            pass
-        dx_engine = None
+        if numerical_images:
+            assert setup_adapter is not None
+            numerical_inputs = []
+            for image in numerical_images:
+                if quality_binding is not None:
+                    value = _exact_input_from_quality_contract(
+                        source_input_contract, image,
+                        preprocess_mode=preprocess_mode_effective,
+                        letterbox_pad_value=letterbox_pad_value_effective,
+                    )
+                    value = setup_adapter.prepare_input(value)
+                else:
+                    value = _select_a4_input(setup_adapter, _make_candidate_inputs(
+                        setup_adapter.input_contracts[0].shape, image=image,
+                        preprocess_mode=preprocess_mode_effective,
+                        letterbox_pad_value=letterbox_pad_value_effective,
+                    ))
+                numerical_inputs.append(value)
+            setup_adapter = None
+            report['deepx_numerical_preflight'] = {
+                'status': 'preparing', 'setup_deepx_serial_calls': 1,
+                'setup_trt_calls': int(task == 'detection'),
+            }
+            report['deepx_numerical_preflight'].update(deepx_split_numerical_preflight(
+                dx_engine, trt, numerical_inputs, image_paths=numerical_images,
+                benchmark_set=bs, model_id=resolved_model_id, task=task,
+                preprocess_mode=preprocess_mode_effective,
+                letterbox_pad_value=letterbox_pad_value_effective,
+                completion_runtime_mode=str(ns.completion_runtime_mode),
+                progress=report['deepx_numerical_preflight'],
+                execution_lifecycle=execution_lifecycle,
+            ))
+            report['deepx_numerical_preflight'].update({
+                'setup_deepx_serial_calls': 1,
+                'setup_trt_calls': int(task == 'detection'),
+                'smoke_requested_completions': int(ns.frames),
+                'smoke_warmup_requested_completions': int(ns.warmup),
+            })
+            report['measurement_purpose'] = 'bounded_numerical_acceptance_smoke'
+            if int(ns.frames) == 0:
+                trt.close()
+                if hasattr(dx_engine, 'close'):
+                    dx_engine.close()
+                report.update(ok=True, native_fifo_e2e_implemented=True,
+                              numerical_only=True, completed_work_units=0)
+                out_path.write_text(json.dumps(report, indent=2), encoding='utf-8')
+                print(json.dumps({'ok': True, 'report': str(out_path), 'numerical_only': True}))
+                return 0
+
+        # A4 keeps exactly one resident engine for setup and measurement. The
+        # controller launches each repeat in a fresh process. Historical S1
+        # retains its original fresh-runtime-per-interval contract.
+        if ns.deepx_runtime_mode == 'S1':
+            try:
+                trt.close()
+            except Exception:
+                pass
+            trt = None
+            try:
+                if hasattr(dx_engine, 'close'):
+                    dx_engine.close()
+            except Exception:
+                pass
+            dx_engine = None
+        setup_adapter = None
         gc.collect()
 
         repetition_runs=[]
+        final_completed_outputs: dict[str, np.ndarray] = {}
         for repetition_index in range(int(ns.repetitions)):
-            if trt is not None:
-                try:
-                    trt.close()
-                except Exception:
-                    pass
-                trt = None
-            if dx_engine is not None:
-                try:
-                    if hasattr(dx_engine, 'close'):
-                        dx_engine.close()
-                except Exception:
-                    pass
-                dx_engine = None
-            gc.collect()
-            dx_engine = InferenceEngine(str(dxnn))
-            trt = NativeTRT(engine_path)
+            if ns.deepx_runtime_mode == 'S1':
+                if trt is not None:
+                    try:
+                        trt.close()
+                    except Exception:
+                        pass
+                    trt = None
+                if dx_engine is not None:
+                    try:
+                        if hasattr(dx_engine, 'close'):
+                            dx_engine.close()
+                    except Exception:
+                        pass
+                    dx_engine = None
+                gc.collect()
+                dx_engine = InferenceEngine(str(dxnn))
+                trt = NativeTRT(engine_path)
             runtime_instance_id = 'fresh_runtime:' + hashlib.sha256(
                 f"deepx-trt-runtime:{time.time_ns()}:{id(dx_engine)}:{id(trt)}".encode('utf-8')
             ).hexdigest()
@@ -1721,6 +2308,9 @@ def main() -> int:
                 task=task,
                 completion_runtime=measured_completion_runtime,
                 warmup_completion_runtime=warmup_completion_runtime,
+                deepx_runtime_mode=ns.deepx_runtime_mode,
+                last_outputs_sink=final_completed_outputs,
+                execution_lifecycle=execution_lifecycle,
             )
             repetition_runs.append(dict(
                 res,
@@ -1729,7 +2319,7 @@ def main() -> int:
             ))
         report.update(_aggregate_repetition_metrics(
             repetition_runs,
-            repetition_runtime_scope='fresh_runtime_per_repetition',
+            repetition_runtime_scope=('fresh_process_per_repetition' if ns.deepx_runtime_mode == 'A4' else 'fresh_runtime_per_repetition'),
             repetition_independence_verified=True,
         ))
         if bool(ns.dump_outputs):
@@ -1737,6 +2327,10 @@ def main() -> int:
                 fast_dump = isinstance(measured_completion_runtime, FastDetectionCompletionRuntime)
                 if fast_dump:
                     _douts = measured_completion_runtime.snapshot_completed_source()
+                elif ns.deepx_runtime_mode == 'A4':
+                    if not final_completed_outputs:
+                        raise RuntimeError('deepx_a4_completed_output_snapshot_missing')
+                    _douts = final_completed_outputs
                 else:
                     _outs = _run_deepx(dx_engine, selected_input)
                     _n, _arr, _ = _map_deepx_output_to_trt(_outs, trt)
@@ -1840,6 +2434,8 @@ def main() -> int:
                 'runtime_options': {
                     'frames': int(ns.frames), 'duration_s': float(ns.duration_s or 0.0),
                     'warmup': int(ns.warmup), 'queue_depth': int(ns.queue_depth),
+                    'deepx_runtime_mode': str(ns.deepx_runtime_mode),
+                    'deepx_max_inflight': 4 if ns.deepx_runtime_mode == 'A4' else 1,
                     'repetitions': int(ns.repetitions),
                     'dump_outputs': bool(ns.dump_outputs),
                     'dump_boundary': bool(ns.dump_boundary),
@@ -1992,10 +2588,29 @@ def main() -> int:
                             record['workload_contract_sha256'] = report['workload_contract_sha256']
         try: trt.close()
         except Exception: pass
+        if ns.deepx_runtime_mode == 'A4' and hasattr(dx_engine, 'close'):
+            dx_engine.close()
     except Exception as e:
         report['ok'] = False
         report['error'] = f'{type(e).__name__}: {e}'
         if hasattr(e, 'request_latency'): report['request_latency'] = e.request_latency
+        if isinstance(report.get('deepx_numerical_preflight'), dict) and report['deepx_numerical_preflight'].get('status') != 'passed':
+            report['deepx_numerical_preflight'].update(status='failed', error=report['error'])
+        if isinstance(getattr(e, 'result', None), dict):
+            failure = e.result
+            phase = str(getattr(e, 'deepx_workload_phase', 'measurement'))
+            report.update({
+                'deepx_failure_phase': phase,
+                'deepx_runtime_observation': dict(failure.get('observation') or {}),
+                'deepx_final_drain_complete': bool(failure.get('drained')),
+                'deepx_unsafe_runtime_state': bool(failure.get('unsafe_runtime_state')),
+                'deepx_unsafe_runtime_reasons': list(failure.get('unsafe_runtime_reasons') or []),
+                'accepted_work_units': int(failure.get('submitted_count') or 0) if phase == 'measurement' else 0,
+                'completed_work_units': int(failure.get('completed_count') or 0) if phase == 'measurement' else 0,
+            })
+            if phase == 'warmup':
+                report.update(warmup_accepted_work_units=int(failure.get('submitted_count') or 0),
+                              warmup_completed_frames=int(failure.get('completed_count') or 0))
     if report.get('ok') and task == 'detection':
         try:
             report.update(
@@ -2027,6 +2642,29 @@ def main() -> int:
         print("__SPLITPOINT_WORK_UNITS_SOURCE__=completed_work_units")
         print("__SPLITPOINT_WORK_UNITS_EXACT__=1")
     return 0 if report.get('ok') else 4
+
+def main() -> int:
+    context: dict[str, Any] = {}
+    try:
+        code = _main(context)
+    except (Exception, SystemExit) as exc:
+        if 'lifecycle' not in context:
+            raise
+        context.setdefault('report', {}).update(ok=False, error=f'{type(exc).__name__}: {exc}')
+        code = 4
+    if 'lifecycle' in context and 'out_path' in context:
+        ns = context['namespace']
+        report = context.setdefault('report', {'ok': False, 'case': str(ns.case),
+            'deepx_runtime_mode': 'A4', 'deepx_max_inflight': 4,
+            'error': 'native_worker_preparation_guard_rejected'})
+        report['deepx_execution_lifecycle'] = context['lifecycle'].report()
+        report['source_contract_sha256'] = str(ns.source_contract_sha256 or '')
+        report['runner_sha256'] = _file_sha256(Path(__file__).resolve())
+        path = context['out_path']
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(report, indent=2), encoding='utf-8')
+    return code
+
 
 if __name__ == '__main__':
     raise SystemExit(main())

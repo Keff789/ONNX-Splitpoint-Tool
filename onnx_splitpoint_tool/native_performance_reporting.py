@@ -191,6 +191,22 @@ def _detail_score(row: Mapping[str, Any]) -> tuple[int, int, int, int]:
     )
 
 
+def _deepx_runtime_fields(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Project declared Native DeepX mode without relabelling old evidence."""
+    if str(row.get("backend") or "") not in {"deepx", "deepx_to_trt", "native_full_deepx"}:
+        return {}
+    contract = row.get("native_command_contract") or row.get("full_command_contract") or {}
+    options = (contract.get("runtime_options") or {}) if isinstance(contract, Mapping) else {}
+    mode = row.get("deepx_runtime_mode") or options.get("deepx_runtime_mode")
+    if not mode:
+        return {}
+    return {
+        "deepx_runtime_mode": str(mode),
+        "deepx_max_inflight": row.get("deepx_max_inflight", options.get("deepx_max_inflight")),
+        "host_pending_max": row.get("host_pending_max", row.get("deepx_actual_pending_max", row.get("actual_pending_max"))),
+    }
+
+
 def _detail_for(
     row: Mapping[str, Any],
     details: list[dict[str, Any]],
@@ -207,6 +223,11 @@ def _detail_for(
             continue
         if comparison and d_comparison and comparison != d_comparison:
             continue
+        if backend in {"deepx", "deepx_to_trt", "native_full_deepx"}:
+            source_mode = _deepx_runtime_fields(row).get("deepx_runtime_mode") or "S1"
+            detail_mode = _deepx_runtime_fields(detail).get("deepx_runtime_mode") or "S1"
+            if source_mode != detail_mode:
+                continue
         candidates.append(detail)
     source_contract = _measurement_contract_key(row)
     if any(value not in {"", "unavailable"} for value in source_contract):
@@ -296,9 +317,9 @@ def collect_native_performance_matrix(run_dir: str | Path) -> dict[str, Any]:
     # Older/manual runs may lack the concise matrix.  Deduplicate the detailed
     # summary by its complete setup-local execution identity in that case.
     if not concise_rows:
-        best: dict[tuple[str, str, str, str, str, str], dict[str, Any]] = {}
+        best: dict[tuple[str, ...], dict[str, Any]] = {}
         for row in details:
-            key = _row_key(row)
+            key = _row_key(row) + (str(_deepx_runtime_fields(row).get("deepx_runtime_mode") or ""),)
             current = best.get(key)
             if current is None or _detail_score(row) > _detail_score(current):
                 best[key] = row
@@ -606,6 +627,7 @@ def collect_native_performance_matrix(run_dir: str | Path) -> dict[str, Any]:
             ranking_exclusion_reasons.append('backend_optimized_different_boundaries')
         ranking_eligible = not ranking_exclusion_reasons
         observations.append({
+            **_deepx_runtime_fields(detail or source),
             "model_id": model,
             "model": model,
             "task": _task(model, source.get("task") or detail.get("task")),

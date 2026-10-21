@@ -3168,6 +3168,7 @@ def _remote_trt_cache_probe_command(payload: Mapping[str, Any]) -> str:
     """Build one self-contained, read-only remote receipt verifier."""
 
     import base64
+    import zlib
 
     encoded = base64.b64encode(json.dumps(
         dict(payload), sort_keys=True, separators=(",", ":"),
@@ -4068,11 +4069,18 @@ print("SPLITPOINT_REMOTE_TRT_CACHE_PREFLIGHT=" + json.dumps(
     result, sort_keys=True, separators=(",", ":"),
 ))
 '''
-    return (
-        "python3 -B - <<'SPLITPOINT_REMOTE_TRT_CACHE_PREFLIGHT_PY'\n"
-        + script.replace("__PAYLOAD__", encoded)
-        + "\nSPLITPOINT_REMOTE_TRT_CACHE_PREFLIGHT_PY"
+    # Compress the complete existing verifier before ordinary SSH quoting.
+    # Large all-split payloads otherwise exceed Linux's per-argument limit.
+    program = script.replace("__PAYLOAD__", encoded)
+    encoded_program = base64.b64encode(
+        zlib.compress(program.encode("utf-8"), level=9)
+    ).decode("ascii")
+    bootstrap = (
+        "import base64,zlib;exec(compile(zlib.decompress(base64.b64decode("
+        + repr(encoded_program)
+        + ")), '<remote-trt-cache-preflight>', 'exec'))"
     )
+    return "python3 -B -c " + shlex.quote(bootstrap)
 
 
 def probe_remote_trt_artifact_cache(

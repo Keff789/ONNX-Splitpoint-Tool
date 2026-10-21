@@ -27,6 +27,29 @@ def _number(value):
  return float(value)
 def _quality(row):
  return _importer()._energy_quality_result_projection(row,measurement_started=True,raw_energy_collected=True)
+
+def _verify_deepx_execution_policy(contract, observation, *, label):
+    """Bind DeepX scheduling alongside the existing endpoint/input proof."""
+    if contract.get('backend') != 'native_full_deepx':
+        return
+    from onnx_splitpoint_tool.native_command_contract import deepx_runtime_policy
+    expected = deepx_runtime_policy(contract.get('runtime_options') or {})
+    original = observation.get('full_command_contract') or observation.get('native_command_contract')
+    candidates = []
+    if isinstance(original, Mapping):
+        candidates.append(original.get('runtime_options') or {})
+    fields = ('deepx_runtime_mode', 'deepx_max_inflight')
+    prepared = observation.get('deepx_prepared_feed_benchmark') or {}
+    if any(field in prepared for field in fields):
+        candidates.append(prepared)
+    declared = {field: observation[field] for field in fields if field in observation}
+    if declared:
+        candidates.append(declared)
+    for values in candidates or [{}]:
+        observed = deepx_runtime_policy(values)
+        if any(observed[field] != expected[field] for field in fields):
+            raise ValueError('Full DeepX runtime cohort differs: ' + label)
+
 def _full_expectation(binding,row):
  path=Path(binding['path'])
  if _sha(path)!=binding['sha256']:raise ValueError('Full performance mode sidecar changed')
@@ -38,6 +61,8 @@ def _full_expectation(binding,row):
  if _sha(contract_path)!=row['command_contract_file_sha256']:raise ValueError('Full command contract file changed')
  contract=_read(contract_path)
  if contract['contract_sha256']!=row['successful_command_contract_sha256']:raise ValueError('Full source contract differs')
+ _verify_deepx_execution_policy(contract,row,label='energy plan')
+ _verify_deepx_execution_policy(contract,request_row,label='performance request')
  workload=contract['energy_workload'];concurrency=request_row.get('measurement_concurrency')
  helper_role=workload.get('runner_artifact');input_role=workload.get('runtime_input_artifact')
  if contract.get('artifacts',{}).get(helper_role,{}).get('sha256')!=expected['helper_sha256']:raise ValueError('Full expected mode helper differs from sealed runtime')
@@ -64,6 +89,7 @@ def _full_expectation(binding,row):
   for kind in['raw_report','normalized_report']:
    if _sha(source[kind])!=source[kind+'_sha256']:raise ValueError('Full performance report changed')
   report=_read(source['normalized_report'])
+  _verify_deepx_execution_policy(contract,report,label='actual performance report')
   if report.get('postprocess_runtime_mode')!=mode or report.get('runtime_input_binding_verified')is not True:raise ValueError('Full performance actual mode/input unverified')
  for name in['helper','selector']:
   if _sha(expected[name])!=expected[name+'_sha256']:raise ValueError('Full mode implementation changed')
@@ -80,6 +106,9 @@ def _full_runtime_proof(importer,row,command,output,record,expected):
   if isinstance(value,dict)and value.get('fresh_report_verified')is True:values.append(value)
  if len(values)!=1:raise ValueError('one actual Full completion report required')
  value=values[0];count=record['energy_work_units_used']
+ if row.get('backend')=='native_full_deepx':
+  contract=_read(row['command_contract_file'])
+  _verify_deepx_execution_policy(contract,value,label='actual energy completion')
  if any(value.get(k)!=row[k]for k in['backend','model'])or value.get('source_contract_sha256')!=row['successful_command_contract_sha256']or value.get('postprocess_runtime_mode')!=expected['expected_actual_performance_mode']or value.get('postprocess_completion_verified')is not True or value.get('runtime_input_binding_verified')is not True or value.get('minimum_duration_satisfied')is not True or value.get('completed_work_units')!=count or value.get('postprocess_completed_frames')!=count or value.get('requested_duration_s')!=row['duration_s']:raise ValueError('Full fresh mode/input/completed count/duration differs')
  return {'stdout_sha256':binding['sha256'],'report':value}
 

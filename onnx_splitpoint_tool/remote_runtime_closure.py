@@ -37,6 +37,11 @@ NATIVE_CONCURRENT_RESOURCE_CLOSURE: Tuple[RemoteResourceAsset, ...] = tuple(
 
 
 NATIVE_REMOTE_PACKAGE_CLOSURE: Tuple[RemotePackageAsset, ...] = (
+    (
+        "onnx_splitpoint_tool/native_deepx_async.py",
+        "onnx_splitpoint_tool.native_deepx_async",
+        ("class NativeDeepXAsync", "def run_a4"),
+    ),
     ("onnx_splitpoint_tool/accuracy_reporting.py", "onnx_splitpoint_tool.accuracy_reporting", ("def assess_accuracy", "def reporting_policy")),
     ("onnx_splitpoint_tool/runners/task_completion.py", "onnx_splitpoint_tool.runners.task_completion", ("class TimedTaskCompletion", "def validate_completion")),
     (

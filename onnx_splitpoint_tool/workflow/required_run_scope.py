@@ -534,6 +534,123 @@ def seal_required_run_scope(path: Path, payload: Mapping[str, Any]) -> dict[str,
     return sealed
 
 
+def restore_sealed_benchmark_plan_created_at(
+    benchmark_plan: Mapping[str, Any],
+    existing_scope: Mapping[str, Any],
+    *,
+    model_id: str,
+    run_manifest: Mapping[str, Any],
+    generation_state: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Recover only a generator plan's creation time against its original SHA.
+
+    A regenerated legacy plan writes a new naive, second-resolution created_at.
+    Existing scopes bind the entire original plan, including that value. Search
+    only the original generation interval and accept a candidate only if its
+    complete canonical plan SHA equals the immutable original plan SHA. The
+    caller must still use normal full scope sealing; no hash field is omitted.
+    Provenance times bound work only and cannot authorize different plan content.
+    """
+    import copy
+    from datetime import datetime, timedelta
+
+    def refused(reason: str) -> RequiredRunScopeError:
+        return RequiredRunScopeError("sealed_plan_created_at_recovery_" + reason)
+
+    if (not isinstance(benchmark_plan, Mapping)
+            or not isinstance(existing_scope, Mapping)
+            or not isinstance(run_manifest, Mapping)
+            or not isinstance(generation_state, Mapping)):
+        raise refused("invalid_provenance_mapping")
+    if (existing_scope.get("schema") != SCHEMA
+            or str(existing_scope.get("scope_sha256") or "")
+            != stable_sha256(_semantic_payload(existing_scope))):
+        raise refused("invalid_existing_scope")
+    wanted = str(existing_scope.get("benchmark_plan_sha256") or "")
+    if len(wanted) != 64 or any(c not in "0123456789abcdef" for c in wanted):
+        raise refused("invalid_original_plan_hash")
+    plan = copy.deepcopy(dict(benchmark_plan))
+    current_sha = stable_sha256(plan)
+    if current_sha == wanted:
+        return plan, {"status": "not_required"}
+    if (existing_scope.get("schema_version") != SCHEMA_VERSION
+            or existing_scope.get("scope_level") != "model"
+            or existing_scope.get("identity_mode") != STRICT_IDENTITY_MODE
+            or existing_scope.get("model_id") != str(model_id)
+            or plan.get("schema") != "onnx-splitpoint/benchmark-plan"
+            or plan.get("schema_version") != 1
+            or run_manifest.get("schema") != "onnx-splitpoint/evaluation-run-manifest"
+            or not str(run_manifest.get("run_id") or "")
+            or generation_state.get("schema") != "onnx-splitpoint/generation-state"
+            or generation_state.get("schema_version") != 1
+            or generation_state.get("model_name") != str(model_id)):
+        raise refused("unsupported_provenance")
+    sessions = run_manifest.get("execution_sessions")
+    if not isinstance(sessions, list):
+        raise refused("creation_session_ambiguous")
+    creations = [s for s in sessions if isinstance(s, Mapping)
+                 and s.get("resume_requested") is False
+                 and s.get("resumed_existing_manifest") is False]
+    if len(creations) != 1 or creations[0] is not sessions[0]:
+        raise refused("creation_session_ambiguous")
+    creation_id = creations[0].get("session_id")
+    if (not isinstance(creation_id, str) or not creation_id.strip()
+            or type(creations[0].get("session_index")) is not int
+            or creations[0].get("session_index") != 1
+            or sum(isinstance(s, Mapping) and s.get("session_id") == creation_id
+                   for s in sessions) != 1):
+        raise refused("creation_session_ambiguous")
+    try:
+        current_time = datetime.fromisoformat(str(plan.get("created_at") or ""))
+        generated = datetime.fromisoformat(str(generation_state.get("created_at") or ""))
+        started = datetime.fromisoformat(str(creations[0].get("started_at") or ""))
+        sealed = datetime.fromisoformat(str(existing_scope.get("created_at") or ""))
+        # This compatibility path applies only to the exact legacy writer's
+        # naive seconds format. Different formats/offsets fail closed.
+        if (current_time.tzinfo is not None or generated.tzinfo is not None
+                or current_time.isoformat(timespec="seconds") != plan.get("created_at")
+                or generated.isoformat(timespec="seconds") != generation_state.get("created_at")
+                or started.tzinfo is None or sealed.tzinfo is None
+                or started.utcoffset() != sealed.utcoffset()):
+            raise refused("time_format_or_timezone")
+        generation_local = generated.replace(tzinfo=sealed.tzinfo)
+        if not started <= generation_local <= sealed:
+            raise refused("invalid_generation_interval")
+        window = (sealed - generation_local).total_seconds()
+        if not 0 <= window <= 3600:
+            raise refused("generation_interval_too_large")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise refused("invalid_timestamp") from exc
+    first = generated
+    last = sealed.replace(tzinfo=None, microsecond=0)
+    seconds = int((last - first).total_seconds())
+    matched = None
+    for offset in range(seconds + 1):
+        candidate = (first + timedelta(seconds=offset)).isoformat(timespec="seconds")
+        plan["created_at"] = candidate
+        if stable_sha256(plan) == wanted:
+            if matched is not None:
+                raise refused("multiple_matches")
+            matched = candidate
+    if matched is None:
+        raise refused("no_exact_original_plan")
+    plan["created_at"] = matched
+    return plan, {
+        "status": "verified_original_plan_timestamp",
+        "model_id": str(model_id),
+        "regenerated_plan_sha256": current_sha,
+        "original_plan_sha256": wanted,
+        "regenerated_created_at": benchmark_plan.get("created_at"),
+        "original_created_at": matched,
+        "creation_session_id": creations[0].get("session_id"),
+        "creation_session_started_at": creations[0].get("started_at"),
+        "generation_created_at": generation_state.get("created_at"),
+        "existing_scope_created_at": existing_scope.get("created_at"),
+        "timestamp_candidates_checked": seconds + 1,
+        "full_scope_seal_still_required": True,
+    }
+
+
 def authoritative_run_ids(scope: Mapping[str, Any]) -> list[str]:
     """Return the unique, canonical logical paths sealed at run level."""
 

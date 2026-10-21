@@ -95,6 +95,7 @@ def write_benchmark_suite_script(dst_dir: str | Path, *, bench_json_name: str = 
         dst_dir / "splitpoint_runners" / "native_split_quality_runtime.py",
         dst_dir / "splitpoint_runners" / "native_split_quality.py",
         dst_dir / "splitpoint_runners" / "native_command_contract.py",
+        dst_dir / "splitpoint_runners" / "native_deepx_async.py",
         dst_dir / "splitpoint_runners" / "native_trt_from_benchmarkset.py",
         dst_dir / "splitpoint_runners" / "native_detection_postprocess.py",
         dst_dir / "splitpoint_runners" / "native_full_input.py",
@@ -158,6 +159,10 @@ def _copy_runner_lib(suite_dir: Path) -> None:
     copy_resource_file(
         "native_three_stage.py",
         dest=dst / "native_three_stage.py",
+    )
+    copy_resource_file(
+        "native_deepx_async.py",
+        dest=dst / "native_deepx_async.py",
     )
     copy_resource_file(
         "preprocessing_contract.py",

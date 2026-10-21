@@ -2640,6 +2640,143 @@ def _prune_unused_graph_inputs_for_hailo(model: onnx.ModelProto) -> Tuple[onnx.M
     }
 
 
+def _materialize_hailo_tool_split_output_slices(
+    model: onnx.ModelProto,
+) -> Tuple[onnx.ModelProto, Dict[str, Any]]:
+    """Replace only tool-owned YOLO26x Part1 output Identities by static slices.
+
+    Identity is transparent to DFC and leaves external Split outputs ambiguous.
+    A genuine nonempty Slice has a single output shape. Keep all original Split
+    nodes/internal consumers, output aliases/order and endpoint node names.
+    Unknown/dynamic/unsupported contracts fail closed to the unchanged graph.
+    """
+    try:
+        metadata = {entry.key: entry.value for entry in model.metadata_props}
+        if (model.producer_name != "kmd-onnx-split" or model.graph.name != "part1"
+                or re.fullmatch(r"yolo26x(?:\.pt|\.onnx)?", metadata.get("model_name", "").lower()) is None
+                or not any(op.domain in {"", "ai.onnx"} and op.version >= 10 for op in model.opset_import)):
+            return model, {}
+        graph = model.graph
+        producers = {}
+        names = set()
+        for node in graph.node:
+            if node.name:
+                if node.name in names:
+                    return model, {}
+                names.add(node.name)
+            for value in node.input:
+                names.add(value)
+            for value in node.output:
+                if value in producers:
+                    return model, {}
+                producers[value] = node
+                names.add(value)
+        initializers = {value.name: value for value in graph.initializer}
+        if len(initializers) != len(graph.initializer):
+            return model, {}
+        value_info = {}
+        for value in list(graph.input) + list(graph.value_info) + list(graph.output):
+            names.add(value.name)
+            if value.name in value_info and value.SerializeToString() != value_info[value.name].SerializeToString():
+                return model, {}
+            value_info[value.name] = value
+        names.update(initializers)
+
+        def static_shape(value):
+            tensor_type = value.type.tensor_type
+            dims = list(tensor_type.shape.dim)
+            if len(dims) != 4 or any(not dim.HasField("dim_value") or dim.dim_value <= 0 for dim in dims):
+                return None
+            return [int(dim.dim_value) for dim in dims]
+
+        changes = []
+        for slot, output in enumerate(graph.output):
+            identity = producers.get(output.name)
+            if identity is None:
+                continue
+            if re.fullmatch(r"splitpoint_hailo_part1_output_identity_b\d+_" + str(slot), identity.name) is None:
+                if identity.op_type == "Identity" and "__hailo_identity" in output.name:
+                    return model, {}
+                continue
+            if (identity.op_type != "Identity" or identity.domain or identity.attribute
+                    or len(identity.input) != 1 or len(identity.output) != 1
+                    or identity.output[0] != output.name
+                    or re.fullmatch(re.escape(identity.input[0]) + r"__hailo_identity(?:_\d+)?", output.name) is None
+                    or any(output.name in node.input for node in graph.node)):
+                return model, {}
+            split = producers.get(identity.input[0])
+            if (split is None or split.op_type != "Split" or split.domain
+                    or len(split.input) != 2 or len(split.output) < 2
+                    or len(set(split.output)) != len(split.output)
+                    or len(split.attribute) != 1 or split.attribute[0].name != "axis"
+                    or split.attribute[0].type != AttributeProto.INT or split.attribute[0].i != 1):
+                return model, {}
+            sizes_tensor = initializers.get(split.input[1])
+            split_input = value_info.get(split.input[0])
+            if (sizes_tensor is None or sizes_tensor.data_type != onnx.TensorProto.INT64
+                    or list(sizes_tensor.dims) != [len(split.output)]
+                    or sizes_tensor.data_location == onnx.TensorProto.EXTERNAL
+                    or sizes_tensor.name in {value.name for value in graph.input}
+                    or split_input is None):
+                return model, {}
+            sizes = [int(value) for value in onnx.numpy_helper.to_array(sizes_tensor).tolist()]
+            input_shape, output_shape = static_shape(split_input), static_shape(output)
+            if (input_shape is None or output_shape is None or any(size <= 0 for size in sizes)
+                    or sum(sizes) != input_shape[1]
+                    or split_input.type.tensor_type.elem_type != output.type.tensor_type.elem_type):
+                return model, {}
+            split_slot = list(split.output).index(identity.input[0])
+            expected_shape = list(input_shape)
+            expected_shape[1] = sizes[split_slot]
+            if output_shape != expected_shape:
+                return model, {}
+            start, end = sum(sizes[:split_slot]), sum(sizes[:split_slot + 1])
+            constant_names = [identity.name + "__slice_v1_" + field for field in ("starts", "ends", "axes", "steps")]
+            if any(name in names for name in constant_names):
+                return model, {}
+            names.update(constant_names)
+            changes.append({
+                "output_slot": slot, "node_name": identity.name,
+                "output_alias": output.name, "original_output": identity.input[0],
+                "split_node": split.name, "split_input": split.input[0],
+                "split_sizes": sizes, "split_output_slot": split_slot,
+                "starts": [start], "ends": [end], "axes": [1], "steps": [1],
+                "constant_names": constant_names,
+            })
+        if not changes:
+            return model, {}
+        patched = onnx.ModelProto()
+        patched.CopyFrom(model)
+        replacement_by_name = {change["node_name"]: change for change in changes}
+        for node in patched.graph.node:
+            change = replacement_by_name.get(node.name)
+            if change is None:
+                continue
+            node.CopyFrom(helper.make_node(
+                "Slice", [change["split_input"]] + change["constant_names"],
+                [change["output_alias"]], name=change["node_name"],
+            ))
+            for name, field in zip(change["constant_names"], ("starts", "ends", "axes", "steps")):
+                patched.graph.initializer.append(helper.make_tensor(name, onnx.TensorProto.INT64, [1], change[field]))
+        onnx.checker.check_model(patched, full_check=True)
+        return patched, {
+            "strategy": "constant_split_external_output_slice",
+            "version": 1,
+            "pre_adapter_graph_sha256": hashlib.sha256(model.SerializeToString()).hexdigest(),
+            "compiler_graph_sha256": hashlib.sha256(patched.SerializeToString()).hexdigest(),
+            "outputs": changes,
+        }
+    except Exception:
+        return model, {}
+
+
+def _hailo_fixed_onnx_filename(source: Path, report: Mapping[str, Any]) -> str:
+    """Preserve original failed compiler graphs when applying this adapter."""
+    if report.get("part1_external_split_output_slice"):
+        return source.stem + "_hailo_output_slice_v1_fixed.onnx"
+    return source.stem + "_hailo_fixed.onnx"
+
+
 def fix_onnx_for_hailo(
     model: onnx.ModelProto,
     *,
@@ -2720,6 +2857,10 @@ def fix_onnx_for_hailo(
             if _get_attr(n, "pads") is None:
                 _set_or_patch_ints_attr(n, "pads", [0, 0, 0, 0])
                 report["conv_defaults_added"] += 1
+
+    patched, output_slice_report = _materialize_hailo_tool_split_output_slices(patched)
+    if output_slice_report:
+        report["part1_external_split_output_slice"] = output_slice_report
 
     return patched, report
 
@@ -2867,9 +3008,9 @@ def hailo_parse_check(
             m2, rep = fix_onnx_for_hailo(m, add_conv_defaults=add_conv_defaults)
             fixup_report = rep
             if out_dir is not None:
-                fixed_path = out_dir / (onnx_path.stem + "_hailo_fixed.onnx")
+                fixed_path = out_dir / _hailo_fixed_onnx_filename(onnx_path, rep)
             else:
-                fixed_path = onnx_path.parent / (onnx_path.stem + "_hailo_fixed.onnx")
+                fixed_path = onnx_path.parent / _hailo_fixed_onnx_filename(onnx_path, rep)
             onnx.save(m2, str(fixed_path))
             model_for_parse = fixed_path
         except Exception as e:
@@ -7049,7 +7190,7 @@ def _hailo_build_hef_legacy(
             m = onnx.load(str(onnx_path))
             m2, rep = fix_onnx_for_hailo(m, add_conv_defaults=add_conv_defaults)
             fixup_report = rep
-            fixed_path = out_dir / (onnx_path.stem + "_hailo_fixed.onnx")
+            fixed_path = out_dir / _hailo_fixed_onnx_filename(onnx_path, rep)
             onnx.save(m2, str(fixed_path))
             model_for_parse = fixed_path
         except Exception as e:

@@ -87,6 +87,41 @@ def load_runtime_profile_snapshot(
     )
 
 
+def workflow_options_from_archived_run(selected_run: str | Path) -> WorkflowOptions:
+    """Restore the selected ordinary Run's request without resolving it anew.
+
+    This is configuration loading only. The normal runner still verifies the
+    archived profile/snapshot, Resume contract, ownership and resource closure
+    before it can write to the selected Run or dispatch any missing work.
+    """
+    selected = Path(selected_run).expanduser()
+    manifest_path = selected / "run_manifest.json"
+    if selected.is_symlink() or manifest_path.is_symlink():
+        raise ValueError("Resume blocked: selected Run is not a regular archived Run.")
+    try:
+        saved = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError("Resume requires an existing selected EvaluationRun.") from exc
+    if (not isinstance(saved, Mapping)
+            or saved.get("schema") != "onnx-splitpoint/evaluation-run-manifest"
+            or saved.get("run_id") != selected.name
+            or not isinstance(saved.get("options"), Mapping)):
+        raise ValueError("Resume blocked: selected Run has no saved workflow request.")
+    options = WorkflowOptions(**dict(saved["options"]))
+    options.resume = True
+    options.run_id = selected.name
+    options.out = str(selected.resolve().parent)
+    # These are one-invocation actions, never archived permissions.
+    options.force_build_confirmed_backends = ()
+    options.force_build_confirmation_source = ""
+    options.require_fresh_run = False
+    options.force_stage = []
+    options.stop_after = None
+    options.rerun_generated_only = False
+    options.resume_missing_full_quality_only = False
+    return options
+
+
 def inline_remote_host_payload(remote: Mapping[str, Any]) -> Dict[str, Any]:
     """Resolve only host data embedded in a profile (no GUI state required)."""
 
@@ -429,5 +464,8 @@ def workflow_options_from_profile_snapshot(
         ).strip(),
         required_run_mode=str(required_run_mode or "").strip(),
         require_fresh_run=bool(require_fresh_run),
+        native_producer_deepx_runtime_mode=str(
+            (payload.get("native_producers") or {}).get("deepx_runtime_mode") or ""
+        ),
         profile_start_snapshot=snapshot,
     )

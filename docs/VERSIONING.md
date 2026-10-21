@@ -1,6 +1,30 @@
 # Versioning policy
 
-## Current release: 2.94.0 — finite normal hardware acceptance
+## Current release: 2.95.5 — Canonical A4 Full prepared-input publication and collection
+
+Package/GUI: `2.95.5`; build/workflow: `v2.95.5`; lineage: `v2.79`; build-contract version: `2`. Aligns fresh A4 Full prepared-input output and collection with the existing strict role-path contract. The actual 2.95.4 MobileNet split numerical PASS is retained; its Full reader failure is preserved. Resource completion remains independent of result validity. See [RELEASE_2.95.5.md](RELEASE_2.95.5.md).
+
+## Previous release: 2.95.4 — Native Full suite selection and complete metadata staging
+
+Package/GUI: `2.95.4`; build/workflow: `v2.95.4`; lineage: `v2.79`; build-contract version: `2`. This patch addresses the actual GUI Full invocation that lacked its separate suite plan and output metadata. Existing A4 execution, result/device separation, documented attempts and strict resource ownership remain authoritative. See [RELEASE_2.95.4.md](RELEASE_2.95.4.md); hardware outcomes are reported separately.
+
+## Previous release: 2.95.3 — Native completion recovery and documented technical repair
+
+Package/GUI: `2.95.3`; build/workflow: `v2.95.3`; lineage: `v2.79`; build-contract version: `2`. Device completion and result validity are evaluated independently. Existing Native recovery uses original worker, dispatch, queue/buffer and owned-process evidence with fresh registered ownership checks; failed scientific results stay failed. Technical repair attempts retain their original records and valid slots without an artificial lifetime cap. Capture retries and unresolved SDK/source STOPs stay strict. Hardware acceptance and actual new cohorts are reported separately; see [RELEASE_2.95.3.md](RELEASE_2.95.3.md).
+
+## Previous release: 2.95.2 — Full staging and serial-reference completion reporting
+
+Package/GUI: `2.95.2`; build/workflow: `v2.95.2`; lineage: `v2.79`; build-contract version: `2`. This patch identifies local software corrections for sealed Full case metadata staging and the missing serial-reference completion counter. It is not hardware accepted. The actual normal GUI acceptance ended partial: two failed MobileNet cells, twelve unstarted cells, exhausted MobileNet attempt budgets and retained post-inference DUT quarantine. No regular performance, energy capture or 75-point campaign started. Original 2.95.1 sources, archive and raw failure evidence remain unchanged; a software or version update neither releases the fence nor resets budgets. See [RELEASE_2.95.2.md](RELEASE_2.95.2.md).
+
+## Historical release: 2.95.1 — DeepX preparation recovery and normal GUI continuation
+
+Package/GUI: `2.95.1`; build/workflow: `v2.95.1`; lineage: `v2.79`; build-contract version: `2`. This patch identifies the preparation/lifecycle recovery corrections and the normal GUI acceptance and targeted Native refresh integration. It preserves original 2.95.0 sources, failed attempts and historical S1 results. Recovery requires evidence of a pre-inference failure and clean process/resource closure; unknown SDK completion remains quarantined. See [RELEASE_2.95.1.md](RELEASE_2.95.1.md) for the provisional software and hardware status. The 14-cell real GUI acceptance remains a prerequisite for the authorized 75-point DeepX Native remeasurement. Installation alone starts neither phase and proves no hardware acceptance.
+
+## Historical release: 2.95.0 — DeepX Native A4 Full and splits
+
+Package/GUI: `2.95.0`; build/workflow: `v2.95.0`; lineage: `v2.79`; build-contract version: `2`. New Native DeepX profiles explicitly bind A4 for Full and every supported split. Historical jobs retain their bound S1 policy; Generic and Hailo execution is unchanged. See [RELEASE_2.95.0.md](RELEASE_2.95.0.md) for actual acceptance and remaining limitations. No automatic remeasurement campaign is started.
+
+## Historical release: 2.94.0 — finite normal hardware acceptance
 
 Package/GUI: `2.94.0`; build/workflow: `v2.94.0`; development lineage: `v2.79`; build-contract version: `2`. This minor release connects finite fresh Native and Generic Completed hardware acceptance to the saved-profile GUI/CLI controller. Existing artifacts, runtime measurement budgets, output validation and scientific admission remain authoritative. Recovery supports an exactly bound interrupted Native capture without inventing historical source completion. See [RELEASE_2.94.0.md](RELEASE_2.94.0.md). The reserved confirmatory release remains `3.0.0`.
 

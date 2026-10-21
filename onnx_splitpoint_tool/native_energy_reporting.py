@@ -831,11 +831,12 @@ def _normalized_sha256(value: Any) -> str:
 
 
 def _cohort_environment_fields(plan, records):
-    """Validate actual DUT evidence independently of non-cohort claim eligibility."""
+    """Validate actual DUT evidence independently of quality claim eligibility."""
     cohort = plan.get('campaign_cohort')
     if not cohort and not plan.get('environment_observation_required'): return True, {}
     from .energy.collector import _sha256_path
     from .energy.environment_observer import validate_environment
+    from .energy.task_budget import native_a4_diagnostic_cohort_repeat
     evidence = []
     ok = len(records) == 3
     parent_id = plan.get('environment_observation_run_id')
@@ -844,7 +845,10 @@ def _cohort_environment_fields(plan, records):
         observed = record.get('environment_observation') or {}
         path = Path(str(observed.get('evidence_path') or ''))
         try:
-            purpose_ok = (record.get('campaign_cohort') == cohort and record.get('diagnostic_only') is not True
+            purpose_ok = (record.get('campaign_cohort') == cohort
+                          and (record.get('diagnostic_only') is not True
+                               or (plan.get('diagnostic_only') is True
+                                   and native_a4_diagnostic_cohort_repeat(record)))
                           if cohort else (record.get('environment_observation_required') is True
                           and not record.get('campaign_cohort')
                           and bool(parent_id) and record.get('campaign_run_id') == parent_id))
@@ -2215,6 +2219,11 @@ def collect_native_energy(run_dir: str | Path, *, include_partial: bool = False)
         )
         out.append({
             **environment_fields,
+            **({
+                "deepx_runtime_mode": plan["deepx_runtime_mode"],
+                "deepx_max_inflight": plan.get("deepx_max_inflight"),
+            } if backend in {"deepx", "deepx_to_trt", "native_full_deepx"}
+                 and plan.get("deepx_runtime_mode") else {}),
             "backend": backend,
             "model": str(plan.get("model") or ""),
             "task": task,
@@ -2738,6 +2747,10 @@ def scientific_energy_rows(
             "task": item.get("task"),
             "case_id": item.get("case"),
             "backend": item.get("backend"),
+            **({
+                "deepx_runtime_mode": item["deepx_runtime_mode"],
+                "deepx_max_inflight": item.get("deepx_max_inflight"),
+            } if item.get("deepx_runtime_mode") else {}),
             "variant": item.get("execution_mode"),
             "setup_id": item.get("setup_id"),
             "evaluation_role": item.get("evaluation_role"),
@@ -3049,6 +3062,11 @@ def build_native_energy_ab_aggregates(rows: Sequence[Mapping[str, Any]]) -> list
     out: list[dict[str, Any]] = []
     for source in rows:
         row = {field: source.get(field) for field in fields}
+        if source.get("deepx_runtime_mode"):
+            row.update({
+                "deepx_runtime_mode": source["deepx_runtime_mode"],
+                "deepx_max_inflight": source.get("deepx_max_inflight"),
+            })
         # Preserve the complete statistics blocks in JSON. CSV serialisation is
         # intentionally a compact textual cell rather than one row per repeat.
         row["scientific_primary_energy_statistics"] = source.get("scientific_primary_energy_statistics") or {}
@@ -3072,6 +3090,11 @@ def _descriptive_energy_pair(
     reasons: list[str] = []
     semantic_reasons: list[str] = []
     baseline = baseline or {}
+    if (split.get("backend") == "deepx_to_trt"
+            and baseline.get("backend") == "native_full_deepx"
+            and str(split.get("deepx_runtime_mode") or "S1")
+            != str(baseline.get("deepx_runtime_mode") or "S1")):
+        reasons.append("deepx_runtime_mode_mismatch")
     if not baseline:
         reasons.append("unique_baseline_missing")
     if split.get("energy_scope") != "full_system":
@@ -3219,6 +3242,14 @@ def build_native_energy_pairs(rows: Sequence[Mapping[str, Any]]) -> list[dict[st
                 baseline_backend,
                 str(split.get("direction") or ""),
             )) or [])
+            if split_backend == "deepx_to_trt" and kind == "vendor_full":
+                matching_mode = [row for row in baseline_candidates
+                                 if str(row.get("deepx_runtime_mode") or "S1")
+                                 == str(split.get("deepx_runtime_mode") or "S1")]
+                # Keep an incompatible sole candidate visible with its exact
+                # mismatch reason; never let an old cohort shadow a new one.
+                if matching_mode:
+                    baseline_candidates = matching_mode
             identity_fields = (
                 "task", "model_sha256", "validation_input_or_image_sha256",
                 "validation_dataset_sha256",
@@ -3356,6 +3387,11 @@ def build_native_energy_pairs(rows: Sequence[Mapping[str, Any]]) -> list[dict[st
             if baseline is None:
                 reasons.append("baseline_ambiguous" if baseline_ambiguous else "baseline_missing")
             else:
+                if split_backend == "deepx_to_trt" and kind == "vendor_full":
+                    if str(split.get("deepx_runtime_mode") or "S1") != str(
+                        baseline.get("deepx_runtime_mode") or "S1"
+                    ):
+                        reasons.append("deepx_runtime_mode_mismatch")
                 required_equal = (
                     ("setup_id", "setup_mismatch_or_missing"),
                     ("task", "task_mismatch_or_missing"),
@@ -3532,6 +3568,8 @@ def build_native_energy_pairs(rows: Sequence[Mapping[str, Any]]) -> list[dict[st
             reasons = list(dict.fromkeys(reasons))
             comparable = baseline is not None and not reasons
             screening_reasons: list[str] = []
+            if "deepx_runtime_mode_mismatch" in reasons:
+                screening_reasons.append("deepx_runtime_mode_mismatch")
             if baseline is None:
                 screening_reasons.append(
                     "baseline_ambiguous"

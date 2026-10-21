@@ -4700,10 +4700,13 @@ class HailoInferModelSession:
         if callback_state.get("exception"):
             raise RuntimeError(f"Hailo InferModel inference failed: {callback_state['exception']}")
 
+        return self._materialize_binding_outputs(binding, copy_outputs=self.copy_outputs)
+
+    def _materialize_binding_outputs(self, binding, *, copy_outputs: bool) -> Dict[str, np.ndarray]:
         raw_outputs: Dict[str, np.ndarray] = {}
         for name in self._hef_output_names:
             arr = np.asarray(self._binding_output(binding, name).get_buffer())
-            if self.copy_outputs:
+            if copy_outputs:
                 arr = np.array(arr, copy=True)
             if arr.ndim > 0 and arr.shape[0] == 1:
                 try:
@@ -5373,7 +5376,7 @@ np.savez_compressed(out_npz, **payload)
             out_data = np.load(out_npz)
             return [np.asarray(out_data[k]) for k in sorted(out_data.files, key=lambda x: int(x.split('_')[-1]))]
 
-    def infer(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    def _validate_prepared_inputs(self, inputs):
         if getattr(self, "exact_prepared_input", False):
             signature = getattr(self, "prepared_input_signature", None)
             if signature is None:
@@ -5389,6 +5392,20 @@ np.savez_compressed(out_npz, **payload)
                     )
         if not inputs:
             raise KeyError("DeepXSession received no inputs")
+
+    def _prepare_async_inputs(self, inputs):
+        if not getattr(self, "exact_prepared_input", False):
+            raise RuntimeError("DeepX async requires the exact bound prepared input")
+        self._validate_prepared_inputs(inputs)
+        used_sources = set()
+        runtime_order = list(self.input_order_override or self._input_names)
+        if set(runtime_order) != set(self._input_names):
+            runtime_order = list(self._input_names)
+        return [np.ascontiguousarray(self._source_for_input(inputs, name, used=used_sources))
+                for name in runtime_order]
+
+    def infer(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        self._validate_prepared_inputs(inputs)
 
         # v53: DeepX may be used as Stage2.  In that case the DXNN starts from
         # feature/cut tensors and often has multiple inputs.  Try ordered input
@@ -5445,6 +5462,9 @@ np.savez_compressed(out_npz, **payload)
             observer({"stage": "actual_engine_call", "candidate_index": diagnostic_candidate_index,
                       "runtime_order": runtime_order, "feeds": [x.copy() for x in combo_arr],
                       "backend": "deepx", "physical_call_completed": True})
+        return self._materialize_outputs(outputs_obj)
+
+    def _materialize_outputs(self, outputs_obj):
         outputs = list(outputs_obj) if isinstance(outputs_obj, (list, tuple)) else [outputs_obj]
 
         out_dict: Dict[str, np.ndarray] = {}
@@ -6175,6 +6195,68 @@ def _summarize_times_ms(values: Optional[List[float]]) -> Dict[str, Any]:
         "p95_ms": float(np.percentile(arr, 95.0)),
         "runs_ms": vals,
     }
+
+
+def _hailo_stage1_interface_float_map(
+    outputs: Dict[str, np.ndarray], *, verified_binding: Any = None,
+) -> Dict[str, np.ndarray]:
+    """Create a FLOAT diagnostic view; preserve the Native raw UINT8 handoff.
+
+    The caller supplies only the binding already verified against the actual
+    HEF, metadata and engine before session creation. No guessed quantization
+    or fresh artifact/precision selection is allowed here. HailoSession has
+    already restored canonical ONNX layout; only the scalar domain changes.
+    """
+    result: Dict[str, np.ndarray] = {}
+    for name, value in outputs.items():
+        array = np.asarray(value)
+        if np.issubdtype(array.dtype, np.floating):
+            result[str(name)] = array
+            continue
+        if array.dtype != np.dtype(np.uint8) or len(outputs) != 1:
+            raise ValueError("hailo_interface_raw_output_contract_unsupported")
+        if not isinstance(verified_binding, Mapping):
+            raise ValueError("hailo_interface_exact_quantization_binding_missing")
+        contract = verified_binding.get("boundary_contract") or {}
+        metadata = verified_binding.get("boundary_metadata_payload") or {}
+        tensor = metadata.get("boundary_tensor") or {}
+        quant = tensor.get("quantization") or {}
+        artifact = (verified_binding.get("artifacts") or {}).get("part1_runtime") or {}
+        selection = verified_binding.get("preselection") or {}
+        if (
+            verified_binding.get("schema") != "onnx-splitpoint/native-split-quality-binding"
+            or verified_binding.get("schema_version") != 1
+            or not re.fullmatch(r"[0-9a-f]{64}", str(verified_binding.get("binding_sha256") or ""))
+            or contract.get("boundary_transform") != "uint8_dequant_then_layout"
+            or metadata.get("boundary_transform") != contract.get("boundary_transform")
+            or metadata.get("boundary_tensor_count") != 1
+            or contract.get("boundary_tensor_dtype") != "uint8"
+            or tensor.get("dtype") != "uint8"
+            or tensor.get("name") != str(name)
+            or contract.get("boundary_tensor_name") != str(name)
+            or tuple(tensor.get("canonical_part2_shape") or ()) != tuple(array.shape)
+            or quant.get("source") != "hailort_hef_output_vstream_info"
+            or not artifact.get("sha256")
+            or metadata.get("part1_artifact_sha256") != artifact.get("sha256")
+            or metadata.get("part1_artifact_size_bytes") != artifact.get("size_bytes")
+            or selection.get("part1_artifact_sha256") != artifact.get("sha256")
+        ):
+            raise ValueError("hailo_interface_exact_quantization_binding_mismatch")
+        try:
+            scale = float(contract["dequant_scale"])
+            zero_point = float(contract["dequant_zero_point"])
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("hailo_interface_quantization_parameters_invalid") from exc
+        if (
+            not np.isfinite(scale) or scale <= 0.0
+            or not np.isfinite(zero_point) or not 0.0 <= zero_point <= 255.0
+            or quant.get("scale") != scale or quant.get("zero_point") != zero_point
+            or selection.get("dequant_scale") != scale
+            or selection.get("dequant_zero_point") != zero_point
+        ):
+            raise ValueError("hailo_interface_quantization_parameters_invalid")
+        result[str(name)] = (array.astype(np.float32) - np.float32(zero_point)) * np.float32(scale)
+    return result
 
 
 def _compare_tensor_maps_by_shape_or_name(
@@ -14824,6 +14906,20 @@ def _completion_hailo_inputs(config, backend, inputs):
     return inputs
 
 
+def _completion_hailo_prepared_feed(config, session, feeds):
+    """Map an existing single prepared tensor without image preparation."""
+    prepared = config["input_binding"]["prepared_input"]
+    if set(feeds) != {prepared["input_name"]} or len(session.input_names) != 1:
+        raise ValueError("Generic Hailo functional input endpoint differs from its prepared binding")
+    value = feeds[prepared["input_name"]]
+    if (not isinstance(value, np.ndarray) or list(value.shape) != prepared["shape"]
+            or str(value.dtype) != prepared["dtype"] or not value.flags.c_contiguous):
+        raise ValueError("Generic Hailo functional input shape/dtype/layout differs")
+    # Same single-input canonical-name binding as fixed-input initialization.
+    # These are already encoded SDK values; do not quantize or normalize again.
+    return {session.input_names[0]: value}
+
+
 def _direct_rgb_classification_quality_input(image_path, input_contract):
     """Use the Native classifier's prepared HWC bytes without an inverse feed."""
     from PIL import Image as _Image
@@ -15065,12 +15161,27 @@ def _configure_generic_completion(args, parser):
     stage2 = _canonical_validation_backend_token(args.stage2_provider or args.provider)
     if stage1 not in {"hailo8", "hailo10h", "deepx_m1"} or stage2 != "tensorrt":
         parser.error("Generic completion supports only the bound accelerator-to-TensorRT splits")
+    from splitpoint_runners.task_completion import normalize_stage1_execution
+    try:
+        execution = normalize_stage1_execution(config.get("stage1_execution"))
+        if execution["policy"] == "hailo_async_slots_v1" and stage1 != "hailo10h":
+            raise ValueError("Generic async slots require the Hailo-10H stage1 backend")
+        if execution["policy"] == "deepx_async_slots_v1" and stage1 != "deepx_m1":
+            raise ValueError("Generic DeepX async slots require the DeepX M1 stage1 backend")
+    except ValueError as error:
+        parser.error(str(error))
     try:
         _completion_validate_prepared_input_contract(config, stage1)
     except ValueError as error:
         parser.error(str(error))
     if stage1.startswith("hailo"):
         _completion_hailo_quantized_inputs(config)
+    if config.get("mixed_input_control"):
+        from splitpoint_runners.generic_mixed_control_binding import load_bound_mixed_control
+        try:
+            load_bound_mixed_control(config)
+        except (ValueError, OSError, KeyError, TypeError) as error:
+            parser.error(str(error))
     args.variants = "composed"
     args.benchmark_task = config["task"]
     args.native_trt_build = False
@@ -15108,9 +15219,10 @@ def _generic_process_identity():
 
 
 def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
-                                  runtime_artifacts, *, clone_payload, repetition_index=None):
+                                  runtime_artifacts, *, clone_payload, repetition_index=None,
+                                  stage1_async=None, mixed_control=None):
     from splitpoint_runners.task_completion import (
-        measure_split_completion, valid_split_completion_repetitions,
+        measure_split_completion, valid_split_completion_repetitions, normalize_stage1_execution,
     )
     from splitpoint_runners.harness.classification import ClassificationCompletion
     from splitpoint_runners.native_detection_postprocess import (
@@ -15120,6 +15232,15 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
     import statistics
     from datetime import datetime, timezone
     energy = config.get("energy_capture")
+    if bool(config.get("mixed_input_control")) != (mixed_control is not None):
+        raise ValueError("Generic mixed functional control must match its explicit runtime binding")
+    if energy and mixed_control is not None:
+        raise ValueError("Mixed functional controls cannot run inside an energy capture")
+    execution = normalize_stage1_execution(config.get("stage1_execution"))
+    actual_execution = normalize_stage1_execution(
+        stage1_async.execution_policy if stage1_async is not None else None)
+    if execution != actual_execution:
+        raise ValueError("Generic completion configured stage1 policy differs from its runtime adapter")
     energy_contract = None
     runtime_sources = config.get("runtime_source_files") or []
     execution_identity = None
@@ -15185,7 +15306,8 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
             "identity", "input_binding", "completion_contract", "measurement_boundary",
             "expected_runtime_artifacts", "functional_reference", "original_run")}
         result.update(schema_version=1, execution_id=config["execution_id"], task=config["task"],
-                      measurement_mode="generic_completed_task", repetitions=[], status="started", created_at=utc_now())
+                      measurement_mode="generic_completed_task", repetitions=[], status="started", created_at=utc_now(),
+                      stage1_execution=execution)
         if energy:
             result.update(schema_version=2, measurement_mode="generic_completed_task_energy", energy_contract=energy_contract,
                           measurement_boundary="prepared_input_before_p1_to_completed_pipeline_drain")
@@ -15238,11 +15360,17 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
         print(f"[generic-completion] repetition={index}/3 " +
               (f"warmup=0 duration_s={energy_contract['duration_s']}" if energy else "warmup=100 tasks=1000") + " started", flush=True)
         try:
+            if mixed_control is not None:
+                attempt["mixed_input_control"] = mixed_control(index)
+                publish()
+                print(f"[generic-completion] repetition={index} mixed_control=passed tasks=32 "
+                      f"peak_uncollected={attempt['mixed_input_control']['stage1_peak_uncollected_jobs']}", flush=True)
             measured = measure_split_completion(stage1, transfer, observe_stage2, current_processor,
                 warmup=0 if energy else 100, tasks=None if energy else 1000,
                 duration_s=energy_contract["duration_s"] if energy else None,
                 queue_depth=int(config.get("queue_depth", 2)),
                 clone_payload=clone_payload, timeout_s=float(config.get("timeout_s", 3600)),
+                stage1_async=stage1_async,
                 progress=lambda phase, count: print(f"[generic-completion] repetition={index} {phase}={count}", flush=True))
             if config["task"] == "detection":
                 source_check = detection_completion_runtime_source_check(current_processor)
@@ -18087,13 +18215,17 @@ def main() -> int:
 
     def run_stage1_map(feeds_p1_override: Optional[Dict[str, np.ndarray]] = None) -> Dict[str, np.ndarray]:
         if hailo_p1 is not None:
-            local_inputs = p1_inputs_hailo if feeds_p1_override is None and p1_inputs_hailo is not None else _build_hailo_input_map(hailo_p1, feeds_p1_override or feeds_p1)
+            if generic_completion_config and feeds_p1_override is not None:
+                local_inputs = _completion_hailo_prepared_feed(generic_completion_config, hailo_p1, feeds_p1_override)
+            else:
+                local_inputs = p1_inputs_hailo if feeds_p1_override is None and p1_inputs_hailo is not None else _build_hailo_input_map(hailo_p1, feeds_p1_override or feeds_p1)
             if generic_completion_config:
                 local_inputs = _completion_hailo_inputs(generic_completion_config, stage1_tok, local_inputs)
             return hailo_p1.infer(local_inputs)
         if deepx_p1 is not None:
             local_inputs = (p1_inputs_deepx if feeds_p1_override is None else
-                            feeds_p1_override if quality_source_direct_rgb_contract is not None else
+                            feeds_p1_override if (quality_source_direct_rgb_contract is not None
+                                                  or generic_completion_config is not None) else
                             deepx_p1.prepare_image_inputs(feeds_p1_override))
             if quality_source_direct_rgb_contract is not None:
                 deepx_p1.bind_prepared_inputs(local_inputs)
@@ -18665,11 +18797,45 @@ def main() -> int:
             "part1_runtime": hailo_p1.hef_path if hailo_p1 is not None else deepx_p1.dxnn_path,
             "engine": native_p2_sess.engine_path,
         }
+        from splitpoint_runners.task_completion import normalize_stage1_execution
+        execution = normalize_stage1_execution(generic_completion_config.get("stage1_execution"))
+        stage1_async = None
+        if execution["policy"] == "hailo_async_slots_v1":
+            from splitpoint_runners.generic_async import HailoAsyncStage1
+            if stage1_tok != "hailo10h" or not isinstance(hailo_p1, HailoInferModelSession):
+                raise RuntimeError("Generic async slots require the Hailo-10H InferModel session")
+            def async_prepared_inputs():
+                local_inputs = (p1_inputs_hailo if p1_inputs_hailo is not None
+                                else _build_hailo_input_map(hailo_p1, feeds_p1))
+                return _completion_hailo_inputs(generic_completion_config, stage1_tok, local_inputs)
+            stage1_async = HailoAsyncStage1(hailo_p1, async_prepared_inputs, inflight=execution["inflight"])
+        elif execution["policy"] == "deepx_async_slots_v1":
+            from splitpoint_runners.generic_async import DeepXAsyncStage1
+            if stage1_tok != "deepx_m1" or not isinstance(deepx_p1, DeepXSession):
+                raise RuntimeError("Generic DeepX async slots require the DeepX M1 session")
+            stage1_async = DeepXAsyncStage1(deepx_p1, lambda: p1_inputs_deepx, inflight=execution["inflight"])
+        mixed_control = None
+        if generic_completion_config.get("mixed_input_control"):
+            from splitpoint_runners.generic_mixed_control_binding import run_bound_mixed_control
+
+            def prepare_mixed_async_feed(feed):
+                if hailo_p1 is not None:
+                    return _completion_hailo_inputs(generic_completion_config, stage1_tok,
+                        _completion_hailo_prepared_feed(generic_completion_config, hailo_p1, feed))
+                return feed
+
+            def mixed_control(repetition):
+                return run_bound_mixed_control(generic_completion_config, out_dir, repetition,
+                    serial_stage1=run_stage1_map, transfer=_build_stage2_inputs, stage2=run_stage2_map,
+                    stage1_async=stage1_async, prepare_async_feed=prepare_mixed_async_feed,
+                    clone_payload=_clone_tensor_map if streaming_impl == "generic" else None,
+                    runner_source=__file__)
         return _run_generic_split_completion(
             generic_completion_config, out_dir, run_stage1_map,
             _build_stage2_inputs, run_stage2_map, artifacts,
             clone_payload=_clone_tensor_map if streaming_impl == "generic" else None,
-            repetition_index=args.generic_completion_repetition)
+            repetition_index=args.generic_completion_repetition, stage1_async=stage1_async,
+            mixed_control=mixed_control)
 
     # Precompute a fixed stage2 input for benchmarking part2 alone.
     # Use CPU-baseline cut tensors so part2 can be isolated and compared against
@@ -18821,7 +18987,17 @@ def main() -> int:
             hailo_p1_map = _canonicalize_hailo10_part1_outputs(
                 hailo_p1.infer(p1_inputs_hailo)
             )
+            hailo_p1_map = _hailo_stage1_interface_float_map(
+                hailo_p1_map,
+                verified_binding=getattr(args, "_native_split_quality_binding", None),
+            )
             p1_iface = _compare_tensor_maps_by_shape_or_name(ref_p1_map, hailo_p1_map, eps=max(float(args.eps), float(getattr(args, "interface_eps", 5e-2) or 5e-2)))
+            p1_iface["comparison_domain"] = "canonical_onnx_float32"
+            p1_iface["candidate_quantized_outputs"] = bool(hailo_p1.quantized_outputs)
+            if hailo_p1.quantized_outputs:
+                p1_iface["comparison_binding_sha256"] = str(
+                    (getattr(args, "_native_split_quality_binding", None) or {}).get("binding_sha256") or ""
+                )
             p1_iface["description"] = "ORT Part1 cut tensors vs Hailo Part1 cut tensors"
             p1_iface["reference_backend"] = "onnxruntime_cpu"
             p1_iface["candidate_backend"] = str(stage1_tok)

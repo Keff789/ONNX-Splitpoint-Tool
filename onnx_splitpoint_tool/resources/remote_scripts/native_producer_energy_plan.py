@@ -83,11 +83,13 @@ except Exception:  # pragma: no cover - standalone remote use
 
 try:
     from onnx_splitpoint_tool.native_command_contract import (
+        deepx_runtime_policy,
         split_energy_runtime_argv,
         verify_native_energy_command_contract,
         verify_native_split_part2_input_contract,
     )
 except Exception:  # pragma: no cover - standalone copy must fail closed
+    deepx_runtime_policy = None
     split_energy_runtime_argv = None
     verify_native_energy_command_contract = None
     verify_native_split_part2_input_contract = None
@@ -2069,6 +2071,25 @@ def _planned_quality_provenance(
     return identity, conflicts
 
 
+def _energy_quality_admission_precision(
+    row: Mapping[str, Any],
+    validation: dict[str, Any] | None,
+    *,
+    runtime_observation_allowed: bool,
+) -> str:
+    """Keep the sealed admission and final row in one annotation stratum."""
+    precision = (
+        _full_comparison_precision(dict(row), validation)
+        if str(row.get("backend") or "").startswith("native_full_")
+        else str(
+            _evidence_value(row, validation, "precision", "dtype") or ""
+        ).strip().lower()
+    )
+    if runtime_observation_allowed and not precision:
+        return "posthoc_annotation_unavailable"
+    return precision
+
+
 def _prepair_energy_quality_admission(
     row: Mapping[str, Any],
     validation: dict[str, Any] | None,
@@ -2091,19 +2112,10 @@ def _prepair_energy_quality_admission(
         or row.get("case_id")
         or ("full" if backend.startswith("native_full_") else "")
     )
-    is_full = backend.startswith("native_full_")
-    precision = (
-        _full_comparison_precision(dict(row), validation)
-        if is_full
-        else str(
-            _evidence_value(row, validation, "precision", "dtype") or ""
-        ).strip().lower()
+    precision = _energy_quality_admission_precision(
+        row, validation,
+        runtime_observation_allowed=runtime_observation_allowed,
     )
-    if runtime_observation_allowed and not precision:
-        # Display/comparison precision belongs to the downstream Quality
-        # annotation.  A technically verified Full command has no Part-2
-        # boundary precision and must not disappear when this label is absent.
-        precision = "posthoc_annotation_unavailable"
     comparison_backend = str(
         row.get("comparison_backend") or ""
     ).strip()
@@ -2468,6 +2480,57 @@ def _energy_quality_result_fields(
             "not_applicable_quality_qualified"
             if qualified else "collect_raw_quality_unqualified"
         ),
+    }
+
+
+def _deepx_energy_runtime_identity(
+    contract: Mapping[str, Any], *, row: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Keep Energy on the successful DeepX execution policy.
+
+    Historical contracts without the DeepX option retain their S1 replay and
+    their original row representation. Explicit policies are carried into the
+    Energy result so imports and resumes can compare them without consulting
+    current profile defaults.
+    """
+    backend = str(contract.get("backend") or "").strip().lower()
+    if backend not in {"deepx_to_trt", "native_full_deepx"}:
+        return {}
+    if deepx_runtime_policy is None:
+        raise ValueError("deepx_energy_runtime_policy_helper_unavailable")
+    options = contract.get("runtime_options")
+    if not isinstance(options, Mapping):
+        raise ValueError("deepx_energy_runtime_options_missing")
+    policy = deepx_runtime_policy(options)
+    mode = policy["deepx_runtime_mode"]
+    maximum = policy["deepx_max_inflight"]
+    if backend == "native_full_deepx":
+        workload = contract.get("energy_workload")
+        if not isinstance(workload, Mapping):
+            raise ValueError("deepx_energy_workload_missing")
+        for field, expected in (
+            ("deepx_runtime_mode", mode), ("deepx_max_inflight", maximum),
+        ):
+            # New A4 contracts must explicitly bind their hotloop policy.
+            if field not in workload and mode == "A4":
+                raise ValueError(f"deepx_energy_workload_{field}_missing")
+            if field in workload and (
+                type(workload[field]) is not type(expected)
+                or workload[field] != expected
+            ):
+                raise ValueError(f"deepx_energy_workload_{field}_mismatch")
+    if row is not None:
+        for field in ("deepx_runtime_mode", "deepx_max_inflight"):
+            if field in row and (
+                type(row[field]) is not type(policy[field])
+                or row[field] != policy[field]
+            ):
+                raise ValueError(f"deepx_energy_performance_{field}_mismatch")
+    if "deepx_runtime_mode" not in options:
+        return {}
+    return {
+        "deepx_runtime_mode": mode,
+        "deepx_max_inflight": maximum,
     }
 
 
@@ -3242,6 +3305,10 @@ def _verify_full_command_contract(
                 "full_command_contract_tensorrt_completed_task_contract_invalid"
             )
     if workload_kind == "deepx_full_prepared_feed_hotloop":
+        try:
+            _deepx_energy_runtime_identity(contract, row=expected_identity)
+        except ValueError as exc:
+            return None, f"full_command_contract_{exc}"
         if str(workload.get("prepared_feed_contract_version") or "") != "deepx-sealed-runtime-input-v3":
             return None, "full_command_contract_deepx_prepared_feed_contract_mismatch"
         runtime_key = str(workload.get("runtime_input_artifact") or "")
@@ -4224,6 +4291,18 @@ def main() -> int:
                 "precision": row.get("precision"),
                 "reason": "successful_command_contract_missing_or_invalid",
                 "command_contract_status": command_contract_status,
+            })
+            continue
+        try:
+            _deepx_energy_runtime_identity(command_contract, row=row)
+        except ValueError as exc:
+            excluded.append({
+                **{field: identity.get(field) for field in (
+                    "backend", "model", "case", "precision", "setup_id",
+                    "comparison_backend",
+                )},
+                "reason": "successful_command_contract_deepx_runtime_mismatch",
+                "command_contract_status": str(exc),
             })
             continue
         if (
@@ -5221,7 +5300,12 @@ def main() -> int:
         )
         # Compatibility field: Split boundary precision for Split rows, legacy
         # Split comparison stratum for Full rows.
-        precision = legacy_comparison_precision if is_full else split_boundary_precision
+        precision = (
+            _energy_quality_admission_precision(
+                row, validation,
+                runtime_observation_allowed=bool(ns.measure_all_runtime_successful),
+            ) if is_full else split_boundary_precision
+        )
         technical_identity = {
             "backend": backend,
             "model": model,
@@ -5946,6 +6030,7 @@ def main() -> int:
                 ) or ""
             ),
             "task": task,
+            **_deepx_energy_runtime_identity(command_contract, row=row),
             **_energy_preprocess_identity(command_contract),
             "evaluation_role": str(_evidence_value(row, validation, "evaluation_role", "model_role") or ""),
             "runner_regime": "native_full" if backend.startswith("native_full_") else "native_fifo",

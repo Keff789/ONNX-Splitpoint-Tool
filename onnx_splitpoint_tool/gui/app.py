@@ -6849,31 +6849,9 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
             raw = str(getattr(getattr(self, "var_eval_workflow_last_run_dir", None), "get", lambda: "")() or "").strip()
             raw = raw or str(getattr(self, "_last_evaluation_workflow_run_dir", "") or "").strip()
             selected = Path(raw).expanduser() if raw else self._evaluation_workflow_last_run_dir(purpose="resume")
-            manifest_path = selected / "run_manifest.json"
-            if selected.is_symlink() or manifest_path.is_symlink():
-                raise ValueError("Resume blocked: selected Run is not a regular archived Run.")
-            try:
-                saved = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError) as exc:
-                raise ValueError("Resume requires an existing selected EvaluationRun.") from exc
-            if (not isinstance(saved, Mapping)
-                    or saved.get("schema") != "onnx-splitpoint/evaluation-run-manifest"
-                    or saved.get("run_id") != selected.name
-                    or not isinstance(saved.get("options"), Mapping)):
-                raise ValueError("Resume blocked: selected Run has no saved workflow request.")
-            options = WorkflowOptions(**dict(saved["options"]))
-            options.resume = True
-            options.run_id = selected.name
-            options.out = str(selected.resolve().parent)
-            # These are one-invocation actions, never archived permissions.
-            options.force_build_confirmed_backends = ()
-            options.force_build_confirmation_source = ""
-            options.require_fresh_run = False
-            options.force_stage = []
-            options.stop_after = None
-            options.rerun_generated_only = False
-            options.resume_missing_full_quality_only = False
-            return options
+            from ..workflow.profile_options import workflow_options_from_archived_run
+
+            return workflow_options_from_archived_run(selected)
         profile = str(getattr(getattr(self, "var_eval_workflow_profile", None), "get", lambda: "")() or "").strip()
         if not profile:
             raise ValueError("Please select an Evaluation Profile or YAML file.")
@@ -6991,14 +6969,17 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         )
 
     def _eval_workflow_command_preview(self, opts: WorkflowOptions) -> str:
-        if opts.profile_start_snapshot and not opts.resume:
+        if opts.profile_start_snapshot:
             argv = [sys.executable, "-m", "onnx_splitpoint_tool.workflow.run_evaluation",
                     "--profile-driven", "--profile", str(opts.profile), "--out", str(opts.out)]
-            for flag, value in (("--models-root", opts.models_root), ("--only-model", opts.only_model)):
-                if value:
-                    argv.extend([flag, str(value)])
-            if opts.require_fresh_run:
-                argv.append("--require-fresh-run")
+            if opts.resume:
+                argv.extend(["--resume", "--run-id", str(opts.run_id)])
+            else:
+                for flag, value in (("--models-root", opts.models_root), ("--only-model", opts.only_model)):
+                    if value:
+                        argv.extend([flag, str(value)])
+                if opts.require_fresh_run:
+                    argv.append("--require-fresh-run")
             return shlex.join(argv)
         parts = [
             "python -m onnx_splitpoint_tool.workflow.run_evaluation",
@@ -7145,6 +7126,16 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         else:
             lines.append("  - no stage results recorded")
         acceptance = (payload.get("evidence_status") or {}).get("hardware_acceptance") or {}
+        refresh = (payload.get("evidence_status") or {}).get("native_refresh") or {}
+        if refresh:
+            lines.extend(["", "Native refresh:",
+                          f"Fixed original points: {refresh.get('matrix_cells')} · completed: {sum(row.get('status') == 'ok' for row in refresh.get('rows', []))}",
+                          f"Verified retained 3+3 cohorts: {sum(row.get('reused_cohort') is True for row in refresh.get('rows', []))} · actual new collector starts: {refresh.get('new_capture_count')}"])
+            for row in refresh.get("rows", []):
+                lines.append(f"  {row.get('model_id')} | {row.get('case_id')}: {row.get('status')} · retained={row.get('reused_cohort') is True} · valid repeats={row.get('valid_repeats', 'unavailable')}")
+                if row.get("reason"):
+                    lines.append("    " + str(row["reason"]))
+            lines.append("Original quality/comparison limits are preserved; Generic, Hailo and optional GPU controls are unchanged.")
         if acceptance:
             lines.extend(["", "Hardware acceptance:",
                           f"Fixed cells: {acceptance.get('matrix_cells')} · runtime paths: {acceptance.get('runtime_paths')}",
@@ -7502,6 +7493,20 @@ class SplitPointAnalyserGUI(LegacySplitPointAnalyserGUI):
         latest_log = out_root / "_latest_evaluation_workflow.log"
         run_label = str(opts.run_id or time.strftime("%Y%m%d_%H%M%S"))
         job_id = _new_evaluation_workflow_job_id()
+        # Observe the real application/window at the normal Queue boundary.
+        # This is session metadata, never a profile/CLI scientific option.
+        vars(opts).pop("gui_start_context", None)
+        if isinstance(self, SplitPointAnalyserGUI) and isinstance(self.root, tk.Misc):
+            try:
+                if self.root.winfo_exists():
+                    opts.gui_start_context = {
+                        "kind": "gui", "job_id": job_id, "app_pid": os.getpid(),
+                        "window_id": int(self.root.winfo_id()),
+                        "widget_class": str(self.root.winfo_class()),
+                        "visible": bool(self.root.winfo_viewable()),
+                    }
+            except tk.TclError:
+                pass
         workflow_cancel = threading.Event()
         workflow_runner: Dict[str, Any] = {}
 

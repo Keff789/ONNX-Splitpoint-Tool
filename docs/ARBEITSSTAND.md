@@ -1,4 +1,267 @@
+## 21.10.2026 — Veröffentlichung des geprüften Controllerstands und neuer Generic-Umfang
+
+Der Folgeauftrag `CODEX_Freeze_Main_Generic_H10_DeepX_20261021.txt` autorisiert ausdrücklich die Sicherung des vollständigen geprüften Controllerstands auf `origin/main` sowie eine neue Generic-Durchsatzserie mit 136 bestehenden Cuts auf H10 und DeepX. H8, Native-/Full-Neumessungen, Energie, Dataset-Evaluation und Builds sind ausgeschlossen. Der vorherige 168er-Auftrag bleibt mit seinem dokumentierten Teilstand und BLOCKED-Pilotgate erhalten.
+
+Vor Git-Integration wurde der vollständige nicht ignorierte Quellbestand außerhalb des Produktbaums gesichert. Die 132 geänderten beziehungsweise neuen Dateien sind dem vorhandenen manifestierten 2.95.5-Stand und dem tatsächlichen 15-Dateien-Async-Handoff zugeordnet. Die sechs veränderten und neun neuen Handoffdateien werden über den bestehenden Manifestgenerator in neue aktuelle Quellenindizes aufgenommen; alte Messfreezes werden nicht verändert. Version und Build-ID bleiben 2.95.5/v2.95.5. Alle 41 erzeugten Runtime-Dateien sind vor Veröffentlichung bytegleich zum geprüften Pilotbundle; ein neuer endgültiger Freeze erhält zusätzlich die veröffentlichte Commitbindung. Lokale Profile, Umgebungen, Artefakte und Messarchive gehören nicht zum Commit.
+
+Im getrennten Releasekandidaten bestanden 18 normale Release-/Packagingtests sowie 807 Regressionen für die mitveröffentlichten 2.95.5-Änderungen. 29 optionale Prüfungen erfordern ausdrücklich angegebene abgeschlossene Klassifikator-/BN6-Kohorten und wurden mit dieser Skipbegründung nicht ausgeführt. Die gezielten Generic-Tests und Regressionen werden zusätzlich im sauberen Checkout des neuen Commits geprüft. Softwareergebnisse sind keine neue Hardwareabnahme.
+
+Der neue Umfang besteht aus MobileNetV3-L, RegNet-X, ResNet-50, YOLO11l, YOLOv7, YOLO26m und YOLO26s mit genau 68 Cuts je Backend; 128 bisher qualitätszulässige und acht H10-MobileNet-Qualitäts-FAILs bleiben erhalten. H10 bindet fest acht Async-Slots, DeepX vier; Standard bleibt synchron. Neue selektive Teilpläne erhalten eigene Ausgabepfade, normale Quellen-/Endpunktprüfungen, Locks und Prozess-Leases. Ein belegter lokaler Referenzfehler sperrt nur abhängige Fälle; ein gemeinsamer Runtime-/Korrektheits-/Ressourcenfehler sperrt alle betroffenen Fälle. Es gibt keine Prüfungsumgehung oder nachträgliche Umdeklaration des alten Pilotgates.
+
+Neue Quellen-, Test-, Plan- und Ergebnisbelege liegen ausschließlich unter `/home/kmika/Reports/generic_main_freeze_h10_deepx_20261021T123251Z/`. Zum Zeitpunkt dieses Publikationseintrags hat die neue Messserie noch nicht begonnen. Der Abschlussbericht dort dokumentiert veröffentlichte Commits, tatsächliche Hardwareergebnisse und offene Referenzfälle.
+
+## 21.10.2026 — Generic-Async: selektive Integration in Controller 2.95.5
+
+Der gelieferte Code- und Testpatch ist nach separatem `git apply --check --exclude=docs/ARBEITSSTAND.md` übernommen. Der vollständige Patchcheck scheiterte ausschließlich am erweiterten Dokumentanfang; der folgende gelieferte Eintrag wird davor eingefügt. Die neuere Hailo-Interface-Diagnose im Template und sämtliche übrige lokale Arbeit bleiben erhalten. Keine Versionsänderung, kein Commit und kein Push. Die unten genannten 129 Tests beschreiben die mitgelieferte Vorprüfung. Auf dem Controller bestanden anschließend alle 44 fokussierten und 86 bestehenden Completion-/Dispatch-/Energievertragsregressionen ohne Deselektion. Externer Auftragsbestand: `/home/kmika/Reports/generic_async_remeasurement_20261021T101830Z`.
+
+Die vorhandene Acceptance-Vorbereitung bindet synchrone Konfigurationen und prüft keine gemischte Aufgabenfolge. Für den ausdrücklich beauftragten Funktionsnachweis ergänzen `generic_mixed_control.py` und `generic_mixed_control_binding.py` daher eine optionale, quellengebundene Kontrolle im normalen Generic-Prozess vor dessen Durchsatztimer. Sie verwendet dieselben initialisierten kompilierten P1/P2-Funktionen, denselben Async-Adapter, dieselbe begrenzte FIFO und die normalen Completion-Prozessoren. 32 serielle Referenzen werden mit 32 Pipelineaufgaben aus zwei bereits vorhandenen Eingaben verglichen; eigene Diagnose-FPS entstehen nicht. Die zweite Hälfte der festen Eingabefolge kehrt die erste um, damit jeder der vier bzw. acht Slots beide Eingaben verarbeitet und veraltete Slot-Ausgaben erkennbar bleiben. Die Prüfung verlangt exakte Logits/Top1/Top5 bzw. vollständige Detektionsresultate, eindeutige Reihenfolge, vollständigen Drain und unveränderte Quellen. Die Produktparser prüfen den gespeicherten Kontrollnachweis mit.
+
+Die Detektorkontrolle bindet die tatsächliche Bildgeometrie je vorhandener Eingabe über den bestehenden Completionvertrag-Builder. Der Durchsatzlauf behält seine ursprüngliche Eingabe und seinen ursprünglichen Vertrag. Die kanonischen Klassifikator-Scopepläne umfassen jeweils exakt 56 bestehende Identitäten; die 40 Pilotvarianten sind separat vorab festgelegt. Vorbereitung und Softwaretests sind keine Hardwarefreigabe. Hardwareprüfung und anschließende Vollkohorte stehen zum Zeitpunkt dieses Eintrags noch aus. Historische Source-Freezes und Ergebnisse bleiben unverändert; neue Energieaufnahmen sind nicht Bestandteil dieses Auftrags.
+
+Abschluss des Hardware-Teilstands am 21.10.2026: 247 integrierte Controller-Softwaretests bestanden. Das eingefrorene Runtimebundle hat SHA-256 `5a97142b78c79575be49e19982a030d277bc7101ba864e76116704c24950d6b9`. Alle zehn H10-A/B-Paare und die sechs DeepX-Klassifikatorpaare bestanden die gemischte 32-Aufgaben-Kontrolle und je drei frische 100/1000-Prozesse pro Variante. Tatsächlich beobachtete Hostspitzen waren H10=8 und DeepX=4; direkte SDK-Wartezeiten und NPU-Auslastung wurden nicht gemessen. DeepX RegNet b001 war im Median 1,54 Prozent langsamer, ResNet b002 praktisch unverändert; langsamere Ergebnisse bleiben erhalten. H8 MobileNet b001 und YOLO26m b038 bestanden separat je drei synchrone Prozesse einschließlich normalem Ressourcenabschluss.
+
+Die zusätzliche DeepX-YOLOv7-b044-Syncvariante besitzt drei normale gültige Messungen und bestandene Funktionskontrollen, wurde danach aber von der bestehenden Native/Generic-Startpaarprüfung angehalten. Die gebundene historische Native-Completionimplementation und die aktuelle Generic-Konfiguration besitzen unterschiedliche vollständige Verträge. Der Verifiergrund `yolov7_sigmoid_arithmetic_implementation_mismatch` ist kein gemessener Nachweis einer numerischen Abweichung. Sechs vorhandene Oct8-Native-Alternativen haben passende Artefakt-/Tensorbytes und denselben aktuellen Vertrag, bestehen jedoch die unveränderten Originalrun-, Prepared-Input- und signierten Manifestbindungen nicht. Kein Flag, historischer Beleg, Source-Freeze oder Startmarker wurde zur Umgehung verändert.
+
+Gesichert sind 99 gültige Pilotprozesse (32 zugelassene Varianten plus die drei Messungen der angehaltenen 33. Variante) und sechs H8-Kontrollprozesse. Sieben Pilotvarianten und sämtliche 168 Klassifikator-Neuaufnahmen bleiben ungestartet; die 151/17 Qualitätszulassungen bleiben unverändert. Die Vollkohorte wurde wegen dieses konkreten Vertragsblockers nicht gestartet, und die neue Native-Auswahlgüte ist nicht bestimmt. Empfehlung bis zur regulären Auflösung und vollständigen Neuaufnahme: Opt-in beibehalten, keine Standardumschaltung. Teilresultate, Quellvergleich, tatsächlicher Diff, Cleanup und Blockerbelege liegen im oben genannten externen Auftragsbestand. Keine Energie-/Native-Neuaufnahme, kein Build, Commit oder Push.
+
+## Optionale asynchrone H10- und DeepX-Producer im Generic-Runner (21.10.2026)
+
+Die Codeprüfung fand keinen besonderen parallelen Generic-Pfad für YOLO gegenüber
+RegNet, ResNet oder MobileNet. Alle verwenden denselben Producer, denselben
+TensorRT-Consumer und die bestehende begrenzte FIFO. Der bisherige H10-Producer
+wartet jedoch unmittelbar nach jeder asynchronen Hailo-Einreichung auf deren
+Abschluss. Der Native-H10-Producer kann mehrere Accelerator-Aufträge gleichzeitig
+offen halten. Dasselbe gilt für DeepX: Generic verwendet `engine.run`, während
+der archivierte Native-A4-Stand von 2.95.5 `run_async` und `wait` mit vier Slots
+verwendet. Für H8 wurde kein entsprechender Unterschied gefunden. Sein Generic-
+VStreams-Pfad blockiert pro Aufruf, und der Native-Pfad schreibt und liest jeweils
+ein Bild. Ob die Unterschiede auf H10 und DeepX die beobachteten Rankings erklären,
+bleibt durch neue Hardwaremessungen zu prüfen.
+
+Der normale Generic-Completed-Task-Pfad bietet deshalb jetzt die ausdrücklich
+gewählte Policy `hailo_async_slots_v1`. Die Vorbereitung mit
+`--hailo-async-inflight 8` bindet für H10 die Konfiguration
+`stage1_execution={"policy":"hailo_async_slots_v1","inflight":8}`.
+Für DeepX setzt `--deepx-async-inflight 4` die zusätzliche Policy
+`stage1_execution={"policy":"deepx_async_slots_v1","inflight":4}`. Beide
+Vorbereitungsoptionen können gemeinsam angegeben werden und gelten unabhängig
+vom Modelltyp. H8 bleibt unverändert. Ohne Option bleiben H10 und DeepX synchron.
+Die bestehende Queue-Tiefe,
+Übergabe, TensorRT-Ausführung und abschließende Top1/Top5- bzw. Detektorauswertung
+werden nicht verändert. Ein Slot ist als explizite Kontrollbedingung zulässig.
+
+`runners/generic_async.py` besitzt einen begrenzten Pool separater Hailo-Bindings
+bzw. DeepX-Eingabe- und Ausgabepuffer.
+Der Producer sammelt Ergebnisse in Einreichungsreihenfolge und kopiert fertige
+Outputs, bevor er ein Binding erneut verwendet. Der Warmup wird vollständig
+abgeschlossen, bevor das gemessene Intervall beginnt. Einreichung, Pipelinefüllung
+und abschließender Drain liegen innerhalb dieses Intervalls. Daueraufnahmen behalten
+ihren bisherigen Vertrag ohne Warmup und zählen alle zugelassenen, tatsächlich
+abgeschlossenen Aufgaben. Der Report nennt außerdem die höchste Zahl eingereichter,
+noch nicht eingesammelter Aufträge im Messfenster. Dies beschreibt die offenen
+Host-Aufträge, nicht die gleichzeitige Ausführung im Accelerator.
+
+Die DeepX-Implementierung benutzt die im archivierten A4-Quellstand belegte SDK-API
+`run_async(inputs, user_arg=..., output_buffer=...)` und `wait(job_id)`.
+Jeder Slot besitzt einen zusammenhängenden Ausgabepuffer. Die Offsets mehrerer
+Ausgaben folgen den kumulierten Bytegrößen in SDK-Reihenfolge. Exakte SDK-Metadaten,
+Pufferadressen, Form und Datentyp werden geprüft. Eingaben werden pro Slot kopiert.
+Nur eine ausdrücklich fehlende führende Batch-eins-Achse darf ergänzt werden.
+Normalisierung, Layout und die bestehende kanonische Ausgabezuordnung ändern sich
+nicht. Fehlende Async-API oder widersprüchliche Metadaten führen zum Fehler, nicht
+zu einem synchronen Ersatzpfad.
+
+Fehler oder Timeout stoppen die Einreichung. Hailo besitzt begrenzte SDK-Waits.
+DeepX `wait` bietet in der belegten API weder Timeout- noch Abbruchparameter.
+Unbekannte Abschlüsse behalten deshalb ihre Engine und Puffer bis zum Prozessende.
+Ein blockierter DeepX-Aufruf kann erst über die bestehende Besitzbindung des
+Messprozesses beendet werden. Ein unvollständiger Drain oder überschrittenes
+Gesamtlimit liefert keinen gültigen Durchsatzwert.
+
+Policy und Slotzahl stehen ausdrücklich in Ergebnisheader und Wiederholungen.
+Sie sind außerdem Teil des Energie-Aufrufvertrags. Fehlende Metadaten bezeichnen
+ausschließlich den bisherigen synchronen Pfad. Ergebnisse mit einer anderen
+Policy, Slotzahl oder eingefrorenen Runtimequelle können nicht als Wiederholung
+weiterverwendet werden. Die bestehenden Artefakt-, Eingabe-, Funktions- und
+Messgrenzen bleiben erhalten. Neue Messungen benötigen einen neuen vorbereiteten
+Ausgabestand. Historische Messwerte werden nicht überschrieben.
+
+Im abschließenden lokalen Lauf bestanden 129 gezielte Tests für Runtime,
+erzeugten Runner, Daueraufnahme, Metadaten, Dispatcher und Eingabeverträge.
+Ein bekannter prozessnamespaceabhängiger Baseline-Test war ausgeklammert.
+Dazu gehören Buffer-Wiederverwendung, geordnete Ausgabe,
+Warmup-Drain, Pipelineende, Fehler und Timeout sowie erzeugte H10- und DeepX-Runner
+mit jeweils 1100 vollständig ausgewerteten Stub-Aufgaben. Der DeepX-Test benutzt
+die tatsächlichen Generic-Eingabe- und Ausgabeadapter mit einem SDK-Stub.
+Der Lauf umfasst auch Energievertragsprüfungen und asynchrone Daueraufnahmen
+beider Backends mit dem echten Template. Es wurde keine Accelerator-Hardware benutzt.
+Damit sind weder ein Geschwindigkeitsgewinn noch eine bessere Vorhersage der
+Native-Rangfolge belegt. Die kleine Hardwareabnahme und die anschließende getrennte
+Neumessung stehen noch aus. Keine Änderung an Version oder Releasefreigabe.
+
+
+## 21.10.2026 — Bereits abgeschlossene historische Qualityresultate für technische Provenienz finden
+
+Die enge Supplementkorrektur erweitert ausschließlich den vorhandenen Provenienzschreiber record_technical_central_projection. Falls dessen bisherige aktuelle Quellen keinen exakten Treffer liefern, darf er einen bereits vorhandenen, indexgebundenen completed-Resultatsidecar derselben ursprünglichen Requestidentität aus einem früheren normalen Versuch finden. Zugelassen sind nur der exakte bekannte Modell-/quality_inputs-Pfad, eine echte andere 32-stellige Sessionidentität, passende Requestquelle und identische Request-SHA sowie vollständige Gleichheit des erwarteten Resultatobjekts. Größe und tatsächlicher Datei-SHA werden über den bestehenden strikten Reader verifiziert. Alte failed-Sidecars und die historische Summary werden nicht umgeschrieben.
+
+Damit kann der normale Join die bereits im Versuch347 abgeschlossenen ursprünglichen 50 Qualityergebnisse regulär weiterverwenden, nachdem die drei technischen Beobachtungen übernommen wurden. Es werden weder Statistik, Bootstrap noch Inferenz oder Hardwaremessungen wiederholt. Die bestehenden Regeln für negative QC-Kontexte, Interfaceblocking, Originaltimingzeilen und alle weiteren Request-/Native-/Quellen-/Writer-/Mergeprüfungen bleiben unverändert. Ein normaler No-op erzeugt weiterhin keinen künstlichen zusätzlichen Provenienzeintrag.
+
+Der tatsächliche externe Nachweis führte zwei unveränderte normale Joins mit jeweils 47 normalisierten Treffern und drei separaten Full-Companions aus, schrieb und validierte die drei technischen Provenienzen jeweils vollständig und setzte die normale Summary vor Veröffentlichung mit exakt 50 unveränderten Originalergebnissen und null fehlgeschlagenen Resultaten zusammen. Die tatsächliche Live-Summary bleibt dabei ehrlich 53; alle Terminaldateien blieben bytegleich. Dieser Softwarenachweis ist kein wissenschaftlicher Qualitäts-PASS.
+
+Diese Adoption ändert ausschließlich Supplement und diese Dokumentation sowie die beiden regulär gebauten Quellmanifeste. Runner, Transport a669, Accuracygate, Suite-/Casebytes, Profil, Sollmatrix, Protokolle, Toleranzen und CPU-Referenz bleiben unverändert. Sie verlangt die neuen tatsächlichen Terminalpins von Attempt04/Session574463, normale releasedOwnership und den unveränderten FirstAnchor347. BCC-Pins werden weder ersetzt noch für die neue Session wiederverwendet. Der anschließende normale Attempt05 muss weiterhin drei Technical preserve, null Technical execute und 50 kanonische QC-Ergebnisse ohne pending ausweisen; fehlende Generic-/Native-/Completed-Arbeit bleibt offen. Es gibt keinen neuen Finalize-only- oder Local-only-Runner.
+## 21.10.2026 — Gesammelte negative technische QC-Kontexte regulär erhalten
+
+Die Supplementkorrektur validiert den No-Timing-Nachweis am kanonischen Writerfeld measured_variants. Sie verarbeitet die drei bereits regulär gesammelten BCC-N5000-Beobachtungen über den vorhandenen strikten Retained-Pfad, ohne neue Hardwareaufnahme. Der tatsächlich geschlossene BCC-Stand mit 53 zentralen Ergebnissen bleibt unverändert gebunden. Die vorhandene completed_quality-/pending_quality-Auswahl verwendet vollständig geprüfte technische Bindings, um exakt die 50 ursprünglichen kanonischen Ergebnisse auszuwählen; die drei zusätzlichen Statistik-Sidecars bleiben unveränderte Diagnostik. Ungebundene gleiche oder anders formatierte Spiegel bleiben unzulässig.
+
+Bei identischen Timinginputs gilt der bisherige Projektionspfad unverändert. Bei einer abweichenden Probe ist ausschließlich ein konsistenter kanonischer FLOAT-NumericFAIL unter dem unveränderten ursprünglichen QC-Vertrag zulässig. Er verlangt denselben ersten Datasetframe, denselben nichtleeren Inputfile-SHA, dieselbe kanonische Preprocessingidentität und dasselbe Backend-Encoding. Der neue negative Vergleich wird ausdrücklich als separater QC-Kontext mit beiden Inputbindungen erhalten. Die komplette alte Timing-, Guard- und QC-Zeile bleibt unverändert, bestehendes Interfaceblocking bleibt true. Shape-, Mapping-, unklare oder positive Ergebnisse werden über diesen Weg nicht zugelassen; der neue QC-Kontext validiert die alte Timingprobe nicht.
+
+Die ausschließlich normale Completion-Relocation zweier output_contracts.json-Deklarationspfade wird durch den vorhandenen Transport-Runbezug, indexgebundene unveränderte Containerbytes und genau einen ursprünglichen Vertragsrecord mit identischer SHA belegt. Alle übrigen Rezept-, Quell-, Request-, Native-, Engine-, Collector- und N5000-Loaderguards bleiben aktiv. Der vollständige echte Closed-Run-Defaultreader ist belegt: drei Technical preserve, null execute, exakt 50 ursprüngliche QC-Ergebnisse, pending=0; die gespeicherte Summary bleibt ehrlich 53. Es werden keine Reports oder Requests umgeschrieben und keine negativen Ergebnisse zu PASS geändert.
+
+Diese Sourceadoption ändert ausschließlich Supplement und diese Dokumentation sowie die beiden normal gebauten Quellmanifeste. Transport a669, Runner, Suite-/Casebytes, Accuracygate, eingefrorenes Profil, Sollmatrix, Toleranzen und CPU-Referenz bleiben unverändert. Neue tatsächliche BCC-Terminalpins und normal freigegebener Owner bleiben Pflicht; Sourceanchor 347 und eigenes BCC-Originalbackup bleiben getrennt erhalten. Die nachfolgende normale CLI muss weiterhin drei Retained-Beobachtungen, null Technical-Ausführung und 50 kanonische QC-Ergebnisse ausweisen. Fehlende 27 Generic-Obligationen werden damit nicht zu fertigen Messungen erklärt; die Korrektur schafft keinen Local-only-Modus.
+## 21.10.2026 — Vorhandene Full-Quality-Companions im selektiven Transport bewahren
+
+Die selektive Setup-Projektion transportiert die vorhandene Full-Quality-Endpoint-ID nur dann, wenn die zugehörige Qualityarbeit tatsächlich fehlt. Bei bereits vollständig belegtem Companion bleibt die Endpoint-ID leer; der vorhandene Suite-Parser erhält damit wieder einen konsistenten vorhandenen Controlvertrag.
+
+Die Änderung betrifft ausschließlich zwei Zeilen in execution_binding.py. Laufplan, 84 Generic- und 159 nominale Zellen, 20 Cuts, N5000/B1000, Timing-/Native-Protokolle, Suite-/Casebytes, Runner und Accuracygate bleiben unverändert. Bereits abgeschlossene Qualitybeobachtungen und Originalbelege bleiben erhalten. Neue technische Revalidierungsergebnisse dürfen ausschließlich über den bestehenden gebundenen Workflowpfad entstehen.
+
+Die Sourceadoption setzt den echten normalen Abschluss der Session 2fa89442a11643e09cb387ebe65da58c, ihre eigene PASS-Terminalclosure und regulär freigegebenen Owner voraus. Der ursprüngliche Supplement-Sourceanchor 34774441feb54fc6ad66c890981469b4 wird nicht neu aufgebaut oder verschoben. Der Versuch besitzt daneben sein normales eigenes Originalbackup. Vorhandene Belege zur 50er Qualitykohorte, CPU-Referenz und den archivierten Sourceepochengruppen werden weiterverwendet; keine neue Statistik oder Messung wird durch die Sourceadoption ausgelöst.
+
+## 21.10.2026 – Reports: bestehendes hartes Hailo-Interfaceveto erhalten
+
+Die technische Reporting-Eligibility berücksichtigt das bestehende aktuelle Hailo→TRT-Interfaceblocking, bevor strukturelle Gültigkeit eine positive Eligibility erzeugen kann. Explizites Blocking oder unaufgelöste Interfaceevidenz bleibt ein technisches Veto. Ein ausdrücklich nicht blockierender aktueller Vertrag bleibt auch nach normaler frischer technischer Projektion maßgeblich; ein historisches runtime_contract_decision=fail allein wird nicht zu einem neuen Veto.
+
+Der gezielte Fix ändert keine Accuracy-, reference_close-, Struktur-/Numerik- oder Reportingpolicy und keine Toleranz, kein Profil oder Protokoll. Die fünf tatsächlichen technischen Negativzeilen bleiben negative Ergebnisse. Synthetische positive Projektionsfixtures sind Softwarebelege und kein Hardware-PASS. Die gleichzeitig übernommene Transportkorrektur und der Erhalt aller abgeschlossenen Quality- und Messdaten sind im folgenden Eintrag beschrieben.
+
+## 20.10.2026 – Supplement: ausschließlich remote fähige Completion-Rollen übertragen
+
+Der bestehende Scheduler überträgt `policy_excluded` aus Generic und `local_statistics` aus Qualitycompanion nicht mehr an Remote-Worker. Beide Rollen bleiben vollständig im unveränderten Controllerplan und in der Sollmatrix. Die vorhandenen strikten Controller- und Suiteparser werden nicht erweitert; unbekannte Actions und falsche Rollen bleiben Fehler. Eine leere Remoteauswahl bleibt ausdrücklich `--selective-completion-rows []`, damit kein gewöhnlicher Scope als Fallback startet.
+
+Der konkrete erste Supplementversuch 347 scheiterte an diesem Parservertrag vor Suiteupload und Case-Workerstart. Für die drei technischen Fälle wurde dabei keine neue N5000-Prediction erzeugt. Der externe Kandidat prüfte beide tatsächlichen Payloads durch beide unveränderten Parser: H8 23 auf 17 und H10 24 auf 18 Zeilen, je genau fünf Policy- und eine lokale Statistikrolle entfernt. Technical3, die bestehende reine Composed-Auswahl und der Erhalt bereits gültiger Part2-Timings bleiben unverändert. Dreizehn gezielte Softwaretests und der unabhängige Review bestanden; kein Hardware-PASS daraus.
+
+Die source-only Übernahme erfolgt erst nach dem tatsächlichen normalen Abschluss und der freigegebenen Ownership von Sitzung347. Deren FirstAnchor bleibt vollständig bytegleich, ebenso die abgeschlossenen zentralen Qualitätsergebnisse, Originalpredictions und alle bestehenden Messungen. Ein anschließender normaler Supplementlauf verwendet seine vorhandene completed_quality- und Attempt-Reuselogik; gültige positive und negative Ergebnisse werden nicht neu bewertet oder durch Erfolgsmarkierungen ersetzt. Suite-, Case-, CPUreferenz-, Runner- und Supplementquellen werden für diesen Filter nicht geändert.
+
+## 20.10.2026 – Supplement: Vergleichsdomäne, Fallberichte und fehlende Composed-Arbeit
+
+Der normale Supplement-Selektor erhält H10 `canonical_float32`/`auto` als echte Float-Beobachtung. Der nachgewiesene b031-Numeric-FAIL wird dadurch bewahrt; unbekannte Domänen werden nicht als Raw-Fehler zugelassen. Die drei belegten Raw-UINT8-Komparatorfälle verwenden bei fehlendem separatem Diagnostikbericht die bereits indexgebundene vollständige normale Aggregatzeile mit ihrem vorhandenen `source_row_sha256`. Alle drei Originalbericht-Verbraucher lesen dieselbe eindeutige Bindung; Request-, Native-, Quell- und Fresh-Prüfungen bleiben streng.
+
+Der normale Collector kopiert `case_validation_report` ohne Diagnostik-Größenlimit. Logs und andere Diagnostik behalten 2 MiB. Bei einer ehrlichen partiellen Setupgruppe genügt ausschließlich ein fehlerfreier Copybeleg mit ausdrücklich anderem fehlendem Run und dem vollständigen eindeutigen eigenen kanonischen Body, der allen Feldern der beiden bytegleichen Reportkopien entspricht. Die Gruppe bleibt partiell; anschließende CPUreferenz-, N5000-, Artefakt-, Cache-, Quell- und Guardprüfungen bleiben erforderlich.
+
+Softwarebeleg extern: 56 gezielte Regressionen und derselbe unabhängige Lauf bestanden. Reine normale Planfunktion auf unverändertem Run: drei technische Wiederholungen, b031 bewahrt. Kein Hardware- oder Workflow-PASS aus diesen Prüfungen. Technische Wiederholungen erzeugen je N5000 neue Composed-Kandidaten in eigenen Attempts, bei null Timingloops und ausschließlich Cacheprüfung; alte N5000 und Performance bleiben erhalten. Der gesamte Supplementlauf enthält zusätzlich 27 normale fehlende Generic-Aufgaben vor `evaluate_quality` und ist deshalb nicht pauschal compilerfrei. Runner, Profil, Auswahl, Messprotokoll und bestehende CPUreferenzquellen bleiben unverändert.
+
+Die vorhandene selektive Transportprojektion übergibt normale auszuführende Hailo-Split-Obligationen als die bereits unterstützte physische Variante `composed`. Die logischen Split-Zeilen, Profile und Sollmatrix bleiben unverändert; Full-, technische Quality-Source-, Preserve- und andere Backend-Zeilen bleiben bytegleich. Der bestehende Required-Scope-Vertrag `reference_measurement_variants` bindet eine vollständige Split-Messung ausdrücklich an Composed, während alleinige Part1-/Part2-Timings unvollständig sind. Damit wählt die unveränderte normale HEF-Verfügbarkeitsprüfung bei den aktuellen 25 fehlenden Split-HEFs keine erneuten isolierten Part2-Timings. Zwei fehlende Full-Fälle bleiben ebenfalls offen. Bei tatsächlich vorhandener HEF-Verfügbarkeit wird nur der fehlende Composed-Fall ausgewählt; es entsteht kein permanenter Supportausschluss. Suite-, Case- und CPUreferenzquellen werden hierfür nicht geändert. Enger Transportbeleg: 22 reine Tests einschließlich der tatsächlichen 27 Vorher-/Nachher-Varianten und Cache-Availability-Kontrollen bestanden; keine Hardwareausführung.
+
+## 20.10.2026 — YOLO26x: gebundene DeepX-Full-Planmetadaten und regulärer Supplement-Quality-Stopp
+
+Nach regulärem Abschluss und Freigabe der Management-CPU-Referenzoperation ist der getrennt geprüfte Controller-Runner für die vorhandene Kampagne übernommen. Der vorangegangene DeepX-Full-Versuch scheiterte vor allen drei Wiederholungen mit explicit_full_benchmark_plan_source_conflict: Der normale Standalone-Plan enthielt nachträgliche Metadaten, während benchmark_set.json.plan seine ursprüngliche Projektion behielt. Die neue Native-Stagingbehandlung gilt ausschließlich für angefordertes DeepX Full im A4-Modus. Sie rekonstruiert die vollständige normale Standalone-Projektion unabhängig aus eingefrorenem Profil, Modell, Analysekopien und Required-Run-Scope; gemeinsame Wertkonflikte, unbekannte Ergänzungen und widersprüchliche Aliase bleiben blockiert. Nur der frische Native-Plan wird anschließend aus der unveränderten BenchmarkSet-Autorität geschrieben und über bestehende Transfermetadaten und beide Remote-SHA-Prüfungen gebunden. Der strikte Native-Guard bleibt unverändert.
+
+Kanonische Suite, Referenz, erhaltener Quellworkspace, DXNN, alte Fehlerberichte und vorhandene Messungen werden durch diese Sourceadoption nicht verändert. Die sechs bereits übernommenen Quelldateien bleiben als vorherige Source-Epoche erhalten; workflow/runner.py wechselt von 419122de auf 7f45b426 und workflow/supplement.py von 226ea791 auf 33162092. Referenz-Restore, Scheduler und Supplement-Admission sind unverändert. Ein neuer Referenzlauf folgt daraus nicht. Force-Rebuild bleibt false; die 20 Splits, N5000, B1000 und Seed20260710 bleiben erhalten.
+
+Die gezielten externen Fixtures und der unabhängige Schlussreview liegen unter operations/resume_20261019_controller/native_deepx_full_route_candidate_20261020 sowie operations/resume_20261019_evidence/native_deepx_full_route_independent_review_20261020.json. Der echte Drei-Wiederholungs-Steuerfluss erreicht im Fixture je 100 Warmup- und 1000 Main-Aufgaben bis zur ausdrücklich ersetzten SDK-Schedulergrenze; run_model -l50 bleibt im Native-Messmodus übersprungen. Dies belegt keine ausgeführte Hardwaremessung oder neue wissenschaftliche Gültigkeit. Der normale Supplementplan, tatsächliche Artefakt-/Qualitätsguards und einzelne Native-/Energy-Repetitionen bleiben gesondert zu prüfen. Die 27 Hailo-Speicherfälle bleiben offen.
+
+Die bestehende archivprofilgesteuerte Supplement-CLI erhält --stop-after mit den vorhandenen ALL_STAGES-Namen. Der bestehende options_from_run-Constructor bleibt unverändert; nur ein expliziter Aufrufwert setzt das bereits volatile options.stop_after. Plan-only nennt den Stopp und inventarisiert weiterhin die vollständige Sollmatrix. Energy-Parents lehnen diesen Workflow-Control ab. Der hier vorgesehene evaluate_quality wird im Supplement neu projiziert und erreicht im tatsächlichen global_barrier-Modus den normalen Stopp vor Native. Bei allgemein wiederverwendeten Stages kann der bestehende frühe Return dagegen die Stopprüfung umgehen; dafür wird keine neue Garantie behauptet. Der normale Cleanup-/Sealing-/Ownershippfad bleibt unverändert. CLI-Parser-/Optionswiring und unveränderte Planrows sind mit neun inerten Fixtures unabhängig geprüft; die tatsächliche Fortsetzung und ihre Qualitätsentscheidungen sind damit nicht ausgeführt.
+
+## 20.10.2026 — YOLO26x: begrenzte Korrekturen für vorhandene Kampagne
+
+Im Auftrag yolo26x_final_thesis_20splits_20261018 sind nach regulärem Ende der Messphase sechs zuvor getrennt geprüfte Quelldateien übernommen. Die fehlende Management-CPU-Referenz wurde durch die Verwechslung des Producer-Kontexts mit einer vorhandenen Referenz vor Inferenz blockiert. Der korrigierte Harness erhält N5000, B1000 und Seed20260710. Der Hailo-Schnittstellencheck dequantisiert ausschließlich tatsächlich rohe UINT8-Ausgaben vor dem Float-Vergleich; vorhandene Float-Negativbefunde und Qualitätsgrenzen bleiben erhalten.
+
+Der normale Supplement-Pfad erhält eine eng belegte 2.95.5-Kompatibilitätsaufnahme, strenges frühes Referenz-Restore, gebundene technische Cache-only-Revalidierung, Descriptortransport und den bestehenden zentralen Quality-Join. Originale Vorhersagen, Messungen und Fehlversuche werden dadurch nicht als gültig umetikettiert. Vor der Übernahme bestanden 52 unabhängige Adapterprüfungen sowie fokussierte Produktpfad-, Descriptor-, Collector- und Spiegelprüfungen; deren genaue Belege stehen im Auftragsordner operations/resume_20261019_controller/post_terminal_reference_repair_independent_review und hailo8_interface_domain_candidate_20261020/normal_retry_candidate. Geräte-Inferenz, N5000-Referenzerzeugung und neue gültige Messungen sind zum Zeitpunkt dieser Quellübernahme noch nicht abgeschlossen.
+
+Die reguläre Hailo-Build-Fortsetzung bleibt wegen fehlendem lokalem Arbeitsraum offen. Unabhängige CPU-Referenz/Qualitätsarbeit wird vorgezogen; der frühere unveränderte-Source-Build-Adapter darf nach dieser Übernahme nicht unverändert gestartet werden. Konfiguration, 20 Splits, Version2.95.5, Force-Rebuild=false und die vorhandene schmutzige Git-Baseline bleiben erhalten. Quelloriginale, Manifeste, Gitstatus und genaue Adoption werden extern unter operations/resume_20261019_controller/source_adoption_actual_* gesichert. Dies ist eine Softwarekorrektur, kein Abschluss der Kampagne und kein Hardware-PASS.
+
+## 16.10.2026 — DeepX Native A4: Abnahme, 75 Punkte und Ergebnislieferung abgeschlossen
+
+Die installierte profilgesteuerte CLI hat alle 14 ursprünglichen Abnahmezellen und alle 75 vorgewählten Punkte (68 Splits, sieben Fulls) vollständig abgeschlossen. Die 14 kompatiblen Abnahmekohorten sind enthalten und wurden nicht doppelt aufgenommen. Ausgewählt sind insgesamt 225 unabhängige Performanceprozesse mit je 100 Warmups und 1.000 Haupttasks sowie 225 gültige 60-s-Native-Energieaufnahmen ohne Workload-Warmup. Die zusätzlichen 61 Punkte benötigten 183 Performanceprozesse und 234 Energiecapturestarts; 51 Fehlcaptures bleiben erhalten. Zusammen mit der Abnahme sind 279 Energiecapturestarts mit 225 gültigen und 54 fehlgeschlagenen Aufnahmen dokumentiert. Native A4, Batch 1, eine Engine, maximal vier offene DeepX-Aufträge und Split-FIFO 3 einschließlich serieller TensorRT-Taskcompletion gelten unverändert.
+
+Die normale Ergebnisvorbereitung und die unabhängige Prüfung des tatsächlichen Archiv-/Importziels sind erfolgreich. Genau 75 von 450 Ergebniszeilen wurden aktualisiert; die übrigen 375 Zeilen einschließlich ihrer Quellen und Repeats sowie alle 450 Qualitätsselektionen sind exakt erhalten. Historische S1-Ergebnisse, Fehlversuche, gültige langsame Messungen und wissenschaftliche Einschränkungen bleiben bestehen. Die drei additiven Archive umfassen 19.394 unterschiedliche Originaldateien mit 6.844.644.708 Bytes. Die normale Current-Aktivierung ist mit freigegebenem Writerlock abgeschlossen; die anschließende Kontrolle bestätigt NOOP_VERIFIED. Die bisherige Analyse bleibt ausdrücklich historisch; eine neue Auswertung wurde nicht behauptet.
+
+Nach dem Messabschluss wurden die kleine Korrektur des normalen Split-Ratenlesers und die enge Zuordnung vorhandener Energie-Repeats im Reportadapter geprüft. Gültige Messungen wurden dafür nicht wiederholt und Originaldaten nicht verändert. Die finale Dokumentations- und Manifestaktualisierung erhält Version 2.95.5 und denselben Produktcode. Der vollständige Bericht einschließlich tatsächlicher Quellen-, Test-, Archiv- und Aktivierungsbelege liegt unter /home/kmika/Reports/deepx_295_gui_acceptance_remeasurement_20261015/20261015T130753Z/REPORT.md. Alle nachfolgenden Arbeitsstände bleiben als historische Zwischenstände erhalten; insbesondere frühere Desktopblockaden und Zwei-Versuchs-Grenzen gelten nicht mehr für diesen abgeschlossenen Auftrag.
+
+## 16.10.2026 — 75 Native-A4-Punkte vollständig aufgenommen; reguläre Übernahme wird abgeschlossen
+
+Die korrigierte Beauftragung wurde über die installierte profilgesteuerte CLI ausgeführt. Alle 14 ursprünglichen Abnahmezellen sind vollständig; ihre kompatiblen Kohorten wurden in den 75 Punkten (68 Splits, sieben Fulls) wiederverwendet. Die sieben Modellläufe sind terminal und geschlossen. Ausgewählt sind 225 unabhängige Performanceprozesse mit je 100 Warmups/1.000 Haupttasks und 225 gültige 60-s-Native-Energieaufnahmen ohne Workload-Warmup. Für die 61 übrigen Punkte entstanden 183 neue Performanceprozesse und 234 Capturestarts mit 183 gültigen Aufnahmen und 51 erhaltenen Fehlaufnahmen. Die Abnahme enthält zusätzlich 45 Capturestarts mit 42 gültigen und drei fehlgeschlagenen Aufnahmen. RegNet und ResNet vervollständigten ausschließlich fehlende Energieslots durch normales Resume; ihre ursprünglichen Teilabschlüsse bleiben erhalten.
+
+Die abschließende Ressourcenprüfung meldet keine bekannten aktiven Worker oder offenen Ressourcen; alle beobachteten Freigaben sind abgeschlossen. Der während sämtlicher Hardwaremessungen eingefrorene installierte Quellstand (2.95.5, 2282 Release-Dateien) bestand die finale Prüfung. Danach scheiterte die normale Übernahme an der vorhandenen Bindung eines dreiteiligen Split-Ergebnisses an nur einen repräsentativen Rawreport. Die kleine Korrektur im normalen Ratenleser öffnet die drei bereits zugelassenen Prozesse über PREPARED, Import und Originalbelege erneut. Die gesammelte originale YOLO26-Outputdeklaration wird über denselben vorbereiteten Auftrag aufgelöst. Zähler, Zeitintervalle, IDs und bestehende Statistik werden erhalten; widersprüchliche Belege bleiben unzulässig. Qualitätsurteile, wissenschaftliche Ausschlüsse und gespeicherte Partial-Befunde werden nicht aufgewertet.
+
+Softwareprüfung des endgültigen Kandidaten: 35 fokussierte Tests bestanden; unabhängige Prüfung 82/82 ohne Auslassungen, einschließlich Full-/Generic-/Hailo-Regressionen und vier tatsächlicher Outputfamilien. Die normalen Messprogramme und ursprünglichen Messdateien bleiben unverändert. Diese nachträgliche Lesekorrektur erfordert keine Wiederholung gültiger Messungen. Installation, abschließende Übernahme, Archivprüfung und Current-Aktivierung werden im Auftragsreport mit ihren tatsächlichen Ergebnissen dokumentiert. Zum Stand dieses Abschnitts ist die Veröffentlichung noch ausstehend.
+
+## 16.10.2026 — Reguläre CLI-Abnahme vollständig; fehlende Native-Energieslots gezielt fortsetzen
+
+Für den Auftrag `deepx_295_gui_acceptance_remeasurement_20261015` ist gemäß korrigierter Nutzeranweisung die installierte profilgesteuerte CLI der reguläre Produktstart. Anforderungen an Desktop, Fenster, Tk-Bedienung oder grafische Startbelege sind aufgehoben. Tatsächliche CLI-Starts werden als CLI ausgewiesen; ältere GUI-Berichte bleiben historische Belege.
+
+Alle ursprünglichen 14 Full-/Split-Zellen der sieben Modelle sind numerisch bestanden und enthalten je drei unabhängige Performanceprozesse mit 100 Warmups/1.000 Haupttasks sowie drei gültige Native-A4-Energieaufnahmen mit 60-s-Vertrag und null Workload-Warmups. Insgesamt sind 42 Performanceprozesse und 42 gültige Energieaufnahmen aus 45 tatsächlichen Captures belegt; die drei Fehlaufnahmen bleiben erhalten. Der ursprüngliche b027-Numerik-PASS wurde übernommen. Die bereits integrierten CLI-/Resume-, Energiezulassungs-, Checkpoint-Umgebungs- und Full-Stagingkorrekturen verwenden weiterhin die gemeinsamen Produktworker und normalen Ergebnisleser.
+
+Die 75-Punkte-Neuaufnahme läuft regulär mit gruppierten Modellprofilen. MobileNet ist mit 18/18 Punkten abgeschlossen. Der erste RegNet-Durchlauf `deepx_2951_native_refresh_regnet_x_1_6gf_20261016_004656` endete am 16.10.2026 terminal partial mit Artefakt-Closurepass: 19/21 Punkte vollständig, alle 57 frischen Performanceprozesse abgeschlossen, 71 Capturestarts mit 54 gültigen und 17 verworfenen Aufnahmen. Nur b008 repeat2 und b037 repeat0/1 fehlen. Originaler Teilabschluss, Budgets, gültige Slots und Fehlaufnahmen wurden vor Resume vollständig kopiert und byteweise geprüft. Die normale Ressourcenbeobachtung bestätigt beendete Besitzer, freie physische Ressourcen und alle 362 Capture-Antworten RELEASED.
+
+Die kleine Resume-Korrektur erhält im bestehenden Aufgabenbudget die ursprünglichen STOPs, Zähler, Ketten und gültigen Slots. Ein ausdrückliches normales Resume kann nach nachgewiesen abgeschlossenem reinem Sampleverlust eine begrenzte weitere Capture-Serie ausschließlich für fehlende Slots eröffnen. Aufgabenbudget und Native-Zulassung prüfen denselben Vertrag; jede fehlende Position erhält die gewöhnliche Aufnahme plus zwei Retries. Die Quellengrenze von 20 Transportfehlern, Ressourcenprüfungen, Kalibration, Sensorfenster und Abschlussprüfungen bleiben unverändert. Collector und Workloadprogramme sind bytegleich; Generic und Hailo werden nicht geändert.
+
+Softwareprüfung: 140 fokussierte Tests beim Autor; unabhängige Prüfung mit 160 fokussierten Tests und zwei portablen normalen Collector-Fällen. Diese Prüfungen sind kein Hardware-PASS der Korrektur. Die tatsächliche Nachaufnahme der drei fehlenden Slots und die übrigen fünf Modelljobs stehen zum Installationszeitpunkt noch aus. Die installierte Version bleibt 2.95.5. Aktueller tatsächlicher Verlauf und vollständige Belege: `/home/kmika/Reports/deepx_295_gui_acceptance_remeasurement_20261015/20261015T130753Z/STATUS.md`. Der finale 75-Zeilen-Import und die Archivaktivierung erfolgen erst nach vollständiger Prüfung.
+
+## 15.10.2026 — Echter Split-PASS, Full-Pfadkorrektur 2.95.5
+
+Die abschließende unabhängige Softwareprüfung von 2.95.5 besteht mit 32 Integrationsprüfungen und neun Kontext-/Erhaltungsprüfungen. Drei ursprüngliche Full-Performanceverträge werden über ihre bestehenden vorbereiteten Aufträge und Originaldateien zusammengeführt; der normale Matrixleser behält alle drei Taskzahlen und Zeitintervalle. Die Energieplanung verwendet den tatsächlich ausgewählten Vertrag. Die portable YOLO26-BN6-Auswertung erhält die unveränderte, bereits bereitgestellte Outputdeklaration. Alle strikten Quellen-/Artefaktprüfungen bleiben bestehen; ein Software-PASS ersetzt keine Hardwareabnahme. Der Stand wird vor dem nächsten ausschließlich Full betreffenden GUI-Versuch regulär archiviert und installiert.
+
+2.95.4 wurde regulär installiert. Die zusätzliche Full-Sperre wurde am 15.10.2026 um 14:08:53 UTC regulär anhand 77 unveränderter Originalbelege und frischer Besitzerprüfung freigegeben. Der anschließende echte GUI-Job `evaluation-workflow-20261015_161110-a4b5f53deedb4590b09da31e1917292f` / Run `deepx_native_a4_gui_acceptance_mobilenet_v3_large_numerical_continuation_20261015_161156` schloss MobileNet b027 als `numerical_passed` ab. Full blieb wegen `full_command_contract_deepx_artifact_role_path_mismatch` failed. Beide Rawreports melden 32 Referenzen, 32 gemischte A4-Aufträge und 64 Smoke-Tasks; Geräte- und Workerabschluss sind jeweils belegt. Die getrennte Ressourcenbehandlung verhinderte eine unbegründete neue Sperre.
+
+2.95.5 gleicht die A4-Full-Veröffentlichung vorbereiteter Eingaben an den vorhandenen kanonischen Pfadvertrag an und erhält ihre normale vollständige Abholung. Die GUI wurde am 15.10.2026 um 14:19:20 UTC nach terminalem Job und bestätigtem Artefaktabschluss regulär geschlossen. Der b027-PASS ist im vollständigen Abnahmeprofil gebunden; ein separates normales Reparaturprofil enthält ausschließlich Full. Kein gültiger PASS wird wiederholt, kein alter Fehler überschrieben. Reguläre Performance und Energie stehen weiterhin aus.
+
+## 15.10.2026 — Full-Suite-Bereitstellung nach echtem 2.95.3-GUI-Lauf
+
+Die ursprüngliche b027-Sperre wurde am 15.10.2026 um 13:36:15 UTC regulär anhand unveränderter Originalbelege und aktueller Besitzerprüfung freigegeben. 2.95.3 wurde normal installiert und über die echte GUI gestartet (Job `evaluation-workflow-20261015_153810-48bbab6d8cad4abc8bd86a8f1a70df70`). Full erreichte die serielle DeepX-Vorbereitung, danach wählte die Suite mangels separatem Benchmark-Plan das falsche ORT-Profil. Der fehlende gemessene A4-Abschluss löste die Schutzsperre aus; b027 wurde vor Admission blockiert. GUI-Job terminal, Anwendung regulär geschlossen. 2.95.4 korrigiert diesen konkreten Bereitstellungsweg; kein unveränderter Hardware-Retry, keine Toleranzlockerung, keine neue Freigabeanforderung. Belege und weiterer Verlauf im aktuellen Report `20261015T130753Z`.
+
+Die A4-Stagingkorrektur stellt den vorhandenen eingebetteten Suite-Plan unverändert separat und die exakt gebundene Outputautorität bereit. Der direkte A4-Full-Runner prüft diese Auswahl vor seinen Runtime-Children und übergibt den Plan ausdrücklich. Frische S1-Voraussetzungen, Generic und Hailo bleiben erhalten. Der integrierte gezielte Testsatz besteht mit 139 PASS; eine unabhängige Prüfung mit 74 PASS. Zusätzlich bestehen sieben Tests mit den originalen Metadaten aller sieben Modelle und je zwei tatsächlichen Suite-Auswahlen für Numerik und Performance. Diese Prüfungen ersetzen die Runtime an ihrer SDK-Grenze und sind kein Hardware-PASS. Die separate normale Recovery und die nächsten echten GUI-Aufnahmen bleiben an ihren tatsächlichen Belegen zu bewerten.
+
+# Fortsetzung15.10.2026: 2.95.3, normale Recovery und technische Reparaturen
+
+Die neueste Nutzeranweisung erweitert den laufenden Auftrag `deepx_295_gui_acceptance_remeasurement_20261015`: Die belegte abgeschlossene b027-Inferenz soll regulär recoverbar sein; Ergebnisgültigkeit und Ressourcenabschluss sind getrennt zu prüfen. Konkrete technische Korrekturen mit Regression und normaler Bereitstellung dürfen weitere dokumentierte Versuche auslösen. Die alte Zwei-Versuchs-Lebenszeitgrenze wird nicht als Blocker fortgeführt; historische Versuche, negative Ergebnisse und gültige Slots bleiben erhalten. Keine neue Budget-/Registrysoftware, kein Force-Unlock, unveränderte Capture-Retries und echte STOPs.
+
+Aktueller Fortsetzungsreport: `/home/kmika/Reports/deepx_295_gui_acceptance_remeasurement_20261015/20261015T130753Z`; ursprüngliche Lieferung `/home/kmika/Reports/deepx_295_gui_acceptance_remeasurement_20261015/20261015T093320Z` bleibt als damaliger Stand erhalten. 2.95.3 bindet die dafür notwendige normale Produktkorrektur nachvollziehbar. Das Ziel bleibt die echte GUI-Abnahme aller sieben Full-/Split-Paare und anschließend unmittelbar die75-Punkte-Neuaufnahme mit jeweils drei Performance- und drei gültigen Native-Energierepeats, vollständigem kompatiblem UID-Reuse und normalem Import/Archiv. Softwareprüfung, tatsächliche Recovery und tatsächliche Hardwareläufe werden im aktuellen Report getrennt nachgewiesen. Die folgenden älteren Abschnitte beschreiben ihre damaligen engeren Autorisierungen und bleiben historisch erhalten.
+
+# Folgeauftrag 15.10.2026: 2.95.2, echte GUI ausgeführt; Hardwareabnahme blockiert
+
+Auftrag `deepx_295_gui_acceptance_remeasurement_20261015`; vollständige aktuelle Belege unter `/home/kmika/Reports/deepx_295_gui_acceptance_remeasurement_20261015/20261015T093320Z`. Die alte eng belegte MobileNet-pre-inference-Quarantäne wurde am 15.10.2026 um 10:21:06 UTC über die normale Produktoperation unter den bestehenden exklusiven Locks regulär aufgelöst. Alte Rohreports, fehlende historische SDK-Zähler, Fehler, Budgets und Quarantänebelege bleiben erhalten.
+
+Der regulär installierte und archivierte 2.95.1-Stand wurde anschließend über das echte Evaluation-Panel der tatsächlichen Tk-GUI gestartet: genau ein MobileNet-Modelljob und die beiden noch zulässigen technischen Ersatzversuche. Job `evaluation-workflow-20261015_122605-c0e4c504322d4cabbb2329221bc83c9b`, Run `deepx_native_a4_2951_gui_acceptance_mobilenet_v3_large_numerical_20261015_122654`. Ergebnis: terminal partial, beide Produktzellen failed. Full scheiterte im Staging vor Workerstart. b027 meldet im unveränderten Worker 32 serielle, 32 gemischte und 64 Smoke-Abschlüsse mit drain=true; die normale Lifecycleprüfung lehnte einen fehlenden expliziten seriellen Abschlusszähler ab und quarantänisierte den DUT erneut. Die Produktzelle wird nicht nachträglich als PASS ausgegeben.
+
+2.95.2 korrigiert die zwei konkreten Schnittstellenfehler: Full reicht das exakt zum versiegelten ursprünglichen Benchmark und deklarierten Inputcase gehörende lokale Case-Metadatum durch die normale Bereitstellung in den frischen Full-Baum; der Split-Worker zählt Ein-/Rückkehr des seriellen Referenz-SDK-Aufrufs explizit. Der strenge Reader und die enge historische Recovery bleiben unverändert. Gezielte Regressionsprüfungen und unabhängige Reviews sind im Auftragsreport ausgewiesen. Die beiden vorherigen Vorbereitungsfixes (Venv-invocation_path, aktueller Workerprüfwert bei frischem A4) bleiben bestehen.
+
+Beide MobileNet-Budgets sind mit je zwei Versuchen ausgeschöpft. Die neue Quarantäne nach tatsächlich begonnener Inferenz fällt nicht unter die alte pre-inference-Recovery und bleibt erhalten. Zwölf Abnahmezellen sind ungestartet, null reguläre Performanceprozesse, null Energiecaptures, null vollständige neue Kohorten. Softwarestand und Hardwareabnahme werden getrennt bewertet; 2.95.2 ist ohne erneute zulässige Hardwareausführung nicht hardwareabgenommen.
+
+Die sieben normalen GUI-Neuaufnahmeprofile binden genau 75 ursprüngliche UIDs. Normales Resume erhält gültige Slots; Übernahme verlangt vollständige kompatible reale GUI-3+3-Kohorten. Der finite Native-Refresh-Selektor ist getrennt von der unveränderten Abnahmebeschränkung auf einen Split je Modell. Nach vollständiger Abnahme ist die Kampagne bereits beauftragt; aktuell verhindern Quarantäne und erschöpftes Numerikbudget ihren Start. Keine privaten Messwrapper, Modell-/Engine-Rebuilds, Generic-/Hailo-Neumessungen, neue Registry oder historischen Umdeutungen. Datasetgeneration, Sprite-Transfer und Current-Aktivierung wurden nicht ausgeführt. Die eigene GUI wurde nach terminalem Abschluss regulär geschlossen.
+
+Der breite Softwarelauf vor GUI-Ausführung ergab 587 passed und zwei Fehler in bereits auf dem archivierten 2.95.0-Stand identisch fehlschlagenden Hailo-Fault-Injection-Fixtures. Deren leere Qualitätsvoraussetzungen blockieren vor dem zu injizierenden Transportfehler; Gesamtstatus bleibt partial/scientific_ready=false. Diese Befunde werden offengelegt, nicht durch Guardlockerung beseitigt. Abschließende 2.95.2-Installation, Releaseprüfung und fokussierte Testergebnisse stehen in REPORT.md/VALIDATION.md des neuen Auftragsreports. Der nachfolgende 2.95.0-Abschnitt bleibt als damaliger historischer Stand erhalten.
+
+Die abschließende gezielte Release-/Installer-/Full-Staging-/Split-/Generic-Hailo-Prüfung für 2.95.2 bestand mit 71 Tests und einer bestehenden Deprecation-Warnung. Alle 14 frisch aus dem finalen Produkt vorbereiteten Zellen binden die aktuellen Worker, korrekte Venv-Aufrufpfade und sämtliche YOLOv7-Heads; die reine Budgetprüfung verweigert beide verbrauchten MobileNet-Versuche ausdrücklich. Offlinevorbereitung und Softwaretests haben keine neuen Hardwareversuche oder Captures erzeugt.
+
 # ONNX Splitpoint – fortlaufender Arbeitsstand
+
+## 2.95.0: DeepX Native A4 (15.10.2026, Software installiert; Hardwareabnahme blockiert)
+
+Der neue Produktauftrag bindet Full und alle unterstützten Native DeepX→TRT-Splits an dieselbe A4-Policy. Gemeinsame Submit-/Wait-/Slotverwaltung, sichere Outputübernahme, FIFO 3 und serielle TRT-/Taskcompletion ersetzen modellabhängige Schedulingentscheidungen. Fehlende Modusfelder alter Jobs bleiben historisch S1. Vorhandene lokale Refresh16-Korrekturen bleiben erhalten.
+
+Die Produktadapter und Regressionen prüfen kontinuierliche A4-Nachfüllung, vier SDK-konforme Gesamtpuffer mit typisierten Multioutput-Ansichten, sichere letzte Outputs, Warmup-/Main-Trennung und Fehlerdrain. Die normale Split-Dispatch-Ebene startet für drei Repeats drei frische Prozesse. GUI-/CLI-Profile, Prepared-/Resume-Verträge und reguläre Performance-/Energieimporte tragen den expliziten Modus; passende S1-/A4-Kohorten werden getrennt gehalten. Der finite Abnahmecontroller erhält einen DeepX-Full-Einstieg neben den bisherigen Splits.
+
+Softwareprüfung und begrenzte Abnahme werden unter `~/Reports/deepx_native_a4_v295_20261015/20261015T071759Z` geführt. Die Abnahmematrix umfasst 14 vorgewählte Zellen; Hardware-PASS wird erst nach tatsächlicher Ausführung vergeben. Die spätere 75-Punkte-Neuaufnahme bleibt Prepare-only.
+
+Die Full-Integration verarbeitet die tatsächlich gebundenen SDK-Multioutputs mit vier getrennten Gesamtpuffern und den vorhandenen Klassifikations-/Detektorendpunkten. Generierte Generic-/Hailo-Bundles, Backendrequests und Profile wurden vor/nach der Änderung verglichen; drei frische generierte Generic-CPU-Läufe liefern gleiche fachliche Ergebnisse. Alle 14 ausgewählten Zellen bestehen die normale Offlinevorbereitung. Der begrenzte numerische Einstieg verwendet dieselbe Vorbereitung, Ressourcenreservierung und Transportstrecke; er eröffnet keine Energieaufnahme und liefert keinen wissenschaftlichen Performance-PASS. Installation und tatsächliche Hardwareergebnisse werden im Auftragsreport gesondert geführt.
+
+327 neue 2.95-Tests bestanden vor der regulären Installation. Der erste normale MobileNet-Phase-A-Auftrag wurde tatsächlich ausgeführt: Full scheiterte vor dem Workerstart an einer falsch aufgelösten Python-Aufrufbindung; b027 scheiterte vor der SDK-/TRT-Konstruktion am erhaltenen historischen Runnerprüfwert. Die beiden Bindungen sind korrigiert (104 gezielte Tests bestanden). Die konservativ gesetzte physische DUT-Quarantäne bleibt bestehen, da das vorhandene Capture-Recovery diesen numerischen Fall nicht unterstützt. Keine weitere Hardwarearbeit, keine Performanceprozesse oder Energiecaptures; zwölf Zellen bleiben ungestartet. Die Softwarelieferung ist kein Nachweis vollständiger physischer A4-Abnahme. REPORT.md, ACCEPTANCE_RESULTS.csv, STATUS.md und RESUME.md halten die Grenzen und Originalbelege fest; alte Ergebnisse, STOPs und lokale Vorarbeiten sind erhalten.
+
+## Refresh16: Native-Energiebeobachtungen regulär fortsetzen (13.10.2026)
+
+Die normale `--previous-results`-Fortsetzung verwarf einen versiegelten Native-
+Split-Beobachtungspfad, weil sie dessen bereits gültigen `admission_scope` nicht
+an denselben Qualitätsbindungsprüfer wie der Erstlauf übergab. Beide produktiven
+Source-/Resource-Einstiege prüfen nun zuerst die ursprüngliche versiegelte
+Zulassung und reichen ausschließlich deren authentifizierten Scope weiter.
+Identität, Commands, Quellen, Cohort und Hashbindungen bleiben unverändert;
+negative Qualitätsbefunde erhalten keine positive Claimzulassung.
+
+58 gezielte Offline-Regressionen bestanden auf der bestehenden installierten
+Umgebung. Belege und ursprüngliche Sources liegen unter
+`~/Reports/refresh16_20261013/energy_prepare/split_resume_install/`. Die neue
+begrenzte Messung verwendet weiterhin die regulären Sensor-, Runtime- und
+Resultconsumer; diese Softwarekorrektur ist kein eigener Hardwareabnahmebeleg.
+Version 2.94.0 bleibt bestehen; keine Compiler-, Modell- oder Decoderänderung.
 
 ## Begrenzter Revision-3-Deltaabschluss: Recovery nach sauberem Folgelauf (12.10.2026)
 
@@ -2824,3 +3087,78 @@ Der finale Quellarchivstand bleibt Version 2.94.0. Gegenüber dem tatsächlich
 gemessenen v8-Quellstand werden zum Abschluss nur dieser Arbeitsstand und die
 normalen Quellenindizes ergänzt. Die große Revision-3-Restkampagne bleibt
 pausiert; nach Git-/Installationsabschluss wird keine weitere Messung gestartet.
+
+## 2026-10-14: Begrenzte DeepX-Sync/Async-Diagnose abgeschlossen
+
+Auftrag: `~/Downloads/CODEX_DEEPX_SYNC_ASYNC_DIAGNOSE_20261014.txt`.
+Diagnosecode, Plan, Tabellen, Rohreports und Resumezustand liegen unter
+`~/Reports/deepx_sync_async_diagnose_20261014/20261014T173407Z/`.
+Abgeschlossene Ursachenklärung und frühere Stufenkohorte wurden wiederverwendet;
+b002 blieb Offlinekontrast. Verwendet wurden MobileNet b027 und ResNet50 b045
+mit vorhandenen Artefakten auf dem registrierten DeepX-DUT.
+
+Die separate Native-Diagnose erhält S1 und ergänzt S1/A1/A2/A4 mit einer Engine,
+vier festen privaten Outputslots, sicherer Requestzuordnung, eigener Boundarykopie
+und vorhandenem TRT-Hoststaging. 193 Tests bestanden vor dem Hardwarestart;
+die letzte vollständige Diagnosesuite bestand 246 Tests, danach die gezielte
+Auswertungsprüfung 30 Tests; 54 bestehende Regressionstests wurden wiederverwendet.
+Alle 20 Hardware-Paritäts-/Smokebedingungen und 60/60 Performanceprozesse bestanden.
+600.000 Main-Completions, 6.000 drainierte Warm-ups, keine Performance-Ersatzversuche
+oder Profile. Vier vor Inferenz abgebrochene Referenzprozesse bleiben erhalten:
+Das SDK verlangte explizites NHWC-Batch 1; RGB-Nutzdaten und Toleranzen blieben gleich.
+Die unabhängige Vollprüfung und der zusätzliche Vergleich gespeicherter serieller
+Referenzen mit den letzten A4-Messausgaben bestanden. Reguläre Lease freigegeben,
+keine Quarantäne und kein eigener STOP; Abschlussbeleg siehe STATUS.md.
+
+MobileNet PC: S1 760,853/s, A1 742,267/s, A2 770,125/s, A4 773,405/s (Mediane).
+ResNet PC: 220,588/s, 222,197/s, 425,326/s, 567,329/s; wegen thermischer Grenzen
+nur deskriptiv. Insgesamt besitzen 21 Prozesse eingeschränkte Zustandsvergleichbarkeit.
+Full S1→A4 gewinnt blockweise im Median 2,414× beziehungsweise 2,013×, bei
+vergleichbaren Zuständen in allen drei Blöcken. Verbesserter Fullbetrieb bleibt
+schneller als der jeweilige Split. Empfehlung: gezielter Native-Full-Async-Patch
+als separate Integration; kein pauschaler Split-/Generic- oder Kern-/PCIe-Nachweis.
+
+Dies ist eine Diagnoseabnahme, keine neue Normal-GUI- oder N5000-Abnahme.
+Produktive Defaults, Generic, historische Qualitätsurteile und kanonische
+Ergebnismatrizen bleiben unverändert. Keine Builds, Energieaufnahme oder neue
+Hash-/Registry-Infrastruktur. Bereits vorhandene Energie-Dateiänderungen wurden
+nicht verändert; dieser Auftrag ergänzt im Repository ausschließlich diesen Stand.
+
+
+### 2.95.1 — gezielte Native-Neuaufnahme im normalen GUI-Workflow
+
+Der getrennte `native_refresh`-Selektor bindet die 75 ursprünglichen DeepX-Native-UIDs in sieben normalen Modelljobs; die Abnahme bleibt bei höchstens einem Split je Modell/Setup. Bestehende Prepare-/Numerik-/Performance-/Energie-/Import- und Ressourcenpfade werden verwendet. Vollständige GUI-Abnahmekohorten werden pro UID über echte 3+3-Rohdaten, normale Importbindungen, A4/max4 und den bestehenden Profilsnapshot geprüft; Reuse meldet null neue Aufrufe. Der echte Tk-Queuepfad ergänzt ausschließlich beobachtende GUI-Job-/Fensterdaten im normalen Ausführungssession-Manifest, außerhalb der wissenschaftlichen Resumeoptionen. Alle sieben gespeicherten Profile sind regulär aufgelöst und alle 75 Punkte offline vorbereitet. Das ist Softwareevidenz: keine GUI-/Hardwarestarts durch diese Integration, kein A4-Hardware-PASS und keine Current-Aktivierung. Details/erhaltene Fehlprüfungen: `/home/kmika/Reports/deepx_295_gui_acceptance_remeasurement_20261015/20261015T093320Z/CAMPAIGN_INTEGRATION.md`.
+
+
+### 2026-10-15: Reguläre CLI-Fortsetzung der DeepX-A4-Abnahme
+
+Die ausdrückliche Nutzerkorrektur erlaubt die installierte profilgesteuerte CLI und hebt sichtbare GUI-Herkunft als Abnahmebedingung auf. Der vorhandene Full-only-Run 165459 ist inzwischen regulär mit Numerik-PASS und Geräte-/Ressourcenabschluss beendet. Der b027-PASS bleibt erhalten; beide Zellen werden nicht erneut numerisch gemessen. Die 14-Zellen-Abnahme und die 75-Punkte-Neuaufnahme verwenden dieselben vorhandenen Profile, Produktworker, Messrezepte und normalen Importe. Die Vollabnahme und Kampagne sind noch offen. Quellen-/Numerik-/Ressourcenprüfungen bleiben unverändert.
+
+Der reguläre CLI-Run `...183413` endete am 15.10.2026 um 18:40:43+02:00 mit Teilstatus und normalem Artefakt-/Ressourcenabschluss. Full und b027 haben jeweils drei gültige Performanceprozesse, noch keine Energieaufnahme. Die Full-Energieplanung wird bei fehlender Vergleichspräzisionsannotation einheitlich mit ihrer bereits versiegelten Kennzeichnung geschrieben; tatsächliche Runtimepräzision und Qualitätsflags bleiben erhalten. Ein gemeinsamer Leser der archivierten Workflowoptionen ermöglicht die explizite profilgesteuerte CLI-Wiederaufnahme desselben Runs; der normale Reader hat alle sechs bestehenden Performance-Slots erneut geprüft. Der unveränderte Teilstand einschließlich fehlerhafter Energiepläne ist vor Resume im Auftragsreport gesichert. Die noch offene Trennung diagnostischer Qualitätsaussagen von technisch gültigen Native-A4-Energiekohorten wird gezielt korrigiert; kein Energie-PASS wird vor tatsächlicher Aufnahme beansprucht.
+
+Die Energiekorrektur ist auf bereits gebundene Native-A4-Abnahmekohorten mit der vorhandenen Capture-Admission begrenzt. Exakte 60-s-/3-Repeat-/FS-/Task-/Fensterbindungen und tatsächlich zugelassene Capture-Belege bleiben Pflicht; diagnostische Qualitätskennzeichnung und explizit falsche Claim-Flags bleiben erhalten. Generische/Hailo-Diagnosekohorten bleiben abgewiesen. Sieben gezielte Writer-/Aggregation-/Reuse-/Importprüfungen und 53 bestehende Regressionen bestanden; sie ersetzen keine physische Energieaufnahme. Die getrennte Full-Präzisionskorrektur bestand 26 gezielte Prüfungen (davon fünf unabhängig wiederholt), die gemeinsame CLI-Resume-Integration 153 Prüfungen sowie die unabhängige Prüfung aller sechs Originalslots.
+
+Der erste reguläre CLI-Resume endete am 15.10.2026 um 18:53:04+02:00 erneut mit Teilstatus, ohne neue Performanceprozesse oder Energieaufnahmen. Die sechs gültigen Prozesse blieben erhalten. Ursache des Checkpointkonflikts war die JSON-bedingt veränderte Reihenfolge zweier Environmentvariablen; die gezielte Korrektur reproduziert beide ursprünglichen Invocation-Hashes und bestand 125 Tests. Beide terminalen Teilstände sind vor weiterer Wiederaufnahme vollständig außerhalb des Quellbaums gesichert. Für die belegten Energiefehler vor Collector-/Workloadstart wird der normale verwaltete Energieversuch unter Erhalt der alten Checkpoints und desselben physischen Budgets neu angesetzt; die normalen Leser folgen dem tatsächlich ausgewählten Versuch. Noch keine neue physische Energieaufnahme und noch keine Ergebnisaktivierung.
+
+Die reguläre CLI-Wiederaufnahme von MobileNet Run183413 ist am 15.10.2026 um 19:20:17+02:00 mit status=ok, technical_status=ok und normalem Artefakt-/Ressourcenabschluss beendet. Full und b027 enthalten jeweils drei erhaltene Performanceprozesse und drei gültige 60-s-Energieaufnahmen. Ein Full-Capture mit verlorenen Sensormesswerten wurde regulär ersetzt und bleibt erhalten (sieben physische Starts insgesamt); keine neuen Performanceprozesse. Beide normalen Kampagnen-Kohortenprüfungen bestanden einschließlich A4/max4, Split-FIFO3, Kalibration, Umgebung und Originalquellen. Danach bestanden RegNet, ResNet und YOLO11l jeweils Full und gespeicherter Split numerisch mit 32/32/64. YOLO26m Run194012 endete regulär mit Teilstatus: b038 PASS; Full scheiterte vor Workerstart lokal am SSH-Argumentlimit (146682 Bytes gegenüber 131072). Die korrigierte Übertragung komprimiert das unveränderte Staging-Programm; die Originaldateien, Modellartefakte, Quellenprüfungen und Prozess-Leases bleiben maßgeblich. Die fehlende Full-Zelle wird nach gezielter Prüfung über ein normales Teilprofil aufgenommen; vorhandene PASS bleiben erhalten. Vollabnahme weiterhin 2/14, Numerik aktuell 9/14; keine Current-Aktivierung.
+
+
+### 2026-10-18: YOLO26x — begrenzte TensorRT-Cacheprobe-Korrektur
+
+Die reguläre 20-Split-Vorbereitung endete mit normalem Artefaktabschluss. Der TensorRT-Cacheverifier mit 41 Anforderungen überschritt lokal das Linux-Argumentlimit (144.149 Bytes); es wurde dabei kein Remoteprozess gestartet. Die vorhandene vollständige Pythonprüfung wird nun wie beim produktiven Full-Staging zlib/Base64-komprimiert übertragen. Programmbytes, Cacheidentitäten, Receiptprüfung und HIT/MISS/UNKNOWN-Semantik bleiben unverändert; das maximale SSH-Argument beträgt für denselben Payload 81.841 Bytes. 33 gezielte Regressionstests einschließlich tatsächlichem Payload, Bytegleichheit, lokalem execve und HIT/MISS/Tamper sowie der unabhängige Review bestanden. Dies ist ein lokaler Transportfix auf 2.95.5, keine neue Messmethodik oder neue Releaseversion. Ursprünglicher Teilstand und Softwarebelege: `/home/kmika/Reports/yolo26x_final_thesis_20splits_20261018/transport_fix/` und `preflight_before_resume/`. Die vollständige Kampagne wird danach über den normalen CLI-Resume fortgesetzt; Hardware-/Qualitäts-/Energieerfolg ist damit noch nicht behauptet.
+
+
+### 2026-10-18: YOLO26x — äußere Hailo-Split-Ausgänge
+
+Im normalen 20-Split-Lauf meldeten beide Hailo-Compiler für b031 einen FeatureSplitter-Ausgang ohne eindeutigen Nachfolger. Die vorhandenen äußeren Identity-Adapter werden vom SDK entfernt. Der eng begrenzte Fix materialisiert ausschließlich tool-eigene YOLO26x-Part1-Ausgänge eines statisch bestimmten Kanal-Splits als konstante Slice-Ausgänge. Ursprüngliche Split-Knoten, interne Verbraucher, Gewichte, Ausgabealiase und die gemeinsame 20er-Auswahl bleiben erhalten. Der Fix greift vor dem tatsächlichen Compilerhash im bestehenden Deferred-/Cachepfad; ein eigener Dateisuffix erhält die ursprünglichen fehlgeschlagenen Compilerdateien. Andere Modelle und die unveränderten Compilergraphen von b003/b062 behalten Bytes, Metadaten und Cachekeys. Force-Rebuild bleibt aus.
+
+23 fokussierte Kandidatenprüfungen einschließlich sechs bitgleichen CPU-ORT-Ausgabevergleichen sowie 22 unabhängige Prüfungen bestanden. Ein SDK-Parser-/HEF- oder Qualitäts-PASS für den neuen Adapter ist damit nicht behauptet. Vor der Integration wurde der eigene Controller nach dem versiegelten Hailo-10H-HEF für b062 regulär abgebrochen; drei fertige HEFs blieben erhalten, der bereits angelaufene Hailo-8-b062-Versuch wurde als abgebrochen dokumentiert. Der normale Artefaktabschluss bestand für 10.704 Dateien. Qualitäts-, Performance- und Energiephasen waren noch nicht gestartet. Originalzustand, Fehler, Softwareprüfungen und Resume-Belege liegen unter `/home/kmika/Reports/yolo26x_final_thesis_20splits_20261018/hailo_output_fix/`, `terminal_before_hailo_output_fix_111949/` und `preflight/hailo_b031_diagnosis/`. Die Fortsetzung erfolgt über denselben Run und die reguläre profilgesteuerte CLI; Kalibration 500/opt1, N5000/B1000 und die freigegebenen Messprotokolle bleiben unverändert.
+
+
+### 2026-10-18: YOLO26x — Zeitstempel beim regulären Scope-Resume
+
+Der anschließende CLI-Resume wurde vor neuen Compiler- oder Messläufen durch den unveränderlichen Model-Scope gesperrt. Der Generator hatte ausschließlich `benchmark_plan.created_at` erneuert; alle 604 Kandidaten, 20 akzeptierten Splitdefinitionen und 84 physischen Generic-Identitäten blieben gleich. Der vollständige eingebettete Planhash behandelte diesen Zeitwechsel als Scopeänderung. Der eigene Lauf wurde während der Cacheprüfung kontrolliert beendet und mit bestandenem Artefaktabschluss als zweiter Checkpoint gesichert.
+
+Der begrenzte Kompatibilitätspfad prüft den vorhandenen Scope und die ursprüngliche Produkt-Session, grenzt die ursprüngliche Planzeit durch deren Generierungsintervall ein und akzeptiert ausschließlich eine Fassung mit exakt dem bereits versiegelten vollständigen Planhash. Danach bleibt der normale vollständige Scopevergleich unverändert Pflicht; bestehende Scopebytes werden nicht umgeschrieben. Andere Planfelder, Cases, Endpoints oder Messparameter können dadurch nicht geändert werden. Die tatsächliche Wiederherstellung wird in den normalen Generate-Stage-Metriken dokumentiert. Unveränderte Legacy-Pläne behalten ihren bisherigen Prüfpfad.
+
+41 gezielte Prüfungen und bestehende Scope-Regressionen bestanden auch gegen die installierten Module, einschließlich tatsächlichem Caller und GenerateStage mit kopierten Metadaten. Der unabhängige Review prüfte zusätzlich 50 Fälle. Dies belegt die Softwarekorrektur; die Kampagne und der neue Hailo-Slice-Compilerpfad benötigen weiterhin ihre tatsächliche Ausführung. Belege: `/home/kmika/Reports/yolo26x_final_thesis_20splits_20261018/scope_resume_fix/` und `terminal_before_scope_resume_fix_111949/`. Drei fertige HEFs, alte Fehler und beide abgeschlossenen Sessions bleiben erhalten. Die Wiederaufnahme erfolgt mit demselben Run und unverändertem Profil über die installierte CLI; Force-Rebuild bleibt aus.

@@ -9,6 +9,7 @@ import math
 import statistics
 import json
 import hashlib
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -285,6 +286,198 @@ def _canonical_full_row(row: Mapping[str, Any], base: Path | None) -> tuple[Mapp
     return raw, str(path)
 
 
+def _normal_split_a4_cohort_rate_fields(row: Mapping[str, Any], base: Path | None) -> dict[str, Any] | None:
+    """Replay the three original processes admitted by the normal Split import."""
+    contract = row.get('native_command_contract')
+    options = contract.get('runtime_options') if isinstance(contract, Mapping) else {}
+    options = options if isinstance(options, Mapping) else {}
+    records = row.get('repetition_records')
+    if (row.get('backend') != 'deepx_to_trt'
+            or 'A4' not in (row.get('deepx_runtime_mode'), options.get('deepx_runtime_mode'))
+            or ((_number(row.get('repetition_count_valid')) or 0) <= 1
+                and not (isinstance(records, list) and len(records) > 1))):
+        return None
+    unavailable = rate_endpoint_fields({})
+    unavailable.update(_historical_rate_fields(row, unavailable=True))
+    reason = 'native_split_a4_normal_import_binding_unavailable'
+    unavailable['completed_task_rate']['reason'] = reason
+    unavailable['completed_task_fps_unavailable_reason'] = reason
+    unavailable['rate_endpoint_source'] = reason
+    if not isinstance(records, list) or len(records) != 3 or any(not isinstance(record, Mapping) for record in records):
+        return unavailable
+    if (row.get('deepx_runtime_mode') not in (None, '', 'A4')
+            or (row.get('deepx_max_inflight') is not None
+                and (type(row['deepx_max_inflight']) is not int or row['deepx_max_inflight'] != 4))):
+        return unavailable
+    unavailable.update(latency_fields(row))
+    unavailable.update(_execution_metadata_fields(row))
+    sources = [record.get('operating_point_source_report') for record in records]
+    if any(not isinstance(value, str) or not value for value in sources):
+        return unavailable
+    candidates = [Path(base)] if base is not None else []
+    try:
+        candidates.append(Path(os.path.commonpath(sources)))
+    except ValueError:
+        return unavailable
+    for point in dict.fromkeys(candidates):
+        try:
+            if not point.is_absolute() or point.resolve() != point:
+                continue
+            prepared_path, receipt_path = point / 'PREPARED.json', point / 'performance_import.json'
+            if prepared_path.is_symlink() or receipt_path.is_symlink():
+                continue
+            prepared = json.loads(prepared_path.read_text(encoding='utf-8'))
+            if (not isinstance(prepared, dict) or prepared.get('output') != str(point)
+                    or prepared.get('deepx_runtime_mode') != 'A4'
+                    or (prepared.get('identity') or {}).get('backend') != 'deepx_to_trt'):
+                continue
+            from .workflow.hardware_acceptance_native import (
+                _same_run_performance_slots, verify_performance_import,
+            )
+            from .resources.remote_scripts.native_producer_final_report import (
+                _verified_repetition_operating_point, _bootstrap_median_ci, _measurement_identity,
+            )
+            slots = _same_run_performance_slots(prepared)['slots']
+            if set(slots) != {1, 2, 3}:
+                continue
+            reports = [Path(slots[index]['report']) for index in (1, 2, 3)]
+            if sources != list(map(str, reports)):
+                continue
+            saved = verify_performance_import(prepared, reports)['row']
+            if any(row.get(key) != value for key, value in saved.items()):
+                continue
+            if any(type(saved.get(key)) is not int or saved[key] != 3 for key in (
+                    'repetition_count_requested', 'repetition_count_attempted', 'repetition_count_valid')):
+                continue
+            raws, rates = [], []
+            for index, record, report in zip((1, 2, 3), records, reports):
+                raw = json.loads(report.read_text(encoding='utf-8'))
+                if (record.get('runtime_instance_id') != slots[index]['runtime_instance_id']
+                        or raw.get('task') != saved.get('task') or record.get('task') not in (None, raw.get('task'))
+                        or raw.get('task_complete') is False or record.get('task_complete') is False
+                        or saved.get('task_complete') is False
+                        or any(saved.get(key) not in (None, '', raw.get(key)) for key in (
+                            'measurement_boundary', 'completed_task_stage', 'postprocess_completion_verified'))
+                        or any(record.get(key) != raw.get(key) for key in (
+                            'runtime_instance_id', 'ok', 'completed_frames', 'completed_work_units',
+                            'makespan_ms', 'fps_makespan', 'measurement_boundary',
+                            'completed_task_stage', 'postprocess_completion_verified'))):
+                    break
+                rate = project_rate_endpoint(raw, 'completed_task')
+                if (rate['status'] != 'available' or rate['repetition_count_valid'] != 1
+                        or rate['repetition_ids'] != [slots[index]['runtime_instance_id']]):
+                    break
+                raws.append(raw)
+                rates.append(rate)
+            if len(raws) != 3:
+                continue
+            proofs = [_verified_repetition_operating_point(record, require_observation=True) for record in records]
+            representative = _verified_repetition_operating_point(saved)
+            if (not representative or not all(proofs)
+                    or len({proof['operating_point_sha256'] for proof in [representative, *proofs]}) != 1):
+                continue
+            # Differing detection seals are accepted only by the existing BN6
+            # proof, which reopens each original declaration and tensor payload.
+            contracts = {(raw.get('completed_task_endpoint_contract_hash'), raw.get('completion_execution_contract_sha256')) for raw in raws}
+            if len(contracts) != 1 and not all(proof.get('completion_contract_provenance_normalized') is True for proof in proofs):
+                continue
+            samples = [rate['samples'][0] for rate in rates]
+            median, low, high = _bootstrap_median_ci(samples, '|'.join(_measurement_identity(saved)) + '|claim-repeat-fps')
+            for key, value in (('fps_median_reported', median), ('fps_ci95_low_reported', low), ('fps_ci95_high_reported', high)):
+                if saved.get(key) is not None and not math.isclose(saved[key], value, rel_tol=1e-9, abs_tol=1e-12):
+                    break
+            else:
+                fields = rate_endpoint_fields(saved)
+                completed = fields['completed_task_rate']
+                completed.update(status='available', reason='', fps=median, ci95_low=low, ci95_high=high,
+                    ci95_method='deterministic_percentile_bootstrap_median_4000', samples=samples,
+                    work_unit_counts=[rate['work_unit_counts'][0] for rate in rates],
+                    measurement_times_s=[rate['measurement_times_s'][0] for rate in rates],
+                    repetition_ids=[rate['repetition_ids'][0] for rate in rates], repetition_count_valid=3)
+                fields.update(completed_task_fps=median, completed_task_fps_median=median,
+                    completed_task_fps_ci95_low=low, completed_task_fps_ci95_high=high,
+                    completed_task_fps_unavailable_reason='', fps_makespan=median, fps_median=median,
+                    fps_ci95_low=low, fps_ci95_high=high, fps_ci95_method=completed['ci95_method'],
+                    fps_repetition_samples=samples, throughput_primary_fps=median, application_throughput_fps=median,
+                    completed_detection_fps=median if saved.get('task') == 'detection' else None,
+                    completed_task_work_unit_counts=completed['work_unit_counts'],
+                    completed_task_measurement_times_s=completed['measurement_times_s'],
+                    rate_endpoint_source='verified_separate_process_repetition_evidence',
+                    rate_endpoint_operating_point_evidence=proofs)
+                fields.update(_execution_metadata_fields(saved))
+                return fields
+        except (OSError, ValueError, TypeError, KeyError, ImportError, AttributeError):
+            continue
+    return unavailable
+
+
+def _normal_full_a4_cohort_rate_fields(row: Mapping[str, Any], base: Path | None) -> dict[str, Any] | None:
+    """Reopen the normal import authority before reading separate Full processes.
+
+    One collected Full leaf owns one runtime UUID. Its surrounding three-leaf
+    summary must retain all three original observations, rather than treating
+    the representative leaf as the aggregate or trusting a summary proof tag.
+    """
+    contract = row.get('full_command_contract')
+    options = contract.get('runtime_options') if isinstance(contract, Mapping) else {}
+    options = options if isinstance(options, Mapping) else {}
+    if (row.get('backend') != 'native_full_deepx'
+            or 'A4' not in (row.get('deepx_runtime_mode'), options.get('deepx_runtime_mode'))
+            or (_number(row.get('repetition_count_valid')) or 0) <= 1):
+        return None
+    unavailable = rate_endpoint_fields({})
+    unavailable.update(_historical_rate_fields(row, unavailable=True))
+    reason = 'native_full_a4_normal_import_binding_unavailable'
+    unavailable['completed_task_rate']['reason'] = reason
+    unavailable['completed_task_fps_unavailable_reason'] = reason
+    unavailable['rate_endpoint_source'] = reason
+    records = row.get('repetition_records')
+    if not isinstance(records, list) or len(records) != 3 or any(not isinstance(value, Mapping) for value in records):
+        return unavailable
+    # source_reports also retains remote suite files. The existing per-record
+    # operating-point field names the collected Full envelope admitted here.
+    sources = [record.get('operating_point_source_report') for record in records]
+    if any(not isinstance(value, str) or not value for value in sources):
+        return unavailable
+    candidates = [Path(base)] if base is not None else []
+    try:
+        candidates.append(Path(os.path.commonpath(sources)))
+    except ValueError:
+        return unavailable
+    for point in dict.fromkeys(candidates):
+        try:
+            if not point.is_absolute() or point.resolve() != point:
+                continue
+            prepared_path, receipt_path = point / 'PREPARED.json', point / 'performance_import.json'
+            if prepared_path.is_symlink() or receipt_path.is_symlink():
+                continue
+            prepared = json.loads(prepared_path.read_text(encoding='utf-8'))
+            if (not isinstance(prepared, dict) or prepared.get('output') != str(point)
+                    or prepared.get('deepx_runtime_mode') != 'A4'
+                    or (prepared.get('identity') or {}).get('backend') != 'native_full_deepx'):
+                continue
+            # These existing pure readers rehash the original summary/leaves
+            # and bind each leaf to its own accepted prepared argv/root.
+            from .workflow.hardware_acceptance_native import (
+                verify_performance_import, _full_performance_remote_contexts,
+            )
+            from .resources.remote_scripts.native_producer_final_report import (
+                _verified_separate_process_rate_fields,
+            )
+            reports = [Path(value) for value in sources]
+            proof = verify_performance_import(prepared, reports)
+            saved = proof['row']
+            if any(row.get(key) != value for key, value in saved.items()):
+                continue
+            contexts = _full_performance_remote_contexts(prepared, reports)
+            fields = _verified_separate_process_rate_fields(dict(saved), remote_execution_contexts=contexts)
+            if fields is not None and fields.get('rate_endpoint_source') == 'verified_separate_process_repetition_evidence':
+                return fields
+        except (OSError, ValueError, TypeError, KeyError, ImportError, AttributeError):
+            continue
+    return unavailable
+
+
 def _execution_metadata_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Preserve admitted raw input/source bindings, rejecting mixed repeats."""
     fields: dict[str, Any] = {}
@@ -319,6 +512,12 @@ def _execution_metadata_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 def report_rate_fields(row: Mapping[str, Any], base: Path | None = None) -> dict[str, Any]:
     """Replay the saved raw report, or validate the retained summary series."""
+    split_cohort = _normal_split_a4_cohort_rate_fields(row, base)
+    if split_cohort is not None:
+        return split_cohort
+    full_cohort = _normal_full_a4_cohort_rate_fields(row, base)
+    if full_cohort is not None:
+        return full_cohort
     canonical, source = _canonical_full_row(row, base)
     if source:
         fields = rate_endpoint_fields(canonical)

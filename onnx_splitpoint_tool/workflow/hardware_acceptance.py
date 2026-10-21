@@ -63,6 +63,9 @@ def validate_request(profile: Mapping[str, Any], options=None) -> dict[str, Any]
     mode = config.get("mode", "scientific")
     if mode not in {"scientific", "functional"}:
         raise ValueError("unsupported hardware acceptance mode")
+    phase = config.get("phase", "complete")
+    if phase not in {"complete", "numerical"}:
+        raise ValueError("unsupported hardware acceptance phase")
     repetitions = 1 if mode == "functional" else 3
     cells = config.get("cells")
     if not isinstance(cells, list) or not cells or len(cells) > 21:
@@ -89,7 +92,11 @@ def validate_request(profile: Mapping[str, Any], options=None) -> dict[str, Any]
     if not policy:
         raise ValueError("acceptance requires the regular enabled task budget")
     if options is not None:
-        if any((options.resume, options.dry_run, options.skip_benchmarks, options.no_remote,
+        resumable_native = (native.get("deepx_runtime_mode") == "A4"
+                            and all(isinstance(cell, Mapping) and cell.get("runtime_variants") == ["native"]
+                                    and (cell.get("backend") or cell.get("native_backend")) in {"deepx_to_trt", "native_full_deepx"}
+                                    for cell in cells))
+        if any((options.resume and not resumable_native, options.dry_run, options.skip_benchmarks, options.no_remote,
                 options.rerun_generated_only, options.force_stage, options.stop_after)):
             raise ValueError("acceptance starts a fresh bounded hardware job; shortcut options are invalid")
         if options.execution_mode != "generate_and_run":
@@ -100,13 +107,14 @@ def validate_request(profile: Mapping[str, Any], options=None) -> dict[str, Any]
         if not isinstance(value, Mapping):
             raise ValueError("acceptance cell must be a mapping")
         cell = copy.deepcopy(dict(value))
-        key = (str(cell.get("model_id") or ""), str(cell.get("setup_id") or ""))
+        full = str(cell.get("case_id") or "") == "full"
+        key = (str(cell.get("model_id") or ""), str(cell.get("setup_id") or ""), full)
         if key in seen:
             raise ValueError("one selected split per model/setup is required")
         seen.add(key)
         if key[0] not in models or key[1] not in setups:
             raise ValueError("acceptance cell is outside the saved profile model/setup selection")
-        if not re.fullmatch(r"b[0-9]+", str(cell.get("case_id") or "")):
+        if not full and not re.fullmatch(r"b[0-9]+", str(cell.get("case_id") or "")):
             raise ValueError("acceptance requires an explicit existing bNNN split identity")
         variants = [_variant(item) for item in cell.get("runtime_variants", ["native", "generic_completed"])]
         if len(variants) != len(set(variants)) or not variants:
@@ -115,15 +123,21 @@ def validate_request(profile: Mapping[str, Any], options=None) -> dict[str, Any]
             raise ValueError("functional acceptance requires one explicitly assigned runtime per cell")
         cell["runtime_variants"] = [v for v in ("native", "generic_completed") if v in variants]
         cell.setdefault("backend", cell.get("native_backend") or cell.get("measurement_direction") or cell.get("profile_split_run_id"))
+        if full and (cell["backend"] != "native_full_deepx" or variants != ["native"] or mode != "scientific"):
+            raise ValueError("Full acceptance requires an explicit scientific Native DeepX Full cell")
         cell.setdefault("native_source_plan", cell.get("native_performance_plan"))
         cell.setdefault("generic_source_plan", cell.get("generic_performance_plan"))
         cell.setdefault("full_baseline_references", cell.get("baselines", []))
+        if phase == "numerical" and (cell["backend"] not in {"native_full_deepx", "deepx_to_trt"}
+                                      or variants != ["native"] or native.get("deepx_runtime_mode") != "A4"
+                                      or mode != "scientific"):
+            raise ValueError("numerical acceptance phase is confined to explicit Native DeepX A4 cells")
         normalized.append(cell)
     report = Path(str(config.get("source_report_root") or "")).expanduser()
     primary = Path(str(config.get("source_primary_run") or "")).expanduser()
     if not report.is_absolute() or not report.is_dir() or not primary.is_absolute() or not primary.is_dir():
         raise ValueError("existing absolute source report and primary run directories are required")
-    config.update(cells=normalized, regular_budget=regular, schema=SCHEMA, mode=mode,
+    config.update(cells=normalized, regular_budget=regular, schema=SCHEMA, mode=mode, phase=phase,
                   source_report_root=str(report.resolve()), source_primary_run=str(primary.resolve()))
     return config
 
@@ -132,9 +146,13 @@ def summary_lines(profile: Mapping[str, Any]) -> list[str]:
     config = validate_request(profile)
     cells, budget = config["cells"], config["regular_budget"]
     paths = sum(len(cell["runtime_variants"]) for cell in cells)
-    return [f"Hardware-Abnahme: {len(cells)} feste Netz/Setup-Zellen, {paths} frische Split-Pfade; je Zelle genau eine Splitposition.",
+    full_count = sum(cell["case_id"] == "full" for cell in cells)
+    return [f"Hardware-Abnahme: {len(cells)} feste Zellen, {paths} frische Pfade ({full_count} Full); je Netz/Setup höchstens eine Splitposition.",
+            "Numerische Phase: unabhängige serielle Referenzen und gemischte A4-Bilder, danach höchstens 64 Smoke-Tasks, 0 Warmups; keine Energieaufnahme." if config["phase"] == "numerical" else
             "Einzelproben zur Funktionsabnahme; keine neuen wissenschaftlichen Kohorten oder statistischen Claims." if config["mode"] == "functional" else "Reguläre Abnahme mit drei Wiederholungen je Pfad.",
+            "Aufnahmen: keine Energie in der numerischen Phase; die regulären Capture-Slots bleiben unbenutzt." if config["phase"] == "numerical" else
             f"Aufnahmen: je Pfad {budget['repetitions']} gültige Energie-Repeats à {budget['duration_s']} s, FS/command; reguläre Retries {budget['task_budget']}.",
+            "Numerischer Smoke: warmup=0, tasks=64, Prozesse=1 je Zelle; zusätzlich die expliziten seriellen und gemischten Bildprüfungen." if config["phase"] == "numerical" else
             f"Timing/Task: warmup={budget['warmup']}, tasks={budget['frames']}, Prozesse={budget['repetitions']}.",
             "Vorhandene Artefakte und passende Full/Quality-Referenzen werden geprüft und wiederverwendet; neue Dataset-Quality wird nicht gestartet.",
             "Die alte Restkampagne bleibt pausiert. Prepare und Starts gehören ausschließlich zu diesem neuen EvaluationRun.",
@@ -208,7 +226,9 @@ def _accepted_result(result, context):
     if (result.get("fresh_hardware_executed") is not True
             or type(result.get("new_capture_count")) is not int
             or result["new_capture_count"] < context["expected_repetitions"]):
-        raise ValueError("hardware PASS requires a new DUT/collector execution")
+        from .hardware_acceptance_native import verify_same_run_resume_result
+        if not verify_same_run_resume_result(result, context):
+            raise ValueError("hardware PASS requires a new DUT/collector execution or verified same-Run retained slots")
     repeats = result.get("valid_repeats") or 0
     if isinstance(repeats, Mapping):
         valid = all(repeats.get(key) == context["expected_repetitions"] for key in ("performance", "energy"))
@@ -242,6 +262,94 @@ def _adapter(variant):
     suffix = "native" if variant == "native" else "generic"
     module = importlib.import_module(".hardware_acceptance_" + suffix, __package__)
     return getattr(module, "prepare_" + suffix), getattr(module, "run_" + suffix)
+
+
+def _accepted_numerical_result(result, context):
+    value = dict(result)
+    if value.get("status") != "numerical_passed":
+        return value
+    retained = value.get("same_run_numerical_retained") is True
+    if retained and value != _retained_numerical_result(context["acceptance_cell"], context["prepared_native"], context):
+        raise ValueError("numerical Resume projection differs from its unchanged original PASS")
+    n = value.get("image_count")
+    if (type(n) is not int or not 1 <= n <= 32 or value.get("serial_reference_count") != n
+            or value.get("mixed_completed_count") != n or value.get("smoke_completed_count") != 64
+            or any(type(value.get(key)) is not int for key in ("serial_reference_count", "mixed_completed_count",
+                                                              "smoke_completed_count", "new_capture_count", "new_performance_processes"))
+            or value.get("deepx_runtime_mode") != "A4" or value.get("device_completion_proven") is not True
+            or value.get("fresh_hardware_executed") is not (False if retained else True) or value.get("new_capture_count") != 0
+            or value.get("new_performance_processes") != 0
+            or any(value.get(key) is not False for key in ("scientific_claim_eligible", "scientific_cohort_complete",
+                                                          "scientific_statistics_published"))):
+        raise ValueError("numerical PASS requires actual serial/mixed/smoke completion and safe drain, with no regular performance or capture")
+    paths = value.get("evidence_paths") or []
+    if not paths:
+        raise ValueError("numerical PASS requires fresh original evidence")
+    for raw in paths:
+        path = Path(str(raw)).resolve(strict=True)
+        if not path.is_file() or not path.is_relative_to(Path(context["run_dir"])):
+            raise ValueError("numerical evidence must belong to its new normal EvaluationRun")
+    return value
+
+
+def _verify_numerical_reference(cell, prepared, context, *, allow_same_run_resume=False):
+    """A4 performance starts only after this same fixed cell's numeric PASS."""
+    declared = cell.get("numerical_reference")
+    if not isinstance(declared, Mapping) or not re.fullmatch(r"[a-f0-9]{64}", str(declared.get("sha256") or "")):
+        raise ValueError("new DeepX A4 acceptance requires its bound numerical PASS reference")
+    binding = file_binding(declared)
+    payload = json.loads(Path(binding["path"]).read_text())
+    matrix = prepared["phase_matrix"]
+    phase = Path(matrix["path"]).parent
+    path = Path(binding["path"])
+    same_run_resume = (allow_same_run_resume is True and context.get("resume") is True
+                       and context.get("acceptance_phase") == "numerical"
+                       and path == Path(prepared["output"]) / "NUMERICAL_RESULT.json"
+                       and json.loads((Path(prepared["output"]) / "PREPARED.json").read_text()) == prepared)
+    expected_root = phase / "hardware_runs" / (cell["model_id"] + "__" + cell["setup_id"])
+    if (not path.is_relative_to(expected_root)
+            or (path.is_relative_to(Path(context["run_dir"])) and context.get("workflow_kind") != "native_refresh" and not same_run_resume)
+            or payload.get("schema") != "onnx-splitpoint/hardware-acceptance-native-numerical/v1"
+            or payload.get("status") != "numerical_passed" or payload.get("identity") != prepared["identity"]
+            or payload.get("phase_matrix") != matrix or payload.get("deepx_runtime_mode") != "A4"
+            or payload.get("source_contract_sha256") != prepared["source_contract"].get("contract_sha256")
+            or payload.get("device_completion_proven") is not True):
+        raise ValueError("numerical PASS is outside this exact current-phase model/artifact/mode binding")
+    images = file_binding(cell.get("numerical_images"))
+    if payload.get("numerical_images") != images:
+        raise ValueError("numerical PASS image selection differs from the saved A4 acceptance cell")
+    n = payload.get("image_count")
+    if (type(n) is not int or not 1 <= n <= 32 or payload.get("serial_reference_count") != n
+            or payload.get("mixed_completed_count") != n or payload.get("smoke_completed_count") != 64
+            or any(type(payload.get(key)) is not int for key in ("serial_reference_count", "mixed_completed_count", "smoke_completed_count"))):
+        raise ValueError("numerical PASS lacks actual bounded serial/mixed/smoke counts")
+    worker = file_binding(payload.get("worker_report"))
+    if not Path(worker["path"]).is_relative_to(path.parent):
+        raise ValueError("numerical worker report escapes its original result directory")
+    from .hardware_acceptance_numerical import validate_numerical_raw
+    actual = validate_numerical_raw(json.loads(Path(worker["path"]).read_text()), prepared, expected_images=n)
+    for key in ("serial_reference_count", "mixed_completed_count", "smoke_completed_count", "device_completion_proven"):
+        if actual.get(key) != payload.get(key):
+            raise ValueError("numerical PASS summary differs from its original worker report: " + key)
+    return {"reference": binding, "worker_report": worker, "identity": prepared["identity"], "status": "numerical_passed"}
+
+
+def _retained_numerical_result(cell, prepared, context):
+    """Project one unchanged, revalidated same-Run PASS without another worker."""
+    if context.get("resume") is not True or context.get("acceptance_phase") != "numerical":
+        raise ValueError("retained numerical PASS requires normal same-Run numerical Resume")
+    path = Path(prepared["output"]) / "NUMERICAL_RESULT.json"
+    if not path.resolve().is_relative_to(Path(context["run_dir"]).resolve()):
+        raise ValueError("retained numerical result is outside its selected Run")
+    binding = file_binding(path)
+    selected = dict(cell, numerical_reference=binding)
+    _verify_numerical_reference(selected, prepared, context, allow_same_run_resume=True)
+    value = json.loads(path.read_text())
+    if value.get("fresh_hardware_executed") is not True:
+        raise ValueError("retained numerical original does not record its actual worker start")
+    value.update(fresh_hardware_executed=False, same_run_numerical_retained=True,
+                 retained_numerical_result=binding, new_numerical_worker_processes=0)
+    return value
 
 
 def _failure_evidence(cell, variant, context, *, invoked, reason):
@@ -309,9 +417,16 @@ def runner_cancel(context):
     return context.get("cancel_event")
 
 
-def run_acceptance(runner) -> WorkflowRunResult:
+def run_acceptance(runner, *, config=None, workflow_kind="hardware_acceptance") -> WorkflowRunResult:
     """Run already validated finite requests within the ordinary runner owner."""
-    config = validate_request(runner.profile_payload, runner.options)
+    if workflow_kind not in {"hardware_acceptance", "native_refresh"}:
+        raise ValueError("unsupported finite Native workflow")
+    if config is None:
+        config = validate_request(runner.profile_payload, runner.options)
+    elif workflow_kind != "native_refresh":
+        raise ValueError("acceptance configuration must use its normal validator")
+    title = "Native refresh" if workflow_kind == "native_refresh" else "Hardware acceptance"
+    job_type = "NativeRefreshJob" if workflow_kind == "native_refresh" else "HardwareAcceptanceJob"
     from .hardware_matrix import default_hardware_setups_file
     registry = runner.options.hardware_setups_file or str(default_hardware_setups_file())
     root = runner.run_dir
@@ -329,19 +444,31 @@ def run_acceptance(runner) -> WorkflowRunResult:
                "budget_file": str(root / "energy/energy_task_budget.json"),
                "budget_path": str(root / "energy/energy_task_budget.json"),
                "acceptance_mode": config["mode"], "requested_repetitions": config["regular_budget"]["repetitions"],
+               "acceptance_phase": config["phase"],
+               "workflow_kind": workflow_kind, "resume": bool(runner.options.resume),
+               "finite_config": config,
+               "finite_request_binding": {"profile_id": getattr(runner, "profile_id", runner.profile_payload.get("name", "")),
+                                          "profile_hash": runner.manifest.get("profile_hash"), "schema": config["schema"]},
                "expected_duration_s": 60, "expected_repetitions": config["regular_budget"]["repetitions"], "expected_frames": 1000, "expected_warmup": 100}
-    plan_path = write_json(root / "reports/hardware_acceptance_plan.json", config)
+    plan_path = write_json(root / "reports" / (workflow_kind + "_plan.json"), config)
     paths = [plan_path]
     rows, errors = [], []
     total = sum(len(cell["runtime_variants"]) for cell in config["cells"])
     runner._progress_total = total + 2
-    runner.manifest["workflow_stages"] = ["hardware_acceptance"]
+    runner.manifest["workflow_stages"] = [workflow_kind]
     runner.manifest["hardware_acceptance"] = {"schema": SCHEMA, "cell_count": len(config["cells"]),
                                              "runtime_path_count": total, "source_campaign_resumed": False,
+                                             "acceptance_phase": config["phase"],
                                              "acceptance_mode": config["mode"], "requested_repetitions": context["expected_repetitions"]}
+    if workflow_kind == "native_refresh":
+        runner.manifest["native_refresh"] = {**runner.manifest["hardware_acceptance"], "schema": config["schema"]}
     runner.manifest["model_count"] = len({cell["model_id"] for cell in config["cells"]})
     runner._save_manifest("running")
     broker = _resource_context(runner, config, context)
+    if config["phase"] == "complete" and (runner.profile_payload.get("native_producers") or {}).get("deepx_runtime_mode") == "A4":
+        for selected_cell in config["cells"]:
+            for selected_variant in selected_cell["runtime_variants"]:
+                _initialize_budget(context, config, selected_cell, selected_variant)
     stop = threading.Event()
     tick_lock = threading.Lock()
     def tick():
@@ -384,10 +511,10 @@ def run_acceptance(runner) -> WorkflowRunResult:
                     identity = {key: cell[key] for key in ("model_id", "setup_id", "case_id")}
                     identity["runtime_variant"] = variant
                     started = now_iso()
-                    job = f"acceptance-{index:02d}-{variant}"
-                    runner.job_event(dict(identity, job_id=job, job_type="HardwareAcceptanceJob", stage="hardware_acceptance",
+                    job = f"{'refresh' if workflow_kind == 'native_refresh' else 'acceptance'}-{index:02d}-{variant}"
+                    runner.job_event(dict(identity, job_id=job, job_type=job_type, stage=workflow_kind,
                                           title=" | ".join(identity.values()), status="running", event="started", run_dir=str(root)))
-                    runner.log("[hardware-acceptance] selected " + json.dumps(identity, sort_keys=True))
+                    runner.log("[" + workflow_kind + "] selected " + json.dumps(identity, sort_keys=True))
                     try:
                         if runner._cancel_event.is_set():
                             result = {"status": "cancelled", "reason": "normal workflow cancellation", "fresh_hardware_executed": False}
@@ -395,17 +522,37 @@ def run_acceptance(runner) -> WorkflowRunResult:
                             result = {"status": "blocked", "reason": selection_error, "fresh_hardware_executed": False}
                         else:
                             tick()
-                            _initialize_budget(context, config, cell, variant)
+                            if config["phase"] != "numerical":
+                                _initialize_budget(context, config, cell, variant)
                             prepare, execute = _adapter(variant)
                             prepared = prepare(cell, cell_context)
+                            if variant == "native":
+                                cell_context["prepared_native"] = prepared
+                                cell_context["acceptance_cell"] = cell
                             prepared_path = write_json(root / "reports" / "acceptance_prepared" / (job + ".json"), _serialize(prepared))
                             paths.append(prepared_path)
                             runner.log("[hardware-acceptance] normal prepare complete " + str(prepared_path))
                             if runner._cancel_event.is_set():
                                 result = {"status": "cancelled", "reason": "cancelled after prepare", "fresh_hardware_executed": False}
                             else:
-                                invoked = True
-                                result = _accepted_result(execute(prepared, cell_context), context)
+                                if config["phase"] == "numerical":
+                                    from .hardware_acceptance_numerical import run_numerical_native
+                                    invoked = True
+                                    prior_numerical = Path(prepared["output"]) / "NUMERICAL_RESULT.json"
+                                    numerical = (_retained_numerical_result(cell, prepared, cell_context)
+                                                 if cell_context.get("resume") is True and prior_numerical.exists()
+                                                 else run_numerical_native(prepared, cell_context, file_binding(cell.get("numerical_images"))))
+                                    result = _accepted_numerical_result(numerical, cell_context)
+                                elif workflow_kind == "native_refresh":
+                                    from .native_refresh import execute_point, accepted_result
+                                    invoked = True
+                                    result = accepted_result(execute_point(cell, prepared, cell_context, execute), cell_context)
+                                else:
+                                    if prepared.get("deepx_runtime_mode") == "A4":
+                                        proof = _verify_numerical_reference(cell, prepared, cell_context)
+                                        write_json(Path(prepared["output"]) / "NUMERICAL_ADMISSION.json", proof)
+                                    invoked = True
+                                    result = _accepted_result(execute(prepared, cell_context), cell_context)
                             if variant == "native":
                                 cell_context.update(prepared_native=prepared, native_result=result)
                     except Exception as exc:
@@ -417,16 +564,17 @@ def run_acceptance(runner) -> WorkflowRunResult:
                     rows.append(row)
                     row_path = write_json(root / "reports/acceptance_results" / (job + ".json"), row)
                     paths.append(row_path)
-                    status = "ok" if row["status"] == "ok" else "cancelled" if row["status"] == "cancelled" else "failed"
-                    stage = StageResult("hardware_acceptance", cell["model_id"], status, started, row["finished_at"],
-                                        job_id=job, job_type="HardwareAcceptanceJob", execution_mode=variant,
+                    passed = row["status"] == ("numerical_passed" if config["phase"] == "numerical" else "ok")
+                    status = "ok" if passed else "cancelled" if row["status"] == "cancelled" else "failed"
+                    stage = StageResult(workflow_kind, cell["model_id"], status, started, row["finished_at"],
+                                        job_id=job, job_type=job_type, execution_mode=variant,
                                         state="completed" if status == "ok" else status, artifacts=[str(row_path)], details=row)
                     runner.stage_results.append(stage.to_dict())
                     runner.manifest.setdefault("models", {}).setdefault(cell["model_id"], {"model_id": cell["model_id"], "stages": {}})["stages"][job] = stage.to_dict()
-                    runner.job_event(dict(identity, job_id=job, job_type="HardwareAcceptanceJob", stage="hardware_acceptance",
+                    runner.job_event(dict(identity, job_id=job, job_type=job_type, stage=workflow_kind,
                                           title=" | ".join(identity.values()), status=status, event="finished", message=row.get("reason", ""), run_dir=str(root)))
                     runner.progress(len(rows), total + 2, f"{cell['model_id']}/{cell['setup_id']}/{variant}: {row['status']}")
-                    write_json(root / "reports/hardware_acceptance_results.json", {"schema": SCHEMA, "rows": rows, "complete": False})
+                    write_json(root / "reports" / (workflow_kind + "_results.json"), {"schema": config["schema"], "rows": rows, "complete": False})
         finally:
             stop.set()
             if worker.ident is not None:
@@ -440,18 +588,23 @@ def run_acceptance(runner) -> WorkflowRunResult:
                         os.environ.pop(key, None)
                     else:
                         os.environ[key] = value
-    status = "cancelled" if runner._cancel_event.is_set() else "ok" if all(row["status"] == "ok" for row in rows) else "partial"
+    passed_status = "numerical_passed" if config["phase"] == "numerical" else "ok"
+    status = "cancelled" if runner._cancel_event.is_set() else "ok" if all(row["status"] == passed_status for row in rows) else "partial"
     completion = workflow_completion_projection(status)
     captures = sum(int(row.get("new_capture_count") or 0) for row in rows)
-    final = {"schema": SCHEMA, "run_id": runner.run_id, "rows": rows, "status": status,
+    final = {"schema": config["schema"], "workflow_kind": workflow_kind, "run_id": runner.run_id, "rows": rows, "status": status,
              "acceptance_mode": config["mode"], "requested_repetitions": context["expected_repetitions"],
+             "acceptance_phase": config["phase"], "hardware_acceptance_complete": status == "ok" and config["phase"] == "complete",
              "complete": status == "ok", "matrix_cells": len(config["cells"]), "runtime_paths": total,
-             "fresh_pass_paths": sum(row["status"] == "ok" for row in rows), "new_capture_count": captures,
+             "fresh_pass_paths": sum(row["status"] == "ok" and not row.get("reused_cohort")
+                                     and (row.get("new_performance_processes", 1) or row.get("new_capture_count", 0)) > 0 for row in rows),
+             "retained_pass_paths": sum(row["status"] == "ok" and not (row.get("new_performance_processes") or row.get("new_capture_count")) for row in rows), "new_capture_count": captures,
+             "numerical_pass_paths": sum(row["status"] == "numerical_passed" for row in rows),
              "source_campaign_resumed": False, "new_dataset_quality_started": False, "resource_errors": errors}
-    result_path = write_json(root / "reports/hardware_acceptance_results.json", final)
+    result_path = write_json(root / "reports" / (workflow_kind + "_results.json"), final)
     dashboard_path = write_json(root / "reports/result_dashboard.json", final)
     dashboard_md = root / "reports/result_dashboard.md"
-    dashboard_md.write_text("Hardware acceptance: " + status + "\n\n"
+    dashboard_md.write_text(title + ": " + status + "\n\n"
         "Model | Setup | Split | Runtime | Result | New captures | Valid repeats | Limitation\n"
         "--- | --- | --- | --- | --- | --- | --- | ---\n"
         + "\n".join(" | ".join(str(value).replace("|", "/").replace("\n", " ") for value in (
@@ -462,8 +615,8 @@ def run_acceptance(runner) -> WorkflowRunResult:
     status_path = write_json(root / "reports/run_status_summary.json", {**final, "completion": completion})
     paths.extend([result_path, dashboard_path, dashboard_md, status_path])
     runner.report_paths.extend(paths)
-    runner.outputs.update(hardware_acceptance_results_json=str(result_path), result_dashboard_json=str(dashboard_path))
-    runner._register_artifacts(paths, kind="hardware_acceptance", producer_stage="hardware_acceptance")
+    runner.outputs.update({workflow_kind + "_results_json": str(result_path), "result_dashboard_json": str(dashboard_path)})
+    runner._register_artifacts(paths, kind=workflow_kind, producer_stage=workflow_kind)
     runner._measurement_phase_status = status
     runner._control_state = "cancelled" if status == "cancelled" else "finished"
     runner._write_workflow_control()

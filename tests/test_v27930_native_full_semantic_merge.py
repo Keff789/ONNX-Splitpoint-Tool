@@ -32,9 +32,13 @@ def prepare_runner_case(tmp_path, monkeypatch, *, model="yolo11l", task="detecti
     case.contract["source_onnx_sha256"] = runner._sha256_file(source)
     write_json(case.full / "output_contract.json", case.contract)
     source_relative = "models/" + case.model + ".onnx"
+    plan = {"task": task, "runs": [{"id": "deepx_m1_full", "type": "deepx", "backend": "deepx_m1",
+        "provider": "deepx_m1", "variants": ["full"], "benchmark_task": task,
+        "dxnn_path": "deepx/deepx_m1/full/model.dxnn", "contract_path": "deepx/deepx_m1/full/output_contract.json"}]}
+    write_json(case.root / "benchmark_plan.json", plan)
     write_json(case.root / "benchmark_set.json", {
         "schema": "onnx-splitpoint/benchmark-set", "schema_version": 2,
-        "model_name": case.model, "model": source_relative, "cases": ["b003"],
+        "model_name": case.model, "model": source_relative, "cases": ["b003"], "plan": plan,
         "artifact_manifest": {"schema": "onnx-splitpoint/benchmark-set", "schema_version": 2,
                               "files": {"models": [source_relative]}, "counts": {"models": 1}},
     })

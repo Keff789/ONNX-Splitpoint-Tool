@@ -389,6 +389,9 @@ def main() -> int:
         ),
     )
     parser.add_argument("--warmup", type=int, default=0)
+    parser.add_argument("--deepx-runtime-mode", choices=("S1", "A4"), default="S1",
+                        help="Native DeepX policy bound to the performance contract; omission preserves historical S1.")
+    parser.add_argument("--endpoint-output-names-json", default="[]")
     parser.add_argument(
         "--task", required=True, choices=["classification", "detection"],
     )
@@ -651,7 +654,8 @@ def main() -> int:
             if str(ns.task) == "classification":
                 values = list(raw) if isinstance(raw, (list, tuple)) else [raw]
                 outputs = dict(raw) if isinstance(raw, Mapping) else {
-                    f"output_{index}": value for index, value in enumerate(values)
+                    (output_names[index] if ns.deepx_runtime_mode == "A4" else f"output_{index}"): value
+                    for index, value in enumerate(values)
                 }
             else:
                 outputs = _named_outputs(raw, output_names)
@@ -677,6 +681,26 @@ def main() -> int:
         from dx_engine import InferenceEngine  # type: ignore
 
         engine = InferenceEngine(str(dxnn))
+        native_adapter = None
+        if ns.deepx_runtime_mode == "A4":
+            from onnx_splitpoint_tool.native_deepx_async import NativeDeepXAsync, run_a4
+            if str(ns.task) == "classification":
+                output_names = json.loads(ns.endpoint_output_names_json)
+                if not isinstance(output_names, list) or not output_names or any(not isinstance(name, str) or not name for name in output_names) or len(set(output_names)) != len(output_names):
+                    raise ValueError("deepx_native_full_classification_output_names_missing")
+            native_adapter = NativeDeepXAsync(
+                engine, input_names=[str(ns.expected_prepared_input_name)],
+            )
+            if len(output_names) != len(native_adapter.output_names):
+                raise ValueError("deepx_native_full_completion_output_count_mismatch")
+            if str(ns.task) == "detection":
+                from onnx_splitpoint_tool.native_detection_postprocess import tensor_signature
+                expected_signature = completion_contract.get(
+                    "raw_output_tensor_signature" if completion_kind == "raw_host_tail" else "source_output_tensor_signature"
+                )
+                if tensor_signature(_named_outputs(native_adapter.slots[0].outputs, output_names)) != expected_signature:
+                    raise ValueError("deepx_native_full_completion_output_contract_mismatch")
+            sdk_feed = native_adapter.prepare_input(feed)
         frames = max(1, int(ns.frames))
         requested_duration_s = max(0.0, float(ns.duration_s or 0.0))
         warmup = max(0, int(ns.warmup))
@@ -684,24 +708,44 @@ def main() -> int:
             completion_processor.assert_implementation_unchanged()
             if isinstance(completion_processor, FrozenDetectionPostprocessor) else {}
         )
-        for _ in range(warmup):
-            raw = engine.run([feed])
-            if completion_processor is not None:
-                complete_outputs(raw)
+        phase = "warmup"
+        if native_adapter is not None:
+            warmup_stats = run_a4(native_adapter, lambda _request_id: sdk_feed,
+                                 count=warmup, complete=lambda _request_id, raw: complete_outputs(raw))
+        else:
+            for _ in range(warmup):
+                raw = engine.run([feed])
+                if completion_processor is not None:
+                    complete_outputs(raw)
 
         completion_result: dict[str, Any] = {}
         timings_ms: list[float] = []
         measured_started = time.perf_counter()
-        while (
-            len(timings_ms) < frames
-            or time.perf_counter() - measured_started
-            < requested_duration_s
-        ):
-            started = time.perf_counter()
-            raw = engine.run([feed])
-            if completion_processor is not None:
+        phase = "measured"
+        native_stats: dict[str, Any] = {}
+        if native_adapter is not None:
+            def complete_native(_request_id, raw):
+                nonlocal completion_result
                 completion_result = complete_outputs(raw)
-            timings_ms.append((time.perf_counter() - started) * 1000.0)
+
+            native_stats = run_a4(
+                native_adapter, lambda _request_id: sdk_feed,
+                count=None if requested_duration_s > 0 else frames,
+                duration_s=requested_duration_s,
+                complete=complete_native,
+            )
+            timings_ms = list(native_stats["request_latencies_ms"])
+        else:
+            while (
+                len(timings_ms) < frames
+                or time.perf_counter() - measured_started
+                < requested_duration_s
+            ):
+                started = time.perf_counter()
+                raw = engine.run([feed])
+                if completion_processor is not None:
+                    completion_result = complete_outputs(raw)
+                timings_ms.append((time.perf_counter() - started) * 1000.0)
 
         completed = len(timings_ms)
         measured_duration_s = max(
@@ -787,7 +831,7 @@ def main() -> int:
             )
 
         ok = bool(
-            completed >= frames
+            (completed > 0 if native_adapter is not None and requested_duration_s > 0 else completed >= frames)
             and minimum_duration_satisfied
             and postprocess_count_ok
             and completed_v2_ok
@@ -799,6 +843,24 @@ def main() -> int:
             "ok": ok,
             "status": "ok" if ok else "completed_work_units_mismatch",
             "benchmark_kind": "prepared_feed_dx_engine_energy_hotloop",
+            "deepx_runtime_mode": str(ns.deepx_runtime_mode),
+            "deepx_max_inflight": 4 if native_adapter is not None else 1,
+            **({
+                "deepx_async_observation": native_stats["observation"],
+                "actual_pending_max": native_stats["actual_pending_max"],
+                "submitted_count": native_stats["submitted_count"],
+                "accepted_work_drained": native_stats["drained"],
+                "request_latency": native_stats.get("request_latency"),
+                "runtime_input_shapes": [list(value.shape) for value in (sdk_feed if isinstance(sdk_feed, list) else [sdk_feed])],
+                "runtime_output_names": list(native_adapter.output_names),
+                "runtime_output_name_binding": [
+                    {"index": index, "sdk_name": sdk_name,
+                     "endpoint_name": output_names[index]}
+                    for index, sdk_name in enumerate(native_adapter.output_names)
+                ],
+                "warmup_completed_count": warmup_stats["completed_count"],
+                "admission_stopped_at_deadline": requested_duration_s > 0,
+            } if native_adapter is not None else {}),
             "prepared_feed_contract_version": CONTRACT_VERSION,
             "requested_work_units": frames,
             "minimum_requested_work_units": frames,
@@ -817,6 +879,8 @@ def main() -> int:
             "measured_duration_s": measured_duration_s,
             "minimum_duration_satisfied": minimum_duration_satisfied,
             "measurement_control": (
+                "duration_admission_then_complete_drain"
+                if native_adapter is not None and requested_duration_s > 0.0 else
                 "minimum_frames_and_duration"
                 if requested_duration_s > 0.0 else "exact_frames"
             ),
@@ -952,10 +1016,23 @@ def main() -> int:
         print(json.dumps(payload), flush=True)
         return 0 if ok else 5
     except Exception as exc:
+        failed_phase = dict(getattr(exc, "result", {}) or {})
         return _fail(
             report,
             "deepx_full_energy_hotloop_failed",
             error=f"{type(exc).__name__}: {exc}",
+            unsafe_runtime_state=bool(getattr(exc, "unsafe_runtime_state", False)),
+            deepx_runtime_mode=str(ns.deepx_runtime_mode),
+            deepx_max_inflight=4 if ns.deepx_runtime_mode == "A4" else 1,
+            unsafe_runtime_reasons=failed_phase.get("unsafe_runtime_reasons") or [],
+            diagnostic_phase=locals().get("phase", "setup"),
+            failed_phase_counts={"submitted_count": failed_phase.get("submitted_count", 0),
+                                 "completed_count": failed_phase.get("completed_count", 0)},
+            completed_frames=failed_phase.get("completed_count", 0) if locals().get("phase") == "measured" else 0,
+            warmup_completed_count=(failed_phase.get("completed_count", 0) if locals().get("phase") == "warmup"
+                                    else warmup_stats["completed_count"] if "warmup_stats" in locals() else 0),
+            accepted_work_drained=failed_phase.get("drained", False),
+            deepx_async_observation=failed_phase.get("observation") or {},
         )
 
 

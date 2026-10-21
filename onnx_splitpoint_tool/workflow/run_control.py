@@ -445,6 +445,63 @@ class EvaluationRunLock:
         self._fh.flush()
         os.fsync(self._fh.fileno())
 
+    def resolve_quarantine(
+        self, *, expected_owner: Mapping[str, Any], expected_quarantine: bytes,
+        recovery: Mapping[str, Any], commit_evidence: Callable[[], None],
+    ) -> None:
+        """Commit a validated resource recovery while holding its existing lock.
+
+        The product recovery validator supplies the exact predecessor and its
+        durable evidence receipt. Keep the fence until the released owner is
+        fsynced; restore the original fence if any part of the transition fails.
+        This method does not establish that an SDK or source is safe to release.
+        """
+        if (self._fh is None or not self._thread_acquired
+                or self._read_owner() != dict(expected_owner)
+                or self.quarantine_path.is_symlink()
+                or self.quarantine_path.read_bytes() != expected_quarantine
+                or recovery.get("status") not in {"verified_pre_inference", "verified_native_numerical"}
+                or recovery.get("resource") != expected_owner.get("physical_resource")
+                or not recovery.get("evidence_path")):
+            raise WorkflowRunCleanupQuarantineError("resource recovery binding changed under lock")
+        released = {**self.owner, "state": "released", "released_at": _now_iso(),
+                    "resource_recovery": dict(recovery)}
+        try:
+            self.write_recovery_owner(released)
+            commit_evidence()
+            self.quarantine_path.unlink()
+            if os.name == "posix":
+                descriptor = os.open(self.lock_path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+        except BaseException:
+            # A failed release remains fenced, even after an unlink or a short
+            # owner write. Preserve the exact historical bytes when possible.
+            original = json.loads(expected_quarantine)
+            self.commit_quarantine_fence(original["owner"])
+            temporary = self.quarantine_path.with_name(
+                f".{self.quarantine_path.name}.{os.getpid()}.{time.time_ns()}.recovery.tmp")
+            try:
+                with temporary.open("xb") as handle:
+                    handle.write(expected_quarantine)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, self.quarantine_path)
+                if os.name == "posix":
+                    descriptor = os.open(self.lock_path.parent, os.O_RDONLY)
+                    try:
+                        os.fsync(descriptor)
+                    finally:
+                        os.close(descriptor)
+                self.write_recovery_owner(expected_owner)
+            finally:
+                temporary.unlink(missing_ok=True)
+            raise
+        self.owner = released
+        self._quarantined = False
+
     def commit_quarantine_fence(
         self, payload: Mapping[str, Any]
     ) -> Path:

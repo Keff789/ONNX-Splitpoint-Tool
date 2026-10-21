@@ -960,7 +960,41 @@ def _run_deepx(
     setup_id: str, comparison_backend: str, *,
     allow_diagnostic_input_probes: bool = False,
     prepared_input_manifest: Path | None = None,
+    deepx_runtime_mode: str = "S1",
+    execution_lifecycle: Any = None,
 ) -> dict[str, Any]:
+    if deepx_runtime_mode == "A4" and execution_lifecycle is None:
+        from onnx_splitpoint_tool.native_deepx_async import NativeExecutionLifecycle
+        execution_lifecycle = NativeExecutionLifecycle()
+    try:
+        result = _run_deepx_impl(
+            benchmark_set, image, out_dir, model, task, setup_id, comparison_backend,
+            allow_diagnostic_input_probes=allow_diagnostic_input_probes,
+            prepared_input_manifest=prepared_input_manifest,
+            deepx_runtime_mode=deepx_runtime_mode,
+            execution_lifecycle=execution_lifecycle,
+        )
+    except Exception as exc:
+        if execution_lifecycle is not None:
+            exc.deepx_execution_lifecycle = execution_lifecycle.report()
+        raise
+    if execution_lifecycle is not None:
+        result["deepx_execution_lifecycle"] = execution_lifecycle.report()
+    return result
+
+
+def _run_deepx_impl(
+    benchmark_set: Path, image: Path, out_dir: Path, model: str, task: str,
+    setup_id: str, comparison_backend: str, *,
+    allow_diagnostic_input_probes: bool = False,
+    prepared_input_manifest: Path | None = None,
+    deepx_runtime_mode: str = "S1",
+    execution_lifecycle: Any = None,
+) -> dict[str, Any]:
+    if deepx_runtime_mode not in {"S1", "A4"}:
+        raise ValueError("deepx_runtime_mode_invalid")
+    if deepx_runtime_mode == "A4" and allow_diagnostic_input_probes:
+        raise ValueError("deepx_a4_serial_oracle_requires_explicit_input_contract")
     try:
         from dx_engine import InferenceEngine  # type: ignore
     except Exception as exc:  # pragma: no cover - target dependency
@@ -970,8 +1004,20 @@ def _run_deepx(
         benchmark_set, backend="deepx_m1", model_id=model,
         variant="full", task=task,
     )
+    if execution_lifecycle is not None:
+        execution_lifecycle.construction_enter()
     engine = InferenceEngine(str(dxnn))
+    if execution_lifecycle is not None:
+        execution_lifecycle.construction_return()
+    native_input_binding = None
+    if deepx_runtime_mode == "A4":
+        from onnx_splitpoint_tool.native_deepx_async import NativeDeepXAsync
+        inp = contract.get("input") if isinstance(contract.get("input"), Mapping) else {}
+        native_input_binding = NativeDeepXAsync(
+            engine, input_names=[str(inp["name"])] if inp.get("name") else None,
+        )
     errors: list[dict[str, Any]] = []
+    serial_calls_started = serial_calls_completed = 0
     if prepared_input_manifest is not None:
         sealed = load_sealed_deepx_native_full_input(
             prepared_input_manifest,
@@ -995,12 +1041,25 @@ def _run_deepx(
         )
     for tensor, hwc, prep, source in candidates:
         try:
+            runtime_inputs = (
+                [native_input_binding.prepare_input(np.ascontiguousarray(tensor))]
+                if native_input_binding is not None else [np.ascontiguousarray(tensor)]
+            )
             if hasattr(engine, "run"):
-                raw = engine.run([np.ascontiguousarray(tensor)])
+                serial_calls_started += 1
+                if execution_lifecycle is not None:
+                    execution_lifecycle.inference_enter()
+                raw = engine.run(runtime_inputs)
             elif hasattr(engine, "Run"):
-                raw = engine.Run([np.ascontiguousarray(tensor)])
+                serial_calls_started += 1
+                if execution_lifecycle is not None:
+                    execution_lifecycle.inference_enter()
+                raw = engine.Run(runtime_inputs)
             else:
                 raise RuntimeError("dx_engine.InferenceEngine has no run/Run method")
+            serial_calls_completed += 1
+            if execution_lifecycle is not None:
+                execution_lifecycle.inference_return()
             values = list(raw) if isinstance(raw, (list, tuple)) else [raw]
             names: list[str] = []
             declared = contract.get("outputs") if isinstance(contract.get("outputs"), list) else []
@@ -1084,6 +1143,9 @@ def _run_deepx(
                 runtime_meta={
                     "dxnn": str(dxnn), "input_candidate": source,
                     "input_contract_mode": _deepx_input_contract_mode(source),
+                    **({"deepx_runtime_mode": "A4", "reference_api": "serial_engine_run",
+                        "sdk_runtime_input_shapes": [list(value.shape) for value in runtime_inputs]}
+                       if native_input_binding is not None else {}),
                 },
                 declared_output_contract=endpoint_declaration,
                 frozen_postprocess_contract=frozen_contract,
@@ -1095,6 +1157,11 @@ def _run_deepx(
                 "ok": True, "output_manifest": str(manifest),
                 "input_manifest": str(input_manifest), "dxnn": str(dxnn),
                 "input_candidate": source, "attempt_errors": errors,
+                **({"deepx_runtime_mode": "A4", "reference_api": "serial_engine_run",
+                    "sdk_runtime_input_shapes": [list(value.shape) for value in runtime_inputs],
+                    "serial_reference_calls_started": serial_calls_started,
+                    "serial_reference_calls_completed": serial_calls_completed}
+                   if native_input_binding is not None else {}),
                 "frozen_host_postprocess_contract": frozen_contract,
                 "frozen_host_postprocess_contract_sha256": str(
                     frozen_contract.get("contract_sha256") or ""
@@ -1110,7 +1177,16 @@ def _run_deepx(
             }
         except Exception as exc:
             errors.append({"source": source, "shape": list(tensor.shape), "dtype": str(tensor.dtype), "error": f"{type(exc).__name__}: {exc}"})
-    raise RuntimeError("No DEEPX Full semantic input candidate succeeded: " + json.dumps(errors)[-6000:])
+            if native_input_binding is not None and serial_calls_started > serial_calls_completed:
+                native_input_binding.retain_unresolved_serial(runtime_inputs, str(exc))
+                break
+    failure = RuntimeError("No DEEPX Full semantic input candidate succeeded: " + json.dumps(errors)[-6000:])
+    if native_input_binding is not None:
+        failure.serial_reference_calls_started = serial_calls_started
+        failure.serial_reference_calls_completed = serial_calls_completed
+        failure.unsafe_runtime_state = serial_calls_started > serial_calls_completed
+        failure.deepx_async_observation = native_input_binding.report()
+    raise failure
 
 
 def main() -> int:
@@ -1142,6 +1218,8 @@ def main() -> int:
     parser.add_argument("--quality-first-producer-identity-sha256", default="")
     parser.add_argument("--setup-id", default="")
     parser.add_argument("--comparison-backend", default="")
+    parser.add_argument("--deepx-runtime-mode", choices=("S1", "A4"), default="S1",
+                        help="Native A4 serial reference binds the actual SDK batch-one input; omission preserves historical S1.")
     parser.add_argument(
         "--prepared-input-manifest", default="",
         help=(
@@ -1156,12 +1234,24 @@ def main() -> int:
     parser.add_argument("--json-out", default="")
     args = parser.parse_args()
 
-    benchmark_set = Path(args.benchmark_set).expanduser().resolve()
-    model = _model_id(benchmark_set, args.model)
-    task = str(args.task or _task(benchmark_set, model)).lower()
-    image = _resolve_image(benchmark_set, args.image)
+    execution_lifecycle = None
+    if args.backend == "deepx" and args.deepx_runtime_mode == "A4":
+        from onnx_splitpoint_tool.native_deepx_async import NativeExecutionLifecycle
+        execution_lifecycle = NativeExecutionLifecycle()
+    benchmark_set = Path(args.benchmark_set).expanduser()
+    model, task, image = str(args.model), str(args.task), Path(args.image).expanduser()
     out_dir = Path(args.out_dir).expanduser().resolve()
+    if execution_lifecycle is None:
+        benchmark_set = benchmark_set.resolve()
+        model = _model_id(benchmark_set, args.model)
+        task = str(args.task or _task(benchmark_set, model)).lower()
+        image = _resolve_image(benchmark_set, args.image)
     try:
+        if execution_lifecycle is not None:
+            benchmark_set = benchmark_set.resolve()
+            model = _model_id(benchmark_set, args.model)
+            task = str(args.task or _task(benchmark_set, model)).lower()
+            image = _resolve_image(benchmark_set, args.image)
         if args.backend == "tensorrt":
             explicit_identity = _verify_explicit_trt_identity(args)
             result = _run_tensorrt(
@@ -1174,6 +1264,8 @@ def main() -> int:
                 benchmark_set, image, out_dir, model, task,
                 str(args.setup_id or ""), str(args.comparison_backend or ""),
                 allow_diagnostic_input_probes=bool(args.diagnostic_deepx_input_probes),
+                deepx_runtime_mode=str(args.deepx_runtime_mode),
+                execution_lifecycle=execution_lifecycle,
                 prepared_input_manifest=(
                     Path(args.prepared_input_manifest).expanduser()
                     if str(args.prepared_input_manifest or "").strip()
@@ -1184,7 +1276,9 @@ def main() -> int:
             "backend": f"native_full_{args.backend}", "model": model,
             "setup_id": str(args.setup_id or ""),
             "comparison_backend": str(args.comparison_backend or ""),
-            "task": task, "image": str(image), "image_sha256": _sha256(image),
+            "task": task, "image": str(image), "image_sha256": (
+                _sha256(image) if execution_lifecycle is None or image.is_file() else ""
+            ),
         })
         rc = 0
     except Exception as exc:
@@ -1192,11 +1286,19 @@ def main() -> int:
             "ok": False, "backend": f"native_full_{args.backend}",
             "model": model, "setup_id": str(args.setup_id or ""),
             "comparison_backend": str(args.comparison_backend or ""),
-            "task": task, "image": str(image), "image_sha256": _sha256(image),
+            "task": task, "image": str(image), "image_sha256": (
+                _sha256(image) if execution_lifecycle is None or image.is_file() else ""
+            ),
             "failure_reason": "native_full_semantic_dump_failed",
             "error": f"{type(exc).__name__}: {exc}",
+            **({key: getattr(exc, key) for key in (
+                "serial_reference_calls_started", "serial_reference_calls_completed",
+                "unsafe_runtime_state", "deepx_async_observation",
+            ) if hasattr(exc, key)} if execution_lifecycle is not None else {}),
         }
         rc = 1
+    if execution_lifecycle is not None:
+        result["deepx_execution_lifecycle"] = execution_lifecycle.report()
     report_path = Path(args.json_out).expanduser().resolve() if args.json_out else out_dir / "native_full_semantic_dump.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

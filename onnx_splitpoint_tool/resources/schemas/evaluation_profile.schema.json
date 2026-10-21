@@ -278,6 +278,36 @@
         "$ref": "#/$defs/runProfile"
       }
     },
+    "native_refresh": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "schema", "source_report_root", "source_primary_run", "source_snapshot", "matrix_evidence", "cells"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "schema": {"const": "onnx-splitpoint/native-refresh/v1"},
+        "mode": {"const": "scientific"},
+        "phase": {"const": "complete"},
+        "source_report_root": {"type": "string", "minLength": 1},
+        "source_primary_run": {"type": "string", "minLength": 1},
+        "source_snapshot": {"$ref": "#/$defs/protocolManifestReference"},
+        "matrix_evidence": {"$ref": "#/$defs/protocolManifestReference"},
+        "cells": {
+          "type": "array", "minItems": 1, "maxItems": 21,
+          "items": {
+            "type": "object",
+            "required": ["model_id", "setup_id", "case_id", "runtime_variants", "numerical_images"],
+            "properties": {
+              "model_id": {"type": "string", "minLength": 1},
+              "setup_id": {"const": "orin_nx_deepx_m1_01"},
+              "case_id": {"type": "string", "pattern": "^(b[0-9]+|full)$"},
+              "runtime_variants": {"const": ["native"]},
+              "numerical_images": {"$ref": "#/$defs/protocolManifestReference"},
+              "cohort_reference": {"$ref": "#/$defs/protocolManifestReference"}
+            }
+          }
+        }
+      }
+    },
     "hardware_acceptance": {
       "type": "object",
       "additionalProperties": false,
@@ -286,6 +316,7 @@
         "enabled": {"type": "boolean"},
         "schema": {"const": "onnx-splitpoint/hardware-acceptance/v1"},
         "mode": {"enum": ["scientific", "functional"]},
+        "phase": {"enum": ["complete", "numerical"], "default": "complete"},
         "source_report_root": {"type": "string", "minLength": 1},
         "source_primary_run": {"type": "string", "minLength": 1},
         "hardware_registry_path": {"type": "string", "minLength": 1},
@@ -298,7 +329,7 @@
             "properties": {
               "model_id": {"type": "string", "minLength": 1},
               "setup_id": {"type": "string", "minLength": 1},
-              "case_id": {"type": "string", "pattern": "^b[0-9]+$"},
+              "case_id": {"type": "string", "pattern": "^(b[0-9]+|full)$"},
               "runtime_variants": {"type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true,
                 "items": {"enum": ["native", "generic_completed", "Native", "Generic Completed"]}}
             }
@@ -1573,6 +1604,11 @@
         "inflight": {
           "type": "integer",
           "minimum": 1
+        },
+        "deepx_runtime_mode": {
+          "type": "string",
+          "enum": ["A4", "S1"],
+          "description": "Native DeepX only. New requests explicitly use A4 (one engine, four open jobs, split FIFO3). S1 is diagnostic compatibility; absent historical modes retain S1."
         },
         "hailo_format": {
           "type": "string"

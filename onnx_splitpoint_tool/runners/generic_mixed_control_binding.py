@@ -1,0 +1,404 @@
+"""Bind optional mixed-input functional controls to a prepared Generic run.
+
+Only existing prepared tensors are loaded. The caller supplies the initialized
+product P1/P2 functions and its policy-bound adapter; this module owns no SDK,
+transport, process, preprocessing, build, or scientific throughput measurement.
+"""
+from __future__ import annotations
+
+from collections.abc import Mapping
+from copy import deepcopy
+import hashlib
+import json
+from pathlib import Path
+import re
+
+import numpy as np
+
+from .task_completion import load_completion_bound_array, normalize_stage1_execution
+
+
+def _sha(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _detection_module():
+    # Generated bundles vendor this module beside native_detection_postprocess;
+    # the repository keeps the canonical module one package level above it.
+    if __package__ == "splitpoint_runners":
+        from . import native_detection_postprocess
+    else:
+        from .. import native_detection_postprocess
+    return native_detection_postprocess
+
+
+def _processor_policy(processor):
+    value = deepcopy(processor)
+    for key in ("original_wh", "letterbox_geometry_contract", "letterbox_geometry_contract_sha256",
+                "implementation_artifacts", "contract_sha256", "invariant_contract_sha256"):
+        value.pop(key, None)
+    if isinstance(value.get("invariant_identity"), Mapping):
+        value["invariant_identity"].pop("implementation_artifacts", None)
+    return value
+
+
+def _detection_contract(control, base, metadata):
+    product = _detection_module()
+    verified = product.verify_detection_completion_execution_contract(control)
+    original = product.verify_detection_completion_execution_contract(base)
+    for key in ("model_id", "model_family", "completion_mode", "execution_policy",
+                "performance_energy_contract_identity", "source_endpoint", "comparison_endpoint_contract",
+                "yolov7_head_mapping", "artifact_hash_policy", "content_hash_policy",
+                "invocation_hash_policy", "observation_relation_policy"):
+        if verified[key] != original[key]:
+            raise ValueError("Mixed detection control changed its completion semantics: " + key)
+    processor = verified["processor_contract"]
+    if _processor_policy(processor) != _processor_policy(original["processor_contract"]):
+        raise ValueError("Mixed detection control changed its processor policy")
+    original_wh = metadata.get("original_wh")
+    if (not isinstance(original_wh, (list, tuple)) or len(original_wh) != 2
+            or any(type(value) is not int or value <= 0 for value in original_wh)
+            or processor["original_wh"] != list(original_wh)):
+        raise ValueError("Mixed detection control geometry differs from its prepared input provenance")
+    hw = processor["input_hw"]
+    if metadata.get("shape") != [hw[0], hw[1], 3] or metadata.get("dtype") != "uint8":
+        raise ValueError("Mixed detection control prepared tensor geometry contract mismatch")
+    geometry = product.build_letterbox_geometry_contract(input_hw=hw, original_wh=original_wh,
+        preprocess={"mode": "letterbox", "rgb": True, "pad_value": 114})
+    if ("letterbox_geometry_contract" in processor
+            and processor["letterbox_geometry_contract"] != geometry):
+        raise ValueError("Mixed detection control derived geometry mismatch")
+    declared = metadata.get("geometry")
+    if declared is not None:
+        expected = {"mode": "letterbox", "source_hw": [original_wh[1], original_wh[0]],
+            "target_hw": hw, "resized_hw": list(reversed(geometry["resized_wh"])),
+            "pad_ltrb": [geometry[key] for key in ("pad_left", "pad_top", "pad_right", "pad_bottom")],
+            "pad_value": geometry["pad_value"]}
+        if not isinstance(declared, Mapping) or any(declared.get(key) != value for key, value in expected.items()):
+            raise ValueError("Mixed detection control prepared geometry mismatch")
+    return verified
+
+
+def _descriptor(value):
+    return (isinstance(value, Mapping) and set(value) == {"path", "sha256"}
+            and isinstance(value["path"], str) and Path(value["path"]).is_absolute()
+            and isinstance(value["sha256"], str) and re.fullmatch(r"[a-f0-9]{64}", value["sha256"]) is not None)
+
+
+def _source_map(config, *, check_files=False):
+    sources = config.get("runtime_source_files")
+    if not isinstance(sources, list) or not sources or any(not _descriptor(item) for item in sources):
+        raise ValueError("Mixed functional control lacks its frozen runtime source closure")
+    result = {item["path"]: item["sha256"] for item in sources}
+    if len(result) != len(sources):
+        raise ValueError("Mixed functional control runtime source paths are duplicated")
+    if check_files:
+        try:
+            changed = any(_sha(path) != digest for path, digest in result.items())
+        except OSError as error:
+            raise ValueError("Mixed functional control runtime source missing") from error
+        if changed:
+            raise ValueError("Mixed functional control runtime sources changed")
+    return result
+
+
+def _input_sequence():
+    # Both inputs visit every physical slot for the fixed four/eight-slot pools.
+    return [(index % 2) ^ (index >= 16) for index in range(32)]
+
+
+def load_bound_mixed_control(config):
+    """Check the optional sidecar and tensor bytes before runtime construction."""
+    if not isinstance(config, Mapping):
+        raise ValueError("Mixed functional control runtime configuration malformed")
+    descriptor = config.get("mixed_input_control")
+    if descriptor is None:
+        return None
+    if config.get("energy_capture"):
+        raise ValueError("Mixed functional control is outside energy captures")
+    if not _descriptor(descriptor):
+        raise ValueError("Mixed functional control requires a hash-bound sidecar")
+    source_map = _source_map(config, check_files=True)
+    if (source_map.get(descriptor["path"]) != descriptor["sha256"]
+            or _sha(descriptor["path"]) != descriptor["sha256"]):
+        raise ValueError("Mixed functional control differs from frozen runtime sources")
+    payload = json.loads(Path(descriptor["path"]).read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping) or config.get("task") not in {"classification", "detection"}:
+        raise ValueError("Mixed functional control sidecar/task malformed")
+    for key in ("identity", "execution_id", "expected_runtime_artifacts"):
+        if not config.get(key) or payload.get(key) != config.get(key):
+            raise ValueError("Mixed functional control belongs to another runtime: " + key)
+    if (payload.get("task_count") != 32 or type(payload.get("task_count")) is not int
+            or normalize_stage1_execution(payload.get("stage1_execution"))
+            != normalize_stage1_execution(config.get("stage1_execution"))
+            or not isinstance(payload.get("inputs"), list) or len(payload["inputs"]) != 2
+            or not isinstance(payload.get("provenance"), Mapping) or not payload["provenance"]):
+        raise ValueError("Mixed functional control task/policy/provenance contract invalid")
+    if (("task_input_indices" in payload and payload["task_input_indices"] != _input_sequence())
+            or ("task_sequence_policy" in payload
+                and payload["task_sequence_policy"] != "first16_alternate_second16_invert_v1")):
+        raise ValueError("Mixed functional control task sequence does not exercise slot reuse")
+    expected = config["input_binding"]["prepared_input"]
+    if config["task"] == "classification" and config.get("completion_contract") != {
+            "task": "classification", "operation": "top1_top5", "label_offset": 0}:
+        raise ValueError("Mixed classification control changed Top1/Top5 completion")
+    tensors = []
+    for index, item in enumerate(payload["inputs"]):
+        if not isinstance(item, Mapping) or not isinstance(item.get("prepared_input"), Mapping):
+            raise ValueError("Mixed functional input descriptor malformed")
+        spec = item["prepared_input"]
+        if (not isinstance(spec.get("path"), str) or not Path(spec["path"]).is_absolute()
+                or any(spec.get(key) != expected.get(key) for key in ("input_name", "shape", "dtype"))
+                or source_map.get(spec["path"]) != spec["sha256"]
+                or not isinstance(item.get("provenance"), Mapping) or not item["provenance"]):
+            raise ValueError("Mixed functional input differs from its prepared contract/source closure")
+        if index == 0 and any(spec.get(key) != expected.get(key) for key in
+                              ("path", "sha256", "input_name", "shape", "dtype", "format")):
+            raise ValueError("Mixed control input zero must preserve the unchanged baseline prepared input")
+        tensors.append(load_completion_bound_array(spec, file_sha256=_sha))
+        if config["task"] == "detection":
+            _detection_contract(item["completion_contract"], config["completion_contract"],
+                {**spec, "original_wh": item.get("original_wh"), **({"geometry": item["geometry"]} if "geometry" in item else {})})
+        elif item.get("completion_contract") not in (None, config["completion_contract"]):
+            raise ValueError("Mixed classification control changed Top1/Top5 completion")
+    if np.array_equal(tensors[0], tensors[1]):
+        raise ValueError("Mixed control requires two distinguishable existing prepared inputs")
+    return payload, tensors
+
+
+def _report_value(value):
+    """Retain tensor evidence compactly; no diagnostic FPS is published."""
+    if isinstance(value, np.ndarray):
+        return {"shape": list(value.shape), "dtype": str(value.dtype),
+                "tensor_sha256": hashlib.sha256(np.ascontiguousarray(value).tobytes()).hexdigest()}
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, Mapping):
+        return {key: _report_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_report_value(item) for item in value]
+    return value
+
+
+def _tensor_snapshot(value):
+    if (not isinstance(value, Mapping) or set(value) != {"shape", "dtype", "tensor_sha256"}
+            or not isinstance(value["shape"], list)
+            or any(type(dim) is not int or dim <= 0 for dim in value["shape"])
+            or not isinstance(value["dtype"], str)
+            or not isinstance(value["tensor_sha256"], str)
+            or re.fullmatch(r"[a-f0-9]{64}", value["tensor_sha256"]) is None):
+        return False
+    try:
+        return np.dtype(value["dtype"]).kind in "biuf"
+    except TypeError:
+        return False
+
+
+def run_bound_mixed_control(config, output, repetition, *, serial_stage1, transfer,
+                            stage2, stage1_async, prepare_async_feed, clone_payload,
+                            runner_source):
+    """Run 32 serial references and 32 ordinary pipeline tasks before timing."""
+    from .generic_mixed_control import run_mixed_control
+    from .harness.classification import ClassificationCompletion
+
+    if type(repetition) is not int or repetition not in (1, 2, 3):
+        raise ValueError("Mixed control requires a bound repetition index 1-3")
+    loaded = load_bound_mixed_control(config)
+    if loaded is None:
+        raise ValueError("Mixed control invoked without its explicit bound sidecar")
+    payload, tensors = loaded
+    sequence = _input_sequence()
+    tasks = [{"task_id": f"task_{index:02d}", "prepared_input": payload["inputs"][sequence[index]]["prepared_input"],
+              "feed": {config["input_binding"]["prepared_input"]["input_name"]: tensors[sequence[index]]}}
+             for index in range(32)]
+
+    class DetectionSequence:
+        def __init__(self):
+            self.completed_count = 0
+            self.last_result = {}
+            self.processors = [_detection_module().create_detection_completion_runtime(item["completion_contract"],
+                source_paths=(runner_source,), sentinel_context={
+                    "prepared_input_sha256": item["prepared_input"]["sha256"]}) for item in payload["inputs"]]
+
+        def process(self, outputs):
+            processor = self.processors[sequence[self.completed_count]]
+            before = processor.completed_count
+            processor.process(outputs)
+            if processor.completed_count != before + 1:
+                raise RuntimeError("Mixed detection control processor completion count mismatch")
+            self.last_result = processor.last_result
+            self.completed_count += 1
+            return self.last_result
+
+    execution = normalize_stage1_execution(config.get("stage1_execution"))
+    if ((stage1_async is None) != (execution["policy"] == "synchronous")
+            or (stage1_async is not None and normalize_stage1_execution(stage1_async.execution_policy) != execution)):
+        raise ValueError("Mixed control adapter differs from its prepared runtime policy")
+    if stage1_async is not None and not callable(prepare_async_feed):
+        raise ValueError("Mixed control async input adapter missing")
+    original_prepare = stage1_async.prepare_inputs if stage1_async is not None else None
+
+    def factory(prepare):
+        stage1_async.prepare_inputs = lambda: prepare_async_feed(prepare())
+        return stage1_async
+
+    destination = Path(output) / "mixed_input_control" / f"repetition_{repetition}.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        raise FileExistsError("Mixed control result already exists; preserve the previous attempt")
+    source_before = {item["path"]: _sha(item["path"]) for item in config["runtime_source_files"]}
+    expected_sources = _source_map(config)
+    if source_before != expected_sources:
+        raise ValueError("Mixed control runtime sources changed before functional execution")
+    report = {}
+    try:
+        report = run_mixed_control(tasks, config=config, original_sources=payload["provenance"],
+            serial_stage1=serial_stage1, transfer=transfer, stage2=stage2,
+            processor_factory=ClassificationCompletion if config["task"] == "classification" else DetectionSequence,
+            stage1_async_factory=factory if stage1_async is not None else None, clone_payload=clone_payload)
+        if report["stage1_peak_uncollected_jobs"] != normalize_stage1_execution(config.get("stage1_execution"))["inflight"]:
+            raise RuntimeError("Mixed control did not observe the requested host submission depth")
+        source_after = {item["path"]: _sha(item["path"]) for item in config["runtime_source_files"]}
+        if source_after != source_before:
+            raise RuntimeError("Mixed control runtime sources changed during functional execution")
+        report["runtime_source_binding"] = {"before": source_before, "after": source_after, "unchanged": True}
+    except BaseException as error:
+        report = dict(getattr(error, "partial_report", report) or {})
+        report.update(status="failed", error=f"{type(error).__name__}: {error}",
+                      control_sidecar=dict(config["mixed_input_control"]))
+        with destination.open("x", encoding="utf-8") as stream:
+            json.dump(_report_value(report), stream, indent=2, allow_nan=False)
+        # The outer throughput handler consumes partial_report as a throughput
+        # record. Never leak functional counters or numpy snapshots into it.
+        raise RuntimeError("Mixed functional control failed; diagnostic report: " + str(destination)) from error
+    finally:
+        if stage1_async is not None:
+            stage1_async.prepare_inputs = original_prepare
+    report["control_sidecar"] = dict(config["mixed_input_control"])
+    report["task_input_indices"] = sequence
+    with destination.open("x", encoding="utf-8") as stream:
+        json.dump(_report_value(report), stream, indent=2, allow_nan=False)
+    return {"status": "passed", "checked_outside_throughput_timer": True,
+            "serial_reference_count": report["serial_reference_count"],
+            "mixed_completed_count": report["mixed_completed_count"],
+            "stage1_peak_uncollected_jobs": report["stage1_peak_uncollected_jobs"],
+            "drain_completed": report["drain_completed"], "stage1_execution": report["stage1_execution"],
+            "control_sidecar": dict(config["mixed_input_control"]),
+            "report": {"path": str(destination.relative_to(output)), "sha256": _sha(destination)}}
+
+
+def validate_bound_mixed_result(repetition, config, *, result_root=None):
+    """Reject foreign/partial controls on normal result import and reentry.
+
+    Frozen runtime paths can be remote. The controller verifies the collected
+    report and its embedded source binding without loading remote sidecar paths.
+    """
+    expected = config.get("mixed_input_control")
+    proof = repetition.get("mixed_input_control")
+    if expected is None and proof is None:
+        return None
+    if not _descriptor(expected) or not isinstance(proof, Mapping):
+        raise ValueError("Generic mixed functional control proof is missing or foreign")
+    sources = _source_map(config)
+    if sources.get(expected["path"]) != expected["sha256"]:
+        raise ValueError("Generic mixed functional control is outside its frozen source closure")
+    execution = normalize_stage1_execution(config.get("stage1_execution"))
+    required = {"status": "passed", "checked_outside_throughput_timer": True,
+                "serial_reference_count": 32, "mixed_completed_count": 32,
+                "stage1_peak_uncollected_jobs": execution["inflight"], "drain_completed": True,
+                "stage1_execution": execution, "control_sidecar": dict(expected)}
+    if (any(proof.get(key) != value or type(proof.get(key)) is not type(value)
+            for key, value in required.items())
+            or normalize_stage1_execution(repetition.get("stage1_execution")) != execution):
+        raise ValueError("Generic mixed functional control counts/policy/drain evidence mismatch")
+    descriptor = proof.get("report")
+    if (not isinstance(descriptor, Mapping) or set(descriptor) != {"path", "sha256"}
+            or not isinstance(descriptor["path"], str) or not descriptor["path"]
+            or Path(descriptor["path"]).is_absolute() or ".." in Path(descriptor["path"]).parts
+            or not isinstance(descriptor["sha256"], str)
+            or re.fullmatch(r"[a-f0-9]{64}", descriptor["sha256"]) is None):
+        raise ValueError("Generic mixed functional control report descriptor invalid")
+    if result_root is None:
+        return dict(proof)
+    root = Path(result_root).resolve()
+    path = (root / descriptor["path"]).resolve()
+    if not path.is_relative_to(root) or not path.is_file() or _sha(path) != descriptor["sha256"]:
+        raise ValueError("Generic mixed functional control report missing, escaped or changed")
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(report, Mapping):
+        raise ValueError("Generic mixed functional control report malformed")
+    report_required = {**{key: value for key, value in required.items() if key != "checked_outside_throughput_timer"},
+        "checked_outside_throughput_timer": True, "requested_task_count": 32,
+        "scientific_statistics_published": False, "exact_task_order": True,
+        "all_declared_tasks_completed": True, "comparison": "exact_outputs_and_completed_results",
+        "purpose": "generic_mixed_input_functional_control", "task_input_indices": _input_sequence(),
+        "queue_depth": config.get("queue_depth"), "timeout_s": config.get("timeout_s"),
+        "handoff_payload_copy": repetition.get("handoff_payload_copy")}
+    if (any(report.get(key) != value for key, value in report_required.items())
+            or any(key in report for key in ("completed_task_fps", "measurement_start_ns",
+                                              "measured_makespan_seconds"))):
+        raise ValueError("Generic mixed functional control full report contract mismatch")
+    binding = report.get("runtime_source_binding", {})
+    if (binding.get("before") != sources or binding.get("after") != sources
+            or binding.get("unchanged") is not True):
+        raise ValueError("Generic mixed functional control runtime source binding mismatch")
+    runtime_binding = {key: config[key] for key in ("identity", "execution_id", "original_run",
+        "expected_runtime_artifacts", "runtime_source_files", "execution_environment") if key in config}
+    if report.get("runtime_binding") != runtime_binding:
+        raise ValueError("Generic mixed functional control runtime identity/artifacts mismatch")
+    observations = report.get("observations")
+    if not isinstance(observations, list) or len(observations) != 32:
+        raise ValueError("Generic mixed functional control lacks 32 ordered observations")
+    input_specs, input_hashes = [], []
+    for observation in observations[:2]:
+        if not isinstance(observation, Mapping):
+            raise ValueError("Generic mixed functional control observation malformed")
+        input_specs.append(observation.get("prepared_input"))
+        input_hashes.append(observation.get("prepared_tensor_sha256"))
+    if (any(not isinstance(spec, Mapping) for spec in input_specs)
+            or input_specs[0] == input_specs[1] or input_hashes[0] == input_hashes[1]):
+        raise ValueError("Generic mixed functional control inputs are not distinguishable")
+    expected_input = config["input_binding"]["prepared_input"]
+    if any(input_specs[0].get(key) != expected_input.get(key) for key in
+           ("path", "sha256", "input_name", "shape", "dtype", "format")):
+        raise ValueError("Generic mixed functional control baseline input mismatch")
+    for index, observation in enumerate(observations):
+        selected = _input_sequence()[index]
+        spec = input_specs[selected]
+        if (not isinstance(spec, Mapping) or not isinstance(observation, Mapping)
+                or observation.get("task_id") != f"task_{index:02d}"
+                or observation.get("prepared_input") != spec
+                or observation.get("input_sha256") != spec.get("sha256")
+                or sources.get(spec.get("path")) != spec.get("sha256")
+                or observation.get("prepared_tensor_sha256") != input_hashes[selected]
+                or not isinstance(input_hashes[selected], str)
+                or re.fullmatch(r"[a-f0-9]{64}", input_hashes[selected]) is None
+                or observation.get("passed") is not True
+                or observation.get("metrics") != {"raw_outputs_and_completed_result_exact": True}):
+            raise ValueError("Generic mixed functional control task association/comparison mismatch")
+        serial, mixed = observation.get("serial"), observation.get("mixed")
+        if (not isinstance(serial, Mapping) or not serial.get("outputs")
+                or not isinstance(serial["outputs"], Mapping)
+                or any(not _tensor_snapshot(value) for value in serial["outputs"].values())
+                or not serial.get("completed_result") or serial != mixed):
+            raise ValueError("Generic mixed functional control raw/completion snapshots mismatch")
+    if observations[0]["serial"]["outputs"] == observations[1]["serial"]["outputs"]:
+        raise ValueError("Generic mixed functional control serial outputs cannot distinguish inputs")
+    coverage = report.get("stage1_slot_input_coverage")
+    if not isinstance(coverage, list) or len(coverage) != execution["inflight"]:
+        raise ValueError("Generic mixed functional control lacks actual slot input coverage")
+    for slot, observed in enumerate(coverage):
+        indices = list(range(slot, 32, execution["inflight"]))
+        expected_hashes = sorted({observations[index]["prepared_tensor_sha256"] for index in indices})
+        if (not isinstance(observed, Mapping) or type(observed.get("slot_index")) is not int
+                or observed["slot_index"] != slot
+                or observed.get("task_ids") != [f"task_{index:02d}" for index in indices]
+                or observed.get("prepared_tensor_sha256") != expected_hashes
+                or observed.get("distinct_prepared_tensor_count") != 2
+                or observed.get("serial_outputs_discriminating") is not True):
+            raise ValueError("Generic mixed functional control slot input/task association mismatch")
+    return dict(proof)

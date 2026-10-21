@@ -7,10 +7,10 @@ must import these constants instead of repeating the current release identity.
 from __future__ import annotations
 
 
-VERSION = "2.94.0"
+VERSION = "2.95.5"
 RELEASE = VERSION
 DEVELOPMENT_LINEAGE = "v2.79"
-BUILD_ID = "v2.94.0"
+BUILD_ID = "v2.95.5"
 BUILD_CONTRACT_VERSION = 2
 SOURCE_INTEGRITY_CONTRACT = "installed_release_source_manifest_runtime_binding"
 BYTECODE_ISOLATION_CONTRACT = "source_local_bytecode_cache_isolation"

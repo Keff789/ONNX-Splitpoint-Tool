@@ -275,6 +275,10 @@ class WorkflowOptions:
     force_build_confirmed_backends: tuple[str, ...] = ()
     force_build_confirmation_source: str = ""
 
+    # DeepX Native only. Empty lets the frozen profile select the mode; keep
+    # this appended so historical positional option constructors retain order.
+    native_producer_deepx_runtime_mode: str = ""
+
 
     def to_dict(self) -> Dict[str, Any]:
         # Keep this round-trippable: WorkflowOptions(**options.to_dict()) is used

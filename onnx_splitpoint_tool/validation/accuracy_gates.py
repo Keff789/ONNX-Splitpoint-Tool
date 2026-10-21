@@ -1387,6 +1387,36 @@ __all__ = [
 ]
 
 
+def _reporting_interface_admissibility(row):
+    """Retain the current Hailo-to-TRT blocking contract beside structure.
+
+    The legacy interface result also contains numeric diagnostics, so neither
+    its False value nor a retained historical runtime decision is a veto here.
+    A normal technical revalidation updates gate_blocking while preserving that
+    historical runtime decision.  Absent blocking evidence retains the existing
+    structural-contract fallback unless the interface is explicitly unresolved.
+    """
+    if not _pipeline_requires_explicit_interface(row):
+        return True, ""
+    nested = row.get("interface_checks") if isinstance(row.get("interface_checks"), Mapping) else {}
+    raw_blocking = row.get("interface_gate_blocking")
+    if raw_blocking is None:
+        raw_blocking = nested.get("gate_blocking")
+    blocking = _as_bool(raw_blocking)
+    if blocking is True:
+        return False, "interface_gate_blocking"
+    if blocking is False:
+        return True, ""
+    if raw_blocking not in (None, ""):
+        return False, "interface_gate_blocking_unavailable"
+    status = str(row.get("interface_check_status") or nested.get("status") or "").strip().lower()
+    gate = nested.get("quantized_classification_gate")
+    decision = str(gate.get("decision") or "").strip().lower() if isinstance(gate, Mapping) else ""
+    if status.startswith(("inconclusive", "unknown", "unavailable")) or decision == "inconclusive":
+        return False, "interface_gate_unresolved"
+    return True, ""
+
+
 def _apply_reporting_gate(row, policy, quality, task, buildable, runtime, contract, contract_reason, numerical):
     from ..accuracy_reporting import assess_accuracy, assessment_fields
     raw = quality.get("raw") or {}
@@ -1412,7 +1442,8 @@ def _apply_reporting_gate(row, policy, quality, task, buildable, runtime, contra
     for field in ("output_shape_match", "shape_contract_pass", "tensor_structure_pass", "tensor_ok", "quality_identity_valid"):
         if _as_bool(row.get(field)) is False:
             contract, contract_reason = False, field + "_failed"
-    technical = bool(buildable and runtime and contract is True and complete)
+    interface_admissible, interface_reason = _reporting_interface_admissibility(row)
+    technical = bool(buildable and runtime and contract is True and complete and interface_admissible)
     decision = assessment.get("accuracy_class") or "not_estimable" if complete else quality.get("decision", "unavailable")
     legacy = dict(row.get("legacy_accuracy_gate") or {})
     if "accuracy_gate_semantics" not in row:
@@ -1447,7 +1478,7 @@ def _apply_reporting_gate(row, policy, quality, task, buildable, runtime, contra
         "energy_eligible": technical and not cpu and _as_bool(row.get("energy_trace_pass")) is not False,
         "strict_quality_eligible": strict, "thesis_valid": strict,
         "numerical_similarity_required_for_claim": False,
-        "ranking_exclusion_reason": "" if technical else contract_reason if contract is not True else reason,
+        "ranking_exclusion_reason": "" if technical else interface_reason or (contract_reason if contract is not True else reason),
         "gate_status": "reported" if technical else "technical_contract_incomplete",
         "quality_evaluation_pending": quality.get("decision") == "pending_central_evaluation",
         "evidence_axes": {"structural_contract": {"pass": contract, "reason": contract_reason},

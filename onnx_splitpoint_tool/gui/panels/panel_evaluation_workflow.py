@@ -331,8 +331,11 @@ def _profile_summary_payload(
         )
         binding_lines = profile_energy_start_binding(raw)
         from ...workflow.hardware_acceptance import enabled as hardware_acceptance_enabled, summary_lines as hardware_acceptance_summary_lines
+        from ...workflow.native_refresh import enabled as native_refresh_enabled, summary_lines as native_refresh_summary_lines
         if hardware_acceptance_enabled(raw):
             binding_lines = hardware_acceptance_summary_lines(raw)
+        elif native_refresh_enabled(raw):
+            binding_lines = native_refresh_summary_lines(raw)
         build_summary = profile_build_summary(raw)
         visible_snapshot = {
             "profile_request": request,
@@ -405,7 +408,7 @@ def _profile_summary_payload(
     except Exception as _plan_exc:
         _effective_plan_text = f"Execution plan unavailable: {type(_plan_exc).__name__}: {_plan_exc}"
 
-    if hardware_acceptance_enabled(raw):
+    if hardware_acceptance_enabled(raw) or native_refresh_enabled(raw):
         return [f"Profile: {profile_id}", f"Run mode: {run_mode_profile_brief(raw).splitlines()[0]}",
                 *binding_lines, f"Profile YAML: {profile_path}"], visible_snapshot
 

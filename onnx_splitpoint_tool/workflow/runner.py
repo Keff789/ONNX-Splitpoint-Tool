@@ -90,6 +90,7 @@ from .checkpoints import (
     native_coordinator_input_hash,
 )
 from .contracts import StageResult, WorkflowOptions, WorkflowRunResult
+from ..native_command_contract import deepx_runtime_policy
 from .start_snapshot import (
     build_profile_start_snapshot,
     public_start_snapshot_metadata,
@@ -112,6 +113,7 @@ from .required_run_scope import (
     build_global_required_run_scope,
     audit_materialized_scope,
     build_model_required_run_scope,
+    restore_sealed_benchmark_plan_created_at,
     merge_authoritative_run_descriptors,
     merge_authoritative_runs,
     required_measurements_from_scope,
@@ -4745,6 +4747,7 @@ def _verify_remote_module_binding_v263(
     expected_sha256: str,
     timeout: int = 180,
     process_runner: Optional[Callable[..., Any]] = None,
+    runtime_python: str = "python",
 ) -> dict[str, Any]:
     """Prove that the backend interpreter imports the just-staged module."""
     expected_path = f"{str(remote_tool_dir).rstrip('/')}/{Path(relative_path).as_posix()}"
@@ -4762,7 +4765,7 @@ def _verify_remote_module_binding_v263(
     remote = (
         prefix + f"cd {shlex.quote(str(remote_tool_dir))} && "
         + f"PYTHONPATH={shlex.quote(str(remote_tool_dir))}:${{PYTHONPATH:-}} "
-        + f"python -c {shlex.quote(code)}"
+        + f"{shlex.quote(str(runtime_python))} -c {shlex.quote(code)}"
     )
     cp = _run_remote_sync_capture_v2736(
         ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", str(ssh), remote],
@@ -5287,6 +5290,21 @@ def _native_concise_summary_v60w(
         }.get(raw_scope, raw_scope or "unavailable")
         from ..native_rate_endpoints import report_rate_fields
         concise_row.update(report_rate_fields(row, Path(reports).parent))
+        if "deepx" in str(row.get("backend") or row.get("producer_backend") or "").lower():
+            command = row.get("native_command_contract") or row.get("full_command_contract") or row.get("energy_command_contract") or {}
+            runtime = row.get("runtime_options") or command.get("runtime_options") or {}
+            explicit_mode = row.get("deepx_runtime_mode") or runtime.get("deepx_runtime_mode")
+            if explicit_mode:
+                policy = deepx_runtime_policy({**runtime, "deepx_runtime_mode": explicit_mode})
+                concise_row.update({key: policy[key] for key in ("deepx_runtime_mode", "deepx_max_inflight")})
+                for field in ("host_pending_max", "deepx_host_pending_max"):
+                    if field in row or field in runtime:
+                        concise_row[field] = row.get(field, runtime.get(field))
+                if "host_pending_max" not in concise_row:
+                    for field in ("deepx_actual_pending_max", "actual_pending_max"):
+                        if field in row:
+                            concise_row["host_pending_max"] = row[field]
+                            break
         concise_row["fps"] = concise_row["completed_task_fps"]
         concise.append(concise_row)
 
@@ -5441,6 +5459,8 @@ def _native_concise_summary_v60w(
     }
     from ..native_rate_endpoints import report_rate_fields, rate_endpoint_fields
     csv_fields.extend(key for key in rate_endpoint_fields({}) if key not in csv_fields)
+    if any("deepx_runtime_mode" in item for item in concise):
+        csv_fields.extend(["deepx_runtime_mode", "deepx_max_inflight", "host_pending_max", "deepx_host_pending_max"])
     for concise_row in concise:
         for field in csv_fields:
             if (
@@ -5733,6 +5753,20 @@ def _seal_model_scope_from_accepted_cases_v27919(
         Path(run_dir) / "models" / model_id / "benchmark_set"
         / "required_run_scope.json"
     )
+    if scope_path.exists():
+        if scope_path.is_symlink() or not scope_path.is_file():
+            raise RequiredRunScopeError(f"required_run_scope_unsafe_existing:{scope_path}")
+        existing_scope = read_json(scope_path, default={}) or {}
+        benchmark_plan, plan_epoch = restore_sealed_benchmark_plan_created_at(
+            benchmark_plan, existing_scope, model_id=model_id,
+            run_manifest=read_json(Path(run_dir) / "run_manifest.json", default={}) or {},
+            generation_state=read_json(
+                Path(run_dir) / "models" / model_id / "benchmark_set"
+                / "legacy_suite" / "generation_state.json", default={},
+            ) or {},
+        )
+        if plan_epoch.get("status") == "verified_original_plan_timestamp":
+            projection = {**projection, "sealed_plan_timestamp_recovery": plan_epoch}
     legacy_reprojection = (
         str(projection.get("identity_mode") or "")
         == "legacy_reprojection_v2"
@@ -5865,6 +5899,122 @@ def _authoritative_benchmark_plan_v2792(
         "model_local_scope_may_shrink_global_scope": False,
     }
     return projected, evidence
+
+def _native_full_plan_alias_metadata(
+    run_dir: Path, suite_dir: Path, model_id: str,
+    resolved_model_row: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Prepare only Native metadata; preserve the canonical reference source.
+
+    The Full-only stager already treats the sealed embedded plan as authority.
+    Accept its enriched standalone alias only when the frozen profile and the
+    ordinary physical-scope projector reproduce that complete alias exactly.
+    """
+    import copy
+
+    profile_path = run_dir / "profile.yaml"
+    scope_path = run_dir / "required_run_scope.json"
+    benchmark_path = suite_dir / "benchmark_set.json"
+    plan_path = suite_dir / "benchmark_plan.json"
+    inputs = (benchmark_path, plan_path)
+    bindings = {}
+    for path in inputs:
+        if not path.is_file() or any(item.is_symlink() for item in (path, *path.parents)):
+            raise ValueError("native_full_plan_metadata_source_unsafe")
+        bindings[str(path)] = str(sha256_file(path))
+    benchmark = read_json(benchmark_path, default={})
+    standalone = read_json(plan_path, default={})
+    embedded = benchmark.get("plan") if isinstance(benchmark, Mapping) else None
+    if not isinstance(embedded, Mapping) or not isinstance(standalone, Mapping):
+        raise ValueError("native_full_plan_metadata_source_invalid")
+
+    def shared_equal(left, right):
+        if type(left) is not type(right):
+            return False
+        if isinstance(left, Mapping):
+            return all(shared_equal(left[key], right[key]) for key in left.keys() & right.keys())
+        if isinstance(left, list):
+            return len(left) == len(right) and all(shared_equal(a, b) for a, b in zip(left, right))
+        return left == right
+
+    source_rows = embedded.get("runs")
+    if not isinstance(source_rows, list):
+        raise ValueError("native_full_plan_metadata_embedded_runs_invalid")
+    for container in (embedded, benchmark, standalone):
+        for key in (("planned_runs",) if container is not benchmark else ("planned_runs", "runs")):
+            if key in container and (not shared_equal(container[key], source_rows) or container[key] != source_rows):
+                raise ValueError("native_full_plan_metadata_row_alias_conflict")
+    if not shared_equal(dict(embedded), dict(standalone)):
+        raise ValueError("native_full_plan_metadata_shared_source_conflict")
+    if dict(embedded) == dict(standalone):
+        return None
+    for path in (profile_path, scope_path):
+        if not path.is_file() or any(item.is_symlink() for item in (path, *path.parents)):
+            raise ValueError("native_full_plan_metadata_source_unsafe")
+        bindings[str(path)] = str(sha256_file(path))
+    profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    if not isinstance(profile, Mapping):
+        raise ValueError("native_full_plan_metadata_profile_invalid")
+    declared = [dict(row) for row in profile_model_entries(profile, include_reserve=True)
+                if str(row.get("id") or row.get("model_id") or row.get("name") or "") == model_id]
+    if len(declared) != 1 or any(resolved_model_row.get(key) != value for key, value in declared[0].items()):
+        raise ValueError("native_full_plan_metadata_model_profile_conflict")
+    model_source = str(resolved_model_row.get("resolved_path") or "")
+    if (resolved_model_row.get("resolved") is not True
+            or benchmark.get("model_name") != model_id
+            or benchmark.get("model") != "models/" + model_id + ".onnx"
+            or str(benchmark.get("model_source") or "") != model_source
+            or str(resolved_model_row.get("task") or "") != str(embedded.get("task") or "")):
+        raise ValueError("native_full_plan_metadata_model_source_conflict")
+    frozen_artifacts = {}
+    # Exact artifact names copied by materialize_legacy_benchmark_set.  Each
+    # current copy must still equal its independent original analysis file.
+    for name in (
+        "prediction.json", "predictions_frozen.csv", "holdout_predictions_frozen.csv",
+        "ranking_predictions_frozen.csv", "holdout_ranking_predictions_frozen.csv",
+        "prediction_freeze_manifest.json", "prediction_freeze_conflict.json",
+        "candidate_universe_manifest.json", "candidate_universe.csv",
+        "prediction_freeze_approval.json", "prediction_freeze_approval.json.sha256",
+        "prediction_freeze_approval.json.sig", "prediction_freeze_public_key.pem",
+        "prediction_freeze_approval_verification.json",
+    ):
+        original = run_dir / "models" / model_id / "analysis" / name
+        if not original.is_file():
+            continue
+        copied = suite_dir / name
+        if (any(item.is_symlink() for path in (original, copied) for item in (path, *path.parents))
+                or not copied.is_file() or sha256_file(original) != sha256_file(copied)):
+            raise ValueError("native_full_plan_metadata_freeze_source_conflict")
+        bindings[str(original)] = str(sha256_file(original))
+        bindings[str(copied)] = str(sha256_file(copied))
+        frozen_artifacts[name] = name
+    expected = copy.deepcopy(dict(embedded))
+    relative_suite = relpath(suite_dir, run_dir)
+    expected.update({
+        "mode": "legacy_benchmarkset_source_of_truth",
+        "legacy_suite_dir": relative_suite, "suite_dir": relative_suite,
+        "quality_gate": dict(profile.get("quality_gate") or {}),
+        "official_coco_evaluation": dict(profile.get("official_coco_evaluation") or {}),
+        "ranking_validation": dict(profile.get("ranking_validation") or {}),
+        "campaign": dict(profile.get("campaign") or {}),
+        "model_suite": {"primary": [dict(resolved_model_row)], "reserve": []},
+        "prediction_freeze_artifacts": frozen_artifacts,
+    })
+    expected, projection = _authoritative_benchmark_plan_v2792(
+        run_dir, expected, model_id=model_id,
+    )
+    if expected != dict(standalone):
+        raise ValueError("native_full_plan_metadata_normal_projection_conflict")
+    if any(str(sha256_file(Path(path))) != digest for path, digest in bindings.items()):
+        raise ValueError("native_full_plan_metadata_source_changed")
+    return copy.deepcopy(dict(embedded)), {
+        "source": "sealed_benchmark_set.json.plan",
+        "source_bindings": bindings,
+        "normal_scope_projection": projection,
+        "canonical_source_modified": False,
+        "source_model": model_source,
+    }
+
 
 class EvaluationWorkflowRunner:
     """Materialize a formal, resumable EvaluationRuns bundle.
@@ -9281,6 +9431,14 @@ class EvaluationWorkflowRunner:
                 continue
             paths.append(path)
         paths.sort()
+        technical_diagnostics = {}
+        if getattr(self.options, "resume_missing", False):
+            from .supplement import technical_diagnostic_request_bindings
+            technical_diagnostics = technical_diagnostic_request_bindings(
+                self.run_dir, model_id, self._supplement_dispatch_rows(model_id))
+        technical_diagnostic_hashes = {row["sha256"] for row in technical_diagnostics.values()}
+        technical_diagnostic_bindings = {row["native_split_quality_binding_sha256"]
+                                        for row in technical_diagnostics.values()}
         targeted = self._missing_full_quality_resume_enabled()
         expected_model_keys = {
             key for key in self._missing_full_quality_keys
@@ -9289,6 +9447,21 @@ class EvaluationWorkflowRunner:
         prepared: list[tuple[str, Path, tuple[Any, ...] | None]] = []
         prepared_target_keys: set[tuple[Any, ...]] = set()
         for path in paths:
+            relative = path.relative_to(self.run_dir).as_posix()
+            if relative in technical_diagnostics:
+                # This exact normal-attempt request is already validated and
+                # retained as technical evidence; the old N5000 remains canonical.
+                continue
+            if technical_diagnostic_hashes and str(sha256_file(path)).removeprefix("sha256:") in technical_diagnostic_hashes:
+                raise ValueError("supplement_technical_diagnostic_unbound_request_mirror:" + str(path))
+            if technical_diagnostic_bindings:
+                mirror = read_json(path, default={}) or {}
+                replay = mirror.get("native_split_quality_binding") or {}
+                if (str(mirror.get("native_split_quality_binding_sha256") or "") in technical_diagnostic_bindings
+                        or str(replay.get("binding_sha256") or "") in technical_diagnostic_bindings):
+                    # Different JSON formatting must not introduce a second
+                    # scientific producer from the same technical-only replay.
+                    raise ValueError("supplement_technical_diagnostic_unbound_binding_mirror:" + str(path))
             key = str(path.resolve())
             if key in self._central_quality_futures:
                 continue
@@ -9736,7 +9909,76 @@ class EvaluationWorkflowRunner:
         )
 
     def _supplement_compatibility_reviewed(self, original) -> bool:
-        return str(original.get("tool_version") or "") in {"2.91.0", "2.91.1"}
+        if str(original.get("tool_version") or "") in {"2.91.0", "2.91.1"}:
+            return True
+        # Reviewed 2.95.5 adapter: the original selective-completion readers
+        # remain unchanged. Restrict this admission to the observed non-variant
+        # global-barrier/A4 contracts; all normal source and measurement checks
+        # still execute in _prepare_selective_completion and stage reuse.
+        if (original.get("tool_version") != "2.95.5"
+                or original.get("workflow_version") != "v2.95.5"
+                or original.get("schema") != "onnx-splitpoint/evaluation-run-manifest"
+                or type(original.get("schema_version")) is not int
+                or original["schema_version"] != 1
+                or original.get("run_id") != self.run_dir.name
+                or original.get("status") not in {"completed", "partial", "failed", "cancelled"}):
+            return False
+        if not isinstance(self.profile_payload, Mapping):
+            return False
+        execution = self.profile_payload.get("workflow_execution") or {}
+        native = self.profile_payload.get("native_producers") or {}
+        if (not isinstance(execution, Mapping) or not isinstance(native, Mapping)
+                or execution.get("native_release_mode") != "global_barrier"
+                or execution.get("setup_queue_mode") != "model_barrier"
+                or native.get("enabled") is not True or native.get("variants") not in (None, [])
+                or native.get("deepx_runtime_mode") != "A4"
+                or type(native.get("deepx_max_inflight")) is not int
+                or native["deepx_max_inflight"] != 4):
+            return False
+        contract = original.get("resume_contract")
+        if (not isinstance(contract, Mapping)
+                or contract.get("schema") != "onnx-splitpoint/evaluation-resume-contract"
+                or type(contract.get("schema_version")) is not int or contract["schema_version"] != 1
+                or any(not re.fullmatch(r"[0-9a-f]{64}", str(contract.get(field) or ""))
+                       or contract[field] != self._resume_contract.get(field) for field in (
+                           "profile_sha256", "effective_execution_plan_sha256", "stable_options_sha256",
+                           "plan_sha256", "resume_contract_sha256"))):
+            return False
+        sessions = original.get("execution_sessions")
+        if (not isinstance(sessions, list) or not sessions or not isinstance(sessions[-1], Mapping)
+                or not original.get("current_session_id")
+                or sessions[-1].get("session_id") != original["current_session_id"]
+                or sessions[-1].get("status") != original["status"]):
+            return False
+        from .supplement import _regular_evidence
+        try:
+            def load(name, schema, version):
+                value = read_json(_regular_evidence(self.run_dir, name), default=None)
+                if (not isinstance(value, Mapping) or value.get("schema") != schema
+                        or type(value.get("schema_version")) is not int or value["schema_version"] != version):
+                    raise ValueError("supplement_2955_unreviewed_schema:" + name)
+                return value
+            plan = load("effective_execution_plan.json", "onnx-splitpoint/effective-execution-plan", 1)
+            scope = load("required_run_scope.json", "onnx-splitpoint/required-run-scope", 3)
+            index = load("artifact_index.json", "onnx-splitpoint/artifact-index", 2)
+            closure = load("reports/artifact_index_closure.json", "onnx-splitpoint/artifact-index-terminal-closure", 1)
+            binding = index.get("terminal_closure") or {}
+            return bool(
+                isinstance(binding, Mapping) and plan.get("models") and scope.get("scope_level") == "run"
+                and scope.get("profile_id") == original.get("profile_id")
+                and index.get("run_id") == original["run_id"]
+                and index.get("profile_id") == original.get("profile_id")
+                and binding.get("schema") == "onnx-splitpoint/artifact-index-terminal-closure-binding"
+                and type(binding.get("schema_version")) is int and binding["schema_version"] == 1
+                and binding.get("report_path") == "reports/artifact_index_closure.json"
+                and all(value.get("status") == "pass" and value.get("run_id") == original["run_id"]
+                        and value.get("session_id") == original["current_session_id"]
+                        and type(value.get("verification_error_count")) is int
+                        and value["verification_error_count"] == 0 for value in (binding, closure))
+                and closure.get("workflow_status") == original["status"]
+            )
+        except (ValueError, OSError, KeyError, TypeError):
+            return False
 
     def _prepare_selective_completion(self) -> None:
         if not getattr(self.options, "resume_missing", False):
@@ -9763,6 +10005,24 @@ class EvaluationWorkflowRunner:
         self._supplement_plan = build_supplement_plan(
             self.run_dir, original_root=source_root, source_index=self._supplement_source_index,
         )
+        # Restore the exact saved semantic source before the model pipeline's
+        # existing scheduler sees an empty future and considers a new producer.
+        # Only planned local-statistics/technical-Quality reentry uses this hook.
+        if _quality_execution_location_v263(self.profile_payload) == "central_management":
+            reference_models = {str(row.get("model_id") or "")
+                for field in ("pending_quality_rows", "quality_companion_rows", "technical_revalidation_rows")
+                for row in self._supplement_plan.get(field, [])
+                if row.get("action") == "local_statistics"
+                or (field == "technical_revalidation_rows" and (row.get("action") == "execute" or row.get("retained_revalidation")))}
+            # A later partial continuation can have no new technical row: its
+            # completed, source-verified history still requires the saved ref.
+            reference_models.update(model_id for model_id in
+                self._supplement_plan.get("technical_reference_models", [])
+                if self._supplement_model_needs_dispatch(model_id))
+            if "" in reference_models:
+                raise ValueError("supplement_saved_reference_model_missing")
+            for model_id in sorted(reference_models):
+                self._restore_management_cpu_reference(model_id)
         (self._preserved_central_quality_results,
          self._preserved_central_quality_requests) = completed_quality(self.run_dir)
         self._supplement_original_root = preserve_metadata(self.run_dir, self.session_id)
@@ -9775,12 +10035,36 @@ class EvaluationWorkflowRunner:
             return None
         if not self._supplement_plan:
             raise ValueError("supplement_plan_not_prepared")
-        return [dict(row) for field in ("generic_rows", "quality_companion_rows")
-                for row in self._supplement_plan[field] if row.get("model_id") == model_id]
+        rows = [dict(row) for field in ("generic_rows", "quality_companion_rows", "technical_revalidation_rows")
+                for row in self._supplement_plan.get(field, []) if row.get("model_id") == model_id]
+        technical = [row for row in rows if row.get("stage") == "quality_source"
+                     and row.get("action") == "execute" and row.get("technical_revalidation")]
+        if technical:
+            # The existing strict reader verifies the exact restored bytes.
+            # Attach one descriptor per setup in the existing dispatch payload;
+            # never mutate the frozen plan or the indexed original proof.
+            _records, status, _encoded = self._management_reference_records(model_id)
+            descriptor = {key: status[key] for key in ("quality_contract", "reference_path",
+                "reference_sha256", "reference_size_bytes")}
+            descriptor.update(reference_role="canonical_cpu_ort", source_evaluation_run_id=self.run_id,
+                quality_contract_sha256=status["quality_contract"]["quality_contract_sha256"])
+            setups = set()
+            for row in technical:
+                proof = row["technical_revalidation"]["dispatch_proof"]
+                if (proof["reference_quality_contract_sha256"] != descriptor["quality_contract_sha256"]
+                        or descriptor["source_evaluation_run_id"] != self.run_id):
+                    raise ValueError("supplement_technical_existing_reference_contract_mismatch")
+                setup = str(row.get("setup_id") or "")
+                if setup not in setups:
+                    row["technical_reference"] = descriptor
+                    setups.add(setup)
+        return rows
 
     def _supplement_model_needs_dispatch(self, model_id: str) -> bool:
-        return any(row.get("action") == "execute"
-                   for row in self._supplement_dispatch_rows(model_id) or [])
+        return any(row.get("action") == "execute" or row.get("retained_revalidation")
+                   for field in ("generic_rows", "quality_companion_rows", "technical_revalidation_rows")
+                   for row in (self._supplement_plan or {}).get(field, [])
+                   if row.get("model_id") == model_id)
 
     def _supplement_stage_decision(self, decision, model_id, stage, previous):
         if not self._supplement_plan:
@@ -12016,6 +12300,9 @@ class EvaluationWorkflowRunner:
         from .hardware_acceptance import enabled as hardware_acceptance_enabled, validate_request as validate_hardware_acceptance
         if hardware_acceptance_enabled(self.profile_payload):
             validate_hardware_acceptance(self.profile_payload, self.options)
+        from .native_refresh import enabled as native_refresh_enabled, validate_request as validate_native_refresh
+        if native_refresh_enabled(self.profile_payload):
+            validate_native_refresh(self.profile_payload, self.options)
         self._validate_requested_start_contract()
         self._materialize_window_method_probe_profile()
         self._open_run_dir()
@@ -12321,6 +12608,9 @@ class EvaluationWorkflowRunner:
         from .hardware_acceptance import enabled as hardware_acceptance_enabled, run_acceptance
         if hardware_acceptance_enabled(self.profile_payload):
             return run_acceptance(self)
+        from .native_refresh import enabled as native_refresh_enabled, run_refresh
+        if native_refresh_enabled(self.profile_payload):
+            return run_refresh(self)
 
         rows = self._resolve_model_rows()
         if self.options.max_models is not None:
@@ -13241,6 +13531,13 @@ class EvaluationWorkflowRunner:
             "environment": current_environment,
             "force_build_start": dict(self._force_build_start_provenance),
         }
+        gui_origin = getattr(self.options, "gui_start_context", None)
+        if isinstance(gui_origin, Mapping):
+            # Observational GUI job identity is not part of the scientific
+            # profile/options contract and may change on an ordinary Resume.
+            session["start_origin"] = copy.deepcopy(dict(gui_origin))
+            if not resumed_existing_manifest:
+                self.manifest["start_origin"] = copy.deepcopy(dict(gui_origin))
         if getattr(self.options, "resume_missing", False):
             session["supplement_source_root"] = relpath(self._supplement_source_root, self.run_dir)
             session["supplement_original_root"] = relpath(self._supplement_original_root, self.run_dir)
@@ -18692,142 +18989,35 @@ class EvaluationWorkflowRunner:
                     continue
                 row_index = candidates[0]
                 row = rows[row_index]
-                row["central_quality_join_mode"] = match_mode
-                row["central_quality_join_source_request_sha256"] = str(
-                    result_identity.get("source_request_sha256") or ""
-                )
+                technical_before = None
+                if row.get("technical_interface_revalidation"):
+                    from .supplement import validate_technical_revalidation
+                    validate_technical_revalidation(self.run_dir, row)
+                    technical_before = copy.deepcopy(row)
+                from .central_quality_join import apply_central_quality_result_to_row
+                result_completed = apply_central_quality_result_to_row(row, result, result_identity,
+                    variant=variant, match_mode=match_mode, match_role=match_role,
+                    result_cancelled=result_cancelled, smoke_quality=smoke_quality)
                 if match_mode == "exact_request_sha_logical_identity":
                     exact_request_sha_fallback_matches += 1
-                result_completed = (
-                    str(result.get("status") or "") == "completed"
-                    and str(result.get("technical_status") or "completed") == "completed"
-                )
                 if result_completed:
-                    gate = {
-                        "schema": "onnx-splitpoint/task-quality-gate",
-                        "schema_version": 2,
-                        "task": str(result.get("task") or row.get("task") or ""),
-                        "variant": variant,
-                        "tier": str((row.get("task_quality_policy") or {}).get("dataset_tier") or "screening")
-                        if isinstance(row.get("task_quality_policy"), Mapping) else "screening",
-                        "canonical_reference": "management_cpu_ort_full_onnx",
-                        "decision": str(result.get("decision") or "unavailable"),
-                        "status": str(result.get("decision") or "unavailable"),
-                        "primary": dict(result.get("primary") or {}),
-                        "guardrails": dict(result.get("guardrails") or {}),
-                        "n": int(result.get("n") or 0),
-                        "execution_location": "central_management",
-                        "management_result_sha256": sha256_json(result),
-                        "evaluation_fingerprint": str(result.get("evaluation_fingerprint") or ""),
-                        "reference_identity": str(result.get("reference_identity") or ""),
-                        "technical_status": str(result.get("technical_status") or "completed"),
-                        "scientific_status": str(result.get("scientific_status") or result.get("decision") or ""),
-                    }
-                    for reporting_field in ("accuracy_assessment", "reporting_policy", "secondary_accuracy_assessments", "accuracy_warnings", "legacy_decision"):
-                        if reporting_field in result:
-                            gate[reporting_field] = copy.deepcopy(result[reporting_field])
                     matched_completed += 1
+                elif result_cancelled:
+                    matched_cancelled += 1
                 else:
-                    gate = {
-                        "schema": "onnx-splitpoint/task-quality-gate",
-                        "schema_version": 2,
-                        "task": str(result.get("task") or row.get("task") or ""),
-                        "variant": variant,
-                        "tier": str((row.get("task_quality_policy") or {}).get("dataset_tier") or "screening")
-                        if isinstance(row.get("task_quality_policy"), Mapping) else "screening",
-                        "canonical_reference": "management_cpu_ort_full_onnx",
-                        "decision": "unavailable",
-                        "status": "unavailable",
-                        "n": 0,
-                        "execution_location": "central_management",
-                        "technical_status": "cancelled" if result_cancelled else "failed",
-                        "scientific_status": "unavailable",
-                        "reason": str(result.get("completion_reason")) if result_cancelled else "central_quality_evaluation_failed",
-                        "error": str(result.get("error") or "central quality evaluation failed"),
-                    }
-                    if result_cancelled:
-                        matched_cancelled += 1
-                    else:
-                        matched_failed += 1
-                canonical_request_identity = {
-                    "schema": "onnx-splitpoint/central-quality-request-identity",
-                    "schema_version": 2,
-                    **result_identity,
-                }
-                gate["source_request_sha256"] = str(result_identity.get("source_request_sha256") or "")
-                gate["quality_request_identity"] = canonical_request_identity
-                by_variant = dict(row.get("task_quality_gates_by_variant") or {})
-                by_variant[variant] = gate
-                row["task_quality_gates_by_variant"] = by_variant
-                identities_by_variant = dict(row.get("quality_request_identities_by_variant") or {})
-                identities_by_variant[variant] = canonical_request_identity
-                row["quality_request_identities_by_variant"] = identities_by_variant
-                row_setup_ids = {
-                    str(value).strip().lower()
-                    for value in list(row.get("quality_source_setup_ids") or [])
-                    if str(value).strip()
-                }
-                if result_identity.get("setup_id"):
-                    row_setup_ids.add(str(result_identity["setup_id"]).strip().lower())
-                row["quality_source_setup_ids"] = sorted(row_setup_ids)
-                row["task_quality_policy_sha256"] = str(result.get("policy_sha256") or row.get("task_quality_policy_sha256") or "")
-                row["runtime_quality_gate_policy_sha256"] = row["task_quality_policy_sha256"]
-                row["quality_execution_location"] = "central_management"
+                    matched_failed += 1
                 if match_role == "primary":
-                    row["task_quality_gate"] = gate
-                    row["quality_evaluation_pending"] = False
-                    # Benchmark completion belongs to the measured accelerator
-                    # row and is independent from a failed semantic evaluator.
-                    row["central_quality_technical_status"] = str(
-                        result.get("technical_status") or ("completed" if result_completed else "failed")
-                    )
-                    row["scientific_status"] = gate["decision"]
-                    row["central_quality_result_path"] = str(result.get("source_request") or "")
-                    row["central_quality_source_request_sha256"] = str(result_identity.get("source_request_sha256") or "")
-                    row["central_quality_request_identity"] = canonical_request_identity
-                    policy = row.get("task_quality_policy") if isinstance(row.get("task_quality_policy"), Mapping) else None
-                    try:
-                        apply_accuracy_gate_to_row(row, policy)
-                    except Exception as exc:
-                        row["central_quality_gate_application_error"] = f"{type(exc).__name__}: {exc}"
-                    if smoke_quality:
-                        metric_miss = str(gate.get("decision") or "").lower() in {
-                            "fail", "failed",
-                        }
-                        row.update({
-                            "diagnostic_only": True,
-                            "claim_eligible": False,
-                            "scientific_claim_eligible": False,
-                            "performance_claim_eligible": False,
-                            "energy_efficiency_claim_eligible": False,
-                            "eligible_for_ranking": False,
-                            "ranking_eligible": False,
-                            "performance_eligible": False,
-                            "energy_eligible": False,
-                            "pareto_eligible": False,
-                            "thesis_valid": False,
-                            "metric_threshold_enforced": False,
-                            "metric_threshold_warning": bool(metric_miss),
-                            "quality_enforcement_mode": "smoke_diagnostic",
-                        })
-                        if metric_miss:
-                            row["accuracy_gate_reason"] = "smoke_metric_threshold_warning"
-                            row["ranking_exclusion_reason"] = "smoke_diagnostic_only"
-                            row["exclusion_reason"] = "smoke_diagnostic_only"
                     model_primary_matches += 1
                     matched_primary += 1
                 else:
-                    supplemental = dict(row.get("central_quality_supplemental_results") or {})
-                    supplemental[variant] = {
-                        "status": "completed" if result_completed else "cancelled" if result_cancelled else "failed",
-                        "source_request": str(result.get("source_request") or ""),
-                        "source_request_sha256": str(result_identity.get("source_request_sha256") or ""),
-                        "request_identity": canonical_request_identity,
-                        "management_result_sha256": sha256_json(result),
-                    }
-                    row["central_quality_supplemental_results"] = supplemental
                     model_supplemental_matches += 1
                     matched_supplemental += 1
+                if technical_before is not None:
+                    from .supplement import record_technical_central_projection
+                    record_technical_central_projection(self.run_dir, row, technical_before, result,
+                        result_identity, session_id=self.session_id, variant=variant,
+                        match_mode=match_mode, match_role=match_role,
+                        result_cancelled=result_cancelled, smoke_quality=smoke_quality)
                 matched_gate_ids.add((row_index, variant))
                 updated_row_ids.add(row_index)
                 updated_rows += 1
@@ -20383,6 +20573,29 @@ class EvaluationWorkflowRunner:
         # this key (even empty) is authoritative for Full-only profiles.
         cfg["split_backends"] = list(split_plan.selected_split_backends)
         cfg["split_selection_source"] = split_plan.source
+        mode_override = str(getattr(opt, "native_producer_deepx_runtime_mode", "") or "")
+        backend_plan = _native_stage_backend_plan_v27519(split_profile, cfg)
+        deepx_selected = bool(
+            "deepx" in backend_plan["split_backends"]
+            or backend_plan["full_enabled"] and "deepx" in backend_plan["full_backends_by_producer"].get("deepx", ())
+        )
+        if deepx_selected and cfg.get("enabled"):
+            historical = bool(getattr(opt, "resume", False) or getattr(opt, "resume_missing", False))
+            original_mode = deepx_runtime_policy({
+                **cfg, "deepx_queue_depth": cfg.get("deepx_queue_depth", 3),
+            })["deepx_runtime_mode"]
+            if historical and original_mode == "S1":
+                raise ValueError(
+                    "deepx_native_historical_s1_resume_requires_original_source: "
+                    "preserve the archived S1 job; create a fresh explicit A4 request"
+                )
+            if historical and mode_override and mode_override != original_mode:
+                raise ValueError("deepx_native_resume_mode_mismatch")
+            cfg["deepx_runtime_mode"] = mode_override or cfg.get("deepx_runtime_mode") or "A4"
+            queue_default = 3 if cfg["deepx_runtime_mode"] == "A4" else cfg.get("queue_depth", 3)
+            cfg.update(deepx_runtime_policy({
+                **cfg, "deepx_queue_depth": cfg.get("deepx_queue_depth", queue_default),
+            }))
         if isinstance(cfg.get("variants"), list) and cfg.get("variants"):
             cfg["remotes"] = self._materialize_variant_native_remotes(cfg)
         contract_profile = dict(self.profile_payload)
@@ -21501,6 +21714,7 @@ class EvaluationWorkflowRunner:
         repetitions = int(native_execution_contract["repetitions"])
         queue_depth = int(native_execution_contract["queue_depth"])
         inflight = int(native_execution_contract["inflight"])
+        deepx_policy = deepx_runtime_policy(native_execution_contract)
         hailo_format = str(cfg.get("hailo_format") or "uint8")
         remote_root_base = str(cfg.get("remote_root") or "/home/nx/native_fifo_evalsets")
         remote_tool_dir = str(cfg.get("remote_tool_dir") or "/home/nx/ONNX-Splitpoint-Tool")
@@ -23343,6 +23557,19 @@ class EvaluationWorkflowRunner:
                     for m in dispatch_models:
                         local_bs = _native_runnable_benchmark_set(m)
                         remote_bs = f"{rroot}/{m}/benchmark_set"
+                        native_plan_alias = None
+                        if (b == "deepx" and "deepx" in dispatch_full_by_producer.get(b, [])
+                                and str(native_execution_contract.get("deepx_runtime_mode") or "S1") == "A4"):
+                            resolved_rows = [row for row in self._resolve_model_rows() if row.get("id") == m]
+                            if len(resolved_rows) != 1:
+                                raise ValueError("native_full_plan_metadata_model_ambiguous")
+                            alias = _native_full_plan_alias_metadata(self.run_dir, local_bs, m, resolved_rows[0])
+                            if alias is not None:
+                                alias_plan, alias_proof = alias
+                                alias_path = write_json(native_transfer_dir / f"{b}_{m}_benchmark_plan.json", alias_plan)
+                                native_plan_alias = {**alias_proof, "path": str(alias_path),
+                                                     "sha256": str(sha256_file(alias_path)).split(":", 1)[-1]}
+                                artifact_paths[f"native_transfer_{b}_{m}_benchmark_plan_json"] = alias_path
                         inventory = build_native_transfer_inventory(local_bs)
                         manifest_json = native_transfer_dir / f"{b}_{m}_native_transfer_manifest.json"
                         files_from = native_transfer_dir / f"{b}_{m}_native_transfer_files.txt"
@@ -23354,6 +23581,7 @@ class EvaluationWorkflowRunner:
                             "remote_benchmark_set": remote_bs,
                             "run_id": self.run_id,
                             "transfer_policy": "lean_native_files_from_v60y",
+                            **({"full_plan_alias_metadata": native_plan_alias} if native_plan_alias else {}),
                         })
                         write_rsync_files_from(inventory, files_from)
                         artifact_paths[f"native_transfer_{b}_{m}_manifest_json"] = manifest_json
@@ -23444,6 +23672,20 @@ class EvaluationWorkflowRunner:
                             result["failure_reason"] = failure_kind
                             result["status_detail"] = pr.stderr[-2000:] or pr.stdout[-2000:]
                             raise RuntimeError(f"{failure_kind}: rsync failed for {m}: {pr.stderr[-1000:] or pr.stdout[-1000:]}")
+                        if native_plan_alias:
+                            if any(str(sha256_file(Path(path))) != digest
+                                   for path, digest in native_plan_alias["source_bindings"].items()):
+                                raise ValueError("native_full_plan_metadata_source_changed_before_transfer")
+                            alias_transfer = _stream_native(
+                                ["rsync", "-a", native_plan_alias["path"], f"{ssh}:{remote_bs}/benchmark_plan.json"],
+                                label=f"transfer-full-plan-metadata:{b}:{m}", timeout_s=timeout,
+                            )
+                            result["steps"].append({"name": f"rsync_full_plan_metadata_{m}",
+                                "rc": alias_transfer.returncode, "expected_sha256": native_plan_alias["sha256"],
+                                "source": "sealed_benchmark_set.json.plan",
+                                "stderr_tail": alias_transfer.stderr[-1000:]})
+                            if alias_transfer.returncode:
+                                raise RuntimeError("native_full_plan_metadata_transfer_failed")
                         local_index = local_bs / "benchmark_set.json"
                         expected_index_sha = str(
                             sha256_file(local_index) or ""
@@ -23454,6 +23696,12 @@ class EvaluationWorkflowRunner:
                             "| awk '{print $1}'); "
                             f"test \"$actual\" = {_q(expected_index_sha)}"
                         )
+                        if native_plan_alias:
+                            verify_index_script = "(" + verify_index_script + ")" + (
+                                f" && test -f {_q(remote_bs + '/benchmark_plan.json')} && "
+                                f"native_full_plan_actual=$(sha256sum {_q(remote_bs + '/benchmark_plan.json')} | awk '{{print $1}}') && "
+                                f"test \"$native_full_plan_actual\" = {_q(native_plan_alias['sha256'])}"
+                            )
                         verify_index = _stream_native(
                             [
                                 "ssh", "-o", "BatchMode=yes", "-o",
@@ -24005,7 +24253,8 @@ class EvaluationWorkflowRunner:
                                 "--frames", str(frames),
                                 "--warmup", str(warmup),
                                 "--repetitions", str(repetitions),
-                                "--queue-depth", str(queue_depth),
+                                "--queue-depth", str(deepx_policy["deepx_queue_depth"]),
+                                "--deepx-runtime-mode", deepx_policy["deepx_runtime_mode"],
                                 "--analysis-tag", _q(_analysis_tag(kr.get("id") or (kr_models_arg + "_" + str(kr.get("precision") or precision)))),
                             ]
                             kr_args += ["--deepx-classification-profile-json", _q(json.dumps({key:self.profile_payload[key] for key in ("deepx_build", "run_mode", "execution_preset", "purpose") if key in self.profile_payload},sort_keys=True,separators=(",",":")))]
@@ -24044,7 +24293,8 @@ class EvaluationWorkflowRunner:
                             "python", "-u", runner, "--root", _q(rroot), "--backend", "deepx", "--models", _q(split_models_arg),
                             "--case-map", _q(case_map_json), "--precision", _q(precision), "--frames", str(frames), "--warmup", str(warmup),
                             "--repetitions", str(repetitions),
-                            "--queue-depth", str(queue_depth),
+                            "--queue-depth", str(deepx_policy["deepx_queue_depth"]),
+                            "--deepx-runtime-mode", deepx_policy["deepx_runtime_mode"],
                             "--preprocess-mode", "auto",
                             "--letterbox-pad-value", "114",
                             "--analysis-tag", _q(_analysis_tag("deepx_all_" + precision)),
@@ -24429,6 +24679,8 @@ class EvaluationWorkflowRunner:
                                 "--letterbox-pad-value", "114",
                             ]
                             fargs += ["--deepx-classification-profile-json", _q(json.dumps({key:self.profile_payload[key] for key in ("deepx_build", "run_mode", "execution_preset", "purpose") if key in self.profile_payload},sort_keys=True,separators=(",",":")))]
+                            if b == "deepx" and "deepx" in fb_list:
+                                fargs += ["--deepx-runtime-mode", deepx_policy["deepx_runtime_mode"]]
                             if supplement_native:
                                 fargs += ["--attempt-id", _q(self.session_id)]
                             if validation_image_map:
@@ -28501,6 +28753,9 @@ class EvaluationWorkflowRunner:
                     f"{message} Accepted-case scope failed: {exc}.",
                     "failed",
                 )
+            plan_epoch = _accepted_projection.get("sealed_plan_timestamp_recovery")
+            if isinstance(plan_epoch, Mapping) and plan_epoch.get("status") == "verified_original_plan_timestamp":
+                metrics_out["sealed_plan_timestamp_recovery"] = dict(plan_epoch)
             accepted_case_contract.update({
                 "source_suite_dir": relpath(
                     selected_suite_dir, self.run_dir,
@@ -29904,7 +30159,7 @@ class EvaluationWorkflowRunner:
             )
         )
         if getattr(self.options, "resume_missing", False):
-            from .supplement import merge_preserved_results, result_key
+            from .supplement import merge_preserved_results, merge_technical_revalidations, result_key
             previous = read_json(self._supplement_original_root / "models" / model_id
                                  / "benchmark_results/normalized_results.json", default={}) or {}
             preserved_keys = {result_key(r) for r in self._supplement_dispatch_rows(model_id) or []
@@ -29913,6 +30168,13 @@ class EvaluationWorkflowRunner:
             quality_metadata_merge = getattr(self, "_merge_supplement_quality_metadata", None)
             if callable(quality_metadata_merge):
                 kept = quality_metadata_merge(kept, normalized_rows)
+            technical_rows = [r for r in self._supplement_dispatch_rows(model_id) or []
+                              if r.get("technical_revalidation")
+                              and (r.get("action") == "execute" or r.get("retained_revalidation"))]
+            if technical_rows:
+                _records, reference_status, _encoded = self._management_reference_records(model_id)
+                kept = merge_technical_revalidations(self.run_dir, kept, source_records,
+                    technical_rows, self.session_id, self._supplement_original_root, reference_status)
             normalized_rows = merge_preserved_results(kept, normalized_rows)
             records_by_path = {str(r.get("path")): r for r in previous.get("sources", [])}
             records_by_path.update({str(r.get("path")): r for r in source_records})

@@ -4802,6 +4802,30 @@ def _deepx_load_sealed_prepared_feed(
 
 
 def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, Any], args: Any, results_dir: Path) -> Dict[str, Any]:
+    # Native A4 records preparation failures before the first runtime guard.
+    # Historical and Generic calls preserve their original result behavior.
+    if str(getattr(args, "deepx_runtime_mode", "S1") or "S1") != "A4":
+        return _run_deepx_prepared_feed_benchmark_impl(root, dxnn, run, args, results_dir)
+    try:
+        from splitpoint_runners.native_deepx_async import NativeExecutionLifecycle
+    except ImportError:
+        from onnx_splitpoint_tool.native_deepx_async import NativeExecutionLifecycle
+    lifecycle = NativeExecutionLifecycle()
+    try:
+        result = _run_deepx_prepared_feed_benchmark_impl(root, dxnn, run, args, results_dir,
+                                                       _deepx_lifecycle=lifecycle)
+    except Exception as exc:
+        result = {"enabled": True, "status": "native_prepared_feed_failed",
+                  "error": f"{type(exc).__name__}: {exc}"}
+    result["deepx_execution_lifecycle"] = lifecycle.report()
+    try:
+        (results_dir / "deepx_prepared_feed_benchmark.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    return result
+
+
+def _run_deepx_prepared_feed_benchmark_impl(root: Path, dxnn: Path, run: Dict[str, Any], args: Any, results_dir: Path, *, _deepx_lifecycle: Any = None) -> Dict[str, Any]:
     """Prepared-feed DeepX full benchmark via dx_engine.
 
     This is the fair comparison path against ORT/TensorRT/Hailo timing loops:
@@ -4810,6 +4834,9 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
     DXRT microbenchmark and may report buffered internal throughput.
     """
     diagnostic_only = bool(getattr(args, "deepx_output_diagnostic_only", False))
+    # Only the Native dispatcher supplies this option. Generic and archived
+    # requests keep their synchronous source and completion contract.
+    native_a4 = str(getattr(args, "deepx_runtime_mode", "S1") or "S1") == "A4"
     runs = max(1, int(getattr(args, "runs", 1) or 1))
     # Energy windows pass their requested inference count via
     # --throughput-frames.  Same-backend DeepX has no separate streaming loop,
@@ -4817,6 +4844,11 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
     if bool(getattr(args, "energy_measurement_only", False)):
         runs = max(1, int(getattr(args, "throughput_frames", 0) or runs))
     warmup = max(0, int(getattr(args, "warmup", 0) or 0))
+    if bool(getattr(args, "deepx_numerical_only", False)) and (
+        not native_a4 or not str(getattr(args, "deepx_numerical_images", "") or "").strip()
+        or runs > 64 or warmup != 0
+    ):
+        raise ValueError("deepx_numerical_only_requires_a4_images_zero_warmup_and_at_most_64_smoke_tasks")
     task = str(run.get("benchmark_task") or getattr(args, "benchmark_task", "auto") or "auto").strip().lower()
     input_size, input_contract = _deepx_input_size_from_contract(root, run, default=640)
     resolution_status = str((input_contract or {}).get("contract_resolution_status") or "").strip().lower()
@@ -5033,7 +5065,40 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
             "input_size": input_size, "input_contract": input_contract,
         }
     try:
+        if _deepx_lifecycle is not None:
+            _deepx_lifecycle.construction_enter()
         engine = InferenceEngine(str(dxnn))
+        if _deepx_lifecycle is not None:
+            _deepx_lifecycle.construction_return()
+        native_adapter = None
+        if native_a4:
+            try:
+                from splitpoint_runners.native_deepx_async import NativeDeepXAsync, run_a4
+            except ImportError:
+                from onnx_splitpoint_tool.native_deepx_async import NativeDeepXAsync, run_a4
+            declared_outputs = input_contract.get("outputs") or []
+            expected_names = [str(item.get("name") or "") for item in declared_outputs]
+            if not expected_names or any(not name for name in expected_names):
+                raise ValueError("deepx_native_full_output_names_missing")
+            native_adapter = NativeDeepXAsync(
+                engine, input_names=[str(inp.get("name"))] if inp.get("name") else None,
+                execution_lifecycle=_deepx_lifecycle,
+            )
+            # Stored Full contracts may bind endpoint aliases such as
+            # model_outputs rather than SDK tensor names. Preserve that exact
+            # established ordinal mapping while binding every physical tensor
+            # to the SDK metadata; never drop additional heads.
+            endpoint_output_names = expected_names
+            if len(declared_outputs) != len(native_adapter.output_names) or len(set(endpoint_output_names)) != len(endpoint_output_names):
+                raise ValueError("deepx_native_full_endpoint_output_order_invalid")
+            for declaration, physical in zip(declared_outputs, native_adapter.output_contracts):
+                if declaration.get("shape") and tuple(declaration["shape"]) != physical.shape:
+                    raise ValueError("deepx_native_full_output_shape_mismatch")
+                if declaration.get("dtype") and np.dtype(declaration["dtype"]) != physical.dtype:
+                    raise ValueError("deepx_native_full_output_dtype_mismatch")
+            # The only storage adaptation permitted here is the SDK's explicit
+            # singleton batch dimension; sealed tensor values remain identical.
+            sdk_feed = native_adapter.prepare_input(feed)
     except Exception as exc:
         return {"enabled": True, "status": "engine_init_failed", "error": f"{type(exc).__name__}: {exc}", "input_size": input_size}
     frozen_postprocessor = None
@@ -5052,15 +5117,35 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
     structural_outputs: Dict[str, Any] = {}
     diagnostic_phase = "structural_probe"
     engine_call_count = 0
+    engine_return_count = 0
     raw_output_snapshot: Dict[str, Any] = {}
+    numerical_validation: Dict[str, Any] = {}
 
     def _engine_run() -> Any:
-        nonlocal engine_call_count
+        nonlocal engine_call_count, engine_return_count
         engine_call_count += 1
+        if native_adapter is not None:
+            # Structural binding remains an untimed serial reference, using
+            # the very same SDK shape as the subsequent A4 requests.
+            try:
+                _deepx_lifecycle.inference_enter()
+                result = engine.run(sdk_feed if isinstance(sdk_feed, list) else [sdk_feed])
+            except BaseException as serial_error:
+                native_adapter.retain_unresolved_serial(sdk_feed, str(serial_error))
+                raise
+            engine_return_count += 1
+            _deepx_lifecycle.inference_return()
+            return result
         return engine.run([feed])
 
     def _named_runtime_outputs(raw: Any) -> Dict[str, Any]:
+        if native_adapter is not None and isinstance(raw, dict):
+            return dict(raw)
         values = list(raw) if isinstance(raw, (list, tuple)) else [raw]
+        if native_adapter is not None:
+            if len(values) != len(native_adapter.output_names):
+                raise ValueError("deepx_native_full_output_count_mismatch")
+            return dict(zip(endpoint_output_names, values))
         declared_outputs = list(input_contract.get("outputs") or []) if isinstance(input_contract, dict) else []
         named: Dict[str, Any] = {}
         for index, value in enumerate(values):
@@ -5418,6 +5503,167 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
         def _run_full_task_once():
             return completion_timer.run(_engine_run, _complete_full_task)
 
+        numerical_validation: Dict[str, Any] = {}
+        numerical_text = str(getattr(args, "deepx_numerical_images", "") or "").strip()
+        if numerical_text:
+            numerical_validation.update(status="running", serial_reference_started_count=0,
+                                        serial_reference_count=0, mixed_submit_attempt_count=0,
+                                        mixed_submitted_count=0, mixed_completed_count=0, accepted_work_drained=False,
+                                        timed=False)
+            if native_adapter is None or diagnostic_only:
+                raise ValueError("deepx_numerical_validation_requires_native_a4")
+            numerical_manifest = None
+            if numerical_text.lstrip().startswith("{"):
+                specification = json.loads(numerical_text)
+            else:
+                numerical_manifest = Path(numerical_text).expanduser().resolve(strict=True)
+                specification = json.loads(numerical_manifest.read_text(encoding="utf-8"))
+            image_names = specification.get("images") if isinstance(specification, dict) else None
+            if not isinstance(image_names, list) or not 1 <= len(image_names) <= 32 or any(not isinstance(name, str) or not name for name in image_names):
+                raise ValueError("deepx_numerical_images_invalid")
+            image_paths = []
+            for name in image_names:
+                path = Path(name).expanduser()
+                if not path.is_absolute() and numerical_manifest is not None:
+                    path = numerical_manifest.parent / path
+                image_paths.append(path.resolve(strict=True))
+            if len(set(image_paths)) != len(image_paths) or img_path.resolve() not in image_paths:
+                raise ValueError("deepx_numerical_images_must_be_unique_and_include_timing_image")
+            prepared_sequence = []
+            geometries = []
+            for index, path in enumerate(image_paths):
+                prepared = prepare_and_seal_deepx_native_full_input(
+                    image_path=path, input_contract=input_contract, task=task,
+                    out_dir=results_dir / "numerical_inputs" / f"{index:03d}",
+                    model=prepared_model, setup_id=prepared_setup_id,
+                    comparison_backend=prepared_comparison_backend,
+                )
+                loaded = load_sealed_deepx_native_full_input(
+                    Path(prepared["manifest_path"]), image_path=path, input_contract=input_contract,
+                    task=task, expected_model=prepared_model, expected_setup_id=prepared_setup_id,
+                    expected_comparison_backend=prepared_comparison_backend,
+                )
+                prepared_sequence.append(native_adapter.prepare_input(loaded["runtime_input"]))
+                with Image.open(path) as image:
+                    geometries.append([int(value) for value in image.size])
+
+            def _new_numerical_processor(outputs, source_wh):
+                if classification_processor is not None:
+                    return ClassificationCompletion()
+                if frozen_postprocessor is not None:
+                    frozen = build_frozen_postprocess_contract(
+                        model_id=decoder_model_id, model_sha256=registered_model_sha256,
+                        source_contract_family=runtime_endpoint_contract_family, outputs=outputs,
+                        input_hw=[int(geometry["height"]), int(geometry["width"])], original_wh=source_wh,
+                    )
+                    return FrozenDetectionPostprocessor(frozen)
+                if direct_normalizer is not None:
+                    frozen = build_frozen_decoded_nms_normalization_contract(
+                        source_completed=True, model_id=decoder_model_id, outputs=outputs,
+                        input_hw=[int(geometry["height"]), int(geometry["width"])], original_wh=source_wh,
+                        preprocess={"mode": preprocess_mode, "letterbox_pad_value": int(pad_value), "color_space": color_space},
+                        source_coordinate_space=str(authoritative_output.get("source_coordinate_space") or ""),
+                        source_endpoint_contract_hash=source_endpoint_contract_hash,
+                        source_output_endpoint_attestation=source_output_endpoint_attestation,
+                    )
+                    return FrozenDecodedNmsPostprocessor(frozen)
+                raise ValueError("deepx_numerical_task_endpoint_missing")
+
+            def _numerical_endpoint(processor, outputs, source_wh):
+                result = processor.process(outputs, original_wh=source_wh)
+                if classification_processor is not None:
+                    return {name: np.asarray(value).copy() for name, value in result.items()}
+                return result.get("detections", getattr(processor, "last_detections", []))
+
+            def _numeric_equal(expected, actual, label):
+                if isinstance(expected, np.ndarray):
+                    if not isinstance(actual, np.ndarray) or expected.shape != actual.shape or expected.dtype != actual.dtype:
+                        raise ValueError("deepx_numerical_shape_dtype_mismatch:" + label)
+                    if not np.isfinite(expected).all() or not np.isfinite(actual).all():
+                        raise ValueError("deepx_numerical_nonfinite:" + label)
+                    if expected.dtype.kind in "biu":
+                        equal = np.array_equal(expected, actual)
+                    else:
+                        equal = np.allclose(expected, actual, rtol=1e-4, atol=1e-5)
+                    if not equal:
+                        raise ValueError("deepx_numerical_tensor_mismatch:" + label)
+                elif isinstance(expected, dict):
+                    if not isinstance(actual, dict) or list(expected) != list(actual):
+                        raise ValueError("deepx_numerical_endpoint_keys_mismatch:" + label)
+                    for name in expected:
+                        _numeric_equal(expected[name], actual[name], label + "/" + name)
+                elif isinstance(expected, (list, tuple)):
+                    if not isinstance(actual, (list, tuple)) or len(expected) != len(actual):
+                        raise ValueError("deepx_numerical_endpoint_count_mismatch:" + label)
+                    for index, (before, after) in enumerate(zip(expected, actual)):
+                        _numeric_equal(before, after, label + "/" + str(index))
+                elif isinstance(expected, (int, float, np.number)):
+                    if not np.isfinite(expected) or not np.isfinite(actual) or (expected != actual if isinstance(expected, (int, np.integer)) else not np.isclose(expected, actual, rtol=1e-4, atol=1e-5)):
+                        raise ValueError("deepx_numerical_endpoint_value_mismatch:" + label)
+                elif expected != actual:
+                    raise ValueError("deepx_numerical_endpoint_value_mismatch:" + label)
+
+            serial_outputs, serial_endpoints, numerical_processors = [], [], []
+            diagnostic_phase = "numerical_reference"
+            for index, prepared in enumerate(prepared_sequence):
+                numerical_validation["serial_reference_started_count"] += 1
+                engine_call_count += 1
+                try:
+                    _deepx_lifecycle.inference_enter()
+                    physical = engine.run(prepared if isinstance(prepared, list) else [prepared])
+                except BaseException as serial_error:
+                    native_adapter.retain_unresolved_serial(prepared, str(serial_error))
+                    raise
+                engine_return_count += 1
+                _deepx_lifecycle.inference_return()
+                named = {name: np.array(value, copy=True) for name, value in _named_runtime_outputs(physical).items()}
+                # Reject nonfinite serial evidence before it can be an oracle.
+                _numeric_equal(named, named, f"serial/{index}")
+                processor = _new_numerical_processor(named, geometries[index])
+                serial_outputs.append(named)
+                serial_endpoints.append(_numerical_endpoint(processor, named, geometries[index]))
+                numerical_processors.append(_new_numerical_processor(named, geometries[index]))
+                numerical_validation["serial_reference_count"] += 1
+            mixed_endpoints = {}
+
+            def _complete_numerical(request_id, physical):
+                outputs = _named_runtime_outputs(physical)
+                mixed_endpoints[request_id] = _numerical_endpoint(numerical_processors[request_id], outputs, geometries[request_id])
+                numerical_validation["mixed_completed_count"] += 1
+
+            def _numerical_submit_attempt(_request_id):
+                numerical_validation["mixed_submit_attempt_count"] += 1
+
+            try:
+                diagnostic_phase = "numerical_mixed"
+                mixed = run_a4(native_adapter, lambda request_id: prepared_sequence[request_id],
+                               count=len(prepared_sequence), complete=_complete_numerical,
+                               on_submit=_numerical_submit_attempt, capture=True)
+            except Exception as numerical_error:
+                partial = dict(getattr(numerical_error, "result", {}) or {})
+                numerical_validation.update(
+                    mixed_submitted_count=partial.get("submitted_count", 0),
+                    mixed_completed_count=partial.get("completed_count", numerical_validation["mixed_completed_count"]),
+                    accepted_work_drained=partial.get("drained", False),
+                )
+                raise
+            numerical_validation.update(mixed_submitted_count=mixed["submitted_count"],
+                                        mixed_completed_count=mixed["completed_count"], accepted_work_drained=mixed["drained"])
+            for index in range(len(prepared_sequence)):
+                _numeric_equal(serial_outputs[index], _named_runtime_outputs(mixed["captured"][index]), f"raw/{index}")
+                _numeric_equal(serial_endpoints[index], mixed_endpoints[index], f"endpoint/{index}")
+            numerical_validation.update({
+                "status": "passed", "serial_reference_count": len(serial_outputs),
+                "mixed_completed_count": mixed["completed_count"], "images": [str(path) for path in image_paths],
+                "integer_comparison": "exact", "float_rtol": 1e-4, "float_atol": 1e-5,
+                "all_outputs_compared": True, "completed_endpoints_compared": True,
+                "actual_pending_max": mixed["actual_pending_max"], "accepted_work_drained": mixed["drained"],
+                "additional_serial_reference_count": engine_return_count - len(serial_outputs),
+                "additional_serial_reference_scope": "worker_setup_only_excludes_outer_series_preflight",
+                "timed": False,
+            })
+            (results_dir / "deepx_native_numerical_validation.json").write_text(json.dumps(numerical_validation, indent=2), encoding="utf-8")
+
         if diagnostic_only:
             if runtime_endpoint_contract_family != "decoded_pre_nms" or frozen_postprocessor is None:
                 raise RuntimeError("deepx_value_probe_requires_declared_decoded_pre_nms")
@@ -5460,8 +5706,12 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
             if frozen_postprocessor is not None
             and getattr(args, "native_full_postprocess_runtime_mode", "strict") != "strict" else {}
         )
-        for _ in range(warmup):
-            _run_full_task_once()
+        if native_adapter is not None:
+            warmup_stats = run_a4(native_adapter, lambda _request_id: sdk_feed,
+                                 count=warmup, complete=lambda _request_id, raw: _complete_full_task(raw))
+        else:
+            for _ in range(warmup):
+                _run_full_task_once()
         try:
             from splitpoint_runners.request_latency import RequestLatency
         except ImportError:
@@ -5475,13 +5725,20 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
         # used as a substitute for measured makespan throughput.
         makespan_start = perf()
         diagnostic_phase = "timed_loop"
-        for request_id in range(runs):
-            request_latency.start(request_id)
-            t0 = perf()
-            _run_full_task_once()
-            t1 = perf()
-            request_latency.complete(request_id)
-            times.append((t1 - t0) * 1000.0)
+        if native_adapter is not None:
+            # Reset observes a completely drained warmup before measured work.
+            # run_a4 includes ordered wait, output ownership and task completion.
+            native_stats = run_a4(native_adapter, lambda _request_id: sdk_feed,
+                                 count=runs, complete=lambda _request_id, raw: _complete_full_task(raw))
+            times = list(native_stats["request_latencies_ms"])
+        else:
+            for request_id in range(runs):
+                request_latency.start(request_id)
+                t0 = perf()
+                _run_full_task_once()
+                t1 = perf()
+                request_latency.complete(request_id)
+                times.append((t1 - t0) * 1000.0)
         makespan_end = perf()
         # Task materialization remains timed. The finite postflight oracle,
         # implementation binding and persisted evidence describe the completed
@@ -5522,6 +5779,28 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
             "preprocessing_contract_audit": preprocess_audit,
             **prepared_input_binding,
         }
+        if native_a4:
+            failed_phase = dict(getattr(exc, "result", {}) or {})
+            if numerical_validation:
+                numerical_validation.update(status="failed", error=f"{type(exc).__name__}: {exc}")
+            failure.update(
+                deepx_runtime_mode="A4", deepx_max_inflight=4,
+                unsafe_runtime_state=bool(getattr(exc, "unsafe_runtime_state", False) or engine_call_count > engine_return_count),
+                accepted_work_drained=failed_phase.get("drained", False),
+                deepx_async_observation=failed_phase.get("observation") or native_adapter.report(),
+                unsafe_runtime_reasons=(failed_phase.get("unsafe_runtime_reasons") or []) + (
+                    ["serial_sdk_completion_unproved"] if engine_call_count > engine_return_count else []),
+                submitted_count=failed_phase.get("submitted_count", 0) if diagnostic_phase == "timed_loop" else 0,
+                completed_frames=failed_phase.get("completed_count", 0) if diagnostic_phase == "timed_loop" else 0,
+                warmup_completed_count=(failed_phase.get("completed_count", 0) if diagnostic_phase == "warmup"
+                                        else warmup_stats["completed_count"] if "warmup_stats" in locals() else 0),
+                failed_phase_counts={"phase": diagnostic_phase,
+                                     "submitted_count": failed_phase.get("submitted_count", 0),
+                                     "completed_count": failed_phase.get("completed_count", 0)},
+                numerical_validation=numerical_validation,
+                serial_runtime_calls_started=engine_call_count,
+                serial_runtime_calls_completed=engine_return_count,
+            )
         # Preserve the first error and the input that reached it. Previously
         # this catch discarded the manifest, making downstream logs wrongly
         # suggest that preparation was the original failure.
@@ -5622,7 +5901,7 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
     out = {
         "enabled": True,
         "status": "ok",
-        "request_latency": request_latency.report(),
+        "request_latency": native_stats.get("request_latency") if native_a4 else request_latency.report(),
         "benchmark_kind": "prepared_feed_dx_engine",
         "postprocess_runtime_mode": getattr(frozen_postprocessor, "runtime_mode", completion_kind),
         "implementation_artifacts_before": implementation_before,
@@ -5745,7 +6024,31 @@ def _run_deepx_prepared_feed_benchmark(root: Path, dxnn: Path, run: Dict[str, An
     }
     if classification_processor is not None:
         out.update(classification_processor.report(postprocess_completed_frames))
-    out["generic_completion_evidence"] = completion_timer.report(warmup, runs)
+    if native_a4:
+        out.update(
+            deepx_runtime_mode="A4", deepx_max_inflight=4,
+            deepx_async_observation=native_stats["observation"],
+            actual_pending_max=native_stats["actual_pending_max"],
+            submitted_count=native_stats["submitted_count"],
+            accepted_work_drained=native_stats["drained"],
+            runtime_input_shapes=[list(value.shape) for value in (sdk_feed if isinstance(sdk_feed, list) else [sdk_feed])],
+            runtime_output_names=list(native_adapter.output_names),
+            endpoint_output_names=endpoint_output_names,
+            runtime_output_name_binding=[
+                {"index": index, "sdk_name": sdk_name, "endpoint_name": endpoint_name}
+                for index, (sdk_name, endpoint_name) in enumerate(zip(native_adapter.output_names, endpoint_output_names))
+            ],
+            warmup_completed_count=warmup_stats["completed_count"],
+            numerical_validation=numerical_validation,
+            numerical_smoke_completed_count=len(times) if numerical_text else 0,
+            serial_runtime_calls_started=engine_call_count,
+            serial_runtime_calls_completed=engine_return_count,
+            numerical_setup_reference_calls_started=engine_call_count - int(numerical_validation.get("serial_reference_started_count", 0)),
+            numerical_setup_reference_calls=engine_return_count - int(numerical_validation.get("serial_reference_count", 0)),
+            additional_serial_reference_count=engine_return_count - int(numerical_validation.get("serial_reference_count", 0)),
+        )
+    else:
+        out["generic_completion_evidence"] = completion_timer.report(warmup, runs)
     try:
         (results_dir / "deepx_prepared_feed_benchmark.json").write_text(json.dumps(out, indent=2), encoding="utf-8")
     except Exception:
@@ -9352,11 +9655,6 @@ def _management_cpu_reference_context(
 
 
 def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: str, image_scale: str, warmup: int, runs: int, timeout_s: Optional[int], stage1: Optional[str] = None, stage2: Optional[str] = None, variants: Optional[List[str]] = None, case_meta: Optional[Dict[str, Any]] = None, *, resume: bool = False, verbose_runs: bool = False, progress_every: int = 25, trt_cache_root: Optional[str] = None, trt_runtime: str = "native_preferred", native_trt_precision: str = "fp16", native_trt_workspace_mb: int = 4096, native_trt_build_timeout_s: int = 7200, native_trt_build: bool = True, boundary_mode: str = "canonical_float32", handoff_profile: str = "off", streaming_impl: str = "auto", throughput_frames: int = 24, throughput_warmup_frames: int = 6, throughput_queue_depth: int = 2, phase_runs: int = 5, validation_images: Optional[str] = None, validation_max_images: int = 0, validation_reference_mode: str = "auto", mini_coco_ap50: bool = False, benchmark_task: str = "auto", mini_classification_eval: bool = False, task_quality_gate: Optional[Dict[str, Any]] = None, measurement_only: bool = False, quality_evidence_only: bool = False, quality_source_only: bool = False, quality_evidence_eval_id: str = "", quality_evidence_model_id: str = "", quality_evidence_setup_id: str = "", quality_evidence_source_run_id: str = "", quality_evidence_originating_plan_run_id: str = "", full_only_quality_identity: Optional[Mapping[str, Any]] = None, native_trt_build_onnx_path: str = "", native_trt_engine_path: str = "", native_trt_build_receipt: str = "", native_split_quality_binding: str = "", native_split_quality_preparation_failure: Optional[Mapping[str, Any]] = None, management_cpu_reference: Optional[Mapping[str, Any]] = None, out_dir_override: Optional[Path] = None) -> Optional[Dict[str, Any]]:
-    if management_cpu_reference and not measurement_only:
-        validation_images = str(_bound_management_validation_source(
-            validation_images, case_dir.parent, str(benchmark_task or "auto").lower(),
-            validation_max_images, management_cpu_reference,
-        ))
     management_reference_only = _management_cpu_reference_context(
         run_id=run_id, provider=provider, stage1=stage1, stage2=stage2,
         variants=variants, case_meta=case_meta, warmup=warmup, runs=runs,
@@ -9369,6 +9667,21 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
         quality_evidence_source_run_id=quality_evidence_source_run_id,
         task_quality_gate=task_quality_gate,
     )
+    if management_reference_only:
+        reference_recipe = (case_meta or {}).get("_run") or {}
+        reference_count = reference_recipe.get("validation_max_images")
+        if (type(reference_count) is not int or reference_count <= 0
+                or type(validation_max_images) is not int
+                or validation_max_images != reference_count):
+            raise RuntimeError("management_cpu_reference_validation_count_invalid")
+        # The validated producer recipe describes the reference being created;
+        # it is not a descriptor of existing predictions for a candidate.
+        management_cpu_reference = None
+    elif management_cpu_reference and not measurement_only:
+        validation_images = str(_bound_management_validation_source(
+            validation_images, case_dir.parent, str(benchmark_task or "auto").lower(),
+            validation_max_images, management_cpu_reference,
+        ))
     if isinstance(native_split_quality_preparation_failure, Mapping) and native_split_quality_preparation_failure:
         failure = dict(native_split_quality_preparation_failure)
         failure_class = str(failure.get("exception_class") or "RuntimeError")
@@ -9857,11 +10170,107 @@ def _canonical_full_onnx_for_native(root: Path) -> Optional[Path]:
     return candidates[0].resolve() if candidates else None
 
 
+def _technical_quality_source_proof(rows, run_id, case_meta, args, *, stage1, stage2, quality_source_only):
+    """Bind the existing completion row before any technical QC preparation."""
+    selected = [row for row in (_completion_run_rows(rows, run_id, stage="quality_source") or [])
+                if str(row.get("case_id") or "") in _case_identifiers(case_meta)]
+    if not selected:
+        return None
+    proof_rows = [row for row in selected if "technical_revalidation" in row]
+    vendor = str(stage1).lower().replace("-", "_") in {"hailo8", "hailo10", "hailo10h"}
+    if not proof_rows and not (quality_source_only and vendor):
+        return None  # Existing Full/other quality companions are unchanged.
+    if (len(selected) != 1 or len(proof_rows) != 1 or not quality_source_only
+            or not vendor or str(stage2).lower() not in {"trt", "tensorrt"}):
+        raise RuntimeError("technical_revalidation_completion_identity_invalid")
+    row = selected[0]
+    proof = row.get("technical_revalidation")
+    expected = [str(getattr(args, "quality_evidence_model_id", "") or ""),
+                str(getattr(args, "quality_evidence_setup_id", "") or ""),
+                str(_canonical_plan_run_id(run_id)).replace("_to_tensorrt", "_to_trt"),
+                str(row.get("case_id") or ""), "split"]
+    if (not isinstance(proof, Mapping) or proof.get("schema") != "hailo_uint8_float_interface_v1"
+            or proof.get("key") != expected or not all(expected)
+            or row.get("model_id") != expected[0] or row.get("setup_id") != expected[1]
+            or row.get("variant") != "split"):
+        raise RuntimeError("technical_revalidation_proof_missing_or_mismatched")
+    expected_roles = {"part1_runtime", "boundary_metadata", "source_part2_onnx", "build_part2_onnx",
+                      "engine", "native_trt_meta", "engine_build_receipt", "trtexec"}
+    def digest(value):
+        return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+    if (proof.get("eval_run_id") != str(getattr(args, "quality_evidence_eval_id", "") or "")
+            or not digest(proof.get("original_binding_sha256"))
+            or not all(digest(proof.get(name)) for name in (
+                "original_preselection_sha256", "original_boundary_contract_sha256",
+                "original_boundary_metadata_value_sha256"))
+            or not isinstance(proof.get("original_artifacts"), Mapping)
+            or set(proof["original_artifacts"]) != expected_roles
+            or any(not isinstance(record, Mapping) or not digest(record.get("sha256"))
+                   or type(record.get("size_bytes")) is not int or record["size_bytes"] <= 0
+                   for record in proof["original_artifacts"].values())):
+        raise RuntimeError("technical_revalidation_original_binding_invalid")
+    # The descriptor is shared only inside this exact model/setup payload,
+    # keeping 20 compact case proofs below the SSH single-argument limit.
+    references = [candidate["technical_revalidation"]["management_cpu_reference"]
+                  for candidate in (rows or [])
+                  if candidate.get("model_id") == expected[0] and candidate.get("setup_id") == expected[1]
+                  and candidate.get("stage") == "quality_source" and candidate.get("action") == "execute"
+                  and isinstance(candidate.get("technical_revalidation"), Mapping)
+                  and "management_cpu_reference" in candidate["technical_revalidation"]]
+    if len(references) != 1 or not isinstance(references[0], Mapping):
+        raise RuntimeError("technical_revalidation_existing_reference_missing_or_ambiguous")
+    descriptor = references[0]
+    contract = descriptor.get("quality_contract")
+    if (not isinstance(contract, Mapping)
+            or not digest(proof.get("reference_quality_contract_sha256"))
+            or descriptor.get("quality_contract_sha256") != proof["reference_quality_contract_sha256"]
+            or contract.get("quality_contract_sha256") != proof["reference_quality_contract_sha256"]
+            or descriptor.get("reference_role") != "canonical_cpu_ort"
+            or descriptor.get("source_evaluation_run_id") != proof["eval_run_id"]
+            or not descriptor.get("reference_path") or not digest(descriptor.get("reference_sha256"))
+            or type(descriptor.get("reference_size_bytes")) is not int or descriptor["reference_size_bytes"] <= 0):
+        raise RuntimeError("technical_revalidation_existing_reference_contract_mismatch")
+    return {**proof, "management_cpu_reference": dict(descriptor)}
+
+
+def _prepare_technical_revalidation_binding(prepare, proof, **kwargs):
+    """Use the existing no-compiler replay, then require the original whole set."""
+    if proof is None:
+        return prepare(**kwargs)
+    previous = os.environ.get("ONNX_SPLITPOINT_ARTIFACT_POLICY")
+    try:
+        os.environ["ONNX_SPLITPOINT_ARTIFACT_POLICY"] = "cache_verify_only"
+        prepared = prepare(**kwargs)
+    finally:
+        if previous is None:
+            os.environ.pop("ONNX_SPLITPOINT_ARTIFACT_POLICY", None)
+        else:
+            os.environ["ONNX_SPLITPOINT_ARTIFACT_POLICY"] = previous
+    from splitpoint_runners.native_split_quality import validate_native_split_quality_binding
+    fresh, status = validate_native_split_quality_binding(prepared.get("binding"), expected_identity={
+        "model": proof["key"][0], "setup_id": proof["key"][1], "backend": proof["key"][2],
+        "case": proof["key"][3], "task": "detection", "precision": "uint8_dequant_fp16"}, verification_mode="portable")
+    replay = (fresh or {}).get("cache_verify_replay") or {}
+    if (fresh is None or prepared.get("cache_verify_reused") is not True
+            or prepared.get("cache_verify_source_binding_sha256") != proof["original_binding_sha256"]
+            or replay.get("source_binding_sha256") != proof["original_binding_sha256"]
+            or replay.get("artifact_policy") != "cache_verify_only" or replay.get("compiler_dispatched") is not False):
+        raise RuntimeError("technical_revalidation_exact_cache_replay_required:" + str(status))
+    artifacts = {role: {field: record[field] for field in ("sha256", "size_bytes")}
+                 for role, record in fresh["artifacts"].items()}
+    if (artifacts != proof["original_artifacts"] or fresh.get("eval_run_id") != proof["eval_run_id"]
+            or any(fresh.get(name) != proof["original_" + name] for name in (
+                "preselection_sha256", "boundary_contract_sha256", "boundary_metadata_value_sha256"))):
+        raise RuntimeError("technical_revalidation_original_artifact_set_changed")
+    return prepared
+
+
 def _prepare_native_split_quality_for_case(
     *, root: Path, case_dir: Path, bench: Mapping[str, Any],
     plan: Optional[Mapping[str, Any]], run: Mapping[str, Any], args: Any,
     run_id: str, stage1: str, stage2: str,
     variants: Optional[Sequence[str]],
+    technical_revalidation: Optional[Mapping[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Build and seal the exact vendor-Part1 -> TRT-Part2 quality producer.
 
@@ -9961,7 +10370,8 @@ def _prepare_native_split_quality_for_case(
         / "native_split_quality_binding.json"
     )
     try:
-        prepared = prepare_native_split_quality_binding(
+        prepared = _prepare_technical_revalidation_binding(
+            prepare_native_split_quality_binding, technical_revalidation,
             benchmark_set=root,
             case_id=case_dir.name,
             model_id=model_id,
@@ -11134,6 +11544,10 @@ def main() -> int:
     parser.add_argument("--native-full-postprocess-runtime-mode", default="strict",
                         choices=("auto", "strict", "bound_dense", "bound_exact_sparse"),
                         help="Native Full dispatcher completion mode; Generic retains strict by default.")
+    parser.add_argument("--deepx-runtime-mode", choices=("S1", "A4"), default="S1",
+                        help="Native DeepX only: explicit A4 async policy. Omitted historical/Generic requests keep S1.")
+    parser.add_argument("--deepx-numerical-images", default="", help="Native A4 bounded numerical preflight JSON file with images list (inline JSON also accepted); outside timing.")
+    parser.add_argument("--deepx-numerical-only", action="store_true", help="Bounded numerical preflight plus at most 64 smoke completions.")
     parser.add_argument(
         "--prepared-input-manifest", default="",
         help=(
@@ -11905,11 +12319,15 @@ def main() -> int:
                 ) and not _completion_case_variants(
                     completion_rows, run_id, c, variants_eff, include_quality_source=False,
                 )
+                technical_proof = _technical_quality_source_proof(
+                    completion_rows, run_id, c, args, stage1=stage1_tok, stage2=stage2_tok,
+                    quality_source_only=quality_source_only,
+                )
                 split_quality = _prepare_native_split_quality_for_case(
                     root=root, case_dir=case_dir, bench=bench, plan=plan,
                     run=run, args=args, run_id=run_id,
                     stage1=stage1_tok, stage2=stage2_tok,
-                    variants=variants_eff,
+                    variants=variants_eff, technical_revalidation=technical_proof,
                 )
                 r = _run_case(
                     case_dir,
@@ -11941,7 +12359,7 @@ def main() -> int:
                     benchmark_task=benchmark_task,
                     mini_classification_eval=mini_classification_eval,
                     task_quality_gate=(dict(run.get("task_quality_gate") or {}) if isinstance(run.get("task_quality_gate"), dict) else (dict((plan or {}).get("quality_gate") or {}) if isinstance((plan or {}).get("quality_gate"), dict) else {})),
-                    management_cpu_reference=(plan or {}).get("management_cpu_reference"),
+                    management_cpu_reference=(technical_proof["management_cpu_reference"] if technical_proof else (plan or {}).get("management_cpu_reference")),
                     trt_runtime=str(getattr(args, "trt_runtime", "native_preferred") or "native_preferred"),
                     native_trt_precision=str(
                         (split_quality or {}).get("precision")

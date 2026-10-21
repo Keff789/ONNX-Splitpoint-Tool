@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, json, re, subprocess, sys, csv, hashlib, os
+import argparse, json, re, subprocess, sys, csv, hashlib, os, time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -9,7 +9,7 @@ if str(ROOT) not in sys.path:
 from onnx_splitpoint_tool.native_job_identity import (
     planned_native_identity, attach_identity_without_conflicts, failed_native_result,
 )
-from onnx_splitpoint_tool.native_command_contract import canonical_json_sha256
+from onnx_splitpoint_tool.native_command_contract import canonical_json_sha256, deepx_runtime_policy
 from onnx_splitpoint_tool.native_split_quality import (
     canonical_native_split_backend,
     native_split_quality_selection_duplicates,
@@ -107,6 +107,102 @@ def _result_file_state(path: Path):
         return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
     except FileNotFoundError:
         return None
+
+
+def _deepx_runtime_projection(result, requested_mode):
+    contract = result.get('native_command_contract') or {}
+    runtime = result.get('runtime_options') or contract.get('runtime_options') or {}
+    observed = dict(runtime)
+    for field in ('deepx_runtime_mode', 'deepx_max_inflight'):
+        if field in result:
+            if field in observed and observed[field] != result[field]:
+                raise ValueError('deepx_child_runtime_mode_conflict:' + field)
+            observed[field] = result[field]
+    policy = deepx_runtime_policy(observed)
+    if policy['deepx_runtime_mode'] != requested_mode:
+        raise ValueError('deepx_child_runtime_mode_mismatch')
+    if 'deepx_runtime_mode' not in observed:
+        return {}
+    projection = {key: policy[key] for key in ('deepx_runtime_mode', 'deepx_max_inflight')}
+    projection['runtime_options'] = dict(runtime)
+    for field in ('host_pending_max', 'deepx_host_pending_max'):
+        if field in result or field in runtime:
+            projection[field] = result.get(field, runtime.get(field))
+    if 'host_pending_max' not in projection:
+        for field in ('deepx_actual_pending_max', 'actual_pending_max'):
+            if field in result:
+                projection['host_pending_max'] = result[field]
+                break
+    return projection
+
+
+def _run_deepx_a4_repeats(cmd, result_path, *, repetitions, timeout):
+    """Keep the existing repeat contract while each A4 child owns one engine."""
+    try:
+        from scripts.native_hailo10_trt_e2e_from_benchmarkset import _aggregate_repetition_metrics
+    except ImportError:
+        from native_hailo10_trt_e2e_from_benchmarkset import _aggregate_repetition_metrics
+    result_path = Path(result_path)
+    group = result_path.parent / 'a4_process_repeats' / f'{os.getpid()}_{time.time_ns()}'
+    group.mkdir(parents=True, exist_ok=False)
+    runs, launches, output, errors = [], [], [], []
+    failed, final_returncode = None, 0
+    for repeat in range(1, int(repetitions) + 1):
+        argv = list(cmd)
+        argv[argv.index('--repetitions') + 1] = '1'
+        destination = group / f'rep{repeat:02d}'
+        argv += ['--out-dir', str(destination)]
+        leaf = destination / result_path.name
+        timed_out = False
+        try:
+            proc = subprocess.run(argv, text=True, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, timeout=float(timeout))
+            code, stdout, stderr = proc.returncode, proc.stdout or '', proc.stderr or ''
+        except subprocess.TimeoutExpired as exc:
+            code, timed_out = 124, True
+            stdout, stderr = str(exc.stdout or ''), str(exc.stderr or '')
+        output.append(stdout)
+        errors.append(stderr)
+        launch = {'repeat': repeat, 'argv': argv, 'report': str(leaf),
+                  'returncode': code, 'timed_out': timed_out}
+        launches.append(launch)
+        try:
+            child = json.loads(leaf.read_text(), object_pairs_hook=_no_duplicate_json_keys)
+            if not isinstance(child, dict):
+                raise ValueError('child_result_must_be_object')
+            _deepx_runtime_projection(child, 'A4')
+        except (OSError, ValueError, TypeError) as exc:
+            child = {'ok': False, 'error': 'deepx_a4_repeat_result_invalid:' + str(exc)}
+        if code or not child.get('ok'):
+            failed, final_returncode = child, int(code or 2)
+            break
+        records = child.get('repetition_records') or child.get('repetition_evidence') or []
+        run = {**child, **(records[0] if len(records) == 1 else {})}
+        for field in ('repetition_records', 'repetition_evidence'):
+            run.pop(field, None)
+        run.update(repetition_index=repeat, process_argv=argv, report=str(leaf))
+        runs.append(run)
+    if failed is None:
+        aggregate = _aggregate_repetition_metrics(
+            runs, repetition_runtime_scope='fresh_process_per_repetition',
+            repetition_independence_verified=True)
+    else:
+        aggregate = {**failed, 'ok': False, 'repetition_records': runs,
+                     'repetition_evidence': runs, 'repetition_status': 'incomplete'}
+    aggregate.update(repetition_count_requested=int(repetitions),
+                     repetition_count_attempted=len(launches),
+                     repetition_count_valid=len(runs),
+                     native_child_launch_count=len(launches),
+                     timed_out=any(launch['timed_out'] for launch in launches),
+                     fresh_process_launches=launches)
+    observed_pending = [run[field] for run in runs
+                        for field in ('host_pending_max', 'deepx_actual_pending_max', 'actual_pending_max')
+                        if type(run.get(field)) is int]
+    if observed_pending:
+        aggregate['host_pending_max'] = max(observed_pending)
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text(json.dumps(aggregate, indent=2) + '\n')
+    return subprocess.CompletedProcess(cmd, final_returncode, '\n'.join(output), '\n'.join(errors))
 
 def _no_duplicate_json_keys(pairs):
     value={}
@@ -404,6 +500,7 @@ def main():
     ap.add_argument('--timeout', type=float, default=3600.0, help='Per-row native producer timeout in seconds.')
     ap.add_argument('--setup-id', default=os.environ.get('ONNX_SPLITPOINT_SETUP_ID',''))
     ap.add_argument('--deepx-classification-profile-json', default='', help='Selected workflow numeric preprocessing admission; no model rebuild is performed here.')
+    ap.add_argument('--deepx-runtime-mode', choices=['A4', 'S1'], default='S1', help='Explicit Native DeepX policy. Missing historical requests retain S1.')
     ap.add_argument('--native-job-prerequisites', default='', help='Dispatcher-owned planned jobs and their upstream blocking evidence.')
     ap.add_argument('--native-split-quality-binding-set', default=os.environ.get('ONNX_SPLITPOINT_NATIVE_SPLIT_BINDING_SET',''))
     ns=ap.parse_args()
@@ -642,6 +739,9 @@ def main():
                     cmd += ['--image', image_val]
             else:
                 cmd=[sys.executable, str(ROOT/'scripts'/'native_deepx_trt_e2e_from_benchmarkset.py'), '--benchmark-set', str(bs), '--case', c, '--precision', effective_precision, '--frames', str(ns.frames), '--warmup', str(ns.warmup), '--repetitions', str(ns.repetitions), '--queue-depth', str(ns.queue_depth), '--task', task, '--preprocess-mode', str(ns.preprocess_mode), '--letterbox-pad-value', str(int(ns.letterbox_pad_value)), '--setup-id', str(ns.setup_id), '--model-id', m, '--completion-runtime-mode', ns.completion_runtime_mode]
+                cmd += ['--deepx-runtime-mode', ns.deepx_runtime_mode]
+                if ns.deepx_runtime_mode == 'A4':
+                    cmd[cmd.index('--queue-depth') + 1] = '3'
                 if row_quality_first:
                     cmd += ['--eval-run-id', str(binding_set.get('eval_run_id') or ''), '--source-run-id', canonical_native_split_backend(binding.get('source_run_id') or source_backend, ns.setup_id), '--native-split-quality-binding', str(binding_path)]
                 if ns.duration_s and float(ns.duration_s) > 0:
@@ -669,7 +769,10 @@ def main():
             previous_result_state = _result_file_state(rp)
             timed_out = False
             try:
-                proc=subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=float(ns.timeout))
+                if ns.backend == 'deepx' and ns.deepx_runtime_mode == 'A4' and int(ns.repetitions) > 1:
+                    proc = _run_deepx_a4_repeats(cmd, rp, repetitions=ns.repetitions, timeout=ns.timeout)
+                else:
+                    proc=subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=float(ns.timeout))
                 returncode = int(proc.returncode)
                 stdout = str(proc.stdout or '')
                 stderr = str(proc.stderr or '')
@@ -693,10 +796,18 @@ def main():
                 child_json_error = 'native_result_invalid_json:' + type(exc).__name__
             child_identity=attach_identity_without_conflicts(identity,j)
             identity_error=str(child_identity.get('failure_reason') or '') if child_identity.get('identity_conflicts') else ''
+            timed_out = timed_out or j.get('timed_out') is True
             runtime_success = bool(
                 j.get('ok') and returncode == 0 and not timed_out
                 and not j.get('error')
             )
+            deepx_projection = {}
+            if ns.backend == 'deepx' and runtime_success:
+                try:
+                    deepx_projection = _deepx_runtime_projection(j, ns.deepx_runtime_mode)
+                except ValueError as exc:
+                    runtime_success = False
+                    j['error'] = str(exc)
             quality_identity_error=''
             if row_quality_first and runtime_success:
                 selected=native_split_quality_selection_duplicates(binding)
@@ -771,7 +882,7 @@ def main():
                 'failure_reason':failure,'status_detail':status_detail,
                 'error':error_text,
                 'returncode':returncode,'rc':returncode,'timed_out':timed_out,
-                'result_fresh':result_fresh,'native_child_launch_count':1,
+                'result_fresh':result_fresh,'native_child_launch_count':j.get('native_child_launch_count', 1),
                 'stdout_tail':stdout[-4000:],'stderr_tail':stderr[-4000:],
                 'input_image':image_val,'input_image_source':image_source,'input_image_sha256':image_sha256,
                 'fps_makespan':j.get('fps_makespan'), 'paper_fps':j.get('paper_equivalent_fps'),
@@ -835,6 +946,7 @@ def main():
                 'native_fifo_boundary_manifest':j.get('native_fifo_boundary_manifest'),
                 'steps':[{'name':'native_producer_e2e','cmd':cmd,'rc':returncode,'timed_out':timed_out,'stdout_tail':stdout[-4000:],'stderr_tail':stderr[-4000:]}],
                 **completion_projection,
+                **deepx_projection,
             })
     for row in rows:
         admission=classification_admissions.get((row.get('model'),row.get('case')))

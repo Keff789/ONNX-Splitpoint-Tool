@@ -2473,12 +2473,23 @@ def _p03_resume_admission(
 def _resume_contract_sha256(
     row: dict[str, Any], plan_payload: dict[str, Any],
 ) -> str:
+    # Preserve historical payloads byte-for-byte when no DeepX policy was
+    # stored. New explicit policy fields belong to the executable cohort, not
+    # the downstream Quality/claim annotations omitted by P0.3.
+    deepx_policy = {
+        field: row[field]
+        for field in ('deepx_runtime_mode', 'deepx_max_inflight')
+        if field in row
+    } if row.get('backend') in {'deepx_to_trt', 'native_full_deepx'} else {}
     p03_admission = _p03_resume_admission(row)
     if p03_admission is not None:
         payload = {
             'row': {
-                field: row.get(field)
-                for field in _P03_RESUME_ROW_CONTRACT_FIELDS
+                **{
+                    field: row.get(field)
+                    for field in _P03_RESUME_ROW_CONTRACT_FIELDS
+                },
+                **deepx_policy,
             },
             'technical_admission': p03_admission,
             'plan': {
@@ -2491,8 +2502,11 @@ def _resume_contract_sha256(
         return _canonical_json_sha256(payload)
     payload = {
         'row': {
-            field: row.get(field)
-            for field in _RESUME_ROW_CONTRACT_FIELDS
+            **{
+                field: row.get(field)
+                for field in _RESUME_ROW_CONTRACT_FIELDS
+            },
+            **deepx_policy,
         },
         'plan': {
             field: plan_payload.get(field)
@@ -2731,7 +2745,8 @@ def _reimport_energy_checkpoint(
     if isinstance(previous.get('row'), Mapping):
         prior_row = previous['row']
         for key in ('backend', 'model', 'case', 'setup_id', 'measurement_output_dir',
-                    'native_command_contract', 'completed_task_completion_mode'):
+                    'native_command_contract', 'completed_task_completion_mode',
+                    'deepx_runtime_mode', 'deepx_max_inflight'):
             if key in prior_row and prior_row[key] != row.get(key):
                 raise ValueError('historical_runtime_row_conflict:' + key)
     argv = execution.get('argv')
@@ -3131,7 +3146,19 @@ def _supplement_previous_results(
             bound_old_row = dict(old_row)
             if not bound_old_row.get('source_request_sha256'):
                 bound_old_row['source_request_sha256'] = new_row.get('source_request_sha256')
-            _verify_split_energy_quality_binding(bound_old_row)
+            _verify_energy_quality_admission(
+                bound_old_row,
+                required=old_plan.get("energy_quality_admission_required") is True,
+            )
+            verified_admission = bound_old_row.get("energy_quality_admission")
+            admission_scope = (
+                str(verified_admission.get("admission_scope") or "")
+                if isinstance(verified_admission, dict)
+                else ""
+            )
+            _verify_split_energy_quality_binding(
+                bound_old_row, admission_scope=admission_scope,
+            )
             if bound_old_row['source_request_sha256'] != new_row.get('source_request_sha256'):
                 raise ValueError('supplement split source request contract drift')
         if _resume_contract_sha256(old_row, old_plan) != _resume_contract_sha256(new_row, plan):

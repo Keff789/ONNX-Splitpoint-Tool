@@ -377,7 +377,7 @@ def authorize_campaign_sample_loss_retries(path, source_id, authorization_file, 
         return copy.deepcopy(grant)
 
 
-def _pure_sample_loss_failure(chain, row, cohort_id):
+def _pure_sample_loss_failure(chain, row, cohort_id, *, native_a4=False):
     """Classify retry permission without changing the failed scientific report."""
     directory = Path(chain["run_directory"])
     entry = json.loads((directory / "energy_summary.json").read_text(encoding="utf-8"))
@@ -389,7 +389,9 @@ def _pure_sample_loss_failure(chain, row, cohort_id):
             or entry.get("preflight_status") != "verified"
             or entry.get("runtime_work_unit_gate_status") != "pass"
             or entry.get("full_system_scope_calibration_status") not in {"pass", "not_full_system"}
-            or entry.get("diagnostic_only") is True or entry.get("global_infrastructure_failure")
+            or (entry.get("diagnostic_only") is True
+                and not (native_a4 and native_a4_diagnostic_cohort_repeat(entry)))
+            or entry.get("global_infrastructure_failure")
             or entry.get("postprocess_status") != "ok"
             or calibration.get("runtime_fail_closed_required") and calibration.get("verified") is not True
             or set(request.get("errors") or []) != {"marker_dropped_samples_nonzero", "marker_not_valid_for_final_energy"}
@@ -455,6 +457,7 @@ def _released_sample_loss_resources(chain, source_id, environment):
     run = Path(chain["run_directory"])
     _reentry_require(run.is_absolute() and run.is_relative_to(root), "retry outside current normal parent")
     directories = {journal, root / "remote-process-leases"}
+    directories.update((root / "jobs/remote_process_leases").glob("*/"))
     relative = run.relative_to(root).parts
     if len(relative) > 2 and relative[0:2] == ("measurement", "resume_attempts"):
         directories.add(root / "resume_attempts" / relative[2] / "remote-process-leases")
@@ -499,6 +502,195 @@ def _released_sample_loss_resources(chain, source_id, environment):
                              "retry resource active or quarantined")
         yield {"request_path": str(request_path), "request": request, "reply": reply,
                "resources": resources, "parent": parent}
+
+
+def native_resume_capture_series(root, row_id, environment=None, *, parent_run_dir=None):
+    """Read the current normal Resume's finite series in the original budget."""
+    import hashlib
+    task = root.get("tasks", {}).get(row_id) or {}
+    history = task.get("resume_capture_series") or []
+    if not history:
+        return None
+    series = history[-1]
+    env = {**os.environ, **(environment or {})}
+    if env.get("ONNX_SPLITPOINT_CONTROLLER_RESOURCES") != "required":
+        return None
+    parent = _budget_parent(environment)
+    if parent != series["parent"]:
+        return None
+    if parent_run_dir is not None:
+        _reentry_require(str(Path(parent_run_dir).resolve()) == series["parent_run_dir"],
+                         "resumed capture series has a different normal parent")
+    cohort = final_cohort_authorization(root, series["cohort_id"])
+    run = Path(series["parent_run_dir"])
+    identity = json.loads(row_id)
+    point = run / "native" / "__".join(identity[i] for i in (1, 3, 2))
+    selected = Path(series["selected_view"])
+    original = series["original_chains"]
+    slots = {"repeat:0", "repeat:1", "repeat:2"}
+    accepted = {c["logical_repeat"] for c in original if c.get("valid") is True}
+    missing = series["logical_repeats"]
+    suffix = task["chains"][len(original):]
+    _reentry_require(series["row_id"] == row_id and row_id in cohort.get("row_ids", [])
+                     and identity[0] in {"deepx_to_trt", "native_full_deepx"}
+                     and run.is_absolute() and run.resolve() == run
+                     and selected.resolve() == selected and selected.parent == point / "energy_view/reports/native_energy_measurements/resume_attempts"
+                     and selected.name.startswith("resume_")
+                     and re.fullmatch(r"[a-f0-9]{64}", series["command_contract_sha256"])
+                     and parent["run_id"] == series["cohort_id"]
+                     and cohort.get("parent_run_dir") == series["parent_run_dir"]
+                     and cohort.get("source_id") == task.get("source_id") == series["source_id"]
+                     and task["stop_reason"] == series["original_stop_reason"]
+                     and task["limits"] == series["original_limits"]
+                     and task["chains"][:len(original)] == original
+                     and all(c.get("cohort_id") == series["cohort_id"]
+                             and Path(c["run_directory"]).resolve().is_relative_to(point / "energy_view") for c in task["chains"])
+                     and all(c["logical_repeat"] in missing
+                             and Path(c["run_directory"]).resolve().is_relative_to(selected)
+                             for c in suffix)
+                     and accepted.issubset(slots) and missing == sorted(slots - accepted) and missing
+                     and all(sum(c["logical_repeat"] == logical for c in suffix) <= series["max_starts"]
+                             for logical in missing)
+                     and len(suffix) <= series["max_total_starts"]
+                     and series["original_stop_reason"] == "task_logical_retry_limit"
+                     and isinstance(series["stop_reason"], str)
+                     and series["original_limits"] == {"max_chains": 9, "max_retries": 2, "max_transport_failures": 20}
+                     and series["max_starts"] == 1 + task["limits"]["max_retries"]
+                     and series["max_total_starts"] == len(missing) * series["max_starts"],
+                     "resumed capture series original contract changed")
+    for binding in (series["predecessor_result"], series["predecessor_checkpoint"]):
+        path = Path(binding["path"])
+        _reentry_require(path.is_file() and not path.is_symlink()
+                         and path.resolve() == path and path.is_relative_to(Path(series["parent_run_dir"]))
+                         and hashlib.sha256(path.read_bytes()).hexdigest() == binding["sha256"],
+                         "resumed capture predecessor changed")
+    return series
+
+
+def authorize_native_resume_capture_series(budget_path, *, row_id, command_contract_sha256,
+                                          predecessor_result, predecessor_checkpoint, selected_view, environment):
+    """One explicit normal Resume, missing slots, ordinary initial + retries.
+
+    The caller has verified the frozen failed managed row and accepted slots.
+    This API independently requires pure sample loss and normally released
+    ownership. Original STOPs, limits and physical counters are never reset.
+    """
+    import hashlib
+    from ..remote.process_lease import RemoteProcessLeaseJournal
+    from ..process_control import _proc_start_time
+    path = Path(budget_path).resolve(strict=True)
+    parent = _budget_parent(environment)
+    env = {**os.environ, **(environment or {})}
+    journal = Path(env["ONNX_SPLITPOINT_REMOTE_LEASE_JOURNAL_DIR"])
+    current = RemoteProcessLeaseJournal._read_json_exact(journal / "controller.resources.json")
+    run = Path(current["run_dir"])
+    _reentry_require(path == run / "energy/energy_task_budget.json"
+                     and parent["run_id"] == run.name, "normal Resume budget binding required")
+    def binding(value):
+        target = Path(value)
+        _reentry_require(target.is_absolute() and target.resolve() == target and target.is_file()
+                         and not target.is_symlink() and target.is_relative_to(run),
+                         "normal Resume predecessor escapes its original Run")
+        return {"path": str(target), "sha256": hashlib.sha256(target.read_bytes()).hexdigest()}
+    result_binding, checkpoint_binding = binding(predecessor_result), binding(predecessor_checkpoint)
+    with path.open("r+", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        root = json.load(handle)
+        task = root["tasks"][row_id]
+        previous = (task.get("resume_capture_series") or [None])[-1]
+        existing = native_resume_capture_series(root, row_id, environment, parent_run_dir=run)
+        if existing is not None:
+            _reentry_require(existing["predecessor_result"] == result_binding
+                             and existing["predecessor_checkpoint"] == checkpoint_binding
+                             and existing["command_contract_sha256"] == command_contract_sha256,
+                             "this normal parent already owns a different capture series")
+            return copy.deepcopy(existing)
+        same_series = (previous is not None and previous["predecessor_result"] == result_binding
+                       and previous["predecessor_checkpoint"] == checkpoint_binding)
+        if previous is not None:
+            _reentry_require(not _proc_start_time(previous["parent"]["pid"])
+                             or _proc_start_time(previous["parent"]["pid"]) != previous["parent"]["start_ticks"],
+                             "previous resumed series parent remains active")
+            _reentry_require(same_series or previous["stop_reason"] == "task_logical_retry_limit",
+                             "previous resumed series still has its ordinary capture allowance")
+            suffix = task["chains"][len(previous["original_chains"]):]
+            _reentry_require(same_series or any(
+                             sum(c["logical_repeat"] == logical for c in suffix) == previous["max_starts"]
+                             and not any(c["logical_repeat"] == logical and c.get("valid") is True for c in suffix)
+                             for logical in previous["logical_repeats"]),
+                             "previous resumed series ordinary capture allowance is not exhausted")
+            prospective = copy.deepcopy(root)
+            prospective["tasks"][row_id]["resume_capture_series"][-1]["parent"] = parent
+            _reentry_require(native_resume_capture_series(prospective, row_id, environment, parent_run_dir=run) is not None,
+                             "previous normal Resume series contract changed")
+        source_id = task["source_id"]
+        cohort = final_cohort_authorization(root, run.name)
+        _reentry_require(root.get("campaign") is True and row_id in cohort.get("row_ids", [])
+                         and cohort.get("source_id") == source_id and cohort.get("parent_run_dir") == str(run)
+                         and root["sources"][source_id].get("stop_reason", "") == ""
+                         and root["sources"][source_id].get("transport_failures", 0) < root["max_transport_failures"]
+                         and task["limits"] == {"max_chains": 9, "max_retries": 2, "max_transport_failures": 20}
+                         and task["stop_reason"] == "task_logical_retry_limit",
+                         "normal Resume requires its original final cohort and sample-loss retry STOP")
+        chains = task["chains"]
+        identity = json.loads(row_id)
+        point = run / "native" / "__".join(identity[i] for i in (1, 3, 2))
+        selected = Path(selected_view)
+        _reentry_require(identity[0] in {"deepx_to_trt", "native_full_deepx"}
+                         and re.fullmatch(r"[a-f0-9]{64}", command_contract_sha256)
+                         and selected.resolve() == selected
+                         and selected.parent == point / "energy_view/reports/native_energy_measurements/resume_attempts"
+                         and selected.name.startswith("resume_")
+                         and all(c.get("cohort_id") == run.name and Path(c["run_directory"]).resolve().is_relative_to(point / "energy_view")
+                                 for c in chains), "normal Resume has a foreign row, output or capture chain")
+        diagnosis_chains = previous["original_chains"] if same_series else chains
+        valid = {c["logical_repeat"] for c in diagnosis_chains if c.get("cohort_id") == run.name and c.get("valid") is True}
+        missing = {"repeat:0", "repeat:1", "repeat:2"} - valid
+        _reentry_require(valid.issubset({"repeat:0", "repeat:1", "repeat:2"}) and missing,
+                         "normal Resume requires an incomplete original energy cohort")
+        failed = [c for c in diagnosis_chains if c.get("cohort_id") == run.name and c["logical_repeat"] in missing]
+        _reentry_require(any(sum(c["logical_repeat"] == logical for c in failed) >= 3 for logical in missing)
+                         and all(c.get("finished") is True
+                         and c.get("collector_started") is True and c.get("valid") is False
+                         and c.get("source_completion_verified") is True
+                         and c.get("transport_reasons") == ["marker_dropped_samples_nonzero"]
+                         and source_completion(c["run_directory"])["verified"]
+                         and _pure_sample_loss_failure(c, row_id, run.name, native_a4=True) for c in failed),
+                         "normal Resume predecessor is not fully completed pure sample loss")
+        for other in root["tasks"].values():
+            if other["source_id"] != source_id:
+                continue
+            _reentry_require(all(c.get("finished") is True and not _chain_owner_alive(c)
+                             and (not c.get("collector_started") or c.get("source_completion_verified") is True)
+                             for c in other["chains"]), "normal Resume source has active or unresolved capture history")
+        with _released_sample_loss_resources(chains[-1], source_id, environment) as released:
+            old_config = RemoteProcessLeaseJournal._read_json_exact(
+                Path(released["request_path"]).parent / "controller.resources.json")
+            _reentry_require(old_config["session_id"] != parent["session_id"]
+                             and _proc_start_time(old_config["parent_pid"]) != old_config["parent_start_ticks"],
+                             "normal Resume predecessor parent is still active")
+            if same_series:
+                _reentry_require(previous["command_contract_sha256"] == command_contract_sha256,
+                                 "continued Resume series command changed")
+                previous.setdefault("previous_parents", []).append(previous["parent"])
+                previous["parent"] = parent
+                handle.seek(0); json.dump(root, handle, indent=2); handle.truncate(); handle.flush(); os.fsync(handle.fileno())
+                return copy.deepcopy(previous)
+            series = {"parent": parent, "parent_run_dir": str(run), "cohort_id": run.name,
+                "row_id": row_id, "source_id": source_id, "logical_repeats": sorted(missing),
+                "command_contract_sha256": command_contract_sha256,
+                "predecessor_result": result_binding, "predecessor_checkpoint": checkpoint_binding,
+                "original_stop_reason": task["stop_reason"], "original_limits": copy.deepcopy(task["limits"]),
+                "original_chains": copy.deepcopy(chains), "max_starts": 1 + task["limits"]["max_retries"],
+                "max_total_starts": len(missing) * (1 + task["limits"]["max_retries"]),
+                "released_capture": released, "selected_view": str(Path(selected_view)), "stop_reason": ""}
+            prospective = copy.deepcopy(root)
+            prospective["tasks"][row_id].setdefault("resume_capture_series", []).append(copy.deepcopy(series))
+            _reentry_require(native_resume_capture_series(prospective, row_id, environment, parent_run_dir=run) is not None,
+                             "new normal Resume series contract invalid")
+            task.setdefault("resume_capture_series", []).append(series)
+            handle.seek(0); json.dump(root, handle, indent=2); handle.truncate(); handle.flush(); os.fsync(handle.fileno())
+            return copy.deepcopy(series)
 
 
 def _reentry_history(grant):
@@ -640,6 +832,9 @@ def _campaign_task_stop(root, row_id, source_id, environment=None, parent_run_di
     task = root["tasks"].get(row_id)
     if task is None:
         return ""
+    series = native_resume_capture_series(root, row_id, environment, parent_run_dir=parent_run_dir)
+    if series is not None:
+        return str(series["stop_reason"])
     if root["sources"][source_id].get("post_unstarted_capture_stop_reason"):
         return str(task.get("post_unstarted_capture_stop_reason") or task.get("stop_reason") or "")
     receipt = _derived_unstarted_capture(root, source_id, row_id, environment, parent_run_dir)
@@ -1439,6 +1634,11 @@ class EnergyTaskBudget:
 
     def _effective_limits(self, logical_repeat):
         limits = dict(self.data["limits"])
+        series = native_resume_capture_series(self.root, self.campaign_row, self.environment) if self.campaign_row else None
+        if series is not None and series["cohort_id"] == self.cohort_id and logical_repeat in series["logical_repeats"]:
+            old = series["original_chains"]
+            limits["max_retries"] = sum(c.get("cohort_id") == self.cohort_id and c["logical_repeat"] == logical_repeat for c in old) + series["max_starts"] - 1
+            limits["max_chains"] = max(limits["max_chains"], len(old) + series["max_total_starts"])
         change = (self._reentry or {}).get("limit_changes", {}).get(self.campaign_row)
         first = True
         while change is not None:
@@ -1551,7 +1751,10 @@ class EnergyTaskBudget:
     @_budget_transaction
     def stop(self, reason):
         if not self._stop_reason():
-            if self._reentry is not None:
+            series = native_resume_capture_series(self.root, self.campaign_row, self.environment) if self.campaign_row else None
+            if series is not None:
+                series["stop_reason"] = reason
+            elif self._reentry is not None:
                 self._reentry["task_stop_reasons"][self.campaign_row] = reason
             elif self.campaign_row is not None and "post_unstarted_capture_stop_reason" in self.data:
                 self.data["post_unstarted_capture_stop_reason"] = reason
@@ -1756,11 +1959,12 @@ class EnergyTaskBudget:
         if self.busy_reason and not reason:
             result.update(ok=False, status="not_dispatched", reason=self.busy_reason, physical_dispatch_started=False)
         result["task_budget"] = {**self.data, "counts": self.counts()}
-        if (self._reentry or {}).get("sample_loss_retries"):
+        resumed = native_resume_capture_series(self.root, self.campaign_row, self.environment) if self.campaign_row else None
+        if (self._reentry or {}).get("sample_loss_retries") or resumed is not None:
             result["task_budget"]["effective_limits"] = {logical: self._effective_limits(logical) for logical in ("repeat:0", "repeat:1", "repeat:2")}
         if self.source is not None:
             result["task_budget"]["campaign_source"] = dict(self.source)
-        if self._reentry is not None or self.data.get("unstarted_capture_reconciliation"):
+        if self._reentry is not None or self.data.get("unstarted_capture_reconciliation") or resumed is not None:
             result["task_budget"]["effective_stop_reason"] = reason
         if reason:
             result.update(ok=False, status="incomplete_task_budget", terminal=True,
@@ -1799,7 +2003,8 @@ def read_verified_campaign_repeat(chain, *, command, command_contract_sha256, du
         if (entry.get("campaign_cohort") != chain.get("cohort_id")
                 or (require_environment_observation and not chain.get("cohort_id")
                     and entry.get("environment_observation_required") is not True)
-                or (chain.get("cohort_id") and entry.get("diagnostic_only") is True)
+                or (chain.get("cohort_id") and entry.get("diagnostic_only") is True
+                    and not native_a4_diagnostic_cohort_repeat(entry))
                 or (entry.get("diagnostic_only") is True
                     and _clamp_diagnostic_claim_fields(entry) != entry)
                 or not validate_environment(root,entry)["ok"]
@@ -1828,6 +2033,111 @@ def read_verified_campaign_repeat(chain, *, command, command_contract_sha256, du
     return entry
 
 
+def _native_a4_diagnostic_capture(options, *, cohort_id, row_id, duration_s, command_sha256, request=None):
+    """Read the existing finite Native admission; this never authorizes a start.
+
+    The normal callback still validates physical phase debt before reservation.
+    Its A4 capture purpose is independent of the quality claim suppression flag.
+    """
+    from .collector import _sha256_path
+    try:
+        row = json.loads(row_id)
+        if (not cohort_id or not isinstance(row, list) or len(row) != 4
+                or row[0] not in {"deepx_to_trt", "native_full_deepx"}
+                or duration_s != 60
+                or options.get("capture_admission_hook") !=
+                "onnx_splitpoint_tool.workflow.hardware_acceptance_native:admit_energy_capture"):
+            return False
+
+        def bound(path, digest):
+            path = Path(path)
+            if (not path.is_absolute() or not path.is_file() or path.is_symlink() or path.resolve(strict=True) != path
+                    or not re.fullmatch(r"[0-9a-f]{64}", str(digest or ""))
+                    or _sha256_path(path) != digest):
+                raise ValueError("Native capture binding changed")
+            value = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(value, dict):
+                raise ValueError("Native capture binding is not an object")
+            return value
+
+        descriptor = bound(options.get("capture_admission_file") or "", options.get("capture_admission_sha256"))
+        run = Path(descriptor["run_dir"])
+        prepared_path = Path(descriptor["prepared"]["path"])
+        prepared = bound(prepared_path, descriptor["prepared"]["sha256"])
+        recipe = prepared.get("energy_recipe") or {}
+        if not isinstance(recipe, dict):
+            return False
+        if request is not None and (
+                request.get("campaign_budget_file") != str(run / "energy/energy_task_budget.json")
+                or request.get("campaign_source_id") != prepared["target_binding"]["urecs_address"]
+                or request.get("setup_id") != prepared["identity"]["setup_id"]
+                or not Path(request["run_directory"]).is_relative_to(Path(prepared["output"]) / "energy_view")):
+            return False
+        return bool(
+            descriptor.get("schema") == "onnx-splitpoint/hardware-acceptance-native-capture-admission/v1"
+            and run.is_absolute() and run.name == cohort_id and prepared_path.is_relative_to(run)
+            and descriptor.get("command_contract_sha256") == command_sha256
+            and re.fullmatch(r"[0-9a-f]{64}", str(command_sha256 or ""))
+            and prepared.get("schema") == "onnx-splitpoint/hardware-acceptance-native-plan/v1"
+            and prepared.get("deepx_runtime_mode") == "A4"
+            and [prepared["identity"][key] for key in ("backend", "model", "case", "setup_id")] == row
+            and all(recipe.get(key) == value for key, value in {
+                "duration_s": 60, "repeats": 3, "warmup": 0, "frames_override": 0,
+                "physical_scope": "FS", "window": "whole_command",
+            }.items())
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def native_a4_diagnostic_cohort_repeat(entry):
+    """Recognize only an admitted Native A4 raw repeat with all claims clamped."""
+    from .collector import _clamp_diagnostic_claim_fields
+    try:
+        if (entry.get("diagnostic_only") is not True
+                or _clamp_diagnostic_claim_fields(entry) != entry
+                or any(entry.get(field) is not False for field in (
+                    "claim_eligible", "energy_efficiency_claim_eligible", "scientific_primary_claim_eligible"))
+                or entry.get("runtime_work_units_required") is not True
+                or entry.get("command_window_alignment_required") is not True
+                or entry.get("environment_observation_required") or entry.get("campaign_run_id")):
+            return False
+        storage = Path(entry["storage_dir"])
+        root = storage.parent
+        receipt_path = root / "capture_admission.json"
+        if not root.is_absolute() or root.resolve() != root or receipt_path.is_symlink():
+            return False
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        if not isinstance(receipt, dict):
+            return False
+        request = receipt["request"]
+        preflight = entry.get("preflight_evidence") or {}
+        if (not isinstance(request, dict) or not isinstance(receipt.get("result"), dict)
+                or not isinstance(preflight, dict)):
+            return False
+        return bool(
+            receipt.get("status") == "admitted" and receipt["result"].get("ok") is True
+            and all(receipt["result"].get(key) == request.get(key) for key in (
+                "campaign_row_id", "campaign_source_id", "logical_repeat"))
+            and request.get("run_directory") == str(root.resolve())
+            and request.get("campaign_row_id") == entry.get("campaign_row")
+            and request.get("duration_s") == entry.get("energy_configured_workload_duration_s")
+            and request.get("command_contract_sha256") == preflight.get("expected_command_contract_sha256")
+            and request.get("require_runtime_work_units") is True
+            and request.get("require_command_window_alignment") is True
+            and request.get("logical_repeat") in {"repeat:0", "repeat:1", "repeat:2"}
+            and _native_a4_diagnostic_capture({
+                "capture_admission_file": receipt.get("descriptor_path"),
+                "capture_admission_sha256": receipt.get("descriptor_sha256"),
+                "capture_admission_hook": receipt.get("hook"),
+            }, cohort_id=entry.get("campaign_cohort"), row_id=entry.get("campaign_row"),
+                duration_s=request.get("duration_s"), command_sha256=request.get("command_contract_sha256"),
+                request=request)
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def bounded_energy_task(function):
     @wraps(function)
     def run(command, out_dir, **kwargs):
@@ -1845,7 +2155,10 @@ def bounded_energy_task(function):
         max_chains = kwargs.pop("task_max_chains", None)
         max_failures = kwargs.pop("task_max_transport_failures", None)
         if campaign:
-            if cohort_id and (kwargs.get("diagnostic_only") or not kwargs.get("require_runtime_work_units")
+            diagnostic_cohort = kwargs.get("diagnostic_only") and not _native_a4_diagnostic_capture(
+                kwargs, cohort_id=cohort_id, row_id=campaign_row, duration_s=kwargs.get("duration_s"),
+                command_sha256=kwargs.get("preflight_expected_command_contract_sha256"))
+            if cohort_id and (diagnostic_cohort or not kwargs.get("require_runtime_work_units")
                               or not kwargs.get("require_command_window_alignment")):
                 raise ValueError("final cohort requires non-diagnostic exact command-window task measurement")
             if checkpoint or max_chains is not None or max_failures is not None:

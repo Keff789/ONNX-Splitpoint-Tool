@@ -389,3 +389,142 @@ def join_quality_results_by_request_sha(
         "unmatched_count": len(unmatched),
         "ambiguous_count": len(ambiguous),
     }
+
+
+def apply_central_quality_result_to_row(row, result, result_identity, *, variant,
+                                        match_mode, match_role, result_cancelled, smoke_quality):
+    """Apply exactly the normal runner's existing per-row Quality projection.
+
+    Identity selection, evaluation, file writing and counters stay with the
+    normal controller. This extracted block is also replayed read-only to
+    verify source-bound technical provenance after a later normal join.
+    """
+    import copy
+    from .artifacts import sha256_json
+    from onnx_splitpoint_tool.validation.accuracy_gates import apply_accuracy_gate_to_row
+    row["central_quality_join_mode"] = match_mode
+    row["central_quality_join_source_request_sha256"] = str(
+        result_identity.get("source_request_sha256") or ""
+    )
+    result_completed = (
+        str(result.get("status") or "") == "completed"
+        and str(result.get("technical_status") or "completed") == "completed"
+    )
+    if result_completed:
+        gate = {
+            "schema": "onnx-splitpoint/task-quality-gate",
+            "schema_version": 2,
+            "task": str(result.get("task") or row.get("task") or ""),
+            "variant": variant,
+            "tier": str((row.get("task_quality_policy") or {}).get("dataset_tier") or "screening")
+            if isinstance(row.get("task_quality_policy"), Mapping) else "screening",
+            "canonical_reference": "management_cpu_ort_full_onnx",
+            "decision": str(result.get("decision") or "unavailable"),
+            "status": str(result.get("decision") or "unavailable"),
+            "primary": dict(result.get("primary") or {}),
+            "guardrails": dict(result.get("guardrails") or {}),
+            "n": int(result.get("n") or 0),
+            "execution_location": "central_management",
+            "management_result_sha256": sha256_json(result),
+            "evaluation_fingerprint": str(result.get("evaluation_fingerprint") or ""),
+            "reference_identity": str(result.get("reference_identity") or ""),
+            "technical_status": str(result.get("technical_status") or "completed"),
+            "scientific_status": str(result.get("scientific_status") or result.get("decision") or ""),
+        }
+        for reporting_field in ("accuracy_assessment", "reporting_policy", "secondary_accuracy_assessments", "accuracy_warnings", "legacy_decision"):
+            if reporting_field in result:
+                gate[reporting_field] = copy.deepcopy(result[reporting_field])
+    else:
+        gate = {
+            "schema": "onnx-splitpoint/task-quality-gate",
+            "schema_version": 2,
+            "task": str(result.get("task") or row.get("task") or ""),
+            "variant": variant,
+            "tier": str((row.get("task_quality_policy") or {}).get("dataset_tier") or "screening")
+            if isinstance(row.get("task_quality_policy"), Mapping) else "screening",
+            "canonical_reference": "management_cpu_ort_full_onnx",
+            "decision": "unavailable",
+            "status": "unavailable",
+            "n": 0,
+            "execution_location": "central_management",
+            "technical_status": "cancelled" if result_cancelled else "failed",
+            "scientific_status": "unavailable",
+            "reason": str(result.get("completion_reason")) if result_cancelled else "central_quality_evaluation_failed",
+            "error": str(result.get("error") or "central quality evaluation failed"),
+        }
+    canonical_request_identity = {
+        "schema": "onnx-splitpoint/central-quality-request-identity",
+        "schema_version": 2,
+        **result_identity,
+    }
+    gate["source_request_sha256"] = str(result_identity.get("source_request_sha256") or "")
+    gate["quality_request_identity"] = canonical_request_identity
+    by_variant = dict(row.get("task_quality_gates_by_variant") or {})
+    by_variant[variant] = gate
+    row["task_quality_gates_by_variant"] = by_variant
+    identities_by_variant = dict(row.get("quality_request_identities_by_variant") or {})
+    identities_by_variant[variant] = canonical_request_identity
+    row["quality_request_identities_by_variant"] = identities_by_variant
+    row_setup_ids = {
+        str(value).strip().lower()
+        for value in list(row.get("quality_source_setup_ids") or [])
+        if str(value).strip()
+    }
+    if result_identity.get("setup_id"):
+        row_setup_ids.add(str(result_identity["setup_id"]).strip().lower())
+    row["quality_source_setup_ids"] = sorted(row_setup_ids)
+    row["task_quality_policy_sha256"] = str(result.get("policy_sha256") or row.get("task_quality_policy_sha256") or "")
+    row["runtime_quality_gate_policy_sha256"] = row["task_quality_policy_sha256"]
+    row["quality_execution_location"] = "central_management"
+    if match_role == "primary":
+        row["task_quality_gate"] = gate
+        row["quality_evaluation_pending"] = False
+        # Benchmark completion belongs to the measured accelerator
+        # row and is independent from a failed semantic evaluator.
+        row["central_quality_technical_status"] = str(
+            result.get("technical_status") or ("completed" if result_completed else "failed")
+        )
+        row["scientific_status"] = gate["decision"]
+        row["central_quality_result_path"] = str(result.get("source_request") or "")
+        row["central_quality_source_request_sha256"] = str(result_identity.get("source_request_sha256") or "")
+        row["central_quality_request_identity"] = canonical_request_identity
+        policy = row.get("task_quality_policy") if isinstance(row.get("task_quality_policy"), Mapping) else None
+        try:
+            apply_accuracy_gate_to_row(row, policy)
+        except Exception as exc:
+            row["central_quality_gate_application_error"] = f"{type(exc).__name__}: {exc}"
+        if smoke_quality:
+            metric_miss = str(gate.get("decision") or "").lower() in {
+                "fail", "failed",
+            }
+            row.update({
+                "diagnostic_only": True,
+                "claim_eligible": False,
+                "scientific_claim_eligible": False,
+                "performance_claim_eligible": False,
+                "energy_efficiency_claim_eligible": False,
+                "eligible_for_ranking": False,
+                "ranking_eligible": False,
+                "performance_eligible": False,
+                "energy_eligible": False,
+                "pareto_eligible": False,
+                "thesis_valid": False,
+                "metric_threshold_enforced": False,
+                "metric_threshold_warning": bool(metric_miss),
+                "quality_enforcement_mode": "smoke_diagnostic",
+            })
+            if metric_miss:
+                row["accuracy_gate_reason"] = "smoke_metric_threshold_warning"
+                row["ranking_exclusion_reason"] = "smoke_diagnostic_only"
+                row["exclusion_reason"] = "smoke_diagnostic_only"
+    else:
+        supplemental = dict(row.get("central_quality_supplemental_results") or {})
+        supplemental[variant] = {
+            "status": "completed" if result_completed else "cancelled" if result_cancelled else "failed",
+            "source_request": str(result.get("source_request") or ""),
+            "source_request_sha256": str(result_identity.get("source_request_sha256") or ""),
+            "request_identity": canonical_request_identity,
+            "management_result_sha256": sha256_json(result),
+        }
+        row["central_quality_supplemental_results"] = supplemental
+    return result_completed

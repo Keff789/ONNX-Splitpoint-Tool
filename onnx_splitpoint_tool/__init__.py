@@ -17,6 +17,7 @@ from .release_identity import (
     VERSION as __version__,
 )
 __build_features__ = (
+    "deepx_native_fixed_a4_full_and_split",
     'v282_selected_energy_attempt',
     'v282_generic_variant_exclusions',
     'v282_early_workspace',

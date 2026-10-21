@@ -28,6 +28,7 @@ from ..benchmark.schema import write_json_atomic
 from ..remote.process_lease import RemoteProcessLeaseRegistry, RemoteProcessLeaseScope
 from ..remote.resource_recovery_observation import _observe_processes
 from ..remote.ssh_transport import HostConfig, SSHTransport
+from ..runners.task_completion import normalize_stage1_execution
 from .execution_binding import physical_dut_key
 from .run_control import EvaluationRunLock
 
@@ -240,6 +241,42 @@ def _acceptance_repetitions(scope: dict) -> int:
     return repetitions(scope)
 
 
+def _is_hailo10_stage1(config: dict) -> bool:
+    original = config.get("original_run_cfg") or {}
+    provider = str(original.get("stage1_provider") or original.get("provider") or "").strip().lower()
+    return provider in {"hailo10", "hailo10h"}
+
+
+def _is_deepx_stage1(config: dict) -> bool:
+    original = config.get("original_run_cfg") or {}
+    provider = str(original.get("stage1_provider") or original.get("provider") or "").strip().lower()
+    return provider == "deepx_m1"
+
+
+def _requested_stage1_policies(options: dict) -> dict:
+    return {key: normalize_stage1_execution({"policy": policy, "inflight": options[key]})
+            for key, policy in (("hailo_async_inflight", "hailo_async_slots_v1"),
+                                ("deepx_async_inflight", "deepx_async_slots_v1"))
+            if options.get(key) is not None}
+
+
+def _stage1_request_for_row(requested: dict, config: dict) -> dict | None:
+    if _is_hailo10_stage1(config):
+        return requested.get("hailo_async_inflight")
+    if _is_deepx_stage1(config):
+        return requested.get("deepx_async_inflight")
+    return None
+
+
+def _validated_stage1_execution(config: dict) -> dict:
+    execution = normalize_stage1_execution(config.get("stage1_execution"))
+    if execution["policy"] == "hailo_async_slots_v1" and not _is_hailo10_stage1(config):
+        raise ValueError("Generic async stage1 execution requires the bound Hailo10H provider")
+    if execution["policy"] == "deepx_async_slots_v1" and not _is_deepx_stage1(config):
+        raise ValueError("Generic async stage1 execution requires the bound DeepX M1 provider")
+    return execution
+
+
 def validate_plan(plan: dict, scope_csv: Path, primary: Path) -> list[dict]:
     import csv
     from ..generic_completion_plan import completion_identity
@@ -295,10 +332,16 @@ def validate_plan(plan: dict, scope_csv: Path, primary: Path) -> list[dict]:
     if len(set(expected)) != expected_count or len(set(actual)) != expected_count or set(expected) != set(actual):
         raise ValueError(f"completion plan differs from the authorized {expected_count} identities")
     requested_repetitions = _acceptance_repetitions(plan)
+    stage1_requests = _requested_stage1_policies(plan)
     for row in rows:
         if _acceptance_repetitions(row) != requested_repetitions:
             raise ValueError('Generic acceptance row differs from its controller recipe')
         config = row.get("runtime_config", row)
+        execution = _validated_stage1_execution(config)
+        if stage1_requests:
+            expected = _stage1_request_for_row(stage1_requests, config) or normalize_stage1_execution()
+            if execution != expected:
+                raise ValueError("Generic stage1 execution differs from the prepared policy")
         if key(config) != key(row) or (row.get("identity") and key(row) != completion_identity(row)):
             raise ValueError("completion runtime identity differs from its authorized row")
         if any(config.get(k) != v for k, v in (("repetitions", 3), ("warmup_count", 100), ("task_count", 1000))):
@@ -377,9 +420,12 @@ def _bind_prepared_numeric_domain(row: dict, command: dict, prepared: dict, runt
         'shared_rgb_source': {'path': contract['shared_rgb_source'], 'sha256': contract['shared_rgb_source_sha256']}}
 
 
-def runtime_configuration(row: dict, remote_root: str, execution_id: str) -> tuple[dict, list[dict]]:
+def runtime_configuration(row: dict, remote_root: str, execution_id: str,
+                          *, stage1_execution: dict | None = None) -> tuple[dict, list[dict]]:
     """Project original bound files into a new attempt, with unchanged content."""
     import posixpath
+    execution = _validated_stage1_execution({"original_run_cfg": row["original_run_cfg"],
+                                             "stage1_execution": stage1_execution})
     local_case = Path(row["original_local_case_dir"])
     case_dir = f"{remote_root}/cases/{row['model_id']}/{row['case_id']}"
     config_dir = f"{remote_root}/configs/{row['model_id']}/{row['case_id']}"
@@ -478,6 +524,10 @@ def runtime_configuration(row: dict, remote_root: str, execution_id: str) -> tup
                                  "min_match_ratio": limits["min_reference_match_ratio"],
                                  "min_mean_iou": limits["min_mean_matched_iou"]}}}
     config["measurement_contract"] = row["measurement_boundary"]
+    # Absence keeps historical synchronous configs and their existing energy
+    # operation hashes unchanged. New scheduling experiments opt in explicitly.
+    if stage1_execution is not None:
+        config["stage1_execution"] = execution
     return config, [*staged, {"role": "original_split_binding", "payload": binding,
                              "remote": original_cfg["native_split_quality_binding"]}]
 
@@ -514,11 +564,18 @@ def stage_case(row: dict, config: dict, files: list[dict], transport: SSHTranspo
     return remote_config
 
 
-def prepare_execution(scope_plan: Path, output: Path) -> Path:
+def prepare_execution(scope_plan: Path, output: Path, *, hailo_async_inflight: int | None = None,
+                      deepx_async_inflight: int | None = None) -> Path:
     plan = read_json(scope_plan)
     primary = Path(plan["original_run"]).resolve()
     output = outside_primary(output, primary)
     rows = validate_plan(plan, Path(plan["scope_source"]), primary)
+    stage1_requests = _requested_stage1_policies({"hailo_async_inflight": hailo_async_inflight,
+                                                 "deepx_async_inflight": deepx_async_inflight})
+    for key, eligible, label in (("hailo_async_inflight", _is_hailo10_stage1, "Hailo10H"),
+                                ("deepx_async_inflight", _is_deepx_stage1, "DeepX M1")):
+        if key in stage1_requests and not any(eligible(row) for row in rows):
+            raise ValueError(f"--{key.replace('_', '-')} requires at least one bound {label} row")
     execution_path = output / "plan" / "execution-plan.json"
     if execution_path.exists():
         raise FileExistsError("execution plan already exists; use its bound entry: " + str(execution_path))
@@ -530,11 +587,20 @@ def prepare_execution(scope_plan: Path, output: Path) -> Path:
         row.update(remote_python_executable=runtime["python"], remote_environment=runtime["environment"],
                    generic_environment_source=runtime["source"], generic_environment_original_line=runtime["original_line"])
         remote_root = f"/home/{target['remote']['user']}/splitpoint_runs/generic_completed_task/{execution_id}"
-        config, files = runtime_configuration(row, remote_root, execution_id)
+        execution = _stage1_request_for_row(stage1_requests, row)
+        if execution is not None:
+            config, files = runtime_configuration(row, remote_root, execution_id,
+                                                  stage1_execution=execution)
+        else:
+            config, files = runtime_configuration(row, remote_root, execution_id)
         row.update(runtime_config=config, staging_files=files, remote_root=remote_root,
                    result_path=str(output / "results" / row["case_output_relative"] / "generic_completion_results.json"))
     plan.update(execution_id=execution_id, prepared_at=now(), output_root=str(output),
                 scope_plan_source=str(scope_plan.resolve()), hardware_targets=targets)
+    if hailo_async_inflight is not None:
+        plan["hailo_async_inflight"] = hailo_async_inflight
+    if deepx_async_inflight is not None:
+        plan["deepx_async_inflight"] = deepx_async_inflight
     validate_plan(plan, Path(plan["scope_source"]), primary)
     write_json(execution_path, plan)
     from ..generic_completion_reporting import write_completion_reports
@@ -645,6 +711,8 @@ def download_case(transport: SSHTransport, remote_output: str, local_output: Pat
             descriptors = list((repetition.get("raw_output_samples") or {}).values())
             if repetition.get("completed_result_artifact"):
                 descriptors.append(repetition["completed_result_artifact"])
+            if (repetition.get("mixed_input_control") or {}).get("report"):
+                descriptors.append(repetition["mixed_input_control"]["report"])
             for descriptor in descriptors:
                 relative = Path(str(descriptor.get("path") or ""))
                 if not descriptor.get("path") or relative.is_absolute() or ".." in relative.parts:
@@ -708,6 +776,8 @@ def run_case(row: dict, transport: SSHTransport, output: Path, index: int, *, to
         for repetition in valid:
             descriptors = [*(repetition.get("raw_output_samples") or {}).values(),
                            repetition["completed_result_artifact"]]
+            if (repetition.get("mixed_input_control") or {}).get("report"):
+                descriptors.append(repetition["mixed_input_control"]["report"])
             for descriptor in descriptors:
                 relative = descriptor["path"]  # checked by load_valid_repetitions
                 upload_new_file(transport, local_output / relative, remote_output + "/" + relative,
@@ -954,12 +1024,20 @@ def main(argv=None) -> int:
     actions.add_argument("--prepare", type=Path, metavar="SCOPE_PLAN_JSON")
     actions.add_argument("--execute", type=Path, metavar="EXECUTION_PLAN_JSON")
     parser.add_argument("--output-root", type=Path)
+    parser.add_argument("--hailo-async-inflight", type=int, choices=range(1, 33), metavar="N",
+                        help="prepare Hailo10H rows with N asynchronous stage1 slots (default: historical synchronous stage1)")
+    parser.add_argument("--deepx-async-inflight", type=int, choices=range(1, 33), metavar="N",
+                        help="prepare DeepX M1 rows with N asynchronous stage1 slots (default: historical synchronous stage1)")
     args = parser.parse_args(argv)
     if args.prepare:
         if args.output_root is None:
             parser.error("--prepare requires --output-root outside the primary run")
-        print(prepare_execution(args.prepare, args.output_root))
+        kwargs = {key: getattr(args, key) for key in ("hailo_async_inflight", "deepx_async_inflight")
+                  if getattr(args, key) is not None}
+        print(prepare_execution(args.prepare, args.output_root, **kwargs))
         return 0
+    if args.hailo_async_inflight is not None or args.deepx_async_inflight is not None:
+        parser.error("async inflight options are prepare-only; --execute uses its bound plan")
     return execute_plan(args.execute)
 
 
@@ -984,6 +1062,16 @@ def bind_runtime_source_closure(row: dict, bundle_root: Path, *, runner_root: st
         digest = (hashlib.sha256(dumps_json_safe(dict(item['payload']), indent=2).encode('utf-8')).hexdigest()
                   if 'payload' in item else item['sha256'])
         sources.append({'path': item['remote'], 'sha256': digest})
+    if row.get('runtime_config', {}).get('mixed_input_control'):
+        # The first functional input is the existing bound throughput input.
+        # Observe its bytes without staging into or rewriting its old archive.
+        prepared = row['runtime_config']['input_binding']['prepared_input']
+        descriptor = {'path': prepared['path'], 'sha256': prepared['sha256']}
+        existing = [item for item in sources if item['path'] == descriptor['path']]
+        if existing and any(item != descriptor for item in existing):
+            raise ValueError('Mixed control prepared input source binding conflicts')
+        if not existing:
+            sources.append(descriptor)
     sources.sort(key=lambda x: x['path'])
     if row.get('runtime_config', {}).get('runtime_source_files') not in (None, sources):
         raise ValueError('Existing Generic runtime source closure differs')

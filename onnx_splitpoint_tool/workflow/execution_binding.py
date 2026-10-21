@@ -1175,12 +1175,27 @@ def _scheduler_owned_remote_add_args(
             ",".join(dict.fromkeys(quality_only)),
         ])
     if selective_completion_rows is not None:
-        kept.extend(["--selective-completion-rows", json.dumps(
-            [{key: row[key] for key in (
+        completion_rows = [
+            {key: ({**row[key]["dispatch_proof"],
+                     **({"management_cpu_reference": row["technical_reference"]} if "technical_reference" in row else {})}
+                     if key == "technical_revalidation" and isinstance(row[key], Mapping) else row[key]) for key in (
                 "model_id", "setup_id", "run_id", "source_run_id", "dispatch_run_id",
-                "case_id", "variant", "stage", "action",
-            ) if key in row} for row in selective_completion_rows], separators=(",", ":"),
-        )])
+                "case_id", "variant", "stage", "action", "technical_revalidation",
+            ) if key in row} for row in selective_completion_rows
+            if not (
+                row.get("action") == "policy_excluded" and str(row.get("stage") or "generic") == "generic"
+                or row.get("action") == "local_statistics" and row.get("stage") == "quality_companion"
+            )]
+        for row in completion_rows:
+            # Required scope's logical split is a complete composed pipeline.
+            # Component-only timings cannot complete that missing obligation.
+            if (row.get("action") == "execute" and row.get("variant") == "split"
+                    and str(row.get("stage") or "generic") == "generic"
+                    and _completion_dispatch_run_id(row) in {
+                        "hailo8_to_trt", "hailo8_to_tensorrt", "hailo10_to_trt",
+                        "hailo10_to_tensorrt", "hailo10h_to_trt", "hailo10h_to_tensorrt"}):
+                row["variant"] = "composed"
+        kept.extend(["--selective-completion-rows", json.dumps(completion_rows, separators=(",", ":"))])
     return shlex.join(kept)
 
 
@@ -2277,14 +2292,16 @@ def _copy_remote_result_files(remote_local_run_dir: Path, dst_dir: Path, *, flat
                     for dd in diagnostic_dirs:
                         _copy(src, dd / "logs" / src.name, kind="remote_log")
 
-    # Per-case validation reports and compact energy summaries.
+    # Per-case validation reports are source-bound scientific evidence for
+    # technical revalidation. Their N5000 request/gate metadata can exceed the
+    # diagnostic cap, just like the canonical Quality inputs below.
     for src in sorted(remote_local_run_dir.rglob("validation_report.json")):
         try:
             rel = src.relative_to(remote_local_run_dir)
         except Exception:
             rel = Path(src.name)
         for dd in diagnostic_dirs:
-            _copy(src, dd / "case_reports" / rel, kind="case_validation_report")
+            _copy(src, dd / "case_reports" / rel, kind="case_validation_report", unbounded=True)
 
     # Central quality inputs are scientific evidence, not optional diagnostics.
     # Preserve their relative case/results directory and never apply the 2 MiB
@@ -4374,6 +4391,8 @@ def _remote_execution_if_requested(
                 setup_local_dispatch["quality_only_run_ids"] = sorted(set(
                     setup_local_dispatch["quality_only_run_ids"]) | (quality_ids - generic_ids))
                 setup_local_dispatch["quality_companion_required"] = bool(missing_quality)
+                if not missing_quality:
+                    setup_local_dispatch["quality_companion_endpoint_id"] = ""
                 if missing_quality and not generic_ids:
                     setup_local_dispatch["expected_full_quality_identities"] = missing_quality
                     setup_local_dispatch["execution_scope"] = "full_only"

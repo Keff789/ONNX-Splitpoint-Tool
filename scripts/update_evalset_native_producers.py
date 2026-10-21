@@ -1207,6 +1207,11 @@ def _native_cfg_from_args(args: argparse.Namespace) -> dict[str, Any]:
     raw_execution_contract = str(
         getattr(args, "native_execution_contract_json", "") or ""
     ).strip()
+    # Missing mode remains the original S1 contract for saved/direct jobs.
+    # New GUI/profile jobs supply A4 explicitly in the DeepX namespace.
+    deepx_mode_arg = getattr(args, "deepx_runtime_mode", None)
+    if deepx_mode_arg is not None:
+        cfg["deepx_runtime_mode"] = str(deepx_mode_arg).upper()
     if raw_execution_contract:
         try:
             parsed_execution_contract = json.loads(raw_execution_contract)
@@ -1225,6 +1230,12 @@ def _native_cfg_from_args(args: argparse.Namespace) -> dict[str, Any]:
                     "native_execution_contract_cli_mismatch:"
                     f"{field}:{cfg[field]}!={execution_contract[field]}"
                 )
+        if str(cfg.get("deepx_runtime_mode") or "S1") != str(
+            execution_contract.get("deepx_runtime_mode") or "S1"
+        ):
+            raise TensorRTQualityChainError(
+                "native_execution_contract_cli_mismatch:deepx_runtime_mode"
+            )
     else:
         execution_contract = build_native_execution_contract(cfg)
     cfg["_native_execution_contract"] = execution_contract
@@ -1608,6 +1619,11 @@ def _run_native_producers(run_dir: Path, cfg: dict[str, Any], *, timeout: int) -
     performance_timeout = _scaled_performance_timeout(timeout, repetitions)
     queue_depth = int(execution_contract["queue_depth"])
     inflight = int(execution_contract["inflight"])
+    deepx_runtime_mode = str(execution_contract.get("deepx_runtime_mode") or "S1")
+    if deepx_runtime_mode != str(cfg.get("deepx_runtime_mode") or "S1"):
+        raise TensorRTQualityChainError(
+            "native_execution_contract_config_mismatch:deepx_runtime_mode"
+        )
     hailo_format = str(cfg.get("hailo_format") or "uint8")
     native_letterbox_pad_value = int(cfg.get("native_letterbox_pad_value") or 0)
     native_force_rebuild_requested = bool(
@@ -2417,7 +2433,9 @@ def _run_native_producers(run_dir: Path, cfg: dict[str, Any], *, timeout: int) -
                 args = ["python", "scripts/native_producer_e2e_eval_runner.py", "--root", _q(rroot), "--backend", "deepx", "--models", _q(models_arg)]
                 if case_policy == "case_map_only":
                     args += ["--case-map", _q(case_map_json)]
-                args += ["--precision", _q(precision), "--frames", str(frames), "--warmup", str(warmup), "--repetitions", str(repetitions), "--queue-depth", str(queue_depth)]
+                args += ["--precision", _q(precision), "--frames", str(frames), "--warmup", str(warmup), "--repetitions", str(repetitions), "--queue-depth", str(3 if deepx_runtime_mode == "A4" else queue_depth)]
+                if "deepx_runtime_mode" in execution_contract:
+                    args += ["--deepx-runtime-mode", deepx_runtime_mode]
                 if build_missing: args.append("--build-missing-engine")
                 if engine_build_python: args += ["--engine-build-python", _q(engine_build_python)]
                 if precision in {"float32_layout_fp16", "uint8_dequant_fp16"}:
@@ -2655,6 +2673,8 @@ sys.exit(0 if ok else 4)
                 fb_list = list(full_backends)
                 if fb_list:
                     fargs = ["python", "-u", "scripts/native_full_baseline_eval_runner.py", "--root", _q(rroot), "--models", _q(models_arg), "--backends", _q(",".join(fb_list)), "--frames", str(frames), "--warmup", str(warmup), "--repetitions", str(repetitions), "--inflight", str(inflight), "--setup-id", _q(setup_id), "--comparison-backend", _q(b), "--comparison-precision", _q(precision), "--engine-build-python", _q(engine_build_python or "auto")]
+                    if b == "deepx" and "deepx_runtime_mode" in execution_contract:
+                        fargs += ["--deepx-runtime-mode", deepx_runtime_mode]
                     if vendor_quality_set_remote:
                         fargs += ["--quality-request-binding-set", _q(vendor_quality_set_remote)]
                     if "tensorrt" in fb_list:
@@ -3089,6 +3109,10 @@ def main() -> int:
     ap.add_argument("--repetitions", type=int, default=1, help="Independent performance repetitions for Split and Full rows. Energy remains a separate one-pass workload unless --native-energy-runs says otherwise.")
     ap.add_argument("--queue-depth", type=int, default=3)
     ap.add_argument("--inflight", type=int, default=8)
+    ap.add_argument(
+        "--deepx-runtime-mode", choices=["A4", "S1"], default=None,
+        help="DeepX Native only; new profiles pass A4, absent historical jobs retain S1.",
+    )
     ap.add_argument(
         "--native-execution-contract-json", default="",
         help=(

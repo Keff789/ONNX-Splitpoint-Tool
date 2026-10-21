@@ -1958,6 +1958,18 @@ def process_lease_cli_main(argv: Optional[Sequence[str]] = None) -> int:
     execute.add_argument("--label", required=True)
     execute.add_argument("--timeout-s", type=float, default=None)
     execute.add_argument("ssh_argv", nargs=argparse.REMAINDER)
+    preparation = subparsers.add_parser(
+        "recover-pre-inference", help="recover the exact archived Native numerical runner-guard failure")
+    for name in ("run-dir", "setup-id", "source-proof", "operator", "evidence-output"):
+        preparation.add_argument("--" + name, required=True)
+    preparation.add_argument("--registry", default=None)
+    numerical = subparsers.add_parser(
+        "recover-native-numerical", help="recover one proven stopped Native numerical resource without accepting its result")
+    for name in ("run-dir", "prepared", "setup-id", "operator", "evidence-output"):
+        numerical.add_argument("--" + name, required=True)
+    numerical.add_argument("--registry", default=None)
+    numerical.add_argument("--source-archive", default=None,
+                           help="original normal release archive for an independently proven Full pre-runtime child failure")
     recover = subparsers.add_parser(
         "recover-capture", help="explicitly reconcile one stopped physical capture resource group"
     )
@@ -1978,6 +1990,33 @@ def process_lease_cli_main(argv: Optional[Sequence[str]] = None) -> int:
     release_ground.add_argument("--authorize-new-attempt", action="store_true",
                                 help="authorize one new workflow despite the unproven old source end; no action or idle ACK is attested")
     arguments = parser.parse_args(list(argv) if argv is not None else None)
+    if arguments.command == "recover-native-numerical":
+        from .resource_recovery import recover_native_numerical_resource
+        from ..workflow.run_control import WorkflowRunControlError
+        try:
+            result = recover_native_numerical_resource(
+                run_dir=arguments.run_dir, prepared_path=arguments.prepared,
+                setup_id=arguments.setup_id, operator=arguments.operator,
+                evidence_output=arguments.evidence_output, registry_path=arguments.registry,
+                source_archive=arguments.source_archive)
+            print(json.dumps(result, indent=2))
+            return 0
+        except (WorkflowRunControlError, RemoteProcessLeaseJournalError, ValueError, OSError) as exc:
+            print(f"Native numerical resource recovery blocked: {exc}", file=sys.stderr)
+            return 70
+    if arguments.command == "recover-pre-inference":
+        from .resource_recovery import recover_pre_inference_resource
+        from ..workflow.run_control import WorkflowRunControlError
+        try:
+            result = recover_pre_inference_resource(
+                run_dir=arguments.run_dir, setup_id=arguments.setup_id,
+                source_proof=arguments.source_proof, operator=arguments.operator,
+                evidence_output=arguments.evidence_output, registry_path=arguments.registry)
+            print(json.dumps(result, indent=2))
+            return 0
+        except (WorkflowRunControlError, RemoteProcessLeaseJournalError, ValueError, OSError) as exc:
+            print(f"pre-inference resource recovery blocked: {exc}", file=sys.stderr)
+            return 70
     if arguments.command == "recover-capture":
         required_fields, forbidden_fields = ((authorization_fields, action_fields)
             if arguments.authorize_new_attempt else (action_fields, authorization_fields))

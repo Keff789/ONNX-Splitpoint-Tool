@@ -449,6 +449,19 @@ def materialize_runtime_profile(
     resolved["hardware"] = hardware
 
     native = dict(resolved.get("native_producers") or {})
+    # Materialisation is the shared fresh GUI/CLI entry. Archived resume jobs
+    # retain their original S1/source contract instead of adopting A4 here.
+    from ..native_execution_contract import native_deepx_selected
+    if native_deepx_selected(resolved) and not bool(getattr(options, "resume", False)):
+        from ..native_command_contract import deepx_runtime_policy
+        native.setdefault("deepx_runtime_mode", "A4")
+        mode_override = str(getattr(options, "native_producer_deepx_runtime_mode", "") or "")
+        if mode_override:
+            native["deepx_runtime_mode"] = mode_override
+        queue_default = 3 if native["deepx_runtime_mode"] == "A4" else native.get("queue_depth", 3)
+        native.update(deepx_runtime_policy({
+            **native, "deepx_queue_depth": native.get("deepx_queue_depth", queue_default),
+        }))
     energy = dict(native.get("energy") or {})
     collector_binding = {}
     if native.get("enabled") and energy.get("enabled") and energy.get("mode") == "measure":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Optional, Sequence
@@ -15,7 +16,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Run the formal ONNX Splitpoint Evaluation Workflow.")
     ap.add_argument("--profile", required=True, help="Evaluation profile id (e.g. smoke, final) or YAML path")
     ap.add_argument("--out", required=True, help="Output root for EvaluationRuns")
-    ap.add_argument("--profile-driven", action="store_true", help="Resolve runtime options from the same frozen profile snapshot used by the GUI. Only profile/out/models-root/only-model/execution-mode, start guards, and the attested cache-canary run id may be combined with this mode.")
+    ap.add_argument("--profile-driven", action="store_true", help="Resolve the same frozen start options as the GUI. With --resume --run-id, restore that exact Run's archived options instead of resolving today's profile; runtime overrides are not accepted on Resume.")
     ap.add_argument("--require-run-mode", choices=["smoke", "standard", "final"], default="", help="Fail before run creation unless the resolved profile has this run mode.")
     ap.add_argument("--require-fresh-run", action="store_true", help="Fail before run creation if resume, partial, result-import, no-remote, or non-runtime shortcuts are active.")
     ap.add_argument("--models-root", default="", help="Optional root containing exported ONNX files")
@@ -121,6 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--native-producer-warmup", type=int, default=0, help="Native producer warmup frames. 0 uses profile/default 100.")
     ap.add_argument("--native-producer-queue-depth", type=int, default=0, help="Native FIFO queue depth. 0 uses default 3.")
     ap.add_argument("--native-producer-inflight", type=int, default=0, help="Hailo10 async inflight jobs. 0 uses default 8.")
+    ap.add_argument("--native-producer-deepx-runtime-mode", choices=["A4", "S1"], default="", help="DeepX Native only: A4 for new regular requests; S1 is explicit diagnostic compatibility.")
     ap.add_argument("--native-producer-hailo-format", default="uint8")
     ap.add_argument("--native-producer-dump-outputs", action="store_true", help="Dump native producer outputs during EvalRun native stage. Off for final performance unless validating outputs.")
     ap.add_argument("--native-producer-no-copy", action="store_true", help="Do not rsync BenchmarkSets to native producer hosts; assume they already exist at remote-root/run-id.")
@@ -197,6 +199,7 @@ _PROFILE_DRIVEN_ALLOWED_OPTIONS = {
     "--execution-mode",
     "--run-id",
     "--profile-driven",
+    "--resume",
     "--require-run-mode",
     "--require-fresh-run",
     "--confirm-force-build",
@@ -216,6 +219,10 @@ def _validate_profile_driven_args(argv: Sequence[str]) -> None:
             "--profile-driven accepts only explicit start controls; unsupported "
             "options: " + ", ".join(unsupported)
         )
+    if "--resume" in supplied:
+        overrides = sorted(supplied & {"--models-root", "--only-model", "--execution-mode", "--require-fresh-run"})
+        if overrides:
+            raise ValueError("Profile-driven Resume restores archived options; unsupported overrides: " + ", ".join(overrides))
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -231,36 +238,45 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             _validate_profile_driven_args(raw_argv)
             from .profile_options import (
                 load_runtime_profile_snapshot,
+                workflow_options_from_archived_run,
                 workflow_options_from_profile_snapshot,
             )
 
-            _resolved_profile, start_snapshot = load_runtime_profile_snapshot(
-                str(ns.profile)
-            )
-            supplied_options = {
-                token.split("=", 1)[0]
-                for token in raw_argv
-                if str(token).startswith("--")
-            }
-            opts = workflow_options_from_profile_snapshot(
-                profile_request=str(ns.profile),
-                out_root=str(Path(ns.out).expanduser()),
-                start_snapshot=start_snapshot,
-                models_root=str(ns.models_root or ""),
-                only_model_override=(
-                    str(ns.only_model or "") or None
-                    if "--only-model" in supplied_options
-                    else None
-                ),
-                execution_mode_override=str(ns.execution_mode or ""),
-                run_id_override=(
-                    str(ns.run_id or "")
-                    if "--run-id" in supplied_options
-                    else None
-                ),
-                required_run_mode=str(ns.require_run_mode or ""),
-                require_fresh_run=bool(ns.require_fresh_run),
-            )
+            if bool(ns.resume):
+                run_id = str(ns.run_id or "").strip()
+                if not run_id or run_id in {".", ".."} or Path(run_id).name != run_id:
+                    raise ValueError("Profile-driven Resume requires an explicit --run-id naming one selected Run.")
+                opts = workflow_options_from_archived_run(Path(ns.out).expanduser() / run_id)
+                if ns.require_run_mode:
+                    opts.required_run_mode = str(ns.require_run_mode)
+            else:
+                _resolved_profile, start_snapshot = load_runtime_profile_snapshot(
+                    str(ns.profile)
+                )
+                supplied_options = {
+                    token.split("=", 1)[0]
+                    for token in raw_argv
+                    if str(token).startswith("--")
+                }
+                opts = workflow_options_from_profile_snapshot(
+                    profile_request=str(ns.profile),
+                    out_root=str(Path(ns.out).expanduser()),
+                    start_snapshot=start_snapshot,
+                    models_root=str(ns.models_root or ""),
+                    only_model_override=(
+                        str(ns.only_model or "") or None
+                        if "--only-model" in supplied_options
+                        else None
+                    ),
+                    execution_mode_override=str(ns.execution_mode or ""),
+                    run_id_override=(
+                        str(ns.run_id or "")
+                        if "--run-id" in supplied_options
+                        else None
+                    ),
+                    required_run_mode=str(ns.require_run_mode or ""),
+                    require_fresh_run=bool(ns.require_fresh_run),
+                )
         except Exception as exc:
             print(
                 json.dumps(
@@ -353,6 +369,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             native_producer_warmup=max(0, int(getattr(ns, "native_producer_warmup", 0) or 0)),
             native_producer_queue_depth=max(0, int(getattr(ns, "native_producer_queue_depth", 0) or 0)),
             native_producer_inflight=max(0, int(getattr(ns, "native_producer_inflight", 0) or 0)),
+            native_producer_deepx_runtime_mode=str(ns.native_producer_deepx_runtime_mode or ""),
             native_producer_hailo_format=str(getattr(ns, "native_producer_hailo_format", "") or "uint8"),
             native_producer_dump_outputs=bool(getattr(ns, "native_producer_dump_outputs", False)),
             native_producer_no_copy=bool(getattr(ns, "native_producer_no_copy", False)),
@@ -448,6 +465,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         logs.append(msg)
         if not bool(ns.json):
             print(msg, flush=True)
+    # Reuse the runner's observational start-context handoff. This dynamic
+    # context is excluded from frozen profile/options and Resume contracts.
+    opts.gui_start_context = {
+        "kind": "cli",
+        "entrypoint": "onnx_splitpoint_tool.workflow.run_evaluation",
+        "profile_driven": bool(ns.profile_driven),
+        "pid": os.getpid(),
+    }
     try:
         result = EvaluationWorkflowRunner(opts, log=_log).run()
         payload = result.to_dict()

@@ -2671,6 +2671,9 @@ def _build_update_cmd(run_dir: Path, cfg: Mapping[str, Any], variant: Mapping[st
         "--timeout", str(timeout_s),
         "--native-telemetry-label", _variant_label(0, variant),
     ]
+    if "deepx" in backends and "deepx_runtime_mode" in execution_contract:
+        from onnx_splitpoint_tool.native_command_contract import deepx_runtime_policy
+        cmd += ["--deepx-runtime-mode", deepx_runtime_policy(execution_contract)["deepx_runtime_mode"]]
     if isinstance(merged.get("quality_gate_policy"), Mapping):
         cmd += [
             "--quality-gate-json",

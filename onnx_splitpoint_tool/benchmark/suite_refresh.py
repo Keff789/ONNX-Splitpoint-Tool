@@ -888,6 +888,7 @@ def refresh_suite_harness(
     mini_coco_ap50: Optional[bool] = None,
     benchmark_task: Optional[str] = None,
     mini_classification_eval: Optional[bool] = None,
+    software_only: bool = False,
     log: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     """Refresh a benchmark suite's embedded harness files in-place.
@@ -898,6 +899,8 @@ def refresh_suite_harness(
     - per-case ONNXRuntime runner wrappers under ``b*/``
 
     Files are only rewritten when bytes changed so bundle caching remains useful.
+    ``software_only`` retains source metadata and skips dataset normalization
+    and provisioning when staging an already validated runtime's software.
     """
     suite_dir = Path(suite_dir).expanduser().resolve()
     if not suite_dir.exists() or not suite_dir.is_dir():
@@ -957,7 +960,7 @@ def refresh_suite_harness(
             "but cannot add missing part2_hailo_prefix/part2_host_tail graph artifacts.",
         )
 
-    norm = _normalize_suite_validation_payloads(
+    norm = {} if software_only else _normalize_suite_validation_payloads(
         suite_dir,
         benchmark_set_json=bench_path,
         validation_images=validation_images,
@@ -969,6 +972,8 @@ def refresh_suite_harness(
         log=log,
     )
     stats.update(norm)
+    if software_only:
+        stats.update(software_only=True, validation_resource_provisioned=False)
     if bool(norm.get('validation_changed')):
         stats['changed'] = True
 

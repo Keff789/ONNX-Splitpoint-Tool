@@ -1,0 +1,13 @@
+# Release 2.95.3: Native-Abschluss und technische Reparaturen
+
+Dieser Patch setzt den ausdrücklich erweiterten Folgeauftrag `deepx_295_gui_acceptance_remeasurement_20261015` fort. Die vorhandenen 2.95.2-Korrekturen für Venv-Aufruf, aktuellen A4-Worker, Full-Case-Staging ohne Validierungsdatenbereitstellung und explizite serielle SDK-Rückkehr bleiben erhalten.
+
+Die bestehende Native-Sicherheitsauswertung trennt Ergebnisgültigkeit von Geräteabschluss. Ein Report-/Numerikfehler bleibt ein Ergebnisfehler; er verlangt keine dauerhafte DUT-Quarantäne, wenn alle angenommenen SDK-Aufträge nachweislich abgeschlossen, Puffer freigegeben und die eigenen Worker regulär beendet sind. Fehlende historische redundante Reportfelder bleiben fehlend. Unabhängige tatsächliche SDK-, Queue-, Puffer- und Lifecyclebelege können den Abschluss dennoch belegen. Widersprüche, offene Jobs, unbekannte Abschlüsse und konkurrierende Besitzer verhindern die Freigabe weiterhin.
+
+Die normale Recovery wird um diesen belegten Native-Numerikfall erweitert. Sie löst den registrierten physischen DUT auf, prüft originale Run-/Prepared-/Dispatch-/Rohreport-/Cleanupbindungen und bestehende Ressourcenjournale unter normalen exklusiven Locks und führt eine frische Owner-/Prozess-/Leaseprüfung durch. Es gibt keinen globalen Ignore-/Force-Unlock-Schalter, keine per-Run-ID-Sonderfreigabe und keine neue Registry. Historische Resultate und Sperrbelege werden nicht überschrieben.
+
+Technische Reparaturversuche nutzen die vorhandenen Versuchsdokumente mit fortlaufender Zählung. Die starre Zwei-Versuchs-Lebenszeitgrenze und entsprechende technische Performance-Ersatzgrenzen dürfen eine konkret korrigierte Integration nicht blockieren. Ein normaler GUI-Auftrag startet keinen endlosen Retryloop. Bereits gültige Performance-/Energieslots und alle früheren Fehlstarts bleiben erhalten; reguläre drei Repeats und normale Capture-Retry-/Integritätsregeln ändern sich nicht.
+
+Der Ausführungsweg bleibt die echte installierte GUI mit normaler Queue, Produktworkern, Collector, Resume und Import. Full und Splits verwenden einheitlich A4, Batch 1, eine Engine, maximal vier offene DeepX-Aufträge und Split FIFO 3 mit seriellem TRT-Taskabschluss. Generic und Hailo bleiben unverändert. Keine Modell-/Engine-Rebuilds, Cut-Neuauswahl, Geräte-Resets oder Datenumdeutung.
+
+Softwareprüfungen, reguläre Recovery, reale 14-Zellen-GUI-Abnahme und anschließende 75-Punkte-Performance-/Native-Energiekohorten sind getrennte Nachweise. Diese Versionsdatei behauptet keinen Hardware-PASS; den tatsächlich erreichten Stand, echte Job-/Run-IDs und fehlende Slots dokumentiert der aktuelle Auftragsreport unter `/home/kmika/Reports/deepx_295_gui_acceptance_remeasurement_20261015/20261015T130753Z`.

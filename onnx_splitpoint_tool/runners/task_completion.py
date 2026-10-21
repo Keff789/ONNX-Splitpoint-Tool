@@ -5,9 +5,24 @@ import math
 import queue
 import threading
 import itertools
+from collections import deque
 from typing import Mapping
 
 PRODUCERS = {"generic_deepx_full", "generic_hailo_full", "generic_ort_full"}
+
+
+def normalize_stage1_execution(value=None):
+    """Missing metadata denotes the historical synchronous P1 policy only."""
+    if value is None:
+        return {"policy": "synchronous", "inflight": 1}
+    if not isinstance(value, Mapping) or set(value) != {"policy", "inflight"}:
+        raise ValueError("generic stage1 execution policy malformed")
+    policy, inflight = value["policy"], value["inflight"]
+    if (policy not in {"synchronous", "hailo_async_slots_v1", "deepx_async_slots_v1"}
+            or type(inflight) is not int or not 1 <= inflight <= 32
+            or (policy == "synchronous" and inflight != 1)):
+        raise ValueError("generic stage1 execution policy invalid")
+    return dict(value)
 
 
 def load_completion_bound_array(spec, *, file_sha256):
@@ -105,7 +120,7 @@ def completion_projection(evidence, *, task, producer=None):
 def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
                              tasks=1000, queue_depth=2, clone_payload=None,
                              timeout_s=3600.0, clock=time.perf_counter_ns, progress=None,
-                             duration_s=None):
+                             duration_s=None, stage1_async=None):
     """Time the existing two-worker Generic pipeline through actual completion.
 
     Backend adapters return materialized host tensors (including their existing
@@ -129,6 +144,12 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
     initial_count = processor.completed_count
     if type(initial_count) is not int or initial_count < 0:
         raise ValueError("generic completion processor counter invalid")
+    execution = normalize_stage1_execution(
+        stage1_async.execution_policy if stage1_async is not None else None)
+    if stage1_async is not None and (execution["policy"] not in {"hailo_async_slots_v1", "deepx_async_slots_v1"}
+            or any(not callable(getattr(stage1_async, key, None)) for key in ("submit", "collect", "drain"))
+            or not math.isfinite(stage1_async.cleanup_timeout_s) or stage1_async.cleanup_timeout_s <= 0):
+        raise ValueError("generic completion async stage1 adapter invalid")
     fifo = queue.Queue(maxsize=queue_depth)
     stop = threading.Event()
     warm_done = threading.Event()
@@ -141,6 +162,7 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
     observed = {"warmup": 0, "measured": 0}
     total = None if duration_mode else warmup + tasks
     admitted = {"measured": 0}
+    peak_uncollected = {"measured": 0}
     end_of_input = object()
 
     def concrete_outputs(outputs):
@@ -152,6 +174,79 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
             if callable(getattr(value, "result", None)) or callable(getattr(value, "wait", None)):
                 raise RuntimeError("generic completion runtime output is still asynchronous")
         return outputs
+
+    def put_payload(index, outputs):
+        outputs = concrete_outputs(outputs)
+        payload = clone_payload(outputs) if clone_payload is not None else outputs
+        while not stop.is_set():
+            try:
+                fifo.put((index, payload), timeout=0.05)
+                return True
+            except queue.Full:
+                continue
+        return False
+
+    def async_phase(start, count, *, measured=False):
+        # At most `inflight` owned bindings exist. Collect in submission order,
+        # and materialize each output before that binding can be reused.
+        pending = deque()
+        next_index = start
+        accepting = True
+        while not stop.is_set():
+            while accepting and len(pending) < execution["inflight"] and not stop.is_set():
+                if count is not None and next_index == start + count:
+                    accepting = False
+                    break
+                if duration_mode and clock() >= stamps["admission_deadline_ns"]:
+                    stamps["admission_stopped_ns"] = clock()
+                    accepting = False
+                    break
+                handle = stage1_async.submit()
+                pending.append((next_index, handle))
+                if measured:
+                    peak_uncollected["measured"] = max(peak_uncollected["measured"], len(pending))
+                if duration_mode:
+                    admitted["measured"] += 1
+                next_index += 1
+            if not pending:
+                return
+            index, handle = pending.popleft()
+            if not put_payload(index, stage1_async.collect(handle)):
+                return
+
+    def async_producer():
+        try:
+            ready.wait(timeout=timeout_s)
+            if warmup:
+                async_phase(0, warmup)
+            while not warm_done.wait(0.05):
+                if stop.is_set():
+                    return
+            producer_measure_ready.set()
+            while not measurement_start_gate.wait(0.05):
+                if stop.is_set():
+                    return
+            async_phase(warmup, None if duration_mode else tasks, measured=True)
+            if duration_mode:
+                while not stop.is_set():
+                    try:
+                        fifo.put(end_of_input, timeout=0.05)
+                        break
+                    except queue.Full:
+                        continue
+        except BaseException as error:
+            errors.append(error)
+            stop.set()
+        finally:
+            # A consumer failure or timeout must not abandon submitted device
+            # jobs or free/reuse their buffers. Hailo waits have SDK timeouts;
+            # DeepX has no bounded wait and retains unresolved ownership until
+            # the leased worker process exits. Drain failures are never a rate.
+            try:
+                stage1_async.drain()
+            except BaseException as error:
+                errors.append(error)
+                stop.set()
 
     def producer():
         try:
@@ -240,7 +335,8 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
             errors.append(error)
             stop.set()
 
-    threads = [threading.Thread(target=producer, name="generic-completion-p1", daemon=True),
+    threads = [threading.Thread(target=async_producer if stage1_async is not None else producer,
+                                name="generic-completion-p1", daemon=True),
                threading.Thread(target=consumer, name="generic-completion-p2", daemon=True)]
     for thread in threads:
         thread.start()
@@ -271,8 +367,10 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
         if any(thread.is_alive() for thread in threads):
             stop.set()
             for thread in threads:
-                thread.join(timeout=1.0)
+                thread.join(timeout=stage1_async.cleanup_timeout_s if stage1_async is not None else 1.0)
     if errors or any(thread.is_alive() for thread in threads) or stop.is_set():
+        if any(thread.is_alive() for thread in threads) and callable(getattr(stage1_async, "retain_unresolved", None)):
+            stage1_async.retain_unresolved()
         reason = str(errors[0]) if errors else "workers unfinished"
         failure = RuntimeError(f"generic completion failed after {observed}: {reason}")
         failure.partial_report = {
@@ -280,6 +378,7 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
             "requested_warmup_count": warmup, "warmup_completed_count": observed["warmup"],
             "requested_task_count": tasks, "completed_task_count": observed["measured"],
             "processor_count_delta": processor.completed_count - initial_count, **stamps,
+            "stage1_execution": execution,
         }
         raise failure from (errors[0] if errors else None)
     report = {
@@ -292,6 +391,7 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
         "prepared_input_adapter_timed": True,
         "postprocess_timed": True, "output_materialization_timed": True,
         "worker_count": 2, "queue_depth": queue_depth,
+        "stage1_execution": execution,
         "handoff_payload_copy": clone_payload is not None,
         "requested_warmup_count": warmup, "warmup_completed_count": observed["warmup"],
         "requested_task_count": tasks, "completed_task_count": observed["measured"],
@@ -299,6 +399,9 @@ def measure_split_completion(stage1, transfer, stage2, processor, *, warmup=100,
         **stamps,
     }
     elapsed_ns = stamps.get("measurement_end_ns", 0) - stamps.get("measurement_start_ns", 0)
+    if stage1_async is not None:
+        # Host submissions awaiting collection, not physical NPU occupancy.
+        report["stage1_peak_uncollected_jobs"] = peak_uncollected["measured"]
     report["measured_makespan_seconds"] = elapsed_ns / 1e9
     report["completed_task_fps"] = observed["measured"] * 1e9 / elapsed_ns if elapsed_ns > 0 else None
     if duration_mode:
@@ -320,6 +423,7 @@ def validate_split_completion_duration(report, *, duration_s):
             or report.get("requested_task_count") is not None
             or report.get("requested_duration_s") != duration_s):
         raise ValueError("generic duration completion scope mismatch")
+    normalize_stage1_execution(report.get("stage1_execution"))
     count = report.get("completed_work_units")
     if type(count) is not int or count <= 0 or any(report.get(key) != count or type(report.get(key)) is not int
             for key in ("completed_task_count", "admitted_task_count", "processor_count_delta")):
@@ -348,6 +452,7 @@ def validate_split_completion(report, *, warmup=100, tasks=1000):
     """Reject partial, enqueue-only and contradictory completion reports."""
     if not isinstance(report, Mapping) or report.get("producer") != "generic_split" or report.get("status") != "ok":
         raise ValueError("generic split completion evidence missing")
+    normalize_stage1_execution(report.get("stage1_execution"))
     counts = {"requested_warmup_count": warmup, "warmup_completed_count": warmup,
               "requested_task_count": tasks, "completed_task_count": tasks,
               "processor_count_delta": warmup + tasks}
@@ -377,6 +482,9 @@ def valid_split_completion_repetitions(result, config, *, result_root=None):
     if (result.get("schema_version") != 1 or result.get("measurement_mode") != "generic_completed_task"
             or result.get("task") != config.get("task") or result.get("original_run") != config.get("original_run")):
         raise ValueError("generic split completion result scope mismatch")
+    execution = normalize_stage1_execution(config.get("stage1_execution"))
+    if normalize_stage1_execution(result.get("stage1_execution")) != execution:
+        raise ValueError("generic split completion stage1 execution mismatch")
     for key, expected in (("repetitions", 3), ("warmup_count", 100), ("task_count", 1000)):
         if key in config and (type(config[key]) is not int or config[key] != expected):
             raise ValueError("generic split completion configured work budget mismatch")
@@ -391,6 +499,14 @@ def valid_split_completion_repetitions(result, config, *, result_root=None):
         if repetition.get("status") != "ok":
             continue
         validate_split_completion(repetition)
+        if normalize_stage1_execution(repetition.get("stage1_execution")) != execution:
+            raise ValueError("generic split repetition stage1 execution mismatch")
+        if config.get("runtime_source_files"):
+            source_map = {source["path"]: source["sha256"] for source in config["runtime_source_files"]}
+            binding = repetition.get("runtime_source_binding") or {}
+            if (binding.get("before") != source_map or binding.get("after") != source_map
+                    or binding.get("unchanged") is not True):
+                raise ValueError("generic split repetition runtime source binding mismatch")
         index = repetition.get("repetition_index")
         if type(index) is not int or index not in (1, 2, 3) or not str(repetition.get("execution_id") or ""):
             raise ValueError("generic split repetition identity invalid")
@@ -398,6 +514,9 @@ def valid_split_completion_repetitions(result, config, *, result_root=None):
         if (control.get("status") != "passed" or control.get("checked_outside_timer") is not True
                 or control.get("reference_binding") != config["functional_reference"]):
             raise ValueError("generic split functional control missing or foreign")
+        if config.get("mixed_input_control") or repetition.get("mixed_input_control"):
+            from .generic_mixed_control_binding import validate_bound_mixed_result
+            validate_bound_mixed_result(repetition, config, result_root=result_root)
         if repetition.get("runtime_artifacts") != config["expected_runtime_artifacts"]:
             raise ValueError("generic split runtime artifacts mismatch")
         original_cfg = config.get("original_run_cfg") or {}

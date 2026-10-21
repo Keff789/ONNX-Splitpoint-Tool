@@ -471,6 +471,30 @@ def _dx_classification_callback_source_update(source):
         return False
 
 
+def _verify_deepx_performance_policy(row, report):
+    """Keep prepared Energy attached to its actually executed DeepX mode."""
+    if row.get('backend') not in {'deepx_to_trt', 'native_full_deepx'}:
+        return
+    from onnx_splitpoint_tool.native_command_contract import deepx_runtime_policy
+    command = row.get('full_command_contract') or row.get('native_command_contract') or {}
+    expected = deepx_runtime_policy(command.get('runtime_options') or {})
+    declared = {field: row[field] for field in ('deepx_runtime_mode', 'deepx_max_inflight') if field in row}
+    if declared:
+        declared_policy = deepx_runtime_policy(declared)
+        if any(declared_policy[field] != expected[field] for field in ('deepx_runtime_mode', 'deepx_max_inflight')):
+            raise ValueError('prepared DeepX performance row policy differs from command')
+    fields = ('deepx_runtime_mode', 'deepx_max_inflight')
+    prepared = report.get('deepx_prepared_feed_benchmark') or {}
+    observations = [prepared] if any(field in prepared for field in fields) else []
+    direct = {field: report[field] for field in fields if field in report}
+    if direct:
+        observations.append(direct)
+    for observed in observations or [{}]:
+        actual = deepx_runtime_policy(observed)
+        if any(actual[field] != expected[field] for field in fields):
+            raise ValueError('prepared DeepX performance/Energy runtime cohort differs')
+
+
 def verify_dx_classification_reuse(row):
     """Check the three already accepted single-observation DX classifier reuses."""
     from onnx_splitpoint_tool.resources.remote_scripts.native_producer_energy_plan import _canonical_json_sha256
@@ -529,6 +553,7 @@ def verify_dx_classification_reuse(row):
     if inp['observed_sha256']!=receipt['canonical_rgb_sha256']:
         raise ValueError('canonical classification RGB differs')
     current=row['full_command_contract'];work=current['energy_workload'];prior=contract['energy_workload']
+    _verify_deepx_performance_policy(row, report)
     document=dict(current);declared=document.pop('contract_sha256')
     if _canonical_json_sha256(document)!=declared or declared!=row.get('full_command_contract_sha256'):
         raise ValueError('current classification command contract binding differs')
@@ -654,6 +679,7 @@ def verify_revision3_performance(payload, *, capture_identities=None):
             reportpath=Path(rep['report']).resolve()
             if not reportpath.is_relative_to(ROOT):raise ValueError('report outside new root')
             report=read(reportpath)
+            _verify_deepx_performance_policy(row, report)
             counts=[report.get(k) for k in ('completed_work_units','postprocess_completed_frames') if k in report]
             if not counts or any(n!=1000 for n in counts):raise ValueError('1000 actual completed tasks required')
             warmup=report.get('warmup_count',report.get('warmup_frames',report.get('warmup')))

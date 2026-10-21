@@ -17,6 +17,14 @@ from ..native_energy_reporting import collect_native_energy
 from ..energy.task_budget import read_verified_campaign_repeat
 
 
+def _normal_native_result_projection(row, fields):
+    result = {field: row.get(field) for field in fields}
+    if row.get('backend') in {'deepx_to_trt', 'native_full_deepx'}:
+        result.update({field: row[field] for field in
+                       ('deepx_runtime_mode', 'deepx_max_inflight') if field in row})
+    return result
+
+
 def product_import_command(command):
     """Resolve preserved legacy import entries without changing saved plans."""
     import shlex
@@ -91,7 +99,7 @@ def import_cohort(cohort,allow_partial=False,source_override=None):
  if config.get('require_environment_observation'):
   assert all(r.get('environment_observation_status')=='pass' and r.get('diagnostic_only')is False for r in accepted)
   receipts['environment_observation_run_id']=cohort.name
- receipts['normal_results']=[{k:r.get(k) for k in fields} for r in accepted];write(out/'RECEIPT.json',receipts);write(out.parent/'LATEST.json',{'snapshot':str(out),'receipt':str(out/'RECEIPT.json'),'receipt_sha256':sha(out/'RECEIPT.json'),'rows':len(accepted),'claimed':sum(r.get('claim_eligible') is True for r in accepted),'source_sha256':digest});return {'status':'NORMAL_SAVED_ENERGY_IMPORTED','snapshot':str(out),'results':receipts['normal_results']}
+ receipts['normal_results']=[_normal_native_result_projection(r,fields) for r in accepted];write(out/'RECEIPT.json',receipts);write(out.parent/'LATEST.json',{'snapshot':str(out),'receipt':str(out/'RECEIPT.json'),'receipt_sha256':sha(out/'RECEIPT.json'),'rows':len(accepted),'claimed':sum(r.get('claim_eligible') is True for r in accepted),'source_sha256':digest});return {'status':'NORMAL_SAVED_ENERGY_IMPORTED','snapshot':str(out),'results':receipts['normal_results']}
 
 
 def resolve_result(run):

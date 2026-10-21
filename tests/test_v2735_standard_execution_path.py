@@ -200,9 +200,9 @@ def test_profile_driven_cli_rejects_nonstandard_override_surface() -> None:
         _validate_profile_driven_args,
     )
 
-    with pytest.raises(ValueError, match="unsupported options: --resume"):
+    with pytest.raises(ValueError, match="unsupported options: --benchmark-runs"):
         _validate_profile_driven_args(
-            ["--profile-driven", "--profile", "p.yaml", "--resume"]
+            ["--profile-driven", "--profile", "p.yaml", "--benchmark-runs", "5"]
         )
 
 

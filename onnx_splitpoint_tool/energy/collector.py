@@ -4246,7 +4246,8 @@ def _energy_repeat_aggregation_eligible(
     """Require a valid marker-bound window and its requested environment proof.
 
     Diagnostic raw observations retain technical repeat validity while their
-    separate scientific claim fields stay clamped. Final cohorts exclude them.
+    separate scientific claim fields stay clamped. A final Native A4 capture
+    additionally requires its existing finite-job admission receipt.
 
     ``require_ab`` is retained in the private signature for callers from older
     versions.  Since v2.67 the Chapter-4 branch is a non-blocking shadow and
@@ -4254,7 +4255,9 @@ def _energy_repeat_aggregation_eligible(
     """
     del require_ab
     if entry.get("campaign_cohort") and entry.get("diagnostic_only") is True:
-        return False
+        from .task_budget import native_a4_diagnostic_cohort_repeat
+        if not native_a4_diagnostic_cohort_repeat(entry):
+            return False
     if (entry.get("campaign_cohort") or entry.get("environment_observation_required")) and (
             (entry.get("environment_observation") or {}).get("ok") is not True):
         return False

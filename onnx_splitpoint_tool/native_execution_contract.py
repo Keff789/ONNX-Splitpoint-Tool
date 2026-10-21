@@ -12,6 +12,8 @@ import hashlib
 import json
 from typing import Any, Mapping
 
+from .native_command_contract import deepx_runtime_policy
+
 
 NATIVE_EXECUTION_CONTRACT_SCHEMA = (
     "onnx-splitpoint/native-execution-contract"
@@ -49,6 +51,17 @@ _MODE_DEFAULTS = {
         "inflight": 8,
     },
 }
+
+
+def native_deepx_selected(profile: Mapping[str, Any]) -> bool:
+    """Use the existing logical Native selection for this optional policy."""
+    from .native_full_quality import resolve_native_full_plan, resolve_native_split_plan
+    split = resolve_native_split_plan(profile)
+    full = resolve_native_full_plan(profile)
+    return bool(
+        "deepx" in split.selected_split_backends
+        or "deepx" in full.backends_by_producer.get("deepx", ())
+    )
 
 
 def _canonical_sha256(value: Mapping[str, Any]) -> str:
@@ -136,6 +149,13 @@ def build_native_execution_contract(
         **values,
         "field_sources": sources,
     }
+    # Optional extension: old execution contracts remain byte-for-byte valid.
+    # DeepX's fixed A4 policy never changes the shared Hailo effort values.
+    if "deepx_runtime_mode" in config:
+        queue_default = 3 if str(config["deepx_runtime_mode"]).strip().upper() == "A4" else values["queue_depth"]
+        body.update(deepx_runtime_policy({
+            **dict(config), "deepx_queue_depth": config.get("deepx_queue_depth", queue_default),
+        }))
     body["contract_sha256"] = _canonical_sha256(body)
     return body
 
@@ -153,6 +173,8 @@ def resolve_native_execution_contract(
         else {}
     )
     explicit = dict(explicit_cli_overrides or {})
+    if "deepx_runtime_mode" in explicit:
+        top_level["deepx_runtime_mode"] = explicit["deepx_runtime_mode"]
     for field in NATIVE_EXECUTION_FIELDS:
         if field in explicit and explicit.get(field) is not None:
             top_level[field] = explicit[field]
@@ -200,6 +222,8 @@ def verify_native_execution_contract(
             raise ValueError(
                 f"native_execution_contract_{field}_source_invalid"
             )
+    if "deepx_runtime_mode" in supplied:
+        deepx_runtime_policy(supplied)
     supplied["contract_sha256"] = expected_sha
     return supplied
 
@@ -211,6 +235,13 @@ def enforce_native_variant_execution_contract(
     """Reject silent per-variant effort drift; identical repeats are harmless."""
 
     verified = verify_native_execution_contract(contract)
+    policy = deepx_runtime_policy(verified)
+    for field in ("deepx_runtime_mode", "deepx_max_inflight", "deepx_queue_depth"):
+        if field not in variant:
+            continue
+        observed = str(variant[field]).strip().upper() if field == "deepx_runtime_mode" else variant[field]
+        if observed != policy[field] or (field != "deepx_runtime_mode" and type(observed) is not int):
+            raise ValueError("native_execution_contract_variant_override_forbidden:" + field)
     for field in NATIVE_EXECUTION_FIELDS:
         if field not in variant or variant.get(field) is None:
             continue

@@ -21,6 +21,29 @@ from typing import Any, Mapping
 NATIVE_COMMAND_CONTRACT_SCHEMA = "onnx-splitpoint/native-command-contract"
 NATIVE_COMMAND_CONTRACT_VERSION = 1
 
+
+def deepx_runtime_policy(options: Mapping[str, Any]) -> dict[str, Any]:
+    """Resolve only the Native DeepX policy, preserving historical S1 jobs.
+
+    Callers creating a new request must persist A4 explicitly. Missing mode in
+    an archived command never acquires today's default during replay/import.
+    The shared Hailo ``inflight`` and ``queue_depth`` defaults are not changed.
+    """
+    mode = str(options["deepx_runtime_mode"] if "deepx_runtime_mode" in options else "S1").strip().upper()
+    if mode not in {"A4", "S1"}:
+        raise ValueError("deepx_runtime_mode_invalid")
+    maximum = 4 if mode == "A4" else 1
+    if "deepx_max_inflight" in options and (type(options["deepx_max_inflight"]) is not int or options["deepx_max_inflight"] != maximum):
+        raise ValueError("deepx_max_inflight_policy_mismatch")
+    queue = options.get("deepx_queue_depth", options.get("queue_depth", 3))
+    if mode == "A4" and (type(queue) is not int or queue != 3):
+        raise ValueError("deepx_a4_requires_queue_depth_3")
+    return {
+        "deepx_runtime_mode": mode,
+        "deepx_max_inflight": maximum,
+        "deepx_queue_depth": 3 if mode == "A4" else queue,
+    }
+
 SPLIT_ENERGY_PREFLIGHT_ATTESTATION_SCHEMA = (
     "onnx-splitpoint/energy-preflight-attestation"
 )
@@ -1007,6 +1030,11 @@ def _verify_native_command_contract_technical(
         )
         if mixed_runtime_status not in {"not_required", "verified"}:
             return None, mixed_runtime_status
+    if backend == "deepx_to_trt":
+        try:
+            deepx_runtime_policy(options)
+        except ValueError as exc:
+            return None, "native_command_contract_" + str(exc)
     return contract, "hash_schema_identity_and_artifacts_verified"
 
 
@@ -1610,6 +1638,7 @@ def successful_runtime_argv(
             argv.append("--dump-boundary")
         return argv
     if backend == "deepx_to_trt":
+        policy = deepx_runtime_policy(options)
         dxnn = dict(artifacts.get("dxnn") or {})
         engine = dict(artifacts.get("engine") or {})
         argv = common + [
@@ -1621,6 +1650,8 @@ def successful_runtime_argv(
             "--expected-engine-sha256", str(engine.get("sha256") or ""),
             "--source-contract-sha256", str(contract["contract_sha256"]),
         ]
+        if "deepx_runtime_mode" in options:
+            argv += ["--deepx-runtime-mode", policy["deepx_runtime_mode"]]
         prepared_contract = contract.get("prepared_input_contract")
         valid_preprocess, task, requested_mode, _effective_mode, requested_pad, _effective_pad = (
             deepx_preprocess_binding(
@@ -1776,6 +1807,7 @@ def split_energy_runtime_argv(
         argv.append("--copy-outputs" if options.get("copy_outputs") else "--no-copy-outputs")
         return argv
     if backend == "deepx_to_trt":
+        policy = deepx_runtime_policy(options)
         prepared_contract = contract.get("prepared_input_contract")
         if not isinstance(artifacts.get("prepared_input"), Mapping):
             raise ValueError("deepx legacy contract has no bound prepared input artefact")
@@ -1791,7 +1823,7 @@ def split_energy_runtime_argv(
         )
         if not valid_preprocess:
             raise ValueError("deepx contract does not bind consistent task preprocessing semantics")
-        return common + [
+        return common + (["--deepx-runtime-mode", policy["deepx_runtime_mode"]] if "deepx_runtime_mode" in options else []) + [
             "--boundary-layout", str(boundary.get("boundary_layout_effective") or "as_input"),
             "--out-dir", str(fresh_output_root),
             "--task", task,

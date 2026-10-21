@@ -1911,9 +1911,11 @@ def _native_full_dump_dir(
         str(getattr(ns, "comparison_backend", "") or ""),
     )
     explicit_root = str(getattr(ns, "out_dir", "") or "").strip()
+    canonical_deepx = (backend == "native_full_deepx"
+                       and str(getattr(ns, "deepx_runtime_mode", "S1") or "S1") == "A4")
     evidence_root = (
         _absolute_without_resolving(Path(explicit_root))
-        if explicit_root else benchmark_set
+        if explicit_root and not canonical_deepx else benchmark_set
     )
     return (
         evidence_root / "native_full_outputs"
@@ -2948,11 +2950,55 @@ def _attach_full_quality_request_binding(
             quality_comparison = verify_completed_detection_comparison_endpoint_contract(
                 binding.get("completed_task_endpoint_contract"), frozen_contract=frozen,
             )
+            completed_attestation = row.get("completed_task_endpoint_attestation")
+            completed_attestation = (
+                dict(completed_attestation)
+                if isinstance(completed_attestation, Mapping) else {}
+            )
+            completed_endpoint = completed_attestation.get("completed_endpoint_contract")
+            completed_endpoint = (
+                dict(completed_endpoint)
+                if isinstance(completed_endpoint, Mapping) else {}
+            )
+            source_hash = completed_endpoint.get("source_endpoint_contract_hash")
+            physical_hash = str(row.get("endpoint_contract_hash") or "")
+            if not isinstance(source_hash, str):
+                raise ValueError("completed_quality_original_source_hash_missing")
+            if re.fullmatch(r"[0-9a-f]{64}", physical_hash) is None:
+                raise ValueError("completed_quality_physical_raw_source_hash_invalid")
+            if source_hash != physical_hash:
+                # Hailo's original raw replay can legitimately declare an empty
+                # probe hash. Verify its separate physical identity and complete
+                # frozen signature; never backfill or relabel either raw hash.
+                physical = row.get("output_endpoint_attestation")
+                physical = dict(physical) if isinstance(physical, Mapping) else {}
+                signature = frozen.get("raw_output_tensor_signature")
+                if not (
+                    source_hash == ""
+                    and backend in {"native_full_hailo8", "native_full_hailo10h"}
+                    and frozen.get("source_contract_family") == "raw_head"
+                    and row.get("contract_family") == "raw_head"
+                    and row.get("stage") == "raw_head"
+                    and row.get("endpoint_contract_complete") is True
+                    and re.fullmatch(r"[0-9a-f]{64}", physical_hash) is not None
+                    and physical.get("attested") is True
+                    and physical.get("status") == "passed"
+                    and physical.get("stage") == "raw_head"
+                    and physical.get("endpoint") == "raw_head"
+                    and physical.get("endpoint_contract_hash") == physical_hash
+                    and isinstance(signature, Mapping)
+                    and signature.get("tensor_count", 0) > 0
+                    and physical.get("tensor_signature") == signature
+                    and completed_endpoint.get("raw_output_tensor_signature") == signature
+                    and row.get("frozen_host_postprocess_contract_sha256")
+                    == frozen.get("contract_sha256")
+                ):
+                    raise ValueError("completed_quality_physical_raw_source_binding_mismatch")
             attestation = build_completed_detection_endpoint_attestation(
                 frozen, row.get("frozen_host_postprocess_result"),
                 completed_frames=int(row.get("completed_frames") or row.get("completed_work_units") or 0),
                 postprocess_completed_frames=int(row.get("postprocess_completed_frames") or 0),
-                source_endpoint_contract_hash=str(row.get("endpoint_contract_hash") or ""),
+                source_endpoint_contract_hash=source_hash,
             )
             if (comparison != quality_comparison
                     or row.get("completed_task_endpoint_attestation") != attestation
@@ -3670,6 +3716,12 @@ def _full_command_contract(
         "image_map": image_map,
     }
     backend_name = str(row.get("backend") or "")
+    if backend_name == "native_full_deepx":
+        deepx_mode = str(getattr(ns, "deepx_runtime_mode", "S1") or "S1")
+        runtime_options.update(
+            deepx_runtime_mode=deepx_mode,
+            deepx_max_inflight=4 if deepx_mode == "A4" else 1,
+        )
     energy_workload: dict[str, Any] = {
         "available": False,
         "status": "full_energy_hotloop_unavailable",
@@ -4579,6 +4631,12 @@ def _full_command_contract(
             and int(row.get("completed_work_units") or 0) == int(row.get("frames") or 0)
             and prepared_tensor_identity_ok
             and deepx_completed_artifact_persisted
+            and str(prepared.get("deepx_runtime_mode") or "S1") == runtime_options["deepx_runtime_mode"]
+            and (
+                runtime_options["deepx_runtime_mode"] != "A4"
+                or (prepared.get("deepx_max_inflight") == 4 and prepared.get("accepted_work_drained") is True
+                    and bool(prepared.get("endpoint_output_names")))
+            )
         )
         prepared_image_identity_ok = bool(
             re.fullmatch(r"[0-9a-f]{64}", input_sha) is not None
@@ -4611,6 +4669,9 @@ def _full_command_contract(
                 else "full_energy_hotloop_unavailable"
             ),
             "kind": "deepx_full_prepared_feed_hotloop",
+            "deepx_runtime_mode": runtime_options["deepx_runtime_mode"],
+            "deepx_max_inflight": runtime_options["deepx_max_inflight"],
+            "endpoint_output_names": list(prepared.get("endpoint_output_names") or []),
             "runtime_python_artifact": "runtime_python",
             "runner_artifact": "hotloop_runner",
             "dxnn_artifact": "dxnn",
@@ -5454,6 +5515,19 @@ def _verified_full_energy_contract(
     workload = contract.get("energy_workload")
     if not isinstance(workload, Mapping) or workload.get("available") is not True:
         return None, "full_energy_hotloop_unavailable"
+    if str(contract.get("backend") or "") == "native_full_deepx":
+        from onnx_splitpoint_tool.native_command_contract import deepx_runtime_policy
+        try:
+            deepx_policy = deepx_runtime_policy(contract.get("runtime_options") or {})
+            for field in ("deepx_runtime_mode", "deepx_max_inflight"):
+                if (field in workload and (type(workload[field]) is not type(deepx_policy[field]) or workload[field] != deepx_policy[field])) or (deepx_policy["deepx_runtime_mode"] == "A4" and field not in workload):
+                    raise ValueError("deepx_energy_runtime_mode_mismatch")
+            if deepx_policy["deepx_runtime_mode"] == "A4":
+                names = workload.get("endpoint_output_names")
+                if not isinstance(names, list) or not names or any(not isinstance(name, str) or not name for name in names) or len(set(names)) != len(names):
+                    raise ValueError("deepx_a4_endpoint_output_names_missing")
+        except (TypeError, ValueError) as exc:
+            return None, str(exc)
     artifacts = contract.get("artifacts")
     if not isinstance(artifacts, Mapping):
         return None, "full_energy_artifacts_missing"
@@ -6070,6 +6144,23 @@ def _energy_workload_only(ns: argparse.Namespace) -> int:
             if isinstance(payload, Mapping) and input_binding_verified else 0
         )
     elif kind == "deepx_full_prepared_feed_hotloop":
+        from onnx_splitpoint_tool.native_command_contract import deepx_runtime_policy
+        runtime_options = dict(contract.get("runtime_options") or {})
+        try:
+            deepx_policy = deepx_runtime_policy(runtime_options)
+        except (TypeError, ValueError) as exc:
+            print(json.dumps({"ok": False, "status": str(exc)}), file=sys.stderr)
+            return 5
+        deepx_mode = deepx_policy["deepx_runtime_mode"]
+        deepx_inflight = deepx_policy["deepx_max_inflight"]
+        if (
+            deepx_mode not in {"A4", "S1"}
+            or runtime_options.get("deepx_max_inflight", deepx_inflight) != deepx_inflight
+            or workload.get("deepx_runtime_mode", deepx_mode) != deepx_mode
+            or workload.get("deepx_max_inflight", deepx_inflight) != deepx_inflight
+        ):
+            print(json.dumps({"ok": False, "status": "deepx_energy_runtime_mode_mismatch"}), file=sys.stderr)
+            return 5
         runner = str(artifacts[str(workload["runner_artifact"])]["path"])
         dxnn = str(artifacts[str(workload["dxnn_artifact"])]["path"])
         runtime_artifact = artifacts.get(
@@ -6113,6 +6204,8 @@ def _energy_workload_only(ns: argparse.Namespace) -> int:
         )
         cmd = [
             runtime_python, runner,
+            "--deepx-runtime-mode", deepx_mode,
+            "--endpoint-output-names-json", json.dumps(workload.get("endpoint_output_names") or []),
             "--dxnn", dxnn,
             "--prepared-input-file", prepared_input,
             "--expected-prepared-input-path", str(
@@ -6234,6 +6327,10 @@ def _energy_workload_only(ns: argparse.Namespace) -> int:
             )
         input_binding_verified = bool(
             isinstance(payload, Mapping)
+            and str(payload.get("deepx_runtime_mode") or "S1") == deepx_mode
+            and type(payload.get("deepx_max_inflight", 1)) is int
+            and payload.get("deepx_max_inflight", 1) == deepx_inflight
+            and (deepx_mode != "A4" or payload.get("accepted_work_drained") is True)
             and payload.get("runtime_input_binding_verified") is True
             and payload.get("runtime_input_source")
             == "preflight_bound_runtime_input_tensor"
@@ -6586,7 +6683,11 @@ def _energy_workload_only(ns: argparse.Namespace) -> int:
             and payload_map.get("postprocess_completion_verified") is True
             and int(payload_map.get("postprocess_completed_frames") or 0) == completed
         )
-    minimum_work_units = 1 if kind == "tensorrt_full_hotloop" and requested_duration_s > 0.0 else frames
+    duration_admission = bool(
+        requested_duration_s > 0.0 and kind == "deepx_full_prepared_feed_hotloop"
+        and str((contract.get("runtime_options") or {}).get("deepx_runtime_mode") or "S1") == "A4"
+    )
+    minimum_work_units = 1 if requested_duration_s > 0.0 and (kind == "tensorrt_full_hotloop" or duration_admission) else frames
     minimum_duration_satisfied = bool(
         requested_duration_s <= 0.0
         or payload_map.get("minimum_duration_satisfied") is True
@@ -6606,6 +6707,11 @@ def _energy_workload_only(ns: argparse.Namespace) -> int:
         "completed_work_units": completed if ok else None,
         "task": workload.get("task"),
         "workload_kind": kind,
+        **({key: payload_map.get(key) for key in (
+            "deepx_runtime_mode", "deepx_max_inflight", "deepx_async_observation",
+            "actual_pending_max", "submitted_count", "accepted_work_drained",
+            "unsafe_runtime_state", "unsafe_runtime_reasons",
+        )} if kind == "deepx_full_prepared_feed_hotloop" else {}),
         **{key: payload_map.get(key) for key in (
             "task_complete", "completed_task_stage", "postprocess_included",
             "postprocess_completed_frames", "postprocess_completion_verified",
@@ -6797,6 +6903,60 @@ def _deepx_original_full_failure(
     return {}
 
 
+def _deepx_a4_full_route_guard(
+    benchmark_set: Path, model: str, run_id: str,
+) -> dict[str, Any] | None:
+    """Reject missing plan/endpoint routing before any Native runtime child."""
+    from onnx_splitpoint_tool.native_deepx_async import NativeExecutionLifecycle
+    from onnx_splitpoint_tool.native_output_endpoint import load_authoritative_output_contract
+    try:
+        plan_path = benchmark_set / "benchmark_plan.json"
+        if not _confined_regular_file(plan_path, allowed_root=benchmark_set, expected_path=plan_path):
+            raise ValueError("explicit_full_benchmark_plan_missing")
+        plan = _load_json(plan_path)
+        runs = plan.get("runs") if isinstance(plan, Mapping) else None
+        selected = [row for row in runs or [] if isinstance(row, Mapping)
+                    and str(row.get("id") or row.get("name") or "") == run_id]
+        if not isinstance(runs, list) or run_id != "deepx_m1_full" or len(selected) != 1:
+            raise ValueError("explicit_full_benchmark_plan_run_missing_or_ambiguous")
+        run = selected[0]
+        variants = set(run.get("variants") or []) | ({run["variant"]} if run.get("variant") else set())
+        stages = [run.get(key) if isinstance(run.get(key), Mapping) else {} for key in ("stage1", "stage2")]
+        backends = {str(value) for value in (run.get("backend"), run.get("provider"),
+                    stages[0].get("backend"), stages[1].get("backend")) if value}
+        if (run.get("type") not in {"deepx", "deepx_m1", "dx_m1"} or variants != {"full"}
+                or backends != {"deepx_m1"}
+                or run.get("dxnn_path", run.get("artifact")) != "deepx/deepx_m1/full/model.dxnn"
+                or run.get("contract_path") != "deepx/deepx_m1/full/output_contract.json"):
+            raise ValueError("explicit_full_benchmark_plan_route_conflict")
+        benchmark = _load_json(benchmark_set / "benchmark_set.json")
+        if (not isinstance(benchmark, Mapping) or benchmark.get("model_name") != model
+                or benchmark.get("model") != "models/" + model + ".onnx"):
+            raise ValueError("explicit_full_benchmark_model_conflict")
+        if isinstance(benchmark.get("plan"), Mapping) and dict(benchmark["plan"]) != dict(plan):
+            raise ValueError("explicit_full_benchmark_plan_source_conflict")
+        case = _first_case(benchmark_set)
+        selected_cases = list(run.get("case_ids") or run.get("cases") or [])
+        if run.get("case_id"):
+            selected_cases.append(run["case_id"])
+        if case is None or (selected_cases and case[0] not in selected_cases):
+            raise ValueError("explicit_full_benchmark_case_conflict")
+        output_contracts = benchmark_set / "output_contracts.json"
+        if not _confined_regular_file(output_contracts, allowed_root=benchmark_set, expected_path=output_contracts):
+            raise ValueError("explicit_full_authoritative_output_contract_unavailable")
+        task = str(run.get("benchmark_task") or run.get("task") or plan.get("task") or "")
+        declaration = load_authoritative_output_contract(
+            benchmark_set, backend="deepx_m1", model_id=model, variant="full", task=task,
+        )
+        if declaration.get("authoritative_output_contract") is not True or declaration.get("contract_resolution_status") != "attested":
+            raise ValueError("explicit_full_authoritative_output_contract_unavailable")
+    except (OSError, TypeError, ValueError, KeyError) as exc:
+        return {"ok": False, "status": "full_suite_route_invalid",
+                "failure_reason": "deepx_a4_full_suite_route_invalid", "error": str(exc),
+                "deepx_execution_lifecycle": NativeExecutionLifecycle().report(), "steps": []}
+    return None
+
+
 def _semantic_full_dump(
     benchmark_set: Path,
     model: str,
@@ -6809,6 +6969,10 @@ def _semantic_full_dump(
     # Run one untimed exact-input Native Full inference and write manifests.
     if not force and not bool(getattr(ns, "dump_outputs", False)):
         return {"ok": False, "status": "disabled", "failure_reason": "semantic_output_dump_disabled"}
+    if backend == "native_full_deepx" and str(getattr(ns, "deepx_runtime_mode", "S1") or "S1") == "A4":
+        route_failure = _deepx_a4_full_route_guard(benchmark_set, model, run_id)
+        if route_failure is not None:
+            return route_failure
     info = _first_case(benchmark_set)
     if info is None:
         return {"ok": False, "status": "runner_missing", "failure_reason": "semantic_runner_missing"}
@@ -7021,6 +7185,8 @@ def _semantic_full_dump(
         ]
     if backend == "native_full_deepx" and bool(getattr(ns, "diagnostic_deepx_input_probes", False)):
         command.append("--diagnostic-deepx-input-probes")
+    if backend == "native_full_deepx" and str(getattr(ns, "deepx_runtime_mode", "S1") or "S1") == "A4":
+        command += ["--deepx-runtime-mode", "A4"]
     if backend == "native_full_deepx" and prepared_input_manifest is not None:
         command += [
             "--prepared-input-manifest", str(prepared_input_manifest),
@@ -7185,6 +7351,16 @@ def _semantic_full_dump(
         "postprocess_included": manifest_payload.get("postprocess_included") is True,
         "quality_first_producer_identity_sha256": expected_producer_sha,
         "quality_first_producer_identity_match": producer_binding_ok,
+        **({key: payload[key] for key in (
+            "serial_reference_calls_started", "serial_reference_calls_completed", "sdk_runtime_input_shapes",
+            "unsafe_runtime_state",
+            "deepx_async_observation", "deepx_execution_lifecycle", "error",
+        ) if key in payload} if backend == "native_full_deepx" and str(getattr(ns, "deepx_runtime_mode", "S1") or "S1") == "A4" else {}),
+        **({"unsafe_runtime_state": True} if (
+            backend == "native_full_deepx"
+            and str(getattr(ns, "deepx_runtime_mode", "S1") or "S1") == "A4"
+            and (step.get("timed_out") or "deepx_execution_lifecycle" not in payload)
+        ) else {}),
         "semantic_execution_command_sha256": semantic_command_sha,
         "python": python_path,
         "extra_sites": sites,
@@ -8070,6 +8246,11 @@ def _aggregate_full_repetitions(
         values = {_identity_value(row, field) for row in valid}
         if len(values) > 1:
             identity_drift_fields.append(field)
+    if any(str(row.get("backend") or "") == "native_full_deepx" for row in valid):
+        for field, historical in (("deepx_runtime_mode", "S1"), ("deepx_max_inflight", 1)):
+            values = {str(row.get(field, historical)) for row in valid}
+            if len(values) > 1:
+                identity_drift_fields.append(field)
     for field in claim_identity_fields:
         values = [_identity_value(row, field) for row in valid]
         nonempty = {value for value in values if value}
@@ -10072,6 +10253,12 @@ def _generic_full_via_suite(
     ns: argparse.Namespace, *,
     prepared_input_manifest: Path | None = None,
 ) -> dict[str, Any]:
+    explicit_a4_plan = backend == "native_full_deepx" and str(getattr(ns, "deepx_runtime_mode", "S1") or "S1") == "A4"
+    if explicit_a4_plan:
+        route_failure = _deepx_a4_full_route_guard(benchmark_set, model, run_id)
+        if route_failure is not None:
+            return {"backend": backend, "model": model, "case": "full",
+                    "execution_mode": "native_full_baseline", **route_failure}
     throughput_frames = (
         max(1, int(ns.frames))
         if backend == "native_full_deepx"
@@ -10169,8 +10356,11 @@ def _generic_full_via_suite(
     ]
     if expected_prepared_image is not None:
         cmd.extend(["--prepared-feed-image", str(expected_prepared_image)])
+    if explicit_a4_plan:
+        cmd.extend(["--plan", str((benchmark_set / "benchmark_plan.json").resolve())])
     if backend == "native_full_deepx":
         cmd.extend([
+            "--deepx-runtime-mode", str(getattr(ns, "deepx_runtime_mode", "S1") or "S1"),
             "--native-full-postprocess-runtime-mode", "auto",
             "--prepared-input-manifest",
             str(prepared_input_manifest.resolve()),
@@ -10179,6 +10369,11 @@ def _generic_full_via_suite(
             "--quality-evidence-setup-id",
             str(getattr(ns, "setup_id", "") or ""),
         ])
+        numerical_images = str(getattr(ns, "deepx_numerical_images", "") or "").strip()
+        if numerical_images:
+            cmd.extend(["--deepx-numerical-images", numerical_images])
+        if bool(getattr(ns, "deepx_numerical_only", False)):
+            cmd.append("--deepx-numerical-only")
     before_results: dict[str, tuple[int, int]] = {}
     for suffix in ("json", "csv"):
         for path in benchmark_set.rglob(f"benchmark_results_{run_id}_*.{suffix}"):
@@ -10231,6 +10426,15 @@ def _generic_full_via_suite(
         and not prepared_projection_conflicts
     )
     prepared_feed = dict(prepared_projection.get("nested_payload") or {})
+    deepx_mode = str(getattr(ns, "deepx_runtime_mode", "S1") or "S1")
+    if backend == "native_full_deepx" and (
+        str(prepared_feed.get("deepx_runtime_mode") or "S1") != deepx_mode
+        or (deepx_mode == "A4" and (
+            type(prepared_feed.get("deepx_max_inflight")) is not int or prepared_feed.get("deepx_max_inflight") != 4
+            or prepared_feed.get("accepted_work_drained") is not True
+        ))
+    ):
+        metric_source_consistent = False
     prepared_contract = prepared_feed.get("input_contract")
     prepared_contract = dict(prepared_contract) if isinstance(prepared_contract, Mapping) else {}
     prepared_input = prepared_contract.get("input")
@@ -10596,9 +10800,34 @@ def _generic_full_via_suite(
         else "failed"
     )
     explicit_runtime_precision = _explicit_runtime_precision(metric_row)
-    return {
+    result = {
         "backend": backend,
         "producer_impl": f"{backend}_native_full_suite",
+        **({
+            "deepx_runtime_mode": deepx_mode,
+            "deepx_max_inflight": 4 if deepx_mode == "A4" else 1,
+            "runtime_options": {"deepx_runtime_mode": deepx_mode,
+                                "deepx_max_inflight": 4 if deepx_mode == "A4" else 1},
+            "deepx_async_observation": prepared_feed.get("deepx_async_observation") or {},
+            "actual_pending_max": prepared_feed.get("actual_pending_max"),
+            "accepted_work_drained": prepared_feed.get("accepted_work_drained"),
+            "submitted_count": prepared_feed.get("submitted_count"),
+            "numerical_validation": prepared_feed.get("numerical_validation") or {},
+            "numerical_smoke_completed_count": prepared_feed.get("numerical_smoke_completed_count"),
+            "runtime_output_name_binding": prepared_feed.get("runtime_output_name_binding") or [],
+            "unsafe_runtime_state": prepared_feed.get("unsafe_runtime_state",
+                (prepared_feed.get("deepx_async_observation") or {}).get("unsafe_runtime_state",
+                    bool(step.get("timed_out") or (not prepared_feed and int(step.get("rc") or 0) != 0)))),
+            "unsafe_runtime_reasons": prepared_feed.get("unsafe_runtime_reasons") or [],
+            "pending": (prepared_feed.get("deepx_async_observation") or {}).get("pending"),
+            "unreleased": (prepared_feed.get("deepx_async_observation") or {}).get("unreleased"),
+            "failed_phase_counts": prepared_feed.get("failed_phase_counts") or {},
+            "warmup_completed_count": prepared_feed.get("warmup_completed_count"),
+            "worker_numerical_setup_reference_calls": prepared_feed.get("numerical_setup_reference_calls"),
+            "worker_numerical_setup_reference_calls_started": prepared_feed.get("numerical_setup_reference_calls_started"),
+            "worker_serial_runtime_calls_started": prepared_feed.get("serial_runtime_calls_started"),
+            "worker_serial_runtime_calls_completed": prepared_feed.get("serial_runtime_calls_completed"),
+        } if backend == "native_full_deepx" else {}),
         "model": model,
         "case": "full",
         "execution_mode": "native_full_baseline",
@@ -10657,7 +10886,7 @@ def _generic_full_via_suite(
             "decoded_nms" if deepx_postprocess_required
             else str(metric_row.get("contract_family") or "")
         ),
-        "measurement_concurrency": 1,
+        "measurement_concurrency": int(prepared_feed.get("actual_pending_max") or 1) if backend == "native_full_deepx" and deepx_mode == "A4" else 1,
         "host_postprocess_frozen": deepx_raw_postprocess_required,
         "normalization_frozen": (
             deepx_direct_normalization_required
@@ -10849,6 +11078,42 @@ def _generic_full_via_suite(
             "postprocess_included", "postprocess_completed_frames", "postprocess_completion_verified",
         )} if prepared_feed.get("completed_task_stage") == "classification_top1_top5" else {}),
     }
+    if backend == "native_full_deepx" and deepx_mode == "A4":
+        if "deepx_execution_lifecycle" in prepared_feed:
+            result["deepx_execution_lifecycle"] = prepared_feed["deepx_execution_lifecycle"]
+            # These are projections, not fresh observations. Preserve exact
+            # reported values (including contradictions), and omit fields the
+            # child never observed rather than manufacturing None/zero counts.
+            for destination, source in (
+                ("actual_pending_max", "actual_pending_max"),
+                ("accepted_work_drained", "accepted_work_drained"),
+                ("submitted_count", "submitted_count"),
+                ("numerical_smoke_completed_count", "numerical_smoke_completed_count"),
+                ("warmup_completed_count", "warmup_completed_count"),
+                ("completed_frames", "completed_frames"),
+                ("completed_work_units", "completed_work_units"),
+                ("postprocess_completed_frames", "postprocess_completed_frames"),
+                ("worker_numerical_setup_reference_calls", "numerical_setup_reference_calls"),
+                ("worker_numerical_setup_reference_calls_started", "numerical_setup_reference_calls_started"),
+                ("worker_serial_runtime_calls_started", "serial_runtime_calls_started"),
+                ("worker_serial_runtime_calls_completed", "serial_runtime_calls_completed"),
+            ):
+                if source in prepared_feed:
+                    result[destination] = prepared_feed[source]
+                else:
+                    result.pop(destination, None)
+            observation = prepared_feed.get("deepx_async_observation")
+            observation = observation if isinstance(observation, Mapping) else {}
+            for key in ("pending", "unreleased"):
+                if key in observation:
+                    result[key] = observation[key]
+                else:
+                    result.pop(key, None)
+        if step.get("timed_out") or not prepared_feed or not changed:
+            # A successful wrapper exit alone cannot establish the SDK state
+            # of a timed child whose report is absent or unreadable.
+            result["unsafe_runtime_state"] = True
+    return result
 
 
 def _deepx_semantic_completion_failure(
@@ -10929,6 +11194,8 @@ def _deepx_full_preparation_failure(
         **{key: semantic[key] for key in (
             "original_full_result_file", "original_full_failure_context_file",
             "original_full_status", "original_full_error", "error", "status_detail",
+            "unsafe_runtime_state", "serial_reference_calls_started", "serial_reference_calls_completed",
+            "deepx_async_observation", "deepx_execution_lifecycle",
         ) if key in semantic},
     }
 
@@ -11010,6 +11277,16 @@ def _row_for_backend(benchmark_set: Path, model: str, backend: str, ns: argparse
             and (_num(runtime_row.get("fps_makespan")) or 0.0) > 0.0
             and not bool(runtime_row.get("timed_out"))
         )
+        if (
+            str(getattr(ns, "deepx_runtime_mode", "S1") or "S1") == "A4"
+            and "deepx_execution_lifecycle" in semantic
+        ):
+            # The measured child already owns its marker in the untouched raw
+            # payload. A duplicate at this combined parent would incorrectly
+            # make its pre-runtime scope include the separate semantic child.
+            if "deepx_execution_lifecycle" in (runtime_row.get("deepx_prepared_feed_benchmark") or {}):
+                runtime_row.pop("deepx_execution_lifecycle", None)
+            runtime_row["preparation_evidence"] = dict(semantic)
         return _attach_semantic_dump(
             runtime_row,
             benchmark_set, model, "native_full_deepx", "deepx_m1_full", ns,
@@ -11048,6 +11325,10 @@ def main() -> int:
         ),
     )
     parser.add_argument("--deepx-classification-profile-json", default="", help="Selected workflow preprocessing profile; checked before any DeepX Full preparation or repetition.")
+    parser.add_argument("--deepx-runtime-mode", choices=("S1", "A4"), default="S1",
+                        help="Explicit Native DeepX policy; omitted historical requests retain S1.")
+    parser.add_argument("--deepx-numerical-images", default="", help="Bounded Native A4 numerical preflight JSON file with images list (inline JSON accepted).")
+    parser.add_argument("--deepx-numerical-only", action="store_true", help="Numerical preflight and bounded smoke (zero warmup, at most 64 frames).")
     parser.add_argument("--setup-id", default="")
     parser.add_argument("--comparison-backend", default="")
     parser.add_argument("--comparison-precision", default="", help="Legacy Split-boundary comparison stratum. This is not the Full runtime precision.")
@@ -11105,6 +11386,11 @@ def main() -> int:
     parser.add_argument("--preflight-attestation-out", default="", help="Remote attestation path written by --energy-preflight-only.")
     parser.add_argument("--preflight-attestation-max-age-s", type=float, default=300.0)
     ns = parser.parse_args()
+    if ns.deepx_numerical_only and (
+        ns.deepx_runtime_mode != "A4" or not ns.deepx_numerical_images.strip()
+        or not 1 <= ns.frames <= 64 or ns.warmup != 0 or ns.repetitions != 1
+    ):
+        parser.error("--deepx-numerical-only requires A4, an image list, 1..64 frames, zero warmup and one repetition")
     if ns.remote_contract_preflight:
         from onnx_splitpoint_tool.hailo_full_contract_promotion import (
             remote_import_preflight,
@@ -11388,6 +11674,25 @@ def main() -> int:
                 row["full_runtime_precision"] = ""
                 row["runtime_precision_source"] = "unavailable"
             row = attach_identity_without_conflicts(planned_identity, row)
+            if backend == "deepx" and str(ns.deepx_runtime_mode) == "A4" and isinstance(deepx_semantic, Mapping):
+                if "deepx_execution_lifecycle" in deepx_semantic:
+                    row["preparation_evidence"] = dict(deepx_semantic)
+                row["numerical_series_preflight_reference_calls"] = deepx_semantic.get("serial_reference_calls_completed")
+                for destination, source, worker in (
+                    ("numerical_setup_reference_calls_started", "serial_reference_calls_started", "worker_numerical_setup_reference_calls_started"),
+                    ("numerical_setup_reference_calls", "serial_reference_calls_completed", "worker_numerical_setup_reference_calls"),
+                ):
+                    observations = [deepx_semantic.get(source), *[repeat.get(worker) for repeat in repeat_rows]]
+                    row[destination] = sum(observations) if all(type(value) is int and value >= 0 for value in observations) else None
+                row["numerical_setup_reference_scope"] = "one_series_preflight_plus_observed_worker_setup_references"
+                row["additional_serial_reference_count"] = row["numerical_setup_reference_calls"]
+                if "deepx_execution_lifecycle" in deepx_semantic:
+                    for field in (
+                        "numerical_series_preflight_reference_calls", "numerical_setup_reference_calls_started",
+                        "numerical_setup_reference_calls", "additional_serial_reference_count",
+                    ):
+                        if row.get(field) is None:
+                            row.pop(field, None)
             full_contract = _full_command_contract(
                 row=row, root=root, benchmark_set=benchmark_set,
                 model=model, backend_arg=backend, ns=ns,

@@ -247,6 +247,7 @@ def package_build_snapshot() -> dict[str, Any]:
         package_root / "gui" / "panels" / "panel_validate.py",
         package_root / "gui_app.py",
         package_root / "native_command_contract.py",
+        package_root / "native_deepx_async.py",
         package_root / "native_execution_contract.py",
         package_root / "native_performance_identity.py",
         package_root / "native_trt_utils.py",
