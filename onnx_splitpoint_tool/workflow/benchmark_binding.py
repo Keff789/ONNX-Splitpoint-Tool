@@ -1192,6 +1192,10 @@ def _benchmark_runs_from_profile(profile_payload: Mapping[str, Any], targets: Se
             }:
                 continue
             run = dict(raw)
+            if (run.get("type") == "mixed_backend"
+                    and run.get("quality_source_only") is True
+                    and "generic_quality_completion_configs" in run):
+                run["type"] = "matrix"
             run.setdefault("id", f"profile_run_{idx:02d}")
             run.setdefault("source", "evaluation_profile.run_profiles")
             runs.append(run)

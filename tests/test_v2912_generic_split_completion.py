@@ -6,6 +6,7 @@ import hashlib
 import importlib.machinery
 import importlib.util
 import json
+import os
 import sys
 import threading
 import time
@@ -26,11 +27,18 @@ TEMPLATE = ROOT / 'onnx_splitpoint_tool/resources/templates/run_split_onnxruntim
 
 
 def _module(monkeypatch):
+    # Generated CLI tests execute in pytest's process. Preserve the environment
+    # around the CLI's normal cache-only guard, including an initially absent key.
+    original_policy = os.environ.get('ONNX_SPLITPOINT_ARTIFACT_POLICY')
+    monkeypatch.setenv('ONNX_SPLITPOINT_ARTIFACT_POLICY', original_policy or '')
+    if original_policy is None:
+        monkeypatch.delenv('ONNX_SPLITPOINT_ARTIFACT_POLICY')
     import onnx_splitpoint_tool.runners.task_completion as completion
     import onnx_splitpoint_tool.runners.harness.classification as classification
     import onnx_splitpoint_tool.native_detection_postprocess as detection
+    import onnx_splitpoint_tool.runners.generic_only as generic_only
     for name, module in [('task_completion', completion), ('harness.classification', classification),
-                         ('native_detection_postprocess', detection)]:
+                         ('native_detection_postprocess', detection), ('generic_only', generic_only)]:
         monkeypatch.setitem(sys.modules, 'splitpoint_runners.' + name, module)
     loader = importlib.machinery.SourceFileLoader('_generic_completion_template_test', str(TEMPLATE))
     spec = importlib.util.spec_from_loader(loader.name, loader)

@@ -9772,6 +9772,7 @@ def _export_central_quality_inputs(
     composed_producer_context: Optional[Mapping[str, Any]] = None,
     candidate_completion_contract: Optional[Mapping[str, Any]] = None,
     completed_task_evidence: Optional[Mapping[str, Any]] = None,
+    generic_completed_quality_evidence: Optional[Mapping[str, Any]] = None,
     diagnostics: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Export GT/candidates remotely or the CPU reference on management only.
@@ -10233,6 +10234,11 @@ def _export_central_quality_inputs(
                     candidate_completion_contract=completion_contract,
                 )
             )
+            if generic_completed_quality_evidence is not None:
+                from splitpoint_runners.generic_quality_completion import bind_completed_quality_producer
+                generic_producer, completion_contract = bind_completed_quality_producer(
+                    generic_producer, completion_contract, generic_completed_quality_evidence,
+                )
             if native_split_quality_binding is not None:
                 # Join the two existing evidence contracts to the exact live
                 # runtime bytes before publishing their duplicated identities.
@@ -10319,6 +10325,14 @@ def _export_central_quality_inputs(
                         generic_producer["runtime_artifact_set_sha256"]
                     ),
                 }
+    generic_completed_quality_duplicates: Dict[str, Any] = {}
+    if generic_completed_quality_evidence is not None:
+        if task_l != "detection" or variant_l != "composed" or not generic_composed_duplicates:
+            raise RuntimeError("Generic completed Quality requires its actual composed detection producer")
+        from splitpoint_runners.generic_quality_completion import completed_quality_export_fields
+        generic_completed_quality_duplicates = completed_quality_export_fields(
+            generic_completed_quality_evidence, candidate_records, generic_producer,
+        )
     candidate_payload = {
         "schema": "onnx-splitpoint/task-quality-candidate-input",
         "schema_version": 1,
@@ -10338,6 +10352,7 @@ def _export_central_quality_inputs(
         **split_duplicates,
         **full_only_duplicates,
         **generic_composed_duplicates,
+        **generic_completed_quality_duplicates,
         "record_count": int(len(candidate_records)),
         "records": candidate_records,
     }
@@ -10398,6 +10413,7 @@ def _export_central_quality_inputs(
         **split_duplicates,
         **full_only_duplicates,
         **generic_composed_duplicates,
+        **generic_completed_quality_duplicates,
         "policy_sha256": str(policy.get("policy_sha256") or ""),
         "metric_gate_config": metric_gate,
         "statistics": {
@@ -15063,7 +15079,12 @@ def _classification_quality_dataset_preflight(samples, validation_source):
 
 def _configure_quality_source_only(args, parser):
     """Keep selective split Quality generation outside Generic timing work."""
+    generic_quality_source = str(
+        getattr(args, "generic_quality_completion_config", "") or ""
+    ).strip()
     if not args.quality_source_only:
+        if generic_quality_source:
+            parser.error("--generic-quality-completion-config requires --quality-source-only")
         return
     incompatible = (
         "generic_completion_config", "quality_evidence_only", "build_only",
@@ -15074,8 +15095,9 @@ def _configure_quality_source_only(args, parser):
         parser.error("--quality-source-only cannot enter another execution mode")
     if [v.strip() for v in str(args.variants).split(",") if v.strip()] != ["composed"]:
         parser.error("--quality-source-only requires exactly --variants composed")
-    if not str(args.native_split_quality_binding or "").strip():
-        parser.error("--quality-source-only requires --native-split-quality-binding")
+    native_quality_source = str(args.native_split_quality_binding or "").strip()
+    if bool(native_quality_source) == bool(generic_quality_source):
+        parser.error("--quality-source-only requires exactly one Native binding or Generic completion config")
     if not str(args.existing_management_cpu_reference_json or "").strip():
         parser.error("--quality-source-only requires the existing management CPU reference")
     if not str(args.validation_images or "").strip() or int(args.validation_max_images or 0) < 1:
@@ -15087,6 +15109,9 @@ def _configure_quality_source_only(args, parser):
     args.throughput_frames = args.throughput_warmup_frames = 0
     args.native_trt_build = False
     args.native_trt_no_fallback = True
+    if generic_quality_source:
+        args.trt_runtime = args.trt_runtime_mode = "native"
+        os.environ["ONNX_SPLITPOINT_ARTIFACT_POLICY"] = "cache_verify_only"
     args.viz = "none"
     args.no_report_plots = True
 
@@ -15099,6 +15124,14 @@ def _configure_generic_completion(args, parser):
     if args.generic_completion_repetition not in (1, 2, 3):
         parser.error("Generic completion requires one independent --generic-completion-repetition 1, 2 or 3")
     config = _read_json(Path(args.generic_completion_config))
+    from splitpoint_runners.generic_only import is_generic_only, validate_generic_only_config
+    try:
+        if is_generic_only(config):
+            validate_generic_only_config(config)
+        elif (config.get("functional_reference") or {}).get("kind") == "serial_compiled_subnets":
+            raise ValueError("Serial compiled references require explicit Generic-only admission")
+    except (ValueError, KeyError, TypeError) as error:
+        parser.error(str(error))
     energy_mode = getattr(args, "generic_completion_energy", False)
     energy_cli = {key: getattr(args, key, "") for key in
                   ("energy_preflight_nonce", "energy_preflight_attestation", "energy_command_contract_sha256")}
@@ -15140,11 +15173,14 @@ def _configure_generic_completion(args, parser):
     # The originating request may be a selective Quality source. This explicit
     # completion invocation owns its unchanged 100/1000/3 measurement contract.
     args.quality_source_only = False
+    args.generic_quality_completion_config = ""
     identity = config["identity"]
+    completion_precision = (config["generic_artifact_binding"]["runtime_precision"]
+                            if is_generic_only(config) else args.native_trt_precision)
     for field, actual in (("model_id", args.model_id or args.quality_evidence_model_id),
                           ("case_id", Path(config["case_dir"]).name),
                           ("setup_id", args.quality_evidence_setup_id),
-                          ("precision", args.native_trt_precision)):
+                          ("precision", completion_precision)):
         if actual and identity.get(field) != actual:
             parser.error(f"Generic completion {field} differs from original execution")
     input_binding = config["input_binding"]
@@ -15231,6 +15267,15 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
     )
     import statistics
     from datetime import datetime, timezone
+    from splitpoint_runners.generic_only import (
+        MODE as GENERIC_ONLY_MODE, is_generic_only, validate_generic_only_config,
+        capture_serial_reference, compare_serial_reference,
+    )
+    generic_only = is_generic_only(config)
+    if generic_only:
+        validate_generic_only_config(config)
+        if type(repetition_index) is not int or repetition_index not in (1, 2, 3):
+            raise ValueError("Generic-only completion requires one independent process repetition")
     energy = config.get("energy_capture")
     if bool(config.get("mixed_input_control")) != (mixed_control is not None):
         raise ValueError("Generic mixed functional control must match its explicit runtime binding")
@@ -15280,8 +15325,8 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
     reference_binding = config["functional_reference"]
     if reference_binding.get("input_sha256") != config["input_binding"]["prepared_input"]["sha256"]:
         raise ValueError("Generic completion functional reference input mismatch")
-    reference_outputs = {name: _completion_bound_array(spec)
-                         for name, spec in reference_binding["outputs"].items()}
+    reference_outputs = None if generic_only else {
+        name: _completion_bound_array(spec) for name, spec in reference_binding["outputs"].items()}
 
     def processor(*, reference=False):
         if config["task"] == "classification":
@@ -15293,8 +15338,10 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
         return create_detection_completion_runtime(config["completion_contract"], source_paths=(__file__,),
             sentinel_context={"prepared_input_sha256": config["input_binding"]["prepared_input"]["sha256"]})
 
-    reference_processor = processor(reference=True)
-    reference_processor.process(reference_outputs)
+    serial_reference = None
+    reference_processor = None if generic_only else processor(reference=True)
+    if not generic_only:
+        reference_processor.process(reference_outputs)
     result_path = Path(out_dir) / ("generic_energy_results.json" if energy else "generic_completion_results.json")
     if energy and result_path.exists():
         raise ValueError("Generic energy capture output already exists; no implicit reuse")
@@ -15308,6 +15355,8 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
         result.update(schema_version=1, execution_id=config["execution_id"], task=config["task"],
                       measurement_mode="generic_completed_task", repetitions=[], status="started", created_at=utc_now(),
                       stage1_execution=execution)
+        if generic_only:
+            result.update(measurement_mode=GENERIC_ONLY_MODE, admission_mode="generic_only")
         if energy:
             result.update(schema_version=2, measurement_mode="generic_completed_task_energy", energy_contract=energy_contract,
                           measurement_boundary="prepared_input_before_p1_to_completed_pipeline_drain")
@@ -15360,6 +15409,13 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
         print(f"[generic-completion] repetition={index}/3 " +
               (f"warmup=0 duration_s={energy_contract['duration_s']}" if energy else "warmup=100 tasks=1000") + " started", flush=True)
         try:
+            if generic_only:
+                reference_processor = processor()
+                reference_outputs, serial_reference = capture_serial_reference(
+                    config, out_dir, index, stage1=stage1, transfer=transfer, stage2=stage2,
+                    processor=reference_processor, attempt_number=len(result["repetitions"]))
+                attempt["serial_reference"] = serial_reference
+                publish()
             if mixed_control is not None:
                 attempt["mixed_input_control"] = mixed_control(index)
                 publish()
@@ -15405,6 +15461,8 @@ def _run_generic_split_completion(config, out_dir, stage1, transfer, stage2,
             if config["task"] == "detection":
                 completed_result.setdefault("host_nms_applied",
                     config["completion_contract"].get("completion_mode") != "decoded_nms_attested_materialization_no_second_nms")
+            if generic_only:
+                compare_serial_reference(latest_outputs, completed_result, reference_outputs, serial_reference)
             completed_path = sample_dir / "completed_task.json"
             _write_json(completed_path, completed_result)
             attempt.update(raw_output_samples=samples, output_sample_relation="last_measured_completed_task",
@@ -15545,6 +15603,7 @@ def main() -> int:
     ap.add_argument("--trt-native-workspace-mb", dest="trt_native_workspace_mb", type=int, default=None, help="Alias for --native-trt-workspace-mb.")
     ap.add_argument("--out-dir", type=str, default="results", help="Output dir for reports (default: results/)")
     ap.add_argument("--generic-completion-config", default="", help="Exact Generic split completion supplement; existing artifacts and prepared input only, no build or quality inference.")
+    ap.add_argument("--generic-quality-completion-config", default="", help="Explicit source/artifact-bound composed dataset Quality using the unchanged timed detection completion factory; requires --quality-source-only.")
     ap.add_argument("--generic-completion-repetition", type=int, choices=[1, 2, 3], default=None, help="Run one independently initialized Generic completion repetition; preserve valid prior repetitions.")
     ap.add_argument("--generic-completion-energy", action="store_true", help="Run one nonce-bound duration capture through the same completed-task pipeline.")
     ap.add_argument("--energy-preflight-nonce", default="")
@@ -16097,6 +16156,55 @@ def main() -> int:
             ),
         }
         args._quality_evidence_source_onnx_path = str(full_path.resolve())
+
+    if generic_completion_config and generic_completion_config.get("admission_mode") == "generic_only":
+        from splitpoint_runners.generic_only import validate_generic_only_config
+        generic_paths = validate_generic_only_config(generic_completion_config, check_files=True)
+        bound_artifacts = generic_completion_config["generic_artifact_binding"]["artifacts"]
+        if any(_sp_file_sha256(path) != bound_artifacts[role]["sha256"] for role, path in (
+                ("source_part1_onnx", p1_path), ("source_part2_onnx", p2_path))):
+            raise ValueError("Generic-only generated model metadata differs from its producer")
+        args._generic_only_artifact_paths = generic_paths
+        args._verified_generic_only_trt_build_receipt = _verify_explicit_native_trt_engine_receipt(
+            source_onnx=generic_paths["build_part2_onnx"], engine_path=generic_paths["engine"],
+            receipt_path=generic_paths["engine_build_receipt"],
+            expected_precision=str(args.native_trt_precision),
+            expected_workspace_mb=int(args.native_trt_workspace_mb))
+
+    if str(getattr(args, "generic_quality_completion_config", "") or "").strip():
+        from splitpoint_runners.generic_quality_completion import load_quality_completion_config
+        quality_completion = load_quality_completion_config(
+            args.generic_quality_completion_config, check_files=True)
+        quality_identity = quality_completion["identity"]
+        stage1 = _canonical_validation_backend_token(args.stage1_provider or args.provider)
+        stage2 = _canonical_validation_backend_token(args.stage2_provider or args.provider)
+        if (not args.quality_source_only or args.native_split_quality_binding
+                or stage1 not in {"hailo10h", "deepx_m1"} or stage2 != "tensorrt"
+                or quality_identity.get("model_id") != _decoder_model_id
+                or quality_identity.get("case_id") != base_dir.name
+                or quality_identity.get("setup_id") != str(args.quality_evidence_setup_id or "")
+                or quality_identity.get("comparison_backend") != stage1):
+            raise ValueError("Generic Quality completion differs from its selected runtime identity")
+        bound_artifacts = quality_completion["expected_runtime_artifacts"]
+        generic_paths = {role: Path(record["path"]) for role, record in bound_artifacts.items()}
+        if (any(_sp_file_sha256(path) != bound_artifacts[role]["sha256"] for role, path in (
+                ("source_part1_onnx", p1_path), ("source_part2_onnx", p2_path)))
+                or _sp_file_sha256(full_path) != quality_completion["source_endpoint_contract"]["full_model_sha256"]):
+            raise ValueError("Generic Quality generated model metadata differs from its producer")
+        quality_original = quality_completion.get("original_run_cfg") or {}
+        args.native_trt_precision = str(quality_original.get("native_trt_precision") or args.native_trt_precision)
+        args.native_trt_workspace_mb = int(quality_original.get("native_trt_workspace_mb") or args.native_trt_workspace_mb)
+        args.boundary_mode = str(quality_original.get("boundary_mode") or args.boundary_mode)
+        args.native_trt_build = False
+        args.native_trt_no_fallback = True
+        args.trt_runtime = args.trt_runtime_mode = "native"
+        args._generic_quality_completion_config = quality_completion
+        args._generic_only_artifact_paths = generic_paths
+        args._verified_generic_only_trt_build_receipt = _verify_explicit_native_trt_engine_receipt(
+            source_onnx=generic_paths["build_part2_onnx"], engine_path=generic_paths["engine"],
+            receipt_path=generic_paths["engine_build_receipt"],
+            expected_precision=str(args.native_trt_precision),
+            expected_workspace_mb=int(args.native_trt_workspace_mb))
 
     if str(getattr(args, "native_split_quality_binding", "") or "").strip():
         if bool(getattr(args, "quality_evidence_only", False)):
@@ -16822,6 +16930,12 @@ def main() -> int:
                     verified_build_receipt = getattr(
                         args, "_verified_native_split_trt_build_receipt", None
                     )
+                elif kind == "part2" and getattr(args, "_generic_only_artifact_paths", None):
+                    generic_paths = args._generic_only_artifact_paths
+                    explicit_engine_path = generic_paths["engine"]
+                    explicit_build_receipt_path = generic_paths["engine_build_receipt"]
+                    native_session_model_path = generic_paths["build_part2_onnx"]
+                    verified_build_receipt = args._verified_generic_only_trt_build_receipt
                 sess_native = NativeTRTSession(
                     kind,
                     native_session_model_path,
@@ -17700,6 +17814,8 @@ def main() -> int:
                     variant_errors["composed"] = msg
             else:
                 hef_p1 = (
+                    args._generic_only_artifact_paths["part1_runtime"]
+                    if getattr(args, "_generic_only_artifact_paths", None) else
                     Path(str(args._native_split_part1_path)).resolve()
                     if isinstance(getattr(args, "_native_split_quality_binding", None), Mapping)
                     else _resolve_hailo_hef(stage1_tok, "part1")
@@ -17758,6 +17874,8 @@ def main() -> int:
                         p1_inputs_hailo = _make_tensor_map_contiguous(p1_inputs_hailo)
         elif _is_deepx_provider(stage1_tok):
             dxnn_p1 = (
+                args._generic_only_artifact_paths["part1_runtime"]
+                if getattr(args, "_generic_only_artifact_paths", None) else
                 Path(str(args._native_split_part1_path)).resolve()
                 if isinstance(getattr(args, "_native_split_quality_binding", None), Mapping)
                 else base_dir / "deepx" / "deepx_m1" / "part1" / "model.dxnn"
@@ -18781,6 +18899,28 @@ def main() -> int:
         out = ort_p2_sess.run(None, inputs)
         return {o.name: a for o, a in zip(ort_p2_sess.get_outputs(), out)}
 
+    def _generic_boundary_runtime(feeds_full_override=None):
+        # Called only outside timing, after the ordinary transfer has
+        # resolved the actual input mapping in Quality or mixed control.
+        session = hailo_p1 if hailo_p1 is not None else deepx_p1
+        if session is None or native_p2_sess is None or not p2_in_map:
+            raise RuntimeError("Generic boundary observation requires a resolved actual composed runtime")
+        observed_full_feeds = feeds_full if feeds_full_override is None else feeds_full_override
+        produced = set(session.output_names)
+        resolved = {name: source for name, source in (p2_in_map or {}).items()
+                    if name in native_p2_sess.input_names and source in produced}
+        passthrough = {name: name for name in native_p2_sess.input_names
+                       if name not in resolved and name in observed_full_feeds}
+        return {"part1_io": session.describe_io(), "part2_io": native_p2_sess.describe_io(),
+                "part2_to_part1": resolved, "passthrough_inputs": passthrough,
+                "transfer_contract": {
+                    "boundary_mode": _boundary_mode,
+                    "hailo_exact_dequantization": bool(hailo_p1 is not None
+                        and _hailo10_native_io(stage1_tok) and not _boundary_requests_raw_hailo),
+                    "part1_cut_names": list(part1_cut_names_manifest),
+                    "part2_cut_names": list(part2_cut_names_manifest),
+                    "manifest_cut_name_map_p2_to_p1": dict(manifest_cut_name_map_p2_to_p1)}}
+
     if generic_completion_config:
         if variant_errors or native_p2_sess is None or (hailo_p1 is None and deepx_p1 is None):
             raise RuntimeError(f"Generic completion exact runtime initialization failed: {variant_errors}")
@@ -18824,12 +18964,16 @@ def main() -> int:
                         _completion_hailo_prepared_feed(generic_completion_config, hailo_p1, feed))
                 return feed
 
+            boundary_runtime = None
+            if generic_completion_config.get("boundary_observation"):
+                boundary_runtime = _generic_boundary_runtime
+
             def mixed_control(repetition):
                 return run_bound_mixed_control(generic_completion_config, out_dir, repetition,
                     serial_stage1=run_stage1_map, transfer=_build_stage2_inputs, stage2=run_stage2_map,
                     stage1_async=stage1_async, prepare_async_feed=prepare_mixed_async_feed,
                     clone_payload=_clone_tensor_map if streaming_impl == "generic" else None,
-                    runner_source=__file__)
+                    runner_source=__file__, boundary_runtime=boundary_runtime)
         return _run_generic_split_completion(
             generic_completion_config, out_dir, run_stage1_map,
             _build_stage2_inputs, run_stage2_map, artifacts,
@@ -21441,6 +21585,26 @@ def main() -> int:
             task_quality_gt_by_image: Dict[str, List[Dict[str, Any]]] = {}
             task_quality_pred_by_image: Dict[str, List[Dict[str, Any]]] = {}
             task_quality_ref_by_image: Dict[str, List[Dict[str, Any]]] = {}
+            _generic_quality_completion = None
+            if str(getattr(args, "generic_quality_completion_config", "") or ""):
+                if str(v).strip().lower() != "composed" or not central_quality_remote_mode:
+                    raise RuntimeError("Generic completed Quality is restricted to central composed candidates")
+                from splitpoint_runners.generic_quality_completion import GenericQualityCompletion, capture_runtime_context
+                _generic_quality_completion = GenericQualityCompletion(
+                    args.generic_quality_completion_config,
+                    producer_context=_active_composed_quality_producer_context(),
+                    runner_source=Path(__file__).resolve(), input_hw=list(img_hw),
+                    expected_image_ids=[str(path.name) for path in validation_dataset_images],
+                    runtime_precision_identity=_central_quality_runtime_precision_identity(
+                        variant=v, full_provider=str(full_tok or ""), stage1_provider=str(stage1_tok or ""),
+                        stage2_provider=str(stage2_tok or ""), boundary_mode=str(_boundary_mode or "canonical_float32"),
+                        trt_precision=str(getattr(args, "native_trt_precision", "fp16") or "fp16"),
+                        full_artifact_path=str(hef_full or "") if 'hef_full' in locals() else ""),
+                    confidence_threshold=float(args.yolo_conf), iou_threshold=float(args.yolo_iou),
+                    max_detections=int(args.yolo_max_det), letterbox=bool(val_letterbox),
+                    preprocessing_contract=validation_preprocessing_contract,
+                    class_names=list(labels or _COCO80),
+                )
             for img_file in validation_dataset_images:
                 row: Dict[str, Any] = {
                     "image": str(img_file.name),
@@ -21583,7 +21747,21 @@ def main() -> int:
                         out_names_local = _ordered_out_names(out_map_local)
                         out_local = [out_map_local[n] for n in out_names_local]
                     elif v == "composed":
-                        out_map_local = run_composed_map(local_feeds_full, local_feeds_p1)
+                        if _generic_quality_completion is None:
+                            out_map_local = run_composed_map(local_feeds_full, local_feeds_p1)
+                        else:
+                            _quality_original_transfer = _build_stage2_inputs
+                            try:
+                                with _generic_quality_completion.observe_stage1_inputs(
+                                    hailo_p1 or deepx_p1, prepared_inputs=local_feeds_p1,
+                                ), _generic_quality_completion.observe_boundary_transfer(
+                                    _quality_original_transfer,
+                                ) as _build_stage2_inputs:
+                                    out_map_local = run_composed_map(local_feeds_full, local_feeds_p1)
+                            finally:
+                                _build_stage2_inputs = _quality_original_transfer
+                            _generic_quality_completion.observe_boundary_runtime(
+                                _generic_boundary_runtime(feeds_full_override=local_feeds_full))
                         out_names_local = _ordered_out_names(out_map_local)
                         out_local = [out_map_local[n] for n in out_names_local]
                     else:
@@ -21649,9 +21827,26 @@ def main() -> int:
                             ) or ""
                         )
 
+                    if _generic_quality_completion is not None:
+                        if Image is None or not img_file.is_file():
+                            raise RuntimeError("Generic completed Quality source image geometry unavailable")
+                        with Image.open(img_file) as _quality_source_image:
+                            _quality_original_wh = [int(value) for value in _quality_source_image.size]
+                        _frozen_quality_detections_original = _generic_quality_completion.process(
+                            {str(name): value for name, value in zip(out_names_local, out_local)},
+                            image_path=img_file, original_wh=_quality_original_wh,
+                            prepared_inputs=local_feeds_p1,
+                        )
+
                     if cpu_reference_only_mode:
                         dets_out = list(quality_cache.get("canonical") or [])
                         warn_out = list(quality_cache.get("warnings") or [])
+                    elif _generic_quality_completion is not None:
+                        # These are already completed original-image records.
+                        # Re-entering the proxy decoder would change NMS and
+                        # inverse-geometry arithmetic relative to timed work.
+                        dets_out = list(_frozen_quality_detections_original)
+                        warn_out = []
                     else:
                         _candidate_output_format = _detect_output_format(
                             list(out_names_local), list(out_local),
@@ -21726,7 +21921,11 @@ def main() -> int:
                                 mini_coco_pred_by_image[str(img_file.name)] = list(dets_out or [])
                         else:
                             mini_coco_warnings_variant.append(f"mini_coco_ap50_missing_annotation={img_file.name}")
-                    metrics_img, pass_img = _proxy_validate_detections(dets_ref=dets_ref or [], dets_out=dets_out)
+                    if _generic_quality_completion is not None:
+                        metrics_img = {"status": "not_evaluated", "reason": "completed_records_evaluated_by_central_quality"}
+                        pass_img = False
+                    else:
+                        metrics_img, pass_img = _proxy_validate_detections(dets_ref=dets_ref or [], dets_out=dets_out)
                     row["metrics"] = metrics_img
                     row["pass"] = bool(pass_img)
                     row["warnings"] = list(warn_ref) + list(warn_out)
@@ -22080,6 +22279,12 @@ def main() -> int:
                 candidate_completion_contract=runtime_completion_contract,
                 completed_task_evidence=(
                     _quality_completed_task_evidence
+                ),
+                generic_completed_quality_evidence=(
+                    _generic_quality_completion.evidence(task_quality_pred_by_image,
+                        runtime_context=capture_runtime_context(
+                            _generic_boundary_runtime(feeds_full_override=local_feeds_full)))
+                    if _generic_quality_completion is not None else None
                 ),
                 diagnostics=_quality_export_diagnostics,
             )

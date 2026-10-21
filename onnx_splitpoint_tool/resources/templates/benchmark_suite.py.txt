@@ -9654,7 +9654,67 @@ def _management_cpu_reference_context(
     return True
 
 
-def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: str, image_scale: str, warmup: int, runs: int, timeout_s: Optional[int], stage1: Optional[str] = None, stage2: Optional[str] = None, variants: Optional[List[str]] = None, case_meta: Optional[Dict[str, Any]] = None, *, resume: bool = False, verbose_runs: bool = False, progress_every: int = 25, trt_cache_root: Optional[str] = None, trt_runtime: str = "native_preferred", native_trt_precision: str = "fp16", native_trt_workspace_mb: int = 4096, native_trt_build_timeout_s: int = 7200, native_trt_build: bool = True, boundary_mode: str = "canonical_float32", handoff_profile: str = "off", streaming_impl: str = "auto", throughput_frames: int = 24, throughput_warmup_frames: int = 6, throughput_queue_depth: int = 2, phase_runs: int = 5, validation_images: Optional[str] = None, validation_max_images: int = 0, validation_reference_mode: str = "auto", mini_coco_ap50: bool = False, benchmark_task: str = "auto", mini_classification_eval: bool = False, task_quality_gate: Optional[Dict[str, Any]] = None, measurement_only: bool = False, quality_evidence_only: bool = False, quality_source_only: bool = False, quality_evidence_eval_id: str = "", quality_evidence_model_id: str = "", quality_evidence_setup_id: str = "", quality_evidence_source_run_id: str = "", quality_evidence_originating_plan_run_id: str = "", full_only_quality_identity: Optional[Mapping[str, Any]] = None, native_trt_build_onnx_path: str = "", native_trt_engine_path: str = "", native_trt_build_receipt: str = "", native_split_quality_binding: str = "", native_split_quality_preparation_failure: Optional[Mapping[str, Any]] = None, management_cpu_reference: Optional[Mapping[str, Any]] = None, out_dir_override: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+
+def _generic_quality_source_for_case(root, run, case_dir, *, model_id, setup_id,
+                                     stage1, stage2, variants):
+    """Select an explicitly bound Generic Quality source without Native staging."""
+    if "generic_quality_completion_configs" not in run:
+        return None  # Existing Native/ordinary source selection is unchanged.
+    configs = run["generic_quality_completion_configs"]
+    selected = run.get("case_ids")
+    if (run.get("quality_source_only") is not True
+            or not isinstance(configs, Mapping) or not configs
+            or not isinstance(selected, list) or not selected
+            or any(not isinstance(key, str) or not key for key in selected)
+            or len(selected) != len(set(selected)) or set(configs) != set(selected)
+            or variants != ["composed"]
+            or str(stage2).lower() not in {"trt", "tensorrt"}):
+        raise ValueError("Generic Quality source requires the exact composed case mapping")
+    source = configs.get(Path(case_dir).name)
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError("Generic Quality source lacks the selected case config")
+    suite = Path(root).resolve()
+    path = (suite / source).resolve()
+    try:
+        path.relative_to(suite)
+    except ValueError as error:
+        raise ValueError("Generic Quality config escapes its suite") from error
+    expected_hashes = run.get("generic_quality_completion_config_sha256")
+    if (not isinstance(expected_hashes, Mapping) or set(expected_hashes) != set(selected)
+            or any(not isinstance(value, str) or re.fullmatch(r"[a-f0-9]{64}", value) is None
+                   for value in expected_hashes.values())
+            or hashlib.sha256(path.read_bytes()).hexdigest() != expected_hashes[Path(case_dir).name]):
+        raise ValueError("Generic Quality config differs from its bound profile source bytes")
+    from splitpoint_runners.generic_quality_completion import load_quality_completion_config
+    config = load_quality_completion_config(path, check_files=True)
+    identity = config["identity"]
+    backend = {"hailo10": "hailo10h", "hailo10h": "hailo10h",
+               "deepx_m1": "deepx_m1"}.get(str(stage1).lower())
+    if (backend is None or not model_id or not setup_id
+            or identity.get("model_id") != str(model_id)
+            or identity.get("setup_id") != str(setup_id)
+            or identity.get("case_id") != Path(case_dir).name
+            or identity.get("comparison_backend") != backend
+            or config.get("native_source") or config.get("native_command_contract")
+            or (config.get("original_run_cfg") or {}).get("native_split_quality_binding")):
+        raise ValueError("Generic Quality source differs from the selected model/setup/case/backend")
+    return {"path": str(path), "config": config}
+
+
+def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: str, image_scale: str, warmup: int, runs: int, timeout_s: Optional[int], stage1: Optional[str] = None, stage2: Optional[str] = None, variants: Optional[List[str]] = None, case_meta: Optional[Dict[str, Any]] = None, *, resume: bool = False, verbose_runs: bool = False, progress_every: int = 25, trt_cache_root: Optional[str] = None, trt_runtime: str = "native_preferred", native_trt_precision: str = "fp16", native_trt_workspace_mb: int = 4096, native_trt_build_timeout_s: int = 7200, native_trt_build: bool = True, boundary_mode: str = "canonical_float32", handoff_profile: str = "off", streaming_impl: str = "auto", throughput_frames: int = 24, throughput_warmup_frames: int = 6, throughput_queue_depth: int = 2, phase_runs: int = 5, validation_images: Optional[str] = None, validation_max_images: int = 0, validation_reference_mode: str = "auto", mini_coco_ap50: bool = False, benchmark_task: str = "auto", mini_classification_eval: bool = False, task_quality_gate: Optional[Dict[str, Any]] = None, measurement_only: bool = False, quality_evidence_only: bool = False, quality_source_only: bool = False, generic_quality_completion_config: str = "", quality_evidence_eval_id: str = "", quality_evidence_model_id: str = "", quality_evidence_setup_id: str = "", quality_evidence_source_run_id: str = "", quality_evidence_originating_plan_run_id: str = "", full_only_quality_identity: Optional[Mapping[str, Any]] = None, native_trt_build_onnx_path: str = "", native_trt_engine_path: str = "", native_trt_build_receipt: str = "", native_split_quality_binding: str = "", native_split_quality_preparation_failure: Optional[Mapping[str, Any]] = None, management_cpu_reference: Optional[Mapping[str, Any]] = None, out_dir_override: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    if str(generic_quality_completion_config or "").strip():
+        if (not quality_source_only or variants != ["composed"] or measurement_only
+                or quality_evidence_only or native_split_quality_binding or full_only_quality_identity):
+            raise ValueError("Generic Quality config requires the explicit composed source-only mode")
+        from splitpoint_runners.generic_quality_completion import load_quality_completion_config
+        source_config = load_quality_completion_config(generic_quality_completion_config, check_files=True)
+        native_trt_build = False
+        trt_runtime = "native"
+        identity = source_config["identity"]
+        if (identity.get("case_id") != Path(case_dir).name
+                or identity.get("model_id") != str(quality_evidence_model_id)
+                or identity.get("setup_id") != str(quality_evidence_setup_id)):
+            raise ValueError("Generic Quality config differs from its child dispatch identity")
     management_reference_only = _management_cpu_reference_context(
         run_id=run_id, provider=provider, stage1=stage1, stage2=stage2,
         variants=variants, case_meta=case_meta, warmup=warmup, runs=runs,
@@ -9789,7 +9849,7 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
     out_tag = _slug(run_id)
     out_dir_name = str(Path(out_dir_override).resolve()) if out_dir_override is not None else f"results_{out_tag}"
 
-    if resume and not quality_evidence_only:
+    if resume and not quality_evidence_only and not generic_quality_completion_config:
         existing = _collect_case_result(
             case_dir,
             out_dir_name,
@@ -9947,12 +10007,18 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
             "--native-trt-engine-path", str(native_trt_engine_path),
             "--native-trt-build-receipt", str(native_trt_build_receipt),
         ]
+    generic_quality_source = str(generic_quality_completion_config or "").strip()
+    if generic_quality_source and not quality_source_only:
+        raise RuntimeError("Generic Quality completion config requires quality_source_only")
     if quality_source_only:
         if (variants != ["composed"] or measurement_only or quality_evidence_only
-                or not str(native_split_quality_binding or "").strip()
+                or bool(str(native_split_quality_binding or "").strip()) == bool(generic_quality_source)
                 or quality_location != "central_management" or not management_cpu_reference):
             raise RuntimeError("quality_source_only_requires_bound_composed_candidate")
         cmd += ["--quality-source-only"]
+        if generic_quality_source:
+            cmd += ["--generic-quality-completion-config", generic_quality_source]
+            native_trt_build = False
     if str(native_split_quality_binding or "").strip():
         cmd += [
             "--native-split-quality-binding",
@@ -10086,6 +10152,8 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
     rc = 0
     try:
         env = os.environ.copy()
+        if generic_quality_source:
+            env["ONNX_SPLITPOINT_ARTIFACT_POLICY"] = "cache_verify_only"
         env["PYTHONFAULTHANDLER"] = "1"
         env["ONNX_SPLITPOINT_TRT_BUILD_CASE"] = case_dir.name
         evidence_json = _stage2_calibration_evidence_env(stage2_gate)
@@ -10140,6 +10208,16 @@ def _run_case(case_dir: Path, run_id: str, provider: str, image: str, preset: st
             print("[quality-first][error] quality report contains performance fields")
             return None
         return quality_report
+
+    if generic_quality_source:
+        if rc != 0:
+            raise RuntimeError("Generic Quality source child failed: " + str(rc))
+        from splitpoint_runners.generic_quality_accounting import collect_capture
+        return collect_capture(
+            case_dir / out_dir_name / "validation_report.json", source_config,
+            config_path=generic_quality_completion_config,
+            run_id=run_id, eval_run_id=str(quality_evidence_eval_id),
+        )
 
     return _collect_case_result(
         case_dir,
@@ -12224,6 +12302,7 @@ def main() -> int:
 
             tag = f"{run_id}_{args.preset}"
             rows: List[Dict[str, Any]] = []
+            generic_capture_count = 0
             run_cases = _cases_for_run(
                 _filter_cases_for_user_selection(cases, user_case_filter), run,
                     setup_id=str(getattr(args, 'quality_evidence_setup_id', '') or run.get('expected_setup_id') or run.get('setup_id') or ''),
@@ -12236,6 +12315,8 @@ def main() -> int:
                 _native_trt_ort_preflight_tokens([stage1_tok, stage2_tok], str(getattr(args, "trt_runtime", "native_preferred") or "native_preferred"))
             )
             if provider_reason:
+                if "generic_quality_completion_configs" in run:
+                    raise RuntimeError("Generic Quality source provider unavailable: " + str(provider_reason))
                 print(f"[preflight] matrix run {run_id!r}: provider unavailable: {provider_reason}")
                 rows = [_provider_unavailable_row(run_id, provider_tag, provider_reason, stage1=stage1_tok, stage2=stage2_tok)]
                 failed_runs.append({"run_id": run_id, "type": rtype, "provider": provider_tag, "stage1": stage1_tok, "stage2": stage2_tok, "reason": provider_reason.get("skip_reason") or "provider_unavailable"})
@@ -12314,21 +12395,31 @@ def main() -> int:
                     mini_coco_ap50 = False
                     mini_classification_eval = False
 
-                quality_source_only = bool(
+                generic_quality = _generic_quality_source_for_case(
+                    root, run, case_dir,
+                    model_id=str(getattr(args, "quality_evidence_model_id", "")
+                                 or bench.get("model_id") or bench.get("model") or ""),
+                    setup_id=str(getattr(args, "quality_evidence_setup_id", "") or ""),
+                    stage1=stage1_tok, stage2=stage2_tok, variants=variants_eff,
+                )
+                quality_source_only = bool(generic_quality) or (bool(
                     _completion_run_rows(completion_rows, run_id, stage="quality_source")
                 ) and not _completion_case_variants(
                     completion_rows, run_id, c, variants_eff, include_quality_source=False,
-                )
-                technical_proof = _technical_quality_source_proof(
-                    completion_rows, run_id, c, args, stage1=stage1_tok, stage2=stage2_tok,
-                    quality_source_only=quality_source_only,
-                )
-                split_quality = _prepare_native_split_quality_for_case(
-                    root=root, case_dir=case_dir, bench=bench, plan=plan,
-                    run=run, args=args, run_id=run_id,
-                    stage1=stage1_tok, stage2=stage2_tok,
-                    variants=variants_eff, technical_revalidation=technical_proof,
-                )
+                ))
+                technical_proof = None
+                split_quality = None
+                if generic_quality is None:
+                    technical_proof = _technical_quality_source_proof(
+                        completion_rows, run_id, c, args, stage1=stage1_tok, stage2=stage2_tok,
+                        quality_source_only=quality_source_only,
+                    )
+                    split_quality = _prepare_native_split_quality_for_case(
+                        root=root, case_dir=case_dir, bench=bench, plan=plan,
+                        run=run, args=args, run_id=run_id,
+                        stage1=stage1_tok, stage2=stage2_tok,
+                        variants=variants_eff, technical_revalidation=technical_proof,
+                    )
                 r = _run_case(
                     case_dir,
                     run_id=run_id,
@@ -12337,6 +12428,7 @@ def main() -> int:
                     stage2=stage2_tok,
                     variants=variants_eff,
                     quality_source_only=quality_source_only,
+                    generic_quality_completion_config=(generic_quality["path"] if generic_quality else ""),
                     image=args.image,
                     preset=args.preset,
                     image_scale=image_scale,
@@ -12363,12 +12455,13 @@ def main() -> int:
                     trt_runtime=str(getattr(args, "trt_runtime", "native_preferred") or "native_preferred"),
                     native_trt_precision=str(
                         (split_quality or {}).get("precision")
+                        or ((generic_quality or {}).get("config", {}).get("original_run_cfg") or {}).get("native_trt_precision")
                         or getattr(args, "native_trt_precision", "fp16") or "fp16"
                     ),
                     native_trt_workspace_mb=int(getattr(args, "native_trt_workspace_mb", 4096) or 4096),
                     native_trt_build_timeout_s=int(getattr(args, "native_trt_build_timeout_s", 7200) or 7200),
                     native_trt_build=(
-                        False if split_quality
+                        False if split_quality or generic_quality
                         else bool(getattr(args, "native_trt_build", True))
                     ),
                     boundary_mode=str(
@@ -12399,6 +12492,13 @@ def main() -> int:
                     ),
                     quality_evidence_source_run_id=run_id,
                 )
+                if generic_quality is not None:
+                    if not isinstance(r, Mapping) or r.get("schema") != "onnx-splitpoint/generic-quality-source-capture":
+                        raise RuntimeError("Generic Quality source capture did not complete")
+                    any_quality_evidence = True
+                    generic_capture_count += 1
+                    quality_evidence_reports.append(dict(r))
+                    continue
                 if r is not None:
                     r["full_baseline_owner"] = run.get("_full_baseline_owner") is True
                     r["full_baseline_owner_run_id"] = str(run.get("_full_baseline_owner_run_id") or "")
@@ -12416,6 +12516,12 @@ def main() -> int:
                             "reason": "native_split_quality_binding_materialization_failed",
                         })
 
+            if "generic_quality_completion_configs" in run:
+                # Every selected case passed the portable proof collector above.
+                # No benchmark-shaped file or scientific performance report is emitted.
+                if generic_capture_count != len(run_cases):
+                    raise RuntimeError("Generic Quality source selected no completed capture")
+                continue
             if not rows:
                 print(f"[warn] No results collected for run {run_id}")
                 failed_runs.append({"run_id": run_id, "type": rtype, "provider": provider_tag, "stage1": stage1_tok, "stage2": stage2_tok})

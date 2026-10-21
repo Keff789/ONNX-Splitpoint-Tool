@@ -66,7 +66,8 @@ def test_normal_generated_cli_reaches_runtime_after_strict_reference_loader(
 
     def stop_at_runtime(*args, **kwargs):
         assert observations == [('', {'model_sha256': '', 'variants': ['composed'],
-                                     'central': False, 'image_count': 0}, None)]
+                                     'central': False, 'image_count': 0,
+                                     'task': config['task']}, None)]
         raise StopBeforeAccelerator('controlled accelerator initialization stop')
 
     monkeypatch.setattr(module, '_existing_management_reference', observe_loader)
@@ -75,7 +76,12 @@ def test_normal_generated_cli_reaches_runtime_after_strict_reference_loader(
     monkeypatch.setattr(module, '_bench_streaming_pipeline', forbidden)
     monkeypatch.setattr(module, '_available_providers', lambda: ['CPUExecutionProvider'])
     monkeypatch.setattr(module, 'ort', SimpleNamespace(SessionOptions=lambda: SimpleNamespace()))
+    # The native TensorRT suffix can initialize before the accelerator prefix.
+    # Stop at either first runtime boundary, after the same strict loader check.
+    monkeypatch.setattr(module, 'NativeTRTSession', stop_at_runtime)
     monkeypatch.setattr(module, 'DeepXSession', stop_at_runtime)
+    # Restore the process environment after exercising the real CLI guard.
+    monkeypatch.setenv('ONNX_SPLITPOINT_ARTIFACT_POLICY', 'cache_verify_only')
     monkeypatch.setattr(sys, 'argv', [str(generated), '--generic-completion-config', str(config_path),
                                     '--out-dir', str(tmp_path / 'completion-results'),
                                     '--generic-completion-repetition', '1'])

@@ -479,7 +479,17 @@ def valid_split_completion_repetitions(result, config, *, result_root=None):
     """Shared runtime/importer reentry check; preserve valid partial repetitions."""
     if not isinstance(result, Mapping) or not str(result.get("execution_id") or ""):
         raise ValueError("generic split completion execution identity missing")
-    if (result.get("schema_version") != 1 or result.get("measurement_mode") != "generic_completed_task"
+    from .generic_only import MODE, is_generic_only, validate_generic_only_config, validate_serial_reference
+    generic_only = is_generic_only(config)
+    if generic_only:
+        validate_generic_only_config(config)
+        if result.get("process_repetition_policy") != "separate_processes":
+            raise ValueError("Generic-only repetitions require independent process evidence")
+        if not config.get("execution_id") or result["execution_id"] != config["execution_id"]:
+            raise ValueError("Generic-only result execution identity differs from its configuration")
+    if is_generic_only(result) != generic_only:
+        raise ValueError("generic split result admission mode mismatch")
+    if (result.get("schema_version") != 1 or result.get("measurement_mode") != (MODE if generic_only else "generic_completed_task")
             or result.get("task") != config.get("task") or result.get("original_run") != config.get("original_run")):
         raise ValueError("generic split completion result scope mismatch")
     execution = normalize_stage1_execution(config.get("stage1_execution"))
@@ -498,6 +508,8 @@ def valid_split_completion_repetitions(result, config, *, result_root=None):
             raise ValueError("generic split repetition malformed")
         if repetition.get("status") != "ok":
             continue
+        if generic_only and repetition.get("execution_id") != config["execution_id"]:
+            raise ValueError("Generic-only repetition execution identity differs from its configuration")
         validate_split_completion(repetition)
         if normalize_stage1_execution(repetition.get("stage1_execution")) != execution:
             raise ValueError("generic split repetition stage1 execution mismatch")
@@ -529,6 +541,10 @@ def valid_split_completion_repetitions(result, config, *, result_root=None):
             raise ValueError("generic split independent runtime identity missing")
         if result_root is not None:
             _validate_split_completion_samples(repetition, config, result_root)
+        if generic_only:
+            validate_serial_reference(repetition, config, result_root=result_root)
+        elif repetition.get("serial_reference"):
+            raise ValueError("paired Generic result cannot adopt a Generic-only serial reference")
         if index in valid and valid[index] != repetition:
             raise ValueError("generic split conflicting duplicate repetition")
         valid[index] = dict(repetition)

@@ -154,6 +154,11 @@ REMOTE_MINIMAL_INCLUDES: list[str] = [
     # central-quality export bind their observed tensors to this recorded suite
     # contract; omitting it makes detection fail closed after transfer.
     "output_contracts.json",
+    # Generic composed Quality uses one source-bound completion sidecar per
+    # selected case. Keep those normal runtime inputs in the shared suite.
+    "quality_runtime/*.json",
+    "quality_runtime/assets/*.hef",
+    "quality_runtime/assets/*.dxnn",
     # v49j: formal generated suites place the full/reference ONNX at the
     # suite root and split_manifest.json references it as ../<model>.onnx.
     # The previous minimal bundle allowlist only kept b*/*.onnx and therefore

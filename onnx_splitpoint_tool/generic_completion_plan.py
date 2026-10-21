@@ -34,6 +34,18 @@ SETUPS = {
 }
 
 
+def apply_native_functional_reference(case: Mapping[str, Any]) -> dict[str, Any]:
+    """Return an explicit verified functional overlay, preserving paired defaults.
+
+    Callers retain the original row for historical Native FPS/quality and use
+    this ephemeral row only to build the new Generic runtime configuration.
+    """
+    if case.get("functional_reference_source") is None:
+        return case
+    from .workflow.native_functional_reference import verify_native_functional_reference
+    return verify_native_functional_reference(case)["runtime_case"]
+
+
 def completion_identity(row: Mapping[str, Any]) -> tuple[str, ...]:
     """Keep the existing seven F04 dimensions; canonicalize backend aliases."""
     values = {field: str(row.get(field) or "").strip() for field in IDENTITY_FIELDS}

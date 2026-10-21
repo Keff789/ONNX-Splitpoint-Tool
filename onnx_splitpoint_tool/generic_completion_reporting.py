@@ -36,8 +36,24 @@ BOUNDARY_CHECKS = (
 )
 
 
+class _GenericOnlyPairedReportError(ValueError):
+    pass
+
+
 def _config(case: Mapping[str, Any]) -> Mapping[str, Any]:
     return case.get("runtime_config", case)
+
+
+def _require_paired_mode(*values: Mapping[str, Any]) -> None:
+    """Keep the explicitly separate Generic-only study out of Native pairs."""
+    for value in values:
+        reference = _mapping(value.get("functional_reference"))
+        if (value.get("scope_mode") == "generic_only_completed_task"
+                or value.get("measurement_mode") == "generic_only_completed_task"
+                or value.get("admission_mode") == "generic_only"
+                or "generic_artifact_binding" in value
+                or reference.get("kind") == "serial_compiled_subnets"):
+            raise _GenericOnlyPairedReportError("generic_only_cannot_enter_paired_completion_report")
 
 
 def _identity(case: Mapping[str, Any]) -> tuple[str, ...]:
@@ -207,6 +223,115 @@ def _verified_pair_prepared_input(command: Mapping[str, Any], case: Mapping[str,
     return entry
 
 
+def _functional_reference_pair_evidence(case: Mapping[str, Any], config: Mapping[str, Any],
+                                        result_path: Path, evidence: dict[str, Any]) -> dict[str, Any]:
+    """Admit a separately captured functional reference, preserving Native FPS.
+
+    The reference verifier owns original-run, command, source, artifact, input,
+    output and full completion proofs.  Here the independently parsed Generic
+    observation must use that verified reference's actual runtime projection.
+    """
+    from .workflow.native_functional_reference import verify_native_functional_reference
+    from .native_detection_postprocess import verify_detection_completion_execution_contract
+
+    overlay = verify_native_functional_reference(case)
+    if overlay.get("status") != "verified":
+        raise ValueError("native_functional_reference_not_verified")
+    runtime_case = overlay["runtime_case"]
+    if _identity(runtime_case) != _identity(case):
+        raise ValueError("native_functional_reference_identity_projection_mismatch")
+    contract = verify_detection_completion_execution_contract(overlay["completion_contract"])
+    if contract != runtime_case["completion_contract"] or contract != config.get("completion_contract"):
+        raise ValueError("native_generic_functional_completion_contract_mismatch")
+    if contract["source_endpoint"]["output_endpoint_id"] != _identity(case)[6]:
+        raise ValueError("native_generic_functional_source_endpoint_mismatch")
+    endpoint = contract["comparison_endpoint_contract"]["output_endpoint_id"]
+    if any(boundary.get("completion_output_endpoint_id") != endpoint for boundary in (
+            _mapping(case.get("native_measurement_boundary")), _mapping(config.get("measurement_contract")))):
+        raise ValueError("native_generic_functional_completed_endpoint_mismatch")
+    if config.get("measurement_contract") != runtime_case.get("measurement_boundary"):
+        raise ValueError("native_generic_functional_measurement_contract_mismatch")
+    if ("functional_reference_source" in config
+            and config["functional_reference_source"] != case.get("functional_reference_source")):
+        raise ValueError("native_generic_functional_source_projection_mismatch")
+    expected_input = _mapping(runtime_case.get("input_binding"))
+    observed_input = _mapping(config.get("input_binding"))
+    if not expected_input or any(observed_input.get(key) != value for key, value in expected_input.items()):
+        raise ValueError("native_generic_functional_input_binding_mismatch")
+    entries = expected_input.get("entries")
+    if not isinstance(entries, list) or len(entries) != 1:
+        raise ValueError("native_generic_functional_single_input_required")
+    prepared = _mapping(observed_input.get("prepared_input"))
+    expected_prepared = {key: entries[0][key] for key in ("sha256", "shape", "dtype")}
+    expected_prepared["path"] = entries[0]["remote_path"]
+    input_contract = _mapping(expected_input.get("prepared_input_contract"))
+    expected_prepared["format"] = {"raw_runtime_tensor": "raw", "numpy_npy_v1": "npy"}.get(input_contract.get("format"))
+    if expected_prepared["format"] is None:
+        raise ValueError("native_generic_functional_prepared_input_format_unsupported")
+    if any(prepared.get(key) != value for key, value in expected_prepared.items()):
+        raise ValueError("native_generic_functional_prepared_input_projection_mismatch")
+    source_input = _mapping(input_contract.get("source_input_contract"))
+    for key in ("layout", "normalization", "source_domain"):
+        if key in prepared:
+            declarations = [value[key] for value in (input_contract, source_input, entries[0]) if value.get(key)]
+            if not declarations or any(value != prepared[key] for value in declarations):
+                raise ValueError("native_generic_functional_prepared_input_descriptor_conflict:" + key)
+    command = runtime_case["native_command_contract"]
+    if command["backend"] == "hailo10h_to_trt":
+        quantized = command["runtime_options"].get("quantized_inputs")
+        if type(quantized) is not bool:
+            raise ValueError("native_generic_functional_input_quantization_binding_missing")
+        runtime_format = "uint8" if quantized else "float32"
+    else:
+        runtime_format = entries[0]["dtype"]
+    if (observed_input.get("runtime_input_format") != runtime_format
+            or observed_input.get("runtime_input_format_source") != runtime_case["native_source"] + "#native_command_contract.runtime_options"):
+        raise ValueError("native_generic_functional_runtime_input_format_mismatch")
+    expected_artifacts = {
+        role: {key: runtime_case["expected_runtime_artifacts"][role][key] for key in ("path", "sha256")}
+        for role in ("part1_runtime", "engine")
+    }
+    if config.get("expected_runtime_artifacts") != expected_artifacts:
+        raise ValueError("native_generic_functional_artifact_projection_mismatch")
+    reference = overlay["functional_reference"]
+    if reference != runtime_case["functional_reference"]:
+        raise ValueError("native_generic_functional_reference_projection_mismatch")
+    observed_reference = _mapping(config.get("functional_reference"))
+    if (observed_reference.get("input_sha256") != entries[0]["sha256"]
+            or observed_reference.get("source_manifest") != reference["output_manifest"]
+            or observed_reference.get("source_manifest_sha256") != reference["output_manifest_sha256"]):
+        raise ValueError("native_generic_functional_manifest_projection_mismatch")
+    tensors = reference["outputs"]
+    outputs = _mapping(observed_reference.get("outputs"))
+    if (not isinstance(tensors, list) or not tensors
+            or any(not isinstance(tensor, Mapping) for tensor in tensors)
+            or any(not isinstance(output, Mapping) for output in outputs.values())
+            or len({tensor["name"] for tensor in tensors}) != len(tensors)
+            or set(outputs) != {tensor["name"] for tensor in tensors}
+            or any(outputs[tensor["name"]].get(field) != tensor.get(field)
+                   for tensor in tensors for field in ("sha256", "shape", "dtype"))
+            or any(output.get("format") != "raw" for output in outputs.values())):
+        raise ValueError("native_generic_functional_output_projection_mismatch")
+    limits = _mapping(runtime_case["original_run_cfg"]["quality_gate_json"])["native_contract"]["detection_self_reference"]
+    if observed_reference.get("tolerances") != {
+            "match_iou_threshold": limits["iou_threshold"],
+            "min_match_ratio": limits["min_reference_match_ratio"],
+            "min_mean_iou": limits["min_mean_matched_iou"]}:
+        raise ValueError("native_generic_functional_tolerance_projection_mismatch")
+    evidence.update(
+        status="verified", native_source=case["native_source"], generic_source=str(result_path),
+        native_functional_reference_source=copy.deepcopy(case["functional_reference_source"]),
+        native_functional_reference_role="functional_control_only",
+        native_scientific_performance_source=case["native_source"],
+        functional_reference_evidence=copy.deepcopy(overlay["evidence"]),
+        native_performance_contract_relation=copy.deepcopy(overlay["version_relation"]),
+        completion_contract_sha256=contract["contract_sha256"],
+        completed_output_endpoint_id=endpoint,
+        native_output_manifest_sha256=reference["output_manifest_sha256"], generic_valid_repetitions=3,
+    )
+    return evidence
+
+
 def _completed_endpoint_pair_evidence(observation: Mapping[str, Any], case: Mapping[str, Any]) -> dict[str, Any]:
     """Verify this measured pair independently of other Native backends.
 
@@ -231,6 +356,7 @@ def _completed_endpoint_pair_evidence(observation: Mapping[str, Any], case: Mapp
         from .resources.remote_scripts.native_producer_validate_visualize import _verified_execution_completed_result_artifact
 
         config = _config(case)
+        _require_paired_mode(case, config, observation)
         identity = _identity(case)
         if config.get("original_run") != case.get("original_run"):
             raise ValueError("native_generic_original_run_mismatch")
@@ -244,6 +370,8 @@ def _completed_endpoint_pair_evidence(observation: Mapping[str, Any], case: Mapp
                 raise ValueError("observed_completion_file_projection_mismatch:" + field)
         if actual.get("status") != "completed" or actual.get("valid_repetition_count") != 3:
             raise ValueError("three_bound_generic_repetitions_required")
+        if any("functional_reference_source" in value for value in (case, config)):
+            return _functional_reference_pair_evidence(case, config, result_path, evidence)
         run = Path(str(case["original_run"]))
         source = _inside(case["native_source"], run)
         native = _read_result(source) or {}
@@ -348,6 +476,7 @@ def _completed_endpoint_pair_evidence(observation: Mapping[str, Any], case: Mapp
 
 def completion_pair(observation: Mapping[str, Any], case: Mapping[str, Any]) -> dict[str, Any]:
     """Link all three observations, admitting quotients only for bound limits."""
+    _require_paired_mode(case, _config(case), observation)
     historical = _mapping(case.get("historical_pair"))
     identity = _identity(case)
     try:
@@ -395,13 +524,18 @@ def completion_pair(observation: Mapping[str, Any], case: Mapping[str, Any]) -> 
             historical.get(f"{tier}_transfer_eligibility_checks"))}
     cross_backend_endpoint_match = cohorts["technical"].get("native_output_endpoint_match")
     endpoint_pair_evidence = {"status": "not_required"}
-    if cross_backend_endpoint_match is False:
+    functional_source_present = any("functional_reference_source" in value for value in (case, _config(case)))
+    if cross_backend_endpoint_match is False or functional_source_present:
         endpoint_pair_evidence = _completed_endpoint_pair_evidence(observation, case)
+    if cross_backend_endpoint_match is False:
         # Preserve the Native cross-backend decision in the historical pair,
         # Quality and claim tiers. Only this measured technical pair has its
         # own scope, backed by the normal command/output/completion verifiers.
         cohorts["technical"].pop("native_output_endpoint_match")
         cohorts["technical"]["native_generic_completed_endpoint_match"] = endpoint_pair_evidence["status"] == "verified"
+    if functional_source_present:
+        for gates in cohorts.values():
+            gates["native_functional_reference_verified"] = endpoint_pair_evidence["status"] == "verified"
     cohorts["claim"]["runtime_environment_comparability_verified"] = environment_verified
     comparable = generic_fps is not None and all(cohorts["technical"].values())
     row = dict(zip(IDENTITY_FIELDS, identity))
@@ -443,6 +577,10 @@ def completion_pair(observation: Mapping[str, Any], case: Mapping[str, Any]) -> 
         row[f"{tier}_transfer_eligibility_checks"] = gates
         row[f"eligible_for_{tier}_transfer"] = comparable and all(gates.values())
         row[f"{tier}_exclusion_reasons"] = [key for key, passed in gates.items() if not passed]
+    if functional_source_present:
+        row["native_functional_reference_source"] = copy.deepcopy(case.get("functional_reference_source"))
+        row["native_functional_reference_role"] = "functional_control_only"
+        row["native_scientific_performance_source"] = case.get("native_source")
     return row
 
 
@@ -504,9 +642,12 @@ def case_result_path(case: Mapping[str, Any], results_dir: str | Path) -> Path:
 
 def write_completion_reports(plan: Mapping[str, Any], results_dir: str | Path, out_dir: str | Path) -> dict[str, Any]:
     """Idempotent incremental/final accounting from the same bound result files."""
+    _require_paired_mode(plan)
     cases = plan.get("rows", plan.get("cases", []))
     if not isinstance(cases, list) or not cases:
         raise ValueError("generic completion plan rows missing")
+    for case in cases:
+        _require_paired_mode(case, _config(case))
     identities = [_identity(case) for case in cases]
     if len(set(identities)) != len(identities):
         raise ValueError("duplicate generic completion planned identity")
@@ -520,7 +661,12 @@ def write_completion_reports(plan: Mapping[str, Any], results_dir: str | Path, o
     observations = []
     for case, path in zip(cases, paths):
         try:
-            observation = validate_completion_case(_read_result(path), case, result_root=path.parent)
+            result = _read_result(path)
+            if result is not None:
+                _require_paired_mode(result)
+            observation = validate_completion_case(result, case, result_root=path.parent)
+        except _GenericOnlyPairedReportError:
+            raise
         except (ValueError, OSError) as error:
             observation = validate_completion_case(None, case)
             observation.update(status="blocked", errors=[str(error)])

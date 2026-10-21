@@ -507,7 +507,19 @@ def _prepare_suite_for_runtime(
     if not isinstance(plan_payload, dict):
         plan_payload = {}
     runs = plan_payload.get("runs") or plan_payload.get("planned_runs") or []
+    from .generic_quality_sidecars import (
+        bind_existing_generic_cpu_reference, materialize_generic_quality_sidecars,
+    )
+    quality_sidecars = materialize_generic_quality_sidecars(
+        suite_dir=suite_dir, model_id=model_id, benchmark_plan=plan_payload,
+    )
+    management_reference = (quality_gate_policy or {}).get("management_reference") or {}
+    existing_cpu_reuse = bind_existing_generic_cpu_reference(
+        suite_dir=suite_dir, run_root=run_root, model_id=model_id,
+        benchmark_plan=plan_payload, quality_gate_policy=quality_gate_policy,
+    ) if isinstance(management_reference, Mapping) and "existing_reference" in management_reference else None
     changed_plan = not plan_path.is_file()
+    changed_plan = changed_plan or bool(existing_cpu_reuse)
     task = str(model_task or "").strip().lower()
     if task not in {"classification", "detection"}:
         task = ""
@@ -604,6 +616,7 @@ def _prepare_suite_for_runtime(
         "errors": errors,
         "model_task": task,
         "quality_gate_policy_sha256": qpolicy_hash,
+        "generic_quality_completion_sidecars": quality_sidecars,
         "created_at": now_iso(),
     }
     p_preflight = write_json(suite_dir / "suite_packaging_preflight.json", payload)
@@ -4038,8 +4051,20 @@ def _run_remote_dispatch_once(
             model_id=model_id,
             eval_run_id=run_root.name,
         )
+        from ..runners.generic_quality_accounting import authorized_runs, copied_capture_summary
+        generic_quality = copied_capture_summary(
+            copied, authorized_runs(read_json(suite_dir / "benchmark_plan.json", default={}) or {}, profile_payload),
+            suite_dir=suite_dir, model_id=model_id, setup_id=target_id, eval_run_id=run_root.name,
+        )
+        generic_source_only = generic_quality.get("requested") is True
         full_only_quality = quality_evidence.get("requested") is True
-        if full_only_quality:
+        if generic_source_only:
+            ok = bool(status_name == "ok" and semantic_rows == 0
+                      and generic_quality.get("status") == "verified_exact"
+                      and not full_only_quality)
+            if status_name == "ok" and not ok:
+                status_name = "partial"
+        elif full_only_quality:
             ok = bool(
                 status_name == "ok"
                 and semantic_rows == 0
@@ -4050,7 +4075,7 @@ def _run_remote_dispatch_once(
         else:
             ok = status_name == "ok" and semantic_rows > 0
         if (
-            not full_only_quality
+            not full_only_quality and not generic_source_only
             and status_name == "ok" and semantic_rows <= 0
         ):
             status_name = "partial"
@@ -4060,7 +4085,9 @@ def _run_remote_dispatch_once(
         p_status = _write_status({
             "status": status_name,
             "reason": (
-                "remote_full_only_quality_evidence_verified"
+                "remote_generic_quality_source_capture_verified"
+                if ok and generic_source_only
+                else "remote_full_only_quality_evidence_verified"
                 if ok and full_only_quality
                 else "remote_service_completed" if ok
                 else str(out.get("error") or "remote_service_partial_or_failed")
@@ -4079,6 +4106,8 @@ def _run_remote_dispatch_once(
                 quality_evidence.get("quality_evidence_count") or 0
             ),
             "full_only_quality_evidence": quality_evidence,
+            "generic_quality_source_capture": generic_quality,
+            "expected_generic_quality_count": int(generic_quality.get("expected") or 0),
             "result_copy_manifest": str(copy_manifest or ""),
             "deepx_prepared_input_materialization": deepx_prepared_input,
             "stdout_path": relpath(stdout_path, run_root),
@@ -4088,10 +4117,12 @@ def _run_remote_dispatch_once(
         })
         return ExecutionBindingResult(
             artifacts={f"remote_benchmark_status{status_suffix}_json": p_status, f"remote_benchmark_dispatch{status_suffix}_json": p_dispatch, f"remote_benchmark_stdout{status_suffix}_txt": stdout_path, f"remote_benchmark_stderr{status_suffix}_txt": stderr_path},
-            metrics={"remote_requested": True, "remote_dispatched": True, "remote_status": status_name, "remote_result_files_copied": len(copied), "canonical_result_files_copied": int(copy_summary.get("file_count") or 0), "canonical_result_rows_copied": semantic_rows, "quality_evidence_count": int(quality_evidence.get("quality_evidence_count") or 0), "quality_evidence_status": str(quality_evidence.get("status") or ""), "quality_evidence_errors": list(quality_evidence.get("errors") or []), "hardware_target_id": target_id},
+            metrics={"remote_requested": True, "remote_dispatched": True, "remote_status": status_name, "remote_result_files_copied": len(copied), "canonical_result_files_copied": int(copy_summary.get("file_count") or 0), "canonical_result_rows_copied": semantic_rows, "quality_evidence_count": int(quality_evidence.get("quality_evidence_count") or 0) + int(generic_quality.get("count") or 0), "expected_generic_quality_count": int(generic_quality.get("expected") or 0), "generic_quality_source_capture": generic_quality, "quality_evidence_status": str(quality_evidence.get("status") or ""), "quality_evidence_errors": list(quality_evidence.get("errors") or []), "hardware_target_id": target_id},
             status="ok" if ok else "partial",
             message=(
-                "Remote Full-only quality evidence was verified with no performance rows."
+                "Remote Generic composed Quality capture verified; central Quality remains required; no performance rows."
+                if ok and generic_source_only
+                else "Remote Full-only quality evidence was verified with no performance rows."
                 if ok and full_only_quality
                 else "Remote benchmark service completed and canonical result files were collected."
                 if ok else "Remote benchmark service was dispatched; required result evidence was incomplete or missing."
@@ -4761,6 +4792,10 @@ def _remote_execution_if_requested(
             int((row.get("metrics") or {}).get("quality_evidence_count") or 0)
             for row in dispatch_records if isinstance(row, Mapping)
         )
+        expected_generic_quality_count = sum(
+            int((row.get("metrics") or {}).get("expected_generic_quality_count") or 0)
+            for row in dispatch_records if isinstance(row, Mapping)
+        )
         expected_full_quality_count = sum(
             len(list(row.get("expected_full_quality_identities") or []))
             for row in dispatch_records if isinstance(row, Mapping)
@@ -4879,6 +4914,7 @@ def _remote_execution_if_requested(
             "setup_local_tensorrt_dispatch": setup_local_trt_contract,
             "quality_evidence_count": quality_evidence_count,
             "expected_full_quality_count": expected_full_quality_count,
+            "expected_generic_quality_count": expected_generic_quality_count,
             "dispatches": dispatch_records,
         })
         all_artifacts["remote_hardware_matrix_status_json"] = p_multi
@@ -4915,6 +4951,7 @@ def _remote_execution_if_requested(
                 "powercalc_workers": power_workers,
                 "quality_evidence_count": quality_evidence_count,
                 "expected_full_quality_count": expected_full_quality_count,
+            "expected_generic_quality_count": expected_generic_quality_count,
             },
             status=matrix_status,
             message=(

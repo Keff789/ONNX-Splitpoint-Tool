@@ -170,10 +170,204 @@ def _discriminating_slot_references(tasks, references, groups, comparator):
                                f"inputs on reused stage1 slot {slot}")
 
 
+def normalize_boundary_observation(value):
+    """Validate the explicit, source-bound opt-in; never infer it from a plan."""
+    if not isinstance(value, Mapping) or set(value) != {
+            "schema_version", "minimum_boundary_tensors", "part1_outputs", "part2_inputs",
+            "part2_to_part1", "passthrough_inputs", "transfer_contract"}:
+        raise ValueError("mixed boundary observation contract malformed")
+    if (type(value["schema_version"]) is not int or value["schema_version"] != 1
+            or type(value["minimum_boundary_tensors"]) is not int
+            or value["minimum_boundary_tensors"] < 2):
+        raise ValueError("mixed boundary observation requires at least two boundary tensors")
+    result = deepcopy(dict(value))
+    for role in ("part1_outputs", "part2_inputs"):
+        specs = value[role]
+        if not isinstance(specs, Mapping) or not specs:
+            raise ValueError("mixed boundary observation requires complete named tensor contracts")
+        for name, spec in specs.items():
+            if (not isinstance(name, str) or not name or not isinstance(spec, Mapping)
+                    or set(spec) != {"shape", "dtype"} or not isinstance(spec["shape"], list)
+                    or not spec["shape"] or any(type(dim) is not int or dim <= 0 for dim in spec["shape"])
+                    or not isinstance(spec["dtype"], str)):
+                raise ValueError("mixed boundary observation tensor contract malformed")
+            try:
+                dtype = np.dtype(spec["dtype"])
+            except TypeError as error:
+                raise ValueError("mixed boundary observation tensor dtype malformed") from error
+            if dtype.kind not in "biuf" or not dtype.isnative or str(dtype) != spec["dtype"]:
+                raise ValueError("mixed boundary observation tensor dtype unsupported")
+    mapping, passthrough = value["part2_to_part1"], value["passthrough_inputs"]
+    if (not isinstance(mapping, Mapping) or not isinstance(passthrough, Mapping)
+            or set(mapping) & set(passthrough)
+            or set(mapping) | set(passthrough) != set(value["part2_inputs"])
+            or any(not isinstance(source, str) or source not in value["part1_outputs"] for source in mapping.values())
+            or set(mapping.values()) != set(value["part1_outputs"])
+            or len(set(mapping.values())) < value["minimum_boundary_tensors"]
+            or any(not isinstance(name, str) or not name for name in passthrough.values())
+            or not isinstance(value["transfer_contract"], Mapping) or not value["transfer_contract"]):
+        raise ValueError("mixed boundary observation mapping/transfer contract malformed")
+    return result
+
+
+def _boundary_snapshot(tensors, specs):
+    if not isinstance(tensors, Mapping) or set(tensors) != set(specs):
+        raise RuntimeError("mixed boundary actual tensor names differ from the complete contract")
+    result = {}
+    for name, spec in specs.items():
+        value = tensors[name]
+        if (not isinstance(value, np.ndarray) or list(value.shape) != spec["shape"]
+                or str(value.dtype) != spec["dtype"] or not np.isfinite(value).all()):
+            raise RuntimeError("mixed boundary actual tensor shape/dtype/content invalid: " + name)
+        result[name] = {"shape": list(value.shape), "dtype": str(value.dtype),
+            "tensor_sha256": hashlib.sha256(value.tobytes(order="C")).hexdigest(),
+            "strides": list(value.strides), "c_contiguous": bool(value.flags.c_contiguous),
+            "f_contiguous": bool(value.flags.f_contiguous), "owns_data": bool(value.flags.owndata),
+            "buffer_address": int(value.ctypes.data), "nbytes": int(value.nbytes)}
+    return result
+
+
+def _boundary_content(snapshot):
+    return {name: {key: value[key] for key in ("shape", "dtype", "tensor_sha256")}
+            for name, value in snapshot.items()}
+
+
+def _buffer_arrays(value):
+    if isinstance(value, np.ndarray):
+        return [value]
+    if isinstance(value, Mapping):
+        return [array for item in value.values() for array in _buffer_arrays(item)]
+    if isinstance(value, (tuple, list)):
+        return [array for item in value for array in _buffer_arrays(item)]
+    return []
+
+
+def _buffer_descriptor(value):
+    address = int(value.ctypes.data)
+    offsets = [(int(dim) - 1) * int(stride) for dim, stride in zip(value.shape, value.strides)]
+    return {"shape": list(value.shape), "dtype": str(value.dtype), "strides": list(value.strides),
+        "buffer_address": address, "nbytes": int(value.nbytes),
+        "byte_span": [address + sum(min(0, offset) for offset in offsets),
+                      address + sum(max(0, offset) for offset in offsets) + value.dtype.itemsize]}
+
+
+class _BoundaryObservation:
+    """Hash actual maps only inside the bounded pre-FPS functional control."""
+
+    def __init__(self, contract, runtime, tasks):
+        self.contract = normalize_boundary_observation(contract)
+        if not callable(runtime):
+            raise ValueError("mixed boundary observation requires the live runtime mapping/IO callback")
+        self.runtime, self.tasks = runtime, tasks
+        self.records = {"serial": {}, "mixed": {}}
+        self.sdk_buffers = []
+        self.slot_ownership = None
+        self.first_runtime = None
+
+    def bind_adapter(self, adapter):
+        slots = getattr(adapter, "slots", None)
+        if not isinstance(slots, list) or len(slots) != adapter.execution_policy["inflight"]:
+            raise ValueError("mixed boundary observation cannot inspect the real adapter slots")
+        groups = []
+        for slot in slots:
+            # Inspect production-owned arrays; SDK binding objects are opaque.
+            arrays = _buffer_arrays({key: slot[key] for key in (
+                "buffer", "outputs", "inputs", "output_buffers", "input_buffers", "binding") if key in slot})
+            unique = {id(value): value for value in arrays}
+            if not unique:
+                raise ValueError("mixed boundary observation adapter slot has no inspectable buffers")
+            groups.append(list(unique.values()))
+        for ordinal, arrays in enumerate(groups):
+            if any(np.shares_memory(first, second) for first in arrays
+                   for other in groups[ordinal + 1:] for second in other):
+                raise RuntimeError("mixed boundary observation accelerator slots share buffers")
+        self.sdk_buffers = [value for group in groups for value in group]
+        self.slot_ownership = {"slot_count": len(groups), "inspected_buffer_count": len(self.sdk_buffers),
+            "slots_disjoint": True, "slots": [{"slot_index": index,
+                "buffers": [_buffer_descriptor(array) for array in arrays]}
+                for index, arrays in enumerate(groups)]}
+
+    def collected(self, phase, index, outputs):
+        if index in self.records[phase]:
+            raise RuntimeError("mixed boundary observation duplicate task collection")
+        snapshot = _boundary_snapshot(outputs, self.contract["part1_outputs"])
+        if any(np.shares_memory(value, owned)
+                for value in outputs.values() for owned in self.sdk_buffers):
+            raise RuntimeError("mixed boundary output still aliases a reusable SDK slot")
+        if any(np.shares_memory(value, prepared) for value in outputs.values()
+                for prepared in self.tasks[index]["feed"].values()):
+            raise RuntimeError("mixed boundary output aliases its prepared image")
+        self.records[phase][index] = {"part1_at_collection": snapshot,
+            "no_reusable_sdk_buffer_alias": True, "no_prepared_input_alias": True}
+
+    def transferred(self, phase, index, outputs, transfer, feed):
+        record = self.records[phase][index]
+        before = _boundary_snapshot(outputs, self.contract["part1_outputs"])
+        record["part1_before_transfer"] = before
+        if _boundary_content(before) != _boundary_content(record["part1_at_collection"]):
+            raise RuntimeError("mixed boundary P1 data/buffer changed while queued")
+        inputs = transfer(outputs, feed)
+        record["part1_after_transfer"] = _boundary_snapshot(outputs, self.contract["part1_outputs"])
+        if record["part1_after_transfer"] != before:
+            raise RuntimeError("mixed boundary transfer mutated its P1 input")
+        record["part2_after_transfer"] = _boundary_snapshot(inputs, self.contract["part2_inputs"])
+        if any(np.shares_memory(value, owned) for value in inputs.values() for owned in self.sdk_buffers):
+            raise RuntimeError("mixed boundary P2 input aliases a reusable SDK slot")
+        runtime = self.runtime()
+        if (not isinstance(runtime, Mapping) or set(runtime) != {
+                "part1_io", "part2_io", "part2_to_part1", "passthrough_inputs", "transfer_contract"}
+                or any(runtime.get(key) != self.contract[key] for key in (
+                    "part2_to_part1", "passthrough_inputs", "transfer_contract"))
+                or not isinstance(runtime["part1_io"], Mapping) or not runtime["part1_io"]
+                or not isinstance(runtime["part2_io"], Mapping)
+                or runtime["part2_io"].get("inputs") != self.contract["part2_inputs"]
+                or set(runtime["part1_io"].get("canonical_outputs", [])) != set(outputs)):
+            raise RuntimeError("mixed boundary live mapping/IO/layout/quantization differs from contract")
+        if any(source not in feed for source in runtime["passthrough_inputs"].values()):
+            raise RuntimeError("mixed boundary passthrough is not an actual original input")
+        if self.first_runtime is None:
+            self.first_runtime = deepcopy(dict(runtime))
+        elif runtime != self.first_runtime:
+            raise RuntimeError("mixed boundary live runtime metadata changed during the control")
+        record["runtime"] = deepcopy(dict(runtime))
+        record["part2_to_part1_aliases"] = {name: [source for source, value in outputs.items()
+            if np.shares_memory(inputs[name], value)] for name in inputs}
+        return inputs
+
+    def inferred(self, phase, index, inputs, stage2, feed):
+        record = self.records[phase][index]
+        before = _boundary_snapshot(inputs, self.contract["part2_inputs"])
+        record["part2_before_inference"] = before
+        if before != record["part2_after_transfer"]:
+            raise RuntimeError("mixed boundary P2 input changed before inference")
+        outputs = stage2(inputs, feed)
+        record["part2_after_inference"] = _boundary_snapshot(inputs, self.contract["part2_inputs"])
+        if record["part2_after_inference"] != before:
+            raise RuntimeError("mixed boundary P2 mutated its input")
+        return outputs
+
+    def compared(self, index):
+        serial, mixed = self.records["serial"][index], self.records["mixed"][index]
+        for name in ("part1_at_collection", "part2_before_inference"):
+            if _boundary_content(serial[name]) != _boundary_content(mixed[name]):
+                raise RuntimeError("mixed boundary serial/async tensor content differs for task "
+                                   + self.tasks[index]["task_id"])
+        if serial["runtime"] != mixed["runtime"]:
+            raise RuntimeError("mixed boundary runtime mapping/IO changed between serial and async")
+        return {"serial": serial, "mixed": mixed, "passed": True}
+
+    def summary(self):
+        return {"schema_version": 1, "contract": deepcopy(self.contract),
+            "observed_task_count": len(self.records["mixed"]),
+            "observed_boundary_tensor_count": len(set(self.first_runtime["part2_to_part1"].values())),
+            "all_boundary_tensors_equal": True, "unchanged_until_inference": True,
+            "slot_buffer_ownership": deepcopy(self.slot_ownership)}
+
+
 class _AssociatedAsync:
     """Attach the declared task to existing SDK handles without scheduling jobs."""
 
-    def __init__(self, adapter, tasks, prepared):
+    def __init__(self, adapter, tasks, prepared, boundary=None):
         self.adapter, self.tasks, self.prepared = adapter, tasks, prepared
         self.execution_policy = adapter.execution_policy
         self.cleanup_timeout_s = adapter.cleanup_timeout_s
@@ -182,6 +376,7 @@ class _AssociatedAsync:
         self.collected = []
         self.slot_tasks = {}
         self.drain_started = self.drain_completed = False
+        self.boundary = boundary
 
     def submit(self):
         index = self.prepared["next"]
@@ -201,6 +396,8 @@ class _AssociatedAsync:
         if self.pending.get(id(handle)) is not token or index != len(self.collected):
             raise RuntimeError("mixed control collected a lost, duplicate, or reordered task")
         outputs = self.adapter.collect(handle)
+        if self.boundary is not None:
+            self.boundary.collected("mixed", index, outputs)
         self.pending.pop(id(handle))
         self.collected.append(index)
         # Preserve the production adapter's payload ownership behavior. We do
@@ -224,7 +421,8 @@ class _AssociatedAsync:
 
 def run_mixed_control(tasks, *, config, original_sources, serial_stage1, transfer,
                       stage2, processor_factory, stage1_async_factory=None,
-                      compare=None, clone_payload=None):
+                      compare=None, clone_payload=None, boundary_observation=None,
+                      boundary_runtime=None):
     """Compare a finite mixed sequence against serial compiled-subnet outputs.
 
     Stage callbacks are the initialized Generic runtime functions:
@@ -241,6 +439,11 @@ def run_mixed_control(tasks, *, config, original_sources, serial_stage1, transfe
     reuse. The fixed sequence i%2 for tasks 0..15, then inverted i%2 for 16..31,
     covers the prescribed 4/8-slot policies; larger pools may not fit a valid
     per-slot reuse control in the authorized 32-task budget.
+    An explicit boundary_observation plus boundary_runtime callback additionally
+    records every actual P1/P2 tensor, live mapping and SDK buffer ownership.
+    It compares transfer bytes with the compiled serial path; it does not
+    reimplement layout or dequantization arithmetic. Absence preserves the
+    original final-output-only control and makes no multi-tensor proof claim.
     """
     if not isinstance(config, Mapping) or not isinstance(original_sources, Mapping) or not original_sources:
         raise ValueError("mixed control requires the bound config and original source descriptors")
@@ -259,6 +462,10 @@ def run_mixed_control(tasks, *, config, original_sources, serial_stage1, transfe
     if clone_payload is not None and not callable(clone_payload):
         raise ValueError("mixed control payload copy callback is not callable")
     frozen = _tasks(tasks, config)
+    if (boundary_observation is None) != (boundary_runtime is None):
+        raise ValueError("mixed boundary observation contract/runtime callback must be explicit together")
+    boundary = (_BoundaryObservation(boundary_observation, boundary_runtime, frozen)
+                if boundary_observation is not None else None)
     slot_groups = _slot_recipe(frozen, execution["inflight"])
     reference_processor, candidate_processor = _fresh_processor(processor_factory), _fresh_processor(processor_factory)
     if reference_processor is candidate_processor:
@@ -289,7 +496,10 @@ def run_mixed_control(tasks, *, config, original_sources, serial_stage1, transfe
     def serial_producer():
         index = prepared["next"]
         feed = prepare_inputs()
-        return {"task_index": index, "outputs": serial_stage1(feed)}
+        outputs = serial_stage1(feed)
+        if boundary is not None:
+            boundary.collected("mixed", index, outputs)
+        return {"task_index": index, "outputs": outputs}
 
     def pipeline_transfer(envelope):
         if (not isinstance(envelope, Mapping) or set(envelope) != {"task_index", "outputs"}
@@ -297,15 +507,17 @@ def run_mixed_control(tasks, *, config, original_sources, serial_stage1, transfe
                 or envelope["task_index"] != len(candidates)):
             raise RuntimeError("mixed control FIFO task association mismatch")
         index = envelope["task_index"]
-        return {"task_index": index,
-                "inputs": transfer(envelope["outputs"], frozen[index]["feed"])}
+        inputs = (boundary.transferred("mixed", index, envelope["outputs"], transfer, frozen[index]["feed"])
+                  if boundary is not None else transfer(envelope["outputs"], frozen[index]["feed"]))
+        return {"task_index": index, "inputs": inputs}
 
     current = {"task_index": None}
 
     def pipeline_stage2(envelope):
         index = envelope["task_index"]
         current["task_index"] = index
-        return stage2(envelope["inputs"], frozen[index]["feed"])
+        return (boundary.inferred("mixed", index, envelope["inputs"], stage2, frozen[index]["feed"])
+                if boundary is not None else stage2(envelope["inputs"], frozen[index]["feed"]))
 
     def copy_envelope(envelope):
         return {"task_index": envelope["task_index"], "outputs": clone_payload(envelope["outputs"])}
@@ -336,10 +548,18 @@ def run_mixed_control(tasks, *, config, original_sources, serial_stage1, transfe
                     or not isinstance(getattr(adapter, "pending", None), Mapping)
                     or adapter.pending or prepared["next"] != 0):
                 raise ValueError("mixed control adapter differs from prepared policy or already owns work")
-            associated = _AssociatedAsync(adapter, frozen, prepared)
-        for item in frozen:
+            if boundary is not None:
+                boundary.bind_adapter(adapter)
+            associated = _AssociatedAsync(adapter, frozen, prepared, boundary)
+        for index, item in enumerate(frozen):
             feed = item["feed"]
-            outputs = stage2(transfer(serial_stage1(feed), feed), feed)
+            if boundary is None:
+                outputs = stage2(transfer(serial_stage1(feed), feed), feed)
+            else:
+                p1 = serial_stage1(feed)
+                boundary.collected("serial", index, p1)
+                p2 = boundary.transferred("serial", index, p1, transfer, feed)
+                outputs = boundary.inferred("serial", index, p2, stage2, feed)
             references.append(_complete(reference_processor, outputs))
             report["serial_reference_count"] = len(references)
         check_input_bytes()
@@ -371,16 +591,20 @@ def run_mixed_control(tasks, *, config, original_sources, serial_stage1, transfe
             "distinct_prepared_tensor_count": len({frozen[index]["prepared_tensor_sha256"] for index in indices}),
             "serial_outputs_discriminating": True}
             for slot, indices in enumerate(observed_groups)]
-        for item, reference, actual in zip(frozen, references, candidates):
+        for index, (item, reference, actual) in enumerate(zip(frozen, references, candidates)):
             metrics, passed = _compare(reference, actual, compare)
             record = {key: deepcopy(item[key]) for key in (
                 "task_id", "prepared_input", "input_sha256", "prepared_tensor_sha256")}
             record.update(serial=reference, mixed=actual, metrics=metrics, passed=passed)
             report["observations"].append(record)
+            if boundary is not None:
+                record["boundary_observation"] = boundary.compared(index)
             if not passed:
                 raise RuntimeError("mixed control output/result mismatch for task " + item["task_id"])
         report.update(status="passed", exact_task_order=True, all_declared_tasks_completed=True,
                       comparison="exact_outputs_and_completed_results" if compare is None else "existing_product_comparator")
+        if boundary is not None:
+            report["boundary_observation"] = boundary.summary()
         return report
     except Exception as error:
         report["status"] = "failed"
@@ -391,4 +615,6 @@ def run_mixed_control(tasks, *, config, original_sources, serial_stage1, transfe
         # failure. Never expose the diagnostic pipeline's timer/rate as a result.
         report["serial_references"] = references
         report["mixed_results"] = candidates
+        if boundary is not None:
+            report["boundary_observation_partial"] = boundary.records
         raise MixedControlError(report["error"], report) from error

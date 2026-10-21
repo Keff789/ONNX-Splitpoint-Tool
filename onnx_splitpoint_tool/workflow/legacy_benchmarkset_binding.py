@@ -1222,6 +1222,12 @@ def _apply_declared_run_variants(
         and (canonical_run_id(row.get('id')) == 'ort_tensorrt' or scoped_mixed(row))
     }
     explicit_composed = _explicit_composed_run_ids(profile_payload)
+    generic_quality = {
+        canonical_run_id(row.get('id')): row
+        for row in _profile_run_profiles(profile_payload)
+        if scoped_mixed(row) and row.get('quality_source_only') is True
+        and 'generic_quality_completion_configs' in row
+    }
     projected = []
     for row in runs:
         run_id = canonical_run_id(row.get('id'))
@@ -1235,6 +1241,19 @@ def _apply_declared_run_variants(
         variants = declared.get(run_id)
         if variants is not None:
             result['variants'] = list(variants)
+        if run_id in generic_quality:
+            source = generic_quality[run_id]
+            for key in (
+                'quality_source_only', 'case_ids', 'hardware_setup_id',
+                'generic_quality_completion_configs',
+                'generic_quality_completion_config_sha256',
+                'generic_quality_completion_sources', 'image_scale',
+                'validation_images', 'validation_max_images',
+                'validation_reference_mode', 'mini_coco_ap50',
+                'native_trt_build', 'trt_runtime', 'native_trt_precision',
+            ):
+                if key in source:
+                    result[key] = source[key]
         projected.append(result)
     return projected
 

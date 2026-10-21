@@ -129,6 +129,11 @@ def load_bound_mixed_control(config):
     payload = json.loads(Path(descriptor["path"]).read_text(encoding="utf-8"))
     if not isinstance(payload, Mapping) or config.get("task") not in {"classification", "detection"}:
         raise ValueError("Mixed functional control sidecar/task malformed")
+    if config.get("boundary_observation") is not None or payload.get("boundary_observation") is not None:
+        from .generic_mixed_control import normalize_boundary_observation
+        contract = normalize_boundary_observation(config.get("boundary_observation"))
+        if payload.get("boundary_observation") != contract:
+            raise ValueError("Mixed boundary observation sidecar differs from its runtime contract")
     for key in ("identity", "execution_id", "expected_runtime_artifacts"):
         if not config.get(key) or payload.get(key) != config.get(key):
             raise ValueError("Mixed functional control belongs to another runtime: " + key)
@@ -200,7 +205,7 @@ def _tensor_snapshot(value):
 
 def run_bound_mixed_control(config, output, repetition, *, serial_stage1, transfer,
                             stage2, stage1_async, prepare_async_feed, clone_payload,
-                            runner_source):
+                            runner_source, boundary_runtime=None):
     """Run 32 serial references and 32 ordinary pipeline tasks before timing."""
     from .generic_mixed_control import run_mixed_control
     from .harness.classification import ClassificationCompletion
@@ -211,6 +216,9 @@ def run_bound_mixed_control(config, output, repetition, *, serial_stage1, transf
     if loaded is None:
         raise ValueError("Mixed control invoked without its explicit bound sidecar")
     payload, tensors = loaded
+    boundary_contract = config.get("boundary_observation")
+    if (boundary_contract is None) != (boundary_runtime is None):
+        raise ValueError("Mixed boundary observation requires its explicit live runtime callback")
     sequence = _input_sequence()
     tasks = [{"task_id": f"task_{index:02d}", "prepared_input": payload["inputs"][sequence[index]]["prepared_input"],
               "feed": {config["input_binding"]["prepared_input"]["input_name"]: tensors[sequence[index]]}}
@@ -259,7 +267,8 @@ def run_bound_mixed_control(config, output, repetition, *, serial_stage1, transf
         report = run_mixed_control(tasks, config=config, original_sources=payload["provenance"],
             serial_stage1=serial_stage1, transfer=transfer, stage2=stage2,
             processor_factory=ClassificationCompletion if config["task"] == "classification" else DetectionSequence,
-            stage1_async_factory=factory if stage1_async is not None else None, clone_payload=clone_payload)
+            stage1_async_factory=factory if stage1_async is not None else None, clone_payload=clone_payload,
+            boundary_observation=boundary_contract, boundary_runtime=boundary_runtime)
         if report["stage1_peak_uncollected_jobs"] != normalize_stage1_execution(config.get("stage1_execution"))["inflight"]:
             raise RuntimeError("Mixed control did not observe the requested host submission depth")
         source_after = {item["path"]: _sha(item["path"]) for item in config["runtime_source_files"]}
@@ -282,13 +291,157 @@ def run_bound_mixed_control(config, output, repetition, *, serial_stage1, transf
     report["task_input_indices"] = sequence
     with destination.open("x", encoding="utf-8") as stream:
         json.dump(_report_value(report), stream, indent=2, allow_nan=False)
-    return {"status": "passed", "checked_outside_throughput_timer": True,
+    proof = {"status": "passed", "checked_outside_throughput_timer": True,
             "serial_reference_count": report["serial_reference_count"],
             "mixed_completed_count": report["mixed_completed_count"],
             "stage1_peak_uncollected_jobs": report["stage1_peak_uncollected_jobs"],
             "drain_completed": report["drain_completed"], "stage1_execution": report["stage1_execution"],
             "control_sidecar": dict(config["mixed_input_control"]),
             "report": {"path": str(destination.relative_to(output)), "sha256": _sha(destination)}}
+    if boundary_contract is not None:
+        proof["boundary_observation"] = deepcopy(report["boundary_observation"])
+    return proof
+
+
+def _validate_boundary_snapshot(value, specs):
+    if not isinstance(value, Mapping) or set(value) != set(specs):
+        raise ValueError("Generic mixed boundary observation actual tensor names mismatch")
+    for name, tensor in value.items():
+        spec = specs[name]
+        if (not isinstance(tensor, Mapping) or set(tensor) != {
+                "shape", "dtype", "tensor_sha256", "strides", "c_contiguous", "f_contiguous",
+                "owns_data", "buffer_address", "nbytes"}
+                or {key: tensor.get(key) for key in ("shape", "dtype")} != spec
+                or not _tensor_snapshot({key: tensor[key] for key in ("shape", "dtype", "tensor_sha256")})
+                or not isinstance(tensor["strides"], list) or len(tensor["strides"]) != len(spec["shape"])
+                or any(type(stride) is not int for stride in tensor["strides"])
+                or any(type(tensor[key]) is not bool for key in ("c_contiguous", "f_contiguous", "owns_data"))
+                or type(tensor["buffer_address"]) is not int or tensor["buffer_address"] <= 0
+                or type(tensor["nbytes"]) is not int
+                or tensor["nbytes"] != int(np.prod(spec["shape"])) * np.dtype(spec["dtype"]).itemsize):
+            raise ValueError("Generic mixed boundary observation tensor snapshot malformed")
+
+
+def _validate_boundary_result(proof, config, report=None):
+    from .generic_mixed_control import _boundary_content, normalize_boundary_observation
+    expected = config.get("boundary_observation")
+    actual = proof.get("boundary_observation")
+    if expected is None:
+        if actual is not None or (report is not None and (report.get("boundary_observation") is not None
+                or any("boundary_observation" in item for item in report.get("observations", [])))):
+            raise ValueError("Generic mixed boundary observation was not requested by this runtime")
+        return
+    contract = normalize_boundary_observation(expected)
+    execution = normalize_stage1_execution(config.get("stage1_execution"))
+    required = {"schema_version": 1, "contract": contract, "observed_task_count": 32,
+                "observed_boundary_tensor_count": len(set(contract["part2_to_part1"].values())),
+                "all_boundary_tensors_equal": True, "unchanged_until_inference": True}
+    if (not isinstance(actual, Mapping) or set(actual) != set(required) | {"slot_buffer_ownership"}
+            or any(actual.get(key) != value or type(actual.get(key)) is not type(value)
+                   for key, value in required.items())):
+        raise ValueError("Generic mixed boundary observation proof missing or incomplete")
+    ownership = actual["slot_buffer_ownership"]
+    if execution["policy"] == "synchronous":
+        if ownership is not None:
+            raise ValueError("Generic mixed boundary synchronous control claims async slot evidence")
+    elif (not isinstance(ownership, Mapping) or set(ownership) != {
+            "slot_count", "inspected_buffer_count", "slots_disjoint", "slots"}
+            or type(ownership["slot_count"]) is not int or ownership["slot_count"] != execution["inflight"]
+            or type(ownership["inspected_buffer_count"]) is not int
+            or ownership["inspected_buffer_count"] < execution["inflight"]
+            or ownership["slots_disjoint"] is not True):
+        raise ValueError("Generic mixed boundary actual slot ownership proof missing")
+    if execution["policy"] != "synchronous":
+        slots = ownership["slots"]
+        if not isinstance(slots, list) or len(slots) != execution["inflight"]:
+            raise ValueError("Generic mixed boundary actual slot buffer descriptors missing")
+        spans, count = [], 0
+        for index, slot in enumerate(slots):
+            if (not isinstance(slot, Mapping) or set(slot) != {"slot_index", "buffers"}
+                    or type(slot["slot_index"]) is not int or slot["slot_index"] != index
+                    or not isinstance(slot["buffers"], list) or not slot["buffers"]):
+                raise ValueError("Generic mixed boundary actual slot descriptor malformed")
+            current = []
+            for buffer in slot["buffers"]:
+                if (not isinstance(buffer, Mapping) or set(buffer) != {
+                        "shape", "dtype", "strides", "buffer_address", "nbytes", "byte_span"}
+                        or not isinstance(buffer["shape"], list) or not buffer["shape"]
+                        or any(type(dim) is not int or dim <= 0 for dim in buffer["shape"])
+                        or not isinstance(buffer["strides"], list)
+                        or len(buffer["strides"]) != len(buffer["shape"])
+                        or any(type(stride) is not int for stride in buffer["strides"])
+                        or type(buffer["buffer_address"]) is not int or buffer["buffer_address"] <= 0
+                        or type(buffer["nbytes"]) is not int):
+                    raise ValueError("Generic mixed boundary actual SDK buffer descriptor malformed")
+                try:
+                    dtype = np.dtype(buffer["dtype"])
+                except (TypeError, ValueError) as error:
+                    raise ValueError("Generic mixed boundary SDK buffer dtype invalid") from error
+                offsets = [(dim - 1) * stride for dim, stride in zip(buffer["shape"], buffer["strides"])]
+                address = buffer["buffer_address"]
+                expected_span = [address + sum(min(0, offset) for offset in offsets),
+                                 address + sum(max(0, offset) for offset in offsets) + dtype.itemsize]
+                if (dtype.kind not in "biuf" or buffer["byte_span"] != expected_span
+                        or buffer["nbytes"] != int(np.prod(buffer["shape"])) * dtype.itemsize):
+                    raise ValueError("Generic mixed boundary actual SDK buffer bounds invalid")
+                current.append(expected_span)
+                count += 1
+            if any(max(first[0], second[0]) < min(first[1], second[1])
+                   for first in current for previous in spans for second in previous):
+                raise ValueError("Generic mixed boundary SDK slots overlap in observed memory")
+            spans.append(current)
+        if count != ownership["inspected_buffer_count"]:
+            raise ValueError("Generic mixed boundary actual SDK buffer count mismatch")
+    if report is None:
+        return
+    if report.get("boundary_observation") != actual:
+        raise ValueError("Generic mixed boundary full report differs from its proof")
+    first_runtime = None
+    for observation in report["observations"]:
+        record = observation.get("boundary_observation")
+        if not isinstance(record, Mapping) or set(record) != {"serial", "mixed", "passed"} or record["passed"] is not True:
+            raise ValueError("Generic mixed boundary task observation missing")
+        for phase in ("serial", "mixed"):
+            item = record[phase]
+            if not isinstance(item, Mapping) or set(item) != {
+                    "part1_at_collection", "part1_before_transfer", "part1_after_transfer",
+                    "part2_after_transfer", "part2_before_inference", "part2_after_inference",
+                    "no_reusable_sdk_buffer_alias", "no_prepared_input_alias", "runtime", "part2_to_part1_aliases"}:
+                raise ValueError("Generic mixed boundary phase evidence malformed")
+            for key in ("part1_at_collection", "part1_before_transfer", "part1_after_transfer"):
+                _validate_boundary_snapshot(item[key], contract["part1_outputs"])
+            for key in ("part2_after_transfer", "part2_before_inference", "part2_after_inference"):
+                _validate_boundary_snapshot(item[key], contract["part2_inputs"])
+            if (_boundary_content(item["part1_at_collection"]) != _boundary_content(item["part1_before_transfer"])
+                    or item["part1_before_transfer"] != item["part1_after_transfer"]
+                    or item["part2_after_transfer"] != item["part2_before_inference"]
+                    or item["part2_before_inference"] != item["part2_after_inference"]
+                    or item["no_reusable_sdk_buffer_alias"] is not True
+                    or item["no_prepared_input_alias"] is not True):
+                raise ValueError("Generic mixed boundary data changed before processing")
+            runtime = item["runtime"]
+            if (not isinstance(runtime, Mapping) or set(runtime) != {
+                    "part1_io", "part2_io", "part2_to_part1", "passthrough_inputs", "transfer_contract"}
+                    or any(runtime.get(key) != contract[key] for key in (
+                        "part2_to_part1", "passthrough_inputs", "transfer_contract"))
+                    or not isinstance(runtime["part1_io"], Mapping) or not runtime["part1_io"]
+                    or not isinstance(runtime["part2_io"], Mapping)
+                    or runtime["part2_io"].get("inputs") != contract["part2_inputs"]
+                    or set(runtime["part1_io"].get("canonical_outputs", [])) != set(contract["part1_outputs"])):
+                raise ValueError("Generic mixed boundary live mapping/IO/layout/quantization mismatch")
+            if first_runtime is None:
+                first_runtime = runtime
+            if runtime != first_runtime:
+                raise ValueError("Generic mixed boundary live runtime metadata changed")
+            aliases = item["part2_to_part1_aliases"]
+            if (not isinstance(aliases, Mapping) or set(aliases) != set(contract["part2_inputs"])
+                    or any(not isinstance(sources, list) or len(set(sources)) != len(sources)
+                           or any(source not in contract["part1_outputs"] for source in sources)
+                           for sources in aliases.values())):
+                raise ValueError("Generic mixed boundary alias evidence malformed")
+        for key in ("part1_at_collection", "part2_before_inference"):
+            if _boundary_content(record["serial"][key]) != _boundary_content(record["mixed"][key]):
+                raise ValueError("Generic mixed boundary serial/async tensor content differs")
 
 
 def validate_bound_mixed_result(repetition, config, *, result_root=None):
@@ -315,6 +468,7 @@ def validate_bound_mixed_result(repetition, config, *, result_root=None):
             for key, value in required.items())
             or normalize_stage1_execution(repetition.get("stage1_execution")) != execution):
         raise ValueError("Generic mixed functional control counts/policy/drain evidence mismatch")
+    _validate_boundary_result(proof, config)
     descriptor = proof.get("report")
     if (not isinstance(descriptor, Mapping) or set(descriptor) != {"path", "sha256"}
             or not isinstance(descriptor["path"], str) or not descriptor["path"]
@@ -401,4 +555,5 @@ def validate_bound_mixed_result(repetition, config, *, result_root=None):
                 or observed.get("distinct_prepared_tensor_count") != 2
                 or observed.get("serial_outputs_discriminating") is not True):
             raise ValueError("Generic mixed functional control slot input/task association mismatch")
+    _validate_boundary_result(proof, config, report)
     return dict(proof)

@@ -143,7 +143,7 @@ def test_normal_performance_run_remains_fail_closed_without_rows() -> None:
             "id": "ort_tensorrt",
             "backend": "tensorrt",
             "variant": "split",
-            "variants": ["full", "split"],
+            "variants": ["full", "composed"],
             "validation_budget_authoritative": True,
             "validation_items_requested": 500,
             "validation_max_images": 500,
@@ -262,7 +262,8 @@ def _run_stage(
         json.dumps({"status": "ok"}), encoding="utf-8",
     )
 
-    workflow = object.__new__(EvaluationWorkflowRunner)
+    from onnx_splitpoint_tool.workflow.runner import WorkflowOptions
+    workflow = EvaluationWorkflowRunner(WorkflowOptions(profile="", out=str(tmp_path)))
     workflow.run_dir = tmp_path
     workflow.run_id = "v27538-full-only-matrix-test"
     workflow.profile_payload = profile
@@ -284,6 +285,8 @@ def _run_stage(
     workflow._remote_process_registry = None
     workflow.session_id = "v27538-full-only-matrix-test"
     workflow._schedule_management_cpu_reference = mock.Mock()
+    # The executor is a leaf fixture; no management workers are needed here.
+    workflow._ensure_central_quality_service = mock.Mock(return_value=SimpleNamespace(pause_gate=None))
     workflow._targets = mock.Mock(return_value=[])
     workflow._benchmark_result_sources = mock.Mock(return_value=[])
     workflow._execution_mode = mock.Mock(return_value="generate_and_run")
@@ -403,7 +406,7 @@ def test_run_benchmarks_stage_does_not_green_normal_empty_performance_plan(
             "id": "ort_tensorrt",
             "backend": "tensorrt",
             "variant": "split",
-            "variants": ["full", "split"],
+            "variants": ["full", "composed"],
             "validation_budget_authoritative": True,
             "validation_items_requested": 500,
             "validation_max_images": 500,
@@ -491,7 +494,6 @@ def test_complete_row_contract_without_active_canary_context_is_fail_closed() ->
     )
     assert {(row["backend"], row["variant"]) for row in required} == {
         ("tensorrt", "full"),
-        ("tensorrt", "split"),
     }
     assert validation_cardinality_mismatches_v60r(
         benchmark_plan=performance_plan, normalized_rows=[],

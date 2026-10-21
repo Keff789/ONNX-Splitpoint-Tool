@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..runners.generic_quality_accounting import normalized_contract as _generic_quality_normalized_contract
+
 from onnx_splitpoint_tool.native_full_quality import (
     enabled_run_profiles,
     native_enabled,
@@ -1226,6 +1228,15 @@ def _performance_plan_v263(
             if str(row.get("id") or row.get("run_id") or "").strip()
             not in known_ids
         )
+    from ..runners.generic_quality_accounting import authorized_runs, make_projection, projected_runs
+    # Restore a prior Generic projection before rechecking its current profile.
+    # Losing authorization must restore ordinary completeness requirements.
+    known_ids = {str(row.get("id") or row.get("run_id") or "")
+                 for row in source_runs if isinstance(row, Mapping)}
+    source_runs.extend(row for row in projected_runs(plan)
+                       if str(row.get("id") or "") not in known_ids)
+    generic_quality_runs = authorized_runs({"runs": source_runs}, profile)
+    generic_ids = {str(row["id"]) for row in generic_quality_runs}
     cpu_aliases = {"cpu", "cpu_ort", "ort_cpu", "onnxruntime_cpu", "cpu_onnxruntime"}
     for raw in source_runs:
         run_id = str((raw.get("id") or raw.get("run_id")) if isinstance(raw, Mapping) else raw).strip()
@@ -1236,6 +1247,9 @@ def _performance_plan_v263(
         ):
             excluded.append(run_id)
             quality_only_runs.append(dict(raw))
+            continue
+        if run_id in generic_ids:
+            excluded.append(run_id)
             continue
         token = run_id.lower().replace("-", "_")
         cpu_reference = bool(central_management and token in cpu_aliases)
@@ -1270,7 +1284,7 @@ def _performance_plan_v263(
         plan["planned_runs"] = kept
     semantic_reference_ids = [
         rid for rid in excluded
-        if rid not in {
+        if rid not in generic_ids and rid not in {
             str(row.get("id") or row.get("run_id") or "")
             for row in quality_only_runs
         }
@@ -1289,7 +1303,8 @@ def _performance_plan_v263(
         if not isinstance(row, Mapping)
         or not bool(row.get("deferred")) and row.get("required") is not False
     ]
-    quality_only_not_applicable = bool(quality_only_runs) and not actionable_kept
+    plan["generic_quality_only_projection"] = make_projection(generic_quality_runs)
+    quality_only_not_applicable = bool(quality_only_runs or generic_quality_runs) and not actionable_kept
     plan["performance_matrix_applicable"] = not quality_only_not_applicable
     plan["performance_matrix_status"] = (
         "not_applicable_quality_evidence_only"
@@ -1660,7 +1675,9 @@ def _selected_run_completeness_v60r(
     """
     runs = list(benchmark_plan.get("runs") or benchmark_plan.get("planned_runs") or [])
     all_selected = [dict(row) for row in runs if isinstance(row, Mapping) and str(row.get("id") or row.get("run_id") or "").strip()]
-    quality_only = _quality_only_runs_v27538(benchmark_plan)
+    from ..runners.generic_quality_accounting import projected_runs
+    generic_quality_only = projected_runs(benchmark_plan)
+    quality_only = _quality_only_runs_v27538(benchmark_plan) + generic_quality_only
     quality_only_ids = {
         str(row.get("id") or row.get("run_id") or "").strip()
         for row in quality_only
@@ -1744,6 +1761,7 @@ def _selected_run_completeness_v60r(
         "expected_run_count": len(expected),
         "deferred_run_count": len(deferred),
         "deferred_runs": deferred,
+        "generic_quality_only_runs": generic_quality_only,
         "quality_only_run_count": len(quality_only),
         "quality_only_run_ids": sorted(quality_only_ids),
         "quality_only_runs": quality_only,
@@ -6612,6 +6630,13 @@ class EvaluationWorkflowRunner:
         """
         if model_id in self._management_reference_futures:
             return
+        quality = self.profile_payload.get("quality_gate") or {}
+        management = quality.get("management_reference") or {}
+        if isinstance(management, Mapping) and "existing_reference" in management:
+            self._schedule_management_cpu_reference(
+                model_id, self.run_dir / "models" / model_id / "benchmark_set" / "legacy_suite",
+            )
+            return
         from onnx_splitpoint_tool.management_reference import (
             _read_diagnostic_status, _source_contract,
             _verify_reference_reuse_model_binding,
@@ -6659,6 +6684,33 @@ class EvaluationWorkflowRunner:
         if _quality_execution_location_v263(self.profile_payload) != "central_management":
             return
         if model_id in self._management_reference_futures:
+            return
+        quality = self.profile_payload.get("quality_gate") or {}
+        management_reference = quality.get("management_reference") or {}
+        if not isinstance(management_reference, Mapping):
+            raise ValueError("generic_existing_cpu_reference_policy_invalid")
+        explicit_reference_present = "existing_reference" in management_reference
+        suite = Path(suite_dir).expanduser().resolve()
+        explicit_plan = read_json(suite / "benchmark_plan.json", default={}) or {}
+        generic_source_only = any(
+            isinstance(row, Mapping) and "generic_quality_completion_configs" in row
+            for row in explicit_plan.get("runs", explicit_plan.get("planned_runs", []))
+        )
+        if explicit_reference_present or generic_source_only:
+            from .generic_quality_sidecars import bind_existing_generic_cpu_reference
+            status = bind_existing_generic_cpu_reference(
+                suite_dir=suite, run_root=self.run_dir, model_id=model_id,
+                benchmark_plan=explicit_plan, quality_gate_policy=quality,
+                require_projected=True,
+            )
+            with self._management_services_lock:
+                if self._management_admission_closed:
+                    return
+                future = concurrent.futures.Future()
+                future.set_result(status)
+                self._management_reference_source_contracts[model_id] = self._quality_sha256_token(status["source_contract_sha256"])
+                self._management_reference_futures[model_id] = future
+            self._emit_log(f"[quality][management] reused explicit existing CPU reference for {model_id}; no CPU inference queued")
             return
         from onnx_splitpoint_tool.management_reference import (
             _source_contract,
@@ -16669,9 +16721,7 @@ class EvaluationWorkflowRunner:
         ) or {}
         if not (
             isinstance(normalized, Mapping)
-            and _sealed_full_only_quality_normalized_contract_v27538(
-                normalized
-            )
+            and _sealed_full_only_quality_normalized_contract_v27538(normalized)
         ):
             return False
 
@@ -16735,6 +16785,21 @@ class EvaluationWorkflowRunner:
                 in {"pass", "fail", "inconclusive", "reference_close", "accuracy_loss", "not_estimable"}
                 for row in model_results
             )
+        )
+
+    def _generic_quality_only_hardware_smoke_not_applicable(self, model_id: str, *, quality_results=None) -> bool:
+        """Join the distinct rowless Generic contract to actual central results."""
+        from ..runners.generic_quality_accounting import central_quality_complete
+        root = self.run_dir / "models" / str(model_id)
+        normalized = read_json(root / "benchmark_results/normalized_results.json", default={}) or {}
+        if not _generic_quality_normalized_contract(normalized):
+            return False
+        return central_quality_complete(
+            normalized,
+            ({"results": quality_results} if quality_results is not None else
+             read_json(self.run_dir / "quality_management/central_quality_summary.json", default={}) or {}),
+            plan=read_json(root / "benchmark_set/benchmark_plan.json", default={}) or {},
+            profile=self.profile_payload, run_root=self.run_dir, model_id=str(model_id),
         )
 
     def _stage_reason_from_result(self, st: Mapping[str, Any]) -> str:
@@ -16828,9 +16893,8 @@ class EvaluationWorkflowRunner:
                     == "completed"
                     and not str(st.get("error_class") or "").strip()
                     and not str(st.get("error_detail") or "").strip()
-                    and self._full_quality_only_hardware_smoke_not_applicable(
-                        model_id
-                    )
+                    and (self._full_quality_only_hardware_smoke_not_applicable(model_id)
+                         or self._generic_quality_only_hardware_smoke_not_applicable(model_id))
                 )
                 or (
                     self._stage_status(model_id, "run_benchmarks") == "ok"
@@ -18445,6 +18509,7 @@ class EvaluationWorkflowRunner:
                     or self._quality_request_identity_for_row_variant(row, variant))
 
         updated_models: set[str] = set()
+        generic_quality_source_completed = 0
         updated_rows = 0
         matched_completed = 0
         matched_failed = 0
@@ -18913,6 +18978,18 @@ class EvaluationWorkflowRunner:
             payload = read_json(path, default={}) or {}
             rows = [dict(row) for row in list(payload.get("results") or []) if isinstance(row, Mapping)]
             model_results = [dict(result) for result in result_rows if str(result.get("model_id") or "") == model_id]
+            if self._generic_quality_only_hardware_smoke_not_applicable(model_id, quality_results=model_results):
+                # An explicitly source-only Generic result has no performance
+                # row to mutate. Keep its genuine central objects and its own
+                # count; Full/Native counters remain unchanged.
+                generic_quality_source_completed += len(model_results)
+                updated_models.add(model_id)
+                payload["central_quality_evaluation"] = {
+                    "status": "completed", "generic_quality_source_completed_count": len(model_results),
+                    "updated_row_count": 0, "execution_location": "central_management",
+                }
+                write_json(path, payload)
+                continue
             row_join_results = [
                 dict(result) for index, result in enumerate(result_rows)
                 if index not in summary_only_processed
@@ -19060,6 +19137,7 @@ class EvaluationWorkflowRunner:
         return {
             "updated_models": sorted(updated_models),
             "updated_row_count": updated_rows,
+            "generic_quality_source_completed_count": generic_quality_source_completed,
             "matched_completed_count": matched_completed,
             "matched_failed_count": matched_failed,
             "matched_cancelled_count": matched_cancelled,
@@ -19108,18 +19186,22 @@ class EvaluationWorkflowRunner:
             "unmatched_result_count": len(unmatched),
         }
 
-    def _refresh_validation_after_central_quality(self, model_ids: Sequence[str]) -> list[dict[str, Any]]:
+    def _refresh_validation_after_central_quality(self, model_ids: Sequence[str], *, quality_results=None) -> list[dict[str, Any]]:
         refreshed: list[dict[str, Any]] = []
         for model_id in model_ids:
             manifest_row = (self.manifest.get("models") or {}).get(model_id, {}) if isinstance(self.manifest.get("models"), Mapping) else {}
-            result = materialize_validation_binding(
-                run_dir=self.run_dir,
-                model_id=model_id,
-                task=self._task_for(manifest_row),
-                validation_preset=self._validation_preset(manifest_row) or str(manifest_row.get("validation_preset") or ""),
-                profile_payload=self.profile_payload,
-                options=self.options,
-            )
+            if self._generic_quality_only_hardware_smoke_not_applicable(model_id, quality_results=quality_results):
+                artifacts, metrics, message, stage_status = self._stage_validate_outputs(model_id, manifest_row)
+                result = {"artifacts": artifacts, "metrics": metrics, "message": message, "status": stage_status}
+            else:
+                result = materialize_validation_binding(
+                    run_dir=self.run_dir,
+                    model_id=model_id,
+                    task=self._task_for(manifest_row),
+                    validation_preset=self._validation_preset(manifest_row) or str(manifest_row.get("validation_preset") or ""),
+                    profile_payload=self.profile_payload,
+                    options=self.options,
+                )
             status = str(result.get("status") or "partial")
             stage_path = self.run_dir / "models" / model_id / "stages" / "validate_outputs" / "stage_result.json"
             old = read_json(stage_path, default={}) or {}
@@ -19404,7 +19486,11 @@ class EvaluationWorkflowRunner:
         smoke_quality = run_mode_id == "smoke"
         strict_quality = run_mode_id in {"standard", "final"}
         merge = self._merge_central_quality_results(results)
-        refreshed = self._refresh_validation_after_central_quality(merge.get("updated_models") or [])
+        refreshed = (
+            self._refresh_validation_after_central_quality(merge.get("updated_models") or [], quality_results=results)
+            if merge.get("generic_quality_source_completed_count")
+            else self._refresh_validation_after_central_quality(merge.get("updated_models") or [])
+        )
         evidence_state_summary = summarize_run_scope(self.run_dir)
         evidence_state_summary["companions"] = int(
             merge.get("summary_only_native_full_quality_completed_count") or 0
@@ -19523,6 +19609,7 @@ class EvaluationWorkflowRunner:
             "quality_missing": int(evidence_state_summary.get("quality_missing") or 0),
             "companions": int(evidence_state_summary.get("companions") or 0),
             "evidence_state_summary": evidence_state_summary,
+            "generic_quality_source_completed_count": int(merge.get("generic_quality_source_completed_count") or 0),
             "matched_completed_count": int(merge.get("matched_completed_count") or 0),
             "matched_failed_count": int(merge.get("matched_failed_count") or 0),
             "matched_primary_result_count": int(merge.get("matched_primary_result_count") or 0),
@@ -19797,6 +19884,7 @@ class EvaluationWorkflowRunner:
             "quality_not_applicable": int(evidence_state_summary.get("quality_not_applicable") or 0),
             "companions": int(evidence_state_summary.get("companions") or 0),
             "updated_row_count": int(merge.get("updated_row_count") or 0),
+            "generic_quality_source_completed_count": int(merge.get("generic_quality_source_completed_count") or 0),
             "matched_completed_count": int(merge.get("matched_completed_count") or 0),
             "matched_failed_count": int(merge.get("matched_failed_count") or 0),
             "matched_primary_result_count": int(merge.get("matched_primary_result_count") or 0),
@@ -19973,9 +20061,8 @@ class EvaluationWorkflowRunner:
             accepted_cases = [dict(x or {}) for x in list(gen_decisions.get("accepted_cases") or []) if isinstance(x, Mapping)]
             rows = [dict(x or {}) for x in list(normalized.get("results") or []) if isinstance(x, Mapping)]
             quality_only_not_applicable = (
-                _sealed_full_only_quality_normalized_contract_v27538(
-                    normalized,
-                )
+                _sealed_full_only_quality_normalized_contract_v27538(normalized)
+                or _generic_quality_normalized_contract(normalized)
             )
 
             pred_by_case: Dict[str, Dict[str, Any]] = {}
@@ -30153,6 +30240,9 @@ class EvaluationWorkflowRunner:
             )
             required_profile_scope_source = "legacy_reprojection_opt_in"
 
+        from ..runners.generic_quality_accounting import projected_runs, filter_performance_scope
+        generic_quality_runs = projected_runs(performance_plan)
+        required_profile_rows = filter_performance_scope(required_profile_rows, generic_quality_runs)
         normalized_rows, scope_binding_errors = (
             _bind_results_to_required_scope_v2796(
                 required_profile_rows, normalized_rows,
@@ -30253,12 +30343,18 @@ class EvaluationWorkflowRunner:
         expected_full_quality_count = int(
             (exec_result.metrics or {}).get("expected_full_quality_count") or 0
         )
+        expected_generic_quality_count = int(
+            (exec_result.metrics or {}).get("expected_generic_quality_count") or 0
+        )
+        expected_quality_count = expected_full_quality_count + expected_generic_quality_count
+        declared_generic_count = sum(len(run["case_ids"]) for run in generic_quality_runs)
         quality_evidence_only_complete = bool(
             not performance_matrix_applicable
             and len(normalized_rows) == 0
             and executor_state in {"ok", "success", "completed"}
-            and expected_full_quality_count > 0
-            and quality_evidence_count == expected_full_quality_count
+            and expected_quality_count > 0
+            and expected_generic_quality_count == declared_generic_count
+            and quality_evidence_count == expected_quality_count
         )
         build_stage = read_json(self.run_dir / "models" / model_id / "stages/build_backend_artifacts/stage_result.json", default={}) or {}
         build_readiness = (build_stage.get("details") or {}).get("deferred_build_readiness") or {}
@@ -30370,6 +30466,7 @@ class EvaluationWorkflowRunner:
             ),
             "quality_evidence_count": quality_evidence_count,
             "expected_full_quality_count": expected_full_quality_count,
+            "expected_generic_quality_count": expected_generic_quality_count,
             "quality_evidence_only_complete": quality_evidence_only_complete,
         })
         executor_incomplete = (
@@ -30478,6 +30575,7 @@ class EvaluationWorkflowRunner:
             "quality_evidence_only_complete": quality_evidence_only_complete,
             "quality_evidence_count": quality_evidence_count,
             "expected_full_quality_count": expected_full_quality_count,
+            "expected_generic_quality_count": expected_generic_quality_count,
             "execution_gates": {"skip_benchmarks": bool(self.options.skip_benchmarks), "no_remote": bool(self.options.no_remote), "dry_run": bool(self.options.dry_run), "execution_mode": self._execution_mode()},
             "executor_status": exec_result.status,
             "executor_metrics": effective_executor_metrics,
@@ -30620,6 +30718,8 @@ class EvaluationWorkflowRunner:
         payload["quality_evidence_only_complete"] = quality_evidence_only_complete
         payload["quality_evidence_count"] = quality_evidence_count
         payload["expected_full_quality_count"] = expected_full_quality_count
+        payload["expected_generic_quality_count"] = expected_generic_quality_count
+        payload["generic_quality_only_projection"] = performance_plan.get("generic_quality_only_projection", {})
         payload["status"] = (
             "quality_evidence_only_complete"
             if quality_evidence_only_complete
@@ -30657,8 +30757,9 @@ class EvaluationWorkflowRunner:
         )
         if quality_evidence_only_complete:
             msg = (
-                "Full-only Quality evidence verified exactly; Generic and "
-                "performance matrices are not applicable for this run."
+                ("Generic composed Quality capture verified exactly; central Quality remains required; "
+                 if generic_quality_runs else "Full-only Quality evidence verified exactly; ")
+                + "performance matrices are not applicable for this run."
             )
         elif normalized_rows and executor_incomplete:
             missing_suffix = ""
@@ -30770,6 +30871,7 @@ class EvaluationWorkflowRunner:
             "quality_evidence_only_complete": quality_evidence_only_complete,
             "quality_evidence_count": quality_evidence_count,
             "expected_full_quality_count": expected_full_quality_count,
+            "expected_generic_quality_count": expected_generic_quality_count,
         }
         metrics.update({
             f"post_build_{key}": value
@@ -30797,6 +30899,7 @@ class EvaluationWorkflowRunner:
             and str(normalized.get("status") or "").strip().lower()
             == "quality_evidence_only_complete"
         ):
+            quality_scope = "Generic composed" if _generic_quality_normalized_contract(normalized) else "Full-only"
             validation_dir = self.run_dir / "models" / model_id / "validation"
             p_plan = write_json(validation_dir / "validation_adapter_plan.json", {
                 "schema": "onnx-splitpoint/validation-adapter-plan",
@@ -30806,7 +30909,7 @@ class EvaluationWorkflowRunner:
                 "status": "not_applicable_quality_evidence_only",
                 "normalized_results_path": relpath(normalized_path, self.run_dir),
                 "reason": (
-                    "Full-only Quality requests are evaluated by Central "
+                    f"{quality_scope} Quality requests are evaluated by Central "
                     "Quality; no Generic/performance rows exist to validate."
                 ),
             })
@@ -30833,7 +30936,7 @@ class EvaluationWorkflowRunner:
                     normalized.get("expected_full_quality_count") or 0
                 ),
                 "notes": [
-                    "Generic output validation is not applicable; exact Full "
+                    f"Performance output validation is not applicable; exact {quality_scope} "
                     "Quality evidence is handled by Central Quality."
                 ],
             })
@@ -30847,7 +30950,7 @@ class EvaluationWorkflowRunner:
                 "quality_evidence_only_complete": True,
             }, (
                 "Generic output validation is not applicable for the completed "
-                "Full-only Quality run."
+                f"{quality_scope} Quality run."
             ), "ok"
         validation_result = materialize_validation_binding(
             run_dir=self.run_dir,

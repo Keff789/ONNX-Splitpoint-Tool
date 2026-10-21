@@ -135,8 +135,13 @@ def capture_configuration(transport: SSHTransport, target: dict, *, primary: Pat
 
 
 def verify_runtime_environment(transport: SSHTransport, row: dict, output: Path):
+    if row.get("functional_reference_source") is not None:
+        from ..generic_completion_plan import apply_native_functional_reference
+        row = apply_native_functional_reference(row)
     python = row["remote_python_executable"]
-    expected = row["native_command_contract"]["artifacts"]["python_executable"]["sha256"]
+    expected = (row["generic_runtime_environment"]["python_sha256"]
+                if row.get("admission_mode") == "generic_only" else
+                row["native_command_contract"]["artifacts"]["python_executable"]["sha256"])
     modules = ["numpy", "onnx", "onnxruntime", "tensorrt", "hailo_platform", "dx_engine"]
     script = ("import sys,json,os,hashlib,importlib.util,importlib.metadata,site\nfrom pathlib import Path\n"
               "for p in os.environ.get('SPLITPOINT_EXTRA_SITES','').split(os.pathsep):\n"
@@ -280,6 +285,11 @@ def _validated_stage1_execution(config: dict) -> dict:
 def validate_plan(plan: dict, scope_csv: Path, primary: Path) -> list[dict]:
     import csv
     from ..generic_completion_plan import completion_identity
+    if plan.get("scope_mode") == "generic_only_completed_task":
+        from ..generic_only_plan import validate_plan as validate_generic_only_plan
+        return validate_generic_only_plan(plan, scope_csv, primary)
+    if plan.get("admission_mode") == "generic_only":
+        raise ValueError("Generic-only admission requires its explicitly separated plan mode")
     with Path(scope_csv).open(newline="", encoding="utf-8") as stream:
         source = list(csv.DictReader(stream))
     rows = plan.get("rows")
@@ -423,6 +433,12 @@ def _bind_prepared_numeric_domain(row: dict, command: dict, prepared: dict, runt
 def runtime_configuration(row: dict, remote_root: str, execution_id: str,
                           *, stage1_execution: dict | None = None) -> tuple[dict, list[dict]]:
     """Project original bound files into a new attempt, with unchanged content."""
+    if row.get("admission_mode") == "generic_only":
+        from ..generic_only_plan import runtime_configuration as generic_only_configuration
+        return generic_only_configuration(row, remote_root, execution_id, stage1_execution=stage1_execution)
+    if row.get("functional_reference_source") is not None:
+        from ..generic_completion_plan import apply_native_functional_reference
+        row = apply_native_functional_reference(row)
     import posixpath
     execution = _validated_stage1_execution({"original_run_cfg": row["original_run_cfg"],
                                              "stage1_execution": stage1_execution})
@@ -558,7 +574,9 @@ def stage_case(row: dict, config: dict, files: list[dict], transport: SSHTranspo
             receipts.append({"role": item["role"], **upload_new_file(transport, path, item["remote"], expected_sha=item.get("sha256", ""))})
     config_path = local / "generic_completion_config.json"
     write_json(config_path, config)
-    remote_config = str(PurePosixPath(config["original_run_cfg"]["native_split_quality_binding"]).parent / config_path.name)
+    config_directory = (config["config_directory"] if config.get("admission_mode") == "generic_only" else
+                        str(PurePosixPath(config["original_run_cfg"]["native_split_quality_binding"]).parent))
+    remote_config = str(PurePosixPath(config_directory) / config_path.name)
     receipts.append(upload_new_file(transport, config_path, remote_config))
     write_json(local / "staging_receipts.json", {"files": receipts, "completed_at": now()})
     return remote_config
@@ -603,8 +621,7 @@ def prepare_execution(scope_plan: Path, output: Path, *, hailo_async_inflight: i
         plan["deepx_async_inflight"] = deepx_async_inflight
     validate_plan(plan, Path(plan["scope_source"]), primary)
     write_json(execution_path, plan)
-    from ..generic_completion_reporting import write_completion_reports
-    write_completion_reports(plan, output / "results", output / "reports")
+    _write_completion_reports(plan, output / "results", output / "reports")
     return execution_path
 
 
@@ -614,6 +631,9 @@ def original_generic_environment(row: dict) -> dict:
     H8 uses system GPU Python plus its existing Hailo venv's appended sites.
     Merely using the Native C++ controller interpreter loses that SDK binding.
     """
+    if row.get("admission_mode") == "generic_only":
+        from ..generic_only_plan import environment
+        return environment(row)
     source = Path(row["generic_raw_source"]).resolve()
     original_results = (Path(row["original_run"]) / "models" / row["model_id"] / "benchmark_results").resolve()
     if original_results not in source.parents:
@@ -640,6 +660,9 @@ def original_generic_environment(row: dict) -> dict:
 
 def configuration_comparison(row: dict, current: dict, current_path: Path) -> dict:
     """Compare available original snapshots; preserve unknown historical fields."""
+    if row.get("admission_mode") == "generic_only":
+        from ..generic_only_plan import configuration_comparison as compare_generic_only
+        return compare_generic_only(row, current, current_path)
     from ..resources.remote_scripts.native_host_telemetry import _identity
     primary = Path(row["original_run"])
     captures = read_json(primary / "reports" / "native_host_telemetry_summary.json")["captures"]
@@ -713,6 +736,10 @@ def download_case(transport: SSHTransport, remote_output: str, local_output: Pat
                 descriptors.append(repetition["completed_result_artifact"])
             if (repetition.get("mixed_input_control") or {}).get("report"):
                 descriptors.append(repetition["mixed_input_control"]["report"])
+            serial = repetition.get("serial_reference") or {}
+            descriptors.extend((serial.get("raw_output_samples") or {}).values())
+            if serial.get("completed_result_artifact"):
+                descriptors.append(serial["completed_result_artifact"])
             for descriptor in descriptors:
                 relative = Path(str(descriptor.get("path") or ""))
                 if not descriptor.get("path") or relative.is_absolute() or ".." in relative.parts:
@@ -759,6 +786,9 @@ def run_case(row: dict, transport: SSHTransport, output: Path, index: int, *, to
     local_output = Path(row["result_path"]).parent
     local_output.mkdir(parents=True, exist_ok=True)
     valid = load_valid_repetitions(row["result_path"], row)
+    if row.get("admission_mode") == "generic_only" and valid:
+        from ..generic_only_reporting import validate_completion_attestations
+        validate_completion_attestations({"repetitions": valid}, row, expected_repetitions=len(valid))
     completed = {r["repetition_index"] for r in valid}
     if completed == requested_indices:
         print(f"[completion] {index}/{total} {case_name(row)} reuse={requested_repetitions}/{requested_repetitions}", flush=True)
@@ -778,6 +808,10 @@ def run_case(row: dict, transport: SSHTransport, output: Path, index: int, *, to
                            repetition["completed_result_artifact"]]
             if (repetition.get("mixed_input_control") or {}).get("report"):
                 descriptors.append(repetition["mixed_input_control"]["report"])
+            serial = repetition.get("serial_reference") or {}
+            descriptors.extend((serial.get("raw_output_samples") or {}).values())
+            if serial.get("completed_result_artifact"):
+                descriptors.append(serial["completed_result_artifact"])
             for descriptor in descriptors:
                 relative = descriptor["path"]  # checked by load_valid_repetitions
                 upload_new_file(transport, local_output / relative, remote_output + "/" + relative,
@@ -813,6 +847,9 @@ def run_case(row: dict, transport: SSHTransport, output: Path, index: int, *, to
             attempt["download"] = download_case(transport, remote_output, local_output, len(attempts))
             write_json(attempts_path, {"attempts": attempts})
         valid = load_valid_repetitions(row["result_path"], row)
+        if row.get("admission_mode") == "generic_only" and valid:
+            from ..generic_only_reporting import validate_completion_attestations
+            validate_completion_attestations({"repetitions": valid}, row, expected_repetitions=len(valid))
         completed = {r["repetition_index"] for r in valid}
         if attempt.get("returncode") != 0 or repetition not in completed:
             raise RuntimeError(f"Generic case stopped: {case_name(row)} repetition={repetition}, rc={attempt.get('returncode')}")
@@ -842,6 +879,9 @@ def terminal_bundle(output: Path) -> None:
 
 
 def write_status_report(plan: dict, summary: dict, output: Path, *, status: str, error: str = ""):
+    if plan.get("scope_mode") == "generic_only_completed_task":
+        from ..generic_only_reporting import write_status_report as write_generic_only_status
+        return write_generic_only_status(plan, summary, output, status=status, error=error)
     remaining = summary["planned_cases"] - summary["status_counts"]["completed"]
     text = ["THESIS20 Generic Completed Task", f"Status: {status}",
             f"Execution: {plan['execution_id']}", f"Updated: {now()}",
@@ -874,8 +914,16 @@ def write_status_report(plan: dict, summary: dict, output: Path, *, status: str,
                          else row.get(key) for key in fields} for row in observations)
 
 
+def _write_completion_reports(plan, results, reports):
+    if plan.get("scope_mode") == "generic_only_completed_task":
+        from ..generic_only_reporting import write_completion_reports
+    else:
+        from ..generic_completion_reporting import write_completion_reports
+    return write_completion_reports(plan, results, reports)
+
+
 def execute_plan(plan_path: Path) -> int:
-    from ..generic_completion_reporting import write_completion_reports, load_valid_repetitions, completion_pair, validate_completion_case
+    from ..generic_completion_reporting import load_valid_repetitions, completion_pair, validate_completion_case
     plan = read_json(plan_path)
     primary = Path(plan["original_run"]).resolve()
     output = outside_primary(Path(plan["output_root"]), primary)
@@ -886,7 +934,8 @@ def execute_plan(plan_path: Path) -> int:
     targets = bound_targets(primary, rows)
     starts = plan["start_case_keys"]
     selected_groups = {(r["setup_id"], r["task"]) for r in rows}
-    required_groups = (selected_groups if plan.get("scope_mode") == "audited_selective_remeasurement"
+    generic_only = plan.get("scope_mode") == "generic_only_completed_task"
+    required_groups = (selected_groups if plan.get("scope_mode") in {"audited_selective_remeasurement", "generic_only_completed_task"}
                        else {(setup, task) for setup in targets for task in ("classification", "detection")})
     if len(starts) != len(required_groups) or len(set(starts)) != len(starts) or not set(starts) <= {r["case_key"] for r in rows}:
         raise ValueError("authorized start cases missing for selected setup/task groups")
@@ -960,12 +1009,19 @@ def execute_plan(plan_path: Path) -> int:
             row["dispatch_wall_seconds"] = time.monotonic() - entered
             observed = validate_completion_case(read_json(Path(row["result_path"])), row,
                 result_root=Path(row["result_path"]).parent)
-            pair = completion_pair(observed, row)
-            if row["case_key"] in starts and not pair["eligible_for_technical_transfer"]:
-                write_json(output / "start-case-pairing-failure.json", pair)
-                raise RuntimeError("start case has no valid completed-task pair: " + row["case_key"])
+            if generic_only:
+                from ..generic_only_reporting import generic_only_admission
+                admission = generic_only_admission(observed, row)
+                if not admission["eligible_for_generic_only_execution"]:
+                    write_json(output / "generic-only-admission-failure.json", admission)
+                    raise RuntimeError("case has no valid Generic-only completion admission: " + row["case_key"])
+            else:
+                pair = completion_pair(observed, row)
+                if row["case_key"] in starts and not pair["eligible_for_technical_transfer"]:
+                    write_json(output / "start-case-pairing-failure.json", pair)
+                    raise RuntimeError("start case has no valid completed-task pair: " + row["case_key"])
             write_json(plan_path, plan)
-            summary = write_completion_reports(plan, output / "results", output / "reports")
+            summary = _write_completion_reports(plan, output / "results", output / "reports")
             if index == len(starts):
                 write_json(output / "start-cases-accepted.json", {"accepted_at": now(),
                     "case_keys": starts, "valid_repetitions": 3 * len(starts), "remaining_cases": len(rows) - len(starts),
@@ -1008,7 +1064,7 @@ def execute_plan(plan_path: Path) -> int:
                 # Any unresolved lease is retained and fenced, never globally killed.
                 write_json(output / "cleanup-status.json", {"at": now(), "active_owned_remote_operations": registry.active_count(),
                     "registry_cancelled_or_poisoned": registry.cancelled, "foreign_processes_stopped": False})
-                summary = write_completion_reports(plan, output / "results", output / "reports")
+                summary = _write_completion_reports(plan, output / "results", output / "reports")
                 write_status_report(plan, summary, output, status=status, error=error)
                 write_json(output / "terminal-status.json", {"finished_at": now(), "status": status, "exitcode": rc,
                            "summary": summary, "error": error, "automatic_restart": False})
@@ -1062,6 +1118,14 @@ def bind_runtime_source_closure(row: dict, bundle_root: Path, *, runner_root: st
         digest = (hashlib.sha256(dumps_json_safe(dict(item['payload']), indent=2).encode('utf-8')).hexdigest()
                   if 'payload' in item else item['sha256'])
         sources.append({'path': item['remote'], 'sha256': digest})
+    if row.get('admission_mode') == 'generic_only':
+        for artifact in row['runtime_config']['generic_artifact_binding']['artifacts'].values():
+            descriptor = {key: artifact[key] for key in ('path', 'sha256')}
+            existing = [source for source in sources if source['path'] == descriptor['path']]
+            if existing and any(source != descriptor for source in existing):
+                raise ValueError('Generic-only artifact source binding conflicts')
+            if not existing:
+                sources.append(descriptor)
     if row.get('runtime_config', {}).get('mixed_input_control'):
         # The first functional input is the existing bound throughput input.
         # Observe its bytes without staging into or rewriting its old archive.
