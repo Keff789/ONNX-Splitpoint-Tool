@@ -37,7 +37,7 @@ from onnx_splitpoint_tool.remote.bundle import BundleCancelled, build_suite_bund
 from onnx_splitpoint_tool.benchmark.results_bundle import create_results_bundle_from_results_dir
 from onnx_splitpoint_tool.log_utils import compact_diagnostic_cause, sanitize_log
 from onnx_splitpoint_tool.remote.ssh_transport import HostConfig as RemoteHost
-from onnx_splitpoint_tool.remote.ssh_transport import SSHTransport
+from onnx_splitpoint_tool.remote.ssh_transport import SSHTransport, shell_quote
 from onnx_splitpoint_tool.remote.process_lease import (
     REMOTE_LEASE_OUTER_CLEANUP_MARGIN_S,
     RemoteProcessLeaseRegistry,
@@ -4134,6 +4134,99 @@ print("SPLITPOINT_REMOTE_TRT_CACHE_PREFLIGHT=" + json.dumps(
     return "python3 -B -c " + shlex.quote(bootstrap)
 
 
+# Linux permits 32 pages (128 KiB on the affected 4 KiB-page controllers) per
+# execve string including NUL. Leave 8 KiB below that boundary. Measure the
+# exact existing SSHTransport._ssh_cmd final argument, not JSON/compressed size.
+_TRT_CACHE_PROBE_SSH_ARGUMENT_LIMIT_BYTES = 120 * 1024
+
+
+def _remote_trt_cache_probe_batches(
+    payload: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Partition disjoint requirements; retain the entire verifier/context.
+
+    Small requests keep their original command bytes. An unrepresentable
+    singleton is reported separately without suppressing independent items.
+    """
+
+    def batch(rows):
+        selected = dict(payload, requirements=list(rows))
+        command = _remote_trt_cache_probe_command(selected)
+        return {"payload": selected, "command": command,
+                "ssh_argument_bytes": len(shell_quote(command).encode("utf-8")) + 1}
+
+    requirements = list(payload["requirements"])
+    identities = [(row["role"], row["item_id"]) for row in requirements]
+    if len(set(identities)) != len(identities):
+        raise ValueError("remote_cache_probe_duplicate_requirement_identity")
+    whole = batch(requirements)
+    limit = _TRT_CACHE_PROBE_SSH_ARGUMENT_LIMIT_BYTES
+    if whole["ssh_argument_bytes"] <= limit:
+        return [whole], []
+    batches: list[dict[str, Any]] = []
+    oversized: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for requirement in requirements:
+        candidate = batch((current["payload"]["requirements"] if current else [])
+                          + [requirement])
+        if candidate["ssh_argument_bytes"] <= limit:
+            current = candidate
+            continue
+        if current is not None:
+            batches.append(current)
+            current = None
+            candidate = batch([requirement])
+        if candidate["ssh_argument_bytes"] <= limit:
+            current = candidate
+        else:
+            oversized.append({"requirement": requirement,
+                              "ssh_argument_bytes": candidate["ssh_argument_bytes"]})
+    if current is not None:
+        batches.append(current)
+    return batches, oversized
+
+
+def _remote_trt_cache_probe_response(
+    output: str, payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Bind every returned observation to exactly one requested identity."""
+
+    marker = "SPLITPOINT_REMOTE_TRT_CACHE_PREFLIGHT="
+    remote_payload = None
+    for line in reversed(str(output or "").splitlines()):
+        if line.startswith(marker):
+            loaded = json.loads(line[len(marker):])
+            if isinstance(loaded, Mapping):
+                remote_payload = dict(loaded)
+            break
+    if remote_payload is None:
+        raise RuntimeError("remote_cache_probe_marker_missing")
+    if (remote_payload.get("schema") != "onnx-splitpoint/remote-trt-cache-preflight"
+            or remote_payload.get("schema_version") != 1
+            or remote_payload.get("status") != "ok"
+            or any(remote_payload.get(key) != payload[key]
+                   for key in ("model_id", "setup_id", "stable_key", "remote_base"))):
+        raise RuntimeError("remote_cache_probe_identity_mismatch")
+    expected = [(row["role"], row["item_id"]) for row in payload["requirements"]]
+    observations = remote_payload.get("observations")
+    if (not isinstance(observations, list) or len(observations) != len(expected)
+            or len(set(expected)) != len(expected)):
+        raise RuntimeError("remote_cache_probe_observation_count_mismatch")
+    by_identity = {}
+    for row in observations:
+        if (not isinstance(row, Mapping)
+                or row.get("model_id") != payload["model_id"]
+                or row.get("setup_id") != payload["setup_id"]
+                or row.get("status") not in {"HIT", "MISS", "UNKNOWN"}):
+            raise RuntimeError("remote_cache_probe_observation_identity_mismatch")
+        key = (row.get("role"), row.get("item_id"))
+        if key not in expected or key in by_identity:
+            raise RuntimeError("remote_cache_probe_observation_identity_mismatch")
+        by_identity[key] = dict(row)
+    remote_payload["observations"] = [by_identity[key] for key in expected]
+    return remote_payload
+
+
 def probe_remote_trt_artifact_cache(
     *,
     transport: SSHTransport | None,
@@ -4515,47 +4608,104 @@ def probe_remote_trt_artifact_cache(
             "native_quality_validator": native_quality_validator,
             "requirements": probe_requirements,
         }
-        rc, output = transport.run_read_only(
-            _remote_trt_cache_probe_command(payload),
-            timeout=max(30, int(timeout_s)),
-        )
-        marker = "SPLITPOINT_REMOTE_TRT_CACHE_PREFLIGHT="
-        if int(rc) != 0:
-            raise RuntimeError(
-                f"remote_cache_probe_failed_rc={rc}:"
-                + str(output or "").strip()[-2000:]
-            )
-        remote_payload: dict[str, Any] | None = None
-        for line in reversed(str(output or "").splitlines()):
-            if line.startswith(marker):
-                loaded = json.loads(line[len(marker):])
-                if isinstance(loaded, Mapping):
-                    remote_payload = dict(loaded)
-                break
-        if remote_payload is None:
-            raise RuntimeError("remote_cache_probe_marker_missing")
-        observations = [
-            dict(row) for row in list(remote_payload.get("observations") or [])
-            if isinstance(row, Mapping)
-        ]
-        if len(observations) != len(probe_requirements):
-            raise RuntimeError("remote_cache_probe_observation_count_mismatch")
+        batches, oversized = _remote_trt_cache_probe_batches(payload)
+        # Preserve the old verifier-call budget after local preparation and
+        # independent path/ABI probes. Disjoint batches share it without reset.
+        deadline = time.monotonic() + max(30, int(timeout_s))
+
+        def remaining_timeout() -> float:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("remote_trt_cache_probe_budget_exhausted")
+            return remaining
+
+        observations_by_identity = {
+            (row["role"], row["item_id"]): row for row in unavailable_observations
+        }
+        batch_evidence = []
+        had_failure = bool(unavailable or oversized)
+        remote_payload = None
+        for row in oversized:
+            requirement = row["requirement"]
+            detail = (f"ssh_argument_bytes={row['ssh_argument_bytes']};"
+                      f"limit_bytes={_TRT_CACHE_PROBE_SSH_ARGUMENT_LIMIT_BYTES}")
+            observation = unknown_rows("remote_trt_cache_probe_payload_too_large", detail,
+                                       selected=[requirement])[0]
+            observations_by_identity[(requirement["role"], requirement["item_id"])] = observation
+            batch_evidence.append({"item_ids": [requirement["item_id"]],
+                                   "ssh_argument_bytes": row["ssh_argument_bytes"],
+                                   "status": "not_dispatched", "reason": observation["reason"]})
+        prior_failure = None
+        for batch in batches:
+            selected = batch["payload"]["requirements"]
+            evidence = {"item_ids": [row["item_id"] for row in selected],
+                        "ssh_argument_bytes": batch["ssh_argument_bytes"]}
+            if prior_failure is not None:
+                # Local SSH exit/timeout does not prove remote completion.
+                # Never launch another unleased command after such a failure,
+                # including an invalid response. These are not safe retries.
+                reason = ("remote_trt_cache_probe_budget_exhausted"
+                          if prior_failure["reason"] == "remote_trt_cache_probe_budget_exhausted"
+                          else "remote_trt_cache_probe_prior_failure_not_dispatched")
+                observations = unknown_rows(reason, prior_failure["error"], selected=selected)
+                for observation in observations:
+                    observation["evidence"]["prior_probe_failure"] = dict(prior_failure)
+                    observations_by_identity[(observation["role"], observation["item_id"])] = observation
+                evidence.update(status="not_dispatched", reason=reason,
+                                prior_probe_failure=dict(prior_failure))
+                batch_evidence.append(evidence)
+                continue
+            dispatched = False
+            try:
+                remaining = remaining_timeout()
+                evidence["timeout_s"] = remaining
+                dispatched = True
+                rc, output = transport.run_read_only(batch["command"], timeout=remaining)
+                if int(rc) != 0:
+                    raise RuntimeError(f"remote_cache_probe_failed_rc={rc}:"
+                                       + str(output or "").strip()[-2000:])
+                response = _remote_trt_cache_probe_response(output, batch["payload"])
+                if remote_payload is None:
+                    remote_payload = response
+                observations = response["observations"]
+                evidence["status"] = "ok"
+            except Exception as exc:
+                had_failure = True
+                reason = ("remote_trt_cache_probe_budget_exhausted" if isinstance(exc, TimeoutError)
+                          else "remote_trt_cache_probe_unavailable")
+                detail = f"{type(exc).__name__}: {exc}"
+                observations = unknown_rows(reason, detail, selected=selected)
+                evidence.update(status="unknown" if dispatched else "not_dispatched",
+                                reason=reason, error=detail)
+                prior_failure = {"evidence_index": len(batch_evidence),
+                                 "item_ids": list(evidence["item_ids"]),
+                                 "reason": reason, "error": detail}
+            for observation in observations:
+                observations_by_identity[(observation["role"], observation["item_id"])] = observation
+            batch_evidence.append(evidence)
         result.update({
-            **remote_payload,
+            **(remote_payload or {}),
             "setup_accelerator": str(setup_accelerator or ""),
             "suite_dir": str(suite),
             "active_run_ids": list(active_run_ids or []),
             "requirement_plan": requirement_plan,
             "requirements": requirements,
             "local_errors": local_errors,
-            "observations": observations + unavailable_observations,
-            "status": "partial" if unavailable else remote_payload.get("status", "ok"),
+            "observations": [observations_by_identity[(row["role"], row["item_id"])]
+                             for row in requirements],
+            "status": ("unknown" if remote_payload is None else "partial" if had_failure else "ok"),
             "builder_abi": effective_builder_abi,
             "builder_cache_abi": builder_cache_abi,
             "builder_abi_sha256": builder_abi_sha256,
             "read_only": True,
             "hardware_action_performed": False,
         })
+        if len(batches) != 1 or oversized or had_failure:
+            result["probe_batches"] = batch_evidence
+        if remote_payload is None:
+            result["reason"] = "remote_trt_cache_probe_unavailable"
+            result["error"] = next((row["error"] for row in batch_evidence if row.get("error")),
+                                   "remote_trt_cache_probe_payload_too_large")
         return result
     except Exception as exc:
         detail = f"{type(exc).__name__}: {exc}"
@@ -7366,7 +7516,7 @@ def _find_resumable_local_run(
 
 
 def _remote_result_collect_script(*, remote_results_dir: str, remote_suite_dir: str) -> str:
-    """Build the remote, best-effort result collection script.
+    """Build best-effort collection that reports any attempted copy failure.
 
     Case runners write their quality requests below ``b*/results_*`` and were
     already covered by the historic per-case loop.  DeepX Full is a suite-level
@@ -7379,7 +7529,7 @@ def _remote_result_collect_script(*, remote_results_dir: str, remote_suite_dir: 
     rr = str(remote_results_dir).replace('"', '\\"')
     rs = str(remote_suite_dir).replace('"', '\\"')
     return (
-        "set -e; shopt -s nullglob; "
+        "set -e; shopt -s nullglob; copy_failed=0; "
         f"suite=\"{rs}\"; "
         f"out=\"{rr}\"; "
         "mkdir -p \"$out\"; "
@@ -7391,7 +7541,7 @@ def _remote_result_collect_script(*, remote_results_dir: str, remote_suite_dir: 
         "\"$suite\"/run_meta.json \"$suite\"/benchmark_suite.py \"$suite\"/native_trt_build_state.json "
         "\"$suite\"/scientific_reporter_v60.py \"$suite\"/scientific_report "
         "\"$suite\"/logs; do "
-        "  [ -e \"$p\" ] && cp -a \"$p\" \"$out/\" || true; "
+        "  if [ -e \"$p\" ]; then cp -a \"$p\" \"$out/\" || copy_failed=1; fi; "
         "done; "
         # Per-case artifacts (preserve case-id to avoid collisions).
         "for cd in \"$suite\"/b*; do "
@@ -7399,7 +7549,7 @@ def _remote_result_collect_script(*, remote_results_dir: str, remote_suite_dir: 
         "  cid=$(basename \"$cd\"); "
         "  mkdir -p \"$out/$cid\"; "
         "  for p in \"$cd\"/results_* \"$cd\"/validation_*; do "
-        "    [ -e \"$p\" ] && cp -a \"$p\" \"$out/$cid/\" || true; "
+        "    if [ -e \"$p\" ]; then cp -a \"$p\" \"$out/$cid/\" || copy_failed=1; fi; "
         "  done; "
         "done; "
         # Suite-level Full producers, notably DeepX Full.  Only copy the
@@ -7408,7 +7558,7 @@ def _remote_result_collect_script(*, remote_results_dir: str, remote_suite_dir: 
         "  [ -d \"$qdir\" ] || continue; "
         "  qrun=$(basename \"$(dirname \"$qdir\")\"); "
         "  mkdir -p \"$out/$qrun\"; "
-        "  cp -a \"$qdir\" \"$out/$qrun/\" || true; "
+        "  cp -a \"$qdir\" \"$out/$qrun/\" || copy_failed=1; "
         "done; "
         # DeepX Full seals the exact prepared runtime input before timing.
         # Transport only that three-file contract.  In particular, do not
@@ -7418,7 +7568,7 @@ def _remote_result_collect_script(*, remote_results_dir: str, remote_suite_dir: 
         "  prun=$(basename \"$(dirname \"$pdir\")\"); "
         "  mkdir -p \"$out/$prun/prepared_input\"; "
         "  for name in native_full_input_manifest.json runtime_input.bin input_rgb_uint8.bin; do "
-        "    [ -f \"$pdir/$name\" ] && cp -a \"$pdir/$name\" \"$out/$prun/prepared_input/$name\" || true; "
+        "    if [ -f \"$pdir/$name\" ]; then cp -a \"$pdir/$name\" \"$out/$prun/prepared_input/$name\" || copy_failed=1; fi; "
         "  done; "
         "done; "
         # Quality-FIRST TensorRT companions live outside bNNN case folders and
@@ -7430,8 +7580,8 @@ def _remote_result_collect_script(*, remote_results_dir: str, remote_suite_dir: 
         "\"$suite\"/native_full_quality/*/*/results_native_full_tensorrt/task_quality_inputs; do "
         "  [ -d \"$qdir\" ] || continue; "
         "  mkdir -p \"$out/results_native_full_tensorrt\"; "
-        "  cp -a \"$qdir\" \"$out/results_native_full_tensorrt/\" || true; "
-        "done"
+        "  cp -a \"$qdir\" \"$out/results_native_full_tensorrt/\" || copy_failed=1; "
+        "done; exit \"$copy_failed\""
     )
 
 
@@ -8366,6 +8516,7 @@ def run_remote_benchmark(
     energy_result_payload: dict[str, Any] | None = None
     cancelled: bool = False
     results_downloaded: bool = False
+    result_collection_rc: int | None = None
     remote_resume_state_found: bool = False
     terminal_remote_storage_failure: bool = False
     pre_mutation_dispatch_failure: dict[str, Any] = {}
@@ -10866,6 +11017,7 @@ def run_remote_benchmark(
             _remote_result_collect_script(remote_results_dir=_rr, remote_suite_dir=_rs)
         )
         rc_collect, out_collect = transport.run(collect_cmd, timeout_s=collect_timeout)
+        result_collection_rc = rc_collect
         if rc_collect == TERMINAL_REMOTE_CLEANUP_RC:
             remote_rc = TERMINAL_REMOTE_CLEANUP_RC
             terminal_remote_failure = _terminal_remote_failure_payload(
@@ -10908,6 +11060,9 @@ def run_remote_benchmark(
             )
             raise _TerminalRemoteCollectionSuppressed()
         if rc_collect != 0:
+            bench_error = bench_error or (
+                f"Remote result collection failed (rc={rc_collect}); remote run retained"
+            )
             log(f"[warn] remote collect step failed (rc={rc_collect})")
             if out_collect.strip():
                 log(out_collect.strip()[-2000:])
@@ -11279,6 +11434,8 @@ def run_remote_benchmark(
     final_error: Optional[str]
     if final_status == "ok":
         final_error = None
+    elif result_collection_rc != 0:
+        final_error = bench_error or "Remote result collection failed; remote run retained"
     elif final_status == "partial" and bool(getattr(args, "resume", True)):
         base_msg = bench_error or "Run ended early"
         final_error = f"{base_msg}. Partial results were collected; rerun the remote benchmark to resume the same run."
@@ -11289,7 +11446,7 @@ def run_remote_benchmark(
     try:
         want_cleanup = bool(getattr(args, "cleanup_remote_after_download", True))
         cleanup_ok_status = (final_status == "ok") or (final_status == "partial" and bool(getattr(args, "cleanup_remote_on_partial", False)))
-        if want_cleanup and cleanup_ok_status and results_downloaded and str(remote_run_dir or "").strip():
+        if want_cleanup and cleanup_ok_status and results_downloaded and result_collection_rc == 0 and str(remote_run_dir or "").strip():
             safe_remote = str(remote_run_dir).strip()
             cleanup_script = (
                 "set -u\n"
@@ -11323,6 +11480,7 @@ def run_remote_benchmark(
                     "cleanup_remote_on_partial": bool(getattr(args, "cleanup_remote_on_partial", False)),
                     "final_status": final_status,
                     "results_downloaded": bool(results_downloaded),
+                    "result_collection_rc": result_collection_rc,
                 },
             }
             diag_dir = local_run_dir / "diagnostics"
@@ -11344,10 +11502,15 @@ def run_remote_benchmark(
                 "enabled": bool(getattr(args, "cleanup_remote_after_download", True)),
                 "attempted": False,
                 "remote_run_dir": str(remote_run_dir or ""),
-                "reason": "disabled_or_not_successful_or_no_download",
+                "reason": (
+                    "result_collection_not_successful"
+                    if result_collection_rc != 0
+                    else "disabled_or_not_successful_or_no_download"
+                ),
                 "policy": {
                     "final_status": final_status,
                     "results_downloaded": bool(results_downloaded),
+                    "result_collection_rc": result_collection_rc,
                     "cleanup_remote_after_download": bool(getattr(args, "cleanup_remote_after_download", True)),
                     "cleanup_remote_on_partial": bool(getattr(args, "cleanup_remote_on_partial", False)),
                 },

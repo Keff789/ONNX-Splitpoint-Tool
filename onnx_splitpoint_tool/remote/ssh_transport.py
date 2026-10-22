@@ -52,6 +52,17 @@ def shell_quote(s: str) -> str:
     return "'" + s.replace("'", "'\"'\"'") + "'"
 
 
+def _with_environment_exports(bash_cmd: str, env: Optional[dict]) -> str:
+    if env:
+        exports = []
+        for key, value in env.items():
+            if value is not None:
+                exports.append(f"export {key}={shell_quote(str(value))}")
+        if exports:
+            return "; ".join(exports) + "; " + bash_cmd
+    return bash_cmd
+
+
 @dataclass
 class HostConfig:
     """Serializable remote host configuration (no secrets)."""
@@ -140,14 +151,7 @@ class SSHTransport:
 
     def _ssh_cmd(self, bash_cmd: str, env: Optional[dict] = None) -> List[str]:
         # Compose env exports inside the remote bash -lc context.
-        if env:
-            exports = []
-            for k, v in env.items():
-                if v is None:
-                    continue
-                exports.append(f"export {k}={shell_quote(str(v))}")
-            if exports:
-                bash_cmd = "; ".join(exports) + "; " + bash_cmd
+        bash_cmd = _with_environment_exports(bash_cmd, env)
         return self._ssh_base() + ["bash", "-lc", shell_quote(bash_cmd)]
 
     # -------------------------
@@ -505,7 +509,9 @@ class SSHTransport:
         except RemoteProcessLeaseConfigurationError as exc:
             return 64, f"leased SSH configuration rejected: {exc}"
         remote_command = (
-            operation.wrap_remote_command(bash_cmd)
+            # The guardian starts another login shell. Restore the explicit
+            # values there too, after its startup files can change them.
+            operation.wrap_remote_command(_with_environment_exports(bash_cmd, env))
             if operation is not None
             else bash_cmd
         )
@@ -578,7 +584,7 @@ class SSHTransport:
             on_line(f"leased SSH configuration rejected: {exc}")
             return 64
         remote_command = (
-            operation.wrap_remote_command(bash_cmd)
+            operation.wrap_remote_command(_with_environment_exports(bash_cmd, env))
             if operation is not None
             else bash_cmd
         )

@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2338,
+  "file_count": 2341,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 407263,
-      "sha256": "ee71a0e7a07d2e25b00e4029b7511bebcbc93a3bc610bc9060a5c341858f9c35"
+      "size": 413843,
+      "sha256": "2151be7a6d075ecab1e7a400cb188dcda491de970646f3d9a64ca825055a08f0"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -751,8 +751,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/benchmark/remote_run.py",
-      "size": 553869,
-      "sha256": "1c69951b85b044a1ca1a9cca8d09c1ce21eaca5383418ce21ef6d7516b65e6e2"
+      "size": 562821,
+      "sha256": "7f442ec88ffe3e70be29199df29a2fc8cf0b143932bd9ea992925ec320a28dd3"
     },
     {
       "path": "onnx_splitpoint_tool/benchmark/results_bundle.py",
@@ -1581,8 +1581,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/remote/ssh_transport.py",
-      "size": 30662,
-      "sha256": "69bd0b1acb75bc1a5fb5f3fbb85a1fed0447c1d342c992d1948dcb59fa1df52f"
+      "size": 30994,
+      "sha256": "76bbcf9b178ad9eca6e40a3002bf17f06ecd66542c47fc5d643470b140304866"
     },
     {
       "path": "onnx_splitpoint_tool/remote_runtime_closure.py",
@@ -7700,6 +7700,16 @@
       "sha256": "97ddec10139200e18c2f6dee79ce585869078b939862d9db99a37f3715204657"
     },
     {
+      "path": "tests/test_remote_result_collection_retention.py",
+      "size": 11875,
+      "sha256": "9073546e5c14b7977a471928d421a750d04493f0c3a841635274db9ef449d2a6"
+    },
+    {
+      "path": "tests/test_remote_trt_cache_probe_batching.py",
+      "size": 15601,
+      "sha256": "fe824ead7ccc12900d96c5314f7116b81007b8f3629d8079975f8986c499b29c"
+    },
+    {
       "path": "tests/test_resource_recovery_observation.py",
       "size": 11836,
       "sha256": "b6bdd34e03d1ac536971f1614396d19b5cd16f1b81548c93e905804381580ef8"
@@ -7768,6 +7778,11 @@
       "path": "tests/test_scientific_reporting_v60.py",
       "size": 22175,
       "sha256": "29e2e863f6bbe95adb5290227a835677bd4d0818dbcf4144dff114a887568277"
+    },
+    {
+      "path": "tests/test_ssh_transport_leased_environment.py",
+      "size": 7214,
+      "sha256": "87e50c4cf4accaf93c6955b64e35183e2341c659f7ab5aec1af77c9f9ed65922"
     },
     {
       "path": "tests/test_thesis20_cross_runner_limits.py",

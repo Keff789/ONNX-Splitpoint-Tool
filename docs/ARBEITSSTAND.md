@@ -1,3 +1,74 @@
+## 22.10.2026 — Controllerkorrekturen für Umgebung, Ergebnisaufbewahrung und Cacheproben
+
+Die implementierten Controllerkorrekturen setzen ausdrücklich deklarierte
+Umgebungswerte bei geleasten SSH-Aufrufen zusätzlich im eigentlichen Payload
+nach dem Start seiner Login-Shell. Die äußere Launcherumgebung bleibt
+erhalten. Der normale Runtime-Identitätsvergleich bleibt unverändert aktiv;
+Aufruferbefehle, Dispatchhistorien, Wiederaufnahmebudgets und das
+Lease-/Bereinigungsprotokoll bleiben erhalten. Die lokale Reproduktion mit
+normalem Launcher und Guardian scheiterte zuvor in beiden geleasten Pfaden
+an einer durch Shell-Startdateien veränderten Umgebung. Zehn gezielte
+Umgebungsprüfungen und 27 bestehende Lease-/Fallbudgetregressionen bestanden
+nach der separat unabhängig geprüften Korrektur.
+
+Die zweite Korrektur schützt den gesamten Remote-Laufordner vor Löschung,
+wenn die Ergebnissammlung fehlschlägt oder ihr Erfolg nicht aufgezeichnet
+wurde. Ein später erfolgreicher Download und die ausdrückliche Erlaubnis
+zur Bereinigung von Teilergebnissen heben diese Sperre nicht auf. Echte
+Kopierfehler werden gesammelt und abschließend gemeldet; spätere Kopien
+laufen weiter und fehlende optionale Quellen bleiben erlaubt. Ursprüngliche
+Inferenz-Returncodes und frühere Hauptfehler bleiben erhalten. Vollständige
+Collection mit Paket-Timeout und erfolgreichem rekursivem Download behält
+den normalen Pfad. Die separat geprüfte Korrektur bestand 38 gezielte
+Controller-/Transportregressionen; die ursprünglichen Fehlerreproduktionen
+bleiben erhalten.
+
+Die dritte Korrektur begrenzt das tatsächlich SSH-gequotete Argument großer
+normaler TensorRT-Cacheproben einschließlich NUL auf 120 KiB. Disjunkte
+Batches behalten die vollständigen unveränderten Validator-, Quellen-,
+Owner- und ABI-Verträge und teilen das ursprüngliche einmalige
+Verifierbudget. Kleine Befehle bleiben bytegleich. Nach einem Transport-
+oder Antwortfehler startet kein weiterer Batch; vorherige gültige Ergebnisse
+bleiben erhalten und übrige Anforderungen werden ausdrücklich als nicht
+ausgeführtes UNKNOWN gemeldet. Rein lokale Größenfehler und normale
+MISS-/UNKNOWN-Prüfantworten erlauben weiterhin unabhängige Anforderungen.
+
+Die genannten Prüfzahlen stammen aus den getrennten Prüfständen. Die drei
+unabhängig geprüften Änderungen sind hier gemeinsam integriert. Die gezielte
+gemeinsame Regression bestand alle 121 Tests in 15,95 Sekunden, ohne
+übersprungene oder fehlgeschlagene Tests. Der normale Produktwriter erzeugt
+weiterhin genau dieselben 42 Bundle-Dateien einschließlich 37 Python-Dateien.
+Es gibt keine Änderung der numerischen Runtime,
+wissenschaftlichen Qualitätsentscheidungen, Dateiauswahl oder Zeitbudgets.
+Collection-Erfolg bescheinigt erfolgreiche Kopierversuche und keine
+wissenschaftliche N5000-Vollständigkeit.
+
+Auslöser waren tatsächliche lokale Startfehler der H10-/DeepX-Preflightaufrufe
+mit Controller 417ac3a. Deren gebundene Argumentgrößen reproduzierten lokal
+`E2BIG`; der ursprüngliche Fehlercode wurde nicht persistiert und wird nicht
+als unmittelbar gespeicherte Beobachtung ausgegeben. Dieser gemeinsame
+Blocker ersetzte die frühere Planung, zunächst alle 177 Qualitätsfälle mit
+417ac3a auszuführen. Die ursprünglichen Läufe und ihre Quellenbindungen
+bleiben unverändert.
+
+Die Übernahme der Controllerkorrekturen und der neue Quellen-Freeze setzen
+die vollständige normale Finalisierung der drei begonnenen Abläufe voraus,
+einschließlich zentraler Auswertung, Bereinigung und Freigabe ihrer eigenen
+Prozesse und Leases. Ein noch laufender H8-Pilot wird dafür nicht unterbrochen;
+größere Folgegruppen bleiben bis zu dieser Freigabe angehalten. Die neue
+Controllerfassung ist lokal softwaregeprüft. Ihre tatsächliche normale
+Hardwareprüfung steht noch aus; die bisherigen Ergebnisse sind kein
+Hardware-PASS dieser Fassung.
+
+Die 29 betroffenen H10-/DeepX-Fälle ohne Capture benötigen später ausdrücklich
+neue Versuche mit dem neuen Controller-Freeze. Alte Startmarker, Budgets,
+Fehlversuche und Freezes werden nicht verändert. Vorhandene Runtime- und
+Konfigurationsbytes bleiben gebunden; neue Profil-, Action- und
+Controllerindexversionen müssen ihre tatsächliche Herkunft belegen.
+Historische abgeschlossene Qualitätscaptures werden nicht wiederholt.
+Die beschriebenen Softwareprüfungen verwendeten keine Verbindungen zu
+Beschleunigersystemen, keine Hardwareinferenz und keine Builds.
+
 ## 21.10.2026 — Parallele physische Setup-Warteschlangen für Generic-only
 
 Der ausdrücklich angeforderte Einstieg `--execute-batch` verteilt vorbereitete
@@ -3386,3 +3457,10 @@ Der begrenzte Kompatibilitätspfad prüft den vorhandenen Scope und die ursprün
 ### 2026-10-21: Generic-only übernimmt reguläre CPU-Referenz-Cachetreffer
 
 Die Generic-only-Zulassung akzeptiert neben `completed` den normalen erfolgreichen CPU-Referenzstatus `cache_hit`. Provider, ausschließlich semantische Referenzverwendung, tatsächliche Artefaktbytes und Deskriptoren sowie der vollständige Quality-/Completion-/Dataset-Vertrag werden unverändert geprüft. Ursprüngliche Ergebnisse und Qualitätsurteile werden nicht umgeschrieben. Dies ist eine Controllerkorrektur ohne Änderung der Runtime oder Messarithmetik; sie behauptet keinen neuen Hardware- oder FPS-PASS. Prüfbelege liegen unter `/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/reviews/actual_b039_quality_independent/`.
+
+
+### 2026-10-22: Große reguläre TensorRT-Cacheproben begrenzen
+
+Die normalen H10-/DeepX-Quality-Vorbereitungen überschritten trotz bestehender Kompression lokal das Linux-Einzelargumentlimit (133.533 beziehungsweise 140.745 UTF-8-Bytes). Die unveränderte Read-only-Prüfung wird bei Bedarf deterministisch auf disjunkte Anforderungsbatches verteilt. Jeder Batch enthält die vollständigen Validator-, Owner-, ABI-, Quellen- und Rezeptmetadaten; das tatsächlich SSH-gequotete Argument einschließlich NUL bleibt bei höchstens 120 KiB. Kleine Proben behalten ihre bisherigen Befehlsbytes. Eine zu große Einzelanforderung bleibt ausdrücklich UNKNOWN, während passende unabhängige Anforderungen weiter geprüft werden. Antworten werden vollständig und eindeutig an Modell, Setup, Rolle und Item gebunden; Reihenfolge sowie HIT/MISS/UNKNOWN bleiben erhalten.
+
+Alle Verifier-Batches teilen das bisherige einmalige Timeoutbudget nach der lokalen Vorbereitung. Pfadauflösung und ABI-Probe behalten ihre eigenen bisherigen Budgets; es gibt keine automatische Wiederholung. Nach einem Transport- oder Antwortfehler startet kein weiterer Read-only-Batch auf diesem Gerät, weil lokales SSH-Ende kein Remote-Ende beweist. Bereits geprüfte Ergebnisse bleiben erhalten; übrige Anforderungen werden mit ihrer Quelle ausdrücklich als nicht ausgeführtes UNKNOWN gemeldet. Erfolgreiche Prüfantworten mit normalen MISS-/UNKNOWN-Zeilen und rein lokale Größenfehler erlauben weiterhin unabhängige Anforderungen. Lokale Produktfixtures prüfen die unveränderten Receipt-/Owner-/Byteprüfungen sowie Teilfehler und Budgetverbrauch. Die tatsächlichen alten H10-/DeepX-Payloads werden ausschließlich offline dekodiert und auf zwei sichere Batches aufgeteilt; kein Remoteprogramm wird dabei ausgeführt. Die 42 Bundle-Dateien einschließlich 37 Python-Runtimequellen bleiben bytegleich zu freeze420_v2. Dies ist eine isolierte Softwarekorrektur, kein Hardware-, Quality- oder FPS-PASS. Belege: /home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/reviews/readonly_trt_cache_batching_v1/.
