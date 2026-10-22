@@ -3250,6 +3250,11 @@
         "note": {
           "type": "string"
         },
+        "benchmark_set_dir": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Existing generated BenchmarkSet directory to import through normal scope, source and runtime validation."
+        },
         "onnx": {
           "type": "string"
         },

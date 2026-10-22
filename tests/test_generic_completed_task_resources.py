@@ -151,6 +151,75 @@ def test_normal_two_setup_quality_and_same_dut_cpu_finalizer_emit_public_owner_r
     assert result["controller"]["exclusive_start_permission"] is False
 
 
+def test_public_owner_probe_accepts_live_scheduler_state_changes(workflow, tmp_path, monkeypatch):
+    _, observed = workflow()
+    pid = observed["processes"][0]["pid"]
+    original = Path.read_text
+    states = []
+
+    def changing_state(path, *args, **kwargs):
+        text = original(path, *args, **kwargs)
+        if str(path) == f"/proc/{pid}/stat":
+            prefix, values = text.rsplit(") ", 1)
+            fields = values.split()
+            state = ("S", "R", "D")[min(len(states), 2)]
+            states.append(state)
+            fields[0] = state
+            return prefix + ") " + " ".join(fields)
+        return text
+
+    monkeypatch.setattr(Path, "read_text", changing_state)
+    monkeypatch.setattr(entry, "_observe_processes", lambda _: observed)
+
+    class Transport:
+        def run_read_only(self, *args, **kwargs):
+            return 0, "OWNERS=" + json.dumps(idle())
+
+    monkeypatch.setattr(entry, "transport_for", lambda *_: Transport())
+    output = tmp_path / "scheduler-states"
+    result = entry.observe_owners({"fps": target()}, output, resource_scoped=True)
+    assert states[:3] == ["S", "R", "D"]
+    assert result["ok"] and result["controller"]["scope_errors"] == []
+    assert json.loads((output / "owners.json").read_text()) == result
+
+
+@pytest.mark.parametrize("fault,offset", [("start_ticks", 19), ("ppid", 1), ("pgid", 2), ("zombie", 0)])
+def test_public_owner_probe_rejects_changed_stable_identity_or_zombie(
+        workflow, tmp_path, monkeypatch, fault, offset):
+    _, observed = workflow()
+    pid = observed["processes"][0]["pid"]
+    original = Path.read_text
+    reads = []
+
+    def changing_identity(path, *args, **kwargs):
+        text = original(path, *args, **kwargs)
+        if str(path) == f"/proc/{pid}/stat":
+            prefix, values = text.rsplit(") ", 1)
+            fields = values.split()
+            fields[0] = "S"
+            reads.append(fields[offset])
+            if len(reads) > 1:
+                fields[offset] = "Z" if fault == "zombie" else str(int(fields[offset]) + 1)
+            return prefix + ") " + " ".join(fields)
+        return text
+
+    monkeypatch.setattr(Path, "read_text", changing_identity)
+    monkeypatch.setattr(entry, "_observe_processes", lambda _: observed)
+    monkeypatch.setattr(entry, "transport_for", lambda *_: pytest.fail("changed identity must block before SSH"))
+    output = tmp_path / ("changed-" + fault)
+    with pytest.raises(RuntimeError, match="controller"):
+        entry.observe_owners({"fps": target()}, output, resource_scoped=True)
+    receipt = json.loads((output / "owners.json").read_text())
+    errors = receipt["controller"]["scope_errors"]
+    assert not receipt["ok"] and len(errors) == 1
+    assert errors[0].startswith("owner_identity_changed")
+    if fault != "zombie":
+        details = json.loads(errors[0].split(": ", 1)[1])
+        assert details["pid"] == pid
+        assert details["changed"] == {fault: {"expected": int(reads[0]) if fault != "start_ticks" else reads[0],
+            "actual": int(reads[0]) + 1 if fault != "start_ticks" else str(int(reads[0]) + 1)}}
+
+
 @pytest.mark.parametrize("fault", ["root_stages_list", "root_entry_list", "model_stages_list", "model_entry_list"])
 def test_malformed_normal_progress_containers_fail_closed(workflow, fault):
     run, observed = workflow(host="192.0.2.8", central=True)

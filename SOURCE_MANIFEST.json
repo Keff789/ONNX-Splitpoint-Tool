@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2355,
+  "file_count": 2356,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 424472,
-      "sha256": "80bee7e392d898559e8f44cc4a2ba8c53782f048db77a768d03bbca9a0318208"
+      "size": 430897,
+      "sha256": "ea1a09b854338eace351f2e9171f1e884f09348b24ed50ce79fac91303dc526a"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -996,8 +996,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/generic_only_plan.py",
-      "size": 29165,
-      "sha256": "2ff97c788530ec637b0e0fcd56ed2320c7028d7886b269b0de686a7c64b49653"
+      "size": 34091,
+      "sha256": "f2162dd012cc6f5c71a40bf25c37ccc458876e42d8c72d8a677f2b9e9f0b690a"
     },
     {
       "path": "onnx_splitpoint_tool/generic_only_reporting.py",
@@ -2051,8 +2051,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/resources/schemas/evaluation_profile.schema.json",
-      "size": 100516,
-      "sha256": "6a674f9c4dedbfbe83c430c18f93cab8f756d8c78f42d0a592f841567d70857d"
+      "size": 100744,
+      "sha256": "298609759e3b89d935d86b64e8a58720fe320a2a5bb88402768fa9a94c4f1af5"
     },
     {
       "path": "onnx_splitpoint_tool/resources/schemas/split_manifest.schema.json",
@@ -3116,13 +3116,13 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generator_binding.py",
-      "size": 52371,
-      "sha256": "b0c3eff3a95eba8152358f8deda4ee9f536623b81a06e0fe8e97d091e3b69d5b"
+      "size": 57568,
+      "sha256": "f81f273617c31a714370a493642de88088b86dbe3551139e8dbc483a40df04d1"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_completed_task.py",
-      "size": 139856,
-      "sha256": "22229863955c888ca49179a7b9c8a30e7978b71a531d4baafd264028adc3182d"
+      "size": 140986,
+      "sha256": "7d11e933de1f3021079a5a93acdcfa0a3c6eb95279c152c7adcbb902eb073344"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_energy_parent.py",
@@ -7291,8 +7291,8 @@
     },
     {
       "path": "tests/test_generic_completed_task_resources.py",
-      "size": 14351,
-      "sha256": "37eaa566f78476a97abcaceb06804b54faecf248f74a349cd5a467ca9b8ff3d2"
+      "size": 17453,
+      "sha256": "0c33bf1d74c5ec41218b690404d112fed7b7353590546d0bcd1faf8ef6d67d2f"
     },
     {
       "path": "tests/test_generic_completion_dispatch.py",
@@ -7451,8 +7451,8 @@
     },
     {
       "path": "tests/test_generic_only_plan.py",
-      "size": 31859,
-      "sha256": "1e253d36bb09411bc4969165af470e4385a58e278cf3010011846a2fe2efb8cd"
+      "size": 40787,
+      "sha256": "108d329663debb6723597dd45c69734fa7374ebe85ae78855b128e37418a6714"
     },
     {
       "path": "tests/test_generic_only_runtime.py",
@@ -7548,6 +7548,11 @@
       "path": "tests/test_generic_quality_source_guards_independent.py",
       "size": 7151,
       "sha256": "933d693a61af11a12892721557dd5fae5dd76c07b29fcc20ffbce898ca06d4b8"
+    },
+    {
+      "path": "tests/test_generic_quality_suite_import.py",
+      "size": 9471,
+      "sha256": "8b2a85b158c4a41dcc09550c90aa7c39b8b7df4a48c578c7c189cdd703423dc2"
     },
     {
       "path": "tests/test_generic_split_manifest.py",

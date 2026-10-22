@@ -10,6 +10,9 @@ import copy
 import csv
 import hashlib
 import json
+import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from typing import Mapping
@@ -27,13 +30,81 @@ FORBIDDEN_NATIVE = (
     "native_command_contract_sha256", "native_quality_binding_sha256",
 )
 
+_VALIDATION_SCOPE = ContextVar("generic_only_validation_scope", default=None)
 
-def file_sha256(path):
+
+def _file_version(path):
+    def fields(value):
+        return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+    return fields(path.lstat()), fields(path.stat())
+
+
+class _ValidationScope:
+    """Operation-local digests and small proofs, never prediction/report data."""
+    def __init__(self):
+        self.sources = {}
+        self.proofs = {}
+
+    def unchanged(self):
+        for path, (version, _) in self.sources.items():
+            if _file_version(path) != version:
+                raise ValueError("Generic-only source changed during validation: " + str(path))
+
+    def digest(self, path):
+        path = Path(os.path.abspath(path))
+        version = _file_version(path)
+        previous = self.sources.get(path)
+        if previous is not None:
+            if previous[0] != version:
+                raise ValueError("Generic-only source changed during validation: " + str(path))
+            return previous[1]
+        # A full 420-row operation fits comfortably; never grow with report size.
+        if len(self.sources) >= 16384:
+            raise ValueError("Generic-only validation source bound exceeded")
+        digest = _file_sha256(path)
+        if _file_version(path) != version:
+            raise ValueError("Generic-only source changed while being read: " + str(path))
+        self.sources[path] = (version, digest)
+        return digest
+
+    def finish(self):
+        self.unchanged()
+        for path, (version, digest) in self.sources.items():
+            if _file_sha256(path) != digest or _file_version(path) != version:
+                raise ValueError("Generic-only source changed during validation: " + str(path))
+
+
+@contextmanager
+def validation_scope():
+    """Reuse validation only within one operation, fully rechecking at its end.
+
+    Preparation callers can nest this around their existing normal operations.
+    No cache survives the outermost operation and no large JSON is retained here.
+    """
+    existing = _VALIDATION_SCOPE.get()
+    if existing is not None:
+        yield existing
+        return
+    scope = _ValidationScope()
+    token = _VALIDATION_SCOPE.set(scope)
+    try:
+        yield scope
+        scope.finish()
+    finally:
+        _VALIDATION_SCOPE.reset(token)
+
+
+def _file_sha256(path):
     digest = hashlib.sha256()
     with Path(path).open("rb") as stream:
         for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def file_sha256(path):
+    scope = _VALIDATION_SCOPE.get()
+    return scope.digest(path) if scope is not None else _file_sha256(path)
 
 
 def read_bound(descriptor):
@@ -48,15 +119,12 @@ def read_bound(descriptor):
 
 
 @lru_cache(maxsize=4)
-def _json_at_version(path, size, modified_ns, digest):
+def _json_at_version(path, version, digest):
     # In-memory parsing reuse only: large ordinary Central Quality summaries
     # contain many cases. Any file version change causes a fresh hash/read.
     source = Path(path)
-    if file_sha256(source) != digest:
-        raise ValueError("Generic-only JSON source changed: " + path)
     value = json.loads(source.read_text(encoding="utf-8"))
-    stat = source.stat()
-    if (stat.st_size, stat.st_mtime_ns) != (size, modified_ns):
+    if _file_version(source) != version:
         raise ValueError("Generic-only JSON source changed while being read")
     return value
 
@@ -67,8 +135,13 @@ def _json(descriptor):
     path = Path(str(descriptor.get("local_path") or descriptor.get("path") or ""))
     if not path.is_absolute() or ".." in path.parts or not path.is_file():
         raise ValueError("Generic-only JSON source missing or escaped")
-    stat = path.stat()
-    value = _json_at_version(str(path), stat.st_size, stat.st_mtime_ns, descriptor.get("sha256"))
+    # Always register/check the source, including an existing parsed-JSON hit.
+    version = _file_version(path)
+    if file_sha256(path) != descriptor.get("sha256") or _file_version(path) != version:
+        raise ValueError("Generic-only JSON source changed: " + str(path))
+    value = _json_at_version(str(path), version, descriptor.get("sha256"))
+    if _file_version(path) != version:
+        raise ValueError("Generic-only JSON source changed while being read")
     selector = descriptor.get("selector")
     if selector is not None:
         if not isinstance(selector, Mapping) or not selector:
@@ -111,6 +184,25 @@ def validate_quality_input_binding(row, proof):
 
 
 def validate_quality_reference(row):
+    """Reuse only a small successful proof inside a fully verified operation."""
+    with validation_scope() as scope:
+        if row.get("task") == "classification":
+            return _validate_quality_reference(row)
+        fields = ("task", "identity", "quality_reference", "completion_contract", "input_binding",
+                  "generic_artifact_binding", "boundary_observation", "canonical_full_input_bindings")
+        key = hashlib.sha256(json.dumps({key: row.get(key) for key in fields},
+            sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+        scope.unchanged()
+        if key in scope.proofs:
+            return copy.deepcopy(scope.proofs[key])
+        proof = _validate_quality_reference(row)
+        scope.unchanged()
+        if len(scope.proofs) < 16 and len(json.dumps(proof)) <= 65536:
+            scope.proofs[key] = copy.deepcopy(proof)
+        return proof
+
+
+def _validate_quality_reference(row):
     """Use the ordinary portable quality loader; do not rerun its bootstrap."""
     if row.get("task") == "classification":
         from .generic_only_classification_quality import validate_classification_quality_reference
@@ -128,6 +220,24 @@ def validate_quality_reference(row):
     policy_document = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
     policy = policy_document.get("quality_gate", policy_document)
     request = json.loads(request_path.read_text(encoding="utf-8"))
+    # These files are read by the normal validators below through their own
+    # readers. Bind their versions too before allowing an operation-local hit.
+    from .runners import generic_quality_completion as completion_validator
+    candidate = request.get("candidate") or {}
+    relative = Path(str(candidate.get("path") or ""))
+    candidate_path = (request_path.parent / relative).resolve()
+    if (not relative.parts or relative.is_absolute()
+            or not candidate_path.is_relative_to(request_path.parent.resolve())):
+        raise ValueError("Generic-only candidate path escapes its request")
+    read_bound({**candidate, "path": str(candidate_path), "local_path": str(candidate_path)})
+    modules = [completion_validator, completion_validator._product(), completion_validator._three_stage(),
+               completion_validator._product()._yolo_module, completion_validator._endpoint]
+    if (request.get("generic_completed_quality") or {}).get("existing_part2_bridge"):
+        modules.append(completion_validator._bridge_validator())
+    for module in modules:
+        file_sha256(module.__file__)
+    for binding in row.get("canonical_full_input_bindings") or []:
+        read_bound(binding.get("source_image"))
     if (result.get("schema") != "onnx-splitpoint/management-paired-quality-result"
             or result.get("status") != "completed" or result.get("technical_status") != "completed"
             or result.get("task") != "detection" or result.get("variant") != "composed"

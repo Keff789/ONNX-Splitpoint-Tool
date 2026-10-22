@@ -15,6 +15,7 @@ candidate plan instead of silently trusting the old Benchmark tab state.
 
 import json
 import os
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -318,9 +319,68 @@ def import_existing_suite(
     profile_payload: Optional[Mapping[str, Any]] = None,
     log: Optional[Callable[[str], None]] = None,
 ) -> Optional[BoundGeneratorResult]:
+    profile = dict(profile_payload or {})
+    declared_runs = list(enabled_run_profiles(profile.get("run_profiles") or []))
+    generic_import = any(
+        "generic_quality_completion_configs" in run for run in declared_runs
+    )
     existing = resolve_existing_suite(row)
     if existing is None:
+        if generic_import and any(row.get(key) for key in (
+            "benchmark_set_dir", "benchmark_suite_dir", "suite_dir",
+            "generated_suite_dir", "benchmarkset_dir", "benchmark_set",
+        )):
+            raise ValueError("generic_quality_suite_import_source_missing")
         return None
+    if generic_import:
+        # Import the complete scientific catalogue, then project only the
+        # current explicitly authorized runtime work. Never turn a source-only
+        # import into partial acceptance or silently keep an old run's scope.
+        if (run_dir.name != run_id
+                or candidate_plan.get("model_id", model_id) != model_id):
+            raise ValueError("generic_quality_suite_import_current_run_binding_invalid")
+        source_set = _read_json(existing / "benchmark_set.json")
+        if (not isinstance(source_set, Mapping)
+                or source_set.get("model_id", model_id) != model_id):
+            raise ValueError("generic_quality_suite_import_source_model_invalid")
+
+        def identities(cases):
+            if not isinstance(cases, list) or not cases:
+                raise ValueError("generic_quality_suite_import_catalogue_invalid")
+            result = []
+            for index, case in enumerate(cases, 1):
+                if not isinstance(case, Mapping):
+                    raise ValueError("generic_quality_suite_import_catalogue_invalid")
+                boundary = _safe_int(case.get("split_index") or case.get("boundary")
+                                     or case.get("boundary_index"))
+                identity = (_case_id_for(case, index), boundary)
+                if (boundary is None or identity in result
+                        or re.fullmatch(r"b[0-9]+", identity[0]) is None):
+                    raise ValueError("generic_quality_suite_import_catalogue_invalid")
+                result.append(identity)
+            return result
+
+        source_cases = identities(source_set.get("cases"))
+        current_cases = identities(candidate_plan.get("selected_candidates"))
+        if source_cases != current_cases:
+            raise ValueError("generic_quality_suite_import_scientific_scope_changed")
+        catalogue = {case for case, _boundary in source_cases}
+        for run in declared_runs:
+            if run.get("semantic_reference_only") is True:
+                continue
+            cases = run.get("case_ids")
+            configs = run.get("generic_quality_completion_configs")
+            hashes = run.get("generic_quality_completion_config_sha256")
+            sources = run.get("generic_quality_completion_sources")
+            if (run.get("quality_source_only") is not True
+                    or run.get("variants") != ["composed"]
+                    or not isinstance(cases, list) or not cases
+                    or len(cases) != len(set(cases))
+                    or not set(cases) <= catalogue
+                    or not all(isinstance(value, Mapping)
+                               and set(value) == set(cases)
+                               for value in (configs, hashes, sources))):
+                raise ValueError("generic_quality_suite_import_runtime_scope_invalid")
     dst = model_dir / "benchmark_set" / "legacy_suite"
     stale_direct = model_dir / "benchmark_set" / "generated_suite"
     if stale_direct.exists() and stale_direct.is_dir():
@@ -328,6 +388,18 @@ def import_existing_suite(
     if dst.exists() and dst.is_dir():
         shutil.rmtree(dst)
     shutil.copytree(existing, dst)
+    if generic_import:
+        # Reuse exported models/artifacts, but emit the ordinary current
+        # runtime in this new target. Old suites can predate the exact Generic
+        # completion protocol declared by the current source-bound configs.
+        from ..gui.controller import _copy_runner_lib, write_benchmark_suite_script
+        from ..split_export_runners import write_runner_skeleton_onnxruntime
+
+        _copy_runner_lib(dst)
+        for case_id in sorted({case for run in declared_runs
+                               for case in run.get("case_ids", [])}):
+            write_runner_skeleton_onnxruntime(str(dst / case_id))
+        write_benchmark_suite_script(dst, bench_json_name="benchmark_set.json")
 
     plan_boundaries = _candidate_boundaries(candidate_plan)
     suite_ids, suite_boundaries = _suite_candidate_ids(dst / "benchmark_set.json")
@@ -436,6 +508,20 @@ def import_existing_suite(
         "materialization_scope": "imported_existing_suite",
         "source_of_truth": "existing_benchmarkset_pipeline",
     })
+    if generic_import:
+        # The executable plan must not retain the imported suite's old run ID,
+        # setup matrix, CPU-reference target or Generic completion bindings.
+        # Retain all original case artifacts; ordinary sidecar/source/reference
+        # admission below runtime preparation still validates their exact bytes.
+        write_json(dst / "benchmark_plan.json", _read_json(p_plan_import))
+        suite_contract = dict(source_set)
+        suite_contract.update(model_id=model_id, profile_id=profile_id,
+                              run_id=run_id, planned_runs=planned_runs)
+        if "runs" in suite_contract:
+            suite_contract["runs"] = planned_runs
+        if isinstance(suite_contract.get("plan"), Mapping):
+            suite_contract["plan"] = _read_json(p_plan_import)
+        write_json(dst / "benchmark_set.json", suite_contract)
     cpu_invariant = finalize_management_cpu_reference_plan_aliases(
         executable_plan_path=dst / "benchmark_plan.json",
         formal_plan_path=p_plan_import,
@@ -762,6 +848,9 @@ def _logical_profile_or_target_runs(
                     "stage1_token": _stage_token_for_target(left),
                     "stage2_token": _stage_token_for_target(right),
                 })
+                if (raw.get("quality_source_only") is True
+                        and "generic_quality_completion_configs" in raw):
+                    row["variants"] = list(raw.get("variants") or [])
             else:
                 backend = full or stage1 or stage2
                 row.update({

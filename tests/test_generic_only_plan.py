@@ -2,6 +2,7 @@
 import copy
 import csv
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -210,7 +211,9 @@ def quality_fixture(tmp_path, monkeypatch, status="accuracy_loss"):
         "statistics": {"bootstrap_repetitions": 1000, "method": "paired_bootstrap", "confidence_level": .95,
                        "seed": 20260710, "decision": "lower_one_sided_bound"}}
     gate = {**policy["detection"], "reporting_policy": policy["reporting_policy"]}
+    candidate = document(tmp_path / "candidate.json", {"records": []})
     req = {"model_id": "yolo26s", "case_id": "b039", "setup_id": "h10", "metric_gate_config": gate,
+        "candidate": {"path": "candidate.json", "sha256": candidate["sha256"]},
         "statistics": policy["statistics"], **{key: "a" * 64 for key in (
         "policy_sha256", "quality_contract_sha256", "endpoint_contract_hash",
         "candidate_execution_completion_contract_sha256", "producer_identity_sha256")}}
@@ -295,6 +298,193 @@ def test_quality_can_select_only_one_original_completed_summary_record(tmp_path)
         admission._json(source)
 
 
+def test_validation_scope_hashes_once_then_fully_rechecks_and_does_not_escape(tmp_path, monkeypatch):
+    source = document(tmp_path / "source.json", {"value": 1})
+    original = admission._file_sha256
+    calls = []
+    def counted(path):
+        calls.append(str(path))
+        return original(path)
+    monkeypatch.setattr(admission, "_file_sha256", counted)
+    with admission.validation_scope():
+        for _ in range(5):
+            admission.read_bound(source)
+        with admission.validation_scope():
+            admission.read_bound(source)
+        assert len(calls) == 1
+    assert len(calls) == 2
+    admission.read_bound(source)
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize("fault", ["content", "same_size_mtime", "replace_inode", "expected_digest"])
+def test_validation_scope_never_reuses_changed_authority(tmp_path, fault):
+    source = document(tmp_path / "source.json", {"value": 1})
+    path = tmp_path / "source.json"
+    before = path.stat()
+    with pytest.raises(ValueError, match="changed"):
+        with admission.validation_scope():
+            admission.read_bound(source)
+            if fault == "expected_digest":
+                source["sha256"] = "f" * 64
+            elif fault == "replace_inode":
+                replacement = tmp_path / "replacement.json"
+                replacement.write_bytes(path.read_bytes())
+                os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+                replacement.replace(path)
+            else:
+                path.write_bytes(path.read_bytes().replace(b"1", b"2"))
+                if fault == "same_size_mtime":
+                    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+            admission.read_bound(source)
+
+
+def test_validation_scope_checks_changes_even_after_last_consumer(tmp_path):
+    source = document(tmp_path / "source.json", {"value": 1})
+    with pytest.raises(ValueError, match="changed"):
+        with admission.validation_scope():
+            admission.read_bound(source)
+            (tmp_path / "source.json").write_text('{"value": 2}')
+
+
+def test_validation_scope_final_hash_is_not_replaced_by_metadata_check(tmp_path, monkeypatch):
+    source = document(tmp_path / "source.json", {"value": 1})
+    version = admission._file_version(tmp_path / "source.json")
+    monkeypatch.setattr(admission, "_file_version", lambda _: version)
+    with pytest.raises(ValueError, match="changed"):
+        with admission.validation_scope():
+            admission.read_bound(source)
+            (tmp_path / "source.json").write_text('{"value": 2}')
+
+
+@pytest.mark.parametrize("change_after_last_read", [False, True])
+def test_normal_preparation_uses_one_scope_and_cannot_return_changed_source(
+        tmp_path, monkeypatch, change_after_last_read):
+    source = document(tmp_path / "source.json", {"value": 1})
+    calls = []
+    original = admission._file_sha256
+    def counted(path):
+        calls.append(str(path))
+        return original(path)
+    def preparation(*args, **kwargs):
+        for _ in range(4):
+            admission.read_bound(source)
+        if change_after_last_read:
+            (tmp_path / "source.json").write_text('{"value": 2}')
+        return tmp_path / "execution-plan.json"
+    monkeypatch.setattr(admission, "_file_sha256", counted)
+    monkeypatch.setattr(completed, "_prepare_execution", preparation)
+    if change_after_last_read:
+        with pytest.raises(ValueError, match="changed"):
+            completed.prepare_execution(tmp_path / "scope.json", tmp_path / "output")
+    else:
+        assert completed.prepare_execution(tmp_path / "scope.json", tmp_path / "output") == tmp_path / "execution-plan.json"
+        assert len(calls) == 2
+
+
+def test_json_version_detects_replacement_with_preserved_size_and_mtime(tmp_path):
+    source = document(tmp_path / "source.json", {"value": 1})
+    assert admission._json(source) == {"value": 1}
+    path = tmp_path / "source.json"
+    before = path.stat()
+    replacement = tmp_path / "replacement.json"
+    replacement.write_bytes(path.read_bytes().replace(b"1", b"2"))
+    os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+    replacement.replace(path)
+    with pytest.raises(ValueError, match="changed"):
+        admission._json(source)
+
+
+def test_quality_scope_reuses_small_proof_and_preserves_fail(tmp_path, monkeypatch):
+    row, _ = quality_fixture(tmp_path, monkeypatch, "accuracy_loss")
+    original = admission._validate_quality_reference
+    calls = []
+    def counted(value):
+        calls.append(value)
+        return original(value)
+    monkeypatch.setattr(admission, "_validate_quality_reference", counted)
+    with admission.validation_scope():
+        first = admission.validate_quality_reference(row)
+        first["status"] = "reference_close"
+        second = admission.validate_quality_reference(row)
+        assert second["status"] == "accuracy_loss"
+        assert second["quality_eligible"] is False
+        assert len(calls) == 1
+    admission.validate_quality_reference(row)
+    assert len(calls) == 2
+
+
+def test_quality_scope_does_not_reuse_changed_scientific_row(tmp_path, monkeypatch):
+    row, _ = quality_fixture(tmp_path, monkeypatch)
+    with admission.validation_scope():
+        admission.validate_quality_reference(row)
+        row["identity"]["precision"] = "other_precision"
+        with pytest.raises(ValueError, match="precision"):
+            admission.validate_quality_reference(row)
+
+
+def test_quality_scope_tracks_candidate_even_when_normal_loader_is_separately_tested(tmp_path, monkeypatch):
+    row, _ = quality_fixture(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="changed"):
+        with admission.validation_scope():
+            admission.validate_quality_reference(row)
+            (tmp_path / "candidate.json").write_text('{"records": [1]}')
+            admission.validate_quality_reference(row)
+
+
+@pytest.mark.parametrize("change_after_terminal", [False, True])
+def test_public_generic_execution_reuses_quality_without_binding_mutable_outputs(
+        tmp_path, monkeypatch, change_after_terminal):
+    row, _ = quality_fixture(tmp_path, monkeypatch, "accuracy_loss")
+    plan_path = tmp_path / "execution-plan.json"
+    document(plan_path, {"scope_mode": admission.MODE})
+    original = admission._validate_quality_reference
+    validations, guards = [], []
+    def validate(value):
+        validations.append(value)
+        return original(value)
+    source_guard = lambda: guards.append("checked")
+    def execute(path, plan, **kwargs):
+        assert kwargs["_source_guard"] is source_guard
+        for phase in ("start", "report", "terminal"):
+            kwargs["_source_guard"]()
+            proof = admission.validate_quality_reference(row)
+            assert proof["status"] == "accuracy_loss"
+            # Normal execution changes these files; they are not authorities
+            # read through admission.read_bound and must not enter its cache.
+            plan["phase"] = phase
+            completed.write_json(path, plan)
+            completed.write_json(tmp_path / "dispatch_attempts.json", {"phase": phase})
+        completed.write_json(tmp_path / "terminal-status.json", {"exitcode": 0})
+        if change_after_terminal:
+            (tmp_path / "candidate.json").write_text('{"records": [1]}')
+        return 0
+    monkeypatch.setattr(admission, "_validate_quality_reference", validate)
+    monkeypatch.setattr(completed, "_execute_plan", execute)
+    if change_after_terminal:
+        with pytest.raises(ValueError, match="changed"):
+            completed.execute_plan(plan_path, _source_guard=source_guard)
+        # Preserve raw observations; the public call still must not succeed.
+        assert json.loads((tmp_path / "terminal-status.json").read_text())["exitcode"] == 0
+    else:
+        assert completed.execute_plan(plan_path, _source_guard=source_guard) == 0
+    assert len(validations) == 1 and len(guards) == 3
+    assert admission._VALIDATION_SCOPE.get() is None
+
+
+def test_public_native_execution_retains_default_path_without_generic_scope(tmp_path, monkeypatch):
+    path = tmp_path / "native-plan.json"
+    document(path, {"scope_mode": "audited_selective_remeasurement"})
+    def execute(plan_path, plan, **kwargs):
+        assert plan_path == path and plan["scope_mode"] == "audited_selective_remeasurement"
+        assert admission._VALIDATION_SCOPE.get() is None
+        assert kwargs["resume"] is True
+        return 7
+    monkeypatch.setattr(admission, "validation_scope", lambda: pytest.fail("Native must retain its default path"))
+    monkeypatch.setattr(completed, "_execute_plan", execute)
+    assert completed.execute_plan(path, resume=True) == 7
+
+
 def test_raw_quality_without_verified_complete_task_export_cannot_admit(tmp_path, monkeypatch):
     row, _ = quality_fixture(tmp_path, monkeypatch)
     def missing(*args, **kwargs):
@@ -353,6 +543,7 @@ def test_actual_completed_quality_export_joins_exact_timing_prepared_array(tmp_p
         "completion_contract": fixture["config"]["completion_contract"]}
     admission.validate_quality_input_binding(row, proof)
     assert proof["image_count"] == 2 and proof["all_actual_completed_records_verified"] is True
+    assert "per_image" not in proof and len(json.dumps(proof)) < 65536
     row["input_binding"]["source_image_sha256"] = "a" * 64
     with pytest.raises(ValueError, match="Quality representative"):
         admission.validate_quality_input_binding(row, proof)

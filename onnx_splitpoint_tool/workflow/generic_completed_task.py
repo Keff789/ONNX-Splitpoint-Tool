@@ -7,7 +7,7 @@ locks and process leases as the normal evaluation workflow.
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from datetime import datetime, timezone
 import inspect
 import hashlib
@@ -134,7 +134,9 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
                "start_ticks": fields[19], "state": fields[0]}
         require(row["state"] != "Z" and row["start_ticks"].isdecimal(), "owner_identity_changed")
         previous = identities.setdefault(pid, row)
-        require(previous == row, "owner_identity_changed")
+        changed = {key: {"expected": previous[key], "actual": row[key]}
+                   for key in ("pid", "ppid", "pgid", "start_ticks") if previous[key] != row[key]}
+        require(not changed, "owner_identity_changed: " + json.dumps({"pid": pid, "changed": changed}, sort_keys=True))
         return row
 
     def held_locks(owner):
@@ -840,6 +842,14 @@ def stage_case(row: dict, config: dict, files: list[dict], transport: SSHTranspo
 
 def prepare_execution(scope_plan: Path, output: Path, *, hailo_async_inflight: int | None = None,
                       deepx_async_inflight: int | None = None) -> Path:
+    from ..generic_only_plan import validation_scope
+    with validation_scope():
+        return _prepare_execution(scope_plan, output, hailo_async_inflight=hailo_async_inflight,
+                                  deepx_async_inflight=deepx_async_inflight)
+
+
+def _prepare_execution(scope_plan: Path, output: Path, *, hailo_async_inflight: int | None = None,
+                       deepx_async_inflight: int | None = None) -> Path:
     plan = read_json(scope_plan)
     primary = Path(plan["original_run"]).resolve()
     output = outside_primary(output, primary)
@@ -1215,8 +1225,16 @@ def _write_completion_reports(plan, results, reports):
 
 def execute_plan(plan_path: Path, *, resume: bool = False,
                  _cancel_event: threading.Event | None = None, _source_guard=None) -> int:
-    from ..generic_completion_reporting import load_valid_repetitions, completion_pair, validate_completion_case
     plan = read_json(plan_path)
+    from ..generic_only_plan import MODE, validation_scope
+    with validation_scope() if plan.get("scope_mode") == MODE else nullcontext():
+        return _execute_plan(plan_path, plan, resume=resume,
+                             _cancel_event=_cancel_event, _source_guard=_source_guard)
+
+
+def _execute_plan(plan_path: Path, plan: dict, *, resume: bool = False,
+                  _cancel_event: threading.Event | None = None, _source_guard=None) -> int:
+    from ..generic_completion_reporting import load_valid_repetitions, completion_pair, validate_completion_case
     primary = Path(plan["original_run"]).resolve()
     output = outside_primary(Path(plan["output_root"]), primary)
     rows = validate_plan(plan, Path(plan["scope_source"]), primary)
