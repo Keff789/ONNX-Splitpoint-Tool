@@ -1,3 +1,70 @@
+## 23.10.2026 — Vollständige Generic-Captures trotz fehlender zentraler Zeilen
+
+Der normale Collector kann einen ausschließlich autorisierten Generic-Source-only-
+Plan mit vollständig kopierten portablen Captures zur zentralen Quality weitergeben,
+auch wenn noch keine kanonischen Ergebniszeilen existieren. Der enge zusätzliche
+Pfad verlangt den vorhandenen normalen `copied_capture_summary` mit verified_exact,
+count gleich expected und expected größer null, die genaue reine Planmenge,
+Workload-Returncode null, nachgewiesenen Download und ausschließlich den bekannten
+nachgelagerten `result_collection_not_successful`-Fehler. Gemischte Performancepläne,
+Full ohne kanonische Ergebnisse, andere Workload-/Collectionfehler, Cancellation,
+unvollständige oder abweichende Producer-/Childbelege bleiben abgelehnt.
+
+Der neue lokale Zustand bedeutet ausschließlich capture_complete und
+pending_central_quality. Ursprünglicher remote_output-Fehlerstatus, Fehlermeldung
+und Collection-Returncode bleiben wahr und erhalten. Es entstehen weder erfundene
+kanonische CSV-Zeilen noch ein Quality-, Statistik- oder FPS-Erfolg. Die normale
+zentrale Validierung mit unveränderten wissenschaftlichen und Referenzprüfungen
+bleibt Pflicht. Zusammen mit dem Setup-Callback kann derselbe bestehende Service
+einen fertigen DUT bearbeiten, während ein anderes Setup noch arbeitet; ein
+zusätzlicher Pool, Runner oder Scheduler wird nicht angelegt.
+
+Der vereinigte gezielte Softwarelauf bestand 46 Tests ohne Fehler oder Skips:
+Callback7 und Collector39 einschließlich der ausgewählten normalen Accounting-,
+Full- und Fehlerpfadregressionen. Für zwei bestehende synthetische Host-Fixtures
+wurde ausschließlich im Testprozess der Name remote auf 192.0.2.10 abgebildet;
+Produkt- und bestehende Testdateien blieben unverändert. Die ersten beiden
+DNS-Umgebungsfehler und ihr gezielter Wiederholungslauf bleiben im ursprünglichen
+Collectorbeleg sichtbar. Es wurde kein realer N5000-/Hardwareerfolg gemessen.
+
+Alle 42 Bundle-Member einschließlich 37 Python-Dateien bleiben bytegleich zu F13.
+Der unveröffentlichte Callbackstand v5 bleibt als eigener Beleg erhalten; v6
+vereinigt ausschließlich Callback und diesen Collectorpfad. Aktivierung bleibt
+bis RootGo nach Abschluss der gebundenen Source13-FPS-/Import- und Replay-Scopes
+gesperrt. Aktive alte Controller, deren Rohdaten und historische Fehlerbelege
+werden durch die Vorbereitung nicht nachträglich verändert.
+
+## 23.10.2026 — Quality-Aufträge nach Abschluss eines einzelnen Setups
+
+Im bestehenden Parent-Dispatcher für ausdrücklich Generic-Source-only-Profile
+kann der normale Setup-Abschlusshook fertige Modell-/Setup-Meldungen an den
+Parent-Controller geben. Dieser durchsucht ausschließlich den kanonischen
+Quality-Input-Unterbaum des abgeschlossenen Setups und verwendet dieselbe normale
+Queue, denselben ManagementQualityService und dieselben Requestbudgets. Andere
+noch aktive Setups werden dabei nicht durchsucht. Die bisherigen absoluten
+Requestpfade deduplizieren wiederholte Meldungen und den weiterhin verpflichtenden
+vollständigen Modellabschluss. Ein früher Zulassungsfehler wird protokolliert und
+zur normalen strikten Abschlussprüfung zurückgestellt; Stop/Cancel verhindert
+diese frühe Zulassung.
+
+Der Hook gilt nur für den vorhandenen per_setup-Remote-Pfad mit ausschließlich
+quality_source_only und composed sowie ausgeschaltetem Native/Energy. Native,
+Energy, Full, lokale Evaluation und andere normale Profile behalten ihren
+bisherigen Abschlussweg. CPU-Reference-Ready-Prüfungen, ResourcePauseGate,
+wissenschaftliche Lader, Poolgrößen, aktive Requestzahl, Owner-/Dispatchgrenzen
+und Shutdownregeln bleiben unverändert. Diese Änderung erweitert keinen laufenden
+alten Controller nachträglich und erzeugt keinen zusätzlichen Service.
+
+Sieben gezielte Tests bestanden mit kontrollierten äußeren Blättern: sechs neue
+Callback-Fälle und die bestehende Parent-Ownership/Lifecycle-Regression. Sie
+belegen Queue-/Scope-/Deduplizierungsverhalten, keinen echten N5000-Qualitätserfolg
+oder gemessenen Hardware-Zeitgewinn. Der normale Bundlevergleich hält alle
+42 Member einschließlich 37 Python-Dateien bytegleich zu F13. Nur Runner, neue
+gezielte Testdatei, dieser Arbeitsstand und die zwei Quellenindizes ändern sich.
+Die Aktivierung bleibt bis zum abgeschlossenen tatsächlichen F13-b031-FPS-Lauf
+und dessen normalem Import gesperrt; dieser vorbereitete Quellenstand behauptet
+keinen solchen Abschluss. Frühere Source-/FPS-/Runbelege bleiben unverändert.
+
 ## 23.10.2026 — Referenzidentität nach dem unveränderten normalen Reader
 
 Die API für erhaltene Quality-Ergebnisse prüft den exakt gebundenen Referenzpfad

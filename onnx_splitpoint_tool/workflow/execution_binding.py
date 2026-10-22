@@ -4052,12 +4052,45 @@ def _run_remote_dispatch_once(
             eval_run_id=run_root.name,
         )
         from ..runners.generic_quality_accounting import authorized_runs, copied_capture_summary
+        capture_plan = read_json(suite_dir / "benchmark_plan.json", default={}) or {}
+        authorized_captures = authorized_runs(capture_plan, profile_payload)
         generic_quality = copied_capture_summary(
-            copied, authorized_runs(read_json(suite_dir / "benchmark_plan.json", default={}) or {}, profile_payload),
+            copied, authorized_captures,
             suite_dir=suite_dir, model_id=model_id, setup_id=target_id, eval_run_id=run_root.name,
         )
         generic_source_only = generic_quality.get("requested") is True
         full_only_quality = quality_evidence.get("requested") is True
+        # Collection can fail on an ancillary file after a successful source-only
+        # capture. Admit only the complete, normally verified portable evidence;
+        # retain the original transport failure and do not invent canonical rows.
+        capture_ids = {row["id"] for row in authorized_captures}
+        capture_only_scope = bool(capture_ids) and all(
+            row.get("id") in capture_ids for row in _plan_run_entries(capture_plan)
+        )
+        remote_output = dict(out) if isinstance(out, Mapping) else {}
+        cleanup = remote_output.get("remote_cleanup") or {}
+        collection = cleanup.get("policy") or {}
+        verified_capture = bool(
+            generic_source_only and capture_only_scope and not full_only_quality
+            and semantic_rows == 0 and generic_quality.get("status") == "verified_exact"
+            and int(generic_quality.get("expected") or 0) > 0
+            and generic_quality.get("count") == generic_quality.get("expected")
+        )
+        capture_after_collection_error = bool(
+            verified_capture and status_name in {"failed", "partial"}
+            and type(remote_output.get("remote_rc")) is int and remote_output["remote_rc"] == 0
+            and remote_output.get("terminal_remote_failure") is not True
+            and not remote_output.get("failure_kind") and not remote_output.get("primary_failure")
+            and not (cancel_event is not None and cancel_event.is_set())
+            and not (remote_process_registry is not None and remote_process_registry.cancelled)
+            and cleanup.get("reason") == "result_collection_not_successful"
+            and collection.get("results_downloaded") is True
+            and type(collection.get("result_collection_rc")) is int
+            and collection["result_collection_rc"] != 0
+            and str(remote_output.get("error") or "").startswith("Remote result collection failed")
+        )
+        if capture_after_collection_error:
+            status_name = "ok"
         if generic_source_only:
             ok = bool(status_name == "ok" and semantic_rows == 0
                       and generic_quality.get("status") == "verified_exact"
@@ -4107,6 +4140,9 @@ def _run_remote_dispatch_once(
             ),
             "full_only_quality_evidence": quality_evidence,
             "generic_quality_source_capture": generic_quality,
+            "capture_status": "capture_complete" if ok and generic_source_only else "",
+            "central_quality_status": "pending_central_quality" if ok and generic_source_only else "",
+            "capture_admitted_after_collection_error": capture_after_collection_error,
             "expected_generic_quality_count": int(generic_quality.get("expected") or 0),
             "result_copy_manifest": str(copy_manifest or ""),
             "deepx_prepared_input_materialization": deepx_prepared_input,

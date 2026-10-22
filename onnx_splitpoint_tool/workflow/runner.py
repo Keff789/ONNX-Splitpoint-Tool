@@ -15296,6 +15296,44 @@ class EvaluationWorkflowRunner:
     def _run_prepared_setup_queues(self, rows):
         ordered = [(slugify(row.get("id") or row.get("model_id") or "model", fallback="model"), row)
                    for row in rows]
+        logical = [run for run in self.profile_payload.get("run_profiles", []) if run.get("enabled", True)]
+        source_quality = bool(logical) and all(run.get("quality_source_only") is True
+            and run.get("variants") == ["composed"] for run in logical)
+        source_quality = (source_quality
+            and (self.profile_payload.get("native_producers") or {}).get("enabled") is False
+            and (self.profile_payload.get("energy") or {}).get("enabled") is False
+            and _quality_execution_location_v263(self.profile_payload) == "central_management")
+        setup_ids = {run.get("hardware_setup_id") for run in logical}
+        setup_ids &= set((self.profile_payload.get("hardware") or {}).get("selected_setups") or [])
+        setup_events = queue.SimpleQueue()
+
+        def completed_setup(model_id, setup_id, _artifacts):
+            # Remote workers only notify; queue admission stays on this parent.
+            setup_events.put((model_id, setup_id))
+        completed_setup._generic_source_quality_queue = True
+
+        def admit_completed_setups():
+            while not setup_events.empty():
+                model_id, setup_id = setup_events.get()
+                if self._stop_requested or self._cancel_event.is_set():
+                    continue
+                if (model_id not in {model for model, _ in ordered}
+                        or not isinstance(setup_id, str) or setup_id not in setup_ids
+                        or Path(setup_id).parts != (setup_id,)):
+                    self._emit_log("[quality][management] setup completion scope invalid; early admission deferred")
+                    continue
+                root = self.run_dir / "models" / model_id / "benchmark_results" / "quality_inputs" / setup_id
+                previous = self._active_model_id, self._active_stage
+                self._active_model_id, self._active_stage = model_id, "run_benchmarks"
+                try:
+                    self._queue_central_quality_requests(model_id, results_root=root)
+                except Exception as exc:
+                    # The ordinary model finalizer still performs its strict
+                    # scan; one early setup failure cannot strand other DUTs.
+                    self._emit_log(f"[quality][management] setup {setup_id} early admission deferred: {type(exc).__name__}: {exc}")
+                finally:
+                    self._active_model_id, self._active_stage = previous
+
         manager = PhysicalSetupDispatchManager(
             max_workers=_parallel_remote_max_setups(self.options, self.profile_payload, default=3),
             model_ids=[model for model, _ in ordered])
@@ -15317,7 +15355,8 @@ class EvaluationWorkflowRunner:
                     continue
                 steps = self._run_stage_steps(model_id, "run_benchmarks",
                     lambda mid=model_id, item=row: self._stage_run_benchmarks_steps(mid, item, dispatch_manager=manager,
-                        dispatch_log=lambda message, owner=mid: events.put((owner, message))))
+                        dispatch_log=lambda message, owner=mid: events.put((owner, message)),
+                        **({"on_setup_complete": completed_setup} if source_quality else {})))
                 try:
                     dispatch = self._advance_stage(steps, model_id, "run_benchmarks")
                 except StopIteration:
@@ -15329,7 +15368,7 @@ class EvaluationWorkflowRunner:
             for model_id, row, steps, dispatch in prepared:
                 future = coordinators.submit(contextvars.copy_context().run, dispatch)
                 pending[future] = (model_id, row, steps)
-            while pending or not events.empty():
+            while pending or not events.empty() or not setup_events.empty():
                 while not events.empty():
                     owner, message = events.get()
                     previous = self._active_model_id, self._active_stage
@@ -15338,6 +15377,7 @@ class EvaluationWorkflowRunner:
                         self.log(message)
                     finally:
                         self._active_model_id, self._active_stage = previous
+                admit_completed_setups()
                 if not pending:
                     break
                 done, _ = concurrent.futures.wait(pending, timeout=0.1,
@@ -15352,6 +15392,7 @@ class EvaluationWorkflowRunner:
                         self.log(message)
                     finally:
                         self._active_model_id, self._active_stage = previous
+                admit_completed_setups()
                 for future in sorted(done, key=lambda item: [m for m, _ in ordered].index(pending[item][0])):
                     model_id, row, steps = pending.pop(future)
                     try:
@@ -30713,6 +30754,12 @@ class EvaluationWorkflowRunner:
                     f"copied={quality_evidence_count}"
                 )
         central_quality_queued = self._queue_central_quality_requests(model_id)
+        if getattr(on_setup_complete, "_generic_source_quality_queue", False):
+            # Setup-completion admission already owns these same futures;
+            # deduplication must not label them as undiscovered at model end.
+            central_quality_queued = max(central_quality_queued, sum(
+                Path(key).is_relative_to(bench_results_dir.resolve())
+                for key in self._central_quality_futures))
         if _quality_execution_location_v263(self.profile_payload) == "central_management":
             quality_workers = _quality_workers_v263(self.profile_payload)
             p_quality_queue = write_json(bench_results_dir / "central_quality_queue_status.json", {
