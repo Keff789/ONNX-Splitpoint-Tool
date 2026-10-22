@@ -286,11 +286,20 @@ def preserved_case(tmp_path, monkeypatch, request):
     # Existing-reference validation has its own 5,000-image suite. This seam
     # keeps this focused fixture at two images; the shared sealed status
     # reader, artifact loader, model authority and request identity stay real.
+    from onnx_splitpoint_tool.management_reference import _successful_reference_status
+    adopted_reference_status = _successful_reference_status(
+        status="cache_hit", model_id="yolo26s", workers=1,
+        source_contract_sha256="sha256:" + source_contract,
+        reference_path=reference_path, reference_sha256="sha256:" + reference["sha256"],
+        reference_metadata={key: reference_status[key] for key in
+            ("task", "record_count", "image_ids_sha256", "quality_contract", "quality_contract_sha256")},
+        extra={"explicit_existing_reference_reuse": True})
     monkeypatch.setattr(generic_quality_sidecars, "bind_existing_generic_cpu_reference",
-        lambda **kwargs: {**reference_status, "status": "cache_hit", "explicit_existing_reference_reuse": True})
+        lambda **kwargs: deepcopy(adopted_reference_status))
     return SimpleNamespace(
         run=run, fixture=fixture, request=request, request_path=request_path,
         reference=reference, reference_status=reference_status, source_contract=source_contract,
+        adopted_reference_status=adopted_reference_status,
         quality_status=quality_status,
         profile=profile, receipt_path=receipt_path, lock=lock, cache=cache, cache_path=cache_path,
         cached=cached, key=key, payload=payload, authorization=authorization,
@@ -490,6 +499,37 @@ def test_recovery_receipt_from_another_run_is_rejected(preserved_case, monkeypat
     _original_unchanged(case, before)
     assert _snapshot(foreign) == foreign_before
     assert foreign_lock.lock_path.read_bytes() == foreign_lock_before
+
+
+@pytest.mark.parametrize("prefix", ["", "sha256:"])
+def test_normal_adoption_status_digest_is_joined_after_strict_normal_reader(preserved_case, monkeypatch, prefix):
+    case = preserved_case
+    _no_runtime(monkeypatch)
+    assert case.adopted_reference_status["reference_sha256"] == "sha256:" + case.reference["sha256"]
+    status = {**case.adopted_reference_status, "reference_sha256": prefix + case.reference["sha256"]}
+    monkeypatch.setattr(generic_quality_sidecars, "bind_existing_generic_cpu_reference", lambda **kwargs: status)
+    published = _admit(case)
+    result = json.loads(Path(published["results"][0]["path"]).read_text())
+    assert result["management_cpu_reference"]["reference_sha256"] == case.reference["sha256"]
+    assert result["management_cpu_reference"]["reference_path"] == case.reference["path"]
+
+
+@pytest.mark.parametrize("fault", ["digest", "path"])
+def test_adopted_reference_mismatch_still_rejected_before_publication(preserved_case, monkeypatch, fault):
+    case = preserved_case
+    _no_runtime(monkeypatch)
+    status = deepcopy(case.adopted_reference_status)
+    if fault == "digest":
+        status["reference_sha256"] = "sha256:" + "f" * 64
+    else:
+        status["reference_path"] = str(case.run / "foreign/canonical_cpu_reference.json")
+    monkeypatch.setattr(generic_quality_sidecars, "bind_existing_generic_cpu_reference", lambda **kwargs: status)
+    before = _snapshot(case.run)
+    with pytest.raises((ValueError, RuntimeError)):
+        _admit(case)
+    _original_unchanged(case, before)
+    assert not case.kwargs["out_dir"].exists()
+    assert not (case.run / "quality_management/central_quality_summary.json").exists()
 
 
 @pytest.mark.parametrize("group", ["deepx_setup", "orin_nx_deepx_m1_01"])

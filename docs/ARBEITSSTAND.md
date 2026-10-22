@@ -1,3 +1,29 @@
+## 23.10.2026 — Referenzidentität nach dem unveränderten normalen Reader
+
+Die API für erhaltene Quality-Ergebnisse prüft den exakt gebundenen Referenzpfad
+und SHA jetzt nach dem unveränderten strikten Management-Referenzreader. Der
+normale Existing-Reference-Binder liefert den Statusdigest als `sha256:<hex>`,
+während Quelldeskriptoren den reinen Hexdigest speichern. Der normale Reader
+prüft Status, unveränderlichen Quellvertrag, reale Referenzbytes, Bildidentitäten
+und Qualityvertrag und liefert die kanonische Identität. Diese wird anschließend
+weiter exakt gegen den ursprünglichen Deskriptor geprüft. Es gibt weder eine
+manuelle Digestumschreibung noch eine gelockerte Identitätsprüfung.
+
+Der tatsächliche F12-Aufruf endete davor mit `adopted reference identity mismatch`
+und erreichte keine Ergebnispublikation. Sein normaler Caller belegt Manifest und
+RecoveryReceipt vorher/nachher unverändert; der Fehlerlauf bleibt erhalten.
+Die minimale Korrektur bestand 31 gezielte Tests mit einem tatsächlich normal
+geformten Referenzstatus. Zusätzliche Fälle prüfen beide üblichen Digestformate
+und die Ablehnung tatsächlich falscher SHA- und Pfadbindungen. Der frühere
+258er-Union und der vorherige 27er-Fokuslauf werden nicht als neue Läufe dieser
+Korrektur ausgegeben; ein tatsächlicher API-Retry wurde hier nicht ausgeführt.
+
+Nur API, deren bestehende Testdatei, dieser Arbeitsstand und die beiden normalen
+Quellenindizes ändern sich. Runtime37 und alle 42 Bundle-Member bleiben bytegleich
+zu F12. Wissenschaftliche Policies, originale Eingaben, Daten, Ownerprüfungen,
+Native- und UINT8-Code bleiben unverändert. Die Aktivierung benötigt eine ehrlich
+veröffentlichte Source13-Bindung und den normalen neuen SourceFreeze.
+
 ## 22.10.2026 — Reguläre logische Setupgruppen bei erhaltener Quality
 
 Die API für erhaltene Quality-Ergebnisse ordnet den ursprünglichen effektiven

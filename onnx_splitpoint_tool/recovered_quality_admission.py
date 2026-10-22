@@ -253,10 +253,11 @@ def admit_preserved_completed_quality(*, original_run_dir, recovery_receipt,
                 _require(Path(canonical_reference_descriptor["path"]).is_relative_to(run), "reference outside original run")
                 status = generic_quality_sidecars.bind_existing_generic_cpu_reference(suite_dir=suite, run_root=run, model_id=model,
                     benchmark_plan=benchmark, quality_gate_policy=quality, require_projected=True)
-                _require(status is not None and status.get("reference_path") == canonical_reference_descriptor["path"]
-                         and status.get("reference_sha256") == canonical_reference_descriptor["sha256"], "adopted reference identity mismatch")
+                _require(status is not None, "adopted reference status missing")
                 records, status, sealed_bytes = Runner._read_management_reference_status(run_dir=run, model_id=model,
                     raw_status=status, expected_source_contract=status["source_contract_sha256"])
+                _require(status.get("reference_path") == canonical_reference_descriptor["path"]
+                         and status.get("reference_sha256") == canonical_reference_descriptor["sha256"], "adopted reference identity mismatch")
                 _require(sealed_bytes == reference_bytes, "adopted reference bytes changed")
                 reference_statuses[model] = (status, sealed_bytes)
             status, reference_bytes = reference_statuses[model]
