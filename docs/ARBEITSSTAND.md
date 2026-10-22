@@ -1,3 +1,33 @@
+## 22.10.2026 — Diagnose der normalen Ergebnissammlung
+
+Der normale Collector protokolliert jetzt seinen Beginn, den Status seines
+EXIT-Traps und fehlgeschlagene Kopien mit ursprünglichem Kopier-Returncode
+sowie Shell-escaped Quell- und Zielpfad. Der Trap setzt keinen Returncode
+und installiert keinen Signalhandler. Sein `exit_trap_status` ist ausdrücklich
+kein allgemeiner Prozess-Returncode: Bei Signalabbruch kann der zuletzt
+beobachtete Shellstatus vom tatsächlichen Prozessstatus abweichen. Der echte
+Transportstatus bleibt getrennt erhalten. Dateiauswahl, Kopierreihenfolge,
+optionale Quellen, Fehleraggregation, Zeitbudgets und Aufbewahrung bleiben
+unverändert; diagnostische Schreibfehler ersetzen keinen ursprünglichen Fehler.
+
+Der normale SSH-Aufruf persistiert zusätzlich die bereits erhobene
+Capturediagnose. Leser- und Wait-Fehlertypen werden ohne Payloadinhalte
+aufgezeichnet; ein unbekannter Wait-Ausgang wird nicht mehr diagnostisch als
+`completed` überschrieben. Rückgabewerte, Reader-Wartezeiten, Environment,
+Leases, Bereinigung und deren bestehender Returncode-70-Vorrang bleiben gleich.
+Es gibt keine neue Marker-basierte Workflow- oder wissenschaftliche Freigabe.
+
+Die gezielte lokale Regression bestand 49 Tests ohne Fehler oder Skips,
+einschließlich stiller Kopierfehler, früher `set -e`-Abbrüche, optional leerer
+Quellen, SIGTERM/SIGKILL, Reader-/Waitfehler und bestehender Collection-/Lease-
+und Umgebungsverträge. Der normale Writer liefert dieselben 42 Bundle-Dateien
+einschließlich aller 37 Python-Dateien bytegleich zur Quality-Epoche v4.
+Die geänderten Dateien gehören ausschließlich zum Controller. Folgende Läufe
+benötigen eine ehrlich neu gebundene Controller-Quellenepoche; alte Freeze-,
+Run- und Qualitybelege bleiben unverändert. Eine neue Hardwareprüfung dieser
+Controllerfassung steht aus. Die erfolgreiche einzelne H8-Sammlung an einem
+neuen Diagnoseziel erklärt die ursprünglichen drei Collection-Fehler nicht.
+
 ## 22.10.2026 — Lebensdauer des Generic-Quality-Eingabebeobachters
 
 Der explizite Generic-Quality-Beobachter stellte die Klassenmethode `infer`

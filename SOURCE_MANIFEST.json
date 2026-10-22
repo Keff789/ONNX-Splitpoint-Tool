@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2342,
+  "file_count": 2343,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 415642,
-      "sha256": "b20dc212a0c5b44dd27350226deaae4978766eabddfde7d490114ae27e83e7ae"
+      "size": 417621,
+      "sha256": "bb8bbc990060511a6b7b632cfee4339730270b1e02d8f472bef3fa1c9a2a82dd"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -751,8 +751,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/benchmark/remote_run.py",
-      "size": 562821,
-      "sha256": "7f442ec88ffe3e70be29199df29a2fc8cf0b143932bd9ea992925ec320a28dd3"
+      "size": 564222,
+      "sha256": "68aa6c27467e911380e243819d2de36a28ced47f01f9080ecd1ea2fe66f1547f"
     },
     {
       "path": "onnx_splitpoint_tool/benchmark/results_bundle.py",
@@ -1581,8 +1581,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/remote/ssh_transport.py",
-      "size": 30994,
-      "sha256": "76bbcf9b178ad9eca6e40a3002bf17f06ecd66542c47fc5d643470b140304866"
+      "size": 31714,
+      "sha256": "2cae27ef88b395fe9d672d4f8c0d97bf03308c0e1828ee252965c3ff281a2f89"
     },
     {
       "path": "onnx_splitpoint_tool/remote_runtime_closure.py",
@@ -7133,6 +7133,11 @@
       "path": "tests/test_clean_source_allowlist.py",
       "size": 2979,
       "sha256": "34d48cc083b734699ddcd9575e78cc4781ed5ee46a0fcea7c9739203570b4d24"
+    },
+    {
+      "path": "tests/test_collection_observability.py",
+      "size": 7332,
+      "sha256": "4ead36b602e025f8f75e7154095ea8a049ad69cc228121e9a4c7ad0633b1f2b8"
     },
     {
       "path": "tests/test_compact_debug_pack.py",

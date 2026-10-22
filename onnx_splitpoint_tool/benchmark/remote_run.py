@@ -7530,6 +7530,12 @@ def _remote_result_collect_script(*, remote_results_dir: str, remote_suite_dir: 
     rs = str(remote_suite_dir).replace('"', '\\"')
     return (
         "set -e; shopt -s nullglob; copy_failed=0; "
+        # An EXIT trap observes the previous shell status, not a universal
+        # process returncode (notably on signals). Never replace that status.
+        "trap 'sp_collect_exit_trap_status=$?; "
+        "printf \"SPLITPOINT_COLLECT_END exit_trap_status=%s copy_failed=%s\\n\" "
+        "\"$sp_collect_exit_trap_status\" \"$copy_failed\" >&2 || :' EXIT; "
+        "printf 'SPLITPOINT_COLLECT_BEGIN\\n' >&2 || :; "
         f"suite=\"{rs}\"; "
         f"out=\"{rr}\"; "
         "mkdir -p \"$out\"; "
@@ -7541,7 +7547,10 @@ def _remote_result_collect_script(*, remote_results_dir: str, remote_suite_dir: 
         "\"$suite\"/run_meta.json \"$suite\"/benchmark_suite.py \"$suite\"/native_trt_build_state.json "
         "\"$suite\"/scientific_reporter_v60.py \"$suite\"/scientific_report "
         "\"$suite\"/logs; do "
-        "  if [ -e \"$p\" ]; then cp -a \"$p\" \"$out/\" || copy_failed=1; fi; "
+        "  if [ -e \"$p\" ]; then cp -a \"$p\" \"$out/\" || { "
+        "sp_collect_cp_rc=$?; copy_failed=1; "
+        "printf 'SPLITPOINT_COLLECT_CP_FAILED rc=%s source=%q destination=%q\\n' "
+        "\"$sp_collect_cp_rc\" \"$p\" \"$out/\" >&2 || :; }; fi; "
         "done; "
         # Per-case artifacts (preserve case-id to avoid collisions).
         "for cd in \"$suite\"/b*; do "
@@ -7549,7 +7558,10 @@ def _remote_result_collect_script(*, remote_results_dir: str, remote_suite_dir: 
         "  cid=$(basename \"$cd\"); "
         "  mkdir -p \"$out/$cid\"; "
         "  for p in \"$cd\"/results_* \"$cd\"/validation_*; do "
-        "    if [ -e \"$p\" ]; then cp -a \"$p\" \"$out/$cid/\" || copy_failed=1; fi; "
+        "    if [ -e \"$p\" ]; then cp -a \"$p\" \"$out/$cid/\" || { "
+        "sp_collect_cp_rc=$?; copy_failed=1; "
+        "printf 'SPLITPOINT_COLLECT_CP_FAILED rc=%s source=%q destination=%q\\n' "
+        "\"$sp_collect_cp_rc\" \"$p\" \"$out/$cid/\" >&2 || :; }; fi; "
         "  done; "
         "done; "
         # Suite-level Full producers, notably DeepX Full.  Only copy the
@@ -7558,7 +7570,10 @@ def _remote_result_collect_script(*, remote_results_dir: str, remote_suite_dir: 
         "  [ -d \"$qdir\" ] || continue; "
         "  qrun=$(basename \"$(dirname \"$qdir\")\"); "
         "  mkdir -p \"$out/$qrun\"; "
-        "  cp -a \"$qdir\" \"$out/$qrun/\" || copy_failed=1; "
+        "  cp -a \"$qdir\" \"$out/$qrun/\" || { "
+        "sp_collect_cp_rc=$?; copy_failed=1; "
+        "printf 'SPLITPOINT_COLLECT_CP_FAILED rc=%s source=%q destination=%q\\n' "
+        "\"$sp_collect_cp_rc\" \"$qdir\" \"$out/$qrun/\" >&2 || :; }; "
         "done; "
         # DeepX Full seals the exact prepared runtime input before timing.
         # Transport only that three-file contract.  In particular, do not
@@ -7568,7 +7583,10 @@ def _remote_result_collect_script(*, remote_results_dir: str, remote_suite_dir: 
         "  prun=$(basename \"$(dirname \"$pdir\")\"); "
         "  mkdir -p \"$out/$prun/prepared_input\"; "
         "  for name in native_full_input_manifest.json runtime_input.bin input_rgb_uint8.bin; do "
-        "    if [ -f \"$pdir/$name\" ]; then cp -a \"$pdir/$name\" \"$out/$prun/prepared_input/$name\" || copy_failed=1; fi; "
+        "    if [ -f \"$pdir/$name\" ]; then cp -a \"$pdir/$name\" \"$out/$prun/prepared_input/$name\" || { "
+        "sp_collect_cp_rc=$?; copy_failed=1; "
+        "printf 'SPLITPOINT_COLLECT_CP_FAILED rc=%s source=%q destination=%q\\n' "
+        "\"$sp_collect_cp_rc\" \"$pdir/$name\" \"$out/$prun/prepared_input/$name\" >&2 || :; }; fi; "
         "  done; "
         "done; "
         # Quality-FIRST TensorRT companions live outside bNNN case folders and
@@ -7580,7 +7598,10 @@ def _remote_result_collect_script(*, remote_results_dir: str, remote_suite_dir: 
         "\"$suite\"/native_full_quality/*/*/results_native_full_tensorrt/task_quality_inputs; do "
         "  [ -d \"$qdir\" ] || continue; "
         "  mkdir -p \"$out/results_native_full_tensorrt\"; "
-        "  cp -a \"$qdir\" \"$out/results_native_full_tensorrt/\" || copy_failed=1; "
+        "  cp -a \"$qdir\" \"$out/results_native_full_tensorrt/\" || { "
+        "sp_collect_cp_rc=$?; copy_failed=1; "
+        "printf 'SPLITPOINT_COLLECT_CP_FAILED rc=%s source=%q destination=%q\\n' "
+        "\"$sp_collect_cp_rc\" \"$qdir\" \"$out/results_native_full_tensorrt/\" >&2 || :; }; "
         "done; exit \"$copy_failed\""
     )
 

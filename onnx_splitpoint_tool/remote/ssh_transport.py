@@ -239,7 +239,9 @@ class SSHTransport:
         diagnostic = diagnostics if diagnostics is not None else {}
         diagnostic.update(command_argv=list(cmd), timeout_s=timeout,
                           owner_pid=os.getpid(), phase="local_admission",
-                          remote_completion_proven=False)
+                          remote_completion_proven=False, reader_error_type=None,
+                          reader_error_errno=None, wait_outcome="not_entered",
+                          wait_error_type=None)
         registry = current_process_registry() or ProcessTreeRegistry()
 
         def cancellation_requested() -> bool:
@@ -272,8 +274,9 @@ class SSHTransport:
                     if not chunk:
                         break
                     chunks.append(chunk)
-            except Exception:
-                pass
+            except Exception as exc:
+                diagnostic["reader_error_type"] = type(exc).__name__
+                diagnostic["reader_error_errno"] = getattr(exc, "errno", None)
             finally:
                 reader_done.set()
 
@@ -319,8 +322,12 @@ class SSHTransport:
                     break
                 time.sleep(0.05)
             try:
+                diagnostic["wait_outcome"] = "entered"
                 rc = int(proc.wait(timeout=5))
-            except Exception:
+                diagnostic["wait_outcome"] = "returned"
+            except Exception as exc:
+                diagnostic["wait_outcome"] = "exception"
+                diagnostic["wait_error_type"] = type(exc).__name__
                 registry.terminate_registered(proc, grace_s=0.2)
                 rc = 1
                 diagnostic["phase"] = "process_exit_unknown"
@@ -347,7 +354,7 @@ class SSHTransport:
             if not diagnostic["local_completion_proven"] and forced_rc is None:
                 forced_rc = 70
                 diagnostic["phase"] = "process_completion_unknown"
-            if forced_rc is None:
+            if forced_rc is None and diagnostic["wait_outcome"] != "exception":
                 diagnostic["phase"] = "completed"
             diagnostic["returncode"] = forced_rc if forced_rc is not None else locals().get("rc")
         return int(forced_rc if forced_rc is not None else rc), "".join(chunks)
@@ -520,11 +527,13 @@ class SSHTransport:
         diag = self._diagnostic({"target_id": self.host.id, "command": bash_cmd, "command_argv": cmd})
         self._log_line(f"[ssh] setup={self.host.id} gestartet · Diagnose: {diag}")
         result: Tuple[int, str]
+        capture_diagnostic: dict = {}
         try:
             result = self._run_capture(
                 cmd,
                 timeout=timeout,
                 remote_operation=operation,
+                diagnostics=capture_diagnostic,
             )
         except FileNotFoundError as e:
             result = (127, f"ssh not found: {e}")
@@ -548,7 +557,8 @@ class SSHTransport:
         if diag != "unavailable":
             self._diagnostic({"target_id": self.host.id, "command": bash_cmd, "command_argv": cmd,
                               "returncode": result[0], "output": result[1],
-                              "cleanup_proven": cleanup_proven}, path=diag)
+                              "cleanup_proven": cleanup_proven,
+                              "capture": capture_diagnostic}, path=diag)
         self._log_line(f"[ssh-result] setup={self.host.id} rc={result[0]} · {time.monotonic()-started:.1f}s · Diagnose: {diag}" + (" · " + compact_diagnostic_cause(result[1]) if result[0] else ""))
         return result
 
