@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2341,
+  "file_count": 2342,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 413843,
-      "sha256": "2151be7a6d075ecab1e7a400cb188dcda491de970646f3d9a64ca825055a08f0"
+      "size": 415642,
+      "sha256": "b20dc212a0c5b44dd27350226deaae4978766eabddfde7d490114ae27e83e7ae"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -2246,8 +2246,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/runners/generic_quality_completion.py",
-      "size": 62611,
-      "sha256": "1841bb011a428e6b631f50eb4ba613bf7d4adaf8ec508e50c9763c2e8cf18a6a"
+      "size": 63239,
+      "sha256": "f74a2880c1c150be2ad4dadccb59cf6dbc60599c22d1a917f80d7a9ba094bf52"
     },
     {
       "path": "onnx_splitpoint_tool/runners/generic_quality_endpoint.py",
@@ -7458,6 +7458,11 @@
       "path": "tests/test_generic_quality_hailo8.py",
       "size": 8374,
       "sha256": "93516190b5a7a42cb3f924eaa122eaec3da7a5b5728791322fe324b21c009ca2"
+    },
+    {
+      "path": "tests/test_generic_quality_observer_lifecycle.py",
+      "size": 6417,
+      "sha256": "b692e3cb033077c4d1461f941a85c34a58fd2918d6df36c92ddb542af0511461"
     },
     {
       "path": "tests/test_generic_quality_profile_transport.py",

@@ -1,3 +1,31 @@
+## 22.10.2026 — Lebensdauer des Generic-Quality-Eingabebeobachters
+
+Der explizite Generic-Quality-Beobachter stellte die Klassenmethode `infer`
+als gebundene Instanzvariable wieder her. Dadurch entstand eine Selbstreferenz,
+die die Session nach der Beobachtung bis zur zyklischen Garbage Collection
+festhalten konnte. Die Korrektur entfernt den vorübergehenden Instanzeintrag,
+wenn ursprünglich die Klassenmethode verwendet wurde, oder stellt den exakt
+vorher vorhandenen Instanzwert wieder her. Argumente, Ergebnisse, Reihenfolge,
+Eingabesnapshots und die Prüfung auf genau einen Inferenzaufruf bleiben gleich.
+
+Auslöser war ein tatsächlicher H8-Kindprozessabsturz mit Returncode -11 nach
+einem 5.000-Bilder-Capture und dem Schreiben des Berichts. Die Selbstreferenz
+ist mit den ursprünglichen Quellen reproduziert; ihre Entfernung ist mit
+68 gezielten Quality-/H8-Regressionen und 29 unabhängigen Prüfungen belegt.
+Diese sich überschneidenden Tests sind getrennte Prüfläufe. Sie beweisen
+weder die native Absturzursache noch eine erfolgreiche Hardwarebehebung.
+SDK-Teardown, Garbage-Collection-Policy und Prozessbeendigung werden durch
+diese Korrektur nicht verändert.
+
+Genau eine Datei der gemeinsamen Runtime-Closure ändert sich. Folgende Läufe
+benötigen deshalb einen neuen echten Freeze und begrenzte Hardwarekontrollen.
+Die numerische Generic-FPS-Ausführung, Slotzahlen, Pipeline und vollständige
+Tasknachverarbeitung bleiben unverändert. Abgeschlossene Beobachtungen und
+Qualitätsbelege behalten ihre ursprünglichen Quellenepochen und passenden
+Verifier; sie werden weder umetikettiert noch automatisch wiederholt. Der
+bereits laufende H8-Workflow bleibt bis zu seiner normalen Finalisierung
+unverändert. Die Korrektur ist zunächst ausschließlich softwaregeprüft.
+
 ## 22.10.2026 — Controllerkorrekturen für Umgebung, Ergebnisaufbewahrung und Cacheproben
 
 Die implementierten Controllerkorrekturen setzen ausdrücklich deklarierte

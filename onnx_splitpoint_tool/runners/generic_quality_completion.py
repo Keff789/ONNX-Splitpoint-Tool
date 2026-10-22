@@ -571,6 +571,9 @@ class GenericQualityCompletion:
         original = getattr(session, "infer", None)
         if not callable(original):
             raise ValueError("Generic completed Quality actual stage1 observer unavailable")
+        instance_attributes = getattr(session, "__dict__", None)
+        had_instance_infer = isinstance(instance_attributes, dict) and "infer" in instance_attributes
+        original_instance_infer = instance_attributes["infer"] if had_instance_infer else None
         calls = 0
         self._runtime_inputs = None
         self._runtime_input_snapshot = None
@@ -592,7 +595,12 @@ class GenericQualityCompletion:
             if calls != 1:
                 raise ValueError("Generic completed Quality stage1 inference was not observed")
         finally:
-            session.infer = original
+            if isinstance(instance_attributes, dict) and not had_instance_infer:
+                # Restore the class descriptor without creating a bound-method
+                # self-cycle that defers native-wrapper release to cyclic GC.
+                instance_attributes.pop("infer", None)
+            else:
+                session.infer = original_instance_infer if had_instance_infer else original
 
     def process(self, outputs, *, image_path, original_wh, prepared_inputs, runtime_inputs=None):
         product = _product(); image = Path(image_path); image_id = image.name
