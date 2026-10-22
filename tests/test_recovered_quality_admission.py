@@ -49,8 +49,10 @@ def _snapshot(root):
 def _recovery(run, session, receipt_path, profile_payload):
     """Commit temporary fixture locks using the existing recovery protocol."""
     manifest_path = run / "run_manifest.json"
-    plan = {"models": ["yolo26s"], "logical_run_profiles": ["source-quality"],
-            "setup_groups": {"test_only_h10": ["source-quality"]}}
+    from onnx_splitpoint_tool.execution_plan import _setup_class
+    logical_id = profile_payload["run_profiles"][0]["id"]
+    plan = {"models": ["yolo26s"], "logical_run_profiles": [logical_id],
+            "setup_groups": {_setup_class(logical_id): [logical_id]}}
     _document(run / "effective_execution_plan.json", plan)
     before = {
         "schema": "onnx-splitpoint/evaluation-run-manifest", "schema_version": 1,
@@ -192,7 +194,7 @@ def preserved_case(tmp_path, monkeypatch, request):
     ns["_verified_suite_vendored_endpoint_attestor_sha256"] = lambda: quality["quality_record_endpoint"]["identity"]["vendored_endpoint_attestor_sha256"]
     monkeypatch.setitem(sys.modules, "splitpoint_runners", runners)
     monkeypatch.setitem(sys.modules, "splitpoint_runners.generic_quality_completion", completion)
-    context = dict(fixture["context"], eval_run_id=run.name, source_run_id="hailo10h_to_trt",
+    context = dict(fixture["context"], eval_run_id=run.name, source_run_id="hailo10_to_tensorrt",
         stage1_backend="hailo10h", stage2_backend="tensorrt", source_model_path=str(full),
         implementation_runner_path=evidence["implementation_runner"]["path"])
     for row in context["runtime_artifacts"]:
@@ -245,7 +247,7 @@ def preserved_case(tmp_path, monkeypatch, request):
         "validation_execution": {"max_items": {"detection": len(ids)}},
         "hardware": {"selected_setups": ["test_only_h10"]},
         "model_suite": {"primary": [{"id": "yolo26s"}]},
-        "run_profiles": [{"id": "source-quality", "hardware_setup_id": "test_only_h10",
+        "run_profiles": [{"id": "hailo10_to_tensorrt", "hardware_setup_id": "test_only_h10",
             "quality_source_only": True, "variants": ["composed"], "case_ids": ["b039"],
             "generic_quality_completion_configs": {"b039": "quality_runtime/b039.json"},
             "generic_quality_completion_config_sha256": {"b039": completion._sha(fixture["path"])},
@@ -488,3 +490,35 @@ def test_recovery_receipt_from_another_run_is_rejected(preserved_case, monkeypat
     _original_unchanged(case, before)
     assert _snapshot(foreign) == foreign_before
     assert foreign_lock.lock_path.read_bytes() == foreign_lock_before
+
+
+@pytest.mark.parametrize("group", ["deepx_setup", "orin_nx_deepx_m1_01"])
+def test_original_normal_logical_setup_group_and_exact_physical_group_are_supported(group):
+    from onnx_splitpoint_tool.recovered_quality_admission import _validate_original_setup_plan_binding
+    # The actual interrupted original plan uses the logical key deepx_setup,
+    # while its source-only profile binds the physical id independently.
+    logical = {"id": "deepx_m1_to_tensorrt", "hardware_setup_id": "orin_nx_deepx_m1_01"}
+    plan = {"logical_run_profiles": [logical["id"]], "setup_groups": {group: [logical["id"]]}}
+    _validate_original_setup_plan_binding(logical, plan, logical["hardware_setup_id"])
+
+
+@pytest.mark.parametrize("declared,groups", [
+    (["deepx_m1_to_tensorrt"], {}),
+    (["deepx_m1_to_tensorrt"], {"hailo8_setup": ["deepx_m1_to_tensorrt"]}),
+    (["deepx_m1_to_tensorrt"], {"foreign_physical_setup": ["deepx_m1_to_tensorrt"]}),
+    (["deepx_m1_to_tensorrt"], {"deepx_setup": ["deepx_m1_to_tensorrt", "deepx_m1_to_tensorrt"]}),
+    (["deepx_m1_to_tensorrt"], {"deepx_setup": ["deepx_m1_to_tensorrt"],
+                                  "orin_nx_deepx_m1_01": ["deepx_m1_to_tensorrt"]}),
+    (["deepx_m1_to_tensorrt"], {"deepx_setup": ["deepx_m1_to_tensorrt", "foreign_run"]}),
+    (["deepx_m1_to_tensorrt", "missing_run"], {"deepx_setup": ["deepx_m1_to_tensorrt"]}),
+    (["deepx_m1_to_tensorrt", "deepx_m1_to_tensorrt"], {"deepx_setup": ["deepx_m1_to_tensorrt"]}),
+    (["foreign_run"], {"deepx_setup": ["foreign_run"]}),
+    (["deepx_m1_to_tensorrt"], {"deepx_setup": "deepx_m1_to_tensorrt"}),
+    (["deepx_m1_to_tensorrt"], {"deepx_setup": []}),
+    (None, {"deepx_setup": ["deepx_m1_to_tensorrt"]}),
+])
+def test_original_setup_plan_join_rejects_foreign_missing_ambiguous_or_malformed_mapping(declared, groups):
+    from onnx_splitpoint_tool.recovered_quality_admission import _validate_original_setup_plan_binding
+    with pytest.raises(ValueError, match="original setup/plan binding mismatch"):
+        _validate_original_setup_plan_binding({"id": "deepx_m1_to_tensorrt"},
+            {"logical_run_profiles": declared, "setup_groups": groups}, "orin_nx_deepx_m1_01")

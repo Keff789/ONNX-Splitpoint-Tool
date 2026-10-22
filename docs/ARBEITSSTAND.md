@@ -1,3 +1,30 @@
+## 22.10.2026 — Reguläre logische Setupgruppen bei erhaltener Quality
+
+Die API für erhaltene Quality-Ergebnisse ordnet den ursprünglichen effektiven
+Plan jetzt mit derselben vorhandenen `_setup_class`-Funktion wie der normale
+Planbuilder zu. Ein regulärer DeepX-Plan führt seinen logischen Run unter
+`deepx_setup`; die physische Setup-ID bleibt über das ursprüngliche Profil
+separat gebunden. Der bisher akzeptierte exakte physische Gruppenkey bleibt
+zulässig. Logische Runliste und Gruppenmitglieder müssen eindeutig und vollständig
+übereinstimmen; fremde, fehlende, doppelte oder fehlerhafte Zuordnungen werden
+weiter abgelehnt. Alle Run-/Recovery-/Input-/Producer-/Source- und wissenschaftlichen
+Prüfungen sowie der reine Cachemodus bleiben unverändert.
+
+Der erste tatsächliche F11-Aufruf endete vor jeder Ergebnispublikation mit
+`original setup/plan binding mismatch`. Sein normaler Caller belegte das
+ursprüngliche Manifest und den RecoveryReceipt vorher/nachher bytegleich; dieser
+Fehlerbeleg bleibt erhalten. Die gezielte Korrektur bestand 27 Tests: 13 vollständige
+API-Fälle mit normalem logischen H10-Planformat und 14 Original-DeepX-Join-/Negativfälle.
+Service, Bootstrap, Hardware und ein erneuter tatsächlicher API-Aufruf waren dabei
+nicht erlaubt. Der frühere 258er-Unionlauf bleibt historische Evidenz der ansonsten
+unveränderten Quellen und wird nicht als neuer Testlauf dieser Korrektur ausgegeben.
+
+Nur API, deren bestehende Testdatei, dieser Arbeitsstand und die zwei normalen
+Quellenindizes ändern sich. Alle 42 Runtime-Bundle-Dateien einschließlich
+37 Python-Dateien bleiben bytegleich zu F11. Die Korrektur benötigt eine ehrlich
+neu veröffentlichte Controllerbindung und SourceFreeze12; F11, ursprüngliche Daten,
+Fehlerbelege, FPS-Ergebnisse und wissenschaftliche Policies bleiben erhalten.
+
 ## 22.10.2026 — Einzelfallbindung und Freigabe abgeschlossener Setups
 
 Neue Generic-FPS-Pläne können ausdrücklich `creation_snapshot_v1` wählen. Dieser

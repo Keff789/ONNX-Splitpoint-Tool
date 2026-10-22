@@ -89,6 +89,32 @@ def _sync_directory(path):
         os.close(fd)
 
 
+def _validate_original_setup_plan_binding(logical, plan, setup):
+    """Join normal logical group names without confusing them with DUT ids."""
+    from .execution_plan import _setup_class
+    declared, groups = plan.get("logical_run_profiles"), plan.get("setup_groups")
+    reason = "original setup/plan binding mismatch: "
+    _require(isinstance(declared, list) and declared
+             and all(isinstance(run_id, str) and run_id for run_id in declared)
+             and len(set(declared)) == len(declared)
+             and isinstance(groups, dict) and groups,
+             reason + "logical run/group declarations invalid")
+    members = []
+    for group, run_ids in groups.items():
+        _require(isinstance(group, str) and group and isinstance(run_ids, list) and run_ids
+                 and all(isinstance(run_id, str) and run_id for run_id in run_ids),
+                 reason + "group membership invalid")
+        members.extend((group, run_id) for run_id in run_ids)
+    planned = [run_id for _, run_id in members]
+    _require(len(planned) == len(set(planned)) and set(planned) == set(declared),
+             reason + "group membership missing, foreign or ambiguous")
+    logical_id = logical["id"]
+    selected = [group for group, run_id in members if run_id == logical_id]
+    _require(logical_id in declared and len(selected) == 1
+             and selected[0] in {setup, _setup_class(logical_id)},
+             reason + "logical profile does not belong to its setup group")
+
+
 def _cache_result(request, cache_root, statistics, sources, identity):
     key, payload = prepare_evaluation(request)
     if statistics.get("engine") == "optimized_coco_v1":
@@ -201,8 +227,7 @@ def admit_preserved_completed_quality(*, original_run_dir, recovery_receipt,
                      and setup in (profile.get("hardware") or {}).get("selected_setups", [])
                      and model in plan.get("models", []), "request is outside original source-only scope")
             logical = runs[0]
-            _require(logical.get("id") in plan.get("logical_run_profiles", [])
-                     and logical["id"] in (plan.get("setup_groups") or {}).get(setup, []), "original setup/plan binding mismatch")
+            _validate_original_setup_plan_binding(logical, plan, setup)
             config_source = (logical.get("generic_quality_completion_sources") or {}).get(case)
             config = json.loads(sources.read(config_source))
             _require(config_source["sha256"] == (logical.get("generic_quality_completion_config_sha256") or {}).get(case)

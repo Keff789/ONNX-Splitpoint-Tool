@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 436944,
-      "sha256": "a46fc2295f4d3c747ed8d6de5a49af95de876c041465937bbf30286859d231bf"
+      "size": 438785,
+      "sha256": "2ba00cf98e23b4592655c2b1bc73bec7c59e09ee2d38476f26d2c59b95c80a89"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -1561,8 +1561,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/recovered_quality_admission.py",
-      "size": 22495,
-      "sha256": "e73e1245e60c6d3b037af813bcd45c0b986fbd4968f352f0154f6e5addd9ee6e"
+      "size": 23850,
+      "sha256": "44c092a7cda0d8565a4806f6553ee5c6c683386c5bceb3c6f3f786d2d5833a42"
     },
     {
       "path": "onnx_splitpoint_tool/release_identity.py",
@@ -7811,8 +7811,8 @@
     },
     {
       "path": "tests/test_recovered_quality_admission.py",
-      "size": 27431,
-      "sha256": "383b6de960c0c4dee4f988d0cc2153ffb843635ff673cafd57e060a7d1c0e4ff"
+      "size": 29741,
+      "sha256": "5310d25d0061d34348aa4c7a3cebd24a69dc66efbc0e112129b9c86e7b053300"
     },
     {
       "path": "tests/test_remote_result_collection_retention.py",
