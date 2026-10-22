@@ -1,3 +1,90 @@
+## 22.10.2026 — Einzelfallbindung und Freigabe abgeschlossener Setups
+
+Neue Generic-FPS-Pläne können ausdrücklich `creation_snapshot_v1` wählen. Dieser
+Modus bindet die vier echten unveränderlichen Startdateien des ursprünglichen
+Quality-Runs: Startsnapshot, Quellprofil, effektives Profil und Ausführungsplan.
+Ein echter zentral abgeschlossener Einzelfall bleibt an seinen Request, Producer,
+Run, seine Eingaben und den vollständigen wissenschaftlichen Vertrag gebunden.
+Fortschritt eines anderen Setups verändert diese Autorität nicht. Run-, Session-,
+Ziel-, Host- oder Quellenänderungen werden beim nächsten Verbrauch und nochmals
+am Scopeende abgelehnt. Der bisherige vollständige Manifestmodus bleibt der
+unveränderte Standard; historische Pläne und Hashes werden nicht umgeschrieben.
+
+Die normale Ressourcenzulassung kann ein ausgewähltes Setup erst freigeben, wenn
+alle dafür geplanten Modell-/Remote-Run-Identitäten im vorhandenen terminalen
+Dispatch- und Statusformat belegt sind. Arbeitswurzel, Suite, Host, Run, aktueller
+RunLock und Session müssen zusammenpassen. Zusätzlich ist die echte physische
+Freigabe desselben Owners ohne Kernel-Lockhalter, Sidecar oder Quarantäne nötig.
+Ausgewählte und unklare Journale blockieren weiter. Ein aktives anderes Setup
+bleibt seinem tatsächlichen Ziel zugeordnet. Default-Recovery, Remote-Owner- und
+physische Dispatchprüfungen bleiben strikt; aus diesem Softwarestand folgt keine
+Freigabe des aktuell noch unvollständig belegten DX-Zustands.
+
+Das bestehende operationslokale Budget kleiner Quality-Proofs steigt von 16 auf
+64 Einträge mit weiterhin höchstens 64 KiB je Eintrag, insgesamt höchstens 4 MiB
+Nutzdaten. Predictions und große Reports werden nicht gespeichert; es gibt keinen
+persistenten Cache. Die Grenze von 16.384 Quelldateien, Dateiversionsprüfungen,
+die erste vollständige Byteprüfung und der abschließende Vollhash bleiben gleich.
+Die Tests prüfen die 64. und 65. Identität sowie eine abschließende Mutation auch
+bei verdeckter Dateimetadatenänderung.
+
+Der notwendige gemeinsame Softwarelauf für die vereinigte Fortsetzungsfassung
+bestand 258 Tests ohne Fehler oder Skips. Die separat erhaltenen älteren
+Referenztests bleiben bei 51 bestandenen Tests und vier identischen, bereits auf
+26b9 belegten Fixturefehlern. Der normale Writer liefert weiterhin alle 42
+Bundle-Dateien einschließlich 37 Python-Dateien bytegleich zu Source10. Diese
+Fassung wurde noch nicht auf Hardware gemessen; die tatsächlichen F10-Ergebnisse
+gehören zur unveränderten Quelle 26b9. Aktivierung und neue Controller-Quellenepoche
+erfolgen nach dem regulären ursprünglichen F10-Teilimport. Builds, Runtime37,
+Native-/UINT8-Verarbeitung, N5000/B1000/Seed, Poolgrößen, Warmups und Wiederholungen
+werden durch diese Korrekturen nicht geändert.
+
+## 22.10.2026 — Fortsetzung: gruppenlokale Validierung und erhaltene Quality-Ergebnisse
+
+Die normale parallele Generic-only-Ausführung hält je Gruppe einen getrennten
+Validierungsscope von der Planvorbereitung bis zum Workerabschluss offen. Der
+vorhandene Ausführungswrapper nutzt denselben Scope; getrennte Gruppen teilen
+keine Scope-Dictionaries. Die erste vollständige Byteprüfung und der abschließende
+Vollhash bleiben erhalten. Der Abschluss erfolgt vor Freigabe des physischen
+Queuekopfs; auch Vorbereitungsfehler und nie gestartete Gruppen schließen ihre
+Scopes. Ein bereits aktiver äußerer Scope wird für den parallelen Batch abgelehnt.
+
+Der zentrale Generic-Quality-Verifier verwendet den vorhandenen Scope auch für
+seine wiederholten Digestabfragen. Ein sichtbar markierter, gegen doppelte
+Installation geschützter Adapter delegiert nur während des expliziten zentralen
+Aufrufs und bei tatsächlich aktivem Scope. Andere Threads, normale Native-Aufrufe
+und Aufrufe außerhalb dieses Kontexts verwenden weiterhin den ursprünglichen
+Reader. Die vollständigen Vertrags-, Bild-, Producer- und wissenschaftlichen
+Prüfungen bleiben aktiv; es gibt keinen persistenten Digestcache und keine Änderung
+an Native- oder Inferenz-Runtime-Dateien.
+
+Eine normale öffentliche API kann nach ausdrücklich gebundener Recovery bereits
+vollständig berechnete, erhaltene Quality-Ergebnisse erstmals publizieren. Sie
+benutzt den bestehenden Request-/Candidate-Lader, die ursprüngliche unveränderliche
+CPU-Referenz, die echten Producer-IDs und dieselbe aus dem Runner ausgegliederte
+Ergebnisanreicherung. Eine reine Cacheabfrage startet weder Service, Bootstrap noch
+Inferenz. Die API verlangt die genaue Recovery-, Run-, Session-, Profil- und
+Requestbindung und verifiziert die ursprünglichen Bytes erneut. Sie schreibt nur
+neue Recovery-Artefakte und die vorher fehlende normale zentrale Summary. Ein
+vorhandener Zielbericht oder Publikationsordner wird ausdrücklich abgelehnt;
+historische Daten und der abgebrochene Originalstatus werden nicht überschrieben.
+Ein bereits laufender Controller lädt diese neue Recoverylogik nicht nach.
+
+Der notwendige gemeinsame Softwarelauf für diese drei Änderungen bestand alle
+123 Tests ohne Fehler oder Skips. Die bereits separat geprüften drei älteren
+Referenz-Testdateien stehen bei 51 bestandenen Tests und vier identisch auf der
+unveränderten Basis 26b9 reproduzierten Fixturefehlern. Diese Fehler wurden weder
+wegselektiert noch durch Änderungen an Tests oder Fixtures verdeckt. Die normalen
+Quellen-/Archivprüfungen und der Vergleich aller 42 Bundle-Dateien einschließlich
+37 Python-Dateien mit Source10 bleiben Teil des isolierten Releasebelegs.
+
+Diese kombinierte Fassung wurde noch nicht auf Hardware gemessen. Die bisherigen
+F10-Beobachtungen gehören zur unveränderten Quellenfassung 26b9 und sind kein
+Hardwaretest dieses Pakets. Builds, UINT8-/Native-Verarbeitung, wissenschaftliche
+Policies, Slotzahlen und Wiederholungsbudgets werden nicht geändert. Die Aktivierung
+erfolgt erst nach dem normalen F10-Teilimport und mit ehrlich neu veröffentlichter
+Controller-Quellenbindung; alte Run-, Source- und Runtimebelege bleiben erhalten.
+
 ## 22.10.2026 — Diagnose der normalen Ergebnissammlung
 
 Der normale Collector protokolliert jetzt seinen Beginn, den Status seines

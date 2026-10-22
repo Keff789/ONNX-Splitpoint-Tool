@@ -690,3 +690,47 @@ def test_malformed_explicit_functional_reference_cannot_skip_preparation_admissi
         completed.runtime_configuration(row, "/session", "execution")
     with pytest.raises((ValueError, KeyError, TypeError)):
         completed.verify_runtime_environment(None, row, tmp_path / "unused.json")
+
+
+def test_quality_scope_retains_first_64_small_proofs_but_not_65(tmp_path, monkeypatch):
+    source = document(tmp_path / "proof-authority.json", {"value": 1})
+    calls = {}
+    def validate(row):
+        case = row["identity"]["case_id"]
+        calls[case] = calls.get(case, 0) + 1
+        admission.read_bound(source)
+        return {"case_id": case, "status": "accuracy_loss", "quality_eligible": False}
+    monkeypatch.setattr(admission, "_validate_quality_reference", validate)
+    rows = [{"task": "detection", "identity": {"case_id": f"b{index:03d}"}}
+            for index in range(65)]
+    with admission.validation_scope() as scope:
+        for row in rows:
+            admission.validate_quality_reference(row)
+        assert len(scope.proofs) == 64
+        for row in rows:
+            proof = admission.validate_quality_reference(row)
+            assert proof["status"] == "accuracy_loss" and proof["quality_eligible"] is False
+        assert all(calls[row["identity"]["case_id"]] == 1 for row in rows[:64])
+        assert calls[rows[64]["identity"]["case_id"]] == 2
+        assert len(scope.proofs) == 64
+
+
+@pytest.mark.parametrize("hide_version_change", [False, True])
+def test_quality_scope_full_budget_still_rehashes_authority_at_end(
+        tmp_path, monkeypatch, hide_version_change):
+    source = document(tmp_path / "proof-authority.json", {"value": 1})
+    path = tmp_path / "proof-authority.json"
+    if hide_version_change:
+        version = admission._file_version(path)
+        monkeypatch.setattr(admission, "_file_version", lambda _: version)
+    def validate(row):
+        admission.read_bound(source)
+        return {"case_id": row["identity"]["case_id"], "status": "reference_close"}
+    monkeypatch.setattr(admission, "_validate_quality_reference", validate)
+    with pytest.raises(ValueError, match="changed"):
+        with admission.validation_scope() as scope:
+            for index in range(65):
+                admission.validate_quality_reference({
+                    "task": "detection", "identity": {"case_id": f"b{index:03d}"}})
+            assert len(scope.proofs) == 64
+            path.write_bytes(path.read_bytes().replace(b"1", b"2"))

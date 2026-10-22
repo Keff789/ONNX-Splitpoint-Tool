@@ -6,6 +6,8 @@ repeat budget and output tree. Only independent physical setup queues overlap.
 from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, wait
+from contextlib import ExitStack
+from contextvars import copy_context
 import hashlib
 import importlib
 import json
@@ -164,7 +166,28 @@ def _write_exclusive(path, value):
         json.dump(value, stream, indent=2)
 
 
-def _prepare_batch(manifest_path, *, resume):
+class _GroupValidation:
+    """One operation scope, handed from preparation to one worker at a time."""
+    def __init__(self):
+        from ..generic_only_plan import _VALIDATION_SCOPE, validation_scope
+        self.context = copy_context()
+        if self.context.get(_VALIDATION_SCOPE) is not None:
+            raise ValueError("Parallel groups require independent validation scopes")
+        self.manager = validation_scope()
+        self.context.run(self.manager.__enter__)
+
+    def run(self, function, *args):
+        return self.context.run(function, *args)
+
+    def close(self):
+        manager, self.manager = self.manager, None
+        if manager is not None:
+            # Always perform the normal final full-byte check, including a
+            # blocked or never-dispatched group. The context token belongs here.
+            self.context.run(manager.__exit__, None, None, None)
+
+
+def _prepare_batch(manifest_path, *, resume, _validation_stack=None):
     manifest_path = Path(manifest_path).resolve()
     source = descriptor(manifest_path)
     manifest = entry.read_json(manifest_path)
@@ -205,8 +228,15 @@ def _prepare_batch(manifest_path, *, resume):
         if current.get("product_freeze") != freeze.descriptor:
             raise ValueError("Parallel child plan differs from the exact shared controller/source freeze")
         primary = Path(current["original_run"]).resolve()
-        rows = entry.validate_plan(current, Path(current["scope_source"]), primary)
-        targets = entry.bound_targets(primary, rows)
+        validation = None
+        if _validation_stack is not None:
+            validation = _GroupValidation()
+            _validation_stack.callback(validation.close)
+        arguments = (current, Path(current["scope_source"]), primary)
+        rows = (validation.run(entry.validate_plan, *arguments) if validation is not None
+                else entry.validate_plan(*arguments))
+        targets = entry.bound_targets(primary, rows, **({"producer_run_binding": current["producer_run_binding"]}
+            if current.get("producer_run_binding") is not None else {}))
         models = {row["model_id"] for row in rows}
         if len(targets) != 1 or len(models) != 1:
             raise ValueError("Each parallel group must be one prepared model/setup plan")
@@ -223,7 +253,7 @@ def _prepare_batch(manifest_path, *, resume):
         roots.append(root); execution_ids.add(current["execution_id"])
         groups.append({"index": index, "plan": declared, "path": path, "payload": current,
             "model_id": next(iter(models)), "setup_id": setup, "physical_dut_key": physical_dut_key(target),
-            "output_root": root})
+            "output_root": root, "validation": validation})
     models = manifest.get("model_ids")
     if (not isinstance(models, list) or not models or len(models) != len(set(models))
             or set(models) != {group["model_id"] for group in groups}):
@@ -304,9 +334,15 @@ def _completed(group):
 
 def execute_batch(manifest_path, *, resume=False):
     """Run normal single-setup plans, preserving every plan's own durable state."""
+    with ExitStack() as validation_stack:
+        return _execute_batch(manifest_path, resume=resume, validation_stack=validation_stack)
+
+
+def _execute_batch(manifest_path, *, resume, validation_stack):
     if threading.current_thread() is not threading.main_thread():
         raise ValueError("Parallel batch controller must own the main-thread signal handlers")
-    manifest, source, output, freeze, groups = _prepare_batch(manifest_path, resume=resume)
+    manifest, source, output, freeze, groups = _prepare_batch(
+        manifest_path, resume=resume, _validation_stack=validation_stack)
     output.mkdir(parents=True, exist_ok=True)
     cancel, events = threading.Event(), queue.SimpleQueue()
     manager = None
@@ -346,7 +382,7 @@ def execute_batch(manifest_path, *, resume=False):
         with quarantine_lock:
             quarantine[key] = record
             _write_exclusive(receipt, record)
-    def work(group):
+    def work_body(group):
         index = group["index"]
         events.put((index, {"status": "running", "controller_group_started_at": entry.now()}))
         result = {}
@@ -391,6 +427,17 @@ def execute_batch(manifest_path, *, resume=False):
                 except Exception as error:
                     quarantine_group(group, error)
             events.put((index, {"controller_group_finished_at": entry.now()}))
+    def work(group):
+        validation = group["validation"]
+        try:
+            try:
+                return validation.run(work_body, group)
+            finally:
+                # Finish before the dispatcher releases this physical queue.
+                validation.close()
+        except Exception as error:
+            return {"status": "blocked", "error": f"{type(error).__name__}: {error}",
+                    "shared_source_failed": freeze.failed}
     with EvaluationRunLock(out_root=output.parent, run_dir=output,
             owner={"run_id": output.name, "purpose": "generic_only_parallel_batch"}):
         start = output / "batch-start.json"

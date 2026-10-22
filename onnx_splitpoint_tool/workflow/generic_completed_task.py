@@ -65,8 +65,13 @@ def outside_primary(path: Path, primary: Path) -> Path:
     return path
 
 
-def bound_targets(primary: Path, rows: list[dict]) -> dict[str, dict]:
-    targets = {r["id"]: r for r in read_json(primary / "run_manifest.json")["hardware_targets"]}
+def bound_targets(primary: Path, rows: list[dict], *, producer_run_binding=None) -> dict[str, dict]:
+    if producer_run_binding is not None:
+        from ..generic_producer_binding import validate_producer_run_binding
+        source = validate_producer_run_binding(primary, producer_run_binding, rows)
+        targets = {r["id"]: r for r in source["hardware_targets"]}
+    else:
+        targets = {r["id"]: r for r in read_json(primary / "run_manifest.json")["hardware_targets"]}
     wanted = {(r.get("identity") or r)["setup_id"] for r in rows}
     result = {}
     for setup_id in sorted(wanted):
@@ -247,6 +252,7 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
                 require(not any(value["physical_resource"] in selected for value in physical),
                         "selected_physical_dut_is_active")
                 central_only = False
+                completed_setups = []
                 if resources & selected:
                     terminal = {"ok", "completed", "partial", "failed", "skipped"}
                     models = manifest.get("models")
@@ -270,13 +276,183 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
                         and smoke.get("mode") == "summary_only"
                         and smoke.get("require_remote_for_hailo") is False
                         and not physical)
-                    require(central_only, "selected_dut_workflow_has_not_entered_central_only_phase")
                     journal = run / "jobs/remote_process_leases"
-                    require(journal.is_dir() and not list(journal.rglob("*.remote-lease.json")),
-                            "central_only_remote_operations_unresolved")
+                    if central_only:
+                        require(journal.is_dir() and not list(journal.rglob("*.remote-lease.json")),
+                                "central_only_remote_operations_unresolved")
+                    else:
+                        # Per-setup dispatch can finish while another setup is
+                        # still capturing. Only normal, complete dispatch and
+                        # transport receipts can close the selected setup; an
+                        # inner case event or a missing journal is insufficient.
+                        require(smoke.get("mode") == "summary_only"
+                                and smoke.get("require_remote_for_hailo") is False,
+                                "selected_dut_workflow_has_not_entered_central_only_phase")
+                        from .execution_binding import _remote_transport_run_id, _profile_remote_with_override
+
+                        def timestamp(value):
+                            stamp = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+                            require(stamp.tzinfo is not None, "selected_setup_terminal_time_unbound")
+                            return stamp.timestamp()
+
+                        completed_setups = [setup for setup in setup_ids
+                            if resource_keys(targets_by_id[setup]) & selected]
+                        completed_at = {}
+                        for setup in completed_setups:
+                            expected_runs = {row["id"] for row in runs
+                                             if row.get("hardware_setup_id") == setup}
+                            require(expected_runs, "selected_setup_planned_runs_missing")
+                            target = targets_by_id[setup]
+                            remote = target.get("remote") or target.get("runtime")
+                            last_terminal = 0
+                            for model_id in sorted(model_ids):
+                                require(isinstance(model_id, str) and re.fullmatch(r"[A-Za-z0-9_.-]+", model_id)
+                                        and re.fullmatch(r"[A-Za-z0-9_.-]+", setup),
+                                        "selected_setup_identity_unsafe")
+                                directory = run / "models" / model_id / "benchmark_results"
+                                dispatch_path = directory / ("remote_benchmark_dispatch_" + setup + ".json")
+                                status_path = directory / ("remote_benchmark_status_" + setup + ".json")
+                                require(dispatch_path.is_file() and status_path.is_file(),
+                                        "selected_dut_workflow_has_not_entered_central_only_phase")
+                                dispatch = read(dispatch_path)
+                                status = read(status_path)
+                                gates = dispatch.get("execution_gates")
+                                require(isinstance(gates, dict), "selected_setup_dispatch_gates_unbound")
+                                planned = gates.get("hardware_run_ids")
+                                require(isinstance(planned, list) and len(planned) == len(expected_runs)
+                                        and set(planned) == expected_runs
+                                        and gates.get("hardware_run_id") in expected_runs
+                                        and gates.get("hardware_target") == target,
+                                        "selected_setup_planned_runs_differ")
+                                expected_host = {"user": remote["user"], "host": remote["host"],
+                                                 "port": int(remote.get("port", 22))}
+                                host = dispatch.get("host")
+                                require(isinstance(host, dict) and all(host.get(k) == v for k, v in expected_host.items())
+                                        and dispatch.get("schema") == "onnx-splitpoint/remote-benchmark-dispatch"
+                                        and dispatch.get("schema_version") == 1
+                                        and dispatch.get("status") == "dispatching"
+                                        and dispatch.get("hardware_target_id") == setup
+                                        and dispatch.get("model_id") == model_id
+                                        and status.get("schema") == "onnx-splitpoint/remote-benchmark-status"
+                                        and status.get("schema_version") == 1
+                                        and status.get("hardware_target_id") == setup
+                                        and status.get("model_id") == model_id
+                                        and status.get("status") in {"ok", "partial", "failed", "cancelled"}
+                                        and status.get("host") == host and status.get("execution_gates") == gates
+                                        and status.get("suite_dir") == dispatch.get("suite_dir"),
+                                        "selected_setup_terminal_dispatch_binding_differs")
+                                arguments = dispatch.get("args")
+                                require(isinstance(arguments, dict)
+                                        and arguments.get("quality_evidence_eval_id") == run.name
+                                        and arguments.get("quality_evidence_model_id") == model_id
+                                        and arguments.get("quality_evidence_setup_id") == setup
+                                        and arguments.get("energy_enabled") is False,
+                                        "selected_setup_quality_dispatch_scope_unbound")
+                                transport_id = _remote_transport_run_id(run_root=run, model_id=model_id,
+                                    target_id=setup, gates=gates, workflow_session_id=session_id)
+                                require(dispatch.get("run_id") == transport_id,
+                                        "selected_setup_transport_run_unbound")
+                                local = Path(str(status.get("local_run_dir") or ""))
+                                meta = read(local / "run_meta.json")
+                                transport_status = read(local / "run_status.json")
+                                requested = meta.get("resume") or {}
+                                suite = Path(str(dispatch.get("suite_dir") or ""))
+                                benchmark = Path(str(dispatch.get("benchmark_set_json") or ""))
+                                require(not suite.is_absolute() and not benchmark.is_absolute()
+                                        and ".." not in suite.parts and ".." not in benchmark.parts
+                                        and bool(suite.parts) and benchmark.parent == suite,
+                                        "selected_setup_suite_path_unbound")
+                                working = Path(str(dispatch.get("local_working_dir") or "")).expanduser()
+                                expected_working = Path(str((manifest.get("options") or {}).get("remote_working_dir")
+                                    or _profile_remote_with_override(profile, remote).get("local_working_dir")
+                                    or directory / "remote_runs")).expanduser().resolve()
+                                require(working.is_absolute() and working == expected_working
+                                        and meta.get("schema_version") == 1
+                                        and meta.get("run_id") == local.name
+                                        and requested.get("requested_run_id") == transport_id
+                                        and requested.get("active_run_id") == local.name
+                                        and meta.get("repeat_idx") == "1"
+                                        and local == working / "Results" / suite.name / "1" / local.name
+                                        and meta.get("host") == host
+                                        and meta.get("suite_dir") == str(run / suite)
+                                        and meta.get("benchmark_set_json") == str(run / benchmark)
+                                        and isinstance(meta.get("args"), dict)
+                                        and meta["args"].get("energy_enabled") is False
+                                        and meta["args"].get("add_args") == arguments.get("add_args")
+                                        and transport_status.get("schema_version") == 1
+                                        and transport_status.get("status") in {"ok", "partial", "failed", "cancelled"}
+                                        and type(transport_status.get("remote_rc")) is int
+                                        and transport_status.get("started_at") == meta.get("started_at"),
+                                        "selected_setup_transport_terminal_unbound")
+                                start = timestamp(meta.get("started_at"))
+                                end = timestamp(transport_status.get("ended_at"))
+                                published = timestamp(status.get("created_at"))
+                                require(acquired.timestamp() <= timestamp(dispatch.get("created_at")) <= start <= end <= published <= time.time(),
+                                        "selected_setup_terminal_predates_current_owner")
+                                last_terminal = max(last_terminal, end)
+                            completed_at[setup] = last_terminal
+                            # The normal physical resource gate still acquires
+                            # at dispatch. Here require its genuine release and
+                            # reject every current kernel holder without taking
+                            # an observer lock or rewriting owner metadata.
+                            for resource in resource_keys(target):
+                                physical_lock = EvaluationRunLock.for_resource(resource, owner={})
+                                require(not os.path.lexists(physical_lock.quarantine_path),
+                                        "selected_setup_physical_quarantine_unresolved")
+                                released = read(physical_lock.lock_path)
+                                require(released.get("schema") == "onnx-splitpoint/evaluation-run-lock"
+                                        and released.get("schema_version") == 1 and released.get("state") == "released"
+                                        and released.get("physical_resource") == resource
+                                        and released.get("run_id") == run.name and released.get("pid") == pid
+                                        and released.get("purpose") == "generic"
+                                        and released.get("hostname") == socket.gethostname()
+                                        and released.get("ppid") == owner["ppid"]
+                                        and released.get("pgid") == owner["pgid"]
+                                        and ("session_id" not in released or released["session_id"] == session_id)
+                                        and acquired.timestamp() <= timestamp(released.get("acquired_at")) <= last_terminal
+                                        <= timestamp(released.get("released_at")) <= time.time(),
+                                        "selected_setup_physical_release_unproven")
+                                info = physical_lock.lock_path.stat()
+                                key = (os.major(info.st_dev), os.minor(info.st_dev), info.st_ino)
+                                for line in Path("/proc/locks").read_text().splitlines():
+                                    fields = line.split()
+                                    if "->" in fields: continue
+                                    if len(fields) >= 6 and fields[1:3] == ["FLOCK", "ADVISORY"]:
+                                        device = fields[5].split(":")
+                                        require(len(device) != 3 or (int(device[0], 16), int(device[1], 16), int(device[2])) != key,
+                                                "selected_setup_physical_lock_still_held")
+                        require(journal.is_dir() and not journal.is_symlink(), "selected_setup_remote_journal_unbound")
+                        require(all(directory.is_dir() and not directory.is_symlink()
+                                    and directory.name in {row["session_id"] for row in sessions}
+                                    for directory in journal.iterdir()), "selected_setup_remote_journal_scope_unknown")
+                        pending = list(journal.rglob("*.remote-lease.json"))
+                        scope = RemoteProcessLeaseScope(run.name, session_id)
+                        for entry in pending:
+                            operation = read(entry)
+                            prefix = operation.get("control_argv_prefix")
+                            require(entry.parent == journal / session_id
+                                    and operation.get("schema") == "onnx-splitpoint/remote-process-lease-journal"
+                                    and operation.get("schema_version") == 1
+                                    and operation.get("run_sha256") == scope.run_sha256
+                                    and operation.get("session_sha256") == scope.session_sha256
+                                    and operation.get("operation_id") == entry.name[:-len(".remote-lease.json")]
+                                    and isinstance(operation.get("token"), str) and bool(operation["token"])
+                                    and isinstance(prefix, list) and all(isinstance(arg, str) for arg in prefix)
+                                    and prefix.count("-p") == 1 and prefix.index("-p") + 1 < len(prefix),
+                                    "selected_setup_remote_journal_scope_unknown")
+                            matched = [other for other in setup_ids if
+                                {"user_host": (targets_by_id[other].get("remote") or targets_by_id[other].get("runtime"))["user"]
+                                    + "@" + (targets_by_id[other].get("remote") or targets_by_id[other].get("runtime"))["host"],
+                                 "port": str(int((targets_by_id[other].get("remote") or targets_by_id[other].get("runtime")).get("port", 22)))}
+                                == {"user_host": prefix[-1], "port": prefix[prefix.index("-p") + 1]}]
+                            require(matched and all(not (resource_keys(targets_by_id[other]) & selected) for other in matched),
+                                    "selected_setup_remote_operations_unresolved")
+                        require(set(journal.rglob("*.remote-lease.json")) == set(pending),
+                                "owner_source_changed_during_observation")
                 value = {"pid": pid, "start_ticks": owner["start_ticks"], "run_id": run.name,
                          "run_dir": str(run), "session_id": session_id,
                          "resources": sorted(resources), "central_only": central_only,
+                         "completed_selected_setups": sorted(completed_setups),
                          "ssh_targets": [{"user_host": (targets_by_id[setup].get("remote")
                              or targets_by_id[setup].get("runtime"))["user"] + "@" +
                              (targets_by_id[setup].get("remote") or targets_by_id[setup].get("runtime"))["host"],
@@ -864,7 +1040,8 @@ def _prepare_execution(scope_plan: Path, output: Path, *, hailo_async_inflight: 
     if execution_path.exists():
         raise FileExistsError("execution plan already exists; use its bound entry: " + str(execution_path))
     execution_id = datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:8]
-    targets = bound_targets(primary, rows)
+    targets = bound_targets(primary, rows, **({"producer_run_binding": plan["producer_run_binding"]}
+        if plan.get("producer_run_binding") is not None else {}))
     for row in rows:
         target = targets[row["setup_id"]]
         runtime = original_generic_environment(row)
@@ -1241,7 +1418,8 @@ def _execute_plan(plan_path: Path, plan: dict, *, resume: bool = False,
     bundle = output / "runner-bundle.tar.gz"
     if not bundle.is_file():
         raise FileNotFoundError("prepare the final tested session runner bundle before production")
-    targets = bound_targets(primary, rows)
+    targets = bound_targets(primary, rows, **({"producer_run_binding": plan["producer_run_binding"]}
+        if plan.get("producer_run_binding") is not None else {}))
     starts = plan["start_case_keys"]
     selected_groups = {(r["setup_id"], r["task"]) for r in rows}
     generic_only = plan.get("scope_mode") == "generic_only_completed_task"

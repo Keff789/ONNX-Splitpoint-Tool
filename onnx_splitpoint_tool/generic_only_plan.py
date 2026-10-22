@@ -13,8 +13,9 @@ import json
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar
-from functools import lru_cache
+from functools import lru_cache, wraps
 from pathlib import Path, PurePosixPath
+from threading import RLock
 from typing import Mapping
 
 from .generic_completion_plan import completion_identity
@@ -31,6 +32,8 @@ FORBIDDEN_NATIVE = (
 )
 
 _VALIDATION_SCOPE = ContextVar("generic_only_validation_scope", default=None)
+_NATIVE_DIGEST_SCOPE = ContextVar("generic_only_central_native_digest", default=False)
+_NATIVE_DIGEST_INSTALL_LOCK = RLock()
 
 
 def _file_version(path):
@@ -44,11 +47,14 @@ class _ValidationScope:
     def __init__(self):
         self.sources = {}
         self.proofs = {}
+        self.producer_guards = {}
 
     def unchanged(self):
         for path, (version, _) in self.sources.items():
             if _file_version(path) != version:
                 raise ValueError("Generic-only source changed during validation: " + str(path))
+        for guard in self.producer_guards.values():
+            guard()
 
     def digest(self, path):
         path = Path(os.path.abspath(path))
@@ -72,6 +78,8 @@ class _ValidationScope:
         for path, (version, digest) in self.sources.items():
             if _file_sha256(path) != digest or _file_version(path) != version:
                 raise ValueError("Generic-only source changed during validation: " + str(path))
+        for guard in self.producer_guards.values():
+            guard()
 
 
 @contextmanager
@@ -155,9 +163,31 @@ def _json(descriptor):
     return value
 
 
+def _install_native_digest_adapter(module):
+    """Keep Native bytes/default reads intact; share only a central scope's digests."""
+    with _NATIVE_DIGEST_INSTALL_LOCK:
+        original = module.file_sha256
+        if getattr(original, "_generic_validation_digest_adapter", False):
+            return
+        @wraps(original)
+        def digest(path):
+            if _NATIVE_DIGEST_SCOPE.get() and _VALIDATION_SCOPE.get() is not None:
+                return file_sha256(path)
+            return original(path)
+        digest._generic_validation_digest_adapter = True
+        module.file_sha256 = digest
+
+
 def _completed_quality_binding(*args, **kwargs):
-    from .runners.generic_quality_completion import validate_completed_quality_binding
-    return validate_completed_quality_binding(*args, **kwargs)
+    from .runners import generic_quality_completion as verifier
+    if _VALIDATION_SCOPE.get() is None:
+        return verifier.validate_completed_quality_binding(*args, **kwargs)
+    _install_native_digest_adapter(verifier._product())
+    token = _NATIVE_DIGEST_SCOPE.set(True)
+    try:
+        return verifier.validate_completed_quality_binding(*args, **kwargs)
+    finally:
+        _NATIVE_DIGEST_SCOPE.reset(token)
 
 
 def validate_quality_input_binding(row, proof):
@@ -186,18 +216,24 @@ def validate_quality_input_binding(row, proof):
 def validate_quality_reference(row):
     """Reuse only a small successful proof inside a fully verified operation."""
     with validation_scope() as scope:
+        if row.get("producer_run_binding") is not None:
+            from .generic_producer_binding import validate_producer_run_binding
+            validate_producer_run_binding(row["original_run"], row["producer_run_binding"], [row])
         if row.get("task") == "classification":
             return _validate_quality_reference(row)
         fields = ("task", "identity", "quality_reference", "completion_contract", "input_binding",
                   "generic_artifact_binding", "boundary_observation", "canonical_full_input_bindings")
-        key = hashlib.sha256(json.dumps({key: row.get(key) for key in fields},
+        selected = {key: row.get(key) for key in fields}
+        if row.get("producer_run_binding") is not None:
+            selected["producer_run_binding"] = row["producer_run_binding"]
+        key = hashlib.sha256(json.dumps(selected,
             sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
         scope.unchanged()
         if key in scope.proofs:
             return copy.deepcopy(scope.proofs[key])
         proof = _validate_quality_reference(row)
         scope.unchanged()
-        if len(scope.proofs) < 16 and len(json.dumps(proof)) <= 65536:
+        if len(scope.proofs) < 64 and len(json.dumps(proof)) <= 65536:
             scope.proofs[key] = copy.deepcopy(proof)
         return proof
 
@@ -264,6 +300,11 @@ def _validate_quality_reference(row):
         result.get("producer_identity"), role="Generic-only source", task="detection")
     if producer_sha != result.get("producer_identity_sha256"):
         raise ValueError("Generic-only Quality producer hash differs")
+    if row.get("producer_run_binding") is not None:
+        run_id = row["producer_run_binding"]["run_id"]
+        if any(value != run_id for value in (request.get("eval_run_id"), result.get("eval_run_id"),
+                producer.get("eval_run_id"), (request.get("producer_identity") or {}).get("eval_run_id"))):
+            raise ValueError("Generic-only Quality differs from its original producer creation run")
     from .native_detection_postprocess import verify_detection_completion_execution_contract
     completion = verify_detection_completion_execution_contract(row["completion_contract"])
     if (completion["source_endpoint"]["endpoint_contract_hash"] != result.get("endpoint_contract_hash")
@@ -353,6 +394,13 @@ def _project_artifacts(row, case_dir):
 
 
 def validate_plan(plan, scope_csv, primary):
+    if plan.get("producer_run_binding") is not None:
+        with validation_scope():
+            return _validate_plan(plan, scope_csv, primary)
+    return _validate_plan(plan, scope_csv, primary)
+
+
+def _validate_plan(plan, scope_csv, primary):
     if plan.get("scope_mode") != MODE or plan.get("admission_mode") != "generic_only":
         raise ValueError("Generic-only plan requires its explicit separated admission mode")
     count = plan.get("authorized_row_count")
@@ -374,10 +422,19 @@ def validate_plan(plan, scope_csv, primary):
     if (len(source) != count or len(set(identities)) != count
             or set(identities) != {completion_identity(r) for r in source}):
         raise ValueError("Generic-only scope identities differ or repeat")
-    manifest = _json(plan.get("producer_run_manifest"))
-    if read_bound(plan["producer_run_manifest"]).resolve() != Path(primary).resolve() / "run_manifest.json":
-        raise ValueError("Generic-only producer run manifest belongs to another run")
-    targets = {item["id"] for item in manifest.get("hardware_targets", [])}
+    if plan.get("producer_run_binding") is not None:
+        if "producer_run_manifest" in plan:
+            raise ValueError("Generic-only producer creation mode cannot replace or mix a legacy manifest binding")
+        from .generic_producer_binding import validate_producer_run_binding
+        producer = validate_producer_run_binding(primary, plan["producer_run_binding"], rows)
+        targets = {item["id"] for item in producer["hardware_targets"]}
+    else:
+        if any(row.get("producer_run_binding") is not None for row in rows):
+            raise ValueError("Generic-only row creation binding requires the explicit plan creation mode")
+        manifest = _json(plan.get("producer_run_manifest"))
+        if read_bound(plan["producer_run_manifest"]).resolve() != Path(primary).resolve() / "run_manifest.json":
+            raise ValueError("Generic-only producer run manifest belongs to another run")
+        targets = {item["id"] for item in manifest.get("hardware_targets", [])}
     requests = {"hailo8": ("synchronous", 1), "hailo10h": ("hailo_async_slots_v1", 8),
                 "deepx": ("deepx_async_slots_v1", 4)}
     for row in rows:

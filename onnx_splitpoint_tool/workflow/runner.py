@@ -8548,6 +8548,15 @@ class EvaluationWorkflowRunner:
         if future is None:
             raise RuntimeError(f"management CPU reference was not scheduled for {model_id}")
         raw_status = future.result()
+        return self._read_management_reference_status(run_dir=self.run_dir, model_id=model_id,
+            raw_status=raw_status, expected_source_contract=getattr(
+                self, "_management_reference_source_contracts", {}).get(str(model_id or "").strip()))
+
+    @classmethod
+    def _read_management_reference_status(cls, *, run_dir: Path, model_id: str,
+                                          raw_status: Mapping[str, Any],
+                                          expected_source_contract: str):
+        """Validate the same sealed saved reference without starting a job."""
         if not isinstance(raw_status, Mapping):
             raise RuntimeError(
                 f"management CPU reference returned no status object for {model_id}"
@@ -8594,10 +8603,10 @@ class EvaluationWorkflowRunner:
                 f"management CPU reference status semantics are invalid for {model_id}"
             )
 
-        source_contract = self._quality_sha256_token(
+        source_contract = cls._quality_sha256_token(
             status.get("source_contract_sha256")
         )
-        reference_sha256 = self._quality_sha256_token(
+        reference_sha256 = cls._quality_sha256_token(
             status.get("reference_sha256")
         )
         reference_size = status.get("reference_size_bytes")
@@ -8605,13 +8614,7 @@ class EvaluationWorkflowRunner:
             raise RuntimeError(
                 f"management CPU reference status digests are invalid for {model_id}"
             )
-        expected_source_contract = self._quality_sha256_token(
-            getattr(
-                self,
-                "_management_reference_source_contracts",
-                {},
-            ).get(model_token)
-        )
+        expected_source_contract = cls._quality_sha256_token(expected_source_contract)
         if not expected_source_contract or source_contract != expected_source_contract:
             raise RuntimeError(
                 f"management CPU reference source contract is not bound to the active workflow for {model_id}: "
@@ -8622,7 +8625,7 @@ class EvaluationWorkflowRunner:
                 f"management CPU reference size binding is invalid for {model_id}"
             )
 
-        root = Path(os.path.abspath(os.fspath(self.run_dir)))
+        root = Path(os.path.abspath(os.fspath(run_dir)))
         raw_path = str(status.get("reference_path") or "").strip()
         if not raw_path:
             raise RuntimeError(
@@ -8675,7 +8678,7 @@ class EvaluationWorkflowRunner:
                 f"management CPU reference path layout is invalid for {model_id}: {candidate}"
             )
 
-        encoded = self._read_management_reference_nofollow(
+        encoded = cls._read_management_reference_nofollow(
             root,
             relative_path,
             expected_size=int(reference_size),
@@ -8737,7 +8740,7 @@ class EvaluationWorkflowRunner:
             raise RuntimeError(
                 f"management CPU reference record has no Image ID for {model_id}"
             )
-        if self._quality_sha256_token(
+        if cls._quality_sha256_token(
             status.get("image_ids_sha256")
         ) != image_ids_fingerprint(image_ids):
             raise RuntimeError(
@@ -8767,10 +8770,10 @@ class EvaluationWorkflowRunner:
             )
         if status_contract is not None or task == "detection":
             if (
-                self._quality_sha256_token(
+                cls._quality_sha256_token(
                     status.get("quality_contract_sha256")
                 )
-                != self._quality_sha256_token(
+                != cls._quality_sha256_token(
                     payload.get("quality_contract_sha256")
                 )
             ):
@@ -8861,9 +8864,13 @@ class EvaluationWorkflowRunner:
         return identity, stored
 
     def _canonical_model_sha256_for_quality(self, model_id: str) -> str:
+        return self._read_canonical_model_sha256_for_quality(run_dir=self.run_dir, model_id=model_id)
+
+    @staticmethod
+    def _read_canonical_model_sha256_for_quality(*, run_dir: Path, model_id: str) -> str:
         """Resolve the exact ONNX model selected by ``model_id`` or fail closed."""
 
-        manifest_path = self.run_dir / "models" / model_id / "model_manifest.json"
+        manifest_path = run_dir / "models" / model_id / "model_manifest.json"
         manifest = read_json(manifest_path, default={}) or {}
 
         def _digest(value: Any) -> str:
@@ -8905,7 +8912,7 @@ class EvaluationWorkflowRunner:
         if not resolved_paths:
             suite_models = [
                 path.resolve() for path in sorted(
-                    (self.run_dir / "models" / model_id / "benchmark_set" / "models").glob("*.onnx")
+                    (run_dir / "models" / model_id / "benchmark_set" / "models").glob("*.onnx")
                 )
                 if path.is_file() and "part1" not in path.name.lower() and "part2" not in path.name.lower()
             ]
@@ -9059,170 +9066,13 @@ class EvaluationWorkflowRunner:
                     request_id=f"{model_id}:{request.request_id}:{sha256_file(request_path)}",
                 )
             result = completed_outcome(service.evaluate(request))
-            result_completed = (
-                str(result.get("status") or "completed") == "completed"
-                and str(result.get("technical_status") or "completed") == "completed"
-            )
-            request_identity["producer_binding_eligible"] = bool(
-                (
-                    request_identity.get("producer_identity_validated")
-                    or request_identity.get(
-                        "native_split_quality_binding_required"
-                    ) is True
-                )
-                and result_completed
-            )
-            result.update({
-                "status": str(result.get("status") or "completed"),
-                # Collection ownership is known locally even for legacy Full
-                # requests that do not attest a remote evaluation run ID.
-                # Do not fabricate that missing producer attestation.
-                "collection_eval_run_id": self.run_id,
-                "eval_run_binding_status": (
-                    "producer_run_bound" if request_identity.get("eval_run_id")
-                    else "workflow_request_collection"
-                ),
-                "task": str(manifest.get("task") or ""),
-                "variant": str(manifest.get("variant") or ""),
-                "case_id": str(request_identity.get("case_id") or case_id),
-                "run_id": str(request_identity.get("source_run_id") or run_id),
-                "model_id": model_id,
-                "eval_run_id": str(request_identity.get("eval_run_id") or ""),
-                "policy_sha256": str(manifest.get("policy_sha256") or ""),
-                "metric_gate_config": dict(manifest.get("metric_gate_config") or {}),
-                "source_request": relpath(request_path, self.run_dir),
-                "source_request_sha256": str(request_identity.get("source_request_sha256") or ""),
-                "source_setup_id": str(request_identity.get("setup_id") or ""),
-                "source_run_id": str(request_identity.get("source_run_id") or ""),
-                "backend": str(request_identity.get("backend") or ""),
-                "execution_role": str(
-                    request_identity.get("execution_role") or ""
-                ),
-                "performance_claims_emitted": (
-                    request_identity.get("performance_claims_emitted")
-                ),
-                "endpoint_contract_hash": str(request_identity.get("endpoint_contract_hash") or ""),
-                "completed_task_endpoint_contract": copy.deepcopy(
-                    request_identity.get(
-                        "completed_task_endpoint_contract"
-                    ) or {}
-                ),
-                "completed_task_endpoint_contract_hash": str(
-                    request_identity.get(
-                        "completed_task_endpoint_contract_hash"
-                    ) or ""
-                ),
-                "completed_task_output_endpoint_id": str(
-                    request_identity.get(
-                        "completed_task_output_endpoint_id"
-                    ) or ""
-                ),
-                "quality_join_endpoint": str(
-                    request_identity.get("quality_join_endpoint") or ""
-                ),
-                "runtime_precision_identity": str(request_identity.get("runtime_precision_identity") or ""),
-                "quality_contract_sha256": str(request_identity.get("quality_contract_sha256") or ""),
-                "preprocessing_contract_sha256": str(request_identity.get("preprocessing_contract_sha256") or ""),
-                "decoder_contract_sha256": str(request_identity.get("decoder_contract_sha256") or ""),
-                "nms_contract_sha256": str(request_identity.get("nms_contract_sha256") or ""),
-                "quality_record_endpoint_contract_sha256": str(
-                    request_identity.get("quality_record_endpoint_contract_sha256") or ""
-                ),
-                "source_model_sha256": str(request_identity.get("source_model_sha256") or ""),
-                "model_sha256": str(request_identity.get("source_model_sha256") or ""),
-                "validation_dataset_manifest_sha256": str(
-                    request_identity.get("validation_dataset_manifest_sha256") or ""
-                ),
-                "validation_dataset_sha256": str(
-                    request_identity.get("validation_dataset_manifest_sha256") or ""
-                ),
-                "validation_image_ids_sha256": str(
-                    request_identity.get("validation_image_ids_sha256") or ""
-                ),
-                "validation_ground_truth_sha256": str(
-                    request_identity.get("validation_ground_truth_sha256") or ""
-                ),
-                "task_quality_policy_sha256": str(
-                    request_identity.get("task_quality_policy_sha256") or ""
-                ),
-                "producer_binding_eligible": bool(
-                    request_identity.get("producer_binding_eligible")
-                ),
-                "artifact_provenance_binding_status": str(
-                    request_identity.get(
-                        "artifact_provenance_binding_status"
-                    ) or "not_required"
-                ),
-                "artifact_provenance_claim_eligible": bool(
-                    request_identity.get(
-                        "artifact_provenance_claim_eligible"
-                    )
-                    and request_identity.get("producer_binding_eligible")
-                ),
-                "native_split_quality_binding_required": bool(
-                    request_identity.get(
-                        "native_split_quality_binding_required"
-                    ) is True
-                ),
-                "native_split_quality_binding": copy.deepcopy(
-                    request_identity.get("native_split_quality_binding") or {}
-                ),
-                "native_split_quality_binding_sha256": str(
-                    request_identity.get(
-                        "native_split_quality_binding_sha256"
-                    ) or ""
-                ),
-                "request_identity": request_identity,
-                "execution_location": "central_management",
-                "management_cpu_reference": dict(reference_status),
-                "cpu_reference_store_manifest": str(stored.get("manifest_path") or ""),
-                "scientific_status": str(result.get("decision") or "inconclusive"),
-                "technical_status": "completed" if result_completed else "failed",
-            })
-            if request_identity.get("producer_identity_validated") is True:
-                result["producer_identity"] = copy.deepcopy(
-                    request_identity.get("producer_identity") or {}
-                )
-                for field_name in self._trt_quality_flat_field_names():
-                    if field_name in request_identity:
-                        result[field_name] = copy.deepcopy(request_identity[field_name])
-                for field_name in (
-                    "part1_model_sha256", "part2_model_sha256",
-                    "runtime_artifact_set_sha256", "runtime_artifacts",
-                    "implementation_runner_sha256",
-                    "candidate_execution_completion_contract_sha256",
-                ):
-                    if field_name in request_identity:
-                        result[field_name] = copy.deepcopy(
-                            request_identity[field_name]
-                        )
-            if request_identity.get(
-                "full_only_plan_identity_validated"
-            ) is True:
-                result.update({
-                    "full_only_plan_identity_validated": True,
-                    "full_only_plan_identity_required": True,
-                    "full_only_plan_identity": copy.deepcopy(
-                        request_identity.get("full_only_plan_identity") or {}
-                    ),
-                    "full_only_plan_identity_sha256": str(
-                        request_identity.get(
-                            "full_only_plan_identity_sha256"
-                        ) or ""
-                    ),
-                    "quality_canary_id": str(
-                        request_identity.get("quality_canary_id") or ""
-                    ),
-                    "dispatch_run_id": str(
-                        request_identity.get("dispatch_run_id") or ""
-                    ),
-                    "producer_backend": str(
-                        request_identity.get("producer_backend") or ""
-                    ),
-                    "backend": str(request_identity.get("backend") or ""),
-                    "execution_role": "full_quality_only",
-                    "performance_claims_emitted": False,
-                })
+            from onnx_splitpoint_tool.quality_result_enrichment import enrich_completed_quality_result
+            result = enrich_completed_quality_result(result, request_identity=request_identity,
+                manifest=manifest, model_id=model_id, request_path=request_path,
+                run_dir=self.run_dir, collection_eval_run_id=self.run_id, case_id=case_id,
+                run_id=run_id, reference_status=reference_status,
+                reference_store_manifest=str(stored.get("manifest_path") or ""),
+                producer_flat_field_names=self._trt_quality_flat_field_names())
             with self._control_lock:
                 if not self._terminal_sealing:
                     write_json(result_path, result)
