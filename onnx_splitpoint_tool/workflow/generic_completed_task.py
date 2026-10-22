@@ -18,6 +18,8 @@ from pathlib import Path, PurePosixPath
 import shlex
 import shutil
 import signal
+import socket
+import stat
 import tarfile
 import threading
 import time
@@ -88,9 +90,244 @@ def transport_for(target: dict, diagnostics: Path, *, scope=None, registry=None,
     return transport
 
 
-def observe_owners(targets: dict[str, dict], output: Path) -> dict:
+def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
+    """Attribute live controller work through its held normal EvaluationRun.
+
+    This is ordinary FPS admission, not recovery or proof of cleanup. Nothing
+    is exempted by PID or executable name. An unknown owner remains blocking.
+    The existing raw probe remains responsible for namespace/lease visibility.
+    """
+    from .run_control import build_resume_contract
+    from .start_snapshot import build_profile_start_snapshot
+    import yaml
+
+    def resource_keys(target):
+        remote = target.get("remote") or target.get("runtime") or target
+        require(bool(remote.get("host")) and bool(remote.get("user")), "unbound_physical_host")
+        # Retain both the explicit chassis identity and resolved transport host:
+        # different aliases/registry labels cannot make one SSH host independent.
+        return {physical_dut_key(target), physical_dut_key({"remote": {"host": remote["host"]}})}
+
+    snapshots, identities, authorities = {}, {}, {}
+    errors = []
+
+    def require(condition, reason):
+        if not condition:
+            raise ValueError(reason)
+
+    selected = set().union(*(resource_keys(target) for target in targets.values()))
+
+    def read(path, *, yaml_file=False):
+        path = Path(path)
+        require(path.is_absolute() and not any(p.is_symlink() for p in (path, *path.parents))
+                and stat.S_ISREG(path.stat().st_mode), "unsafe_owner_control_file")
+        data = path.read_bytes()
+        snapshots[path] = data
+        value = yaml.safe_load(data) if yaml_file else json.loads(data)
+        require(isinstance(value, dict), "invalid_owner_control_file")
+        return value
+
+    def process(pid):
+        require(type(pid) is int and pid > 0, "invalid_observed_pid")
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()
+        row = {"pid": pid, "ppid": int(fields[1]), "pgid": int(fields[2]),
+               "start_ticks": fields[19], "state": fields[0]}
+        require(row["state"] != "Z" and row["start_ticks"].isdecimal(), "owner_identity_changed")
+        previous = identities.setdefault(pid, row)
+        require(previous == row, "owner_identity_changed")
+        return row
+
+    def held_locks(owner):
+        result = []
+        for fd in Path(f"/proc/{owner['pid']}/fd").iterdir():
+            try:
+                path = Path(os.readlink(fd))
+            except FileNotFoundError:
+                continue
+            if path.parent.name != ".onnx_splitpoint_run_locks" or path.suffix != ".lock":
+                continue
+            metadata = path.stat()
+            for line in Path(f"/proc/{owner['pid']}/fdinfo/{fd.name}").read_text().splitlines():
+                parts = line.split()
+                if len(parts) != 9 or parts[:1] != ["lock:"] or parts[2:5] != ["FLOCK", "ADVISORY", "WRITE"]:
+                    continue
+                device = parts[6].split(":")
+                if (int(parts[5]) == owner["pid"] and len(device) == 3
+                        and (int(device[0], 16), int(device[1], 16), int(device[2]))
+                        == (os.major(metadata.st_dev), os.minor(metadata.st_dev), metadata.st_ino)):
+                    result.append((path, read(path)))
+        return result
+
+    def authority(pid):
+        visited = set()
+        while pid > 1 and pid not in visited and len(visited) < 64:
+            visited.add(pid)
+            owner = process(pid)
+            if pid in authorities:
+                return authorities[pid]
+            locks = held_locks(owner)
+            for path, lock in locks:
+                if lock.get("physical_resource"):
+                    continue
+                run = Path(str(lock.get("run_dir") or ""))
+                session_id = str(lock.get("session_id") or "")
+                require(lock.get("schema") == "onnx-splitpoint/evaluation-run-lock"
+                        and lock.get("state") == "running" and lock.get("pid") == pid
+                        and lock.get("ppid") == owner["ppid"] and lock.get("pgid") == owner["pgid"]
+                        and lock.get("hostname") == socket.gethostname()
+                        and re.fullmatch(r"[0-9a-f]{32}", session_id)
+                        and run.is_absolute() and lock.get("run_id") == run.name
+                        and EvaluationRunLock(out_root=run.parent, run_dir=run, owner={}).lock_path == path,
+                        "unbound_normal_run_lock")
+                boot = next(line.split()[1] for line in Path("/proc/stat").read_text().splitlines()
+                            if line.startswith("btime "))
+                birth = int(boot) + int(owner["start_ticks"]) / os.sysconf("SC_CLK_TCK")
+                acquired = datetime.fromisoformat(str(lock.get("acquired_at") or "").replace("Z", "+00:00"))
+                require(acquired.tzinfo is not None and birth <= acquired.timestamp() <= time.time(),
+                        "run_lock_predates_process_identity")
+                manifest = read(run / "run_manifest.json")
+                control = read(run / "jobs/workflow_control.json")
+                profile = read(run / "profile.yaml", yaml_file=True)
+                plan = read(run / "effective_execution_plan.json")
+                archived = read(run / "profile_start_snapshot.json")
+                source = read(run / "profile_source.yaml", yaml_file=True)
+                rebuilt = build_profile_start_snapshot(
+                    **{key: str(archived.get(key) or "") for key in
+                       ("profile_request", "profile_id", "profile_path", "profile_source")},
+                    source_profile=source, resolved_profile=profile,
+                    runtime_bindings=archived.get("runtime_bindings") or {},
+                    schema_version=int(archived.get("schema_version") or 1))
+                contract = build_resume_contract(profile_payload=profile,
+                    effective_execution_plan=plan, options=manifest.get("options") or {})
+                sessions = manifest.get("execution_sessions") or []
+                require(manifest.get("schema") == "onnx-splitpoint/evaluation-run-manifest"
+                        and manifest.get("run_id") == run.name and manifest.get("run_dir") == str(run)
+                        and manifest.get("current_session_id") == session_id
+                        and sessions and sessions[-1].get("session_id") == session_id
+                        and contract == manifest.get("resume_contract")
+                        and all(lock.get(key) == contract[key] == sessions[-1].get(key)
+                                for key in ("profile_sha256", "plan_sha256"))
+                        and control.get("schema") == "onnx-splitpoint/workflow-control"
+                        and control.get("run_id") == run.name and control.get("session_id") == session_id
+                        and archived.get("snapshot_sha256") == rebuilt["snapshot_sha256"]
+                        == (manifest.get("profile_start_snapshot") or {}).get("snapshot_sha256")
+                        and (archived.get("runtime_bindings") or {}).get("hardware_targets")
+                        == manifest.get("hardware_targets"),
+                        "normal_run_session_contract_mismatch")
+                runs = [row for row in profile.get("run_profiles", []) if row.get("enabled", True)]
+                model_ids = {row.get("id") for row in (profile.get("model_suite") or {}).get("primary", [])}
+                run_ids = {row.get("id") for row in runs}
+                planned_groups = plan.get("setup_groups") or {}
+                planned_runs = [run for group in planned_groups.values() for run in group]
+                require((profile.get("energy") or {}).get("enabled") is False
+                        and (profile.get("native_producers") or {}).get("enabled") is False
+                        and runs and all(row.get("quality_source_only") is True for row in runs),
+                        "owner_is_not_source_only_quality_workflow")
+                require(model_ids and set(plan.get("models") or []) == model_ids
+                        and set(plan.get("logical_run_profiles") or []) == run_ids
+                        and len(planned_runs) == len(run_ids) and set(planned_runs) == run_ids,
+                        "effective_plan_model_or_setup_runs_differ")
+                targets_by_id = {row["id"]: row for row in manifest.get("hardware_targets", [])}
+                setup_ids = (profile.get("hardware") or {}).get("selected_setups") or []
+                require(setup_ids and set(setup_ids) == {row.get("hardware_setup_id") for row in runs}
+                        and set(setup_ids) <= set(targets_by_id), "normal_run_resource_scope_unbound")
+                resources = set().union(*(resource_keys(targets_by_id[setup]) for setup in setup_ids))
+                physical = [value for physical_path, value in locks if value.get("physical_resource")
+                            and physical_path == EvaluationRunLock.for_resource(
+                                value["physical_resource"], owner={}).lock_path]
+                require(len(physical) == sum(bool(value.get("physical_resource")) for _, value in locks),
+                        "physical_lock_path_binding_mismatch")
+                require(all(value.get("schema") == "onnx-splitpoint/evaluation-run-lock"
+                            and value.get("state") == "running" and value.get("pid") == pid
+                            and value.get("run_id") == run.name and value.get("purpose") == "generic"
+                            and value.get("physical_resource") in resources for value in physical),
+                        "normal_run_physical_owner_mismatch")
+                require(not any(value["physical_resource"] in selected for value in physical),
+                        "selected_physical_dut_is_active")
+                central_only = False
+                if resources & selected:
+                    terminal = {"ok", "completed", "partial", "failed", "skipped"}
+                    models = manifest.get("models") or {}
+                    quality_stage = (manifest.get("workflow_stages") or {}).get("evaluate_quality") or {}
+                    central_only = bool(model_ids and model_ids <= set(models) and all(
+                        ((model.get("stages") or {}).get("run_benchmarks") or {}).get("status") in terminal
+                        for model in models.values()) and (
+                        quality_stage.get("status") in terminal | {"running"}
+                        or manifest.get("status") in terminal)
+                        and (profile.get("hardware_smoke") or {}).get("enabled") is False
+                        and not physical)
+                    require(central_only, "selected_dut_workflow_has_not_entered_central_only_phase")
+                    journal = run / "jobs/remote_process_leases"
+                    require(journal.is_dir() and not list(journal.rglob("*.remote-lease.json")),
+                            "central_only_remote_operations_unresolved")
+                value = {"pid": pid, "start_ticks": owner["start_ticks"], "run_id": run.name,
+                         "run_dir": str(run), "session_id": session_id,
+                         "resources": sorted(resources), "central_only": central_only,
+                         "ssh_targets": [{"user_host": (targets_by_id[setup].get("remote")
+                             or targets_by_id[setup].get("runtime"))["user"] + "@" +
+                             (targets_by_id[setup].get("remote") or targets_by_id[setup].get("runtime"))["host"],
+                             "port": str(int((targets_by_id[setup].get("remote")
+                                 or targets_by_id[setup].get("runtime")).get("port", 22)))} for setup in setup_ids]}
+                authorities[pid] = value
+                return value
+            pid = owner["ppid"]
+        raise ValueError("observed_process_has_no_live_normal_run_owner")
+
+    try:
+        require(isinstance(observed.get("processes"), list)
+                and isinstance(observed.get("live_product_leases"), list)
+                and observed.get("read_only") is True
+                and observed.get("recorded_owners") == [] and observed.get("visibility_errors") == [],
+                "controller_visibility_or_owner_scope_unknown")
+        require((observed.get("ok") is True and observed.get("status") == "no_known_competing_work_seen"
+                 and not observed["processes"] and not observed["live_product_leases"])
+                or (observed.get("ok") is False and observed.get("status") == "busy"
+                    and bool(observed["processes"] or observed["live_product_leases"])),
+                "controller_observation_status_unknown")
+        for item in observed["processes"] + observed["live_product_leases"]:
+            current = process(item.get("pid"))
+            require(current["start_ticks"] == str(item.get("start_time_ticks")), "observed_process_identity_changed")
+            bound = authority(current["pid"])
+            if "path" in item:
+                lease = read(Path(item["path"]))
+                scope = RemoteProcessLeaseScope(bound["run_id"], bound["session_id"])
+                require(lease.get("schema") == "onnx-splitpoint/remote-process-lease"
+                        and lease.get("pid") == current["pid"] and lease.get("pgid") == current["pgid"]
+                        and str(lease.get("start_time_ticks")) == current["start_ticks"]
+                        and lease.get("run_sha256") == scope.run_sha256
+                        and lease.get("session_sha256") == scope.session_sha256
+                        and not bound["central_only"], "local_lease_scope_unbound")
+                operation = lease.get("operation_id")
+                require(isinstance(operation, str) and re.fullmatch(r"[A-Za-z0-9_.-]+", operation),
+                        "local_lease_operation_unbound")
+                journal = read(Path(bound["run_dir"]) / "jobs/remote_process_leases"
+                               / bound["session_id"] / (operation + ".remote-lease.json"))
+                prefix = journal.get("control_argv_prefix") or []
+                require(journal.get("schema") == "onnx-splitpoint/remote-process-lease-journal"
+                        and all(journal.get(key) == lease.get(key) for key in
+                                ("operation_id", "token", "run_sha256", "session_sha256"))
+                        and isinstance(prefix, list) and all(isinstance(arg, str) for arg in prefix)
+                        and prefix and prefix.count("-p") == 1 and prefix.index("-p") + 1 < len(prefix)
+                        and {"user_host": prefix[-1], "port": prefix[prefix.index("-p") + 1]}
+                        in bound["ssh_targets"], "local_lease_run_session_or_target_unbound")
+        require(all(path.read_bytes() == data and not path.is_symlink() for path, data in snapshots.items()),
+                "owner_source_changed_during_observation")
+        for pid in list(identities):
+            process(pid)
+    except (OSError, ValueError, TypeError, KeyError, IndexError, StopIteration) as exc:
+        errors.append(str(exc) or type(exc).__name__)
+    return {"ok": not errors, "read_only": True,
+            "status": "resource_scope_unresolved" if errors else "no_conflict_with_selected_resources",
+            "selected_resources": sorted(selected), "raw_observation": observed,
+            "normal_quality_owners": list(authorities.values()), "scope_errors": errors,
+            "cleanup_proven": False, "exclusive_start_permission": False}
+
+
+def observe_owners(targets: dict[str, dict], output: Path, resource_scoped: bool = False) -> dict:
     """Read-only existing owner probe, without recovery or stopping a process."""
     controller = _observe_processes([])
+    if resource_scoped:
+        controller = _scoped_controller_owners(targets, controller)
     result = {"observed_at": now(), "controller": controller, "setups": {}, "ok": False}
     if not controller.get("ok"):
         write_json(output / "owners.json", result)
@@ -106,6 +343,13 @@ def observe_owners(targets: dict[str, dict], output: Path) -> dict:
         records = [line[7:] for line in stdout.splitlines() if line.startswith("OWNERS=")]
         observation = json.loads(records[0]) if rc == 0 and len(records) == 1 else {
             "ok": False, "error": "owner observation failed", "rc": rc, "output": stdout[-4000:]}
+        if resource_scoped and (not isinstance(observation, dict)
+                or observation.get("read_only") is not True
+                or observation.get("status") != "no_known_competing_work_seen"
+                or any(observation.get(key) != [] for key in
+                       ("processes", "live_product_leases", "recorded_owners", "visibility_errors"))):
+            observation = {"ok": False, "error": "device owner visibility or ownership is unresolved",
+                           "raw_observation": observation}
         result["setups"][setup_id] = observation
         write_json(output / "owners.json", result)
         if not observation.get("ok"):
@@ -1056,7 +1300,7 @@ def execute_plan(plan_path: Path, *, resume: bool = False,
         preflight = (output / "production-preflight" / controller_marker.stem
                      if independent else output / "production-preflight")
         if not independent:
-            observe_owners(targets, preflight)
+            observe_owners(targets, preflight, generic_only)
         for setup, target in targets.items():
             if independent and setup in lock_failures:
                 write_json(output / "branch-stops" / controller_marker.stem / (setup + ".json"),
@@ -1076,7 +1320,7 @@ def execute_plan(plan_path: Path, *, resume: bool = False,
                     branch_ownership[setup] = {"registry": branch_registry, "journal": branch_journal,
                         "scope": branch_scope}
                     require_clean_ownership(branch_registry, branch_journal, branch_scope)
-                    observe_owners({setup: target}, preflight / "branches" / setup)
+                    observe_owners({setup: target}, preflight / "branches" / setup, True)
                 transport = transport_for(target, output / "diagnostics" / setup,
                     scope=branch_scope, registry=branch_registry, cancel=cancel)
                 transports[setup] = transport

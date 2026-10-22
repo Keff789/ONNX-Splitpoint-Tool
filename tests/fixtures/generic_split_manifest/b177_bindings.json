@@ -1,0 +1,457 @@
+{
+  "boundary_inputs": [
+    {
+      "dtype": "float32",
+      "layout": "NCHW",
+      "name": "/model.4/cv2/act/Mul_output_0",
+      "shape": [
+        1,
+        512,
+        80,
+        80
+      ]
+    },
+    {
+      "dtype": "float32",
+      "layout": "NCHW",
+      "name": "/model.6/cv2/conv/Conv_output_0",
+      "shape": [
+        1,
+        512,
+        40,
+        40
+      ]
+    }
+  ],
+  "full_model_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+  "original_artifacts": {
+    "build_part2_onnx": {
+      "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/splits/b177/part2/7e74bdabec6703424ac7d54ccbd44199defc203839f59963c1774fcb60e924f3/fp16/source.onnx",
+      "sha256": "7e74bdabec6703424ac7d54ccbd44199defc203839f59963c1774fcb60e924f3",
+      "size_bytes": 77206861
+    },
+    "engine": {
+      "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/splits/b177/part2/7e74bdabec6703424ac7d54ccbd44199defc203839f59963c1774fcb60e924f3/fp16/part2_fp16.engine",
+      "sha256": "761381f26295edfc49f24e149d20b6c4ab31421ac7cadacbb31a54ccd60b0896",
+      "size_bytes": 41707116
+    },
+    "engine_build_receipt": {
+      "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/splits/b177/part2/7e74bdabec6703424ac7d54ccbd44199defc203839f59963c1774fcb60e924f3/fp16/engine_build_receipt.json",
+      "sha256": "59bf6bebf8bf2413dcfcc800b3b5cc79e0b9911c4d26fef5a5822c22b3cdc44a",
+      "size_bytes": 1730
+    },
+    "part1_build_receipt": {
+      "path": "/home/kmika/.cache/onnx_splitpoint/hailo_hef/67af35045498b36fbd3bbf7ba0c81aaa5163b152c9b2b5d725813e4944a2382e/hailo_hef_build_receipt.json",
+      "sha256": "cc66431ef08386dc9d065e48fb9b1f963df0a50b8498e4f82284cc11e6a02354",
+      "size_bytes": 3545
+    },
+    "part1_runtime": {
+      "path": "/home/kmika/.cache/onnx_splitpoint/hailo_hef/67af35045498b36fbd3bbf7ba0c81aaa5163b152c9b2b5d725813e4944a2382e/compiled.hef",
+      "sha256": "db9f8aaac5200a6450e12c13114230728fc5c853d6410371f6ab2a03b5cb3b0f",
+      "size_bytes": 8697990
+    },
+    "source_part1_onnx": {
+      "path": "/home/kmika/mnt/sprite/diss_results/models/yolo11l/benchmark_set/legacy_suite/b177/yolo11l_part1_b177.onnx",
+      "sha256": "c9e2247946f099d5d261cc9cdbf671a741349e0f76149c1a2c8a92307935137b",
+      "size_bytes": 24539972
+    },
+    "source_part2_onnx": {
+      "path": "/home/kmika/mnt/sprite/diss_results/models/yolo11l/benchmark_set/legacy_suite/b177/yolo11l_part2_b177.onnx",
+      "sha256": "7e74bdabec6703424ac7d54ccbd44199defc203839f59963c1774fcb60e924f3",
+      "size_bytes": 77206861
+    }
+  },
+  "original_source": {
+    "path": "/home/kmika/mnt/sprite/diss_results/models/yolo11l/benchmark_set/legacy_suite/b177/split_manifest.json",
+    "sha256": "ecb4d2378369ec78e430036301323f1efbb03c866b4f6bcdd1c3f40658c54efc",
+    "size_bytes": 31582
+  },
+  "producer_model": {
+    "part1_onnx_sha256": "c9e2247946f099d5d261cc9cdbf671a741349e0f76149c1a2c8a92307935137b",
+    "part1_onnx_size_bytes": 24539972,
+    "part2_onnx_sha256": "7e74bdabec6703424ac7d54ccbd44199defc203839f59963c1774fcb60e924f3",
+    "part2_onnx_size_bytes": 77206861,
+    "runtime_artifact_sha256": "3c685f19f59221352a0bafb6636f5d73302e3332ce324b218b3ba651fe069855",
+    "source_onnx_sha256": "f0fcdf56a4ac24d87ec30c627170492ccad9db80486ec5694df6de65c1b3d147",
+    "source_onnx_size_bytes": 101744337
+  },
+  "row": {
+    "admission_mode": "generic_only",
+    "boundary_observation": {
+      "minimum_boundary_tensors": 2,
+      "part1_outputs": {
+        "/model.4/cv2/act/Mul_output_0": {
+          "dtype": "float32",
+          "shape": [
+            1,
+            512,
+            80,
+            80
+          ]
+        },
+        "/model.6/cv2/conv/Conv_output_0": {
+          "dtype": "float32",
+          "shape": [
+            1,
+            512,
+            40,
+            40
+          ]
+        }
+      },
+      "part2_inputs": {
+        "/model.4/cv2/act/Mul_output_0": {
+          "dtype": "float32",
+          "shape": [
+            1,
+            512,
+            80,
+            80
+          ]
+        },
+        "/model.6/cv2/conv/Conv_output_0": {
+          "dtype": "float32",
+          "shape": [
+            1,
+            512,
+            40,
+            40
+          ]
+        }
+      },
+      "part2_to_part1": {
+        "/model.4/cv2/act/Mul_output_0": "/model.4/cv2/act/Mul_output_0",
+        "/model.6/cv2/conv/Conv_output_0": "/model.6/cv2/conv/Conv_output_0"
+      },
+      "passthrough_inputs": {},
+      "schema_version": 1,
+      "transfer_contract": {
+        "boundary_mode": "canonical_float32",
+        "hailo_exact_dequantization": false,
+        "manifest_cut_name_map_p2_to_p1": {
+          "/model.4/cv2/act/Mul_output_0": "/model.4/cv2/act/Mul_output_0",
+          "/model.6/cv2/conv/Conv_output_0": "/model.6/cv2/conv/Conv_output_0"
+        },
+        "part1_cut_names": [
+          "/model.4/cv2/act/Mul_output_0",
+          "/model.6/cv2/conv/Conv_output_0"
+        ],
+        "part2_cut_names": [
+          "/model.4/cv2/act/Mul_output_0",
+          "/model.6/cv2/conv/Conv_output_0"
+        ]
+      }
+    },
+    "functional_reference": {
+      "input_sha256": "0bd0f530dd401d77b085e0cd847c03cef94346395ff6e852a68f6e615c58b8cb",
+      "kind": "serial_compiled_subnets",
+      "outputs": {
+        "output0": {
+          "dtype": "float32",
+          "shape": [
+            1,
+            84,
+            8400
+          ]
+        }
+      },
+      "tolerances": {
+        "match_iou_threshold": 0.5,
+        "min_match_ratio": 0.8,
+        "min_mean_iou": 0.85
+      }
+    },
+    "generic_artifact_binding": {
+      "artifacts": {
+        "boundary_metadata": {
+          "local_path": "/home/kmika/mnt/sprite/diss_results/models/yolo11l/benchmark_set/legacy_suite/b177/split_manifest.json",
+          "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_quality_yolo11l_followup_shared_v1_20261022_20261022_110350_yolo11l_orin_nx_hailo8_01/1/suite/quality_runtime/assets/b177/boundary_metadata/split_manifest.json",
+          "sha256": "ecb4d2378369ec78e430036301323f1efbb03c866b4f6bcdd1c3f40658c54efc",
+          "size_bytes": 31582,
+          "source_path_alias": "/home/kmika/mnt/sprite/diss_results/models/yolo11l/benchmark_set/legacy_suite/b177/split_manifest.json",
+          "stage_local": true
+        },
+        "build_part2_onnx": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/splits/b177/part2/7e74bdabec6703424ac7d54ccbd44199defc203839f59963c1774fcb60e924f3/fp16/source.onnx",
+          "sha256": "7e74bdabec6703424ac7d54ccbd44199defc203839f59963c1774fcb60e924f3",
+          "size_bytes": 77206861
+        },
+        "engine": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/splits/b177/part2/7e74bdabec6703424ac7d54ccbd44199defc203839f59963c1774fcb60e924f3/fp16/part2_fp16.engine",
+          "sha256": "761381f26295edfc49f24e149d20b6c4ab31421ac7cadacbb31a54ccd60b0896",
+          "size_bytes": 41707116
+        },
+        "engine_build_receipt": {
+          "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolo11l-b479a219175b061f/splits/b177/part2/7e74bdabec6703424ac7d54ccbd44199defc203839f59963c1774fcb60e924f3/fp16/engine_build_receipt.json",
+          "sha256": "59bf6bebf8bf2413dcfcc800b3b5cc79e0b9911c4d26fef5a5822c22b3cdc44a",
+          "size_bytes": 1730
+        },
+        "part1_build_receipt": {
+          "local_path": "/home/kmika/.cache/onnx_splitpoint/hailo_hef/67af35045498b36fbd3bbf7ba0c81aaa5163b152c9b2b5d725813e4944a2382e/hailo_hef_build_receipt.json",
+          "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_quality_yolo11l_followup_shared_v1_20261022_20261022_110350_yolo11l_orin_nx_hailo8_01/1/suite/quality_runtime/assets/b177/part1_build_receipt/hailo_hef_build_receipt.json",
+          "sha256": "cc66431ef08386dc9d065e48fb9b1f963df0a50b8498e4f82284cc11e6a02354",
+          "size_bytes": 3545,
+          "source_path_alias": "/home/kmika/.cache/onnx_splitpoint/hailo_hef/67af35045498b36fbd3bbf7ba0c81aaa5163b152c9b2b5d725813e4944a2382e/hailo_hef_build_receipt.json",
+          "stage_local": true
+        },
+        "part1_runtime": {
+          "local_path": "/home/kmika/.cache/onnx_splitpoint/hailo_hef/67af35045498b36fbd3bbf7ba0c81aaa5163b152c9b2b5d725813e4944a2382e/compiled.hef",
+          "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_quality_yolo11l_followup_shared_v1_20261022_20261022_110350_yolo11l_orin_nx_hailo8_01/1/suite/quality_runtime/assets/b177/part1_runtime/compiled.hef",
+          "sha256": "db9f8aaac5200a6450e12c13114230728fc5c853d6410371f6ab2a03b5cb3b0f",
+          "size_bytes": 8697990,
+          "source_path_alias": "/home/kmika/.cache/onnx_splitpoint/hailo_hef/67af35045498b36fbd3bbf7ba0c81aaa5163b152c9b2b5d725813e4944a2382e/compiled.hef",
+          "stage_local": true
+        },
+        "source_part1_onnx": {
+          "local_path": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/quality_followup_shared_v1/evaluation_runs/generic420_quality_yolo11l_followup_shared_v1_20261022_20261022_110350/models/yolo11l/benchmark_set/legacy_suite/b177/yolo11l_part1_b177.onnx",
+          "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_quality_yolo11l_followup_shared_v1_20261022_20261022_110350_yolo11l_orin_nx_hailo8_01/1/suite/b177/yolo11l_part1_b177.onnx",
+          "sha256": "c9e2247946f099d5d261cc9cdbf671a741349e0f76149c1a2c8a92307935137b",
+          "size_bytes": 24539972,
+          "stage_local": true
+        },
+        "source_part2_onnx": {
+          "local_path": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/quality_followup_shared_v1/evaluation_runs/generic420_quality_yolo11l_followup_shared_v1_20261022_20261022_110350/models/yolo11l/benchmark_set/legacy_suite/b177/yolo11l_part2_b177.onnx",
+          "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_quality_yolo11l_followup_shared_v1_20261022_20261022_110350_yolo11l_orin_nx_hailo8_01/1/suite/b177/yolo11l_part2_b177.onnx",
+          "sha256": "7e74bdabec6703424ac7d54ccbd44199defc203839f59963c1774fcb60e924f3",
+          "size_bytes": 77206861,
+          "stage_local": true
+        }
+      },
+      "boundary_contract": {
+        "minimum_boundary_tensors": 2,
+        "part1_outputs": {
+          "/model.4/cv2/act/Mul_output_0": {
+            "dtype": "float32",
+            "shape": [
+              1,
+              512,
+              80,
+              80
+            ]
+          },
+          "/model.6/cv2/conv/Conv_output_0": {
+            "dtype": "float32",
+            "shape": [
+              1,
+              512,
+              40,
+              40
+            ]
+          }
+        },
+        "part2_inputs": {
+          "/model.4/cv2/act/Mul_output_0": {
+            "dtype": "float32",
+            "shape": [
+              1,
+              512,
+              80,
+              80
+            ]
+          },
+          "/model.6/cv2/conv/Conv_output_0": {
+            "dtype": "float32",
+            "shape": [
+              1,
+              512,
+              40,
+              40
+            ]
+          }
+        },
+        "part2_to_part1": {
+          "/model.4/cv2/act/Mul_output_0": "/model.4/cv2/act/Mul_output_0",
+          "/model.6/cv2/conv/Conv_output_0": "/model.6/cv2/conv/Conv_output_0"
+        },
+        "passthrough_inputs": {},
+        "schema_version": 1,
+        "transfer_contract": {
+          "boundary_mode": "canonical_float32",
+          "hailo_exact_dequantization": false,
+          "manifest_cut_name_map_p2_to_p1": {
+            "/model.4/cv2/act/Mul_output_0": "/model.4/cv2/act/Mul_output_0",
+            "/model.6/cv2/conv/Conv_output_0": "/model.6/cv2/conv/Conv_output_0"
+          },
+          "part1_cut_names": [
+            "/model.4/cv2/act/Mul_output_0",
+            "/model.6/cv2/conv/Conv_output_0"
+          ],
+          "part2_cut_names": [
+            "/model.4/cv2/act/Mul_output_0",
+            "/model.6/cv2/conv/Conv_output_0"
+          ]
+        }
+      },
+      "producer_source": {
+        "path": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/quality_followup_shared_v1/evaluation_runs/generic420_quality_yolo11l_followup_shared_v1_20261022_20261022_110350/models/yolo11l/benchmark_results/quality_inputs/orin_nx_hailo8_01/results/b177/results_hailo8_to_trt/task_quality_inputs/composed_request.json",
+        "sha256": "9ad8c0b4785982062c663aea97eab6f222ec878be032eab2c144e8d685ccdf23",
+        "size_bytes": 100770038
+      },
+      "quality_reference": {
+        "cpu_reference": {
+          "path": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/quality_followup_shared_v1/evaluation_runs/generic420_quality_yolo11l_followup_shared_v1_20261022_20261022_110350/quality_management/references/yolo11l/by_source_contract/045c9e9089920b3aff0e839d06698778269068688317da79067e6894441fd05d/canonical_cpu_reference.json",
+          "sha256": "c2e55949edebe83bca1498005a01bebcf751ab339905655475eb5274970d2e6c",
+          "size_bytes": 10374270
+        },
+        "dataset_manifest_sha256": "6e6a01aff3f354ef81379ac56359c89080733c338ac2e42b87c039b899d33dd2",
+        "policy_sha256": "d50d6d5d43d2e9a58350e1e5499ed276ed7f2b6c67f79d5a07c10088f8ae8900",
+        "policy_source": {
+          "path": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/quality_followup_shared_v1/evaluation_runs/generic420_quality_yolo11l_followup_shared_v1_20261022_20261022_110350/profile.yaml",
+          "sha256": "e7a57654ee6d14ab3256a57e276ccf1f58c1f0ef9f086bcae9ea948fd8a92eff",
+          "size_bytes": 39600
+        },
+        "request": {
+          "path": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/quality_followup_shared_v1/evaluation_runs/generic420_quality_yolo11l_followup_shared_v1_20261022_20261022_110350/models/yolo11l/benchmark_results/quality_inputs/orin_nx_hailo8_01/results/b177/results_hailo8_to_trt/task_quality_inputs/composed_request.json",
+          "sha256": "9ad8c0b4785982062c663aea97eab6f222ec878be032eab2c144e8d685ccdf23",
+          "size_bytes": 100770038
+        },
+        "result": {
+          "path": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/measurements/generic_only/v6_orphan_recovery_wave1/observations/orin_nx_hailo8_01/yolo11l/b177/quality_result.json",
+          "sha256": "c087202b5d21b8fb5d3cf34f98eb5034574c6b0cf5b5c5dfdaad5c41de88decd",
+          "size_bytes": 176401
+        }
+      },
+      "runtime_precision": "float32_layout_fp16",
+      "schema": "onnx-splitpoint/generic-only-artifact-binding/v1"
+    },
+    "identity": {
+      "case_id": "b177",
+      "comparison_backend": "hailo8",
+      "direction": "hailo8_to_trt",
+      "model_id": "yolo11l",
+      "output_endpoint_id": "detection:decoded_pre_nms:4ff299deec70a49feb11e468c7adeadea8016934121da91b275994b3229fa431",
+      "precision": "float32_layout_fp16",
+      "setup_id": "orin_nx_hailo8_01"
+    },
+    "input_binding": {
+      "prepared_input": {
+        "c_contiguous": true,
+        "dtype": "uint8",
+        "format": "raw",
+        "input_name": "images",
+        "layout": "HWC",
+        "local_path": "/home/kmika/mnt/sprite/diss_results/native_producers/hailo8/yolov7_paper/benchmark_set/native_pipeline/b009/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/contract_artifacts/hailo8_prepared_input_python.bin",
+        "path": "/home/nx/native_fifo_evalsets/thesis_20splits_n5000_b1000_20260925_20260925_103745/yolov7_paper/benchmark_set/native_pipeline/b009/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/contract_artifacts/hailo8_prepared_input_python.bin",
+        "sha256": "0bd0f530dd401d77b085e0cd847c03cef94346395ff6e852a68f6e615c58b8cb",
+        "shape": [
+          640,
+          640,
+          3
+        ],
+        "size_bytes": 1228800
+      },
+      "prepared_input_contract": {
+        "dtype": "uint8",
+        "image_preprocessing_contract": {
+          "color_space": "RGB",
+          "contract_scope": "prepared_rgb_uint8_semantics",
+          "image_scale": "norm",
+          "input_domain": "uint8_0_255",
+          "letterbox": true,
+          "letterbox_pad_value": 114,
+          "pad_value": 114,
+          "placement": "floor_top_left_remainder_bottom_right",
+          "preprocess_mode": "letterbox",
+          "resize_interpolation": "bilinear",
+          "resize_rounding": "python_round_ties_to_even",
+          "schema": "onnx-splitpoint/image-preprocessing-contract",
+          "schema_version": 2,
+          "spatial_transform": "centered_letterbox",
+          "target_hw": [
+            640,
+            640
+          ],
+          "task": "detection"
+        },
+        "layout": "HWC",
+        "letterbox": true,
+        "letterbox_pad_value": 114,
+        "normalization": "divide_255_float32",
+        "preprocess_mode": "letterbox",
+        "shape": [
+          640,
+          640,
+          3
+        ],
+        "source_domain": "uint8_0_255",
+        "source_image": "/home/nx/native_fifo_evalsets/thesis_20splits_n5000_b1000_20260925_20260925_103745/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n5000_s20260710/000000000139.jpg",
+        "source_image_sha256": "ffe0f0cec3b2e27aab1967229cdf0a0d7751dcdd5800322f0b8ac0dffb3b8a8d",
+        "task": "detection"
+      },
+      "preprocessing_timed": false,
+      "runtime_input_format": "float32",
+      "sequence": "single_exact_prepared_feed_repeated",
+      "source_image": "/home/nx/native_fifo_evalsets/thesis_20splits_n5000_b1000_20260925_20260925_103745/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n5000_s20260710/000000000139.jpg",
+      "source_image_sha256": "ffe0f0cec3b2e27aab1967229cdf0a0d7751dcdd5800322f0b8ac0dffb3b8a8d"
+    },
+    "runtime_config": {
+      "input_binding": {
+        "prepared_input": {
+          "c_contiguous": true,
+          "dtype": "uint8",
+          "format": "raw",
+          "input_name": "images",
+          "layout": "HWC",
+          "local_path": "/home/kmika/mnt/sprite/diss_results/native_producers/hailo8/yolov7_paper/benchmark_set/native_pipeline/b009/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/contract_artifacts/hailo8_prepared_input_python.bin",
+          "path": "/home/nx/native_fifo_evalsets/thesis_20splits_n5000_b1000_20260925_20260925_103745/yolov7_paper/benchmark_set/native_pipeline/b009/hailo_to_trt/uint8_dequant_fp16/endpoints/completed_task/contract_artifacts/hailo8_prepared_input_python.bin",
+          "sha256": "0bd0f530dd401d77b085e0cd847c03cef94346395ff6e852a68f6e615c58b8cb",
+          "shape": [
+            640,
+            640,
+            3
+          ],
+          "size_bytes": 1228800
+        },
+        "prepared_input_contract": {
+          "dtype": "uint8",
+          "image_preprocessing_contract": {
+            "color_space": "RGB",
+            "contract_scope": "prepared_rgb_uint8_semantics",
+            "image_scale": "norm",
+            "input_domain": "uint8_0_255",
+            "letterbox": true,
+            "letterbox_pad_value": 114,
+            "pad_value": 114,
+            "placement": "floor_top_left_remainder_bottom_right",
+            "preprocess_mode": "letterbox",
+            "resize_interpolation": "bilinear",
+            "resize_rounding": "python_round_ties_to_even",
+            "schema": "onnx-splitpoint/image-preprocessing-contract",
+            "schema_version": 2,
+            "spatial_transform": "centered_letterbox",
+            "target_hw": [
+              640,
+              640
+            ],
+            "task": "detection"
+          },
+          "layout": "HWC",
+          "letterbox": true,
+          "letterbox_pad_value": 114,
+          "normalization": "divide_255_float32",
+          "preprocess_mode": "letterbox",
+          "shape": [
+            640,
+            640,
+            3
+          ],
+          "source_domain": "uint8_0_255",
+          "source_image": "/home/nx/native_fifo_evalsets/thesis_20splits_n5000_b1000_20260925_20260925_103745/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n5000_s20260710/000000000139.jpg",
+          "source_image_sha256": "ffe0f0cec3b2e27aab1967229cdf0a0d7751dcdd5800322f0b8ac0dffb3b8a8d",
+          "task": "detection"
+        },
+        "preprocessing_timed": false,
+        "runtime_input_format": "float32",
+        "sequence": "single_exact_prepared_feed_repeated",
+        "source_image": "/home/nx/native_fifo_evalsets/thesis_20splits_n5000_b1000_20260925_20260925_103745/yolov7_paper/benchmark_set/resources/validation/detection/val2017_n5000_s20260710/000000000139.jpg",
+        "source_image_sha256": "ffe0f0cec3b2e27aab1967229cdf0a0d7751dcdd5800322f0b8ac0dffb3b8a8d"
+      }
+    },
+    "task": "detection"
+  },
+  "staged_source": {
+    "path": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/quality_followup_shared_v1/evaluation_runs/generic420_quality_yolo11l_followup_shared_v1_20261022_20261022_110350/models/yolo11l/benchmark_set/legacy_suite/b177/split_manifest.json",
+    "sha256": "f93ff5a87984bd3bfc2d272c95ed3b2fce5db965f267d07e5c3aaf92b623a720",
+    "size_bytes": 10606
+  }
+}

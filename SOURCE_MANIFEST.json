@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2345,
+  "file_count": 2351,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 419161,
-      "sha256": "8275c321169ee250ca4a1f2ffa1e032021c2357473e59ff83081659bc03c7271"
+      "size": 420978,
+      "sha256": "2feeec2640d039633b0fa221f757fd74017b320d82a09532f86fedae93afa450"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -1003,6 +1003,11 @@
       "path": "onnx_splitpoint_tool/generic_only_reporting.py",
       "size": 15595,
       "sha256": "136185ce0db9a69e07e337ddd78c818540260a6fd98b64a0cc58a4a74092c7c2"
+    },
+    {
+      "path": "onnx_splitpoint_tool/generic_split_manifest.py",
+      "size": 16047,
+      "sha256": "2bf12dc41375731b998e77af18cb94734da1711a1997eb773a714b2953bd0f0f"
     },
     {
       "path": "onnx_splitpoint_tool/gui/__init__.py",
@@ -3116,8 +3121,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_completed_task.py",
-      "size": 122616,
-      "sha256": "9ed4fd422be805cc5298617f8cb11fbe658683e2574d93dfb9d489bfadfae21b"
+      "size": 138953,
+      "sha256": "9fc7b08291469f1d0f1812fc8fc0df178c458d228683e6f7edcf2af174fbebdc"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_energy_parent.py",
@@ -5560,6 +5565,21 @@
       "sha256": "0c62434a6b1c602ce3d27f1cf562aba9e3f9a76fc55c8e93ffa719365df287dc"
     },
     {
+      "path": "tests/fixtures/generic_split_manifest/b177_bindings.json",
+      "size": 21576,
+      "sha256": "ab9e7566baf2b652daf9056b4124c91df366896fc7ad83970629b5514bb24505"
+    },
+    {
+      "path": "tests/fixtures/generic_split_manifest/b177_original.json",
+      "size": 31582,
+      "sha256": "ecb4d2378369ec78e430036301323f1efbb03c866b4f6bcdd1c3f40658c54efc"
+    },
+    {
+      "path": "tests/fixtures/generic_split_manifest/b177_staged.json",
+      "size": 10606,
+      "sha256": "f93ff5a87984bd3bfc2d272c95ed3b2fce5db965f267d07e5c3aaf92b623a720"
+    },
+    {
       "path": "tests/fixtures/v270b/central_quality_summary_2.70a_smoke.json",
       "size": 1864354,
       "sha256": "791186953c6c7619c91e0873a7d24dd67bf02aee351e4b0e1e59dc0363c9acfd"
@@ -7250,6 +7270,11 @@
       "sha256": "c41890910cbc381eba104cbb6ee4df69462f4c834eca158967a58dc50ea6ed2b"
     },
     {
+      "path": "tests/test_generic_completed_task_resources.py",
+      "size": 10539,
+      "sha256": "d23af52056105b4ba4b62a8fa6afeed601ff599c078e9a4e5db0334bf3d59e88"
+    },
+    {
       "path": "tests/test_generic_completion_dispatch.py",
       "size": 16402,
       "sha256": "05033c30857f9de3896a855a66aa36d84ea519b5569fb11d693e08b29b078eec"
@@ -7503,6 +7528,11 @@
       "path": "tests/test_generic_quality_source_guards_independent.py",
       "size": 7151,
       "sha256": "933d693a61af11a12892721557dd5fae5dd76c07b29fcc20ffbce898ca06d4b8"
+    },
+    {
+      "path": "tests/test_generic_split_manifest.py",
+      "size": 5100,
+      "sha256": "d283bd4f2ecb7e450b9c206c2018ee44aa6344bf16588105fc865712c9858e5a"
     },
     {
       "path": "tests/test_hailo10_yolo26_full_semantic_fixture.py",
