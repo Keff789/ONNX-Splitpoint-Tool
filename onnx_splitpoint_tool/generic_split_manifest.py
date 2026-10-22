@@ -23,6 +23,11 @@ _FULL_FIELDS = frozenset({
     "full_endpoint_mode", "full_output_contract", "full_prepared_baseline",
     "full_receipt_attested", "full_required", "full_true_full_model",
 })
+_BUILD_DIAGNOSTICS = frozenset({
+    "build_evidence", "cache_key", "context_count", "partition_iterations",
+    "partition_time_s", "allocation_time_s", "compilation_time_s",
+    "expensive_build", "expensive_build_reason", "negative_evidence_hit",
+})
 _MISSING = object()
 
 
@@ -63,9 +68,176 @@ def _document(raw, source):
     return value, {key: source[key] for key in ("path", "sha256", "size_bytes")}
 
 
+def _historical_build_provenance(build, original, *, arch, model, case,
+                                 source_sha256, full_model_sha256, prepared):
+    """Validate retained compile evidence, without equating compiler/source graphs.
+
+    The normal caller has already checked the actual measured artifacts and
+    receipts. This pure relation additionally binds the historical observation
+    being omitted to that same model, cut and compiler recipe.
+    """
+    from .build_evidence import (
+        BuildEvidenceError, boundary_endpoint_contract_sha256,
+        canonical_build_key_from_hailo_v3_payload, canonical_sha256,
+    )
+
+    evidence = build["build_evidence"]
+    _require(isinstance(evidence, dict) and set(evidence) == {
+        "cache_key_v3", "cache_payload_v3", "compiler_dispatch_allowed", "context",
+        "evidence_origin", "key", "key_sha256", "negative_evidence_hit", "reason",
+        "record", "reusable", "state", "status",
+    }, "unreviewed historical build evidence")
+    _require(evidence["status"] == "MISS" and evidence["reason"] == "exact_key_not_found"
+             and evidence["compiler_dispatch_allowed"] is True
+             and evidence["negative_evidence_hit"] is False and evidence["reusable"] is False
+             and all(evidence[key] is None for key in ("state", "record", "evidence_origin")),
+             "historical build was failed, unknown or negative evidence")
+    context, payload = evidence["context"], evidence["cache_payload_v3"]
+    _require(isinstance(payload, dict) and set(payload) == {
+        "activation_part1_sha256", "calibration_batch_size", "calibration_count",
+        "calibration_identity", "calibration_memory_cap_bytes", "calibration_storage",
+        "disable_rt_metadata_extraction", "end_nodes", "extra_model_script",
+        "hailo_sdk_version", "hw_arch", "integrity", "model_sha256", "net_input_shapes",
+        "net_name", "optimization_level", "prepared_calibration_identity_sha256",
+        "preprocessing_contract", "preprocessing_contract_sha256",
+        "requested_calibration_count", "schema", "start_nodes",
+    }, "unreviewed historical compiler cache payload")
+    _require(isinstance(context, dict) and set(context) == {
+        "boundary", "full_source_onnx_path", "full_source_onnx_sha256",
+        "model_id", "split_manifest", "stage",
+    } and context["boundary"] == int(case[1:]) and context["model_id"] == model
+             and context["stage"] == "part1"
+             and context["full_source_onnx_sha256"] == full_model_sha256
+             and context["full_source_onnx_path"] == original["full_model_source"],
+             "historical build context differs from selected model/cut")
+    snapshot = context["split_manifest"]
+    _require(isinstance(snapshot, dict)
+             and {"boundary", "boundary_index", "part1", "part2", "cut", "cut_tensors",
+                  "part1_cut_names", "part2_cut_names", "io", "pipeline", "orig_inputs",
+                  "orig_outputs", "full_model", "full_model_source"} <= set(snapshot)
+             and all(value == original.get(key, _MISSING)
+                     for key, value in snapshot.items() if key != "hailo")
+             and isinstance(snapshot.get("hailo"), dict)
+             and snapshot["hailo"].get("hefs") == {}
+             and snapshot["hailo"].get("config") == original["hailo"]["config"]
+             and all(value == original["hailo"].get(key, _MISSING)
+                     for key, value in snapshot["hailo"].items() if key != "hefs"),
+             "historical build snapshot differs from original scientific manifest")
+    config = original["hailo"]["config"]
+    _require(payload["hw_arch"] == ("hailo8" if arch == "hailo8" else "hailo10h")
+             and payload["net_name"] == f"{model}_part1_{case}"
+             and payload["net_input_shapes"] == [1, 3, *prepared["shape"][:2]]
+             and payload["optimization_level"] == config["opt_level"]
+             and payload["requested_calibration_count"] == config["calib_count"]
+             and payload["calibration_batch_size"] == config["calib_batch_size"]
+             and build["calib_source"] == config["calib_dir"],
+             "historical compiler/calibration recipe differs")
+    try:
+        endpoint = boundary_endpoint_contract_sha256(
+            stage="part1", cache_payload=payload, split_manifest=original)
+        key = canonical_build_key_from_hailo_v3_payload(
+            payload, builder_source_onnx_sha256=source_sha256,
+            full_source_onnx_sha256=full_model_sha256,
+            boundary_endpoint_contract_sha256=endpoint,
+            expected_cache_key=build["cache_key"])
+        _require(evidence["key"] == key and evidence["key_sha256"] == canonical_sha256(key)
+                 and evidence["cache_key_v3"] == build["cache_key"],
+                 "historical compiler evidence identity differs")
+    except BuildEvidenceError as error:
+        raise ValueError("Generic split-manifest staging: invalid historical compiler evidence") from error
+    _require(build.get("negative_evidence_hit", False) is False
+             and all(build.get(key) is False for key in
+                     ("mapping_failed", "timed_out", "watchdog_expired")),
+             "historical build contains failure evidence")
+    flags = tuple(build.get(key) for key in
+                  ("single_context_failed", "single_context_used", "multi_context_used"))
+    count = build.get("context_count")
+    _require(all(type(value) is bool for value in flags)
+             and type(count) is int and count > 0 and (
+        (build["context_mode"] == "single_context_failed_to_multi"
+         and flags == (True, False, True) and count > 1)
+        or (build["context_mode"] == "multi_context_used"
+            and flags == (False, False, True) and count > 1)
+        or (build["context_mode"] == "single_context_used"
+            and flags in ((False, True, False), (False, False, False)) and count == 1)),
+        "unknown or inconsistent historical compiler context")
+    for name in ("partition_iterations", "partition_time_s", "allocation_time_s", "compilation_time_s"):
+        if name in build:
+            value = build[name]
+            _require(type(value) in (int, float) and math.isfinite(value) and value >= 0
+                     and (name != "partition_iterations" or type(value) is int),
+                     "invalid historical compiler diagnostic")
+    reasons = []
+    if build["elapsed_s"] >= 1800:
+        reasons.append("elapsed_s>=1800")
+    if build["context_mode"] in {"multi_context_used", "single_context_failed_to_multi"}:
+        reasons.append(build["context_mode"])
+    _require(("expensive_build" not in build and "expensive_build_reason" not in build)
+             or (build.get("expensive_build") is True and bool(reasons)
+                 and build.get("expensive_build_reason") == ";".join(reasons)),
+             "inconsistent historical build-cost diagnostic")
+    return {
+        "backend_metadata": arch, "executed_artifact_identity_proved": arch == "hailo8",
+        "historical_observation": deepcopy(build),
+        "compiler_onnx_sha256": key["compiler_onnx_sha256"],
+        "source_onnx_sha256": source_sha256,
+        "compiler_source_byte_equality_claimed": False,
+    }
+
+
+def _bind_historical_receipt(raw, build, bindings):
+    """Tie old compile provenance to the exact receipt actually measured."""
+    receipt_binding = bindings["part1_build_receipt"]
+    _require(isinstance(raw, bytes) and 0 < len(raw) <= 2 * 1024**2,
+             "actual historical-build receipt bytes required")
+    _require(len(raw) == receipt_binding["size_bytes"]
+             and hashlib.sha256(raw).hexdigest() == receipt_binding["sha256"],
+             "actual historical-build receipt bytes differ from artifact binding")
+
+    def invalid_constant(value):
+        raise ValueError("Generic split-manifest staging: nonfinite receipt constant: " + value)
+
+    try:
+        receipt = json.loads(raw, object_pairs_hook=_object, parse_constant=invalid_constant)
+    except json.JSONDecodeError as error:
+        raise ValueError("Generic split-manifest staging: malformed historical-build receipt") from error
+    evidence = build["build_evidence"]
+    payload, key = evidence["cache_payload_v3"], evidence["key"]
+    _require(isinstance(receipt, dict)
+             and receipt.get("schema") == "onnx-splitpoint/hailo-hef-build-receipt/v2"
+             and receipt.get("publish_artifacts") is True
+             and receipt.get("diagnostic_only") is False
+             and receipt.get("cache_key") == build["cache_key"] == evidence["cache_key_v3"]
+             and receipt.get("cache_payload") == payload
+             and receipt.get("source_onnx_sha256") == key["builder_source_onnx_sha256"]
+             and receipt.get("compiler_onnx_sha256") == key["compiler_onnx_sha256"]
+             and receipt.get("compiler_onnx_filename") == PurePosixPath(build["compiler_onnx_path"]).name
+             and receipt.get("hef_sha256") == bindings["part1_runtime"]["sha256"]
+             and type(receipt.get("hef_size_bytes")) is int
+             and receipt["hef_size_bytes"] == bindings["part1_runtime"]["size_bytes"]
+             and receipt.get("hw_arch") == payload["hw_arch"] == "hailo8"
+             and receipt.get("net_name") == payload["net_name"]
+             and receipt.get("hailo_sdk_version") == payload["hailo_sdk_version"]
+             and all(receipt.get(name, _MISSING) == payload[name] for name in (
+                 "calibration_identity", "prepared_calibration_identity_sha256",
+                 "calibration_count", "requested_calibration_count", "calibration_storage",
+                 "calibration_memory_cap_bytes", "preprocessing_contract", "preprocessing_contract_sha256")),
+             "historical compiler provenance differs from actual measured receipt")
+    # Structural equality alone would equate JSON true with 1. Recheck the
+    # existing canonical cache identity against the actual receipt payload.
+    from .build_evidence import canonical_sha256
+    _require(canonical_sha256(receipt["cache_payload"]) == receipt["cache_key"],
+             "actual receipt cache payload identity differs")
+    return {**receipt_binding, "cache_key": receipt["cache_key"],
+            "source_onnx_sha256": receipt["source_onnx_sha256"],
+            "compiler_onnx_sha256": receipt["compiler_onnx_sha256"],
+            "hef_sha256": receipt["hef_sha256"], "hef_size_bytes": receipt["hef_size_bytes"]}
+
+
 def _validate_generic_split_manifest_staging(
     original_bytes, staged_bytes, *, original_source, staged_source, row,
     original_artifacts, full_model_sha256, producer_model, boundary_inputs,
+    part1_build_receipt_bytes=None,
 ):
     """Return provenance for actual byte-bound staging, or reject any drift.
 
@@ -194,20 +366,61 @@ def _validate_generic_split_manifest_staging(
         permit(("deepx", "part1_dxnn", "build_status"), "same unused-backend artifact reused")
         for key in ("artifact", "outcome", "reason"):
             permit(("deepx", "part1_dxnn", "cache_lookup", key), "same unused-backend artifact lookup metadata")
+    historical_build_reuse = []
     for arch in ("hailo8", "hailo10"):
         old_build = original["hailo"]["hefs"][arch]["part1_build"]
         new_build = staged["hailo"]["hefs"][arch]["part1_build"]
-        _require(all(b.get("ok") is True and b.get("cache_hit") is True and b.get("skipped") is True
-                     for b in (old_build, new_build)), "part1 must remain actual artifact reuse")
+        reuse = lambda b: b.get("ok") is True and b.get("cache_hit") is True and b.get("skipped") is True
+        historical = (old_build.get("ok") is True and old_build.get("cache_hit") is False
+                      and old_build.get("skipped") is False)
+        _require(reuse(new_build) and (reuse(old_build) or historical),
+                 "part1 must remain actual artifact reuse or a proven successful historical build")
+        _require(all(type(b.get("elapsed_s")) in (int, float) and math.isfinite(b["elapsed_s"])
+                     and b["elapsed_s"] >= 0 for b in (old_build, new_build)), "invalid reuse elapsed time")
+        if historical:
+            proof = _historical_build_provenance(
+                old_build, original, arch=arch, model=model, case=case,
+                source_sha256=bindings["source_part1_onnx"]["sha256"],
+                full_model_sha256=full_model_sha256, prepared=prepared)
+            if arch == "hailo8":
+                proof["actual_receipt_binding"] = _bind_historical_receipt(
+                    part1_build_receipt_bytes, old_build, bindings)
+            historical_build_reuse.append(proof)
+            _require(new_build.get("context_mode") == "skipped"
+                     and new_build.get("calib_source") == "validated_existing_artifact"
+                     and all(new_build.get(key) is False for key in (
+                         "single_context_failed", "single_context_used", "multi_context_used",
+                         "mapping_failed", "timed_out", "watchdog_expired")),
+                     "current reuse contains compiler activity or failure")
+            for key in ("cache_hit", "skipped", "calib_source", "context_mode",
+                        "single_context_failed", "single_context_used", "multi_context_used"):
+                permit(("hailo", "hefs", arch, "part1_build", key),
+                       "successful historical compile to current artifact-reuse observation")
+            for key in sorted(_BUILD_DIAGNOSTICS & old_build.keys()):
+                _require(key not in new_build or new_build[key] == old_build[key],
+                         "historical diagnostic may only be retained or omitted")
+                permit(("hailo", "hefs", arch, "part1_build", key),
+                       "historical compiler diagnostic retained in provenance, omitted by reuse")
         for key in ("source_onnx_path", "compiler_onnx_path", "build_receipt_path"):
             if old_build[key] != new_build[key]:
                 relative = (f"hailo/{arch}/part1/hailo_hef_build_receipt.json"
                             if key == "build_receipt_path" else staged["part1"])
-                _require(old_build[key].endswith("/" + case + "/" + relative)
+                old_relative = relative
+                if historical and key == "compiler_onnx_path":
+                    old_relative = (f"hailo/{arch}/part1/"
+                                    f"{model}_part1_{case}_hailo_fixed.onnx")
+                    if old_build[key] == old_build["source_onnx_path"]:
+                        old_relative = staged["part1"]
+                if historical:
+                    old_case_root = PurePosixPath(old_build["source_onnx_path"]).parent
+                    _require(old_build[key] == str(old_case_root / old_relative),
+                             "historical compiler/source/receipt staging roots differ")
+                old_path = PurePosixPath(old_build[key])
+                _require(old_path.is_absolute() and ".." not in old_path.parts
+                         and old_build[key].endswith("/" + case + "/" + old_relative)
                          and new_build[key] == str(new_root / relative), "unbound part1 staging path")
-                permit(("hailo", "hefs", arch, "part1_build", key), "same part1 source/receipt under new normal suite root")
-        _require(all(type(b.get("elapsed_s")) in (int, float) and math.isfinite(b["elapsed_s"])
-                     and b["elapsed_s"] >= 0 for b in (old_build, new_build)), "invalid reuse elapsed time")
+                permit(("hailo", "hefs", arch, "part1_build", key),
+                       "part1 source/receipt staging; historical compiler graph identity retained separately")
         permit(("hailo", "hefs", arch, "part1_build", "elapsed_s"), "new artifact-reuse observation duration")
     # Source-only Generic parts do not execute the optional Full variants.
     # Allow only removal, never replacement, promotion or changes to part1.
@@ -245,6 +458,7 @@ def _validate_generic_split_manifest_staging(
         "unchanged_artifact_bindings": bindings, "boundary_contract": deepcopy(boundary),
         "prepared_input": {k: prepared[k] for k in ("sha256", "shape", "dtype", "layout", "input_name")},
         "source_image_sha256": feed["source_image_sha256"], "allowed_differences": changes,
+        "historical_build_reuse": historical_build_reuse,
         "scientific_manifest_fields_unchanged": True,
     }
 
@@ -252,14 +466,20 @@ def _validate_generic_split_manifest_staging(
 def validate_generic_split_manifest_staging(
     original_bytes, staged_bytes, *, original_source, staged_source, row,
     original_artifacts, full_model_sha256, producer_model, boundary_inputs,
+    part1_build_receipt_bytes=None,
 ):
-    """Validate the byte-bound relation; malformed or unreviewed inputs deny."""
+    """Validate staging; historical measured H8 builds require exact receipt bytes.
+
+    Reuse-to-reuse callers remain compatible without this optional input. The
+    caller reads the already bound receipt; this helper performs no file I/O.
+    """
     try:
         return _validate_generic_split_manifest_staging(
             original_bytes, staged_bytes, original_source=original_source,
             staged_source=staged_source, row=row, original_artifacts=original_artifacts,
             full_model_sha256=full_model_sha256, producer_model=producer_model,
             boundary_inputs=boundary_inputs,
+            part1_build_receipt_bytes=part1_build_receipt_bytes,
         )
     except (KeyError, TypeError, IndexError, AttributeError) as error:
         raise ValueError("Generic split-manifest staging: incomplete or malformed binding") from error
