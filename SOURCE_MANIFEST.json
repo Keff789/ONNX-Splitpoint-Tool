@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 422750,
-      "sha256": "597f043f9f4da6901161994982bcb76f00f92fe163dfebc5a5e0f3ae6a21ee6a"
+      "size": 424472,
+      "sha256": "80bee7e392d898559e8f44cc4a2ba8c53782f048db77a768d03bbca9a0318208"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -3121,8 +3121,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_completed_task.py",
-      "size": 138953,
-      "sha256": "9fc7b08291469f1d0f1812fc8fc0df178c458d228683e6f7edcf2af174fbebdc"
+      "size": 139856,
+      "sha256": "22229863955c888ca49179a7b9c8a30e7978b71a531d4baafd264028adc3182d"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_energy_parent.py",
@@ -7291,8 +7291,8 @@
     },
     {
       "path": "tests/test_generic_completed_task_resources.py",
-      "size": 10539,
-      "sha256": "d23af52056105b4ba4b62a8fa6afeed601ff599c078e9a4e5db0334bf3d59e88"
+      "size": 14351,
+      "sha256": "37eaa566f78476a97abcaceb06804b54faecf248f74a349cd5a467ca9b8ff3d2"
     },
     {
       "path": "tests/test_generic_completion_dispatch.py",

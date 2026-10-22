@@ -247,14 +247,26 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
                 central_only = False
                 if resources & selected:
                     terminal = {"ok", "completed", "partial", "failed", "skipped"}
-                    models = manifest.get("models") or {}
-                    quality_stage = (manifest.get("workflow_stages") or {}).get("evaluate_quality") or {}
+                    models = manifest.get("models")
+                    root_stages = manifest.get("root_stages")
+                    smoke = profile.get("hardware_smoke")
+                    require(isinstance(models, dict) and isinstance(root_stages, dict)
+                            and isinstance(smoke, dict), "normal_stage_status_scope_unbound")
+                    # workflow_stages is the normal runner's ordered stage-name
+                    # list. Actual workflow status is recorded in root_stages.
+                    quality_stage = root_stages.get("evaluate_quality", {})
+                    require(isinstance(quality_stage, dict), "normal_quality_stage_status_unbound")
+                    for model in models.values():
+                        require(isinstance(model, dict) and isinstance(model.get("stages"), dict)
+                                and isinstance(model["stages"].get("run_benchmarks", {}), dict),
+                                "normal_model_stage_status_unbound")
                     central_only = bool(model_ids and model_ids <= set(models) and all(
                         ((model.get("stages") or {}).get("run_benchmarks") or {}).get("status") in terminal
                         for model in models.values()) and (
                         quality_stage.get("status") in terminal | {"running"}
                         or manifest.get("status") in terminal)
-                        and (profile.get("hardware_smoke") or {}).get("enabled") is False
+                        and smoke.get("mode") == "summary_only"
+                        and smoke.get("require_remote_for_hailo") is False
                         and not physical)
                     require(central_only, "selected_dut_workflow_has_not_entered_central_only_phase")
                     journal = run / "jobs/remote_process_leases"
@@ -314,7 +326,7 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
                 "owner_source_changed_during_observation")
         for pid in list(identities):
             process(pid)
-    except (OSError, ValueError, TypeError, KeyError, IndexError, StopIteration) as exc:
+    except (OSError, ValueError, TypeError, KeyError, IndexError, StopIteration, AttributeError) as exc:
         errors.append(str(exc) or type(exc).__name__)
     return {"ok": not errors, "read_only": True,
             "status": "resource_scope_unresolved" if errors else "no_conflict_with_selected_resources",
