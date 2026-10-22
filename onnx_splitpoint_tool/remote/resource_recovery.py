@@ -26,6 +26,469 @@ from .resource_recovery_observation import observe_resource_owners
 from ..workflow.run_control import EvaluationRunLock, WorkflowRunCleanupQuarantineError
 
 
+def _generic_orphan_read(path, snapshots, descriptor=None):
+    """Read a regular, explicitly bound control file; retain its exact bytes."""
+    _require(isinstance(path, (str, os.PathLike)), "missing Generic orphan evidence path")
+    path = Path(path).expanduser()
+    _require(path.is_absolute() and not any(p.is_symlink() for p in (path, *path.parents)),
+             "unsafe Generic orphan evidence path")
+    _require(path.is_file() and stat.S_ISREG(path.stat().st_mode),
+             "missing or nonregular Generic orphan evidence: " + str(path))
+    data = path.read_bytes()
+    if descriptor is not None:
+        _require(isinstance(descriptor, Mapping) and descriptor.get("path") == str(path)
+                 and descriptor.get("size_bytes") == len(data)
+                 and descriptor.get("sha256") == hashlib.sha256(data).hexdigest(),
+                 "Generic orphan evidence descriptor differs: " + str(path))
+    def unique(pairs):
+        value = {}
+        for key, item in pairs:
+            _require(key not in value, "duplicate Generic orphan evidence key")
+            value[key] = item
+        return value
+    try:
+        value = json.loads(data, object_pairs_hook=unique)
+    except (ValueError, UnicodeError) as exc:
+        raise WorkflowRunCleanupQuarantineError("invalid Generic orphan evidence: " + str(path)) from exc
+    _require(isinstance(value, dict), "Generic orphan evidence must be an object")
+    snapshots[path] = data
+    return value
+
+
+def _generic_orphan_local_observation(owners, *, run_dir, profile_path,
+                                      process_groups, ssh_host, known_operations):
+    """Close the recorded Generic scope, including detached transfer/helpers.
+
+    Missing PIDs alone are insufficient: inspect the complete visible process
+    namespace, old process groups/sessions and run/transfer identities too.
+    No process is signalled. Only this caller's exact live ancestry is exempt
+    from argument matching, never from the recorded-predecessor check.
+    """
+    from .resource_recovery_observation import _observe_processes
+    observed = _observe_processes(owners)
+    if not observed.get("ok"):
+        return {"ok": False, "recorded_scope": observed}
+    proc = Path("/proc")
+    def identity(pid):
+        tail = (proc / str(pid) / "stat").read_text().rsplit(") ", 1)[1].split()
+        return {"pid": pid, "state": tail[0], "ppid": int(tail[1]),
+                "pgid": int(tail[2]), "session": int(tail[3]), "start_ticks": tail[19]}
+    ancestors, errors, matches = {}, [], []
+    try:
+        current = os.getpid()
+        while current > 0 and current not in ancestors:
+            row = identity(current)
+            ancestors[current] = row["start_ticks"]
+            current = row["ppid"]
+        entries = list(proc.iterdir())
+    except (OSError, ValueError, IndexError):
+        return {"ok": False, "recorded_scope": observed,
+                "visibility_errors": ["caller_ancestry_or_process_visibility_unproven"]}
+    tokens = [str(run_dir), Path(run_dir).name, str(profile_path), *known_operations]
+    known_pids = {row["pid"] for row in owners}
+    for entry in entries:
+        if not entry.name.isdecimal():
+            continue
+        try:
+            row = identity(int(entry.name))
+            if row["state"] == "Z":
+                continue
+            argv = (entry / "cmdline").read_bytes().split(b"\0")
+            args = [arg.decode("utf-8", "replace") for arg in argv if arg]
+            own_ancestor = ancestors.get(row["pid"]) == row["start_ticks"]
+            reasons = []
+            if row["pgid"] in process_groups or row["session"] in process_groups:
+                reasons.append("original_process_group_or_session")
+            if row["ppid"] in known_pids:
+                reasons.append("recorded_parent_descendant")
+            if not own_ancestor:
+                if any(token and token in arg for token in tokens for arg in args):
+                    reasons.append("original_run_or_operation_argument")
+                names = {Path(arg).name for arg in args if " " not in arg and "\n" not in arg}
+                if names & {"ssh", "scp", "sftp", "rsync"} and any(ssh_host in arg for arg in args):
+                    reasons.append("same_target_transfer_not_proven_foreign")
+                if row["ppid"] == 1 and any("multiprocessing." in arg for arg in args):
+                    reasons.append("unattributed_detached_multiprocessing_helper")
+            if reasons:
+                matches.append({**row, "reasons": reasons})
+        except FileNotFoundError:
+            if entry.exists():
+                errors.append("process_identity_incomplete:" + entry.name)
+        except (OSError, ValueError, IndexError):
+            errors.append("process_visibility_unproven:" + entry.name)
+    return {"ok": not matches and not errors, "recorded_scope": observed,
+            "scope_processes": matches, "visibility_errors": errors,
+            "caller_ancestry": ancestors, "read_only": True}
+
+
+def recover_generic_orphan_run(*, run_dir, session_id, setup_id, evidence_path,
+                               authorization_path, evidence_output, registry_path=None):
+    """Explicitly close one proven quiescent orphaned Generic Quality session.
+
+    Input documents point to genuine original launcher, handoff and interruption
+    records. Caller-created cleanup booleans are never admission evidence. The
+    old run is cancelled, never promoted to a completed measurement. No build,
+    SDK, inference, source/collector release or automatic resume occurs here.
+    """
+    from ..workflow.execution_binding import physical_dut_key
+    from ..platform_power import host_config_from_setup
+    from ..energy.config import default_registry_path, _read_hardware_registry_unlocked
+    import uuid
+
+    supplied = Path(run_dir).expanduser()
+    _require(supplied.is_absolute() and supplied.is_dir()
+             and not any(p.is_symlink() for p in (supplied, *supplied.parents)),
+             "Generic orphan run must be an existing regular directory")
+    run = supplied.resolve()
+    _require(isinstance(session_id, str) and re.fullmatch(r"[0-9a-f]{32}", session_id),
+             "exact original Generic session_id is required")
+    _require(isinstance(setup_id, str) and bool(setup_id) and Path(setup_id).name == setup_id
+             and setup_id not in {".", ".."}, "exact original Generic setup_id is required")
+    identity = {"run_id": run.name, "run_dir": str(run), "session_id": session_id, "setup_id": setup_id}
+    snapshots = {}
+    evidence_file, auth_file = Path(evidence_path).expanduser(), Path(authorization_path).expanduser()
+    evidence = _generic_orphan_read(evidence_file, snapshots)
+    auth = _generic_orphan_read(auth_file, snapshots)
+    _require(evidence.get("schema") == "onnx-splitpoint/generic-orphan-recovery-input"
+             and type(evidence.get("schema_version")) is int and evidence["schema_version"] == 1
+             and _bound(evidence, identity, identity), "Generic orphan input scope differs")
+    _require(auth.get("schema") == "onnx-splitpoint/generic-orphan-recovery-authorization"
+             and type(auth.get("schema_version")) is int and auth["schema_version"] == 1
+             and auth.get("authorized") is True and auth.get("action") == "recover_generic_orphan_run"
+             and _bound(auth, identity, identity)
+             and all(isinstance(auth.get(k), str) and auth[k].strip() for k in ("operator", "source", "authorized_at")),
+             "explicit Generic orphan operator authorization differs")
+    _require(_time(auth["authorized_at"]) <= datetime.now(timezone.utc), "Generic authorization is in the future")
+    _require(isinstance(auth.get("evidence"), Mapping), "authorization lacks its exact evidence descriptor")
+    _generic_orphan_read(evidence_file, snapshots, auth["evidence"])
+    def referenced(name, source=evidence):
+        descriptor = source.get(name)
+        _require(isinstance(descriptor, Mapping), "Generic orphan lacks original " + name)
+        return _generic_orphan_read(descriptor.get("path", ""), snapshots, descriptor)
+    lineage, handoff, interruption = referenced("initial_lineage"), referenced("handoff"), referenced("interruption")
+    _require(lineage.get("schema") == "generic420-normal-quality-group-initial-local-lineage-v1"
+             and lineage.get("initial_lineage_status") == "bound" and not lineage.get("observation_error"),
+             "original Generic launcher lineage is not bound")
+    _require(isinstance(handoff.get("actions"), list) and isinstance(lineage.get("target"), Mapping)
+             and isinstance(lineage.get("scope"), Mapping), "original Generic scope inventory is incomplete")
+    rows = [row for row in handoff.get("actions", []) if isinstance(row, Mapping)
+            and row.get("normal_run_dir") == str(run) and row.get("normal_run_id") == run.name]
+    _require(len(rows) == 1, "original Generic handoff is missing or ambiguous")
+    original = rows[0]
+    _require(original.get("session_id") == session_id and original.get("initial_lineage") == evidence["initial_lineage"]
+             and original.get("target") == lineage.get("target")
+             and original.get("target", {}).get("setup_id") == setup_id,
+             "original handoff/lineage/session/setup binding differs")
+    for name in ("action", "profile", "started"):
+        _require(original.get(name) == lineage.get(name), "original Generic " + name + " differs")
+    action, source_profile, started = (referenced(name, lineage) for name in ("action", "profile", "started"))
+    _require(action.get("profile") == lineage["profile"] and action.get("target") == lineage["target"]
+             and action.get("scope") == lineage.get("scope")
+             and started.get("action_spec") == lineage["action"]["path"]
+             and started.get("argv") == action.get("argv"), "original Generic start/action contract differs")
+    scope = lineage.get("scope") or {}
+    _require(scope.get("Native") is False and scope.get("energy") is False
+             and scope.get("FPS") is False and isinstance(scope.get("model_id"), str)
+             and isinstance(scope.get("case_ids"), list) and bool(scope["case_ids"]),
+             "only original source-only Generic Quality scope is recoverable")
+    model_id = scope["model_id"]
+    _require(Path(model_id).name == model_id and model_id not in {".", ".."}, "invalid original model scope")
+    owner_rows = []
+    for role in ("workflow_owner", "logger_owner"):
+        owner = lineage.get(role) or {}
+        _require(isinstance(owner, Mapping) and type(owner.get("pid")) is int and owner["pid"] > 0
+                 and str(owner.get("process_start_ticks") or "").isdecimal()
+                 and all(type(owner.get(k)) is int and owner[k] > 0 for k in ("ppid", "pgrp", "session_id"))
+                 and isinstance(owner.get("argv"), list) and owner["argv"]
+                 and all(isinstance(arg, str) for arg in owner["argv"]), "incomplete original " + role)
+        owner_rows.append({"pid": owner["pid"], "start_time_ticks": str(owner["process_start_ticks"])})
+    workflow, logger = lineage["workflow_owner"], lineage["logger_owner"]
+    _require(workflow["ppid"] == logger["pid"] and workflow["argv"] == action.get("argv")
+             and original.get("workflow_pid") == workflow["pid"]
+             and original.get("workflow_process_start_ticks") == workflow["process_start_ticks"]
+             and original.get("logger_pid") == logger["pid"]
+             and original.get("logger_process_start_ticks") == logger["process_start_ticks"],
+             "original controller/logger lineage differs")
+    _require("run_evaluation_workflow.py" in {Path(arg).name for arg in workflow["argv"]}
+             and "--profile-driven" in workflow["argv"], "original normal CLI is not proven")
+    for flag, expected in (("--profile", lineage["profile"]["path"]), ("--out", str(run.parent))):
+        argv = workflow["argv"]
+        _require(argv.count(flag) == 1 and argv.index(flag) + 1 < len(argv)
+                 and argv[argv.index(flag) + 1] == expected, "original Generic CLI target differs")
+    histories = original.get("current_local_processes")
+    _require(isinstance(histories, list) and bool(histories), "original local process inventory missing")
+    groups = {workflow["pgrp"], workflow["session_id"], logger["pgrp"], logger["session_id"]}
+    for row in histories:
+        _require(isinstance(row, Mapping) and type(row.get("pid")) is int
+                 and str(row.get("start_ticks") or "").isdecimal(), "corrupt original local process inventory")
+        owner_rows.append({"pid": row["pid"], "start_time_ticks": str(row["start_ticks"])})
+        groups.update(row[k] for k in ("pgrp", "session_id") if type(row.get(k)) is int and row[k] > 0)
+    _require(interruption.get("schema") == "generic420-continuation-v3-lifecycle-interruption-v1"
+             and interruption.get("source_handoff") == evidence["handoff"]["path"]
+             and isinstance(interruption.get("workflows"), list),
+             "genuine interruption/handoff source differs")
+    interrupted = [row for row in interruption.get("workflows", []) if isinstance(row, Mapping)
+                   and row.get("normal_run_dir") == str(run) and row.get("session_id") == session_id]
+    _require(len(interrupted) == 1 and interrupted[0].get("setup_id") == setup_id
+             and interrupted[0].get("original_action_path") == lineage["action"]["path"],
+             "interruption does not bind the exact original workflow")
+    last = interrupted[0].get("last_genuine_local_owner_snapshot") or {}
+    _require(last.get("pid") == workflow["pid"] and last.get("ppid") == workflow["ppid"]
+             and last.get("start_ticks") == workflow["process_start_ticks"]
+             and last.get("pgrp") == workflow["pgrp"], "last genuine controller identity differs")
+    phase = interrupted[0].get("phase") or {}
+    if phase.get("orphan_scp_pid") is not None:
+        _require(type(phase["orphan_scp_pid"]) is int and str(phase.get("orphan_scp_start_ticks") or "").isdecimal(),
+                 "original orphan SCP identity is incomplete")
+        owner_rows.append({"pid": phase["orphan_scp_pid"], "start_time_ticks": str(phase["orphan_scp_start_ticks"])})
+    target = lineage["target"]
+    _require(isinstance(original.get("lease_records"), list)
+             and all(isinstance(row, Mapping) and isinstance(row.get("value", {}), Mapping)
+                     for row in original["lease_records"]), "original lease inventory is incomplete")
+    orphan = (interruption.get("local_orphan_scope_latest") or {}).get("ssh_orphan") or {}
+    operations = [str(row.get("operation_id")) for row in original.get("lease_records", [])
+                  if row.get("operation_id")]
+    operations += [str(row.get("value", {}).get("operation_id")) for row in original.get("lease_records", [])
+                   if row.get("value", {}).get("operation_id")]
+    if orphan.get("target") == target.get("user", "") + "@" + target.get("host", ""):
+        _require(orphan.get("exact_original_remote_operation") in operations
+                 and type(orphan.get("pid")) is int and str(orphan.get("start_ticks") or "").isdecimal(),
+                 "detached original SSH binding is incomplete")
+        owner_rows.append({"pid": orphan["pid"], "start_time_ticks": str(orphan["start_ticks"])})
+        groups.update(orphan[k] for k in ("pgrp", "session") if type(orphan.get(k)) is int and orphan[k] > 0)
+    owner_map = {}
+    for row in owner_rows:
+        _require(row["pid"] not in owner_map or owner_map[row["pid"]] == row["start_time_ticks"],
+                 "conflicting original process identities")
+        owner_map[row["pid"]] = row["start_time_ticks"]
+    owners = [{"pid": pid, "start_time_ticks": ticks} for pid, ticks in sorted(owner_map.items())]
+
+    registry_file = Path(registry_path or default_registry_path()).expanduser()
+    _require(registry_file.is_absolute() and registry_file.is_file()
+             and not any(p.is_symlink() for p in (registry_file, *registry_file.parents)),
+             "normal hardware registry unavailable")
+    registry_before = registry_file.read_bytes()
+    registry, _ = _read_hardware_registry_unlocked(registry_file)
+    setups = [row for row in registry.get("hardware_setups", []) if row.get("id") == setup_id]
+    _require(len(setups) == 1, "registered Generic setup missing or ambiguous")
+    setup, host = setups[0], host_config_from_setup(setups[0])
+    _require(host.host == target.get("host") and host.user == target.get("user")
+             and int(host.port) == int(target.get("port", 22)), "registered Generic SSH target differs")
+    fields = setup.get("host") if isinstance(setup.get("host"), Mapping) else {}
+    resource = physical_dut_key({"remote": {"host": host.host,
+        "physical_host_id": setup.get("physical_host_id") or fields.get("physical_host_id")}})
+    _require(interrupted[0].get("physical_resource") == resource, "interrupted physical DUT differs")
+    output = Path(evidence_output).expanduser()
+    _require(output.is_absolute() and not any(p.is_symlink() for p in (output, *output.parents))
+             and not output.resolve().is_relative_to(run)
+             and output not in snapshots and output != registry_file,
+             "Generic recovery receipt must be separate from original run and evidence")
+    recovery_id = uuid.uuid4().hex
+    recovery_owner = {"run_id": run.name, "session_id": session_id, "purpose": "explicit_generic_orphan_recovery"}
+    run_lock = EvaluationRunLock(out_root=run.parent, run_dir=run, owner=recovery_owner)
+    physical = EvaluationRunLock.for_resource(resource, owner=recovery_owner)
+    run_lock.acquire_for_recovery()
+    try:
+        physical.acquire_for_recovery()
+        try:
+            return _recover_generic_orphan_locked(
+                run=run, identity=identity, lineage=lineage, original=original, source_profile=source_profile,
+                auth=auth, evidence_file=evidence_file, auth_file=auth_file, output=output,
+                snapshots=snapshots, owners=owners, groups=groups, operations=operations,
+                host=host, setup=setup, registry_file=registry_file, registry_before=registry_before,
+                run_lock=run_lock, physical=physical, resource=resource, recovery_id=recovery_id)
+        finally:
+            physical.release(write_released_state=False)
+    finally:
+        run_lock.release(write_released_state=False)
+
+
+def _recover_generic_orphan_locked(*, run, identity, lineage, original, source_profile,
+                                    auth, evidence_file, auth_file, output, snapshots,
+                                    owners, groups, operations, host, setup, registry_file,
+                                    registry_before, run_lock, physical, resource, recovery_id):
+    from .process_lease import RemoteProcessLeaseRegistry, RemoteProcessLeaseScope
+    from ..workflow.run_control import (build_resume_contract, commit_generic_orphan_recovery_group,
+                                       validate_generic_orphan_recovery_owner)
+    import yaml
+
+    def descriptor(path, data):
+        return {"path": str(path), "sha256": hashlib.sha256(data).hexdigest(), "size_bytes": len(data)}
+    inputs = {"evidence": descriptor(evidence_file, snapshots[evidence_file]),
+              "authorization": descriptor(auth_file, snapshots[auth_file])}
+    if output.exists():
+        prior = _generic_orphan_read(output, {})
+        _require(prior.get("schema") == "onnx-splitpoint/generic-orphan-recovery"
+                 and prior.get("state") == "committed" and _bound(prior, identity, identity)
+                 and prior.get("inputs") == inputs and prior.get("resources") == [resource],
+                 "existing Generic recovery receipt is incomplete, changed or foreign")
+        _require(validate_generic_orphan_recovery_owner(run_lock) == prior
+                 and validate_generic_orphan_recovery_owner(physical) == prior
+                 and hashlib.sha256((run / "run_manifest.json").read_bytes()).hexdigest()
+                 == prior.get("manifest_after_sha256"), "committed Generic group changed")
+        _require(prior.get("registry") == descriptor(registry_file, registry_before),
+                 "committed Generic registry binding changed")
+        mutable = {str(run / "run_manifest.json"), str(run_lock.quarantine_path), str(physical.quarantine_path)}
+        sources = prior.get("source_evidence")
+        _require(isinstance(sources, list), "committed Generic source inventory missing")
+        for source in sources:
+            _require(isinstance(source, Mapping), "committed Generic source descriptor is corrupt")
+            if source.get("path") not in mutable:
+                path = Path(source.get("path", ""))
+                _require(path.is_file() and not any(p.is_symlink() for p in (path, *path.parents))
+                         and descriptor(path, path.read_bytes()) == source,
+                         "committed Generic original source changed")
+        return {"status": "already_committed", **identity, "resources": [resource],
+                "evidence_path": str(output), "measurements_started": 0}
+
+    manifest_path = run / "run_manifest.json"
+    manifest = _generic_orphan_read(manifest_path, snapshots)
+    control = _generic_orphan_read(run / "jobs/workflow_control.json", snapshots)
+    _require(manifest.get("schema") == "onnx-splitpoint/evaluation-run-manifest"
+             and manifest.get("run_id") == run.name and manifest.get("run_dir") == str(run)
+             and manifest.get("status") == "running" and manifest.get("current_session_id") == identity["session_id"]
+             and control.get("schema") == "onnx-splitpoint/workflow-control"
+             and _bound(control, identity, ("run_id", "session_id")), "original running workflow/session differs")
+    sessions = manifest.get("execution_sessions")
+    _require(isinstance(sessions, list) and bool(sessions)
+             and all(isinstance(row, Mapping) and isinstance(row.get("session_id"), str) for row in sessions)
+             and len({row["session_id"] for row in sessions}) == len(sessions), "original session inventory incomplete")
+    selected = [row for row in sessions if row["session_id"] == identity["session_id"]]
+    _require(len(selected) == 1 and selected[0] is sessions[-1] and selected[0].get("status") == "running"
+             and selected[0].get("start_origin", {}).get("pid") == lineage["workflow_owner"]["pid"]
+             and all(row.get("status") != "running" for row in sessions[:-1]), "original active session differs")
+    def yaml_file(name):
+        path = run / name
+        _require(path.is_file() and not any(p.is_symlink() for p in (path, *path.parents)), "unsafe original profile")
+        data = path.read_bytes()
+        value = yaml.safe_load(data)
+        _require(isinstance(value, Mapping), "original profile is not a mapping")
+        snapshots[path] = data
+        return dict(value)
+    resolved_profile, archived_source = yaml_file("profile.yaml"), yaml_file("profile_source.yaml")
+    _require(archived_source == source_profile, "original profile-source bytes/meaning changed")
+    options = manifest.get("options")
+    plan = _generic_orphan_read(run / "effective_execution_plan.json", snapshots)
+    _require(isinstance(options, Mapping), "original archived options missing")
+    contract = build_resume_contract(profile_payload=resolved_profile,
+                                     effective_execution_plan=plan, options=options)
+    _require(contract == manifest.get("resume_contract") == original.get("resume_contract")
+             and all(selected[0].get(k) == contract[k] for k in
+                     ("profile_sha256", "plan_sha256", "resume_contract_sha256")),
+             "original start/resume contract changed")
+    _require(options.get("energy_enabled") is False and options.get("native_producer_enabled") is False
+             and (resolved_profile.get("energy") or {}).get("enabled") is False
+             and (resolved_profile.get("native_producers") or {}).get("enabled") is False
+             and (resolved_profile.get("hardware") or {}).get("selected_setups") == [identity["setup_id"]],
+             "Generic recovery cannot release a broader Native/Energy/hardware scope")
+    runs = [row for row in resolved_profile.get("run_profiles", []) if row.get("enabled", True)]
+    _require(len(runs) == 1 and runs[0].get("quality_source_only") is True
+             and runs[0].get("hardware_setup_id") == identity["setup_id"]
+             and runs[0].get("case_ids") == lineage["scope"]["case_ids"],
+             "original source-only Generic run scope changed")
+    dispatch = _generic_orphan_read(run / "models" / lineage["scope"]["model_id"] / "benchmark_results"
+                                   / ("remote_benchmark_dispatch_" + identity["setup_id"] + ".json"), snapshots)
+    _require(dispatch.get("schema") == "onnx-splitpoint/remote-benchmark-dispatch"
+             and dispatch.get("hardware_target_id") == identity["setup_id"]
+             and dispatch.get("model_id") == lineage["scope"]["model_id"]
+             and dispatch.get("host", {}).get("host") == host.host
+             and dispatch.get("host", {}).get("user") == host.user
+             and int(dispatch.get("host", {}).get("port", 22)) == int(host.port)
+             and dispatch.get("args", {}).get("quality_evidence_eval_id") == run.name
+             and dispatch.get("args", {}).get("quality_evidence_setup_id") == identity["setup_id"],
+             "genuine original remote dispatch differs")
+    workflow = lineage["workflow_owner"]
+    for lock, is_run in ((run_lock, True), (physical, False)):
+        owner = lock.previous_owner
+        _require(owner.get("schema") == "onnx-splitpoint/evaluation-run-lock"
+                 and owner.get("state") == "running" and owner.get("run_id") == run.name
+                 and owner.get("pid") == workflow["pid"] and owner.get("ppid") == workflow["ppid"]
+                 and owner.get("pgid") == workflow["pgrp"] and owner.get("hostname") == socket.gethostname(),
+                 "original Generic lock owner differs")
+        if is_run:
+            _require(owner.get("run_dir") == str(run) and owner.get("session_id") == identity["session_id"]
+                     and owner.get("profile_sha256") == contract["profile_sha256"]
+                     and owner.get("plan_sha256") == contract["plan_sha256"], "original Run-lock contract differs")
+        else:
+            _require(owner.get("purpose") == "generic" and owner.get("physical_resource") == resource
+                     and ("session_id" not in owner or owner["session_id"] == identity["session_id"]),
+                     "physical owner is not this original Generic workflow")
+        if os.path.lexists(lock.quarantine_path):
+            fence = _generic_orphan_read(lock.quarantine_path, snapshots)
+            _require(fence.get("schema") == "onnx-splitpoint/evaluation-run-lock-quarantine"
+                     and fence.get("state") == "quarantined"
+                     and fence.get("run_dir") == str(lock.run_dir)
+                     and fence.get("owner") == {"reason": "previous_writer_terminated_uncleanly", "previous_owner": owner},
+                     "foreign Generic quarantine must remain closed")
+    original_local = _generic_orphan_local_observation(
+        owners, run_dir=run, profile_path=lineage["profile"]["path"],
+        process_groups=groups, ssh_host=host.host, known_operations=operations)
+    _require(original_local.get("ok") is True, "active, unknown or unbound original local descendants")
+
+    journal_root = run / "jobs/remote_process_leases"
+    _require(journal_root.is_dir() and not journal_root.is_symlink(), "original Generic lease journal missing")
+    directories = sorted(journal_root.iterdir())
+    _require(all(path.is_dir() and not path.is_symlink() for path in directories)
+             and {path.name for path in directories} == {row["session_id"] for row in sessions},
+             "original session/journal inventory changed or is incomplete")
+    cleanup = []
+    for directory in directories:
+        scope = RemoteProcessLeaseScope(run_id=run.name, session_id=directory.name)
+        for path in directory.glob("*.remote-lease.json"):
+            value = RemoteProcessLeaseJournal._read_json_exact(path)
+            prefix = value.get("control_argv_prefix") or []
+            _require(value.get("run_sha256") == scope.run_sha256
+                     and value.get("session_sha256") == scope.session_sha256
+                     and isinstance(prefix, list) and all(isinstance(arg, str) for arg in prefix)
+                     and prefix and prefix[-1] == host.user_host and prefix.count("-p") == 1
+                     and prefix.index("-p") + 1 < len(prefix)
+                     and prefix[prefix.index("-p") + 1] == str(int(host.port)),
+                     "original remote lease target/scope differs")
+        registry = RemoteProcessLeaseRegistry()
+        journal = registry.configure_journal(scope=scope, journal_dir=directory)
+        reports = registry.cancel_all(grace_s=3.0)
+        active, pending = registry.active_count(), journal.pending_count()
+        _require(not active and not pending and all(row.get("ok") is True for row in reports),
+                 "exact original remote cleanup is unresolved")
+        cleanup.append({"session_id": directory.name, "journal_dir": str(directory),
+                        "reports": reports, "active_count": active, "pending_count": pending})
+    observed = observe_resource_owners(setup, local_owners=owners, diagnostics_dir=output.parent / "diagnostics")
+    final_local = _generic_orphan_local_observation(
+        owners, run_dir=run, profile_path=lineage["profile"]["path"],
+        process_groups=groups, ssh_host=host.host, known_operations=operations)
+    _require(observed.get("ok") is True and final_local.get("ok") is True,
+             "fresh locked local/remote ownership is active or unobservable")
+    _require(registry_file.read_bytes() == registry_before
+             and sorted(journal_root.iterdir()) == directories
+             and not list(journal_root.rglob("*.remote-lease.json"))
+             and all(not path.is_symlink() and path.read_bytes() == data for path, data in snapshots.items())
+             and run_lock._read_owner() == run_lock.previous_owner and physical._read_owner() == physical.previous_owner,
+             "Generic ownership, source or registry changed during recovery")
+    now = datetime.now(timezone.utc).isoformat()
+    after = copy.deepcopy(manifest)
+    after.update(status="cancelled", technical_status="cancelled", updated_at=now)
+    closed = after["execution_sessions"][-1]
+    closed.update(status="cancelled", finished_at=now, interrupted_at=now,
+                  generic_orphan_recovery={"recovery_id": recovery_id, "session_id": identity["session_id"],
+                                           "receipt_path": str(output)})
+    receipt = {"schema": "onnx-splitpoint/generic-orphan-recovery", "schema_version": 1,
+               **identity, "recovery_id": recovery_id, "resources": [resource], "inputs": inputs,
+               "operator": auth["operator"], "authorized_at": auth["authorized_at"],
+               "source_evidence": [descriptor(path, data) for path, data in snapshots.items()],
+               "registry": descriptor(registry_file, registry_before), "original_local_identities": owners,
+               "local_observation_before": original_local, "local_observation_after": final_local,
+               "ownership_observation": observed, "scoped_remote_cleanup": cleanup,
+               "original_completion_proven": False, "measurements_started": 0,
+               "recovery_scope": "original_run_and_bound_physical_dut_only"}
+    committed = commit_generic_orphan_recovery_group(
+        run_lock=run_lock, physical_locks={resource: physical}, receipt_path=output,
+        receipt_data=receipt, manifest_path=manifest_path,
+        manifest_before=snapshots[manifest_path], manifest_after=after)
+    return {"status": "committed", **identity, "resources": [resource], "recovery_id": recovery_id,
+            "evidence_path": str(output), "measurements_started": 0,
+            "manifest_after_sha256": committed["manifest_after_sha256"]}
+
+
 def _require(condition, reason):
     if not condition:
         raise WorkflowRunCleanupQuarantineError("physical_resource_recovery: " + reason)

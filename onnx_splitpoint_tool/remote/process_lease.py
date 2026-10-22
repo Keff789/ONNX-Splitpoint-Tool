@@ -1970,6 +1970,19 @@ def process_lease_cli_main(argv: Optional[Sequence[str]] = None) -> int:
     numerical.add_argument("--registry", default=None)
     numerical.add_argument("--source-archive", default=None,
                            help="original normal release archive for an independently proven Full pre-runtime child failure")
+    orphan = subparsers.add_parser(
+        "recover-generic-orphan",
+        help="recover one exactly bound interrupted Generic workflow without accepting its results",
+        allow_abbrev=False,
+    )
+    def required_orphan_value(value: str) -> str:
+        if not value.strip():
+            raise argparse.ArgumentTypeError("an explicit nonempty value is required")
+        return value
+    for name in ("run-dir", "session-id", "setup-id", "evidence-path",
+                 "authorization-path", "evidence-output"):
+        orphan.add_argument("--" + name, required=True, type=required_orphan_value)
+    orphan.add_argument("--registry", default=None, type=required_orphan_value)
     recover = subparsers.add_parser(
         "recover-capture", help="explicitly reconcile one stopped physical capture resource group"
     )
@@ -1990,6 +2003,22 @@ def process_lease_cli_main(argv: Optional[Sequence[str]] = None) -> int:
     release_ground.add_argument("--authorize-new-attempt", action="store_true",
                                 help="authorize one new workflow despite the unproven old source end; no action or idle ACK is attested")
     arguments = parser.parse_args(list(argv) if argv is not None else None)
+    if arguments.command == "recover-generic-orphan":
+        from .resource_recovery import recover_generic_orphan_run
+        from ..workflow.run_control import WorkflowRunControlError
+        try:
+            result = recover_generic_orphan_run(
+                run_dir=arguments.run_dir, session_id=arguments.session_id,
+                setup_id=arguments.setup_id, evidence_path=arguments.evidence_path,
+                authorization_path=arguments.authorization_path,
+                evidence_output=arguments.evidence_output,
+                registry_path=arguments.registry,
+            )
+            print(json.dumps(result, indent=2))
+            return 0
+        except (WorkflowRunControlError, RemoteProcessLeaseJournalError, ValueError, OSError) as exc:
+            print(f"Generic orphan recovery blocked: {exc}", file=sys.stderr)
+            return 70
     if arguments.command == "recover-native-numerical":
         from .resource_recovery import recover_native_numerical_resource
         from ..workflow.run_control import WorkflowRunControlError
@@ -2355,3 +2384,8 @@ def controller_activity(*, setup_id, attempt_dir, purpose, cancel_event=None, en
         yield claim
     finally:
         claim.finish({"process_started": False})
+
+
+if __name__ == "__main__":
+    from .process_lease_cli import process_lease_cli_main as _cli_main
+    raise SystemExit(_cli_main())
