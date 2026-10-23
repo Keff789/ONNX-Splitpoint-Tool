@@ -986,6 +986,7 @@ def collect_model_artifact_cache_probes(
     *, run_dir: str | Path, model_id: str, targets: Sequence[str],
     policy: Mapping[str, Any],
     remote_trt_observations: Sequence[Mapping[str, Any]] = (),
+    profile_payload: Mapping[str, Any] | None = None,
 ) -> tuple[list[CacheProbeObservation], set[str]]:
     """Collect decisions and retain every required final-selection item.
 
@@ -1103,6 +1104,7 @@ def collect_model_artifact_cache_probes(
                 (role, f"{case_id}:{stage}") for case_id in cases
                 if "cases" not in contract or case_id in selected_set
             )
+    plan_full_roles: set[str] = set()
     for row in plan.get("runs") or plan.get("planned_runs") or []:
         if not isinstance(row, Mapping) or row.get("enabled") is False or row.get("deferred"):
             continue
@@ -1116,6 +1118,7 @@ def collect_model_artifact_cache_probes(
             full_role = local_role(row.get("full_provider") or row.get("provider") or row.get("backend") or run_id)
         if full_role and full_role not in excluded_full:
             required.add((full_role, "full"))
+            plan_full_roles.add(full_role)
         if run_type not in {"matrix", "split", "mixed_backend"} and "_to_" not in run_id:
             continue
         row_cases: list[str] = []
@@ -1148,6 +1151,32 @@ def collect_model_artifact_cache_probes(
             if role not in {ROLE_HAILO8, ROLE_HAILO10} or ":part" not in item_id
         }
         required.update(scoped_hailo_items)
+    from .deferred_hailo_builds import _generic_deferred_artifact_scope
+    generic_scope = _generic_deferred_artifact_scope(
+        suite_dir, profile_payload or {}, selected_set,
+    )
+    if generic_scope is not None:
+        # Use the same source-bound authority as the normal finalizer.
+        # Copied catalogue probes/service requests and broad target lists
+        # cannot add work to an explicitly authorized Generic-only capture.
+        local_roles = {ROLE_HAILO8, ROLE_HAILO10, ROLE_DEEPX}
+        selected_items = {
+            (local_role(backend), f"{case_id}:{stage}")
+            for backend, case_id, stage in generic_scope
+        }
+        selected_items.update((role, "full") for role in plan_full_roles)
+        required = {(role, item) for role, item in required if role not in local_roles}
+        required.update(selected_items)
+        observations = [
+            row for row in observations
+            if row.role not in local_roles
+            or (row.role, row.item_id) in selected_items
+            # A real preparation build remains a strict warm-policy violation.
+            or (row.evidence or {}).get("current_build") is True
+        ]
+        applicable.difference_update(local_roles)
+        applicable.update(role for role, _item in selected_items)
+        applicable.update(row.role for row in observations)
     trt_rows, trt_roles = _trt_observations(
         run_root=run_root, model_id=model_id, policy=policy,
         suite_dir=suite_dir,

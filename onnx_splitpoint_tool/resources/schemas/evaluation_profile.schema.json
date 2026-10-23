@@ -2669,6 +2669,10 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "defer_central_quality": {
+          "type": "boolean",
+          "description": "Capture only explicitly bound Generic composed Quality inputs; retain the required central evaluation for a later CPU continuation."
+        },
         "native_release_mode": {
           "type": "string",
           "enum": [

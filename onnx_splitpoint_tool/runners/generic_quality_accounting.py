@@ -117,7 +117,8 @@ def filter_performance_scope(required, rows):
              str(row.get("run_id") or row.get("backend") or ""), str(row.get("case_id") or "")) in keys)]
 
 
-def verify_capture(request_path, config, *, config_path, eval_run_id=None, source_run_id=None):
+def verify_capture(request_path, config, *, config_path, eval_run_id=None, source_run_id=None,
+                   producer_source_authority=None):
     """Verify genuine portable completion bytes before central metric evaluation."""
     from .generic_quality_completion import FIELD, completed_quality_export_fields
     request_path = Path(request_path).resolve()
@@ -134,7 +135,8 @@ def verify_capture(request_path, config, *, config_path, eval_run_id=None, sourc
     producer = request.get("producer_identity") or {}
     if (not isinstance(proof, Mapping) or candidate.get(FIELD) != proof
             or candidate.get("producer_identity") != producer
-            or completed_quality_export_fields(proof, candidate.get("records") or [], producer).get(FIELD) != proof
+            or completed_quality_export_fields(proof, candidate.get("records") or [], producer,
+                producer_source_authority=producer_source_authority).get(FIELD) != proof
             or proof.get("base_completion_contract") != config["completion_contract"]
             or proof.get("identity") != config["identity"]
             or proof.get("image_ids") != config["expected_image_ids"]):
@@ -305,7 +307,10 @@ def normalized_contract(payload):
 
 def central_quality_complete(normalized, summary, *, plan, profile, run_root, model_id):
     """Prove completed normal Generic Quality, without claiming NPU performance."""
+    from . import generic_quality_completion as completion_verifier
     from .generic_quality_completion import load_quality_completion_config, validate_completed_quality_binding
+    from ..workflow.artifact_cache_preflight import resolve_generated_benchmark_suite_dir
+    from ..workflow.generic_quality_sidecars import admit_generic_quality_producer_sources
     if not normalized_contract(normalized) or not isinstance(summary, Mapping):
         return False
     try:
@@ -329,6 +334,7 @@ def central_quality_complete(normalized, summary, *, plan, profile, run_root, mo
         expected = {(row["hardware_setup_id"], row["id"], case): row for row in rows for case in row["case_ids"]}
         if len(results) != len(expected) or not expected:
             return False
+        suite_dir = resolve_generated_benchmark_suite_dir(run_dir=run_root, model_id=model_id)
         seen = set()
         for result in results:
             # The normal result reader canonicalizes source_run_id; the signed
@@ -383,11 +389,22 @@ def central_quality_complete(normalized, summary, *, plan, profile, run_root, mo
                 "sha256": planned_reference["reference_sha256"],
                 "size_bytes": planned_reference["reference_size_bytes"],
             })
+            observer = Path(completion_verifier.__file__)
+            observer_sha = completion_verifier._sha(observer)
+            proof = request.get("generic_completed_quality") or {}
+            same_observer = isinstance(proof, Mapping) and any(
+                isinstance(source, Mapping) and Path(str(source.get("path") or "")).name == observer.name
+                and source.get("sha256") == observer_sha for source in proof.get("runtime_source_files") or [])
+            authority = (None if same_observer else admit_generic_quality_producer_sources(
+                profile=profile, benchmark_plan=plan, suite_dir=suite_dir,
+                config_path=config_path, model_id=model_id))
             verify_capture(request_path, config, config_path=config_path,
-                           eval_run_id=Path(run_root).name, source_run_id=row["id"])
+                           eval_run_id=Path(run_root).name, source_run_id=row["id"],
+                           producer_source_authority=authority)
             validate_completed_quality_binding(request, result, config["completion_contract"],
                 config["expected_runtime_artifacts"], request_path=request_path,
-                reference_descriptor={"expected_image_ids": config["expected_image_ids"]})
+                reference_descriptor={"expected_image_ids": config["expected_image_ids"]},
+                producer_source_authority=authority)
             seen.add(key)
         return seen == set(expected)
     except (ValueError, KeyError, TypeError, OSError):

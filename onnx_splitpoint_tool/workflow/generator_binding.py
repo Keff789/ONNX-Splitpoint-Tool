@@ -56,6 +56,125 @@ def _read_json(path: Path, default: Any = None) -> Any:
         return default
 
 
+def _rebind_imported_generic_hailo_requests(
+    source: Path, suite: Path, *, model_id: str,
+    profile: Mapping[str, Any], runs: List[Mapping[str, Any]],
+) -> None:
+    """Keep historical Hailo calls and stage current cache-only import calls.
+
+    No saved success is carried into the new request. The existing finalizer
+    still performs the ordinary receipt-aware cache lookup before execution.
+    """
+    from ..build_dispatch_policy import profile_hailo_compute_mapping, require_productive_force_off
+    from ..hailo_compiler_context import normalize_compute_by_family
+    from ..runners.generic_quality_accounting import authorized_runs
+    from .artifacts import sha256_file
+    from .deferred_hailo_builds import (
+        REQUEST_NAME, _generic_deferred_artifact_scope, _generic_hailo_request_identity,
+    )
+    from .hailo_artifact_scope import hailo_scope_backend
+
+    def require(condition: bool, reason: str) -> None:
+        if not condition:
+            raise ValueError("generic_quality_hailo_import_" + reason)
+
+    def digest(value: Any) -> str:
+        return str(value or "").removeprefix("sha256:")
+
+    def descriptor(path: Path) -> Dict[str, Any]:
+        return {"path": str(path.resolve()), "sha256": sha256_file(path),
+                "size_bytes": path.stat().st_size}
+
+    catalogue = _read_json(suite / "benchmark_set.json")
+    accepted = {str(row.get("case_dir") or row.get("folder") or "")
+                for row in catalogue.get("cases", [])}
+    scope = _generic_deferred_artifact_scope(suite, profile, accepted)
+    requests = [path for path in sorted(source.rglob(REQUEST_NAME))
+                if scope is not None and _generic_hailo_request_identity(source, path) in scope]
+    if not requests:
+        return
+    require_productive_force_off(profile)
+    build = profile.get("hailo_build") or {}
+    require(build.get("mode") in {"reuse_only", "cache_verify_only"}, "requires_restrictive_build_policy")
+    authorized = authorized_runs({"runs": runs}, profile)
+    for original in requests:
+        backend, case, stage = _generic_hailo_request_identity(source, original)
+        require(stage in {"part1", "part2"}, "full_request_not_admitted")
+        relative, target = original.relative_to(source), suite / original.relative_to(source)
+        require(original.read_bytes() == target.read_bytes(), "request_changed_during_copy")
+        request = _read_json(original)
+        require(isinstance(request, Mapping)
+                and request.get("schema") == "onnx-splitpoint/deferred-hailo-build/v1"
+                and isinstance(request.get("kwargs"), Mapping), "request_invalid")
+        args = dict(request["kwargs"])
+        require_productive_force_off({}, hailo_force_build=args.get("force", False))
+        require(hailo_scope_backend(args.get("hw_arch")) == backend, "backend_changed")
+        old_output = Path(str(args.get("outdir") or "")).expanduser()
+        old_source = Path(str(request.get("source_onnx") or "")).expanduser()
+        require(old_output.is_absolute() and old_source.is_absolute()
+                and old_output.parts[-4:] == relative.parts[:-1], "original_output_scope_invalid")
+        before, after = source / case / "split_manifest.json", suite / case / "split_manifest.json"
+        require(before.read_bytes() == after.read_bytes(), "split_manifest_changed")
+        manifest = _read_json(after)
+        part = str(manifest.get(stage + "_model") or manifest.get(stage) or manifest.get(stage + "_path") or "")
+        require(part and not Path(part).is_absolute()
+                and manifest.get("boundary", manifest.get("boundary_index")) == int(case[1:]), "source_boundary_changed")
+        source_relative = Path(case) / part
+        require(".." not in source_relative.parts
+                and old_source == old_output.parents[3] / source_relative, "original_source_scope_invalid")
+        actual_source, imported_source = source / source_relative, suite / source_relative
+        expected_hash = digest(request.get("source_onnx_sha256"))
+        require(re.fullmatch(r"[0-9a-f]{64}", expected_hash) is not None
+                and actual_source.is_file() and imported_source.is_file()
+                and digest(sha256_file(actual_source)) == expected_hash
+                and digest(sha256_file(imported_source)) == expected_hash, "source_onnx_changed:" + case)
+        context = args.get("build_evidence_context") or {}
+        require(context.get("model_id") == model_id and context.get("stage") == stage
+                and _safe_int(context.get("boundary")) == int(case[1:]), "request_identity_changed")
+        saved_manifest = context.get("split_manifest") or {}
+        for key in ("part1", "part2", "cut_tensors", "cut_tensors_full",
+                    "part1_cut_names", "part2_cut_names", "orig_inputs", "orig_outputs"):
+            require(key not in saved_manifest or saved_manifest[key] == manifest.get(key), "cut_contract_changed:" + key)
+        for current, saved in (("calib_count", "calib_count"), ("calib_batch_size", "calib_batch_size"),
+                               ("optimization_level", "opt_level")):
+            require(current not in build or build[current] == args.get(saved), "compiler_contract_changed:" + current)
+        require(normalize_compute_by_family(args.get("compute_by_family"))
+                == profile_hailo_compute_mapping(profile), "compute_profile_changed")
+        bindings = []
+        for run in authorized:
+            if case not in run["case_ids"] or hailo_scope_backend(run.get("stage" + stage[-1])) != backend:
+                continue
+            declared = run["generic_quality_completion_sources"][case]
+            config_path = Path(declared["path"])
+            require(config_path.is_file() and config_path.stat().st_size == declared["size_bytes"]
+                    and digest(sha256_file(config_path)) == digest(declared["sha256"]), "config_changed:" + case)
+            config = _read_json(config_path)
+            identity = config.get("identity") or {}
+            require(identity.get("model_id") == model_id and identity.get("case_id") == case
+                    and identity.get("setup_id") == run["hardware_setup_id"], "config_identity_changed")
+            artifact = (config.get("expected_runtime_artifacts") or {}).get(stage + "_runtime") or {}
+            source_hef, imported_hef = original.parent / "compiled.hef", target.parent / "compiled.hef"
+            require(artifact.get("sha256") and source_hef.is_file() and imported_hef.is_file()
+                    and source_hef.stat().st_size == imported_hef.stat().st_size == artifact.get("size_bytes")
+                    and digest(sha256_file(source_hef)) == digest(artifact["sha256"])
+                    and digest(sha256_file(imported_hef)) == digest(artifact["sha256"]), "runtime_artifact_changed:" + case)
+            bindings.append({"config": descriptor(config_path), "source_runtime_artifact": descriptor(source_hef),
+                             "imported_runtime_artifact": descriptor(imported_hef)})
+        require(bool(bindings), "current_config_binding_missing:" + case)
+        history = target.with_name(target.stem + "." + digest(sha256_file(original)) + ".json")
+        require(not history.exists() or history.read_bytes() == original.read_bytes(), "history_conflict")
+        if not history.exists():
+            history.write_bytes(original.read_bytes())
+        args.update(outdir=str(target.parent.resolve()), cache_only=True, force=False)
+        write_json(target, {"schema": request["schema"], "status": "pending",
+            "source_onnx": str(imported_source.resolve()), "source_onnx_sha256": request["source_onnx_sha256"],
+            "kwargs": args, "environment": dict(request.get("environment") or {}),
+            "import_source": {"request": descriptor(original), "history": descriptor(history),
+                "suite_dir": str(source.resolve()), "original_out_dir": str(old_output),
+                "split_manifest": descriptor(before), "runtime_bindings": bindings,
+                "profile_payload": dict(profile), "bench_plan_runs": list(runs)}})
+
+
 def _copy_if_file(src: Any, dst: Path) -> bool:
     raw = str(src or "").strip()
     if not raw:
@@ -429,13 +548,27 @@ def import_existing_suite(
                                and set(value) == set(cases)
                                for value in (configs, hashes, sources))):
                 raise ValueError("generic_quality_suite_import_runtime_scope_invalid")
+        from ..runners.generic_quality_accounting import authorized_runs
+        authorized = authorized_runs({"runs": declared_runs}, profile)
+        if not authorized or any(not str(run.get("id") or "").strip() for run in authorized):
+            raise ValueError("generic_quality_suite_import_authority_unresolved")
+
+    def ignore_transport_archive(directory, names):
+        # Only the known suite-root transport output is regenerated by the
+        # ordinary bundle writer. Preserve every other imported input.
+        archive = Path(directory) / "suite_bundle.tar.gz"
+        return [archive.name] if (
+            Path(directory) == existing / "dist" and archive.name in names
+            and archive.is_file() and not archive.is_symlink()
+        ) else []
+
     dst = model_dir / "benchmark_set" / "legacy_suite"
     stale_direct = model_dir / "benchmark_set" / "generated_suite"
     if stale_direct.exists() and stale_direct.is_dir():
         shutil.rmtree(stale_direct)
     if dst.exists() and dst.is_dir():
         shutil.rmtree(dst)
-    shutil.copytree(existing, dst)
+    shutil.copytree(existing, dst, ignore=ignore_transport_archive if generic_import else None)
     if generic_import:
         # Reuse exported models/artifacts, but emit the ordinary current
         # runtime in this new target. Old suites can predate the exact Generic
@@ -577,6 +710,9 @@ def import_existing_suite(
         from .deferred_hailo_builds import rebind_imported_deepx_part1_request
         rebind_imported_deepx_part1_request(
             existing, dst, profile_payload=profile, bench_plan_runs=planned_runs,
+        )
+        _rebind_imported_generic_hailo_requests(
+            existing, dst, model_id=model_id, profile=profile, runs=planned_runs,
         )
     cpu_invariant = finalize_management_cpu_reference_plan_aliases(
         executable_plan_path=dst / "benchmark_plan.json",

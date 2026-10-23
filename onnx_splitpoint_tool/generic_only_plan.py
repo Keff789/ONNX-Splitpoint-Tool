@@ -213,12 +213,14 @@ def validate_quality_input_binding(row, proof):
         raise ValueError("Generic-only Quality representative tensor differs from actual timing input bytes")
 
 
-def validate_quality_reference(row):
+def validate_quality_reference(row, *, producer_source_authority=None):
     """Reuse only a small successful proof inside a fully verified operation."""
     with validation_scope() as scope:
         if row.get("producer_run_binding") is not None:
             from .generic_producer_binding import validate_producer_run_binding
             validate_producer_run_binding(row["original_run"], row["producer_run_binding"], [row])
+        if producer_source_authority is not None:
+            return _validate_quality_reference(row, producer_source_authority=producer_source_authority)
         if row.get("task") == "classification":
             return _validate_quality_reference(row)
         fields = ("task", "identity", "quality_reference", "completion_contract", "input_binding",
@@ -238,7 +240,7 @@ def validate_quality_reference(row):
         return proof
 
 
-def _validate_quality_reference(row):
+def _validate_quality_reference(row, *, producer_source_authority=None):
     """Use the ordinary portable quality loader; do not rerun its bootstrap."""
     if row.get("task") == "classification":
         from .generic_only_classification_quality import validate_classification_quality_reference
@@ -332,7 +334,8 @@ def _validate_quality_reference(row):
                    for key in ("method", "confidence_level", "bootstrap_repetitions", "seed", "decision"))):
         raise ValueError("Generic-only Quality thresholds/statistics differ from the bound producer profile")
     completion_proof = _completed_quality_binding(request, result, completion, artifacts,
-        request_path=request_path, reference_descriptor=reference["cpu_reference"])
+        request_path=request_path, reference_descriptor=reference["cpu_reference"],
+        producer_source_authority=producer_source_authority)
     validate_quality_input_binding(row, completion_proof)
     loaded = quality_request_from_manifest(request_path, verify_artifacts=True,
         reference_artifact={"path": str(cpu_path), "sha256": reference["cpu_reference"]["sha256"],
