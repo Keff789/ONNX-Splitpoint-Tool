@@ -656,3 +656,163 @@ def test_compact_staging_requires_coherent_omission_and_cannot_promote_unmeasure
         document["hailo"]["case_variant_availability"]["hailo8"]["full"] = True
     with pytest.raises(ValueError, match="split-manifest staging"):
         validate_generic_split_manifest_staging(original, rewritten(document, args), **args)
+
+
+def test_actual_b071_staging_binds_explicit_boundary_mirror_and_unchanged_b71_graphs():
+    original, staged, args = bindings("b071")
+    old, current = json.loads(original), json.loads(staged)
+    unchanged = deepcopy(args)
+    boundary = args["row"]["generic_artifact_binding"]["artifacts"]["boundary_metadata"]
+
+    proof = validate_generic_split_manifest_staging(original, staged, **args)
+
+    assert args == unchanged
+    assert old["boundary"] == current["boundary"] == 71
+    assert old["part1"] == current["part1"] == "yolo26s_part1_b71.onnx"
+    assert old["part2"] == current["part2"] == "yolo26s_part2_b71.onnx"
+    assert proof["measured_identity"]["case_id"] == "b071"
+    assert proof["original_manifest"] == args["original_source"]
+    assert proof["staged_manifest"] == args["staged_source"]
+    assert proof["original_boundary_metadata_artifact"] == boundary
+    assert boundary["local_path"] != args["original_source"]["path"]
+    assert boundary["source_path_alias"] == args["original_source"]["path"]
+    assert boundary["stage_local"] is True
+    assert {key: boundary[key] for key in ("sha256", "size_bytes")} == {
+        key: args["original_source"][key] for key in ("sha256", "size_bytes")}
+    assert proof["unchanged_artifact_bindings"] == {
+        role: {key: value[key] for key in ("sha256", "size_bytes")}
+        for role, value in args["original_artifacts"].items()
+    }
+    measured, = proof["historical_build_reuse"]
+    assert measured["historical_observation"] == old["hailo"]["hefs"]["hailo8"]["part1_build"]
+    assert measured["actual_receipt_binding"]["sha256"] == hashlib.sha256(
+        args["part1_build_receipt_bytes"]).hexdigest()
+    assert json.loads(args["part1_build_receipt_bytes"])["net_name"] == "yolo26s_part1_b71"
+    assert proof["boundary_contract"] == args["row"]["boundary_observation"]
+    assert proof["scientific_manifest_fields_unchanged"] is True
+
+
+@pytest.mark.parametrize("key,value", [
+    ("source_path_alias", "/foreign/b071/split_manifest.json"),
+    ("source_path_alias", None),
+    ("stage_local", False),
+    ("stage_local", 1),
+    ("local_path", None),
+    ("local_path", "bound_assets/b071/boundary_metadata/split_manifest.json"),
+    ("local_path", "/bound_assets/b071/../boundary_metadata/split_manifest.json"),
+    ("local_path", "/bound_assets/b071/boundary_metadata/another_manifest.json"),
+    ("sha256", "f" * 64),
+    ("size_bytes", 59943),
+])
+def test_b071_boundary_mirror_requires_exact_explicit_original_binding(key, value):
+    original, staged, args = bindings("b071")
+    boundary = args["row"]["generic_artifact_binding"]["artifacts"]["boundary_metadata"]
+    if value is None:
+        boundary.pop(key)
+    else:
+        boundary[key] = value
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, staged, **args)
+
+
+@pytest.mark.parametrize("which", ["original", "staged"])
+def test_b071_mirror_relation_cannot_accept_changed_manifest_bytes(which):
+    original, staged, args = bindings("b071")
+    if which == "original":
+        original += b"\n"
+    else:
+        staged += b"\n"
+    with pytest.raises(ValueError, match="bytes differ from descriptor"):
+        validate_generic_split_manifest_staging(original, staged, **args)
+
+
+@pytest.mark.parametrize("which,part", [
+    ("original", "part1"), ("original", "part2"),
+    ("staged", "part1"), ("staged", "part2"),
+])
+def test_b071_display_padding_cannot_rewrite_either_actual_graph_name(which, part):
+    original, staged, args = bindings("b071")
+    document = json.loads(original if which == "original" else staged)
+    document[part] = f"yolo26s_{part}_b071.onnx"
+    if which == "original":
+        original = rewritten_original(document, args)
+    else:
+        staged = rewritten(document, args)
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, staged, **args)
+
+
+@pytest.mark.parametrize("role", [
+    "part1_runtime", "source_part1_onnx", "source_part2_onnx", "part1_build_receipt",
+    "engine", "build_part2_onnx", "engine_build_receipt",
+])
+def test_b071_boundary_mirror_keeps_all_seven_measured_artifact_identities(role):
+    original, staged, args = bindings("b071")
+    args["row"]["generic_artifact_binding"]["artifacts"][role]["sha256"] = "f" * 64
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, staged, **args)
+
+
+@pytest.mark.parametrize("fault", ["cut", "boundary_dtype", "prepared_input", "receipt_net_name"])
+def test_b071_name_and_mirror_relation_still_requires_actual_cut_input_and_receipt(fault):
+    original, staged, args = bindings("b071")
+    if fault == "cut":
+        document = json.loads(staged)
+        document["boundary"] = document["boundary_index"] = 72
+        staged = rewritten(document, args)
+    elif fault == "boundary_dtype":
+        args["boundary_inputs"][0]["dtype"] = "float16"
+    elif fault == "prepared_input":
+        args["row"]["input_binding"]["prepared_input"]["sha256"] = "f" * 64
+    else:
+        receipt = json.loads(args["part1_build_receipt_bytes"])
+        receipt["net_name"] = "yolo26s_part1_b071"
+        bind_receipt(json.dumps(receipt, sort_keys=True).encode(), args)
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, staged, **args)
+
+
+def test_normal_read_bound_rejects_tampered_local_boundary_mirror_bytes(tmp_path):
+    from onnx_splitpoint_tool.generic_only_plan import read_bound, validation_scope
+
+    original, _, args = bindings("b071")
+    mirror = tmp_path / "bound_assets/b071/boundary_metadata/split_manifest.json"
+    mirror.parent.mkdir(parents=True)
+    mirror.write_bytes(original)
+    descriptor = deepcopy(args["row"]["generic_artifact_binding"]["artifacts"]["boundary_metadata"])
+    descriptor["local_path"] = str(mirror)
+
+    with pytest.raises(ValueError, match="Generic-only source.*changed"):
+        with validation_scope():
+            assert read_bound(descriptor) == mirror
+            mirror.write_bytes(b"x" + original[1:])
+    with pytest.raises(ValueError, match="Generic-only source.*changed"):
+        read_bound(descriptor)
+
+
+@pytest.mark.parametrize("case,graph_case", [("b003", "b3"), ("b071", "b71")])
+def test_graph_case_helper_preserves_existing_unpadded_names_for_same_integer_cut(case, graph_case):
+    from onnx_splitpoint_tool.generic_split_manifest import _manifest_graph_case
+
+    original = {
+        "boundary": int(case[1:]), "boundary_index": int(case[1:]),
+        "part1": f"detector_part1_{graph_case}.onnx",
+        "part2": f"detector_part2_{graph_case}.onnx",
+        "full_model": "../models/detector.onnx",
+    }
+    assert _manifest_graph_case(original, deepcopy(original), model="detector", case=case) == graph_case
+
+
+@pytest.mark.parametrize("part,graph_case", [("part1", "b003"), ("part2", "b003"), ("part1", "b4")])
+def test_graph_case_helper_cannot_mix_padding_or_change_original_integer_cut(part, graph_case):
+    from onnx_splitpoint_tool.generic_split_manifest import _manifest_graph_case
+
+    original = {
+        "boundary": 3, "boundary_index": 3,
+        "part1": "detector_part1_b3.onnx", "part2": "detector_part2_b3.onnx",
+        "full_model": "../models/detector.onnx",
+    }
+    staged = deepcopy(original)
+    staged[part] = f"detector_{part}_{graph_case}.onnx"
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        _manifest_graph_case(original, staged, model="detector", case="b003")

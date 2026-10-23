@@ -68,6 +68,56 @@ def _document(raw, source):
     return value, {key: source[key] for key in ("path", "sha256", "size_bytes")}
 
 
+def _manifest_graph_case(original, staged, *, model, case):
+    """Bind display padding to unchanged actual integer-boundary graph names."""
+    _require(isinstance(case, str) and re.fullmatch(r"b[0-9]+", case),
+             "invalid display cut identity")
+    boundary = int(case[1:])
+    graph_cases = {case, "b" + str(boundary)}
+    matches = [token for token in graph_cases
+               if all(document.get("part1") == f"{model}_part1_{token}.onnx"
+                      and document.get("part2") == f"{model}_part2_{token}.onnx"
+                      and type(document.get("boundary")) is int
+                      and type(document.get("boundary_index")) is int
+                      and document["boundary"] == document["boundary_index"] == boundary
+                      for document in (original, staged))]
+    _require(len(matches) == 1, "manifest model/cut identity differs")
+    return matches[0]
+
+
+def _boundary_metadata_locator(boundary_metadata, original_source, *, case):
+    """Preserve an explicit original-to-local mirror relation, never relabel it.
+
+    The normal plan validator hashes every artifact's actual local_path with
+    read_bound before this call, registering it for the final source rehash.
+    This pure relation requires that same original byte identity and the
+    existing explicit staging alias; it does not read or manufacture a file.
+    """
+    _require(boundary_metadata.get("sha256") == original_source["sha256"]
+             and type(boundary_metadata.get("size_bytes")) is int
+             and boundary_metadata["size_bytes"] == original_source["size_bytes"],
+             "original bytes are not the actual boundary-metadata artifact")
+    local_value = boundary_metadata.get("local_path")
+    if local_value == original_source["path"]:
+        return {"original_source": original_source, "actual_boundary_metadata_artifact": deepcopy(boundary_metadata),
+                "local_mirror_used": False}
+    local = PurePosixPath(str(local_value or ""))
+    remote = PurePosixPath(str(boundary_metadata.get("path") or ""))
+    expected_suffix = (case, "boundary_metadata", "split_manifest.json")
+    _require(set(boundary_metadata) == {"local_path", "path", "sha256", "size_bytes", "source_path_alias", "stage_local"}
+             and boundary_metadata["stage_local"] is True
+             and boundary_metadata["source_path_alias"] == original_source["path"]
+             and local.is_absolute() and ".." not in local.parts and str(local) == local_value
+             and remote.is_absolute() and ".." not in remote.parts
+             and local.parts[-3:] == remote.parts[-3:] == expected_suffix,
+             "unproved original boundary-metadata local mirror alias")
+    return {"original_source": original_source, "actual_boundary_metadata_artifact": deepcopy(boundary_metadata),
+            "local_mirror_used": True,
+            "normal_local_file_verifier": "generic_only_plan.validate_plan/read_bound with final validation_scope source rehash",
+            "same_original_sha256": original_source["sha256"], "same_original_size_bytes": original_source["size_bytes"],
+            "original_descriptor_or_hash_rewritten": False}
+
+
 def _historical_build_provenance(build, original, *, arch, model, case,
                                  source_sha256, full_model_sha256, prepared):
     """Validate retained compile evidence, without equating compiler/source graphs.
@@ -125,7 +175,7 @@ def _historical_build_provenance(build, original, *, arch, model, case,
              "historical build snapshot differs from original scientific manifest")
     config = original["hailo"]["config"]
     _require(payload["hw_arch"] == ("hailo8" if arch == "hailo8" else "hailo10h")
-             and payload["net_name"] == f"{model}_part1_{case}"
+             and payload["net_name"] == PurePosixPath(original["part1"]).stem
              and payload["net_input_shapes"] == [1, 3, *prepared["shape"][:2]]
              and payload["optimization_level"] == config["opt_level"]
              and payload["requested_calibration_count"] == config["calib_count"]
@@ -233,7 +283,8 @@ def _bind_historical_receipt(raw, build, bindings):
     return {**receipt_binding, "cache_key": receipt["cache_key"],
             "source_onnx_sha256": receipt["source_onnx_sha256"],
             "compiler_onnx_sha256": receipt["compiler_onnx_sha256"],
-            "hef_sha256": receipt["hef_sha256"], "hef_size_bytes": receipt["hef_size_bytes"]}
+            "hef_sha256": receipt["hef_sha256"], "hef_size_bytes": receipt["hef_size_bytes"],
+            "net_name": receipt["net_name"]}
 
 
 def _omitted_deepx_provenance(original, *, source_sha256, prepared, case):
@@ -329,10 +380,7 @@ def _validate_generic_split_manifest_staging(
     _require(old_root.name == new_root.name == case, "manifest belongs to another cut")
     artifacts = (row.get("generic_artifact_binding") or {}).get("artifacts") or {}
     boundary_metadata = artifacts.get("boundary_metadata") or {}
-    _require(boundary_metadata.get("sha256") == old_source["sha256"]
-             and boundary_metadata.get("size_bytes") == old_source["size_bytes"]
-             and boundary_metadata.get("local_path") == old_source["path"],
-             "original bytes are not the actual boundary-metadata artifact")
+    locator_provenance = _boundary_metadata_locator(boundary_metadata, old_source, case=case)
     bindings = {}
     for role in _ROLES:
         before, measured = original_artifacts.get(role) or {}, artifacts.get(role) or {}
@@ -345,11 +393,9 @@ def _validate_generic_split_manifest_staging(
              and producer_model.get("part1_onnx_sha256") == bindings["source_part1_onnx"]["sha256"]
              and producer_model.get("part2_onnx_sha256") == bindings["source_part2_onnx"]["sha256"],
              "selected full/split model identity differs")
+    graph_case = _manifest_graph_case(original, staged, model=model, case=case)
     for document in (original, staged):
-        _require(document.get("boundary") == document.get("boundary_index") == int(case[1:])
-                 and document.get("part1") == f"{model}_part1_{case}.onnx"
-                 and document.get("part2") == f"{model}_part2_{case}.onnx"
-                 and PurePosixPath(str(document.get("full_model") or "")).name == model + ".onnx",
+        _require(PurePosixPath(str(document.get("full_model") or "")).name == model + ".onnx",
                  "manifest model/cut identity differs")
     for role, key in (("source_part1_onnx", "part1"), ("source_part2_onnx", "part2")):
         _require(artifacts[role].get("local_path") == str(new_root / staged[key]),
@@ -538,7 +584,7 @@ def _validate_generic_split_manifest_staging(
                 old_relative = relative
                 if historical and key == "compiler_onnx_path":
                     old_relative = (f"hailo/{arch}/part1/"
-                                    f"{model}_part1_{case}_hailo_fixed.onnx")
+                                    f"{PurePosixPath(original['part1']).stem}_hailo_fixed.onnx")
                     if old_build[key] == old_build["source_onnx_path"]:
                         old_relative = staged["part1"]
                 if historical:
@@ -652,6 +698,10 @@ def _validate_generic_split_manifest_staging(
         "schema": "onnx-splitpoint/generic-split-manifest-staging-provenance/v1",
         "original_manifest": old_source, "staged_manifest": new_source,
         "original_boundary_metadata_artifact": deepcopy(boundary_metadata),
+        "original_boundary_metadata_locator_provenance": locator_provenance,
+        "normal_integer_boundary_graph_identity": {"display_case_id": case, "integer_boundary": int(case[1:]),
+            "actual_graph_case_token": graph_case, "part1": original["part1"], "part2": original["part2"],
+            "original_and_staged_graph_names_unchanged": True},
         "measured_identity": deepcopy(identity), "full_model_sha256": full_model_sha256,
         "unchanged_artifact_bindings": bindings, "boundary_contract": deepcopy(boundary),
         "prepared_input": {k: prepared[k] for k in ("sha256", "shape", "dtype", "layout", "input_name")},

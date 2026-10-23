@@ -4117,3 +4117,12 @@ Die normale Source-only-Projektion darf dabei nur unveränderte positive ungemes
 Der normale H8-only-Generator darf unbenutzte DeepX-, H10- und Full-Metadaten weglassen. Der Import bindet weiterhin alle sieben unveränderten Artefakte, den historischen erfolgreichen H8-Build und dessen tatsächlich gemessenen Receipt sowie Modell, Cut, vollständige Boundary und typisierten Input. Der kompakte aktuelle H8-Reuse-Datensatz muss dem normalen Writer entsprechen; unbekannte oder negative ausgelassene Backend-Metadaten werden abgewiesen. Historische Originalmanifest-Bytes bleiben Autorität und ausgelassene Blöcke werden ohne neue Compile-, Reuse-, Quality- oder Hardware-Erfolgsbehauptung als Provenienz erhalten.
 
 Validierung: 213 gezielte Softwaretests bestanden; alle vier tatsächlichen F20-H8-DTOs b182/b211/b213/b234 rein lesend erfolgreich wiedergegeben, je sieben identische Artefaktbindungen. Keine neue Hardwaremessung, kein Runner- oder Schwellenwertwechsel. Historische Measurement-Freeze18/19/20 und Import-Freeze21 unverändert; neuer veröffentlichter Importstand wird separat gebunden.
+
+
+### 2026-10-24: Originale Boundary-Metadaten lokal und numerische Graphnamen
+
+Der normale H8-Import bindet eine ausdrücklich deklarierte lokale Kopie der ursprünglichen Boundary-Metadaten als Provenienz: ursprünglicher Descriptor, gleicher SHA/Byteumfang, unveränderter source_path_alias und stage_local sowie die normale read_bound-Prüfung mit finalem Quellenrehash. Der neu generierte Split-Manifestcontainer bleibt ein eigener Descriptor mit eigenem Hash. Die sieben wissenschaftlichen Artefakte, Modell, Cut, vollständige Tensorboundary und der typisierte Messinput bleiben streng gebunden.
+
+Anzeige-IDs wie b071 dürfen nur dann die normalen Graphnamen b71 verwenden, wenn Original und gestagtes Manifest beide dieselben Part1-/Part2-Namen und Integerboundary71 belegen; historischer Compiler- und tatsächlicher Receipt-Netzname werden aus diesen originalen Graphnamen gebunden. Kein Graphname, Originalhash oder Receipt wird umgeschrieben.
+
+Validierung: 247 gezielte Softwaretests bestanden; tatsächlicher H8/b071-DTO mit lokalem read_bound und finalem Quellenrehash bestanden. Der tatsächliche H10/b071-Import bestand unabhängig mit unverändertem V3 über seine bestehende ursprüngliche Producer-/Sieben-Artefakt-Autorität; der H8-Mapperscope wird dafür nicht erweitert. Keine neue Hardwaremessung und keine Änderung an Runner, Slot-Policies, Quality-Schwellen, Measurement-Freeze22 oder Import-Freeze23.
