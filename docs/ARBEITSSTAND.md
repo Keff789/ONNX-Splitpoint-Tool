@@ -1,3 +1,35 @@
+## 23.10.2026 — Verwaister normaler Controller auf unabhängigem FPS-Setup
+
+Die normale Generic-FPS-Zulassung erkennt einen nach PID 1 umgehängten
+Quality-Controller weiter über seinen tatsächlich gehaltenen ursprünglichen
+Run-Flock. Der enge Zusatzpfad verlangt einen gespeicherten Eltern-PID größer
+eins, identisch mit der unveränderten Prozessgruppe, einen nachweislich nicht
+mehr vorhandenen ursprünglichen Elternprozess sowie die bisherigen unveränderten
+PID-/Startzeit-, Run-/Session-, Profil-/Plan-/Snapshot- und Ressourcenbelege.
+Elternabwesenheit und gehaltener Run-Flock werden am Beobachtungsende erneut
+geprüft. Der Pfad gilt ausschließlich für vollständig unabhängige ausgewählte
+physische Ressourcen. Auch ein zentral fertigender verwaister Controller auf
+demselben DUT bleibt gesperrt. Unbekannte, wiederverwendete oder unlesbare
+Elternidentitäten erteilen keine Zulassung.
+
+Der gezielte Softwarelauf bestand 100 Tests ohne Fehler oder Skips. Darunter
+sind ein tatsächlich verwaister lokaler Run-Flock-Inhaber, derselbe DUT, aktive
+oder unlesbare ursprüngliche Eltern, Identitäts-/Session-/Startzeitabweichungen,
+fehlender oder vor Abschluss freigegebener Flock sowie der weiterhin strikte
+Recoverypfad. Der normale frisch erzeugte Runner enthält alle 42 Member,
+darunter 37 Python-Dateien, bytegleich zum ursprünglichen F18-Bundle. Es wurden
+keine Hardware, SSH, Inferenz, Statistik oder FPS-Importe gestartet.
+
+Die Änderung wird ausschließlich in einem separaten Checkout direkt auf F18
+vorbereitet. Der ursprüngliche F18-Quellpfad und alle bestehenden Exporte,
+Laufbelege und Rohmessungen bleiben unverändert. Neue FPS-Pläne benötigen nach
+normaler Veröffentlichung einen eigenen unveränderlichen Quellenstand und
+neuen SourceFreeze; die drei erhaltenen H10/b239-Wiederholungen werden weder
+neu aufgenommen noch einem neuen Plan zugeordnet. Ein neuer Quellenstand
+ersetzt keine abgeschlossene zentrale Quality oder normale DUT-Freigabe.
+Veröffentlichung, tatsächlicher SourceFreeze und Hardwarezulassung bleiben
+separate Schritte des koordinierenden Roots.
+
 ## 23.10.2026 — Kanonische Backendidentität im DeepX-Controllerdescriptor
 
 Der normale Controller-Writer ergänzt im vorhandenen DeepX-Stage-Descriptor

@@ -114,6 +114,7 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
         return {physical_dut_key(target), physical_dut_key({"remote": {"host": remote["host"]}})}
 
     snapshots, identities, authorities = {}, {}, {}
+    reparented_locks, absent_parents = {}, set()
     errors = []
 
     def require(condition, reason):
@@ -165,6 +166,15 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
                     result.append((path, read(path)))
         return result
 
+    def require_absent_parent(pid):
+        # Only absence in the already visibility-checked local /proc qualifies.
+        # A live, zombie, reused or unreadable former parent remains blocking.
+        try:
+            Path(f"/proc/{pid}").stat()
+        except FileNotFoundError:
+            return
+        raise ValueError("original_normal_run_parent_is_present")
+
     def authority(pid):
         visited = set()
         while pid > 1 and pid not in visited and len(visited) < 64:
@@ -178,9 +188,17 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
                     continue
                 run = Path(str(lock.get("run_dir") or ""))
                 session_id = str(lock.get("session_id") or "")
+                reparented = lock.get("ppid") != owner["ppid"]
+                if reparented:
+                    parent = lock.get("ppid")
+                    require(owner["ppid"] == 1 and type(parent) is int and parent > 1
+                            and parent == lock.get("pgid") == owner["pgid"],
+                            "unbound_normal_run_parent")
+                    require_absent_parent(parent)
+                    absent_parents.add(parent)
                 require(lock.get("schema") == "onnx-splitpoint/evaluation-run-lock"
                         and lock.get("state") == "running" and lock.get("pid") == pid
-                        and lock.get("ppid") == owner["ppid"] and lock.get("pgid") == owner["pgid"]
+                        and lock.get("pgid") == owner["pgid"]
                         and lock.get("hostname") == socket.gethostname()
                         and re.fullmatch(r"[0-9a-f]{32}", session_id)
                         and run.is_absolute() and lock.get("run_id") == run.name
@@ -239,6 +257,8 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
                 require(setup_ids and set(setup_ids) == {row.get("hardware_setup_id") for row in runs}
                         and set(setup_ids) <= set(targets_by_id), "normal_run_resource_scope_unbound")
                 resources = set().union(*(resource_keys(targets_by_id[setup]) for setup in setup_ids))
+                require(not reparented or resources.isdisjoint(selected),
+                        "reparented_normal_owner_overlaps_selected_resources")
                 physical = [value for physical_path, value in locks if value.get("physical_resource")
                             and physical_path == EvaluationRunLock.for_resource(
                                 value["physical_resource"], owner={}).lock_path]
@@ -451,6 +471,8 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
                                 "owner_source_changed_during_observation")
                 value = {"pid": pid, "start_ticks": owner["start_ticks"], "run_id": run.name,
                          "run_dir": str(run), "session_id": session_id,
+                         "ppid": owner["ppid"], "pgid": owner["pgid"],
+                         "recorded_ppid": lock.get("ppid"), "reparented_to_init": reparented,
                          "resources": sorted(resources), "central_only": central_only,
                          "completed_selected_setups": sorted(completed_setups),
                          "ssh_targets": [{"user_host": (targets_by_id[setup].get("remote")
@@ -459,6 +481,8 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
                              "port": str(int((targets_by_id[setup].get("remote")
                                  or targets_by_id[setup].get("runtime")).get("port", 22)))} for setup in setup_ids]}
                 authorities[pid] = value
+                if reparented:
+                    reparented_locks[pid] = (path, lock)
                 return value
             pid = owner["ppid"]
         raise ValueError("observed_process_has_no_live_normal_run_owner")
@@ -504,6 +528,10 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
                 "owner_source_changed_during_observation")
         for pid in list(identities):
             process(pid)
+        for parent in absent_parents:
+            require_absent_parent(parent)
+        for pid, expected in reparented_locks.items():
+            require(expected in held_locks(process(pid)), "normal_run_lock_no_longer_held")
     except (OSError, ValueError, TypeError, KeyError, IndexError, StopIteration, AttributeError) as exc:
         errors.append(str(exc) or type(exc).__name__)
     return {"ok": not errors, "read_only": True,

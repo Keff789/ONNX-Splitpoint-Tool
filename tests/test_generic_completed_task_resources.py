@@ -24,10 +24,11 @@ def idle():
 def workflow(tmp_path):
     """A live subprocess holds the actual product Run flock until stdin closes."""
     children = []
+    orphans = []
 
     def start(*, host="192.0.2.10", central=False, physical=False, alias="",
               targets=None, finalizing=False, smoke_mode="summary_only",
-              require_remote_for_hailo=False):
+              require_remote_for_hailo=False, orphan=False):
         run = tmp_path / ("run-" + str(len(children)))
         config = {"run": str(run), "targets": targets or [target(host, alias=alias)],
                   "central": central, "physical": physical, "finalizing": finalizing,
@@ -78,23 +79,48 @@ if c["physical"]:
  from onnx_splitpoint_tool.workflow.execution_binding import physical_dut_key
  other=run_control.EvaluationRunLock.for_resource(physical_dut_key(c["targets"][0]),owner={"run_id":run.name,"purpose":"generic"});other.acquire()
 fields=pathlib.Path("/proc/self/stat").read_text().rsplit(") ",1)[1].split()
+if "ready_fd" in c:
+ os.write(c["ready_fd"],b"x");os.close(c["ready_fd"])
 print(json.dumps({"pid":os.getpid(),"start_time_ticks":fields[19]}),flush=True)
 sys.stdin.buffer.read(1)
 if other:other.release()
 lock.release()
 '''
-        child = subprocess.Popen([sys.executable, "-B", "-c", source, json.dumps(config)],
+        command = [sys.executable, "-B", "-c", source, json.dumps(config)]
+        if orphan:
+            launcher = r'''
+import json,os,subprocess,sys
+read_fd,write_fd=os.pipe()
+config=json.loads(sys.argv[2]);config["ready_fd"]=write_fd
+subprocess.Popen([sys.executable,"-B","-c",sys.argv[1],json.dumps(config)],
+ pass_fds=(write_fd,),stdin=sys.stdin,stdout=sys.stdout,stderr=sys.stderr)
+os.close(write_fd);os.read(read_fd,1);os.close(read_fd)
+'''
+            command = [sys.executable, "-B", "-c", launcher, source, json.dumps(config)]
+        child = subprocess.Popen(command,
                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                 env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])})
+                                 env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])},
+                                 start_new_session=orphan)
         children.append(child)
         line = child.stdout.readline()
         assert line, child.stderr.read().decode()
         identity = json.loads(line)
+        if orphan:
+            child.wait(timeout=5)
+            orphans.append(child)
+            fields = Path(f"/proc/{identity['pid']}/stat").read_text().rsplit(") ", 1)[1].split()
+            assert int(fields[1]) == 1
         observed = {**idle(), "ok": False, "status": "busy",
                     "processes": [{**identity, "matched_programs": ["arbitrary-name-is-not-an-exemption"]}]}
         return run, observed
 
     yield start
+    for child in orphans:
+        child.stdin.write(b"x")
+        child.stdin.flush()
+        child.stdin.close()
+        # The original launcher has exited; EOF proves its orphan also exited.
+        child.stdout.read()
     for child in children:
         if child.poll() is None:
             child.stdin.write(b"x")
@@ -116,6 +142,95 @@ def test_same_dut_workflow_blocks_even_with_different_registry_alias(workflow):
     result = entry._scoped_controller_owners({"fps": target(alias="fps-alias")}, observed)
     assert not result["ok"]
     assert "selected_dut_workflow_has_not_entered_central_only_phase" in result["scope_errors"]
+
+
+def test_orphaned_independent_workflow_retains_its_actual_held_run_authority(workflow):
+    run, observed = workflow(orphan=True)
+    result = entry._scoped_controller_owners({"fps": target()}, observed)
+    assert result["ok"], result
+    owner = result["normal_quality_owners"][0]
+    assert owner["run_dir"] == str(run)
+    assert owner["reparented_to_init"] is True
+    assert owner["ppid"] == 1 and owner["recorded_ppid"] == owner["pgid"] > 1
+    assert result["cleanup_proven"] is result["exclusive_start_permission"] is False
+
+
+@pytest.mark.parametrize("central", [False, True])
+def test_orphaned_same_dut_remains_blocked_even_after_central_only_stage(workflow, central):
+    _, observed = workflow(host="192.0.2.8", central=central, orphan=True)
+    result = entry._scoped_controller_owners({"fps": target()}, observed)
+    assert not result["ok"]
+    assert result["scope_errors"] == ["reparented_normal_owner_overlaps_selected_resources"]
+
+
+@pytest.mark.parametrize("fault", ["active_parent", "reused_parent", "unreadable_parent",
+    "parent_reappears", "ppid", "pgid", "start_ticks", "session", "birth", "unheld_lock",
+    "lock_released_before_close"])
+def test_orphaned_owner_requires_the_complete_stable_normal_proof(workflow, monkeypatch, fault):
+    run, observed = workflow(orphan=True)
+    pid = observed["processes"][0]["pid"]
+    lock_path = next((run.parent / ".onnx_splitpoint_run_locks").glob(run.name + ".*.lock"))
+    lock = json.loads(lock_path.read_text())
+    parent_path = Path(f"/proc/{lock['ppid']}")
+    original_stat, original_read = Path.stat, Path.read_text
+    parent_reads = 0
+
+    def controlled_stat(path, *args, **kwargs):
+        nonlocal parent_reads
+        if path == parent_path and fault in {
+                "active_parent", "reused_parent", "unreadable_parent", "parent_reappears"}:
+            parent_reads += 1
+            if fault == "unreadable_parent":
+                raise PermissionError("parent visibility unavailable")
+            if fault != "parent_reappears" or parent_reads > 1:
+                # Any existing original-parent PID, including a reused one, blocks.
+                return original_stat(Path("/proc/self"))
+        return original_stat(path, *args, **kwargs)
+
+    fd_reads = 0
+    def controlled_read(path, *args, **kwargs):
+        nonlocal fd_reads
+        raw = original_read(path, *args, **kwargs)
+        if path == Path(f"/proc/{pid}/stat") and fault in {"ppid", "pgid"}:
+            prefix, tail = raw.rsplit(") ", 1)
+            fields = tail.split()
+            index = 1 if fault == "ppid" else 2
+            fields[index] = str(int(fields[index]) + 1)
+            return prefix + ") " + " ".join(fields)
+        if path.parent == Path(f"/proc/{pid}/fdinfo") and "FLOCK" in raw:
+            fd_reads += 1
+            if fault == "unheld_lock" or fault == "lock_released_before_close" and fd_reads > 1:
+                return ""
+        return raw
+
+    if fault == "start_ticks":
+        observed["processes"][0]["start_time_ticks"] = "1"
+    elif fault == "session":
+        path = run / "run_manifest.json"
+        manifest = json.loads(path.read_text())
+        manifest["current_session_id"] = "b" * 32
+        path.write_text(json.dumps(manifest))
+    elif fault == "birth":
+        lock["acquired_at"] = "1970-01-01T00:00:00+00:00"
+        lock_path.write_text(json.dumps(lock))
+    monkeypatch.setattr(Path, "stat", controlled_stat)
+    monkeypatch.setattr(Path, "read_text", controlled_read)
+    result = entry._scoped_controller_owners({"fps": target()}, observed)
+    assert not result["ok"], result
+    assert result["scope_errors"]
+
+
+def test_raw_recovery_still_blocks_a_genuine_orphaned_controller(workflow, tmp_path, monkeypatch):
+    from onnx_splitpoint_tool.remote import resource_recovery_observation as recovery
+    _, observed = workflow(orphan=True)
+    identity = observed["processes"][0]
+    monkeypatch.setattr(recovery, "SSHTransport", lambda *_: pytest.fail("active owner reached SSH"))
+    result = recovery.observe_resource_owners({},
+        local_owners=[{"pid": identity["pid"], "start_time_ticks": identity["start_time_ticks"]}],
+        diagnostics_dir=tmp_path / "recovery")
+    assert result["ok"] is False
+    assert result["controller"]["recorded_owners"][0]["state"] == "active"
+    assert result["remote"]["status"] == "not_observed"
 
 
 def test_central_only_statistics_can_coexist_without_new_pool(workflow, monkeypatch):
