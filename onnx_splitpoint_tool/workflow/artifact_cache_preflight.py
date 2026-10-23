@@ -16,6 +16,7 @@ existing backend receipt validator remains ``UNKNOWN``.
 
 import csv
 import json
+import os
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -446,8 +447,39 @@ def _hailo_role(backend: Any) -> str | None:
     return None
 
 
+def _collect_probe_paths(suite_dir: Path) -> dict[str, list[Path]]:
+    names = ("hailo_cache_miss.json", "deferred_hailo_build.json",
+             "hailo_negative_evidence.json", "deepx_part1_artifact_status.json",
+             "deepx_part2_artifact_status.json")
+    paths: dict[str, list[Path]] = {name: [] for name in names}
+    parents: list[Path] = []
+    errors: list[OSError] = []
+    for directory, directories, files in os.walk(
+        suite_dir, followlinks=False, onerror=errors.append,
+    ):
+        if any(Path(entry).match(name) for entry in directories + files for name in names):
+            parents.append(Path(directory))
+    if any(error.filename is None for error in errors):
+        return {name: sorted(suite_dir.rglob(name)) for name in names}
+    parents.extend(Path(error.filename) for error in errors)
+    try:
+        # Delegate literal-name case, broken links and execute-only directory
+        # visibility to pathlib, including on older precise-selector versions.
+        for parent in parents:
+            for name in names:
+                paths[name].extend(parent.glob(name))
+    except OSError:
+        return {name: sorted(suite_dir.rglob(name)) for name in names}
+    return {name: sorted(values) for name, values in paths.items()}
+
+
+def _probe_paths(suite_dir: Path, name: str, collected=None):
+    return sorted(suite_dir.rglob(name)) if collected is None else collected[name]
+
+
 def _hailo_observations(
     *, run_root: Path, model_id: str, policy: Mapping[str, Any],
+    probe_paths: Mapping[str, Sequence[Path]] | None = None,
 ) -> tuple[list[CacheProbeObservation], set[str]]:
     plan_path = (
         run_root / "models" / model_id / "benchmark_set"
@@ -500,7 +532,7 @@ def _hailo_observations(
         }
 
     exact_misses: dict[tuple[str, str], tuple[Path, dict[str, Any]]] = {}
-    for miss_path in sorted(suite_dir.rglob("hailo_cache_miss.json")):
+    for miss_path in _probe_paths(suite_dir, "hailo_cache_miss.json", probe_paths):
         miss = _read_object(miss_path)
         register_probe_request(miss_path, miss)
         miss_role = _hailo_role(miss.get("hw_arch"))
@@ -514,7 +546,7 @@ def _hailo_observations(
         )
         exact_misses[(miss_role, miss_item)] = (miss_path, miss)
     deferred_requests: dict[tuple[str, str], dict[str, Any]] = {}
-    for request_path in sorted(suite_dir.rglob("deferred_hailo_build.json")):
+    for request_path in _probe_paths(suite_dir, "deferred_hailo_build.json", probe_paths):
         request = _read_object(request_path)
         register_probe_request(request_path, request)
         kwargs = dict(request.get("kwargs") or {})
@@ -526,7 +558,7 @@ def _hailo_observations(
         deferred_requests[(role, item)] = request
 
     negative_probes: dict[tuple[str, str], dict[str, Any]] = {}
-    for negative_path in sorted(suite_dir.rglob("hailo_negative_evidence.json")):
+    for negative_path in _probe_paths(suite_dir, "hailo_negative_evidence.json", probe_paths):
         probe = _read_object(negative_path)
         register_probe_request(negative_path, probe)
         role = _hailo_role(probe.get("hw_arch"))
@@ -807,6 +839,7 @@ def _deepx_observation_from_status(
 
 def _deepx_observations(
     *, run_root: Path, model_id: str, policy: Mapping[str, Any],
+    probe_paths: Mapping[str, Sequence[Path]] | None = None,
 ) -> tuple[list[CacheProbeObservation], set[str]]:
     bdir = run_root / "models" / model_id / "benchmark_set"
     full_candidates = (
@@ -836,7 +869,7 @@ def _deepx_observations(
     accepted = set(_benchmark_case_ids(contract))
     for stage in ("part1", "part2"):
         seen_cases: set[str] = set()
-        for path in sorted(suite_dir.rglob(f"deepx_{stage}_artifact_status.json")):
+        for path in _probe_paths(suite_dir, f"deepx_{stage}_artifact_status.json", probe_paths):
             payload = _read_object(path)
             if payload.get("selected") is False or _token(payload.get("status")) == "not_selected":
                 continue
@@ -996,15 +1029,21 @@ def collect_model_artifact_cache_probes(
     """
 
     run_root = Path(run_dir)
+    suite_dir = resolve_generated_benchmark_suite_dir(
+        run_dir=run_root, model_id=model_id,
+    )
+    probe_paths = _collect_probe_paths(suite_dir)
     observations: list[CacheProbeObservation] = []
     applicable: set[str] = set()
     hailo_rows, hailo_roles = _hailo_observations(
         run_root=run_root, model_id=model_id, policy=policy,
+        probe_paths=probe_paths,
     )
     observations.extend(hailo_rows)
     applicable.update(hailo_roles)
     deepx_rows, deepx_roles = _deepx_observations(
         run_root=run_root, model_id=model_id, policy=policy,
+        probe_paths=probe_paths,
     )
     observations.extend(deepx_rows)
     applicable.update(deepx_roles)

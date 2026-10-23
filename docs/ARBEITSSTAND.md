@@ -1,3 +1,24 @@
+## 23.10.2026 — Wörtlicher Controller-Backport der gemeinsamen Preflight-Suche
+
+Dieser getrennte Quellenstand auf Source3 `d43415d` übernimmt ausschließlich
+die geprüfte Controller-Datei und die neue Testdatei der gemeinsamen Suche nach
+den fünf bestehenden Artifact-Cache-Request-/Statusnamen. Beide Dateien sind
+bytegleich zum geprüften Main-Kandidaten. Dessen 40 bestandene gezielte Tests
+werden nicht als neuer Backport-Testlauf ausgegeben. Die Standard-Reader und
+ihre Inhalts-/Hash-/Scope-/Statusprüfungen bleiben bestehen; ein normaler Aufruf
+teilt einen rekursiven Durchlauf, unklare Enumerationsfehler verwenden die
+ursprünglichen wörtlichen Suchläufe. Es gibt keine Dataset-Ausnahmen, keinen
+persistenten Cache und keine gemessene NAS-/Hardware-Beschleunigungsbehauptung.
+
+Die normale Paketprüfung und der normale Runnerwriter binden diesen Backport
+separat. Seine 42 Runner-Member einschließlich 37 Python-Dateien bleiben exakt
+bei Source3/F19; die zwei Source4-Quality-Module werden nicht übernommen.
+Source3, alle bisherigen Exporte, F18/F19/F20 und aktive Läufe bleiben
+unverändert. Dieser Quellenstand startet weder Hardware noch Resume noch
+Statistik und ändert keinen bestehenden Run oder dessen wissenschaftliche
+Belege. Eine spätere ausdrücklich gebundene normale Fortsetzung bleibt ein
+separater Schritt des koordinierenden Roots.
+
 ## 23.10.2026 — Kanonische Backendidentität im DeepX-Controllerdescriptor
 
 Der normale Controller-Writer ergänzt im vorhandenen DeepX-Stage-Descriptor
