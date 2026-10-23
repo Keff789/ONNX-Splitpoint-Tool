@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2367,
+  "file_count": 2368,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 447028,
-      "sha256": "a85fff88b3481814cbe4ebab1b8a3177e1e650acd9af0a7c28a78efa11aa7fe4"
+      "size": 449628,
+      "sha256": "41161a87058c04a12e6118a7d784f283768cc1ffdfc1d243bc139297b4615f6f"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -3081,8 +3081,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/deferred_hailo_builds.py",
-      "size": 52918,
-      "sha256": "889db929ecd93ef43da1dfa73fed2c01ef93e389e1d6a83599319d17871005c5"
+      "size": 62572,
+      "sha256": "4fe111a41a2efe6b7536bffbce936f1dc06a67080c0879c83717d5c33a589526"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/endpoint_lifecycle.py",
@@ -3131,8 +3131,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generator_binding.py",
-      "size": 57591,
-      "sha256": "b8d9c4dc80767a64634dc13b7937407636cfeda65dbde948c510104c025929c1"
+      "size": 57807,
+      "sha256": "a23065027d958cf065cb3bb0d237309af3e3f653f3e3e2e7953319f971c52bb7"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_completed_task.py",
@@ -7348,6 +7348,11 @@
       "path": "tests/test_generic_deepx_async.py",
       "size": 10906,
       "sha256": "c5f394a7c1e089f8a1e3e94ec6c50988c6314ee1919aa40035157243d06f0640"
+    },
+    {
+      "path": "tests/test_generic_deepx_deferred_import.py",
+      "size": 19149,
+      "sha256": "077fab38c4cee34b05b81f8ad4b70c3c94da0efc32abb4ebd396fcfa04c37b7b"
     },
     {
       "path": "tests/test_generic_energy_campaign.py",

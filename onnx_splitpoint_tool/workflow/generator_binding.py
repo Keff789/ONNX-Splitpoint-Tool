@@ -522,6 +522,10 @@ def import_existing_suite(
         if isinstance(suite_contract.get("plan"), Mapping):
             suite_contract["plan"] = _read_json(p_plan_import)
         write_json(dst / "benchmark_set.json", suite_contract)
+        from .deferred_hailo_builds import rebind_imported_deepx_part1_request
+        rebind_imported_deepx_part1_request(
+            existing, dst, profile_payload=profile, bench_plan_runs=planned_runs,
+        )
     cpu_invariant = finalize_management_cpu_reference_plan_aliases(
         executable_plan_path=dst / "benchmark_plan.json",
         formal_plan_path=p_plan_import,

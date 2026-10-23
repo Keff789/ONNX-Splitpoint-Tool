@@ -19,6 +19,7 @@ from .artifact_cache_preflight import known_negative_build_evidence
 
 REQUEST_NAME = "deferred_hailo_build.json"
 DEEPX_PART1_REQUEST = "deferred_deepx_part1_build.json"
+DEEPX_PART1_IMPORT_REQUEST = "deferred_deepx_part1_import_request.json"
 DEEPX_PART2_REQUEST = "deferred_deepx_part2_build.json"
 _BUILD_ENV = (
     "ONNX_SPLITPOINT_HAILO_CALIBRATION_STORAGE",
@@ -384,13 +385,170 @@ def defer_deepx_part1_build(**kwargs: Any) -> dict[str, Any]:
     return {"status": "deferred_until_cache_preflight", "compiler_dispatched": False}
 
 
+def _imported_deepx_part1_applicable(profile: Mapping[str, Any], runs: list[Mapping[str, Any]]) -> bool:
+    from ..runners.generic_quality_accounting import _stage, authorized_runs
+    # Unrelated Generic/Hailo imports retain their exact legacy behavior.
+    if not any(isinstance(row, Mapping) and row.get("quality_source_only") is True
+               and "generic_quality_completion_configs" in row
+               and _stage(row.get("stage1")) == "deepx_m1"
+               for row in profile.get("run_profiles", [])):
+        return False
+    return any(_stage(row.get("stage1")) == "deepx_m1"
+               for row in authorized_runs({"runs": runs}, profile))
+
+
+def _imported_deepx_part1_config(args: Mapping[str, Any], profile: Mapping[str, Any]) -> dict[str, Any]:
+    from ..build_dispatch_policy import require_productive_force_off
+    require_productive_force_off(profile)
+    require_productive_force_off({"deepx_build": {"force_build": args.get("force_build", False)}})
+    historical_config = dict(args.get("build_config") or {})
+    require_productive_force_off({"deepx_build": historical_config})
+    current_config = {key: value for key, value in dict(profile.get("deepx_build") or {}).items()
+                      if value not in (None, "")}
+    if current_config.get("mode") not in {"reuse_only", "cache_verify_only"}:
+        raise ValueError("Imported DeepX Part1 requires restrictive build policy")
+    for key, value in current_config.items():
+        if key in {"mode", "force_build"}:
+            continue
+        if key not in historical_config and key == "opt_level" and value == 0:
+            continue  # The ordinary compiler's established default.
+        if historical_config.get(key) != value:
+            raise ValueError(f"Imported DeepX Part1 compiler contract changed: {key}")
+    return {**historical_config, **current_config, "force_build": False}
+
+
+def _deepx_part1_request_path(suite: Path) -> Path:
+    path = suite / DEEPX_PART1_IMPORT_REQUEST
+    if not path.is_file():
+        return suite / DEEPX_PART1_REQUEST
+    request = _read(path)
+    args = request["kwargs"]
+    # An imported catalogue may be inspected, but never grants build authority.
+    if (args.get("cache_only") is not True or args.get("force_build") is not False
+            or args.get("build_config", {}).get("mode") not in {"reuse_only", "cache_verify_only"}):
+        raise RuntimeError("Imported DeepX Part1 build policy invalid")
+    if Path(args["out_dir"]).resolve() != suite.resolve():
+        raise RuntimeError("Imported DeepX Part1 suite identity mismatch")
+    origin = request["import_source"]["request"]
+    original = Path(origin["path"])
+    if (not original.is_file() or original.stat().st_size != origin["size_bytes"]
+            or sha256_file(original) != origin["sha256"]):
+        raise RuntimeError("Imported DeepX Part1 source request changed")
+    saved = _read(original)
+    saved_args = saved["kwargs"]
+    if not _imported_deepx_part1_applicable(args.get("profile_payload") or {}, args.get("bench_plan_runs") or []):
+        raise RuntimeError("Imported DeepX Part1 current authority invalid")
+    relocated_fields = {"out_dir", "cache_only", "force_build", "profile_payload", "bench_plan_runs", "build_config"}
+    if ({key: value for key, value in args.items() if key not in relocated_fields}
+            != {key: value for key, value in saved_args.items() if key not in relocated_fields}
+            or args.get("build_config") != _imported_deepx_part1_config(saved_args, args["profile_payload"])):
+        raise RuntimeError("Imported DeepX Part1 original scientific kwargs changed")
+    expected_sources = {}
+    source_cases = set()
+    old_root = Path(saved_args["out_dir"]).expanduser().resolve()
+    for token, digest in saved.get("source_onnx_sha256", {}).items():
+        relative = Path(token).expanduser().resolve().relative_to(old_root)
+        case = relative.parts[0]
+        target = (suite / relative).resolve()
+        if (case not in saved_args["selected_case_dirs"] or case in source_cases
+                or not target.is_relative_to((suite / case).resolve())):
+            raise RuntimeError("Imported DeepX Part1 original source case changed")
+        source_cases.add(case)
+        expected_sources[str(target)] = digest
+    if (source_cases != set(saved_args["selected_case_dirs"])
+            or request.get("source_onnx_sha256") != expected_sources
+            or sha256_file(original) != origin["sha256"]):
+        raise RuntimeError("Imported DeepX Part1 original ONNX bindings changed")
+    return path
+
+
+def rebind_imported_deepx_part1_request(
+    source: Path, suite: Path, *, profile_payload: Mapping[str, Any],
+    bench_plan_runs: list[Mapping[str, Any]],
+) -> Optional[Path]:
+    """Derive a cache-only request, retaining the original request and hashes."""
+    original = source / DEEPX_PART1_REQUEST
+    if not original.is_file():
+        return None
+    if not _imported_deepx_part1_applicable(profile_payload, bench_plan_runs):
+        previous = suite / DEEPX_PART1_IMPORT_REQUEST
+        if previous.is_file() and source.resolve() != suite.resolve():
+            # A copied prior import is history, not this unrelated run's request.
+            if previous.read_bytes() != (source / DEEPX_PART1_IMPORT_REQUEST).read_bytes():
+                raise ValueError("Imported DeepX Part1 history changed during copy")
+            history = previous.with_name(previous.stem + "." + sha256_file(previous).removeprefix("sha256:") + ".json")
+            if history.exists() and history.read_bytes() != previous.read_bytes():
+                raise ValueError("Imported DeepX Part1 history conflict")
+            previous.replace(history)
+        return None
+    request = _read(original)
+    args = dict(request["kwargs"])
+    effective_config = _imported_deepx_part1_config(args, profile_payload)
+    selected = args.get("selected_case_dirs")
+    if (not isinstance(selected, list) or not selected
+            or any(not isinstance(case, str) or re.fullmatch(r"b[0-9]+", case) is None for case in selected)
+            or len(selected) != len(set(selected))):
+        raise ValueError("Imported DeepX Part1 selected cases invalid")
+    source_cases = {str(c.get("case_dir") or c.get("folder") or c.get("case_id") or c.get("id") or ""): c
+                    for c in _read(source / "benchmark_set.json").get("cases", [])}
+    current_cases = {str(c.get("case_dir") or c.get("folder") or c.get("case_id") or c.get("id") or ""): c
+                     for c in _read(suite / "benchmark_set.json").get("cases", [])}
+    if not set(selected) <= source_cases.keys() or not set(selected) <= current_cases.keys():
+        raise ValueError("Imported DeepX Part1 case missing from catalogue")
+    old_root = Path(args["out_dir"]).expanduser().resolve()
+    rebound = {}
+    seen = set()
+    for source_path, digest in request.get("source_onnx_sha256", {}).items():
+        relative = Path(source_path).expanduser().resolve().relative_to(old_root)
+        case = relative.parts[0]
+        if case not in selected or case in seen:
+            raise ValueError("Imported DeepX Part1 source case invalid")
+        seen.add(case)
+        manifest_name = str(source_cases[case].get("manifest") or "split_manifest.json")
+        before = source / case / manifest_name
+        after = suite / case / manifest_name
+        if (before.resolve().is_relative_to((source / case).resolve()) is False
+                or after.resolve().is_relative_to((suite / case).resolve()) is False
+                or before.read_bytes() != after.read_bytes()):
+            raise ValueError("Imported DeepX Part1 split manifest changed")
+        manifest = _read(after)
+        part1 = str(manifest.get("part1_model") or manifest.get("part1") or manifest.get("part1_path") or "")
+        if (Path(part1).is_absolute() or Path(case) / part1 != relative
+                or manifest.get("boundary", manifest.get("boundary_index")) != int(case[1:])):
+            raise ValueError("Imported DeepX Part1 source boundary/path changed")
+        target = (suite / relative).resolve()
+        if (not target.is_relative_to((suite / case).resolve())
+                or not target.is_file() or sha256_file(target) != digest):
+            raise ValueError(f"Imported DeepX Part1 ONNX changed: {case}")
+        rebound[str(target)] = digest
+    if seen != set(selected):
+        raise ValueError("Imported DeepX Part1 ONNX bindings incomplete")
+    args.update(out_dir=str(suite.resolve()),
+                selected_case_dirs=list(selected), cache_only=True, force_build=False,
+                build_config=effective_config,
+                profile_payload=dict(profile_payload), bench_plan_runs=list(bench_plan_runs))
+    path = suite / DEEPX_PART1_IMPORT_REQUEST
+    if path.is_file():
+        # A later import keeps any previous import's genuine result as history.
+        history = path.with_name(path.stem + "." + sha256_file(path).removeprefix("sha256:") + ".json")
+        if history.exists() and history.read_bytes() != path.read_bytes():
+            raise ValueError("Imported DeepX Part1 history conflict")
+        if not history.exists():
+            history.write_bytes(path.read_bytes())
+    write_json(path, {"status": "pending", "kwargs": args, "source_onnx_sha256": rebound,
+        "import_source": {"request": {"path": str(original.resolve()),
+            "sha256": sha256_file(original), "size_bytes": original.stat().st_size},
+            "suite_dir": str(source.resolve()), "original_out_dir": str(old_root)}})
+    return path
+
+
 def probe_deferred_deepx_part1_cache(suite: Path, *, log: Any = None) -> dict[str, Any]:
     """Resolve the selected Part1 receipt before dependent TRT cache probes.
 
     Use the generator's saved exact request and leave its build continuation
     pending. No compiler/SDK probe is needed for a verified reuse hit.
     """
-    path = suite / DEEPX_PART1_REQUEST
+    path = _deepx_part1_request_path(suite)
     if not path.is_file():
         return {}
     request = _read(path)
@@ -421,7 +579,7 @@ def probe_deferred_deepx_part1_cache(suite: Path, *, log: Any = None) -> dict[st
 
 def _finalize_deepx(suite: Path, selected: set[str], log: Any, cancel_event: Any) -> list[dict[str, Any]]:
     jobs = []
-    p1_request = suite / DEEPX_PART1_REQUEST
+    p1_request = _deepx_part1_request_path(suite)
     if p1_request.is_file():
         request = _read(p1_request)
         if request.get("status") in {"pending", "failed", "completed"}:
