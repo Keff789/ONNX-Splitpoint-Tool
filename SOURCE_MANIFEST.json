@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2366,
+  "file_count": 2367,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 445102,
-      "sha256": "0af49214dbb82814c1bc4f4c1beed62742574650aa516f374e8a047315fbe344"
+      "size": 447028,
+      "sha256": "a85fff88b3481814cbe4ebab1b8a3177e1e650acd9af0a7c28a78efa11aa7fe4"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -3131,8 +3131,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generator_binding.py",
-      "size": 57568,
-      "sha256": "f81f273617c31a714370a493642de88088b86dbe3551139e8dbc483a40df04d1"
+      "size": 57591,
+      "sha256": "b8d9c4dc80767a64634dc13b7937407636cfeda65dbde948c510104c025929c1"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_completed_task.py",
@@ -7213,6 +7213,11 @@
       "path": "tests/test_deepx_full_preprocessing_ab_contract.py",
       "size": 23899,
       "sha256": "c28c94a4d5a6a03e6a661978bc88c6bfd6df57fc0f2975457b1ff816fd069cf3"
+    },
+    {
+      "path": "tests/test_deepx_stage_descriptor_authority.py",
+      "size": 3827,
+      "sha256": "989e90880be5540cf8dfb0acec6494168930f948006fc173520843a286f965c1"
     },
     {
       "path": "tests/test_diagnostic_energy_environment.py",

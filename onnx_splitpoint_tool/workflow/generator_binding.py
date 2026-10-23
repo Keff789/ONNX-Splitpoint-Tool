@@ -711,7 +711,7 @@ def _stage_descriptor_for_target(target: str) -> Dict[str, Any]:
     """
     t = _canon_target(target)
     if str(t).startswith("deepx") or "dx_m1" in str(t):
-        return {"type": "deepx", "target": "deepx_m1", "artifact_kind": "dxnn"}
+        return {"type": "deepx", "target": "deepx_m1", "backend": "deepx_m1", "artifact_kind": "dxnn"}
     if str(t).startswith("hailo"):
         return {"type": "hailo", "hw_arch": t}
     return {"type": "onnxruntime", "provider": _provider_for_target(t)}

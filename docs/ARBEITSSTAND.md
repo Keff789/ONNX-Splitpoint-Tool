@@ -1,3 +1,31 @@
+## 23.10.2026 — Kanonische Backendidentität im DeepX-Controllerdescriptor
+
+Der normale Controller-Writer ergänzt im vorhandenen DeepX-Stage-Descriptor
+`backend: deepx_m1`. Die bisherigen Felder type, target und artifact_kind bleiben
+erhalten. Der unveränderte normale Authority-Lader verwendet das explizite
+Backendfeld für seine Stageidentität; target ist kein solcher Authority-Alias.
+Damit bleibt der normal erzeugte Plan an denselben ursprünglichen DeepX-Scope
+gebunden. `_stage`, `_binding`, authorized_runs und alle Runtime37-Dateien werden
+nicht gelockert oder geändert. Alte Profile, YAMLs, Pläne und Fehlerbelege bleiben
+unverändert; die Korrektur gilt für normal neu erzeugte Controllerprojektionen.
+
+Zehn gezielte Metadatentests bestanden: normaler Serializer zur unveränderten
+Authority für DeepX/H8/H10 mit denselben vier Maps und Katalog20, bestehende
+DeepX-Aliasse sowie Ablehnung der alten fehlenden Backendrepräsentation, falscher
+Backendidentität, unbekannter Stage und geändertem Case-Scope. Es wurden keine
+Config-/Modell-/Request-/Candidate-/Report-/Tensorbodies und keine Hardware
+benutzt. Der vorherige 46er-Union wird nicht erneut ausgeführt oder als neuer
+Testlauf ausgegeben. Die unabhängige enge Root-Prüfung akzeptierte den Einfeldfix.
+
+Root hat das tatsächliche vorige Source14-Laufende rc1 und dessen normalen
+Finalisierungs-/Freigabeabschluss belegt. Der technische Authorityfehler wird
+nicht als wissenschaftlicher Qualityverlust umgedeutet. Die Source15-Vorbereitung
+verändert weder den alten Lauf noch dessen Daten oder CURRENT. Nur Writer, neue
+gezielte Testdatei, dieser Arbeitsstand und zwei Quellenindizes ändern sich;
+alle 42 Bundle-Member einschließlich 37 Python-Dateien bleiben bytegleich zu F14.
+Installation, normale Veröffentlichung und tatsächlicher neuer SourceFreeze15
+bleiben Aufgabe des koordinierenden Roots; hier wird keine Fortsetzung gestartet.
+
 ## 23.10.2026 — Vollständige Generic-Captures trotz fehlender zentraler Zeilen
 
 Der normale Collector kann einen ausschließlich autorisierten Generic-Source-only-
