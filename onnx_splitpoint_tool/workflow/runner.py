@@ -6141,6 +6141,7 @@ class EvaluationWorkflowRunner:
         self._management_reference_futures: Dict[str, concurrent.futures.Future] = {}
         self._management_reference_source_contracts: Dict[str, str] = {}
         self._central_quality_service: Any = None
+        self._controller_resource_gate: Any = None
         self._quality_cancel_context: dict[str, Any] = {}
         self._central_quality_reference_store: Any = None
         self._central_quality_futures: Dict[str, Any] = {}
@@ -6792,7 +6793,56 @@ class EvaluationWorkflowRunner:
             f"it runs with {_quality_reference_threads(self.profile_payload)} CPU threads in parallel with remote benchmarks"
         )
 
+    def _defer_central_quality(self) -> bool:
+        """Admit only the existing source-bound Generic capture contract."""
+        raw = (self.profile_payload.get("workflow_execution") or {}).get("defer_central_quality", False)
+        if type(raw) is not bool:
+            raise ValueError("workflow_execution.defer_central_quality must be boolean")
+        if not raw:
+            return False
+        from ..runners.generic_quality_accounting import authorized_runs
+        runs = [run for run in self.profile_payload.get("run_profiles", [])
+                if isinstance(run, Mapping) and run.get("enabled", True)]
+        quality = self.profile_payload.get("quality_gate") or {}
+        reference = (quality.get("management_reference") or {}).get("existing_reference")
+        if (not runs or any("generic_quality_completion_configs" not in run for run in runs)
+                or _quality_execution_location_v263(self.profile_payload) != "central_management"
+                or not isinstance(reference, Mapping) or not reference
+                or (self.profile_payload.get("native_producers") or {}).get("enabled") is not False
+                or (self.profile_payload.get("energy") or {}).get("enabled") is not False
+                or any(bool(getattr(self.options, key, False)) for key in
+                    ("native_producer_enabled", "native_producer_energy_enabled", "energy_enabled"))):
+            raise ValueError("deferred central Quality requires only explicit Generic source-only composed captures, existing CPU reference, and disabled Native/Energy")
+        # Reuse the same config/case/source/endpoint scope admission as capture
+        # collection. The normal reference binder still verifies reference bytes.
+        authorized = authorized_runs({"runs": runs}, {**self.profile_payload, "run_profiles": runs})
+        selected = set((self.profile_payload.get("hardware") or {}).get("selected_setups") or [])
+        if (len(authorized) != len(runs)
+                or selected != {run.get("hardware_setup_id") for run in runs}):
+            raise ValueError("deferred central Quality requires the exact selected Generic setup scope")
+        return True
+
+    def _ensure_controller_resource_gate(self) -> Any:
+        """Keep normal transport/DUT protection without creating CPU workers."""
+        with self._management_services_lock:
+            if self._central_quality_service is not None:
+                return self._central_quality_service.pause_gate
+            if self._controller_resource_gate is None:
+                from onnx_splitpoint_tool.quality_service import ResourcePauseGate
+                self._controller_resource_gate = ResourcePauseGate(
+                    transfer_slots=_parallel_remote_max_uploads(getattr(self, "options", None), self.profile_payload, default=1),
+                    postcalc_slots=_parallel_powercalc_workers(getattr(self, "options", None), self.profile_payload, default=1),
+                )
+            return self._controller_resource_gate
+
+    def _benchmark_controller_gate(self) -> Any:
+        if self._defer_central_quality():
+            return self._ensure_controller_resource_gate()
+        return self._ensure_central_quality_service().pause_gate
+
     def _ensure_central_quality_service(self) -> Any:
+        if self._defer_central_quality():
+            raise RuntimeError("central Quality service is forbidden during deferred Generic capture")
         with self._management_services_lock:
             if self._management_admission_closed:
                 from onnx_splitpoint_tool.quality_service import QualityServiceClosedError
@@ -6807,14 +6857,12 @@ class EvaluationWorkflowRunner:
                 from onnx_splitpoint_tool.quality_service import (
                     CPUQualityReferenceStore,
                     ManagementQualityService,
-                    ResourcePauseGate,
                 )
 
                 self._central_quality_service = ManagementQualityService(
                     self.run_dir / "quality_management" / "evaluation_cache",
                     workers=_quality_workers_v263(self.profile_payload),
-                    pause_gate=ResourcePauseGate(transfer_slots=_parallel_remote_max_uploads(getattr(self, "options", None), self.profile_payload, default=1),
-                        postcalc_slots=_parallel_powercalc_workers(getattr(self, "options", None), self.profile_payload, default=1)),
+                    pause_gate=self._ensure_controller_resource_gate(),
                     statistics=_quality_statistics_options(self.profile_payload),
                 )
                 # One shared instance avoids redundant per-request coordination;
@@ -9197,6 +9245,10 @@ class EvaluationWorkflowRunner:
             return failure
 
     def _queue_central_quality_requests(self, model_id: str, *, results_root: Optional[Path] = None) -> int:
+        if self._defer_central_quality():
+            # Capture/collection already attests portable request/candidate
+            # siblings. Keep those original bytes for the later CPU owner.
+            return 0
         if _quality_execution_location_v263(self.profile_payload) != "central_management":
             return 0
         self._ensure_central_quality_service()
@@ -9735,6 +9787,7 @@ class EvaluationWorkflowRunner:
     def _validate_requested_start_contract(self) -> None:
         """Fail before run creation when a thin caller requested exact intent."""
 
+        self._defer_central_quality()
         guard = cache_verify_guard(self.profile_payload)
         if guard:
             try:
@@ -12576,7 +12629,7 @@ class EvaluationWorkflowRunner:
             for row in rows:
                 self._queue_central_quality_requests(str(row.get("id") or row.get("model_id")))
 
-        if not self._stop_requested and (self.profile_payload.get("workflow_execution") or {}).get("native_release_mode") == "per_case":
+        if not self._stop_requested and not self._defer_central_quality() and (self.profile_payload.get("workflow_execution") or {}).get("native_release_mode") == "per_case":
             self._run_quality_native_pipeline()
         else:
             if not self._stop_requested:
@@ -19240,6 +19293,25 @@ class EvaluationWorkflowRunner:
     def _stage_evaluate_quality_steps(self):
         quality_dir = self.run_dir / "quality_management"
         quality_dir.mkdir(parents=True, exist_ok=True)
+        if self._defer_central_quality():
+            if self._central_quality_service is not None or self._central_quality_futures:
+                raise RuntimeError("deferred Generic capture unexpectedly owns central Quality work")
+            payload = {
+                "schema": "onnx-splitpoint/central-quality-summary", "schema_version": 1,
+                "created_at": now_iso(), "run_id": self.run_id,
+                "status": "deferred", "technical_status": "not_evaluated",
+                "execution_location": "central_management", "defer_central_quality": True,
+                "quality_required": True, "quality_decision": "not_evaluated",
+                "aggregate_quality_decision": "not_evaluated", "scientific_status": "not_evaluated",
+                "scientific_pass": False, "claim_eligible": False,
+                "request_count": 0, "completed_count": 0, "workers_started": 0,
+                "deferred_required_count": sum(len(run["case_ids"]) for run in
+                    self.profile_payload["run_profiles"] if run.get("enabled", True)),
+            }
+            path = write_json(quality_dir / "central_quality_summary.json", payload)
+            return {"central_quality_summary_json": path}, payload, (
+                "Generic Quality inputs retained; required central evaluation is deferred to a CPU continuation."
+            ), "partial"
         if _quality_execution_location_v263(self.profile_payload) != "central_management":
             p = write_json(quality_dir / "central_quality_summary.json", {
                 "schema": "onnx-splitpoint/central-quality-summary",
@@ -29829,13 +29901,13 @@ class EvaluationWorkflowRunner:
                 else None
             ),
         )
-        service = self._ensure_central_quality_service()
+        controller_gate = self._benchmark_controller_gate()
         workflow_execution = self.profile_payload.get("workflow_execution") or {}
         protect = (workflow_execution.get("native_release_mode") == "per_case"
                    or workflow_execution.get("setup_queue_mode") == "per_setup")
         def dispatch_benchmarks():
             from ..process_control import bind_workflow_resource_options
-            with bind_workflow_resource_options(controller_gate=service.pause_gate,
+            with bind_workflow_resource_options(controller_gate=controller_gate,
                     controller_physical_protection=protect, controller_run_id=self.run_id):
                 return execute_benchmark_suite_if_requested(**dispatch_arguments)
         exec_result = yield dispatch_benchmarks
@@ -30767,10 +30839,12 @@ class EvaluationWorkflowRunner:
                 "schema_version": 1,
                 "created_at": now_iso(),
                 "model_id": model_id,
-                "status": "queued" if central_quality_queued else "no_requests_discovered",
+                "status": "deferred" if self._defer_central_quality() else ("queued" if central_quality_queued else "no_requests_discovered"),
                 "queued_request_count": central_quality_queued,
                 "workers": quality_workers,
-                "worker_model": "process_pool",
+                "worker_model": "deferred" if self._defer_central_quality() else "process_pool",
+                **({"workers_started": 0, "quality_required": True}
+                   if self._defer_central_quality() else {}),
                 "cpu_reference_execution": "management_node_once_per_model_contract",
                 "remote_cpu_performance_baseline": "excluded",
             })

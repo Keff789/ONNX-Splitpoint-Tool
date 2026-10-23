@@ -260,6 +260,14 @@ def build_profile_start_snapshot(
     except CacheVerifyPolicyError as exc:
         raise StartSnapshotConsistencyError(str(exc)) from exc
     mismatches: list[Dict[str, Any]] = []
+    # Keep F18's derived plan/selection shape readable by already-running
+    # controller owners. The complete source/resolved profile hashes freeze
+    # this execution flag; additionally forbid resolution from replacing it.
+    requested_workflow = source_profile.get("workflow_execution") or {}
+    if "defer_central_quality" in requested_workflow:
+        _append_mismatch(mismatches, "workflow_execution.defer_central_quality",
+            requested_workflow["defer_central_quality"],
+            (resolved_profile.get("workflow_execution") or {}).get("defer_central_quality", False))
 
     for field in (
         "profile_name",
