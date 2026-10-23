@@ -153,6 +153,155 @@ def test_actual_historical_successful_build_to_reuse_retains_exact_provenance():
     assert "/hailo/hefs/hailo10/part1_build/context_mode" in paths
 
 
+def retained_unused_historical_build():
+    original, staged, args = bindings("b239")
+    document = json.loads(staged)
+    document["hailo"]["hefs"]["hailo10"]["part1_build"] = deepcopy(
+        json.loads(original)["hailo"]["hefs"]["hailo10"]["part1_build"])
+    return original, document, args
+
+
+def test_unchanged_unused_historical_build_is_provenance_without_a_current_reuse_claim():
+    original, document, args = retained_unused_historical_build()
+    staged = rewritten(document, args)
+    unchanged = deepcopy(args)
+    proof = validate_generic_split_manifest_staging(original, staged, **args)
+    assert args == unchanged
+    assert [item["backend_metadata"] for item in proof["historical_build_reuse"]] == ["hailo8"]
+    retained, = proof["retained_historical_build_metadata"]
+    assert retained["historical_observation"] == document["hailo"]["hefs"]["hailo10"]["part1_build"]
+    assert retained["build_record_unchanged"] is True
+    assert retained["executed_artifact_identity_proved"] is False
+    assert retained["current_compile_claimed"] is retained["current_reuse_claimed"] is False
+    assert "actual_receipt_binding" not in retained
+    assert not any(item["pointer"].startswith("/hailo/hefs/hailo10/part1_build")
+                   for item in proof["allowed_differences"])
+    assert proof["historical_build_reuse"][0]["actual_receipt_binding"]["sha256"] == (
+        args["original_artifacts"]["part1_build_receipt"]["sha256"])
+
+
+@pytest.mark.parametrize("key,value", [
+    ("elapsed_s", 1.0),
+    ("source_onnx_path", "/foreign/b239/yolo11l_part1_b239.onnx"),
+    ("build_evidence", {}),
+    ("single_context_failed", 1),
+])
+def test_unused_historical_record_must_remain_type_exactly_unchanged(key, value):
+    original, document, args = retained_unused_historical_build()
+    document["hailo"]["hefs"]["hailo10"]["part1_build"][key] = value
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, rewritten(document, args), **args)
+
+
+@pytest.mark.parametrize("key,value", [
+    ("ok", False),
+    ("negative_evidence_hit", True),
+    ("cache_key", "f" * 64),
+    ("context_mode", "unknown_context"),
+])
+def test_equal_unused_historical_records_still_require_positive_bound_provenance(key, value):
+    original, document, args = retained_unused_historical_build()
+    old = json.loads(original)
+    old["hailo"]["hefs"]["hailo10"]["part1_build"][key] = value
+    document["hailo"]["hefs"]["hailo10"]["part1_build"] = deepcopy(
+        old["hailo"]["hefs"]["hailo10"]["part1_build"])
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(
+            rewritten_original(old, args), rewritten(document, args), **args)
+
+
+def test_measured_h8_historical_record_cannot_replace_actual_current_reuse():
+    original, document, args = retained_unused_historical_build()
+    document["hailo"]["hefs"]["hailo8"]["part1_build"] = deepcopy(
+        json.loads(original)["hailo"]["hefs"]["hailo8"]["part1_build"])
+    with pytest.raises(ValueError, match="part1 must remain actual artifact reuse"):
+        validate_generic_split_manifest_staging(original, rewritten(document, args), **args)
+
+
+def current_only_terminal_summary(retain_full_metadata):
+    original, document, args = retained_unused_historical_build()
+    old = json.loads(original)
+    if retain_full_metadata:
+        for arch in ("hailo8", "hailo10h"):
+            retained = document["hailo"]["hefs"].setdefault(arch, {})
+            for key, value in old["hailo"]["hefs"][arch].items():
+                if key.startswith("full"):
+                    retained[key] = deepcopy(value)
+            document["hailo"]["case_variant_availability"][arch]["full"] = True
+    document["hailo"]["backend_terminal_states"] = [deepcopy(item) for item in
+        old["hailo"]["backend_terminal_states"]
+        if item["hw_arch"] == "hailo8" and item["variant"] == "part1"]
+    return original, document, args
+
+
+@pytest.mark.parametrize("retain_full_metadata", [False, True])
+def test_current_h8_summary_may_omit_only_positive_unexecuted_historical_states(retain_full_metadata):
+    original, document, args = current_only_terminal_summary(retain_full_metadata)
+    proof = validate_generic_split_manifest_staging(original, rewritten(document, args), **args)
+    assert len(proof["omitted_unexecuted_backend_terminal_states"]) == (3 if retain_full_metadata else 1)
+    assert all(item["status"] == "ready" and item["available"] is True
+               and (item["hw_arch"] != "hailo8" or item["variant"] != "part1")
+               for item in proof["omitted_unexecuted_backend_terminal_states"])
+    assert document["hailo"]["hefs"]["hailo10"]["part1_build"] == json.loads(original)["hailo"]["hefs"]["hailo10"]["part1_build"]
+    assert proof["scientific_manifest_fields_unchanged"] is True
+
+
+@pytest.mark.parametrize("fault", ["measured_changed", "measured_type", "measured_missing", "unused_failed", "unused_unknown"])
+def test_current_summary_projection_cannot_hide_changed_unknown_or_failed_states(fault):
+    original, document, args = current_only_terminal_summary(True)
+    old = json.loads(original)
+    if fault == "measured_changed":
+        document["hailo"]["backend_terminal_states"][0]["reason"] = "different"
+    elif fault == "measured_type":
+        document["hailo"]["backend_terminal_states"][0]["available"] = 1
+    elif fault == "measured_missing":
+        document["hailo"]["backend_terminal_states"] = []
+    else:
+        unused = next(item for item in old["hailo"]["backend_terminal_states"]
+                      if item["hw_arch"] == "hailo10h" and item["variant"] == "part1")
+        if fault == "unused_failed":
+            unused.update(status="failed", available=False)
+        else:
+            unused["unknown_diagnostic"] = True
+        original = rewritten_original(old, args)
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, rewritten(document, args), **args)
+
+
+def demoted_unexecuted_full_claims():
+    from onnx_splitpoint_tool.hailo_full_contract_promotion import _demote_hailo_suite_full_claims
+    original, document, args = current_only_terminal_summary(True)
+    demoted = _demote_hailo_suite_full_claims(document)
+    for arch in ("hailo8", "hailo10h"):
+        for key, value in demoted["hailo"]["hefs"][arch].items():
+            if key.startswith("full"):
+                document["hailo"]["hefs"][arch][key] = deepcopy(value)
+    return original, document, args
+
+
+def test_unexecuted_full_claims_may_only_follow_the_existing_normal_demotion():
+    original, document, args = demoted_unexecuted_full_claims()
+    proof = validate_generic_split_manifest_staging(original, rewritten(document, args), **args)
+    assert {item["backend_metadata"] for item in proof["demoted_unexecuted_full_claims"]} == {"hailo8", "hailo10h"}
+    assert all(item["current_full_execution_claimed"] is False
+               for item in proof["demoted_unexecuted_full_claims"])
+    assert len(proof["unchanged_artifact_bindings"]) == 7
+
+
+@pytest.mark.parametrize("fault", ["promoted", "contract_drift", "receipt_drift"])
+def test_full_claim_demotion_cannot_promote_replace_or_change_historical_metadata(fault):
+    original, document, args = demoted_unexecuted_full_claims()
+    meta = document["hailo"]["hefs"]["hailo8"]
+    if fault == "promoted":
+        meta["full_receipt_attested"] = True
+    elif fault == "contract_drift":
+        meta["full_output_contract"]["unreviewed_semantic_contract"] = True
+    else:
+        meta["full_build_receipt"] = {"sha256": "f" * 64}
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, rewritten(document, args), **args)
+
+
 def test_historical_relation_has_no_model_or_cut_id_exception():
     from onnx_splitpoint_tool.build_evidence import (
         boundary_endpoint_contract_sha256, canonical_build_key_from_hailo_v3_payload,

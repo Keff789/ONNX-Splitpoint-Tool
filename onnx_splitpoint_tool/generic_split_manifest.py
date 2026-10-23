@@ -367,13 +367,20 @@ def _validate_generic_split_manifest_staging(
         for key in ("artifact", "outcome", "reason"):
             permit(("deepx", "part1_dxnn", "cache_lookup", key), "same unused-backend artifact lookup metadata")
     historical_build_reuse = []
+    retained_historical_build_metadata = []
     for arch in ("hailo8", "hailo10"):
         old_build = original["hailo"]["hefs"][arch]["part1_build"]
         new_build = staged["hailo"]["hefs"][arch]["part1_build"]
         reuse = lambda b: b.get("ok") is True and b.get("cache_hit") is True and b.get("skipped") is True
         historical = (old_build.get("ok") is True and old_build.get("cache_hit") is False
                       and old_build.get("skipped") is False)
-        _require(reuse(new_build) and (reuse(old_build) or historical),
+        # This relation is explicitly scoped above to measured H8. A normal
+        # source-only staging may retain the other backend's successful build
+        # record verbatim; that is historical provenance, not a new reuse claim.
+        from .build_evidence import canonical_json_bytes
+        retained_historical = (arch == "hailo10" and historical
+                               and canonical_json_bytes(old_build) == canonical_json_bytes(new_build))
+        _require(retained_historical or reuse(new_build) and (reuse(old_build) or historical),
                  "part1 must remain actual artifact reuse or a proven successful historical build")
         _require(all(type(b.get("elapsed_s")) in (int, float) and math.isfinite(b["elapsed_s"])
                      and b["elapsed_s"] >= 0 for b in (old_build, new_build)), "invalid reuse elapsed time")
@@ -382,6 +389,12 @@ def _validate_generic_split_manifest_staging(
                 old_build, original, arch=arch, model=model, case=case,
                 source_sha256=bindings["source_part1_onnx"]["sha256"],
                 full_model_sha256=full_model_sha256, prepared=prepared)
+            if retained_historical:
+                retained_historical_build_metadata.append({
+                    **proof, "build_record_unchanged": True,
+                    "current_compile_claimed": False, "current_reuse_claimed": False,
+                })
+                continue
             if arch == "hailo8":
                 proof["actual_receipt_binding"] = _bind_historical_receipt(
                     part1_build_receipt_bytes, old_build, bindings)
@@ -427,11 +440,43 @@ def _validate_generic_split_manifest_staging(
     _require(staged["hailo"]["config"]["build"] == {"full": False, "part1": True, "part2": False},
              "unreviewed Hailo build/variant scope")
     removed_arches = set()
+    demoted_unexecuted_full_claims = []
     for arch in ("hailo8", "hailo10h"):
         old_hef = original["hailo"]["hefs"].get(arch, {})
         new_hef = staged["hailo"]["hefs"].get(arch, {})
         removed = set(old_hef) - set(new_hef)
         _require(removed <= _FULL_FIELDS, "non-Full backend field removed")
+        changed_full = any(canonical_json_bytes(old_hef[key]) != canonical_json_bytes(new_hef[key])
+                           for key in old_hef.keys() & new_hef.keys() & _FULL_FIELDS)
+        if changed_full:
+            from .hailo_full_contract_promotion import _demote_hailo_suite_full_claims
+            _require(len(retained_historical_build_metadata) == 1
+                     and any(p["backend_metadata"] == "hailo8" and "actual_receipt_binding" in p
+                             for p in historical_build_reuse)
+                     and old_hef.get("full_receipt_attested") is True
+                     and old_hef.get("full_build", {}).get("ok") is True
+                     and old_hef.get("full_output_contract", {}).get("artifact_binding_status") == "verified"
+                     and old_hef["full_output_contract"].get("contract_status") == "recorded",
+                     "unreviewed metadata or scientific manifest difference: unproved unexecuted Full claim demotion")
+            demoted = _demote_hailo_suite_full_claims(
+                {"hailo": {"hefs": {arch: old_hef}}})["hailo"]["hefs"][arch]
+            # The archived receipt may remain as exact historical metadata;
+            # both current attestation flags and the Full contract are demoted.
+            if "full_build_receipt" in new_hef:
+                _require("full_build_receipt" in old_hef
+                         and canonical_json_bytes(new_hef["full_build_receipt"])
+                             == canonical_json_bytes(old_hef["full_build_receipt"]),
+                         "historical unexecuted Full receipt changed")
+                demoted["full_build_receipt"] = deepcopy(old_hef["full_build_receipt"])
+            _require(canonical_json_bytes({k: v for k, v in new_hef.items() if k in _FULL_FIELDS})
+                     == canonical_json_bytes({k: v for k, v in demoted.items() if k in _FULL_FIELDS}),
+                     "unreviewed unexecuted Full contract change")
+            for key in sorted((old_hef.keys() | new_hef.keys()) & _FULL_FIELDS):
+                permit(("hailo", "hefs", arch, key), "exact normal unexecuted Full receipt-claim demotion")
+            demoted_unexecuted_full_claims.append({"backend_metadata": arch,
+                "normal_demotion": "_demote_hailo_suite_full_claims",
+                "current_full_execution_claimed": False})
+            removed = set()  # Claim demotion is not removal of the historical variant.
         if removed:
             removed_arches.add(arch)
             if arch not in staged["hailo"]["hefs"]:
@@ -446,9 +491,34 @@ def _validate_generic_split_manifest_staging(
                      "Full availability may only contract")
             permit(("hailo", "case_variant_availability", arch, "full"), "unexecuted Full variant is unavailable in source-only scope")
     old_states, new_states = original["hailo"]["backend_terminal_states"], staged["hailo"]["backend_terminal_states"]
-    _require(new_states == [s for s in old_states if not (s.get("variant") == "full"
-             and s.get("hw_arch") in removed_arches)], "backend terminal states changed outside removed Full scope")
-    permit(("hailo", "backend_terminal_states"), "only removed Full variant terminal rows omitted")
+    expected_states = [s for s in old_states if not (s.get("variant") == "full"
+                       and s.get("hw_arch") in removed_arches)]
+    omitted_unexecuted_states = []
+    if new_states != expected_states:
+        # The source-only generator may project its current terminal summary
+        # to H8 part1 while retaining all historical availability/build data.
+        # This is allowed only after proving measured reuse and the unchanged
+        # positive other-backend build above; no failed/unknown state is hidden.
+        def ready_state(value):
+            return (isinstance(value, dict) and set(value) == {
+                "available", "hw_arch", "reason", "status", "terminal", "variant"}
+                and value["available"] is True and value["terminal"] is True
+                and value["reason"] == "artifact_available" and value["status"] == "ready")
+        measured_states = [s for s in expected_states
+                           if s.get("hw_arch") == "hailo8" and s.get("variant") == "part1"]
+        omitted_unexecuted_states = [s for s in expected_states if s not in measured_states]
+        _require(len(retained_historical_build_metadata) == 1
+                 and any(p["backend_metadata"] == "hailo8" and "actual_receipt_binding" in p
+                         for p in historical_build_reuse)
+                 and len(measured_states) == len(new_states) == 1
+                 and all(ready_state(s) for s in expected_states + new_states)
+                 and len({(s["hw_arch"], s["variant"]) for s in expected_states}) == len(expected_states)
+                 and new_states == measured_states
+                 and all((s["variant"] == "full" and s["hw_arch"] in {"hailo8", "hailo10h"})
+                         or (s["variant"] == "part1" and s["hw_arch"] == "hailo10h")
+                         for s in omitted_unexecuted_states),
+                 "backend terminal states changed outside proven unexecuted positive scope")
+    permit(("hailo", "backend_terminal_states"), "only proven unexecuted variant terminal rows omitted")
     _require(expected == staged, "unreviewed metadata or scientific manifest difference")
     return {
         "schema": "onnx-splitpoint/generic-split-manifest-staging-provenance/v1",
@@ -459,6 +529,9 @@ def _validate_generic_split_manifest_staging(
         "prepared_input": {k: prepared[k] for k in ("sha256", "shape", "dtype", "layout", "input_name")},
         "source_image_sha256": feed["source_image_sha256"], "allowed_differences": changes,
         "historical_build_reuse": historical_build_reuse,
+        "retained_historical_build_metadata": retained_historical_build_metadata,
+        "omitted_unexecuted_backend_terminal_states": deepcopy(omitted_unexecuted_states),
+        "demoted_unexecuted_full_claims": demoted_unexecuted_full_claims,
         "scientific_manifest_fields_unchanged": True,
     }
 
