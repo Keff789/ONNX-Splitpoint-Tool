@@ -472,3 +472,187 @@ def test_hash_bound_malformed_or_unknown_receipt_denies(raw):
     bind_receipt(raw, args)
     with pytest.raises(ValueError, match="split-manifest staging"):
         validate_generic_split_manifest_staging(original, staged, **args)
+
+
+def test_actual_compact_h8_staging_keeps_measured_identity_and_omitted_history():
+    original, staged, args = bindings("b182")
+    old, current = json.loads(original), json.loads(staged)
+    unchanged = deepcopy(args)
+
+    proof = validate_generic_split_manifest_staging(original, staged, **args)
+
+    assert args == unchanged
+    assert set(current["hailo"]["hefs"]) == {"hailo8"}
+    assert not {"deepx", "deepx_part1_dxnn", "deepx_part1_output_contract"} & current.keys()
+    assert proof["original_manifest"] == args["original_source"]
+    assert proof["staged_manifest"] == args["staged_source"]
+    assert proof["scientific_manifest_fields_unchanged"] is True
+    assert proof["unchanged_artifact_bindings"] == {
+        role: {key: value[key] for key in ("sha256", "size_bytes")}
+        for role, value in args["original_artifacts"].items()
+    }
+    measured, = proof["historical_build_reuse"]
+    assert measured["backend_metadata"] == "hailo8"
+    assert measured["historical_observation"] == old["hailo"]["hefs"]["hailo8"]["part1_build"]
+    assert measured["executed_artifact_identity_proved"] is True
+    assert measured["compiler_source_byte_equality_claimed"] is False
+    receipt = measured["actual_receipt_binding"]
+    assert receipt["sha256"] == hashlib.sha256(args["part1_build_receipt_bytes"]).hexdigest()
+    assert receipt["hef_sha256"] == args["original_artifacts"]["part1_runtime"]["sha256"]
+    omitted = {item["backend_metadata"]: item for item in proof["omitted_unexecuted_backend_metadata"]}
+    assert set(omitted) == {"deepx", "hailo10"}
+    assert omitted["deepx"]["historical_observation"] == old["deepx"]
+    assert omitted["hailo10"]["historical_observation"] == old["hailo"]["hefs"]["hailo10"]
+    other_build = omitted["hailo10"]["validated_historical_build"]
+    assert other_build["historical_observation"] == old["hailo"]["hefs"]["hailo10"]["part1_build"]
+    assert other_build["executed_artifact_identity_proved"] is False
+    assert "actual_receipt_binding" not in other_build
+    for item in omitted.values():
+        assert item["current_compile_claimed"] is False
+        assert item["current_reuse_claimed"] is False
+        assert item["current_quality_or_hardware_pass_claimed"] is False
+
+
+@pytest.mark.parametrize("path", [
+    ("hailo", "hefs", "hailo8"),
+    ("hailo", "hefs", "hailo8", "part1"),
+    ("hailo", "hefs", "hailo8", "part1_build"),
+])
+def test_compact_staging_cannot_omit_the_measured_h8_record(path):
+    original, staged, args = bindings("b182")
+    document = json.loads(staged)
+    parent = document
+    for key in path[:-1]:
+        parent = parent[key]
+    del parent[path[-1]]
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, rewritten(document, args), **args)
+
+
+@pytest.mark.parametrize("key,value", [
+    ("unknown_current_build_field", True),
+    ("cache_hit", 1),
+    ("ok", False),
+    ("mapping_failed", True),
+    ("multi_context_used", True),
+    ("calib_source", "unknown_existing_artifact"),
+    ("context_mode", "multi_context_used"),
+    ("elapsed_s", -1),
+    ("source_onnx_path", "/foreign/b182/yolo26s_part1_b182.onnx"),
+    ("compiler_onnx_path", "/foreign/b182/yolo26s_part1_b182.onnx"),
+    ("build_receipt_path", "/foreign/b182/hailo/hailo8/part1/hailo_hef_build_receipt.json"),
+])
+def test_compact_measured_h8_summary_requires_ordinary_bound_reuse(key, value):
+    original, staged, args = bindings("b182")
+    document = json.loads(staged)
+    document["hailo"]["hefs"]["hailo8"]["part1_build"][key] = value
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, rewritten(document, args), **args)
+
+
+@pytest.mark.parametrize("raw", [None, b"{}", b"modified receipt bytes"])
+def test_compact_measured_h8_still_requires_exact_receipt_bytes(raw):
+    original, staged, args = bindings("b182")
+    args["part1_build_receipt_bytes"] = raw
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, staged, **args)
+
+
+@pytest.mark.parametrize("key,value", [
+    ("cache_key", "f" * 64),
+    ("compiler_onnx_filename", "different_compiler_graph.onnx"),
+    ("hef_sha256", "f" * 64),
+])
+def test_compact_hash_bound_receipt_cannot_replace_historical_artifact_identity(key, value):
+    original, staged, args = bindings("b182")
+    receipt = json.loads(args["part1_build_receipt_bytes"])
+    receipt[key] = value
+    bind_receipt(json.dumps(receipt, sort_keys=True).encode(), args)
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, staged, **args)
+
+
+@pytest.mark.parametrize("role", [
+    "part1_runtime", "source_part1_onnx", "source_part2_onnx", "part1_build_receipt",
+    "engine", "build_part2_onnx", "engine_build_receipt",
+])
+def test_compact_staging_still_requires_all_seven_original_artifacts(role):
+    original, staged, args = bindings("b182")
+    args["row"]["generic_artifact_binding"]["artifacts"][role]["sha256"] = "f" * 64
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, staged, **args)
+
+
+@pytest.mark.parametrize("fault", [
+    lambda a: a["producer_model"].update(part2_onnx_sha256="f" * 64),
+    lambda a: a.update(full_model_sha256="f" * 64),
+    lambda a: a["boundary_inputs"][0].update(shape=[1, 1]),
+    lambda a: a["row"]["input_binding"]["prepared_input"].update(sha256="f" * 64),
+    lambda a: a["row"]["input_binding"].update(runtime_input_format="uint8"),
+    lambda a: a["row"]["identity"].update(comparison_backend="hailo10h"),
+])
+def test_compact_staging_still_binds_model_boundary_input_and_execution_scope(fault):
+    original, staged, args = bindings("b182")
+    fault(args)
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, staged, **args)
+
+
+@pytest.mark.parametrize("path,value", [
+    (("deepx", "unknown_backend_field"), True),
+    (("deepx", "part1_dxnn", "ok"), False),
+    (("deepx", "part1_dxnn", "status"), "failed"),
+    (("deepx", "part1_dxnn", "cache_lookup", "outcome"), "MISS"),
+    (("hailo", "hefs", "hailo10", "unknown_backend_field"), True),
+    (("hailo", "hefs", "hailo10", "part1_build", "unknown_build_field"), True),
+    (("hailo", "hefs", "hailo10", "part1_build", "ok"), False),
+    (("hailo", "hefs", "hailo10", "part1_build", "negative_evidence_hit"), True),
+    (("hailo", "case_variant_availability", "hailo10h", "part1_failed"), True),
+])
+def test_compact_staging_cannot_hide_unknown_or_negative_original_backend_metadata(path, value):
+    original, staged, args = bindings("b182")
+    document = json.loads(original)
+    parent = document
+    for key in path[:-1]:
+        parent = parent[key]
+    parent[path[-1]] = value
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(rewritten_original(document, args), staged, **args)
+
+
+@pytest.mark.parametrize("context_count", [None, 0, True, 2])
+def test_compact_historical_single_context_requires_exact_positive_diagnostic(context_count):
+    original, staged, args = bindings("b182")
+    document = json.loads(original)
+    document["hailo"]["hefs"]["hailo8"]["part1_build"]["context_count"] = context_count
+    with pytest.raises(ValueError, match="historical compiler context"):
+        validate_generic_split_manifest_staging(rewritten_original(document, args), staged, **args)
+
+
+@pytest.mark.parametrize("fault", [
+    "deepx_alias_only", "deepx_block_only", "h10_availability_only",
+    "h10_part1_only", "h10_current_reuse", "h8_full_promotion",
+])
+def test_compact_staging_requires_coherent_omission_and_cannot_promote_unmeasured_backends(fault):
+    original, staged, args = bindings("b182")
+    old, document = json.loads(original), json.loads(staged)
+    if fault == "deepx_alias_only":
+        document["deepx_part1_dxnn"] = old["deepx_part1_dxnn"]
+    elif fault == "deepx_block_only":
+        document["deepx"] = deepcopy(old["deepx"])
+    elif fault == "h10_availability_only":
+        document["hailo"]["case_variant_availability"]["hailo10h"] = deepcopy(
+            old["hailo"]["case_variant_availability"]["hailo10h"])
+    elif fault == "h10_part1_only":
+        document["hailo"]["hefs"]["hailo10"] = {
+            "part1": old["hailo"]["hefs"]["hailo10"]["part1"]}
+    elif fault == "h10_current_reuse":
+        document["hailo"]["hefs"]["hailo10"] = {
+            "part1": old["hailo"]["hefs"]["hailo10"]["part1"],
+            "part1_build": deepcopy(document["hailo"]["hefs"]["hailo8"]["part1_build"]),
+        }
+    else:
+        document["hailo"]["hefs"]["hailo8"]["full"] = old["hailo"]["hefs"]["hailo8"]["full"]
+        document["hailo"]["case_variant_availability"]["hailo8"]["full"] = True
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, rewritten(document, args), **args)

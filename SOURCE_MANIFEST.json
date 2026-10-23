@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2384,
+  "file_count": 2388,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 482677,
-      "sha256": "54877abdb8d7cec5b04c0430c3a14096990a25aaec4f0d5d92c2a943ddfdafd4"
+      "size": 483758,
+      "sha256": "ac826893c4969ba0b55f3e63fe09976653ccc0e8c1d3017038f1ff49de92429d"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -1011,8 +1011,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/generic_split_manifest.py",
-      "size": 35304,
-      "sha256": "44318563c71cc10a972e51a796cfb8b7e7ad829fbab75405b9c0dce3575e8e2c"
+      "size": 45298,
+      "sha256": "1f95def865530dc26f8f9b7bc0fa154e703d4fc211359a83e217a230165fc658"
     },
     {
       "path": "onnx_splitpoint_tool/gui/__init__.py",
@@ -5600,6 +5600,26 @@
       "sha256": "f93ff5a87984bd3bfc2d272c95ed3b2fce5db965f267d07e5c3aaf92b623a720"
     },
     {
+      "path": "tests/fixtures/generic_split_manifest/b182_bindings.json",
+      "size": 20416,
+      "sha256": "9013a867105a09d6cb2b3d981c632a97542dff15fa8445f0c4ba767e485c1ba9"
+    },
+    {
+      "path": "tests/fixtures/generic_split_manifest/b182_original.json",
+      "size": 62083,
+      "sha256": "83f3fd78cc09464dfe879d4300f8fc63f5f645bbed40cb4a4f136ba1407105b5"
+    },
+    {
+      "path": "tests/fixtures/generic_split_manifest/b182_part1_build_receipt.json",
+      "size": 10750,
+      "sha256": "980bbf114c09c1089e85913a3ee290acd455447615ab38a01fac25ca12a0effc"
+    },
+    {
+      "path": "tests/fixtures/generic_split_manifest/b182_staged.json",
+      "size": 6366,
+      "sha256": "58840e8f65b343c31f30091c257c8fc4437a913279df0cd0e119b59105568d04"
+    },
+    {
       "path": "tests/fixtures/generic_split_manifest/b239_bindings.json",
       "size": 26681,
       "sha256": "d4559ee25be6e1149df0d0cc211ca13639b0ae5130783a69ea062f473d6fce14"
@@ -7691,8 +7711,8 @@
     },
     {
       "path": "tests/test_generic_split_manifest.py",
-      "size": 23874,
-      "sha256": "c7eec834fb8ba7974717c3f7779cbca472de1b3baf81d79f5ec30a61b6f602dc"
+      "size": 32960,
+      "sha256": "21724bcd45b81e4673ee8228e8d3de79c10cc8c5542c1b210608203775b84a0d"
     },
     {
       "path": "tests/test_hailo10_yolo26_full_semantic_fixture.py",
