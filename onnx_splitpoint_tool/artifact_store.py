@@ -117,8 +117,8 @@ def _owned_reflink_copy(src: Path, dst: Path) -> int:
         registry.unregister(proc)
 
 
-def materialize_file(src: Path, dst: Path) -> str:
-    """Materialize *src* at *dst*, preferring reflink/hardlink over copy."""
+def materialize_file(src: Path, dst: Path, *, allow_hardlink: bool = True) -> str:
+    """Materialize atomically; disallow hardlinks when the source stays mutable."""
     src = src.expanduser().resolve()
     # Replace a destination alias itself; never overwrite its source snapshot.
     dst = dst.expanduser().absolute()
@@ -138,13 +138,14 @@ def materialize_file(src: Path, dst: Path) -> str:
         registry = current_process_registry()
         if copy_rc == 130 and registry is not None and registry.cancelled:
             raise RuntimeError("artifact materialization cancelled")
-    try:
-        os.link(src, tmp)
-        os.replace(tmp, dst)
-        return "hardlink"
-    except OSError:
-        with contextlib.suppress(FileNotFoundError):
-            tmp.unlink()
+    if allow_hardlink:
+        try:
+            os.link(src, tmp)
+            os.replace(tmp, dst)
+            return "hardlink"
+        except OSError:
+            with contextlib.suppress(FileNotFoundError):
+                tmp.unlink()
     try:
         shutil.copy2(src, tmp)
         os.replace(tmp, dst)

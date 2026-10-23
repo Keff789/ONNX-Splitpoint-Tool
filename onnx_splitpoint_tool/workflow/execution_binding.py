@@ -44,6 +44,7 @@ from .artifacts import (
     read_json,
     relpath,
     sha256_file,
+    sha256_file_uncached,
     sha256_payload,
     write_json,
     write_text,
@@ -2142,7 +2143,7 @@ def _inspect_canonical_result(path: Path) -> Dict[str, Any]:
         detail["semantic_status"] = "unparseable"
     return detail
 
-def _copy_remote_result_files(remote_local_run_dir: Path, dst_dir: Path, *, flat_prefix: str = "") -> List[Dict[str, Any]]:
+def _copy_remote_result_files(remote_local_run_dir: Path, dst_dir: Path, *, flat_prefix: str = "", share_generic_case_reports: bool = False) -> List[Dict[str, Any]]:
     """Copy canonical result files and compact diagnostics into an EvaluationRun.
 
     v60t separates *canonical result transport* from *diagnostic-pack slimming*.
@@ -2246,6 +2247,7 @@ def _copy_remote_result_files(remote_local_run_dir: Path, dst_dir: Path, *, flat
         canonical: bool = False,
         source_label: str = "",
         unbounded: bool = False,
+        report_snapshot: Optional[Path] = None,
     ) -> bool:
         try:
             if not src.is_file():
@@ -2267,7 +2269,30 @@ def _copy_remote_result_files(remote_local_run_dir: Path, dst_dir: Path, *, flat
                 return False
             seen_destinations.add(dkey)
             dest.parent.mkdir(parents=True, exist_ok=True)
-            if str(src.resolve()) != str(dest.resolve()):
+            materialization = {}
+            if kind == "case_validation_report":
+                from ..artifact_store import materialize_file
+                # Raw transport can be re-extracted in place. Only the independently
+                # published snapshot may supply the second diagnostic hardlink.
+                source = report_snapshot if share_generic_case_reports and report_snapshot is not None else src
+                tmp = dest.with_name(f".{dest.name}.{os.getpid()}.{time.time_ns()}.tmp")
+                try:
+                    if share_generic_case_reports and report_snapshot is not None:
+                        try:
+                            os.link(source, tmp)
+                            method = "hardlink"
+                        except OSError:
+                            method = materialize_file(source, tmp, allow_hardlink=False)
+                    else:
+                        method = materialize_file(source, tmp, allow_hardlink=False)
+                    digest = sha256_file_uncached(src)
+                    if digest != sha256_file_uncached(tmp) or tmp.stat().st_size != size:
+                        raise RuntimeError("case_report_snapshot_bytes_changed")
+                    os.replace(tmp, dest)
+                    materialization = {"materialization": method, "sha256": digest}
+                finally:
+                    tmp.unlink(missing_ok=True)
+            elif str(src.resolve()) != str(dest.resolve()):
                 shutil.copy2(src, dest)
             copied.append({
                 "source": source_label or str(src),
@@ -2275,6 +2300,7 @@ def _copy_remote_result_files(remote_local_run_dir: Path, dst_dir: Path, *, flat
                 "kind": kind,
                 "canonical": bool(canonical),
                 "size_bytes": size,
+                **materialization,
             })
             return True
         except Exception as exc:
@@ -2313,8 +2339,13 @@ def _copy_remote_result_files(remote_local_run_dir: Path, dst_dir: Path, *, flat
             rel = src.relative_to(remote_local_run_dir)
         except Exception:
             rel = Path(src.name)
+        snapshot = None
         for dd in diagnostic_dirs:
-            _copy(src, dd / "case_reports" / rel, kind="case_validation_report", unbounded=True)
+            dest = dd / "case_reports" / rel
+            if _copy(src, dest, kind="case_validation_report", unbounded=True, report_snapshot=snapshot):
+                snapshot = dest
+            elif share_generic_case_reports:
+                break
 
     # Central quality inputs are scientific evidence, not optional diagnostics.
     # Preserve their relative case/results directory and never apply the 2 MiB
@@ -4013,7 +4044,19 @@ def _run_remote_dispatch_once(
                 status="failed_to_dispatch",
                 message=primary_error,
             )
-        copied = _copy_remote_result_files(local_run_dir, result_dir, flat_prefix=target_id) if local_run_dir else []
+        from ..runners.generic_quality_accounting import authorized_runs, copied_capture_summary
+        capture_plan = read_json(suite_dir / "benchmark_plan.json", default={}) or {}
+        authorized_captures = authorized_runs(capture_plan, profile_payload)
+        capture_ids = {row["id"] for row in authorized_captures}
+        capture_only_scope = bool(capture_ids) and all(
+            row.get("id") in capture_ids for row in _plan_run_entries(capture_plan)
+        )
+        copied = _copy_remote_result_files(
+            local_run_dir, result_dir, flat_prefix=target_id,
+            share_generic_case_reports=bool(capture_only_scope
+                and (profile_payload.get("workflow_execution") or {}).get("defer_central_quality") is True
+                and type(out.get("remote_rc")) is int and out["remote_rc"] == 0),
+        ) if local_run_dir else []
         deepx_prepared_input = _deepx_prepared_input_full_only_quality_na(
             gates=gates, model_id=model_id, target_id=target_id,
         )
@@ -4051,9 +4094,6 @@ def _run_remote_dispatch_once(
             model_id=model_id,
             eval_run_id=run_root.name,
         )
-        from ..runners.generic_quality_accounting import authorized_runs, copied_capture_summary
-        capture_plan = read_json(suite_dir / "benchmark_plan.json", default={}) or {}
-        authorized_captures = authorized_runs(capture_plan, profile_payload)
         generic_quality = copied_capture_summary(
             copied, authorized_captures,
             suite_dir=suite_dir, model_id=model_id, setup_id=target_id, eval_run_id=run_root.name,
@@ -4063,10 +4103,6 @@ def _run_remote_dispatch_once(
         # Collection can fail on an ancillary file after a successful source-only
         # capture. Admit only the complete, normally verified portable evidence;
         # retain the original transport failure and do not invent canonical rows.
-        capture_ids = {row["id"] for row in authorized_captures}
-        capture_only_scope = bool(capture_ids) and all(
-            row.get("id") in capture_ids for row in _plan_run_entries(capture_plan)
-        )
         remote_output = dict(out) if isinstance(out, Mapping) else {}
         cleanup = remote_output.get("remote_cleanup") or {}
         collection = cleanup.get("policy") or {}
