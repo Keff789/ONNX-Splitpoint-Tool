@@ -279,7 +279,7 @@ def load_quality_completion_config(path, *, check_files=True):
         raise ValueError("Generic completed Quality identity missing")
     base = _verify_contract(config.get("completion_contract"))
     if identity.get("comparison_backend") == "hailo8":
-        _h8_representative(config.get("representative_input"), base["processor_contract"]["input_hw"])
+        _h8_representative(config.get("representative_input"), base["processor_contract"]["input_hw"], identity["precision"])
     elif representative is not None and "runtime_input_adapter" in representative:
         raise ValueError("Generic completed Quality H8 input adapter cannot authorize another backend")
     if base["model_id"] != identity["model_id"]:
@@ -363,9 +363,11 @@ def _bridge_validator():
     return native_split_quality
 
 
-def _h8_representative(representative, input_hw):
+def _h8_representative(representative, input_hw, precision):
+    input_format = {"float32_layout_fp16": "float32", "uint8_dequant_fp16": "uint8"}.get(precision)
     if (not isinstance(representative, Mapping)
-            or representative.get("runtime_input_adapter") != H8_INPUT_ADAPTER
+            or input_format is None
+            or representative.get("runtime_input_adapter") != {**H8_INPUT_ADAPTER, "runtime_input_format": input_format}
             or not isinstance(representative.get("runtime_input_name"), str)
             or not representative["runtime_input_name"]):
         raise ValueError("Generic completed Quality H8 requires the explicit normal input adapter")
@@ -373,16 +375,17 @@ def _h8_representative(representative, input_hw):
     if (prepared.get("dtype") != "uint8" or prepared.get("shape") != [*input_hw, 3]
             or prepared.get("format") not in {"npy", "raw", "raw_bin", "binary"}):
         raise ValueError("Generic completed Quality H8 requires bound HWC RGB uint8 input bytes")
+    return input_format
 
 
-def _portable_h8_input(adapter_proof, representative, input_hw, runner):
+def _portable_h8_input(adapter_proof, representative, input_hw, runner, precision):
     """Verify an existing representative file against the normal H8 conversion.
 
     One bounded original file is transported with the proof. This permits the
-    controller to verify the numeric relation without inventing byte parity
-    between the RGB source and the float32 SDK input or re-running inference.
+    controller to verify the declared normal SDK input relation without
+    re-running inference.
     """
-    _h8_representative(representative, input_hw)
+    input_format = _h8_representative(representative, input_hw, precision)
     if (not isinstance(adapter_proof, Mapping) or set(adapter_proof) != {
             "prepared_file_base64", "adapter_implementation", "expected_runtime_input"}
             or adapter_proof.get("adapter_implementation") != {
@@ -412,10 +415,11 @@ def _portable_h8_input(adapter_proof, representative, input_hw, runner):
         raise ValueError("Generic completed Quality H8 original RGB tensor differs")
     # Verification arithmetic only. Capture invokes the unchanged normal runner
     # function, and the observer records the real post-adapter SDK feed.
-    expected = source.astype(np.float32) / np.float32(255.0)
+    expected = source if input_format == "uint8" else source.astype(np.float32) / np.float32(255.0)
     expected_snapshot = _input_snapshot({representative["runtime_input_name"]: expected})
     if adapter_proof["expected_runtime_input"] != expected_snapshot:
-        raise ValueError("Generic completed Quality H8 normal float32/255 relation differs")
+        relation = "uint8 passthrough" if input_format == "uint8" else "float32/255"
+        raise ValueError("Generic completed Quality H8 normal " + relation + " relation differs")
     return source, expected_snapshot
 
 
@@ -650,7 +654,7 @@ class GenericQualityCompletion:
             compared = expected
             if self.timed_input_adapter is not None:
                 compared_map = self.timed_input_adapter({"task": "detection", "input_binding": {
-                    "runtime_input_format": H8_INPUT_ADAPTER["runtime_input_format"]}}, "hailo8", {name: expected})
+                    "runtime_input_format": representative["runtime_input_adapter"]["runtime_input_format"]}}, "hailo8", {name: expected})
                 if not isinstance(compared_map, Mapping) or set(compared_map) != {name}:
                     raise ValueError("Generic completed Quality H8 actual adapter endpoint changed")
                 compared = compared_map[name]
@@ -658,7 +662,8 @@ class GenericQualityCompletion:
                 adapter_proof = {"prepared_file_base64": base64.b64encode(payload).decode("ascii"),
                     "adapter_implementation": {"function": H8_INPUT_ADAPTER["function"], "runner": self.runner_descriptor},
                     "expected_runtime_input": _input_snapshot(compared_map)}
-                _portable_h8_input(adapter_proof, representative, policy["input_hw"], self.runner_descriptor)
+                _portable_h8_input(adapter_proof, representative, policy["input_hw"], self.runner_descriptor,
+                                   self.config["identity"]["precision"])
             if (actual is None or actual.dtype != compared.dtype or actual.shape != compared.shape
                     or not np.array_equal(actual, compared) or representative.get("source_image_sha256") != image_sha
                     or representative.get("original_wh") != list(original_wh)):
@@ -737,10 +742,11 @@ def bind_completed_quality_producer(producer_identity, completion_contract, evid
     return producer, completion
 
 
-def completed_quality_export_fields(evidence, candidate_records, producer_identity):
+def completed_quality_export_fields(evidence, candidate_records, producer_identity, *, producer_source_authority=None):
     """Bind actual completed records into both ordinary portable envelopes."""
     proof = deepcopy(evidence)
-    _validate_evidence(proof, candidate_records, proof["base_completion_contract"], proof["runtime_artifacts"])
+    _validate_evidence(proof, candidate_records, proof["base_completion_contract"], proof["runtime_artifacts"],
+                       producer_source_authority=producer_source_authority)
     producer = producer_identity or {}
     _validate_producer(proof, producer)
     proof.pop("evidence_sha256")
@@ -818,7 +824,7 @@ def _validate_capture_timing(value, expected_count):
         raise ValueError("Generic completed Quality capture timing scope/count/monotonic duration invalid")
 
 
-def _validate_evidence(evidence, records, completion_contract, expected_runtime_artifacts):
+def _validate_evidence(evidence, records, completion_contract, expected_runtime_artifacts, *, producer_source_authority=None):
     if (not isinstance(evidence, Mapping) or evidence.get("schema") != EVIDENCE_SCHEMA
             or type(evidence.get("schema_version")) is not int or evidence["schema_version"] != 1):
         raise ValueError("Generic completed Quality actual completion evidence missing")
@@ -863,9 +869,20 @@ def _validate_evidence(evidence, records, completion_contract, expected_runtime_
             raise ValueError("Generic completed Quality bridge proof validator implementation differs")
     elif "existing_part2_bridge_runtime_policy" in evidence:
         raise ValueError("Generic completed Quality bridge proof reference missing")
-    # Controller/source aliases may differ from deployed paths; implementation
-    # bytes must still match the actual verifier modules, not just their names.
+    admitted_producer_sources = False
+    if producer_source_authority is not None:
+        if __package__ == "splitpoint_runners":
+            raise ValueError("Generic completed Quality producer-source authority is controller-only")
+        from ..workflow.generic_quality_sidecars import _ProducerSourceAuthority
+        if type(producer_source_authority) is not _ProducerSourceAuthority:
+            raise ValueError("Generic completed Quality producer-source authority invalid")
+        producer_source_authority.validate_evidence_sources(evidence)
+        admitted_producer_sources = True
+    # Decoder/endpoint implementations remain exact. A controller may verify
+    # an older observer only through its normally admitted original sources.
     for module in (__file__, _product().__file__, _three_stage().__file__, _product()._yolo_module.__file__, _endpoint.__file__):
+        if module == __file__ and admitted_producer_sources:
+            continue
         if not any(Path(path).name == Path(module).name and digest == _sha(module) for path, digest in sources.items()):
             raise ValueError("Generic completed Quality implementation source differs")
     ids = evidence.get("image_ids"); per_image = evidence.get("per_image")
@@ -908,7 +925,7 @@ def _validate_evidence(evidence, records, completion_contract, expected_runtime_
             raise ValueError("Generic completed Quality exported detections differ from actual completed result")
     representative = evidence.get("representative_input")
     if evidence["identity"].get("comparison_backend") == "hailo8":
-        _h8_representative(representative, base["processor_contract"]["input_hw"])
+        _h8_representative(representative, base["processor_contract"]["input_hw"], evidence["identity"]["precision"])
     if representative is not None:
         matched = [entry for entry in per_image if entry["image_id"] == representative.get("image_id")]
         if len(matched) != 1:
@@ -923,7 +940,7 @@ def _validate_evidence(evidence, records, completion_contract, expected_runtime_
         if evidence["identity"].get("comparison_backend") == "hailo8":
             adapter_proof = comparison.get("runtime_input_adapter_proof")
             source, adapted = _portable_h8_input(adapter_proof, representative,
-                                               base["processor_contract"]["input_hw"], runner)
+                                               base["processor_contract"]["input_hw"], runner, evidence["identity"]["precision"])
             if expected_tensor != _input_snapshot({"canonical": source})["canonical"]:
                 raise ValueError("Generic completed Quality H8 prepared source snapshot differs")
             expected_tensor = adapted[name]
@@ -942,7 +959,7 @@ def _validate_evidence(evidence, records, completion_contract, expected_runtime_
 
 
 def validate_completed_quality_binding(request, result, completion_contract, expected_runtime_artifacts,
-                                     *, request_path, reference_descriptor):
+                                     *, request_path, reference_descriptor, producer_source_authority=None):
     """Verify actual normal transported completion evidence before admission."""
     request_path = Path(request_path).resolve(); descriptor = request.get("candidate") or {}
     if json.loads(request_path.read_text(encoding="utf-8")) != request:
@@ -956,7 +973,8 @@ def validate_completed_quality_binding(request, result, completion_contract, exp
     evidence = request.get(FIELD)
     if evidence != candidate.get(FIELD):
         raise ValueError("Generic completed Quality request/candidate completion evidence differs")
-    proof = _validate_evidence(evidence, candidate.get("records") or [], completion_contract, expected_runtime_artifacts)
+    proof = _validate_evidence(evidence, candidate.get("records") or [], completion_contract, expected_runtime_artifacts,
+                               producer_source_authority=producer_source_authority)
     producer = request.get("producer_identity") or {}
     _validate_producer(proof, producer)
     completion = producer.get("candidate_execution_completion_contract") or {}
@@ -975,10 +993,16 @@ def validate_completed_quality_binding(request, result, completion_contract, exp
             or completion.get("completion_mode") != "stage1_stage2_then_frozen_detection_completion_per_image"
             or completion.get("frozen_completion_execution_contract_sha256") != completion_contract["contract_sha256"]):
         raise ValueError("Generic completed Quality normal result/reference/image binding differs")
-    return {"schema": EVIDENCE_SCHEMA, "evidence_sha256": proof["evidence_sha256"],
+    summary = {"schema": EVIDENCE_SCHEMA, "evidence_sha256": proof["evidence_sha256"],
             "base_completion_contract_sha256": proof["base_completion_contract"]["contract_sha256"],
             "image_count": proof["image_count"], "completion_factory": proof["completion_factory"],
             "all_actual_completed_records_verified": True,
             "representative_input": deepcopy(proof.get("representative_input")),
             "representative_input_comparison": next((deepcopy(entry["representative_input_comparison"])
                 for entry in proof["per_image"] if entry.get("representative_input_comparison") is not None), None)}
+    if producer_source_authority is not None:
+        summary["producer_observer_implementation"] = next(deepcopy(source) for source in proof["runtime_source_files"]
+            if Path(source["path"]).name == Path(__file__).name)
+        summary["consumer_observer_implementation"] = {
+            "path": str(Path(__file__).resolve()), "sha256": _sha(__file__), "size_bytes": Path(__file__).stat().st_size}
+    return summary

@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import stat
 import tempfile
 
 
@@ -53,6 +54,156 @@ def _check_sources(config, root):
             raise ValueError("generic_quality_sidecar_runtime_source_changed")
         if "size_bytes" in source and path.stat().st_size != source["size_bytes"]:
             raise ValueError("generic_quality_sidecar_runtime_source_size_changed")
+
+
+_PRODUCER_SOURCE_AUTHORITY_TOKEN = object()
+
+
+def _producer_source_path(path):
+    path = Path(path)
+    if (not path.is_absolute() or ".." in path.parts
+            or any(member.is_symlink() for member in (path, *path.parents))):
+        raise ValueError("generic_quality_producer_source_path_invalid")
+    return path
+
+
+def _producer_source_bytes(descriptor):
+    if (not isinstance(descriptor, Mapping) or not _digest(descriptor.get("sha256"))
+            or not isinstance(descriptor.get("path"), str)
+            or type(descriptor.get("size_bytes")) is not int or descriptor["size_bytes"] < 1):
+        raise ValueError("generic_quality_producer_source_descriptor_invalid")
+    path = _producer_source_path(descriptor["path"])
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
+        before = os.fstat(stream.fileno())
+        if not stat.S_ISREG(before.st_mode) or before.st_size != descriptor["size_bytes"]:
+            raise ValueError("generic_quality_producer_source_size_changed")
+        payload = stream.read()
+        after = os.fstat(stream.fileno())
+    current = _producer_source_path(path).stat()
+    fields = lambda value: (value.st_dev, value.st_ino, value.st_size,
+                            value.st_mtime_ns, value.st_ctime_ns)
+    if (fields(before) != fields(after) or fields(before) != fields(current)
+            or len(payload) != descriptor["size_bytes"]
+            or hashlib.sha256(payload).hexdigest() != descriptor["sha256"]):
+        raise ValueError("generic_quality_producer_source_bytes_changed")
+    return payload
+
+
+def _producer_python_sources(root, case_id):
+    package = _producer_source_path(root / "splitpoint_runners")
+    if not package.is_dir():
+        raise ValueError("generic_quality_producer_source_closure_missing")
+    for member in package.rglob("*"):
+        if member.is_symlink():
+            raise ValueError("generic_quality_producer_source_path_invalid")
+    return {root / case_id / "run_split_onnxruntime.py", *package.rglob("*.py")}
+
+
+class _ProducerSourceAuthority:
+    """Operation-local access to original authorized config and source bytes."""
+    __slots__ = ("__config_bytes", "__descriptors", "__root", "__case_id", "__sources")
+
+    def __init__(self, token, *, config_bytes, descriptors, root, case_id, sources):
+        if token is not _PRODUCER_SOURCE_AUTHORITY_TOKEN:
+            raise ValueError("generic_quality_producer_source_authority_factory_required")
+        object.__setattr__(self, "_ProducerSourceAuthority__config_bytes", config_bytes)
+        object.__setattr__(self, "_ProducerSourceAuthority__descriptors", tuple(
+            (item["path"], item["sha256"], item["size_bytes"]) for item in descriptors))
+        object.__setattr__(self, "_ProducerSourceAuthority__root", str(root))
+        object.__setattr__(self, "_ProducerSourceAuthority__case_id", case_id)
+        object.__setattr__(self, "_ProducerSourceAuthority__sources", tuple(str(path) for path in sources))
+
+    def __setattr__(self, name, value):
+        raise AttributeError("Generic producer source authority is immutable")
+
+    def validate_evidence_sources(self, evidence):
+        """Recheck real original files before admitting their portable projection."""
+        for path, digest, size in self.__descriptors:
+            _producer_source_bytes({"path": path, "sha256": digest, "size_bytes": size})
+        root = _producer_source_path(self.__root)
+        if _producer_python_sources(root, self.__case_id) != {Path(path) for path in self.__sources}:
+            raise ValueError("generic_quality_producer_source_closure_changed")
+        config = json.loads(self.__config_bytes)
+        config_file = evidence.get("config_file") if isinstance(evidence, Mapping) else None
+        if (not isinstance(evidence, Mapping)
+                or not isinstance(config_file, Mapping)
+                or config_file.get("sha256") != self.__descriptors[0][1]
+                or evidence.get("identity") != config["identity"]
+                or evidence.get("base_completion_contract") != config["completion_contract"]
+                or evidence.get("image_ids") != config["expected_image_ids"]
+                or type(evidence.get("image_count")) is not int
+                or evidence["image_count"] != len(config["expected_image_ids"])):
+            raise ValueError("generic_quality_producer_source_config_binding_changed")
+        observed = evidence.get("runtime_source_files")
+        if not isinstance(observed, list) or len(observed) != len(config["runtime_source_files"]):
+            raise ValueError("generic_quality_producer_source_closure_changed")
+        matched = set()
+        for declared in config["runtime_source_files"]:
+            token = declared["path"]
+            matches = [(index, source) for index, source in enumerate(observed)
+                       if isinstance(source, Mapping) and isinstance(source.get("path"), str)
+                       and source["path"].endswith("/" + token)]
+            if (len(matches) != 1 or matches[0][0] in matched
+                    or any(matches[0][1].get(key) != declared[key] for key in ("sha256", "size_bytes"))):
+                raise ValueError("generic_quality_producer_source_closure_changed")
+            matched.add(matches[0][0])
+        expected = config["expected_runtime_artifacts"]
+        actual = evidence.get("runtime_artifacts")
+        if (not isinstance(actual, Mapping) or set(actual) != set(expected)
+                or any(not isinstance(actual[role], Mapping)
+                       or any(actual[role].get(key) != expected[role][key] for key in ("sha256", "size_bytes"))
+                       for role in expected)):
+            raise ValueError("generic_quality_producer_source_artifact_binding_changed")
+
+
+def admit_generic_quality_producer_sources(*, profile, benchmark_plan, suite_dir,
+                                          config_path, model_id):
+    """Admit an original profile-selected config and its complete local sources."""
+    from ..runners.generic_quality_accounting import authorized_runs
+    from ..runners.generic_quality_completion import load_quality_completion_config
+
+    root = _producer_source_path(suite_dir)
+    origin = _producer_source_path(config_path)
+    rows = authorized_runs(benchmark_plan, profile)
+    selected = [(run, case, source) for run in rows
+                for case, source in run["generic_quality_completion_sources"].items()
+                if Path(source["path"]) == origin]
+    if len(selected) != 1:
+        raise ValueError("generic_quality_producer_source_original_config_unbound")
+    run, case, source = selected[0]
+    payload = _producer_source_bytes(source)
+    target = _contained(root, run["generic_quality_completion_configs"][case])
+    copied = {"path": str(target), "sha256": source["sha256"], "size_bytes": source["size_bytes"]}
+    if _producer_source_bytes(copied) != payload:
+        raise ValueError("generic_quality_producer_source_sidecar_changed")
+    raw = json.loads(payload)
+    config = load_quality_completion_config(target, check_files=False)
+    if (raw.get("path_root") != "suite_root"
+            or config["identity"].get("model_id") != model_id
+            or config["identity"].get("case_id") != case
+            or config["identity"].get("setup_id") != run["hardware_setup_id"]
+            or run.get("validation_max_images") != len(config["expected_image_ids"])):
+        raise ValueError("generic_quality_producer_source_original_config_identity_changed")
+    declared = raw.get("runtime_source_files")
+    if not isinstance(declared, list) or len(declared) != 37:
+        raise ValueError("generic_quality_producer_source_complete_37_required")
+    descriptors = [dict(source), copied]
+    paths = set()
+    for item in declared:
+        if (not isinstance(item, Mapping) or not isinstance(item.get("path"), str)
+                or Path(item["path"]).suffix != ".py"):
+            raise ValueError("generic_quality_producer_source_closure_invalid")
+        path = _contained(root, item["path"])
+        if path in paths:
+            raise ValueError("generic_quality_producer_source_closure_duplicated")
+        paths.add(path)
+        descriptor = {**item, "path": str(path)}
+        _producer_source_bytes(descriptor)
+        descriptors.append(descriptor)
+    if paths != _producer_python_sources(root, case):
+        raise ValueError("generic_quality_producer_source_complete_37_required")
+    return _ProducerSourceAuthority(_PRODUCER_SOURCE_AUTHORITY_TOKEN,
+        config_bytes=payload, descriptors=descriptors, root=root, case_id=case, sources=paths)
 
 
 def _publish_new(target, payload):

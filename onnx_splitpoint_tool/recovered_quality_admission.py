@@ -24,6 +24,7 @@ from .workflow.run_control import (EvaluationRunLock, build_resume_contract,
     validate_generic_orphan_recovery_owner)
 from .workflow.runner import EvaluationWorkflowRunner as Runner
 from .workflow import generic_quality_sidecars
+from .workflow.artifact_cache_preflight import resolve_generated_benchmark_suite_dir
 from .workflow.scientific_reporting import project_central_quality_status
 
 
@@ -284,10 +285,24 @@ def admit_preserved_completed_quality(*, original_run_dir, recovery_receipt,
                 case_id=case, run_id=identity["source_run_id"], reference_status=status,
                 producer_flat_field_names=Runner._trt_quality_flat_field_names())
             from .runners.generic_quality_completion import validate_completed_quality_binding
+            from .runners import generic_quality_completion as verifier
+            observer = Path(verifier.__file__)
+            observer_sha = verifier._sha(observer)
+            proof = payload.get("generic_completed_quality") or {}
+            same_observer = isinstance(proof, dict) and any(
+                isinstance(source, dict) and Path(str(source.get("path") or "")).name == observer.name
+                and source.get("sha256") == observer_sha for source in proof.get("runtime_source_files") or [])
+            authority = None
+            if not same_observer:
+                suite = resolve_generated_benchmark_suite_dir(run_dir=run, model_id=model)
+                benchmark, _ = sources.bind(suite / "benchmark_plan.json")
+                authority = generic_quality_sidecars.admit_generic_quality_producer_sources(
+                    profile=profile, benchmark_plan=benchmark, suite_dir=suite,
+                    config_path=Path(config_source["path"]), model_id=model)
             validate_completed_quality_binding(payload, result, config["completion_contract"],
                 config["expected_runtime_artifacts"], request_path=request_path,
-                reference_descriptor=canonical_reference_descriptor)
-            from .runners import generic_quality_completion as verifier
+                reference_descriptor=canonical_reference_descriptor,
+                producer_source_authority=authority)
             modules = [verifier, verifier._product(), verifier._three_stage(),
                        verifier._product()._yolo_module, verifier._endpoint]
             if (payload.get("generic_completed_quality") or {}).get("existing_part2_bridge"):

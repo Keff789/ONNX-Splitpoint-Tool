@@ -61,7 +61,8 @@ def h8_capture(fixture, *, actual=None, adapter=None):
     class Session:
         def infer(self, feeds): return fixture["outputs"]
     session = Session(); records = {}
-    feeds = normal_adapter()({"task":"detection", "input_binding":{"runtime_input_format":"float32"}},
+    feeds = normal_adapter()({"task":"detection", "input_binding":{"runtime_input_format":
+        cfg["representative_input"]["runtime_input_adapter"]["runtime_input_format"]}},
                              "hailo8", fixture["inputs"]) if actual is None else actual
     for image in fixture["images"]:
         with runtime.observe_stage1_inputs(session, prepared_inputs=fixture["inputs"]):
