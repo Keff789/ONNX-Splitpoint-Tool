@@ -56,7 +56,8 @@ def _generic_orphan_read(path, snapshots, descriptor=None):
 
 
 def _generic_orphan_local_observation(owners, *, run_dir, profile_path,
-                                      process_groups, ssh_host, known_operations):
+                                      process_groups, ssh_host, known_operations,
+                                      resource_setup=None):
     """Close the recorded Generic scope, including detached transfer/helpers.
 
     Missing PIDs alone are insufficient: inspect the complete visible process
@@ -66,6 +67,10 @@ def _generic_orphan_local_observation(owners, *, run_dir, profile_path,
     """
     from .resource_recovery_observation import _observe_processes
     observed = _observe_processes(owners)
+    if resource_setup is not None:
+        from .resource_recovery_observation import scope_local_resource_owners
+        observed = scope_local_resource_owners(
+            resource_setup, local_owners=owners, raw_observation=observed)
     if not observed.get("ok"):
         return {"ok": False, "recorded_scope": observed}
     proc = Path("/proc")
@@ -123,6 +128,31 @@ def _generic_orphan_local_observation(owners, *, run_dir, profile_path,
 
 def recover_generic_orphan_run(*, run_dir, session_id, setup_id, evidence_path,
                                authorization_path, evidence_output, registry_path=None):
+    return _recover_generic_original_run(
+        run_dir=run_dir, session_id=session_id, setup_id=setup_id,
+        evidence_path=evidence_path, authorization_path=authorization_path,
+        evidence_output=evidence_output, registry_path=registry_path,
+        predispatch_run_only=False)
+
+
+def recover_generic_predispatch_run_only(*, run_dir, session_id, setup_id,
+                                         evidence_path, authorization_path,
+                                         evidence_output, registry_path=None):
+    """Close an ended, never-dispatched Generic Quality run, without releasing a DUT.
+
+    Only genuine original control records and a normally released physical
+    predecessor are accepted. This starts no work and never resumes the run.
+    """
+    return _recover_generic_original_run(
+        run_dir=run_dir, session_id=session_id, setup_id=setup_id,
+        evidence_path=evidence_path, authorization_path=authorization_path,
+        evidence_output=evidence_output, registry_path=registry_path,
+        predispatch_run_only=True)
+
+
+def _recover_generic_original_run(*, run_dir, session_id, setup_id, evidence_path,
+                                   authorization_path, evidence_output,
+                                   registry_path, predispatch_run_only):
     """Explicitly close one proven quiescent orphaned Generic Quality session.
 
     Input documents point to genuine original launcher, handoff and interruption
@@ -149,18 +179,29 @@ def recover_generic_orphan_run(*, run_dir, session_id, setup_id, evidence_path,
     evidence_file, auth_file = Path(evidence_path).expanduser(), Path(authorization_path).expanduser()
     evidence = _generic_orphan_read(evidence_file, snapshots)
     auth = _generic_orphan_read(auth_file, snapshots)
-    _require(evidence.get("schema") == "onnx-splitpoint/generic-orphan-recovery-input"
+    schema = ("onnx-splitpoint/generic-predispatch-run-only-recovery"
+              if predispatch_run_only else "onnx-splitpoint/generic-orphan-recovery")
+    _require(evidence.get("schema") == schema + "-input"
              and type(evidence.get("schema_version")) is int and evidence["schema_version"] == 1
              and _bound(evidence, identity, identity), "Generic orphan input scope differs")
-    _require(auth.get("schema") == "onnx-splitpoint/generic-orphan-recovery-authorization"
+    _require(auth.get("schema") == schema + "-authorization"
              and type(auth.get("schema_version")) is int and auth["schema_version"] == 1
-             and auth.get("authorized") is True and auth.get("action") == "recover_generic_orphan_run"
+             and auth.get("authorized") is True and auth.get("action") == (
+                 "recover_generic_predispatch_run_only" if predispatch_run_only
+                 else "recover_generic_orphan_run")
              and _bound(auth, identity, identity)
              and all(isinstance(auth.get(k), str) and auth[k].strip() for k in ("operator", "source", "authorized_at")),
              "explicit Generic orphan operator authorization differs")
     _require(_time(auth["authorized_at"]) <= datetime.now(timezone.utc), "Generic authorization is in the future")
     _require(isinstance(auth.get("evidence"), Mapping), "authorization lacks its exact evidence descriptor")
     _generic_orphan_read(evidence_file, snapshots, auth["evidence"])
+    if predispatch_run_only and "live_binding" in evidence:
+        _require(not any(key in evidence for key in ("initial_lineage", "handoff", "interruption")),
+                 "pre-dispatch binding forms must not be mixed")
+        return _recover_generic_predispatch_live(
+            run=run, identity=identity, evidence=evidence, auth=auth,
+            evidence_file=evidence_file, auth_file=auth_file, output=Path(evidence_output).expanduser(),
+            snapshots=snapshots, registry_path=registry_path)
     def referenced(name, source=evidence):
         descriptor = source.get(name)
         _require(isinstance(descriptor, Mapping), "Generic orphan lacks original " + name)
@@ -191,6 +232,12 @@ def recover_generic_orphan_run(*, run_dir, session_id, setup_id, evidence_path,
              and scope.get("FPS") is False and isinstance(scope.get("model_id"), str)
              and isinstance(scope.get("case_ids"), list) and bool(scope["case_ids"]),
              "only original source-only Generic Quality scope is recoverable")
+    if predispatch_run_only:
+        _require(scope.get("Full", False) is False
+                 and len(set(scope["case_ids"])) == len(scope["case_ids"])
+                 and all(isinstance(case, str) and re.fullmatch(r"b[0-9]+", case)
+                         for case in scope["case_ids"]),
+                 "pre-dispatch recovery requires exact split-only Quality cases")
     model_id = scope["model_id"]
     _require(Path(model_id).name == model_id and model_id not in {".", ".."}, "invalid original model scope")
     owner_rows = []
@@ -250,6 +297,10 @@ def recover_generic_orphan_run(*, run_dir, session_id, setup_id, evidence_path,
                   if row.get("operation_id")]
     operations += [str(row.get("value", {}).get("operation_id")) for row in original.get("lease_records", [])
                    if row.get("value", {}).get("operation_id")]
+    if predispatch_run_only:
+        _require(not original["lease_records"] and not operations
+                 and not phase.get("orphan_scp_pid") and not orphan,
+                 "pre-dispatch recovery cannot contain prior lease/transfer work")
     if orphan.get("target") == target.get("user", "") + "@" + target.get("host", ""):
         _require(orphan.get("exact_original_remote_operation") in operations
                  and type(orphan.get("pid")) is int and str(orphan.get("start_ticks") or "").isdecimal(),
@@ -268,6 +319,12 @@ def recover_generic_orphan_run(*, run_dir, session_id, setup_id, evidence_path,
              and not any(p.is_symlink() for p in (registry_file, *registry_file.parents)),
              "normal hardware registry unavailable")
     registry_before = registry_file.read_bytes()
+    if predispatch_run_only:
+        descriptor = evidence.get("registry") or {}
+        _require(descriptor == {"path": str(registry_file),
+                 "sha256": hashlib.sha256(registry_before).hexdigest(),
+                 "size_bytes": len(registry_before)},
+                 "pre-dispatch registry descriptor differs")
     registry, _ = _read_hardware_registry_unlocked(registry_file)
     setups = [row for row in registry.get("hardware_setups", []) if row.get("id") == setup_id]
     _require(len(setups) == 1, "registered Generic setup missing or ambiguous")
@@ -291,6 +348,15 @@ def recover_generic_orphan_run(*, run_dir, session_id, setup_id, evidence_path,
     try:
         physical.acquire_for_recovery()
         try:
+            if predispatch_run_only:
+                return _recover_generic_predispatch_locked(
+                    run=run, identity=identity, lineage=lineage, original=original,
+                    source_profile=source_profile, evidence=evidence, auth=auth,
+                    evidence_file=evidence_file, auth_file=auth_file, output=output,
+                    snapshots=snapshots, owners=owners, groups=groups, operations=operations,
+                    host=host, setup=setup, registry_file=registry_file,
+                    registry_before=registry_before, run_lock=run_lock,
+                    physical=physical, resource=resource, recovery_id=recovery_id)
             return _recover_generic_orphan_locked(
                 run=run, identity=identity, lineage=lineage, original=original, source_profile=source_profile,
                 auth=auth, evidence_file=evidence_file, auth_file=auth_file, output=output,
@@ -301,6 +367,480 @@ def recover_generic_orphan_run(*, run_dir, session_id, setup_id, evidence_path,
             physical.release(write_released_state=False)
     finally:
         run_lock.release(write_released_state=False)
+
+
+def _recover_generic_predispatch_live(*, run, identity, evidence, auth, evidence_file,
+        auth_file, output, snapshots, registry_path):
+    """Use a real live Action/Creation binding, never synthesize launcher history."""
+    from .predispatch_binding import load_generic_predispatch_live_binding
+    from ..workflow.execution_binding import physical_dut_key
+    from ..platform_power import host_config_from_setup
+    from ..energy.config import default_registry_path, _read_hardware_registry_unlocked
+    import uuid
+    registry_file = Path(registry_path or default_registry_path()).expanduser()
+    _require(registry_file.is_absolute() and registry_file.is_file()
+             and not any(path.is_symlink() for path in (registry_file, *registry_file.parents)),
+             "normal pre-dispatch registry is unavailable")
+    registry_before = registry_file.read_bytes()
+    registry, _ = _read_hardware_registry_unlocked(registry_file)
+    selected = [row for row in registry.get("hardware_setups", []) if row.get("id") == identity["setup_id"]]
+    _require(len(selected) == 1, "exact pre-dispatch setup is missing or ambiguous")
+    setup = selected[0]
+    host = host_config_from_setup(setup)
+    fields = setup.get("host") if isinstance(setup.get("host"), Mapping) else {}
+    resource = physical_dut_key({"remote": {"host": host.host,
+        "physical_host_id": setup.get("physical_host_id") or fields.get("physical_host_id")}})
+    _require(output.is_absolute() and not any(path.is_symlink() for path in (output, *output.parents))
+             and not output.resolve().is_relative_to(run)
+             and output not in snapshots and output != registry_file,
+             "pre-dispatch receipt must be separate from original evidence")
+    recovery_owner = {"run_id": run.name, "session_id": identity["session_id"],
+                      "purpose": "explicit_generic_predispatch_run_only_recovery"}
+    run_lock = EvaluationRunLock(out_root=run.parent, run_dir=run, owner=recovery_owner)
+    physical = EvaluationRunLock.for_resource(resource, owner=recovery_owner)
+    run_lock.acquire_for_recovery()
+    try:
+        physical.acquire_for_recovery()
+        try:
+            context = load_generic_predispatch_live_binding(
+                run_dir=run, session_id=identity["session_id"], setup_id=identity["setup_id"],
+                evidence=evidence, snapshots={}, run_lock=run_lock, registry_path=registry_file)
+            frozen = dict(context["source_snapshots"])
+            snapshots.update(frozen)
+            end_descriptor = evidence.get("lifecycle_end") or {}
+            end = _generic_orphan_read(end_descriptor.get("path", ""), snapshots, end_descriptor)
+            process = context["process"]
+            report = end.get("process_tree_report") or {}
+            ended_identity = end.get("original_process_identity") or {}
+            _require(end.get("schema") == "onnx-splitpoint/generic-predispatch-lifecycle-end-v1"
+                     and type(end.get("schema_version")) is int and end["schema_version"] == 1
+                     and _bound(end, identity, identity)
+                     and end.get("live_binding") == evidence["live_binding"]
+                     and isinstance(ended_identity, Mapping)
+                     and set(ended_identity) == {"pid", "start_ticks"}
+                     and type(ended_identity.get("pid")) is int and ended_identity["pid"] == process["pid"]
+                     and not isinstance(ended_identity.get("start_ticks"), bool)
+                     and str(ended_identity.get("start_ticks", "")).isdecimal()
+                     and str(ended_identity["start_ticks"]) == str(process["start_ticks"])
+                     and isinstance(report, Mapping) and report.get("root_pid") == process["pid"]
+                     and type(report.get("captured_process_count")) is int and report["captured_process_count"] >= 1
+                     and type(report.get("remaining_process_count")) is int and report["remaining_process_count"] == 0
+                     and report.get("nested_session_cancellation_safe") is True
+                     and _time(context["report"]["observed_at"]) <= _time(end.get("observed_at"))
+                         <= datetime.now(timezone.utc),
+                     "genuine bound pre-dispatch lifecycle end evidence is missing or unresolved")
+            owner = context["run_owner"]
+            argv = context["action"]["argv"]
+            profile_path = Path(argv[argv.index("--profile") + 1]).expanduser()
+            profile_bytes = frozen[profile_path]
+            binding = {"workflow_owner": {"pid": process["pid"], "ppid": owner["ppid"],
+                "pgrp": owner["pgid"], "process_start_ticks": process["start_ticks"]},
+                "scope": context["scope"], "profile": {"path": str(profile_path),
+                    "sha256": hashlib.sha256(profile_bytes).hexdigest(), "size_bytes": len(profile_bytes)}}
+            original = {"resume_contract": context["manifest"]["resume_contract"]}
+            return _recover_generic_predispatch_locked(
+                run=run, identity=identity, lineage=binding, original=original,
+                source_profile=context["source_profile"], evidence=evidence, auth=auth,
+                evidence_file=evidence_file, auth_file=auth_file, output=output,
+                snapshots=snapshots, owners=[{"pid": process["pid"],
+                    "start_time_ticks": str(process["start_ticks"])}],
+                groups={process["pgid"], process["session"]}, operations=[], host=host, setup=setup,
+                registry_file=registry_file, registry_before=registry_before, run_lock=run_lock,
+                physical=physical, resource=resource, recovery_id=uuid.uuid4().hex,
+                live_context={**context, "frozen_sources": frozen})
+        finally:
+            physical.release(write_released_state=False)
+    finally:
+        run_lock.release(write_released_state=False)
+
+
+def _generic_predispatch_no_work(run, model_id, manifest, snapshots):
+    """Inspect only normal control/output boundaries, never suite payload trees."""
+    from .process_lease import (RemoteProcessLeaseScope, REMOTE_LEASE_JOURNAL_SCHEMA,
+                               REMOTE_LEASE_JOURNAL_SCHEMA_VERSION)
+    preparation = {"resolve_profile", "campaign_preflight", "artifact_cache_preflight",
+        "resolve_model", "check_validation_assets", "prepare_model", "analyze_model",
+        "select_split_candidates", "prepare_full_baselines", "generate_benchmark_set"}
+    forbidden = {"build_backend_artifacts", "run_benchmarks", "evaluate_quality", "hardware_smoke",
+                 "validate_outputs", "run_native_producers", "capture", "energy", "measure_energy",
+                 "aggregate_results", "generate_report"}
+    models = manifest.get("models") or {}
+    _require(isinstance(models, Mapping) and set(models) <= {model_id},
+             "pre-dispatch model scope is ambiguous")
+    model_root = run / "models"
+    _require(model_root.is_dir() and not model_root.is_symlink()
+             and all(path.is_dir() and not path.is_symlink() and path.name == model_id
+                     for path in model_root.iterdir()),
+             "pre-dispatch filesystem contains a foreign or unsafe model")
+    model_row = models.get(model_id) or {}
+    _require(isinstance(model_row, Mapping), "pre-dispatch model control is invalid")
+    for stages in [manifest.get("root_stages") or {},
+                   model_row.get("stages") or {}]:
+        _require(isinstance(stages, Mapping), "pre-dispatch stage inventory is incomplete")
+        for name, row in stages.items():
+            _require(name in preparation | forbidden, "unknown pre-dispatch stage evidence")
+            if name not in forbidden:
+                continue
+            _require(isinstance(row, Mapping) and not row.get("started_at")
+                     and not row.get("finished_at") and not row.get("complete")
+                     and row.get("state", row.get("status", "planned"))
+                         in {"planned", "queued", "pending", "skipped", "not_started"},
+                     "pre-dispatch run already entered a hardware/quality stage")
+    model = run / "models" / model_id
+    for path in (model / "benchmark_results", model / "hardware", model / "results",
+                 model / "quality", run / "quality_management", run / "native_producers",
+                 run / "energy"):
+        if os.path.lexists(path):
+            _require(path.is_dir() and not path.is_symlink() and not list(path.iterdir()),
+                     "pre-dispatch run contains dispatch or execution evidence: " + str(path))
+    reports = run / "reports"
+    if os.path.lexists(reports):
+        # ensure_run_layout creates these two directories before any stage.
+        # Their empty presence is not a generated table, figure or report.
+        _require(not reports.is_symlink() and reports.is_dir(),
+                 "unsafe pre-dispatch reports root")
+        for path in reports.iterdir():
+            if path.name == "remote_trt_cache_preflight.json":
+                value = _generic_orphan_read(path, snapshots)
+                # The normal running StageResult is written before fn(), but
+                # root_stages receives it only after fn() returns. A blocked
+                # preflight therefore has a genuine file and no manifest row.
+                stage_path = run / "stages" / "artifact_cache_preflight" / "stage_result.json"
+                stage = _generic_orphan_read(stage_path, snapshots)
+                manifest_stage = (manifest.get("root_stages") or {}).get("artifact_cache_preflight")
+                _require(stage.get("schema_version") == 1
+                         and stage.get("stage") == "artifact_cache_preflight"
+                         and stage.get("model_id") is None
+                         and stage.get("state") in {"running", "completed", "failed", "cancelled"}
+                         and isinstance(stage.get("started_at"), str) and bool(stage["started_at"])
+                         and (manifest_stage is None or isinstance(manifest_stage, Mapping)
+                              and {key: item for key, item in manifest_stage.items()
+                                   if key != "stage_result_path"} == stage),
+                         "cache-preflight normal stage_result identity differs")
+                probes = value.get("probes")
+                targets = {row.get("id") or row.get("setup_id")
+                           for row in manifest.get("hardware_targets") or [] if isinstance(row, Mapping)}
+                _require(set(value) <= {"schema", "schema_version", "created_at", "read_only",
+                         "hardware_action_performed", "probe_count", "probes", "status", "reason"}
+                         and value.get("schema") == "onnx-splitpoint/remote-trt-cache-preflight-set"
+                         and type(value.get("schema_version")) is int and value["schema_version"] == 1
+                         and value.get("read_only") is True
+                         and value.get("hardware_action_performed") is False
+                         and _time(stage["started_at"]) <= _time(value.get("created_at"))
+                         and (not stage.get("finished_at")
+                              or _time(value["created_at"]) <= _time(stage["finished_at"]))
+                         and isinstance(probes, list) and type(value.get("probe_count")) is int
+                         and value["probe_count"] == len(probes),
+                         "unbound or non-read-only pre-dispatch cache-preflight set")
+                allowed_probe_fields = {"schema", "schema_version", "status", "setup_id",
+                    "setup_accelerator", "model_id", "suite_dir", "active_run_ids", "runtime_contract",
+                    "requirement_plan", "requirements", "native_quality_validator", "local_errors",
+                    "observations", "read_only", "hardware_action_performed", "reason", "error",
+                    "stable_key", "remote_base", "current_namespace", "namespace_count", "receipt_count",
+                    "builder_abi", "builder_cache_abi", "builder_abi_sha256", "probe_batches"}
+                for probe in probes:
+                    _require(isinstance(probe, Mapping) and set(probe) <= allowed_probe_fields
+                             and probe.get("schema") == "onnx-splitpoint/remote-trt-cache-preflight"
+                             and type(probe.get("schema_version")) is int and probe["schema_version"] == 1
+                             and probe.get("read_only") is True
+                             and probe.get("hardware_action_performed") is False
+                             and probe.get("model_id") == model_id and probe.get("setup_id") in targets
+                             and probe.get("suite_dir") in {str(model / "benchmark_set"),
+                                                           str(model / "benchmark_set" / "legacy_suite")},
+                             "unbound or non-read-only pre-dispatch cache probe")
+                continue
+            _require(path.name in {"tables", "figures"} and not path.is_symlink()
+                     and path.is_dir() and not any(path.iterdir()),
+                     "pre-dispatch run contains report output or unknown entry: " + str(path))
+    sessions = {row["session_id"] for row in manifest["execution_sessions"]}
+    root = run / "jobs" / "remote_process_leases"
+    inventory = []
+    if os.path.lexists(root):
+        _require(root.is_dir() and not root.is_symlink(), "unsafe pre-dispatch journal root")
+        for directory in sorted(root.iterdir()):
+            _require(directory.is_dir() and not directory.is_symlink()
+                     and directory.name in sessions, "unknown pre-dispatch journal session")
+            entries = sorted(directory.iterdir())
+            _require(all(path.name == "session.cancelled.json" for path in entries),
+                     "pre-dispatch run has a remote lease or unknown journal record")
+            for path in entries:
+                value = _generic_orphan_read(path, snapshots)
+                scope = RemoteProcessLeaseScope(run_id=run.name, session_id=directory.name)
+                _require(value == {"schema": REMOTE_LEASE_JOURNAL_SCHEMA,
+                         "schema_version": REMOTE_LEASE_JOURNAL_SCHEMA_VERSION,
+                         "run_sha256": scope.run_sha256, "session_sha256": scope.session_sha256,
+                         "cancelled": True}, "foreign pre-dispatch cancellation tombstone")
+            inventory.append((directory.name, tuple(path.name for path in entries)))
+    return inventory
+
+
+def _generic_predispatch_predecessor(evidence, snapshots, physical, run, resource):
+    """Bind a different, normally terminal predecessor without rewriting it."""
+    proof = evidence.get("released_physical_predecessor") or {}
+    purpose = physical.previous_owner.get("purpose")
+    task = purpose == "generic_completed_task_192"
+    fields = {"owner", "run_manifest", "run_lock"} | ({"task_terminal", "task_cleanup"} if task else set())
+    _require(isinstance(proof, Mapping) and set(proof) == fields,
+             "missing genuine released physical predecessor proof")
+    def read(name):
+        descriptor = proof.get(name) or {}
+        return _generic_orphan_read(descriptor.get("path", ""), snapshots, descriptor)
+    owner, prior, prior_lock = read("owner"), read("run_manifest"), read("run_lock")
+    _require(proof["owner"]["path"] == str(physical.lock_path)
+             and owner == physical.previous_owner and owner.get("state") == "released"
+             and purpose in {"generic", "generic_completed_task_192"}
+             and owner.get("purpose") == purpose and owner.get("physical_resource") == resource
+             and owner.get("run_id") != run.name and not os.path.lexists(physical.quarantine_path)
+             and not any("recovery" in str(key) for key in owner),
+             "physical predecessor is not an ordinary released foreign Generic owner")
+    prior_dir = Path(proof["run_manifest"]["path"]).parent
+    terminal = {"ok", "partial", "failed", "cancelled", "completed", "skipped"}
+    _require(Path(proof["run_manifest"]["path"]) == prior_dir / "run_manifest.json"
+             and prior.get("schema") == "onnx-splitpoint/evaluation-run-manifest"
+             and type(prior.get("schema_version")) is int and prior["schema_version"] == 1
+             and prior.get("run_id") == prior_dir.name == owner.get("run_id")
+             and prior.get("run_dir") == str(prior_dir) and prior.get("status") in terminal
+             and prior.get("technical_status") in terminal,
+             "released physical predecessor lacks its normal terminal Run")
+    sessions = prior.get("execution_sessions") or []
+    _require(isinstance(sessions, list) and bool(sessions)
+             and all(isinstance(row, Mapping) and row.get("status") in terminal
+                     and isinstance(row.get("session_id"), str)
+                     and re.fullmatch(r"[0-9a-f]{32}", row["session_id"]) for row in sessions)
+             and len({row["session_id"] for row in sessions}) == len(sessions)
+             and sessions[-1].get("session_id") == prior.get("current_session_id")
+             and (task or sessions[-1].get("start_origin", {}).get("pid") == owner.get("pid")),
+             "released physical predecessor session identity differs")
+    contract = prior.get("resume_contract") or {}
+    lock_run = Path(str(prior_lock.get("run_dir") or "")) if task else prior_dir
+    _require(lock_run.is_absolute() and not any(path.is_symlink() for path in (lock_run, *lock_run.parents)),
+             "unsafe released predecessor task directory")
+    expected = EvaluationRunLock(out_root=lock_run.parent, run_dir=lock_run, owner={})
+    _require(proof["run_lock"]["path"] == str(expected.lock_path)
+             and not os.path.lexists(expected.quarantine_path)
+             and prior_lock.get("schema") == "onnx-splitpoint/evaluation-run-lock"
+             and type(prior_lock.get("schema_version")) is int and prior_lock["schema_version"] == 1
+             and prior_lock.get("state") == "released"
+             and prior_lock.get("run_id") == prior_dir.name
+             and prior_lock.get("run_dir") == str(lock_run)
+             and (prior_lock.get("session_id") == owner.get("session_id")
+                  and isinstance(owner.get("session_id"), str) and bool(owner["session_id"])
+                  and prior_lock.get("purpose") == purpose if task
+                  else prior_lock.get("session_id") == prior.get("current_session_id"))
+             and not any("recovery" in str(key) for key in prior_lock)
+             and all(prior_lock.get(key) == owner.get(key) for key in ("pid", "ppid", "pgid", "hostname"))
+             and prior_lock.get("hostname") == socket.gethostname()
+             and (task or all(prior_lock.get(key) == contract.get(key) == sessions[-1].get(key)
+                     and isinstance(contract.get(key), str) and contract[key]
+                     for key in ("profile_sha256", "plan_sha256"))),
+             "released physical predecessor lacks its matching normal released Run lock")
+    for value in (owner, prior_lock):
+        _require(_time(value.get("acquired_at")) <= _time(value.get("released_at"))
+                 <= datetime.now(timezone.utc), "released predecessor chronology is invalid")
+    _require(_time(prior_lock["acquired_at"]) <= _time(owner["acquired_at"])
+             <= _time(owner["released_at"]) <= _time(prior_lock["released_at"]),
+             "physical predecessor release is outside its normal Run-lock lifetime")
+    if task:
+        terminal_record, cleanup = read("task_terminal"), read("task_cleanup")
+        _require(Path(proof["task_terminal"]["path"]) == lock_run / "terminal-status.json"
+                 and Path(proof["task_cleanup"]["path"]) == lock_run / "cleanup-status.json"
+                 and terminal_record.get("status") in {"complete", "complete_with_cell_failures"}
+                 and type(terminal_record.get("exitcode")) is int
+                 and terminal_record["exitcode"] == (0 if terminal_record["status"] == "complete" else 1)
+                 and type(cleanup.get("active_owned_remote_operations")) is int
+                 and cleanup["active_owned_remote_operations"] == 0
+                 and cleanup.get("registry_cancelled_or_poisoned") is False
+                 and cleanup.get("foreign_processes_stopped") is False
+                 and _time(owner["acquired_at"]) <= _time(cleanup.get("at"))
+                 <= _time(terminal_record.get("finished_at")) <= _time(owner["released_at"]),
+                 "released Generic FPS predecessor lacks normal terminal/cleanup evidence")
+        branches = cleanup.get("per_backend_journals", {})
+        _require(isinstance(branches, Mapping) and all(
+            isinstance(branch, Mapping)
+            and type(branch.get("active_owned_remote_operations")) is int
+            and branch["active_owned_remote_operations"] == 0
+            and branch.get("registry_cancelled_or_poisoned") is False
+            and type(branch.get("journal_pending_count")) is int and branch["journal_pending_count"] == 0
+            and branch.get("journal_cancelled") is False and branch.get("journal_empty") is True
+            for branch in branches.values()), "released Generic FPS predecessor journal cleanup is unresolved")
+    return proof
+
+
+def _recover_generic_predispatch_locked(*, run, identity, lineage, original, source_profile,
+        evidence, auth, evidence_file, auth_file, output, snapshots, owners, groups, operations,
+        host, setup, registry_file, registry_before, run_lock, physical, resource, recovery_id,
+        live_context=None):
+    from ..workflow.run_control import (build_resume_contract,
+        commit_generic_predispatch_run_only_recovery,
+        validate_generic_predispatch_run_only_recovery_owner)
+    from ..workflow.start_snapshot import build_profile_start_snapshot, public_start_snapshot_metadata
+    import yaml
+    def descriptor(path, data):
+        return {"path": str(path), "sha256": hashlib.sha256(data).hexdigest(), "size_bytes": len(data)}
+    inputs = {"evidence": descriptor(evidence_file, snapshots[evidence_file]),
+              "authorization": descriptor(auth_file, snapshots[auth_file])}
+    if output.exists():
+        prior = _generic_orphan_read(output, {})
+        _require(prior.get("schema") == "onnx-splitpoint/generic-predispatch-run-only-recovery"
+                 and prior.get("state") == "committed" and _bound(prior, identity, identity)
+                 and prior.get("inputs") == inputs
+                 and validate_generic_predispatch_run_only_recovery_owner(run_lock) == prior
+                 and prior.get("registry") == descriptor(registry_file, registry_before),
+                 "existing pre-dispatch Run-only receipt is incomplete, changed or foreign")
+        mutable = {str(run / "run_manifest.json"), str(run_lock.lock_path), str(run_lock.quarantine_path),
+                   str(physical.lock_path)}
+        sources = prior.get("source_evidence")
+        _require(isinstance(sources, list) and bool(sources), "committed pre-dispatch source inventory missing")
+        for source in sources:
+            _require(isinstance(source, Mapping), "corrupt committed pre-dispatch source descriptor")
+            if source.get("path") not in mutable:
+                path = Path(source["path"])
+                _require(path.is_file() and not any(p.is_symlink() for p in (path, *path.parents))
+                         and descriptor(path, path.read_bytes()) == source,
+                         "committed pre-dispatch original source changed")
+        return {"status": "already_committed", **identity, "resources": [resource],
+                "evidence_path": str(output), "measurements_started": 0}
+
+    frozen_sources = (live_context or {}).get("frozen_sources", {})
+    _require(all(path.is_file() and not any(parent.is_symlink() for parent in (path, *path.parents))
+                 and path.read_bytes() == raw for path, raw in frozen_sources.items()),
+             "captured live pre-dispatch sources changed")
+
+    manifest_path = run / "run_manifest.json"
+    manifest = _generic_orphan_read(manifest_path, snapshots)
+    control = _generic_orphan_read(run / "jobs/workflow_control.json", snapshots)
+    _require(manifest.get("schema") == "onnx-splitpoint/evaluation-run-manifest"
+             and type(manifest.get("schema_version")) is int and manifest["schema_version"] == 1
+             and manifest.get("run_id") == run.name and manifest.get("run_dir") == str(run)
+             and manifest.get("status") == "running" and manifest.get("current_session_id") == identity["session_id"]
+             and control.get("schema") == "onnx-splitpoint/workflow-control"
+             and _bound(control, identity, ("run_id", "session_id")), "original running workflow/session differs")
+    sessions = manifest.get("execution_sessions")
+    terminal = {"ok", "partial", "failed", "cancelled", "completed", "skipped"}
+    _require(isinstance(sessions, list) and bool(sessions)
+             and all(isinstance(row, Mapping) and isinstance(row.get("session_id"), str)
+                     and re.fullmatch(r"[0-9a-f]{32}", row["session_id"]) for row in sessions)
+             and len({row["session_id"] for row in sessions}) == len(sessions)
+             and sessions[-1].get("session_id") == identity["session_id"]
+             and sessions[-1].get("status") == "running"
+             and all(row.get("status") in terminal for row in sessions[:-1])
+             and sessions[-1].get("start_origin", {}).get("pid") == lineage["workflow_owner"]["pid"],
+             "original pre-dispatch session inventory differs")
+    def yaml_file(name):
+        path = run / name
+        _require(path.is_file() and not any(p.is_symlink() for p in (path, *path.parents)),
+                 "unsafe original pre-dispatch profile")
+        data = path.read_bytes(); snapshots[path] = data
+        value = yaml.safe_load(data)
+        _require(isinstance(value, Mapping), "original pre-dispatch profile is not a mapping")
+        return dict(value)
+    resolved, archived_source = yaml_file("profile.yaml"), yaml_file("profile_source.yaml")
+    _require(archived_source == source_profile, "original pre-dispatch profile source changed")
+    options = manifest.get("options")
+    plan = _generic_orphan_read(run / "effective_execution_plan.json", snapshots)
+    _require(isinstance(options, Mapping), "original archived pre-dispatch options missing")
+    contract = build_resume_contract(profile_payload=resolved, effective_execution_plan=plan, options=options)
+    _require(contract == manifest.get("resume_contract") == original.get("resume_contract")
+             and all(sessions[-1].get(key) == contract[key] for key in
+                     ("profile_sha256", "plan_sha256", "resume_contract_sha256")),
+             "original pre-dispatch start/resume contract changed")
+    _require(options.get("energy_enabled") is False and options.get("native_producer_enabled") is False
+             and (resolved.get("energy") or {}).get("enabled") is False
+             and (resolved.get("native_producers") or {}).get("enabled") is False
+             and (resolved.get("hardware") or {}).get("selected_setups") == [identity["setup_id"]],
+             "pre-dispatch recovery cannot close Native/Full/Energy or broader hardware")
+    runs = [row for row in resolved.get("run_profiles", []) if row.get("enabled", True)]
+    _require(len(runs) == 1 and runs[0].get("quality_source_only") is True
+             and runs[0].get("hardware_setup_id") == identity["setup_id"]
+             and runs[0].get("case_ids") == lineage["scope"]["case_ids"],
+             "original pre-dispatch split-only Quality scope changed")
+    archived = _generic_orphan_read(run / "profile_start_snapshot.json", snapshots)
+    _require(type(archived.get("schema_version")) is int and archived["schema_version"] in {1, 2}
+             and archived.get("profile_path") == lineage["profile"]["path"]
+             and archived.get("profile_request") == lineage["profile"]["path"],
+             "original pre-dispatch snapshot source identity differs")
+    rebuilt = build_profile_start_snapshot(
+        **{key: str(archived.get(key) or "") for key in
+           ("profile_request", "profile_id", "profile_path", "profile_source")},
+        source_profile=archived_source, resolved_profile=resolved,
+        runtime_bindings=archived.get("runtime_bindings") or {},
+        schema_version=int(archived.get("schema_version") or 1))
+    _require(archived == public_start_snapshot_metadata(rebuilt)
+             == manifest.get("profile_start_snapshot"),
+             "original pre-dispatch start snapshot changed")
+    workflow = lineage["workflow_owner"]
+    owner = run_lock.previous_owner
+    _require(owner.get("schema") == "onnx-splitpoint/evaluation-run-lock"
+             and owner.get("state") == "running" and owner.get("run_id") == run.name
+             and owner.get("run_dir") == str(run) and owner.get("session_id") == identity["session_id"]
+             and owner.get("pid") == workflow["pid"] and owner.get("ppid") == workflow["ppid"]
+             and owner.get("pgid") == workflow["pgrp"] and owner.get("hostname") == socket.gethostname()
+             and all(owner.get(key) == contract[key] for key in ("profile_sha256", "plan_sha256")),
+             "original pre-dispatch Run-lock identity differs")
+    if os.path.lexists(run_lock.quarantine_path):
+        fence = _generic_orphan_read(run_lock.quarantine_path, snapshots)
+        _require(fence.get("schema") == "onnx-splitpoint/evaluation-run-lock-quarantine"
+                 and fence.get("state") == "quarantined"
+                 and fence.get("run_dir") == str(run)
+                 and fence.get("owner") == {"reason": "previous_writer_terminated_uncleanly", "previous_owner": owner},
+                 "foreign pre-dispatch quarantine must remain closed")
+    predecessor = _generic_predispatch_predecessor(evidence, snapshots, physical, run, resource)
+    prior_roots = [Path(predecessor["run_manifest"]["path"]).parent]
+    if physical.previous_owner.get("purpose") == "generic_completed_task_192":
+        prior_roots.append(Path(json.loads(snapshots[Path(predecessor["run_lock"]["path"])] )["run_dir"]))
+    diagnostics = output.parent / "diagnostics"
+    _require(not any(path.is_symlink() for path in (diagnostics, *diagnostics.parents))
+             and (not os.path.lexists(diagnostics) or diagnostics.is_dir())
+             and all(not diagnostics.resolve().is_relative_to(root.resolve())
+                     and not output.resolve().is_relative_to(root.resolve()) for root in [run, *prior_roots])
+             and output not in snapshots
+             and not any(path.resolve().is_relative_to(diagnostics.resolve()) for path in snapshots),
+             "recovery diagnostics/receipt would modify protected original evidence")
+    inventory = _generic_predispatch_no_work(run, lineage["scope"]["model_id"], manifest, snapshots)
+    before = _generic_orphan_local_observation(owners, run_dir=run, profile_path=lineage["profile"]["path"],
+        process_groups=groups, ssh_host=host.host, known_operations=operations, resource_setup=setup)
+    _require(before.get("ok") is True, "active, unknown or unbound original pre-dispatch work")
+    observed = observe_resource_owners(setup, local_owners=owners, diagnostics_dir=diagnostics, resource_scoped=True)
+    after_local = _generic_orphan_local_observation(owners, run_dir=run, profile_path=lineage["profile"]["path"],
+        process_groups=groups, ssh_host=host.host, known_operations=operations, resource_setup=setup)
+    _require(observed.get("ok") is True and after_local.get("ok") is True,
+             "fresh pre-dispatch local/remote quiescence is active or unobservable")
+    final_snapshots = {}
+    _require(registry_file.is_file()
+             and not any(p.is_symlink() for p in (registry_file, *registry_file.parents))
+             and registry_file.read_bytes() == registry_before
+             and _generic_predispatch_no_work(run, lineage["scope"]["model_id"], manifest, final_snapshots) == inventory
+             and all(path.is_file() and not any(p.is_symlink() for p in (path, *path.parents))
+                     and path.read_bytes() == data for path, data in snapshots.items())
+             and all(path.is_file() and not any(p.is_symlink() for p in (path, *path.parents))
+                     and path.read_bytes() == raw for path, raw in frozen_sources.items())
+             and run_lock._read_owner() == owner and physical._read_owner() == physical.previous_owner,
+             "pre-dispatch ownership, source, registry or absence proof changed")
+    now = datetime.now(timezone.utc).isoformat()
+    after = copy.deepcopy(manifest)
+    after.update(status="cancelled", technical_status="cancelled", updated_at=now)
+    marker = {"recovery_id": recovery_id, "session_id": identity["session_id"], "receipt_path": str(output)}
+    after["execution_sessions"][-1].update(status="cancelled", finished_at=now,
+        interrupted_at=now, generic_predispatch_run_only_recovery=marker)
+    receipt = {"schema": "onnx-splitpoint/generic-predispatch-run-only-recovery", "schema_version": 1,
+        "recovery_scope": "predispatch_run_only", **identity, "recovery_id": recovery_id,
+        "inputs": inputs, "operator": auth["operator"], "authorized_at": auth["authorized_at"],
+        "source_evidence": [descriptor(path, data) for path, data in snapshots.items()],
+        "registry": descriptor(registry_file, registry_before), "original_local_identities": owners,
+        "local_observation_before": before, "local_observation_after": after_local,
+        "ownership_observation": observed, "predispatch_journal_inventory": inventory,
+        "original_completion_proven": False, "measurements_started": 0}
+    if live_context is not None:
+        receipt["original_binding_kind"] = "stable_live_action_creation_binding"
+        receipt["live_binding"] = evidence["live_binding"]
+        receipt["lifecycle_end"] = evidence["lifecycle_end"]
+    committed = commit_generic_predispatch_run_only_recovery(
+        run_lock=run_lock, physical_locks={resource: physical}, receipt_path=output,
+        receipt_data=receipt, manifest_path=manifest_path,
+        manifest_before=snapshots[manifest_path], manifest_after=after)
+    return {"status": "committed", **identity, "resources": [resource], "recovery_id": recovery_id,
+            "evidence_path": str(output), "measurements_started": 0,
+            "manifest_after_sha256": committed["manifest_after_sha256"]}
 
 
 def _recover_generic_orphan_locked(*, run, identity, lineage, original, source_profile,

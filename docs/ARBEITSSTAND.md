@@ -1,3 +1,59 @@
+## 23.10.2026 — Expliziter Run-only-Abschluss vor Generic-Quality-Dispatch
+
+Der separate normale Befehl `recover-generic-predispatch-run-only` schließt nur
+einen tatsächlich beendeten, eindeutig gebundenen source-only Generic-Quality-
+Controller ohne Dispatch oder Remote-Lease. Ursprüngliche Launcher-/Abbruch-,
+Run-/Session-, Profil-/Snapshot-, Registry- und Prozessbelege werden geprüft;
+aktive oder unklare lokale/entfernte Arbeit bleibt gesperrt. Leere normale
+Sessionordner und exakt gebundene Cancellation-Tombstones sind keine Leases.
+Die normalen, noch leeren Startupordner `reports/tables` und `reports/figures`
+sind zulässig; enthaltene Dateien und unerwartete Einträge bleiben Blocker.
+Ein normaler `remote_trt_cache_preflight.json` bleibt als ausschließlich lesender
+Vorbereitungsbeleg zulässig: Schema, No-Hardware-Flags, Modell, Setup, eigener
+Suitepfad und Zeitbindung werden geprüft und seine Originalbytes erhalten.
+Der bereits laufende normale `stage_result.json` bindet diese Vorbereitung;
+der Manifestrow entsteht erst nach Rückkehr der Stagefunktion.
+Unbekannte oder bereits ausgeführte spätere Stages und Ausgabebelege sperren.
+Für tatsächliche normale Actions mit beschreibenden Scope-/Targetfeldern
+erfasst `observe_generic_predispatch_run_binding` vor dem Ende zweimal stabil
+argv/cwd, PID/Start/Prozessgruppe/Session sowie tatsächlichen Run-Flock/Inode
+und Ownerbytes zusammen mit den unveränderten Creation-/PackageSource-Belegen.
+Es ist ausdrücklich eine neue Beobachtung ohne End-/Releasebehauptung; fehlende
+historische Logger-/Startedbelege werden nicht ergänzt. Die Recovery verlangt
+danach einen gesonderten echten Lifecycle-Endbeleg und frische Quieszenz. Ein
+vorzeitig beendeter Generierungslauf benötigt keinen fertigen benchmark_plan.
+Tatsächliche Actions mit typisierten `scope.case_ids` und `scope.FPS=false`
+werden ohne Änderung der Originaldatei unterstützt; widersprüchliche parallele
+Deklarationen bleiben gesperrt.
+
+Der frühere physische Owner muss regulär freigegeben und unquarantined sein.
+Unterstützt sind normale Generic-Owner sowie der konkret belegte normale
+`generic_completed_task_192`-Vorgänger mit seinen bestehenden Terminal-/Cleanup-
+Belegen. Seine Ownerbytes und Sperrdateien bleiben unverändert. Der neue eigene
+Receipt-/Owner-Marker erlaubt ausschließlich den unter Run-Flock gesicherten
+Management-Abschluss als `cancelled`; Erzeugung, wissenschaftliche Ergebnisse,
+Stages und ursprüngliche Abbruchbelege werden nicht umgedeutet. Unvollständige
+Receipts und fehlgeschlagene Transaktionen bleiben dauerhaft gesperrt. Der
+bisherige Generic-Gruppenabschluss behält seine nichtleere physische Gruppe und
+seine bisherigen Ownership-Prüfungen unverändert.
+
+Nur die tatsächlich betroffene Ressource wird geprüft und gesperrt. Eine durch
+die vorhandene normale Controller-Zuordnung nachweislich unabhängige andere DUT
+blockiert diesen neuen Pfad nicht; derselbe DUT, unbekannte Zuordnungen und
+Sichtbarkeitsfehler bleiben Blocker. Der Befehl beendet keine Prozesse, startet
+keine Hardware, Statistik oder automatische Fortsetzung und gibt keine
+Collector-/Quellensperre frei. Die gezielten Tests verwenden temporäre Belege
+und kontrollierte lokale Testprozesse. Vor den konkreten Normalformatkorrekturen
+bestanden 307 gezielte Softwaretests:
+151 neue Binding-/API-/Durability-/CLI-/DUT-Scope-Fälle und 156 bestehende
+Generic-/CLI-/Quality-Admission-/Resource-Recovery-Regressionen. Nach einem realen
+read-only Parserabbruch wurden die normalen `sha256:`-Build-Digests strikt
+normalisiert. Anschließend bestanden 23 direkte Binding-/Recoveryfälle mit dem
+tatsächlichen normalen Hash- und StageResult-Writer, leerem Startup-Reportbaum,
+streng gebundenem lesendem Cache-Preflight und typisierten Actionfeldern sowie
+deren konkreten negativen Gegenfällen. Keine reale
+Recovery oder Hardware wurde für diese Änderung ausgeführt.
+
 ## 23.10.2026 — Gemeinsame Dateisuche für den Artifact-Cache-Preflight
 
 Der normale Controller sammelt die fünf bereits verwendeten wörtlichen

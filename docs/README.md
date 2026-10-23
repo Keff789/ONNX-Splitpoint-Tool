@@ -1,6 +1,50 @@
-# Documentation index — current release 2.79.20
+# Documentation index — current release 2.95.5
 
-Current build/workflow:
+## Generic Quality vor Dispatch
+
+`observe_generic_predispatch_run_binding` erfasst eine neue ausschließlich lesende
+Bindung des tatsächlich lebenden Controllers: originale Action und optionales
+Started-Dokument, argv/cwd, PID und Geburtszeit, Prozessgruppe/Session sowie
+gehaltener Run-Flock mit Inode und unveränderten Ownerbytes. Creation, Profile,
+Snapshot, PackageSource und Registry müssen denselben Run und Scope belegen.
+Die Beobachtung bestätigt weder Prozessende noch Cleanup oder Ressourcenfreigabe.
+
+Nach tatsächlichem Prozessende erlaubt ausschließlich
+`recover-generic-predispatch-run-only` den gesonderten Management-Abschluss eines
+source-only Generic-Quality-Runs ohne Native, Full, Energie, FPS, Build, Dispatch
+oder Remote-Lease. Der neue Endbeleg verweist auf die Live-Bindung und enthält den
+unveränderten Bericht des bestehenden bounded ProcessTree-Lifecycles. Die Recovery
+prüft unter Run- und Ressourcenlocks erneut sämtliche Quellen und die vollständige
+frische lokale sowie entfernte Quieszenz. Ein fertiger Benchmarkplan ist vor einem
+unterbrochenen Generierungsschritt nicht erforderlich.
+
+Der physische Vorgänger muss durch seine bestehenden normalen Belege terminal,
+regulär freigegeben und unquarantined sein. Seine Dateien bleiben bytegleich.
+Aktive oder unklare Arbeit auf demselben DUT, fehlende Sichtbarkeit, Ergebnisdateien,
+Dispatch- und Leasebelege blockieren. Die normalen leeren Startupordner sowie der
+streng gebundene lesende Cache-Preflight sind Vorbereitungsbelege. Ein separat
+eindeutig gebundener anderer DUT verhindert diesen Run-only-Abschluss nicht.
+
+Der normale explizite CLI-Aufruf verwendet ein beleggebundenes Input-Dokument,
+eine passende Autorisierung und einen neuen Receiptpfad:
+
+```bash
+python -B -m onnx_splitpoint_tool.remote.process_lease_cli recover-generic-predispatch-run-only \
+  --run-dir /absolute/original/run --session-id ORIGINAL_SESSION --setup-id ORIGINAL_SETUP \
+  --evidence-path /absolute/recovery-input.json --authorization-path /absolute/authorization.json \
+  --evidence-output /absolute/new-recovery-receipt.json
+```
+
+Der Befehl startet keine Hardware oder automatische Fortsetzung. Er erhält
+wissenschaftliche Ergebnisse, Creation und ursprüngliche Abbruchbelege und
+schließt ausschließlich den Run als `cancelled`. Der bisherige Generic-
+Gruppenabschluss behält alle bisherigen physischen Ownership-Prüfungen.
+Softwarevalidierung und tatsächliche Runtimebelege werden im
+[Arbeitsstand](ARBEITSSTAND.md) getrennt dokumentiert.
+
+## Retained release 2.79.20 documentation
+
+Historical build/workflow:
 `v2.79.20-artifact-reuse-closure`.
 
 Release 2.79.20 closes artifact reuse around the existing backend caches.
