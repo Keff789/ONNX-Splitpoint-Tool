@@ -1,3 +1,35 @@
+## 23.10.2026 — Atomare lokale Reportprojektionen für Generic Source-only
+
+Der normale Collector hielt große `validation_report.json` zusätzlich zur
+unabhängigen Raw-Transportquelle in zwei vollständigen lokalen Projektionen.
+Neue explizit autorisierte, abgeschlossene Generic-Source-only-Dispatches mit
+aufgeschobener zentraler Quality teilen nun nur die beiden Projektionen: Die
+erste entsteht als eigene byteverifizierte atomare Kopie, die zweite als atomar
+veröffentlichter Hardlink darauf. Die Transportquelle wird niemals verlinkt;
+ein späterer Download darf sie weiter unabhängig überschreiben. Fehlende
+Hardlink-Unterstützung fällt auf eine normale unabhängige Kopie zurück.
+
+Jede erneute Collector-Schreibung dieser Reports ersetzt den jeweiligen Pfad
+atomar, auch ohne Sharingzulassung; dadurch trunciert ein späterer Durchlauf
+keinen alten gemeinsamen Inode. Die Originalpfade, vollständigen JSON-Inhalte
+und Source-/Copy-Manifestzuordnungen bleiben erhalten. Hashabweichungen werden
+vor dem Ersetzen abgewiesen und als normale Kopierfehler dokumentiert. Es wird
+kein neuer Cache eingeführt und kein vorhandener Lauf nachträglich verändert.
+Bei erfolgreichem Hardlink entfällt genau eine lokale Reportpayloadkopie,
+beispielsweise die belegten 2,669 GB für vier Reports; CoW-Ersparnis wird nicht
+vorausgesetzt.
+
+Der identische Produktdelta wurde auf dem gemeinsamen Main-Stand mit drei
+gezielten lokalen Softwaretests geprüft; diese bestanden in 0,44 Sekunden. Sie prüfen
+Raw-Unabhängigkeit, tatsächliche Hardlinks, wiederholtes und nicht mehr teilendes
+Collect, EXDEV-Kopierfallback und die Ablehnung falscher Snapshotbytes. Der erste
+Testaufruf scheiterte vor allen Tests am noch fehlenden externen Basetemp-Eltern-
+verzeichnis; dessen Beleg bleibt erhalten. Keine Hardware, SSH, SDK-Inferenz,
+N5000- oder FPS-Neumessung wurde gestartet. Die ungeklärte historische
+Collect-rc1-Meldung wird dadurch weder unterdrückt noch als gelöst bezeichnet.
+Der Collector-Fix ändert keine der 42/37 gebündelten Runnerdateien; die getrennte
+Source3-Veröffentlichung erhält ihre bisherigen f74-Laufzeitbytes unverändert.
+
 ## 23.10.2026 — Wörtlicher Controller-Backport der gemeinsamen Preflight-Suche
 
 Dieser getrennte Quellenstand auf Source3 `d43415d` übernimmt ausschließlich
