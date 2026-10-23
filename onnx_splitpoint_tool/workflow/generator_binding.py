@@ -305,6 +305,54 @@ def resolve_existing_suite(row: Mapping[str, Any]) -> Optional[Path]:
     return None
 
 
+def _bind_imported_generic_validation_budget(
+    runs: List[Dict[str, Any]], *, profile: Mapping[str, Any],
+    row: Mapping[str, Any], model_id: str,
+) -> List[Dict[str, Any]]:
+    management = (profile.get("quality_gate") or {}).get("management_reference") or {}
+    if not isinstance(management, Mapping) or "existing_reference" not in management:
+        return runs
+    from ..runners.generic_quality_accounting import authorized_runs
+    from .legacy_benchmarkset_binding import _validation_defaults
+
+    selected = authorized_runs({"runs": runs}, profile)
+    if (not selected or any(run.get("id") not in {item["id"] for item in selected}
+                           and run.get("semantic_reference_only") is not True for run in runs)):
+        raise ValueError("generic_quality_suite_import_validation_scope_invalid")
+    defaults = _validation_defaults(profile, row, model_id)
+    budget = defaults.get("validation_items_requested")
+    limits = (profile.get("validation_execution") or {}).get("max_items") or {}
+    reference = management.get("existing_reference") or {}
+    dataset = ((reference.get("quality_contract") or {}).get("dataset") or {}) if isinstance(reference, Mapping) else {}
+    if (defaults.get("validation_budget_authoritative") is not True
+            or type(budget) is not int or budget <= 0
+            or limits.get(defaults["benchmark_task"]) != budget
+            or defaults.get("validation_max_images") != budget
+            or type(dataset.get("image_count")) is not int or dataset["image_count"] != budget):
+        raise ValueError("generic_quality_suite_import_validation_budget_invalid")
+    fields = ("validation_images", "validation_max_images", "validation_manifest",
+              "validation_source_kind", "image_scale", "letterbox", "preprocess_mode",
+              "validation_reference_mode", "mini_coco_ap50", "mini_classification_eval")
+    template = {key: selected[0][key] for key in fields if key in selected[0]}
+    if (not str(template.get("validation_images") or "").strip()
+            or type(template.get("validation_max_images")) is not int
+            or template["validation_max_images"] != budget
+            or any({key: run[key] for key in fields if key in run} != template for run in selected)):
+        raise ValueError("generic_quality_suite_import_validation_source_ambiguous")
+    result = [dict(run) for run in runs]
+    cpu = [run for run in result if run.get("semantic_reference_only") is True]
+    if len(cpu) != 1:
+        raise ValueError("generic_quality_suite_import_cpu_recipe_ambiguous")
+    if any(key in cpu[0] and cpu[0][key] != value for key, value in template.items()):
+        raise ValueError("generic_quality_suite_import_cpu_validation_changed")
+    cpu[0].update(template)
+    for run in result:
+        run.setdefault("benchmark_task", defaults["benchmark_task"])
+        run["validation_items_requested"] = budget
+        run["validation_budget_authoritative"] = True
+    return result
+
+
 def import_existing_suite(
     *,
     model_id: str,
@@ -423,6 +471,10 @@ def import_existing_suite(
     planned_runs = _logical_profile_or_target_runs(
         profile_payload, targets, accepted, {},
     )
+    if generic_import:
+        planned_runs = _bind_imported_generic_validation_budget(
+            planned_runs, profile=profile, row=row, model_id=model_id,
+        )
     p_plan_import = write_json(model_dir / "benchmark_set" / "benchmark_plan.json", {
         "schema": "onnx-splitpoint/benchmark-generation-plan",
         "schema_version": 3,
