@@ -15999,6 +15999,7 @@ class EvaluationWorkflowRunner:
                         model_id=model_id,
                         targets=targets,
                         policy=policy,
+                        profile_payload=self.profile_payload,
                         remote_trt_observations=remote_trt_by_model.get(
                             model_id, []
                         ),
