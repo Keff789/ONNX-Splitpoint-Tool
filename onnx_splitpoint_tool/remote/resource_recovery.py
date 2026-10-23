@@ -423,7 +423,10 @@ def _recover_generic_predispatch_live(*, run, identity, evidence, auth, evidence
                      and str(ended_identity.get("start_ticks", "")).isdecimal()
                      and str(ended_identity["start_ticks"]) == str(process["start_ticks"])
                      and isinstance(report, Mapping) and report.get("root_pid") == process["pid"]
-                     and type(report.get("captured_process_count")) is int and report["captured_process_count"] >= 1
+                     and type(report.get("captured_process_count")) is int and report["captured_process_count"] >= 0
+                     and (report["captured_process_count"] > 0
+                          or type(report.get("captured_process_group_count")) is int
+                          and report["captured_process_group_count"] == 0)
                      and type(report.get("remaining_process_count")) is int and report["remaining_process_count"] == 0
                      and report.get("nested_session_cancellation_safe") is True
                      and _time(context["report"]["observed_at"]) <= _time(end.get("observed_at"))

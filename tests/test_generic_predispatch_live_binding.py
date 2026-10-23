@@ -434,6 +434,39 @@ def _refresh_direct_input(case):
     _write(case.auth_path, auth)
 
 
+def test_real_already_ended_lifecycle_api_zero_capture_remains_exactly_reported(direct_case, monkeypatch):
+    from onnx_splitpoint_tool.process_control import terminate_process_tree
+    case = direct_case
+    kwargs = _direct_recovery_input(case, monkeypatch)
+    assert case.child.poll() == 0
+    report = terminate_process_tree(case.child)
+    assert report["captured_process_count"] == report["captured_process_group_count"] == 0
+    assert report["remaining_process_count"] == 0
+    end = json.loads(case.end_path.read_text())
+    end["process_tree_report"] = report
+    _write(case.end_path, end)
+    _refresh_direct_input(case)
+    assert resource_recovery.recover_generic_predispatch_run_only(**kwargs)["status"] == "committed"
+    assert json.loads(case.end_path.read_text())["process_tree_report"] == report
+    assert case.physical.lock_path.read_bytes() == case.physical_before
+
+
+def test_claimed_zero_capture_never_releases_a_still_live_original_owner(direct_case, monkeypatch):
+    case = direct_case
+    kwargs = _direct_recovery_input(case, monkeypatch, finish=False)
+    end = json.loads(case.end_path.read_text())
+    end["process_tree_report"].update(captured_process_count=0, captured_process_group_count=0)
+    _write(case.end_path, end)
+    _refresh_direct_input(case)
+    before = {path: path.read_bytes() for path in
+              (case.run / "run_manifest.json", case.run_lock.lock_path, case.physical.lock_path)}
+    with pytest.raises((run_control.WorkflowRunCleanupQuarantineError, run_control.WorkflowRunLockedError)):
+        resource_recovery.recover_generic_predispatch_run_only(**kwargs)
+    assert case.child.poll() is None
+    assert not case.receipt_path.exists()
+    assert all(path.read_bytes() == raw for path, raw in before.items())
+
+
 @pytest.mark.parametrize("direct_case", ["actual8", "pregeneration"], indirect=True)
 def test_direct_binding_and_genuine_fixture_end_close_only_original_management_lifecycle(direct_case, monkeypatch):
     case = direct_case

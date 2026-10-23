@@ -48,11 +48,15 @@ bestanden 307 gezielte Softwaretests:
 151 neue Binding-/API-/Durability-/CLI-/DUT-Scope-Fälle und 156 bestehende
 Generic-/CLI-/Quality-Admission-/Resource-Recovery-Regressionen. Nach einem realen
 read-only Parserabbruch wurden die normalen `sha256:`-Build-Digests strikt
-normalisiert. Anschließend bestanden 23 direkte Binding-/Recoveryfälle mit dem
+normalisiert. Anschließend bestanden 25 direkte Binding-/Recoveryfälle mit dem
 tatsächlichen normalen Hash- und StageResult-Writer, leerem Startup-Reportbaum,
 streng gebundenem lesendem Cache-Preflight und typisierten Actionfeldern sowie
 deren konkreten negativen Gegenfällen. Keine reale
 Recovery oder Hardware wurde für diese Änderung ausgeführt.
+Der bestehende Lifecycle-Rückgabefall für einen bereits beendeten Prozess
+behält seine echten Nullzähler. Originale Live-Bindung und vollständige frische
+Quieszenz bleiben erforderlich; ein lebender Owner wird auch mit behaupteten
+Nullzählern abgewiesen.
 
 ## 23.10.2026 — Gemeinsame Dateisuche für den Artifact-Cache-Preflight
 
