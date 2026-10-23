@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2370,
+  "file_count": 2373,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 454349,
-      "sha256": "d6150e3c810f6fd7364cd6cc2b318344625e1d0ef6a7add417a665312ae43d55"
+      "size": 456660,
+      "sha256": "ce28eaa538d42696e1330a343c025f4a26276bfbf9b17dd2f112c5810fd904d8"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -1581,8 +1581,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/remote/process_lease.py",
-      "size": 100948,
-      "sha256": "2dbc9e1c6f1809a07739eca76c6b0fe929bf39893ce632eb1d1bbaf7c33b1d4e"
+      "size": 102330,
+      "sha256": "78d31032631ae88703d54b7c89e2f56f6c9a7c561a6bda280e1482d731982087"
     },
     {
       "path": "onnx_splitpoint_tool/remote/process_lease_cli.py",
@@ -1591,13 +1591,13 @@
     },
     {
       "path": "onnx_splitpoint_tool/remote/resource_recovery.py",
-      "size": 143297,
-      "sha256": "075b0a139bb07ff1c12df6ccca5d344a5e0b078605ba07c14850ffae79209db0"
+      "size": 184048,
+      "sha256": "5927eb8c21c03fedd50c82a9ade536a4043e1f9c4ad014c2f1163d920cf7852e"
     },
     {
       "path": "onnx_splitpoint_tool/remote/resource_recovery_observation.py",
-      "size": 13550,
-      "sha256": "3414459c710955adc54279cda04c4337ed45f38b83e07d4c9d91409f6d193793"
+      "size": 17916,
+      "sha256": "58998d6ea0ee76e9c5a7026c58e7282b8dce2421d02bc09bab5ff7a26bdd7a05"
     },
     {
       "path": "onnx_splitpoint_tool/remote/ssh_transport.py",
@@ -3301,8 +3301,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/run_control.py",
-      "size": 48711,
-      "sha256": "e7219b27b8168ca7e9b8a0e1285c2a3fb86ef3cf3700c7afa5602ba6449b0e9b"
+      "size": 55731,
+      "sha256": "46b5d55e88b9ee94d138491352d821008f36bc3ee57eb032640a885ffe5abf36"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/run_discovery.py",
@@ -7408,6 +7408,21 @@
       "path": "tests/test_generic_existing_cpu_reference_resume_independent.py",
       "size": 5162,
       "sha256": "8a03cc5afc7071e46ebe1cf521c851c39f367c35d586b22761f194f98bfb0e70"
+    },
+    {
+      "path": "tests/test_generic_final_cleanup_group.py",
+      "size": 22421,
+      "sha256": "da68698bb0a17b6d530395d37d36057e399853e432cca0232607a34a4d4e475d"
+    },
+    {
+      "path": "tests/test_generic_final_cleanup_observation.py",
+      "size": 3659,
+      "sha256": "2e948f68312f6b6658337b9b0d685d57eecccfe8623c548995b21a3d09404c8f"
+    },
+    {
+      "path": "tests/test_generic_final_cleanup_recovery.py",
+      "size": 40706,
+      "sha256": "3eeb5b4d511c9c8116c0efb8b719b677c50648630d52f56db6c204eed0843fba"
     },
     {
       "path": "tests/test_generic_final_controller_sources.py",

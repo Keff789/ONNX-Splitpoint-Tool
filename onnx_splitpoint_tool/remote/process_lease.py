@@ -1983,6 +1983,14 @@ def process_lease_cli_main(argv: Optional[Sequence[str]] = None) -> int:
                  "authorization-path", "evidence-output"):
         orphan.add_argument("--" + name, required=True, type=required_orphan_value)
     orphan.add_argument("--registry", default=None, type=required_orphan_value)
+    final_cleanup = subparsers.add_parser(
+        "recover-generic-final-cleanup",
+        help="reconcile one genuine partial Generic final cleanup while preserving its measurement status",
+        allow_abbrev=False,
+    )
+    for name in ("run-dir", "session-id", "setup-id", "evidence-path",
+                 "authorization-path", "evidence-output", "registry"):
+        final_cleanup.add_argument("--" + name, required=True, type=required_orphan_value)
     recover = subparsers.add_parser(
         "recover-capture", help="explicitly reconcile one stopped physical capture resource group"
     )
@@ -2003,6 +2011,21 @@ def process_lease_cli_main(argv: Optional[Sequence[str]] = None) -> int:
     release_ground.add_argument("--authorize-new-attempt", action="store_true",
                                 help="authorize one new workflow despite the unproven old source end; no action or idle ACK is attested")
     arguments = parser.parse_args(list(argv) if argv is not None else None)
+    if arguments.command == "recover-generic-final-cleanup":
+        from .resource_recovery import recover_generic_final_cleanup
+        from ..workflow.run_control import WorkflowRunControlError
+        try:
+            result = recover_generic_final_cleanup(
+                run_dir=arguments.run_dir, session_id=arguments.session_id,
+                setup_id=arguments.setup_id, evidence_path=arguments.evidence_path,
+                authorization_path=arguments.authorization_path,
+                evidence_output=arguments.evidence_output, registry_path=arguments.registry)
+            print(json.dumps(result, indent=2))
+            return 0
+        except (WorkflowRunControlError, RemoteProcessLeaseJournalError, ValueError, OSError,
+                TypeError, KeyError, IndexError, AttributeError) as exc:
+            print(f"Generic final cleanup recovery blocked: {exc}", file=sys.stderr)
+            return 70
     if arguments.command == "recover-generic-orphan":
         from .resource_recovery import recover_generic_orphan_run
         from ..workflow.run_control import WorkflowRunControlError

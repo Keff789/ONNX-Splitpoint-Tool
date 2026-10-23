@@ -262,3 +262,82 @@ def observe_resource_owners(
                   "visibility_errors": ["remote_observation_failed:" + type(exc).__name__]}
     return {"ok": bool(controller["ok"] and remote["ok"]),
             "controller": controller, "remote": remote}
+
+
+def _observe_final_cleanup_remote(operations):
+    """Read kernel boot clocks and the exact original guardian tokens only."""
+    import os
+    import pathlib
+    import stat
+    import time
+    import uuid
+
+    started = time.time_ns()
+    boottime_start = time.clock_gettime(time.CLOCK_BOOTTIME)
+    boot_id = pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    uuid.UUID(boot_id)
+    btimes = [line.split()[1] for line in pathlib.Path("/proc/stat").read_text().splitlines()
+              if line.startswith("btime ")]
+    if len(btimes) != 1:
+        raise ValueError("kernel boot time is ambiguous")
+    uptime = float(pathlib.Path("/proc/uptime").read_text().split()[0])
+    rows = []
+    for operation in operations:
+        base = pathlib.Path(operation["remote_lease_root"]) if operation["remote_lease_root"] else (
+            pathlib.Path("/tmp") / ("onnx_splitpoint-process-leases-%d" % os.getuid()))
+        root = base / operation["run_sha256"] / operation["session_sha256"]
+        lease = root / (operation["operation_id"] + ".lease.json")
+        drained = root / (operation["operation_id"] + ".drained")
+        if not base.is_absolute() or any(p.is_symlink() for p in (root, *root.parents)):
+            raise ValueError("unsafe original remote lease path")
+        value = None
+        if os.path.lexists(lease):
+            if not stat.S_ISREG(lease.lstat().st_mode):
+                raise ValueError("nonregular original remote lease")
+            value = json.loads(lease.read_text())
+            if (not isinstance(value, dict)
+                    or value.get("schema") != "onnx-splitpoint/remote-process-lease"
+                    or any(value.get(key) != operation[key] for key in
+                           ("run_sha256", "session_sha256", "operation_id", "token"))):
+                raise ValueError("original remote lease identity differs")
+        token_matches = False
+        if os.path.lexists(drained):
+            if not stat.S_ISREG(drained.lstat().st_mode):
+                raise ValueError("nonregular original guardian drain")
+            token_matches = drained.read_text(encoding="ascii").strip() == operation["token"]
+            if not token_matches:
+                raise ValueError("original guardian drain token differs")
+        rows.append({"operation_id": operation["operation_id"], "lease_path": str(lease),
+                     "lease_present": value is not None, "guardian_drained": token_matches})
+    ownership = _observe_processes([])
+    boottime_end = time.clock_gettime(time.CLOCK_BOOTTIME)
+    ended = time.time_ns()
+    return {"read_only": True, "ownership": ownership, "operations": rows,
+            "boot_id": boot_id, "kernel_btime_unix_s": int(btimes[0]),
+            "proc_uptime_s": uptime, "clock_boottime_start_s": boottime_start,
+            "clock_boottime_end_s": boottime_end,
+            "remote_start_unix_ns": started, "remote_end_unix_ns": ended}
+
+
+def observe_generic_final_cleanup_remote(setup, *, operations, diagnostics_dir):
+    """One normal read-only transport call; no cancellation or lease writes."""
+    import time
+    transport = SSHTransport(host_config_from_setup(setup))
+    transport.diagnostics_dir = Path(diagnostics_dir)
+    script = inspect.getsource(_observe_processes) + "\n" + inspect.getsource(_observe_final_cleanup_remote)
+    command = ("python3 -B - <<'GENERIC_FINAL_CLEANUP_OBSERVATION_PY'\n"
+               + script + "\nimport json\nprint('GENERIC_FINAL_CLEANUP=' + json.dumps("
+               "_observe_final_cleanup_remote(json.loads(" + repr(json.dumps(operations))
+               + ")), sort_keys=True))\nGENERIC_FINAL_CLEANUP_OBSERVATION_PY")
+    started = time.time_ns()
+    rc, output = transport.run_read_only(command, timeout=30,
+                                         env={"PYTHONDONTWRITEBYTECODE": "1"})
+    ended = time.time_ns()
+    lines = [line[len("GENERIC_FINAL_CLEANUP="):] for line in output.splitlines()
+             if line.startswith("GENERIC_FINAL_CLEANUP=")]
+    if rc != 0 or len(lines) != 1:
+        raise ValueError("fresh final cleanup remote observation is incomplete")
+    result = json.loads(lines[0])
+    if not isinstance(result, dict):
+        raise ValueError("fresh final cleanup remote observation is malformed")
+    return {**result, "local_start_unix_ns": started, "local_end_unix_ns": ended}

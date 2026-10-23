@@ -1,3 +1,38 @@
+## 23.10.2026 — Explizite Generic-Recovery nach partiellem Final-Cleanup
+
+Der neue normale CLI-Zweig `recover-generic-final-cleanup` behandelt einen
+bereits partiell abgeschlossenen Generic-Quality-Lauf mit echter finaler
+Remote-Quarantäne. Der alte Running-Orphan-Vertrag bleibt erhalten. Die Recovery
+bindet Originalaktion, Start-/Profil-/Planvertrag, Controlleridentität,
+Final-Cleanup-Marker, sämtliche alten Sessionjournale sowie die exakten Run-/DUT-
+Owner und Fences. Registry, Unixnutzer, Home, normale Lockpfade und vorhandene
+Inodes müssen auch aus einem isolierten Checkout identisch sein.
+
+Unter denselben vorhandenen Run- und DUT-Locks werden ursprüngliche Gruppen und
+Nachfahren erneut geprüft. Die bestehende normale Vertragsattribution darf nur
+nachweisbar unabhängige andere DUT-Controller zulassen; unbekannte und gleiche
+DUT-Arbeit bleibt blockiert. Die neue entfernte Beobachtung verwendet den
+bestehenden Readonly-Transport. Eine fehlende alte Lease reicht nicht: erforderlich
+sind ein echter passender Guardian-Drained-Token oder eine an UTC/Uptime gebundene
+Kernel-Bootgrenze nach altem Final-Cleanup und eine frische freie DUT-Beobachtung.
+Es werden keine Cancelmarker, Signale oder Messungen erzeugt.
+
+Der vorhandene fsync-gesicherte Gruppencommit erhält einen engen expliziten
+Freigabegrund. Manifest, Session, finished_at und wissenschaftliche Ergebnisse
+bleiben partiell und unverändert; allein ein heutiger Recoveryverweis kommt
+hinzu. Originale Owner-/Fence-/Manifest-/Journalbytes und der alte Cleanupmarker
+werden im Receipt bewahrt. Descriptorbereinigung und Freigabe von Run plus einem
+DUT bilden dieselbe Gruppe; Fehler rollen die Originalbytes zurück und bleiben
+geschlossen. Identische Wiederholung ist an unveränderte Quellen gebunden.
+
+Die gezielte Softwareprüfung umfasst partiellen Erhalt, Belegbindungen,
+fehlende Remoteproofs, aktive und unbekannte Eigentümer, Originalbytes,
+Idempotenz sowie Commit- und Rollbackfehler. Der echte isolierte Readonly-Probe
+bestätigt die ursprünglichen sechs Pfade/Inodes und den alten Startvertrag.
+Eine tatsächliche Ressourcen-Recovery oder neue Hardwaremessung wurde in diesem
+Arbeitspaket noch nicht ausgeführt; konkrete Review und Veröffentlichung des
+isolierten Zweigs gehen einer solchen Ausführung voraus.
+
 ## 23.10.2026 — Kanonische Backendidentität im DeepX-Controllerdescriptor
 
 Der normale Controller-Writer ergänzt im vorhandenen DeepX-Stage-Descriptor

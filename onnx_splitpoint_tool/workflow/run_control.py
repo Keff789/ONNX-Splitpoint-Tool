@@ -798,6 +798,7 @@ def commit_generic_orphan_recovery_group(
     receipt_path: Path, receipt_data: Mapping[str, Any],
     manifest_path: Path, manifest_before: bytes,
     manifest_after: bytes | Mapping[str, Any],
+    terminal_journal_entries: Mapping[Path, bytes] | None = None,
 ) -> dict[str, Any]:
     """Commit one validated Generic orphan closure under all existing flocks.
 
@@ -808,6 +809,11 @@ def commit_generic_orphan_recovery_group(
     Their marker binds the final receipt; the receipt stores marker-free owners
     so there is no hash cycle. Ordinary admission checks that marker even when
     its sidecar was already removed before a crash.
+
+    The explicit final-cleanup ground preserves an already partial manifest
+    and its last partial session, adding only the root recovery reference.
+    Original selected-session lease descriptors join that durable group; their
+    bytes are archived before removal and restored if the commit fails.
     """
     def require(condition: bool, message: str) -> None:
         if not condition:
@@ -817,6 +823,12 @@ def commit_generic_orphan_recovery_group(
     data = dict(receipt_data)
     require(data.get("schema") == _GENERIC_ORPHAN_SCHEMA
             and data.get("schema_version") == 1, "invalid receipt schema")
+    final_cleanup = data.get("release_ground") == "verified_generic_final_cleanup"
+    require("release_ground" not in data or final_cleanup,
+            "unsupported recovery release ground")
+    require(terminal_journal_entries is None
+            or (final_cleanup and isinstance(terminal_journal_entries, Mapping)),
+            "terminal lease journals require verified Generic final cleanup")
     require(all(isinstance(data.get(key), str) and data[key].strip()
                 for key in ("recovery_id", "run_id", "session_id", "run_dir")),
             "receipt identity is incomplete")
@@ -824,6 +836,9 @@ def commit_generic_orphan_recovery_group(
             and data["run_dir"] == str(run_lock.run_dir), "receipt run differs")
     require(isinstance(physical_locks, Mapping) and bool(physical_locks),
             "the complete physical DUT group is required")
+    if final_cleanup:
+        require(len(physical_locks) == 1,
+                "final cleanup releases only the selected remaining physical DUT")
     locks = [run_lock]
     for resource, lock in sorted(physical_locks.items()):
         require(isinstance(resource, str) and resource.startswith("dut:")
@@ -858,53 +873,99 @@ def commit_generic_orphan_recovery_group(
                     for key, value in reference.items()), "foreign lifecycle recovery reference")
     after[_GENERIC_ORPHAN_MARKER] = {**existing_reference, **reference}
     after_bytes = _generic_orphan_bytes(after)
-    require(before.get("schema") == "onnx-splitpoint/evaluation-run-manifest"
-            and before.get("status") == "running"
-            and before.get("run_id") == data["run_id"]
-            and before.get("current_session_id") == data["session_id"]
-            and after.get("run_id") == data["run_id"]
-            and after.get("current_session_id") == data["session_id"]
-            and after.get("status") == "cancelled"
-            and after.get("technical_status") == "cancelled",
-            "manifest closure is not bound to the interrupted original session")
-    lifecycle_fields = {"status", "technical_status", "updated_at", "execution_sessions",
-                        _GENERIC_ORPHAN_MARKER}
-    require({key: value for key, value in before.items() if key not in lifecycle_fields}
-            == {key: value for key, value in after.items() if key not in lifecycle_fields},
-            "recovery cannot alter stages or scientific results")
-    original_sessions = before.get("execution_sessions")
-    closed_sessions = after.get("execution_sessions")
-    require(isinstance(original_sessions, list) and isinstance(closed_sessions, list)
-            and len(original_sessions) == len(closed_sessions), "session journal differs")
-    found = 0
-    session_fields = {"status", "finished_at", "interrupted_at", "last_updated_at",
-                      _GENERIC_ORPHAN_MARKER}
-    for old, closed in zip(original_sessions, closed_sessions):
-        require(isinstance(old, dict) and isinstance(closed, dict), "invalid session journal")
-        if old.get("session_id") == data["session_id"]:
-            found += 1
-            require(old.get("status") == "running" and closed.get("status") == "cancelled"
-                    and {key: value for key, value in old.items() if key not in session_fields}
-                    == {key: value for key, value in closed.items() if key not in session_fields},
-                    "only the interrupted session lifecycle may change")
-        else:
-            require(old == closed, "a foreign session changed")
-    require(found == 1, "original session is not unique")
+    if final_cleanup:
+        require(before.get("schema") == "onnx-splitpoint/evaluation-run-manifest"
+                and before.get("status") == "partial"
+                and before.get("run_id") == data["run_id"]
+                and before.get("current_session_id") == data["session_id"]
+                and _GENERIC_ORPHAN_MARKER not in before
+                and _generic_orphan_bytes({key: value for key, value in after.items()
+                                           if key != _GENERIC_ORPHAN_MARKER})
+                == _generic_orphan_bytes(before),
+                "final cleanup must preserve the complete original partial manifest")
+        original_sessions = before.get("execution_sessions")
+        require(isinstance(original_sessions, list) and bool(original_sessions)
+                and all(isinstance(row, dict) for row in original_sessions)
+                and sum(row.get("session_id") == data["session_id"]
+                        for row in original_sessions) == 1
+                and original_sessions[-1].get("session_id") == data["session_id"]
+                and original_sessions[-1].get("status") == "partial",
+                "final cleanup requires the unique last partial session")
+    else:
+        require(before.get("schema") == "onnx-splitpoint/evaluation-run-manifest"
+                and before.get("status") == "running"
+                and before.get("run_id") == data["run_id"]
+                and before.get("current_session_id") == data["session_id"]
+                and after.get("run_id") == data["run_id"]
+                and after.get("current_session_id") == data["session_id"]
+                and after.get("status") == "cancelled"
+                and after.get("technical_status") == "cancelled",
+                "manifest closure is not bound to the interrupted original session")
+        lifecycle_fields = {"status", "technical_status", "updated_at", "execution_sessions",
+                            _GENERIC_ORPHAN_MARKER}
+        require({key: value for key, value in before.items() if key not in lifecycle_fields}
+                == {key: value for key, value in after.items() if key not in lifecycle_fields},
+                "recovery cannot alter stages or scientific results")
+        original_sessions = before.get("execution_sessions")
+        closed_sessions = after.get("execution_sessions")
+        require(isinstance(original_sessions, list) and isinstance(closed_sessions, list)
+                and len(original_sessions) == len(closed_sessions), "session journal differs")
+        found = 0
+        session_fields = {"status", "finished_at", "interrupted_at", "last_updated_at",
+                          _GENERIC_ORPHAN_MARKER}
+        for old, closed in zip(original_sessions, closed_sessions):
+            require(isinstance(old, dict) and isinstance(closed, dict), "invalid session journal")
+            if old.get("session_id") == data["session_id"]:
+                found += 1
+                require(old.get("status") == "running" and closed.get("status") == "cancelled"
+                        and {key: value for key, value in old.items() if key not in session_fields}
+                        == {key: value for key, value in closed.items() if key not in session_fields},
+                        "only the interrupted session lifecycle may change")
+            else:
+                require(old == closed, "a foreign session changed")
+        require(found == 1, "original session is not unique")
+    journal_snapshots = []
+    if final_cleanup:
+        require(Path(data["session_id"]).name == data["session_id"]
+                and data["session_id"] not in {".", ".."}, "unsafe original session ID")
+        journal_dir = run_lock.run_dir / "jobs" / "remote_process_leases" / data["session_id"]
+        require(not journal_dir.is_symlink()
+                and not any(parent.is_symlink() for parent in journal_dir.parents),
+                "unsafe original terminal lease journal")
+        for path, raw in sorted((terminal_journal_entries or {}).items(),
+                                key=lambda item: str(item[0])):
+            require(isinstance(path, Path) and isinstance(raw, bytes),
+                    "original terminal lease journal bytes are required")
+            path = _generic_orphan_path(path)
+            require(path.parent == journal_dir and path.name.endswith(".remote-lease.json")
+                    and path.name != ".remote-lease.json",
+                    "terminal lease journal is outside the original session")
+            journal_snapshots.append({"path": path, "original_bytes": raw})
     group_keys = [{"lock_path": str(lock.lock_path),
                    "physical_resource": None if lock is run_lock else next(
                        key for key, value in physical_locks.items() if value is lock)}
                   for lock in locks]
-    input_sha256 = _canonical_sha256({"receipt_data": data,
+    input_payload = {"receipt_data": data,
         "manifest_path": str(manifest_path),
         "manifest_before_sha256": hashlib.sha256(manifest_before).hexdigest(),
         "manifest_after_sha256": hashlib.sha256(after_bytes).hexdigest(),
-        "group": group_keys})
+        "group": group_keys}
+    if final_cleanup:
+        input_payload["terminal_journal_entries"] = [
+            {"path": str(row["path"]),
+             "original_sha256": hashlib.sha256(row["original_bytes"]).hexdigest()}
+            for row in journal_snapshots]
+    input_sha256 = _canonical_sha256(input_payload)
     if receipt_path.exists():
         existing = json.loads(receipt_path.read_bytes())
         require(isinstance(existing, dict) and existing.get("state") == "committed"
                 and existing.get("input_sha256") == input_sha256,
                 "existing receipt is incomplete, changed or foreign")
         require(manifest_path.read_bytes() == after_bytes, "committed lifecycle changed")
+        if final_cleanup:
+            require(not list(journal_dir.glob("*.remote-lease.json"))
+                    and all(not os.path.lexists(row["path"]) for row in journal_snapshots),
+                    "committed terminal lease journal changed")
         for lock in locks:
             verified = validate_generic_orphan_recovery_owner(lock)
             require(verified == existing, "group member refers to a foreign receipt")
@@ -928,9 +989,14 @@ def commit_generic_orphan_recovery_group(
                     and owner.get("run_id") == data["run_id"]
                     and owner.get("purpose") == "generic",
                     "physical owner is outside this original run")
+            if final_cleanup:
+                require("session_id" not in owner or owner["session_id"] == data["session_id"],
+                        "physical owner belongs to a foreign session")
         _generic_orphan_path(lock.quarantine_path)
         fence_bytes = (lock.quarantine_path.read_bytes()
                        if lock.quarantine_path.exists() else None)
+        if final_cleanup:
+            require(fence_bytes is not None, "original final cleanup fence is required")
         if fence_bytes is not None:
             fence = json.loads(fence_bytes)
             payload = fence.get("owner") if isinstance(fence, dict) else None
@@ -939,10 +1005,26 @@ def commit_generic_orphan_recovery_group(
                     and fence.get("state") == "quarantined"
                     and fence.get("run_id") == lock.run_dir.name
                     and fence.get("run_dir") == str(lock.run_dir)
-                    and payload.get("reason") in {
+                    and (final_cleanup or payload.get("reason") in {
                         "previous_writer_terminated_uncleanly",
-                        "generic_remote_cleanup_requires_reconciliation"},
+                        "generic_remote_cleanup_requires_reconciliation"}),
                     "foreign or unsupported resource fence")
+            if final_cleanup:
+                require(fence.get("schema_version") == 1,
+                        "unsupported final cleanup fence schema")
+                if lock is run_lock:
+                    require(payload.get("phase") == "final_cleanup"
+                            and payload.get("reason") == "final_process_quiescence_unresolved"
+                            and payload.get("local_process_quiescence_proven") is True
+                            and payload.get("remote_process_quiescence_proven") is False
+                            and payload.get("run_id") == data["run_id"]
+                            and payload.get("session_id") == data["session_id"],
+                            "run fence is not the original remote-only final cleanup")
+                else:
+                    require(payload.get("reason") == "generic_remote_cleanup_requires_reconciliation"
+                            and payload.get("run_id", data["run_id"]) == data["run_id"]
+                            and payload.get("session_id", data["session_id"]) == data["session_id"],
+                            "physical fence is outside the original final cleanup")
             if "previous_owner" in payload:
                 require(payload["previous_owner"] == owner,
                         "fence predecessor differs from the original owner")
@@ -950,6 +1032,14 @@ def commit_generic_orphan_recovery_group(
                           "fence_bytes": fence_bytes})
     require(manifest_path.read_bytes() == manifest_before,
             "original manifest changed under recovery")
+    if final_cleanup:
+        require(set(journal_dir.glob("*.remote-lease.json"))
+                == {row["path"] for row in journal_snapshots},
+                "original terminal lease journal membership changed")
+        for row in journal_snapshots:
+            _generic_orphan_path(row["path"], existing=True)
+            require(row["path"].read_bytes() == row["original_bytes"],
+                    "original terminal lease journal changed under recovery")
     prepared_at = _now_iso()
     group = []
     for key, snapshot in zip(group_keys, snapshots):
@@ -968,11 +1058,18 @@ def commit_generic_orphan_recovery_group(
         "manifest_before_sha256": hashlib.sha256(manifest_before).hexdigest(),
         "manifest_before_base64": base64.b64encode(manifest_before).decode("ascii"),
         "manifest_after_sha256": hashlib.sha256(after_bytes).hexdigest(), "group": group}
+    if final_cleanup:
+        committed["terminal_journal_entries"] = [
+            {"path": str(row["path"]),
+             "original_sha256": hashlib.sha256(row["original_bytes"]).hexdigest(),
+             "original_base64": base64.b64encode(row["original_bytes"]).decode("ascii")}
+            for row in journal_snapshots]
     committed_bytes = _generic_orphan_bytes(committed)
     receipt_sha256 = hashlib.sha256(committed_bytes).hexdigest()
     marker = {"receipt_path": str(receipt_path), "receipt_sha256": receipt_sha256,
               **{key: data[key] for key in ("recovery_id", "run_id", "session_id", "run_dir")}}
     changed = False
+    removed_journals = []
     try:
         # Until committed is published every marker intentionally points at a
         # different receipt hash/state, keeping even a missing sidecar closed.
@@ -990,6 +1087,15 @@ def commit_generic_orphan_recovery_group(
                 _GENERIC_ORPHAN_MARKER: {**marker, "lock_path": str(lock.lock_path),
                                         "physical_resource": member["physical_resource"]}})
         _generic_orphan_atomic_write(manifest_path, after_bytes)
+        for row in journal_snapshots:
+            require(row["path"].read_bytes() == row["original_bytes"],
+                    "terminal lease journal changed during group commit")
+            row["path"].unlink()
+            removed_journals.append(row)
+            _generic_orphan_sync_directory(row["path"].parent)
+        if final_cleanup:
+            require(not list(journal_dir.glob("*.remote-lease.json")),
+                    "terminal lease journal membership changed during group commit")
         for snapshot in snapshots:
             lock = snapshot["lock"]
             lock.quarantine_path.unlink()
@@ -1037,6 +1143,11 @@ def commit_generic_orphan_recovery_group(
                     os.fsync(lock._fh.fileno())
                 except BaseException as rollback_exc:
                     rollback_errors.append(f"owner {lock.lock_path}: {rollback_exc}")
+            for row in removed_journals:
+                try:
+                    _generic_orphan_atomic_write(row["path"], row["original_bytes"])
+                except BaseException as rollback_exc:
+                    rollback_errors.append(f"journal {row['path']}: {rollback_exc}")
             try:
                 _generic_orphan_atomic_write(manifest_path, manifest_before)
             except BaseException as rollback_exc:
