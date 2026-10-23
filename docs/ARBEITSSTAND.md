@@ -1,3 +1,27 @@
+## 23.10.2026 — Gemeinsamer Main-Stand aus H8-UINT8-Quality und Run-only-Recovery
+
+Der getrennte Integrationscheckout vereinigt die akzeptierten Branchstände
+`100c039` (H8-UINT8 Generic Quality) und `1aede9a` (normale Pre-dispatch
+Run-only-Recovery einschließlich des Already-ended-Falls mit null Prozessen).
+Produkt- und Testdateien bleiben exakt die jeweiligen freigegebenen
+Branchversionen. Beide ursprünglichen Arbeitsstandsnotizen sind unverändert
+erhalten; ausschließlich dieser Integrationsabschnitt und die normal neu
+erzeugten Quellenindizes führen die gemeinsame Veröffentlichungsmetadaten fort.
+
+Die vorhandenen Softwarebelege bleiben 41 gezielte UINT8-Tests, 25 finale
+Recovery-Tests und die zuvor geprüften 307 Recovery-Tests. Für diese reine
+Integration wird keine Testkampagne wiederholt. Der normale Runnerwriter enthält
+42 Member einschließlich 37 Python-Dateien. Gegenüber Main `ffbfe457` ändern
+sich genau die zwei UINT8-Dateien `runner/run_split_onnxruntime.py` und
+`splitpoint_runners/generic_quality_completion.py`; die übrigen 40 Member
+bleiben bytegleich. Die Recovery-Änderung verändert keine weiteren Runnerbytes.
+
+Hardware, SDK-Inferenz, SSH, neue Captures, FPS und Statistik werden hier nicht
+gestartet. Laufende quellengebundene Vorgänge, historische Exporte und Configpins
+bleiben unverändert. Ein neuer FPS-SourceFreeze wird nicht erzeugt. Die regulären
+Manifest-, Source-Release- und Installed-Integrity-Prüfungen sowie der exakte
+Commitexport bilden den neuen gemeinsamen veröffentlichten Quellenstand.
+
 ## 23.10.2026 — Verifizierte H8-UINT8-Bindung im Generic-Quality-Lauf
 
 Der normale Generic-Quality-Lauf verwendete eine bereits streng geprüfte
@@ -34,6 +58,66 @@ bytegleich. Bestehende Exporte und historische Config-/Runtimebindungen bleiben
 unverändert. Neue Quality-only-Läufe benötigen die wahrheitsgetreue normale
 PackageSource-/Configbindung dieses veröffentlichten Branchstands. Ein neuer
 FPS-SourceFreeze wird hier nicht erzeugt.
+
+## 23.10.2026 — Expliziter Run-only-Abschluss vor Generic-Quality-Dispatch
+
+Der separate normale Befehl `recover-generic-predispatch-run-only` schließt nur
+einen tatsächlich beendeten, eindeutig gebundenen source-only Generic-Quality-
+Controller ohne Dispatch oder Remote-Lease. Ursprüngliche Launcher-/Abbruch-,
+Run-/Session-, Profil-/Snapshot-, Registry- und Prozessbelege werden geprüft;
+aktive oder unklare lokale/entfernte Arbeit bleibt gesperrt. Leere normale
+Sessionordner und exakt gebundene Cancellation-Tombstones sind keine Leases.
+Die normalen, noch leeren Startupordner `reports/tables` und `reports/figures`
+sind zulässig; enthaltene Dateien und unerwartete Einträge bleiben Blocker.
+Ein normaler `remote_trt_cache_preflight.json` bleibt als ausschließlich lesender
+Vorbereitungsbeleg zulässig: Schema, No-Hardware-Flags, Modell, Setup, eigener
+Suitepfad und Zeitbindung werden geprüft und seine Originalbytes erhalten.
+Der bereits laufende normale `stage_result.json` bindet diese Vorbereitung;
+der Manifestrow entsteht erst nach Rückkehr der Stagefunktion.
+Unbekannte oder bereits ausgeführte spätere Stages und Ausgabebelege sperren.
+Für tatsächliche normale Actions mit beschreibenden Scope-/Targetfeldern
+erfasst `observe_generic_predispatch_run_binding` vor dem Ende zweimal stabil
+argv/cwd, PID/Start/Prozessgruppe/Session sowie tatsächlichen Run-Flock/Inode
+und Ownerbytes zusammen mit den unveränderten Creation-/PackageSource-Belegen.
+Es ist ausdrücklich eine neue Beobachtung ohne End-/Releasebehauptung; fehlende
+historische Logger-/Startedbelege werden nicht ergänzt. Die Recovery verlangt
+danach einen gesonderten echten Lifecycle-Endbeleg und frische Quieszenz. Ein
+vorzeitig beendeter Generierungslauf benötigt keinen fertigen benchmark_plan.
+Tatsächliche Actions mit typisierten `scope.case_ids` und `scope.FPS=false`
+werden ohne Änderung der Originaldatei unterstützt; widersprüchliche parallele
+Deklarationen bleiben gesperrt.
+
+Der frühere physische Owner muss regulär freigegeben und unquarantined sein.
+Unterstützt sind normale Generic-Owner sowie der konkret belegte normale
+`generic_completed_task_192`-Vorgänger mit seinen bestehenden Terminal-/Cleanup-
+Belegen. Seine Ownerbytes und Sperrdateien bleiben unverändert. Der neue eigene
+Receipt-/Owner-Marker erlaubt ausschließlich den unter Run-Flock gesicherten
+Management-Abschluss als `cancelled`; Erzeugung, wissenschaftliche Ergebnisse,
+Stages und ursprüngliche Abbruchbelege werden nicht umgedeutet. Unvollständige
+Receipts und fehlgeschlagene Transaktionen bleiben dauerhaft gesperrt. Der
+bisherige Generic-Gruppenabschluss behält seine nichtleere physische Gruppe und
+seine bisherigen Ownership-Prüfungen unverändert.
+
+Nur die tatsächlich betroffene Ressource wird geprüft und gesperrt. Eine durch
+die vorhandene normale Controller-Zuordnung nachweislich unabhängige andere DUT
+blockiert diesen neuen Pfad nicht; derselbe DUT, unbekannte Zuordnungen und
+Sichtbarkeitsfehler bleiben Blocker. Der Befehl beendet keine Prozesse, startet
+keine Hardware, Statistik oder automatische Fortsetzung und gibt keine
+Collector-/Quellensperre frei. Die gezielten Tests verwenden temporäre Belege
+und kontrollierte lokale Testprozesse. Vor den konkreten Normalformatkorrekturen
+bestanden 307 gezielte Softwaretests:
+151 neue Binding-/API-/Durability-/CLI-/DUT-Scope-Fälle und 156 bestehende
+Generic-/CLI-/Quality-Admission-/Resource-Recovery-Regressionen. Nach einem realen
+read-only Parserabbruch wurden die normalen `sha256:`-Build-Digests strikt
+normalisiert. Anschließend bestanden 25 direkte Binding-/Recoveryfälle mit dem
+tatsächlichen normalen Hash- und StageResult-Writer, leerem Startup-Reportbaum,
+streng gebundenem lesendem Cache-Preflight und typisierten Actionfeldern sowie
+deren konkreten negativen Gegenfällen. Keine reale
+Recovery oder Hardware wurde für diese Änderung ausgeführt.
+Der bestehende Lifecycle-Rückgabefall für einen bereits beendeten Prozess
+behält seine echten Nullzähler. Originale Live-Bindung und vollständige frische
+Quieszenz bleiben erforderlich; ein lebender Owner wird auch mit behaupteten
+Nullzählern abgewiesen.
 
 ## 23.10.2026 — Gemeinsame Dateisuche für den Artifact-Cache-Preflight
 

@@ -97,7 +97,8 @@ def original_process_group(tmp_path):
 def group_case(tmp_path, monkeypatch, original_process_group, request):
     monkeypatch.setattr(run_control, "platform_workflow_interlock_path",
                         lambda: tmp_path / "locks/workflow_platform_interlock.lock")
-    run = tmp_path / "runs/original-generic-quality"
+    run_name = "diagnostics" if getattr(request, "param", None) == "diagnostics" else "original-generic-quality"
+    run = tmp_path / "runs" / run_name
     session = "a" * 32
     controller = original_process_group.identities["controller"]
     owner = {"run_id": run.name, "session_id": session,
@@ -455,6 +456,26 @@ def orphan_case(group_case, monkeypatch):
         def run_read_only(self, *args, **kwargs):
             return 0, "RESOURCE_OWNERS=" + json.dumps(remote)
 
+    # Unit fixtures do not require unrelated product workflows on the host to
+    # stop. Keep the genuine recorded PID/start observations and every visibility
+    # error, and scope only the broad known-program list to this fixture's PIDs.
+    # The full normal Generic run/PGID/session/descendant scan remains unchanged.
+    real_process_observation = resource_recovery_observation._observe_processes
+    fixture_pids = {row["pid"] for row in processes.identities.values()}
+
+    def fixture_process_observation(local_owners, **kwargs):
+        observed = real_process_observation(local_owners, **kwargs)
+        observed["processes"] = [row for row in observed["processes"]
+                                 if row["pid"] in fixture_pids]
+        busy = bool(observed["processes"] or observed["live_product_leases"]
+                    or any(row["state"] == "active" for row in observed["recorded_owners"]))
+        errors = bool(observed["visibility_errors"])
+        observed.update(ok=not busy and not errors,
+                        status="busy" if busy else "unknown" if errors
+                        else "no_known_competing_work_seen")
+        return observed
+
+    monkeypatch.setattr(resource_recovery_observation, "_observe_processes", fixture_process_observation)
     monkeypatch.setattr(resource_recovery_observation, "SSHTransport", Transport)
     case.evidence_path, case.authorization_path = evidence_path, authorization_path
     case.lineage_path, case.handoff_path = lineage_path, handoff_path

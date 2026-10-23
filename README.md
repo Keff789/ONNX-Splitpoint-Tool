@@ -2,6 +2,11 @@
 
 Aktueller Build: `v2.95.5`. Die A4-Full-Ausgabe vorbereiteter Eingaben wird mit dem bestehenden strikten Pfadvertrag und der normalen Abholung der Originalbelege vereinheitlicht. Der echte 2.95.4-GUI-Lauf lieferte einen regulären MobileNet-b027-Numerik-PASS; Full blieb wegen der Artefaktpfadbindung failed, bei bestätigtem Geräteabschluss. [Release 2.95.5](docs/RELEASE_2.95.5.md) trennt diese Integration von der noch laufenden Hardwareabnahme.
 
+Für eindeutig beendete source-only Generic-Quality-Vorbereitungen ohne Dispatch
+ergänzt der normale [Run-only-Recoverypfad](docs/README.md#generic-quality-vor-dispatch)
+einen gesonderten beleggebundenen Management-Abschluss. Frühere regulär freigegebene
+physische Owner bleiben unverändert; aktive oder unklare Arbeit bleibt gesperrt.
+
 # ONNX Splitpoint Tool v2.95.4
 
 Vorheriger Build: `v2.95.4`. Die A4-Full-Bereitstellung ergänzt nach dem tatsächlichen GUI-Fehler die vorhandenen Suite- und Outputmetadaten. Die Auswahl muss den vorgesehenen DeepX-Full-Auftrag vor SDK-Start eindeutig auflösen. Die getrennte Prüfung von Ergebnisgültigkeit und Geräteabschluss sowie dokumentierte technische Reparaturversuche bleiben erhalten. [Release 2.95.4](docs/RELEASE_2.95.4.md) beschreibt den Stand. Reale GUI-Abnahme, Performance und Native-Energie werden getrennt im Auftragsreport nachgewiesen.

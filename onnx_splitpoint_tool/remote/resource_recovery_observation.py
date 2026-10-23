@@ -216,8 +216,111 @@ def _observe_processes(local_owners, *, proc_root="/proc", lease_parent="/tmp"):
             "exclusive_start_permission": False, "cleanup_proven": False}
 
 
+def scope_local_resource_owners(
+    setup: Mapping[str, Any], *, local_owners: list[dict],
+    raw_observation: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Attribute only proven foreign normal work to disjoint physical resources.
+
+    Recorded recovery predecessors must first be absent or zombies. The normal
+    FPS authority validator then supplies live process/run/lease associations;
+    its central-only exceptions never exempt a selected resource here. This
+    does not establish cleanup or authorize starting work.
+    """
+    from ..workflow.execution_binding import physical_dut_key
+    from ..workflow.generic_completed_task import _scoped_controller_owners
+    import copy
+
+    errors: list[str] = []
+    scoped: dict[str, Any] | None = None
+    selected: set[str] = set()
+    raw = dict(raw_observation) if isinstance(raw_observation, Mapping) else {}
+
+    def require(condition: bool, reason: str) -> None:
+        if not condition:
+            raise ValueError(reason)
+
+    try:
+        require(raw.get("read_only") is True
+                and all(isinstance(raw.get(key), list) for key in (
+                    "recorded_owners", "processes", "live_product_leases", "visibility_errors")),
+                "controller_raw_observation_incomplete")
+        require(not raw["visibility_errors"], "controller_visibility_unproven")
+        require(isinstance(local_owners, list) and bool(local_owners), "recorded_owners_required")
+        expected: set[tuple[int, str]] = set()
+        for owner in local_owners:
+            require(isinstance(owner, Mapping) and type(owner.get("pid")) is int
+                    and owner["pid"] > 0 and not isinstance(owner.get("start_time_ticks"), bool)
+                    and str(owner.get("start_time_ticks") or "").isdecimal()
+                    and int(owner["start_time_ticks"]) > 0, "recorded_owner_identity_invalid")
+            key = (owner["pid"], str(owner["start_time_ticks"]))
+            require(key not in expected, "duplicate_recorded_owner_identity")
+            expected.add(key)
+        seen: set[tuple[int, str]] = set()
+        for row in raw["recorded_owners"]:
+            require(isinstance(row, Mapping) and type(row.get("pid")) is int
+                    and not isinstance(row.get("start_time_ticks"), bool),
+                    "recorded_owner_observation_invalid")
+            key = (row["pid"], str(row.get("start_time_ticks")))
+            require(key in expected and key not in seen, "recorded_owner_observation_differs")
+            require(row.get("state") in {"absent", "zombie"}
+                    and ((row["state"] == "absent"
+                          and row.get("observed_start_time_ticks") is None)
+                         or (row["state"] == "zombie"
+                             and str(row.get("observed_start_time_ticks")) == key[1])),
+                    "recorded_original_owner_not_proven_ended")
+            seen.add(key)
+        require(seen == expected, "recorded_owner_observation_missing")
+        require(isinstance(setup, Mapping) and isinstance(setup.get("id"), str)
+                and bool(setup["id"].strip()), "selected_setup_identity_missing")
+        host = host_config_from_setup(setup)
+        require(bool(host.host) and bool(host.user), "selected_setup_host_unbound")
+        fields = setup.get("host") if isinstance(setup.get("host"), Mapping) else {}
+        physical_id = setup.get("physical_host_id") or fields.get("physical_host_id")
+        target = {"id": setup["id"], "physical_host_id": physical_id,
+                  "remote": {"host": host.host, "user": host.user,
+                             "port": int(host.port), "physical_host_id": physical_id}}
+        selected = {physical_dut_key(target),
+                    physical_dut_key({"remote": {"host": host.host}})}
+        association_raw = copy.deepcopy(raw)
+        # This adaptation is permitted only after every original PID/start
+        # observation above proved ended. Keep the unmodified raw evidence.
+        association_raw["recorded_owners"] = []
+        busy = bool(association_raw["processes"] or association_raw["live_product_leases"])
+        association_raw.update(ok=not busy,
+            status="busy" if busy else "no_known_competing_work_seen")
+        scoped = _scoped_controller_owners({setup["id"]: target}, association_raw)
+        require(isinstance(scoped, dict) and scoped.get("ok") is True
+                and scoped.get("read_only") is True and scoped.get("scope_errors") == []
+                and isinstance(scoped.get("selected_resources"), list)
+                and set(scoped["selected_resources"]) == selected
+                and isinstance(scoped.get("normal_quality_owners"), list),
+                "normal_controller_resource_association_unproven")
+        authorities = scoped["normal_quality_owners"]
+        require(not busy or bool(authorities), "observed_process_resource_authority_missing")
+        for authority in authorities:
+            require(isinstance(authority, Mapping)
+                    and isinstance(authority.get("resources"), list)
+                    and bool(authority["resources"])
+                    and all(isinstance(resource, str) and resource.startswith("dut:")
+                            for resource in authority["resources"]),
+                    "normal_controller_resources_unbound")
+            require(set(authority["resources"]).isdisjoint(selected),
+                    "normal_controller_overlaps_selected_resources")
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        errors.append(str(exc) or type(exc).__name__)
+    return {"ok": not errors, "read_only": True,
+            "status": "resource_scope_unresolved" if errors else "no_conflict_with_selected_resources",
+            "raw_observation": raw, "scoped_observation": scoped,
+            "recorded_owners": raw.get("recorded_owners", []),
+            "visibility_errors": raw.get("visibility_errors", []),
+            "selected_resources": sorted(selected), "scope_errors": errors,
+            "cleanup_proven": False, "exclusive_start_permission": False}
+
+
 def observe_resource_owners(
     setup: Mapping[str, Any], *, local_owners: list[dict], diagnostics_dir: Path,
+    resource_scoped: bool = False,
 ) -> dict[str, Any]:
     """Observe exact controller predecessors and known product work on the DUT.
 
@@ -229,6 +332,9 @@ def observe_resource_owners(
     if not isinstance(local_owners, list) or not local_owners:
         controller["visibility_errors"].append("recorded_owners_required")
         controller.update(ok=False, status="unknown")
+    if resource_scoped:
+        controller = scope_local_resource_owners(
+            setup, local_owners=local_owners, raw_observation=controller)
     remote: dict[str, Any] = {"ok": False, "read_only": True, "status": "not_observed"}
     # Do not open another connection after an already blocked local observation.
     if not controller["ok"]:
