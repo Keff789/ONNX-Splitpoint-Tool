@@ -1,3 +1,40 @@
+## 23.10.2026 — Verifizierte H8-UINT8-Bindung im Generic-Quality-Lauf
+
+Der normale Generic-Quality-Lauf verwendete eine bereits streng geprüfte
+historische UINT8-Bridge, reichte deren Quantisierungsbindung aber nicht an den
+Interfacevergleich weiter. Dieser las ausschließlich die Native-Laufzeitbindung.
+Außerdem blieb die H8-Session trotz deklarierter UINT8-Eingabe im bisherigen
+FLOAT32-Standardpfad. Nach abgefangenen Bildfehlern konnte der weiterhin strikte
+Capture-Timingguard die ursprünglichen Fehler verdecken, bevor deren Zeilen
+gesichert wurden. Ein solcher Fehlerlauf ist kein gültiger N5000-Capture.
+
+Der bestehende strikte Bridgeprüfer liefert seine geprüfte Bindung nun als
+separate Generic-Interfacebindung ausschließlich im Arbeitsspeicher zurück.
+Configdateien können diese Bindung nicht vorgeben; eine Native-Zulassung entsteht
+nicht. Die deklarierte H8-UINT8-Relation bestimmt den Sessioneingabetyp. Jedes
+tatsächliche Bild wird mit der vorhandenen kanonischen RGB-Fabrik aufbereitet und
+bytegleich durch den bestehenden UINT8-Adapter gereicht. Quantisierungswerte,
+HEF-/Bridge-/Scopeprüfungen und die numerischen FLOAT32-, FPS- und Native-Zweige
+bleiben unverändert. Der normale Fehlerpfad sichert beobachtete Soll-, Completion-
+und Versuchsanzahlen sowie die ersten acht begrenzten ursprünglichen Bildfehler.
+Er wirft den ursprünglichen Timing-/Countguard auch bei einem Diagnose-I/O-Fehler
+weiter; ein ungültiger Capture wird nicht zugelassen.
+
+41 gezielte Softwaretests bestanden in 8,94 Sekunden; der unabhängige fokussierte
+Review und die anschließende Root-Prüfung akzeptierten den konkreten Delta.
+Geprüft wurden gültige und falsche Bridge-/Quant-/HEF-/Scopebindungen, unveränderte
+UINT8-Bildbytes bis zum ursprünglichen Infer-Aufruf, weiterhin verbotene
+Nativeflags, bestehende Defaults sowie ehrliche und begrenzte Fehlerdiagnosen.
+Es wurden keine Hardware, SDK-Inferenz, SSH, Statistik oder neuen Captures
+gestartet. Der normale Runnerwriter erzeugt 42 Member einschließlich 37
+Python-Dateien. Gegenüber F20 ändern sich ausschließlich
+`runner/run_split_onnxruntime.py` und
+`splitpoint_runners/generic_quality_completion.py`; die übrigen 40 Member sind
+bytegleich. Bestehende Exporte und historische Config-/Runtimebindungen bleiben
+unverändert. Neue Quality-only-Läufe benötigen die wahrheitsgetreue normale
+PackageSource-/Configbindung dieses veröffentlichten Branchstands. Ein neuer
+FPS-SourceFreeze wird hier nicht erzeugt.
+
 ## 23.10.2026 — Gemeinsame Dateisuche für den Artifact-Cache-Preflight
 
 Der normale Controller sammelt die fünf bereits verwendeten wörtlichen
