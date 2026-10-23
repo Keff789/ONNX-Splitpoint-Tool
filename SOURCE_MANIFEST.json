@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2376,
+  "file_count": 2377,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 469022,
-      "sha256": "b1efa52da8d5411c7abe823301dcc3ea5c9a07d89e016205f019cdc46aeb9a67"
+      "size": 470507,
+      "sha256": "1ea42fabc02d02105f729e4623c1bd886e59940a69594579113384b58a0d78ce"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -3011,8 +3011,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/artifact_cache_preflight.py",
-      "size": 76523,
-      "sha256": "58bd45d9657f167f80afa7f77a008747669d0cc9f205cfd6ebf98716383c5afb"
+      "size": 78350,
+      "sha256": "916aaca4c3f42e93c8a3bedcdc7704c57b9f8625f85a05bea42efaaf15fe067e"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/artifact_registry_binding.py",
@@ -7153,6 +7153,11 @@
       "path": "tests/test_ap08_workflow_configuration.py",
       "size": 11184,
       "sha256": "f59bb5f82d6e833534ba006adb45672e3fddf4bd2bbc9b490efeadd25f6dae99"
+    },
+    {
+      "path": "tests/test_artifact_cache_preflight_single_walk.py",
+      "size": 8478,
+      "sha256": "eb1f29649a21ef7d930811795fb2a647dc5bd8372d799502d364915ce383d1d6"
     },
     {
       "path": "tests/test_artifact_index_report_cleanup.py",

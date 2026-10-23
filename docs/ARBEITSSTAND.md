@@ -1,3 +1,25 @@
+## 23.10.2026 — Gemeinsame Dateisuche für den Artifact-Cache-Preflight
+
+Der normale Controller sammelt die fünf bereits verwendeten wörtlichen
+Request-/Statusdateinamen pro Modell und Preflight-Aufruf mit einem gemeinsamen
+rekursiven Verzeichnisdurchlauf. Die bestehenden Hailo-/DeepX-Reader erhalten
+dieselben sortierten Pfadlisten; Inhalte, Hashes, Status- und Auswahlprüfungen
+bleiben unverändert. Es werden keine Dataset-Unterbäume oder Backends ausgelassen
+und keine Beobachtungen über mehrere Aufrufe gespeichert. Direkte Einzelaufrufe
+der bisherigen privaten Reader behalten ihre ursprüngliche Suche.
+
+Wörtliche pathlib-Lookups erhalten die jeweilige Groß-/Kleinschreibung und
+Symlink-Semantik, auch bei nicht auflistbaren Verzeichnissen. Unklare
+Enumerations- oder Lookupfehler fallen auf die fünf ursprünglichen Suchläufe
+zurück. 40 gezielte Tests bestanden mit einer bestehenden DeprecationWarning;
+darunter sind vollständige Beobachtungsparität, alte negative Belege,
+Duplikatpriorität, fehlende/nestende Pfade, kaputte Links, nicht auflistbare
+Verzeichnisse, Fehlerfallbacks und frische Beobachtungen beim nächsten Aufruf.
+Ein kontrollierter Zähltest belegt fünf zu einem rekursiven Suchlauf im normalen
+Fall. Es wird kein gemessener Hardware-/NAS-Zeitgewinn behauptet. Alle 42 normal
+erzeugten Runner-Member einschließlich 37 Python-Dateien sind bytegleich zu F20.
+Aktive Quellenstände, Läufe, Exporte, Hardware und Statistik bleiben unberührt.
+
 ## 23.10.2026 — Gemeinsamer Quellenstand aus F19 und H8-UINT8-Source4
 
 Der getrennte Integrationscheckout vereinigt den veröffentlichten F19-Ownerpfad
