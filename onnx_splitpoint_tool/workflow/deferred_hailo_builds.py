@@ -577,10 +577,12 @@ def probe_deferred_deepx_part1_cache(suite: Path, *, log: Any = None) -> dict[st
     return _materialize_manual_deepx_part1_artifacts(**args)
 
 
-def _finalize_deepx(suite: Path, selected: set[str], log: Any, cancel_event: Any) -> list[dict[str, Any]]:
+def _finalize_deepx(suite: Path, selected: set[str], log: Any, cancel_event: Any, *,
+                    part1_cases: Optional[set[str]] = None,
+                    part2_cases: Optional[set[str]] = None) -> list[dict[str, Any]]:
     jobs = []
-    p1_request = _deepx_part1_request_path(suite)
-    if p1_request.is_file():
+    p1_request = _deepx_part1_request_path(suite) if part1_cases is None or part1_cases else None
+    if p1_request is not None and p1_request.is_file():
         request = _read(p1_request)
         if request.get("status") in {"pending", "failed", "completed"}:
             if cancel_event is not None and cancel_event.is_set():
@@ -588,7 +590,8 @@ def _finalize_deepx(suite: Path, selected: set[str], log: Any, cancel_event: Any
             from ..gui.benchmark_workflow import _materialize_manual_deepx_part1_artifacts
             args = dict(request["kwargs"])
             args["out_dir"] = Path(args["out_dir"])
-            args["selected_case_dirs"] = sorted(selected.intersection(args.get("selected_case_dirs", selected)))
+            p1_selected = selected if part1_cases is None else selected.intersection(part1_cases)
+            args["selected_case_dirs"] = sorted(p1_selected.intersection(args.get("selected_case_dirs", p1_selected)))
             if request.get("status") == "completed":
                 args["force_build"] = False
             for source_path, digest in request.get("source_onnx_sha256", {}).items():
@@ -609,7 +612,8 @@ def _finalize_deepx(suite: Path, selected: set[str], log: Any, cancel_event: Any
                      "status": request["status"], "result": request.get("result") or {},
                      "error": str((request.get("result") or {}).get("error") or (request.get("result") or {}).get("reason") or "")})
     for path in sorted(suite.glob(f"*/{DEEPX_PART2_REQUEST}")):
-        if path.parent.name not in selected:
+        if (path.parent.name not in selected
+                or part2_cases is not None and path.parent.name not in part2_cases):
             continue
         request = _read(path)
         previous_dxnn = Path(str(request.get("result", {}).get("dxnn_path") or ""))
@@ -885,6 +889,48 @@ def refresh_deferred_hailo_negative_probes(
     return {"status": "refreshed" if jobs else "not_applicable", "jobs": jobs}
 
 
+def _generic_deferred_artifact_scope(
+    suite: Path, profile: Mapping[str, Any], accepted: set[str],
+) -> Optional[set[tuple[str, str, str]]]:
+    from ..native_full_quality import enabled_run_profiles
+    from ..runners.generic_quality_accounting import _stage, authorized_runs
+    from .hailo_artifact_scope import selected_hailo_artifact_stages
+
+    declared = enabled_run_profiles(profile.get("run_profiles"))
+    generic = [row for row in declared if "generic_quality_completion_configs" in row]
+    if not generic or any(row not in generic and not row.get("semantic_reference_only") for row in declared):
+        return None  # Existing mixed/legacy workflows keep their full contract.
+    plan = _read(suite / "benchmark_plan.json")
+    authorized = enabled_run_profiles(authorized_runs(plan, profile))
+    if not authorized or {row["id"] for row in authorized} != {row["id"] for row in generic}:
+        raise ValueError("deferred_generic_quality_authority_unresolved")
+    for row in enabled_run_profiles(plan.get("runs") or plan.get("planned_runs")):
+        if row.get("id") not in {item["id"] for item in authorized} and not row.get("semantic_reference_only"):
+            raise ValueError("deferred_generic_quality_plan_scope_unresolved")
+    if any(not set(row["case_ids"]) <= accepted for row in authorized):
+        raise ValueError("deferred_generic_quality_case_scope_invalid")
+    scope = selected_hailo_artifact_stages({"runs": authorized}, sorted(accepted))
+    if scope is None:
+        raise ValueError("deferred_generic_quality_stage_scope_unresolved")
+    scope.update(("deepx", case, "part1") for row in authorized
+                 if _stage(row["stage1"]) == "deepx_m1" for case in row["case_ids"])
+    return scope
+
+
+def _generic_hailo_request_identity(suite: Path, path: Path) -> tuple[str, str, str]:
+    from .hailo_artifact_scope import hailo_scope_backend
+    parts = path.relative_to(suite).parts
+    if len(parts) == 5 and re.fullmatch(r"b[0-9]+", parts[0]) and parts[1] == "hailo":
+        case, backend, stage = parts[0], hailo_scope_backend(parts[2]), parts[3]
+    elif len(parts) == 4 and parts[0] == "hailo" and parts[2] == "full":
+        case, backend, stage = "full", hailo_scope_backend(parts[1]), "full"
+    else:
+        raise ValueError(f"deferred_generic_request_scope_unresolved:{path}")
+    if not backend or stage not in {"part1", "part2", "full"}:
+        raise ValueError(f"deferred_generic_request_scope_unresolved:{path}")
+    return backend, case, stage
+
+
 def finalize_deferred_hailo_builds(
     *, model_dir: Path, run_dir: Path, profile_payload: Mapping[str, Any],
     log: Optional[Callable[[str], None]] = None, process_registry: Any = None,
@@ -912,6 +958,12 @@ def finalize_deferred_hailo_builds(
         str(case.get("case_dir") or case.get("folder") or "")
         for case in payload.get("cases", []) if isinstance(case, Mapping)
     }
+    generic_scope = _generic_deferred_artifact_scope(suite, profile_payload, selected)
+    if generic_scope is not None:
+        hailo_scope = {item for item in generic_scope if item[0] in {"hailo8", "hailo10"}}
+        requests = ([path for path in requests
+                     if _generic_hailo_request_identity(suite, path) in hailo_scope]
+                    if hailo_scope else [])
     if requests and build_fn is None:
         from ..gui.benchmark_workflow import resolve_hailo_benchmark_helpers
         build_fn = resolve_hailo_benchmark_helpers(need_build=True, need_part2=False).hailo_build_hef_fn
@@ -939,6 +991,10 @@ def finalize_deferred_hailo_builds(
         if output.parent.parent.parent != suite and case_manifest is None:
             raise ValueError(f"deferred_request_stage_scope_invalid:{request_path}")
         context = _request_context(request, request_path, model_id=Path(model_dir).name)
+        if generic_scope is not None:
+            from .hailo_artifact_scope import hailo_scope_backend
+            if (hailo_scope_backend(context["backend"]), context["boundary"], context["stage"]) != _generic_hailo_request_identity(suite, request_path):
+                raise ValueError(f"deferred_request_identity_scope_invalid:{request_path}")
         cache_role = "hailo10_hef" if "hailo10" in context["backend"] else "hailo8_hef"
         strict_warm = bool(cache_policy.get("enabled", True) and cache_policy.get("block_on_unexpected_cold_builds") and
             _expectation_for(cache_policy, model_id=context["model_id"], role=cache_role,
@@ -1071,12 +1127,17 @@ def finalize_deferred_hailo_builds(
     from ..process_control import bind_process_registry, current_process_registry
     from ..cache_verify_policy import bind_artifact_policy
     with bind_artifact_policy(profile_payload), bind_process_registry(process_registry or current_process_registry()):
-        deepx_jobs = _finalize_deepx(suite, selected, log, cancel_event)
+        deepx_scope = {} if generic_scope is None else {
+            "part1_cases": {case for backend, case, stage in generic_scope if backend == "deepx" and stage == "part1"},
+            "part2_cases": {case for backend, case, stage in generic_scope if backend == "deepx" and stage == "part2"},
+        }
+        deepx_jobs = _finalize_deepx(suite, selected, log, cancel_event, **deepx_scope)
         jobs.extend(deepx_jobs)
         selected_requests.extend({key: job[key] for key in
             ("request", "model_id", "backend", "boundary", "stage", "job_kind", "identity_source", "selected") if key in job}
             for job in deepx_jobs)
-    _refresh_suite_mirrors(suite, formal)
+    if generic_scope is None or requests:
+        _refresh_suite_mirrors(suite, formal)
     result = {"status": "partial" if any(job["status"] == "failed" for job in jobs) else "completed",
               "jobs": jobs, "selected_requests": selected_requests}
     result["readiness"] = project_deferred_build_readiness(result)

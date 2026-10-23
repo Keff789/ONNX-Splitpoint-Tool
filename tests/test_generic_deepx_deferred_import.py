@@ -316,7 +316,7 @@ def test_imported_finalizer_remains_cache_only_and_preserves_legacy_bytes(tmp_pa
         model_dir=data.model_dir, run_dir=data.run_dir, profile_payload=data.profile)
     assert result["status"] == "completed"
     assert len(calls) == 1
-    assert calls[0]["selected_case_dirs"] == data.cases
+    assert calls[0]["selected_case_dirs"] == data.runs[0]["case_ids"]
     assert calls[0]["profile_payload"] == data.profile
     assert result["jobs"][0]["request"] == str(path)
     assert (data.suite / deferred.DEEPX_PART1_REQUEST).read_bytes() == original
