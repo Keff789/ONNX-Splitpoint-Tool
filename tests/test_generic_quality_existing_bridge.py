@@ -22,6 +22,7 @@ def bridge_fixture(tmp_path):
     cfg["runtime_source_files"].append(descriptor(native_split_quality.__file__))
     selected=bound["preselection"]
     cfg["identity"].update(case_id=selected["case_id"], setup_id=selected["setup_id"],precision=selected["precision"])
+    cfg["representative_input"]["runtime_input_adapter"]["runtime_input_format"] = "uint8"
     fixture["context"].update(case_id=selected["case_id"],setup_id=selected["setup_id"])
     for role in ("part1_runtime","boundary_metadata","source_part2_onnx","build_part2_onnx","engine","engine_build_receipt"):
         cfg["expected_runtime_artifacts"][role]=deepcopy(bound["artifacts"][role])

@@ -14936,6 +14936,60 @@ def _completion_hailo_prepared_feed(config, session, feeds):
     return {session.input_names[0]: value}
 
 
+def _generic_quality_hailo8_input_adapter(config):
+    """Use the input relation already checked by the Generic Quality loader."""
+    if not config or config["identity"]["comparison_backend"] != "hailo8":
+        return None
+    adapter = config["representative_input"]["runtime_input_adapter"]
+    return {"task": adapter["task"],
+            "input_binding": {"runtime_input_format": adapter["runtime_input_format"]}}
+
+
+def _generic_quality_hailo8_uint8_feed(config, session, image_path):
+    """Prepare this actual image with the existing canonical RGB factory."""
+    from PIL import Image as _Image
+    try:
+        from splitpoint_runners.preprocessing_contract import prepare_rgb_uint8_image
+    except ImportError:
+        from onnx_splitpoint_tool.preprocessing_contract import prepare_rgb_uint8_image
+    adapter = _generic_quality_hailo8_input_adapter(config)
+    if adapter is None or not _completion_hailo_quantized_inputs(adapter):
+        raise ValueError("Generic Quality UINT8 feed requires its declared H8 adapter")
+    representative = config["representative_input"]
+    name = representative["runtime_input_name"]
+    if list(session.input_names) != [name]:
+        raise ValueError("Generic Quality H8 input name differs from its declared endpoint")
+    contract, _ = _resolve_image_preprocessing_contract(
+        task="detection", target_hw=tuple(config["completion_contract"]["processor_contract"]["input_hw"]))
+    with _Image.open(image_path) as image:
+        prepared, _ = prepare_rgb_uint8_image(np.asarray(image.convert("RGB")), contract)
+    prepared = np.ascontiguousarray(prepared)
+    if (str(prepared.dtype) != "uint8"
+            or list(prepared.shape) != representative["prepared_input"]["shape"]):
+        raise ValueError("Generic Quality H8 prepared image differs from its declared endpoint")
+    return _completion_hailo_inputs(adapter, "hailo8", {name: prepared})
+
+
+def _finish_generic_quality_capture(completion, per_image_rows, out_dir):
+    """Preserve small original failure evidence before propagating the guard."""
+    try:
+        return completion.finish_capture()
+    except Exception as error:
+        try:
+            diagnostic = completion.capture_failure_diagnostic(per_image_rows, error)
+            (Path(out_dir) / "generic_quality_capture_failure.json").write_text(
+                json.dumps(diagnostic, indent=2) + "\n", encoding="utf-8")
+            print("[generic-quality][capture-failed] "
+                  f"expected={diagnostic['expected_image_count']} "
+                  f"completed={diagnostic['completed_image_count']} "
+                  f"attempted={diagnostic['attempted_image_count']} "
+                  f"image_errors={diagnostic['image_error_count']} "
+                  f"first_errors={diagnostic['first_image_errors']}")
+        except Exception as diagnostic_error:
+            print(f"[generic-quality][capture-failure-diagnostic] {diagnostic_error}")
+        raise
+
+
 def _direct_rgb_classification_quality_input(image_path, input_contract):
     """Use the Native classifier's prepared HWC bytes without an inverse feed."""
     from PIL import Image as _Image
@@ -16202,6 +16256,7 @@ def main() -> int:
         args.native_trt_no_fallback = True
         args.trt_runtime = args.trt_runtime_mode = "native"
         args._generic_quality_completion_config = quality_completion
+        args._generic_quality_interface_binding = quality_completion.get("_verified_generic_interface_binding")
         args._generic_only_artifact_paths = generic_paths
         args._verified_generic_only_trt_build_receipt = _verify_explicit_native_trt_engine_receipt(
             source_onnx=generic_paths["build_part2_onnx"], engine_path=generic_paths["engine"],
@@ -17807,6 +17862,10 @@ def main() -> int:
     deepx_p1: Optional[DeepXSession] = None
     p1_inputs_hailo: Optional[Dict[str, np.ndarray]] = None
     ort_p1_sess: Optional[ort.InferenceSession] = None
+    generic_quality_config = getattr(args, "_generic_quality_completion_config", None)
+    quality_h8_input_adapter = _generic_quality_hailo8_input_adapter(generic_quality_config)
+    quality_h8_uint8_inputs = bool(quality_h8_input_adapter
+        and _completion_hailo_quantized_inputs(quality_h8_input_adapter))
 
     if need_stage1:
         if _is_hailo(stage1_tok):
@@ -17834,7 +17893,9 @@ def main() -> int:
                             stage1_tok,
                             hef_p1,
                             quantized_inputs=(_completion_hailo_quantized_inputs(generic_completion_config)
-                                              if generic_completion_config else _hailo_image_quantized_inputs_default(stage1_tok)),
+                                              if generic_completion_config else
+                                              _completion_hailo_quantized_inputs(quality_h8_input_adapter)
+                                              if quality_h8_input_adapter else _hailo_image_quantized_inputs_default(stage1_tok)),
                             quantized_outputs=bool(
                                 _boundary_requests_raw_hailo
                                 or _hailo10_native_io(stage1_tok)
@@ -17861,19 +17922,25 @@ def main() -> int:
                         p1_inputs_hailo = {}
                         first_input_name = next(iter(feeds_full.keys()))
                         first_input_val = feeds_full[first_input_name]
-                        for name in hailo_p1.input_names:
-                            src = feeds_full.get(name, first_input_val)
-                            src_arr = np.asarray(src)
-                            try:
-                                if generic_completion_config:
-                                    p1_inputs_hailo[name] = src_arr
-                                else:
-                                    p1_inputs_hailo[name] = _prepare_hailo_image_input(hailo_p1, src_arr, name)
-                            except Exception:
-                                if generic_completion_config or _hailo10_native_io(stage1_tok):
-                                    raise
-                                tgt_shape = hailo_p1.runtime_input_shapes.get(name) or hailo_p1.input_shapes.get(name)
-                                p1_inputs_hailo[name] = _adapt_tensor(src_arr, tgt_shape) if tgt_shape is not None else src_arr
+                        if quality_h8_uint8_inputs:
+                            if p_img is None:
+                                raise ValueError("Generic Quality H8 requires the resolved source image")
+                            p1_inputs_hailo = _generic_quality_hailo8_uint8_feed(
+                                generic_quality_config, hailo_p1, Path(p_img))
+                        else:
+                            for name in hailo_p1.input_names:
+                                src = feeds_full.get(name, first_input_val)
+                                src_arr = np.asarray(src)
+                                try:
+                                    if generic_completion_config:
+                                        p1_inputs_hailo[name] = src_arr
+                                    else:
+                                        p1_inputs_hailo[name] = _prepare_hailo_image_input(hailo_p1, src_arr, name)
+                                except Exception:
+                                    if generic_completion_config or _hailo10_native_io(stage1_tok):
+                                        raise
+                                    tgt_shape = hailo_p1.runtime_input_shapes.get(name) or hailo_p1.input_shapes.get(name)
+                                    p1_inputs_hailo[name] = _adapt_tensor(src_arr, tgt_shape) if tgt_shape is not None else src_arr
                         p1_inputs_hailo = _make_tensor_map_contiguous(p1_inputs_hailo)
         elif _is_deepx_provider(stage1_tok):
             dxnn_p1 = (
@@ -18338,6 +18405,9 @@ def main() -> int:
         if hailo_p1 is not None:
             if generic_completion_config and feeds_p1_override is not None:
                 local_inputs = _completion_hailo_prepared_feed(generic_completion_config, hailo_p1, feeds_p1_override)
+            elif quality_h8_uint8_inputs:
+                local_inputs = _completion_hailo_inputs(quality_h8_input_adapter, "hailo8",
+                    p1_inputs_hailo if feeds_p1_override is None else feeds_p1_override)
             else:
                 local_inputs = p1_inputs_hailo if feeds_p1_override is None and p1_inputs_hailo is not None else _build_hailo_input_map(hailo_p1, feeds_p1_override or feeds_p1)
             if generic_completion_config:
@@ -19152,14 +19222,16 @@ def main() -> int:
             )
             hailo_p1_map = _hailo_stage1_interface_float_map(
                 hailo_p1_map,
-                verified_binding=getattr(args, "_native_split_quality_binding", None),
+                verified_binding=(getattr(args, "_generic_quality_interface_binding", None)
+                                  or getattr(args, "_native_split_quality_binding", None)),
             )
             p1_iface = _compare_tensor_maps_by_shape_or_name(ref_p1_map, hailo_p1_map, eps=max(float(args.eps), float(getattr(args, "interface_eps", 5e-2) or 5e-2)))
             p1_iface["comparison_domain"] = "canonical_onnx_float32"
             p1_iface["candidate_quantized_outputs"] = bool(hailo_p1.quantized_outputs)
             if hailo_p1.quantized_outputs:
                 p1_iface["comparison_binding_sha256"] = str(
-                    (getattr(args, "_native_split_quality_binding", None) or {}).get("binding_sha256") or ""
+                    (getattr(args, "_generic_quality_interface_binding", None)
+                     or getattr(args, "_native_split_quality_binding", None) or {}).get("binding_sha256") or ""
                 )
             p1_iface["description"] = "ORT Part1 cut tensors vs Hailo Part1 cut tensors"
             p1_iface["reference_backend"] = "onnxruntime_cpu"
@@ -21487,6 +21559,9 @@ def main() -> int:
                 raise RuntimeError(f"failed to load validation image {img_file}")
             local_feeds_full[image_input_name] = arr
             local_feeds_p1 = {name: local_feeds_full[name] for name in p1_inputs}
+            if quality_h8_uint8_inputs:
+                local_feeds_p1 = _generic_quality_hailo8_uint8_feed(
+                    generic_quality_config, hailo_p1, img_file)
             return local_feeds_full, local_feeds_p1, tuple(img_hw)
 
         def _select_dataset_reference_mode(v: str, ann_exists: bool) -> Tuple[str, List[str]]:
@@ -21957,7 +22032,8 @@ def main() -> int:
                 per_image_rows.append(row)
 
             if _generic_quality_completion is not None:
-                generic_quality_capture_timing_by_variant[str(v)] = _generic_quality_completion.finish_capture()
+                generic_quality_capture_timing_by_variant[str(v)] = _finish_generic_quality_capture(
+                    _generic_quality_completion, per_image_rows, out_dir)
 
             if (
                 _task_quality_execution_location(task_quality_policy)

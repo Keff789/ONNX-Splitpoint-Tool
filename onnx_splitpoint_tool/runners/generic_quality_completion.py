@@ -235,7 +235,8 @@ def load_quality_completion_config(path, *, check_files=True):
             or type(config.get("schema_version")) is not int or config["schema_version"] != 1):
         raise ValueError("Generic completed Quality explicit config schema invalid")
     if any(key in config for key in ("native_source", "native_uid", "native_command_contract",
-            "native_command_contract_sha256", "native_quality_binding_sha256", "native_split_quality_binding")):
+            "native_command_contract_sha256", "native_quality_binding_sha256", "native_split_quality_binding",
+            "_verified_generic_interface_binding")):
         raise ValueError("Generic completed Quality cannot claim Native authority")
     original = config.get("original_run_cfg") or {}
     if not isinstance(original, Mapping) or original.get("native_split_quality_binding"):
@@ -292,7 +293,7 @@ def load_quality_completion_config(path, *, check_files=True):
     _artifact_identity(artifacts)
     for descriptor in artifacts.values():
         _descriptor(descriptor, check_files=check_files)
-    _verify_existing_part2_bridge(config, check_files=check_files)
+    verified_bridge = _verify_existing_part2_bridge(config, check_files=check_files)
     _endpoint.verify_generic_quality_endpoint_projection(config, check_files=check_files)
     alias = config.get("generic_artifact_binding")
     if alias is not None and (not isinstance(alias, Mapping) or alias.get("artifacts") != artifacts):
@@ -302,6 +303,10 @@ def load_quality_completion_config(path, *, check_files=True):
     if (not isinstance(ids, list) or not ids or any(not isinstance(value, str) or not value for value in ids)
             or ids != sorted(set(ids))):
         raise ValueError("Generic completed Quality frozen image IDs invalid")
+    if verified_bridge is not None:
+        # Runtime-only result of the strict original file guard, never accepted
+        # from a config or exported as Native execution authority.
+        config["_verified_generic_interface_binding"] = verified_bridge
     return dict(config)
 
 
@@ -353,6 +358,7 @@ def _verify_existing_part2_bridge(config, *, check_files):
             raise ValueError("Generic completed Quality existing bridge selected artifact differs: " + role)
         if role in {"engine", "build_part2_onnx", "engine_build_receipt"} and Path(selected["path"]).resolve() != Path(sealed["path"]).resolve():
             raise ValueError("Generic completed Quality existing bridge persistent artifact path differs: " + role)
+    return deepcopy(binding)
 
 
 def _bridge_validator():
@@ -503,6 +509,7 @@ class GenericQualityCompletion:
         self._transfer_observations = 0
         self._capture_started_ns = None
         self._capture_timing = None
+        self._capture_timing_attempt = None
 
     def begin_capture(self):
         """Observe the whole untimed Quality image loop after engine setup."""
@@ -517,9 +524,24 @@ class GenericQualityCompletion:
         timing = {**deepcopy(CAPTURE_TIMING_SCOPE), "image_count": len(self.entries),
             "start_monotonic_ns": self._capture_started_ns, "end_monotonic_ns": end,
             "wall_seconds": (end-self._capture_started_ns)/1_000_000_000}
+        self._capture_timing_attempt = deepcopy(timing)
         _validate_capture_timing(timing, len(self.config["expected_image_ids"]))
         self._capture_timing = timing
         return deepcopy(timing)
+
+    def capture_failure_diagnostic(self, per_image_rows, error):
+        """Retain observed failure counts without admitting an invalid capture."""
+        failures = [row for row in per_image_rows if row.get("error")]
+        errors = [{"image": str(row.get("image", "")),
+                   "error": str(row["error"])[:2048]} for row in failures[:8]]
+        return {"schema": "onnx-splitpoint/generic-quality-capture-failure", "schema_version": 1,
+            "valid_capture": False, "expected_image_count": len(self.config["expected_image_ids"]),
+            "completed_image_count": len(self.entries), "attempted_image_count": len(per_image_rows),
+            "image_error_count": len(failures), "first_image_errors": errors,
+            "image_errors_truncated": len(failures) > len(errors)
+                or any(len(str(row["error"])) > 2048 for row in failures[:8]),
+            "capture_guard_error": f"{type(error).__name__}: {error}"[:2048],
+            "unvalidated_capture_timing_attempt": deepcopy(self._capture_timing_attempt)}
 
     @contextmanager
     def observe_boundary_transfer(self, transfer):
