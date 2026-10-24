@@ -7609,6 +7609,16 @@ def _remote_result_collect_script(*, remote_results_dir: str, remote_suite_dir: 
     )
 
 
+def _remote_result_collect_command(*, remote_results_dir: str, remote_suite_dir: str) -> str:
+    """Run pure file collection without login-shell exit hooks.
+
+    SSH/lease login shells still establish the normal environment. The strict
+    collector must return its own copy status, rather than a .bash_logout hook.
+    """
+    return "bash --noprofile --norc -c " + shlex.quote(_remote_result_collect_script(
+        remote_results_dir=remote_results_dir, remote_suite_dir=remote_suite_dir))
+
+
 def preflight_remote_energy_dispatch(
     *,
     host: RemoteHost,
@@ -11033,13 +11043,9 @@ def run_remote_benchmark(
         scp_timeout = 60 if cancel_requested else (int(args.timeout_s) if args.timeout_s is not None and int(args.timeout_s) > 0 else 300)
 
         log("Collecting results on remote (best effort)")
-        # Quote remote paths inside the script (the *whole* script is single-quoted
-        # for bash -lc, so we use double quotes for paths).
         _rr = remote_results_dir
         _rs = remote_suite_dir
-        collect_cmd = "bash -lc " + shlex.quote(
-            _remote_result_collect_script(remote_results_dir=_rr, remote_suite_dir=_rs)
-        )
+        collect_cmd = _remote_result_collect_command(remote_results_dir=_rr, remote_suite_dir=_rs)
         rc_collect, out_collect = transport.run(collect_cmd, timeout_s=collect_timeout)
         result_collection_rc = rc_collect
         if rc_collect == TERMINAL_REMOTE_CLEANUP_RC:

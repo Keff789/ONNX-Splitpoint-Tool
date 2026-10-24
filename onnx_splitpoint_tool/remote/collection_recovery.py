@@ -176,7 +176,7 @@ def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id
     from ..platform_power import host_config_from_setup
     from ..workflow.execution_binding import physical_dut_key
     from ..workflow.hardware_matrix import _setup_to_target
-    from ..benchmark.remote_run import _remote_result_collect_script, _remote_storage_preflight
+    from ..benchmark.remote_run import _remote_result_collect_command, _remote_storage_preflight
     import yaml
 
     run = Path(run_dir).expanduser()
@@ -388,8 +388,8 @@ def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id
                     receipt['remote_capacity'] = 'fresh_normal_preflight_passed'
                     archive_remote = remote + '/.collection-recovery-' + uuid.uuid4().hex + '.tar.gz'
                     command(_archive_command('preflight', remote, archive_remote, anchors=anchors), 120)
-                    command('bash -lc ' + shlex.quote(_remote_result_collect_script(
-                        remote_results_dir=remote + '/results', remote_suite_dir=remote + '/suite')), 60)
+                    command(_remote_result_collect_command(
+                        remote_results_dir=remote + '/results', remote_suite_dir=remote + '/suite'), 60)
                     text = command(_archive_command('pack', remote, archive_remote, budget=budget), 600)
                     values = [json.loads(line.split('=', 1)[1]) for line in text.splitlines()
                               if line.startswith('COLLECTION_ARCHIVE=')]

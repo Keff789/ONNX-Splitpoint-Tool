@@ -1,5 +1,17 @@
 ## 24.10.2026 — Begrenzte Wiederaufnahme abgeschlossener Generic-Collection
 
+Der erste echte Collection-only-Apply des Operators lieferte nun den konkreten
+ERR-Beleg `/usr/bin/clear_console -q` beim Login-Shell-Abschluss; die Kopierfehler-
+variable blieb 0. Dieser Versuch bleibt mit rc1 erhalten, ohne Archivierung oder
+Remote-Storagecleanup. Der reine Datei-Collector verwendet jetzt an beiden
+normalen Aufrufstellen denselben Nonlogin-Commandbuilder. Äußere SSH-/Lease-
+Loginumgebung, Runner, Venvs und das strikte Collectorscript bleiben unverändert;
+Benutzer-Dotfiles werden nicht geändert und Fehlercodes nicht ignoriert.
+Vier kleine direkt ausgeführte unittest-Prüfungen belegen Nonlogin-Shellmodus,
+bytegleiche Kopien, gemeinsame Aufrufgrenze sowie echte Kopier-/Shellfehler mit
+unveränderten Nichtnullcodes. HOME und Benutzer-Dotfiles wurden nicht verändert;
+die vorhandene pytest-HOME-Umlenkung wurde für diese Tests nicht aufgerufen.
+
 Ein tatsächlicher lokaler Recovery-Dry-run stoppte vor Lock-/Remoteänderungen,
 weil der rohe Power-Registryeintrag direkt an die Laufzeit-Resourcekeyfunktion
 gereicht wurde. Die Grenze verwendet jetzt die vorhandene normale
