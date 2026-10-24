@@ -474,8 +474,9 @@ def test_hash_bound_malformed_or_unknown_receipt_denies(raw):
         validate_generic_split_manifest_staging(original, staged, **args)
 
 
-def test_actual_compact_h8_staging_keeps_measured_identity_and_omitted_history():
-    original, staged, args = bindings("b182")
+@pytest.mark.parametrize("case", ["b182", "b017"])
+def test_actual_compact_h8_staging_keeps_measured_identity_and_omitted_history(case):
+    original, staged, args = bindings(case)
     old, current = json.loads(original), json.loads(staged)
     unchanged = deepcopy(args)
 
@@ -502,6 +503,12 @@ def test_actual_compact_h8_staging_keeps_measured_identity_and_omitted_history()
     omitted = {item["backend_metadata"]: item for item in proof["omitted_unexecuted_backend_metadata"]}
     assert set(omitted) == {"deepx", "hailo10"}
     assert omitted["deepx"]["historical_observation"] == old["deepx"]
+    if case == "b017":
+        dx = omitted["deepx"]["historical_observation"]["part1_dxnn"]
+        assert dx["build_status"] == "ready_built"
+        assert dx["cache_lookup"]["outcome"] == "MISS"
+        assert dx["cache_lookup"]["reason"] == "model_missing"
+        assert dx["cache_lookup"]["artifact"] == ""
     assert omitted["hailo10"]["historical_observation"] == old["hailo"]["hefs"]["hailo10"]
     other_build = omitted["hailo10"]["validated_historical_build"]
     assert other_build["historical_observation"] == old["hailo"]["hefs"]["hailo10"]["part1_build"]
@@ -576,8 +583,9 @@ def test_compact_hash_bound_receipt_cannot_replace_historical_artifact_identity(
     "part1_runtime", "source_part1_onnx", "source_part2_onnx", "part1_build_receipt",
     "engine", "build_part2_onnx", "engine_build_receipt",
 ])
-def test_compact_staging_still_requires_all_seven_original_artifacts(role):
-    original, staged, args = bindings("b182")
+@pytest.mark.parametrize("case", ["b182", "b017"])
+def test_compact_staging_still_requires_all_seven_original_artifacts(role, case):
+    original, staged, args = bindings(case)
     args["row"]["generic_artifact_binding"]["artifacts"][role]["sha256"] = "f" * 64
     with pytest.raises(ValueError, match="split-manifest staging"):
         validate_generic_split_manifest_staging(original, staged, **args)
@@ -591,11 +599,82 @@ def test_compact_staging_still_requires_all_seven_original_artifacts(role):
     lambda a: a["row"]["input_binding"].update(runtime_input_format="uint8"),
     lambda a: a["row"]["identity"].update(comparison_backend="hailo10h"),
 ])
-def test_compact_staging_still_binds_model_boundary_input_and_execution_scope(fault):
-    original, staged, args = bindings("b182")
+@pytest.mark.parametrize("case", ["b182", "b017"])
+def test_compact_staging_still_binds_model_boundary_input_and_execution_scope(fault, case):
+    original, staged, args = bindings(case)
     fault(args)
     with pytest.raises(ValueError, match="split-manifest staging"):
         validate_generic_split_manifest_staging(original, staged, **args)
+
+
+@pytest.mark.parametrize("path,value", [
+    (("ok",), False),
+    (("status",), "failed"),
+    (("build_status",), "ready_reused"),
+    (("build_status",), "building"),
+    (("source_onnx_sha256",), "f" * 64),
+    (("dxnn_sha256",), "not-a-sha256"),
+    (("dxnn_size_bytes",), 0),
+    (("output_contract_sha256",), "not-a-sha256"),
+    (("output_names",), ["unbound_tensor"]),
+    (("cache_contract", "input_shape"), [1, 3, 320, 320]),
+    (("cache_contract", "case_id"), "b018"),
+    (("cache_contract", "calibration_count"), 501),
+    (("cache_contract", "compiler_identity"), ""),
+    (("cache_contract", "preprocessing_contract"), "unproved-preprocessing"),
+    (("cache_lookup", "outcome"), "HIT"),
+    (("cache_lookup", "reason"), "compatible"),
+    (("cache_lookup", "artifact"), "/fabricated/current/model.dxnn"),
+    (("cache_lookup", "artifact"), None),
+    (("cache_lookup", "identity"), "deepx_m1_part1_b017_v2_" + "f" * 32),
+    (("cache_lookup", "case_id"), "b018"),
+    (("cache_lookup", "role"), "full"),
+    (("unknown_positive_claim",), True),
+])
+def test_omitted_historical_deepx_build_requires_original_positive_bound_observation(path, value):
+    original, staged, args = bindings("b017")
+    document = json.loads(original)
+    parent = document["deepx"]["part1_dxnn"]
+    for key in path[:-1]:
+        parent = parent[key]
+    parent[path[-1]] = value
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(rewritten_original(document, args), staged, **args)
+
+
+def test_omitted_historical_deepx_build_cannot_claim_current_hit_or_active_deepx():
+    original, staged, args = bindings("b017")
+    document = json.loads(original)
+    dx = document["deepx"]["part1_dxnn"]
+    dx["cache_lookup"].update(outcome="HIT", reason="compatible",
+                            artifact=f"/fabricated/cache/{dx['cache_key']}/model.dxnn")
+    with pytest.raises(ValueError, match="omitted DeepX cache observation"):
+        validate_generic_split_manifest_staging(rewritten_original(document, args), staged, **args)
+
+    original, staged, args = bindings("b017")
+    args["row"]["identity"].update(comparison_backend="deepx", direction="deepx_to_trt")
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, staged, **args)
+
+
+@pytest.mark.parametrize("field", [
+    "full_end_node_names", "full_endpoint_mode", "full_output_contract", "unknown_full_metadata",
+])
+def test_compact_staging_cannot_hide_partial_or_unknown_full_endpoint_metadata(field):
+    original, staged, args = bindings("b017")
+    document = json.loads(original)
+    document["hailo"][field] = "unproved"
+    with pytest.raises(ValueError, match="unknown compact backend omission scope"):
+        validate_generic_split_manifest_staging(rewritten_original(document, args), staged, **args)
+
+
+@pytest.mark.parametrize("key,value", [("full", 1), ("part1", False), ("part2", True), ("unknown", True)])
+def test_compact_historical_build_scope_requires_exact_boolean_source_only_parts(key, value):
+    original, staged, args = bindings("b017")
+    document = json.loads(original)
+    document["hailo"]["config"]["build"][key] = value
+    with pytest.raises(ValueError, match="known unexecuted Full scope"):
+        validate_generic_split_manifest_staging(rewritten_original(document, args), staged, **args)
 
 
 @pytest.mark.parametrize("path,value", [
@@ -633,8 +712,9 @@ def test_compact_historical_single_context_requires_exact_positive_diagnostic(co
     "deepx_alias_only", "deepx_block_only", "h10_availability_only",
     "h10_part1_only", "h10_current_reuse", "h8_full_promotion",
 ])
-def test_compact_staging_requires_coherent_omission_and_cannot_promote_unmeasured_backends(fault):
-    original, staged, args = bindings("b182")
+@pytest.mark.parametrize("case", ["b182", "b017"])
+def test_compact_staging_requires_coherent_omission_and_cannot_promote_unmeasured_backends(fault, case):
+    original, staged, args = bindings(case)
     old, document = json.loads(original), json.loads(staged)
     if fault == "deepx_alias_only":
         document["deepx_part1_dxnn"] = old["deepx_part1_dxnn"]

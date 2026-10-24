@@ -1,3 +1,34 @@
+## 24.10.2026 — Historische DeepX-Buildbelege beim normalen H8-Import
+
+Der normale Import verglich einen H8-only-Manifestanhang mit seinem gebundenen
+ursprünglichen Mehrbackend-Manifest. Dessen erfolgreicher historischer DeepX-Build
+enthielt korrekt noch den vorherigen Cachebefund `MISS`/`model_missing` mit leerem
+Artefaktpfad. Die vorhandene Auslassungsrelation erwartete ausschließlich einen
+historischen `ready_reused`/`HIT`-Beleg und wies diesen positiven Buildbeleg zurück.
+
+Der Mapper erlaubt jetzt zusätzlich ausschließlich `ready_built` zusammen mit
+diesem exakten ursprünglichen MISS-Befund. Alle bestehenden Modell-, Cut-,
+Input-, Kalibrierungs-, Artefakt- und Provenienzprüfungen bleiben erhalten. Die
+vollständige ursprüngliche DeepX-Metadatenstruktur bleibt im Importnachweis
+gespeichert; eine aktuelle DeepX-Kompilierung, Wiederverwendung oder Quality- und
+Hardwarefreigabe wird weiterhin ausdrücklich nicht behauptet.
+
+Der gleiche normale H8-only-Anhang unterstützt ursprüngliche Manifeste mit
+vollständig fehlenden optionalen Full-Endpunktmetadaten sowie mit der vollständigen
+bekannten Feldgruppe. Nur tatsächlich vorhandene unbenutzte Full-Felder dürfen
+entfallen. Ein bereits falsches ursprüngliches Full-Buildflag bleibt unverändert;
+partielle, unbekannte oder aktive zusätzliche Bereiche bleiben gesperrt.
+
+298 lokale Mapperregressionen bestanden ohne Fehler oder übersprungene Fälle.
+Die tatsächlichen ursprünglichen und gemessenen yolov7-Manifeste einschließlich
+des gebundenen H8-Receipts bestehen den vollständigen Mapper; veränderte sieben
+H8-Artefaktbindungen, Modelle, Inputs, aktive Backends und erfundene positive
+Cachebehauptungen bleiben abgewiesen. Runner, Qualityberechnung, Scheduler und
+Ownershipprüfungen wurden nicht geändert. Hardware, Statistik, erneuter Import
+und CURRENT-Schreibzugriffe wurden für diesen Fix nicht ausgeführt. Bestehende
+Messfreezes und veröffentlichte Quellen bleiben unverändert; die neue Quelle ist
+für einen anschließend gesondert zugelassenen normalen Import bestimmt.
+
 ## 24.10.2026 — Direkter physischer Übergang nach abgeschlossenem Generic-Dispatch
 
 Der normale Generic-FPS-Controller erwirbt seinen physischen Flock vor der

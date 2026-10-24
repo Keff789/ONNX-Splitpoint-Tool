@@ -300,7 +300,7 @@ def _omitted_deepx_provenance(original, *, source_sha256, prepared, case):
     }, "unknown omitted DeepX metadata")
     contract, lookup = dx["cache_contract"], dx["cache_lookup"]
     _require(dx["ok"] is True and dx["status"] == "ok"
-             and dx["build_status"] == "ready_reused"
+             and dx["build_status"] in {"ready_reused", "ready_built"}
              and dx["source_onnx_sha256"] == dx["build_onnx_sha256"] == source_sha256
              and dx["build_onnx"] == original["part1"]
              and dx["build_onnx_adapter_receipt"] == ""
@@ -334,18 +334,24 @@ def _omitted_deepx_provenance(original, *, source_sha256, prepared, case):
              and dx["preprocessing_contract"] == {"schema": "onnx-splitpoint/deepx-detection-preprocessing",
                  "schema_version": 1, "mode": "letterbox114_div255"},
              "unproved omitted DeepX model/input/calibration contract")
+    # A successful historical build retains the MISS that preceded compilation.
+    # Preserve that observation; omitting it never claims a current cache hit.
     artifact = PurePosixPath(str(lookup.get("artifact") or ""))
     _require(set(lookup) == {"schema", "schema_version", "outcome", "role", "model_id",
                            "case_id", "identity", "reason", "artifact"}
              and lookup["schema"] == "onnx-splitpoint/deepx-cache-lookup"
              and type(lookup["schema_version"]) is int and lookup["schema_version"] == 1
-             and lookup["outcome"] == "HIT" and lookup["reason"] == "compatible"
              and lookup["role"] == "part1" and lookup["case_id"] == case
              and lookup["model_id"] == "benchmark_set"
              and lookup["identity"] == dx["cache_key"]
              and re.fullmatch(r"deepx_m1_part1_" + case + r"_v2_[0-9a-f]{32}", dx["cache_key"])
-             and artifact.is_absolute() and ".." not in artifact.parts
-             and artifact.parts[-2:] == (dx["cache_key"], "model.dxnn"),
+             and ((dx["build_status"] == "ready_reused"
+                   and lookup["outcome"] == "HIT" and lookup["reason"] == "compatible"
+                   and artifact.is_absolute() and ".." not in artifact.parts
+                   and artifact.parts[-2:] == (dx["cache_key"], "model.dxnn"))
+                  or (dx["build_status"] == "ready_built"
+                      and lookup["outcome"] == "MISS" and lookup["reason"] == "model_missing"
+                      and lookup["artifact"] == "")),
              "unknown or nonpositive omitted DeepX cache observation")
     return {"backend_metadata": "deepx", "historical_observation": deepcopy(original["deepx"]),
             "current_compile_claimed": False, "current_reuse_claimed": False,
@@ -485,14 +491,19 @@ def _validate_generic_split_manifest_staging(
             "compiler_onnx_path", "context_mode", "elapsed_s", "mapping_failed", "multi_context_used",
             "ok", "single_context_failed", "single_context_used", "skipped", "source_onnx_path",
             "timed_out", "watchdog_expired"}, "unknown compact actual-artifact attachment fields")
-        _require(set(original["hailo"]) == {"backend_terminal_states", "case_variant_availability",
-            "config", "hefs", "full_end_node_names", "full_endpoint_mode", "full_output_contract"}
-                 and set(staged["hailo"]) == {"backend_terminal_states", "case_variant_availability", "config", "hefs"},
+        backend_fields = {"backend_terminal_states", "case_variant_availability", "config", "hefs"}
+        full_fields = {"full_end_node_names", "full_endpoint_mode", "full_output_contract"}
+        _require(set(original["hailo"]) in (backend_fields, backend_fields | full_fields)
+                 and set(staged["hailo"]) == backend_fields,
                  "unknown compact backend omission scope")
-        _require(original["hailo"]["config"]["build"] == {"full": True, "part1": True, "part2": False},
+        original_build = original["hailo"]["config"]["build"]
+        _require(set(original_build) == {"full", "part1", "part2"}
+                 and type(original_build["full"]) is bool
+                 and original_build["part1"] is True and original_build["part2"] is False,
                  "compact generation must only contract known unexecuted Full scope")
-        permit(("hailo", "config", "build", "full"), "normal H8-only generation does not request Full")
-        for key in ("full_end_node_names", "full_endpoint_mode", "full_output_contract"):
+        if original_build["full"]:
+            permit(("hailo", "config", "build", "full"), "normal H8-only generation does not request Full")
+        for key in sorted(full_fields.intersection(original["hailo"])):
             permit(("hailo", key), "unexecuted Full metadata retained in original manifest authority")
     else:
         new_dx = staged["deepx"]["part1_dxnn"]
