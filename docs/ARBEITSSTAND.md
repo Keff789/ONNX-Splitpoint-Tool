@@ -1,3 +1,27 @@
+## 25.10.2026 — Verifizierte H10-Importartefakte im Verfügbarkeits-Mirror
+
+Die reale Fortsetzung erreichte mit der gebundenen Original-H10-HEF einen
+normalen Cache-HIT. Der unveränderte Suite-Runner übersprang den Schnitt jedoch,
+weil der importierte H8-Katalog weiterhin ausschließlich H8-Part1-Verfügbarkeit
+enthielt. Es entstand kein Capture; der nachfolgende Kardinalitätsfehler und
+der ursprüngliche partielle Lauf bleiben erhalten.
+
+Nach erfolgreicher unveränderter Graph-/HEF-/Receipt-Prüfung registriert der
+Import-Rebinder jetzt den tatsächlichen aktuellen H10-Part1-Lokator mit einem
+separaten Verweis auf Receipt und Wiederverwendungsbeleg. Die vorhandenen
+Verfügbarkeits-, Terminal- und Compile-Projektionen aktualisieren ausschließlich
+diesen ausgewählten Schnitt und seine normalen Metadaten-Mirrors. Historische
+H8-Artefaktangaben und die übrigen 19 Fälle bleiben unverändert. Es werden weder
+Build-Erfolg noch Build-Continuation oder aktuelle Messzulassung behauptet.
+
+Die sieben gezielten Softwaretests bestanden. Der Positivpfad prüft nun auch
+den tatsächlichen unveränderten Template-Pruner: Vor dem Import wird H10
+verworfen, nach der normalen Projektion bleibt `composed` ausführbar. Falsche
+Graphen, Architekturen, Receipt-, Normierungs- und Inputbindungen bleiben
+gesperrt; fehlende Hinweise bleiben UNKNOWN. Keine Hardware-, SDK- oder
+Compiler-Ausführung für diese Korrektur; Runtime42/37, Pruner und Wissenschaft
+bleiben unverändert.
+
 ## 24.10.2026 — Originale H10-Artefakte vor dem Import-Cacheguard
 
 Ein Generic-H10-Source-Lauf konnte eine geschlossene H8-Suite mit identischen

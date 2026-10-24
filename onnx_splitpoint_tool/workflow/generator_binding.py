@@ -56,6 +56,66 @@ def _read_json(path: Path, default: Any = None) -> Any:
         return default
 
 
+def _register_imported_generic_hailo_hint(
+    suite: Path, case: str, destination: Path, runs: List[Mapping[str, Any]],
+) -> None:
+    """Project the verified current artifact through ordinary availability."""
+    from ..benchmark.services import (
+        BenchmarkGenerationService, build_case_hailo_variant_availability,
+        case_hailo_backend_terminal_states,
+    )
+    from .hailo_artifact_scope import hailo_scope_backend
+
+    manifest_path = suite / case / "split_manifest.json"
+    manifest = _read_json(manifest_path)
+    catalogue = _read_json(suite / "benchmark_set.json")
+    if not isinstance(manifest, dict) or not isinstance(catalogue, dict):
+        raise ValueError("generic_quality_hailo_import_hint_current_manifest_invalid")
+    hailo = manifest.setdefault("hailo", {})
+    if not isinstance(hailo, dict):
+        raise ValueError("generic_quality_hailo_import_hint_current_manifest_invalid")
+    hefs = hailo.setdefault("hefs", {})
+    if not isinstance(hefs, dict) or any(not isinstance(meta, dict) for meta in hefs.values()):
+        raise ValueError("generic_quality_hailo_import_hint_current_manifest_invalid")
+    if any(hailo_scope_backend(arch) == "hailo10"
+           and any(str(key).startswith("part1") for key in meta)
+           for arch, meta in hefs.items()):
+        raise ValueError("generic_quality_hailo_import_hint_current_locator_conflict")
+    hefs.setdefault("hailo10h", {}).update(
+        part1=relpath(destination, manifest_path.parent),
+        part1_original_reuse={
+            "receipt": relpath(destination.with_name("hailo_hef_build_receipt.json"), manifest_path.parent),
+            "provenance": relpath(destination.with_name("generic_quality_original_hailo_reuse.json"), manifest_path.parent),
+        },
+    )
+    availability = build_case_hailo_variant_availability(
+        catalogue.get("hailo", {}).get("hefs", {}), hefs)
+    terminal = case_hailo_backend_terminal_states(runs, availability)
+    hailo["case_variant_availability"] = availability
+    hailo["backend_terminal_states"] = terminal
+    projected = {
+        "hailo_case_variant_availability": availability,
+        "hailo_backend_terminal_states": terminal,
+        "hailo_compile": BenchmarkGenerationService().case_hailo_compile_from_hefs(hefs),
+    }
+    mirrors = []
+    for path, key in ((suite / "benchmark_set.json", "cases"),
+                      (suite.parent / "benchmark_set.json", "cases"),
+                      (suite.parent / "generation_decisions.json", "accepted_cases")):
+        if not path.is_file():
+            continue
+        payload = _read_json(path)
+        rows = payload.get(key, []) if isinstance(payload, dict) else []
+        matches = [row for index, row in enumerate(rows, 1) if _case_id_for(row, index) == case]
+        if len(matches) != 1:
+            raise ValueError("generic_quality_hailo_import_hint_current_case_scope_changed")
+        matches[0].update(projected)
+        mirrors.append((path, payload))
+    write_json(manifest_path, manifest)
+    for path, payload in mirrors:
+        write_json(path, payload)
+
+
 def _materialize_imported_generic_hailo_hints(
     source: Path, suite: Path, *, model_id: str,
     profile: Mapping[str, Any], runs: List[Mapping[str, Any]],
@@ -180,6 +240,7 @@ def _materialize_imported_generic_hailo_hints(
                 "reuse": "verified_original_bytes_no_compiler_invocation",
                 "original_receipt_bytes_preserved": True, "compiler_dispatch_count": 0}
             write_json(destination.with_name("generic_quality_original_hailo_reuse.json"), record)
+            _register_imported_generic_hailo_hint(suite, case, destination, runs)
             records.append(record)
     return records
 

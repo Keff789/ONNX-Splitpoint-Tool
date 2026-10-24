@@ -15,6 +15,10 @@ from onnx import TensorProto, helper
 import pytest
 
 from onnx_splitpoint_tool import hailo_backend
+from onnx_splitpoint_tool.benchmark.hailo_policy import (
+    build_case_hailo_variant_availability,
+    case_hailo_backend_terminal_states,
+)
 from onnx_splitpoint_tool.preprocessing_contract import resolve_image_preprocessing_contract
 from onnx_splitpoint_tool.workflow.artifact_cache_preflight import (
     _hailo_observations,
@@ -24,6 +28,7 @@ from onnx_splitpoint_tool.workflow.artifact_cache_preflight import (
 from onnx_splitpoint_tool.workflow.benchmark_binding import materialize_backend_artifact_decisions
 from onnx_splitpoint_tool.workflow.hailo_remote_binding import materialize_hailo_artifact_service_plan
 from test_generic_quality_suite_import import _fixture, _import, _write
+from test_v2798_runtime_generation_contracts import _suite_functions
 
 
 def _digest(path):
@@ -61,9 +66,17 @@ def _prepared(tmp_path):
         hef = data["source"] / row["case_id"] / "hailo/hailo8/part1/compiled.hef"
         hef.parent.mkdir(parents=True, exist_ok=True)
         hef.write_bytes(("OWN historical H8 " + row["case_id"]).encode())
+        h8 = {"part1": "hailo/hailo8/part1/compiled.hef", "part1_build": {
+            "hef_path": "hailo/hailo8/part1/compiled.hef", "OWN_H8_PROVENANCE": row["case_id"]}}
+        _write(data["source"] / row["case_id"] / "split_manifest.json", {
+            "boundary": row["boundary"], "part1": "part1.onnx", "part2": "part2.onnx",
+            "cut_tensors": ["own_cut"], "hailo": {"hefs": {"hailo8": h8}}})
+        row["hailo_case_variant_availability"] = build_case_hailo_variant_availability({}, {"hailo8": h8})
+        row["hailo_compile"] = {"hailo8": {"part1": deepcopy(h8["part1_build"])}}
+    source_set = json.loads((data["source"] / "benchmark_set.json").read_text())
+    source_set["cases"] = data["catalogue"]
+    _write(data["source"] / "benchmark_set.json", source_set)
     case = data["source"] / "b001"
-    _write(case / "split_manifest.json", {"boundary": 1, "part1": "part1.onnx",
-           "part2": "part2.onnx", "cut_tensors": ["own_cut"]})
     graph = helper.make_graph(
         [helper.make_node("Identity", ["own_input"], ["own_cut"])], "OWN_P1_FIXTURE_ONLY",
         [helper.make_tensor_value_info("own_input", TensorProto.FLOAT, [1, 3, 640, 640])],
@@ -167,6 +180,12 @@ def test_original_h10_hint_is_copied_and_ordinary_preflight_discovers_reuse(tmp_
     data = _prepared(tmp_path)
     originals = {path: path.read_bytes() for root in (data["source"], data["original_hef"].parent)
                  for path in root.rglob("*") if path.is_file()}
+    source_cases = {row["case_id"]: row for row in data["catalogue"]}
+    source_manifest = json.loads((data["source"] / "b001/split_manifest.json").read_text())
+    prune = _suite_functions({"_resolve_stage_token", "_canonical_hailo_arch_key",
+        "_merged_hailo_arch_meta", "_variant_hailo_requirements_for_run",
+        "_prune_case_variants_for_run"})["_prune_case_variants_for_run"]
+    assert prune(data["run"], ["composed"], source_cases["b001"], {}) == []
     calls = _verifier(data, monkeypatch)
     result = _import(data, targets=["hailo10", "tensorrt"])
     target = result.suite_dir / "b001/hailo/hailo10/part1/compiled.hef"
@@ -177,6 +196,33 @@ def test_original_h10_hint_is_copied_and_ordinary_preflight_discovers_reuse(tmp_
     provenance = json.loads(target.with_name("generic_quality_original_hailo_reuse.json").read_text())
     assert provenance["compiler_dispatch_count"] == 0
     assert provenance["original_receipt_bytes_preserved"] is True
+    manifest = json.loads((result.suite_dir / "b001/split_manifest.json").read_text())
+    hefs = manifest["hailo"]["hefs"]
+    assert hefs["hailo8"] == source_manifest["hailo"]["hefs"]["hailo8"]
+    h10_key, h10 = next((key, value) for key, value in hefs.items() if key in {"hailo10", "hailo10h"})
+    assert h10_key == "hailo10h"
+    assert h10 == {"part1": "hailo/hailo10/part1/compiled.hef", "part1_original_reuse": {
+        "receipt": "hailo/hailo10/part1/hailo_hef_build_receipt.json",
+        "provenance": "hailo/hailo10/part1/generic_quality_original_hailo_reuse.json"}}
+    assert (result.suite_dir / "b001" / h10["part1"]).resolve() == target
+    suite_set = json.loads((result.suite_dir / "benchmark_set.json").read_text())
+    cases = {row["case_id"]: row for row in suite_set["cases"]}
+    availability = cases["b001"]["hailo_case_variant_availability"]
+    assert availability == build_case_hailo_variant_availability({}, hefs)
+    assert availability["hailo10h"]["part1"] is True
+    assert availability["hailo10h"]["part2"] is False
+    assert availability["hailo8"] == source_cases["b001"]["hailo_case_variant_availability"]["hailo8"]
+    assert cases["b001"]["hailo_backend_terminal_states"] == case_hailo_backend_terminal_states(
+        [data["run"]], availability)
+    assert cases["b001"]["hailo_compile"][h10_key] == {"part1": {"hef_path": h10["part1"]}}
+    assert prune(data["run"], ["composed"], cases["b001"], {}) == ["composed"]
+    assert {key: value for key, value in cases.items() if key != "b001"} == {
+        key: value for key, value in source_cases.items() if key != "b001"}
+    for path, body in originals.items():
+        if path.is_relative_to(data["source"]):
+            relative = path.relative_to(data["source"])
+            if relative.parts[0] in source_cases and relative.parts[0] != "b001":
+                assert (result.suite_dir / relative).read_bytes() == body
     assert not list(result.suite_dir.rglob("deferred_hailo_build.json"))
     service, rows, roles = _ordinary_observations(data, result)
     assert service["build_attempt_count"] == 0
