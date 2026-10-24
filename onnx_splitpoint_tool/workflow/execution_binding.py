@@ -28,6 +28,7 @@ import json
 import os
 import re
 import shlex
+import stat
 import threading
 import shutil
 import subprocess
@@ -2143,7 +2144,47 @@ def _inspect_canonical_result(path: Path) -> Dict[str, Any]:
         detail["semantic_status"] = "unparseable"
     return detail
 
-def _copy_remote_result_files(remote_local_run_dir: Path, dst_dir: Path, *, flat_prefix: str = "", share_generic_case_reports: bool = False) -> List[Dict[str, Any]]:
+def _closed_generic_report_snapshots(generic_capture_requested, remote_output, *, cancelled=False):
+    """Storage eligibility only; never admit a capture or alter its outcome."""
+    if (not generic_capture_requested or cancelled or not isinstance(remote_output, Mapping)
+            or type(remote_output.get("remote_rc")) is not int or remote_output["remote_rc"] != 0
+            or remote_output.get("remote_dispatched") is not True
+            or remote_output.get("terminal_remote_failure") is True
+            or remote_output.get("remote_dispatch_failed") is True
+            or remote_output.get("failure_kind") or remote_output.get("primary_failure")):
+        return False
+    status = str(remote_output.get("status") or "").strip().lower()
+    if status == "ok":
+        return True
+    if status not in {"failed", "partial"}:
+        return False
+    cleanup = remote_output.get("remote_cleanup") or {}
+    if not isinstance(cleanup, Mapping):
+        return False
+    collection = cleanup.get("policy") or {}
+    if not isinstance(collection, Mapping):
+        return False
+    return bool(status in {"failed", "partial"}
+        and cleanup.get("reason") == "result_collection_not_successful"
+        and collection.get("results_downloaded") is True
+        and type(collection.get("result_collection_rc")) is int and collection["result_collection_rc"] != 0
+        and str(remote_output.get("error") or "").startswith("Remote result collection failed"))
+
+
+def _generic_report_snapshot_scopes(rows, target_id):
+    # Match the existing suite writer's _slug(run_id), not a backend alias.
+    scopes = set()
+    for row in rows:
+        if row.get("hardware_setup_id") != target_id:
+            continue
+        tag = "".join(c if c.isalnum() or c in "-_." else "_" for c in str(row.get("id") or "").strip()).strip("_")
+        while "__" in tag:
+            tag = tag.replace("__", "_")
+        scopes.update((case, "results_" + (tag or "run")) for case in row["case_ids"])
+    return scopes
+
+
+def _copy_remote_result_files(remote_local_run_dir: Path, dst_dir: Path, *, flat_prefix: str = "", share_generic_case_reports: bool = False, generic_case_report_scopes=None) -> List[Dict[str, Any]]:
     """Copy canonical result files and compact diagnostics into an EvaluationRun.
 
     v60t separates *canonical result transport* from *diagnostic-pack slimming*.
@@ -2248,6 +2289,7 @@ def _copy_remote_result_files(remote_local_run_dir: Path, dst_dir: Path, *, flat
         source_label: str = "",
         unbounded: bool = False,
         report_snapshot: Optional[Path] = None,
+        share_snapshot: bool = False,
     ) -> bool:
         try:
             if not src.is_file():
@@ -2256,7 +2298,8 @@ def _copy_remote_result_files(remote_local_run_dir: Path, dst_dir: Path, *, flat
             if suffix in blocked_suffixes or suffix not in allowed_suffixes:
                 skipped.append({"source": str(src), "destination": str(dest), "kind": kind, "reason": "unsupported_suffix"})
                 return False
-            size = int(src.stat().st_size)
+            source_stat = src.stat()
+            size = int(source_stat.st_size)
             limit = 0 if unbounded else (canonical_max_bytes if canonical else diagnostic_max_bytes)
             if limit > 0 and size > limit:
                 skipped.append({
@@ -2274,10 +2317,14 @@ def _copy_remote_result_files(remote_local_run_dir: Path, dst_dir: Path, *, flat
                 from ..artifact_store import materialize_file
                 # Raw transport can be re-extracted in place. Only the independently
                 # published snapshot may supply the second diagnostic hardlink.
-                source = report_snapshot if share_generic_case_reports and report_snapshot is not None else src
+                source = report_snapshot if share_snapshot and report_snapshot is not None else src
+                def file_version(value):
+                    return (value.st_dev, value.st_ino, value.st_mode, value.st_size,
+                            value.st_mtime_ns, value.st_ctime_ns)
+                snapshot_before = source.stat()
                 tmp = dest.with_name(f".{dest.name}.{os.getpid()}.{time.time_ns()}.tmp")
                 try:
-                    if share_generic_case_reports and report_snapshot is not None:
+                    if share_snapshot and report_snapshot is not None:
                         try:
                             os.link(source, tmp)
                             method = "hardlink"
@@ -2285,8 +2332,20 @@ def _copy_remote_result_files(remote_local_run_dir: Path, dst_dir: Path, *, flat
                             method = materialize_file(source, tmp, allow_hardlink=False)
                     else:
                         method = materialize_file(source, tmp, allow_hardlink=False)
+                    snapshot_published = source.stat()
+                    temporary_published = tmp.lstat()
+                    # Linking changes FIRST's ctime; capture both versions after
+                    # our link, but reject replacement or data changes during it.
+                    if (file_version(snapshot_before)[:-1] != file_version(snapshot_published)[:-1]
+                            or (method != "hardlink" and file_version(snapshot_before) != file_version(snapshot_published))):
+                        raise RuntimeError("case_report_snapshot_bytes_changed")
                     digest = sha256_file_uncached(src)
-                    if digest != sha256_file_uncached(tmp) or tmp.stat().st_size != size:
+                    if (digest != sha256_file_uncached(tmp) or tmp.stat().st_size != size
+                            or file_version(src.stat()) != file_version(source_stat)
+                            or file_version(tmp.lstat()) != file_version(temporary_published)
+                            or file_version(source.stat()) != file_version(snapshot_published)
+                            or not stat.S_ISREG(temporary_published.st_mode) or os.path.samefile(src, tmp)
+                            or (method == "hardlink" and not os.path.samefile(source, tmp))):
                         raise RuntimeError("case_report_snapshot_bytes_changed")
                     os.replace(tmp, dest)
                     materialization = {"materialization": method, "sha256": digest}
@@ -2339,12 +2398,16 @@ def _copy_remote_result_files(remote_local_run_dir: Path, dst_dir: Path, *, flat
             rel = src.relative_to(remote_local_run_dir)
         except Exception:
             rel = Path(src.name)
+        share_report = bool(share_generic_case_reports and (
+            generic_case_report_scopes is None or (
+                len(rel.parts) == 4 and rel.parts[0] == "results"
+                and tuple(rel.parts[1:3]) in generic_case_report_scopes)))
         snapshot = None
         for dd in diagnostic_dirs:
             dest = dd / "case_reports" / rel
-            if _copy(src, dest, kind="case_validation_report", unbounded=True, report_snapshot=snapshot):
+            if _copy(src, dest, kind="case_validation_report", unbounded=True, report_snapshot=snapshot, share_snapshot=share_report):
                 snapshot = dest
-            elif share_generic_case_reports:
+            elif share_report:
                 break
 
     # Central quality inputs are scientific evidence, not optional diagnostics.
@@ -4051,11 +4114,14 @@ def _run_remote_dispatch_once(
         capture_only_scope = bool(capture_ids) and all(
             row.get("id") in capture_ids for row in _plan_run_entries(capture_plan)
         )
+        report_scopes = _generic_report_snapshot_scopes(authorized_captures, target_id)
         copied = _copy_remote_result_files(
             local_run_dir, result_dir, flat_prefix=target_id,
-            share_generic_case_reports=bool(capture_only_scope
-                and (profile_payload.get("workflow_execution") or {}).get("defer_central_quality") is True
-                and type(out.get("remote_rc")) is int and out["remote_rc"] == 0),
+            share_generic_case_reports=_closed_generic_report_snapshots(
+                bool(report_scopes), out, cancelled=bool(
+                    (cancel_event is not None and cancel_event.is_set())
+                    or (remote_process_registry is not None and remote_process_registry.cancelled))),
+            generic_case_report_scopes=report_scopes,
         ) if local_run_dir else []
         deepx_prepared_input = _deepx_prepared_input_full_only_quality_na(
             gates=gates, model_id=model_id, target_id=target_id,

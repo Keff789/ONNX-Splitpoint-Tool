@@ -1,3 +1,25 @@
+## 24.10.2026 — Unabhängige Raw-Quelle mit geteilten Diagnostik-Snapshots
+
+Die normale lokale Collection veröffentlicht den ersten vollständigen
+Generic-Case-Report weiterhin unabhängig von der Raw-Transportdatei. Nur der
+zweite Diagnostik-Snapshot desselben autorisierten Cases darf den bereits
+veröffentlichten ersten Snapshot per temporärem Hardlink und atomarem Austausch
+teilen; bei nicht unterstütztem Hardlink bleibt die bisherige unabhängige
+Materialisierung bestehen. Beide Manifestzeilen behalten Quelle, SHA, Größe und
+die tatsächlich verwendete Materialisierung. Vollständige Inhaltsprüfungen und
+Versionsprüfungen von Raw, erstem Snapshot und temporärem Ziel sperren Änderungen
+während des Kopierens und Hashens.
+
+Diese reine Speicherentscheidung verwendet die tatsächliche abgeschlossene
+Remoteausführung und die exakten Case-/Writerpfade. Sie ändert weder den
+vollständigen Katalog noch die wissenschaftliche Capture-only-Zulassung oder
+Fehlercodes. Ein tatsächlich gebundener b041-Metadatenbeleg zeigt den erreichbaren
+Pfad trotz unverändertem äußerem Collectionfehler und nullable Top-Level-RC.
+23 fokussierte Kopierprüfungen und 11 Source-only-Regressionsprüfungen bestanden;
+alle 42 Runnerdateien einschließlich der 37 Pythondateien bleiben bytegleich
+zum veröffentlichten Archivcheckpoint. Keine Hardwareausführung oder Änderung
+bestehender Quellen wurde für diesen Fix vorgenommen.
+
 ## 24.10.2026 — Begrenzte Wiederaufnahme abgeschlossener Generic-Collection
 
 Der zweite echte Apply sammelte/packte mit rc0 und lud das gebundene
