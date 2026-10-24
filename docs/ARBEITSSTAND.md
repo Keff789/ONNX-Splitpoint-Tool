@@ -8,15 +8,17 @@ meldete der vorgelagerte Serviceplan deshalb `pending_dfc_build`/`UNKNOWN`.
 Der vorhandene Import-Rebinder materialisiert jetzt ausschließlich ausgewählte,
 explizit gebundene Original-H10-HEF-/Receipt-Paare vor dieser Barriere. Er prüft
 Graph, Architektur, Originalbytes, benachbarte unveränderte Receipt, Kalibrierung,
-Preprocessing und Inputvertrag mit den vorhandenen Validatoren. Die normale
+vollständigen unabhängig abgeleiteten Preprocessingvertrag samt Normierung und
+den ursprünglichen uint8-HWC-/NCHW-Inputvertrag mit vorhandenen Validatoren. Die normale
 Service-Erkennung und der unveränderte Cacheguard entscheiden anschließend
 selbst über HIT. Historische Compilerbelege bleiben unverändert; ein separates
 Ereignis dokumentiert die aktuelle Wiederverwendung ohne Compileraufruf.
 Fehlende Hinweise behalten UNKNOWN; abweichende Graphen, Architekturen oder
 Receipt-Bindungen werden abgewiesen. Es werden keine gültig-Flags gesetzt.
 
-Fünf fokussierte Softwaretests bestanden: regulärer Import/Service-HIT,
-Graph-/Architekturabweichung, fehlender Hinweis und nicht benachbarte Receipt.
+Sieben fokussierte Softwaretests bestanden: regulärer Import/Service-HIT,
+Graph-/Architekturabweichung, fehlender Hinweis, nicht benachbarte Receipt sowie
+abweichende Bildnormierung und Inputkodierung.
 Keine Hardware-, SDK- oder Compiler-Ausführung; Runtime42/37 und wissenschaftliche
 Auswahl, Inputs, Qualitäts- und Messpolitik bleiben unverändert. Die tatsächliche
 Fortsetzung bleibt normaler Ressourcen-, Cache- und Quellenzulassung vorbehalten.

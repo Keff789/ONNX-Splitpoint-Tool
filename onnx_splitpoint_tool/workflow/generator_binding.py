@@ -70,6 +70,7 @@ def _materialize_imported_generic_hailo_hints(
     from ..artifact_store import materialize_file
     from ..build_dispatch_policy import require_productive_force_off
     from ..hailo_backend import _hailo_receipt_path, _load_valid_hailo_receipt
+    from ..preprocessing_contract import canonical_runtime_dtype, resolve_image_preprocessing_contract
     from ..runners.generic_quality_accounting import authorized_runs
     from .artifacts import sha256_file
     from .generic_quality_sidecars import _contained, _producer_source_path
@@ -145,14 +146,22 @@ def _materialize_imported_generic_hailo_hints(
             hw = ((config.get("completion_contract") or {}).get("processor_contract") or {}).get("input_hw")
             preprocess = config.get("preprocess") or {}
             sealed_preprocess = saved.get("preprocessing_contract") or {}
-            require(isinstance(hw, list) and len(hw) == 2 and all(type(n) is int and n > 0 for n in hw)
-                    and sealed_preprocess.get("target_hw") == hw
-                    and sealed_preprocess.get("preprocess_mode") == preprocess.get("mode")
-                    and sealed_preprocess.get("pad_value") == preprocess.get("pad_value")
-                    and sealed_preprocess.get("color_space") == "RGB" and preprocess.get("rgb") is True,
+            require(isinstance(hw, list) and len(hw) == 2 and all(type(n) is int and n > 0 for n in hw),
+                    "preprocessing_changed")
+            current_preprocess, current_preprocess_sha = resolve_image_preprocessing_contract(
+                task="detection", target_hw=hw)
+            prepared = ((config.get("representative_input") or {}).get("prepared_input") or {})
+            require(sealed_preprocess == current_preprocess
+                    and saved.get("preprocessing_contract_sha256") == current_preprocess_sha
+                    and run.get("image_scale") == current_preprocess["image_scale"]
+                    and preprocess.get("mode") == current_preprocess["preprocess_mode"]
+                    and preprocess.get("pad_value") == current_preprocess["pad_value"]
+                    and preprocess.get("rgb") is True
+                    and canonical_runtime_dtype(prepared.get("dtype")) == "uint8"
+                    and prepared.get("shape") == [*hw, 3],
                     "preprocessing_changed")
             verified = _load_valid_hailo_receipt(original_hef,
-                preprocessing_sha256=saved.get("preprocessing_contract_sha256"),
+                preprocessing_sha256=current_preprocess_sha,
                 source_onnx_sha256=source_graph["sha256"], cache_key=saved.get("cache_key"),
                 cache_payload=payload, expected_net_name=f"{model_id}_part1_b{int(case[1:])}",
                 expected_net_input_shapes=[1, 3, *hw], expected_disable_rt_metadata_extraction=True)

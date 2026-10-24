@@ -15,6 +15,7 @@ from onnx import TensorProto, helper
 import pytest
 
 from onnx_splitpoint_tool import hailo_backend
+from onnx_splitpoint_tool.preprocessing_contract import resolve_image_preprocessing_contract
 from onnx_splitpoint_tool.workflow.artifact_cache_preflight import (
     _hailo_observations,
     build_artifact_cache_preflight,
@@ -44,7 +45,7 @@ def _prepared(tmp_path):
     data = _fixture(tmp_path)
     run = data["profile"]["run_profiles"][0]
     run.update(id="hailo10_to_trt", stage1={"type": "hailo", "hw_arch": "hailo10"},
-               hardware_setup_id="own_hailo10_setup")
+               hardware_setup_id="own_hailo10_setup", image_scale="norm")
     data["profile"]["run_profiles"] = [run]
     data["profile"]["hailo_build"] = {
         "mode": "reuse_only", "force_build": False, "calib_count": 500,
@@ -73,9 +74,8 @@ def _prepared(tmp_path):
     original.mkdir(parents=True)
     hef, receipt_path = original / "compiled.hef", original / "hailo_hef_build_receipt.json"
     hef.write_bytes(b"OWN original regular H10 HEF fixture\x00")
-    preprocessing = {"target_hw": [640, 640], "preprocess_mode": "letterbox",
-                     "pad_value": 114, "color_space": "RGB"}
-    preprocessing_sha = hashlib.sha256(json.dumps(preprocessing, sort_keys=True).encode()).hexdigest()
+    preprocessing, preprocessing_sha = resolve_image_preprocessing_contract(
+        task="detection", target_hw=[640, 640])
     payload = {
         "schema": "onnx-splitpoint/hailo-hef-cache/v3",
         "model_sha256": _digest(case / "part1.onnx"), "hw_arch": "hailo10h",
@@ -113,6 +113,7 @@ def _prepared(tmp_path):
         generic_artifact_binding={"artifacts": deepcopy(artifacts)},
         completion_contract={"processor_contract": {"input_hw": [640, 640]}},
         preprocess={"mode": "letterbox", "pad_value": 114, "rgb": True},
+        representative_input={"prepared_input": {"dtype": "uint8", "shape": [640, 640, 3]}},
     )
     data.update(run=run, config=config, config_path=config_path, original_hef=hef,
                 original_receipt=receipt_path, receipt=receipt)
@@ -226,6 +227,27 @@ def test_changed_graph_or_original_receipt_is_rejected_before_materialization(
     assert calls == []
     assert data["original_hef"].read_bytes() == original_hef
     assert data["original_receipt"].read_bytes() == original_receipt
+
+
+@pytest.mark.parametrize("fault", ["image_scale", "prepared_input_dtype"])
+def test_current_scale_or_prepared_encoding_is_rejected_before_materialization(
+        tmp_path, monkeypatch, fault):
+    data = _prepared(tmp_path)
+    if fault == "image_scale":
+        data["run"]["image_scale"] = "raw"
+    else:
+        data["config"]["representative_input"]["prepared_input"]["dtype"] = "float32"
+    _seal_config(data)
+    originals = {path: path.read_bytes() for path in
+                 (data["original_hef"], data["original_receipt"])}
+    calls = _verifier(data, monkeypatch)
+    with pytest.raises(ValueError, match="generic_quality_hailo_import_hint_preprocessing_changed"):
+        _import(data, targets=["hailo10", "tensorrt"])
+    target = data["run_root"] / "models/model/benchmark_set/legacy_suite/b001/hailo/hailo10/part1"
+    assert not (target / "compiled.hef").exists()
+    assert not (target / "hailo_hef_build_receipt.json").exists()
+    assert calls == []
+    assert all(path.read_bytes() == body for path, body in originals.items())
 
 
 def test_import_without_original_hint_keeps_h10_absent_and_normal_unknown(tmp_path, monkeypatch):
