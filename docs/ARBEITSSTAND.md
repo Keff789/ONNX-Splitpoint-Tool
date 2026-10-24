@@ -1,5 +1,17 @@
 ## 24.10.2026 — Begrenzte Wiederaufnahme abgeschlossener Generic-Collection
 
+Ein tatsächlicher lokaler Recovery-Dry-run stoppte vor Lock-/Remoteänderungen,
+weil der rohe Power-Registryeintrag direkt an die Laufzeit-Resourcekeyfunktion
+gereicht wurde. Die Grenze verwendet jetzt die vorhandene normale
+`_setup_to_target`-Auflösung; genau dasselbe kanonische Target mit unverändertem
+Endpoint und physischer Aliasidentität bindet Resourcekey und Ownerbeobachtung.
+Der Key wird gegen den tatsächlich gehaltenen freigegebenen Physicalrecord
+geprüft. Ein zusätzlicher realistischer H10-Registry-Integrationstest mit
+verschachtelten Host-/Runtimefeldern und explizitem Physicalalias besteht;
+13 fokussierte Recoverychecks bestanden. Alte Autorisierung, fehlgeschlagener
+Dry-run und Quellenbelege bleiben unverändert; ein echter Recoverylauf wurde
+für diesen Fix nicht ausgeführt.
+
 Ein enger Nachtrag bindet zusätzlich den expliziten komprimierten Archivdeckel
 und lokale/remote Platzreserven des Operators. Die bestehenden normalen
 Filesystem-/RemoteStorage-Guards prüfen frische Kapazität vor Remoteänderungen;

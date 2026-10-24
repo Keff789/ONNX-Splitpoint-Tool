@@ -10,6 +10,7 @@ import pytest
 
 from onnx_splitpoint_tool.remote import collection_recovery as mod
 from onnx_splitpoint_tool.workflow import run_control
+from onnx_splitpoint_tool.platform_power import host_config_from_setup as real_host_config_from_setup
 
 
 def put(path, value):
@@ -194,3 +195,38 @@ def test_explicit_capacity_shortfall_blocks_transfer_or_removes_only_own_partial
     assert remote.is_dir() and not list(remote.glob('.collection-recovery-*.tar.gz'))
     assert all(p.read_bytes()==data for p,data in originals.items())
     if where=='local_preflight': assert calls==[]
+
+
+def test_raw_h10_power_registry_uses_one_normal_target_and_original_physical_identity(case, monkeypatch):
+    kw, remote, originals, _ = case
+    physical_id = 'TEST_ONLY_H10_CHASSIS'
+    raw_setup = {'id':kw['setup_id'], 'enabled':True, 'accelerator':'hailo10h',
+        'host':{'address':'127.0.0.222','user':'TEST_ONLY','port':22,
+                'base_dir':str(remote.parents[2]), 'physical_host_id':physical_id,
+                'ssh_extra_args':'-o BatchMode=yes'},
+        'runtime':{'activate':'source ~/venvs/hailo10/bin/activate','provider':'hailo10h'}}
+    put(Path(kw['registry_path']), {'hardware_setups':[raw_setup]})
+    monkeypatch.setattr('onnx_splitpoint_tool.platform_power.host_config_from_setup',
+                        real_host_config_from_setup)
+    prior = run_control.EvaluationRunLock.for_resource('dut:'+physical_id, owner={'purpose':'generic'})
+    prior.acquire(); prior.release(); prior_bytes=prior.lock_path.read_bytes()
+    from onnx_splitpoint_tool.workflow import execution_binding
+    normal_key = execution_binding.physical_dut_key
+    key_targets, observed_targets = [], []
+    def key(target):
+        key_targets.append(target)
+        return normal_key(target)
+    def observe(target, **kwargs):
+        observed_targets.append(target)
+        assert kwargs['resource_scoped'] is True
+        assert target['remote']['host']=='127.0.0.222'
+        assert target['remote']['physical_host_id']==target['physical_host_id']==physical_id
+        return {'ok':True,'read_only':True}
+    monkeypatch.setattr(execution_binding,'physical_dut_key',key)
+    monkeypatch.setattr(mod,'observe_resource_owners',observe)
+    result=mod.recover_generic_closed_collection(**kw,apply=True)
+    assert result['status']=='completed' and result['physical_resource']=='dut:'+physical_id
+    assert len(key_targets)==len(observed_targets)==1 and key_targets[0] is observed_targets[0]
+    assert json.loads(prior_bytes)['physical_resource']==result['physical_resource']
+    assert prior.lock_path.read_bytes()==prior_bytes
+    assert all(p.read_bytes()==data for p,data in originals.items())

@@ -175,6 +175,7 @@ def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id
     from ..energy.config import default_registry_path, _read_hardware_registry_unlocked
     from ..platform_power import host_config_from_setup
     from ..workflow.execution_binding import physical_dut_key
+    from ..workflow.hardware_matrix import _setup_to_target
     from ..benchmark.remote_run import _remote_result_collect_script, _remote_storage_preflight
     import yaml
 
@@ -292,8 +293,13 @@ def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id
     registry, _ = _read_hardware_registry_unlocked(registry_file)
     setups = [row for row in registry.get('hardware_setups', []) if row.get('id') == setup_id]
     _require(len(setups) == 1, 'unknown/ambiguous setup')
-    setup = setups[0]
-    host = host_config_from_setup(setup)
+    target = _setup_to_target(setups[0], build_envs=registry.get('build_environments', []),
+                              registry_source=str(registry_file))
+    # The shared owner observer also accepts the registry's top-level alias.
+    # Carry the factory's exact physical identity there, without inventing one.
+    target['physical_host_id'] = target['remote'].get('physical_host_id', '')
+    host = host_config_from_setup(target)
+    resource = physical_dut_key(target)
     endpoint = {'host': host.host, 'user': host.user, 'port': int(host.port)}
     _require(all(dispatch.get('host', {}).get(k) == v for k, v in endpoint.items())
              and all(metadata.get('host', {}).get(k) == v for k, v in endpoint.items())
@@ -314,7 +320,7 @@ def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id
              and not any(p.is_symlink() for p in output.parents), 'recovery requires new separate output')
     local_admission = _local_capacity(output, budget['max_archive_bytes'], budget['local_reserve_bytes'])
     run_lock = EvaluationRunLock(out_root=run.parent, run_dir=run, owner={})
-    physical = EvaluationRunLock.for_resource(physical_dut_key(setup), owner={})
+    physical = EvaluationRunLock.for_resource(resource, owner={})
     run_lock.acquire_for_recovery()
     try:
         physical.acquire_for_recovery()
@@ -328,7 +334,7 @@ def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id
                      'original released controller binding differs')
             _require(physical.previous_owner.get('state') == 'released'
                      and physical.previous_owner.get('schema') == 'onnx-splitpoint/evaluation-run-lock'
-                     and physical.previous_owner.get('physical_resource') == physical_dut_key(setup)
+                     and physical.previous_owner.get('physical_resource') == resource
                      and not os.path.lexists(run_lock.quarantine_path) and not os.path.lexists(physical.quarantine_path)
                      and not Path('/proc', str(old['pid'])).exists(), 'active/unknown owner or quarantine')
             journal_root = run / 'jobs/remote_process_leases'
@@ -338,7 +344,8 @@ def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id
                      'original remote actor cleanup unresolved')
             output.mkdir(parents=True)
             receipt = {'schema': schema, 'schema_version': 1, **identity, 'remote_run_dir': remote,
-                       'endpoint': endpoint, 'apply': bool(apply), 'cleanup_requested': bool(cleanup),
+                       'endpoint': endpoint, 'physical_resource': resource,
+                       'apply': bool(apply), 'cleanup_requested': bool(cleanup),
                        'capacity_budget': budget, 'local_pre_mutation_capacity': local_admission,
                        'storage_forecast': {
                            'maximum_new_local_compressed_bytes': budget['max_archive_bytes'],
@@ -360,7 +367,7 @@ def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id
             leases = None
             try:
                 if apply:
-                    observed = observe_resource_owners(setup, local_owners=[], absent_owner_pids=[old['pid']],
+                    observed = observe_resource_owners(target, local_owners=[], absent_owner_pids=[old['pid']],
                         diagnostics_dir=output / 'owner_diagnostics', resource_scoped=True)
                     receipt['ownership_observation'] = observed
                     _require(observed.get('ok') is True, 'associated controller/remote actors not proven stopped')

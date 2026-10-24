@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 497679,
-      "sha256": "17a5f38e5543ab003cdec26495454a22247ce813c0102716f5d1a01ff86a2c19"
+      "size": 498488,
+      "sha256": "a51ec19e97fc139922124e71be0fd9a078f4b573e7b2cd38e28aa233fb441645"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -1581,8 +1581,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/remote/collection_recovery.py",
-      "size": 27695,
-      "sha256": "5adcff471b0cfc4d4478bc1e8b522686ba4e49e0ebc495c2541588cc5c3c5f7c"
+      "size": 28192,
+      "sha256": "4a762c5c7c7ddfd394490bb13aa9030d7efb5c93220799f4acbb47c347de3193"
     },
     {
       "path": "onnx_splitpoint_tool/remote/predispatch_binding.py",
@@ -7401,8 +7401,8 @@
     },
     {
       "path": "tests/test_generic_closed_collection_recovery.py",
-      "size": 12548,
-      "sha256": "0347f1408843370ccecca63951754251c4da51da0e482d61aa3b364f65e91675"
+      "size": 14761,
+      "sha256": "a6180f55cc72e70d3d7ed4e4f97ba5e882cfc2b2dda0567fd4e0750345203185"
     },
     {
       "path": "tests/test_generic_completed_task_resources.py",
