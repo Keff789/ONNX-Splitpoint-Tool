@@ -4478,3 +4478,10 @@ and complete source inventory, then optionally cleans only that exact owned Run.
 Local/remote reserve guards remain; forecast additional archive bytes are zero.
 `previous_collection_rc: 0` is separate from `fresh_collection_performed: false`;
 no fresh Collection0 is invented. No operation starts automatically.
+
+
+### 2026-10-25: Fehlende historische H8-Diagnosen beim Manifestimport
+
+Erfolgreiche historische H8-Builds dürfen die redundanten obersten Diagnosefelder `calib_source` und `cache_key` tatsächlich nicht aufgezeichnet haben. Der reine Stagingprüfer bindet in diesem Fall weiterhin den vollständigen kanonischen Compiler-/Kalibrationspayload und dessen Schlüssel an den exakten tatsächlich gemessenen HEF-Receipt. Vorhandene widersprüchliche oder nullwertige Diagnosen bleiben gesperrt; für ungemessene H10-Metadaten werden fehlende Felder nicht neu zugelassen. Die ursprüngliche historische Beobachtung bleibt einschließlich ihrer fehlenden Felder unverändert. Es wird kein neues Kalibrationsverzeichnis-Attest abgeleitet; Builder-Source- und Compilergraph-Identitäten bleiben getrennt gebunden.
+
+Validierung: 21 neue gezielte Regressionsfälle und die vollständige bestehende Staging-Testdatei mit insgesamt 319 Fällen bestanden. Abweichende Kalibrations-/Schlüsselbelege, fehlende oder unpassende gemessene Receipts und der ungemessene H10-Scope bleiben abgewiesen. Die Tests starteten keine Hardware, Statistikrechnung, Compiler oder CURRENT-Übernahme. Historische Messungen und eingefrorene Exporte bleiben unverändert; eine getrennte veröffentlichte Import-Reader-Quelle ist für die spätere Fortsetzung erforderlich.

@@ -41,6 +41,15 @@ def bind_receipt(raw, args):
     args["row"]["generic_artifact_binding"]["artifacts"]["part1_build_receipt"].update(descriptor)
 
 
+def historical_without_h8_diagnostics(case="b239", missing=("calib_source", "cache_key")):
+    original, staged, args = bindings(case)
+    document = json.loads(original)
+    build = document["hailo"]["hefs"]["hailo8"]["part1_build"]
+    for name in missing:
+        del build[name]
+    return document, staged, args
+
+
 def test_actual_normal_staging_preserves_both_file_identities_and_all_bindings():
     original, staged, args = bindings()
     unchanged = deepcopy(args)
@@ -151,6 +160,124 @@ def test_actual_historical_successful_build_to_reuse_retains_exact_provenance():
     assert "/hailo/hefs/hailo8/part1_build/build_evidence" in paths
     assert "/hailo/hefs/hailo8/part1_build/allocation_time_s" in paths
     assert "/hailo/hefs/hailo10/part1_build/context_mode" in paths
+
+
+@pytest.mark.parametrize("case,missing", [
+    ("b239", ("calib_source",)),
+    ("b239", ("cache_key",)),
+    ("b239", ("calib_source", "cache_key")),
+    ("b017", ("calib_source", "cache_key")),
+])
+def test_historical_h8_absent_diagnostics_preserve_exact_observation_and_receipt(case, missing):
+    document, staged, args = historical_without_h8_diagnostics(case, missing)
+    original = rewritten_original(document, args)
+    unchanged_args = deepcopy(args)
+
+    proof = validate_generic_split_manifest_staging(original, staged, **args)
+
+    assert args == unchanged_args
+    assert proof["original_manifest"] == args["original_source"]
+    assert proof["scientific_manifest_fields_unchanged"] is True
+    measured, = [item for item in proof["historical_build_reuse"]
+                 if item["backend_metadata"] == "hailo8"]
+    build = document["hailo"]["hefs"]["hailo8"]["part1_build"]
+    assert measured["historical_observation"] == build
+    assert not set(missing) & measured["historical_observation"].keys()
+    receipt, key = measured["actual_receipt_binding"], build["build_evidence"]["key"]
+    assert receipt["sha256"] == args["original_artifacts"]["part1_build_receipt"]["sha256"]
+    assert receipt["cache_key"] == build["build_evidence"]["cache_key_v3"]
+    assert receipt["hef_sha256"] == args["original_artifacts"]["part1_runtime"]["sha256"]
+    assert receipt["source_onnx_sha256"] == measured["source_onnx_sha256"] == key["builder_source_onnx_sha256"]
+    assert receipt["compiler_onnx_sha256"] == measured["compiler_onnx_sha256"] == key["compiler_onnx_sha256"]
+    assert measured["compiler_source_byte_equality_claimed"] is False
+    if case == "b017":
+        assert receipt["source_onnx_sha256"] != receipt["compiler_onnx_sha256"]
+
+
+@pytest.mark.parametrize("name,value", [
+    ("calib_source", None),
+    ("calib_source", "/different/calibration"),
+    ("cache_key", None),
+    ("cache_key", "f" * 64),
+])
+def test_historical_h8_absent_diagnostics_cannot_hide_present_contradictions(name, value):
+    document, staged, args = historical_without_h8_diagnostics()
+    document["hailo"]["hefs"]["hailo8"]["part1_build"][name] = value
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(rewritten_original(document, args), staged, **args)
+
+
+@pytest.mark.parametrize("name", ["calib_source", "cache_key"])
+def test_historical_h8_absent_diagnostics_do_not_relax_unmeasured_h10(name):
+    document, staged, args = historical_without_h8_diagnostics()
+    del document["hailo"]["hefs"]["hailo10"]["part1_build"][name]
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(rewritten_original(document, args), staged, **args)
+
+
+@pytest.mark.parametrize("path,value", [
+    (("build_evidence", "cache_key_v3"), "f" * 64),
+    (("build_evidence", "context", "split_manifest", "hailo", "config", "calib_dir"), "/different/calibration"),
+    (("build_evidence", "cache_payload_v3", "requested_calibration_count"), 501),
+    (("mapping_failed",), True),
+])
+def test_historical_h8_absent_diagnostics_still_require_bound_positive_compile_evidence(path, value):
+    document, staged, args = historical_without_h8_diagnostics()
+    parent = document["hailo"]["hefs"]["hailo8"]["part1_build"]
+    for name in path[:-1]:
+        parent = parent[name]
+    parent[path[-1]] = value
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(rewritten_original(document, args), staged, **args)
+
+
+@pytest.mark.parametrize("raw", [None, b"modified receipt bytes"])
+def test_historical_h8_absent_diagnostics_still_require_exact_receipt_bytes(raw):
+    document, staged, args = historical_without_h8_diagnostics()
+    args["part1_build_receipt_bytes"] = raw
+    with pytest.raises(ValueError, match="receipt bytes"):
+        validate_generic_split_manifest_staging(rewritten_original(document, args), staged, **args)
+
+
+@pytest.mark.parametrize("name,value", [
+    ("calibration_identity", "manifest:" + "f" * 64),
+    ("prepared_calibration_identity_sha256", "f" * 64),
+    ("preprocessing_contract", {}),
+    ("hef_sha256", "f" * 64),
+])
+def test_historical_h8_absent_diagnostics_still_require_measured_receipt_identity(name, value):
+    document, staged, args = historical_without_h8_diagnostics()
+    receipt = json.loads(args["part1_build_receipt_bytes"])
+    receipt[name] = value
+    bind_receipt(json.dumps(receipt, sort_keys=True).encode(), args)
+    with pytest.raises(ValueError, match="actual measured receipt"):
+        validate_generic_split_manifest_staging(rewritten_original(document, args), staged, **args)
+
+
+def test_historical_h8_absent_diagnostics_cannot_replace_receipt_calibration_with_rekeyed_evidence():
+    from onnx_splitpoint_tool.build_evidence import (
+        boundary_endpoint_contract_sha256, canonical_build_key_from_hailo_v3_payload,
+        canonical_sha256,
+    )
+
+    document, staged, args = historical_without_h8_diagnostics()
+    evidence = document["hailo"]["hefs"]["hailo8"]["part1_build"]["build_evidence"]
+    payload = evidence["cache_payload_v3"]
+    payload["calibration_identity"] = "manifest:" + "f" * 64
+    payload["prepared_calibration_identity_sha256"] = canonical_sha256({
+        "calibration_identity": payload["calibration_identity"],
+        "preprocessing_contract_sha256": payload["preprocessing_contract_sha256"],
+    })
+    evidence["cache_key_v3"] = canonical_sha256(payload)
+    evidence["key"] = canonical_build_key_from_hailo_v3_payload(
+        payload, builder_source_onnx_sha256=args["producer_model"]["part1_onnx_sha256"],
+        full_source_onnx_sha256=args["full_model_sha256"],
+        boundary_endpoint_contract_sha256=boundary_endpoint_contract_sha256(
+            stage="part1", cache_payload=payload, split_manifest=document),
+        expected_cache_key=evidence["cache_key_v3"])
+    evidence["key_sha256"] = canonical_sha256(evidence["key"])
+    with pytest.raises(ValueError, match="actual measured receipt"):
+        validate_generic_split_manifest_staging(rewritten_original(document, args), staged, **args)
 
 
 def retained_unused_historical_build():

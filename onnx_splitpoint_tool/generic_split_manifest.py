@@ -174,13 +174,20 @@ def _historical_build_provenance(build, original, *, arch, model, case,
                      for key, value in snapshot["hailo"].items() if key != "hefs"),
              "historical build snapshot differs from original scientific manifest")
     config = original["hailo"]["config"]
+    # Some successful historical H8 records omitted these redundant diagnostics.
+    # Their canonical evidence and the exact measured receipt remain required;
+    # absence is not a newly inferred calibration-location observation.
+    _require(("calib_source" in build and build["calib_source"] == config["calib_dir"]
+              or "calib_source" not in build and arch == "hailo8")
+             and ("cache_key" in build and build["cache_key"] == evidence["cache_key_v3"]
+                  or "cache_key" not in build and arch == "hailo8"),
+             "historical compiler diagnostics differ or lack measured H8 receipt scope")
     _require(payload["hw_arch"] == ("hailo8" if arch == "hailo8" else "hailo10h")
              and payload["net_name"] == PurePosixPath(original["part1"]).stem
              and payload["net_input_shapes"] == [1, 3, *prepared["shape"][:2]]
              and payload["optimization_level"] == config["opt_level"]
              and payload["requested_calibration_count"] == config["calib_count"]
-             and payload["calibration_batch_size"] == config["calib_batch_size"]
-             and build["calib_source"] == config["calib_dir"],
+             and payload["calibration_batch_size"] == config["calib_batch_size"],
              "historical compiler/calibration recipe differs")
     try:
         endpoint = boundary_endpoint_contract_sha256(
@@ -189,9 +196,8 @@ def _historical_build_provenance(build, original, *, arch, model, case,
             payload, builder_source_onnx_sha256=source_sha256,
             full_source_onnx_sha256=full_model_sha256,
             boundary_endpoint_contract_sha256=endpoint,
-            expected_cache_key=build["cache_key"])
-        _require(evidence["key"] == key and evidence["key_sha256"] == canonical_sha256(key)
-                 and evidence["cache_key_v3"] == build["cache_key"],
+            expected_cache_key=evidence["cache_key_v3"])
+        _require(evidence["key"] == key and evidence["key_sha256"] == canonical_sha256(key),
                  "historical compiler evidence identity differs")
     except BuildEvidenceError as error:
         raise ValueError("Generic split-manifest staging: invalid historical compiler evidence") from error
@@ -259,7 +265,8 @@ def _bind_historical_receipt(raw, build, bindings):
              and receipt.get("schema") == "onnx-splitpoint/hailo-hef-build-receipt/v2"
              and receipt.get("publish_artifacts") is True
              and receipt.get("diagnostic_only") is False
-             and receipt.get("cache_key") == build["cache_key"] == evidence["cache_key_v3"]
+             and receipt.get("cache_key") == evidence["cache_key_v3"]
+             and ("cache_key" not in build or build["cache_key"] == evidence["cache_key_v3"])
              and receipt.get("cache_payload") == payload
              and receipt.get("source_onnx_sha256") == key["builder_source_onnx_sha256"]
              and receipt.get("compiler_onnx_sha256") == key["compiler_onnx_sha256"]
