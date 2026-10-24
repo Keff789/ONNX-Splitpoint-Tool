@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2401,
+  "file_count": 2403,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 503284,
-      "sha256": "d8c6386f9b925ae5fe5dac3db9ab0051436c3a09dc298df523a4f76521e44a56"
+      "size": 504918,
+      "sha256": "68a5c1845e17f8764fac53e4eb892cd9de430c591a95995372895019f17f705d"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -725,6 +725,11 @@
       "sha256": "41895dc68218eab75b53a14a28b215e70f3cf5820378d2643f648088f298f880"
     },
     {
+      "path": "onnx_splitpoint_tool/benchmark/generic_quality_transport.py",
+      "size": 8512,
+      "sha256": "4c86f6b7ad15cce95f2d64f97ad80a6c7b252074498e6ac1634ca4bcce9b6bca"
+    },
+    {
       "path": "onnx_splitpoint_tool/benchmark/hailo_policy.py",
       "size": 26282,
       "sha256": "deb143eab193c0beadc35f1e3263ddd5c71d00538f7c2a1614e7eca104f6d63b"
@@ -751,8 +756,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/benchmark/remote_run.py",
-      "size": 564720,
-      "sha256": "0ad24c86e637aa3c5811d6295071bb7a80c675f4483de17d6eebf3c2d7615ad5"
+      "size": 565992,
+      "sha256": "1d3a36c079ea20de34554cd60e820893a8b1e368d57210278ac748e93ae3dcf2"
     },
     {
       "path": "onnx_splitpoint_tool/benchmark/results_bundle.py",
@@ -7743,6 +7748,11 @@
       "path": "tests/test_generic_quality_runtime_context.py",
       "size": 6843,
       "sha256": "df208e08025039bc353a41e4d19af3803d59924f5aaa548cf50334ae372d5734"
+    },
+    {
+      "path": "tests/test_generic_quality_selected_transport.py",
+      "size": 15399,
+      "sha256": "d81ff14abc4219a0bf6267940ad30bddf530955c4d4686dee157864b372ab061"
     },
     {
       "path": "tests/test_generic_quality_sidecar_transport.py",

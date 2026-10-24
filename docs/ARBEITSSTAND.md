@@ -1,3 +1,28 @@
+## 24.10.2026 — Gebundene Binärauswahl beim Generic-Source-Transport
+
+Explizit gebundene Generic-Source-Läufe verwenden ihre aktiven Case-/Config-
+Bindungen auch für den Remote-Transport. Eine operationslokale Ausschlussliste
+entfernt ausschließlich Laufzeitbinärdateien nachweislich unselektierter Cases.
+Dieselbe Liste steuert die frühe Suite-/ONNX-Platzrechnung und den normalen
+Bundle-Builder. Der vollständige wissenschaftliche Katalog, Plan, gemeinsame
+N5000-Eingaben, Metadaten, Sidecars und selektierte Dateien bleiben unverändert.
+Kapazitätsformeln, Reserven, Cache-/Ownershipprüfungen und Archivintegrität
+bleiben erhalten. Andere ausführbare Planrezepte am gemeinsamen Bundlepfad
+sowie direkte, gemischte oder unklare Auswahl verwenden den bisherigen Transport.
+
+Die Optimierung setzt nachgewiesen eingebettete ONNX-Tensordaten voraus. Der
+installierte Reader lädt ohne externe Daten; die Protobuf-Traversierung erfasst
+auch Attribute, Untergraphen, sparse Tensoren und Funktionen. Externe oder
+unbekannte Speicherrepräsentationen und Parsefehler behalten den vollständigen
+Transport samt bisheriger Platzrechnung bei und protokollieren den Grund.
+Graphen und externe Blobs werden dabei nicht verändert oder aufgelöst.
+
+17 gezielte Softwareprüfungen bestanden, einschließlich zweier vorhandener
+Kapazitätsregressionen. 33 weitere direkt relevante Prüfungen bestanden;
+17 Prüfungen benötigen einen erhaltenen echten YOLO-Augmentationslauf und
+wurden ausgelassen. Hardwareausführung und Wiederholung des abgewiesenen
+b105-Laufs bleiben gesonderter Ressourcen- und Kapazitätszulassung vorbehalten.
+
 ## 24.10.2026 — Unabhängige Raw-Quelle mit geteilten Diagnostik-Snapshots
 
 Die normale lokale Collection veröffentlicht den ersten vollständigen

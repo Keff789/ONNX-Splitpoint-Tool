@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import csv
 import functools
+import fnmatch
 import hashlib
 import os
 import random
@@ -35,6 +36,7 @@ DEEPX_DISCOVERY_SHELL = '\nDEEPX_PY=""\nDEEPX_SITE=""\n_deepx_has_py_bindings() 
 
 from onnx_splitpoint_tool.remote.bundle import BundleCancelled, build_suite_bundle, remote_minimal_bundle_patterns
 from onnx_splitpoint_tool.benchmark.results_bundle import create_results_bundle_from_results_dir
+from onnx_splitpoint_tool.benchmark.generic_quality_transport import selected_source_transport_excludes
 from onnx_splitpoint_tool.log_utils import compact_diagnostic_cause, sanitize_log
 from onnx_splitpoint_tool.remote.ssh_transport import HostConfig as RemoteHost
 from onnx_splitpoint_tool.remote.ssh_transport import SSHTransport, shell_quote
@@ -4732,13 +4734,15 @@ def _remote_storage_reserve_bytes() -> int:
         return 2 * 1024 * 1024 * 1024
 
 
-def _suite_storage_footprint(suite_dir: Path) -> dict[str, int]:
+def _suite_storage_footprint(suite_dir: Path, *, transport_excludes: Sequence[str] = ()) -> dict[str, int]:
     """Conservatively count source bytes and all file/directory inodes."""
 
     total_bytes = 0
     file_count = 0
     directory_count = 1
     for path in Path(suite_dir).rglob("*"):
+        if any(fnmatch.fnmatch(path.relative_to(suite_dir).as_posix(), pattern) for pattern in transport_excludes):
+            continue
         try:
             if path.is_symlink():
                 file_count += 1
@@ -4784,14 +4788,25 @@ def _run_mentions_tensorrt(value: Any) -> bool:
     )
 
 
+def _source_transport_excludes_for_args(suite_dir: Path, args, *, log=None) -> tuple[str, ...]:
+    if args is None or str(getattr(args, 'transfer_mode', 'bundle') or 'bundle').lower() != 'bundle':
+        return ()
+    return selected_source_transport_excludes(
+        suite_dir, active_run_ids=_extract_run_ids_from_add_args(getattr(args, 'add_args', '')),
+        model_id=_trt_preflight_model_id(suite_dir), log=log)
+
+
 def _remote_run_capacity_requirement_for_args(
     suite_dir: Path,
     *,
     args: "RemoteBenchmarkArgs | None",
+    transport_excludes: Sequence[str] | None = None,
 ) -> dict[str, int]:
     """Return conservative selected-plan cold/warm byte and inode budgets."""
 
-    footprint = _suite_storage_footprint(suite_dir)
+    if transport_excludes is None:
+        transport_excludes = _source_transport_excludes_for_args(suite_dir, args)
+    footprint = _suite_storage_footprint(suite_dir, transport_excludes=transport_excludes)
     raw = int(footprint["total_bytes"])
     entries = int(footprint["file_count"]) + int(footprint["directory_count"])
     plan = _read_json_dict(Path(suite_dir) / "benchmark_plan.json") or {}
@@ -4808,6 +4823,8 @@ def _remote_run_capacity_requirement_for_args(
 
     onnx_sizes: list[int] = []
     for path in Path(suite_dir).rglob("*.onnx"):
+        if any(fnmatch.fnmatch(path.relative_to(suite_dir).as_posix(), pattern) for pattern in transport_excludes):
+            continue
         try:
             if path.is_file() and not path.is_symlink():
                 onnx_sizes.append(int(path.stat().st_size))
@@ -8556,6 +8573,7 @@ def run_remote_benchmark(
     pre_mutation_dispatch_failure: dict[str, Any] = {}
 
     try:
+        transport_excludes = _source_transport_excludes_for_args(suite_dir, args, log=log)
         # Resolve remote base (expands ~ and symlinks)
         remote_base = transport.resolve_path_read_only(
             remote_base_raw,
@@ -8568,6 +8586,7 @@ def run_remote_benchmark(
         capacity_requirement = _remote_run_capacity_requirement_for_args(
             suite_dir,
             args=args,
+            transport_excludes=transport_excludes,
         )
         base_preflight = _remote_storage_preflight(
             transport,
@@ -9443,6 +9462,7 @@ def run_remote_benchmark(
             if force_bundle_rebuild and bool(args.reuse_bundle):
                 log('[package] Suite files were refreshed locally; the shared bundle manifest will decide whether a rebuild is actually required.')
             bundle_includes, bundle_extra_excludes = remote_minimal_bundle_patterns()
+            bundle_extra_excludes.extend(transport_excludes)
             # v60q: validation transport is exact-root, never
             # ``resources/validation/**``.  The latter pulled the complete
             # 50,000-image ImageNet tree into a 16-item Smoke bundle.
