@@ -98,6 +98,9 @@ def case(tmp_path, monkeypatch):
             calls.append(command)
             p = subprocess.run(['bash','-c',command],capture_output=True,text=True,timeout=10)
             return p.returncode,p.stdout+p.stderr
+        def run_read_only(self, command, timeout):
+            p=subprocess.run(['bash','-c',command],capture_output=True,text=True,timeout=10)
+            return p.returncode,p.stdout+p.stderr
         def scp_download(self, source, destination, timeout_s):
             shutil.copyfile(source,destination); return 0,''
     monkeypatch.setattr(mod,'SSHTransport',LocalTransport)
@@ -109,6 +112,8 @@ def case(tmp_path, monkeypatch):
         'schema_version':1,'authorized':True,'action':'recover_generic_closed_collection',**identity,
         'operator':'TEST_ONLY','source':'TEST_ONLY user instruction','authorized_at':'2026-01-01T00:00:00Z',
         'evidence':mod._descriptor(evidence),'endpoint':endpoint,'remote_run_dir':str(remote),'cleanup':True})
+    value=json.loads(auth.read_text());value['capacity_budget']={
+        'max_archive_bytes':10*1024*1024,'local_reserve_bytes':0,'remote_reserve_bytes':0};put(auth,value)
     kwargs = dict(run_dir=run,session_id=session,setup_id=setup_id,model_id=model,
                   evidence_path=evidence,authorization_path=auth,registry_path=registry,output_dir=tmp_path/'new-output')
     originals = {p:p.read_bytes() for p in [lock.lock_path,physical.lock_path,*run.rglob('*.json'),run/'profile.yaml']}
@@ -159,7 +164,8 @@ def test_default_dryrun_no_transport_and_archive_tamper_rejected(case):
     assert result['status']=='dry_run_pass' and calls==[] and remote.is_dir()
     assert all(p.read_bytes()==value for p,value in originals.items())
     archive=remote/'.collection-recovery-TEST_ONLY.tar.gz'
-    p=subprocess.run(['bash','-c',mod._archive_command('pack',str(remote),str(archive))],capture_output=True,text=True)
+    p=subprocess.run(['bash','-c',mod._archive_command('pack',str(remote),str(archive),
+        budget={'max_archive_bytes':10*1024*1024,'remote_reserve_bytes':0})],capture_output=True,text=True)
     assert p.returncode==0
     expected=mod._descriptor(archive);archive.write_bytes(archive.read_bytes()[:-16])
     with pytest.raises(Exception): mod._verify_archive(archive,expected,str(remote))
@@ -176,3 +182,15 @@ def test_remote_content_change_after_archive_download_blocks_removal(case, monke
     monkeypatch.setattr(mod.SSHTransport, 'run', change_before_cleanup)
     with pytest.raises(Exception): mod.recover_generic_closed_collection(**kw,apply=True,cleanup=True)
     assert remote.is_dir() and all(p.read_bytes()==value for p,value in originals.items())
+
+
+@pytest.mark.parametrize('where',['local_preflight','remote_writer_cap'])
+def test_explicit_capacity_shortfall_blocks_transfer_or_removes_only_own_partial(case, where):
+    kw, remote, originals, calls = case
+    auth=Path(kw['authorization_path']);value=json.loads(auth.read_text())
+    value['capacity_budget']['max_archive_bytes'] = 2**63 if where=='local_preflight' else 1
+    put(auth,value)
+    with pytest.raises(Exception): mod.recover_generic_closed_collection(**kw,apply=True,cleanup=True)
+    assert remote.is_dir() and not list(remote.glob('.collection-recovery-*.tar.gz'))
+    assert all(p.read_bytes()==data for p,data in originals.items())
+    if where=='local_preflight': assert calls==[]

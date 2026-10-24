@@ -41,6 +41,20 @@ A separate JSON authorization has schema
 identity fields, `operator`, `source`, `authorized_at`, the exact `evidence`
 descriptor, `endpoint: {host,user,port}`, and exact `remote_run_dir`.
 `cleanup: true` is additionally required for deletion.
+The authorization must also bind `capacity_budget: {max_archive_bytes,
+local_reserve_bytes, remote_reserve_bytes}` with integer byte values, a positive
+archive cap and nonnegative reserves. Root includes other active work and its
+retained reserve in the local reserve value. These are transfer budgets, not
+scientific limits; no compression ratio is assumed.
+
+The local normal filesystem guard requires cap plus reserve before any remote
+mutation. The normal read-only remote storage guard and the archive writer
+require the same remote cap plus reserve; the writer enforces compressed bytes
+and fresh available blocks during writes. A budget abort removes only its own
+new partial archive. Before SCP, actual archive size must fit the authorized
+cap and fresh local free space minus reserve. A local dry-run reports its
+literal capacity budget and local inspection; it makes no fresh remote-space
+claim and performs no remote probe.
 
 ```sh
 python -B scripts/recover_generic_closed_collection.py \

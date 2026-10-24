@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 491752,
-      "sha256": "9f8e944772396fd9a8c57c798465408fb6e3617b0e7cfc291aa807ab3090241c"
+      "size": 492397,
+      "sha256": "4c523b28eaf813d6954a843cc2005fc156c3b6bfbc2156c84e367fbb6c7cca99"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -621,8 +621,8 @@
     },
     {
       "path": "docs/closed_generic_collection_recovery.md",
-      "size": 4024,
-      "sha256": "18b0bf676784ca10375f3ba43180b841adb0ff2effa634c30acca2829ba097a0"
+      "size": 4958,
+      "sha256": "6b97030c2c85afa1fc93b15f432cea2822eb911415e1b332aa9cf47010cb206a"
     },
     {
       "path": "download_model_zoo_examples.py",
@@ -1586,8 +1586,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/remote/collection_recovery.py",
-      "size": 24035,
-      "sha256": "86b7a4494b25ae4ecc12c175c5cd6fd3fdd44b3ea6ec8b962f4440d62ef8acd4"
+      "size": 27695,
+      "sha256": "5adcff471b0cfc4d4478bc1e8b522686ba4e49e0ebc495c2541588cc5c3c5f7c"
     },
     {
       "path": "onnx_splitpoint_tool/remote/predispatch_binding.py",
@@ -7406,8 +7406,8 @@
     },
     {
       "path": "tests/test_generic_closed_collection_recovery.py",
-      "size": 11398,
-      "sha256": "5aff67a921e91300ad825ad21389573ff14612dc0f973b36b65eae3d12e0a929"
+      "size": 12548,
+      "sha256": "0347f1408843370ccecca63951754251c4da51da0e482d61aa3b364f65e91675"
     },
     {
       "path": "tests/test_generic_completed_task_resources.py",

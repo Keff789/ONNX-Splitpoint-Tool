@@ -32,12 +32,20 @@ def _descriptor(path):
     return {'path': str(path), 'sha256': digest.hexdigest(), 'size_bytes': path.stat().st_size}
 
 
+def _local_capacity(output, archive_bytes, reserve_bytes):
+    from ..filesystem_admission import require_write_target
+    return require_write_target(output, operation='Closed collection archive',
+        minimum_free_bytes=archive_bytes + reserve_bytes, minimum_free_inodes=128).as_dict()
+
+
 # Uses the same tarfile/full-byte packaging and normal SCP as remote_run.
 # The manifest describes storage bytes, not a new scientific result authority.
 _ARCHIVE_SCRIPT = r'''
 import hashlib, io, json, os, pathlib, shutil, stat, sys, tarfile
 mode, root_raw, archive_raw, expected_archive_sha, anchors_raw = sys.argv[1:]
 root, archive = pathlib.Path(root_raw), pathlib.Path(archive_raw)
+anchors = json.loads(anchors_raw)
+budget = anchors.pop('_capacity_budget', {})
 if not root.is_absolute() or any(p.is_symlink() for p in (root, *root.parents)):
     raise RuntimeError('unsafe original remote run path')
 if archive.parent != root or not archive.name.startswith('.collection-recovery-'):
@@ -67,20 +75,41 @@ if mode == 'preflight':
         st = p.lstat()
         if not (stat.S_ISREG(st.st_mode) or stat.S_ISDIR(st.st_mode)):
             raise RuntimeError('unpreserved symlink/special file: ' + str(p))
-    for logical, expected in json.loads(anchors_raw).items():
+    for logical, expected in anchors.items():
         p = root / logical
         if not p.is_file() or sha(p) != expected['sha256'] or p.stat().st_size != expected['size_bytes']:
             raise RuntimeError('original remote suite binding differs: ' + logical)
     print('COLLECTION_PREFLIGHT=exact_regular_owned_run')
 elif mode == 'pack':
     if archive.exists(): raise RuntimeError('archive already exists')
+    maximum, reserve = budget.get('max_archive_bytes'), budget.get('remote_reserve_bytes')
+    if type(maximum) is not int or maximum <= 0 or type(reserve) is not int or reserve < 0:
+        raise RuntimeError('explicit archive capacity budget missing')
+    def free_bytes():
+        fs = os.statvfs(root)
+        return int(fs.f_bavail) * int(fs.f_frsize or fs.f_bsize)
+    if free_bytes() < maximum + reserve: raise RuntimeError('fresh remote archive capacity insufficient')
     rows = inventory()
     manifest = json.dumps({'schema':'onnx-splitpoint/closed-run-byte-manifest',
         'schema_version':1, 'remote_run_dir':str(root), 'files':rows}, sort_keys=True).encode()
-    with tarfile.open(archive, 'w:gz') as tf:
-        for row in rows: tf.add(root / row['path'], arcname='run/' + row['path'], recursive=False)
-        info = tarfile.TarInfo('collection_manifest.json'); info.size = len(manifest)
-        tf.addfile(info, io.BytesIO(manifest))
+    created = False
+    try:
+        with archive.open('xb') as raw:
+            created = True
+            class BoundedOutput:
+                def write(self, data):
+                    if raw.tell() + len(data) > maximum or free_bytes() - len(data) < reserve:
+                        raise RuntimeError('authorized compressed archive cap/remote reserve reached')
+                    return raw.write(data)
+                def tell(self): return raw.tell()
+                def flush(self): return raw.flush()
+            with tarfile.open(fileobj=BoundedOutput(), mode='w:gz') as tf:
+                for row in rows: tf.add(root / row['path'], arcname='run/' + row['path'], recursive=False)
+                info = tarfile.TarInfo('collection_manifest.json'); info.size = len(manifest)
+                tf.addfile(info, io.BytesIO(manifest))
+    except BaseException:
+        if created: archive.unlink(missing_ok=True)  # only this new operation's partial
+        raise
     if inventory() != rows: raise RuntimeError('remote content changed during packaging')
     print('COLLECTION_ARCHIVE=' + json.dumps({'sha256':sha(archive), 'size_bytes':archive.stat().st_size}))
 elif mode == 'cleanup':
@@ -96,10 +125,12 @@ else: raise RuntimeError('unknown collection operation')
 '''.strip()
 
 
-def _archive_command(mode, remote, archive, sha='', anchors=None):
+def _archive_command(mode, remote, archive, sha='', anchors=None, budget=None):
+    control = dict(anchors or {})
+    control['_capacity_budget'] = budget or {}
     return ' '.join(shlex.quote(v) for v in
                     ('python3', '-B', '-c', _ARCHIVE_SCRIPT, mode, remote, archive, sha,
-                     json.dumps(anchors or {}, separators=(',', ':'))))
+                     json.dumps(control, separators=(',', ':'))))
 
 
 def _verify_archive(archive, expected, remote):
@@ -144,7 +175,7 @@ def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id
     from ..energy.config import default_registry_path, _read_hardware_registry_unlocked
     from ..platform_power import host_config_from_setup
     from ..workflow.execution_binding import physical_dut_key
-    from ..benchmark.remote_run import _remote_result_collect_script
+    from ..benchmark.remote_run import _remote_result_collect_script, _remote_storage_preflight
     import yaml
 
     run = Path(run_dir).expanduser()
@@ -171,6 +202,11 @@ def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id
     _require(isinstance(auth.get('evidence'), dict), 'authorization lacks evidence descriptor')
     _generic_orphan_read(Path(evidence_path), snapshots, auth['evidence'])
     _require(not cleanup or (apply and auth.get('cleanup') is True), 'cleanup not explicitly authorized')
+    budget = auth.get('capacity_budget', {})
+    _require(type(budget.get('max_archive_bytes')) is int and budget['max_archive_bytes'] > 0
+             and all(type(budget.get(k)) is int and budget[k] >= 0
+                     for k in ('local_reserve_bytes', 'remote_reserve_bytes')),
+             'explicit max archive bytes and local/remote reserves required')
     original = evidence.get('original', {})
     def read(name, path):
         return _generic_orphan_read(path, snapshots, original.get(name, {}))
@@ -276,6 +312,7 @@ def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id
     _require(output.is_absolute() and not output.exists() and not output.is_relative_to(run)
              and output == output.resolve() and run == run.resolve()
              and not any(p.is_symlink() for p in output.parents), 'recovery requires new separate output')
+    local_admission = _local_capacity(output, budget['max_archive_bytes'], budget['local_reserve_bytes'])
     run_lock = EvaluationRunLock(out_root=run.parent, run_dir=run, owner={})
     physical = EvaluationRunLock.for_resource(physical_dut_key(setup), owner={})
     run_lock.acquire_for_recovery()
@@ -302,6 +339,13 @@ def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id
             output.mkdir(parents=True)
             receipt = {'schema': schema, 'schema_version': 1, **identity, 'remote_run_dir': remote,
                        'endpoint': endpoint, 'apply': bool(apply), 'cleanup_requested': bool(cleanup),
+                       'capacity_budget': budget, 'local_pre_mutation_capacity': local_admission,
+                       'storage_forecast': {
+                           'maximum_new_local_compressed_bytes': budget['max_archive_bytes'],
+                           'minimum_local_free_bytes': budget['max_archive_bytes'] + budget['local_reserve_bytes'],
+                           'minimum_remote_free_bytes': budget['max_archive_bytes'] + budget['remote_reserve_bytes'],
+                           'full_plain_extraction_bytes': 0, 'compression_ratio_assumed': False},
+                       'remote_capacity': 'not_probed_in_local_dry_run',
                        'original_status_unchanged': True, 'measurements_started': 0,
                        'evidence': _descriptor(evidence_path), 'authorization': _descriptor(authorization_path)}
             def unchanged(check_scientific=False):
@@ -331,14 +375,24 @@ def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id
                                  'fresh collection operation failed; remote retained')
                         return text
                     unchanged()
+                    receipt['remote_pre_mutation_capacity'] = _remote_storage_preflight(
+                        transport, remote, required_free_bytes=budget['max_archive_bytes'] + budget['remote_reserve_bytes'],
+                        required_free_inodes=4, stage='closed_collection_before_collect_pack')
+                    receipt['remote_capacity'] = 'fresh_normal_preflight_passed'
                     archive_remote = remote + '/.collection-recovery-' + uuid.uuid4().hex + '.tar.gz'
                     command(_archive_command('preflight', remote, archive_remote, anchors=anchors), 120)
                     command('bash -lc ' + shlex.quote(_remote_result_collect_script(
                         remote_results_dir=remote + '/results', remote_suite_dir=remote + '/suite')), 60)
-                    text = command(_archive_command('pack', remote, archive_remote), 600)
+                    text = command(_archive_command('pack', remote, archive_remote, budget=budget), 600)
                     values = [json.loads(line.split('=', 1)[1]) for line in text.splitlines()
                               if line.startswith('COLLECTION_ARCHIVE=')]
                     _require(len(values) == 1, 'remote archive integrity descriptor missing')
+                    receipt['remote_archive'] = {'path': archive_remote, **values[0]}
+                    _require(type(values[0].get('size_bytes')) is int
+                             and 0 < values[0]['size_bytes'] <= budget['max_archive_bytes'],
+                             'actual archive exceeds authorized compressed budget')
+                    receipt['local_before_download_capacity'] = _local_capacity(
+                        output, values[0]['size_bytes'], budget['local_reserve_bytes'])
                     local_archive = output / 'original_remote_run.tar.gz'
                     rc, _ = transport.scp_download(archive_remote, str(local_archive), timeout_s=600)
                     _require(rc == 0 and leases.active_count() == journal.pending_count() == 0,

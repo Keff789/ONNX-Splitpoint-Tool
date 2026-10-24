@@ -1,5 +1,14 @@
 ## 24.10.2026 — Begrenzte Wiederaufnahme abgeschlossener Generic-Collection
 
+Ein enger Nachtrag bindet zusätzlich den expliziten komprimierten Archivdeckel
+und lokale/remote Platzreserven des Operators. Die bestehenden normalen
+Filesystem-/RemoteStorage-Guards prüfen frische Kapazität vor Remoteänderungen;
+der Writer begrenzt komprimierte Bytes und erhält während des Schreibens die
+Remotereserve. Vor SCP werden tatsächliche Archivgröße und frische lokale
+Kapazität erneut geprüft. Keine Kompressionsquote wird angenommen; bei Abbruch
+wird nur die eigene neue partielle Archivdatei entfernt. Zwei kleine negative
+Kapazitätsfälle ergänzen die Softwareprüfung; echte Archivierung wurde nicht ausgeführt.
+
 Abgeschlossene Generic-N5000-Quellen konnten vollständige lokale SourceVerified-
 und ArtifactClosure-Belege besitzen, obwohl die Remote-Collection mit rc1 und
 copy_failed=0 endete. Die bestehende Cleanupbedingung bewahrt dann korrekt den
