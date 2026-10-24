@@ -1,3 +1,26 @@
+## 24.10.2026 — Originale H10-Artefakte vor dem Import-Cacheguard
+
+Ein Generic-H10-Source-Lauf konnte eine geschlossene H8-Suite mit identischen
+ONNX-Schnitten importieren, während seine explizit gebundene Original-H10-HEF
+nur als späterer Quality-Sidecar vorlag. Ohne historischen H10-Buildrequest
+meldete der vorgelagerte Serviceplan deshalb `pending_dfc_build`/`UNKNOWN`.
+
+Der vorhandene Import-Rebinder materialisiert jetzt ausschließlich ausgewählte,
+explizit gebundene Original-H10-HEF-/Receipt-Paare vor dieser Barriere. Er prüft
+Graph, Architektur, Originalbytes, benachbarte unveränderte Receipt, Kalibrierung,
+Preprocessing und Inputvertrag mit den vorhandenen Validatoren. Die normale
+Service-Erkennung und der unveränderte Cacheguard entscheiden anschließend
+selbst über HIT. Historische Compilerbelege bleiben unverändert; ein separates
+Ereignis dokumentiert die aktuelle Wiederverwendung ohne Compileraufruf.
+Fehlende Hinweise behalten UNKNOWN; abweichende Graphen, Architekturen oder
+Receipt-Bindungen werden abgewiesen. Es werden keine gültig-Flags gesetzt.
+
+Fünf fokussierte Softwaretests bestanden: regulärer Import/Service-HIT,
+Graph-/Architekturabweichung, fehlender Hinweis und nicht benachbarte Receipt.
+Keine Hardware-, SDK- oder Compiler-Ausführung; Runtime42/37 und wissenschaftliche
+Auswahl, Inputs, Qualitäts- und Messpolitik bleiben unverändert. Die tatsächliche
+Fortsetzung bleibt normaler Ressourcen-, Cache- und Quellenzulassung vorbehalten.
+
 ## 24.10.2026 — Gebundene Binärauswahl beim Generic-Source-Transport
 
 Explizit gebundene Generic-Source-Läufe verwenden ihre aktiven Case-/Config-
