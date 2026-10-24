@@ -15,6 +15,7 @@ def main():
                  'authorization-path', 'output-dir'):
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--registry-path')
+    parser.add_argument('--archive-checkpoint-path')
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--cleanup', action='store_true')
     result = recover_generic_closed_collection(**vars(parser.parse_args()))

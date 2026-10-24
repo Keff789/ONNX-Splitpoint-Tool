@@ -143,34 +143,120 @@ def _verify_archive(archive, expected, remote):
         names = [m.name for m in members]
         _require(len(names) == len(set(names)) and names.count('collection_manifest.json') == 1,
                  'duplicate/missing archive manifest member')
+        earlier = {}
         for member in members:
             logical = PurePosixPath(member.name)
-            _require(member.isfile() and not logical.is_absolute() and '..' not in logical.parts
+            _require(not logical.is_absolute() and '..' not in logical.parts
                      and str(logical) == member.name
-                     and (member.name == 'collection_manifest.json' or logical.parts[0] == 'run'),
-                     'unsafe/special archive member')
+                     and (member.name == 'collection_manifest.json'
+                          or (len(logical.parts) > 1 and logical.parts[0] == 'run')),
+                     'unsafe archive member path: ' + member.name)
+            if member.islnk():
+                target = PurePosixPath(member.linkname)
+                original = earlier.get(member.linkname)
+                _require(member.name != 'collection_manifest.json' and member.size == 0
+                         and not target.is_absolute() and '..' not in target.parts
+                         and str(target) == member.linkname and len(target.parts) > 1
+                         and target.parts[0] == 'run' and original is not None and original.isfile(),
+                         'unsafe archive hardlink relation: ' + member.name)
+            else:
+                _require(member.isfile(), 'unsafe/special archive member: ' + member.name)
+            earlier[member.name] = member
         manifest = json.load(tf.extractfile('collection_manifest.json'))
         _require(manifest.get('schema') == 'onnx-splitpoint/closed-run-byte-manifest'
                  and manifest.get('schema_version') == 1 and manifest.get('remote_run_dir') == remote,
                  'full archive belongs to a different remote run')
         rows = manifest.get('files')
         _require(isinstance(rows, list) and bool(rows)
+                 and all(isinstance(r, dict) and isinstance(r.get('path'), str)
+                         and type(r.get('size_bytes')) is int and r['size_bytes'] >= 0
+                         and re.fullmatch('[0-9a-f]{64}', r.get('sha256', '')) for r in rows)
                  and len({r['path'] for r in rows}) == len(rows)
                  and set(names) == {'collection_manifest.json', *('run/' + r['path'] for r in rows)},
                  'archive content is incomplete or unmanifested')
-        for row in rows:
-            handle = tf.extractfile('run/' + row['path'])
+        by_name = {'run/' + row['path']: row for row in rows}
+        verified = {}
+        for member in members:
+            if member.name == 'collection_manifest.json':
+                continue
+            row = by_name[member.name]
+            if member.islnk():
+                target = by_name.get(member.linkname, {})
+                _require((row['sha256'], row['size_bytes']) ==
+                         (target.get('sha256'), target.get('size_bytes')) == verified.get(member.linkname),
+                         'archive hardlink manifest/content differs: ' + member.name)
+                continue
+            handle = tf.extractfile(member)
             h = hashlib.sha256(); size = 0
             for data in iter(lambda: handle.read(1024 * 1024), b''):
                 h.update(data); size += len(data)
             _require(size == row['size_bytes'] and h.hexdigest() == row['sha256'],
                      'archive member content differs from its manifest')
+            verified[member.name] = (h.hexdigest(), size)
     return manifest
+
+
+def _archive_checkpoint(path, auth, identity, endpoint, remote, snapshots):
+    """Bind the completed prior copy, never invent a fresh collection success."""
+    descriptor = auth.get('archive_checkpoint')
+    _require(isinstance(descriptor, dict), 'authorization lacks its exact archive checkpoint')
+    checkpoint = _generic_orphan_read(Path(path), snapshots, descriptor)
+    _require(checkpoint.get('schema') == 'onnx-splitpoint/generic-closed-collection-archive-checkpoint'
+             and checkpoint.get('schema_version') == 1
+             and all(checkpoint.get(k) == v for k, v in identity.items())
+             and checkpoint.get('endpoint') == endpoint and checkpoint.get('remote_run_dir') == remote,
+             'archive checkpoint scope differs')
+    def read(name):
+        d = checkpoint.get(name, {})
+        return _generic_orphan_read(Path(d.get('path', '')), snapshots, d)
+    prior, logger = read('prior_recovery_receipt'), read('prior_logger_result')
+    prior_dir = Path(checkpoint['prior_recovery_receipt']['path']).parent
+    _require(all(prior.get(k) == v for k, v in identity.items())
+             and prior.get('schema') == 'onnx-splitpoint/generic-closed-collection-recovery'
+             and prior.get('status') == 'failed' and prior.get('apply') is True
+             and prior.get('endpoint') == endpoint and prior.get('remote_run_dir') == remote
+             and prior.get('measurements_started') == 0 and prior.get('new_operation_cleanup') == []
+             and not prior.get('new_physical_quarantine')
+             and 'unsafe/special archive member' in str(prior.get('error', ''))
+             and logger.get('returncode') == 1, 'prior failed copy event is not bound/quiescent')
+    argv = logger.get('argv', [])
+    for flag, expected in (('--run-dir', identity['run_dir']), ('--session-id', identity['session_id']),
+                           ('--setup-id', identity['setup_id']), ('--model-id', identity['model_id']),
+                           ('--output-dir', str(prior_dir))):
+        _require(argv.count(flag) == 1 and argv.index(flag) + 1 < len(argv)
+                 and argv[argv.index(flag) + 1] == expected, 'prior collection logger scope differs')
+    archive = checkpoint.get('remote_archive', {})
+    local = checkpoint.get('local_archive', {})
+    _require(archive == prior.get('remote_archive') and Path(archive.get('path', '')).parent == Path(remote)
+             and Path(archive['path']).name.startswith('.collection-recovery-')
+             and local.get('path') == str(prior_dir / 'original_remote_run.tar.gz')
+             and all(local.get(k) == archive.get(k) for k in ('sha256', 'size_bytes')),
+             'prior local/remote archive binding differs')
+    from ..benchmark.remote_run import _remote_result_collect_command
+    collector, pack = read('collector_diagnostic'), read('pack_diagnostic')
+    for name, diagnostic in (('collector_diagnostic', collector), ('pack_diagnostic', pack)):
+        _require(Path(checkpoint[name]['path']).parent == prior_dir / 'diagnostics'
+                 and diagnostic.get('target_id') == identity['setup_id']
+                 and diagnostic.get('returncode') == 0 and diagnostic.get('cleanup_proven') is True,
+                 'prior collection/pack diagnostic is not normal completed zero')
+    _require(collector.get('command') == _remote_result_collect_command(
+        remote_results_dir=remote + '/results', remote_suite_dir=remote + '/suite')
+        and collector.get('output') == 'SPLITPOINT_COLLECT_BEGIN\nSPLITPOINT_COLLECT_END exit_trap_status=0 copy_failed=0\n',
+        'previous actual collection zero is not proven')
+    args = shlex.split(pack.get('command', ''))
+    _require(len(args) == 9 and args[:3] == ['python3', '-B', '-c']
+             and args[3] == _ARCHIVE_SCRIPT and args[4:7] == ['pack', remote, archive['path']],
+             'previous normal archive writer/path differs')
+    values = [json.loads(line.split('=', 1)[1]) for line in pack.get('output', '').splitlines()
+              if line.startswith('COLLECTION_ARCHIVE=')]
+    _require(values == [{k: archive[k] for k in ('sha256', 'size_bytes')}], 'previous pack integrity proof differs')
+    return checkpoint
 
 
 def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id,
                                       evidence_path, authorization_path, output_dir,
-                                      registry_path=None, apply=False, cleanup=False):
+                                      registry_path=None, apply=False, cleanup=False,
+                                      archive_checkpoint_path=None):
     """Dry-run by default. Never run inference or rewrite original completion."""
     from ..energy.config import default_registry_path, _read_hardware_registry_unlocked
     from ..platform_power import host_config_from_setup
@@ -203,6 +289,8 @@ def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id
     _require(isinstance(auth.get('evidence'), dict), 'authorization lacks evidence descriptor')
     _generic_orphan_read(Path(evidence_path), snapshots, auth['evidence'])
     _require(not cleanup or (apply and auth.get('cleanup') is True), 'cleanup not explicitly authorized')
+    _require(bool(archive_checkpoint_path) == bool(auth.get('archive_checkpoint')),
+             'archive checkpoint requires its explicit bound authorization and argument')
     budget = auth.get('capacity_budget', {})
     _require(type(budget.get('max_archive_bytes')) is int and budget['max_archive_bytes'] > 0
              and all(type(budget.get(k)) is int and budget[k] >= 0
@@ -314,11 +402,17 @@ def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id
              and remote_base.endswith('/splitpoint_runs') and remote == expected_remote
              and str(posix) == remote
              and auth.get('remote_run_dir') == remote, 'unsafe/unbound original remote directory')
+    checkpoint = (_archive_checkpoint(archive_checkpoint_path, auth, identity, endpoint, remote, snapshots)
+                  if archive_checkpoint_path else None)
+    if checkpoint:
+        _require(0 < checkpoint['local_archive']['size_bytes'] <= budget['max_archive_bytes'],
+                 'bound existing archive exceeds operator cap')
     output = Path(output_dir).expanduser()
     _require(output.is_absolute() and not output.exists() and not output.is_relative_to(run)
              and output == output.resolve() and run == run.resolve()
              and not any(p.is_symlink() for p in output.parents), 'recovery requires new separate output')
-    local_admission = _local_capacity(output, budget['max_archive_bytes'], budget['local_reserve_bytes'])
+    new_archive_bytes = 0 if checkpoint else budget['max_archive_bytes']
+    local_admission = _local_capacity(output, new_archive_bytes, budget['local_reserve_bytes'])
     run_lock = EvaluationRunLock(out_root=run.parent, run_dir=run, owner={})
     physical = EvaluationRunLock.for_resource(resource, owner={})
     run_lock.acquire_for_recovery()
@@ -347,10 +441,11 @@ def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id
                        'endpoint': endpoint, 'physical_resource': resource,
                        'apply': bool(apply), 'cleanup_requested': bool(cleanup),
                        'capacity_budget': budget, 'local_pre_mutation_capacity': local_admission,
+                       'collection_mode': 'reuse_bound_previous_archive' if checkpoint else 'fresh_collect_pack_download',
                        'storage_forecast': {
-                           'maximum_new_local_compressed_bytes': budget['max_archive_bytes'],
-                           'minimum_local_free_bytes': budget['max_archive_bytes'] + budget['local_reserve_bytes'],
-                           'minimum_remote_free_bytes': budget['max_archive_bytes'] + budget['remote_reserve_bytes'],
+                           'maximum_new_local_compressed_bytes': new_archive_bytes,
+                           'minimum_local_free_bytes': new_archive_bytes + budget['local_reserve_bytes'],
+                           'minimum_remote_free_bytes': new_archive_bytes + budget['remote_reserve_bytes'],
                            'full_plain_extraction_bytes': 0, 'compression_ratio_assumed': False},
                        'remote_capacity': 'not_probed_in_local_dry_run',
                        'original_status_unchanged': True, 'measurements_started': 0,
@@ -383,36 +478,49 @@ def recover_generic_closed_collection(*, run_dir, session_id, setup_id, model_id
                         return text
                     unchanged()
                     receipt['remote_pre_mutation_capacity'] = _remote_storage_preflight(
-                        transport, remote, required_free_bytes=budget['max_archive_bytes'] + budget['remote_reserve_bytes'],
+                        transport, remote, required_free_bytes=new_archive_bytes + budget['remote_reserve_bytes'],
                         required_free_inodes=4, stage='closed_collection_before_collect_pack')
                     receipt['remote_capacity'] = 'fresh_normal_preflight_passed'
-                    archive_remote = remote + '/.collection-recovery-' + uuid.uuid4().hex + '.tar.gz'
+                    archive_remote = (checkpoint['remote_archive']['path'] if checkpoint else
+                                      remote + '/.collection-recovery-' + uuid.uuid4().hex + '.tar.gz')
                     command(_archive_command('preflight', remote, archive_remote, anchors=anchors), 120)
-                    command(_remote_result_collect_command(
-                        remote_results_dir=remote + '/results', remote_suite_dir=remote + '/suite'), 60)
-                    text = command(_archive_command('pack', remote, archive_remote, budget=budget), 600)
-                    values = [json.loads(line.split('=', 1)[1]) for line in text.splitlines()
-                              if line.startswith('COLLECTION_ARCHIVE=')]
-                    _require(len(values) == 1, 'remote archive integrity descriptor missing')
-                    receipt['remote_archive'] = {'path': archive_remote, **values[0]}
-                    _require(type(values[0].get('size_bytes')) is int
-                             and 0 < values[0]['size_bytes'] <= budget['max_archive_bytes'],
-                             'actual archive exceeds authorized compressed budget')
-                    receipt['local_before_download_capacity'] = _local_capacity(
-                        output, values[0]['size_bytes'], budget['local_reserve_bytes'])
-                    local_archive = output / 'original_remote_run.tar.gz'
-                    rc, _ = transport.scp_download(archive_remote, str(local_archive), timeout_s=600)
-                    _require(rc == 0 and leases.active_count() == journal.pending_count() == 0,
-                             'archive download incomplete')
-                    byte_manifest = _verify_archive(local_archive, values[0], remote)
+                    if checkpoint:
+                        expected = checkpoint['local_archive']
+                        local_archive = Path(expected['path'])
+                        receipt.update(archive_checkpoint=auth['archive_checkpoint'], previous_collection_rc=0,
+                            previous_event={k: checkpoint[k] for k in (
+                                'prior_recovery_receipt', 'prior_logger_result', 'collector_diagnostic', 'pack_diagnostic')},
+                            fresh_collection_performed=False, fresh_pack_or_download_performed=False)
+                    else:
+                        command(_remote_result_collect_command(
+                            remote_results_dir=remote + '/results', remote_suite_dir=remote + '/suite'), 60)
+                        text = command(_archive_command('pack', remote, archive_remote, budget=budget), 600)
+                        values = [json.loads(line.split('=', 1)[1]) for line in text.splitlines()
+                                  if line.startswith('COLLECTION_ARCHIVE=')]
+                        _require(len(values) == 1, 'remote archive integrity descriptor missing')
+                        expected = values[0]
+                        _require(type(expected.get('size_bytes')) is int
+                                 and 0 < expected['size_bytes'] <= budget['max_archive_bytes'],
+                                 'actual archive exceeds authorized compressed budget')
+                        receipt['local_before_download_capacity'] = _local_capacity(
+                            output, expected['size_bytes'], budget['local_reserve_bytes'])
+                        local_archive = output / 'original_remote_run.tar.gz'
+                        rc, _ = transport.scp_download(archive_remote, str(local_archive), timeout_s=600)
+                        _require(rc == 0 and leases.active_count() == journal.pending_count() == 0,
+                                 'archive download incomplete')
+                        receipt.update(fresh_collection_rc=0, fresh_collection_performed=True,
+                                       fresh_pack_or_download_performed=True)
+                    receipt['remote_archive'] = {'path': archive_remote, **{
+                        k: expected[k] for k in ('sha256', 'size_bytes')}}
+                    byte_manifest = _verify_archive(local_archive, expected, remote)
                     preserved = {(r['sha256'], r['size_bytes']) for r in byte_manifest['files']}
                     _require(all((desc['sha256'], desc['size_bytes']) in preserved for _, desc in scientific),
                              'full archive lacks original scientific content')
                     receipt.update(archive=_descriptor(local_archive), preserved_file_count=len(byte_manifest['files']),
-                                   fresh_collection_rc=0, complete_archive_verified=True)
+                                   complete_archive_verified=True)
                     unchanged(check_scientific=True)
                     if cleanup:
-                        command(_archive_command('cleanup', remote, archive_remote, values[0]['sha256']), 600)
+                        command(_archive_command('cleanup', remote, archive_remote, expected['sha256']), 600)
                         receipt['remote_cleanup'] = 'removed_exact_verified_run'
                 unchanged()
                 receipt['status'] = 'completed' if apply else 'dry_run_pass'

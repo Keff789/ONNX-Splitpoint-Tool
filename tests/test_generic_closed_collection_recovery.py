@@ -21,7 +21,6 @@ def put(path, value):
 
 @pytest.fixture
 def case(tmp_path, monkeypatch):
-    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
     monkeypatch.setattr(run_control, 'platform_workflow_interlock_path', lambda: tmp_path / 'platform.lock')
     run = tmp_path / 'runs/TEST_ONLY_run'; run.mkdir(parents=True)
     session, setup_id, model = 'a' * 32, 'TEST_ONLY_setup', 'TEST_ONLY_model'

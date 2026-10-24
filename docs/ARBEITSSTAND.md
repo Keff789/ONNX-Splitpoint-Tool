@@ -1,5 +1,24 @@
 ## 24.10.2026 — Begrenzte Wiederaufnahme abgeschlossener Generic-Collection
 
+Der zweite echte Apply sammelte/packte mit rc0 und lud das gebundene
+2.057.362.279-Byte-Archiv herunter. Die Archivprüfung sperrte danach einen
+Tar-Hardlink; der erste gezielt gelesene Header verweist intern auf eine frühere
+reguläre Cache-Metadatendatei. Dieser Versuch bleibt rc1 ohne Storagecleanup.
+Der Verifier akzeptiert jetzt ausschließlich kanonische interne `run/...`-
+Hardlinks zu früheren regulären manifestierten Dateien mit identischer SHA/Größe
+und bereits geprüften Zielbytes. Symlinks, fremde/absolute/`..`-Ziele, Ketten,
+Zyklen, unmanifestierte Ziele und Inhaltsabweichungen bleiben gesperrt.
+
+Ein optionaler autorisierungsgebundener Archivcheckpoint bewahrt das bereits
+heruntergeladene Archiv. Er bindet den früheren fehlgeschlagenen Recoverybeleg,
+Logger und echte Collector-/Pack-Nullbelege, exakte lokale/remote Archivpfade
+sowie SHA/Größe. Sämtliche ursprünglichen Source-/Run-/DUT-/Endpoint-/Owner-
+Guards bleiben bestehen. Die normale vollständige lokale Archivprüfung und der
+frische Remote-SHA-/Inventarvergleich laufen erneut; Collection/Pack/SCP nicht.
+Neue Receipts nennen ausdrücklich den wiederverwendeten früheren Collection0-
+Event und behaupten keine frische Collection. Fünf direkte eigene unittest-
+Prüfungen bestanden, ohne HOME-Umlenkung oder reale Nutzdatenprüfung.
+
 Der erste echte Collection-only-Apply des Operators lieferte nun den konkreten
 ERR-Beleg `/usr/bin/clear_console -q` beim Login-Shell-Abschluss; die Kopierfehler-
 variable blieb 0. Dieser Versuch bleibt mit rc1 erhalten, ohne Archivierung oder
@@ -4346,3 +4365,20 @@ Der normale H8-Import bindet eine ausdrücklich deklarierte lokale Kopie der urs
 Anzeige-IDs wie b071 dürfen nur dann die normalen Graphnamen b71 verwenden, wenn Original und gestagtes Manifest beide dieselben Part1-/Part2-Namen und Integerboundary71 belegen; historischer Compiler- und tatsächlicher Receipt-Netzname werden aus diesen originalen Graphnamen gebunden. Kein Graphname, Originalhash oder Receipt wird umgeschrieben.
 
 Validierung: 247 gezielte Softwaretests bestanden; tatsächlicher H8/b071-DTO mit lokalem read_bound und finalem Quellenrehash bestanden. Der tatsächliche H10/b071-Import bestand unabhängig mit unverändertem V3 über seine bestehende ursprüngliche Producer-/Sieben-Artefakt-Autorität; der H8-Mapperscope wird dafür nicht erweitert. Keine neue Hardwaremessung und keine Änderung an Runner, Slot-Policies, Quality-Schwellen, Measurement-Freeze22 oder Import-Freeze23.
+
+### Existing archive checkpoint for collection recovery
+
+`--archive-checkpoint-path` requires a NEW authorization binding its exact
+`archive_checkpoint: {path,sha256,size_bytes}` descriptor. The checkpoint schema
+is `onnx-splitpoint/generic-closed-collection-archive-checkpoint`, version 1,
+with the original five identity fields, `endpoint`, `remote_run_dir`, descriptors
+`prior_recovery_receipt`, `prior_logger_result`, `collector_diagnostic`,
+`pack_diagnostic`, and exact `local_archive`/`remote_archive` path/SHA/size.
+Only the earlier normal failed archive-member event with proven collection0,
+pack0 and downloaded-byte identity can be reused. Old authorizations and failed
+receipts stay immutable. The new event performs no collection, packaging or SCP;
+it streams/verifies the existing archive, freshly verifies the remote archive
+and complete source inventory, then optionally cleans only that exact owned Run.
+Local/remote reserve guards remain; forecast additional archive bytes are zero.
+`previous_collection_rc: 0` is separate from `fresh_collection_performed: false`;
+no fresh Collection0 is invented. No operation starts automatically.

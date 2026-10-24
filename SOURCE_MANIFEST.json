@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2400,
+  "file_count": 2401,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 499366,
-      "sha256": "51b0a267aabb391e15c5231b5f263e9c52f4c512cdeff0c75021aee88c94337b"
+      "size": 501846,
+      "sha256": "14fecc60c14f8fffbd3e00f99415b1a208d8e3aee1ee7546d532c0cf392f426b"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -1581,8 +1581,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/remote/collection_recovery.py",
-      "size": 28167,
-      "sha256": "296678f9b2d444d7e0169a056d17f8ef2b36593c62229fcad8de2f6d5b90826d"
+      "size": 35796,
+      "sha256": "a740ae00e2f0d03a11593c8196d908d495850da0fe19aeb74e6936a5cd41d415"
     },
     {
       "path": "onnx_splitpoint_tool/remote/predispatch_binding.py",
@@ -4321,8 +4321,8 @@
     },
     {
       "path": "scripts/recover_generic_closed_collection.py",
-      "size": 949,
-      "sha256": "3b6c022f88d930e97b26a3f289cb8c27d2bf4e46d460d645dc8fbf308262f77e"
+      "size": 1002,
+      "sha256": "bb7e1ca512b425dee0b45a08e341236e17dc027b13a4b8ac698c8ce17936f668"
     },
     {
       "path": "scripts/reference_workflow_gate_v2803.py",
@@ -7270,6 +7270,11 @@
       "sha256": "34d48cc083b734699ddcd9575e78cc4781ed5ee46a0fcea7c9739203570b4d24"
     },
     {
+      "path": "tests/test_collection_archive_checkpoint.py",
+      "size": 8508,
+      "sha256": "1f0376dd78c3361c0a846c320c5dac5270a583bbe25bef663b382b7af2df02d1"
+    },
+    {
       "path": "tests/test_collection_nonlogin_boundary.py",
       "size": 3666,
       "sha256": "abd328e06820161f2439f53c6f1d66880f524adbee3d6168336f0e005d094136"
@@ -7406,8 +7411,8 @@
     },
     {
       "path": "tests/test_generic_closed_collection_recovery.py",
-      "size": 14761,
-      "sha256": "a6180f55cc72e70d3d7ed4e4f97ba5e882cfc2b2dda0567fd4e0750345203185"
+      "size": 14706,
+      "sha256": "9d222b56f35f5b8f0f1a18a10e8c9a97c3d57f63fc7bf52770b5ff6090543967"
     },
     {
       "path": "tests/test_generic_completed_task_resources.py",
