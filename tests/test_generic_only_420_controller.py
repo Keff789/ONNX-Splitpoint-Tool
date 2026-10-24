@@ -159,7 +159,7 @@ def test_default_once_only_controller_on_controlled_owner_leaf(tmp_path, monkeyp
     # The existing regression otherwise sees the intentionally live campaign.
     # Substitute only its external owner-observation leaf, not task parsing.
     from test_generic_completion_dispatch import test_normal_cli_accepts_six_pairs_before_remainder_and_finally_reports_stop
-    monkeypatch.setattr(entry, "observe_owners", lambda *_: {"ok": True, "synthetic_owner_fixture": True})
+    monkeypatch.setattr(entry, "observe_owners", lambda *_, **__: {"ok": True, "synthetic_owner_fixture": True})
     test_normal_cli_accepts_six_pairs_before_remainder_and_finally_reports_stop(tmp_path, monkeypatch)
 
 
@@ -184,7 +184,14 @@ def independent_plan(tmp_path, monkeypatch, *, cross_setup=False):
         "scope_source": str(scope), "start_case_keys": [row["case_key"] for row in rows] if cross_setup else [rows[0]["case_key"]]}
     path = output / "plan/execution-plan.json"; entry.write_json(path, plan)
     monkeypatch.setattr(entry, "validate_plan", lambda plan, *_: plan["rows"])
-    monkeypatch.setattr(entry, "observe_owners", lambda *_: {"ok": True, "synthetic_owner_fixture": True})
+    def observe(targets, _output, scoped=False, **context):
+        assert scoped is True
+        assert context["measurement_identity"] == (primary.name, plan["execution_id"])
+        assert set(context["current_physical_locks"]) == set(targets)
+        assert all(lock._fh is not None and lock.owner["purpose"] == "generic_completed_task_192"
+                   for lock in context["current_physical_locks"].values())
+        return {"ok": True, "synthetic_owner_fixture": True}
+    monkeypatch.setattr(entry, "observe_owners", observe)
     monkeypatch.setattr(entry, "write_status_report", lambda *args, **kwargs: None)
     monkeypatch.setattr(entry, "terminal_bundle", lambda *_: None)
     monkeypatch.setattr(run_control, "platform_workflow_interlock_path", lambda: tmp_path / "test-locks/platform.lock")

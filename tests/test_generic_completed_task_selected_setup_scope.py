@@ -169,6 +169,106 @@ def test_selected_setup_complete_allows_other_setup_live_lock_and_journal(setup_
     assert actual["cleanup_proven"] is actual["exclusive_start_permission"] is False
 
 
+def measurement_lock(run, monkeypatch, *, resource="dut:192.0.2.8"):
+    monkeypatch.setattr(run_control, "platform_workflow_interlock_path", lambda: run.parent/"locks/platform.lock")
+    return run_control.EvaluationRunLock.for_resource(resource,
+        owner={"run_id": "fps-source", "session_id": "fps-execution",
+               "purpose": "generic_completed_task_192"})
+
+
+def handoff_result(observed, lock, *, identity=("fps-source", "fps-execution")):
+    return entry._scoped_controller_owners({"fps": target()}, observed,
+        current_physical_locks={"fps": lock}, measurement_identity=identity)
+
+
+def test_direct_released_setup_handoff_under_actual_new_flock(setup_workflow, monkeypatch):
+    run, observed = select_dx(setup_workflow, completed_setups=["dx"], journal_setups=["h8"])
+    with measurement_lock(run, monkeypatch) as lock:
+        assert lock.previous_owner["run_id"] == run.name and lock.previous_owner["state"] == "released"
+        assert json.loads(lock.lock_path.read_text())["state"] == "running"
+        assert not result(observed)["ok"]  # The old strict observer remains strict.
+        actual = handoff_result(observed, lock)
+        assert actual["ok"], actual
+        proof = actual["normal_quality_owners"][0]["direct_physical_handoffs"]["dut:192.0.2.8"]
+        assert proof["previous_owner"] == lock.previous_owner
+        assert proof["current_owner"] == lock.owner
+        assert proof["inode"][2] == os.fstat(lock._fh.fileno()).st_ino
+
+
+@pytest.mark.parametrize("fault", ["not_acquired", "closed", "unlocked", "wrong_path", "replaced_inode",
+    "wrong_resource", "wrong_run", "wrong_session", "wrong_pid", "quarantine"])
+def test_invalid_current_handoff_lock_denies(setup_workflow, monkeypatch, fault):
+    run, observed = select_dx(setup_workflow, completed_setups=["dx"])
+    resource = "dut:192.0.2.99" if fault == "wrong_resource" else "dut:192.0.2.8"
+    lock = measurement_lock(run, monkeypatch, resource=resource)
+    if fault == "not_acquired":
+        assert not handoff_result(observed, lock)["ok"]
+        return
+    with lock:
+        identity = ("wrong", "fps-execution") if fault == "wrong_run" else ("fps-source", "wrong") if fault == "wrong_session" else ("fps-source", "fps-execution")
+        path, renamed = lock.lock_path, None
+        try:
+            if fault == "closed": lock.release()
+            elif fault == "unlocked":
+                import fcntl
+                fcntl.flock(lock._fh.fileno(), fcntl.LOCK_UN)
+            elif fault == "wrong_path": lock.lock_path = path.with_name("wrong.lock")
+            elif fault == "replaced_inode":
+                renamed = path.with_suffix(".held")
+                path.rename(renamed)
+                path.write_text(json.dumps(lock.owner))
+            elif fault == "wrong_pid":
+                lock.owner["pid"] += 1
+                path.write_text(json.dumps(lock.owner))
+            elif fault == "quarantine": lock.quarantine_path.write_text("{}")
+            actual = handoff_result(observed, lock, identity=identity)
+            assert not actual["ok"], (fault, actual)
+        finally:
+            lock.lock_path = path
+            if renamed is not None:
+                path.unlink()
+                renamed.rename(path)
+
+
+@pytest.mark.parametrize("field,value", [("state", "running"), ("state", "quarantined"),
+    ("run_id", "other"), ("pid", 1), ("ppid", 1), ("pgid", 1), ("hostname", "other"),
+    ("session_id", "wrong"), ("physical_resource", "dut:192.0.2.99"),
+    ("released_at", "2000-01-01T00:00:00+00:00"), ("generic_orphan_recovery", {})])
+def test_wrong_direct_predecessor_denies(setup_workflow, monkeypatch, field, value):
+    run, observed = select_dx(setup_workflow, completed_setups=["dx"])
+    with measurement_lock(run, monkeypatch) as lock:
+        lock.previous_owner[field] = value
+        actual = handoff_result(observed, lock)
+        assert not actual["ok"], (field, actual)
+
+
+def test_intervening_owner_cannot_supply_old_source_release(setup_workflow, monkeypatch):
+    run, observed = select_dx(setup_workflow, completed_setups=["dx"])
+    with measurement_lock(run, monkeypatch):
+        pass
+    with measurement_lock(run, monkeypatch) as later:
+        assert later.previous_owner["run_id"] == "fps-source"
+        assert not handoff_result(observed, later)["ok"]
+
+
+@pytest.mark.parametrize("fault", ["selected_journal", "visibility", "unknown_process", "active_dut"])
+def test_current_handoff_does_not_exempt_other_blockers(setup_workflow, monkeypatch, fault):
+    run, observed = select_dx(setup_workflow, completed_setups=["dx"],
+        journal_setups=["dx"] if fault == "selected_journal" else [])
+    if fault == "active_dut":
+        other, active = select_dx(setup_workflow, physical=True)
+        observed["processes"] += active["processes"]
+        # The actual new lock must fail while this other owner holds the DUT.
+        with pytest.raises(run_control.WorkflowRunLockedError):
+            measurement_lock(run, monkeypatch).acquire()
+        return
+    if fault == "visibility": observed["visibility_errors"] = ["incomplete"]
+    if fault == "unknown_process":
+        observed["processes"].append({"pid": 999999999, "start_time_ticks": "1"})
+    with measurement_lock(run, monkeypatch) as lock:
+        assert not handoff_result(observed, lock)["ok"]
+
+
 @pytest.mark.parametrize("fault", ["status_absent", "status_pending", "status_wrong_setup", "status_wrong_host",
     "status_wrong_model", "dispatch_wrong_run", "dispatch_missing_run", "dispatch_extra_run", "dispatch_wrong_session_time",
     "meta_absent", "meta_wrong_host", "meta_wrong_run", "meta_wrong_args", "meta_wrong_working_root",

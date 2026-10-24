@@ -1,3 +1,42 @@
+## 24.10.2026 — Direkter physischer Übergang nach abgeschlossenem Generic-Dispatch
+
+Der normale Generic-FPS-Controller erwirbt seinen physischen Flock vor der
+Ownerprüfung. Dabei ersetzt die bestehende Lock-API den freigegebenen Owner des
+Source-Laufs durch den neuen laufenden Owner. Wenn der alte Source-Controller
+noch ausschließlich auf Smartmirror2 finalisiert, konnte dessen bereits
+abgeschlossener DUT-Dispatch deshalb nicht mehr aus der globalen Ownerdatei
+belegt werden. Ein vollständiger alter Controllerabschluss mit anschließendem
+explizitem Same-plan-Resume blieb möglich; der erste geblockte Versuch blieb
+korrekt erhalten.
+
+Nur der normale Generic-Aufruf reicht jetzt seine tatsächlich gehaltenen
+physischen Lockobjekte und die erwartete Run-/Measurement-Identität an die
+bestehende Ressourcenprüfung weiter. Kanonischer Pfad, offener FD/Inode,
+aktueller Owner, eigener exklusiver Kernel-Flock, Prozessidentität, Zeitbindung
+und fehlende Quarantäne werden geprüft und am Ende erneut gebunden. Für den
+alten Source-Lauf gelten unverändert alle Run-/Session-/Profil-/Dispatch-/
+Transport-/Release-/Journalbedingungen; sein Release wird ausschließlich aus
+dem bereits unter diesem Flock erfassten direkten `previous_owner` belegt.
+Nur dieser nachgewiesene aktuelle Flock darf während der Prüfung gehalten sein.
+
+Ohne den gehaltenen Kontext bleibt der bisherige strenge Pfad bestehen. Aktive
+oder unbekannte Arbeit, fremde Holder, fehlende Sichtbarkeit, abweichende
+Vorgänger und Quarantänen bleiben gesperrt. Ein zwischenliegender anderer
+physischer Owner unterbricht die direkte Relation; es wird keine Releasehistorie
+rekonstruiert. `run_control`, Recovery, Scheduler, Versuchslimits und numerische
+Laufzeitpfade werden nicht geändert. Die ergänzten normalen Ownerdiagnosen sind
+keine neue Registry oder spätere Startberechtigung.
+
+137 fokussierte lokale Softwarechecks bestanden: 57 Prüfungen der ausgewählten
+Setup-Ressourcen einschließlich eines echten eigenen temporären Flock-Übergangs
+und 80 bestehende Ressourcen-, Controller- und Recovery-Beobachtungsprüfungen.
+Falsche, geschlossene, entsperrte oder ausgetauschte aktuelle Locks, falsche
+Vorgänger, aktive DUTs/Journals und unvollständige Sichtbarkeit bleiben gesperrt.
+Hardware, SSH, Inferenz, neue Captures/FPS und Statistik wurden für diesen Fix
+nicht ausgeführt. Bestehende veröffentlichte Exporte, SourceFreezes und Läufe
+bleiben unverändert; zukünftige Starts benötigen eine neue wahrheitsgetreue
+Produkt-/Sourcebindung und weiterhin die vollständige normale Admission.
+
 ## 23.10.2026 — Atomare lokale Reportprojektionen für Generic Source-only
 
 Der normale Collector hielt große `validation_report.json` zusätzlich zur

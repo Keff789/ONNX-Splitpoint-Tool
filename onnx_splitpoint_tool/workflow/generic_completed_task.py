@@ -7,6 +7,7 @@ locks and process leases as the normal evaluation workflow.
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 from contextlib import ExitStack, nullcontext
 from datetime import datetime, timezone
 import inspect
@@ -95,7 +96,8 @@ def transport_for(target: dict, diagnostics: Path, *, scope=None, registry=None,
     return transport
 
 
-def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
+def _scoped_controller_owners(targets: dict[str, dict], observed: dict, *,
+                              current_physical_locks=None, measurement_identity=None) -> dict:
     """Attribute live controller work through its held normal EvaluationRun.
 
     This is ordinary FPS admission, not recovery or proof of cleanup. Nothing
@@ -115,6 +117,7 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
 
     snapshots, identities, authorities = {}, {}, {}
     reparented_locks, absent_parents = {}, set()
+    handoffs = {}
     errors = []
 
     def require(condition, reason):
@@ -165,6 +168,61 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
                         == (os.major(metadata.st_dev), os.minor(metadata.st_dev), metadata.st_ino)):
                     result.append((path, read(path)))
         return result
+
+    def held_measurement_lock(setup, lock, *, previous=None):
+        """Use only the direct predecessor retained by this still-held lock."""
+        require(isinstance(lock, EvaluationRunLock) and lock._fh is not None
+                and not lock._quarantined and lock._thread_acquired,
+                "current_physical_lock_not_held")
+        resource = physical_dut_key(targets[setup])
+        canonical = EvaluationRunLock.for_resource(resource, owner={})
+        require(lock.lock_path == canonical.lock_path and lock.run_dir == canonical.run_dir,
+                "current_physical_lock_path_unbound")
+        require(not os.path.lexists(canonical.quarantine_path),
+                "selected_setup_physical_quarantine_unresolved")
+        descriptor = lock._fh.fileno()
+        opened, named = os.fstat(descriptor), lock.lock_path.stat()
+        key = (os.major(opened.st_dev), os.minor(opened.st_dev), opened.st_ino)
+        require(stat.S_ISREG(opened.st_mode)
+                and (opened.st_dev, opened.st_ino) == (named.st_dev, named.st_ino)
+                and os.readlink(f"/proc/self/fd/{descriptor}") == str(lock.lock_path),
+                "current_physical_lock_inode_unbound")
+        own = process(os.getpid())
+        if previous is not None:
+            require(lock.lock_path.read_bytes() == snapshots[lock.lock_path],
+                    "current_physical_owner_changed")
+        value = read(lock.lock_path) if previous is None else json.loads(snapshots[lock.lock_path])
+        require(value == lock.owner and value.get("schema") == "onnx-splitpoint/evaluation-run-lock"
+                and type(value.get("schema_version")) is int and value["schema_version"] == 1
+                and value.get("state") == "running" and value.get("physical_resource") == resource
+                and value.get("run_dir") == str(canonical.run_dir)
+                and value.get("run_id") == measurement_identity[0]
+                and value.get("session_id") == measurement_identity[1]
+                and value.get("purpose") == "generic_completed_task_192"
+                and value.get("hostname") == socket.gethostname()
+                and all(value.get(name) == own[name] for name in ("pid", "ppid", "pgid")),
+                "current_physical_owner_unbound")
+        acquired = datetime.fromisoformat(str(value.get("acquired_at") or "").replace("Z", "+00:00"))
+        boot = next(line.split()[1] for line in Path("/proc/stat").read_text().splitlines()
+                    if line.startswith("btime "))
+        birth = int(boot) + int(own["start_ticks"]) / os.sysconf("SC_CLK_TCK")
+        require(acquired.tzinfo is not None and birth <= acquired.timestamp() <= time.time(),
+                "current_physical_owner_time_unbound")
+        matches = []
+        for line in Path(f"/proc/self/fdinfo/{descriptor}").read_text().splitlines():
+            fields = line.split()
+            if len(fields) == 9 and fields[:1] == ["lock:"] and fields[2:5] == ["FLOCK", "ADVISORY", "WRITE"]:
+                device = fields[6].split(":")
+                if len(device) == 3 and (int(device[0], 16), int(device[1], 16), int(device[2])) == key:
+                    matches.append(int(fields[5]))
+        require(matches == [own["pid"]], "current_physical_flock_unbound")
+        predecessor = deepcopy(lock.previous_owner)
+        require(isinstance(predecessor, dict)
+                and not any(name.endswith("_recovery") for name in predecessor)
+                and (previous is None or predecessor == previous),
+                "current_physical_predecessor_changed")
+        return resource, {"lock": lock, "setup": setup, "previous": predecessor,
+                          "owner": value, "inode": key}
 
     def require_absent_parent(pid):
         # Only absence in the already visibility-checked local /proc qualifies.
@@ -419,7 +477,8 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
                                 physical_lock = EvaluationRunLock.for_resource(resource, owner={})
                                 require(not os.path.lexists(physical_lock.quarantine_path),
                                         "selected_setup_physical_quarantine_unresolved")
-                                released = read(physical_lock.lock_path)
+                                handoff = handoffs.get(resource)
+                                released = handoff["previous"] if handoff else read(physical_lock.lock_path)
                                 require(released.get("schema") == "onnx-splitpoint/evaluation-run-lock"
                                         and released.get("schema_version") == 1 and released.get("state") == "released"
                                         and released.get("physical_resource") == resource
@@ -439,8 +498,11 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
                                     if "->" in fields: continue
                                     if len(fields) >= 6 and fields[1:3] == ["FLOCK", "ADVISORY"]:
                                         device = fields[5].split(":")
-                                        require(len(device) != 3 or (int(device[0], 16), int(device[1], 16), int(device[2])) != key,
-                                                "selected_setup_physical_lock_still_held")
+                                        if len(device) == 3 and (int(device[0], 16), int(device[1], 16), int(device[2])) == key:
+                                            require(handoff is not None and handoff["inode"] == key
+                                                    and fields[3] == "WRITE"
+                                                    and int(fields[4]) == handoff["owner"]["pid"],
+                                                    "selected_setup_physical_lock_still_held")
                         require(journal.is_dir() and not journal.is_symlink(), "selected_setup_remote_journal_unbound")
                         require(all(directory.is_dir() and not directory.is_symlink()
                                     and directory.name in {row["session_id"] for row in sessions}
@@ -481,6 +543,12 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
                              "port": str(int((targets_by_id[setup].get("remote")
                                  or targets_by_id[setup].get("runtime")).get("port", 22)))} for setup in setup_ids]}
                 authorities[pid] = value
+                if completed_setups and handoffs:
+                    value["direct_physical_handoffs"] = {
+                        resource: {"source": "current_held_lock.previous_owner",
+                                   "previous_owner": proof["previous"], "current_owner": proof["owner"],
+                                   "inode": list(proof["inode"])}
+                        for resource, proof in handoffs.items() if resource in resources & selected}
                 if reparented:
                     reparented_locks[pid] = (path, lock)
                 return value
@@ -498,6 +566,17 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
                 or (observed.get("ok") is False and observed.get("status") == "busy"
                     and bool(observed["processes"] or observed["live_product_leases"])),
                 "controller_observation_status_unknown")
+        if current_physical_locks is not None:
+            require(isinstance(current_physical_locks, dict) and set(current_physical_locks) == set(targets)
+                    and isinstance(measurement_identity, tuple) and len(measurement_identity) == 2
+                    and all(isinstance(value, str) and value for value in measurement_identity),
+                    "current_measurement_scope_unbound")
+            for setup, lock in current_physical_locks.items():
+                resource, proof = held_measurement_lock(setup, lock)
+                require(resource not in handoffs, "current_physical_lock_scope_duplicated")
+                handoffs[resource] = proof
+        else:
+            require(measurement_identity is None, "current_measurement_scope_unbound")
         for item in observed["processes"] + observed["live_product_leases"]:
             current = process(item.get("pid"))
             require(current["start_ticks"] == str(item.get("start_time_ticks")), "observed_process_identity_changed")
@@ -532,6 +611,10 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
             require_absent_parent(parent)
         for pid, expected in reparented_locks.items():
             require(expected in held_locks(process(pid)), "normal_run_lock_no_longer_held")
+        for resource, proof in handoffs.items():
+            _, current = held_measurement_lock(proof["setup"], proof["lock"], previous=proof["previous"])
+            require(current["owner"] == proof["owner"] and current["inode"] == proof["inode"],
+                    "current_physical_lock_changed")
     except (OSError, ValueError, TypeError, KeyError, IndexError, StopIteration, AttributeError) as exc:
         errors.append(str(exc) or type(exc).__name__)
     return {"ok": not errors, "read_only": True,
@@ -541,11 +624,14 @@ def _scoped_controller_owners(targets: dict[str, dict], observed: dict) -> dict:
             "cleanup_proven": False, "exclusive_start_permission": False}
 
 
-def observe_owners(targets: dict[str, dict], output: Path, resource_scoped: bool = False) -> dict:
+def observe_owners(targets: dict[str, dict], output: Path, resource_scoped: bool = False, *,
+                   current_physical_locks=None, measurement_identity=None) -> dict:
     """Read-only existing owner probe, without recovery or stopping a process."""
     controller = _observe_processes([])
     if resource_scoped:
-        controller = _scoped_controller_owners(targets, controller)
+        controller = _scoped_controller_owners(targets, controller,
+            **({"current_physical_locks": current_physical_locks,
+                "measurement_identity": measurement_identity} if current_physical_locks is not None else {}))
     result = {"observed_at": now(), "controller": controller, "setups": {}, "ok": False}
     if not controller.get("ok"):
         write_json(output / "owners.json", result)
@@ -1536,7 +1622,9 @@ def _execute_plan(plan_path: Path, plan: dict, *, resume: bool = False,
         preflight = (output / "production-preflight" / controller_marker.stem
                      if independent else output / "production-preflight")
         if not independent:
-            observe_owners(targets, preflight, generic_only)
+            observe_owners(targets, preflight, generic_only,
+                **({"current_physical_locks": physical_locks,
+                    "measurement_identity": (primary.name, session)} if generic_only else {}))
         for setup, target in targets.items():
             if independent and setup in lock_failures:
                 write_json(output / "branch-stops" / controller_marker.stem / (setup + ".json"),
@@ -1556,7 +1644,9 @@ def _execute_plan(plan_path: Path, plan: dict, *, resume: bool = False,
                     branch_ownership[setup] = {"registry": branch_registry, "journal": branch_journal,
                         "scope": branch_scope}
                     require_clean_ownership(branch_registry, branch_journal, branch_scope)
-                    observe_owners({setup: target}, preflight / "branches" / setup, True)
+                    observe_owners({setup: target}, preflight / "branches" / setup, True,
+                        current_physical_locks={setup: physical_locks[setup]},
+                        measurement_identity=(primary.name, session))
                 transport = transport_for(target, output / "diagnostics" / setup,
                     scope=branch_scope, registry=branch_registry, cancel=cancel)
                 transports[setup] = transport

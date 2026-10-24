@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 485187,
-      "sha256": "634cabebb42cdd94114a676094c9cc46d15a1b1b92ee4cd7cd399c0e97a7067a"
+      "size": 487777,
+      "sha256": "554c6e2235434d0fe912ba2cb2bb658bcd58dd73ee8df700d20c0ecef05828ae"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -3141,8 +3141,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_completed_task.py",
-      "size": 157811,
-      "sha256": "ac567afd51e6a15a2875e18e16e1c08a8f5959babbb254f26c3c1eae3889c3eb"
+      "size": 164135,
+      "sha256": "13ff252982bcb23a228c4925aca9f1afaaec43844e971883ec9917fc1b001652"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_energy_parent.py",
@@ -7376,8 +7376,8 @@
     },
     {
       "path": "tests/test_generic_completed_task_selected_setup_scope.py",
-      "size": 17347,
-      "sha256": "c61b56a43c86bc624c6f6889e322200e7fc7d961cd72b6786d7b8e818d18f635"
+      "size": 22675,
+      "sha256": "77bc0e5823b101444821ed17e353133594cfb67defb2c09c59c2b12a35345351"
     },
     {
       "path": "tests/test_generic_completion_dispatch.py",
@@ -7516,8 +7516,8 @@
     },
     {
       "path": "tests/test_generic_only_420_controller.py",
-      "size": 23744,
-      "sha256": "27dffb29ba04813010160cce9705589fc07d6d3c79f5ff9f5caf2814e7ea5965"
+      "size": 24182,
+      "sha256": "80c51429a14cc4dc3c4fda993dad8cd0f6f373fae8bc297179da5fa9aa2d6645"
     },
     {
       "path": "tests/test_generic_only_420_runtime.py",
