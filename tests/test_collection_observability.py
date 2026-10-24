@@ -63,6 +63,8 @@ def test_early_set_e_failure_has_real_trap_status_without_claiming_cp_failure(tm
     result = _collect(suite, out)
     assert result.returncode == 1
     assert _end(result) == ["SPLITPOINT_COLLECT_END exit_trap_status=1 copy_failed=0"]
+    assert 'SPLITPOINT_COLLECT_ERROR rc=1 ' in result.stderr
+    assert 'command=mkdir' in result.stderr
     assert "SPLITPOINT_COLLECT_CP_FAILED" not in result.stderr
     assert out.read_text() == "TEST_ONLY preserved"
 

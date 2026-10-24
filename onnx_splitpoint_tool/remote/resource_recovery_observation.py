@@ -219,6 +219,7 @@ def _observe_processes(local_owners, *, proc_root="/proc", lease_parent="/tmp"):
 def scope_local_resource_owners(
     setup: Mapping[str, Any], *, local_owners: list[dict],
     raw_observation: Mapping[str, Any],
+    absent_owner_pids: list[int] | None = None,
 ) -> dict[str, Any]:
     """Attribute only proven foreign normal work to disjoint physical resources.
 
@@ -246,7 +247,11 @@ def scope_local_resource_owners(
                     "recorded_owners", "processes", "live_product_leases", "visibility_errors")),
                 "controller_raw_observation_incomplete")
         require(not raw["visibility_errors"], "controller_visibility_unproven")
-        require(isinstance(local_owners, list) and bool(local_owners), "recorded_owners_required")
+        absent_only = not local_owners and isinstance(absent_owner_pids, list) and bool(absent_owner_pids)
+        if absent_only:
+            require(all(type(pid) is int and pid > 0 and not Path('/proc', str(pid)).exists()
+                        for pid in absent_owner_pids), 'original_controller_not_absent')
+        require(isinstance(local_owners, list) and (bool(local_owners) or absent_only), "recorded_owners_required")
         expected: set[tuple[int, str]] = set()
         for owner in local_owners:
             require(isinstance(owner, Mapping) and type(owner.get("pid")) is int
@@ -321,6 +326,7 @@ def scope_local_resource_owners(
 def observe_resource_owners(
     setup: Mapping[str, Any], *, local_owners: list[dict], diagnostics_dir: Path,
     resource_scoped: bool = False,
+    absent_owner_pids: list[int] | None = None,
 ) -> dict[str, Any]:
     """Observe exact controller predecessors and known product work on the DUT.
 
@@ -329,12 +335,21 @@ def observe_resource_owners(
     No process is stopped and no remote lease, upload, or measurement is started.
     """
     controller = _observe_processes(local_owners)
-    if not isinstance(local_owners, list) or not local_owners:
+    absent_only = bool(absent_owner_pids) and not local_owners
+    if absent_only:
+        # Closed historical runs sometimes recorded a PID but no birth tick.
+        # Never invent a tick or admit a reused PID: only actual absence works.
+        for pid in absent_owner_pids:
+            if type(pid) is not int or pid <= 0 or Path('/proc', str(pid)).exists():
+                controller['visibility_errors'].append('original_controller_not_absent')
+        controller['ok'] = bool(controller['ok'] and not controller['visibility_errors'])
+    if not isinstance(local_owners, list) or (not local_owners and not absent_only):
         controller["visibility_errors"].append("recorded_owners_required")
         controller.update(ok=False, status="unknown")
     if resource_scoped:
         controller = scope_local_resource_owners(
-            setup, local_owners=local_owners, raw_observation=controller)
+            setup, local_owners=local_owners, raw_observation=controller,
+            absent_owner_pids=absent_owner_pids)
     remote: dict[str, Any] = {"ok": False, "read_only": True, "status": "not_observed"}
     # Do not open another connection after an already blocked local observation.
     if not controller["ok"]:

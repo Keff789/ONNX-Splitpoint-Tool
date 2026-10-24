@@ -7529,7 +7529,10 @@ def _remote_result_collect_script(*, remote_results_dir: str, remote_suite_dir: 
     rr = str(remote_results_dir).replace('"', '\\"')
     rs = str(remote_suite_dir).replace('"', '\\"')
     return (
-        "set -e; shopt -s nullglob; copy_failed=0; "
+        "set -Ee; shopt -s nullglob; copy_failed=0; "
+        "trap 'sp_collect_err_rc=$?; "
+        "printf \"SPLITPOINT_COLLECT_ERROR rc=%s line=%s command=%q\\n\" "
+        "\"$sp_collect_err_rc\" \"$LINENO\" \"$BASH_COMMAND\" >&2 || :' ERR; "
         # An EXIT trap observes the previous shell status, not a universal
         # process returncode (notably on signals). Never replace that status.
         "trap 'sp_collect_exit_trap_status=$?; "

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 
 import pytest
 
@@ -115,3 +116,19 @@ def test_public_observer_uses_disjoint_authority_only_for_explicit_resource_scop
     assert bool(calls) is resource_scoped
     if not resource_scoped:
         assert result["remote"]["status"] == "not_observed"
+
+
+@pytest.mark.parametrize('absent', [True, False])
+def test_public_absent_only_original_without_birth_tick_keeps_normal_resource_scope(tmp_path, monkeypatch, absent):
+    monkeypatch.setattr(observation, '_observe_processes', lambda *_a, **_k: idle())
+    calls = []
+    class Transport:
+        def __init__(self, *_a, **_k): calls.append(True)
+        def run_read_only(self, *_a, **_k): return 0, 'RESOURCE_OWNERS=' + json.dumps(idle())
+    monkeypatch.setattr(observation, 'SSHTransport', Transport)
+    result = observation.observe_resource_owners(SETUP, local_owners=[],
+        absent_owner_pids=[1000000000 if absent else os.getpid()],
+        diagnostics_dir=tmp_path/'diagnostics', resource_scoped=True)
+    assert result['ok'] is absent
+    assert bool(calls) is absent
+    assert result['controller']['recorded_owners'] == []  # no invented birth witness

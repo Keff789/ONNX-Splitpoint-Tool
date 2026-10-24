@@ -1,3 +1,31 @@
+## 24.10.2026 — Begrenzte Wiederaufnahme abgeschlossener Generic-Collection
+
+Abgeschlossene Generic-N5000-Quellen konnten vollständige lokale SourceVerified-
+und ArtifactClosure-Belege besitzen, obwohl die Remote-Collection mit rc1 und
+copy_failed=0 endete. Die bestehende Cleanupbedingung bewahrt dann korrekt den
+Remote-Run; ein wiederholter Hardwarelauf ist keine Collection-Reparatur. Die
+historische Shell-Ursache ist aus den vorhandenen EXIT-Zeilen nicht ableitbar.
+Eine eigene minimale lokale Suite durchlief den unveränderten Collector mit rc0.
+
+Ein expliziter Collection-only-Recoverypfad verwendet jetzt dieselben Run-/DUT-
+Flocks, Ownerprüfungen, SSHTransport- und Prozess-Leases sowie den bestehenden
+Collector. Er verändert keine alten Status-/Raw-/Ownerbytes und startet keine
+Numerik. Default ist Dry-run; Apply kopiert ein vollständiges komprimiertes
+Archiv genau des gebundenen alten Remote-Runs. Die SHA-/Größenprüfung erfolgt
+streamend ohne zusätzliche vollständige Extraktion. Erst zusätzliche explizite
+Cleanupautorisierung, originale Source-/Index-/Inputbelege, frische Collection0
+und unveränderte vollständig archivierte Remotebytes erlauben dessen Entfernung.
+Fremde/aktive/unbekannte Arbeit, Pfadabweichungen, Links, Sonderdateien und
+veränderte Inhalte bleiben gesperrt. Eine neue ERR-Diagnose nennt die tatsächlich
+fehlschlagende Collector-Anweisung; bestehende Exitcodes bleiben erhalten.
+
+37 gezielte lokale Softwarechecks bestanden, einschließlich normaler
+Ressourcen-Beobachtungs-ABI, originaler JSON-/Lockbytes, Archivprüfung,
+Inhaltsdrift, fehlender Bindung und fremder Symlinkziele. Ein unabhängiger enger
+Quellenreview wurde nach Behebung konkreter ABI-/Pfadprobleme abgeschlossen.
+Keine echten Runpayloads, SSH-/DUT-Verbindungen, Hardware, Inferenz, Statistiken,
+Caches, CURRENT-Adoption oder tatsächliche Remote-Löschung wurden ausgeführt.
+
 ## 24.10.2026 — Historische DeepX-Buildbelege beim normalen H8-Import
 
 Der normale Import verglich einen H8-only-Manifestanhang mit seinem gebundenen

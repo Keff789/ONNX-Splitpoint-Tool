@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2396,
+  "file_count": 2400,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 489850,
-      "sha256": "a0700ee57d19c54c7555655cccb95b7b040d34942fdba690cd1d56efc95555d7"
+      "size": 491752,
+      "sha256": "9f8e944772396fd9a8c57c798465408fb6e3617b0e7cfc291aa807ab3090241c"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -620,6 +620,11 @@
       "sha256": "fc931e3d039b5f18eeed87a2726807b3fc1673f2170de70dd5eff98ee31b0f76"
     },
     {
+      "path": "docs/closed_generic_collection_recovery.md",
+      "size": 4024,
+      "sha256": "18b0bf676784ca10375f3ba43180b841adb0ff2effa634c30acca2829ba097a0"
+    },
+    {
       "path": "download_model_zoo_examples.py",
       "size": 7902,
       "sha256": "524742a04cf7a1359707dea7c54d10357165fc260f68826679f1bbcd5632bd40"
@@ -751,8 +756,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/benchmark/remote_run.py",
-      "size": 564222,
-      "sha256": "68aa6c27467e911380e243819d2de36a28ced47f01f9080ecd1ea2fe66f1547f"
+      "size": 564416,
+      "sha256": "6a6da64dbd85715a8b1c8dddc8da484513d378ca01daeb20433559b997e3a1a8"
     },
     {
       "path": "onnx_splitpoint_tool/benchmark/results_bundle.py",
@@ -1580,6 +1585,11 @@
       "sha256": "4cb6cb5ce2340a5e1288c071cb7afec9a48b6521cbc0f22b52ec47e97410d79e"
     },
     {
+      "path": "onnx_splitpoint_tool/remote/collection_recovery.py",
+      "size": 24035,
+      "sha256": "86b7a4494b25ae4ecc12c175c5cd6fd3fdd44b3ea6ec8b962f4440d62ef8acd4"
+    },
+    {
       "path": "onnx_splitpoint_tool/remote/predispatch_binding.py",
       "size": 30276,
       "sha256": "7498392aa44018cab785ad2e2839abac9002f0787de630fdc6e5180839ded10f"
@@ -1601,8 +1611,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/remote/resource_recovery_observation.py",
-      "size": 19852,
-      "sha256": "ef7da5204379b812592e119b9d296569a3337316b28ef5fdcccbc151cc602fab"
+      "size": 20892,
+      "sha256": "586425b39a2ada69a1953125b3e1ebe99be8fcdf56e954da4fd10969ed5032a6"
     },
     {
       "path": "onnx_splitpoint_tool/remote/ssh_transport.py",
@@ -3456,8 +3466,8 @@
     },
     {
       "path": "scripts/build_source_manifest.py",
-      "size": 35400,
-      "sha256": "14be3360baeeb6a6027a8e1b7761cde08d4889ca812e1abead7cd24395ba92c3"
+      "size": 35450,
+      "sha256": "8f678558c063d79a355fc4b625480eb6f5ab9c435c91e90b0222eb71bca74484"
     },
     {
       "path": "scripts/build_source_release.py",
@@ -4313,6 +4323,11 @@
       "path": "scripts/recover_b5_build_evidence.py",
       "size": 4920,
       "sha256": "a3024b36c3dda610268a6101eebe6d0c2f023a8d9a2ec66a334e52781e8b8c40"
+    },
+    {
+      "path": "scripts/recover_generic_closed_collection.py",
+      "size": 949,
+      "sha256": "3b6c022f88d930e97b26a3f289cb8c27d2bf4e46d460d645dc8fbf308262f77e"
     },
     {
       "path": "scripts/reference_workflow_gate_v2803.py",
@@ -7261,8 +7276,8 @@
     },
     {
       "path": "tests/test_collection_observability.py",
-      "size": 7332,
-      "sha256": "4ead36b602e025f8f75e7154095ea8a049ad69cc228121e9a4c7ad0633b1f2b8"
+      "size": 7437,
+      "sha256": "6aff051ccae10c4ac07026eaff27a576b8ec43ee457bfef2d66de5dd6809e5e5"
     },
     {
       "path": "tests/test_compact_debug_pack.py",
@@ -7388,6 +7403,11 @@
       "path": "tests/test_generic_central_digest_adapter.py",
       "size": 7872,
       "sha256": "0a195b55190916cc10bbeed335b7488f0b70825cc65f0b9476991cc3c3eb3dd5"
+    },
+    {
+      "path": "tests/test_generic_closed_collection_recovery.py",
+      "size": 11398,
+      "sha256": "5aff67a921e91300ad825ad21389573ff14612dc0f973b36b65eae3d12e0a929"
     },
     {
       "path": "tests/test_generic_completed_task_resources.py",
@@ -7606,8 +7626,8 @@
     },
     {
       "path": "tests/test_generic_predispatch_recovery_observation.py",
-      "size": 4932,
-      "sha256": "65c3a35aeec52a6026f7850f90ce500865993b1ad4926729b2c1b401176c6203"
+      "size": 5810,
+      "sha256": "d3985ed0f28230fde25b02b83520fbfd33463cf47d8aa42d463ab81b9d2a581c"
     },
     {
       "path": "tests/test_generic_predispatch_run_only_recovery.py",
