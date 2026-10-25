@@ -60,6 +60,39 @@ def selected_source_transport_excludes(suite_dir, *, active_run_ids, model_id, l
         plan = json.loads((suite / 'benchmark_plan.json').read_text())
     except (OSError, ValueError):
         return ()  # No explicit source proof: retain ordinary transport.
+    return _selected_source_excludes(suite, plan=plan, active_run_ids=requested,
+                                    model_id=model_id, log=log)
+
+
+def selected_source_import_excludes(suite_dir, *, runs, model_id, log=None):
+    """Prove the same dependency selection before a new local suite copy.
+
+    Use the current explicitly bound original configs, never the source suite's
+    historical executable plan. Sidecars/runtime are materialized normally after
+    import; missing old dependencies keep the ordinary complete local copy.
+    """
+    suite = Path(suite_dir).resolve(strict=True)
+    runs = list(runs)
+    return _selected_source_excludes(
+        suite, plan={'runs': runs},
+        active_run_ids=[str(row.get('id') or row.get('name') or '')
+                        for row in runs if isinstance(row, Mapping)
+                        and row.get('semantic_reference_only') is not True],
+        model_id=model_id, source_configs=True, log=log)
+
+
+def _selected_source_excludes(suite, *, plan, active_run_ids, model_id,
+                              source_configs=False, log=None):
+    requested = set(active_run_ids or ())
+    if not requested:
+        return ()
+
+    def retain_full(reason):
+        if log is not None:
+            prefix = '[source][local-import]' if source_configs else '[remote][transport]'
+            log(prefix + ' retaining full suite: ' + reason)
+        return ()
+
     if not isinstance(plan, Mapping) or not isinstance(plan.get('runs'), list):
         return ()
     rows = [r for r in plan.get('runs', []) if isinstance(r, Mapping)
@@ -94,17 +127,33 @@ def selected_source_transport_excludes(suite_dir, *, active_run_ids, model_id, l
         binding = _binding(row)  # Existing exact source/config/stage scope checks.
         cases = binding['case_ids']; paths = binding['generic_quality_completion_configs']
         hashes = binding['generic_quality_completion_config_sha256']
+        if source_configs and row.get('native_trt_build') is not False:
+            return retain_full('source_only_build_policy_not_explicit')
         require(row.get('native_trt_build') is False and set(cases) <= declared)
         for case in cases:
             require(paths[case] == f'quality_runtime/{case}.json'
                     and isinstance(hashes[case], str) and re.fullmatch('[0-9a-f]{64}', hashes[case]))
-            target = _contained(suite, paths[case])
-            payload = target.read_bytes()
+            if source_configs:
+                from ..workflow.generic_quality_sidecars import _producer_source_bytes, _producer_source_path
+                payload = _producer_source_bytes(binding['generic_quality_completion_sources'][case])
+            else:
+                target = _contained(suite, paths[case])
+                payload = target.read_bytes()
             require(hashlib.sha256(payload).hexdigest() == hashes[case]
                     and len(payload) == binding['generic_quality_completion_sources'][case]['size_bytes'])
-            config = json.loads(payload); identity = config.get('identity') or {}
+            config = json.loads(payload)
+            if source_configs and not (isinstance(config, Mapping)
+                    and config.get('schema') == 'onnx-splitpoint/generic-composed-quality-completion-config'
+                    and type(config.get('schema_version')) is int
+                    and config['schema_version'] == 1):
+                return retain_full('original_config_schema_unavailable')
+            identity = config.get('identity') or {}
             backend = {'hailo8': 'hailo8', 'hailo10': 'hailo10h',
                        'hailo10h': 'hailo10h', 'deepx_m1': 'deepx_m1'}.get(_stage(row.get('stage1')))
+            if source_configs and not (isinstance(identity, Mapping)
+                    and all(identity.get(key) for key in
+                            ('case_id', 'model_id', 'setup_id', 'comparison_backend'))):
+                return retain_full('original_config_identity_metadata_unavailable')
             require(config.get('path_root') == 'suite_root' and backend
                     and _stage(row.get('stage2')) == 'tensorrt'
                     and identity.get('case_id') == case and identity.get('model_id') == model_id
@@ -112,6 +161,10 @@ def selected_source_transport_excludes(suite_dir, *, active_run_ids, model_id, l
                     and bool(identity.get('setup_id')) and identity.get('comparison_backend') == backend)
             artifacts = config.get('expected_runtime_artifacts')
             sources = config.get('runtime_source_files')
+            if source_configs and not (isinstance(artifacts, Mapping)
+                    and {'source_part1_onnx', 'source_part2_onnx'} <= artifacts.keys()
+                    and isinstance(sources, list) and sources):
+                return retain_full('original_config_dependency_metadata_unavailable')
             require(isinstance(artifacts, Mapping) and isinstance(sources, list) and sources
                     and {'source_part1_onnx', 'source_part2_onnx'} <= artifacts.keys())
             for role in ('source_part1_onnx', 'source_part2_onnx'):
@@ -127,8 +180,17 @@ def selected_source_transport_excludes(suite_dir, *, active_run_ids, model_id, l
                             and '..' not in relative.parts and not relative.is_relative_to(suite))
                     continue
                 dependency = _contained(suite, relative)
-                require(not (re.fullmatch(r'b[0-9]+', relative.parts[0]) and relative.parts[0] != case)
-                        and dependency.is_file()
+                require(not (re.fullmatch(r'b[0-9]+', relative.parts[0])
+                             and relative.parts[0] != case))
+                if source_configs and not dependency.is_file():
+                    # Normal Generic sidecar publication may supply an exact
+                    # original asset which this older suite never contained.
+                    local = descriptor.get('local_path')
+                    if local:
+                        dependency = _producer_source_path(local)
+                    else:
+                        return retain_full('dependency_not_materialized:' + str(relative))
+                require(dependency.is_file()
                         and ('size_bytes' not in descriptor or dependency.stat().st_size == descriptor['size_bytes']))
             def check_paths(value):
                 if isinstance(value, Mapping):
@@ -148,7 +210,5 @@ def selected_source_transport_excludes(suite_dir, *, active_run_ids, model_id, l
     excludes = tuple(f'{case}/*{suffix}' for case in sorted(declared - selected) for suffix in suffixes)
     reason = _inline_graphs(suite, excludes, required_graphs) if excludes else ''
     if reason:
-        if log is not None:
-            log('[remote][transport] retaining full suite: ' + reason)
-        return ()
+        return retain_full(reason)
     return excludes

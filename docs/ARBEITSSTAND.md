@@ -1,3 +1,31 @@
+## 25.10.2026 — Selektive lokale Kopie beim gebundenen Generic-Source-Import
+
+Der lokale Import kopierte bisher auch die Laufzeitbinärdateien aller nicht
+auszuführenden Schnitte, obwohl der anschließende normale Transport sie bereits
+gebunden auslassen konnte. Der Import verwendet jetzt dieselbe Auswahlprüfung
+mit den aktuellen Original-Configbindungen vor der Kopie. Ausschließlich
+nachweislich unselektierte reguläre Binärdateien entfallen. Der vollständige
+20er-Katalog, sämtliche Case-Verzeichnisse und Metadaten, ausgewählte Artefakte,
+gemeinsame N5000-Eingaben und Laufzeitquellen bleiben erhalten; die geschlossene
+Quellsuite wird nicht verändert. Es entstehen keine Hardlinks oder Symlinks.
+
+Die vorhandene Inline-ONNX-Prüfung und die unveränderten Quellen-/Pfadbindungen
+bleiben maßgeblich. Unbekannte Configmetadaten, unklare ältere Abhängigkeiten
+und externe ONNX-Daten behalten die Vollkopie; falsche explizite Bindungen
+werden abgewiesen. Die tatsächlich verwendeten Ausschlussmuster stehen in den
+neuen Generator-Input-/Entscheidungsmetadaten. Kapazitätsformeln und Reserven,
+Cache-/Ownershipprüfungen, wissenschaftliche Auswahl und Runtime42/37 bleiben
+unverändert. Die normale Abschlussprüfung registriert nur vorhandene Dateien;
+bereits registrierte fehlende Dateien bleiben ein harter Fehler.
+
+Die 95 gezielten Softwaretests bestanden. Sie prüfen vollständige Katalog-/Metadatenerhaltung,
+eigene 5000 gemeinsame Fixture-Eingaben, identische lokale und spätere
+Transportauswahl, originale Sidecar-Materialisierung sowie normale
+Generierungsnachbedingung und Abschlussindex ohne Ausnahme. Keine Hardware-,
+SDK-, Compiler- oder Produktionsdatenoperation für diese Korrektur. Eine
+kleinere Arbeitsprognose gilt ausschließlich bei tatsächlich bestätigter
+Auswahl; bei Vollkopie ist deren vollständiger Platzbedarf einzuplanen.
+
 ## 25.10.2026 — Verifizierte H10-Importartefakte im Verfügbarkeits-Mirror
 
 Die reale Fortsetzung erreichte mit der gebundenen Original-H10-HEF einen
