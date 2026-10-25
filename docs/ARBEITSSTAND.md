@@ -4641,4 +4641,50 @@ Eine neue typisierte, rein lesende Import-API verbindet bereits zugelassene hist
 
 Die tatsächlich vorhandenen Native-Belege und alle drei Generic-Wiederholungen benötigen kanonische Selbsthashes, eigene Postflight-Snapshots, exakte Zähler, Artefakte, Inputs und Methoden. Der Beobachtungskontext bleibt ausdrücklich `postflight_oracle_sentinel` / `owned_postflight_after_fifo_drain`. Ein fehlender ursprünglicher Attestationsbody wird nicht wiederhergestellt oder als geprüft behauptet. Der heutige Ausführungsprüfer, alle FPS-Zahlen und Wiederholungen, ursprüngliche FPS-/Quality-Hashes und eingefrorene Runtimequellen bleiben unverändert. Es gibt keine behauptete Exact-Request-Relation und keinen automatischen CURRENT-Write.
 
-Validierung: 72 fokussierte Softwaretests bestanden, einschließlich zweier rein synthetischer Importe in einer 420-Zeilen-Matrix mit unveränderten übrigen 418 Zeilen und unveränderten FPS-Feldern. Beide tatsächlichen historischen Fälle b003/b021 bestehen ihre vollständige normale Quality-Eigenbasisprüfung und historische Postflight-Relation; ihre wissenschaftlichen Ergebnisse bleiben `accuracy_loss`. Acht Fehler in der zusätzlich geprüften älteren Request-Join-Testdatei reproduzieren identisch im unveränderten veröffentlichten efc169-Export (sieben fehlende `run_id`-Fixturefelder, eine alte Diagnosekopier-Erwartung) und werden hier nicht geändert. Keine Hardware, Inferenz, Statistikneuberechnung, Source-Ausführung oder CURRENT-Übernahme; der reine Controllerimport benötigt keine neue Measurement-Quellenepoche. API und Grenzen sind in `docs/historical_quality_import.md` dokumentiert.
+Validierung: 72 fokussierte Softwaretests bestanden, einschließlich zweier rein synthetischer Importe in einer 420-Zeilen-Matrix mit unveränderten übrigen 418 Zeilen und unveränderten FPS-Feldern. Beide tatsächlichen historischen Fälle b003/b021 bestehen ihre vollständige normale Quality-Eigenbasisprüfung und historische Postflight-Relation; ihre wissenschaftlichen Ergebnisse bleiben `accuracy_loss`. Acht Fehler in der zusätzlich geprüften älteren Request-Join-Testdatei reproduzieren identisch im unveränderten veröffentlichten efc169-Export (sieben fehlende `run_id`-Fixturefelder, eine alte Diagnosekopier-Erwartung) und werden hier nicht geändert. Keine Hardware, Inferenz, Statistikneuberechnung, Source-Ausführung oder CURRENT-Übernahme; der reine Controllerimport benötigt keine neue Measurement-Quellenepoche. API und Grenzen sind im folgenden Abschnitt dokumentiert.
+
+#### API: Historical completed-operator Quality import
+
+`workflow.historical_quality_import.import_historical_operator_quality` is a
+read-only, explicitly typed import API. It returns copies of existing ledger
+rows. Callers retain responsibility for the normal index/merge and publication
+transaction. The API neither writes CURRENT nor starts execution or statistics.
+
+Each `HistoricalQualityImport` binds the original accepted Generic FPS result,
+original plan, actual Native backing, Quality config, original normal Quality
+admission and the Quality producer's own normal row/source authority. Descriptors
+are rechecked in the normal source validation scope. The target must already be
+an admitted historical H8 Generic row with the exact physical identity and
+source authorities. No case numbers are special-cased.
+
+Admission requires both original completion contracts to pass their unchanged
+normal verifier. Their scientific operator payloads must agree exactly after
+separating validated derived seals, source-observation references, an optional
+identical full-model identity and the existing known Rev3 reporting-compatible
+native implementation. Only the decoded-NMS/no-second-NMS family is supported.
+All other implementation files, source/comparison endpoints, policies, geometry,
+input tensors, model and compiled/source artifacts remain exact.
+
+The actual original Native record and three independent Generic repeats must
+bind the original plan's contract, input, method, counts and artifacts. Existing
+postflight oracle attestations require their canonical self-hash, owned capture,
+counts and artifact/input identities. Their context remains
+`postflight_oracle_sentinel` with `owned_postflight_after_fifo_drain`. This never
+recovers a missing original source-attestation body or creates a current
+execution admission; the current execution-attestation verifier is unchanged.
+
+Quality is revalidated against its own producer, request, config/base and
+original normal admission, including the normal completed-record verifier. A
+consumer observer may move paths only when its bytes and all other proof fields
+remain identical. After these checks the API invokes the unchanged normal
+`apply_central_quality_result_to_row` projection using the explicit
+`historical_completed_operator_quality_import` relation. Both frozen contract
+hashes and source-observation references remain separate. It does not claim an
+exact-request match. Quality FAIL remains Quality FAIL.
+
+Callers should bind a fresh current ledger snapshot, select exact unique UIDs,
+apply this API to the complete ordered rows, then assert that all untargeted
+rows and every target's FPS/repeat/provenance fields are unchanged before the
+existing normal index/merge transaction. CURRENT adoption belongs to its owner.
+This controller-only import does not change frozen hardware/runtime sources or
+require a measurement refreeze.

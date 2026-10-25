@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2414,
+  "file_count": 2413,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 525814,
-      "sha256": "f92359d6dd354de874410490a4747b676c1efa14ca9a18912cb16cba2308c454"
+      "size": 528703,
+      "sha256": "7883d8dbb5c304d5a105b18f1b1a7882f84cc5aa342d092a504cb15a0abf7eeb"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -618,11 +618,6 @@
       "path": "docs/calibration/yolov7_streaming_reference.csv",
       "size": 5156,
       "sha256": "fc931e3d039b5f18eeed87a2726807b3fc1673f2170de70dd5eff98ee31b0f76"
-    },
-    {
-      "path": "docs/historical_quality_import.md",
-      "size": 2896,
-      "sha256": "10aae8885e8576dd385dd5c955c5779439005a362ca99e8c1165c883513ec964"
     },
     {
       "path": "download_model_zoo_examples.py",
@@ -3476,8 +3471,8 @@
     },
     {
       "path": "scripts/build_source_manifest.py",
-      "size": 35441,
-      "sha256": "a086e956c7c6eb5fcf849b5b82e81e25d2409573cdd7ae017ce7718ba35aeee6"
+      "size": 35400,
+      "sha256": "14be3360baeeb6a6027a8e1b7761cde08d4889ca812e1abead7cd24395ba92c3"
     },
     {
       "path": "scripts/build_source_release.py",
