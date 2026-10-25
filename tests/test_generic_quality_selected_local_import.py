@@ -116,10 +116,22 @@ def test_normal_import_preserves_full20_shared_inputs_sources_and_terminal_cover
     assert not any('/b002/part1.onnx' in r['path'] for r in indexed)
     assert {p.relative_to(source).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in source.rglob('*') if p.is_file()} == before
+    shared = []
     for path in suite.rglob('*'):
         assert not path.is_symlink()
         if path.is_file() and (source / path.relative_to(suite)).is_file():
-            assert path.stat().st_ino != (source / path.relative_to(suite)).stat().st_ino
+            relative = path.relative_to(suite).as_posix()
+            immutable = relative in {'models/model.onnx', 'b001/part1.onnx', 'b001/part2.onnx'} or (
+                relative.startswith('resources/validation/') and path.suffix == '.jpg')
+            assert path.samefile(source / relative) is immutable
+            if immutable:
+                shared.append(path)
+    sharing = generator_input['local_immutable_input_sharing']
+    assert sharing == {'enabled': True, 'hardlinked_files': 5003,
+                       'hardlinked_bytes': sum(p.stat().st_size for p in shared),
+                       'fallback_copied_files': 0, 'fallback_copied_bytes': 0}
+    assert json.loads(result.artifacts['generation_decisions_json'].read_text())[
+        'local_immutable_input_sharing'] == result.metrics['local_immutable_input_sharing'] == sharing
 
 
 def test_exact_new_asset_can_be_supplied_by_original_generic_config(tmp_path):
@@ -161,6 +173,8 @@ def test_unproved_import_eligibility_retains_full_copy(tmp_path, fault):
     result = normal_import(state)
     assert (result.suite_dir / 'b020/part1.onnx').read_bytes() == (state['suite'] / 'b020/part1.onnx').read_bytes()
     assert json.loads(result.artifacts['generator_input_json'].read_text())['local_runtime_binary_excludes'] == []
+    assert result.metrics['local_immutable_input_sharing']['enabled'] is False
+    assert not (result.suite_dir / 'models/model.onnx').samefile(state['suite'] / 'models/model.onnx')
 
 
 @pytest.mark.parametrize('fault', ['changed_original_config', 'foreign_case_dependency', 'escape_dependency', 'wrong_identity'])
@@ -186,6 +200,8 @@ def test_non_generic_import_retains_all_case_binaries(tmp_path):
     state['profile'] = {}
     result = normal_import(state)
     assert (result.suite_dir / 'b020/part1.onnx').read_bytes() == (state['suite'] / 'b020/part1.onnx').read_bytes()
+    assert result.metrics['local_immutable_input_sharing']['enabled'] is False
+    assert not (result.suite_dir / 'models/model.onnx').samefile(state['suite'] / 'models/model.onnx')
 
 
 def foreign_portable_donor(tmp_path):

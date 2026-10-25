@@ -13,10 +13,12 @@ suite is supplied in the profile, it is imported and audited against the formal
 candidate plan instead of silently trusting the old Benchmark tab state.
 """
 
+import errno
 import json
 import os
 import re
 import shutil
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -752,6 +754,84 @@ def import_existing_suite(
         local_binary_excludes, local_sidecar_publication_targets = selected_source_import_selection(
             existing, runs=declared_runs, model_id=model_id, log=log)
 
+    input_sharing = {
+        "enabled": bool(local_binary_excludes),
+        "hardlinked_files": 0, "hardlinked_bytes": 0,
+        "fallback_copied_files": 0, "fallback_copied_bytes": 0,
+    }
+
+    def copy_imported_file(source, destination):
+        if not input_sharing["enabled"]:
+            return shutil.copy2(source, destination)
+        path = Path(source)
+        relative = path.relative_to(existing)
+        parts = relative.parts
+        # Positive selection already proves every retained ONNX is inline.
+        # Share only source graphs and prepared image inputs consumed read-only
+        # by this source-only path. Plans, runtime, receipts and sidecars remain
+        # independent because the ordinary import writers may replace them.
+        graph = path.suffix.lower() == ".onnx" and (
+            parts[0] == "models"
+            or (len(parts) == 2 and re.fullmatch(r"b[0-9]+", parts[0]) is not None)
+            or relative.as_posix() == str(source_set.get("model") or "")
+        )
+        image = parts[:2] == ("resources", "validation") and path.suffix.lower() in {".jpg", ".jpeg"}
+        eligible = graph or image
+
+        def contained_regular():
+            current = existing
+            for part in parts:
+                current = current / part
+                if current.is_symlink():
+                    return False
+            return stat.S_ISREG(path.lstat().st_mode) and path.resolve().is_relative_to(existing)
+
+        if eligible and contained_regular():
+            before = path.lstat()
+            # Creating a link changes ctime/nlink, not the input byte version.
+
+            def version(info):
+                return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_mode)
+
+            try:
+                os.link(path, destination, follow_symlinks=False)
+            except OSError as exc:
+                if exc.errno == errno.EEXIST or os.path.lexists(destination):
+                    raise ValueError("generic_quality_suite_import_shared_input_target_conflict") from exc
+                # Own both open files: a newly appearing destination symlink
+                # must never turn this fallback into a write through its alias.
+                nofollow = getattr(os, "O_NOFOLLOW", 0)
+                with os.fdopen(os.open(path, os.O_RDONLY | nofollow), "rb") as original:
+                    if version(os.fstat(original.fileno())) != version(before):
+                        raise ValueError("generic_quality_suite_import_shared_input_changed")
+                    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow
+                    with os.fdopen(os.open(destination, flags, stat.S_IMODE(before.st_mode)), "wb") as copied:
+                        shutil.copyfileobj(original, copied)
+                        copied.flush()
+                        after = os.fstat(original.fileno())
+                        if (not contained_regular() or version(after) != version(before)
+                                or version(path.lstat()) != version(before)):
+                            raise ValueError("generic_quality_suite_import_shared_input_changed")
+                        os.fchmod(copied.fileno(), stat.S_IMODE(after.st_mode))
+                        os.utime(copied.fileno(), ns=(after.st_atime_ns, after.st_mtime_ns))
+                        if version(Path(destination).lstat()) != version(os.fstat(copied.fileno())):
+                            raise ValueError("generic_quality_suite_import_shared_input_target_conflict")
+                input_sharing["fallback_copied_files"] += 1
+                input_sharing["fallback_copied_bytes"] += before.st_size
+                return str(destination)
+            else:
+                if (not contained_regular()
+                        or version(path.lstat()) != version(before)
+                        or version(Path(destination).lstat()) != version(before)):
+                    # A concurrent replacement may own the target now. Like
+                    # copytree's other failures, leave the partial import for
+                    # inspection; never remove an unproved destination.
+                    raise ValueError("generic_quality_suite_import_shared_input_changed")
+                input_sharing["hardlinked_files"] += 1
+                input_sharing["hardlinked_bytes"] += before.st_size
+                return str(destination)
+        return shutil.copy2(source, destination)
+
     def ignore_transport_archive(directory, names):
         # The known old transport output is regenerated normally. Omit only
         # additionally proved unselected regular binaries; retain all case
@@ -779,7 +859,8 @@ def import_existing_suite(
         shutil.rmtree(stale_direct)
     if dst.exists() and dst.is_dir():
         shutil.rmtree(dst)
-    shutil.copytree(existing, dst, ignore=ignore_transport_archive if generic_import else None)
+    shutil.copytree(existing, dst, ignore=ignore_transport_archive if generic_import else None,
+                    copy_function=copy_imported_file if input_sharing["enabled"] else shutil.copy2)
     if generic_import:
         # Reuse exported models/artifacts, but emit the ordinary current
         # runtime in this new target. Old suites can predate the exact Generic
@@ -856,6 +937,7 @@ def import_existing_suite(
         "generator_overrides": overrides,
         "local_runtime_binary_excludes": list(local_binary_excludes),
         "local_sidecar_publication_targets": list(local_sidecar_publication_targets),
+        "local_immutable_input_sharing": dict(input_sharing),
         "targets": list(targets),
         "status": "imported_with_overrides" if overrides else "imported_matches_candidate_plan",
         "created_at": now_iso(),
@@ -875,6 +957,7 @@ def import_existing_suite(
         "force_candidate_plan_first": True,
         "local_runtime_binary_excludes": list(local_binary_excludes),
         "local_sidecar_publication_targets": list(local_sidecar_publication_targets),
+        "local_immutable_input_sharing": dict(input_sharing),
         "targets": list(targets),
     })
     p_cases = write_csv(
@@ -961,6 +1044,7 @@ def import_existing_suite(
             "generator_overrides": len(overrides),
             "suite_dir": relpath(dst, run_dir),
             "binding_mode": "import_existing_suite",
+            "local_immutable_input_sharing": dict(input_sharing),
             "management_cpu_reference_invariant": cpu_invariant,
         },
         message="Existing benchmark suite imported and audited against final_candidate_plan.json.",

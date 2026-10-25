@@ -1,3 +1,38 @@
+## 25.10.2026 — Gemeinsame unveränderliche Eingaben bei selektiven Generic-Importen
+
+Der normale Suiteimport kopierte auch die nur gelesenen Modellgraphen und
+N5000-JPEGs für jeden neuen Schnitt erneut. Nur nach positiver bestehender
+Generic-Auswahlprüfung teilt die normale Kopierfunktion jetzt reguläre,
+enthaltene Inline-ONNX-Quellgraphen und JPEGs unter `resources/validation`
+per Hardlink. Symlinks einschließlich Elternverzeichnissen werden nicht geteilt;
+bei fehlender Hardlink-Unterstützung bleibt die unabhängige Kopie erhalten.
+Unbekannte, nicht generische oder externe Graphabhängigkeiten behalten die
+bisherige vollständige private Kopie. Die bestehende Binärauswahl und die exakten
+aktuellen Sidecar-Veröffentlichungsziele bleiben unverändert.
+
+Pläne, Kataloge, wissenschaftliche Metadaten, Skripte, Konfigurationen, Receipts,
+Buildrequests und Sidecars bleiben unabhängige Dateien. Die Quellbytes werden
+nicht geschrieben; Hardlinks ändern technisch Linkanzahl und ctime der geteilten
+Eingaben. Diese Eingaben werden im normalen Source-only-Pfad nur lesend verwendet.
+Der Import prüft Dateiversion und Linkziel und protokolliert tatsächlich geteilte
+Dateien/Bytes sowie unabhängige Rückfallkopien in Generator-Input, Entscheidungen
+und Metriken. Er verändert weder Kapazitätsformeln noch Runner oder Wissenschaft.
+Ein privater Rückfall öffnet sein Ziel exklusiv und kopiert über eigene
+Dateideskriptoren; belegte oder während der Kopie ersetzte Ziele führen zum
+Fehler. Fehlgeschlagene neue Teilimporte bleiben zur Prüfung erhalten, ohne
+ein inzwischen fremdes Ziel zu überschreiben oder zu löschen.
+
+Alle 77 gezielten lokalen Tests bestanden: tatsächliche 5000-JPEG- und
+Graph-Hardlinks mit unveränderten Bytes und normalem Abschlussindex, private
+Metadaten, `EXDEV`-Rückfall, Symlinkfälle, Quellwechsel während der Verlinkung
+und bestehende selektive Import-/Sidecar-/Hailo-/DeepX-/Transport-Guards.
+Nach der gezielten Korrektur zweier Zielbesitz-Races bestanden zusätzlich alle
+neun Sharingtests einschließlich Modus-/Zeitstempelerhalt im privaten Rückfall,
+erhaltener fremder Zielersatzdatei und exklusiv abgewiesenem Zielsymlink.
+Sämtliche Fixtures liegen in
+neuen temporären Reports-Verzeichnissen. Keine Produktionsdaten-, Source-,
+SSH-, Hardware-, SDK- oder Compileroperation für diese Änderung.
+
 ## 25.10.2026 — Aktuelle portable Sidecars bei Generic-Suiteimporten
 
 Eine geschlossene H8-Suite kann am ausgewählten Case-Pfad noch ihre damalige
