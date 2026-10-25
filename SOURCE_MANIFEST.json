@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 522720,
-      "sha256": "8bbb2ea21f0945690e9145bd6bab00a8d23f47e9cf8875610e959a49addc3a01"
+      "size": 523473,
+      "sha256": "0185edec8780f8618b701b419e2b1927bc0f5611f4f39b29c8f8501f3ab84bde"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -2271,8 +2271,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/runners/generic_passthrough.py",
-      "size": 14539,
-      "sha256": "d896df4f0054977f974a590d246f0592f534edfaf5ad7a7e877963fe339d3c64"
+      "size": 14694,
+      "sha256": "9665058a5e61a52137c8f4d06d51123594075524118d96c8d29f78ab7a37c68e"
     },
     {
       "path": "onnx_splitpoint_tool/runners/generic_quality_accounting.py",
@@ -7421,8 +7421,8 @@
     },
     {
       "path": "tests/test_generic_canonical_original_input_projection.py",
-      "size": 10202,
-      "sha256": "94ae34f647f32d2c5e1feee5ba32581761190102c8e351d45bf1107dce9ce725"
+      "size": 10728,
+      "sha256": "9cc40c9d30250388eaf1bf085ecb5ad6edfe90a015bcde3b9dbfc3e17393545d"
     },
     {
       "path": "tests/test_generic_case_report_mirrors.py",
