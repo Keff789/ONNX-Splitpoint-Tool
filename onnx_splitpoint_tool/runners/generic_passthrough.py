@@ -9,7 +9,9 @@ import re
 import numpy as np
 
 SCHEMA = "onnx-splitpoint/generic-canonical-full-input/v1"
-_LEGACY_STALE_MAP_RUNNER = "875c32fc4746c178a9b0bf6985df64bb32aa13768298c6feae00aaa03106865a"
+# Actual rendered A814 Quality runner, as bound by its published runtime37.
+# The source template has a different identity and cannot attest an execution.
+_LEGACY_STALE_MAP_RUNNER = "1eda22010758b22dc804ffaf9f2398c30a08a770c2865b2481ef4d6106c8800e"
 
 
 def prepare_canonical_row(row, proof, *, split_manifest):

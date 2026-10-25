@@ -28,7 +28,9 @@ def legacy_case(canonical, count):
     row['split_manifest'] = {'path': '/SYNTHETIC/selected_manifest.json', 'sha256': 'a' * 64}
     row['input_binding']['prepared_input_contract'] = {
         'image_preprocessing_contract': deepcopy(proof['image_preprocessing_contract'])}
-    proof.update(image_count=2, implementation_runner={'sha256': full._LEGACY_STALE_MAP_RUNNER})
+    # Independently recorded rendered A814 SourceQuality runner (not its template).
+    proof.update(image_count=2, implementation_runner={
+        'sha256': '1eda22010758b22dc804ffaf9f2398c30a08a770c2865b2481ef4d6106c8800e'})
     proof['runtime_context'] = {
         'boundary_observation_count': 2,
         'logical_boundary': {'part1_outputs': deepcopy(outputs), 'part2_inputs': deepcopy(inputs)},
@@ -106,6 +108,13 @@ def test_feature_only_projection_is_unchanged(canonical):
     _, row, proof, _, manifest = legacy_case(canonical, 2)
     manifest['io']['part2_external_inputs'].remove('images')
     assert full.prepare_canonical_row(row, proof, split_manifest=manifest) == row
+
+
+def test_unrendered_template_cannot_attest_actual_quality_execution(canonical):
+    _, row, proof, _, manifest = legacy_case(canonical, 2)
+    proof['implementation_runner']['sha256'] = '875c32fc4746c178a9b0bf6985df64bb32aa13768298c6feae00aaa03106865a'
+    with pytest.raises(ValueError, match='proven diagnostic alias'):
+        full.prepare_canonical_row(row, proof, split_manifest=manifest)
 
 
 def manifest_passthrough_case():
