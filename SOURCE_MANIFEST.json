@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 513542,
-      "sha256": "113d53fad8d2ee28e3bda9082207e082978848d75b19dc629349c8253646a616"
+      "size": 515103,
+      "sha256": "62d3235dba7eaadc65b74598217f8e05fd658a9c04b3f1412583910097d10432"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -1016,8 +1016,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/generic_split_manifest.py",
-      "size": 49792,
-      "sha256": "469aba609548aec2aebae71c6976593888dca2519e273fb042f5c16e5cdf4fe5"
+      "size": 52224,
+      "sha256": "e950c4ec780baa21463fe28dfbaf080a99aaf170036165329f2735d5dcdd46fd"
     },
     {
       "path": "onnx_splitpoint_tool/gui/__init__.py",
@@ -7801,8 +7801,8 @@
     },
     {
       "path": "tests/test_generic_split_manifest.py",
-      "size": 50997,
-      "sha256": "bab88ef30333fe58f8d00a94237353818498d7d0ad042807ff61ffc30d5eb8ce"
+      "size": 61881,
+      "sha256": "f7a127cc18e14ca7267b1b9810431aab26264fc06680b57e20fa1b4abc667c6f"
     },
     {
       "path": "tests/test_hailo10_yolo26_full_semantic_fixture.py",

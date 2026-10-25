@@ -243,6 +243,45 @@ def _historical_build_provenance(build, original, *, arch, model, case,
     }
 
 
+def _omitted_h10_reuse_provenance(build, original, *, case):
+    """Retain a positive unused reuse summary, without proving H10 execution.
+
+    This summary carries no compiler-byte or receipt identity. Only its exact
+    known shape and model/cut locators are admitted; the caller separately
+    proves unchanged selected H8 artifacts and the full scientific manifest.
+    """
+    _require(set(build) == {
+        "build_receipt_path", "cache_hit", "calib_source", "compiler_onnx_path",
+        "context_mode", "elapsed_s", "mapping_failed", "multi_context_used", "ok",
+        "single_context_failed", "single_context_used", "skipped", "source_onnx_path",
+        "timed_out", "watchdog_expired",
+    } and build["ok"] is True and build["cache_hit"] is True
+             and build["skipped"] is True
+             and build["calib_source"] == "validated_existing_artifact"
+             and build["context_mode"] == "skipped"
+             and all(build[key] is False for key in (
+                 "single_context_failed", "single_context_used", "multi_context_used",
+                 "mapping_failed", "timed_out", "watchdog_expired"))
+             and type(build["elapsed_s"]) in (int, float)
+             and math.isfinite(build["elapsed_s"]) and build["elapsed_s"] >= 0,
+             "unknown or nonpositive omitted historical H10 reuse")
+    source_value = build["source_onnx_path"]
+    source = PurePosixPath(str(source_value or ""))
+    _require(source.is_absolute() and ".." not in source.parts
+             and str(source) == source_value
+             and source.parent.name == case and source.name == original["part1"]
+             and build["compiler_onnx_path"] == source_value
+             and build["build_receipt_path"] == str(
+                 source.parent / "hailo/hailo10/part1/hailo_hef_build_receipt.json"),
+             "unbound omitted historical H10 reuse locators")
+    return {
+        "backend_metadata": "hailo10", "historical_observation": deepcopy(build),
+        "historical_reuse_observation": True,
+        "executed_artifact_identity_proved": False,
+        "compiler_source_byte_equality_claimed": False,
+    }
+
+
 def _bind_historical_receipt(raw, build, bindings):
     """Tie old compile provenance to the exact receipt actually measured."""
     receipt_binding = bindings["part1_build_receipt"]
@@ -537,14 +576,18 @@ def _validate_generic_split_manifest_staging(
             _require(set(old_hef) <= _FULL_FIELDS | {"part1", "part1_build"}
                      and set(old_build) <= set(current_build) | _BUILD_DIAGNOSTICS
                      and old_hef["part1"] == "hailo/hailo10/part1/compiled.hef"
-                     and old_build.get("ok") is True and old_build.get("cache_hit") is False
-                     and old_build.get("skipped") is False
+                     and old_build.get("ok") is True
                      and type(old_build.get("elapsed_s")) in (int, float)
                      and math.isfinite(old_build["elapsed_s"]) and old_build["elapsed_s"] >= 0,
                      "unknown or nonpositive omitted historical H10 build")
-            proof = _historical_build_provenance(old_build, original, arch=arch, model=model, case=case,
-                source_sha256=bindings["source_part1_onnx"]["sha256"],
-                full_model_sha256=full_model_sha256, prepared=prepared)
+            if old_build.get("cache_hit") is True and old_build.get("skipped") is True:
+                proof = _omitted_h10_reuse_provenance(old_build, original, case=case)
+            else:
+                _require(old_build.get("cache_hit") is False and old_build.get("skipped") is False,
+                         "unknown or nonpositive omitted historical H10 build")
+                proof = _historical_build_provenance(old_build, original, arch=arch, model=model, case=case,
+                    source_sha256=bindings["source_part1_onnx"]["sha256"],
+                    full_model_sha256=full_model_sha256, prepared=prepared)
             omitted_unexecuted_backend_metadata.append({"backend_metadata": arch,
                 "historical_observation": deepcopy(old_hef), "validated_historical_build": proof,
                 "current_compile_claimed": False, "current_reuse_claimed": False,

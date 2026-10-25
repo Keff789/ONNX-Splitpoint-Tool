@@ -50,6 +50,31 @@ def historical_without_h8_diagnostics(case="b239", missing=("calib_source", "cac
     return document, staged, args
 
 
+def positive_unused_h10_reuse():
+    """Attach the observed small H10 reuse summary to a synthetic H8 fixture."""
+    original, staged, args = bindings("b017")
+    document = json.loads(original)
+    historical_source = document["hailo"]["hefs"]["hailo10"]["part1_build"]["source_onnx_path"]
+    document["hailo"]["hefs"]["hailo10"]["part1_build"] = {
+        "build_receipt_path": str(Path(historical_source).parent / "hailo/hailo10/part1/hailo_hef_build_receipt.json"),
+        "cache_hit": True,
+        "calib_source": "validated_existing_artifact",
+        "compiler_onnx_path": historical_source,
+        "context_mode": "skipped",
+        "elapsed_s": 1.2098214626312256,
+        "mapping_failed": False,
+        "multi_context_used": False,
+        "ok": True,
+        "single_context_failed": False,
+        "single_context_used": False,
+        "skipped": True,
+        "source_onnx_path": historical_source,
+        "timed_out": False,
+        "watchdog_expired": False,
+    }
+    return rewritten_original(document, args), staged, args
+
+
 def test_actual_normal_staging_preserves_both_file_identities_and_all_bindings():
     original, staged, args = bindings()
     unchanged = deepcopy(args)
@@ -645,6 +670,194 @@ def test_actual_compact_h8_staging_keeps_measured_identity_and_omitted_history(c
         assert item["current_compile_claimed"] is False
         assert item["current_reuse_claimed"] is False
         assert item["current_quality_or_hardware_pass_claimed"] is False
+
+
+def test_omitted_positive_h10_reuse_is_exact_metadata_without_execution_or_reuse_claims(monkeypatch):
+    # Load the pure evidence helper before forbidding all file opens in validation.
+    from onnx_splitpoint_tool import build_evidence
+
+    assert build_evidence is not None
+    original, staged, args = positive_unused_h10_reuse()
+    old, current = json.loads(original), json.loads(staged)
+    unchanged = deepcopy(args)
+    original_bytes = original[:]
+
+    def no_file_open(*_args, **_kwargs):
+        pytest.fail("the staging relation must not open historical artifacts")
+
+    with monkeypatch.context() as guard:
+        guard.setattr("builtins.open", no_file_open)
+        guard.setattr(Path, "open", no_file_open)
+        proof = validate_generic_split_manifest_staging(original, staged, **args)
+
+    assert original == original_bytes
+    assert json.loads(original) == old
+    assert args == unchanged
+    assert "hailo10" not in current["hailo"]["hefs"]
+    assert proof["original_manifest"] == args["original_source"]
+    assert proof["staged_manifest"] == args["staged_source"]
+    assert proof["original_boundary_metadata_artifact"] == args["row"]["generic_artifact_binding"]["artifacts"]["boundary_metadata"]
+    assert proof["scientific_manifest_fields_unchanged"] is True
+    assert proof["unchanged_artifact_bindings"] == {
+        role: {key: value[key] for key in ("sha256", "size_bytes")}
+        for role, value in args["original_artifacts"].items()
+    }
+    measured, = proof["historical_build_reuse"]
+    assert measured["backend_metadata"] == "hailo8"
+    assert measured["executed_artifact_identity_proved"] is True
+    assert measured["actual_receipt_binding"]["sha256"] == args["original_artifacts"]["part1_build_receipt"]["sha256"]
+    assert measured["actual_receipt_binding"]["hef_sha256"] == args["original_artifacts"]["part1_runtime"]["sha256"]
+    omitted, = [item for item in proof["omitted_unexecuted_backend_metadata"]
+                if item["backend_metadata"] == "hailo10"]
+    assert omitted["historical_observation"] == old["hailo"]["hefs"]["hailo10"]
+    reuse = omitted["validated_historical_build"]
+    assert reuse["backend_metadata"] == "hailo10"
+    assert reuse["historical_observation"] == old["hailo"]["hefs"]["hailo10"]["part1_build"]
+    assert reuse["historical_reuse_observation"] is True
+    assert reuse["executed_artifact_identity_proved"] is False
+    assert reuse["compiler_source_byte_equality_claimed"] is False
+    assert "actual_receipt_binding" not in reuse
+    assert omitted["current_compile_claimed"] is False
+    assert omitted["current_reuse_claimed"] is False
+    assert omitted["current_quality_or_hardware_pass_claimed"] is False
+    removed, = [item for item in proof["allowed_differences"]
+                if item["pointer"] == "/hailo/hefs/hailo10"]
+    assert removed["original_present"] is True and removed["staged_present"] is False
+
+
+@pytest.mark.parametrize("key,value", [
+    ("ok", False), ("ok", 1),
+    ("cache_hit", False), ("cache_hit", 1),
+    ("skipped", False), ("skipped", 1),
+    ("calib_source", "unknown_existing_artifact"),
+    ("context_mode", "single_context_used"),
+    ("mapping_failed", True), ("mapping_failed", 0),
+    ("multi_context_used", True), ("single_context_failed", True),
+    ("single_context_used", True), ("timed_out", True),
+    ("watchdog_expired", True),
+    ("elapsed_s", -1), ("elapsed_s", True), ("elapsed_s", "1.2"),
+    ("unknown_build_field", True), ("negative_evidence_hit", True),
+    ("negative_evidence_hit", False), ("cache_key", "f" * 64),
+    ("build_evidence", {}),
+])
+def test_omitted_positive_h10_reuse_cannot_hide_negative_unknown_or_extra_metadata(key, value):
+    original, staged, args = positive_unused_h10_reuse()
+    document = json.loads(original)
+    document["hailo"]["hefs"]["hailo10"]["part1_build"][key] = value
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(rewritten_original(document, args), staged, **args)
+
+
+@pytest.mark.parametrize("key", [
+    "build_receipt_path", "cache_hit", "calib_source", "compiler_onnx_path",
+    "context_mode", "elapsed_s", "mapping_failed", "multi_context_used", "ok",
+    "single_context_failed", "single_context_used", "skipped", "source_onnx_path",
+    "timed_out", "watchdog_expired",
+])
+def test_omitted_positive_h10_reuse_requires_the_complete_observed_summary(key):
+    original, staged, args = positive_unused_h10_reuse()
+    document = json.loads(original)
+    del document["hailo"]["hefs"]["hailo10"]["part1_build"][key]
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(rewritten_original(document, args), staged, **args)
+
+
+@pytest.mark.parametrize("fault", [
+    "wrong_hef", "extra_backend_metadata", "relative_source", "wrong_source_model",
+    "wrong_source_cut", "divergent_compiler", "wrong_receipt_backend",
+    "wrong_receipt_name", "divergent_receipt_root", "noncanonical_source",
+])
+def test_omitted_positive_h10_reuse_requires_coherent_original_model_cut_paths(fault):
+    original, staged, args = positive_unused_h10_reuse()
+    document = json.loads(original)
+    hef = document["hailo"]["hefs"]["hailo10"]
+    build = hef["part1_build"]
+    source = Path(build["source_onnx_path"])
+    if fault == "wrong_hef":
+        hef["part1"] = "hailo/hailo8/part1/compiled.hef"
+    elif fault == "extra_backend_metadata":
+        hef["unknown_backend_field"] = True
+    elif fault == "relative_source":
+        build["source_onnx_path"] = build["compiler_onnx_path"] = source.name
+    elif fault == "wrong_source_model":
+        build["source_onnx_path"] = build["compiler_onnx_path"] = str(source.with_name("another_model_part1_b17.onnx"))
+    elif fault == "wrong_source_cut":
+        build["source_onnx_path"] = build["compiler_onnx_path"] = str(source.with_name("yolov7_paper_part1_b18.onnx"))
+    elif fault == "divergent_compiler":
+        build["compiler_onnx_path"] = str(source.parent / "hailo/hailo10/part1/yolov7_paper_part1_b17_hailo_fixed.onnx")
+    elif fault == "wrong_receipt_backend":
+        build["build_receipt_path"] = build["build_receipt_path"].replace("/hailo10/", "/hailo8/")
+    elif fault == "wrong_receipt_name":
+        build["build_receipt_path"] = str(Path(build["build_receipt_path"]).with_name("another_receipt.json"))
+    elif fault == "divergent_receipt_root":
+        build["build_receipt_path"] = "/foreign/b017/hailo/hailo10/part1/hailo_hef_build_receipt.json"
+    else:
+        build["source_onnx_path"] = build["compiler_onnx_path"] = str(source.parent) + "/../b017/" + source.name
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(rewritten_original(document, args), staged, **args)
+
+
+@pytest.mark.parametrize("key,value", [
+    ("full", True), ("full", 0), ("part1", False), ("part1", 1),
+    ("part2", True), ("unknown", False),
+])
+def test_omitted_positive_h10_reuse_requires_exact_source_only_recipe_flags(key, value):
+    original, staged, args = positive_unused_h10_reuse()
+    document = json.loads(original)
+    document["hailo"]["config"]["build"][key] = value
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(rewritten_original(document, args), staged, **args)
+
+
+@pytest.mark.parametrize("role", [
+    "part1_runtime", "source_part1_onnx", "source_part2_onnx", "part1_build_receipt",
+    "engine", "build_part2_onnx", "engine_build_receipt",
+])
+def test_omitted_positive_h10_reuse_keeps_all_seven_selected_h8_artifact_bindings(role):
+    original, staged, args = positive_unused_h10_reuse()
+    args["row"]["generic_artifact_binding"]["artifacts"][role]["sha256"] = "f" * 64
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, staged, **args)
+
+
+@pytest.mark.parametrize("path,value", [
+    (("part1",), "another_part1.onnx"),
+    (("part2",), "another_part2.onnx"),
+    (("full_model",), "../models/another_model.onnx"),
+    (("boundary",), 18),
+    (("boundary_index",), 18),
+    (("part1_cut_names",), ["unbound_tensor"]),
+    (("io", "part2_external_inputs"), ["unbound_input"]),
+    (("hailo", "hefs", "hailo8", "part1"), "different.hef"),
+    (("hailo", "hefs", "hailo8", "part1_build", "cache_hit"), False),
+])
+def test_omitted_positive_h10_reuse_cannot_relax_selected_h8_manifest_science(path, value):
+    original, staged, args = positive_unused_h10_reuse()
+    document = json.loads(staged)
+    parent = document
+    for key in path[:-1]:
+        parent = parent[key]
+    parent[path[-1]] = value
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, rewritten(document, args), **args)
+
+
+@pytest.mark.parametrize("fault", [
+    lambda a: a["producer_model"].update(part1_onnx_sha256="f" * 64),
+    lambda a: a["producer_model"].update(part2_onnx_sha256="f" * 64),
+    lambda a: a.update(full_model_sha256="f" * 64),
+    lambda a: a["boundary_inputs"][0].update(shape=[1, 1]),
+    lambda a: a["boundary_inputs"][0].update(dtype="float16"),
+    lambda a: a["row"]["input_binding"]["prepared_input"].update(sha256="f" * 64),
+    lambda a: a["row"]["input_binding"].update(runtime_input_format="uint8"),
+    lambda a: a["row"]["identity"].update(comparison_backend="hailo10h"),
+    lambda a: a.update(part1_build_receipt_bytes=b"modified receipt bytes"),
+])
+def test_omitted_positive_h10_reuse_cannot_relax_model_boundary_input_or_h8_receipt(fault):
+    original, staged, args = positive_unused_h10_reuse()
+    fault(args)
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, staged, **args)
 
 
 @pytest.mark.parametrize("path", [
