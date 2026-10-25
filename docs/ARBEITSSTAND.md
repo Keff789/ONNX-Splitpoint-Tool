@@ -1,3 +1,31 @@
+## 25.10.2026 — Aktuelle portable Sidecars bei Generic-Suiteimporten
+
+Eine geschlossene H8-Suite kann am ausgewählten Case-Pfad noch ihre damalige
+Quality-Konfiguration und portable HEF-/Receipt-Dateien enthalten. Beim Import
+einer eigenen H10-Konfiguration blockierten diese fremden Bytes sowohl die
+Abhängigkeitsauswahl als auch den bewusst unveränderten Sidecar-Konfliktguard.
+
+Die normale Auswahlprüfung bindet jetzt zusätzlich die exakten aktuellen
+Veröffentlichungsziele: die ausgewählte Originalkonfiguration und ausschließlich
+portable Artefakte mit expliziter, regulärer, eigener kanonischer lokaler Quelle.
+Die vorhandene portable Namensraumprüfung wird dafür gemeinsam verwendet.
+SHA, Größe, stabile Quelldatei und eindeutige Zuordnung werden vor der Kopie
+geprüft. Nur diese Ziele entfallen in der neuen privaten Kopie; der normale
+unveränderliche Sidecar-Schreiber veröffentlicht danach die aktuellen Bytes.
+Die geschlossene Quellsuite wird nicht geändert. Fremde, fehlende oder
+mehrdeutige Quellen bleiben Fehler; unbekannte, gemischte oder externe
+Abhängigkeiten behalten die bisherige Vollkopie. Der spätere Remote-Transport
+prüft tatsächlich materialisierte Dateien und verwendet keine lokalen Ersatzpfade.
+
+Alle 64 gezielten Import-/Transport-/Sidecar-/H10-Hint-/DeepX-Regressionstests
+bestanden, einschließlich der vollständigen Kopier- und Sidecar-Reihenfolge
+mit kontrollierter H8/H10-Kollision, vollständigem 20er-Katalog und gemeinsamen
+5000 Fixture-Eingaben. Eine zusätzliche einmalige normale, rein lesende Auswahl
+der tatsächlichen b079-Konfiguration bestätigte 133 unselektierte Binärmuster
+und genau vier aktuelle Veröffentlichungsziele, ohne Source-Konstruktor,
+Kopie oder Hardware. Cache-/Receipt-/Ownership-/Quarantäneprüfungen,
+wissenschaftliche Parameter und Runtime42/37 bleiben unverändert.
+
 ## 25.10.2026 — Aktuelle DeepX-Requestmenge nach selektiver lokaler Kopie
 
 Der erste reale selektive DeepX-Import stoppte vor jeder Hardwareausführung:

@@ -1,14 +1,17 @@
 """Selective local imports over fresh OWN full20 fixtures; no hardware."""
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 from onnx import TensorProto
 
 from onnx_splitpoint_tool.benchmark.generic_quality_transport import (
-    selected_source_import_excludes, selected_source_transport_excludes,
+    selected_source_import_excludes, selected_source_import_selection,
+    selected_source_transport_excludes,
 )
 from onnx_splitpoint_tool.workflow.artifacts import file_record
 from onnx_splitpoint_tool.workflow.generator_binding import import_existing_suite
@@ -183,3 +186,117 @@ def test_non_generic_import_retains_all_case_binaries(tmp_path):
     state['profile'] = {}
     result = normal_import(state)
     assert (result.suite_dir / 'b020/part1.onnx').read_bytes() == (state['suite'] / 'b020/part1.onnx').read_bytes()
+
+
+def foreign_portable_donor(tmp_path):
+    """OWN H10 config versus old H8 portable bytes at the same case paths."""
+    state = prepare(tmp_path)
+    assets = state['config']['expected_runtime_artifacts']
+    hef = assets['part1_runtime']
+    original = write(tmp_path / 'own_regular_generation/compiled.hef', b'OWN current H10 HEF')
+    hef.update(sha256=original['sha256'], size_bytes=original['size_bytes'], local_path=original['path'])
+    receipt = write(tmp_path / 'own_regular_generation/hailo_hef_build_receipt.json', b'{"OWN_H10_receipt_bytes":true}')
+    assets['part1_build_receipt'] = {
+        **receipt, 'path': 'quality_runtime/assets/b001/part1_build_receipt/hailo_hef_build_receipt.json',
+        'local_path': receipt['path']}
+    # Ordinary import hint/cache admission remains separate. This fixture
+    # already has the selected case HEF, while its portable sidecars are old H8.
+    write(state['suite'] / 'b001/hailo/hailo10/part1/compiled.hef', b'OWN current H10 HEF')
+    republish(state)
+    old = deepcopy(state['config'])
+    old['identity'].update(comparison_backend='hailo8', setup_id='OWN_OLD_H8_SETUP')
+    json_file(state['suite'] / 'quality_runtime/b001.json', old)
+    for role in ('part1_runtime', 'part1_build_receipt'):
+        write(state['suite'] / assets[role]['path'], ('OWN old H8 ' + role + ' different bytes').encode())
+    return state
+
+
+def test_foreign_backend_portable_config_and_assets_are_published_only_in_new_copy(tmp_path):
+    state = foreign_portable_donor(tmp_path)
+    source = state['suite']
+    before = {p.relative_to(source).as_posix(): p.read_bytes() for p in source.rglob('*') if p.is_file()}
+    binary_excludes, staged = selected_source_import_selection(
+        source, runs=state['profile']['run_profiles'], model_id=MODEL)
+    assets = state['config']['expected_runtime_artifacts']
+    assert binary_excludes == selection(state) and binary_excludes
+    assert set(staged) == {'quality_runtime/b001.json', assets['part1_runtime']['path'],
+                           assets['part1_build_receipt']['path']}
+    result = normal_import(state)
+    suite = result.suite_dir
+    assert all(not (suite / relative).exists() for relative in staged)
+    assert len(json.loads((suite / 'benchmark_set.json').read_text())['cases']) == 20
+    assert (suite / 'b001/part1.onnx').read_bytes() == before['b001/part1.onnx']
+    assert not (suite / 'b002/part1.onnx').exists()
+    assert (suite / state['dataset'].relative_to(source) / 'manifest.json').read_bytes() == before[
+        (state['dataset'].relative_to(source) / 'manifest.json').as_posix()]
+    assert set(json.loads(result.artifacts['generator_input_json'].read_text())[
+        'local_sidecar_publication_targets']) == set(staged)
+    # Remote transport must inspect actual staged bytes, never substitute a
+    # controller local_path for an absent target.
+    with pytest.raises(OSError):
+        selected_source_transport_excludes(suite, active_run_ids=[RUN], model_id=MODEL)
+    plan = json.loads((suite / 'benchmark_plan.json').read_text())
+    records = materialize_generic_quality_sidecars(suite_dir=suite, model_id=MODEL, benchmark_plan=plan)
+    assert [record['case_id'] for record in records] == ['b001']
+    assert (suite / 'quality_runtime/b001.json').read_bytes() == state['origin'].read_bytes()
+    for role in ('part1_runtime', 'part1_build_receipt'):
+        descriptor = assets[role]
+        target, origin = suite / descriptor['path'], Path(descriptor['local_path'])
+        assert target.read_bytes() == origin.read_bytes()
+        assert target.stat().st_ino != origin.stat().st_ino
+    assert selected_source_transport_excludes(suite, active_run_ids=[RUN], model_id=MODEL) == binary_excludes
+    assert {p.relative_to(source).as_posix(): p.read_bytes() for p in source.rglob('*') if p.is_file()} == before
+
+
+@pytest.mark.parametrize('fault', ['missing', 'hash', 'symlink', 'foreign_case', 'ambiguous_target', 'nonportable'])
+def test_unproven_sidecar_replacement_rejects_before_any_private_copy(tmp_path, fault):
+    state = foreign_portable_donor(tmp_path)
+    assets = state['config']['expected_runtime_artifacts']
+    item = assets['part1_runtime']
+    if fault == 'missing':
+        Path(item['local_path']).unlink()
+    elif fault == 'hash':
+        Path(item['local_path']).write_bytes(b'OWN changed original')
+    elif fault == 'symlink':
+        link = tmp_path / 'own_alias.hef'
+        link.symlink_to(item['local_path'])
+        item['local_path'] = str(link)
+    elif fault == 'foreign_case':
+        item['path'] = item['path'].replace('/b001/', '/b002/')
+    elif fault == 'ambiguous_target':
+        assets['OWN_conflicting_role'] = {**item, 'sha256': '0' * 64}
+    else:
+        item['path'] = 'b001/hailo/part1.hef'
+    republish(state)
+    with pytest.raises((OSError, ValueError)):
+        normal_import(state)
+    assert not state['run_root'].exists()
+
+
+@pytest.mark.parametrize('fault', ['mixed', 'external'])
+def test_unproved_scope_does_not_skip_donor_portable_files(tmp_path, fault):
+    state = foreign_portable_donor(tmp_path)
+    if fault == 'mixed':
+        state['profile'] = {}
+    else:
+        model = tiny_inline_model()
+        tensor = model.graph.initializer[0]
+        tensor.ClearField('float_data')
+        tensor.data_location = TensorProto.EXTERNAL
+        tensor.external_data.add(key='location', value='../b002/part1.data')
+        write(state['suite'] / 'models/model.onnx', model.SerializeToString())
+    result = normal_import(state)
+    for relative in ['quality_runtime/b001.json', state['config']['expected_runtime_artifacts']['part1_runtime']['path']]:
+        assert (result.suite_dir / relative).read_bytes() == (state['suite'] / relative).read_bytes()
+    assert json.loads(result.artifacts['generator_input_json'].read_text())['local_sidecar_publication_targets'] == []
+
+
+def test_postcopy_unequal_target_still_rejected_by_unchanged_sidecar_guard(tmp_path):
+    state = foreign_portable_donor(tmp_path)
+    result = normal_import(state)
+    item = state['config']['expected_runtime_artifacts']['part1_runtime']
+    write(result.suite_dir / item['path'], b'OWN foreign late target')
+    plan = json.loads((result.suite_dir / 'benchmark_plan.json').read_text())
+    with pytest.raises(ValueError, match='generic_quality_sidecar_asset_existing_bytes_differ'):
+        materialize_generic_quality_sidecars(suite_dir=result.suite_dir, model_id=MODEL, benchmark_plan=plan)
+    assert (result.suite_dir / item['path']).read_bytes() == b'OWN foreign late target'

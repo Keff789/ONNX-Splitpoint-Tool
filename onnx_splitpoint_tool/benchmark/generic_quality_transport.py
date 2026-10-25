@@ -9,8 +9,10 @@ from collections.abc import Mapping
 import fnmatch
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import stat
 
 from .generic_quality_preflight import _contained
 from ..runners.generic_quality_accounting import _binding, _stage
@@ -71,18 +73,26 @@ def selected_source_import_excludes(suite_dir, *, runs, model_id, log=None):
     historical executable plan. Sidecars/runtime are materialized normally after
     import; missing old dependencies keep the ordinary complete local copy.
     """
+    return selected_source_import_selection(
+        suite_dir, runs=runs, model_id=model_id, log=log)[0]
+
+
+def selected_source_import_selection(suite_dir, *, runs, model_id, log=None):
+    """Return binary exclusions and exact selected normal publication targets."""
     suite = Path(suite_dir).resolve(strict=True)
     runs = list(runs)
-    return _selected_source_excludes(
+    staged_paths = set()
+    excludes = _selected_source_excludes(
         suite, plan={'runs': runs},
         active_run_ids=[str(row.get('id') or row.get('name') or '')
                         for row in runs if isinstance(row, Mapping)
                         and row.get('semantic_reference_only') is not True],
-        model_id=model_id, source_configs=True, log=log)
+        model_id=model_id, source_configs=True, staged_paths=staged_paths, log=log)
+    return excludes, tuple(sorted(staged_paths))
 
 
 def _selected_source_excludes(suite, *, plan, active_run_ids, model_id,
-                              source_configs=False, log=None):
+                              source_configs=False, staged_paths=None, log=None):
     requested = set(active_run_ids or ())
     if not requested:
         return ()
@@ -122,7 +132,7 @@ def _selected_source_excludes(suite, *, plan, active_run_ids, model_id,
                 and row.get('folder', case) == case and case not in declared)
         declared.add(case)
     require(declared and len(rows) == len(requested))
-    selected = set(); required_graphs = set()
+    selected = set(); required_graphs = set(); publications = {}
     for row in rows:
         binding = _binding(row)  # Existing exact source/config/stage scope checks.
         cases = binding['case_ids']; paths = binding['generic_quality_completion_configs']
@@ -167,6 +177,28 @@ def _selected_source_excludes(suite, *, plan, active_run_ids, model_id,
                 return retain_full('original_config_dependency_metadata_unavailable')
             require(isinstance(artifacts, Mapping) and isinstance(sources, list) and sources
                     and {'source_part1_onnx', 'source_part2_onnx'} <= artifacts.keys())
+            staged_assets = {}
+            if source_configs:
+                from ..workflow.generic_quality_sidecars import _portable_asset_descriptors
+                def stage(relative, descriptor, origin):
+                    target = _contained(suite, relative)
+                    original = _producer_source_path(origin)
+                    require(original.stat().st_uid == os.getuid())
+                    _producer_source_bytes({**descriptor, 'path': str(original)})
+                    require(original.stat().st_uid == os.getuid()
+                            and (not target.exists() or (
+                                stat.S_ISREG(target.stat().st_mode)
+                                and target.stat().st_uid == os.getuid())))
+                    identity = (descriptor['sha256'], descriptor['size_bytes'], str(original))
+                    require(relative not in publications or publications[relative] == identity)
+                    publications[relative] = identity
+                    return original
+                stage(paths[case], binding['generic_quality_completion_sources'][case],
+                      binding['generic_quality_completion_sources'][case]['path'])
+                for _role, descriptor in _portable_asset_descriptors(config, case):
+                    if descriptor.get('local_path'):
+                        relative = descriptor['path']
+                        staged_assets[relative] = stage(relative, descriptor, descriptor['local_path'])
             for role in ('source_part1_onnx', 'source_part2_onnx'):
                 require(Path(artifacts[role].get('path', '')).parts[:1] == (case,))
                 required_graphs.add(_contained(suite, artifacts[role]['path']))
@@ -182,14 +214,12 @@ def _selected_source_excludes(suite, *, plan, active_run_ids, model_id,
                 dependency = _contained(suite, relative)
                 require(not (re.fullmatch(r'b[0-9]+', relative.parts[0])
                              and relative.parts[0] != case))
-                if source_configs and not dependency.is_file():
-                    # Normal Generic sidecar publication may supply an exact
-                    # original asset which this older suite never contained.
-                    local = descriptor.get('local_path')
-                    if local:
-                        dependency = _producer_source_path(local)
-                    else:
-                        return retain_full('dependency_not_materialized:' + str(relative))
+                if source_configs and relative.as_posix() in staged_assets:
+                    # Only the normal materializer's exact selected portable
+                    # target may use the bound original before the new copy.
+                    dependency = staged_assets[relative.as_posix()]
+                elif source_configs and not dependency.is_file():
+                    return retain_full('dependency_not_materialized:' + str(relative))
                 require(dependency.is_file()
                         and ('size_bytes' not in descriptor or dependency.stat().st_size == descriptor['size_bytes']))
             def check_paths(value):
@@ -211,4 +241,6 @@ def _selected_source_excludes(suite, *, plan, active_run_ids, model_id,
     reason = _inline_graphs(suite, excludes, required_graphs) if excludes else ''
     if reason:
         return retain_full(reason)
+    if staged_paths is not None:
+        staged_paths.update(publications)
     return excludes

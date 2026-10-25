@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 516419,
-      "sha256": "ff93dbdcd7967aa6175b6b8f80864423e59c4158fcce9a7dfef21f612fd7ecc3"
+      "size": 518280,
+      "sha256": "270b932041d47c5f7d1348cfcfb5d21f1d0428807603c6d2188a7bf702baccbb"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -726,8 +726,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/benchmark/generic_quality_transport.py",
-      "size": 11752,
-      "sha256": "34131a1b642152e5175a3db851a04d7afb3b710fa6d2e2855c1dc89eb778e4b1"
+      "size": 13715,
+      "sha256": "6172dced9298a7923d815369dba2d46b5a704bb93c396a6e5f6a6a0d738016fa"
     },
     {
       "path": "onnx_splitpoint_tool/benchmark/hailo_policy.py",
@@ -3146,8 +3146,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generator_binding.py",
-      "size": 83297,
-      "sha256": "f760c4571a333c8062fc015a49ca7f8acb2d24b43f6b46c0160921718f1263cd"
+      "size": 83670,
+      "sha256": "77335b8bae0e3f552ed5579ad8a48c2adb73ef5689ee5a118d608b72db0585da"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_completed_task.py",
@@ -3171,8 +3171,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_quality_sidecars.py",
-      "size": 28857,
-      "sha256": "1b336d6401465f07020a56bff9d9bc6c4d82a78ba9070376c0eb402821d60feb"
+      "size": 29173,
+      "sha256": "5256dbc628803b49b28fa03d1217367633e4a2aab58142bae15280dc1348a295"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/hailo_artifact_scope.py",
@@ -7776,8 +7776,8 @@
     },
     {
       "path": "tests/test_generic_quality_selected_local_import.py",
-      "size": 9920,
-      "sha256": "4bf1d011bb08a84aed809755bada7b2ca69e1ba806528dcd94277803dda67607"
+      "size": 16554,
+      "sha256": "77725605970d321383e43258b64908186d564e93793e976292c2d20c67c213f3"
     },
     {
       "path": "tests/test_generic_quality_selected_transport.py",

@@ -221,9 +221,8 @@ def _publish_new(target, payload):
             temporary.unlink(missing_ok=True)
 
 
-def _materialize_assets(config, root, case_id):
-    """Copy the exact portable artifact descriptors requested by this case."""
-    pending = {}
+def _portable_asset_descriptors(config, case_id):
+    """Use the same exact portable namespace for import and publication."""
     prefix = f"quality_runtime/assets/{case_id}/"
     artifacts = config.get("expected_runtime_artifacts", {})
     if not isinstance(artifacts, Mapping):
@@ -237,6 +236,7 @@ def _materialize_assets(config, root, case_id):
                 or source.get("pointer") != "/native_split_quality_binding"):
             raise ValueError("generic_quality_sidecar_bridge_source_invalid")
         artifacts["existing_part2_bridge_binding_source"] = source
+    result = []
     for role, descriptor in artifacts.items():
         if not isinstance(descriptor, Mapping):
             raise ValueError("generic_quality_sidecar_asset_descriptor_invalid")
@@ -248,6 +248,15 @@ def _materialize_assets(config, root, case_id):
                 or type(descriptor.get("size_bytes")) is not int
                 or descriptor["size_bytes"] < 1):
             raise ValueError("generic_quality_sidecar_asset_binding_invalid")
+        result.append((role, descriptor))
+    return result
+
+
+def _materialize_assets(config, root, case_id):
+    """Copy the exact portable artifact descriptors requested by this case."""
+    pending = {}
+    for role, descriptor in _portable_asset_descriptors(config, case_id):
+        relative = descriptor["path"]
         target = _contained(root, relative)
         local = descriptor.get("local_path")
         if local:

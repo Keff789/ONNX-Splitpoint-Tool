@@ -746,9 +746,10 @@ def import_existing_suite(
             raise ValueError("generic_quality_suite_import_authority_unresolved")
 
     local_binary_excludes = ()
+    local_sidecar_publication_targets = ()
     if generic_import:
-        from ..benchmark.generic_quality_transport import selected_source_import_excludes
-        local_binary_excludes = selected_source_import_excludes(
+        from ..benchmark.generic_quality_transport import selected_source_import_selection
+        local_binary_excludes, local_sidecar_publication_targets = selected_source_import_selection(
             existing, runs=declared_runs, model_id=model_id, log=log)
 
     def ignore_transport_archive(directory, names):
@@ -760,14 +761,15 @@ def import_existing_suite(
             Path(directory) == existing / "dist" and archive.name in names
             and archive.is_file() and not archive.is_symlink()
         ) else []
-        if local_binary_excludes:
+        if local_binary_excludes or local_sidecar_publication_targets:
             import fnmatch
             for name in names:
                 member = Path(directory) / name
                 relative = member.relative_to(existing).as_posix()
                 if (member.is_file() and not member.is_symlink()
-                        and any(fnmatch.fnmatch(relative, pattern)
-                                for pattern in local_binary_excludes)):
+                        and (relative in local_sidecar_publication_targets
+                             or any(fnmatch.fnmatch(relative, pattern)
+                                    for pattern in local_binary_excludes))):
                     ignored.append(name)
         return ignored
 
@@ -853,6 +855,7 @@ def import_existing_suite(
         "policy_backfills": list(candidate_plan.get("policy_backfills") or []),
         "generator_overrides": overrides,
         "local_runtime_binary_excludes": list(local_binary_excludes),
+        "local_sidecar_publication_targets": list(local_sidecar_publication_targets),
         "targets": list(targets),
         "status": "imported_with_overrides" if overrides else "imported_matches_candidate_plan",
         "created_at": now_iso(),
@@ -871,6 +874,7 @@ def import_existing_suite(
         "legacy_suite_dir": relpath(dst, run_dir),
         "force_candidate_plan_first": True,
         "local_runtime_binary_excludes": list(local_binary_excludes),
+        "local_sidecar_publication_targets": list(local_sidecar_publication_targets),
         "targets": list(targets),
     })
     p_cases = write_csv(
