@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2409,
+  "file_count": 2411,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 518280,
-      "sha256": "270b932041d47c5f7d1348cfcfb5d21f1d0428807603c6d2188a7bf702baccbb"
+      "size": 522720,
+      "sha256": "8bbb2ea21f0945690e9145bd6bab00a8d23f47e9cf8875610e959a49addc3a01"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -1001,8 +1001,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/generic_only_plan.py",
-      "size": 37311,
-      "sha256": "285ed28a398614ec97147efee6866ff96ee9f3d355cd71c0616f533a829c9997"
+      "size": 37481,
+      "sha256": "35e42eb011254324997c569ba34fe47c89696ef01e1432b287b29fb9320d70e7"
     },
     {
       "path": "onnx_splitpoint_tool/generic_only_reporting.py",
@@ -1016,8 +1016,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/generic_split_manifest.py",
-      "size": 53416,
-      "sha256": "15800950c439130c1b3069d1eb1c3cef05a69a95411d575c4ba562fc18c2c911"
+      "size": 56292,
+      "sha256": "fff82f379816ede6178f66281ab1614d9d541e2542f7e9904b2c4227927e2de7"
     },
     {
       "path": "onnx_splitpoint_tool/gui/__init__.py",
@@ -2106,8 +2106,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/resources/templates/run_split_onnxruntime.py.txt",
-      "size": 1130831,
-      "sha256": "875c32fc4746c178a9b0bf6985df64bb32aa13768298c6feae00aaa03106865a"
+      "size": 1131490,
+      "sha256": "08ef1c1e55c668992a523f065f12be4ebb5dc66690a861e84100b6faf2a4f532"
     },
     {
       "path": "onnx_splitpoint_tool/resources/templates/scientific_reporter_v60.py.txt",
@@ -2271,8 +2271,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/runners/generic_passthrough.py",
-      "size": 8701,
-      "sha256": "2043d7f3a402c06310b90128cab4d84b02ab9478e27d4b4b7c5a4f5c4511a5e4"
+      "size": 14539,
+      "sha256": "d896df4f0054977f974a590d246f0592f534edfaf5ad7a7e877963fe339d3c64"
     },
     {
       "path": "onnx_splitpoint_tool/runners/generic_quality_accounting.py",
@@ -3146,8 +3146,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generator_binding.py",
-      "size": 83670,
-      "sha256": "77335b8bae0e3f552ed5579ad8a48c2adb73ef5689ee5a118d608b72db0585da"
+      "size": 88412,
+      "sha256": "c5637afd388b2838f1ba356a3c8c950c31732bcf2314fc996ba558eb3d6f8c39"
     },
     {
       "path": "onnx_splitpoint_tool/workflow/generic_completed_task.py",
@@ -7420,6 +7420,11 @@
       "sha256": "c41890910cbc381eba104cbb6ee4df69462f4c834eca158967a58dc50ea6ed2b"
     },
     {
+      "path": "tests/test_generic_canonical_original_input_projection.py",
+      "size": 10202,
+      "sha256": "94ae34f647f32d2c5e1feee5ba32581761190102c8e351d45bf1107dce9ce725"
+    },
+    {
       "path": "tests/test_generic_case_report_mirrors.py",
       "size": 14059,
       "sha256": "e54ef70f54d0316c50a6fd3e7d879ec3e974228c0e89ed09fe67d074ab80a7eb"
@@ -7651,8 +7656,8 @@
     },
     {
       "path": "tests/test_generic_passthrough.py",
-      "size": 22393,
-      "sha256": "ce1fb38bb970562ec2a782fac6f4546fceb373a5b0d4cf3808e8a7d2a7579164"
+      "size": 23259,
+      "sha256": "0128d138ab39f67df67a724792994009e3fb8d0ea242c0e1371d7c51652bd0f1"
     },
     {
       "path": "tests/test_generic_predispatch_live_binding.py",
@@ -7750,6 +7755,11 @@
       "sha256": "bb564c49edb1a057e5e2b111007b6f00cd6a01479004a57f54cec6bb8465d3cd"
     },
     {
+      "path": "tests/test_generic_quality_immutable_input_sharing.py",
+      "size": 9155,
+      "sha256": "3843a752da4bf4463a0cf4389f4fab325c8bb0c4e9aacd40f65ba7efbf9ba97c"
+    },
+    {
       "path": "tests/test_generic_quality_import_budget.py",
       "size": 7206,
       "sha256": "87a3063583f2be1873677d1aa27f89a9e916bad995736bfad6a20c658c67ea90"
@@ -7776,8 +7786,8 @@
     },
     {
       "path": "tests/test_generic_quality_selected_local_import.py",
-      "size": 16554,
-      "sha256": "77725605970d321383e43258b64908186d564e93793e976292c2d20c67c213f3"
+      "size": 17693,
+      "sha256": "dc1bf3ed8a28cfe8ba33e0c17d4d659eca1641bd2aaff3e1163d256b5835b919"
     },
     {
       "path": "tests/test_generic_quality_selected_transport.py",
