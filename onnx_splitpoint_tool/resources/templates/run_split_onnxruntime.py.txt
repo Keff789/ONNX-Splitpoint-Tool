@@ -18786,6 +18786,7 @@ def main() -> int:
 
         if native_p2_sess is not None:
             expected = list(native_p2_sess.input_names)
+            original_inputs = set(feeds_full_local) - set(part2_cut_names_manifest)
             if p2_in_map is None or p2_in_map_src_keys != src_keys:
                 p2_in_map = _map_inputs_to_outputs(expected, list(out1_map.keys()))
                 for p2_name, p1_name in manifest_cut_name_map_p2_to_p1.items():
@@ -18798,6 +18799,8 @@ def main() -> int:
                     part1_cut_names_manifest=part1_cut_names_manifest,
                     part2_cut_names_manifest=part2_cut_names_manifest,
                 )
+                for name in original_inputs:
+                    p2_in_map.pop(name, None)
                 p2_in_map_src_keys = src_keys
                 try:
                     print(f"[interface][p2-map][native-trt] {p2_in_map}")
@@ -18808,12 +18811,14 @@ def main() -> int:
             io = native_p2_sess.describe_io().get("inputs", {})
             for inp in expected:
                 tgt_shape = tuple(io.get(inp, {}).get("shape") or []) or None
-                hit = _select_source_tensor(inp, tgt_shape, out1_map, p2_in_map, used_names=used_stage1_sources)
+                hit = (None if inp in original_inputs else
+                    _select_source_tensor(inp, tgt_shape, out1_map, p2_in_map, used_names=used_stage1_sources))
                 if hit is not None:
                     src_name, src = hit
                     p2_in_map[inp] = src_name
                     used_stage1_sources.add(src_name)
                 elif inp in feeds_full_local:
+                    p2_in_map.pop(inp, None)
                     src = feeds_full_local[inp]
                     ok, src = _try_adapt_tensor(src, tgt_shape)
                     if not ok:
@@ -18999,6 +19004,11 @@ def main() -> int:
             raise RuntimeError(f"Generic completion exact runtime initialization failed: {variant_errors}")
         from splitpoint_runners.generic_passthrough import prepare_full_feeds
         canonical_full_feeds = prepare_full_feeds(generic_completion_config, _load_image_as_nchw)
+        original_p2_inputs = ((set(native_p2_sess.input_names) & set(feeds_full)
+                               - set(part2_cut_names_manifest))
+                              if native_p2_sess is not None else set())
+        if original_p2_inputs and canonical_full_feeds is None:
+            raise ValueError("Generic P2 original inputs require canonical SourceQuality bindings")
         completion_transfer = _build_stage2_inputs
         completion_stage2 = run_stage2_map
         if canonical_full_feeds is not None:

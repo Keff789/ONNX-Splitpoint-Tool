@@ -2,12 +2,96 @@
 from collections.abc import Mapping
 from copy import deepcopy
 import hashlib
+import math
 from pathlib import Path
 import re
 
 import numpy as np
 
 SCHEMA = "onnx-splitpoint/generic-canonical-full-input/v1"
+_LEGACY_STALE_MAP_RUNNER = "875c32fc4746c178a9b0bf6985df64bb32aa13768298c6feae00aaa03106865a"
+
+
+def prepare_canonical_row(row, proof, *, split_manifest):
+    """Project a verified producer's original inputs without rewriting its report.
+
+    The normal caller still validates the complete SourceQuality and artifacts.
+    This pure relation handles only the old initial-map diagnostic: differently
+    sized features could not supply the original input, whose canonical bytes
+    were observed separately for every SourceQuality image.
+    """
+    original = deepcopy(row.get("boundary_observation") or {})
+    projection = row.get("canonical_original_input_projection")
+    if projection is not None:
+        original = deepcopy(projection.get("original_source_boundary") or {})
+    context = proof.get("runtime_context") or {}
+    observed, logical = context.get("boundary_runtime") or {}, context.get("logical_boundary") or {}
+    p1, p2 = split_manifest.get("part1_cut_names"), split_manifest.get("part2_cut_names")
+    external = (split_manifest.get("io") or {}).get("part2_external_inputs")
+    originals = split_manifest.get("orig_inputs")
+    if not all(isinstance(value, list) and len(value) == len(set(value))
+               for value in (p1, p2, external, originals)):
+        raise ValueError("Canonical original-input manifest partition malformed")
+    cut = dict(zip(p2, p1))
+    extra = set(external) - set(p2)
+    if (not p1 or len(p1) != len(p2) or not set(p2) <= set(external)
+            or not extra <= set(originals) or set(p1) & extra):
+        raise ValueError("Canonical original-input cut/source partition differs")
+    if not extra:
+        if projection is not None:
+            raise ValueError("Canonical original-input projection has no original inputs")
+        return deepcopy(row)
+    pass_map = {name: name for name in sorted(extra)}
+    inputs, outputs = logical.get("part2_inputs"), logical.get("part1_outputs")
+    transfer = observed.get("transfer_contract") or {}
+    if (not isinstance(inputs, Mapping) or not isinstance(outputs, Mapping)
+            or set(outputs) != set(p1) or set(inputs) != set(external)
+            or inputs != (observed.get("part2_io") or {}).get("inputs")
+            or set(outputs) != set((observed.get("part1_io") or {}).get("canonical_outputs") or [])
+            or original.get("part1_outputs") != outputs or original.get("part2_inputs") != inputs
+            or original.get("part2_to_part1") != observed.get("part2_to_part1")
+            or original.get("passthrough_inputs") != observed.get("passthrough_inputs")
+            or original.get("transfer_contract") != transfer
+            or transfer.get("part1_cut_names") != p1 or transfer.get("part2_cut_names") != p2
+            or transfer.get("manifest_cut_name_map_p2_to_p1") != cut
+            or any(outputs[source] != inputs[target] for target, source in cut.items())):
+        raise ValueError("Canonical original-input observed manifest/typed boundary differs")
+    desired = {**original, "part2_to_part1": cut, "passthrough_inputs": pass_map}
+    if original == desired:
+        if projection is not None:
+            raise ValueError("Canonical original-input projection is unnecessary")
+        return deepcopy(row)
+    mapping = observed.get("part2_to_part1") or {}
+    if (proof.get("implementation_runner", {}).get("sha256") != _LEGACY_STALE_MAP_RUNNER
+            or observed.get("passthrough_inputs") != {} or set(mapping) != set(inputs)
+            or any(mapping.get(target) != source for target, source in cut.items())
+            or any(mapping.get(name) not in outputs for name in extra)
+            or any(math.prod(inputs[name]["shape"]) == math.prod(spec["shape"])
+                   for name in extra for spec in outputs.values())):
+        raise ValueError("Canonical original-input legacy mapping is not a proven diagnostic alias")
+    images = proof.get("per_image")
+    if (not isinstance(images, list) or not images
+            or proof.get("image_count") != len(images)
+            or context.get("boundary_observation_count") != len(images)):
+        raise ValueError("Canonical original-input SourceQuality image observations missing")
+    for image in images:
+        for name in extra:
+            snapshot = _content((image.get("prepared_inputs") or {}).get(name))
+            if any(snapshot[key] != inputs[name][key] for key in ("shape", "dtype")):
+                raise ValueError("Canonical original-input SourceQuality numeric domain/shape differs")
+    result = deepcopy(row)
+    result["boundary_observation"] = desired
+    result["generic_artifact_binding"]["boundary_contract"] = deepcopy(desired)
+    result["canonical_original_input_projection"] = {
+        "schema": "onnx-splitpoint/canonical-original-input-projection/v1",
+        "original_source_boundary": original,
+        "source_quality_request": deepcopy(row["quality_reference"]["request"]),
+        "source_implementation_runner": deepcopy(proof["implementation_runner"]),
+        "selected_manifest": deepcopy(row["split_manifest"]),
+        "measurement_boundary": deepcopy(desired),
+        "source_boundary_rewritten": False,
+    }
+    return result
 
 
 def _sha(path):
@@ -59,19 +143,25 @@ def binding_from_quality(proof, image_id, source_image, prepared_input_sha256, p
             "runtime_inputs": {name: _content(value) for name, value in image["runtime_inputs"].items()}}
 
 
-def validate_quality_bindings(row, proof):
+def validate_quality_bindings(row, proof, *, split_manifest=None):
     """Rejoin every canonical byte expectation to the actual normal Quality."""
     sources = passthrough_sources(row)
     bindings = row.get("canonical_full_input_bindings")
     if not sources:
-        if bindings is not None:
+        if bindings is not None or row.get("canonical_original_input_projection") is not None:
             raise ValueError("Canonical full-input bindings require an actual passthrough")
         return
     if not isinstance(bindings, list) or len(bindings) != 2:
         raise ValueError("Actual image passthrough requires two bound canonical full inputs")
     observed = (proof.get("runtime_context") or {}).get("boundary_runtime") or {}
-    if observed.get("passthrough_inputs") != row["boundary_observation"]["passthrough_inputs"]:
-        raise ValueError("Canonical original-input mapping differs from actual normal Quality")
+    if (row.get("canonical_original_input_projection") is not None
+            or observed.get("passthrough_inputs") != row["boundary_observation"]["passthrough_inputs"]):
+        if not isinstance(split_manifest, Mapping) or not row.get("canonical_original_input_projection"):
+            raise ValueError("Canonical original-input mapping differs from actual normal Quality")
+        projected = prepare_canonical_row(row, proof, split_manifest=split_manifest)
+        if any(projected.get(key) != row.get(key) for key in (
+                "boundary_observation", "generic_artifact_binding", "canonical_original_input_projection")):
+            raise ValueError("Canonical original-input projection differs from its original SourceQuality")
     for index, binding in enumerate(bindings):
         if (not isinstance(binding, Mapping) or binding.get("schema") != SCHEMA
                 or binding.get("producer_source") != row["quality_reference"]["request"]
