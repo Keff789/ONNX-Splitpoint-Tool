@@ -206,8 +206,9 @@ def actual_transfer(module, io, cut_names, baseline):
     functions = [node for node in main.body if isinstance(node, ast.FunctionDef) and node.name in names]
     assert len(functions) == 3
     outer = ast.parse('''def make(io, cut_names, baseline):
-    p2_in_map = {name: name for name in cut_names}
+    p2_in_map = {**{name: name for name in cut_names}, 'images': cut_names[0]}
     p2_in_map_src_keys = tuple(sorted(cut_names))
+    part2_cut_names_manifest = list(cut_names)
     deepx_p2_tuned_map = None
     deepx_p2_contract_report = {}
     feeds_full = {'images': baseline}
@@ -219,6 +220,7 @@ def actual_transfer(module, io, cut_names, baseline):
     _cached_boundary_buffer = None
 ''').body[0]
     outer.body.extend(functions)
+    outer.body.extend(ast.parse('_build_stage2_inputs.observed_mapping = lambda: dict(p2_in_map)').body)
     outer.body.append(ast.Return(ast.Name('_build_stage2_inputs', ast.Load())))
     namespace = {**vars(module), 'SimpleNamespace': SimpleNamespace}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[outer], type_ignores=[])), str(TEMPLATE), 'exec'), namespace)
@@ -229,6 +231,19 @@ def actual_transfer(module, io, cut_names, baseline):
     callback = next(node for node in ast.walk(completion) if isinstance(node, ast.FunctionDef)
                     and node.name == 'completion_transfer')
     return transfer, callback
+
+
+def test_actual_native_transfer_prefers_canonical_original_over_same_shape_feature(monkeypatch):
+    module = _module(monkeypatch)
+    image = np.full((1, 3, 2, 2), np.float32(0.25))
+    io = {'a': {'shape': [1, 3, 2, 2]}, 'b': {'shape': [1, 7]},
+          'images': {'shape': [1, 3, 2, 2]}}
+    transfer, _ = actual_transfer(module, io, ['a', 'b'], image)
+    feature = np.full_like(image, np.float32(127))
+    result = transfer({'a': feature, 'b': np.zeros((1, 7), dtype=np.float32)}, {'images': image})
+    np.testing.assert_array_equal(result['images'], image)
+    np.testing.assert_array_equal(result['a'], feature)
+    assert transfer.observed_mapping() == {'a': 'a', 'b': 'b'}
 
 
 @pytest.mark.parametrize('case', ['b236', 'b257', 'b278', 'b280', 'b306'])

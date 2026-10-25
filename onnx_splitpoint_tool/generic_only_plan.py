@@ -224,7 +224,8 @@ def validate_quality_reference(row, *, producer_source_authority=None):
         if row.get("task") == "classification":
             return _validate_quality_reference(row)
         fields = ("task", "identity", "quality_reference", "completion_contract", "input_binding",
-                  "generic_artifact_binding", "boundary_observation", "canonical_full_input_bindings")
+                  "generic_artifact_binding", "boundary_observation", "canonical_full_input_bindings",
+                  "canonical_original_input_projection")
         selected = {key: row.get(key) for key in fields}
         if row.get("producer_run_binding") is not None:
             selected["producer_run_binding"] = row["producer_run_binding"]
@@ -352,7 +353,8 @@ def _validate_quality_reference(row, *, producer_source_authority=None):
     if status not in {"reference_close", "accuracy_loss", "inconclusive"}:
         raise ValueError("Generic-only Quality classification is missing or technical failure")
     from .runners.generic_passthrough import validate_quality_bindings
-    validate_quality_bindings(row, request.get("generic_completed_quality") or {})
+    validate_quality_bindings(row, request.get("generic_completed_quality") or {},
+        split_manifest=_json(row["split_manifest"]) if row.get("canonical_original_input_projection") else None)
     return {"status": status, "quality_eligible": status == "reference_close",
             "policy_sha256": result["policy_sha256"],
             "dataset_manifest_sha256": reference["dataset_manifest_sha256"],

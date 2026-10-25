@@ -457,16 +457,57 @@ def _validate_generic_split_manifest_staging(
                        for item in boundary_inputs}
     _require(len(expected_inputs) == len(boundary_inputs) > 0
              and boundary.get("part2_inputs") == expected_inputs
-             and row.get("boundary_observation") == boundary and not boundary.get("passthrough_inputs"),
+             and row.get("boundary_observation") == boundary
+             and isinstance(boundary.get("passthrough_inputs"), dict),
              "original typed boundary inputs differ")
     p1, p2 = staged.get("part1_cut_names"), staged.get("part2_cut_names")
+    passthrough = boundary["passthrough_inputs"]
     _require(isinstance(p1, list) and isinstance(p2, list) and len(set(p1)) == len(p1)
-             and len(set(p2)) == len(p2) == len(p1) == len(expected_inputs)
+             and len(set(p2)) == len(p2) == len(p1)
              and set(p1) == set(boundary.get("part1_outputs") or {})
-             and set(p2) == set(expected_inputs)
+             and not set(p2) & set(passthrough)
+             and set(p2) | set(passthrough) == set(expected_inputs)
              and boundary.get("part2_to_part1") == dict(zip(p2, p1))
              and all(boundary["part1_outputs"][name] == expected_inputs[target]
                      for target, name in zip(p2, p1)), "complete cut tensor mapping differs")
+    canonical_original_inputs = []
+    if passthrough:
+        external = (staged.get("io") or {}).get("part2_external_inputs")
+        quality = row.get("quality_reference") or {}
+        artifact_binding = row.get("generic_artifact_binding") or {}
+        input_binding = row.get("input_binding") or {}
+        canonical = row.get("canonical_full_input_bindings")
+        _require(isinstance(external, list) and len(set(external)) == len(external)
+                 and set(external) == set(expected_inputs)
+                 and all(target == source and source in staged.get("orig_inputs", [])
+                         for target, source in passthrough.items())
+                 and isinstance(canonical, list) and len(canonical) == 2
+                 and quality.get("request") == artifact_binding.get("producer_source")
+                 and isinstance(quality.get("request"), dict),
+                 "canonical original-input source/manifest partition missing")
+        for item in canonical:
+            image = item.get("source_image") or {}
+            path = PurePosixPath(str(image.get("local_path") or image.get("path") or ""))
+            snapshots = item.get("inputs") or {}
+            _require(item.get("schema") == "onnx-splitpoint/generic-canonical-full-input/v1"
+                     and item.get("producer_source") == quality["request"]
+                     and item.get("preprocessing_contract") == (
+                         input_binding.get("prepared_input_contract") or {}).get("image_preprocessing_contract")
+                     and path.is_absolute() and ".." not in path.parts and _sha(image.get("sha256"))
+                     and _sha(item.get("prepared_input_sha256"))
+                     and set(snapshots) == set(passthrough.values())
+                     and all(isinstance(snapshots[source], dict)
+                             and _sha(snapshots[source].get("tensor_sha256"))
+                             and all(snapshots[source].get(key) == expected_inputs[target][key]
+                                     for key in ("shape", "dtype"))
+                             for target, source in passthrough.items()),
+                     "canonical original-input bytes/numeric contract differ")
+        _require(canonical[0].get("image_id") != canonical[1].get("image_id")
+                 and canonical[0].get("prepared_input_sha256") == (
+                     input_binding.get("prepared_input") or {}).get("sha256")
+                 and canonical[0]["source_image"]["sha256"] == input_binding.get("source_image_sha256"),
+                 "canonical original-input baseline/mixed image differs")
+        canonical_original_inputs = deepcopy(canonical)
     feed = row.get("input_binding") or {}
     prepared, contract = feed.get("prepared_input") or {}, feed.get("prepared_input_contract") or {}
     # A fresh normal H8-only generation attaches the existing measured receipt
@@ -780,6 +821,7 @@ def _validate_generic_split_manifest_staging(
             "original_and_staged_graph_names_unchanged": True},
         "measured_identity": deepcopy(identity), "full_model_sha256": full_model_sha256,
         "unchanged_artifact_bindings": bindings, "boundary_contract": deepcopy(boundary),
+        "canonical_original_input_bindings": canonical_original_inputs,
         "prepared_input": {k: prepared[k] for k in ("sha256", "shape", "dtype", "layout", "input_name")},
         "source_image_sha256": feed["source_image_sha256"], "allowed_differences": changes,
         "historical_build_reuse": historical_build_reuse,
