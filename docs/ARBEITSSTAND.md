@@ -1,3 +1,28 @@
+## 25.10.2026 — Aktuelle DeepX-Requestmenge nach selektiver lokaler Kopie
+
+Der erste reale selektive DeepX-Import stoppte vor jeder Hardwareausführung:
+Der alte Deferred-Part1-Request enthielt weiterhin alle 20 ursprünglichen
+ONNX-Dateien und prüfte deshalb eine bewusst nicht kopierte, unselektierte
+Datei. Der ursprüngliche Lauf, seine fehlende Messung und die Fehlerbelege
+bleiben unverändert.
+
+Nur bei einer tatsächlich nachgewiesenen selektiven lokalen Kopie erzeugt der
+vorhandene Rebinder jetzt einen neuen cache-only Request für die aktuell
+autorisierten DeepX-Fälle. Die ursprünglichen 20er-Requestbytes, Hashbindungen,
+Case-Metadaten, Kalibrierung und Compilerparameter bleiben erhalten. Probe und
+Finalizer prüfen die normale Auswahl erneut gegen diese Originalquelle und
+vergleichen die abgeleitete Case-/ONNX-Menge mit der aktuellen Autorität.
+Falsche oder fehlende selektierte Graphen bleiben gesperrt. Ohne positive
+lokale Auswahl gelten weiterhin die bisherigen vollständigen 20er-Prüfungen;
+unselektierte Fälle erhalten keinen aktuellen Verfügbarkeitsnachweis.
+
+Alle 47 gezielten Regressionstests, darunter die fünf neuen DeepX-Importtests,
+bestanden, einschließlich normalem
+Import/Probe/Finalizer, selektierten Graphabweichungen, Request-/Subset-/Hash-
+Manipulationen und strikter Vollkopie bei unbekannten oder externen Daten.
+Keine Hardware-, SDK-, Compiler- oder produktive Source-Ausführung für diese
+Korrektur; Runtime42/37 und wissenschaftliche Budgets bleiben unverändert.
+
 ## 25.10.2026 — Selektive lokale Kopie beim gebundenen Generic-Source-Import
 
 Der lokale Import kopierte bisher auch die Laufzeitbinärdateien aller nicht

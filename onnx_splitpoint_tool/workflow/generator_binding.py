@@ -921,6 +921,7 @@ def import_existing_suite(
         from .deferred_hailo_builds import rebind_imported_deepx_part1_request
         rebind_imported_deepx_part1_request(
             existing, dst, profile_payload=profile, bench_plan_runs=planned_runs,
+            local_binary_excludes=local_binary_excludes,
         )
         _rebind_imported_generic_hailo_requests(
             existing, dst, model_id=model_id, profile=profile, runs=planned_runs,
