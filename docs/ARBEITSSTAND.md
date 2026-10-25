@@ -16,6 +16,17 @@ Falsche oder fehlende selektierte Graphen bleiben gesperrt. Ohne positive
 lokale Auswahl gelten weiterhin die bisherigen vollständigen 20er-Prüfungen;
 unselektierte Fälle erhalten keinen aktuellen Verfügbarkeitsnachweis.
 
+Ältere vollständige Kataloge können ihr Modell ohne oberes `model_id`-Feld
+beschreiben. Dafür reicht der Import seinen bereits gebundenen aktuellen
+Modellparameter explizit an die Requestableitung durch. Der neue Request bindet
+diese aktuelle Autorität separat; die Consumer prüfen sie erneut über dieselbe
+normale Configidentität. Der historische Katalog bleibt unverändert. Die sieben
+gezielten Tests einschließlich fehlendem Katalogfeld und falscher/leerer
+aktueller Modellbindung bestanden. Eine zusätzliche reine Prüfung der realen,
+geschützten b105-Quelle ergab mit Originalrequest, aktuellem Modell und
+Originalconfig ausschließlich den erforderlichen aktuellen Fall b064, ohne
+Source-Konstruktor, Materialisierung oder Hardwareausführung.
+
 Alle 47 gezielten Regressionstests, darunter die fünf neuen DeepX-Importtests,
 bestanden, einschließlich normalem
 Import/Probe/Finalizer, selektierten Graphabweichungen, Request-/Subset-/Hash-

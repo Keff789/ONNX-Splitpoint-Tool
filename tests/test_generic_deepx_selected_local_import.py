@@ -97,9 +97,16 @@ def _fallback(state, fault):
     assert selection(state) == ()
 
 
-def test_actual_selected_deepx_import_keeps_full20_and_consumes_only_current_case(tmp_path, monkeypatch):
+@pytest.mark.parametrize("catalogue_model", ["declared", "absent"])
+def test_actual_selected_deepx_import_keeps_full20_and_consumes_only_current_case(tmp_path, monkeypatch, catalogue_model):
     state = _prepared(tmp_path)
     source = state["suite"]
+    catalogue_path = source / "benchmark_set.json"
+    if catalogue_model == "absent":
+        catalogue = json.loads(catalogue_path.read_text())
+        catalogue.pop("model_id")
+        json_file(catalogue_path, catalogue)
+    original_catalogue = catalogue_path.read_bytes()
     original = (source / deferred.DEEPX_PART1_REQUEST).read_bytes()
     saved = json.loads(original)
     expected_excludes = selection(state)
@@ -117,6 +124,7 @@ def test_actual_selected_deepx_import_keeps_full20_and_consumes_only_current_cas
     assert rebound["kwargs"]["selected_case_dirs"] == ["b001"]
     assert rebound["source_onnx_sha256"] == {str(suite / "b001/part1.onnx"): saved["source_onnx_sha256"][str(source / "b001/part1.onnx")]}
     assert tuple(rebound["import_source"]["local_runtime_binary_excludes"]) == expected_excludes
+    assert rebound["import_source"]["current_model_id"] == MODEL
     assert rebound["import_source"]["request"]["sha256"] == _sha(source / deferred.DEEPX_PART1_REQUEST)
     calls = []
     _materializer(monkeypatch, calls)
@@ -128,6 +136,29 @@ def test_actual_selected_deepx_import_keeps_full20_and_consumes_only_current_cas
     assert json.loads(request_path.read_text())["kwargs"]["cache_only"] is True
     assert (source / deferred.DEEPX_PART1_REQUEST).read_bytes() == original
     assert (suite / deferred.DEEPX_PART1_REQUEST).read_bytes() == original
+    assert catalogue_path.read_bytes() == original_catalogue
+
+
+def test_consumers_reject_wrong_or_empty_model_authority_without_historical_model_id(tmp_path, monkeypatch):
+    calls = []
+    _materializer(monkeypatch, calls)
+    for consumer in ("probe", "finalizer"):
+        for model_id in ("OWN_WRONG_MODEL", ""):
+            state = _prepared(tmp_path / (consumer + "_" + (model_id or "empty")))
+            catalogue_path = state["suite"] / "benchmark_set.json"
+            catalogue = json.loads(catalogue_path.read_text())
+            catalogue.pop("model_id")
+            json_file(catalogue_path, catalogue)
+            original_catalogue = catalogue_path.read_bytes()
+            suite = _import(state).suite_dir
+            request_path = suite / IMPORTED_REQUEST
+            rebound = json.loads(request_path.read_text())
+            rebound["import_source"]["current_model_id"] = model_id
+            json_file(request_path, rebound)
+            with pytest.raises((ValueError, RuntimeError)):
+                _consume(state, suite, consumer)
+            assert catalogue_path.read_bytes() == original_catalogue
+    assert calls == []
 
 
 def test_selected_p1_missing_or_changed_still_blocks_normal_import(tmp_path, monkeypatch):

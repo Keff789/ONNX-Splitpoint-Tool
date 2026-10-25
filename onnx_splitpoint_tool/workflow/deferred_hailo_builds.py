@@ -418,14 +418,19 @@ def _imported_deepx_part1_config(args: Mapping[str, Any], profile: Mapping[str, 
 
 
 def _imported_deepx_local_cases(source: Path, *, profile, runs, original_cases,
-                                 local_binary_excludes) -> list[str]:
+                                 local_binary_excludes, model_id=None) -> list[str]:
     """Narrow only an actually proved selective copy; retain original history."""
     if not local_binary_excludes:
         return list(original_cases)
     from ..benchmark.generic_quality_transport import selected_source_import_excludes
     from ..runners.generic_quality_accounting import _stage, authorized_runs
+    original_model = _read(source / "benchmark_set.json").get("model_id")
+    model_id = original_model if model_id is None else model_id
+    if (not isinstance(model_id, str) or not model_id
+            or original_model not in (None, model_id)):
+        raise ValueError("Imported DeepX Part1 current model identity unbound")
     expected = selected_source_import_excludes(
-        source, runs=runs, model_id=_read(source / "benchmark_set.json")["model_id"])
+        source, runs=runs, model_id=model_id)
     if (not isinstance(local_binary_excludes, (list, tuple)) or not expected
             or tuple(local_binary_excludes) != expected):
         raise ValueError("Imported DeepX Part1 local selection proof changed")
@@ -462,7 +467,8 @@ def _deepx_part1_request_path(suite: Path) -> Path:
     local_excludes = request["import_source"].get("local_runtime_binary_excludes", ())
     selected = _imported_deepx_local_cases(
         original.parent, profile=args["profile_payload"], runs=args["bench_plan_runs"],
-        original_cases=saved_args["selected_case_dirs"], local_binary_excludes=local_excludes)
+        original_cases=saved_args["selected_case_dirs"], local_binary_excludes=local_excludes,
+        model_id=request["import_source"].get("current_model_id"))
     if local_excludes:
         relocated_fields.add("selected_case_dirs")
     if args.get("selected_case_dirs") != selected:
@@ -495,6 +501,7 @@ def rebind_imported_deepx_part1_request(
     source: Path, suite: Path, *, profile_payload: Mapping[str, Any],
     bench_plan_runs: list[Mapping[str, Any]],
     local_binary_excludes=(),
+    model_id: Optional[str] = None,
 ) -> Optional[Path]:
     """Derive a cache-only request, retaining the original request and hashes."""
     original = source / DEEPX_PART1_REQUEST
@@ -521,7 +528,8 @@ def rebind_imported_deepx_part1_request(
         raise ValueError("Imported DeepX Part1 selected cases invalid")
     selected = _imported_deepx_local_cases(
         source, profile=profile_payload, runs=bench_plan_runs,
-        original_cases=original_selected, local_binary_excludes=local_binary_excludes)
+        original_cases=original_selected, local_binary_excludes=local_binary_excludes,
+        model_id=model_id)
     source_cases = {str(c.get("case_dir") or c.get("folder") or c.get("case_id") or c.get("id") or ""): c
                     for c in _read(source / "benchmark_set.json").get("cases", [])}
     current_cases = {str(c.get("case_dir") or c.get("folder") or c.get("case_id") or c.get("id") or ""): c
@@ -575,6 +583,8 @@ def rebind_imported_deepx_part1_request(
             "suite_dir": str(source.resolve()), "original_out_dir": str(old_root)}
     if local_binary_excludes:
         import_source["local_runtime_binary_excludes"] = list(local_binary_excludes)
+        import_source["current_model_id"] = (
+            _read(source / "benchmark_set.json").get("model_id") if model_id is None else model_id)
     write_json(path, {"status": "pending", "kwargs": args, "source_onnx_sha256": rebound,
                       "import_source": import_source})
     return path
