@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2411,
+  "file_count": 2414,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 523473,
-      "sha256": "0185edec8780f8618b701b419e2b1927bc0f5611f4f39b29c8f8501f3ab84bde"
+      "size": 525814,
+      "sha256": "f92359d6dd354de874410490a4747b676c1efa14ca9a18912cb16cba2308c454"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -618,6 +618,11 @@
       "path": "docs/calibration/yolov7_streaming_reference.csv",
       "size": 5156,
       "sha256": "fc931e3d039b5f18eeed87a2726807b3fc1673f2170de70dd5eff98ee31b0f76"
+    },
+    {
+      "path": "docs/historical_quality_import.md",
+      "size": 2896,
+      "sha256": "10aae8885e8576dd385dd5c955c5779439005a362ca99e8c1165c883513ec964"
     },
     {
       "path": "download_model_zoo_examples.py",
@@ -3225,6 +3230,11 @@
       "sha256": "664b0e285ee4a7f9856bacb8c14fcb407bd6f3c5fd194fcbd5168d48596ea4c8"
     },
     {
+      "path": "onnx_splitpoint_tool/workflow/historical_quality_import.py",
+      "size": 20783,
+      "sha256": "a13ff65426c1b92ec941f738967058cd2444e2389c3dc24755989d9d0859b7f4"
+    },
+    {
       "path": "onnx_splitpoint_tool/workflow/jobs.py",
       "size": 34838,
       "sha256": "4969ca3c7e6592040ec6f4a2c6a4bc8182f3f3cd09a1abc18b48c152c1a29d33"
@@ -3466,8 +3476,8 @@
     },
     {
       "path": "scripts/build_source_manifest.py",
-      "size": 35400,
-      "sha256": "14be3360baeeb6a6027a8e1b7761cde08d4889ca812e1abead7cd24395ba92c3"
+      "size": 35441,
+      "sha256": "a086e956c7c6eb5fcf849b5b82e81e25d2409573cdd7ae017ce7718ba35aeee6"
     },
     {
       "path": "scripts/build_source_release.py",
@@ -7858,6 +7868,11 @@
       "path": "tests/test_hardware_acceptance_native.py",
       "size": 44942,
       "sha256": "d06d6aaffbea6ccec8dba985cbd91b3502bd422dbb2fed713bb65c342332bd6e"
+    },
+    {
+      "path": "tests/test_historical_quality_import.py",
+      "size": 18064,
+      "sha256": "c2ee9e76d11398414930536261650d0c68b90351704b6ef4c2aebc3dddf9fd20"
     },
     {
       "path": "tests/test_holdout_audit_freeze_contract_v61e.py",

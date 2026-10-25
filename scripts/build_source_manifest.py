@@ -234,6 +234,7 @@ ALLOWED_DOC_FILES = {
     "docs/RELEASE_2.95.4.md",
     "docs/RELEASE_2.95.5.md",
     "docs/ARBEITSSTAND.md",
+    "docs/historical_quality_import.md",
     "docs/V2804_QUALITAET_UND_ABNAHME.md",
     "docs/RELEASE_SCOPE_V281.md",
     "docs/V281_EVIDENCE_INDEX.json",
