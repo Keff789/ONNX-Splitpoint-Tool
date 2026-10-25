@@ -740,10 +740,25 @@ def _validate_generic_split_manifest_staging(
         measured_states = [s for s in expected_states
                            if s.get("hw_arch") == "hailo8" and s.get("variant") == "part1"]
         omitted_unexecuted_states = [s for s in expected_states if s not in measured_states]
+        # An original selected H8 reuse has no cold-build proof to rebind.
+        # Its already checked artifact/path relation may project the same
+        # positive states only beside the exact omitted H10 reuse proof.
+        measured_reuse_to_reuse = (compact_attachment
+            and any(p["backend_metadata"] == "hailo10"
+                    and p["validated_historical_build"].get("historical_reuse_observation") is True
+                    for p in omitted_unexecuted_backend_metadata)
+            and all(build.get("ok") is True and build.get("cache_hit") is True
+                    and build.get("skipped") is True and build.get("context_mode") == "skipped"
+                    and build.get("calib_source") == "validated_existing_artifact"
+                    and all(build.get(key) is False for key in (
+                        "single_context_failed", "single_context_used", "multi_context_used",
+                        "mapping_failed", "timed_out", "watchdog_expired"))
+                    for build in (original["hailo"]["hefs"]["hailo8"]["part1_build"],
+                                  staged["hailo"]["hefs"]["hailo8"]["part1_build"])))
         _require((len(retained_historical_build_metadata) == 1 or compact_attachment
                   and any(p["backend_metadata"] == "hailo10" for p in omitted_unexecuted_backend_metadata))
-                 and any(p["backend_metadata"] == "hailo8" and "actual_receipt_binding" in p
-                         for p in historical_build_reuse)
+                 and (any(p["backend_metadata"] == "hailo8" and "actual_receipt_binding" in p
+                          for p in historical_build_reuse) or measured_reuse_to_reuse)
                  and len(measured_states) == len(new_states) == 1
                  and all(ready_state(s) for s in expected_states + new_states)
                  and len({(s["hw_arch"], s["variant"]) for s in expected_states}) == len(expected_states)

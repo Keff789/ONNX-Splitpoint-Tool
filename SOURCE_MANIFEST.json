@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2406,
+  "file_count": 2409,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 515103,
-      "sha256": "62d3235dba7eaadc65b74598217f8e05fd658a9c04b3f1412583910097d10432"
+      "size": 516419,
+      "sha256": "ff93dbdcd7967aa6175b6b8f80864423e59c4158fcce9a7dfef21f612fd7ecc3"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -1016,8 +1016,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/generic_split_manifest.py",
-      "size": 52224,
-      "sha256": "e950c4ec780baa21463fe28dfbaf080a99aaf170036165329f2735d5dcdd46fd"
+      "size": 53416,
+      "sha256": "15800950c439130c1b3069d1eb1c3cef05a69a95411d575c4ba562fc18c2c911"
     },
     {
       "path": "onnx_splitpoint_tool/gui/__init__.py",
@@ -5675,6 +5675,21 @@
       "sha256": "58840e8f65b343c31f30091c257c8fc4437a913279df0cd0e119b59105568d04"
     },
     {
+      "path": "tests/fixtures/generic_split_manifest/b189_bindings.json",
+      "size": 21679,
+      "sha256": "719bff98e5d675e6c0941d55d8957b4b4f47fa3368e75c831b508c3252099a8d"
+    },
+    {
+      "path": "tests/fixtures/generic_split_manifest/b189_original.json",
+      "size": 28785,
+      "sha256": "0634876daca4524d73d16aa1072d72ebab5e51b556ac9f2ac2a54b1c8c1d1ade"
+    },
+    {
+      "path": "tests/fixtures/generic_split_manifest/b189_staged.json",
+      "size": 5824,
+      "sha256": "c6db773a08713d45bb1565744204453abd962c29ff0d9e091cd3c667fb54f9c2"
+    },
+    {
       "path": "tests/fixtures/generic_split_manifest/b239_bindings.json",
       "size": 26681,
       "sha256": "d4559ee25be6e1149df0d0cc211ca13639b0ae5130783a69ea062f473d6fce14"
@@ -7801,8 +7816,8 @@
     },
     {
       "path": "tests/test_generic_split_manifest.py",
-      "size": 61881,
-      "sha256": "f7a127cc18e14ca7267b1b9810431aab26264fc06680b57e20fa1b4abc667c6f"
+      "size": 66774,
+      "sha256": "5d6491c3770379cef1439699deef65a589ed1e1db6153575486c707a9d83ca59"
     },
     {
       "path": "tests/test_hailo10_yolo26_full_semantic_fixture.py",

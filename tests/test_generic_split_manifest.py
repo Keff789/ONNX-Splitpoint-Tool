@@ -75,6 +75,104 @@ def positive_unused_h10_reuse():
     return rewritten_original(document, args), staged, args
 
 
+def test_actual_b189_reuse_to_reuse_composition_preserves_science_and_omitted_states(monkeypatch):
+    """Recorded manifest/plan metadata exercise every mapper clause, without payloads."""
+    from onnx_splitpoint_tool import build_evidence
+
+    assert build_evidence is not None
+    original, staged, args = bindings("b189")
+    old, current = json.loads(original), json.loads(staged)
+    unchanged = deepcopy(args)
+
+    def no_file_open(*_args, **_kwargs):
+        pytest.fail("metadata composition must not open artifacts")
+
+    with monkeypatch.context() as guard:
+        guard.setattr("builtins.open", no_file_open)
+        guard.setattr(Path, "open", no_file_open)
+        proof = validate_generic_split_manifest_staging(original, staged, **args)
+
+    assert args == unchanged
+    assert proof["scientific_manifest_fields_unchanged"] is True
+    assert len(args["boundary_inputs"]) == 3
+    assert proof["historical_build_reuse"] == []  # Both original backends already reused.
+    assert current["hailo"]["backend_terminal_states"] == [old["hailo"]["backend_terminal_states"][-1]]
+    assert proof["omitted_unexecuted_backend_terminal_states"] == [
+        row for row in old["hailo"]["backend_terminal_states"]
+        if row["variant"] == "part1" and row["hw_arch"] == "hailo10h"]
+    assert proof["unchanged_artifact_bindings"] == args["original_artifacts"]
+    omitted, = [row for row in proof["omitted_unexecuted_backend_metadata"]
+                if row["backend_metadata"] == "hailo10"]
+    assert omitted["historical_observation"] == old["hailo"]["hefs"]["hailo10"]
+    assert omitted["validated_historical_build"]["historical_reuse_observation"] is True
+    assert omitted["validated_historical_build"]["executed_artifact_identity_proved"] is False
+    assert "actual_receipt_binding" not in omitted["validated_historical_build"]
+    assert all(omitted[key] is False for key in (
+        "current_compile_claimed", "current_reuse_claimed", "current_quality_or_hardware_pass_claimed"))
+
+
+@pytest.mark.parametrize("fault", [
+    "unavailable", "nonterminal", "failed", "unknown_field", "duplicate",
+    "wrong_backend", "part2", "changed_selected", "extra_selected",
+])
+def test_b189_complete_relation_rejects_unproved_terminal_projection(fault):
+    original, staged, args = bindings("b189")
+    old, current = json.loads(original), json.loads(staged)
+    state = old["hailo"]["backend_terminal_states"][1]  # Omitted H10 part1.
+    if fault == "unavailable":
+        state["available"] = False
+    elif fault == "nonterminal":
+        state["terminal"] = False
+    elif fault == "failed":
+        state["status"] = "failed"
+    elif fault == "unknown_field":
+        state["unknown"] = False
+    elif fault == "duplicate":
+        old["hailo"]["backend_terminal_states"].append(deepcopy(state))
+    elif fault == "wrong_backend":
+        state["hw_arch"] = "deepx"
+    elif fault == "part2":
+        state["variant"] = "part2"
+    elif fault == "changed_selected":
+        current["hailo"]["backend_terminal_states"][0]["reason"] = "other"
+    else:
+        current["hailo"]["backend_terminal_states"].append(deepcopy(state))
+    with pytest.raises(ValueError, match="backend terminal states"):
+        validate_generic_split_manifest_staging(
+            rewritten_original(old, args), rewritten(current, args), **args)
+
+
+@pytest.mark.parametrize("flag", ["mapping_failed", "single_context_used", "timed_out"])
+def test_b189_terminal_projection_requires_positive_selected_h8_reuse(flag):
+    original, staged, args = bindings("b189")
+    old, current = json.loads(original), json.loads(staged)
+    for document in (old, current):
+        document["hailo"]["hefs"]["hailo8"]["part1_build"][flag] = True
+    with pytest.raises(ValueError, match="backend terminal states"):
+        validate_generic_split_manifest_staging(
+            rewritten_original(old, args), rewritten(current, args), **args)
+
+
+@pytest.mark.parametrize("fault", ["artifact", "receipt", "full_model", "boundary", "input", "manifest"])
+def test_b189_complete_relation_preserves_all_selected_scientific_guards(fault):
+    original, staged, args = bindings("b189")
+    if fault in {"artifact", "receipt"}:
+        role = "part1_runtime" if fault == "artifact" else "part1_build_receipt"
+        args["original_artifacts"][role]["sha256"] = "f" * 64
+    elif fault == "full_model":
+        args["producer_model"]["source_onnx_sha256"] = "f" * 64
+    elif fault == "boundary":
+        args["boundary_inputs"][0]["dtype"] = "float16"
+    elif fault == "input":
+        args["row"]["functional_reference"]["input_sha256"] = "f" * 64
+    else:
+        current = json.loads(staged)
+        current["orig_outputs"] = ["changed"]
+        staged = rewritten(current, args)
+    with pytest.raises(ValueError, match="split-manifest staging"):
+        validate_generic_split_manifest_staging(original, staged, **args)
+
+
 def test_actual_normal_staging_preserves_both_file_identities_and_all_bindings():
     original, staged, args = bindings()
     unchanged = deepcopy(args)
