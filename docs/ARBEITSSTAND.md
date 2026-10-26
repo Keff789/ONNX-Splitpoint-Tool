@@ -4743,3 +4743,10 @@ Vorherige positive H8-/H10-Builds und ausgelassene positive DeepX-Metadaten blei
 Der reine FPS-Vorbereitungsvalidator erkennt nun die bereits ausgeführte native H10-HEF-Dequantisierung von uint8-P1-Ausgaben zu gleich geformten Float32-P2-Eingaben. Voraussetzung sind vollständige tatsächliche SourceQuality-Transfermetadaten, eindeutige HEF/ONNX-Aliase, passende Formate, gültige QuantInfo, eigene Artefakt-/Receipt-/Request-Bindungen und die identische Dequantizer-Implementierung im ursprünglichen Sourceabschluss. Die ursprünglichen Roh- und kanonischen Beobachtungen bleiben erhalten; Berechnung und Runnertransfer wurden nicht geändert.
 
 Software: 88 gezielte Tests bestanden, begrenzter unabhängiger Peer CLEAR. Die tatsächlichen Metadaten aller 5000 Bilder von H10/Yolov7 b236 bestehen die normale Projektionsfunktion. Keine erneute Sourceaufnahme, Quality- oder Hardwaremessung. Die Änderung des gebündelten Guardmoduls ist ein ehrliches Runtime37-Delta; bestehende Freezes bleiben unverändert und die vorhandene explizite Producer-/Measurement-Relation muss den neuen Hash binden.
+
+
+### 2026-10-26 – Tatsächliche Factory-Staginglokatoren im H10-Transfernachweis
+
+Die normale Factory ergänzt nach Quellenprüfung lokale Pfade und stage_local-Flags. Der Transferguard erhält jetzt exakte Rollen und sämtliche wissenschaftlichen Artefaktfelder und prüft allein diese lokalen Stagingergänzungen über den vorhandenen read_bound-SourceScope sowie die ursprüngliche positive Dateigröße. Ein aus den tatsächlich ausgeführten Factory-Stagingoperationen gewonnenes b236-Metadatenfixture deckt den Integrationspfad ab; ursprüngliche Request-/Receipt-/HEF-/Quellenbindungen bleiben unverändert.
+
+Software: 100 gezielte Tests bestanden, begrenzter unabhängiger Peer CLEAR. Kein dritter CPU-Versuch, keine neue Quality-, Source- oder Hardwareausführung. Das gebündelte Guardmodul erzeugt ein ehrlich ausgewiesenes Runtime-Delta; alte Messungen und Freezes werden nicht umgebunden.

@@ -88,3 +88,56 @@ def test_unchanged_direct_typed_transfer_does_not_require_a_hailo_relation():
     for target, source in case[5].items():case[3][source] = deepcopy(case[4][target])
     case[2]['transfer_contract'].clear()
     validate(case)
+
+
+def factory_projected_case(monkeypatch):
+    """Captured outputs of the exact held Factory loops, whose real bytes passed."""
+    from types import SimpleNamespace
+    from onnx_splitpoint_tool import generic_only_plan
+    fixture = json.loads((Path(__file__).parent / 'fixtures/generic_canonical_transfer/h10_b236_actual_factory_artifact_projection.json').read_text())
+    assert fixture['all_actual_local_bytes_checked_by_unchanged_normal_factory']
+    case = actual_case()
+    assert fixture['original_artifacts'] == case[1]['runtime_artifacts']
+    case[0]['generic_artifact_binding']['artifacts'] = deepcopy(fixture['projected_artifacts'])
+    admitted = {v['local_path']: v for v in fixture['projected_artifacts'].values() if v.get('local_path')}
+    def checked_actual_descriptor(value):
+        expected = admitted.get(value.get('local_path'))
+        if expected is None or any(value.get(k) != expected.get(k) for k in ('path', 'sha256', 'size_bytes')):
+            raise ValueError('Local source missing or changed')
+        return SimpleNamespace(stat=lambda: SimpleNamespace(st_size=expected['size_bytes']))
+    monkeypatch.setattr(generic_only_plan, 'read_bound', checked_actual_descriptor)
+    return case
+
+
+def test_actual_factory_local_staging_projection_keeps_source_science(monkeypatch):
+    case = factory_projected_case(monkeypatch); before = deepcopy(case)
+    validate(case)
+    assert case == before
+
+
+@pytest.mark.parametrize('fault', ['sha', 'size', 'role', 'receipt', 'extra_science', 'stage_type',
+                                 'engine_stage', 'relative_path', 'foreign_path', 'missing_local'])
+def test_actual_factory_projection_rejects_changed_science_or_unvalidated_local_staging(monkeypatch, fault):
+    case = factory_projected_case(monkeypatch); artifacts = case[0]['generic_artifact_binding']['artifacts']
+    value = artifacts['source_part1_onnx']
+    if fault == 'sha': value['sha256'] = 'f' * 64
+    elif fault == 'size': value['size_bytes'] += 1
+    elif fault == 'role': artifacts['foreign_role'] = artifacts.pop('source_part1_onnx')
+    elif fault == 'receipt': artifacts['part1_build_receipt']['sha256'] = 'f' * 64
+    elif fault == 'extra_science': value['layout'] = 'foreign'
+    elif fault == 'stage_type': value['stage_local'] = 1
+    elif fault == 'engine_stage': artifacts['engine'].update(stage_local=True,local_path='/foreign/engine')
+    elif fault == 'relative_path': value['local_path'] = 'relative/part1.onnx'
+    elif fault == 'foreign_path': value['local_path'] = '/foreign/part1.onnx'
+    else: value.pop('local_path')
+    with pytest.raises(ValueError): validate(case)
+
+
+def test_staging_identity_uses_actual_normal_file_hash_and_size(tmp_path):
+    import hashlib
+    local = tmp_path / 'part1.onnx'; local.write_bytes(b'original scientific file')
+    source = {'path': '/original/part1.onnx', 'sha256': hashlib.sha256(local.read_bytes()).hexdigest(), 'size_bytes': local.stat().st_size}
+    projected = {**source, 'local_path': str(local), 'stage_local': True}
+    full._validate_staged_artifact_identity({'source_part1_onnx': source}, {'source_part1_onnx': projected})
+    local.write_bytes(b'changed scientific file!')
+    with pytest.raises(ValueError): full._validate_staged_artifact_identity({'source_part1_onnx': source}, {'source_part1_onnx': projected})

@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2424,
+  "file_count": 2425,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 543325,
-      "sha256": "ed168ee7bde99c363ea1a2ef317797c390167fcac8373e66fd6ef6a2262d193d"
+      "size": 544230,
+      "sha256": "8a6d8c93ae01f2bfe46c90d07fa37d1258e21864c25ceb3319ad7cd57f54357e"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -2271,8 +2271,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/runners/generic_passthrough.py",
-      "size": 19681,
-      "sha256": "718f96a781fb1fb235fc1d61bc1294aee127652d5c260206e5c1641863edb84c"
+      "size": 21311,
+      "sha256": "b34a8cf968de841f4d5a686b4549bb871984347cfed38855a98d59f9d0df6c1a"
     },
     {
       "path": "onnx_splitpoint_tool/runners/generic_quality_accounting.py",
@@ -5600,6 +5600,11 @@
       "sha256": "7cfaf888abe083b279d9c6d65b28802998a8298f672c1cfdb77b3ec94c47921c"
     },
     {
+      "path": "tests/fixtures/generic_canonical_transfer/h10_b236_actual_factory_artifact_projection.json",
+      "size": 11111,
+      "sha256": "5a8cc7f5232d3b5b8794e1da94adf1878088a7f8b3790342fc68f4efa191d346"
+    },
+    {
       "path": "tests/fixtures/generic_canonical_transfer/h10_b236_observed_metadata.json",
       "size": 30850,
       "sha256": "77c3bd3c12e5b639468c115543f4c06221ba39e7ad6438b0f7e48fe4cdc1615c"
@@ -7581,8 +7586,8 @@
     },
     {
       "path": "tests/test_generic_hailo_canonical_transfer.py",
-      "size": 5637,
-      "sha256": "48e32d946e5f44b3100a0fd9d9b5588815aa57f6fce46f7a0d836443d40c55ae"
+      "size": 8963,
+      "sha256": "0aef4f572888766f383c2b526a0466a61ff7358ff09e8b4554c183135dabe961"
     },
     {
       "path": "tests/test_generic_hailo_import_hints.py",

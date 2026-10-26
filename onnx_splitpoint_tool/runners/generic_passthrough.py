@@ -14,6 +14,32 @@ SCHEMA = "onnx-splitpoint/generic-canonical-full-input/v1"
 _LEGACY_STALE_MAP_RUNNER = "1eda22010758b22dc804ffaf9f2398c30a08a770c2865b2481ef4d6106c8800e"
 
 
+def _validate_staged_artifact_identity(original, projected):
+    if not isinstance(projected, Mapping) or set(original) != set(projected):
+        raise ValueError("Canonical original-input exact HEF artifact roles differ")
+    for role, source in original.items():
+        value = projected[role]
+        if value == source:
+            continue
+        if (not isinstance(value, Mapping)
+                or {k: v for k, v in source.items() if k not in {"local_path", "stage_local"}}
+                != {k: v for k, v in value.items() if k not in {"local_path", "stage_local"}}
+                or type(value.get("stage_local")) is not bool
+                or value["stage_local"] != (role not in {"engine", "build_part2_onnx"})
+                or not isinstance(value.get("local_path"), str)
+                or not Path(value["local_path"]).is_absolute()
+                or ".." in Path(value["local_path"]).parts
+                or type(source.get("size_bytes")) is not int or source["size_bytes"] <= 0):
+            raise ValueError("Canonical original-input exact HEF staged artifact identity differs")
+        # These are the normal Factory's local locators, not new scientific
+        # authority. Rejoin every permitted addition to its original own bytes
+        # within the caller's existing final-rehash SourceScope.
+        from ..generic_only_plan import read_bound
+        local = read_bound({**source, "local_path": value["local_path"]})
+        if local.stat().st_size != source["size_bytes"]:
+            raise ValueError("Canonical original-input exact HEF staged artifact size differs")
+
+
 def _validate_canonical_cut_transfer(row, proof, observed, outputs, inputs, cut):
     if all(outputs[source] == inputs[target] for target, source in cut.items()):
         return
@@ -51,13 +77,13 @@ def _validate_canonical_cut_transfer(row, proof, observed, outputs, inputs, cut)
             or any(value != "UINT8" for value in formats.values())
             or not isinstance(quant, Mapping) or set(quant) != set(names)
             or io.get("onnx_output_shapes") != {name: value.get("shape") for name, value in outputs.items()}
-            or bound.get("artifacts") != artifacts
             or bound.get("producer_source") != (row.get("quality_reference") or {}).get("request")
             or not bound.get("producer_source") or io.get("artifact") != hef.get("path")
             or re.fullmatch(r"[a-f0-9]{64}", str(hef.get("sha256"))) is None
             or type(hef.get("size_bytes")) is not int or hef["size_bytes"] <= 0
             or not artifacts.get("part1_build_receipt")):
         raise ValueError("Canonical original-input exact HEF transfer proof differs")
+    _validate_staged_artifact_identity(artifacts, bound.get("artifacts"))
     receipt = artifacts["part1_build_receipt"]
     if (not isinstance(receipt, Mapping) or not receipt.get("path")
             or re.fullmatch(r"[a-f0-9]{64}", str(receipt.get("sha256"))) is None

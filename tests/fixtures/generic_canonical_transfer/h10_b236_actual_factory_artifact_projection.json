@@ -1,0 +1,157 @@
+{
+  "all_actual_local_bytes_checked_by_unchanged_normal_factory": true,
+  "changed_fields": {
+    "boundary_metadata": {
+      "stage_local": {
+        "original": null,
+        "projected": true
+      }
+    },
+    "part1_build_receipt": {
+      "stage_local": {
+        "original": null,
+        "projected": true
+      }
+    },
+    "part1_runtime": {
+      "stage_local": {
+        "original": null,
+        "projected": true
+      }
+    },
+    "source_part1_onnx": {
+      "local_path": {
+        "original": null,
+        "projected": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/local_quality_runs/yolov7_H10_b236_sourcea814_selective_local_import_full20_local_v1/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947/models/yolov7_paper/benchmark_set/legacy_suite/b236/yolov7_paper_part1_b236.onnx"
+      },
+      "stage_local": {
+        "original": null,
+        "projected": true
+      }
+    },
+    "source_part2_onnx": {
+      "local_path": {
+        "original": null,
+        "projected": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/local_quality_runs/yolov7_H10_b236_sourcea814_selective_local_import_full20_local_v1/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947/models/yolov7_paper/benchmark_set/legacy_suite/b236/yolov7_paper_part2_b236.onnx"
+      },
+      "stage_local": {
+        "original": null,
+        "projected": true
+      }
+    }
+  },
+  "factory": {
+    "path": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/generic_canonical_original_inputs_FPS_factory_v6_v1/prepare_generic_only_measurements_creation_v6_canonical_original_inputs.py",
+    "sha256": "47040e2a3e920408b6bc1170aaa94605aae1a2e6f0e7814f2f61325ee0006c94",
+    "size_bytes": 76378
+  },
+  "factory_statement_lines": [
+    688,
+    694
+  ],
+  "no_make_row_CPU_Source_Q_FPS_Hardware_or_CURRENT_execution": true,
+  "normal_validation_scope_closed": true,
+  "original_artifacts": {
+    "boundary_metadata": {
+      "local_path": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/next_h10_yolov7_b236_sourcea814_selected_sidecar_import_local_v1/bound_assets/b236/boundary_metadata/split_manifest.json",
+      "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/quality_runtime/assets/b236/boundary_metadata/split_manifest.json",
+      "sha256": "b21cfb4ceb8f65370a79232792f0412251d9f6274d0d0c82abb1cc9b9c7436ee",
+      "size_bytes": 53206
+    },
+    "build_part2_onnx": {
+      "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/splits/b236/part2/2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e/fp16/source.onnx",
+      "sha256": "2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e",
+      "size_bytes": 65377138
+    },
+    "engine": {
+      "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/splits/b236/part2/2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e/fp16/part2_fp16.engine",
+      "sha256": "2daf6577310caf09b02d9e0b2a7579a358cbc8edc83f1ba09246e397f2c74107",
+      "size_bytes": 34701516
+    },
+    "engine_build_receipt": {
+      "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/splits/b236/part2/2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e/fp16/engine_build_receipt.json",
+      "sha256": "3c71740c786bf35df818f5aa32c9374a025485b0d8c698b0c4ec2980c186a4a9",
+      "size_bytes": 1755
+    },
+    "part1_build_receipt": {
+      "local_path": "/home/kmika/.cache/onnx_splitpoint/hailo_hef/871616820ad70a5169840aea067ef409f53664c35688d15232745ff1640d539b/.hailo-generations/68851df6b39b4e8e84401e3376b2ce28/hailo_hef_build_receipt.json",
+      "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/quality_runtime/assets/b236/part1_build_receipt/hailo_hef_build_receipt.json",
+      "sha256": "084d41bec358f71ad3202b170429356c5abc8db851e8170cd8c0e9424be28586",
+      "size_bytes": 9182
+    },
+    "part1_runtime": {
+      "local_path": "/home/kmika/.cache/onnx_splitpoint/hailo_hef/871616820ad70a5169840aea067ef409f53664c35688d15232745ff1640d539b/.hailo-generations/68851df6b39b4e8e84401e3376b2ce28/compiled.hef",
+      "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/quality_runtime/assets/b236/part1_runtime/compiled.hef",
+      "sha256": "840b8cf05b39b98d23ff7564749d592f8e7994e74617c3654bcc29282f59563c",
+      "size_bytes": 19144704
+    },
+    "source_part1_onnx": {
+      "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/b236/yolov7_paper_part1_b236.onnx",
+      "sha256": "7381e73fcc97a7b11478d9641f978186978965868a646f0d72c1719f474cebca",
+      "size_bytes": 93197165
+    },
+    "source_part2_onnx": {
+      "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/b236/yolov7_paper_part2_b236.onnx",
+      "sha256": "2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e",
+      "size_bytes": 65377138
+    }
+  },
+  "original_request": {
+    "path": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/local_quality_runs/yolov7_H10_b236_sourcea814_selective_local_import_full20_local_v1/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947/models/yolov7_paper/benchmark_results/quality_inputs/orin_nx_hailo10_01/results/b236/results_hailo10_to_tensorrt/task_quality_inputs/composed_request.json",
+    "sha256": "8f1d0b0145b90d543491c6881bb9b91f13ab6e3806b4485e1f15a3d9a597ef85",
+    "size_bytes": 132222608
+  },
+  "projected_artifacts": {
+    "boundary_metadata": {
+      "local_path": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/next_h10_yolov7_b236_sourcea814_selected_sidecar_import_local_v1/bound_assets/b236/boundary_metadata/split_manifest.json",
+      "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/quality_runtime/assets/b236/boundary_metadata/split_manifest.json",
+      "sha256": "b21cfb4ceb8f65370a79232792f0412251d9f6274d0d0c82abb1cc9b9c7436ee",
+      "size_bytes": 53206,
+      "stage_local": true
+    },
+    "build_part2_onnx": {
+      "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/splits/b236/part2/2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e/fp16/source.onnx",
+      "sha256": "2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e",
+      "size_bytes": 65377138
+    },
+    "engine": {
+      "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/splits/b236/part2/2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e/fp16/part2_fp16.engine",
+      "sha256": "2daf6577310caf09b02d9e0b2a7579a358cbc8edc83f1ba09246e397f2c74107",
+      "size_bytes": 34701516
+    },
+    "engine_build_receipt": {
+      "path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/splits/b236/part2/2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e/fp16/engine_build_receipt.json",
+      "sha256": "3c71740c786bf35df818f5aa32c9374a025485b0d8c698b0c4ec2980c186a4a9",
+      "size_bytes": 1755
+    },
+    "part1_build_receipt": {
+      "local_path": "/home/kmika/.cache/onnx_splitpoint/hailo_hef/871616820ad70a5169840aea067ef409f53664c35688d15232745ff1640d539b/.hailo-generations/68851df6b39b4e8e84401e3376b2ce28/hailo_hef_build_receipt.json",
+      "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/quality_runtime/assets/b236/part1_build_receipt/hailo_hef_build_receipt.json",
+      "sha256": "084d41bec358f71ad3202b170429356c5abc8db851e8170cd8c0e9424be28586",
+      "size_bytes": 9182,
+      "stage_local": true
+    },
+    "part1_runtime": {
+      "local_path": "/home/kmika/.cache/onnx_splitpoint/hailo_hef/871616820ad70a5169840aea067ef409f53664c35688d15232745ff1640d539b/.hailo-generations/68851df6b39b4e8e84401e3376b2ce28/compiled.hef",
+      "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/quality_runtime/assets/b236/part1_runtime/compiled.hef",
+      "sha256": "840b8cf05b39b98d23ff7564749d592f8e7994e74617c3654bcc29282f59563c",
+      "size_bytes": 19144704,
+      "stage_local": true
+    },
+    "source_part1_onnx": {
+      "local_path": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/local_quality_runs/yolov7_H10_b236_sourcea814_selective_local_import_full20_local_v1/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947/models/yolov7_paper/benchmark_set/legacy_suite/b236/yolov7_paper_part1_b236.onnx",
+      "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/b236/yolov7_paper_part1_b236.onnx",
+      "sha256": "7381e73fcc97a7b11478d9641f978186978965868a646f0d72c1719f474cebca",
+      "size_bytes": 93197165,
+      "stage_local": true
+    },
+    "source_part2_onnx": {
+      "local_path": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/local_quality_runs/yolov7_H10_b236_sourcea814_selective_local_import_full20_local_v1/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947/models/yolov7_paper/benchmark_set/legacy_suite/b236/yolov7_paper_part2_b236.onnx",
+      "path": "/home/nx/splitpoint_runs/legacy_suite/generic420_h10_yolov7_b236_sourcea814_selective_local_import_full20_deferred_v1_20261026_041947_yolov7_paper_orin_nx_hailo10_01/1/suite/b236/yolov7_paper_part2_b236.onnx",
+      "sha256": "2c42f50b2c0e22ba0e7efd8ed6a45da856681a964701b1f2a83992268780cd0e",
+      "size_bytes": 65377138,
+      "stage_local": true
+    }
+  },
+  "schema": "actual-normal-Factory-v6-artifact-staging-projection-metadata-fixture-v1"
+}
