@@ -196,9 +196,14 @@ def normalize_boundary_observation(value):
         and isinstance(value["part1_outputs"], Mapping) and len(value["part1_outputs"]) == 1
         and isinstance(value["part2_inputs"], Mapping) and len(value["part2_inputs"]) >= 2
         and isinstance(value["passthrough_inputs"], Mapping) and bool(value["passthrough_inputs"]))
+    one_cut_without_original_input = (value["minimum_boundary_tensors"] == 1
+        and isinstance(value["part1_outputs"], Mapping) and len(value["part1_outputs"]) == 1
+        and isinstance(value["part2_inputs"], Mapping) and len(value["part2_inputs"]) == 1
+        and value["passthrough_inputs"] == {})
     if (type(value["schema_version"]) is not int or value["schema_version"] != 1
             or type(value["minimum_boundary_tensors"]) is not int
-            or (value["minimum_boundary_tensors"] < 2 and not one_cut_with_original_input)):
+            or (value["minimum_boundary_tensors"] < 2
+                and not (one_cut_with_original_input or one_cut_without_original_input))):
         raise ValueError("mixed boundary observation requires at least two boundary tensors")
     result = deepcopy(dict(value))
     for role in ("part1_outputs", "part2_inputs"):

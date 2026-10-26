@@ -2,7 +2,7 @@
   "schema": "onnx-splitpoint/source-manifest-v1",
   "package_version": "2.95.5",
   "workflow_version": "v2.95.5",
-  "file_count": 2430,
+  "file_count": 2433,
   "files": [
     {
       "path": ".gitignore",
@@ -356,8 +356,8 @@
     },
     {
       "path": "docs/ARBEITSSTAND.md",
-      "size": 545420,
-      "sha256": "dad3344f37eb403f6ac97491f94d23dc1eed0a3b8475da5a7469cf16ac6e7c08"
+      "size": 546856,
+      "sha256": "868c204f96caa04836a55e99abd0caaec29ed339a5f52de2af3cb97b78d7a72c"
     },
     {
       "path": "docs/ARTIFACTS_AND_POSTPROCESSING_CONTRACT.md",
@@ -2256,8 +2256,8 @@
     },
     {
       "path": "onnx_splitpoint_tool/runners/generic_mixed_control.py",
-      "size": 38911,
-      "sha256": "cab425c90bc32894537e1c3c03d39a6fb13444f453f99efe0f19c472463f02b0"
+      "size": 39271,
+      "sha256": "947e03758d7b588ba2d9fc413c86d8a3f0d7fff2ae0e33818e460aa6e1b7b270"
     },
     {
       "path": "onnx_splitpoint_tool/runners/generic_mixed_control_binding.py",
@@ -5615,6 +5615,11 @@
       "sha256": "0c62434a6b1c602ce3d27f1cf562aba9e3f9a76fc55c8e93ffa719365df287dc"
     },
     {
+      "path": "tests/fixtures/generic_single_feature_boundary/deepx_yolov7_b009_actual_context.json",
+      "size": 8255,
+      "sha256": "cbc07588c8d2124f776c8054170c866dee4c12ca18f87ba48ec0605738f00cbd"
+    },
+    {
       "path": "tests/fixtures/generic_split_manifest/b017_bindings.json",
       "size": 20429,
       "sha256": "ca6dc3e06f55238001a77661e585f9d10a79997a39bcabbb66ec3e803cbb5a83"
@@ -7721,8 +7726,8 @@
     },
     {
       "path": "tests/test_generic_passthrough.py",
-      "size": 23259,
-      "sha256": "0128d138ab39f67df67a724792994009e3fb8d0ea242c0e1371d7c51652bd0f1"
+      "size": 23196,
+      "sha256": "1832593cb84886ca4f927a5d24f42bcba37be353c6596ba7eac39dc92cbdd6f0"
     },
     {
       "path": "tests/test_generic_predispatch_live_binding.py",
@@ -7893,6 +7898,16 @@
       "path": "tests/test_generic_setup_quality_callback.py",
       "size": 14229,
       "sha256": "e5f0fde83fc3c935b34acfe9e906299e18896f98ca5e92638bf0d025a64aafbc"
+    },
+    {
+      "path": "tests/test_generic_single_feature_control.py",
+      "size": 5069,
+      "sha256": "c19f57ff3e1429002b710622ea6fd41c9ac06b5fac1289dc3451301844686784"
+    },
+    {
+      "path": "tests/test_generic_single_feature_rendered_control.py",
+      "size": 6347,
+      "sha256": "1d355a90e11dc58b2df2f4b49bd9abbd05fbb30d3c8a73f9392836d96254baaa"
     },
     {
       "path": "tests/test_generic_source_only_collection_completion.py",

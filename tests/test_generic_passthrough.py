@@ -165,7 +165,7 @@ def test_matching_serial_and_pipeline_wrong_baseline_is_rejected_by_task_bytes()
 
 
 @pytest.mark.parametrize('passthrough', [True, False])
-def test_single_cut_with_original_image_remains_one_truthful_boundary_tensor(passthrough):
+def test_single_cut_remains_one_truthful_boundary_tensor_with_or_without_original_image(passthrough):
     from onnx_splitpoint_tool.runners.generic_mixed_control import normalize_boundary_observation
     tasks, args, _, _ = mixed_case()
     boundary = args['boundary_observation']
@@ -173,22 +173,20 @@ def test_single_cut_with_original_image_remains_one_truthful_boundary_tensor(pas
     boundary['part1_outputs'].pop('b'); boundary['part2_inputs'].pop('b'); boundary['part2_to_part1'].pop('b')
     if not passthrough:
         boundary['passthrough_inputs'] = {}; boundary['part2_inputs'].pop('images')
-        with pytest.raises(ValueError, match='at least two'):
-            normalize_boundary_observation(boundary)
-    else:
-        assert len(normalize_boundary_observation(boundary)['part1_outputs']) == 1
-        old_stage1, old_runtime = args['serial_stage1'], args['boundary_runtime']
-        def stage1(feed):
-            return {'a': old_stage1(feed)['a']}
-        def transfer(outputs, feed):
-            return {'a': outputs['a'], 'images': feed['images']}
-        def runtime():
-            return {**old_runtime(), 'part1_io': {'canonical_outputs': ['a']}}
-        args.update(serial_stage1=stage1, transfer=transfer, boundary_runtime=runtime)
-        report = run_mixed_control(tasks, **args)
-        assert report['status'] == 'passed'
-        assert report['boundary_observation']['observed_boundary_tensor_count'] == 1
-        assert report['mixed_completed_count'] == 32
+        args['stage2'] = lambda inputs, feed: {'logits': inputs['a']}
+    assert len(normalize_boundary_observation(boundary)['part1_outputs']) == 1
+    old_stage1, old_runtime = args['serial_stage1'], args['boundary_runtime']
+    def stage1(feed):
+        return {'a': old_stage1(feed)['a']}
+    def transfer(outputs, feed):
+        return {**{'a': outputs['a']}, **({'images': feed['images']} if passthrough else {})}
+    def runtime():
+        return {**old_runtime(), 'part1_io': {'canonical_outputs': ['a']}}
+    args.update(serial_stage1=stage1, transfer=transfer, boundary_runtime=runtime)
+    report = run_mixed_control(tasks, **args)
+    assert report['status'] == 'passed'
+    assert report['boundary_observation']['observed_boundary_tensor_count'] == 1
+    assert report['mixed_completed_count'] == 32
 
 
 def test_passthrough_without_explicit_task_canonical_feed_cannot_fall_back_to_sdk_bytes():

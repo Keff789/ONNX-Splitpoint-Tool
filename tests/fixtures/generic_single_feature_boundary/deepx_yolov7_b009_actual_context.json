@@ -1,0 +1,195 @@
+{
+  "identity": {
+    "case_id": "b009",
+    "comparison_backend": "deepx_m1",
+    "model_id": "yolov7_paper",
+    "precision": "float32_layout_fp16",
+    "setup_id": "orin_nx_deepx_m1_01"
+  },
+  "image_count": 5000,
+  "runtime_context": {
+    "boundary_observation_count": 5000,
+    "boundary_runtime": {
+      "part1_io": {
+        "artifact": "/home/nx/splitpoint_runs/legacy_suite/generic420_dx_y7_b009_sourceb4_original_dx_selected_full20_deferred_v1_20261026_044947_yolov7_paper_orin_nx_deepx_m1_01/1/suite/quality_runtime/assets/b009/part1_runtime/model.dxnn",
+        "backend": "deepx_m1",
+        "canonical_inputs": [
+          "images"
+        ],
+        "canonical_outputs": [
+          "getitem_9"
+        ],
+        "onnx_input_shapes": {
+          "images": [
+            1,
+            3,
+            640,
+            640
+          ]
+        },
+        "onnx_output_shapes": {
+          "getitem_9": [
+            1,
+            128,
+            160,
+            160
+          ]
+        },
+        "runtime_input_format": "uint8_nhwc_for_image_inputs",
+        "runtime_input_order_override": [],
+        "runtime_input_shapes": {
+          "images": [
+            1,
+            640,
+            640,
+            3
+          ]
+        },
+        "runtime_output_format": "float32",
+        "schema_version": 1
+      },
+      "part2_io": {
+        "artifact": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/native_split_quality/orin_nx_deepx_m1_01/yolov7_paper/b009/deepx_to_trt/643b69c29d0d476edcdd8c3281f39e7d294b913858fc60c4d64b6ac1fc2c60b0/engine_cache/b009/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+        "backend": "native_tensorrt",
+        "build_info": {
+          "artifact_binding_status": "verified_exact_native_tensorrt_engine_receipt",
+          "build_disabled": true,
+          "cache_hit": true,
+          "cache_miss_reason": "",
+          "cache_root": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-5a18ec9945c3960d/splits/b009",
+          "canonical_role_layout": true,
+          "cuda_binding": "ctypes-libcudart",
+          "cuda_python_import_error": "ModuleNotFoundError: No module named 'cuda'",
+          "engine": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/native_split_quality/orin_nx_deepx_m1_01/yolov7_paper/b009/deepx_to_trt/643b69c29d0d476edcdd8c3281f39e7d294b913858fc60c4d64b6ac1fc2c60b0/engine_cache/b009/part2/float32_layout_fp16/part2_float32_layout_fp16.engine",
+          "engine_build_receipt_file_sha256": "9378e5709a58dc9ace7fb8432dada69c2ce0d631861cf14b04e78a48be9c16b5",
+          "engine_build_receipt_path": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/native_split_quality/orin_nx_deepx_m1_01/yolov7_paper/b009/deepx_to_trt/643b69c29d0d476edcdd8c3281f39e7d294b913858fc60c4d64b6ac1fc2c60b0/engine_cache/b009/part2/float32_layout_fp16/engine_build_receipt.json",
+          "engine_build_receipt_sha256": "ccf0e9e07717987464f6466117b5d88f439eca4f42e15fe164f28e177e6c09a5",
+          "engine_sha256": "ee2b823a6253f046f65480ee6ab3db35909936654e48a13c695d4e7c5205daa7",
+          "explicit_engine": true,
+          "fallback_disabled": true,
+          "model": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/native_split_quality/orin_nx_deepx_m1_01/yolov7_paper/b009/deepx_to_trt/643b69c29d0d476edcdd8c3281f39e7d294b913858fc60c4d64b6ac1fc2c60b0/engine_cache/b009/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+          "precision": "float32_layout_fp16",
+          "requested_precision": "float32_layout_fp16",
+          "runtime": "native_tensorrt",
+          "source_model": "/home/nx/splitpoint_runs/_onnx_splitpoint_cache/tensorrt_managed_v27516/yolov7_paper-c098bef45c108b08/native_split_quality/orin_nx_deepx_m1_01/yolov7_paper/b009/deepx_to_trt/643b69c29d0d476edcdd8c3281f39e7d294b913858fc60c4d64b6ac1fc2c60b0/engine_cache/b009/part2/float32_layout_fp16/source_part2_float32_layout_bridge.onnx",
+          "source_model_sha256": "8e2c9167d8dcb959a4cab257c9410d3a0be4412798c10562a0c4502b8dfe657a",
+          "trtexec": "/usr/src/tensorrt/bin/trtexec",
+          "trtexec_sha256": "b800990508793a9bf50713d78d4fedfe475381d8cd749abda80909b9197fa1c4"
+        },
+        "input_names": [
+          "getitem_9"
+        ],
+        "inputs": {
+          "getitem_9": {
+            "dtype": "float32",
+            "shape": [
+              1,
+              128,
+              160,
+              160
+            ]
+          }
+        },
+        "output_names": [
+          "output",
+          "clone_1",
+          "clone_2"
+        ],
+        "outputs": {
+          "clone_1": {
+            "dtype": "float32",
+            "shape": [
+              1,
+              3,
+              40,
+              40,
+              85
+            ]
+          },
+          "clone_2": {
+            "dtype": "float32",
+            "shape": [
+              1,
+              3,
+              20,
+              20,
+              85
+            ]
+          },
+          "output": {
+            "dtype": "float32",
+            "shape": [
+              1,
+              3,
+              80,
+              80,
+              85
+            ]
+          }
+        },
+        "precision": "float32_layout_fp16",
+        "schema_version": 2
+      },
+      "part2_to_part1": {
+        "getitem_9": "getitem_9"
+      },
+      "passthrough_inputs": {},
+      "transfer_contract": {
+        "boundary_mode": "canonical_float32",
+        "hailo_exact_dequantization": false,
+        "manifest_cut_name_map_p2_to_p1": {
+          "getitem_9": "getitem_9"
+        },
+        "part1_cut_names": [
+          "getitem_9"
+        ],
+        "part2_cut_names": [
+          "getitem_9"
+        ]
+      }
+    },
+    "environment": {
+      "environment": {
+        "LD_LIBRARY_PATH": "/usr/local/cuda/targets/aarch64-linux/lib:/usr/local/cuda-12.6/targets/aarch64-linux/lib:/usr/local/cuda/lib64:/usr/lib/aarch64-linux-gnu:/usr/lib/aarch64-linux-gnu/tegra:/usr/lib/aarch64-linux-gnu/nvidia:",
+        "PATH": "/usr/local/cuda/bin:/usr/src/tensorrt/bin:/usr/local/bin:/home/nx/venvs/deepx-runtime/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+        "SPLITPOINT_EXTRA_SITES": "/home/nx/venvs/deepx-runtime/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages:/home/nx/venvs/deepx-runtime/lib/python3.10/site-packages:/usr/local/lib/python3.10/dist-packages:/usr/lib/python3/dist-packages:/usr/lib/python3.10/dist-packages"
+      },
+      "executable": "/home/nx/venvs/deepx-runtime/bin/python3",
+      "executable_resolved": "/usr/bin/python3.10",
+      "executable_sha256": "03bb5d246e83c44204ef38044b062fdc46c2835881874e763c44c48b4304c490",
+      "python_version": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]"
+    },
+    "logical_boundary": {
+      "part1_outputs": {
+        "getitem_9": {
+          "dtype": "float32",
+          "shape": [
+            1,
+            128,
+            160,
+            160
+          ]
+        }
+      },
+      "part2_inputs": {
+        "getitem_9": {
+          "dtype": "float32",
+          "shape": [
+            1,
+            128,
+            160,
+            160
+          ]
+        }
+      }
+    },
+    "schema": "onnx-splitpoint/generic-quality-runtime-context",
+    "schema_version": 1
+  },
+  "schema": "actual-normal-single-feature-boundary-metadata-fixture-v1",
+  "source_request": {
+    "path": "/home/kmika/Reports/generic_detectors20_multitensor_20261021T163124Z/continuation_v3_20261022/local_quality_runs/yolov7_DeepX_b009_sourceb4_original_DX_selected_full20_deferred_v1/generic420_dx_y7_b009_sourceb4_original_dx_selected_full20_deferred_v1_20261026_044947/models/yolov7_paper/benchmark_results/quality_inputs/orin_nx_deepx_m1_01/results/b009/results_deepx_m1_to_tensorrt/task_quality_inputs/composed_request.json",
+    "sha256": "e4cde956551fd9e5f28ed47544e778a35d135ba48ba0f11cfe59d1f5618237b2",
+    "size_bytes": 132091456
+  }
+}
